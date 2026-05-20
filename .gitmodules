@@ -1,23 +1,23 @@
 [submodule "repos/cynthion"]
 	path = repos/cynthion
-	url = https://github.com/awtoau/cynthion.git
+	url = https://github.com/awtoau/awto-cynthion.git
 	branch = main
 
 [submodule "repos/apollo"]
 	path = repos/apollo
-	url = https://github.com/greatscottgadgets/apollo.git
+	url = https://github.com/awtoau/awto-apollo.git
 
 [submodule "repos/luna"]
 	path = repos/luna
-	url = https://github.com/greatscottgadgets/luna.git
+	url = https://github.com/awtoau/awto-luna.git
 
 [submodule "repos/saturn-v"]
 	path = repos/saturn-v
-	url = https://github.com/greatscottgadgets/saturn-v.git
+	url = https://github.com/awtoau/awto-saturn-v.git
 
 [submodule "repos/facedancer"]
 	path = repos/facedancer
-	url = https://github.com/awtoau/facedancer.git
+	url = https://github.com/awtoau/awto-facedancer.git
 	branch = main
 
 [submodule "app"]

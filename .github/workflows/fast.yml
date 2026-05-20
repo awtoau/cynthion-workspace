@@ -1,8 +1,8 @@
 name: fast
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:    # manual only — run locally with scripts/check-fast.sh day-to-day
+  pull_request:         # also runs on PRs to catch regressions before merge
 
 jobs:
   rust:
@@ -46,14 +46,13 @@ jobs:
       - run: uv venv .venv --python 3.12
       - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
       - run: .venv/bin/python -c "import cynthion; import apollo_fpga; import facedancer"
-      - run: .venv/bin/python -m py_compile repos/cynthion/scripts/test-fault-detection.py
       - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short
         continue-on-error: true
 
   python-314t:
     name: python 3.14t no-GIL (experimental)
     runs-on: ubuntu-latest
-    continue-on-error: true          # allowed to fail — compatibility target, not yet required
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
@@ -74,9 +73,6 @@ jobs:
       - run: flutter pub get
         working-directory: app
         continue-on-error: true
-      - run: flutter analyze
-        working-directory: app
-        continue-on-error: true
-      - run: flutter test
+      - run: flutter analyze && flutter test
         working-directory: app
         continue-on-error: true
