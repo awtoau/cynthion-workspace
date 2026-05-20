@@ -50,15 +50,15 @@ jobs:
       - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short
         continue-on-error: true
 
-  python-315t:
-    name: python 3.15t (experimental)
+  python-314t:
+    name: python 3.14t no-GIL (experimental)
     runs-on: ubuntu-latest
     continue-on-error: true          # allowed to fail — compatibility target, not yet required
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - uses: astral-sh/setup-uv@v4
-      - run: uv venv .venv --python 3.15t
+      - run: uv venv .venv --python 3.14t
       - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
       - run: .venv/bin/python -c "import cynthion; import apollo_fpga; import facedancer"
       - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short

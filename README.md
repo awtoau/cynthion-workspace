@@ -35,5 +35,6 @@ cd cynthion-workspace
 ## Python strategy
 
 - **Required**: 3.12 (stable, known-good with full dependency stack)
-- **Target**: 3.15t (free-threaded) — in CI as `allowed-to-fail`, promoted once stack proves stable
+- **Target**: 3.14t (free-threaded, no-GIL) — in CI as `allowed-to-fail`, promoted once stack proves stable
+- Note: free-threaded builds introduced in 3.13t, 3.14t is current
 - Pinned in `scripts/setup-dev.sh` via `uv`
