@@ -1,0 +1,75 @@
+name: full
+
+on:
+  schedule:
+    - cron: '0 18 * * *'     # nightly at 04:00 AEST
+  workflow_dispatch:           # manual trigger
+
+jobs:
+  build-firmware:
+    name: firmware + bitstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: riscv32imac-unknown-none-elf }
+      - run: sudo apt-get install -y gcc-arm-none-eabi llvm
+      - run: make bin
+        working-directory: repos/cynthion/firmware
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moondancer-bin
+          path: repos/cynthion/cynthion/python/assets/moondancer.bin
+
+  build-apollo:
+    name: apollo firmware + size report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - run: sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+      - run: make APOLLO_BOARD=cynthion
+        working-directory: repos/apollo/firmware
+      - run: arm-none-eabi-size _build/cynthion_d11/firmware.elf
+        working-directory: repos/apollo/firmware
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apollo-firmware
+          path: repos/apollo/firmware/_build/cynthion_d11/firmware.bin
+
+  python-full:
+    name: python full test matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+        experimental: [false]
+        include:
+          - python: '3.15t'
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: astral-sh/setup-uv@v4
+      - run: uv venv .venv --python ${{ matrix.python }}
+      - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
+      - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -v --tb=long
+
+  flutter-release:
+    name: flutter release builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: sudo apt-get install -y clang cmake libgtk-3-dev ninja-build
+      - run: flutter pub get && flutter build linux --release
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cynthion-app-linux
+          path: app/build/linux/x64/release/
