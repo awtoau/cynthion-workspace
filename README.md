@@ -16,14 +16,35 @@ cd cynthion-workspace
 
 ## Repository map
 
-| Path | Repo | Contents |
-|------|------|----------|
-| `repos/cynthion` | awtoau/cynthion | Firmware (Rust), gateware (Python/Amaranth), Python host library |
-| `repos/apollo` | greatscottgadgets/apollo | Apollo ARM MCU firmware (C/TinyUSB) |
-| `repos/luna` | greatscottgadgets/luna | LUNA USB gateware library |
-| `repos/saturn-v` | greatscottgadgets/saturn-v | Apollo DFU bootloader |
-| `repos/facedancer` | awtoau/facedancer | Patched Facedancer host library |
-| `app/` | awtoau/cynthion-app | Flutter dashboard (QHD + laptop + mobile) |
+| Path | Repo | Upstream | Contents |
+|------|------|----------|----------|
+| `repos/cynthion` | awtoau/awto-cynthion | greatscottgadgets/cynthion | Firmware (Rust), gateware (Python/Amaranth), Python host library |
+| `repos/apollo` | awtoau/awto-apollo | greatscottgadgets/apollo | Apollo ARM MCU firmware (C/TinyUSB) |
+| `repos/luna` | awtoau/awto-luna | greatscottgadgets/luna | LUNA USB gateware library |
+| `repos/saturn-v` | awtoau/awto-saturn-v | greatscottgadgets/saturn-v | Apollo DFU bootloader |
+| `repos/facedancer` | awtoau/awto-facedancer | greatscottgadgets/facedancer | Patched Facedancer host library |
+| `repos/packetry` | awtoau/awto-packetry | greatscottgadgets/packetry | USB capture + analysis tool |
+| `repos/cynthion-hardware` | awtoau/awto-cynthion-hardware | greatscottgadgets/cynthion-hardware | KiCad schematics and PCB layout |
+| `app/` | *(in-tree)* | — | Flutter dashboard — topology graph, TTY log, power rails |
+
+## Local mirrors
+
+Upstream repos are mirrored at `~/git_mirror/greatscottgadgets/` for offline access and
+reference (KiCad files, upstream history). The `cynthion-hardware` schematics also have a
+standalone copy at `~/git_mirror/cynthion-hardware/`.
+
+```
+~/git_mirror/greatscottgadgets/
+  apollo/               ARM MCU firmware upstream
+  cynthion/             gateware + Python lib upstream
+  cynthion-hardware/    KiCad schematics + PCB
+  facedancer/           Facedancer upstream
+  luna/                 LUNA gateware upstream
+  packetry/             USB capture tool upstream
+  saturn-v/             DFU bootloader upstream
+~/git_mirror/cynthion-hardware/   standalone KiCad copy
+~/git_mirror/packetry/            standalone packetry copy
+```
 
 ## CI levels
 

@@ -20,7 +20,10 @@
 	url = https://github.com/awtoau/awto-facedancer.git
 	branch = main
 
-[submodule "app"]
-	path = app
-	url = https://github.com/awtoau/cynthion-app.git
-	branch = main
+[submodule "repos/packetry"]
+	path = repos/packetry
+	url = https://github.com/awtoau/awto-packetry.git
+
+[submodule "repos/cynthion-hardware"]
+	path = repos/cynthion-hardware
+	url = https://github.com/awtoau/awto-cynthion-hardware.git
