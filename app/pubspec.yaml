@@ -12,6 +12,9 @@ dependencies:
   flutter_riverpod: ^2.6.1
   shared_preferences: ^2.3.2
   fl_chart: ^0.69.0
+  web_socket_channel: ^3.0.1
+  flutter_blue_plus: ^1.35.5
+  multicast_dns: ^0.3.2+4
 
 dev_dependencies:
   flutter_test:

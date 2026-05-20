@@ -65,7 +65,7 @@ final defaultNodes = [
   // ── Physical hardware ────────────────────────────────────────────
   HardwareNode(id: 'host',    label: 'Host PC',    sublabel: 'linux',
       type: NodeType.host,         position: const Offset(60,  340), status: NodeStatus.ok),
-  HardwareNode(id: 'apollo',  label: 'Apollo',     sublabel: 'SAMD11 · 1d50:615c',
+  HardwareNode(id: 'apollo',  label: 'Apollo',     sublabel: 'SAMD11 · 1d50:615c · SN:005600…',
       type: NodeType.apollo,       position: const Offset(320, 220), status: NodeStatus.unknown),
   HardwareNode(id: 'pac1954', label: 'PAC1954',    sublabel: 'I²C power monitor',
       type: NodeType.powerMonitor, position: const Offset(320, 420), status: NodeStatus.unknown),
