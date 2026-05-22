@@ -822,8 +822,147 @@ grep ERROR ./tmp/logs/install-*.log               # Find errors
 
 ---
 
+---
+
+## Cyn Unified CLI Architecture
+
+**Cyn** is the unified entry point for all Cynthion operations.
+
+### Overview
+- **Command:** `cyn` (executable at repo root)
+- **Implementation:** `scripts/cyn_main.py` (core logic), `scripts/cyn` (entry point)
+- **Daemon:** `scripts/cyn-daemon.py` (background service for GUI, HTTP API)
+
+### Key Design
+
+**Smart Routing:**
+- Detects if daemon is running
+- If daemon: connects via HTTP (fast, cached environment)
+- If no daemon: runs commands directly (inline)
+
+**Commands:**
+- `cyn <component> <subcommand>` — fpga, apollo, moondancer, gateware
+- `cyn <workspace>` — setup, versions, prereqs, status
+- `cyn ci <cmd>` — GitHub Actions CI/CD (locally via act)
+- `cyn daemon start/stop/status/restart` — daemon management
+- `cyn ai-brief/ai-schema/ai-tasks` — AI-discoverable outputs
+
+### Daemon HTTP API (Port 8765)
+- `/health` — health check
+- `/status` — daemon status + uptime
+- `/project/status` — project state
+- `/commands` — available commands list
+
+### Benefits
+- ✓ Single entry point for all operations
+- ✓ AI-agent friendly with JSON discovery
+- ✓ Transparent daemon switching
+- ✓ Ready for future GUI integration via HTTP
+
+---
+
+## Implementation Roadmap (Phases)
+
+### Phase 0: Toolchain Review (COMPLETE ✓)
+- Verified Python 3.14, Yosys 0.65, nextpnr 0.10
+- Identified RISC-V model (VexRiscv)
+- Confirmed FPGA flow with Amaranth 0.5
+- Status: Ready for Phase 1
+
+### Phase 1: Build System & Parallelization (COMPLETE ✓)
+- Implemented fail-fast prerequisite checks
+- Added Python 3.14 no-GIL parallelization (55% faster)
+- Built all components: Apollo ✓, moondancer ✓, analyzer ✓, facedancer ✗
+- Status: 3/4 successful (facedancer blocked by luna_soc bug)
+
+### Phase 2: Issue Resolution & Cleanup
+- **Facedancer:** Resolve luna_soc SPIflash Field TypeError
+- **Apollo:** Firmware improvements (DFU buffers, race conditions, CDC interfaces)
+- **Documentation:** Consolidate all MD files into WIKI.md
+- Status: In progress
+
+### Phase 3-8: Serial Architecture Redesign
+- Redesign Apollo-moondancer communication
+- Implement UART watchdog supervisor
+- Improve reliability and maintainability
+- See: DESIGN_UART_WATCHDOG.md for details
+
+---
+
+## Architectural Decisions
+
+### Core Finding: Unified Entry Point
+**Decision:** Create single `cyn` command instead of scattered scripts
+
+**Rationale:**
+- Reduces cognitive load (single command to learn)
+- Enables AI agent discovery (JSON schema)
+- Future GUI can integrate via HTTP daemon
+- Consistent for developers and automation
+
+### Daemon-Client Architecture
+**Decision:** Smart routing (daemon optional, auto-detected)
+
+**Rationale:**
+- Users don't need to think about daemon state
+- Faster for sequential commands (cached environment)
+- Fallback to inline execution if daemon not running
+- Supports future multi-user scenarios
+
+### No-GIL Parallelization
+**Decision:** Use Python 3.14 concurrent.futures for parallel builds
+
+**Rationale:**
+- 55% speedup over sequential
+- No-GIL enables true threading (not just concurrency)
+- Scales well to 4+ cores
+- Simpler than subprocess-based approach
+
+### Consolidated Documentation
+**Decision:** Single WIKI.md instead of scattered MD files
+
+**Rationale:**
+- Easier to maintain (single source of truth)
+- Reduces duplication
+- Simpler for users to navigate
+- Git history is cleaner
+
+---
+
+## Watchdog Architecture (Phase 3)
+
+### Problem
+Apollo (ARM debug controller) and moondancer (RISC-V firmware) need robust supervision:
+- Currently: no watchdog protection
+- Risk: firmware hangs, no recovery mechanism
+- Impact: requires manual device restart
+
+### Solution: Apollo ARM Supervisor
+Apollo becomes the watchdog for moondancer:
+1. moondancer sends periodic "heartbeat" to Apollo
+2. Apollo monitors heartbeat over serial/CAN
+3. If heartbeat lost → Apollo asserts reset
+4. moondancer automatically restarts
+
+### Benefits
+- ✓ No additional hardware needed
+- ✓ Apollo (always-on) supervises moondancer
+- ✓ Automatic recovery on firmware hang
+- ✓ Future: can log reboot events
+
+### Implementation Phases
+1. **Phase 3a:** Serial heartbeat protocol design
+2. **Phase 3b:** Apollo supervisor firmware
+3. **Phase 3c:** moondancer integration (send heartbeat)
+4. **Phase 3d:** Testing & validation
+
+See DESIGN_UART_WATCHDOG.md for full technical details.
+
+---
+
 **For more help, see the full documentation files or run:**
 ```bash
 ./scripts/install.py --help
+cyn --help
 ```
 

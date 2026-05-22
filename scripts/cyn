@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Cynthion CLI - entry point (delegates to cyn_main module)"""
+from cyn_main import main
+
+if __name__ == "__main__":
+    main()
