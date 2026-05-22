@@ -1,0 +1,68 @@
+From 6fa3e0a8589af66b22439260bf1f0cb812c3bf75 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 00:30:15 +1000
+Subject: [PATCH 05/20] moondancer: clamp endpoint max_packet_size to
+ EP_MAX_PACKET_SIZE
+
+SuperSpeed devices advertise wMaxPacketSize values larger than the HS
+maximum (e.g. 1024 for bulk) but fall back to HS when connected to
+Cynthion. The previous hard EINVAL aborted all endpoint configuration,
+leaving the device unusable (greatscottgadgets/cynthion#220).
+
+Clamp to EP_MAX_PACKET_SIZE (512) with a warning instead.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/moondancer/src/gcp/moondancer.rs | 32 +++++++++++++----------
+ 1 file changed, 18 insertions(+), 14 deletions(-)
+
+diff --git a/firmware/moondancer/src/gcp/moondancer.rs b/firmware/moondancer/src/gcp/moondancer.rs
+index 36ad8f9..035a21e 100644
+--- a/firmware/moondancer/src/gcp/moondancer.rs
++++ b/firmware/moondancer/src/gcp/moondancer.rs
+@@ -393,24 +393,28 @@ impl Moondancer {
+                 continue;
+             }
+ 
+-            // ignore endpoint configurations we won't be able to handle
+-            if endpoint.max_packet_size.get() as usize > smolusb::EP_MAX_PACKET_SIZE {
+-                error!(
+-                    "  failed to configure endpoint address 0x{:x} with max packet size {} > {}",
+-                    endpoint.address,
+-                    endpoint.max_packet_size,
+-                    smolusb::EP_MAX_PACKET_SIZE,
+-                );
+-                return Err(GreatError::InvalidArgument);
+-            }
++            // Clamp max_packet_size to EP_MAX_PACKET_SIZE. Devices operating at
++            // SuperSpeed advertise larger values (e.g. 1024 for bulk) but fall
++            // back to HS when connected to Cynthion, where 512 is the HS maximum.
++            // Returning EINVAL here aborts all endpoint configuration (cynthion#220).
++            let max_packet_size: u16 =
++                if endpoint.max_packet_size.get() as usize > smolusb::EP_MAX_PACKET_SIZE {
++                    warn!(
++                        "  clamping endpoint 0x{:x} max_packet_size {} -> {} (HS maximum)",
++                        endpoint.address,
++                        endpoint.max_packet_size.get(),
++                        smolusb::EP_MAX_PACKET_SIZE,
++                    );
++                    smolusb::EP_MAX_PACKET_SIZE as u16
++                } else {
++                    endpoint.max_packet_size.get()
++                };
+ 
+             // configure endpoint max packet sizes
+             if Direction::from(endpoint.address) == Direction::HostToDevice {
+-                self.ep_out_max_packet_size[endpoint_number as usize] =
+-                    endpoint.max_packet_size.into();
++                self.ep_out_max_packet_size[endpoint_number as usize] = max_packet_size;
+             } else {
+-                self.ep_in_max_packet_size[endpoint_number as usize] =
+-                    endpoint.max_packet_size.into();
++                self.ep_in_max_packet_size[endpoint_number as usize] = max_packet_size;
+             }
+ 
+             // prime any OUT endpoints
+-- 
+2.54.0
+

@@ -1,0 +1,23 @@
+From 24af0a44fc8ae056ec5684dae14798add60cf073 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 15:51:09 +1000
+Subject: [PATCH 07/20] gitignore: add tmp/ workspace scratch directory
+
+---
+ .gitignore | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/.gitignore b/.gitignore
+index 099022a..ea05fb1 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,6 @@
++# workspace temp files (logs, intermediate builds, scratch)
++tmp/
++
+ # Python
+ __pycache__/
+ **/*.py[cod]
+-- 
+2.54.0
+

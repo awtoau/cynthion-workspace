@@ -1,0 +1,77 @@
+From c0144f40fbc60461d6e6b988df622fa4927ebb8e Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 22:03:10 +1000
+Subject: [PATCH 13/20] firmware: fix wrong function name in write_endpoint log
+ message (#28)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ep_in_busy() in write_endpoint was passing "write_control_endpoint()"
+as the caller label — copy-paste from write_control_endpoint. Closes #28.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/moondancer/src/gcp/moondancer.rs | 25 ++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/firmware/moondancer/src/gcp/moondancer.rs b/firmware/moondancer/src/gcp/moondancer.rs
+index 8332891..7b8f3f7 100644
+--- a/firmware/moondancer/src/gcp/moondancer.rs
++++ b/firmware/moondancer/src/gcp/moondancer.rs
+@@ -143,12 +143,9 @@ impl Moondancer {
+                 match self.control_queue.enqueue(setup_packet) {
+                     Ok(()) => (),
+                     Err(_) => {
+-                        error!("Moondancer - control queue overflow");
+-                        loop {
+-                            unsafe {
+-                                riscv::asm::nop();
+-                            }
+-                        }
++                        // Drop the setup packet and continue — spinning here permanently
++                        // deadlocks the firmware in interrupt context (#26).
++                        error!("control queue overflow: dropped setup packet on ep{}", endpoint_number);
+                     }
+                 }
+                 UsbEvent::ReceiveControl(endpoint_number)
+@@ -416,6 +413,15 @@ impl Moondancer {
+                 continue;
+             }
+ 
++            // reject out-of-range endpoint numbers (#25)
++            if endpoint_number as usize >= smolusb::EP_MAX_ENDPOINTS {
++                error!(
++                    "  endpoint number {} >= EP_MAX_ENDPOINTS ({}), skipping",
++                    endpoint_number, smolusb::EP_MAX_ENDPOINTS
++                );
++                continue;
++            }
++
+             // Clamp max_packet_size to EP_MAX_PACKET_SIZE. Devices operating at
+             // SuperSpeed advertise larger values (e.g. 1024 for bulk) but fall
+             // back to HS when connected to Cynthion, where 512 is the HS maximum.
+@@ -668,6 +674,11 @@ impl Moondancer {
+         let blocking = args.blocking.read() != 0;
+         let payload_length = args.payload.len();
+         let iter = args.payload.iter();
++
++        if endpoint_number as usize >= smolusb::EP_MAX_ENDPOINTS {
++            error!("moondancer::write_endpoint: endpoint {} out of range", endpoint_number);
++            return Err(GreatError::InvalidArgument);
++        }
+         let max_packet_size = self.ep_in_max_packet_size[endpoint_number as usize] as usize;
+ 
+         let bytes_written = self.usb0.write_with_packet_size(
+@@ -790,7 +801,7 @@ impl Moondancer {
+         if blocking
+             && self
+                 .usb0
+-                .ep_in_busy(endpoint_number, "moondancer::write_control_endpoint()")
++                .ep_in_busy(endpoint_number, "moondancer::write_endpoint()")
+         {
+             log::error!(
+                 "moondancer::write_endpoint timed out after {} bytes during write of {} bytes",
+-- 
+2.54.0
+

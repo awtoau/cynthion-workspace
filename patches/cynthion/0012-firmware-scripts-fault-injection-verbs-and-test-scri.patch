@@ -1,0 +1,393 @@
+From 4d8688c48cec22dec77a0813ac94834b42557888 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 17:04:42 +1000
+Subject: [PATCH 12/20] firmware+scripts: fault injection verbs and test script
+ for #14/#16
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+selftest GCP class gains four new verbs:
+  0x00  get_canary_status  — safe probe: returns canary word, stack used/total
+  0x11  trigger_panic      — deliberate panic!() to test panic handler
+  0x12  trigger_stack_overflow — unbounded recursion; canary fires on next IRQ
+  0x13  corrupt_canary     — overwrites _sheap; returns OK, panic ~1ms later
+
+canary module gains read_raw() and corrupt() for fault injection support.
+
+scripts/test-fault-detection.py: CLI runner that verifies canary is intact
+(safe, always runnable) and optionally drives all three destructive fault
+paths with pass/fail reporting. --destructive requires reset between tests.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/moondancer/src/canary.rs       |  13 ++
+ firmware/moondancer/src/gcp/selftest.rs | 129 ++++++++++++++++--
+ scripts/test-fault-detection.py         | 169 ++++++++++++++++++++++++
+ 3 files changed, 301 insertions(+), 10 deletions(-)
+ create mode 100755 scripts/test-fault-detection.py
+
+diff --git a/firmware/moondancer/src/canary.rs b/firmware/moondancer/src/canary.rs
+index fccaaae..9515a93 100644
+--- a/firmware/moondancer/src/canary.rs
++++ b/firmware/moondancer/src/canary.rs
+@@ -26,6 +26,19 @@ pub unsafe fn is_intact() -> bool {
+     core::ptr::read_volatile(addr) == CANARY_VALUE
+ }
+ 
++/// Read the raw canary word (for diagnostics / selftest reporting).
++pub unsafe fn read_raw() -> u32 {
++    let addr = core::ptr::addr_of!(_sheap) as *const u32;
++    core::ptr::read_volatile(addr)
++}
++
++/// Overwrite the canary with zero — for fault-injection testing only.
++/// The panic fires at the next MachineExternal interrupt.
++pub unsafe fn corrupt() {
++    let addr = core::ptr::addr_of!(_sheap) as *mut u32;
++    core::ptr::write_volatile(addr, 0);
++}
++
+ /// Bytes of stack consumed from the top: distance from current SP down
+ /// to `_stack_start`. Read at interrupt entry — reflects interrupt-path depth.
+ pub fn stack_used_bytes() -> u32 {
+diff --git a/firmware/moondancer/src/gcp/selftest.rs b/firmware/moondancer/src/gcp/selftest.rs
+index fb899e4..a83e5e8 100644
+--- a/firmware/moondancer/src/gcp/selftest.rs
++++ b/firmware/moondancer/src/gcp/selftest.rs
+@@ -17,18 +17,70 @@ pub static CLASS_DOCS: &str = "Provides functionality for a Cynthion to self-tes
+ 
+ /// Fields are `"\0"`  where C implementation has `""`
+ /// Fields are `"*\0"` where C implementation has `NULL`
+-pub static VERBS: [Verb; 1] = [Verb {
+-    id: 0x10,
+-    name: "test_error_return_code\0",
+-    doc: "\0", // "Returns the string 'ok' if code is 0, otherwise an error with the given code.\0",
+-    in_signature: "<I\0",
+-    in_param_names: "code\0",
+-    out_signature: "<S\0",
+-    out_param_names: "result\0",
+-}];
++pub static VERBS: [Verb; 5] = [
++    Verb {
++        id: 0x00,
++        name: "get_canary_status\0",
++        doc: "Returns canary word at _sheap, stack bytes used, stack bytes total.\0",
++        in_signature: "\0",
++        in_param_names: "*\0",
++        out_signature: "<III\0",
++        out_param_names: "canary_value, stack_used, stack_total\0",
++    },
++    Verb {
++        id: 0x10,
++        name: "test_error_return_code\0",
++        doc: "\0",
++        in_signature: "<I\0",
++        in_param_names: "code\0",
++        out_signature: "<S\0",
++        out_param_names: "result\0",
++    },
++    Verb {
++        id: 0x11,
++        name: "trigger_panic\0",
++        doc: "Deliberately panics the firmware. Device will hang until power-cycled.\0",
++        in_signature: "\0",
++        in_param_names: "*\0",
++        out_signature: "\0",
++        out_param_names: "*\0",
++    },
++    Verb {
++        id: 0x12,
++        name: "trigger_stack_overflow\0",
++        doc: "Overflows the stack via unbounded recursion. Canary fires on next interrupt.\0",
++        in_signature: "\0",
++        in_param_names: "*\0",
++        out_signature: "\0",
++        out_param_names: "*\0",
++    },
++    Verb {
++        id: 0x13,
++        name: "corrupt_canary\0",
++        doc: "Overwrites the stack canary word. Panic fires on next MachineExternal interrupt.\0",
++        in_signature: "\0",
++        in_param_names: "*\0",
++        out_signature: "\0",
++        out_param_names: "*\0",
++    },
++];
+ 
+ // - verb implementations -----------------------------------------------------
+ 
++pub fn get_canary_status<'a>(
++    _arguments: &[u8],
++    _context: &'a dyn Any,
++) -> GreatResult<impl Iterator<Item = u8> + 'a> {
++    let canary_value = unsafe { crate::canary::read_raw() };
++    let stack_used = crate::canary::stack_used_bytes();
++    let stack_total = crate::canary::stack_total_bytes();
++    debug!("  get_canary_status: canary=0x{:08x} used={} total={}", canary_value, stack_used, stack_total);
++    let response = canary_value.to_le_bytes().into_iter()
++        .chain(stack_used.to_le_bytes())
++        .chain(stack_total.to_le_bytes());
++    Ok(response)
++}
++
+ pub fn test_error_return_code<'a>(
+     arguments: &[u8],
+     _context: &'a dyn Any,
+@@ -54,6 +106,44 @@ pub fn test_error_return_code<'a>(
+     }
+ }
+ 
++pub fn trigger_panic<'a>(
++    _arguments: &[u8],
++    _context: &'a dyn Any,
++) -> GreatResult<impl Iterator<Item = u8> + 'a> {
++    panic!("deliberate test panic via selftest::trigger_panic");
++    #[allow(unreachable_code)]
++    Ok([].into_iter())
++}
++
++/// Unbounded recursion to overflow the stack. Each frame is at least 16 bytes
++/// (saved ra + s0 + locals). The volatile read prevents tail-call elimination.
++#[inline(never)]
++fn recurse(depth: u32) -> u32 {
++    let here = depth;
++    let _ = unsafe { core::ptr::read_volatile(&here) };
++    recurse(depth.wrapping_add(1))
++}
++
++pub fn trigger_stack_overflow<'a>(
++    _arguments: &[u8],
++    _context: &'a dyn Any,
++) -> GreatResult<impl Iterator<Item = u8> + 'a> {
++    let _ = recurse(0);
++    Ok([].into_iter())
++}
++
++pub fn corrupt_canary<'a>(
++    _arguments: &[u8],
++    _context: &'a dyn Any,
++) -> GreatResult<impl Iterator<Item = u8> + 'a> {
++    // Overwrite canary with zero and return normally. The panic fires at the
++    // next MachineExternal interrupt (~1 ms). Lets the GCP response reach the
++    // host first, making this the observable/testable path for canary detection.
++    unsafe { crate::canary::corrupt() };
++    debug!("  corrupt_canary: canary overwritten — panic expected on next interrupt");
++    Ok([].into_iter())
++}
++
+ // - dispatch -----------------------------------------------------------------
+ 
+ use libgreat::gcp::{iter_to_response, GreatResponse, LIBGREAT_MAX_COMMAND_SIZE};
+@@ -66,12 +156,31 @@ pub fn dispatch(
+     let no_context: Option<u8> = None;
+ 
+     match verb_number {
++        0x00 => {
++            let iter = get_canary_status(arguments, &no_context)?;
++            let response = iter_to_response(iter, response_buffer);
++            Ok(response)
++        }
+         0x10 => {
+-            // selftest::test_error_return_code
+             let iter = test_error_return_code(arguments, &no_context)?;
+             let response = iter_to_response(iter, response_buffer);
+             Ok(response)
+         }
++        0x11 => {
++            let iter = trigger_panic(arguments, &no_context)?;
++            let response = iter_to_response(iter, response_buffer);
++            Ok(response)
++        }
++        0x12 => {
++            let iter = trigger_stack_overflow(arguments, &no_context)?;
++            let response = iter_to_response(iter, response_buffer);
++            Ok(response)
++        }
++        0x13 => {
++            let iter = corrupt_canary(arguments, &no_context)?;
++            let response = iter_to_response(iter, response_buffer);
++            Ok(response)
++        }
+ 
+         _verb_number => Err(GreatError::InvalidArgument),
+     }
+diff --git a/scripts/test-fault-detection.py b/scripts/test-fault-detection.py
+new file mode 100755
+index 0000000..0fae744
+--- /dev/null
++++ b/scripts/test-fault-detection.py
+@@ -0,0 +1,169 @@
++#!/usr/bin/env python3
++"""
++Fault detection self-test for moondancer firmware.
++
++Tests the hardening changes from issues #14, #16, #18:
++  - Canary is present and intact after boot
++  - corrupt_canary: GCP call returns OK, device then hangs (canary fires on next interrupt)
++  - trigger_panic:  device hangs immediately
++  - trigger_stack_overflow: device hangs (stack smashes canary, detected on next interrupt)
++
++Destructive tests kill the USB connection — the device must be power-cycled
++(or soft-reset via `./scripts/reset-cynthion.sh`) between them.
++
++Usage:
++  venv/bin/python scripts/test-fault-detection.py [--destructive]
++
++Without --destructive, only the safe canary probe runs.
++With    --destructive, all fault injection tests run in sequence with prompts.
++"""
++
++import argparse
++import logging
++import sys
++import time
++
++log = logging.getLogger(__name__)
++
++CANARY_EXPECTED = 0xDEAD_C0DE
++
++
++def connect():
++    import cynthion
++    board = cynthion.Cynthion()
++    return board
++
++
++def run_safe_tests(api):
++    print("\n--- safe: canary status ---")
++    canary_value, stack_used, stack_total = api.get_canary_status()
++    print(f"  canary word : 0x{canary_value:08x}  (expected 0x{CANARY_EXPECTED:08x})")
++    print(f"  stack used  : {stack_used} bytes")
++    print(f"  stack total : {stack_total} bytes")
++    print(f"  stack free  : {stack_total - stack_used} bytes")
++
++    if canary_value != CANARY_EXPECTED:
++        print(f"  FAIL: canary is 0x{canary_value:08x}, expected 0x{CANARY_EXPECTED:08x}")
++        return False
++
++    print("  PASS: canary intact")
++    return True
++
++
++def run_destructive_test(label, call_fn):
++    """Run a fault injection call and verify the USB connection dies."""
++    print(f"\n--- destructive: {label} ---")
++    print("  calling verb (device will hang after this)...")
++
++    try:
++        call_fn()
++        # corrupt_canary returns normally before the panic fires
++        print("  verb returned OK — waiting for panic on next interrupt...")
++        time.sleep(0.5)
++        # Now try another GCP call — should fail if canary fired
++        print("  probing device (expect timeout/error)...")
++    except Exception as e:
++        print(f"  verb raised: {e}")
++
++    # Try to talk to the device — expect it to be dead
++    import cynthion
++    try:
++        board2 = cynthion.Cynthion()
++        board2.apis.selftest.get_canary_status()
++        print("  UNEXPECTED: device still responding — fault detection may not have fired")
++        return False
++    except Exception as e:
++        print(f"  PASS: device not responding ({type(e).__name__}) — fault detected as expected")
++        return True
++
++
++def wait_for_reset(prompt):
++    print(f"\n  {prompt}")
++    print("  Run:  ./scripts/reset-cynthion.sh")
++    input("  Press Enter once the device has re-enumerated... ")
++    time.sleep(1.0)
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--destructive", action="store_true",
++                        help="Run fault injection tests (kills USB, requires reset between each)")
++    parser.add_argument("-v", "--verbose", action="store_true")
++    args = parser.parse_args()
++
++    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
++
++    print("Moondancer fault detection self-test")
++    print("=====================================")
++
++    # Safe test — always runs
++    try:
++        board = connect()
++    except Exception as e:
++        print(f"Could not connect to Cynthion: {e}")
++        print("Is moondancer running? Try: cynthion run facedancer")
++        sys.exit(1)
++
++    api = board.apis.selftest
++    ok = run_safe_tests(api)
++    if not ok:
++        sys.exit(1)
++
++    if not args.destructive:
++        print("\nSafe tests passed. Run with --destructive to test fault injection.")
++        print("WARNING: --destructive tests kill the USB connection and require a reset.")
++        sys.exit(0)
++
++    # Destructive tests — each kills the device
++    results = {}
++
++    print("\n" + "="*50)
++    print("DESTRUCTIVE TESTS — device will hang after each")
++    print("="*50)
++
++    # Test 1: corrupt_canary
++    # The GCP call returns OK. The panic fires on the next USB SOF interrupt (~1 ms).
++    # This is the cleanest observable path: host receives the response, then device dies.
++    board = connect()
++    api = board.apis.selftest
++    results["corrupt_canary"] = run_destructive_test(
++        "corrupt_canary (GCP returns OK, panic fires ~1ms later)",
++        lambda: api.corrupt_canary()
++    )
++    wait_for_reset("Reset device before next test.")
++
++    # Test 2: trigger_panic
++    # Direct panic — GCP call does not return, device hangs immediately.
++    board = connect()
++    api = board.apis.selftest
++    results["trigger_panic"] = run_destructive_test(
++        "trigger_panic (direct panic, no GCP response expected)",
++        lambda: api.trigger_panic()
++    )
++    wait_for_reset("Reset device before next test.")
++
++    # Test 3: trigger_stack_overflow
++    # Unbounded recursion — smashes stack into canary region.
++    # Canary fires on the next interrupt after the overflow.
++    board = connect()
++    api = board.apis.selftest
++    results["trigger_stack_overflow"] = run_destructive_test(
++        "trigger_stack_overflow (recursion, canary fires on next interrupt)",
++        lambda: api.trigger_stack_overflow()
++    )
++    wait_for_reset("Reset device after final test.")
++
++    # Summary
++    print("\n=== Results ===")
++    all_pass = True
++    for name, passed in results.items():
++        status = "PASS" if passed else "FAIL"
++        print(f"  {status}  {name}")
++        if not passed:
++            all_pass = False
++
++    sys.exit(0 if all_pass else 1)
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.54.0
+

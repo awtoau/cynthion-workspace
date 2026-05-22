@@ -1,0 +1,38 @@
+From 6863fd659ff1dd1ff3a97c1ef80eaad6b8a32c82 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Thu, 21 May 2026 10:39:32 +1000
+Subject: [PATCH 14/20] awto.md: add USB topology diagram showing
+ CONTROL/TARGET-A/TARGET-C paths
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ awto.md | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/awto.md b/awto.md
+index 0d84c53..d9c9fc6 100644
+--- a/awto.md
++++ b/awto.md
+@@ -1,5 +1,19 @@
+ # Hardware
+ 
++```
++  HOST PC
++  ├─ CONTROL USB ──(1d50:615c)──► Apollo ARM MCU ──UART(R14/T14)──► ECP5 FPGA
++  │                                     │   │                              │
++  │                                  int│   └──JTAG──► ECP5 fabric         │
++  │                               (T6)  │                    │             │
++  │                                     └──────────── VexRiscv soft core ◄─┘
++  │
++  ├─ TARGET-A USB ─(1d50:615b)──► ECP5 FPGA ── moondancer gateware (facedancer mode)
++  │                                                  subclass 0x20
++  └─ TARGET-C USB ──────────────► UTi261M thermal camera (0bda:5830, UVC)
++                                  (proxied by facedancer → TARGET-A → host)
++```
++
+ **Cynthion** — Great Scott Gadgets USB test instrument
+ - USB VID:PID: 1d50:615b (all gateware modes: analyzer, facedancer)
+ - Apollo bootloader: 1d50:60e6 (shown when no gateware is loaded)
+-- 
+2.54.0
+

@@ -1,0 +1,116 @@
+From 131927a2c70db1e21974688dda3fa099d751cd8e Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 16:59:30 +1000
+Subject: [PATCH 11/20] firmware: add stack canary for overflow detection (#14)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds moondancer::canary module:
+- Writes 0xDEAD_C0DE sentinel at _sheap (top of BSS, bottom of stack gap)
+  during pre_main before any significant stack usage
+- Checks sentinel on every MachineExternal entry (~2 instructions overhead)
+- Panics with stack usage estimate if clobbered
+
+Without this the RISC-V has no MPU and no canary — stack overflow into BSS
+is silent corruption. Now detected at the next interrupt and reported via
+the panic handler and UART.
+
+Closes #14.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/moondancer/src/bin/moondancer.rs |  6 ++++
+ firmware/moondancer/src/canary.rs         | 43 +++++++++++++++++++++++
+ firmware/moondancer/src/lib.rs            |  1 +
+ 3 files changed, 50 insertions(+)
+ create mode 100644 firmware/moondancer/src/canary.rs
+
+diff --git a/firmware/moondancer/src/bin/moondancer.rs b/firmware/moondancer/src/bin/moondancer.rs
+index d9a7cfd..a704ecc 100644
+--- a/firmware/moondancer/src/bin/moondancer.rs
++++ b/firmware/moondancer/src/bin/moondancer.rs
+@@ -47,6 +47,11 @@ fn dispatch_event(event: InterruptEvent) {
+ #[allow(non_snake_case)]
+ #[no_mangle]
+ extern "C" fn MachineExternal() {
++    if !unsafe { moondancer::canary::is_intact() } {
++        panic!("stack overflow: canary clobbered (used ~{} of {} bytes)",
++            moondancer::canary::stack_used_bytes(),
++            moondancer::canary::stack_total_bytes());
++    }
+     let event = moondancer::util::get_usb_interrupt_event();
+     dispatch_event(event);
+ }
+@@ -59,6 +64,7 @@ unsafe fn pre_main() {
+     pac::cpu::vexriscv::flush_icache();
+     #[cfg(feature = "vexriscv_dcache")]
+     pac::cpu::vexriscv::flush_dcache();
++    moondancer::canary::init();
+ }
+ 
+ #[riscv_rt::entry]
+diff --git a/firmware/moondancer/src/canary.rs b/firmware/moondancer/src/canary.rs
+new file mode 100644
+index 0000000..fccaaae
+--- /dev/null
++++ b/firmware/moondancer/src/canary.rs
+@@ -0,0 +1,43 @@
++// Stack overflow detection via canary word and current-SP stack usage.
++//
++// The canary is written at `_sheap` (first address above BSS, below the stack
++// gap). If the stack grows down past this address the canary is clobbered and
++// `is_intact()` returns false. Detected on every MachineExternal entry.
++//
++// See issue #14.
++
++const CANARY_VALUE: u32 = 0xDEAD_C0DE;
++
++extern "C" {
++    static _sheap: u8;        // bottom of free space = top of BSS (riscv-rt)
++    static _stack_start: u8;  // top of blockram = initial SP
++}
++
++/// Write canary at `_sheap`. Call once during init before any significant
++/// stack usage (i.e. in `pre_main` or at the top of `main`).
++pub unsafe fn init() {
++    let addr = core::ptr::addr_of!(_sheap) as *mut u32;
++    core::ptr::write_volatile(addr, CANARY_VALUE);
++}
++
++/// Returns true if the canary word at `_sheap` is intact.
++pub unsafe fn is_intact() -> bool {
++    let addr = core::ptr::addr_of!(_sheap) as *const u32;
++    core::ptr::read_volatile(addr) == CANARY_VALUE
++}
++
++/// Bytes of stack consumed from the top: distance from current SP down
++/// to `_stack_start`. Read at interrupt entry — reflects interrupt-path depth.
++pub fn stack_used_bytes() -> u32 {
++    let sp: usize;
++    unsafe { core::arch::asm!("mv {}, sp", out(reg) sp) }
++    let top = core::ptr::addr_of!(_stack_start) as usize;
++    top.saturating_sub(sp) as u32
++}
++
++/// Total stack space available (blockram top - sheap).
++pub fn stack_total_bytes() -> u32 {
++    let top = core::ptr::addr_of!(_stack_start) as usize;
++    let bottom = core::ptr::addr_of!(_sheap) as usize;
++    top.saturating_sub(bottom) as u32
++}
+diff --git a/firmware/moondancer/src/lib.rs b/firmware/moondancer/src/lib.rs
+index 2d8d02e..12eb945 100644
+--- a/firmware/moondancer/src/lib.rs
++++ b/firmware/moondancer/src/lib.rs
+@@ -4,6 +4,7 @@
+ 
+ // - modules ------------------------------------------------------------------
+ 
++pub mod canary;
+ pub mod debug;
+ pub mod error;
+ pub mod event;
+-- 
+2.54.0
+

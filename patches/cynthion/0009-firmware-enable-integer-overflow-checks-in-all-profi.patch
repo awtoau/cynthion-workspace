@@ -1,0 +1,39 @@
+From 482bcf22308c89fcfd7413dc21da2b1a17965420 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 16:56:54 +1000
+Subject: [PATCH 09/20] firmware: enable integer overflow checks in all
+ profiles
+
+Enables overflow-checks = true for both release and dev profiles in the
+workspace Cargo.toml. Integer wrapping in release builds was previously
+silent; now triggers a panic like debug builds.
+
+Closes #18.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/Cargo.toml | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/firmware/Cargo.toml b/firmware/Cargo.toml
+index 5e86f3c..ea29fda 100644
+--- a/firmware/Cargo.toml
++++ b/firmware/Cargo.toml
+@@ -21,7 +21,7 @@ debug-assertions = false
+ incremental = false
+ lto = true
+ opt-level = "s"
+-overflow-checks = false
++overflow-checks = true
+ 
+ [profile.dev]
+ codegen-units = 1
+@@ -30,4 +30,4 @@ debug-assertions = false
+ incremental = false
+ lto = true
+ opt-level = "s"
+-overflow-checks = false
++overflow-checks = true
+-- 
+2.54.0
+

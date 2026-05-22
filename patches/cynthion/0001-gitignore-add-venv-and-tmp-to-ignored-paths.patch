@@ -1,0 +1,29 @@
+From c8b591e5ec8baf1e960f536538e1e3eca53d5908 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@dnt.com.au>
+Date: Tue, 19 May 2026 13:49:36 +1000
+Subject: [PATCH 01/20] gitignore: add venv/ and tmp/ to ignored paths
+
+---
+ .gitignore | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/.gitignore b/.gitignore
+index 730e60c..3f2e9dc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -17,6 +17,12 @@ firmware/moondancer-pac/build/
+ 
+ # Environments
+ **/.python-version
++ci_env/
++ci_env*/
++venv/
++
++# Local workspace scratch
++tmp/
+ 
+ # Operating system spew
+ .DS_Store
+-- 
+2.54.0
+

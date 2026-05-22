@@ -1,0 +1,61 @@
+From 7378797fa9d4641ec331b25bc07f5c52605de6da Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Wed, 20 May 2026 16:58:04 +1000
+Subject: [PATCH 10/20] firmware: event queue overflow drops event instead of
+ spinning
+
+Replaces the permanent spin-loop on queue overflow with a drop-and-continue.
+Adds EVENT_DROPS counter so the number of lost events is visible in the log.
+
+Spinning converted a recoverable overload condition into a hard hang
+requiring power cycle. Closes #16.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/moondancer/src/bin/moondancer.rs | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/firmware/moondancer/src/bin/moondancer.rs b/firmware/moondancer/src/bin/moondancer.rs
+index 9ece689..d9a7cfd 100644
+--- a/firmware/moondancer/src/bin/moondancer.rs
++++ b/firmware/moondancer/src/bin/moondancer.rs
+@@ -20,6 +20,8 @@ use moondancer::{hal, pac, util};
+ 
+ use pac::csr::interrupt;
+ 
++use core::sync::atomic::{AtomicU16, Ordering};
++
+ // - configuration ------------------------------------------------------------
+ 
+ const DEVICE_SPEED: Speed = Speed::High;
+@@ -27,21 +29,17 @@ const DEVICE_SPEED: Speed = Speed::High;
+ // - MachineExternal interrupt handler ----------------------------------------
+ 
+ static EVENT_QUEUE: Queue<InterruptEvent, 64> = Queue::new();
++static EVENT_DROPS: AtomicU16 = AtomicU16::new(0);
+ 
+ #[inline(always)]
+ fn dispatch_event(event: InterruptEvent) {
+     match EVENT_QUEUE.enqueue(event) {
+         Ok(()) => (),
+-        Err(_) => {
+-            error!("MachineExternal - event queue overflow");
+-            while let Some(interrupt_event) = EVENT_QUEUE.dequeue() {
+-                error!("{:?}", interrupt_event);
+-            }
+-            loop {
+-                unsafe {
+-                    riscv::asm::nop();
+-                }
+-            }
++        Err(dropped) => {
++            // Queue full: drop the event and continue. Spinning here would
++            // permanently hang the firmware — overflow is recoverable (#16).
++            let n = EVENT_DROPS.fetch_add(1, Ordering::Relaxed);
++            error!("event queue overflow #{}: dropped {:?}", n, dropped);
+         }
+     }
+ }
+-- 
+2.54.0
+

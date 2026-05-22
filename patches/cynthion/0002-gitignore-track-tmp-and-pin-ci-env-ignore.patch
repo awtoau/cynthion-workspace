@@ -1,0 +1,30 @@
+From 1d085050911d781a80b5e57976eff24cd3728da9 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@dnt.com.au>
+Date: Tue, 19 May 2026 18:10:35 +1000
+Subject: [PATCH 02/20] gitignore: track tmp and pin ci env ignore
+
+---
+ .gitignore | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 3f2e9dc..979b66e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -18,12 +18,9 @@ firmware/moondancer-pac/build/
+ # Environments
+ **/.python-version
+ ci_env/
+-ci_env*/
++ci_env311/
+ venv/
+ 
+-# Local workspace scratch
+-tmp/
+-
+ # Operating system spew
+ .DS_Store
+ .Spotlight-V100
+-- 
+2.54.0
+

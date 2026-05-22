@@ -1,0 +1,80 @@
+From efd5009789a47bbe61a4d5f8c483c71291899eeb Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Tue, 19 May 2026 23:43:15 +1000
+Subject: [PATCH 04/20] scripts: add reset-cynthion.sh, update proxy comment
+ for #7
+
+reset-cynthion.sh uses ApolloDebugger(force_offline=True) to recover
+from a bad moondancer state without a power cycle (awtoau/cynthion#7).
+
+Update run-proxy-camera.sh comment: no longer reproduces a crash (#9
+fix applied), documents that cynthion run facedancer handles recovery.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ scripts/reset-cynthion.sh   | 34 ++++++++++++++++++++++++++++++++++
+ scripts/run-proxy-camera.sh |  5 +++--
+ 2 files changed, 37 insertions(+), 2 deletions(-)
+ create mode 100755 scripts/reset-cynthion.sh
+
+diff --git a/scripts/reset-cynthion.sh b/scripts/reset-cynthion.sh
+new file mode 100755
+index 0000000..08884f6
+--- /dev/null
++++ b/scripts/reset-cynthion.sh
+@@ -0,0 +1,34 @@
++#!/usr/bin/env bash
++# Reset Cynthion to Apollo bootloader mode (1d50:60e6).
++# Works even when the moondancer interface is unresponsive after a proxy crash.
++#
++# Uses ApolloDebugger(force_offline=True): requests USB handoff from the FPGA
++# stub interface, then lets Apollo reconfigure the FPGA from config flash.
++# The device comes back in analyzer mode (subclass 0x10) — run
++# `cynthion run facedancer` to reload facedancer gateware.
++#
++# Run from repo root: ./scripts/reset-cynthion.sh
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++VENV="$ROOT/venv"
++
++if [ ! -f "$VENV/bin/python" ]; then
++    echo "venv not found — run ./scripts/setup-venv.sh first"
++    exit 1
++fi
++
++if ! lsusb | grep -q "1d50:"; then
++    echo "No Cynthion detected on USB (expected 1d50:60e6 or 1d50:615b)."
++    exit 1
++fi
++
++echo "Requesting soft reset via Apollo debugger..."
++"$VENV/bin/python" - <<'EOF'
++from apollo_fpga import ApolloDebugger
++device = ApolloDebugger(force_offline=True)
++device.soft_reset()
++device.allow_fpga_takeover_usb()
++device.close()
++print("Reset complete.")
++EOF
+diff --git a/scripts/run-proxy-camera.sh b/scripts/run-proxy-camera.sh
+index 00b9704..c57d528 100755
+--- a/scripts/run-proxy-camera.sh
++++ b/scripts/run-proxy-camera.sh
+@@ -1,10 +1,11 @@
+ #!/usr/bin/env bash
+ # Load facedancer gateware onto Cynthion then run the UTi261M camera proxy.
+-# Reproduces the isochronous IN crash documented in awtoau/cynthion#6.
+ #
+ # The Cynthion must be connected (any mode — Apollo 1d50:60e6 or
+ # Analyzer/Facedancer 1d50:615b). The script loads the facedancer gateware
+-# unconditionally so the moondancer API is always available to the proxy.
++# unconditionally, which also recovers from a bad proxy state (awtoau/cynthion#7):
++# cynthion run facedancer uses ApolloDebugger(force_offline=True) which requests
++# a USB handoff even when the moondancer interface is unresponsive.
+ #
+ # Run from repo root: ./scripts/run-proxy-camera.sh
+ set -euo pipefail
+-- 
+2.54.0
+

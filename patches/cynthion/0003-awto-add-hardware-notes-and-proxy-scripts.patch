@@ -1,0 +1,175 @@
+From 1d24249438cc6b0d1f60d81893bcceaa1a3b3ffa Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Tue, 19 May 2026 23:27:18 +1000
+Subject: [PATCH 03/20] awto: add hardware notes and proxy scripts
+
+- awto.md: Cynthion/UTi261M hardware reference, venv setup notes,
+  device state transitions, udev permissions
+- scripts/setup-venv.sh: rebuild Python 3.11 venv from PyPI
+- scripts/run-proxy-camera.sh: load facedancer gateware and run UTi261M proxy
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ awto.md                     | 59 +++++++++++++++++++++++++++++++++++++
+ scripts/run-proxy-camera.sh | 45 ++++++++++++++++++++++++++++
+ scripts/setup-venv.sh       | 30 +++++++++++++++++++
+ 3 files changed, 134 insertions(+)
+ create mode 100644 awto.md
+ create mode 100755 scripts/run-proxy-camera.sh
+ create mode 100755 scripts/setup-venv.sh
+
+diff --git a/awto.md b/awto.md
+new file mode 100644
+index 0000000..42ceeff
+--- /dev/null
++++ b/awto.md
+@@ -0,0 +1,59 @@
++# Hardware
++
++**Cynthion** — Great Scott Gadgets USB test instrument
++- USB VID:PID: 1d50:615b (all gateware modes: analyzer, facedancer)
++- Apollo bootloader: 1d50:60e6 (shown when no gateware is loaded)
++- The VID:PID alone does not tell you which gateware is running —
++  check the USB interface subclass: 0x10 = analyzer, 0x20 = moondancer/facedancer
++
++**UTi261M** — UNI-T thermal imaging camera, controlled by UNIT Android app
++- USB VID:PID: 0bda:5830 (Realtek UVC chip)
++- Presents as USB Video Class (UVC) device
++- Connects to Cynthion TARGET-C port for proxy
++
++# Environment
++
++## Python venv
++
++Uses Python 3.11. Install from **PyPI** (not local source) so the pre-built
++gateware bitstreams ship with the package.
++
++```
++./scripts/setup-venv.sh
++```
++
++Logs to `tmp/setup-venv.log`.
++
++Why PyPI not local source: the local repo only contains `analyzer.bit` in
++`cynthion/python/build/`. The `facedancer.bit` and `moondancer.bin` assets
++are built separately and distributed via PyPI. Installing from local source
++gives you only `apollo.bin` and the proxy cannot load facedancer gateware.
++
++When making code changes to the cynthion Python package, reinstall local
++source on top after setup:
++
++```
++venv/bin/pip install cynthion/python
++```
++
++## Device states and transitions
++
++```
++Power on (gateware flashed)  →  1d50:615b  analyzer or facedancer mode
++Power on (no gateware)       →  1d50:60e6  Apollo bootloader
++
++cynthion run facedancer      →  loads facedancer.bit + moondancer.bin via Apollo
++                                device reappears at 1d50:615b with subclass 0x20
++
++cynthion update              →  flashes analyzer.bit to config flash
++                                device comes back as analyzer (subclass 0x10) after power cycle
++```
++
++After a proxy crash the Cynthion is left unresponsive at the USB command level
++(`cynthion.Cynthion()` raises `USBErrorTimeout` or `DeviceNotFoundError`) but still
++visible to `lsusb`. Power cycle required to recover (issue #7).
++
++## udev / permissions
++
++udev rule: `/etc/udev/rules.d/54-cynthion.rules`
++User `dan` gets rw access via uaccess ACL — no plugdev group required.
+diff --git a/scripts/run-proxy-camera.sh b/scripts/run-proxy-camera.sh
+new file mode 100755
+index 0000000..00b9704
+--- /dev/null
++++ b/scripts/run-proxy-camera.sh
+@@ -0,0 +1,45 @@
++#!/usr/bin/env bash
++# Load facedancer gateware onto Cynthion then run the UTi261M camera proxy.
++# Reproduces the isochronous IN crash documented in awtoau/cynthion#6.
++#
++# The Cynthion must be connected (any mode — Apollo 1d50:60e6 or
++# Analyzer/Facedancer 1d50:615b). The script loads the facedancer gateware
++# unconditionally so the moondancer API is always available to the proxy.
++#
++# Run from repo root: ./scripts/run-proxy-camera.sh
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++VENV="$ROOT/venv"
++LOG="$ROOT/tmp/proxy-run.log"
++mkdir -p "$ROOT/tmp"
++
++if [ ! -f "$VENV/bin/python" ]; then
++    echo "venv not found — run ./scripts/setup-venv.sh first"
++    exit 1
++fi
++
++if ! lsusb | grep -q "1d50:"; then
++    echo "No Cynthion detected on USB (expected 1d50:60e6 or 1d50:615b)."
++    exit 1
++fi
++
++echo "Loading facedancer gateware onto Cynthion..." | tee "$LOG"
++"$VENV/bin/cynthion" run facedancer 2>&1 | tee -a "$LOG"
++
++echo "Waiting for Cynthion to reappear with moondancer interface (subclass 0x20)..." | tee -a "$LOG"
++until "$VENV/bin/python" -c "
++import usb1, sys
++with usb1.USBContext() as ctx:
++    for dev in ctx.getDeviceList():
++        if dev.getVendorID() == 0x1d50 and dev.getProductID() == 0x615b:
++            for cfg in dev:
++                for iface in cfg:
++                    for s in iface:
++                        if s.getSubClass() == 0x20:
++                            sys.exit(0)
++    sys.exit(1)
++" 2>/dev/null; do true; done
++
++echo "Moondancer ready. Starting UTi261M camera proxy (0x0bda:0x5830)..." | tee -a "$LOG"
++"$VENV/bin/python" "$ROOT/tmp/proxy-camera.py" 2>&1 | tee -a "$LOG"
+diff --git a/scripts/setup-venv.sh b/scripts/setup-venv.sh
+new file mode 100755
+index 0000000..79e3bc2
+--- /dev/null
++++ b/scripts/setup-venv.sh
+@@ -0,0 +1,30 @@
++#!/usr/bin/env bash
++# Recreate the Python 3.11 venv and install cynthion + facedancer.
++#
++# Installs cynthion from PyPI so the pre-built bitstreams (facedancer.bit,
++# moondancer.bin) are available for 'cynthion run facedancer'.
++# When making code changes to the cynthion Python package, reinstall from
++# local source afterwards: venv/bin/pip install cynthion/python
++#
++# Run from the repo root: ./scripts/setup-venv.sh
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++VENV="$ROOT/venv"
++LOG="$ROOT/tmp/setup-venv.log"
++mkdir -p "$ROOT/tmp"
++
++echo "Removing old venv..." | tee "$LOG"
++rm -rf "$VENV"
++
++echo "Creating venv with python3.11..." | tee -a "$LOG"
++python3.11 -m venv "$VENV" 2>&1 | tee -a "$LOG"
++
++echo "Installing cynthion from PyPI (includes pre-built bitstreams)..." | tee -a "$LOG"
++"$VENV/bin/pip" install --upgrade pip 2>&1 | tee -a "$LOG"
++"$VENV/bin/pip" install cynthion 2>&1 | tee -a "$LOG"
++
++echo "Installing facedancer..." | tee -a "$LOG"
++"$VENV/bin/pip" install facedancer 2>&1 | tee -a "$LOG"
++
++echo "Done. Activate with: source venv/bin/activate" | tee -a "$LOG"
+-- 
+2.54.0
+

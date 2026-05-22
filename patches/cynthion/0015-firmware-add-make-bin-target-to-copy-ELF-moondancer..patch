@@ -1,0 +1,38 @@
+From b0c06d789436d3ad09af869a52dda89b52f8c27e Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Thu, 21 May 2026 10:39:36 +1000
+Subject: [PATCH 15/20] =?UTF-8?q?firmware:=20add=20'make=20bin'=20target?=
+ =?UTF-8?q?=20to=20copy=20ELF=20=E2=86=92=20moondancer.bin=20asset?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ firmware/Makefile | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/firmware/Makefile b/firmware/Makefile
+index 53a1c18..3be4e8d 100644
+--- a/firmware/Makefile
++++ b/firmware/Makefile
+@@ -4,9 +4,16 @@ check:
+ fmt:
+ 	cargo fmt -- --emit files
+ 
++MOONDANCER_ELF = target/riscv32imac-unknown-none-elf/release/moondancer
++MOONDANCER_BIN = ../cynthion/python/assets/moondancer.bin
++
+ build:
+ 	RUSTFLAGS="-C link-arg=-Tmemory.x -C link-arg=-Tlink.x" cargo build --release --target riscv32imac-unknown-none-elf
+ 
++bin: build
++	llvm-objcopy -O binary $(MOONDANCER_ELF) $(MOONDANCER_BIN)
++	@echo "Written: $(MOONDANCER_BIN)"
++
+ 
+ ALL_GROUPS=-Wclippy::correctness \
+ 		   -Wclippy::suspicious \
+-- 
+2.54.0
+

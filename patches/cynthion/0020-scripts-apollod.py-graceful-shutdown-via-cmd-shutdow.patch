@@ -1,0 +1,134 @@
+From ae970268e3bf52725376fd845974d7716b46c331 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Fri, 22 May 2026 13:42:56 +1000
+Subject: [PATCH 20/20] =?UTF-8?q?scripts:=20apollod.py=20=E2=80=94=20grace?=
+ =?UTF-8?q?ful=20shutdown=20via=20{"cmd":"shutdown"}=20socket=20command?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SocketPublisher now spawns a reader thread per client. On receiving
+{"cmd":"shutdown"}, sends {"event":"shutdown_ack"} to the requesting
+client, sets _stop to break the main loop, and closes the socket file.
+Closes #35.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ scripts/apollod.py | 59 ++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 57 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/apollod.py b/scripts/apollod.py
+index 5905f50..4e2533f 100755
+--- a/scripts/apollod.py
++++ b/scripts/apollod.py
+@@ -406,11 +406,12 @@ class TtyReader(threading.Thread):
+ class SocketPublisher:
+     """Publishes JSON-lines to connected Unix socket clients."""
+ 
+-    def __init__(self, path: str):
++    def __init__(self, path: str, on_command=None):
+         self.path = path
+         self._sock: Optional[socket.socket] = None
+         self._clients: list = []
+         self._lock = threading.Lock()
++        self._on_command = on_command  # callback(cmd: dict, conn: socket)
+ 
+     def start(self):
+         p = Path(self.path)
+@@ -437,9 +438,45 @@ class SocketPublisher:
+                     with self._lock:
+                         self._clients.append(conn)
+                     log.info("Socket client connected")
++                    if self._on_command:
++                        t = threading.Thread(
++                            target=self._read_client, args=(conn,),
++                            daemon=True, name="sock-read",
++                        )
++                        t.start()
+                 except OSError:
+                     pass
+ 
++    def _read_client(self, conn):
++        buf = b""
++        while True:
++            try:
++                data = conn.recv(4096)
++                if not data:
++                    break
++                buf += data
++                while b"\n" in buf:
++                    line, buf = buf.split(b"\n", 1)
++                    line = line.strip()
++                    if not line:
++                        continue
++                    try:
++                        cmd = json.loads(line)
++                        if self._on_command:
++                            self._on_command(cmd, conn)
++                    except json.JSONDecodeError:
++                        log.warning("Bad command from client: %r", line)
++            except OSError:
++                break
++
++    def send_to(self, conn, event: dict):
++        """Send an event to a specific client only."""
++        line = json.dumps(event, separators=(",", ":")) + "\n"
++        try:
++            conn.sendall(line.encode())
++        except OSError:
++            pass
++
+     def publish(self, event: dict):
+         line = json.dumps(event, separators=(",", ":")) + "\n"
+         data = line.encode()
+@@ -457,6 +494,14 @@ class SocketPublisher:
+                 except OSError:
+                     pass
+ 
++    def close(self):
++        try:
++            if self._sock:
++                self._sock.close()
++        except OSError:
++            pass
++        Path(self.path).unlink(missing_ok=True)
++
+ 
+ # ---------------------------------------------------------------------------
+ # WebSocket publisher (WiFi transport for phone app)
+@@ -700,7 +745,7 @@ class Daemon:
+         self._setup_logs()
+ 
+         sock_path = str(self.args.socket or DEFAULT_SOCKET)
+-        self._publisher = SocketPublisher(sock_path)
++        self._publisher = SocketPublisher(sock_path, on_command=self._handle_command)
+         self._publisher.start()
+ 
+         if getattr(self.args, "wifi", None):
+@@ -740,6 +785,8 @@ class Daemon:
+                 self._heartbeat.stop()
+             if self._log_writer:
+                 self._log_writer.close()
++            if self._publisher:
++                self._publisher.close()
+ 
+     def _start_readers(self, device: dict):
+         tty_map = map_tty_names(device)
+@@ -795,6 +842,14 @@ class Daemon:
+                     self._start_readers(device)
+                     prev_pid = device["pid"]
+ 
++    def _handle_command(self, cmd: dict, conn):
++        verb = cmd.get("cmd")
++        if verb == "shutdown":
++            log.info("Shutdown command received from client")
++            if self._publisher:
++                self._publisher.send_to(conn, {"event": "shutdown_ack"})
++            self._stop.set()
++
+     def _stop_readers(self):
+         self._stop.set()
+         for r in self._readers:
+-- 
+2.54.0
+
