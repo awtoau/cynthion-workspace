@@ -70,6 +70,14 @@ CYN_DAEMON_PY = SCRIPTS_DIR / "cyn-daemon.py"
 PID_FILE = Path("/tmp/cyn-daemon.pid")
 DAEMON_URL = "http://localhost:8765"
 
+# Hardware-facing paths (from awto.py)
+MOONDANCER_FW = REPOS / "awto-cynthion" / "firmware" / "moondancer"
+APOLLO_FW = REPOS / "awto-apollo" / "firmware"
+GATEWARE_DIR = REPOS / "awto-cynthion" / "cynthion" / "python"
+APP_DIR = REPO_ROOT / "app"
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
+TMP_DIR = REPO_ROOT / "tmp"
+
 class Colors:
     """ANSI color codes"""
     RESET = "\033[0m"
@@ -258,6 +266,48 @@ class CynCLI:
             self.output("ERROR", f"Exception: {e}")
             return False, str(e)
 
+    def _log_path(self, cmd):
+        """Get log file path for a command"""
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        return TMP_DIR / f"cyn-{cmd}.log"
+
+    def _run_tee(self, label, args_list, cwd=None, log_file=None, check=True, env=None):
+        """Run subprocess streaming output to stdout + log file (tee mode)"""
+        print(f"  {label}: {' '.join(str(a) for a in args_list)}")
+        try:
+            proc = subprocess.Popen(
+                args_list,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            for line in proc.stdout:
+                sys.stdout.write("    " + line)
+                if log_file:
+                    log_file.write(line)
+                    log_file.flush()
+            proc.wait()
+            if log_file:
+                log_file.flush()
+            if check and proc.returncode != 0:
+                print(f"  FAIL (exit {proc.returncode})")
+                return proc.returncode
+            return proc.returncode
+        except FileNotFoundError as e:
+            print(f"  ERROR: {e}")
+            if check:
+                return 1
+            return 1
+
+    def _check_venv(self):
+        """Check if venv exists, exit if not"""
+        if not VENV_PYTHON.exists():
+            print(f"ERROR: venv not found at {VENV_PYTHON}")
+            print(f"  Run:  pip install -r requirements.txt && python -m venv {REPO_ROOT / '.venv'}")
+            sys.exit(1)
+
     def cmd_ai_brief(self, args):
         """AI-friendly project brief"""
         status = {
@@ -404,6 +454,41 @@ class CynCLI:
                         "status": "Check daemon status",
                         "restart": "Restart daemon"
                     }
+                },
+                "build": {
+                    "description": "Build firmware/gateware/app",
+                    "args": ["[rust|apollo|gateware|app|all]", "--release"],
+                    "outputs": ["human"]
+                },
+                "check": {
+                    "description": "Run pre-commit checks",
+                    "args": ["[fast|rust|c|gateware|all]"],
+                    "outputs": ["human"]
+                },
+                "test": {
+                    "description": "Run hardware self-tests",
+                    "args": ["--destructive"],
+                    "outputs": ["human"]
+                },
+                "clean": {
+                    "description": "Clean build artifacts",
+                    "args": ["[rust|apollo|gateware|app|all]"],
+                    "outputs": ["human"]
+                },
+                "flash": {
+                    "description": "Flash to connected device",
+                    "args": ["[rust|apollo|gateware]"],
+                    "outputs": ["human"]
+                },
+                "deploy": {
+                    "description": "Full release cycle (build --release + flash)",
+                    "args": [],
+                    "outputs": ["human"]
+                },
+                "reset": {
+                    "description": "Reset device to Apollo mode",
+                    "args": [],
+                    "outputs": ["human"]
                 }
             }
         }
@@ -485,6 +570,48 @@ class CynCLI:
                     "description": "Check if daemon is running",
                     "time_estimate": "1 second",
                     "difficulty": "trivial"
+                },
+                {
+                    "id": "build_all",
+                    "command": "cyn build all",
+                    "description": "Build all firmware/gateware/app",
+                    "time_estimate": "15-20 minutes",
+                    "difficulty": "medium"
+                },
+                {
+                    "id": "check_fast",
+                    "command": "cyn check fast",
+                    "description": "Run fast pre-commit checks (rust, C, python)",
+                    "time_estimate": "5-10 minutes",
+                    "difficulty": "medium"
+                },
+                {
+                    "id": "flash_rust",
+                    "command": "cyn flash rust",
+                    "description": "Flash moondancer to connected device",
+                    "time_estimate": "2-3 minutes",
+                    "difficulty": "medium"
+                },
+                {
+                    "id": "deploy",
+                    "command": "cyn deploy",
+                    "description": "Full release: build --release + flash both rust and gateware",
+                    "time_estimate": "20-25 minutes",
+                    "difficulty": "hard"
+                },
+                {
+                    "id": "reset_device",
+                    "command": "cyn reset",
+                    "description": "Reset device to Apollo mode",
+                    "time_estimate": "1-2 minutes",
+                    "difficulty": "simple"
+                },
+                {
+                    "id": "test_hardware",
+                    "command": "cyn test",
+                    "description": "Run hardware self-tests (requires connected device)",
+                    "time_estimate": "10-15 minutes",
+                    "difficulty": "hard"
                 }
             ],
             "phase_info": {
@@ -541,6 +668,19 @@ class CynCLI:
         print("  cyn ci apollo             - Run Apollo CI")
         print("  cyn ci cynthion           - Run Cynthion CI")
         print("  cyn ci luna               - Run Luna CI")
+
+        print(f"\n{Colors.CYAN}Hardware/Build Commands:{Colors.RESET}")
+        print("  cyn build [rust|apollo|gateware|app|all] [--release]")
+        print("                            - Build firmware/gateware/app")
+        print("  cyn check [fast|rust|c|gateware|all]")
+        print("                            - Run pre-commit checks")
+        print("  cyn clean [rust|apollo|gateware|app|all]")
+        print("                            - Clean build artifacts")
+        print("  cyn test [--destructive]  - Run hardware self-tests")
+        print("  cyn flash [rust|apollo|gateware]")
+        print("                            - Flash to connected device")
+        print("  cyn deploy                - Build --release + flash (full cycle)")
+        print("  cyn reset                 - Reset device to Apollo mode")
 
         print(f"\n{Colors.CYAN}Daemon Commands (for GUI integration):{Colors.RESET}")
         print("  cyn daemon start          - Start daemon (background service)")
@@ -748,6 +888,308 @@ class CynCLI:
             self.output("ERROR", f"Unknown ci command: {args.subcommand}")
             return 1
 
+    # ── Hardware/Build Commands ────────────────────────────────────────
+
+    def _build_rust(self, log_file, release=False):
+        """Build moondancer (Rust/RISC-V firmware)"""
+        args = ["cargo", "build"]
+        if release:
+            args.append("--release")
+        return self._run_tee("rust firmware", args, cwd=MOONDANCER_FW, log_file=log_file)
+
+    def _build_apollo(self, log_file, release=False):
+        """Build Apollo C firmware"""
+        ret = self._run_tee("apollo C firmware",
+            ["make", "APOLLO_BOARD=cynthion"],
+            cwd=APOLLO_FW, log_file=log_file)
+        if ret == 0:
+            elf = APOLLO_FW / "_build" / "cynthion_d11" / "firmware.elf"
+            if elf.exists():
+                self._run_tee("apollo size", ["arm-none-eabi-size", str(elf)],
+                    cwd=APOLLO_FW, log_file=log_file, check=False)
+        return ret
+
+    def _build_gateware(self, log_file, release=False):
+        """Build gateware (Amaranth HDL)"""
+        return self._run_tee("gateware", ["make", "facedancer"],
+            cwd=GATEWARE_DIR, log_file=log_file)
+
+    def _build_app(self, log_file, release=False):
+        """Build Flutter app"""
+        profile = "--release" if release else "--debug"
+        return self._run_tee("flutter app", ["flutter", "build", "linux", profile],
+            cwd=APP_DIR, log_file=log_file)
+
+    def cmd_build(self, args):
+        """Build firmware/gateware/app"""
+        target = getattr(args, "target", "all")
+        release = getattr(args, "release", False)
+        log_path = self._log_path("build")
+        print(f"==> build {target} {'(release)' if release else ''} (log: {log_path.relative_to(REPO_ROOT)})")
+
+        dispatch = {
+            "rust": self._build_rust,
+            "apollo": self._build_apollo,
+            "gateware": self._build_gateware,
+            "app": self._build_app,
+        }
+
+        with log_path.open("w") as log:
+            targets = ["rust", "apollo", "gateware", "app"] if target == "all" else [target]
+            for t in targets:
+                ret = dispatch[t](log, release)
+                if ret != 0:
+                    print(f"\nBuild {t} failed")
+                    return 1
+
+        print("\nBuild complete.")
+        return 0
+
+    def _check_rust(self, log_file):
+        """Check rust code"""
+        ret = self._run_tee("rust check", ["cargo", "check", "--release"],
+            cwd=MOONDANCER_FW, log_file=log_file)
+        if ret != 0: return ret
+        ret = self._run_tee("rust clippy", ["cargo", "clippy"],
+            cwd=MOONDANCER_FW, log_file=log_file)
+        if ret != 0: return ret
+        return self._run_tee("rust test", ["cargo", "test"],
+            cwd=MOONDANCER_FW, log_file=log_file)
+
+    def _check_c(self, log_file):
+        """Check C code"""
+        return self._run_tee("apollo C build", ["make", "APOLLO_BOARD=cynthion"],
+            cwd=APOLLO_FW, log_file=log_file)
+
+    def _check_gateware(self, log_file):
+        """Check gateware"""
+        self._check_venv()
+        return self._run_tee("gateware elaborate",
+            [str(VENV_PYTHON), "-c",
+             "from cynthion.gateware.facedancer import top; print('elaborate ok')"],
+            log_file=log_file, check=False)
+
+    def _check_python(self, log_file):
+        """Check Python code"""
+        self._check_venv()
+        ret = self._run_tee("python imports",
+            [str(VENV_PYTHON), "-c", "import cynthion; import apollo_fpga; import facedancer"],
+            log_file=log_file)
+        if ret != 0: return ret
+        return self._run_tee("pytest",
+            [str(VENV_PYTHON), "-m", "pytest",
+             str(REPOS / "awto-cynthion" / "cynthion" / "python" / "tests"), "-q", "--tb=short"],
+            cwd=REPO_ROOT, log_file=log_file, check=False)
+
+    def cmd_check(self, args):
+        """Run pre-commit checks"""
+        target = getattr(args, "target", "fast")
+        log_path = self._log_path("check")
+        print(f"==> check {target} (log: {log_path.relative_to(REPO_ROOT)})")
+
+        results = {}
+        def checked(label, fn, log):
+            try:
+                ret = fn(log)
+                results[label] = "OK" if ret == 0 else "FAIL"
+            except SystemExit:
+                results[label] = "FAIL"
+
+        with log_path.open("w") as log:
+            if target in ("fast", "all", "rust"):
+                checked("rust", self._check_rust, log)
+            if target in ("fast", "all", "c"):
+                checked("c", self._check_c, log)
+            if target in ("all",):
+                checked("python", self._check_python, log)
+            if target in ("fast", "all", "gateware"):
+                checked("gateware", self._check_gateware, log)
+
+        print()
+        failed = []
+        for label, status in results.items():
+            mark = "✓" if status == "OK" else "✗"
+            print(f"  {mark}  {label:<20} {status}")
+            if status == "FAIL":
+                failed.append(label)
+        print()
+
+        if failed:
+            print(f"FAILED: {', '.join(failed)} (see {log_path.relative_to(REPO_ROOT)})")
+            return 1
+
+        print("All checks passed.")
+        return 0
+
+    def cmd_test(self, args):
+        """Run hardware self-tests"""
+        destructive = getattr(args, "destructive", False)
+        log_path = self._log_path("test")
+        self._check_venv()
+
+        test_script = REPOS / "awto-cynthion" / "scripts" / "test-fault-detection.py"
+        if not test_script.exists():
+            print(f"ERROR: test script not found: {test_script}")
+            return 1
+
+        cmd = [str(VENV_PYTHON), str(test_script)]
+        if destructive:
+            cmd.append("--destructive")
+
+        print(f"==> test (log: {log_path.relative_to(REPO_ROOT)})")
+        with log_path.open("w") as log:
+            ret = self._run_tee("fault-detection", cmd, cwd=REPO_ROOT, log_file=log)
+        print("Tests complete.")
+        return ret
+
+    def cmd_clean(self, args):
+        """Clean build artifacts"""
+        target = getattr(args, "target", "all")
+        log_path = self._log_path("clean")
+        print(f"==> clean {target} (log: {log_path.relative_to(REPO_ROOT)})")
+
+        with log_path.open("w") as log:
+            if target in ("rust", "all"):
+                self._run_tee("rust clean", ["cargo", "clean"],
+                    cwd=MOONDANCER_FW, log_file=log, check=False)
+            if target in ("apollo", "all"):
+                self._run_tee("apollo clean", ["make", "clean", "APOLLO_BOARD=cynthion"],
+                    cwd=APOLLO_FW, log_file=log, check=False)
+            if target in ("gateware", "all"):
+                self._run_tee("gateware clean", ["make", "clean"],
+                    cwd=GATEWARE_DIR, log_file=log, check=False)
+            if target in ("app", "all"):
+                self._run_tee("flutter clean", ["flutter", "clean"],
+                    cwd=APP_DIR, log_file=log, check=False)
+
+        print("Clean complete.")
+        return 0
+
+    def _flash_rust(self, log_file):
+        """Flash moondancer to device"""
+        elf_candidates = list(MOONDANCER_FW.glob("target/**/firmware.elf"))
+        if not elf_candidates:
+            elf_candidates = list(MOONDANCER_FW.glob("target/**/*.elf"))
+        if not elf_candidates:
+            print("  ERROR: no ELF found — run 'cyn build rust' first")
+            return 1
+
+        elf = sorted(elf_candidates, key=lambda p: p.stat().st_mtime)[-1]
+        return self._run_tee("probe-rs flash", ["probe-rs", "download", "--chip", "riscv", str(elf)],
+            log_file=log_file)
+
+    def _flash_apollo(self, log_file):
+        """Flash Apollo to device"""
+        elf = APOLLO_FW / "_build" / "cynthion_d11" / "firmware.elf"
+        if not elf.exists():
+            print("  ERROR: Apollo ELF not found — run 'cyn build apollo' first")
+            return 1
+
+        ret = self._run_tee("apollo flash",
+            ["arm-none-eabi-gdb", "-batch",
+             "-ex", f"target extended-remote | openocd -f interface/cmsis-dap.cfg -c 'gdb_port pipe'",
+             "-ex", f"load {elf}",
+             "-ex", "detach"],
+            log_file=log_file, check=False)
+        print("  note: Apollo flash requires SWD connection — check device docs if this failed")
+        return ret
+
+    def _flash_gateware(self, log_file):
+        """Flash gateware to FPGA"""
+        self._check_venv()
+        bitstream = GATEWARE_DIR / "build" / "top.bit"
+        ret = self._run_tee("gateware upload",
+            [str(VENV_PYTHON), "-m", "apollo_fpga.cli", "--", "configure", str(bitstream)],
+            log_file=log_file, check=False)
+        print("  note: ensure device is in Apollo mode (run 'cyn reset' first if needed)")
+        return ret
+
+    def cmd_flash(self, args):
+        """Flash to connected device"""
+        target = getattr(args, "target", "rust")
+        log_path = self._log_path("flash")
+        print(f"==> flash {target} (log: {log_path.relative_to(REPO_ROOT)})")
+
+        with log_path.open("w") as log:
+            if target == "rust":
+                ret = self._flash_rust(log)
+            elif target == "apollo":
+                ret = self._flash_apollo(log)
+            elif target == "gateware":
+                ret = self._flash_gateware(log)
+            else:
+                print(f"  ERROR: unknown target {target}")
+                return 1
+
+        print("Flash complete.")
+        return ret
+
+    def cmd_deploy(self, args):
+        """Full release cycle: build --release + flash"""
+        log_path = self._log_path("deploy")
+        print(f"==> deploy (log: {log_path.relative_to(REPO_ROOT)})")
+
+        with log_path.open("w") as log:
+            ret = self._build_rust(log, release=True)
+            if ret != 0:
+                print("Deploy failed: rust build")
+                return 1
+
+            ret = self._build_gateware(log, release=True)
+            if ret != 0:
+                print("Deploy failed: gateware build")
+                return 1
+
+            ret = self._flash_rust(log)
+            if ret != 0:
+                print("Deploy failed: rust flash")
+                return 1
+
+            ret = self._flash_gateware(log)
+            if ret != 0:
+                print("Deploy failed: gateware flash")
+                return 1
+
+        print("Deploy complete.")
+        return 0
+
+    def cmd_reset(self, args):
+        """Reset device to Apollo mode"""
+        self._check_venv()
+        log_path = self._log_path("reset")
+        print(f"==> reset (log: {log_path.relative_to(REPO_ROOT)})")
+
+        reset_script = REPOS / "awto-cynthion" / "scripts" / "reset-cynthion.sh"
+        with log_path.open("w") as log:
+            if reset_script.exists():
+                ret = self._run_tee("reset-cynthion", [str(reset_script)],
+                    cwd=REPO_ROOT, log_file=log)
+            else:
+                ret = self._run_tee("force-offline",
+                    [str(VENV_PYTHON), "-c", """
+import sys
+try:
+    import usb.core
+    from apollo_fpga import ApolloDebugger
+    FPGA_VID, FPGA_PID = 0x1d50, 0x615b
+    if usb.core.find(idVendor=FPGA_VID, idProduct=FPGA_PID) is None:
+        print("Device already in Apollo mode (or not connected).")
+        sys.exit(0)
+    d = ApolloDebugger(force_offline=True)
+    d.soft_reset()
+    d.allow_fpga_takeover_usb()
+    d.close()
+    print("Reset complete.")
+except Exception as e:
+    print(f"Reset failed: {e}")
+    print("If moondancer has hung: power-cycle the device.")
+    sys.exit(1)
+"""],
+                    log_file=log)
+
+        print("Reset complete.")
+        return ret
+
     def cmd_daemon(self, args):
         """Daemon management (start, stop, status)"""
         if not args.subcommand:
@@ -826,6 +1268,36 @@ class CynCLI:
         ci = subs.add_parser("ci", help="CI/CD (GitHub Actions)")
         ci.add_argument("subcommand", nargs="?", help="install, list, apollo, cynthion, luna")
         ci.set_defaults(func=self.cmd_ci)
+
+        # Hardware/Build commands
+        build = subs.add_parser("build", help="Build firmware/gateware/app")
+        build.add_argument("target", nargs="?", default="all",
+                          choices=["rust", "apollo", "gateware", "app", "all"])
+        build.add_argument("--release", action="store_true", help="Release profile")
+        build.set_defaults(func=self.cmd_build)
+
+        check = subs.add_parser("check", help="Run pre-commit checks")
+        check.add_argument("target", nargs="?", default="fast",
+                          choices=["fast", "rust", "c", "gateware", "all"])
+        check.set_defaults(func=self.cmd_check)
+
+        test = subs.add_parser("test", help="Run hardware self-tests")
+        test.add_argument("--destructive", action="store_true",
+                         help="Include fault-injection tests")
+        test.set_defaults(func=self.cmd_test)
+
+        clean = subs.add_parser("clean", help="Clean build artifacts")
+        clean.add_argument("target", nargs="?", default="all",
+                          choices=["rust", "apollo", "gateware", "app", "all"])
+        clean.set_defaults(func=self.cmd_clean)
+
+        flash = subs.add_parser("flash", help="Flash to connected device")
+        flash.add_argument("target", nargs="?", default="rust",
+                          choices=["rust", "apollo", "gateware"])
+        flash.set_defaults(func=self.cmd_flash)
+
+        subs.add_parser("deploy", help="Build --release + flash (full cycle)").set_defaults(func=self.cmd_deploy)
+        subs.add_parser("reset", help="Reset device to Apollo mode").set_defaults(func=self.cmd_reset)
 
         daemon = subs.add_parser("daemon", help="Daemon management")
         daemon.add_argument("subcommand", nargs="?", help="start, stop, status, restart")
