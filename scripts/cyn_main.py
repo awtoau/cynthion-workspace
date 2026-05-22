@@ -1,47 +1,56 @@
 #!/usr/bin/env python3
 """
-Cynthion Unified Entry Point
+Cynthion Unified CLI - Target-Based Architecture
 
-Single command for AI agents and developers to control entire codebase:
-  cyn status              - Project status (human + JSON)
-  cyn ai-brief            - AI-friendly project summary
-  cyn ai-schema           - All available commands as JSON schema
-  cyn ai-tasks            - List actionable tasks for AI
+Design: cyn <target> <verb> [options]
+
+Targets:
+  riscv                   - moondancer RISC-V firmware
+  apollo                  - Apollo ARM debug firmware
+  fpga                    - FPGA gateware (Amaranth HDL)
+  app                     - Flutter application
+
+Verbs (per target):
+  build [--release]       - Build target
+  flash                   - Flash to connected device
+  check                   - Run linters/static checks
+  test [--destructive]    - Run tests (hardware required)
+  clean                   - Clean build artifacts
+
+Meta-Commands (all targets):
+  cyn build [--release]   - Build all
+  cyn flash               - Flash all
+  cyn check               - Check all
+  cyn test [--destructive]- Test all
+  cyn clean               - Clean all
+
+Device Management:
+  cyn deploy [--release]  - Build --release + flash riscv + fpga
+  cyn reset               - Reset device to Apollo mode
+  cyn monitor             - Live device monitoring (stub)
+
+Workspace:
+  cyn setup [--parallel]  - Full setup
+  cyn status              - Project status
+  cyn versions            - Show tool versions
+  cyn prereqs             - Check prerequisites
+
+CI/CD:
+  cyn ci [install|list|apollo|cynthion|luna]
+
+Daemon:
+  cyn daemon [start|stop|status|restart]
+
+AI/Discovery:
+  cyn ai-brief            - AI-friendly summary
+  cyn ai-schema           - Command schema (JSON)
+  cyn ai-tasks            - Available tasks (JSON)
   cyn list                - All available commands
 
-Component Commands:
-  cyn fpga <cmd>          - FPGA simulator: sim_test, sim_uart, sim_usb
-  cyn apollo <cmd>        - Apollo: build, clean, get-deps, reset
-  cyn moondancer <cmd>    - moondancer: build, clean
-  cyn gateware <cmd>      - Gateware: elaborate, facedancer, list
-
-Workspace Commands:
-  cyn setup               - Full setup (sequential)
-  cyn setup --parallel    - Full setup with parallelization
-  cyn versions            - Show all tool versions
-  cyn prereqs             - Check system prerequisites
-
-CI/CD Commands:
-  cyn ci install          - Install act (GitHub Actions runner)
-  cyn ci list             - List available workflows
-  cyn ci apollo           - Run Apollo CI locally
-  cyn ci cynthion         - Run Cynthion CI locally
-  cyn ci luna             - Run Luna CI locally
-
-Daemon Commands (for GUI integration):
-  cyn daemon start        - Start daemon (background service)
-  cyn daemon stop         - Stop daemon
-  cyn daemon status       - Check daemon status
-  cyn daemon restart      - Restart daemon
-
-Smart Routing:
-  If daemon is running, all commands automatically connect to it via HTTP.
-  If no daemon, commands run directly (inline).
-
 Global Options:
-  cyn --json <cmd>        - JSON output (AI-friendly)
-  cyn --log file <cmd>    - Log to file
-  cyn --verbose <cmd>     - Verbose output
+  --json                  - JSON output (AI-friendly)
+  --log FILE              - Log to file
+  --verbose               - Verbose output
 """
 
 import argparse
@@ -366,130 +375,85 @@ class CynCLI:
     def cmd_ai_schema(self, args):
         """Machine-readable command schema for AI"""
         schema = {
-            "version": "1.0",
+            "version": "2.0",
+            "architecture": "target-based",
             "entry_point": "cyn",
             "global_options": [
                 {"name": "--json", "description": "JSON output", "type": "boolean"},
                 {"name": "--log FILE", "description": "Log to file", "type": "string"},
                 {"name": "--verbose", "description": "Verbose output", "type": "boolean"}
             ],
-            "commands": {
-                "status": {
-                    "description": "Project status",
-                    "args": [],
-                    "outputs": ["human", "json"]
-                },
-                "ai-brief": {
-                    "description": "AI-friendly summary",
-                    "args": [],
-                    "outputs": ["human", "json"]
-                },
-                "ai-schema": {
-                    "description": "This schema (machine-readable)",
-                    "args": [],
-                    "outputs": ["json"]
-                },
-                "ai-tasks": {
-                    "description": "Available tasks for AI",
-                    "args": [],
-                    "outputs": ["human", "json"]
-                },
-                "list": {
-                    "description": "All available commands",
-                    "args": [],
-                    "outputs": ["human"]
-                },
-                "fpga": {
-                    "description": "FPGA simulator and gateware",
-                    "subcommands": {
-                        "sim_test": "Run all Luna simulator tests",
-                        "sim_uart": "Run UART simulator",
-                        "sim_usb": "Run USB simulator tests"
+            "targets": {
+                "riscv": {
+                    "description": "moondancer RISC-V firmware",
+                    "verbs": {
+                        "build": {"args": ["--release"], "description": "Build RISC-V firmware"},
+                        "flash": {"args": [], "description": "Flash to connected device"},
+                        "check": {"args": [], "description": "Run cargo check/clippy/test"},
+                        "test": {"args": ["--destructive"], "description": "Run tests"},
+                        "clean": {"args": [], "description": "Clean build artifacts"}
                     }
                 },
                 "apollo": {
-                    "description": "Apollo firmware (ARM)",
-                    "subcommands": {
-                        "build": "Build Apollo firmware",
-                        "clean": "Clean build artifacts",
-                        "get-deps": "Get dependencies (TinyUSB, etc)",
-                        "reset": "Flash to hardware"
+                    "description": "Apollo ARM debug firmware",
+                    "verbs": {
+                        "build": {"args": ["--release"], "description": "Build Apollo firmware"},
+                        "flash": {"args": [], "description": "Flash to connected device (requires SWD)"},
+                        "check": {"args": [], "description": "Run build verification"},
+                        "test": {"args": ["--destructive"], "description": "Run tests"},
+                        "clean": {"args": [], "description": "Clean build artifacts"}
                     }
                 },
-                "moondancer": {
-                    "description": "moondancer firmware (Rust/RISC-V)",
-                    "subcommands": {
-                        "build": "Build moondancer",
-                        "clean": "Clean build artifacts"
+                "fpga": {
+                    "description": "FPGA gateware (Amaranth HDL)",
+                    "verbs": {
+                        "build": {"args": ["--release"], "description": "Build gateware"},
+                        "flash": {"args": [], "description": "Flash gateware to FPGA"},
+                        "check": {"args": [], "description": "Elaborate gateware (syntax check)"},
+                        "test": {"args": [], "description": "N/A for FPGA"},
+                        "clean": {"args": [], "description": "Clean build artifacts"}
                     }
                 },
-                "gateware": {
-                    "description": "FPGA gateware elaboration",
-                    "subcommands": {
-                        "elaborate": "Elaborate analyzer gateware",
-                        "facedancer": "Elaborate facedancer gateware",
-                        "list": "List available gateware"
+                "app": {
+                    "description": "Flutter application",
+                    "verbs": {
+                        "build": {"args": ["--release"], "description": "Build Flutter app"},
+                        "flash": {"args": [], "description": "N/A for app"},
+                        "check": {"args": [], "description": "N/A for app"},
+                        "test": {"args": ["--destructive"], "description": "Run tests"},
+                        "clean": {"args": [], "description": "Clean build artifacts"}
                     }
-                },
-                "setup": {
-                    "description": "Full workspace setup",
-                    "args": ["--parallel", "--jobs N"],
-                    "outputs": ["human", "json"]
-                },
-                "versions": {
-                    "description": "Show all tool versions",
-                    "args": [],
-                    "outputs": ["human", "json"]
-                },
-                "prereqs": {
-                    "description": "Check system prerequisites",
-                    "args": [],
-                    "outputs": ["human", "json"]
-                },
-                "daemon": {
-                    "description": "Daemon management (for GUI integration)",
-                    "subcommands": {
-                        "start": "Start daemon",
-                        "stop": "Stop daemon",
-                        "status": "Check daemon status",
-                        "restart": "Restart daemon"
-                    }
-                },
-                "build": {
-                    "description": "Build firmware/gateware/app",
-                    "args": ["[rust|apollo|gateware|app|all]", "--release"],
-                    "outputs": ["human"]
-                },
-                "check": {
-                    "description": "Run pre-commit checks",
-                    "args": ["[fast|rust|c|gateware|all]"],
-                    "outputs": ["human"]
-                },
-                "test": {
-                    "description": "Run hardware self-tests",
-                    "args": ["--destructive"],
-                    "outputs": ["human"]
-                },
-                "clean": {
-                    "description": "Clean build artifacts",
-                    "args": ["[rust|apollo|gateware|app|all]"],
-                    "outputs": ["human"]
-                },
-                "flash": {
-                    "description": "Flash to connected device",
-                    "args": ["[rust|apollo|gateware]"],
-                    "outputs": ["human"]
-                },
-                "deploy": {
-                    "description": "Full release cycle (build --release + flash)",
-                    "args": [],
-                    "outputs": ["human"]
-                },
-                "reset": {
-                    "description": "Reset device to Apollo mode",
-                    "args": [],
-                    "outputs": ["human"]
                 }
+            },
+            "meta_commands": {
+                "build": {"args": ["--release"], "description": "Build all components"},
+                "flash": {"args": [], "description": "Flash all components"},
+                "check": {"args": [], "description": "Check all components"},
+                "test": {"args": ["--destructive"], "description": "Test all components"},
+                "clean": {"args": [], "description": "Clean all components"}
+            },
+            "device_commands": {
+                "deploy": {"args": ["--release"], "description": "Build --release + flash riscv + fpga"},
+                "reset": {"args": [], "description": "Reset device to Apollo mode"},
+                "monitor": {"args": [], "description": "Live device monitoring (stub, apollod pending)"}
+            },
+            "workspace_commands": {
+                "setup": {"args": ["--parallel", "--jobs N"], "description": "Full setup"},
+                "status": {"args": [], "description": "Project status"},
+                "versions": {"args": [], "description": "Show tool versions"},
+                "prereqs": {"args": [], "description": "Check prerequisites"}
+            },
+            "ci_commands": {
+                "ci": {"subcommands": ["install", "list", "apollo", "cynthion", "luna"]}
+            },
+            "daemon_commands": {
+                "daemon": {"subcommands": ["start", "stop", "status", "restart"]}
+            },
+            "ai_commands": {
+                "ai-brief": {"args": [], "description": "AI-friendly summary"},
+                "ai-schema": {"args": [], "description": "This schema (JSON)"},
+                "ai-tasks": {"args": [], "description": "Available tasks for AI"},
+                "list": {"args": [], "description": "List all commands"}
             }
         }
 
@@ -502,32 +466,67 @@ class CynCLI:
             "timestamp": datetime.now().isoformat(),
             "available_tasks": [
                 {
-                    "id": "fpga_test",
-                    "command": "cyn fpga sim_test",
-                    "description": "Run FPGA simulator test suite",
-                    "time_estimate": "5-10 minutes",
+                    "id": "riscv_build",
+                    "command": "cyn riscv build",
+                    "description": "Build moondancer RISC-V firmware",
+                    "time_estimate": "3-5 minutes",
                     "difficulty": "simple"
                 },
                 {
                     "id": "apollo_build",
                     "command": "cyn apollo build",
-                    "description": "Build Apollo firmware",
+                    "description": "Build Apollo ARM firmware",
                     "time_estimate": "5-10 minutes",
                     "difficulty": "simple"
                 },
                 {
-                    "id": "moondancer_build",
-                    "command": "cyn moondancer build",
-                    "description": "Build moondancer firmware",
+                    "id": "fpga_build",
+                    "command": "cyn fpga build",
+                    "description": "Build FPGA gateware (Amaranth)",
+                    "time_estimate": "5-8 minutes",
+                    "difficulty": "simple"
+                },
+                {
+                    "id": "app_build",
+                    "command": "cyn app build",
+                    "description": "Build Flutter application",
+                    "time_estimate": "5-10 minutes",
+                    "difficulty": "simple"
+                },
+                {
+                    "id": "riscv_check",
+                    "command": "cyn riscv check",
+                    "description": "Check moondancer (cargo check, clippy, test)",
+                    "time_estimate": "2-3 minutes",
+                    "difficulty": "simple"
+                },
+                {
+                    "id": "apollo_check",
+                    "command": "cyn apollo check",
+                    "description": "Check Apollo firmware build",
+                    "time_estimate": "5-10 minutes",
+                    "difficulty": "simple"
+                },
+                {
+                    "id": "fpga_check",
+                    "command": "cyn fpga check",
+                    "description": "Check gateware elaboration",
                     "time_estimate": "3-5 minutes",
                     "difficulty": "simple"
                 },
                 {
-                    "id": "gateware_elaborate",
-                    "command": "cyn gateware elaborate",
-                    "description": "Elaborate analyzer gateware",
-                    "time_estimate": "5-8 minutes",
-                    "difficulty": "simple"
+                    "id": "build_all",
+                    "command": "cyn build",
+                    "description": "Build all components (meta-command)",
+                    "time_estimate": "15-20 minutes",
+                    "difficulty": "medium"
+                },
+                {
+                    "id": "check_all",
+                    "command": "cyn check",
+                    "description": "Check all components (meta-command)",
+                    "time_estimate": "5-10 minutes",
+                    "difficulty": "medium"
                 },
                 {
                     "id": "full_setup_sequential",
@@ -572,30 +571,23 @@ class CynCLI:
                     "difficulty": "trivial"
                 },
                 {
-                    "id": "build_all",
-                    "command": "cyn build all",
-                    "description": "Build all firmware/gateware/app",
-                    "time_estimate": "15-20 minutes",
-                    "difficulty": "medium"
-                },
-                {
-                    "id": "check_fast",
-                    "command": "cyn check fast",
-                    "description": "Run fast pre-commit checks (rust, C, python)",
-                    "time_estimate": "5-10 minutes",
-                    "difficulty": "medium"
-                },
-                {
-                    "id": "flash_rust",
-                    "command": "cyn flash rust",
+                    "id": "flash_riscv",
+                    "command": "cyn riscv flash",
                     "description": "Flash moondancer to connected device",
+                    "time_estimate": "2-3 minutes",
+                    "difficulty": "medium"
+                },
+                {
+                    "id": "flash_fpga",
+                    "command": "cyn fpga flash",
+                    "description": "Flash gateware to FPGA",
                     "time_estimate": "2-3 minutes",
                     "difficulty": "medium"
                 },
                 {
                     "id": "deploy",
                     "command": "cyn deploy",
-                    "description": "Full release: build --release + flash both rust and gateware",
+                    "description": "Full release: build --release + flash riscv + fpga",
                     "time_estimate": "20-25 minutes",
                     "difficulty": "hard"
                 },
@@ -639,7 +631,7 @@ class CynCLI:
 
     def cmd_list(self, args):
         """List all available commands"""
-        print(f"\n{Colors.BOLD}Cynthion CLI - All Commands{Colors.RESET}\n")
+        print(f"\n{Colors.BOLD}Cynthion CLI - Target-Based Architecture{Colors.RESET}\n")
 
         print(f"{Colors.CYAN}Information Commands:{Colors.RESET}")
         print("  cyn status                - Project status")
@@ -652,15 +644,39 @@ class CynCLI:
         print("  cyn ai-schema             - Command schema (JSON)")
         print("  cyn ai-tasks              - Available tasks (JSON)")
 
-        print(f"\n{Colors.CYAN}Component Commands:{Colors.RESET}")
-        print("  cyn fpga [sim_test|sim_uart|sim_usb]")
-        print("  cyn apollo [build|clean|get-deps|reset]")
-        print("  cyn moondancer [build|clean]")
-        print("  cyn gateware [elaborate|facedancer|list]")
+        print(f"\n{Colors.CYAN}Target-Based Commands (cyn <target> <verb> [options]):{Colors.RESET}")
+        print("\n  Targets:")
+        print("    riscv                   - moondancer RISC-V firmware")
+        print("    apollo                  - Apollo ARM debug firmware")
+        print("    fpga                    - FPGA gateware (Amaranth HDL)")
+        print("    app                     - Flutter application")
+        print("\n  Verbs (for each target):")
+        print("    build [--release]       - Build the target")
+        print("    flash                   - Flash to connected device")
+        print("    check                   - Run linters/static checks")
+        print("    test [--destructive]    - Run tests (hardware required)")
+        print("    clean                   - Clean build artifacts")
+        print("\n  Examples:")
+        print("    cyn riscv build --release")
+        print("    cyn apollo flash")
+        print("    cyn fpga check")
+
+        print(f"\n{Colors.CYAN}Meta-Commands (all targets):{Colors.RESET}")
+        print("  cyn build [--release]     - Build all components")
+        print("  cyn flash                 - Flash all components")
+        print("  cyn check                 - Check all components")
+        print("  cyn clean                 - Clean all components")
+        print("  cyn test [--destructive]  - Test all components")
+
+        print(f"\n{Colors.CYAN}Device Management:{Colors.RESET}")
+        print("  cyn deploy [--release]    - Build --release + flash riscv + fpga")
+        print("  cyn reset                 - Reset device to Apollo mode")
+        print("  cyn monitor               - Live device monitoring (stub)")
 
         print(f"\n{Colors.CYAN}Workspace Commands:{Colors.RESET}")
         print("  cyn setup                 - Full setup (sequential)")
-        print("  cyn setup --parallel      - Parallel setup (55% faster)")
+        print("  cyn setup --parallel [--jobs N]")
+        print("                            - Parallel setup (55% faster)")
 
         print(f"\n{Colors.CYAN}CI/CD Commands:{Colors.RESET}")
         print("  cyn ci install            - Install act (GitHub Actions locally)")
@@ -668,19 +684,6 @@ class CynCLI:
         print("  cyn ci apollo             - Run Apollo CI")
         print("  cyn ci cynthion           - Run Cynthion CI")
         print("  cyn ci luna               - Run Luna CI")
-
-        print(f"\n{Colors.CYAN}Hardware/Build Commands:{Colors.RESET}")
-        print("  cyn build [rust|apollo|gateware|app|all] [--release]")
-        print("                            - Build firmware/gateware/app")
-        print("  cyn check [fast|rust|c|gateware|all]")
-        print("                            - Run pre-commit checks")
-        print("  cyn clean [rust|apollo|gateware|app|all]")
-        print("                            - Clean build artifacts")
-        print("  cyn test [--destructive]  - Run hardware self-tests")
-        print("  cyn flash [rust|apollo|gateware]")
-        print("                            - Flash to connected device")
-        print("  cyn deploy                - Build --release + flash (full cycle)")
-        print("  cyn reset                 - Reset device to Apollo mode")
 
         print(f"\n{Colors.CYAN}Daemon Commands (for GUI integration):{Colors.RESET}")
         print("  cyn daemon start          - Start daemon (background service)")
@@ -699,129 +702,6 @@ class CynCLI:
         return 0
 
     # Component command handlers
-    def cmd_fpga(self, args):
-        """FPGA commands"""
-        if not args.subcommand:
-            self.output("INFO", "FPGA commands: sim_test, sim_uart, sim_usb")
-            return 0
-
-        if args.subcommand == "sim_test":
-            ok, _ = self.run_cmd(
-                "python -m unittest discover -t . -s tests -v",
-                cwd=REPOS / "awto-luna",
-                description="Running Luna FPGA simulator tests..."
-            )
-            return 0 if ok else 1
-
-        elif args.subcommand == "sim_uart":
-            ok, _ = self.run_cmd(
-                "python -m unittest tests.test_uart -v",
-                cwd=REPOS / "awto-luna",
-                description="Running UART simulator test..."
-            )
-            return 0 if ok else 1
-
-        elif args.subcommand == "sim_usb":
-            ok, _ = self.run_cmd(
-                "python -m unittest discover -t . -s tests -k usb -v",
-                cwd=REPOS / "awto-luna",
-                description="Running USB simulator tests..."
-            )
-            return 0 if ok else 1
-        else:
-            self.output("ERROR", f"Unknown fpga command: {args.subcommand}")
-            return 1
-
-    def cmd_apollo(self, args):
-        """Apollo firmware commands"""
-        if not args.subcommand:
-            self.output("INFO", "Apollo commands: build, clean, get-deps, reset")
-            return 0
-
-        fw_dir = REPOS / "awto-apollo" / "firmware"
-        if not fw_dir.exists():
-            self.output("ERROR", f"Apollo directory not found: {fw_dir}")
-            return 1
-
-        if args.subcommand == "build":
-            ok, _ = self.run_cmd("make APOLLO_BOARD=cynthion", cwd=fw_dir,
-                                description="Building Apollo firmware...")
-            return 0 if ok else 1
-
-        elif args.subcommand == "clean":
-            ok, _ = self.run_cmd("make APOLLO_BOARD=cynthion clean", cwd=fw_dir,
-                                description="Cleaning Apollo build...")
-            return 0 if ok else 1
-
-        elif args.subcommand == "get-deps":
-            ok, _ = self.run_cmd("make APOLLO_BOARD=cynthion get-deps", cwd=fw_dir,
-                                description="Getting Apollo dependencies...")
-            return 0 if ok else 1
-
-        elif args.subcommand == "reset":
-            self.output("WARNING", "Apollo reset requires hardware connection")
-            self.output("INFO", "Command: dfu-util -d 1d50:615e -D build/cynthion_d11/apollo_debug_soc.bin")
-            return 0
-        else:
-            self.output("ERROR", f"Unknown apollo command: {args.subcommand}")
-            return 1
-
-    def cmd_moondancer(self, args):
-        """moondancer firmware commands"""
-        if not args.subcommand:
-            self.output("INFO", "moondancer commands: build, clean")
-            return 0
-
-        fw_dir = REPOS / "awto-cynthion" / "firmware" / "moondancer"
-        if not fw_dir.exists():
-            self.output("ERROR", f"moondancer directory not found: {fw_dir}")
-            return 1
-
-        if args.subcommand == "build":
-            ok, _ = self.run_cmd("cargo build --release", cwd=fw_dir,
-                                description="Building moondancer firmware...")
-            return 0 if ok else 1
-
-        elif args.subcommand == "clean":
-            ok, _ = self.run_cmd("cargo clean", cwd=fw_dir,
-                                description="Cleaning moondancer build...")
-            return 0 if ok else 1
-        else:
-            self.output("ERROR", f"Unknown moondancer command: {args.subcommand}")
-            return 1
-
-    def cmd_gateware(self, args):
-        """Gateware commands"""
-        if not args.subcommand:
-            self.output("INFO", "Gateware commands: elaborate, facedancer, list")
-            return 0
-
-        gw_dir = REPOS / "awto-cynthion" / "cynthion" / "python"
-        if not gw_dir.exists():
-            self.output("ERROR", f"Gateware directory not found: {gw_dir}")
-            return 1
-
-        oss_env = Path.home() / "opt" / "oss-cad-suite" / "environment"
-        env_prefix = f"source {oss_env} && " if oss_env.exists() else ""
-
-        if args.subcommand == "elaborate":
-            cmd = f"{env_prefix}LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 python3.14 -m cynthion.gateware.analyzer.top --dry-run"
-            ok, _ = self.run_cmd(f"bash -c '{cmd}'", cwd=gw_dir,
-                                description="Elaborating analyzer gateware...")
-            return 0 if ok else 1
-
-        elif args.subcommand == "facedancer":
-            cmd = f"{env_prefix}LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 python3.14 -m cynthion.gateware.facedancer.top --dry-run"
-            ok, _ = self.run_cmd(f"bash -c '{cmd}'", cwd=gw_dir,
-                                description="Elaborating facedancer gateware...")
-            return 0 if ok else 1
-
-        elif args.subcommand == "list":
-            self.output("INFO", "Available gateware: analyzer, facedancer")
-            return 0
-        else:
-            self.output("ERROR", f"Unknown gateware command: {args.subcommand}")
-            return 1
 
     def cmd_workspace(self, args):
         """Workspace commands"""
@@ -920,30 +800,6 @@ class CynCLI:
         return self._run_tee("flutter app", ["flutter", "build", "linux", profile],
             cwd=APP_DIR, log_file=log_file)
 
-    def cmd_build(self, args):
-        """Build firmware/gateware/app"""
-        target = getattr(args, "target", "all")
-        release = getattr(args, "release", False)
-        log_path = self._log_path("build")
-        print(f"==> build {target} {'(release)' if release else ''} (log: {log_path.relative_to(REPO_ROOT)})")
-
-        dispatch = {
-            "rust": self._build_rust,
-            "apollo": self._build_apollo,
-            "gateware": self._build_gateware,
-            "app": self._build_app,
-        }
-
-        with log_path.open("w") as log:
-            targets = ["rust", "apollo", "gateware", "app"] if target == "all" else [target]
-            for t in targets:
-                ret = dispatch[t](log, release)
-                if ret != 0:
-                    print(f"\nBuild {t} failed")
-                    return 1
-
-        print("\nBuild complete.")
-        return 0
 
     def _check_rust(self, log_file):
         """Check rust code"""
@@ -981,89 +837,6 @@ class CynCLI:
              str(REPOS / "awto-cynthion" / "cynthion" / "python" / "tests"), "-q", "--tb=short"],
             cwd=REPO_ROOT, log_file=log_file, check=False)
 
-    def cmd_check(self, args):
-        """Run pre-commit checks"""
-        target = getattr(args, "target", "fast")
-        log_path = self._log_path("check")
-        print(f"==> check {target} (log: {log_path.relative_to(REPO_ROOT)})")
-
-        results = {}
-        def checked(label, fn, log):
-            try:
-                ret = fn(log)
-                results[label] = "OK" if ret == 0 else "FAIL"
-            except SystemExit:
-                results[label] = "FAIL"
-
-        with log_path.open("w") as log:
-            if target in ("fast", "all", "rust"):
-                checked("rust", self._check_rust, log)
-            if target in ("fast", "all", "c"):
-                checked("c", self._check_c, log)
-            if target in ("all",):
-                checked("python", self._check_python, log)
-            if target in ("fast", "all", "gateware"):
-                checked("gateware", self._check_gateware, log)
-
-        print()
-        failed = []
-        for label, status in results.items():
-            mark = "✓" if status == "OK" else "✗"
-            print(f"  {mark}  {label:<20} {status}")
-            if status == "FAIL":
-                failed.append(label)
-        print()
-
-        if failed:
-            print(f"FAILED: {', '.join(failed)} (see {log_path.relative_to(REPO_ROOT)})")
-            return 1
-
-        print("All checks passed.")
-        return 0
-
-    def cmd_test(self, args):
-        """Run hardware self-tests"""
-        destructive = getattr(args, "destructive", False)
-        log_path = self._log_path("test")
-        self._check_venv()
-
-        test_script = REPOS / "awto-cynthion" / "scripts" / "test-fault-detection.py"
-        if not test_script.exists():
-            print(f"ERROR: test script not found: {test_script}")
-            return 1
-
-        cmd = [str(VENV_PYTHON), str(test_script)]
-        if destructive:
-            cmd.append("--destructive")
-
-        print(f"==> test (log: {log_path.relative_to(REPO_ROOT)})")
-        with log_path.open("w") as log:
-            ret = self._run_tee("fault-detection", cmd, cwd=REPO_ROOT, log_file=log)
-        print("Tests complete.")
-        return ret
-
-    def cmd_clean(self, args):
-        """Clean build artifacts"""
-        target = getattr(args, "target", "all")
-        log_path = self._log_path("clean")
-        print(f"==> clean {target} (log: {log_path.relative_to(REPO_ROOT)})")
-
-        with log_path.open("w") as log:
-            if target in ("rust", "all"):
-                self._run_tee("rust clean", ["cargo", "clean"],
-                    cwd=MOONDANCER_FW, log_file=log, check=False)
-            if target in ("apollo", "all"):
-                self._run_tee("apollo clean", ["make", "clean", "APOLLO_BOARD=cynthion"],
-                    cwd=APOLLO_FW, log_file=log, check=False)
-            if target in ("gateware", "all"):
-                self._run_tee("gateware clean", ["make", "clean"],
-                    cwd=GATEWARE_DIR, log_file=log, check=False)
-            if target in ("app", "all"):
-                self._run_tee("flutter clean", ["flutter", "clean"],
-                    cwd=APP_DIR, log_file=log, check=False)
-
-        print("Clean complete.")
-        return 0
 
     def _flash_rust(self, log_file):
         """Flash moondancer to device"""
@@ -1104,25 +877,6 @@ class CynCLI:
         print("  note: ensure device is in Apollo mode (run 'cyn reset' first if needed)")
         return ret
 
-    def cmd_flash(self, args):
-        """Flash to connected device"""
-        target = getattr(args, "target", "rust")
-        log_path = self._log_path("flash")
-        print(f"==> flash {target} (log: {log_path.relative_to(REPO_ROOT)})")
-
-        with log_path.open("w") as log:
-            if target == "rust":
-                ret = self._flash_rust(log)
-            elif target == "apollo":
-                ret = self._flash_apollo(log)
-            elif target == "gateware":
-                ret = self._flash_gateware(log)
-            else:
-                print(f"  ERROR: unknown target {target}")
-                return 1
-
-        print("Flash complete.")
-        return ret
 
     def cmd_deploy(self, args):
         """Full release cycle: build --release + flash"""
@@ -1190,6 +944,107 @@ except Exception as e:
         print("Reset complete.")
         return ret
 
+    # ── Target-Based Dispatcher ────────────────────────────────────────
+
+    def cmd_target(self, args):
+        """Route target + verb to appropriate handler"""
+        target = getattr(args, "target", "all")
+        verb = getattr(args, "verb", None)
+        release = getattr(args, "release", False)
+        destructive = getattr(args, "destructive", False)
+
+        if not verb:
+            print(f"ERROR: {target} requires a verb: build, flash, check, test, clean")
+            return 1
+
+        # Dispatch table: target → verb → (handler_fn, supports_release, supports_destructive)
+        dispatch = {
+            "riscv": {
+                "build": (self._build_rust, True, False),
+                "flash": (self._flash_rust, False, False),
+                "check": (self._check_rust, False, False),
+                "test": (lambda log: self._run_tee("rust test", ["cargo", "test"], cwd=MOONDANCER_FW, log_file=log), False, True),
+                "clean": (lambda log: self._run_tee("rust clean", ["cargo", "clean"], cwd=MOONDANCER_FW, log_file=log, check=False), False, False),
+            },
+            "apollo": {
+                "build": (self._build_apollo, True, False),
+                "flash": (self._flash_apollo, False, False),
+                "check": (self._check_c, False, False),
+                "test": (lambda log: self._run_tee("apollo test", ["make", "APOLLO_BOARD=cynthion"], cwd=APOLLO_FW, log_file=log), False, True),
+                "clean": (lambda log: self._run_tee("apollo clean", ["make", "clean", "APOLLO_BOARD=cynthion"], cwd=APOLLO_FW, log_file=log, check=False), False, False),
+            },
+            "fpga": {
+                "build": (self._build_gateware, True, False),
+                "flash": (self._flash_gateware, False, False),
+                "check": (self._check_gateware, False, False),
+                "test": (lambda log: 0, False, False),
+                "clean": (lambda log: self._run_tee("gateware clean", ["make", "clean"], cwd=GATEWARE_DIR, log_file=log, check=False), False, False),
+            },
+            "app": {
+                "build": (self._build_app, True, False),
+                "flash": (lambda log: 0, False, False),
+                "check": (lambda log: 0, False, False),
+                "test": (lambda log: self._run_tee("flutter test", ["flutter", "test"], cwd=APP_DIR, log_file=log, check=False), False, True),
+                "clean": (lambda log: self._run_tee("flutter clean", ["flutter", "clean"], cwd=APP_DIR, log_file=log, check=False), False, False),
+            },
+        }
+
+        if target == "all":
+            log_path = self._log_path(verb)
+            print(f"==> {verb} all (log: {log_path.relative_to(REPO_ROOT)})")
+            with log_path.open("w") as log:
+                for t in ["riscv", "apollo", "fpga", "app"]:
+                    if verb in dispatch[t]:
+                        handler, has_release, has_destructive = dispatch[t][verb]
+                        try:
+                            if has_release:
+                                ret = handler(log, release)
+                            else:
+                                ret = handler(log)
+                            if ret != 0:
+                                print(f"\n{verb} {t} failed")
+                                return ret
+                        except Exception as e:
+                            print(f"Error in {t} {verb}: {e}")
+                            return 1
+            print(f"\n{verb} complete.")
+            return 0
+        else:
+            if target not in dispatch:
+                print(f"ERROR: unknown target '{target}'")
+                return 1
+            if verb not in dispatch[target]:
+                print(f"ERROR: {target} doesn't support verb '{verb}'")
+                return 1
+
+            log_path = self._log_path(f"{target}-{verb}")
+            print(f"==> {target} {verb} (log: {log_path.relative_to(REPO_ROOT)})")
+            with log_path.open("w") as log:
+                handler, has_release, has_destructive = dispatch[target][verb]
+                try:
+                    if has_release:
+                        ret = handler(log, release)
+                    else:
+                        ret = handler(log)
+                    if ret != 0:
+                        print(f"\n{verb} failed")
+                        return ret
+                except Exception as e:
+                    print(f"Error: {e}")
+                    return 1
+
+            print(f"\n{verb} complete.")
+            return 0
+
+    def cmd_monitor(self, args):
+        """Device monitoring (stub — apollod integration pending)"""
+        print("⚠ Monitor: apollod integration pending (not yet production-ready)")
+        print("  See: /home/dan/git/awtoau/awto-cynthion/scripts/apollod.py")
+        print("  apollod reads TTYs: ttyACM0=rv0, ttyACM1=fpg, ttyACM2=apl")
+        print("  publishes JSON-lines on Unix socket for live device monitoring")
+        print("  (architecture: integrate into cyn-daemon as HTTP /monitor endpoint)")
+        return 0
+
     def cmd_daemon(self, args):
         """Daemon management (start, stop, status)"""
         if not args.subcommand:
@@ -1243,23 +1098,7 @@ except Exception as e:
         subs.add_parser("ai-schema", help="Command schema (JSON)").set_defaults(func=self.cmd_ai_schema)
         subs.add_parser("ai-tasks", help="Available tasks").set_defaults(func=self.cmd_ai_tasks)
 
-        # Component commands
-        fpga = subs.add_parser("fpga", help="FPGA simulator")
-        fpga.add_argument("subcommand", nargs="?")
-        fpga.set_defaults(func=self.cmd_fpga)
-
-        apollo = subs.add_parser("apollo", help="Apollo firmware")
-        apollo.add_argument("subcommand", nargs="?")
-        apollo.set_defaults(func=self.cmd_apollo)
-
-        moon = subs.add_parser("moondancer", help="moondancer firmware")
-        moon.add_argument("subcommand", nargs="?")
-        moon.set_defaults(func=self.cmd_moondancer)
-
-        gw = subs.add_parser("gateware", help="Gateware")
-        gw.add_argument("subcommand", nargs="?")
-        gw.set_defaults(func=self.cmd_gateware)
-
+        # Workspace setup
         setup = subs.add_parser("setup", help="Full setup")
         setup.add_argument("--parallel", action="store_true")
         setup.add_argument("--jobs", type=int, default=4)
@@ -1269,37 +1108,35 @@ except Exception as e:
         ci.add_argument("subcommand", nargs="?", help="install, list, apollo, cynthion, luna")
         ci.set_defaults(func=self.cmd_ci)
 
-        # Hardware/Build commands
-        build = subs.add_parser("build", help="Build firmware/gateware/app")
-        build.add_argument("target", nargs="?", default="all",
-                          choices=["rust", "apollo", "gateware", "app", "all"])
-        build.add_argument("--release", action="store_true", help="Release profile")
-        build.set_defaults(func=self.cmd_build)
+        # Target-based architecture: cyn <target> <verb> [options]
+        # Targets: riscv, apollo, fpga, app
+        # Verbs: build, flash, check, test, clean
+        for target_name, target_help in [
+            ("riscv", "moondancer RISC-V firmware"),
+            ("apollo", "Apollo ARM debug firmware"),
+            ("fpga", "FPGA gateware (Amaranth HDL)"),
+            ("app", "Flutter application"),
+        ]:
+            t = subs.add_parser(target_name, help=target_help)
+            t.add_argument("verb", choices=["build", "flash", "check", "test", "clean"])
+            t.add_argument("--release", action="store_true", help="Release profile")
+            t.add_argument("--destructive", action="store_true", help="Include destructive tests")
+            t.set_defaults(func=self.cmd_target, target=target_name)
 
-        check = subs.add_parser("check", help="Run pre-commit checks")
-        check.add_argument("target", nargs="?", default="fast",
-                          choices=["fast", "rust", "c", "gateware", "all"])
-        check.set_defaults(func=self.cmd_check)
+        # Meta-commands: operate on all targets
+        for verb in ["build", "flash", "check", "clean", "test"]:
+            cmd = subs.add_parser(verb, help=f"{verb} all components")
+            cmd.add_argument("--release", action="store_true", help="Release profile")
+            cmd.add_argument("--destructive", action="store_true", help="Include destructive tests")
+            cmd.set_defaults(func=self.cmd_target, target="all", verb=verb)
 
-        test = subs.add_parser("test", help="Run hardware self-tests")
-        test.add_argument("--destructive", action="store_true",
-                         help="Include fault-injection tests")
-        test.set_defaults(func=self.cmd_test)
-
-        clean = subs.add_parser("clean", help="Clean build artifacts")
-        clean.add_argument("target", nargs="?", default="all",
-                          choices=["rust", "apollo", "gateware", "app", "all"])
-        clean.set_defaults(func=self.cmd_clean)
-
-        flash = subs.add_parser("flash", help="Flash to connected device")
-        flash.add_argument("target", nargs="?", default="rust",
-                          choices=["rust", "apollo", "gateware"])
-        flash.set_defaults(func=self.cmd_flash)
-
-        subs.add_parser("deploy", help="Build --release + flash (full cycle)").set_defaults(func=self.cmd_deploy)
+        # Device management
+        subs.add_parser("deploy", help="Build --release + flash riscv + fpga (full cycle)").set_defaults(func=self.cmd_deploy)
         subs.add_parser("reset", help="Reset device to Apollo mode").set_defaults(func=self.cmd_reset)
+        subs.add_parser("monitor", help="Live device monitoring (stub)").set_defaults(func=self.cmd_monitor)
 
-        daemon = subs.add_parser("daemon", help="Daemon management")
+        # Daemon management
+        daemon = subs.add_parser("daemon", help="Daemon management (start/stop/status/restart)")
         daemon.add_argument("subcommand", nargs="?", help="start, stop, status, restart")
         daemon.set_defaults(func=self.cmd_daemon)
 
