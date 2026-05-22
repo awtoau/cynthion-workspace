@@ -1,0 +1,3 @@
+Submodule 'lib/tinyusb' (https://github.com/hathach/tinyusb) registered for path 'lib/tinyusb'
+Cloning into '/home/dan/git/awtoau/awto-apollo/lib/tinyusb'...
+Submodule path 'lib/tinyusb': checked out '5b08a65ad2e695332d56bd4676841a91f34dd5b1'

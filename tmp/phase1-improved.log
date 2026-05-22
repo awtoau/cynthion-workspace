@@ -1,0 +1,99 @@
+
+[1m[96m======================================================================[0m
+[1m[96mCynthion Workspace Full Setup[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Running fail-fast prerequisite check...
+
+[1m[96m======================================================================[0m
+[1m[96mSystem Scan & Prerequisite Check[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Scanning system information...
+[1m[96m[INFO][0m ✓ OS: fedora 44
+[1m[96m[INFO][0m ✓ Package manager: dnf
+
+[1m[96m[INFO][0m Checking critical build tools...
+[1m[96m[INFO][0m ✓ git             git version 2.54.0
+[1m[96m[INFO][0m ✓ gcc             gcc (GCC) 16.1.1 20260515 (Red Hat 16.1.1-2)
+[1m[96m[INFO][0m ✓ make            GNU Make 4.4.1
+[1m[96m[INFO][0m ✓ python3.14      Python 3.14.4
+
+[1m[96m[INFO][0m Checking FPGA toolchain...
+[1m[96m[INFO][0m ✓ arm-none-eabi-gcc    arm-none-eabi-gcc (Fedora 15.2.0-4.fc44) 15.2.0
+[1m[96m[INFO][0m ✓ rustc                rustc 1.95.0 (59807616e 2026-04-14)
+
+[1m[96m[INFO][0m Checking OSS CAD Suite (gateware toolchain)...
+[1m[96m[INFO][0m ✓ OSS CAD Suite Yosys 0.65+57 (git sha1 9d0cdb855, clang++ 18.1.8 
+
+[1m[96m[INFO][0m ✓ System prerequisites check PASSED
+
+
+[1m[96m======================================================================[0m
+[1m[96mRepository Setup[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Repos directory: /home/dan/git/awtoau
+[1m[96m[INFO][0m Pulling awto-apollo...
+[1m[96m[INFO][0m ✓ awto-apollo
+[1m[96m[INFO][0m Initializing submodules in awto-apollo...
+[1m[93m[WARNING][0m Warning: submodule init failed (may not be needed)
+[1m[96m[INFO][0m Pulling awto-cynthion...
+[1m[96m[INFO][0m ✓ awto-cynthion
+[1m[96m[INFO][0m Initializing submodules in awto-cynthion...
+[1m[96m[INFO][0m ✓ Submodules initialized
+[1m[93m[WARNING][0m Skipping optional awto-luna
+[1m[93m[WARNING][0m Skipping optional awto-facedancer
+
+[1m[96m======================================================================[0m
+[1m[96mToolchain Verification[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m ✓ Yosys: Yosys 0.65+57 (git sha1 9d0cdb855, clang++ 18.1.8 -fPIC -O3)
+[1m[96m[INFO][0m ✓ nextpnr-ecp5: 
+
+[1m[96m======================================================================[0m
+[1m[96mPython Environment[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m ✓ Python 3.14.4
+[1m[96m[INFO][0m Installing cynthion package (editable)...
+[1m[96m[INFO][0m ✓ cynthion package installed
+
+[1m[96m======================================================================[0m
+[1m[96mApollo Firmware Build[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Getting dependencies (TinyUSB, etc)...
+[1m[91m[ERROR][0m Failed to get dependencies: 2
+[1m[91m[ERROR][0m stderr: Makefile:60: ../lib/tinyusb/examples/make.mk: No such file or directory
+make: *** No rule to make target '../lib/tinyusb/examples/make.mk'.  Stop.
+
+[1m[91m[ERROR][0m This usually means TinyUSB submodule initialization failed. Try:
+[1m[91m[ERROR][0m   cd /home/dan/git/awtoau/awto-apollo/firmware
+[1m[91m[ERROR][0m   git submodule update --init --recursive lib/tinyusb/
+
+[1m[96m======================================================================[0m
+[1m[96mmoondancer Firmware Build (Rust/RISC-V)[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Building release...
+[1m[96m[INFO][0m ✓ moondancer firmware built successfully
+
+[1m[96m======================================================================[0m
+[1m[96mAnalyzer Gateware Build[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Elaborating analyzer gateware...
+[1m[96m[INFO][0m ✓ Analyzer gateware elaborated successfully
+
+[1m[96m======================================================================[0m
+[1m[96mFacedancer Gateware Build[0m
+[1m[96m======================================================================[0m
+
+[1m[96m[INFO][0m Elaborating facedancer gateware...
+[1m[91m[ERROR][0m Facedancer gateware elaboration failed with exit code 1
+[1m[91m[ERROR][0m Known issue: luna_soc SPIflash controller has incompatible Field definition
+[1m[91m[ERROR][0m Probable cause: Facedancer uses SPIflash but current luna_soc version is broken
+[1m[91m[ERROR][0m Workaround: Try analyzer-only build without SPIflash
+[1m[91m[ERROR][0m Some builds failed

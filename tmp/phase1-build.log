@@ -1,0 +1,72 @@
+
+[1m[96m======================================================================[0m
+[1m[96mCynthion Workspace Full Setup[0m
+[1m[96m======================================================================[0m
+
+
+[1m[96m======================================================================[0m
+[1m[96mRepository Setup[0m
+[1m[96m======================================================================[0m
+
+[96m[INFO][0m Repos directory: /home/dan/git/awtoau
+[96m[INFO][0m Pulling awto-apollo...
+[92m[OK][0m ✓ awto-apollo
+[96m[INFO][0m Initializing submodules in awto-apollo...
+[93m[WARN][0m Warning: submodule init failed (may not be needed)
+[96m[INFO][0m Pulling awto-cynthion...
+[92m[OK][0m ✓ awto-cynthion
+[96m[INFO][0m Initializing submodules in awto-cynthion...
+[92m[OK][0m ✓ Submodules initialized
+[93m[WARN][0m Skipping optional awto-luna
+[93m[WARN][0m Skipping optional awto-facedancer
+
+[1m[96m======================================================================[0m
+[1m[96mToolchain Verification[0m
+[1m[96m======================================================================[0m
+
+[92m[OK][0m ✓ Yosys: Yosys 0.65+57 (git sha1 9d0cdb855, clang++ 18.1.8 -fPIC -O3)
+[92m[OK][0m ✓ nextpnr-ecp5: 
+
+[1m[96m======================================================================[0m
+[1m[96mPython Environment[0m
+[1m[96m======================================================================[0m
+
+[92m[OK][0m ✓ Python 3.14.4
+[96m[INFO][0m Installing cynthion package (editable)...
+[92m[OK][0m ✓ cynthion package installed
+
+[1m[96m======================================================================[0m
+[1m[96mApollo Firmware Build[0m
+[1m[96m======================================================================[0m
+
+[96m[INFO][0m Getting dependencies (TinyUSB, etc)...
+[91m[ERROR][0m Failed to get dependencies
+
+[1m[96m======================================================================[0m
+[1m[96mmoondancer Firmware Build (Rust/RISC-V)[0m
+[1m[96m======================================================================[0m
+
+[96m[INFO][0m Building release...
+[92m[OK][0m ✓ moondancer firmware built successfully
+
+[1m[96m======================================================================[0m
+[1m[96mAnalyzer Gateware Build[0m
+[1m[96m======================================================================[0m
+
+[96m[INFO][0m Elaborating analyzer gateware...
+[92m[OK][0m ✓ Analyzer gateware elaborated successfully
+
+[1m[96m======================================================================[0m
+[1m[96mFacedancer Gateware Build[0m
+[1m[96m======================================================================[0m
+
+[96m[INFO][0m Elaborating facedancer gateware...
+[91m[ERROR][0m Facedancer gateware elaboration failed
+  le "/home/dan/.local/lib/python3.14/site-packages/luna_soc/gateware/core/spiflash/controller.py", line 91, in __init__
+    self._cs     = regs.add("cs",     self.Cs())
+                                      ~~~~~~~^^
+  File "/home/dan/.local/lib/python3.14/site-packages/luna_soc/gateware/vendor/amaranth_soc/csr/reg.py", line 504, in __init__
+    raise TypeError(f"Field collection must be a dict, list, or Field, not {fields!r}")
+TypeError: Field collection must be a dict, list, or Field, not None
+
+[91m[ERROR][0m Some builds failed

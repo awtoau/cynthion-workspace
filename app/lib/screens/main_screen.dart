@@ -20,7 +20,7 @@ class MainScreen extends StatelessWidget {
         Expanded(
           child: Row(children: [
             Expanded(
-              flex: 3,
+              flex: 1,
               child: Container(
                 decoration: const BoxDecoration(
                   border: Border(right: BorderSide(color: theme.borderColor)),
@@ -28,8 +28,8 @@ class MainScreen extends StatelessWidget {
                 child: const TopologyCanvas(),
               ),
             ),
-            SizedBox(
-              width: 360,
+            Expanded(
+              flex: 2,
               child: Column(children: [
                 Expanded(
                   flex: 3,
@@ -56,6 +56,7 @@ class MainScreen extends StatelessWidget {
     );
   }
 }
+
 
 class _TitleBar extends ConsumerWidget {
   const _TitleBar();

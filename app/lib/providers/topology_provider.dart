@@ -3,14 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/node.dart';
+import 'board_config_provider.dart';
 
 const _prefKey = 'node_positions_v1';
 
 class TopologyNotifier extends Notifier<Map<String, HardwareNode>> {
   @override
   Map<String, HardwareNode> build() {
+    final nodes = ref.watch(boardConfigProvider).valueOrNull?.nodes ?? const [];
     _loadPositions();
-    return {for (final n in defaultNodes) n.id: n};
+    return {for (final n in nodes) n.id: n};
   }
 
   void moveNode(String id, Offset delta) {

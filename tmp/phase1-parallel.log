@@ -1,0 +1,5 @@
+usage: install.py [-h] [--repos-path REPOS_PATH] [--repo-only] [--no-build]
+                  [--no-submodules] [--verbose] [--dry-run] [--parallel]
+                  [--jobs N]
+                  {setup,clean,rebuild,status,versions,versions-check,prereqs,clone-repos,toolchain-install,toolchain-status,ci-install,ci-list} ...
+install.py: error: unrecognized arguments: --parallel --jobs 2

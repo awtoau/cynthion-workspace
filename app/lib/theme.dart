@@ -18,6 +18,17 @@ const colTarget  = Color(0xFF79C0FF); // light blue
 const colDevice  = Color(0xFFFFA657); // amber
 const colPower   = Color(0xFF56D364); // bright green
 
+// New peripheral node accent colours
+const colUsbConnector = Color(0xFF79C0FF); // light blue (same as target)
+const colSwd          = Color(0xFFFF7B72); // salmon/orange-red — debug ports
+const colPmod         = Color(0xFFD2A8FF); // lavender
+const colMezzanine    = Color(0xFFD2A8FF); // lavender
+const colButton       = Color(0xFFFFA657); // amber
+const colLed          = Color(0xFFFFD700); // gold
+const colFlash        = Color(0xFF8B949E); // grey
+const colHyperRam     = Color(0xFF8B949E); // grey
+const colUsbPhy       = Color(0xFF58A6FF); // blue
+
 // Software / logical node accent colours (same hues, lower saturation)
 const colFirmware  = Color(0xFF8B949E); // grey-blue
 const colGateware  = Color(0xFF8B949E);
@@ -33,6 +44,15 @@ Color nodeAccent(NodeType t) => switch (t) {
       NodeType.targetC      => colTarget,
       NodeType.device       => colDevice,
       NodeType.powerMonitor => colPower,
+      NodeType.usbConnector => colUsbConnector,
+      NodeType.swd          => colSwd,
+      NodeType.pmod         => colPmod,
+      NodeType.mezzanine    => colMezzanine,
+      NodeType.button       => colButton,
+      NodeType.led          => colLed,
+      NodeType.flash        => colFlash,
+      NodeType.hyperram     => colHyperRam,
+      NodeType.usbPhy       => colUsbPhy,
       NodeType.firmware     => colFirmware,
       NodeType.gateware     => colGateware,
       NodeType.daemon       => colDaemon,

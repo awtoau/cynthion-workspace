@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'hardware_info.dart';
 
 enum NodeType {
   // physical hardware
   host, apollo, fpga, riscv, targetA, targetC, device, powerMonitor,
+  // connectors / peripherals
+  usbConnector, swd, pmod, mezzanine, button, led, flash, hyperram, usbPhy,
   // logical / software
   firmware, gateware, daemon, library,
 }
@@ -16,6 +19,7 @@ class HardwareNode {
   final NodeType type;
   NodeStatus status;
   Offset position; // canvas-space
+  final HardwareInfo? info;
 
   HardwareNode({
     required this.id,
@@ -24,12 +28,39 @@ class HardwareNode {
     required this.type,
     this.status = NodeStatus.unknown,
     required this.position,
+    this.info,
   });
 
   bool get isPhysical => switch (type) {
-        NodeType.host || NodeType.apollo || NodeType.fpga ||
-        NodeType.riscv || NodeType.targetA || NodeType.targetC ||
-        NodeType.device || NodeType.powerMonitor => true,
+        NodeType.host ||
+        NodeType.apollo ||
+        NodeType.fpga ||
+        NodeType.riscv ||
+        NodeType.targetA ||
+        NodeType.targetC ||
+        NodeType.device ||
+        NodeType.powerMonitor ||
+        NodeType.usbConnector ||
+        NodeType.swd ||
+        NodeType.pmod ||
+        NodeType.mezzanine ||
+        NodeType.button ||
+        NodeType.led ||
+        NodeType.flash ||
+        NodeType.hyperram ||
+        NodeType.usbPhy =>
+          true,
+        _ => false,
+      };
+
+  bool get isCompact => switch (type) {
+        NodeType.usbConnector ||
+        NodeType.swd ||
+        NodeType.pmod ||
+        NodeType.mezzanine ||
+        NodeType.button ||
+        NodeType.led =>
+          true,
         _ => false,
       };
 
@@ -40,6 +71,7 @@ class HardwareNode {
         type: type,
         status: status ?? this.status,
         position: position ?? this.position,
+        info: info,
       );
 }
 
@@ -48,59 +80,19 @@ class NodeConnection {
   final String toId;
   final String label;
   final bool active;
+  final bool dataActive;
 
   const NodeConnection({
     required this.fromId,
     required this.toId,
     this.label = '',
     this.active = true,
+    this.dataActive = false,
   });
 }
 
 const nodeSize = Size(130, 62);
+const nodeCompactSize = Size(100, 48);
 
-// Initial hardware topology — matches docs/architecture.md
-// Fake/demo data for now; apollod will update status at runtime.
-final defaultNodes = [
-  // ── Physical hardware ────────────────────────────────────────────
-  HardwareNode(id: 'host',    label: 'Host PC',    sublabel: 'linux',
-      type: NodeType.host,         position: const Offset(60,  340), status: NodeStatus.ok),
-  HardwareNode(id: 'apollo',  label: 'Apollo',     sublabel: 'SAMD11 · 1d50:615c · SN:005600…',
-      type: NodeType.apollo,       position: const Offset(320, 220), status: NodeStatus.unknown),
-  HardwareNode(id: 'pac1954', label: 'PAC1954',    sublabel: 'I²C power monitor',
-      type: NodeType.powerMonitor, position: const Offset(320, 420), status: NodeStatus.unknown),
-  HardwareNode(id: 'fpga',    label: 'ECP5 FPGA',  sublabel: 'LFE5U-12F',
-      type: NodeType.fpga,         position: const Offset(580, 340), status: NodeStatus.unknown),
-  HardwareNode(id: 'riscv',   label: 'VexRiscv',   sublabel: 'soft core',
-      type: NodeType.riscv,        position: const Offset(580, 160), status: NodeStatus.unknown),
-  HardwareNode(id: 'targetA', label: 'TARGET-A',   sublabel: '1d50:615b',
-      type: NodeType.targetA,      position: const Offset(840, 240), status: NodeStatus.unknown),
-  HardwareNode(id: 'targetC', label: 'TARGET-C',   sublabel: 'camera port',
-      type: NodeType.targetC,      position: const Offset(840, 460), status: NodeStatus.unknown),
-  HardwareNode(id: 'camera',  label: 'UTi261M',    sublabel: '0bda:5830 UVC',
-      type: NodeType.device,       position: const Offset(1080, 460), status: NodeStatus.unknown),
+Size nodeSizeFor(HardwareNode n) => n.isCompact ? nodeCompactSize : nodeSize;
 
-  // ── Logical / software ───────────────────────────────────────────
-  HardwareNode(id: 'moondancer', label: 'moondancer', sublabel: 'RISC-V firmware',
-      type: NodeType.firmware,  position: const Offset(580, 60),  status: NodeStatus.unknown),
-  HardwareNode(id: 'gateware',   label: 'facedancer.bit', sublabel: 'ECP5 gateware',
-      type: NodeType.gateware,  position: const Offset(840, 60),  status: NodeStatus.unknown),
-  HardwareNode(id: 'apollod',    label: 'apollod',    sublabel: 'TTY daemon',
-      type: NodeType.daemon,    position: const Offset(60,  160),  status: NodeStatus.unknown),
-  HardwareNode(id: 'facedancer', label: 'facedancer',  sublabel: 'Python host lib',
-      type: NodeType.library,   position: const Offset(60,  520),  status: NodeStatus.unknown),
-];
-
-const defaultConnections = [
-  NodeConnection(fromId: 'host',       toId: 'apollo',      label: 'CONTROL USB'),
-  NodeConnection(fromId: 'apollo',     toId: 'fpga',        label: 'JTAG + UART'),
-  NodeConnection(fromId: 'apollo',     toId: 'pac1954',     label: 'I²C'),
-  NodeConnection(fromId: 'fpga',       toId: 'riscv',       label: 'internal'),
-  NodeConnection(fromId: 'fpga',       toId: 'targetA',     label: 'PHY A'),
-  NodeConnection(fromId: 'fpga',       toId: 'targetC',     label: 'PHY C'),
-  NodeConnection(fromId: 'targetC',    toId: 'camera',      label: 'UVC'),
-  NodeConnection(fromId: 'moondancer', toId: 'riscv',       label: 'runs on'),
-  NodeConnection(fromId: 'gateware',   toId: 'fpga',        label: 'loaded into'),
-  NodeConnection(fromId: 'apollod',    toId: 'apollo',      label: 'ttyACM0-2'),
-  NodeConnection(fromId: 'facedancer', toId: 'targetA',     label: 'GCP API'),
-];

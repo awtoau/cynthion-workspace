@@ -1,0 +1,417 @@
+{
+  "_meta": {
+    "board": "Cynthion",
+    "version": "1.4",
+    "kicad_source": "repos/cynthion-hardware"
+  },
+  "nodes": [
+    {
+      "id": "host",
+      "label": "Host PC",
+      "sublabel": "linux",
+      "type": "host",
+      "position": { "x": 53.5, "y": 90.8 }
+    },
+    {
+      "id": "apollo",
+      "label": "Apollo",
+      "sublabel": "SAMD11 · 1d50:615c · SN:005600…",
+      "type": "apollo",
+      "kicad_ref": "U4",
+      "position": { "x": 309.2, "y": 216.2 },
+      "info": {
+        "partNumber": "ATSAMD11D14A-M",
+        "manufacturer": "Microchip",
+        "description": "Cortex-M0+ 32-bit MCU, 16KB Flash, 4KB SRAM, USB FS, 20-pin QFN",
+        "pins": []
+      }
+    },
+    {
+      "id": "pac1954",
+      "label": "PAC1954",
+      "sublabel": "I²C power monitor",
+      "type": "powerMonitor",
+      "kicad_ref": "U3",
+      "position": { "x": 48.75, "y": 413.7 },
+      "info": {
+        "partNumber": "PAC1954T",
+        "manufacturer": "Microchip",
+        "description": "4-channel power monitor, I²C/SMBus, ±1% accuracy",
+        "pins": []
+      }
+    },
+    {
+      "id": "fpga",
+      "label": "ECP5 FPGA",
+      "sublabel": "LFE5U-12F",
+      "type": "fpga",
+      "kicad_ref": "U1",
+      "position": { "x": 305.1, "y": 350.9 },
+      "info": {
+        "partNumber": "LFE5U-12F-6BG256C",
+        "manufacturer": "Lattice",
+        "description": "ECP5 FPGA, 12k LUTs, 1.1V core, 256-ball BGA",
+        "pins": []
+      }
+    },
+    {
+      "id": "riscv",
+      "label": "VexRiscv",
+      "sublabel": "soft core",
+      "type": "riscv",
+      "position": { "x": 535.1, "y": 213.8 }
+    },
+    {
+      "id": "targetA",
+      "label": "TARGET-A",
+      "sublabel": "1d50:615b",
+      "type": "targetA",
+      "position": { "x": 521.97, "y": 352.3 }
+    },
+    {
+      "id": "targetC",
+      "label": "TARGET-C",
+      "sublabel": "camera port",
+      "type": "targetC",
+      "position": { "x": 537.54, "y": 478.6 }
+    },
+    {
+      "id": "camera",
+      "label": "UTi261M",
+      "sublabel": "0bda:5830 UVC",
+      "type": "device",
+      "position": { "x": 773.35, "y": 548.0 }
+    },
+    {
+      "id": "moondancer",
+      "label": "moondancer",
+      "sublabel": "RISC-V firmware",
+      "type": "firmware",
+      "position": { "x": 779.23, "y": 97.4 }
+    },
+    {
+      "id": "gateware",
+      "label": "facedancer.bit",
+      "sublabel": "ECP5 gateware",
+      "type": "gateware",
+      "position": { "x": 44.7, "y": 562.7 }
+    },
+    {
+      "id": "apollod",
+      "label": "apollod",
+      "sublabel": "TTY daemon",
+      "type": "daemon",
+      "position": { "x": 55.93, "y": 260.2 }
+    },
+    {
+      "id": "facedancer",
+      "label": "facedancer",
+      "sublabel": "Python host lib",
+      "type": "library",
+      "position": { "x": 773.71, "y": 356.1 }
+    },
+    {
+      "id": "usb_ctrl",
+      "label": "CONTROL",
+      "sublabel": "USB-C · J2",
+      "type": "usbConnector",
+      "kicad_ref": "J2",
+      "position": { "x": 175.0, "y": 130.0 }
+    },
+    {
+      "id": "usb_target_a",
+      "label": "TARGET-A",
+      "sublabel": "USB-A · J3",
+      "type": "usbConnector",
+      "kicad_ref": "J3",
+      "position": { "x": 670.0, "y": 310.0 }
+    },
+    {
+      "id": "usb_target_c",
+      "label": "TARGET-C",
+      "sublabel": "USB-C · J4",
+      "type": "usbConnector",
+      "kicad_ref": "J4",
+      "position": { "x": 670.0, "y": 450.0 }
+    },
+    {
+      "id": "usb_aux",
+      "label": "AUX",
+      "sublabel": "USB-C · J1",
+      "type": "usbConnector",
+      "kicad_ref": "J1",
+      "position": { "x": 670.0, "y": 560.0 }
+    },
+    {
+      "id": "usb_phy_a",
+      "label": "USB3343",
+      "sublabel": "PHY · TARGET-A",
+      "type": "usbPhy",
+      "kicad_ref": "U2",
+      "position": { "x": 590.0, "y": 310.0 },
+      "info": {
+        "partNumber": "USB3343-CP",
+        "manufacturer": "Microchip",
+        "description": "Hi-Speed USB 2.0 ULPI PHY, 3.3V, QFN-32",
+        "pins": []
+      }
+    },
+    {
+      "id": "usb_phy_c",
+      "label": "USB3343",
+      "sublabel": "PHY · TARGET-C",
+      "type": "usbPhy",
+      "kicad_ref": "U5",
+      "position": { "x": 590.0, "y": 450.0 },
+      "info": {
+        "partNumber": "USB3343-CP",
+        "manufacturer": "Microchip",
+        "description": "Hi-Speed USB 2.0 ULPI PHY, 3.3V, QFN-32",
+        "pins": []
+      }
+    },
+    {
+      "id": "config_flash",
+      "label": "W25Q32",
+      "sublabel": "4MB config flash",
+      "type": "flash",
+      "kicad_ref": "U6",
+      "position": { "x": 420.0, "y": 290.0 },
+      "info": {
+        "partNumber": "W25Q32JVSS",
+        "manufacturer": "Winbond",
+        "description": "32Mbit SPI NOR Flash — stores FPGA bitstream",
+        "pins": []
+      }
+    },
+    {
+      "id": "hyperram",
+      "label": "HyperRAM",
+      "sublabel": "S27KS0641 8MB",
+      "type": "hyperram",
+      "kicad_ref": "U7",
+      "position": { "x": 420.0, "y": 410.0 },
+      "info": {
+        "partNumber": "S27KS0641GABHI020",
+        "manufacturer": "Infineon",
+        "description": "64Mbit HyperRAM, 200MHz HyperBus interface",
+        "pins": []
+      }
+    },
+    {
+      "id": "swd_mcu",
+      "label": "MCU SWD",
+      "sublabel": "10-pin · J6",
+      "type": "swd",
+      "kicad_ref": "J6",
+      "position": { "x": 280.0, "y": 140.0 },
+      "info": {
+        "partNumber": "Conn_ARM_JTAG_SWD_10",
+        "manufacturer": "",
+        "description": "10-pin 0.05\" Cortex SWD/JTAG debug connector",
+        "pins": [
+          { "number": 1,  "name": "VCC",    "signal": "VCC",        "type": "power"  },
+          { "number": 2,  "name": "SWDIO",  "signal": "SWDIO",      "type": "signal" },
+          { "number": 3,  "name": "GND",    "signal": "GND",        "type": "gnd"    },
+          { "number": 4,  "name": "SWDCLK", "signal": "SWDCLK",     "type": "signal" },
+          { "number": 5,  "name": "GND",    "signal": "GND",        "type": "gnd"    },
+          { "number": 6,  "name": "SWO",    "signal": "SWO",        "type": "signal" },
+          { "number": 7,  "name": "KEY",    "signal": "NC",         "type": "nc"     },
+          { "number": 8,  "name": "NC",     "signal": "NC",         "type": "nc"     },
+          { "number": 9,  "name": "GND",    "signal": "GND",        "type": "gnd"    },
+          { "number": 10, "name": "nRESET", "signal": "~{RESET}",   "type": "signal" }
+        ]
+      }
+    },
+    {
+      "id": "swd_fpga",
+      "label": "FPGA SWD",
+      "sublabel": "3-pin · J10",
+      "type": "swd",
+      "kicad_ref": "J10",
+      "position": { "x": 680.0, "y": 180.0 }
+    },
+    {
+      "id": "pmod_a",
+      "label": "PMOD-A",
+      "sublabel": "12-pin · J7",
+      "type": "pmod",
+      "kicad_ref": "J7",
+      "position": { "x": 170.0, "y": 540.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "PMOD-A 12-pin 0.1\" right-angle connector",
+        "pins": [
+          { "number": 1,  "name": "IO1",  "signal": "PMOD_A1",  "type": "signal" },
+          { "number": 2,  "name": "IO2",  "signal": "PMOD_A2",  "type": "signal" },
+          { "number": 3,  "name": "IO3",  "signal": "PMOD_A3",  "type": "signal" },
+          { "number": 4,  "name": "IO4",  "signal": "PMOD_A4",  "type": "signal" },
+          { "number": 5,  "name": "GND",  "signal": "GND",      "type": "gnd"    },
+          { "number": 6,  "name": "VCC",  "signal": "+3V3",     "type": "power"  },
+          { "number": 7,  "name": "IO7",  "signal": "PMOD_A7",  "type": "signal" },
+          { "number": 8,  "name": "IO8",  "signal": "PMOD_A8",  "type": "signal" },
+          { "number": 9,  "name": "IO9",  "signal": "PMOD_A9",  "type": "signal" },
+          { "number": 10, "name": "IO10", "signal": "PMOD_A10", "type": "signal" },
+          { "number": 11, "name": "GND",  "signal": "GND",      "type": "gnd"    },
+          { "number": 12, "name": "VCC",  "signal": "+3V3",     "type": "power"  }
+        ]
+      }
+    },
+    {
+      "id": "pmod_b",
+      "label": "PMOD-B",
+      "sublabel": "12-pin · J8",
+      "type": "pmod",
+      "kicad_ref": "J8",
+      "position": { "x": 170.0, "y": 610.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "PMOD-B 12-pin 0.1\" right-angle connector",
+        "pins": [
+          { "number": 1,  "name": "IO1",  "signal": "PMOD_B1",  "type": "signal" },
+          { "number": 2,  "name": "IO2",  "signal": "PMOD_B2",  "type": "signal" },
+          { "number": 3,  "name": "IO3",  "signal": "PMOD_B3",  "type": "signal" },
+          { "number": 4,  "name": "IO4",  "signal": "PMOD_B4",  "type": "signal" },
+          { "number": 5,  "name": "GND",  "signal": "GND",      "type": "gnd"    },
+          { "number": 6,  "name": "VCC",  "signal": "+3V3",     "type": "power"  },
+          { "number": 7,  "name": "IO7",  "signal": "PMOD_B7",  "type": "signal" },
+          { "number": 8,  "name": "IO8",  "signal": "PMOD_B8",  "type": "signal" },
+          { "number": 9,  "name": "IO9",  "signal": "PMOD_B9",  "type": "signal" },
+          { "number": 10, "name": "IO10", "signal": "PMOD_B10", "type": "signal" },
+          { "number": 11, "name": "GND",  "signal": "GND",      "type": "gnd"    },
+          { "number": 12, "name": "VCC",  "signal": "+3V3",     "type": "power"  }
+        ]
+      }
+    },
+    {
+      "id": "mezzanine",
+      "label": "Mezzanine",
+      "sublabel": "30-pin · J5",
+      "type": "mezzanine",
+      "kicad_ref": "J5",
+      "position": { "x": 420.0, "y": 580.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "Mezzanine 30-pin SMD gold edge connector",
+        "pins": [
+          { "number": 1,  "name": "MEZZANINE1",  "signal": "MEZZANINE1",  "type": "signal" },
+          { "number": 2,  "name": "MEZZANINE2",  "signal": "MEZZANINE2",  "type": "signal" },
+          { "number": 3,  "name": "MEZZANINE3",  "signal": "MEZZANINE3",  "type": "signal" },
+          { "number": 4,  "name": "MEZZANINE4",  "signal": "MEZZANINE4",  "type": "signal" },
+          { "number": 5,  "name": "MEZZANINE5",  "signal": "MEZZANINE5",  "type": "signal" },
+          { "number": 6,  "name": "MEZZANINE6",  "signal": "MEZZANINE6",  "type": "signal" },
+          { "number": 7,  "name": "MEZZANINE7",  "signal": "MEZZANINE7",  "type": "signal" },
+          { "number": 8,  "name": "MEZZANINE8",  "signal": "MEZZANINE8",  "type": "signal" },
+          { "number": 9,  "name": "MEZZANINE9",  "signal": "MEZZANINE9",  "type": "signal" },
+          { "number": 10, "name": "MEZZANINE10", "signal": "MEZZANINE10", "type": "signal" },
+          { "number": 11, "name": "MEZZANINE11", "signal": "MEZZANINE11", "type": "signal" },
+          { "number": 12, "name": "MEZZANINE12", "signal": "MEZZANINE12", "type": "signal" },
+          { "number": 13, "name": "MEZZANINE13", "signal": "MEZZANINE13", "type": "signal" },
+          { "number": 14, "name": "MEZZANINE14", "signal": "MEZZANINE14", "type": "signal" },
+          { "number": 15, "name": "MEZZANINE15", "signal": "MEZZANINE15", "type": "signal" },
+          { "number": 16, "name": "MEZZANINE16", "signal": "MEZZANINE16", "type": "signal" },
+          { "number": 17, "name": "MEZZANINE17", "signal": "MEZZANINE17", "type": "signal" },
+          { "number": 18, "name": "MEZZANINE18", "signal": "MEZZANINE18", "type": "signal" },
+          { "number": 19, "name": "MEZZANINE19", "signal": "MEZZANINE19", "type": "signal" },
+          { "number": 20, "name": "MEZZANINE20", "signal": "MEZZANINE20", "type": "signal" },
+          { "number": 21, "name": "MEZZANINE21", "signal": "MEZZANINE21", "type": "signal" },
+          { "number": 22, "name": "MEZZANINE22", "signal": "MEZZANINE22", "type": "signal" },
+          { "number": 23, "name": "MEZZANINE23", "signal": "MEZZANINE23", "type": "signal" },
+          { "number": 24, "name": "MEZZANINE24", "signal": "MEZZANINE24", "type": "signal" },
+          { "number": 25, "name": "MEZZANINE25", "signal": "MEZZANINE25", "type": "signal" },
+          { "number": 26, "name": "MEZZANINE26", "signal": "MEZZANINE26", "type": "signal" },
+          { "number": 27, "name": "GND",          "signal": "GND",         "type": "gnd"    },
+          { "number": 28, "name": "GND",          "signal": "GND",         "type": "gnd"    },
+          { "number": 29, "name": "VCC",          "signal": "+3V3",        "type": "power"  },
+          { "number": 30, "name": "VCC",          "signal": "+3V3",        "type": "power"  }
+        ]
+      }
+    },
+    {
+      "id": "btn_program",
+      "label": "PROGRAM",
+      "sublabel": "SW1 button",
+      "type": "button",
+      "kicad_ref": "SW1",
+      "position": { "x": 900.0, "y": 200.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "PROGRAM button (SW1) — asserts ~{BTN_PROGRAM}, triggers FPGA configuration from flash",
+        "pins": []
+      }
+    },
+    {
+      "id": "btn_reset",
+      "label": "RESET",
+      "sublabel": "SW2 button",
+      "type": "button",
+      "kicad_ref": "SW2",
+      "position": { "x": 900.0, "y": 260.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "RESET button (SW2) — asserts ~{BTN_RESET}, hard reset",
+        "pins": []
+      }
+    },
+    {
+      "id": "btn_user",
+      "label": "USER",
+      "sublabel": "SW3 button",
+      "type": "button",
+      "kicad_ref": "SW3",
+      "position": { "x": 900.0, "y": 320.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "USER button (SW3) — asserts ~{BTN_USER}, general purpose input",
+        "pins": []
+      }
+    },
+    {
+      "id": "leds",
+      "label": "LEDs",
+      "sublabel": "D2-D14 · LED[0..14]",
+      "type": "led",
+      "position": { "x": 900.0, "y": 400.0 },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "LED array: D2(RED/LED0) D3(ORANGE/LED1) D4(YELLOW/LED2) D5(GREEN/LED3) D6(BLUE/LED4) D7(PURPLE/LED5) D10(ICE BLUE/LED10) D11(PINK/LED11) D12(WHITE/LED12) D13(PINK/LED13) D14(ICE BLUE/LED14) — driven by FPGA LED[0..14]",
+        "pins": []
+      }
+    }
+  ],
+  "connections": [
+    { "fromId": "host",       "toId": "usb_ctrl",    "label": "CONTROL USB" },
+    { "fromId": "usb_ctrl",   "toId": "apollo",       "label": "" },
+    { "fromId": "apollo",     "toId": "fpga",         "label": "JTAG + UART" },
+    { "fromId": "apollo",     "toId": "pac1954",      "label": "I²C" },
+    { "fromId": "apollo",     "toId": "swd_mcu",      "label": "SWD" },
+    { "fromId": "fpga",       "toId": "config_flash", "label": "SPI" },
+    { "fromId": "fpga",       "toId": "hyperram",     "label": "HyperBus" },
+    { "fromId": "fpga",       "toId": "riscv",        "label": "internal" },
+    { "fromId": "fpga",       "toId": "usb_phy_a",    "label": "ULPI" },
+    { "fromId": "fpga",       "toId": "usb_phy_c",    "label": "ULPI" },
+    { "fromId": "usb_phy_a",  "toId": "usb_target_a", "label": "" },
+    { "fromId": "usb_phy_c",  "toId": "usb_target_c", "label": "" },
+    { "fromId": "fpga",       "toId": "usb_aux",      "label": "AUX PHY" },
+    { "fromId": "targetC",    "toId": "camera",       "label": "UVC" },
+    { "fromId": "riscv",      "toId": "swd_fpga",     "label": "JTAG" },
+    { "fromId": "fpga",       "toId": "pmod_a",       "label": "IO bank" },
+    { "fromId": "fpga",       "toId": "pmod_b",       "label": "IO bank" },
+    { "fromId": "fpga",       "toId": "mezzanine",    "label": "IO bank" },
+    { "fromId": "fpga",       "toId": "btn_program",  "label": "~BTN" },
+    { "fromId": "fpga",       "toId": "btn_reset",    "label": "~BTN" },
+    { "fromId": "fpga",       "toId": "btn_user",     "label": "~BTN" },
+    { "fromId": "fpga",       "toId": "leds",         "label": "LED[0..14]" },
+    { "fromId": "moondancer", "toId": "riscv",        "label": "runs on" },
+    { "fromId": "gateware",   "toId": "fpga",         "label": "loaded into" },
+    { "fromId": "apollod",    "toId": "apollo",       "label": "ttyACM0-2" },
+    { "fromId": "facedancer", "toId": "targetA",      "label": "GCP API" }
+  ]
+}

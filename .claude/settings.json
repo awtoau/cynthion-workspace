@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh issue *)",
+      "Bash(grep -E \"\\\\.\\(py|sh\\)$\")",
+      "Bash(grep -oE \"PIN_PA[0-9]{1,2}\")",
+      "Bash(cat > *)",
+      "Bash(git log *)",
+      "Bash(grep -E \"\\\\.h$\")",
+      "Bash(gh --version)",
+      "Bash(gh api *)",
+      "Bash(xargs ls -lhS)",
+      "Bash(arm-none-eabi-gcc --version)",
+      "Bash(riscv64-unknown-elf-gcc --version)",
+      "Bash(yosys --version)",
+      "Bash(nextpnr-ecp5 --version)",
+      "WebFetch(domain:github.com)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

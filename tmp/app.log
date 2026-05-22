@@ -1,0 +1,3 @@
+
+(au.awto.cynthion_monitor:3250206): Atk-CRITICAL **: 14:59:23.910: atk_socket_embed: assertion 'plug_id != NULL' failed
+Gdk-Message: 14:59:23.972: Unable to load  from the cursor theme

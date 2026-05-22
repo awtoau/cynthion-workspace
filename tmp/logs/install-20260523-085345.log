@@ -1,0 +1,10 @@
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] Root: /home/dan/git/cynthion-workspace
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] Repos: /home/dan/git/awtoau
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] OSS CAD Suite: /home/dan/opt/oss-cad-suite
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] ✓ awto-apollo [required]
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] ✓ awto-cynthion [required]
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] ✓ awto-luna [optional]
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] ✓ awto-facedancer [optional]
+2026-05-23 08:53:45 [[1m[96m[INFO][0m] Build artifacts:
+2026-05-23 08:53:45 [[1m[93m[WARNING][0m] ✗ Apollo firmware: apollo_debug_soc.elf
+2026-05-23 08:53:45 [[1m[93m[WARNING][0m] ✗ moondancer firmware: moondancer

@@ -4,7 +4,7 @@ import 'package:cynthion_monitor/main.dart';
 
 void main() {
   testWidgets('app smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const ProviderScope(child: CynthionMonitorApp()));
+    await tester.pumpWidget(ProviderScope(child: CynthionMonitorApp()));
     expect(find.text('Cynthion Monitor'), findsOneWidget);
   });
 }

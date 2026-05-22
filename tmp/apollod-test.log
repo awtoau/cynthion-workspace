@@ -1,0 +1,8 @@
+2026-05-22 14:59:20,754 apollod INFO Logging raw=/home/dan/git/awto-cynthion/tmp/apollo-raw.log friendly=/home/dan/git/awto-cynthion/tmp/apollo-friendly.log ai=/home/dan/git/awto-cynthion/tmp/apollo-ai.log
+2026-05-22 14:59:20,755 apollod INFO Listening on /home/dan/.local/run/apollod.sock
+2026-05-22 14:59:20,757 apollod INFO Device is moondancer (PID 615b) — no TTY sources
+2026-05-22 14:59:21,761 apollod INFO Device appeared: PID=615b serial=355027cba3ac60de
+2026-05-22 14:59:21,761 apollod INFO Device is moondancer (PID 615b) — no TTY sources
+2026-05-22 14:59:35,213 apollod INFO Socket client connected
+2026-05-22 14:59:35,214 apollod INFO Shutdown command received from client
+{"t": 174678.995532933, "src": "apollod", "kind": "status", "msg": "device connected pid=0x615b serial=355027cba3ac60de"}

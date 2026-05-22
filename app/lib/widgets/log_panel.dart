@@ -21,6 +21,9 @@ class LogPanel extends ConsumerStatefulWidget {
 class _LogPanelState extends ConsumerState<LogPanel> {
   final _scroll = ScrollController();
   bool _autoScroll = true;
+  final Set<TtySource> _visible = {
+    TtySource.rv0, TtySource.fpg, TtySource.apl, TtySource.system,
+  };
 
   @override
   void dispose() {
@@ -30,9 +33,9 @@ class _LogPanelState extends ConsumerState<LogPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = ref.watch(ttyProvider);
+    final all = ref.watch(ttyProvider);
+    final lines = all.where((l) => _visible.contains(l.source)).toList();
 
-    // Auto-scroll to bottom when new lines arrive
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_autoScroll && _scroll.hasClients) {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
@@ -65,14 +68,27 @@ class _LogPanelState extends ConsumerState<LogPanel> {
   }
 
   Widget _header() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: theme.borderColor)),
         ),
         child: Row(children: [
           const Icon(Icons.terminal, size: 13, color: theme.textMuted),
           const SizedBox(width: 6),
-          const Text('TTY log', style: TextStyle(color: theme.textMuted, fontSize: 11)),
+          const Text('TTY log',
+              style: TextStyle(color: theme.textMuted, fontSize: 11)),
+          const SizedBox(width: 10),
+          ...TtySource.values.map((src) => _SourceChip(
+                src: src,
+                on: _visible.contains(src),
+                onTap: () => setState(() {
+                  if (_visible.contains(src)) {
+                    if (_visible.length > 1) _visible.remove(src);
+                  } else {
+                    _visible.add(src);
+                  }
+                }),
+              )),
           const Spacer(),
           if (!_autoScroll)
             GestureDetector(
@@ -80,11 +96,49 @@ class _LogPanelState extends ConsumerState<LogPanel> {
                 setState(() => _autoScroll = true);
                 _scroll.jumpTo(_scroll.position.maxScrollExtent);
               },
-              child: const Text('↓ scroll to live',
+              child: const Text('↓ live',
                   style: TextStyle(color: Color(0xFF58A6FF), fontSize: 10)),
             ),
         ]),
       );
+}
+
+class _SourceChip extends StatelessWidget {
+  final TtySource src;
+  final bool on;
+  final VoidCallback onTap;
+  const _SourceChip({required this.src, required this.on, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _srcColor(src);
+    final tag = switch (src) {
+      TtySource.rv0    => 'rv0',
+      TtySource.fpg    => 'fpg',
+      TtySource.apl    => 'apl',
+      TtySource.system => 'sys',
+    };
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: on ? color.withValues(alpha: 0.15) : Colors.transparent,
+          border: Border.all(
+              color: on ? color.withValues(alpha: 0.6) : theme.borderColor),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Text(tag,
+            style: TextStyle(
+              color: on ? color : theme.textMuted,
+              fontSize: 9,
+              fontFamily: 'monospace',
+              fontWeight: FontWeight.w600,
+            )),
+      ),
+    );
+  }
 }
 
 class _LogLine extends StatelessWidget {
