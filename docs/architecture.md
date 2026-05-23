@@ -66,10 +66,13 @@ See issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15).
 ```bash
 git clone --recurse-submodules https://github.com/awtoau/cynthion-workspace
 cd cynthion-workspace
-./scripts/machine-setup.sh    # one-time: OS packages + toolchains + venv
-./scripts/check-fast.sh       # run before every commit
-./cynthion_control.py --help  # unified CLI
+./cyn setup                   # full setup (sequential)
+./cyn setup --parallel        # setup with parallelization (55% faster)
+./cyn check                   # run checks before every commit
+./cyn list                    # list all available commands
 ```
+
+See [Cyn CLI Architecture](../WIKI.md#cyn-cli-architecture) in WIKI.md for detailed target-based commands.
 
 ### udev / permissions
 
@@ -84,20 +87,19 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615b", MODE="0664", 
 
 All patches are tracked in source — no installed package files are edited directly.
 
-### facedancer patches (`repos/facedancer/` — `awto` branch)
+### facedancer patches (`vendor/facedancer/` — `awto` branch)
 
 | Issue | File | Description |
 |-------|------|-------------|
-| [#8](https://github.com/awtoau/cynthion-workspace/issues/8)   | proxy.py | Catch `USBErrorIO` on isochronous `bulkRead` instead of crashing |
-| [#9](https://github.com/awtoau/cynthion-workspace/issues/9)   | configuration.py | Skip pre-interface descriptors (e.g. IAD) that appear before any interface |
-| [#10](https://github.com/awtoau/cynthion-workspace/issues/10) | backends/base.py | Downgrade duplicate endpoint address from exception to warning (UVC alt settings) |
-| [#11](https://github.com/awtoau/cynthion-workspace/issues/11) | backends/moondancer.py | Deduplicate endpoints by address before calling `configure_endpoints` |
+| [#8](https://github.com/awtoau/cynthion-workspace/issues/8)   | configuration.py | Skip pre-interface descriptors (e.g. IAD) that appear before any interface |
+| [#9](https://github.com/awtoau/cynthion-workspace/issues/9)   | backends/base.py | Downgrade duplicate endpoint address from exception to warning (UVC alt settings) |
+| [#10](https://github.com/awtoau/cynthion-workspace/issues/10) | backends/moondancer.py | Deduplicate endpoints by address before calling `configure_endpoints` |
 
-### firmware patch
+### firmware patches
 
 | Issue | File | Description |
 |-------|------|-------------|
-| [#11](https://github.com/awtoau/cynthion-workspace/issues/11) | firmware/moondancer/src/gcp/moondancer.rs | Clamp endpoint `max_packet_size` to `EP_MAX_PACKET_SIZE` (512) instead of returning `EINVAL` for SS devices |
+| [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | firmware/moondancer/src/gcp/moondancer.rs | Clamp endpoint `max_packet_size` to `EP_MAX_PACKET_SIZE` (512) instead of returning `EINVAL` for SuperSpeed devices |
 
 ## Isochronous support (issue [#11](https://github.com/awtoau/cynthion-workspace/issues/11), in progress)
 
