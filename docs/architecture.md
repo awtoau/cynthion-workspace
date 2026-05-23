@@ -1,87 +1,29 @@
 # Cynthion Stack — Hardware Architecture and Patches
 
-## Hardware block diagram
+> **Note:** Detailed hardware architecture, device state diagrams, and patch documentation have been consolidated into [WIKI.md](../WIKI.md#hardware-architecture) as the canonical reference. This document focuses on architectural decisions and implementation status.
 
-```
-  HOST PC
-  ├─ CONTROL USB ──(1d50:615c)──► Apollo ARM MCU ──UART(R14/T14)──► ECP5 FPGA
-  │                                     │   │                              │
-  │                                  int│   └──JTAG──► ECP5 fabric         │
-  │                               (T6)  │                    │             │
-  │                                     └──────────── VexRiscv soft core ◄─┘
-  │
-  ├─ TARGET-A USB ─(1d50:615b)──► ECP5 FPGA ── moondancer gateware (facedancer mode)
-  │                                                  subclass 0x20
-  └─ TARGET-C USB ──────────────► UTi261M thermal camera (0bda:5830, UVC)
-                                  (proxied by facedancer → TARGET-A → host)
-```
 
-**Cynthion** — Great Scott Gadgets USB test instrument
-- USB VID:PID: 1d50:615b (all gateware modes: analyzer, facedancer)
-- Apollo bootloader: 1d50:60e6 (shown when no gateware is loaded)
-- The VID:PID alone does not tell you which gateware is running —
-  check the USB interface subclass: 0x10 = analyzer, 0x20 = moondancer/facedancer
+## Hardware Architecture
 
-**UTi261M** — UNI-T thermal imaging camera, controlled by UNIT Android app
-- USB VID:PID: 0bda:5830 (Realtek UVC chip)
-- Presents as USB Video Class (UVC) device
-- Connects to Cynthion TARGET-C port for proxy
+See [**WIKI.md Hardware Architecture**](../WIKI.md#hardware-architecture) for detailed block diagrams, device states, CONTROL_SWITCH design, and udev setup.
 
-## Device states and transitions
+**Key references:**
+- [Issue #15](https://github.com/awtoau/cynthion-workspace/issues/15) — Apollo supervisor architecture (watchdog, halt notification, UART forwarding)
 
-```
-Power on (gateware flashed)  →  1d50:615b  analyzer or facedancer mode
-Power on (no gateware)       →  1d50:60e6  Apollo bootloader
-
-cynthion run facedancer      →  loads facedancer.bit + moondancer.bin via Apollo
-                                device reappears at 1d50:615b with subclass 0x20
-
-cynthion update              →  flashes analyzer.bit to config flash
-                                device comes back as analyzer (subclass 0x10) after power cycle
-```
-
-After a proxy crash the Cynthion can become stuck at the Apollo stub level.
-`./scripts/reset-cynthion.sh` recovers via soft reset. If Apollo has already ceded
-CONTROL USB to the FPGA and the firmware is hung, a power cycle is required
-(see issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15)).
-
-## CONTROL_SWITCH architecture
-
-Apollo controls a USB mux between itself and the FPGA PHY. On boot Apollo holds
-CONTROL. When moondancer loads, Apollo asserts PROGRAM_B to configure the FPGA
-then cedes CONTROL USB to the FPGA. Once ceded, Apollo cannot be reached over
-USB until a power cycle or until PROGRAM_B is used to reset the FPGA.
-
-Multi-TTY plan: three CDC-ACM TTYs on CONTROL —
-- `ttyACM0` (rv0) UART bridge to VexRiscv
-- `ttyACM1` (fpg) FPGA event stream
-- `ttyACM2` (apl) Apollo console / GDB RSP
-
-See issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15).
-
-## Environment
-
-### Quick start (workspace)
+## Development Setup
 
 ```bash
 git clone --recurse-submodules https://github.com/awtoau/cynthion-workspace
 cd cynthion-workspace
-./cyn setup                   # full setup (sequential)
-./cyn setup --parallel        # setup with parallelization (55% faster)
-./cyn check                   # run checks before every commit
-./cyn list                    # list all available commands
+cyn setup                     # full setup (sequential)
+cyn setup --parallel          # setup with parallelization (55% faster)
+cyn check                     # run checks before every commit
+cyn list                      # list all available commands (target-based architecture)
 ```
 
-See [Cyn CLI Architecture](../WIKI.md#cyn-cli-architecture) in WIKI.md for detailed target-based commands.
-
-### udev / permissions
-
-udev rule: `/etc/udev/rules.d/54-cynthion.rules` (installed by `machine-setup.sh`)
-
-```udev
-SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615c", MODE="0664", GROUP="plugdev", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615b", MODE="0664", GROUP="plugdev", TAG+="uaccess"
-```
+**Documentation:**
+- [Cyn CLI Architecture](../WIKI.md#cyn-cli-architecture) — target-based command structure
+- [udev rules / USB permissions](../WIKI.md#udev-rules) — device access setup
 
 ## Patches
 
