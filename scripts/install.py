@@ -81,6 +81,12 @@ REPOS_MANIFEST = {
         "required": False,
         "builds": [],
     },
+    "awto-luna-soc": {
+        "url": "https://github.com/awtoau/awto-luna-soc.git",
+        "path": REPOS / "awto-luna-soc",
+        "required": True,
+        "builds": [],
+    },
     "awto-facedancer": {
         "url": "https://github.com/greatscottgadgets/facedancer.git",
         "path": REPOS / "awto-facedancer",
