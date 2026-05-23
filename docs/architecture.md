@@ -47,7 +47,7 @@ All patches are tracked in source — no installed package files are edited dire
 
 Full isochronous support requires changes at three layers:
 
-### Gateware (`repos/cynthion/cynthion/python/src/gateware/facedancer/`)
+### Gateware (`vendor/cynthion/cynthion/python/src/gateware/facedancer/`)
 
 `ep_iso_in.py` — Amaranth CSR peripheral wrapping LUNA's `USBIsochronousStreamInEndpoint`.
 
@@ -63,11 +63,11 @@ Full isochronous support requires changes at three layers:
 
 **Status:** code complete, requires bitstream rebuild.
 
-### Firmware (`repos/cynthion/firmware/moondancer/src/gcp/moondancer.rs`)
+### Firmware (`vendor/cynthion/firmware/moondancer/src/gcp/moondancer.rs`)
 
 - GCP verb `0x10` (`iso_in_write`): stub only until bitstream is rebuilt
 
-### Python (`repos/facedancer/` — `awto` branch)
+### Python (`vendor/facedancer/` — `awto` branch)
 
 - `proxy.py`: `handle_nak` routes isochronous IN to `_proxy_iso_in_transfer`
 - `proxy.py`: `_proxy_iso_in_transfer` reads one frame via libusb1 isochronous transfer
