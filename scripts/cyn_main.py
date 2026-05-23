@@ -791,8 +791,17 @@ class CynCLI:
 
     def _build_gateware(self, log_file, release=False):
         """Build gateware (Amaranth HDL)"""
-        return self._run_tee("gateware", ["make", "facedancer"],
-            cwd=GATEWARE_DIR, log_file=log_file)
+        # Set up OSS CAD Suite in environment
+        env = os.environ.copy()
+        oss_cad_suite = Path.home() / "opt" / "oss-cad-suite" / "bin"
+        if oss_cad_suite.exists():
+            env["PATH"] = f"{oss_cad_suite}:{env.get('PATH', '')}"
+
+        for target in ["analyzer", "selftest", "facedancer"]:
+            ret = self._run_tee(f"gateware {target}", ["make", target],
+                cwd=GATEWARE_DIR, log_file=log_file, env=env)
+            if ret != 0: return ret
+        return 0
 
     def _build_app(self, log_file, release=False):
         """Build Flutter app"""
@@ -820,10 +829,13 @@ class CynCLI:
     def _check_gateware(self, log_file):
         """Check gateware"""
         self._check_venv()
-        return self._run_tee("gateware elaborate",
-            [str(VENV_PYTHON), "-c",
-             "from cynthion.gateware.facedancer import top; print('elaborate ok')"],
-            log_file=log_file, check=False)
+        for target in ["analyzer", "selftest", "facedancer"]:
+            ret = self._run_tee(f"gateware {target} elaborate",
+                [str(VENV_PYTHON), "-c",
+                 f"from cynthion.gateware.{target} import top; print('elaborate ok')"],
+                log_file=log_file, check=False)
+            if ret != 0: return ret
+        return 0
 
     def _check_python(self, log_file):
         """Check Python code"""
