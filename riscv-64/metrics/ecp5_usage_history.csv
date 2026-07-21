@@ -1,0 +1,7 @@
+timestamp,git_commit,tag,device,package,speed,luts_used,luts_total,luts_pct,ffs_used,ffs_total,ffs_pct,bram_used,bram_total,bram_pct,fmax_mhz,target_mhz,timing_pass,source_log,notes
+2026-07-21T14:59:27+00:00,8b987e8,baseline,LFE5U-12F,BG256,8,2351,24288,9.68,895,24288,3.68,,,,95.07,25.00,yes,riscv-64/out/sim/vexii_ecp5_nextpnr.log,wrapper core-only
+2026-07-21T15:01:00+00:00,8b987e8,baseline-bram,LFE5U-12F,BG256,8,2351,24288,9.68,895,24288,3.68,,,,95.07,25.00,yes,riscv-64/out/sim/vexii_ecp5_nextpnr.log,bram size tracking enabled
+2026-07-21T15:01:14+00:00,8b987e8,baseline-bram-fixed,LFE5U-12F,BG256,8,2351,24288,9.68,895,24288,3.68,0,56,0.00,95.07,25.00,yes,riscv-64/out/sim/vexii_ecp5_nextpnr.log,dp16kd parser fixed
+2026-07-21T15:01:56+00:00,8b987e8,smoke-de,LFE5U-12F,BG256,8,2351,24288,9.68,895,24288,3.68,0,56,0.00,95.07,25.00,yes,riscv-64/out/sim/vexii_ecp5_nextpnr.log,runner wiring test
+2026-07-21T15:02:57+00:00,8b987e8,dev-py-smoke,LFE5U-12F,BG256,8,2351,24288,9.68,895,24288,3.68,0,56,0.00,95.07,25.00,yes,riscv-64/out/sim/vexii_ecp5_nextpnr.log,renamed runner script
+2026-07-21T15:08:08+00:00,8b987e8,runner-logscan-smoke,LFE5U-12F,BG256,8,2351,24288,9.68,895,24288,3.68,0,56,0.00,95.07,25.00,yes,riscv-64/out/sim/vexii_ecp5_nextpnr.log,full runner with log scan
