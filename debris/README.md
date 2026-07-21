@@ -53,3 +53,8 @@ Only archived or superseded documents should remain in `debris/`.
 
 **To restore**: If needed, git checkout commits 14db505 or earlier.
 
+## Boundary Reference
+
+For the canonical active-vs-archived architecture document boundary, see:
+- [architecture_doc_boundary.md](../docs/architecture_doc_boundary.md)
+

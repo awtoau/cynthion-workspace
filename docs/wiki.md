@@ -29,6 +29,7 @@ No documentation has been discarded:
 ## Architecture and Design
 
 - [architecture_overview.md](architecture_overview.md)
+- [architecture_doc_boundary.md](architecture_doc_boundary.md)
 - [development_phases.md](development_phases.md)
 - [implementation_roadmap.md](implementation_roadmap.md)
 - [architectural_decisions.md](architectural_decisions.md)
