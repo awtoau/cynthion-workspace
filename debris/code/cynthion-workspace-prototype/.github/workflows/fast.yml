@@ -1,0 +1,78 @@
+name: fast
+
+on:
+  workflow_dispatch:    # manual only — run locally with scripts/check-fast.sh day-to-day
+  pull_request:         # also runs on PRs to catch regressions before merge
+
+jobs:
+  rust:
+    name: rust check + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv32imac-unknown-none-elf
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: repos/cynthion/firmware }
+      - run: cargo check --release --target riscv32imac-unknown-none-elf
+        working-directory: repos/cynthion/firmware
+      - run: make clippy
+        working-directory: repos/cynthion/firmware
+      - run: cargo test
+        working-directory: repos/cynthion/firmware
+
+  c-apollo:
+    name: apollo C firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - run: sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+      - run: make APOLLO_BOARD=cynthion
+        working-directory: repos/apollo/firmware
+      - run: arm-none-eabi-size _build/cynthion_d11/firmware.elf
+        working-directory: repos/apollo/firmware
+
+  python-312:
+    name: python 3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: astral-sh/setup-uv@v4
+      - run: uv venv .venv --python 3.12
+      - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
+      - run: .venv/bin/python -c "import cynthion; import apollo_fpga; import facedancer"
+      - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short
+        continue-on-error: true
+
+  python-314t:
+    name: python 3.14t no-GIL (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: astral-sh/setup-uv@v4
+      - run: uv venv .venv --python 3.14t
+      - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
+      - run: .venv/bin/python -c "import cynthion; import apollo_fpga; import facedancer"
+      - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short
+
+  flutter:
+    name: flutter app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: flutter pub get
+        working-directory: app
+        continue-on-error: true
+      - run: flutter analyze && flutter test
+        working-directory: app
+        continue-on-error: true

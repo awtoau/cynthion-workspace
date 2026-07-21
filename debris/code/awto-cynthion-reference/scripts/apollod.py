@@ -1,0 +1,929 @@
+#!/usr/bin/env python3
+"""
+apollod.py — Cynthion device daemon
+
+Discovers Cynthion devices, reads all available TTYs simultaneously,
+performs statistical dedup and outlier detection, correlates cross-TTY
+events, and publishes JSON-lines on a Unix socket.
+
+USB VID:PID:
+  1d50:615c = Apollo mode  (ttyACM0=rv0, ttyACM1=fpg, ttyACM2=apl)
+  1d50:615b = moondancer mode (no Apollo TTYs)
+
+Usage:
+  venv/bin/python scripts/apollod.py [--daemon] [--verbose]
+"""
+
+import argparse
+import json
+import logging
+import os
+import select
+import socket
+import subprocess
+import sys
+import termios
+import threading
+import time
+from collections import deque
+from pathlib import Path
+from statistics import median, stdev
+from typing import Optional
+
+log = logging.getLogger("apollod")
+
+# USB IDs
+VID = 0x1d50
+PID_APOLLO = 0x615c
+PID_MOONDANCER = 0x615b
+
+# TTY name map for Apollo mode (ACM index → source name)
+APOLLO_TTY_NAMES = {0: "rv0", 1: "fpg", 2: "apl"}
+
+# Dedup configuration
+DEDUP_WINDOW = 10          # lines in sliding window to consider for dedup
+DEDUP_MIN_COUNT = 4        # minimum repeats before dedup summary
+DEDUP_STDEV_RATIO = 0.2    # stdev < ratio * median to trigger dedup
+
+# Correlation window (seconds)
+CORRELATION_WINDOW = 0.050
+
+# Outlier detection: flag IAT > median + 3*stdev
+OUTLIER_SIGMA = 3.0
+
+DEFAULT_SOCKET = Path.home() / ".local" / "run" / "apollod.sock"
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Device discovery via udevadm (no pyudev dependency)
+# ---------------------------------------------------------------------------
+
+def _udevadm_info(devnode: str) -> dict:
+    """Run udevadm info on a device node and return key=value pairs."""
+    try:
+        out = subprocess.check_output(
+            ["udevadm", "info", "--query=property", "--name=" + devnode],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {}
+    result = {}
+    for line in out.splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            result[k.strip()] = v.strip()
+    return result
+
+
+def _find_usb_devices():
+    """Scan /sys/bus/usb/devices for Cynthion VID:PIDs.
+    Returns list of dicts: {vid, pid, serial, syspath, tty_nodes}.
+    """
+    devices = []
+    sys_bus = Path("/sys/bus/usb/devices")
+    if not sys_bus.exists():
+        return devices
+
+    target_pids = {PID_APOLLO, PID_MOONDANCER}
+
+    for devdir in sorted(sys_bus.iterdir()):
+        id_vendor_path = devdir / "idVendor"
+        id_product_path = devdir / "idProduct"
+        if not id_vendor_path.exists():
+            continue
+        try:
+            vid = int(id_vendor_path.read_text().strip(), 16)
+            pid = int(id_product_path.read_text().strip(), 16)
+        except (ValueError, OSError):
+            continue
+        if vid != VID or pid not in target_pids:
+            continue
+
+        serial = ""
+        try:
+            serial = (devdir / "serial").read_text().strip()
+        except OSError:
+            pass
+
+        # Find ttyACM children
+        tty_nodes = []
+        for child in sorted(devdir.rglob("tty/tty*")):
+            tty_nodes.append("/dev/" + child.name)
+        # Also check ttyACM* directly
+        for child in sorted(devdir.rglob("*/ttyACM*")):
+            node = "/dev/" + child.name
+            if node not in tty_nodes:
+                tty_nodes.append(node)
+
+        devices.append({
+            "vid": vid,
+            "pid": pid,
+            "serial": serial,
+            "syspath": str(devdir),
+            "tty_nodes": sorted(tty_nodes),
+        })
+
+    return devices
+
+
+def discover_device() -> Optional[dict]:
+    """Return the first Cynthion device found, or None."""
+    devs = _find_usb_devices()
+    if devs:
+        return devs[0]
+    return None
+
+
+def map_tty_names(device: dict) -> dict:
+    """Map ttyACM* nodes to source names for Apollo mode."""
+    tty_nodes = device.get("tty_nodes", [])
+    names = {}
+    if device["pid"] == PID_APOLLO:
+        # Sort ACM nodes and assign in order
+        acm_nodes = sorted([n for n in tty_nodes if "ACM" in n or "tty" in n])
+        for i, node in enumerate(acm_nodes):
+            if i in APOLLO_TTY_NAMES:
+                names[node] = APOLLO_TTY_NAMES[i]
+            else:
+                names[node] = f"tty{i}"
+    return names
+
+
+# ---------------------------------------------------------------------------
+# Statistics helpers
+# ---------------------------------------------------------------------------
+
+def _safe_stdev(data):
+    """Return stdev or 0 if fewer than 2 samples."""
+    if len(data) < 2:
+        return 0.0
+    return stdev(data)
+
+
+# ---------------------------------------------------------------------------
+# Per-source state for dedup and outlier detection
+# ---------------------------------------------------------------------------
+
+class SourceState:
+    def __init__(self, src: str):
+        self.src = src
+        self.last_lines: deque = deque(maxlen=DEDUP_WINDOW)  # (msg, t)
+        self.iat_window: deque = deque(maxlen=20)            # inter-arrival times (s)
+        self.last_t: Optional[float] = None
+
+        # Current dedup run
+        self._dedup_msg: Optional[str] = None
+        self._dedup_count: int = 0
+        self._dedup_times: list = []   # arrival times for the run
+
+    def update_iat(self, t: float):
+        if self.last_t is not None:
+            iat = t - self.last_t
+            if iat >= 0:
+                self.iat_window.append(iat)
+        self.last_t = t
+
+    def is_outlier(self, t: float) -> bool:
+        if self.last_t is None or len(self.iat_window) < 4:
+            return False
+        iat = t - self.last_t
+        iats = list(self.iat_window)
+        m = median(iats)
+        s = _safe_stdev(iats)
+        return iat > m + OUTLIER_SIGMA * s
+
+    def feed(self, msg: str, t: float):
+        """
+        Feed a new line.  Returns a list of events to emit:
+          - may flush a pending dedup summary
+          - may return a dedup continuation (count update)
+          - always returns at minimum a raw log event (or dedup summary)
+        """
+        events = []
+        is_out = self.is_outlier(t)
+        self.update_iat(t)
+
+        if self._dedup_msg is None:
+            # Start new dedup candidate
+            self._dedup_msg = msg
+            self._dedup_count = 1
+            self._dedup_times = [t]
+            self.last_lines.append((msg, t))
+            # Emit as plain log
+            ev = {"t": t, "src": self.src, "kind": "log", "msg": msg}
+            if is_out:
+                ev["outlier"] = True
+            events.append(ev)
+        elif msg == self._dedup_msg:
+            self._dedup_count += 1
+            self._dedup_times.append(t)
+            self.last_lines.append((msg, t))
+
+            if self._dedup_count >= DEDUP_MIN_COUNT:
+                # Check stdev criterion
+                iats = [
+                    self._dedup_times[i] - self._dedup_times[i - 1]
+                    for i in range(1, len(self._dedup_times))
+                ]
+                if len(iats) >= 2:
+                    m_ms = median(iats) * 1000
+                    s_ms = _safe_stdev(iats) * 1000
+                    if m_ms > 0 and s_ms < DEDUP_STDEV_RATIO * m_ms:
+                        ev = {
+                            "t": t,
+                            "src": self.src,
+                            "kind": "dedup",
+                            "msg": msg,
+                            "count": self._dedup_count,
+                            "median_ms": round(m_ms, 1),
+                            "stdev_ms": round(s_ms, 3),
+                        }
+                        if is_out:
+                            ev["outlier"] = True
+                        events.append(ev)
+                        return events
+                # Not yet stable — emit plain log
+                ev = {"t": t, "src": self.src, "kind": "log", "msg": msg}
+                if is_out:
+                    ev["outlier"] = True
+                events.append(ev)
+            else:
+                ev = {"t": t, "src": self.src, "kind": "log", "msg": msg}
+                if is_out:
+                    ev["outlier"] = True
+                events.append(ev)
+        else:
+            # Flush dedup run if it qualified
+            if self._dedup_count >= DEDUP_MIN_COUNT and len(self._dedup_times) >= 3:
+                iats = [
+                    self._dedup_times[i] - self._dedup_times[i - 1]
+                    for i in range(1, len(self._dedup_times))
+                ]
+                if len(iats) >= 2:
+                    m_ms = median(iats) * 1000
+                    s_ms = _safe_stdev(iats) * 1000
+                    if m_ms > 0 and s_ms < DEDUP_STDEV_RATIO * m_ms:
+                        events.append({
+                            "t": self._dedup_times[-1],
+                            "src": self.src,
+                            "kind": "dedup_end",
+                            "msg": self._dedup_msg,
+                            "count": self._dedup_count,
+                            "median_ms": round(m_ms, 1),
+                            "stdev_ms": round(s_ms, 3),
+                        })
+
+            # Start fresh with new message
+            self._dedup_msg = msg
+            self._dedup_count = 1
+            self._dedup_times = [t]
+            self.last_lines.append((msg, t))
+            ev = {"t": t, "src": self.src, "kind": "log", "msg": msg}
+            if is_out:
+                ev["outlier"] = True
+            events.append(ev)
+
+        return events
+
+
+# ---------------------------------------------------------------------------
+# Cross-TTY event correlator
+# ---------------------------------------------------------------------------
+
+class Correlator:
+    """Groups events from different sources within a 50ms window."""
+
+    def __init__(self, window: float = CORRELATION_WINDOW):
+        self.window = window
+        self._pending: list = []   # (t, event)
+
+    def feed(self, event: dict):
+        """Feed an event, return list of (possibly correlated) events to emit."""
+        t = event["t"]
+        self._pending.append((t, event))
+
+        # Flush events older than the window
+        cutoff = t - self.window
+        flushed = []
+        remaining = []
+        for pt, pe in self._pending:
+            if pt < cutoff:
+                flushed.append((pt, pe))
+            else:
+                remaining.append((pt, pe))
+        self._pending = remaining
+
+        # If we have ≥2 events from different sources in the same window, tag them
+        if len(flushed) >= 2:
+            srcs = set(e["src"] for _, e in flushed)
+            if len(srcs) >= 2:
+                group_id = f"grp_{int(flushed[0][0] * 1000)}"
+                for _, e in flushed:
+                    e = dict(e)
+                    e["corr_group"] = group_id
+                    yield e
+                return
+
+        for _, e in flushed:
+            yield e
+
+
+# ---------------------------------------------------------------------------
+# TTY reader thread
+# ---------------------------------------------------------------------------
+
+def _open_tty_nonblocking(path: str):
+    """Open a TTY in non-blocking, raw mode. Returns fd or None on failure."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+        # Set raw mode so we get data as-is (no line discipline transformations)
+        try:
+            attrs = termios.tcgetattr(fd)
+            attrs[3] &= ~(termios.ICANON | termios.ECHO)
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        except termios.error:
+            pass
+        return fd
+    except OSError as e:
+        log.warning("Cannot open %s: %s", path, e)
+        return None
+
+
+class TtyReader(threading.Thread):
+    """Reads lines from a single TTY and puts events into a queue."""
+
+    def __init__(self, path: str, src: str, event_cb, stop_event: threading.Event):
+        super().__init__(daemon=True, name=f"tty-{src}")
+        self.path = path
+        self.src = src
+        self.event_cb = event_cb
+        self.stop_event = stop_event
+        self._state = SourceState(src)
+        self._buf = b""
+
+    def run(self):
+        fd = _open_tty_nonblocking(self.path)
+        if fd is None:
+            return
+        log.info("TtyReader: opened %s as %s", self.path, self.src)
+        try:
+            self._read_loop(fd)
+        finally:
+            os.close(fd)
+            log.info("TtyReader: closed %s", self.path)
+
+    def _read_loop(self, fd: int):
+        while not self.stop_event.is_set():
+            try:
+                rlist, _, _ = select.select([fd], [], [], 0.1)
+            except (ValueError, OSError):
+                break
+            if not rlist:
+                continue
+            try:
+                data = os.read(fd, 4096)
+            except (BlockingIOError, OSError):
+                continue
+            if not data:
+                break
+            t = time.monotonic()
+            self._buf += data
+            while b"\n" in self._buf:
+                line, self._buf = self._buf.split(b"\n", 1)
+                msg = line.rstrip(b"\r").decode("utf-8", errors="replace").strip()
+                if not msg:
+                    continue
+                for ev in self._state.feed(msg, t):
+                    self.event_cb(ev)
+
+
+# ---------------------------------------------------------------------------
+# Socket publisher
+# ---------------------------------------------------------------------------
+
+class SocketPublisher:
+    """Publishes JSON-lines to connected Unix socket clients."""
+
+    def __init__(self, path: str, on_command=None):
+        self.path = path
+        self._sock: Optional[socket.socket] = None
+        self._clients: list = []
+        self._lock = threading.Lock()
+        self._on_command = on_command  # callback(cmd: dict, conn: socket)
+
+    def start(self):
+        p = Path(self.path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if p.exists():
+            p.unlink()
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.bind(self.path)
+        self._sock.listen(8)
+        self._sock.setblocking(False)
+        log.info("Listening on %s", self.path)
+        t = threading.Thread(target=self._accept_loop, daemon=True, name="sock-accept")
+        t.start()
+
+    def _accept_loop(self):
+        while True:
+            try:
+                rlist, _, _ = select.select([self._sock], [], [], 1.0)
+            except (ValueError, OSError):
+                break
+            if rlist:
+                try:
+                    conn, _ = self._sock.accept()
+                    with self._lock:
+                        self._clients.append(conn)
+                    log.info("Socket client connected")
+                    if self._on_command:
+                        t = threading.Thread(
+                            target=self._read_client, args=(conn,),
+                            daemon=True, name="sock-read",
+                        )
+                        t.start()
+                except OSError:
+                    pass
+
+    def _read_client(self, conn):
+        buf = b""
+        while True:
+            try:
+                data = conn.recv(4096)
+                if not data:
+                    break
+                buf += data
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        cmd = json.loads(line)
+                        if self._on_command:
+                            self._on_command(cmd, conn)
+                    except json.JSONDecodeError:
+                        log.warning("Bad command from client: %r", line)
+            except OSError:
+                break
+
+    def send_to(self, conn, event: dict):
+        """Send an event to a specific client only."""
+        line = json.dumps(event, separators=(",", ":")) + "\n"
+        try:
+            conn.sendall(line.encode())
+        except OSError:
+            pass
+
+    def publish(self, event: dict):
+        line = json.dumps(event, separators=(",", ":")) + "\n"
+        data = line.encode()
+        with self._lock:
+            dead = []
+            for c in self._clients:
+                try:
+                    c.sendall(data)
+                except (BrokenPipeError, OSError):
+                    dead.append(c)
+            for c in dead:
+                self._clients.remove(c)
+                try:
+                    c.close()
+                except OSError:
+                    pass
+
+    def close(self):
+        try:
+            if self._sock:
+                self._sock.close()
+        except OSError:
+            pass
+        Path(self.path).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket publisher (WiFi transport for phone app)
+# ---------------------------------------------------------------------------
+
+class WsPublisher:
+    """
+    WebSocket server that forwards apollod JSON-line events to phone clients.
+    Also advertises via mDNS as _apollod._tcp.local for auto-discovery.
+
+    Requires: pip install websockets zeroconf
+    Both are optional — if missing the --wifi flag exits with a clear error.
+    """
+
+    def __init__(self, host: str = "0.0.0.0", port: int = 7777):
+        self.host = host
+        self.port = port
+        self._clients: set = set()
+        self._lock = threading.Lock()
+        self._loop: Optional[object] = None
+        self._zeroconf: Optional[object] = None
+
+    def start(self):
+        try:
+            import asyncio
+            import websockets  # type: ignore
+        except ImportError:
+            raise RuntimeError("websockets not installed — run: pip install websockets")
+
+        import asyncio
+
+        def _run():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._serve())
+
+        t = threading.Thread(target=_run, daemon=True, name="ws-server")
+        t.start()
+        self._start_mdns()
+        log.info("WebSocket server on ws://%s:%d", self.host, self.port)
+
+    async def _serve(self):
+        import websockets  # type: ignore
+        async with websockets.serve(self._handler, self.host, self.port):
+            await asyncio.Future()  # run forever
+
+    async def _handler(self, ws):
+        addr = ws.remote_address
+        log.info("WS client connected: %s", addr)
+        with self._lock:
+            self._clients.add(ws)
+        try:
+            async for msg in ws:
+                # Commands from phone — forward to apollod command channel (stub)
+                log.debug("WS cmd from %s: %s", addr, msg)
+        finally:
+            with self._lock:
+                self._clients.discard(ws)
+            log.info("WS client disconnected: %s", addr)
+
+    def publish(self, event: dict):
+        if not self._clients or not self._loop:
+            return
+        line = json.dumps(event, separators=(",", ":")) + "\n"
+        import asyncio
+        asyncio.run_coroutine_threadsafe(self._broadcast(line), self._loop)
+
+    async def _broadcast(self, line: str):
+        import websockets  # type: ignore
+        with self._lock:
+            clients = set(self._clients)
+        dead = set()
+        for ws in clients:
+            try:
+                await ws.send(line)
+            except Exception:
+                dead.add(ws)
+        if dead:
+            with self._lock:
+                self._clients -= dead
+
+    def _start_mdns(self):
+        try:
+            from zeroconf import Zeroconf, ServiceInfo  # type: ignore
+            import socket as _socket
+            local_ip = _socket.gethostbyname(_socket.gethostname())
+            info = ServiceInfo(
+                "_apollod._tcp.local.",
+                f"apollod._apollod._tcp.local.",
+                addresses=[_socket.inet_aton(local_ip)],
+                port=self.port,
+                properties={"version": "1"},
+            )
+            self._zeroconf = Zeroconf()
+            self._zeroconf.register_service(info)
+            log.info("mDNS: _apollod._tcp.local @ %s:%d", local_ip, self.port)
+        except ImportError:
+            log.debug("zeroconf not installed — mDNS discovery disabled")
+        except Exception as e:
+            log.debug("mDNS registration failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Log writers
+# ---------------------------------------------------------------------------
+
+class LogWriter:
+    def __init__(self, raw_path: str, friendly_path: str, ai_path: str):
+        self._raw = open(raw_path, "a", buffering=1)
+        self._friendly = open(friendly_path, "a", buffering=1)
+        self._ai = open(ai_path, "a", buffering=1)
+
+    def write(self, event: dict):
+        line = json.dumps(event, separators=(",", ":"))
+        self._raw.write(line + "\n")
+
+        # Human-readable friendly format
+        t = event.get("t", 0)
+        src = event.get("src", "?")
+        kind = event.get("kind", "log")
+        msg = event.get("msg", "")
+        ts = f"{t:12.3f}"
+
+        if kind == "dedup":
+            count = event.get("count", "?")
+            med = event.get("median_ms", "?")
+            std = event.get("stdev_ms", "?")
+            self._friendly.write(
+                f"{ts}  [{src:4s}]  (x{count} @{med}ms±{std}ms) {msg}\n"
+            )
+        elif kind == "dedup_end":
+            count = event.get("count", "?")
+            self._friendly.write(
+                f"{ts}  [{src:4s}]  --- dedup end: {msg!r} x{count}\n"
+            )
+        else:
+            outlier = " [OUTLIER]" if event.get("outlier") else ""
+            corr = f" [grp:{event['corr_group']}]" if "corr_group" in event else ""
+            self._friendly.write(f"{ts}  [{src:4s}]{outlier}{corr}  {msg}\n")
+
+        # AI log stub
+        if kind in ("log", "dedup") and event.get("outlier"):
+            self._ai.write(line + "\n")
+
+    def close(self):
+        for f in (self._raw, self._friendly, self._ai):
+            try:
+                f.close()
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat / spinner
+# ---------------------------------------------------------------------------
+
+SPINNER_FRAMES = r"\|/-"
+
+class Heartbeat:
+    def __init__(self, sources: list, enabled: bool = True, interval: float = 1.0):
+        self.sources = sources
+        self.enabled = enabled
+        self.interval = interval
+        self._idx = 0
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True, name="heartbeat")
+
+    def start(self):
+        if self.enabled:
+            self._t.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        while not self._stop.is_set():
+            frame = SPINNER_FRAMES[self._idx % len(SPINNER_FRAMES)]
+            self._idx += 1
+            srcs = " ".join(self.sources) if self.sources else "(none)"
+            print(f"\r{frame} watching: {srcs}   ", end="", flush=True)
+            # Wait using select on a self-pipe so we never use sleep
+            r, w = os.pipe()
+            try:
+                select.select([r], [], [], self.interval)
+            finally:
+                os.close(r)
+                os.close(w)
+
+
+# ---------------------------------------------------------------------------
+# Daemon main loop
+# ---------------------------------------------------------------------------
+
+class Daemon:
+    def __init__(self, args):
+        self.args = args
+        self._stop = threading.Event()
+        self._correlator = Correlator()
+        self._readers: list = []
+        self._publisher: Optional[SocketPublisher] = None
+        self._ws_publisher: Optional[WsPublisher] = None
+        self._log_writer: Optional[LogWriter] = None
+        self._heartbeat: Optional[Heartbeat] = None
+        self._pending_corr: list = []
+        self._corr_lock = threading.Lock()
+
+    def _on_event(self, event: dict):
+        """Called from reader threads — route through correlator and dispatch."""
+        # Collect for correlation (correlator not thread-safe; use a queue)
+        with self._corr_lock:
+            self._pending_corr.append(event)
+
+    def _flush_correlator(self):
+        with self._corr_lock:
+            pending = self._pending_corr[:]
+            self._pending_corr.clear()
+        for ev in pending:
+            for out_ev in self._correlator.feed(ev):
+                self._dispatch(out_ev)
+
+    def _dispatch(self, event: dict):
+        if self._log_writer:
+            self._log_writer.write(event)
+        if self._publisher:
+            self._publisher.publish(event)
+        if self._ws_publisher:
+            self._ws_publisher.publish(event)
+        if self.args.verbose:
+            print(json.dumps(event))
+
+    def _setup_logs(self):
+        tmp = WORKSPACE_ROOT / "tmp"
+        tmp.mkdir(exist_ok=True)
+        raw = str(self.args.raw_log or tmp / "apollo-raw.log")
+        friendly = str(self.args.friendly_log or tmp / "apollo-friendly.log")
+        ai = str(tmp / "apollo-ai.log")
+        self._log_writer = LogWriter(raw, friendly, ai)
+        log.info("Logging raw=%s friendly=%s ai=%s", raw, friendly, ai)
+
+    def run(self):
+        self._setup_logs()
+
+        sock_path = str(self.args.socket or DEFAULT_SOCKET)
+        self._publisher = SocketPublisher(sock_path, on_command=self._handle_command)
+        self._publisher.start()
+
+        if getattr(self.args, "wifi", None):
+            host, _, port_str = self.args.wifi.partition(":")
+            port = int(port_str) if port_str else 7777
+            self._ws_publisher = WsPublisher(host=host or "0.0.0.0", port=port)
+            self._ws_publisher.start()
+
+        # Initial device discovery
+        device = discover_device()
+        if device is None:
+            log.warning("No Cynthion device found — will retry in background")
+            self._dispatch({
+                "t": time.monotonic(),
+                "src": "apollod",
+                "kind": "status",
+                "msg": "no device found, waiting",
+            })
+        else:
+            self._start_readers(device)
+
+        sources = [r.src for r in self._readers]
+        self._heartbeat = Heartbeat(
+            sources,
+            enabled=not self.args.no_spinner,
+            interval=1.0,
+        )
+        self._heartbeat.start()
+
+        try:
+            self._main_loop()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._stop.set()
+            if self._heartbeat:
+                self._heartbeat.stop()
+            if self._log_writer:
+                self._log_writer.close()
+            if self._publisher:
+                self._publisher.close()
+
+    def _start_readers(self, device: dict):
+        tty_map = map_tty_names(device)
+        if not tty_map:
+            log.info("Device is moondancer (PID 615b) — no TTY sources")
+            return
+        for node, src in tty_map.items():
+            if not os.path.exists(node):
+                log.warning("TTY not found: %s", node)
+                continue
+            r = TtyReader(node, src, self._on_event, self._stop)
+            r.start()
+            self._readers.append(r)
+            log.info("Started reader: %s -> %s", node, src)
+
+    def _main_loop(self):
+        """Main event loop — flushes correlator and watches for new devices."""
+        prev_pid = None
+
+        while not self._stop.is_set():
+            self._flush_correlator()
+
+            # Periodic re-discovery (check once per second via select on a pipe)
+            r_fd, w_fd = os.pipe()
+            try:
+                select.select([r_fd], [], [], 1.0)
+            finally:
+                os.close(r_fd)
+                os.close(w_fd)
+
+            device = discover_device()
+            if device is None:
+                if prev_pid is not None:
+                    log.warning("Device disconnected")
+                    self._dispatch({
+                        "t": time.monotonic(),
+                        "src": "apollod",
+                        "kind": "status",
+                        "msg": "device disconnected",
+                    })
+                    prev_pid = None
+                    self._stop_readers()
+            else:
+                if device["pid"] != prev_pid:
+                    log.info("Device appeared: PID=%04x serial=%s", device["pid"], device["serial"])
+                    self._dispatch({
+                        "t": time.monotonic(),
+                        "src": "apollod",
+                        "kind": "status",
+                        "msg": f"device connected pid=0x{device['pid']:04x} serial={device['serial']}",
+                    })
+                    self._stop_readers()
+                    self._start_readers(device)
+                    prev_pid = device["pid"]
+
+    def _handle_command(self, cmd: dict, conn):
+        verb = cmd.get("cmd")
+        if verb == "shutdown":
+            log.info("Shutdown command received from client")
+            if self._publisher:
+                self._publisher.send_to(conn, {"event": "shutdown_ack"})
+            self._stop.set()
+
+    def _stop_readers(self):
+        self._stop.set()
+        for r in self._readers:
+            r.join(timeout=2.0)
+        self._readers.clear()
+        self._stop.clear()
+
+
+# ---------------------------------------------------------------------------
+# Daemonise helper
+# ---------------------------------------------------------------------------
+
+def daemonise():
+    """Double-fork to detach from terminal."""
+    if os.fork() > 0:
+        sys.exit(0)
+    os.setsid()
+    if os.fork() > 0:
+        sys.exit(0)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--daemon", action="store_true",
+                        help="Run as background daemon (default: foreground)")
+    parser.add_argument("--socket", metavar="PATH", default=None,
+                        help=f"Unix socket path (default: {DEFAULT_SOCKET})")
+    parser.add_argument("--raw-log", metavar="FILE", default=None,
+                        help="Path for raw JSON-lines log (default: tmp/apollo-raw.log)")
+    parser.add_argument("--friendly-log", metavar="FILE", default=None,
+                        help="Path for friendly log (default: tmp/apollo-friendly.log)")
+    parser.add_argument("--wifi", metavar="[HOST:]PORT", nargs="?", const="7777",
+                        help="Start WebSocket server for phone app (default port 7777). "
+                             "Requires: pip install websockets zeroconf")
+    parser.add_argument("--no-spinner", action="store_true",
+                        help="Suppress heartbeat spinner")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Print events to stdout")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+
+    if args.daemon:
+        daemonise()
+        # After fork, log to file only
+        log_path = WORKSPACE_ROOT / "tmp" / "apollod.log"
+        log_path.parent.mkdir(exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            filename=str(log_path),
+            format="%(asctime)s %(name)s %(levelname)s %(message)s",
+            force=True,
+        )
+
+    daemon = Daemon(args)
+    daemon.run()
+
+
+if __name__ == "__main__":
+    main()

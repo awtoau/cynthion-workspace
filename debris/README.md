@@ -17,11 +17,14 @@ These were never committed and have been removed:
 
 ## Files Currently in This Directory
 
-(Files will be added here during cleanup)
+- `architecture.md` — archived hardware architecture and patch summary retained for historical reference
 
 ## Curated Prototype Archives
 
 - `code/cynthion-workspace-prototype/` — preserved human-authored subset of an older workspace snapshot after removing generated files, VCS metadata, and exact duplicates
+- `code/legacy_cli/` — superseded root CLI preserved after migration to the `cyn` command stack
+- `code/cynthion-app-prototype/` — preserved human-authored subset of an older Flutter app snapshot after removing generated files and platform boilerplate
+- `code/awto-cynthion-reference/` — curated source-reference subset of an archived `awto-cynthion` snapshot preserving cited source anchors, scripts, shared TOML files, and build docs without the full repo bulk
 
 ## Future Documentation
 
