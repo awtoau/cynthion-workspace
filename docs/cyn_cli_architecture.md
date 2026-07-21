@@ -27,6 +27,28 @@
 - `/project/status` — project state
 - `/commands` — available commands list
 
+### Active Shutdown Contract (Canonical)
+
+Chosen active runtime path for shutdown semantics:
+1. `cyn-daemon` lifecycle (`start` / `stop` / `status` / `restart`) is the canonical active path.
+2. Operator flow is process-level lifecycle management, not the historical `{"cmd":"shutdown"}` socket message from archived `apollod` path.
+
+Required behavior contract for active path:
+1. `start` acquires daemon PID lock and exposes HTTP status endpoints.
+2. `stop` sends SIGTERM and daemon exits cleanly.
+3. Immediate relaunch path is supported (`start` after `stop` without stale lock state).
+4. `status` accurately reports running/not-running state.
+
+Validation snapshot (2026-07-22):
+1. `status` -> not running
+2. `start` -> running with PID and HTTP API visible
+3. `stop` -> clean stop reported
+4. `status` -> not running
+
+Historical note:
+1. `apollod` / `apollo-mux` graceful shutdown semantics remain preserved in patch/archive references for lineage tracking.
+2. Those references are not the canonical active runtime path in this workspace.
+
 ### Benefits
 - ✓ Single entry point for all operations
 - ✓ AI-agent friendly with JSON discovery

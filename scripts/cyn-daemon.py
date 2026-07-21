@@ -18,6 +18,7 @@ Or from cyn CLI:
 
 import argparse
 import daemon
+import daemon.pidfile
 import json
 import logging
 import os
@@ -78,7 +79,7 @@ class CynDaemon:
 
         # Use daemon context for proper daemonisation
         context = daemon.DaemonContext(
-            pidfile=daemon.pidfile.PIDFile(str(self.pidfile)),
+            pidfile=daemon.pidfile.PIDLockFile(str(self.pidfile)),
             stdout=open(self.logfile, 'a'),
             stderr=open(self.logfile, 'a'),
             signal_map={
