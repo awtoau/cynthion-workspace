@@ -5,6 +5,10 @@ Integration workspace for the Cynthion USB proxy stack.
 This repo does not contain code — it pins submodule versions, provides fast
 dev-cycle check scripts, and owns CI configuration.
 
+## Documentation
+
+- Canonical docs index: [docs/wiki.md](docs/wiki.md)
+
 ## Quick start
 
 ```bash
