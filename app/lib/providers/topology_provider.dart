@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +28,17 @@ class TopologyNotifier extends Notifier<Map<String, HardwareNode>> {
     final node = state[id];
     if (node == null) return;
     state = {...state, id: node.copyWith(status: status)};
+  }
+
+  void randomizeStatuses() {
+    final rng = Random();
+    final statuses = NodeStatus.values;
+    final updated = <String, HardwareNode>{};
+    for (final entry in state.entries) {
+      final status = statuses[rng.nextInt(statuses.length)];
+      updated[entry.key] = entry.value.copyWith(status: status);
+    }
+    state = updated;
   }
 
   // Layered auto-layout: assigns positions by logical depth from host.

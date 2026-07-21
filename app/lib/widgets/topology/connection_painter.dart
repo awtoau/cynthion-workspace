@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../models/node.dart';
 import '../../theme.dart' as theme;
@@ -9,6 +10,7 @@ class ConnectionPainter extends CustomPainter {
   final double animPhase; // 0.0–1.0 for traveling-dash animation
   final Offset? hoverPoint; // canvas-space hover position
   final Matrix4 transform; // InteractiveViewer transform applied in paint()
+  final Map<String, Offset> dragOffsets; // Local offsets during node drag
 
   ConnectionPainter({
     required this.nodes,
@@ -16,6 +18,7 @@ class ConnectionPainter extends CustomPainter {
     this.animPhase = 0.0,
     this.hoverPoint,
     required this.transform,
+    this.dragOffsets = const {},
   });
 
   // ── Debug logging ──────────────────────────────────────────────────────────
@@ -38,38 +41,132 @@ class ConnectionPainter extends CustomPainter {
   }
 
   // ── Edge-attachment helper ──────────────────────────────────────────────────
-  /// Returns the point on the boundary of [n]'s rectangle where the line
-  /// from n's centre toward [toward] exits the rectangle.
+  /// Returns the point on the closest edge of [n]'s rectangle.
+  /// Exits perpendicular to that edge with padding to avoid overlapping.
   Offset _edgePoint(HardwareNode n, Offset toward) {
     final sz = nodeSizeFor(n);
-    final cx = n.position.dx + sz.width / 2;
-    final cy = n.position.dy + sz.height / 2;
-    final hw = sz.width / 2;
-    final hh = sz.height / 2;
+    final dragOffset = dragOffsets[n.id] ?? Offset.zero;
+    final nLeft = n.position.dx + dragOffset.dx;
+    final nTop = n.position.dy + dragOffset.dy;
+    final nRight = nLeft + sz.width;
+    final nBottom = nTop + sz.height;
+    final nCenterX = nLeft + sz.width / 2;
+    final nCenterY = nTop + sz.height / 2;
 
-    final dx = toward.dx - cx;
-    final dy = toward.dy - cy;
+    // Find closest edge: left, right, top, or bottom
+    final dx = toward.dx - nCenterX;
+    final dy = toward.dy - nCenterY;
+    final absX = dx.abs();
+    final absY = dy.abs();
 
-    if (dx == 0 && dy == 0) return Offset(cx, cy);
+    // Padding: move exit point away from node to prevent curve overlap
+    const padding = 6.0;
 
-    final tx = dx != 0 ? hw / dx.abs() : double.infinity;
-    final ty = dy != 0 ? hh / dy.abs() : double.infinity;
-    final t = tx < ty ? tx : ty;
+    Offset result;
 
-    return Offset(cx + dx * t, cy + dy * t);
+    // Decide which edge is closest based on angle
+    if (absX > absY) {
+      // Left or right edge — exit perpendicular (horizontally)
+      if (dx > 0) {
+        // Right edge
+        result = Offset(nRight + padding, nCenterY);
+      } else {
+        // Left edge
+        result = Offset(nLeft - padding, nCenterY);
+      }
+    } else {
+      // Top or bottom edge — exit perpendicular (vertically)
+      if (dy > 0) {
+        // Bottom edge
+        result = Offset(nCenterX, nBottom + padding);
+      } else {
+        // Top edge
+        result = Offset(nCenterX, nTop - padding);
+      }
+    }
+
+    _log('edge ${n.id} node=${nLeft.toStringAsFixed(0)},${nTop.toStringAsFixed(0)} toward=${toward.dx.toStringAsFixed(0)},${toward.dy.toStringAsFixed(0)} → result=${result.dx.toStringAsFixed(1)},${result.dy.toStringAsFixed(1)}');
+    return result;
+  }
+
+  /// Exits vertically from the node: top or bottom edge.
+  /// [goingDown] indicates direction: true = bottom, false = top.
+  Offset _edgePointVertical(HardwareNode n, bool goingDown) {
+    final sz = nodeSizeFor(n);
+    final dragOffset = dragOffsets[n.id] ?? Offset.zero;
+    final nLeft = n.position.dx + dragOffset.dx;
+    final nTop = n.position.dy + dragOffset.dy;
+    final nRight = nLeft + sz.width;
+    final nBottom = nTop + sz.height;
+    final nCenterX = nLeft + sz.width / 2;
+    const padding = 6.0;
+
+    return Offset(
+      nCenterX,
+      goingDown ? nBottom + padding : nTop - padding,
+    );
+  }
+
+  /// Exits horizontally from the node: left or right edge.
+  /// [goingRight] indicates direction: true = right, false = left.
+  Offset _edgePointHorizontal(HardwareNode n, bool goingRight) {
+    final sz = nodeSizeFor(n);
+    final dragOffset = dragOffsets[n.id] ?? Offset.zero;
+    final nLeft = n.position.dx + dragOffset.dx;
+    final nTop = n.position.dy + dragOffset.dy;
+    final nRight = nLeft + sz.width;
+    final nCenterY = nTop + sz.height / 2;
+    const padding = 6.0;
+
+    return Offset(
+      goingRight ? nRight + padding : nLeft - padding,
+      nCenterY,
+    );
   }
 
   Offset _center(HardwareNode n) {
     final sz = nodeSizeFor(n);
-    return n.position + Offset(sz.width / 2, sz.height / 2);
+    final dragOffset = dragOffsets[n.id] ?? Offset.zero;
+    return n.position + dragOffset + Offset(sz.width / 2, sz.height / 2);
   }
 
-  // ── Bezier builder ─────────────────────────────────────────────────────────
-  Path _buildPath(Offset a, Offset b) {
-    final dx = (b.dx - a.dx).abs() * 0.45;
+  // ── Bezier path with perpendicular exits ──────────────────────────────────
+  Path _buildPath(Offset a, Offset b, {String connLabel = ''}) {
+    // Bezier curve that exits perpendicular to edges
+
+    final dx = (b.dx - a.dx);
+    final dy = (b.dy - a.dy);
+    final distance = sqrt(dx * dx + dy * dy);
+
+    // Control point distance: proportional to path length
+    final ctrlDist = (distance * 0.4).clamp(40.0, 250.0);
+
+    final absX = dx.abs();
+    final absY = dy.abs();
+
+    Offset cp1, cp2;
+
+    // Position control points perpendicular to edges for 90-degree exits
+    if (absX > absY) {
+      // Horizontal path: control points go perpendicular (vertically)
+      // This makes curve exit horizontally, then curve vertically, then exit horizontally
+      final sign = dy > 0 ? 1.0 : -1.0;
+      cp1 = Offset(a.dx + ctrlDist * 0.5, a.dy + ctrlDist * sign);
+      cp2 = Offset(b.dx - ctrlDist * 0.5, b.dy - ctrlDist * sign);
+    } else {
+      // Vertical path: control points go perpendicular (horizontally)
+      final sign = dx > 0 ? 1.0 : -1.0;
+      cp1 = Offset(a.dx + ctrlDist * sign, a.dy + ctrlDist * 0.5);
+      cp2 = Offset(b.dx - ctrlDist * sign, b.dy - ctrlDist * 0.5);
+    }
+
+    if (connLabel == 'targetC→camera' || connLabel == 'facedancer→targetA' || connLabel == 'fpga→usb_phy_a') {
+      _log('path $connLabel: a=${a.dx.toStringAsFixed(1)},${a.dy.toStringAsFixed(1)} b=${b.dx.toStringAsFixed(1)},${b.dy.toStringAsFixed(1)} cp1=${cp1.dx.toStringAsFixed(1)},${cp1.dy.toStringAsFixed(1)} cp2=${cp2.dx.toStringAsFixed(1)},${cp2.dy.toStringAsFixed(1)}');
+    }
+
     return Path()
       ..moveTo(a.dx, a.dy)
-      ..cubicTo(a.dx + dx, a.dy, b.dx - dx, b.dy, b.dx, b.dy);
+      ..cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, b.dx, b.dy);
   }
 
   // ── Animated dashes ────────────────────────────────────────────────────────
@@ -204,9 +301,18 @@ class ConnectionPainter extends CustomPainter {
 
       final centerA = _center(from);
       final centerB = _center(to);
-      final a = _edgePoint(from, centerB);
-      final b = _edgePoint(to, centerA);
-      final path = _buildPath(a, b);
+
+      // Get edge points based on closest edge to target
+      var a = _edgePoint(from, centerB);
+      var b = _edgePoint(to, centerA);
+
+      final connLabel = '${conn.fromId}→${conn.toId}';
+      final dx = b.dx - a.dx;
+      final dy = b.dy - a.dy;
+
+      _log('conn $connLabel a=${a.dx.toStringAsFixed(1)},${a.dy.toStringAsFixed(1)} b=${b.dx.toStringAsFixed(1)},${b.dy.toStringAsFixed(1)} dx=${dx.toStringAsFixed(1)} dy=${dy.toStringAsFixed(1)}');
+
+      final path = _buildPath(a, b, connLabel: connLabel);
 
       final isHovered = hoveredConnKey == '${conn.fromId}→${conn.toId}';
 
@@ -272,5 +378,8 @@ class ConnectionPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(ConnectionPainter old) => true;
+  bool shouldRepaint(ConnectionPainter old) =>
+      old.dragOffsets != dragOffsets ||
+      old.animPhase != animPhase ||
+      old.hoverPoint != hoverPoint;
 }

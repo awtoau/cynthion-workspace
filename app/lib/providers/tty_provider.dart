@@ -25,19 +25,29 @@ class TtyNotifier extends Notifier<List<TtyLine>> {
 
   void _startStub() {
     final rng = Random();
-    _timer = Timer.periodic(const Duration(milliseconds: 800), (_) {
+    _timer = Timer.periodic(const Duration(milliseconds: 300), (_) {
       _tick++;
-      final sources = TtySource.values.where((s) => s != TtySource.system).toList();
-      final src = sources[_tick % sources.length];
-      final isFault = rng.nextInt(30) == 0;
+
+      // Cycle through sources with varied timing
+      TtySource src = switch (_tick % 12) {
+        0 || 4 || 8 => TtySource.rv0,
+        1 || 5 || 9 => TtySource.fpg,
+        2 || 6 || 10 => TtySource.apl,
+        _ => TtySource.system,
+      };
+
+      // Occasional faults
+      final isFault = rng.nextInt(50) == 0;
+
       final text = isFault
-          ? '⚠ DEMO FAULT — stack_canary=0x${rng.nextInt(0xFFFF).toRadixString(16).padLeft(4, '0')} [FAKE DATA]'
+          ? '⚠ fault: canary=0x${rng.nextInt(0xFFFF).toRadixString(16).padLeft(4, '0')} exception_pc=0x${rng.nextInt(0xFFFFFF).toRadixString(16).padLeft(6, '0')}'
           : switch (src) {
-              TtySource.rv0 => '♥ heartbeat tick=$_tick  uptime=${_tick * 100}ms [FAKE]',
-              TtySource.fpg => 'evt endpoint=${rng.nextInt(8)} pkt_len=${rng.nextInt(512)} [FAKE]',
-              TtySource.apl => '> apollo ready  cpu=${rng.nextInt(100)}% [FAKE]',
-              TtySource.system => '',
+              TtySource.rv0 => '♥ heartbeat uptime=${_tick * 100}ms clk=${rng.nextInt(500)}MHz rv0_state=${["READY", "IDLE", "ACTIVE"][_tick % 3]}',
+              TtySource.fpg => 'evt ep=${rng.nextInt(8)} len=${64 + rng.nextInt(448)} pkt_id=${_tick ~/ 3} crc=${(rng.nextInt(0xFFFF)).toRadixString(16).padLeft(4, '0')}',
+              TtySource.apl => 'apollo dbg: jtag_ir=0x${rng.nextInt(0xFF).toRadixString(16).padLeft(2, '0')} tap_state=${["RTI", "SHIFT_DR", "UPDATE_DR"][_tick % 3]} freq=${_tick * 10 % 25}MHz',
+              TtySource.system => 'sys: load_avg=${(rng.nextDouble() * 2).toStringAsFixed(2)} memory=${rng.nextInt(80)}% [${["idle", "scan", "xfer", "wait"][_tick % 4]}]',
             };
+
       append(TtyLine(
         source: src,
         timestamp: DateTime.now(),

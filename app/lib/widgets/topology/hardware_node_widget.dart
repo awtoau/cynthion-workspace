@@ -28,6 +28,9 @@ class HardwareNodeWidget extends StatelessWidget {
     final sz = nodeSizeFor(node);
     final hasPins = node.info?.pins.isNotEmpty ?? false;
 
+    // Background color tint based on status
+    final bgTint = sColor.withValues(alpha: 0.08);
+
     // Border brightens on hover/select
     final borderAlpha = selected
         ? 1.0
@@ -48,13 +51,13 @@ class HardwareNodeWidget extends StatelessWidget {
             width: sz.width,
             height: sz.height,
             decoration: BoxDecoration(
-              color: theme.bgCard,
+              color: Color.alphaBlend(bgTint, theme.bgCard),
               border: Border.all(
                 color: selected || hovered
-                    ? accent
+                    ? sColor
                     : isLogical
                         ? theme.borderColor.withValues(alpha: borderAlpha)
-                        : accent.withValues(alpha: borderAlpha),
+                        : sColor.withValues(alpha: borderAlpha * 0.6),
                 width: selected ? 1.5 : (hovered ? 1.2 : 1.0),
               ),
               borderRadius: BorderRadius.circular(isLogical ? 8 : 6),
@@ -62,7 +65,7 @@ class HardwareNodeWidget extends StatelessWidget {
                   ? null
                   : [
                       BoxShadow(
-                        color: accent.withValues(alpha: hovered ? 0.22 : 0.12),
+                        color: sColor.withValues(alpha: hovered ? 0.22 : 0.12),
                         blurRadius: hovered ? 12 : 8,
                         spreadRadius: 1,
                       ),
@@ -84,7 +87,7 @@ class HardwareNodeWidget extends StatelessWidget {
                       child: Text(
                         node.label,
                         style: TextStyle(
-                          color: isLogical ? theme.textMuted : theme.textPrimary,
+                          color: theme.textPrimary,
                           fontSize: isCompact ? 10 : 11,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.2,
@@ -108,8 +111,8 @@ class HardwareNodeWidget extends StatelessWidget {
                   Text(
                     node.sublabel,
                     style: TextStyle(
-                      color: theme.textMuted.withValues(alpha: 0.7),
-                      fontSize: isCompact ? 8 : 9,
+                      color: theme.textPrimary,
+                      fontSize: isCompact ? 9 : 10,
                       letterSpacing: 0.1,
                     ),
                     overflow: TextOverflow.ellipsis,

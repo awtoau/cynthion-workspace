@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:awto_gui_inspect/awto_gui_inspect.dart';
 import 'providers/transport_provider.dart';
+import 'providers/inspect_provider.dart';
 import 'services/transport/apollo_transport.dart';
 import 'theme.dart';
 import 'screens/main_screen.dart';
@@ -55,7 +56,7 @@ void main() async {
   runApp(ProviderScope(child: CynthionMonitorApp()));
 }
 
-class CynthionMonitorApp extends StatelessWidget {
+class CynthionMonitorApp extends ConsumerWidget {
   late final AwtoAiLogHistory _logHistory;
 
   CynthionMonitorApp({super.key}) {
@@ -63,17 +64,25 @@ class CynthionMonitorApp extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'Cynthion Monitor',
-        theme: buildTheme(),
-        debugShowCheckedModeBanner: false,
-        home: AwtoInspectApp(
-          enabled: kDebugMode,
-          screenName: 'CynthionMonitor',
-          aiLogSink: _logHistory,
-          child: _AppShell(child: MainScreen()),
-        ),
-      );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final inspectEnabled = ref.watch(inspectProvider);
+
+    final home = inspectEnabled
+        ? AwtoInspectApp(
+            enabled: true,
+            screenName: 'CynthionMonitor',
+            aiLogSink: _logHistory,
+            child: _AppShell(child: MainScreen()),
+          )
+        : _AppShell(child: MainScreen());
+
+    return MaterialApp(
+      title: 'Cynthion Monitor',
+      theme: buildTheme(),
+      debugShowCheckedModeBanner: false,
+      home: home,
+    );
+  }
 }
 
 // Saves window geometry and handles graceful shutdown (Ctrl+Q / window close).

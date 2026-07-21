@@ -30,6 +30,7 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
   Offset? _mouseCanvasPos;
 
   String? _draggingNodeId;
+  final Map<String, Offset> _dragOffsets = {}; // Local offsets during drag (no rebuild)
 
   late final AnimationController _animController;
 
@@ -118,6 +119,7 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
                     animPhase: _animController.value,
                     hoverPoint: _mouseCanvasPos,
                     transform: _transform.value,
+                    dragOffsets: _dragOffsets,
                   ),
                 ),
               ),
@@ -142,30 +144,44 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                    ...nodes.values.map((node) => Positioned(
-                          left: node.position.dx,
-                          top: node.position.dy,
-                          child: Listener(
+                    ...nodes.values.map((node) {
+                      final dragOffset = _dragOffsets[node.id] ?? Offset.zero;
+                      return Positioned(
+                        left: node.position.dx + dragOffset.dx,
+                        top: node.position.dy + dragOffset.dy,
+                        child: Listener(
                             behavior: HitTestBehavior.opaque,
                             onPointerDown: (_) =>
                                 setState(() => _draggingNodeId = node.id),
                             onPointerMove: (e) {
                               if (_draggingNodeId == node.id) {
-                                // e.delta is screen pixels; divide by viewer
-                                // scale to get canvas-space displacement.
+                                // Store local offset during drag (no provider update = no rebuild)
                                 final scale = _transform.value.storage[0];
-                                ref
-                                    .read(topologyProvider.notifier)
-                                    .moveNode(node.id, e.delta / scale);
+                                final delta = e.delta / scale;
+                                final current = _dragOffsets[node.id] ?? Offset.zero;
+                                _dragOffsets[node.id] = current + delta;
+                                // No setState — smooth drag without rebuilding entire tree
                               }
                             },
                             onPointerUp: (_) {
                               if (_draggingNodeId == node.id) {
+                                // Commit drag to provider on release
+                                final offset = _dragOffsets[node.id];
+                                if (offset != null && offset != Offset.zero) {
+                                  ref
+                                      .read(topologyProvider.notifier)
+                                      .moveNode(node.id, offset);
+                                  _dragOffsets.remove(node.id);
+                                }
                                 setState(() => _draggingNodeId = null);
                               }
                             },
-                            onPointerCancel: (_) =>
-                                setState(() => _draggingNodeId = null),
+                            onPointerCancel: (_) {
+                              if (_draggingNodeId == node.id) {
+                                _dragOffsets.remove(node.id);
+                                setState(() => _draggingNodeId = null);
+                              }
+                            },
                             child: GestureDetector(
                               onTap: () => _onNodeTap(node),
                               child: HardwareNodeWidget(
@@ -176,7 +192,8 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
                               ),
                             ),
                           ),
-                        )),
+                        );
+                    }),
                       ]),
                     ),
                   ),
