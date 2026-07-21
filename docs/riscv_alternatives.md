@@ -327,9 +327,11 @@ For this repo, evaluate each option against:
 
 Any CPU swap would likely touch at least:
 
-1. `debris/code/awto-cynthion-reference/cynthion/python/src/gateware/facedancer/top.py`
-2. `debris/code/awto-cynthion-reference/firmware/moondancer-pac/src/generated.rs`
-3. `debris/code/awto-cynthion-reference/firmware/lunasoc-hal/`
+1. `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py`
+2. `/mnt/2tb/git/awtoau/awto-cynthion/firmware/moondancer-pac/src/generated.rs`
+3. `/mnt/2tb/git/awtoau/awto-cynthion/firmware/lunasoc-hal/`
+
+For archived local deltas relative to that checkout, see `patches/cynthion/` and the remaining non-duplicate files in `debris/code/awto-cynthion-reference/`.
 
 These paths are listed here as the known historical integration points from planning notes.
 

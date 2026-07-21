@@ -2,10 +2,12 @@
 
 This file is preserved from an archived `awto-cynthion` snapshot.
 
-This curated archive keeps the parts of that snapshot that still have documentary
-or source-reference value to this workspace, while dropping the full repo bulk:
-- preserved: cited source anchors, helper scripts, shared TOML files, workflow YAMLs, and build/docs context
-- removed: `.git/`, `tmp/`, `firmware/target/`, `__pycache__/`, vendored bulk, and other full-snapshot baggage
+This archive no longer mirrors the broader source tree. Exact duplicates of the
+live `/mnt/2tb/git/awtoau/awto-cynthion` checkout were removed, leaving only the
+small set of files that still differ locally.
+
+For the full live source tree, use `/mnt/2tb/git/awtoau/awto-cynthion`.
+For patch-form deltas, use `patches/cynthion/` in this workspace.
 
 The original upstream README content follows.
 
