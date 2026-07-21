@@ -101,6 +101,33 @@ Exit criteria:
 - Post-PnR timing and utilization report is generated.
 - UART output confirms first instruction execution.
 
+## Phase 1.5: Pre-Hardware Core Validation (Completed)
+
+This phase validates the standalone core before Cynthion SoC integration.
+
+Deliverables:
+
+- Instruction-driven RTL smoke test result.
+- Post-synthesis netlist smoke test result.
+- ECP5 nextpnr timing/place report for a wrapper top.
+
+Tasks:
+
+1. Run `python3 riscv-64/scripts/40_run_vexii_rtl_smoke.py`.
+2. Run `python3 riscv-64/scripts/41_run_vexii_postsynth_smoke.py`.
+3. Run `python3 riscv-64/scripts/42_run_vexii_nextpnr_timing.py`.
+
+Verified outputs:
+
+- `riscv-64/out/sim/vexii_smoke_run.log`
+- `riscv-64/out/sim/vexii_postsynth_run.log`
+- `riscv-64/out/sim/vexii_ecp5_nextpnr.log`
+- `riscv-64/out/sim/vexii_ecp5_timing_summary.txt`
+
+Notes:
+
+- The timing flow uses `VexiiRiscvWrap` (`riscv-64/sim/vexii_ecp5_wrap.v`) so IO count fits the ECP5-12F package during standalone core evaluation.
+
 ## Phase 2: Boot Chain
 
 Deliverables:
@@ -172,6 +199,38 @@ Exit criteria:
 4. USB gadget networking integration overhead.
 5. Toolchain mismatch across Yosys/nextpnr/ecppack or core generators.
 
+## Unexpected Issues Encountered
+
+1. Incomplete submodule tree caused sbt project load failure.
+Cause:
+`No project 'idslplugin' ... Valid project IDs: spinalhdl`
+Fix:
+Run `git submodule update --init --recursive` in `riscv-64/work/vexiiriscv`.
+
+2. Trellis support database was missing when building nextpnr dependencies.
+Cause:
+`pytrellis` was built, but `devices.json` and family DB files were absent in install tree.
+Fix:
+Populate from mirrored `prjtrellis-db` into the local trellis install database path.
+
+3. `yosys-config` binary is absent on this host.
+Cause:
+The packaged toolchain provides `yosys` but not `yosys-config`.
+Fix:
+Use `/usr/share/yosys/simcells.v` directly for post-synth simulation.
+
+4. nextpnr CLI mismatch against expected options.
+Cause:
+This `nextpnr-ecp5` build does not accept `--pcf` in the way some scripts assume.
+Fix:
+Use wrapper top and unconstrained run mode without `--pcf` for early timing/place experiments.
+
+5. Raw core top exceeded available package IO for ECP5-12F.
+Cause:
+Standalone core exposes many memory bus/debug ports as top-level IO.
+Fix:
+Use a wrapper top that internalizes bus handshakes and exposes only minimal IO (`clk`, `reset`) for PnR timing checks.
+
 ## Immediate Next Actions
 
 1. Run the three setup scripts in `riscv-64/scripts`.
@@ -184,6 +243,6 @@ Exit criteria:
 
 - `docs/riscv_alternatives.md`
 - `cynthion_control.py`
-- `debris/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py`
-- `debris/awto-cynthion/cynthion/python/src/commands/cynthion_build.py`
-- `debris/awto-cynthion/cynthion/python/src/commands/cynthion_flash.py`
+- `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py`
+- `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/commands/cynthion_build.py`
+- `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/commands/cynthion_flash.py`
