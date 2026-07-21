@@ -64,7 +64,7 @@ sudo apt-get install -y python3.14 python3.14-dev rustc cargo \
 ./scripts/install.py ci-install
 
 # Run Apollo CI locally
-cd /home/dan/git/awtoau/awto-apollo
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
 act -l                    # List jobs
 act -j firmware-build     # Run firmware build
 ```
@@ -205,7 +205,7 @@ The new system provides **detailed error messages** for each failure:
 ✗ stderr: Makefile:60: ../lib/tinyusb/examples/make.mk: No such file
 
 This usually means TinyUSB submodule initialization failed. Try:
-  cd /home/dan/git/awtoau/awto-apollo/firmware
+  cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"
   git submodule update --init --recursive lib/tinyusb/
 ```
 
@@ -222,7 +222,7 @@ This usually means TinyUSB submodule initialization failed. Try:
 ## Installation
 
 ### Full Setup Guide
-See: [INSTALL.md](INSTALL.md)
+See: [install.md](install.md)
 
 **Covers:**
 - System requirements
@@ -405,7 +405,7 @@ curl https://raw.githubusercontent.com/nektos/act/master/install.sh | bash
 
 #### List Workflows
 ```bash
-cd /home/dan/git/awtoau/awto-apollo
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
 ./scripts/install.py ci-list   # Via install.py
 # or
 act -l                         # Via act directly
@@ -432,7 +432,7 @@ act --dry-run
 act -j build-and-test
 
 # For Cynthion (3 OS × 5 Python = 15 jobs locally)
-cd /home/dan/git/awtoau/awto-cynthion
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
 act  # Runs all (some may fail if OS unsupported locally)
 ```
 
@@ -440,27 +440,27 @@ act  # Runs all (some may fail if OS unsupported locally)
 
 **Apollo:**
 ```bash
-cd /home/dan/git/awtoau/awto-apollo
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
 act -l                    # Lists: firmware-build, host
 act -j firmware-build     # Runs: make get-deps all
 ```
 
 **Cynthion:**
 ```bash
-cd /home/dan/git/awtoau/awto-cynthion
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
 act -l                    # Lists: build-and-test (15 jobs)
 act -j build-and-test     # Runs: Python tests (all versions)
 ```
 
 **Saturn-V:**
 ```bash
-cd /home/dan/git/awtoau/awto-saturn-v
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-saturn-v"
 act -j firmware
 ```
 
 **Luna:**
 ```bash
-cd /home/dan/git/awtoau/awto-luna
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-luna"
 act -j build              # Simulations
 ```
 
@@ -594,7 +594,7 @@ cmake --version              # 4.3.0
 
 ### Repository Structure
 ```
-~/git/awtoau/
+$HOME/git/awtoau/
 ├── awto-apollo/              # Apollo debug controller (ARM)
 │   └── firmware/
 │       └── Makefile          # make APOLLO_BOARD=cynthion
@@ -659,7 +659,7 @@ install.py setup
 - [ ] Dual CDC interface implementation
 
 ### Phase 3-8: UART Architecture
-See: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
+See: [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md)
 
 ---
 
@@ -713,7 +713,7 @@ yosys --version
 ls -la tmp/*.log
 
 # Check build directories
-find ~/git/awtoau -name "*.elf" -o -name "*.bin"
+find "${REPOS_ROOT:-$HOME/git/awtoau}" -name "*.elf" -o -name "*.bin"
 ```
 
 ### act Installation Fails
@@ -763,10 +763,10 @@ docker ps
 
 ### Supplemental Files
 
-- [INSTALL.md](INSTALL.md) — Detailed installation (prerequisites by OS)
-- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — 8-phase roadmap
-- [.claude-toolchain.md](.claude-toolchain.md) — Canonical toolchain config
-- [ARCHITECTURAL_DECISIONS.md](ARCHITECTURAL_DECISIONS.md) — Design history
+- [install.md](install.md) — Detailed installation (prerequisites by OS)
+- [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md) — 8-phase roadmap
+- [claude-toolchain.md](claude-toolchain.md) — Canonical toolchain config
+- [serial_communication_redesign_decisions.md](design_history/serial_communication_redesign_decisions.md) — Design history
 
 ### Build Artifacts & Logs
 
@@ -878,14 +878,14 @@ grep ERROR ./tmp/logs/install-*.log               # Find errors
 ### Phase 2: Issue Resolution & Cleanup
 - **Facedancer:** Resolve luna_soc SPIflash Field TypeError
 - **Apollo:** Firmware improvements (DFU buffers, race conditions, CDC interfaces)
-- **Documentation:** Consolidate all MD files into WIKI.md
+- **Documentation:** Consolidate all MD files into wiki.md
 - Status: In progress
 
 ### Phase 3-8: Serial Architecture Redesign
 - Redesign Apollo-moondancer communication
 - Implement UART watchdog supervisor
 - Improve reliability and maintainability
-- See: DESIGN_UART_WATCHDOG.md for details
+- See: design_proposals/apollo_moondancer_uart_watchdog_design.md for details
 
 ---
 
@@ -919,7 +919,7 @@ grep ERROR ./tmp/logs/install-*.log               # Find errors
 - Simpler than subprocess-based approach
 
 ### Consolidated Documentation
-**Decision:** Single WIKI.md instead of scattered MD files
+**Decision:** Single wiki.md instead of scattered MD files
 
 **Rationale:**
 - Easier to maintain (single source of truth)
@@ -956,7 +956,7 @@ Apollo becomes the watchdog for moondancer:
 3. **Phase 3c:** moondancer integration (send heartbeat)
 4. **Phase 3d:** Testing & validation
 
-See DESIGN_UART_WATCHDOG.md for full technical details.
+See design_proposals/apollo_moondancer_uart_watchdog_design.md for full technical details.
 
 ---
 
@@ -1058,9 +1058,9 @@ See [Issue #11](https://github.com/awtoau/cynthion-workspace/issues/11) for deta
 **Status**: Phase 2 Design Review  
 **Related Issues**: [#15](https://github.com/awtoau/cynthion-workspace/issues/15), [#33](https://github.com/awtoau/cynthion-workspace/issues/33)  
 **Reference Docs**: 
-- [`DESIGN_UART_WATCHDOG.md`](debris/DESIGN_UART_WATCHDOG.md) — Proposed UART redesign
-- [`ARCHITECTURE_SCAN.md`](debris/ARCHITECTURE_SCAN.md) — Pin analysis & Debug SPI discovery
-- [`APOLLO_CODE_REVIEW.md`](APOLLO_CODE_REVIEW.md) — Phase 2 code review findings
+- [`apollo_moondancer_uart_watchdog_design.md`](design_proposals/apollo_moondancer_uart_watchdog_design.md) — Proposed UART redesign
+- [`cynthion_architecture_scan_2026_05_22.md`](research/cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
+- [`apollo_code_review.md`](apollo_code_review.md) — Phase 2 code review findings
 
 ### The Problem
 
@@ -1127,7 +1127,7 @@ case SPI_FPGA_DEBUG:
 
 #### Option 1: UART-Based Watchdog ⭐ **Recommended**
 
-**Reference**: [`DESIGN_UART_WATCHDOG.md`](debris/DESIGN_UART_WATCHDOG.md)
+**Reference**: [`apollo_moondancer_uart_watchdog_design.md`](design_proposals/apollo_moondancer_uart_watchdog_design.md)
 
 **Architecture**:
 ```
@@ -1158,7 +1158,7 @@ PA04 ← status ────── ← moondancer status output
 
 #### Option 2: Debug SPI on SERCOM2
 
-**Reference**: [`ARCHITECTURE_SCAN.md` (Section 5)](debris/ARCHITECTURE_SCAN.md#5-unimplemented-spi_fpga_debug)
+**Reference**: [`cynthion_architecture_scan_2026_05_22.md` (Section 5)](research/cynthion_architecture_scan_2026_05_22.md#5-unimplemented-spi_fpga_debug)
 
 **Architecture**:
 ```

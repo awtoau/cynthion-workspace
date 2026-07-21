@@ -2,14 +2,14 @@
 
 **Last Updated**: 2026-05-22  
 **Status**: Active  
-**Installed**: /home/dan/opt/oss-cad-suite/
+**Installed**: ${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}
 
 ## Environment Setup
 
 Before any build (Apollo, moondancer, gateware), source the environment:
 
 ```bash
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 ```
 
 This sets PATH and LD_LIBRARY_PATH for all FPGA tools.
@@ -26,7 +26,7 @@ This sets PATH and LD_LIBRARY_PATH for all FPGA tools.
 ## Verification
 
 ```bash
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 yosys --version        # Should show 0.65+57
 nextpnr-ecp5 --version # Should show 0.10-74-gee605e2b
 ```
@@ -46,7 +46,7 @@ If you need to use system-installed Yosys/nextpnr (not recommended), you'll lose
 # unset PATH LD_LIBRARY_PATH (but this is destructive)
 ```
 
-**Recommendation**: Always use `/home/dan/opt/oss-cad-suite/` for Cynthion builds.
+**Recommendation**: Always use `${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}` for Cynthion builds.
 
 ## Python 3.14 no-GIL Status
 
@@ -57,5 +57,5 @@ If you need to use system-installed Yosys/nextpnr (not recommended), you'll lose
 
 ## Related Documentation
 
-- `/home/dan/git/cynthion-workspace/PHASE_0_FINDINGS.md` — Detailed toolchain review
-- `/home/dan/git/cynthion-workspace/TOOLCHAIN_VERSIONS.md` — Version comparison analysis
+- [wiki.md](wiki.md) — Consolidated toolchain and build workflow summary
+- [install.md](install.md) — Detailed setup and build instructions

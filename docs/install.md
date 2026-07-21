@@ -6,7 +6,7 @@
 
 ## Overview
 
-This workspace uses **forked repositories** at `/home/dan/git/awtoau/` instead of submodules. The canonical toolchain and build process are documented below.
+This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific `/home/dan/...` paths.
 
 ---
 
@@ -176,7 +176,7 @@ See respective `.github/workflows/*.yml` files for exact CI setup details.
 ## Repository Structure
 
 ```
-/home/dan/git/awtoau/
+${REPOS_ROOT:-$HOME/git/awtoau}/
 ├── awto-apollo/              # Debug controller firmware (ARM)
 │   ├── firmware/
 │   │   ├── Makefile          # Build via: make APOLLO_BOARD=cynthion [target]
@@ -222,10 +222,10 @@ See respective `.github/workflows/*.yml` files for exact CI setup details.
 Before any build, source the OSS CAD Suite environment:
 
 ```bash
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 ```
 
-**Location**: `/home/dan/opt/oss-cad-suite/`  
+**Location**: `${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}`  
 **Version**: 2026-05-22  
 
 | Tool | Version | Commit |
@@ -236,7 +236,7 @@ source /home/dan/opt/oss-cad-suite/environment
 
 Verify:
 ```bash
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 yosys --version        # → 0.65+57
 nextpnr-ecp5 --version # → 0.10-74-gee605e2b
 ```
@@ -304,7 +304,7 @@ If you prefer to build components individually:
 #### Setup (one-time)
 
 ```bash
-cd /home/dan/git/awtoau/awto-apollo/firmware
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"
 # Initialize submodules (TinyUSB)
 make APOLLO_BOARD=cynthion get-deps
 ```
@@ -317,7 +317,7 @@ The `get-deps` target will:
 #### Build
 
 ```bash
-cd /home/dan/git/awtoau/awto-apollo/firmware
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"
 
 # Clean build
 make APOLLO_BOARD=cynthion clean
@@ -342,7 +342,7 @@ make APOLLO_BOARD=cynthion dfu
 **Build System**: Cargo
 
 ```bash
-cd /home/dan/git/awtoau/awto-cynthion/firmware/moondancer
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/firmware/moondancer"
 
 # Build release
 cargo build --release
@@ -361,10 +361,10 @@ cargo build --release
 #### Setup (one-time)
 
 ```bash
-cd /home/dan/git/awtoau/awto-cynthion/cynthion/python
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/cynthion/python"
 
 # Install cynthion package in editable mode
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 pip install --user -e .
 ```
 
@@ -372,7 +372,7 @@ pip install --user -e .
 
 ```bash
 # Test elaboration (dry-run)
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
   python3.14 -m cynthion.gateware.analyzer.top --dry-run
 
@@ -388,7 +388,7 @@ LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
 Same as Analyzer, but with facedancer module:
 
 ```bash
-source /home/dan/opt/oss-cad-suite/environment
+source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
   python3.14 -m cynthion.gateware.facedancer.top --dry-run
 ```
@@ -460,7 +460,7 @@ LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
 - Race condition analysis (scheduler, USB, UART)
 - Dual CDC interfaces (JTAG + console/moondancer serial)
 
-See: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
+See: [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md)
 
 ## References
 
@@ -468,5 +468,5 @@ See: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 - [Cynthion Hardware](https://github.com/greatscottgadgets/cynthion-hardware) - Board schematics
 - [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) - FPGA toolchain releases
 - [Amaranth HDL](https://amaranth-lang.org/) - Python HDL framework
-- [.claude-toolchain.md](.claude-toolchain.md) - Canonical toolchain configuration
+- [claude-toolchain.md](claude-toolchain.md) - Canonical toolchain configuration
 

@@ -13,34 +13,40 @@ These were never committed and have been removed:
 - TOOLCHAIN_REVIEW.md - Detailed toolchain review
 - TOOLCHAIN_VERSIONS.md - Tool versions comparison
 
-**Reason**: Content consolidated into WIKI.md (the single source of truth for documentation)
+**Reason**: Content consolidated into wiki.md (the single source of truth for documentation)
 
 ## Files Currently in This Directory
 
 (Files will be added here during cleanup)
 
+## Curated Prototype Archives
+
+- `code/cynthion-workspace-prototype/` — preserved human-authored subset of an older workspace snapshot after removing generated files, VCS metadata, and exact duplicates
+
 ## Future Documentation
 
-- Use WIKI.md for all project documentation
-- Use design docs for forward-looking architecture (IMPLEMENTATION_PLAN.md, DESIGN_UART_WATCHDOG.md, etc)
+- Use wiki.md for all project documentation
+- Use docs/implementation_plans/ and docs/design_proposals/ for forward-looking architecture work.
+
+Only archived or superseded documents should remain in `debris/`.
 - Use git commit messages for session summaries (no need for separate SESSION_SUMMARY.md)
 
 ## Archived Documents
 
 ### architecture.md
-**Status**: Archived 2026-05-23 after consolidation to WIKI.md
+**Status**: Archived 2026-05-23 after consolidation to wiki.md
 
 **Why archived**: All hardware architecture, patch documentation, and isochronous support details have been consolidated into:
-- [WIKI.md Hardware Architecture](../WIKI.md#hardware-architecture) — canonical reference for hardware design
+- [hardware_architecture.md](../docs/hardware_architecture.md) — canonical reference for hardware design
 - [GitHub Issues #8-11, #15, #43](https://github.com/awtoau/cynthion-workspace/issues) — implementation tracking
 
 **What was in it**:
-- Hardware block diagrams → now in WIKI.md
-- Device states and transitions → now in WIKI.md  
-- CONTROL_SWITCH architecture → now in WIKI.md
-- Firmware patches (#8-#10, #43) → now in WIKI.md + GitHub issues
-- Isochronous support (#11) → now in WIKI.md + Issue #11 detailed comment
-- Development setup → referenced to WIKI.md and cyn CLI
+- Hardware block diagrams → now in wiki.md
+- Device states and transitions → now in wiki.md  
+- CONTROL_SWITCH architecture → now in wiki.md
+- Firmware patches (#8-#10, #43) → now in wiki.md + GitHub issues
+- Isochronous support (#11) → now in wiki.md + Issue #11 detailed comment
+- Development setup → referenced to wiki.md and cyn CLI
 
 **To restore**: If needed, git checkout commits 14db505 or earlier.
 

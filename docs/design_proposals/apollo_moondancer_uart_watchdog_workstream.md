@@ -1,4 +1,6 @@
-# Replace FPGA_ADV Pulse-Train with UART Watchdog (rover)
+# Apollo-Moondancer UART Watchdog Workstream
+
+**Status**: Active Workstream
 
 **Labels**: `rover`, `enhancement`, `architecture`, `firmware`, `gateware`  
 **Related**: #15  
@@ -32,7 +34,7 @@ PA04 GPIO ←───── status
 
 ## Design Document
 
-See [DESIGN_UART_WATCHDOG.md](./DESIGN_UART_WATCHDOG.md) for:
+See [apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md) for:
 - Detailed architecture
 - Implementation plan (3 phases)
 - Risk assessment

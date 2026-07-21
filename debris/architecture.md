@@ -1,11 +1,11 @@
 # Cynthion Stack — Hardware Architecture and Patches
 
-> **Note:** Detailed hardware architecture, device state diagrams, and patch documentation have been consolidated into [WIKI.md](../WIKI.md#hardware-architecture) as the canonical reference. This document focuses on architectural decisions and implementation status.
+> **Note:** Detailed hardware architecture, device state diagrams, and patch documentation have been consolidated into [hardware_architecture.md](../docs/hardware_architecture.md) as the canonical reference. This document focuses on architectural decisions and implementation status.
 
 
 ## Hardware Architecture
 
-See [**WIKI.md Hardware Architecture**](../WIKI.md#hardware-architecture) for detailed block diagrams, device states, CONTROL_SWITCH design, and udev setup.
+See [**hardware_architecture.md**](../docs/hardware_architecture.md) for detailed block diagrams, device states, CONTROL_SWITCH design, and udev setup.
 
 **Key references:**
 - [Issue #15](https://github.com/awtoau/cynthion-workspace/issues/15) — Apollo supervisor architecture (watchdog, halt notification, UART forwarding)
@@ -22,8 +22,8 @@ cyn list                      # list all available commands (target-based archit
 ```
 
 **Documentation:**
-- [Cyn CLI Architecture](../WIKI.md#cyn-cli-architecture) — target-based command structure
-- [udev rules / USB permissions](../WIKI.md#udev-rules) — device access setup
+- [Cyn CLI Architecture](../docs/cyn_cli_architecture.md) — target-based command structure
+- [udev rules / USB permissions](../docs/apollo_uart_spi_design_conflict_analysis.md#udev-rules) — device access setup
 
 ## Patches
 

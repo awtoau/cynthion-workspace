@@ -177,7 +177,7 @@ cd awto-cynthion/cynthion/python && python -m cynthion.gateware.facedancer.top -
 
 ## Phase 3-8: Implementation
 
-See DESIGN_UART_WATCHDOG.md for details on:
+See ../design_proposals/apollo_moondancer_uart_watchdog_design.md for details on:
 - Phase 3: JTAG always available (separate from moondancer)
 - Phase 4: FPGA stub gateware test
 - Phase 5: moondancer diagnostic serial build
