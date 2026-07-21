@@ -4,6 +4,15 @@
 
 This document consolidates the RISC-V CPU alternatives and evaluation criteria that were previously scattered across planning notes and chat summaries.
 
+## Verification Status
+
+- Last verified: 2026-07-22
+- Canonicality: this is the canonical alternatives-and-ranking reference for CPU direction in this workspace.
+- Verification delta (2026-07-22):
+	1. Updated stale toolchain note regarding `nextpnr-ecp5` availability.
+	2. Replaced machine-specific absolute paths with portable `${REPOS_ROOT:-$HOME/git/awtoau}` forms.
+	3. Recommendation outcome unchanged: `VexiiRiscv` remains the first RV64 experiment candidate, with `Rocket` as secondary and `CVA6` unlikely on current FPGA budget.
+
 Primary source references:
 - `docs/implementation_plans/serial_architecture_redesign_plan.md` (Phase 0, P0.1)
 - `vexriscv_update_blocked.md`
@@ -131,7 +140,7 @@ This conclusion should be revisited only if at least one of the following become
 2. The surrounding SoC is simplified enough that CPU area becomes the dominant cost.
 3. The hardware target changes to a larger FPGA.
 
-Note: this workspace currently does not have `nextpnr-ecp5` installed, so this document does not include a fresh local synthesis datapoint. The conclusion above is based on the board size in this repo plus the published design class of the candidate RV64 cores.
+Note: `nextpnr-ecp5` is available in this workspace, but this document still does not include a full fresh side-by-side synthesis matrix for all candidates. The conclusion above remains based on board-size constraints in this repo plus the published design class of the candidate RV64 cores.
 
 ## Primary Question: Bare-Minimum RV64 Linux
 
@@ -327,9 +336,9 @@ For this repo, evaluate each option against:
 
 Any CPU swap would likely touch at least:
 
-1. `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py`
-2. `/mnt/2tb/git/awtoau/awto-cynthion/firmware/moondancer-pac/src/generated.rs`
-3. `/mnt/2tb/git/awtoau/awto-cynthion/firmware/lunasoc-hal/`
+1. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py`
+2. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/firmware/moondancer-pac/src/generated.rs`
+3. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/firmware/lunasoc-hal/`
 
 For archived local deltas relative to that checkout, see `patches/cynthion/` and the remaining non-duplicate files in `debris/code/awto-cynthion-reference/`.
 
