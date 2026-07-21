@@ -118,5 +118,53 @@ Fast validation checklist:
 3. `riscv canary` runs without `ModuleNotFoundError`.
 4. If failure remains, investigate device mode/API state separately (not Python packaging).
 
+### Facedancer Prebuilt-Bitstream Fallback Runbook
+
+Use this only when local facedancer gateware build/toolchain path is blocked and you need bring-up continuity.
+
+Prechecks:
+```bash
+# 1) Confirm toolchain/build-path failure signature first.
+# Typical signatures:
+# - missing FPGA toolchain binaries
+# - facedancer asset build fails
+
+# 2) Confirm baseline USB mode before switching.
+lsusb | rg -i '1d50:615b|1d50:615c'
+
+# 3) Confirm a candidate prebuilt bitstream exists.
+find "${REPOS_ROOT:-$HOME/git/awtoau}" -path '*/assets/*' -name 'facedancer.bit'
+```
+
+Known fallback command pattern:
+```bash
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/cynthion" run \
+  --bitstream /absolute/path/to/facedancer.bit facedancer
+```
+
+Postchecks:
+```bash
+# 1) Verify USB identity/mode changed as expected.
+lsusb | rg -i '1d50:615b|1d50:615c'
+
+# 2) Verify command path sanity.
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/cynthion" run -h
+```
+
+When this fallback is appropriate:
+1. You need immediate debug/bring-up continuity.
+2. Canonical gateware build path is temporarily unavailable.
+
+Risks and limitations:
+1. Version drift: prebuilt artifact may not match current source tree.
+2. Reproducibility gap: behavior cannot be attributed to local commit build output.
+3. Trust boundary: only use artifacts from known local repos with provenance.
+
+Recovery to canonical path:
+1. Restore local FPGA toolchain and successful `make assets` flow.
+2. Re-run with locally built facedancer artifact.
+3. Record toolchain and artifact provenance in notes/logs.
+
 ---
 

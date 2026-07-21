@@ -479,6 +479,16 @@ PY
 3. `riscv canary` executes without import-path errors.
 4. If command still fails, check device mode/API compatibility separately from Python environment.
 
+### Facedancer Bitstream Build Blocked
+
+If local facedancer asset build is blocked, a prebuilt `facedancer.bit` fallback can be used for temporary bring-up continuity.
+
+Use the runbook in [troubleshooting.md](troubleshooting.md) before applying this fallback:
+- verify failure signatures first,
+- use explicit artifact path provenance,
+- validate USB mode and command sanity after load,
+- return to canonical local build flow when toolchain is restored.
+
 ### Amaranth Not Compatible with Python 3.14
 
 **Status**: ✅ VERIFIED COMPATIBLE
