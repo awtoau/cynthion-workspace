@@ -76,5 +76,47 @@ sudo usermod -aG docker $USER
 docker ps
 ```
 
+### apollo-mux: REPL works but `riscv` commands fail with `No module named 'cynthion'`
+```bash
+# Typical symptom:
+# - apollo-mux connects to socket
+# - REPL accepts commands
+# - riscv command path throws ModuleNotFoundError
+```
+
+This is usually an execution-context problem. Treat diagnosis in this order:
+
+1. Package installed?
+```bash
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -c "import cynthion; print(cynthion.__file__)"
+```
+
+2. Interpreter mismatch?
+```bash
+which python3
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -m pip show cynthion
+```
+
+3. Launch context mismatch (cwd/PYTHONPATH)?
+```bash
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" scripts/apollo-mux.py \
+  --socket "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/tmp/apollod.sock" --no-spinner -v
+```
+
+Known-good runtime pattern:
+```bash
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -m pip install -e cynthion/python
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -c "import cynthion; print(cynthion.__file__)"
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" scripts/apollo-mux.py --socket "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/tmp/apollod.sock" --no-spinner -v
+```
+
+Fast validation checklist:
+1. Socket connected message appears.
+2. Import check resolves `cynthion` in the same interpreter used to run `apollo-mux`.
+3. `riscv canary` runs without `ModuleNotFoundError`.
+4. If failure remains, investigate device mode/API state separately (not Python packaging).
+
 ---
 

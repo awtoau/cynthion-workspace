@@ -434,6 +434,51 @@ All build artifacts and logs go to `./tmp/` per CLAUDE.md rules:
 2. Use full platform path: `cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2`
 3. Source OSS CAD Suite environment first
 
+### apollo-mux Runtime Context Trap (REPL works, `riscv` fails)
+
+**Symptom pattern**:
+- `apollo-mux` starts and connects to socket
+- REPL responds to `help`
+- `riscv` commands fail with `No module named 'cynthion'`
+
+This usually means runtime context mismatch, not hardware failure.
+
+**Distinguish the three common causes**:
+1. **Package missing**: `python -c "import cynthion"` fails in all terminals.
+2. **Wrong interpreter**: package is installed in one Python, but `apollo-mux` runs under another.
+3. **Wrong cwd/PYTHONPATH context**: `apollo-mux` starts from a context where the expected package path is not visible.
+
+**Minimal reproducible failure sequence**:
+```bash
+# Example of a context mismatch that can fail on riscv command paths.
+python3 /path/to/awto-cynthion/scripts/apollo-mux.py \
+  --socket /path/to/awto-cynthion/tmp/apollod.sock --no-spinner -v
+```
+
+**Known-good sequence**:
+```bash
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
+
+# Use the same interpreter that has the editable cynthion package.
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -m pip install -e cynthion/python
+
+# Validate import path before launching REPL.
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" - <<'PY'
+import cynthion
+print(cynthion.__file__)
+PY
+
+# Launch with the same interpreter used for the import check.
+"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" scripts/apollo-mux.py \
+  --socket "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/tmp/apollod.sock" --no-spinner -v
+```
+
+**Validation checklist**:
+1. `apollo-mux` shows socket connected.
+2. Import check prints a valid `cynthion` module path.
+3. `riscv canary` executes without import-path errors.
+4. If command still fails, check device mode/API compatibility separately from Python environment.
+
 ### Amaranth Not Compatible with Python 3.14
 
 **Status**: ✅ VERIFIED COMPATIBLE
