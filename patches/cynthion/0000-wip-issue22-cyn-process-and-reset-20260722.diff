@@ -1,0 +1,76 @@
+diff --git a/scripts/cyn_main.py b/scripts/cyn_main.py
+index a11d37e..db9f103 100755
+--- a/scripts/cyn_main.py
++++ b/scripts/cyn_main.py
+@@ -922,32 +922,49 @@ class CynCLI:
+     def cmd_reset(self, args):
+         """Reset device to Apollo mode"""
+         self._check_venv()
+-        log_path = self._log_path("reset")
++        mode = getattr(args, "mode", "normal")
++        hold_apollo = (mode == "hold-apollo")
++        log_path = self._log_path("reset-hold-apollo" if hold_apollo else "reset")
+         print(f"==> reset (log: {log_path.relative_to(REPO_ROOT)})")
++        print(f"  mode: {mode}")
+ 
+         reset_script = REPOS / "awto-cynthion" / "scripts" / "reset-cynthion.sh"
+         with log_path.open("w") as log:
+-            if reset_script.exists():
++            if reset_script.exists() and not hold_apollo:
+                 ret = self._run_tee("reset-cynthion", [str(reset_script)],
+                     cwd=REPO_ROOT, log_file=log)
+             else:
++                if reset_script.exists() and hold_apollo:
++                    print("  hold-apollo mode bypasses reset-cynthion.sh to prevent auto-handoff.")
++                allow_takeover = "False" if hold_apollo else "True"
+                 ret = self._run_tee("force-offline",
+-                    [str(VENV_PYTHON), "-c", """
++                    [str(VENV_PYTHON), "-c", f"""
+ import sys
+ try:
+     import usb.core
+     from apollo_fpga import ApolloDebugger
++    ALLOW_FPGA_TAKEOVER = {allow_takeover}
+     FPGA_VID, FPGA_PID = 0x1d50, 0x615b
+     if usb.core.find(idVendor=FPGA_VID, idProduct=FPGA_PID) is None:
+         print("Device already in Apollo mode (or not connected).")
++        if not ALLOW_FPGA_TAKEOVER:
++            print("Hold mode active; triggering soft reset without USB handoff.")
++            d = ApolloDebugger()
++            d.soft_reset()
++            d.close()
++            print("Reset complete (Apollo hold mode, takeover not allowed).")
+         sys.exit(0)
+     d = ApolloDebugger(force_offline=True)
+     d.soft_reset()
+-    d.allow_fpga_takeover_usb()
++    if ALLOW_FPGA_TAKEOVER:
++        d.allow_fpga_takeover_usb()
+     d.close()
+-    print("Reset complete.")
++    if ALLOW_FPGA_TAKEOVER:
++        print("Reset complete (FPGA takeover allowed).")
++    else:
++        print("Reset complete (Apollo hold mode, takeover not allowed).")
+ except Exception as e:
+-    print(f"Reset failed: {e}")
++    print(f"Reset failed: {{e}}")
+     print("If moondancer has hung: power-cycle the device.")
+     sys.exit(1)
+ """],
+@@ -1144,7 +1161,14 @@ except Exception as e:
+ 
+         # Device management
+         subs.add_parser("deploy", help="Build --release + flash riscv + fpga (full cycle)").set_defaults(func=self.cmd_deploy)
+-        subs.add_parser("reset", help="Reset device to Apollo mode").set_defaults(func=self.cmd_reset)
++        reset = subs.add_parser("reset", help="Reset device to Apollo mode")
++        reset.add_argument(
++            "--mode",
++            choices=["normal", "hold-apollo"],
++            default="normal",
++            help="normal: allow FPGA takeover after reset; hold-apollo: keep Apollo in control for CDC/UART testing",
++        )
++        reset.set_defaults(func=self.cmd_reset)
+         subs.add_parser("monitor", help="Live device monitoring (stub)").set_defaults(func=self.cmd_monitor)
+ 
+         # Daemon management
