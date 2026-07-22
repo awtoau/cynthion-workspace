@@ -105,8 +105,10 @@ def run_core_dev(
     skip_log_scan: bool,
     run_log: pathlib.Path,
 ) -> None:
-    run_sbt_main(WORK, sbt_arg_string(profile.sbt_main, profile.sbt_args), run_log)
-    run_dev_profile(ROOT, tag, notes, target_mhz, threads, fail_on_warnings, skip_log_scan, run_log)
+    # Core generation and downstream flow both rely on shared build artifacts.
+    with with_shared_pipeline_lock(ROOT):
+        run_sbt_main(WORK, sbt_arg_string(profile.sbt_main, profile.sbt_args), run_log)
+        run_dev_profile(ROOT, tag, notes, target_mhz, threads, fail_on_warnings, skip_log_scan, run_log)
 
 
 def run_microsoc_direct(
