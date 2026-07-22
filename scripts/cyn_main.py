@@ -421,7 +421,7 @@ class CynCLI:
                     "description": "Apollo ARM debug firmware",
                     "verbs": {
                         "build": {"args": ["--release"], "description": "Build Apollo firmware"},
-                        "flash": {"args": [], "description": "Flash to connected device (requires SWD)"},
+                        "flash": {"args": [], "description": "Flash via USB DFU (Saturn-V runtime)"},
                         "check": {"args": [], "description": "Run build verification"},
                         "test": {"args": ["--destructive"], "description": "Run tests"},
                         "clean": {"args": [], "description": "Clean build artifacts"}
@@ -917,27 +917,29 @@ class CynCLI:
         return 0
 
     def _flash_apollo(self, log_file):
-        """Flash Apollo to device"""
-        elf = APOLLO_FW / "_build" / "cynthion_d11" / "firmware.elf"
-        if not elf.exists():
-            print("  ERROR: Apollo ELF not found — run 'cyn build apollo' first")
+        """Flash Apollo firmware via USB DFU."""
+        image = APOLLO_FW / "_build" / "cynthion_d11" / "firmware.bin"
+        if not image.exists():
+            print("  ERROR: Apollo firmware image not found — run 'cyn build apollo' first")
             return 1
 
-        ret = self._run_tee("apollo flash",
-            ["arm-none-eabi-gdb", "-batch",
-             "-ex", f"target extended-remote | openocd -f interface/cmsis-dap.cfg -c 'gdb_port pipe'",
-             "-ex", f"load {elf}",
-             "-ex", "detach"],
-            log_file=log_file, check=False)
-        print("  note: Apollo flash requires SWD connection — check device docs if this failed")
+        ret = self._run_tee(
+            "apollo flash (dfu)",
+            ["make", "APOLLO_BOARD=cynthion", "dfu"],
+            cwd=APOLLO_FW,
+            log_file=log_file,
+            check=False,
+        )
+        print("  note: DFU expects Apollo runtime VID:PID (1d50:615c or 1209:0010).")
         return ret
 
     def _flash_gateware(self, log_file):
         """Flash gateware to FPGA"""
         self._check_venv()
         bitstream = GATEWARE_DIR / "build" / "top.bit"
-        ret = self._run_tee("gateware upload",
-            [str(VENV_PYTHON), "-m", "apollo_fpga.cli", "--", "configure", str(bitstream)],
+        ret = self._run_tee(
+            "gateware upload",
+            ["apollo", "configure", str(bitstream)],
             log_file=log_file, check=False)
         print("  note: ensure device is in Apollo mode (run 'cyn reset' first if needed)")
         return ret
@@ -977,9 +979,83 @@ class CynCLI:
         self._check_venv()
         mode = getattr(args, "mode", "normal")
         hold_apollo = (mode == "hold-apollo")
-        log_path = self._log_path("reset-hold-apollo" if hold_apollo else "reset")
+        boot_dfu = (mode == "boot-dfu")
+        log_path = self._log_path(
+            "reset-boot-dfu" if boot_dfu else ("reset-hold-apollo" if hold_apollo else "reset")
+        )
         print(f"==> reset (log: {log_path.relative_to(REPO_ROOT)})")
         print(f"  mode: {mode}")
+
+        if boot_dfu:
+            with log_path.open("w") as log:
+                ret = self._run_tee(
+                    "boot-to-dfu",
+                    [
+                        str(VENV_PYTHON),
+                        "-c",
+                        """
+import sys
+import time
+import usb.core
+from apollo_fpga import ApolloDebugger, DebuggerNotFound
+
+
+def _is_apollo_debugger_device(dev):
+    request_type = 0xC0  # IN | VENDOR | DEVICE
+    try:
+        response = dev.ctrl_transfer(request_type, 0xa0, data_or_wLength=64, timeout=200)
+    except usb.core.USBError:
+        return False
+
+    ident = bytes(response).decode('utf-8', errors='ignore').split('\\x00')[0]
+    return "Apollo" in ident
+
+
+print('Sending bootloader request...')
+try:
+    d = ApolloDebugger(force_offline=True)
+except DebuggerNotFound as e:
+    print(f'Apollo debugger not found (possibly already in bootloader): {e}')
+else:
+    try:
+        d.out_request(0xed)
+        print('Bootloader request sent.')
+    except usb.core.USBError as e:
+        # Reboot can race the status stage and cause timeout/pipe errors.
+        print(f'Reboot request caused expected USB interruption: {e}')
+    finally:
+        d.close()
+
+# Pause briefly, then confirm the post-reset USB state.
+time.sleep(0.35)
+deadline = time.time() + 6.0
+
+while time.time() < deadline:
+    dev_60e6 = usb.core.find(idVendor=0x1d50, idProduct=0x60e6)
+    if dev_60e6 is not None:
+        print('Detected Saturn-V bootloader (1d50:60e6).')
+        sys.exit(0)
+
+    dev_615c = usb.core.find(idVendor=0x1d50, idProduct=0x615c)
+    dev_1209 = usb.core.find(idVendor=0x1209, idProduct=0x0010)
+    candidate = dev_615c or dev_1209
+
+    if candidate is not None and not _is_apollo_debugger_device(candidate):
+        print('Detected non-Apollo responder on shared VID:PID (bootloader-like state).')
+        sys.exit(0)
+
+    time.sleep(0.1)
+
+print('Bootloader was not detected on the USB bus after reboot request.')
+sys.exit(1)
+""",
+                    ],
+                    cwd=REPO_ROOT,
+                    log_file=log,
+                )
+
+            print("Reset complete.")
+            return ret
 
         reset_script = REPOS / "awto-cynthion" / "scripts" / "reset-cynthion.sh"
         with log_path.open("w") as log:
@@ -1217,9 +1293,9 @@ except Exception as e:
         reset = subs.add_parser("reset", help="Reset device to Apollo mode")
         reset.add_argument(
             "--mode",
-            choices=["normal", "hold-apollo"],
+            choices=["normal", "hold-apollo", "boot-dfu"],
             default="normal",
-            help="normal: allow FPGA takeover after reset; hold-apollo: keep Apollo in control for CDC/UART testing",
+            help="normal: allow FPGA takeover after reset; hold-apollo: keep Apollo in control for CDC/UART testing; boot-dfu: reboot Apollo into Saturn-V DFU bootloader",
         )
         reset.set_defaults(func=self.cmd_reset)
         subs.add_parser("monitor", help="Live device monitoring (stub)").set_defaults(func=self.cmd_monitor)
