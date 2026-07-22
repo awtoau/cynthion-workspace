@@ -186,7 +186,7 @@ cyn <task-command>
 | `scripts/install.py` | Workspace setup automation |
 | `scripts/logging_utils.py` | Logging infrastructure |
 | `patchset/patchset_overview.md` | Patch-set history snapshot |
-| `build_system.md` | Toolchain configuration |
+| `install.md` | Toolchain and build-system configuration |
 
 ---
 
