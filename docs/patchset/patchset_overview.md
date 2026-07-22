@@ -1,21 +1,18 @@
 ## Apollo Modification History
 
-This page records Apollo-related change sets as modification history rather than a phase summary.
 The canonical patch artifact for the current set is:
 
 - [patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff](../../patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff)
 
 For the evidence/issue workflow that goes with these changes, see [apollo_change_process.md](../apollo_samd11_mcu/apollo_change_process.md).
 
-### Related Build-System Snapshot
+### Related Build-System Changes
 
 The build-system work that introduced logging, fail-fast checks, and parallel execution is summarized separately here:
 
 - [0001-improved-build-system-logging-fail-fast-parallelization.md](0001-improved-build-system-logging-fail-fast-parallelization.md)
 - [0002-parallel-build-execution-setup-and-build-threading.md](0002-parallel-build-execution-setup-and-build-threading.md)
 - [install.md](../install.md)
-
-This is a documentation snapshot of the build-system change set, not a standalone patch artifact.
 
 ### 2026-07-22 - Apollo console/UART race hardening
 

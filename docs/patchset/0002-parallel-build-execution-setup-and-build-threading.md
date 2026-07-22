@@ -1,6 +1,6 @@
 ## Parallel Build Execution
 
-Associated build-system snapshot:
+Related change set:
 - [0001-improved-build-system-logging-fail-fast-parallelization.md](0001-improved-build-system-logging-fail-fast-parallelization.md)
 
 ### Usage
