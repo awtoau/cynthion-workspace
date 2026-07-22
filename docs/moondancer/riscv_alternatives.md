@@ -1,4 +1,4 @@
-# RISC-V Alternatives for Cynthion moondancer
+# RISC-V Alternatives for Cynthion Moondancer (RISC-V softcore on ECP5 FPGA)
 
 ## Purpose
 
@@ -14,7 +14,7 @@ This document consolidates the RISC-V CPU alternatives and evaluation criteria t
 	3. Recommendation outcome unchanged: `VexiiRiscv` remains the first RV64 experiment candidate, with `Rocket` as secondary and `CVA6` unlikely on current FPGA budget.
 
 Primary source references:
-- `docs/implementation_plans/serial_architecture_redesign_plan.md` (Phase 0, P0.1)
+- `docs/apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md` (Phase 0, P0.1)
 - `vexriscv_update_blocked.md`
 
 ## Current Baseline
@@ -35,7 +35,7 @@ The alternatives originally identified for investigation are:
 4. Ibex (lowRISC)
 5. VexRiscv (current baseline for comparison)
 
-Reference: `docs/implementation_plans/serial_architecture_redesign_plan.md`
+Reference: `docs/apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md`
 
 Important clarification for 64-bit review:
 

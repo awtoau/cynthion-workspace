@@ -7,7 +7,11 @@ dev-cycle check scripts, and owns CI configuration.
 
 ## Documentation
 
-- Canonical docs index: [docs/wiki.md](docs/wiki.md)
+- Consolidated documentation snapshot: [docs/full.md](docs/full.md)
+- Hardware-specific docs:
+  - [docs/apollo_samd11_mcu](docs/apollo_samd11_mcu)
+  - [docs/luna_ecp5_fpga](docs/luna_ecp5_fpga)
+  - [docs/moondancer](docs/moondancer)
 
 ## Quick start
 

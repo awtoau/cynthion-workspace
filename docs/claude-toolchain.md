@@ -57,5 +57,5 @@ If you need to use system-installed Yosys/nextpnr (not recommended), you'll lose
 
 ## Related Documentation
 
-- [wiki.md](wiki.md) — Consolidated toolchain and build workflow summary
+- [full.md](full.md) — Consolidated workspace documentation snapshot
 - [install.md](install.md) — Detailed setup and build instructions

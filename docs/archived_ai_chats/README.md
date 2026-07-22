@@ -21,7 +21,7 @@ Recovered Copilot chat transcripts for this workspace after path migration from 
 
 ## De-duplication Note
 
-- Consolidated RISC-V alternatives and option analysis now live in `docs/riscv_alternatives.md`.
+- Consolidated RISC-V alternatives and option analysis now live in `docs/moondancer/riscv_alternatives.md`.
 - Transcript files are preserved as raw records; this index avoids repeating detailed alternatives content.
 
 ## Format

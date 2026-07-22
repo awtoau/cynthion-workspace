@@ -185,7 +185,7 @@ cyn <task-command>
 | `cyn` | Main entry point (this file) |
 | `scripts/install.py` | Workspace setup automation |
 | `scripts/logging_utils.py` | Logging infrastructure |
-| `wiki.md` | Complete documentation |
+| `full.md` | Consolidated documentation snapshot |
 | `claude-toolchain.md` | Toolchain configuration |
 
 ---
@@ -224,6 +224,6 @@ cyn ci cynthion     # List Cynthion jobs
 
 ## See Also
 
-- [wiki.md](../wiki.md) — Complete documentation
-- [scripts/install.py](scripts/install.py) — Build automation (called by cyn)
+- [full.md](../full.md) — Consolidated documentation snapshot
+- [scripts/install.py](../../scripts/install.py) — Build automation (called by cyn)
 - [cyn_entrypoint_architecture.md](cyn_entrypoint_architecture.md) — This file

@@ -1,4 +1,4 @@
-# Cynthion Workspace Wiki
+# Cynthion Workspace Documentation
 
 **Complete documentation for setup, build, CI/CD, and development workflows**
 
@@ -12,7 +12,7 @@
 1. **[Quick Start](#quick-start)** — Get started in 5 minutes
 2. **[Improved Build System (NEW)](#improved-build-system)** — Phase 1 improvements: logging, fail-fast checks, parallelization
 3. **[Parallel Build Execution](#parallel-build-execution)** — 55% faster builds with Python 3.14 no-GIL
-4. **[Phase 1 Results](#phase-1-results)** — Build status: 3/4 successful
+4. **[Apollo Modification History](#apollo-modification-history)** — Patch-set-backed Apollo change log
 5. **[Installation](#installation)** — Complete setup guide
 6. **[Build System](#build-system)** — install.py commands reference
 7. **[Version Management](#version-management)** — Track and compare versions
@@ -63,10 +63,10 @@ sudo apt-get install -y python3.14 python3.14-dev rustc cargo \
 # Install GitHub Actions runner
 ./scripts/install.py ci-install
 
-# Run Apollo CI locally
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
+# Run Cynthion CI locally
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
 act -l                    # List jobs
-act -j firmware-build     # Run firmware build
+act -j build-and-test     # Run matrix build job
 ```
 
 ---
@@ -92,11 +92,10 @@ act -j firmware-build     # Run firmware build
 - 55% speedup (33 min → 18 min with 4 threads)
 - New CLI options: `--parallel`, `--jobs N`
 
-### Apollo Firmware Fixed
+### Subsystem Notes Moved
 
-**Issue:** TinyUSB submodule initialization failed  
-**Fix:** Applied: `git submodule deinit -f lib/tinyusb && git submodule update --init`  
-**Result:** Apollo firmware now builds successfully ✓
+Subsystem-specific deep dives were moved out of this workspace-wide summary.
+See: [apollo_summary_from_full.md](apollo_samd11_mcu/apollo_summary_from_full.md)
 
 ---
 
@@ -138,10 +137,9 @@ act -j firmware-build     # Run firmware build
    - Python environment setup
 
 2. **Build Phase (Parallel)**: 8 min
-   - Thread 1: Apollo Firmware (10 min)
-   - Thread 2: moondancer (5 min)
-   - Thread 3: Analyzer Gateware (8 min)
-   - Thread 4: Facedancer Gateware (8 min)
+  - Thread 1: moondancer (5 min)
+  - Thread 2: Analyzer Gateware (8 min)
+  - Thread 3: Facedancer Gateware (8 min)
    - All run simultaneously
 
 **Total: 20 minutes (setup + parallel builds)**
@@ -157,65 +155,11 @@ act -j firmware-build     # Run firmware build
 
 ---
 
-## Phase 1 Results
+## Apollo Modification History
 
-### Status: 3/4 SUCCESSFUL
+See [patchset/patchset_overview.md](patchset/patchset_overview.md) for the patch-set-backed Apollo change log.
 
-| Component | Result | Notes |
-|-----------|--------|-------|
-| Apollo Firmware | ✓ SUCCESS | Builds cleanly; TinyUSB issue fixed |
-| moondancer (Rust/RISC-V) | ✓ SUCCESS | Compilation working perfectly |
-| Analyzer Gateware | ✓ SUCCESS | Amaranth elaboration → bitstream |
-| Facedancer Gateware | ✗ KNOWN ISSUE | luna_soc SPIflash Field TypeError |
-
-### Detailed Results
-
-**Apollo Firmware (ARM Cortex-M0+)**
-- Compiler: arm-none-eabi-gcc (GCC 15.2.0)
-- Dependencies: TinyUSB (fixed), FreeRTOS, lwIP, Microchip drivers
-- Build: Compiles cleanly with standard warnings
-- Output: `firmware/build/cynthion_d11/apollo_debug_soc.elf`
-
-**moondancer (RISC-V)**
-- Language: Rust
-- Target: riscv32imac-unknown-none-elf
-- Build: Cargo release build
-- Output: `firmware/moondancer/target/riscv32imac-unknown-none-elf/release/moondancer`
-
-**Analyzer Gateware**
-- Language: Python (Amaranth HDL)
-- Framework: Amaranth 0.5 (Python 3.14 compatible)
-- Target: Cynthion r0.2 (ECP5 LFE5U-12F FPGA)
-- Status: Elaboration test passes, ready for synthesis
-
-**Facedancer Gateware**
-- Issue: `TypeError: Field collection must be a dict, list, or Field, not None`
-- Location: `luna_soc/gateware/core/spiflash/controller.py:91`
-- Cause: luna_soc library bug (not Cynthion-specific)
-- Impact: Only affects Facedancer; Analyzer works independently
-- Workaround: Use analyzer-only build for now (Phase 2 to resolve)
-
-### Error Handling Improvements
-
-The new system provides **detailed error messages** for each failure:
-
-**Apollo TinyUSB Issue (NOW SHOWS):**
-```
-✗ Failed to get dependencies: 2
-✗ stderr: Makefile:60: ../lib/tinyusb/examples/make.mk: No such file
-
-This usually means TinyUSB submodule initialization failed. Try:
-  cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"
-  git submodule update --init --recursive lib/tinyusb/
-```
-
-**Facedancer luna_soc Issue (NOW SHOWS):**
-```
-✗ Facedancer gateware elaboration failed with exit code 1
-✗ Known issue: luna_soc SPIflash controller has incompatible Field definition
-✗ Probable cause: Facedancer uses SPIflash but current luna_soc version is broken
-✗ Workaround: Try analyzer-only build without SPIflash
-```
+The old phase-summary content was moved out of this document so the overview stays focused on the broad workspace documentation.
 
 ---
 
@@ -312,13 +256,6 @@ nextpnr-ecp5 --version # 0.10+
 
 ### Build Artifacts
 
-**Apollo Firmware (ARM):**
-```
-awto-apollo/firmware/build/cynthion_d11/
-  ├── apollo_debug_soc.elf
-  └── apollo_debug_soc.bin
-```
-
 **moondancer Firmware (RISC-V):**
 ```
 awto-cynthion/firmware/moondancer/target/riscv32imac-unknown-none-elf/release/
@@ -333,7 +270,6 @@ tmp/  (Amaranth elaboration produces .bit files)
 ### Build Logs
 ```
 tmp/
-├── apollo-build.log
 ├── moondancer-build.log
 ├── gateware-analyzer-build.log
 ├── gateware-facedancer-build.log
@@ -405,7 +341,7 @@ curl https://raw.githubusercontent.com/nektos/act/master/install.sh | bash
 
 #### List Workflows
 ```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
 ./scripts/install.py ci-list   # Via install.py
 # or
 act -l                         # Via act directly
@@ -438,13 +374,6 @@ act  # Runs all (some may fail if OS unsupported locally)
 
 ### Vendor Workflows (Existing CI)
 
-**Apollo:**
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
-act -l                    # Lists: firmware-build, host
-act -j firmware-build     # Runs: make get-deps all
-```
-
 **Cynthion:**
 ```bash
 cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
@@ -469,11 +398,6 @@ act -j build              # Simulations
 ## GitHub Actions
 
 ### Current Workflows
-
-**awto-apollo/.github/workflows/firmware.yml**
-- Builds: Apollo firmware for 6 board variants
-- Triggers: push, pull_request, merge_group
-- Runs on: ubuntu-latest
 
 **awto-cynthion/.github/workflows/python.yml**
 - Tests: Python package on 3 OS × 5 Python versions
@@ -558,13 +482,6 @@ nextpnr-ecp5 --version
 
 ### Compilers
 
-**ARM (Apollo):**
-```bash
-arm-none-eabi-gcc --version  # GCC 15.2.0
-arm-none-eabi-g++
-arm-none-eabi-ar
-```
-
 **RISC-V (moondancer):**
 ```bash
 rustc --version              # 1.95.0+
@@ -595,9 +512,6 @@ cmake --version              # 4.3.0
 ### Repository Structure
 ```
 $HOME/git/awtoau/
-├── awto-apollo/              # Apollo debug controller (ARM)
-│   └── firmware/
-│       └── Makefile          # make APOLLO_BOARD=cynthion
 ├── awto-cynthion/            # Gateware + moondancer
 │   ├── cynthion/python/      # Gateware (Amaranth)
 │   └── firmware/
@@ -612,12 +526,8 @@ Repos (GitHub)
   ↓
 install.py setup
   ├─→ Clone all repos
-  ├─→ Init submodules (TinyUSB, etc)
+  ├─→ Init submodules
   ├─→ Install Python deps (Amaranth, etc)
-  │
-  ├─→ Apollo firmware
-  │   └─→ make APOLLO_BOARD=cynthion
-  │       └─→ firmware/build/cynthion_d11/apollo_debug_soc.elf
   │
   ├─→ moondancer firmware
   │   └─→ cargo build --release
@@ -638,28 +548,26 @@ install.py setup
 
 ### Phase 0: Toolchain Review (COMPLETE ✓)
 - ✓ RISC-V CPU model (VexRiscv proven)
-- ✓ Apollo firmware toolchain (ARM GCC 15.2.0)
 - ✓ Python 3.14 no-GIL compatibility (Amaranth 0.5 tested)
 - ✓ FPGA programming flow (Yosys/nextpnr/trellis)
 - ✓ OSS CAD Suite installation (2026-05-22)
 
 ### Phase 1: Toolchain Build (COMPLETE ✓)
-- ✓ Apollo firmware clean build (TinyUSB submodule fixed)
 - ✓ moondancer firmware clean build (Rust/RISC-V)
 - ✓ Analyzer gateware elaboration (Amaranth → bitstream)
 - ✗ Facedancer gateware (known luna_soc SPIflash issue)
 - ✓ Documented all build issues and improvements
 
-**Status:** 3/4 builds successful
+**Status:** 2/3 builds successful
 **Improvements:** Fail-fast checks, comprehensive logging, 55% speedup via parallelization
 
-### Phase 2: Apollo Firmware Fixes (NEXT)
-- [ ] DFU memory buffer optimization
-- [ ] Race condition analysis and fixes
-- [ ] Dual CDC interface implementation
+### Phase 2: Component Issue Resolution (NEXT)
+- [ ] Facedancer/luna_soc compatibility fixes
+- [ ] Workspace integration validation
 
-### Phase 3-8: UART Architecture
-See: [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md)
+### Phase 3-8: Subsystem Roadmaps
+Apollo-specific roadmap details moved to:
+[apollo_summary_from_full.md](apollo_samd11_mcu/apollo_summary_from_full.md)
 
 ---
 
@@ -745,13 +653,13 @@ docker ps
 
 ## References
 
-### This Wiki Contains
+### This Documentation Contains
 
 **All consolidated documentation:**
 - Quick start & setup instructions
 - Improved build system with fail-fast checks
 - Parallelization guide (55% speedup)
-- Phase 1 results and status
+- Apollo modification history
 - Installation prerequisites
 - Build system commands
 - Version management
@@ -764,7 +672,7 @@ docker ps
 ### Supplemental Files
 
 - [install.md](install.md) — Detailed installation (prerequisites by OS)
-- [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md) — 8-phase roadmap
+- [apollo_summary_from_full.md](apollo_samd11_mcu/apollo_summary_from_full.md) — Apollo-specific roadmap and architecture links
 - [claude-toolchain.md](claude-toolchain.md) — Canonical toolchain config
 - [serial_communication_redesign_decisions.md](design_history/serial_communication_redesign_decisions.md) — Design history
 
@@ -812,8 +720,8 @@ docker ps
 # CI/CD
 ./scripts/install.py ci-install                   # Install act
 ./scripts/install.py ci-list                      # List workflows
-cd awto-apollo && act -l                          # List Apollo jobs
-cd awto-apollo && act -j firmware-build           # Run Apollo CI
+cd awto-cynthion && act -l                        # List Cynthion jobs
+cd awto-cynthion && act -j build-and-test         # Run Cynthion CI
 
 # Logging
 tail -f ./tmp/logs/install-*.log                  # Watch logs live
@@ -872,20 +780,17 @@ grep ERROR ./tmp/logs/install-*.log               # Find errors
 ### Phase 1: Build System & Parallelization (COMPLETE ✓)
 - Implemented fail-fast prerequisite checks
 - Added Python 3.14 no-GIL parallelization (55% faster)
-- Built all components: Apollo ✓, moondancer ✓, analyzer ✓, facedancer ✗
+- Built all components: moondancer ✓, analyzer ✓, facedancer ✗
 - Status: 3/4 successful (facedancer blocked by luna_soc bug)
 
 ### Phase 2: Issue Resolution & Cleanup
 - **Facedancer:** Resolve luna_soc SPIflash Field TypeError
-- **Apollo:** Firmware improvements (DFU buffers, race conditions, CDC interfaces)
-- **Documentation:** Consolidate all MD files into wiki.md
+- **Documentation:** Consolidate and categorize docs under `docs/` with informative filenames
 - Status: In progress
 
 ### Phase 3-8: Serial Architecture Redesign
-- Redesign Apollo-moondancer communication
-- Implement UART watchdog supervisor
-- Improve reliability and maintainability
-- See: design_proposals/apollo_moondancer_uart_watchdog_design.md for details
+- Subsystem-specific serial redesign details are tracked in subsystem docs.
+- Apollo-specific details moved to: [apollo_summary_from_full.md](apollo_samd11_mcu/apollo_summary_from_full.md)
 
 ---
 
@@ -919,7 +824,7 @@ grep ERROR ./tmp/logs/install-*.log               # Find errors
 - Simpler than subprocess-based approach
 
 ### Consolidated Documentation
-**Decision:** Single wiki.md instead of scattered MD files
+**Decision:** Consolidated docs tree with informative filenames and one optional snapshot (`full.md`)
 
 **Rationale:**
 - Easier to maintain (single source of truth)
@@ -929,305 +834,14 @@ grep ERROR ./tmp/logs/install-*.log               # Find errors
 
 ---
 
-## Watchdog Architecture (Phase 3)
+## Apollo Details Moved
 
-### Problem
-Apollo (ARM debug controller) and moondancer (RISC-V firmware) need robust supervision:
-- Currently: no watchdog protection
-- Risk: firmware hangs, no recovery mechanism
-- Impact: requires manual device restart
+Apollo-specific architecture, watchdog, and UART/SPI conflict analysis were moved out of `full.md`.
 
-### Solution: Apollo ARM Supervisor
-Apollo becomes the watchdog for moondancer:
-1. moondancer sends periodic "heartbeat" to Apollo
-2. Apollo monitors heartbeat over serial/CAN
-3. If heartbeat lost → Apollo asserts reset
-4. moondancer automatically restarts
-
-### Benefits
-- ✓ No additional hardware needed
-- ✓ Apollo (always-on) supervises moondancer
-- ✓ Automatic recovery on firmware hang
-- ✓ Future: can log reboot events
-
-### Implementation Phases
-1. **Phase 3a:** Serial heartbeat protocol design
-2. **Phase 3b:** Apollo supervisor firmware
-3. **Phase 3c:** moondancer integration (send heartbeat)
-4. **Phase 3d:** Testing & validation
-
-See design_proposals/apollo_moondancer_uart_watchdog_design.md for full technical details.
-
----
-
-## Hardware Architecture
-
-### Block Diagram
-
-```
-HOST PC
-├─ CONTROL USB ──(1d50:615c)──► Apollo ARM MCU ──UART(R14/T14)──► ECP5 FPGA
-│                                     │   │                              │
-│                                  int│   └──JTAG──► ECP5 fabric         │
-│                               (T6)  │                    │             │
-│                                     └──────────── VexRiscv soft core ◄─┘
-│
-├─ TARGET-A USB ─(1d50:615b)──► ECP5 FPGA ── moondancer gateware (facedancer mode)
-│                                                  subclass 0x20
-└─ TARGET-C USB ──────────────► UTi261M thermal camera (0bda:5830, UVC)
-                                (proxied by facedancer → TARGET-A → host)
-```
-
-**Cynthion** — Great Scott Gadgets USB test instrument
-- USB VID:PID: 1d50:615b (all gateware modes: analyzer, facedancer)
-- Apollo bootloader: 1d50:60e6 (shown when no gateware is loaded)
-- USB interface subclass: 0x10 = analyzer, 0x20 = moondancer/facedancer
-
-**UTi261M** — UNI-T thermal imaging camera
-- USB VID:PID: 0bda:5830 (Realtek UVC chip)
-- Proxied through Cynthion TARGET-C port
-
-### Device States & Transitions
-
-```
-Power on (gateware flashed)  →  1d50:615b  analyzer or facedancer mode
-Power on (no gateware)       →  1d50:60e6  Apollo bootloader
-
-cyn riscv build && cyn fpga build  →  builds moondancer + gateware
-cyn deploy --release              →  full build + flash cycle
-cyn reset                         →  soft reset to Apollo mode
-```
-
-**Recovery**: If Cynthion becomes stuck at Apollo level after a proxy crash:
-```bash
-cyn reset  # soft reset via Apollo
-```
-
-If Apollo has ceded CONTROL USB to hung firmware:
-- Power cycle required (see [Issue #15](https://github.com/awtoau/cynthion-workspace/issues/15))
-
-### CONTROL_SWITCH Architecture
-
-Apollo controls a USB mux between itself and the FPGA PHY:
-
-| Operation | Control | Effect |
-|-----------|---------|--------|
-| Boot | Apollo holds | CONTROL USB accessible, FPGA in reset |
-| moondancer loads | Apollo asserts PROGRAM_B | FPGA configures from flash |
-| Configuration done | Apollo cedes CONTROL | CONTROL USB switches to FPGA |
-| Hung firmware | N/A | Power cycle required to recover |
-
-**Multi-TTY Plan** (Issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15)):
-- `ttyACM0` (rv0) — UART bridge to VexRiscv
-- `ttyACM1` (fpg) — FPGA event stream
-- `ttyACM2` (apl) — Apollo console / GDB RSP
-
-### Firmware Patches
-
-All patches are tracked in source, applied to the vendored dependency trees:
-
-| Issue | Component | File | Description |
-|-------|-----------|------|-------------|
-| [#8](https://github.com/awtoau/cynthion-workspace/issues/8) | facedancer | configuration.py | Skip pre-interface descriptors (e.g. IAD) before first interface |
-| [#9](https://github.com/awtoau/cynthion-workspace/issues/9) | facedancer | backends/base.py | Downgrade duplicate endpoint address exception to warning (UVC alt settings) |
-| [#10](https://github.com/awtoau/cynthion-workspace/issues/10) | facedancer | backends/moondancer.py | Deduplicate endpoints by address before configure_endpoints |
-| [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | moondancer | firmware/moondancer/src/gcp/moondancer.rs | Clamp endpoint max_packet_size to 512 bytes (HS limit) instead of rejecting SuperSpeed devices |
-
-### Isochronous Support (Issue [#11](https://github.com/awtoau/cynthion-workspace/issues/11))
-
-Full isochronous support requires changes at three layers:
-
-**Gateware** ✅ Complete
-- `cynthion/python/src/gateware/facedancer/ep_iso_in.py` — Amaranth CSR peripheral for isochronous IN transfers
-- Wired into usb0 at CSR 0x00001700, IRQ 14, endpoint 1 (max_packet_size=128)
-- Awaiting bitstream rebuild
-
-**Firmware** 🟡 Stubbed
-- GCP verb 0x10 (`iso_in_write`) defined but not yet wired to CSR registers
-
-**Python** ✅ Ready
-- `proxy.py`: routes isochronous IN to `_proxy_iso_in_transfer`
-- `backends/moondancer.py`: `send_iso_in_frame` calls GCP verb 0x10
-
-See [Issue #11](https://github.com/awtoau/cynthion-workspace/issues/11) for detailed implementation status.
-
----
-
-## Apollo UART/SPI Design Conflict Analysis
-
-**Status**: Phase 2 Design Review  
-**Related Issues**: [#15](https://github.com/awtoau/cynthion-workspace/issues/15), [#33](https://github.com/awtoau/cynthion-workspace/issues/33)  
-**Reference Docs**: 
-- [`apollo_moondancer_uart_watchdog_design.md`](design_proposals/apollo_moondancer_uart_watchdog_design.md) — Proposed UART redesign
-- [`cynthion_architecture_scan_2026_05_22.md`](research/cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
-- [`apollo_code_review.md`](apollo_code_review.md) — Phase 2 code review findings
-
-### The Problem
-
-**Current Architecture Vulnerability** (Issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15)):
-- moondancer enables `FPGA_ADV` pulse-train to request USB port
-- Apollo counts rising edges (>2 in 200ms) and surrenders CONTROL USB
-- **If moondancer crashes**: Advertiser stays enabled → Host loses all USB access
-- **Recovery**: Power cycle required
-
-**Current Pin Conflict**:
-- UART uses PA11/PA14 (same as JTAG TMS/TDI)
-- Forces choice between UART console debugging and JTAG access
-- Limits diagnostic capability
-
-### Hardware: ATSAMD11D14A
-
-**Pin Summary** (20-pin LQFP):
-```
-SAMD11D14A @ 48 MHz, 32KB RAM, 14KB Flash
-
-Used Pins (currently):
-├── PA03  ← FPGA_INITN (status input)
-├── PA04  ← FPGA_DONE (status input)
-├── PA06  ← USB_SWITCH (mux control)
-├── PA08  → FPGA_PROGRAM (reset trigger, post-bootup only)
-├── PA09  ← FPGA_ADV (pulse-train input for USB negotiation)
-├── PA10  ← TDO (JTAG data out)
-├── PA11  ← TMS (JTAG mode select) [CONFLICT: also UART RX]
-├── PA14  → TDI (JTAG data in) [CONFLICT: also UART TX]
-├── PA15  → TCK (JTAG clock)
-├── PA16-PA17, PA22-PA23, PA27 → LEDs (5× blue/pink)
-
-Unassigned:
-├── PA00, PA01, PA02, PA05, PA07, PA12, PA13, PA18-PA21, PA24-PA26, PA28-PA31
-│   (Note: SAMD11D14 has only ~20 pins total; upper range varies by package)
-└── PA05  ? CONTROL_RESET_DETECT (not currently defined in firmware)
-```
-
-### SERCOM Peripheral Options
-
-**SERCOM0** (SPI JTAG — already configured):
-```c
-// File: src/boards/cynthion_d11/spi.c:44-47
-PA14 → SERCOM0 PAD0 (MOSI)
-PA15 → SERCOM0 PAD1 (SCK)
-PA10 ← SERCOM0 PAD2 (MISO)
-```
-Status: ✅ Implemented, used for FPGA programming via bit-bang SPI
-
-**SERCOM2** (Dual-use candidate):
-```c
-// File: src/boards/cynthion_d11/uart.c:85-88 (CURRENT — conflicts with JTAG)
-PA11 ← SERCOM2 PAD3 (RX) [conflicts with TMS]
-PA14 → SERCOM2 PAD0 (TX) [conflicts with TDI]
-
-// File: src/boards/cynthion_d11/spi.c:92-95 (PLANNED but unimplemented)
-case SPI_FPGA_DEBUG:
-    _pm_enable_bus_clock(PM_BUS_APBC, SERCOM2);
-    _gclk_enable_channel(SERCOM2_GCLK_ID_CORE, GCLK_CLKCTRL_GEN_GCLK0_Val);
-    // TODO: pinmux never completed (line 56)
-```
-
-### Design Proposals
-
-#### Option 1: UART-Based Watchdog ⭐ **Recommended**
-
-**Reference**: [`apollo_moondancer_uart_watchdog_design.md`](design_proposals/apollo_moondancer_uart_watchdog_design.md)
-
-**Architecture**:
-```
-Apollo (SAMD11) ←→ moondancer (ECP5/VexRiscv)
-
-PA08 → SERCOM2 TX ──→ moondancer UART RX
-PA09 ← SERCOM2 RX ──← moondancer UART TX
-PA03 ← INT (watchdog) ← moondancer watchdog signal
-PA04 ← status ────── ← moondancer status output
-```
-
-**Benefits**:
-- ✅ Bidirectional communication (heartbeat/diagnostics)
-- ✅ Solves USB vulnerability: Apollo stays on CONTROL USB always
-- ✅ Frees JTAG pins PA11/PA14 for debugging
-- ✅ Hardware UART (reliable, no bit-banging)
-
-**Implementation** (3 phases):
-1. Apollo: Change SERCOM2 pinmux PA11/PA14 → PA08/PA09
-2. FPGA: Add UART slave CSR on facedancer gateware
-3. moondancer: Replace advertiser with UART response handler
-
-**Risks**:
-- ⚠️ Breaks backward compatibility (old UART on PA11/PA14 becomes unavailable)
-- ⚠️ FPGA gateware changes needed (adds complexity)
-
----
-
-#### Option 2: Debug SPI on SERCOM2
-
-**Reference**: [`cynthion_architecture_scan_2026_05_22.md` (Section 5)](research/cynthion_architecture_scan_2026_05_22.md#5-unimplemented-spi_fpga_debug)
-
-**Architecture**:
-```
-Apollo (SAMD11) ←→ FPGA (ECP5)
-
-PA08 → SERCOM2 PAD0 (MOSI)
-PA09 → SERCOM2 PAD1 (SCK)
-PA10 ← SERCOM0 PAD2 (MISO) [shared with JTAG SPI]
-```
-
-**Status**: Clocking already configured, pinmux TODO
-
-**Benefits**:
-- ✅ Direct SPI access to FPGA debug/config
-- ✅ Uses existing infrastructure (clocking set up)
-- ✅ Can coexist with JTAG SPI (different chip selects)
-
-**Implementation**:
-1. Complete `src/boards/cynthion_d11/spi.c` case SPI_FPGA_DEBUG: pinmux
-2. Define PA08/PA09 SPI pin mappings in apollo_board.h
-3. Enable `_BOARD_HAS_DEBUG_SPI` for D11
-4. Test with existing debug tools
-
-**Risks**:
-- ⚠️ Still uses pulse-train for USB negotiation (vulnerability remains)
-- ⚠️ **Conflict with Option 1**: Both want PA08/PA09
-
----
-
-#### Option 3: Hybrid (Requires SERCOM1 or SERCOM3-5)
-
-Move UART to different SERCOM to support both UART + Debug SPI:
-- Investigate PA00/PA01/PA05/PA07/PA12/PA13 for SERCOM1/SERCOM3-5 availability
-- Requires additional datasheet review for MUX options
-- More complex, lower priority
-
----
-
-### Pin Reallocation Summary
-
-| Pin | Current | Option 1 (UART) | Option 2 (SPI) | Hardware SPI? |
-|-----|---------|-----------------|----------------|--------------|
-| PA03 | FPGA_INITN | INT watchdog | FPGA_INITN | SERCOM0 PAD1 |
-| PA04 | FPGA_DONE | status | FPGA_DONE | SERCOM0 PAD0 |
-| PA08 | FPGA_PROGRAM | SERCOM2 TX ✅ | SERCOM2 MOSI ✅ | **CONFLICT** |
-| PA09 | FPGA_ADV | SERCOM2 RX ✅ | SERCOM2 SCK ✅ | **CONFLICT** |
-| PA10 | TDO (JTAG) | TDO (freed) | TDO (MISO) | SERCOM0 PAD2 |
-| PA11 | TMS (JTAG) + UART RX | TMS (freed) | TMS (JTAG) | SERCOM2 PAD3 |
-| PA14 | TDI (JTAG) + UART TX | TDI (freed) | TDI (JTAG) | SERCOM0 PAD0 |
-| PA15 | TCK (JTAG) | TCK (JTAG) | TCK (JTAG) | SERCOM0 PAD1 |
-
----
-
-### Recommendation
-
-**Implement Option 1 (UART Redesign)** because:
-
-1. **Solves critical vulnerability** (Issue #15) — moondancer crash no longer breaks CONTROL USB
-2. **Enables true debugging** — bidirectional heartbeat/diagnostics
-3. **Frees JTAG pins** — PA11/PA14 available for actual JTAG debugging
-4. **Better long-term** — Debug SPI is convenient but not critical (existing bit-bang SPI works)
-5. **Simpler hardware** — UART is native SERCOM feature, no special pinmux needed
-
-**Next Steps**:
-- [ ] Finalize UART protocol specification
-- [ ] Implement Phase 1: Apollo firmware (SERCOM2 pinmux PA08/PA09)
-- [ ] Implement Phase 2: FPGA gateware (add UART slave CSR)
-- [ ] Implement Phase 3: moondancer firmware (UART response handler)
-- [ ] Test watchdog timeout scenarios
+See:
+- [apollo_summary_from_full.md](apollo_samd11_mcu/apollo_summary_from_full.md)
+- [apollo_watchdog_architecture.md](apollo_samd11_mcu/apollo_watchdog_architecture.md)
+- [apollo_uart_spi_design_conflict_analysis.md](apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md)
 
 ---
 

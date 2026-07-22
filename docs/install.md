@@ -8,6 +8,34 @@
 
 This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific `/home/dan/...` paths.
 
+## Version and Update Checks
+
+Run these early during setup and whenever the environment drifts:
+
+```bash
+./scripts/install.py versions
+./scripts/install.py versions-check
+```
+
+Use this to:
+- Capture local versions for system tools, FPGA toolchain, Python packages, and repo commits
+- Compare local versions with upstream releases
+- Keep a baseline for later diff checks
+
+Suggested workflow:
+
+```bash
+# Save baseline after a known-good setup
+./scripts/install.py versions > tmp/versions-baseline.txt
+
+# Compare later state
+./scripts/install.py versions > tmp/versions-current.txt
+diff tmp/versions-baseline.txt tmp/versions-current.txt
+
+# Check upstream updates
+./scripts/install.py versions-check
+```
+
 ---
 
 ## Prerequisites
@@ -135,10 +163,6 @@ nextpnr-ecp5 --version  # → 0.10-74-gee605e2b
 ### Pre-Flight Checklist
 
 ```bash
-# Verify all prerequisites
-./scripts/install.py status
-./scripts/install.py toolchain-status
-
 # Check Python 3.14
 python3.14 --version  # → 3.14.4
 
@@ -154,6 +178,72 @@ gcc --version && make --version && cmake --version
 # Check toolchain
 source ~/opt/oss-cad-suite/environment && yosys --version
 ```
+
+### Early Failure Recovery (Run Before `setup`)
+
+If pre-flight checks fail, fix these first instead of continuing:
+
+#### Python 3.14 Not Found
+```bash
+python3.14 --version
+
+# Fedora/RHEL
+sudo dnf install python3.14 python3.14-devel
+
+# Debian/Ubuntu
+sudo apt-get install python3.14 python3.14-dev
+```
+
+#### Rust RISC-V Target Missing
+```bash
+rustup target add riscv32imac-unknown-none-elf
+rustup target list --installed
+```
+
+#### OSS CAD Suite Download/Install Failure
+```bash
+# Check connectivity to release endpoint
+curl -I https://github.com/YosysHQ/oss-cad-suite-build/releases/latest
+
+# Manual fallback install
+wget https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-05-22/oss-cad-suite-linux-x64-20260522.tgz
+tar xzf oss-cad-suite-linux-x64-20260522.tgz -C ~/opt/
+
+# Verify tools
+source ~/opt/oss-cad-suite/environment
+yosys --version
+nextpnr-ecp5 --version
+```
+
+#### Build Artifacts Not Found
+```bash
+./scripts/install.py status
+ls -la tmp/*.log
+find "${REPOS_ROOT:-$HOME/git/awtoau}" -name "*.elf" -o -name "*.bin"
+```
+
+#### Optional CI Tooling (`act`) Fails
+
+Only needed if you run local GitHub Actions workflows.
+
+```bash
+mkdir -p ~/.local/bin
+curl -o ~/.local/bin/act \
+  https://github.com/nektos/act/releases/download/v0.2.60/act_Linux_x86_64
+chmod +x ~/.local/bin/act
+export PATH="$HOME/.local/bin:$PATH"
+act --version
+```
+
+If `act` fails due to Docker:
+
+```bash
+sudo systemctl start docker
+sudo usermod -aG docker $USER
+docker ps
+```
+
+If you still need a deeper diagnosis after these first-pass fixes, see [troubleshooting.md](troubleshooting.md).
 
 ### Reference: CI/Docker Configuration
 
@@ -257,13 +347,20 @@ which riscv32-unknown-elf-gcc
 which arm-none-eabi-gcc
 ```
 
-## Quick Start with install.py
+## Quick Operations with install.py
 
-The unified installation script handles all setup automatically:
+Use `install.py` for common setup and recovery flows:
 
 ```bash
+# Fail-fast prerequisite check (recommended first step)
+./scripts/install.py prereqs
+
 # Full setup: clone repos, init submodules, install deps, build all
 ./scripts/install.py setup
+
+# Parallel setup (faster on multi-core hosts)
+./scripts/install.py --parallel setup
+./scripts/install.py --parallel --jobs 2 setup
 
 # Just clone repos without building
 ./scripts/install.py --repo-only setup
@@ -274,12 +371,16 @@ The unified installation script handles all setup automatically:
 # Check workspace status
 ./scripts/install.py status
 
-# Install/update OSS CAD Suite
-./scripts/install.py toolchain-install
-./scripts/install.py toolchain-status
-
 # Clone repos to custom location
 ./scripts/install.py --repos-path /path/to/repos clone-repos
+
+# CI helpers
+./scripts/install.py ci-install
+./scripts/install.py ci-list
+
+# Live troubleshooting
+tail -f ./tmp/logs/install-*.log
+grep ERROR ./tmp/logs/install-*.log
 ```
 
 **Options:**
@@ -288,6 +389,14 @@ The unified installation script handles all setup automatically:
 - `--no-build` — Setup repos but skip builds
 - `--no-submodules` — Skip git submodule initialization
 - `--repos-path /path` — Use custom repos directory
+
+### Local CI Smoke Test (Apollo)
+
+```bash
+cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
+act -l
+act -j firmware-build
+```
 
 ---
 
@@ -483,7 +592,7 @@ PY
 
 If local facedancer asset build is blocked, a prebuilt `facedancer.bit` fallback can be used for temporary bring-up continuity.
 
-Use the runbook in [troubleshooting.md](troubleshooting.md) before applying this fallback:
+Use the detailed runbook in [troubleshooting.md](troubleshooting.md) before applying this fallback:
 - verify failure signatures first,
 - use explicit artifact path provenance,
 - validate USB mode and command sanity after load,
@@ -515,7 +624,7 @@ LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
 - Race condition analysis (scheduler, USB, UART)
 - Dual CDC interfaces (JTAG + console/moondancer serial)
 
-See: [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md)
+See: [serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md)
 
 ## References
 

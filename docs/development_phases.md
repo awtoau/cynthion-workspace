@@ -23,7 +23,7 @@
 - [ ] Dual CDC interface implementation
 
 ### Phase 3-8: UART Architecture
-See: [serial_architecture_redesign_plan.md](implementation_plans/serial_architecture_redesign_plan.md)
+See: [serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md)
 
 ---
 

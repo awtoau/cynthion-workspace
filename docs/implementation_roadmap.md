@@ -15,14 +15,14 @@
 ### Phase 2: Issue Resolution & Cleanup
 - **Facedancer:** Resolve luna_soc SPIflash Field TypeError
 - **Apollo:** Firmware improvements (DFU buffers, race conditions, CDC interfaces)
-- **Documentation:** Consolidate all MD files into wiki.md
+- **Documentation:** Consolidate and categorize docs under `docs/` with informative filenames
 - Status: In progress
 
 ### Phase 3-8: Serial Architecture Redesign
 - Redesign Apollo-moondancer communication
 - Implement UART watchdog supervisor
 - Improve reliability and maintainability
-- See: design_proposals/apollo_moondancer_uart_watchdog_design.md for details
+- See: apollo_samd11_mcu/apollo_moondancer_uart_watchdog_design.md for details
 
 ---
 

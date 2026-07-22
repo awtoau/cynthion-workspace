@@ -13,7 +13,7 @@ These were never committed and have been removed:
 - TOOLCHAIN_REVIEW.md - Detailed toolchain review
 - TOOLCHAIN_VERSIONS.md - Tool versions comparison
 
-**Reason**: Content consolidated into wiki.md (the single source of truth for documentation)
+**Reason**: Content consolidated into the active `docs/` tree and `docs/full.md` snapshot.
 
 ## Files Currently in This Directory
 
@@ -28,7 +28,7 @@ These were never committed and have been removed:
 
 ## Future Documentation
 
-- Use wiki.md for all project documentation
+- Use the active `docs/` tree for current documentation.
 - Use docs/implementation_plans/ and docs/design_proposals/ for forward-looking architecture work.
 
 Only archived or superseded documents should remain in `debris/`.
@@ -37,24 +37,24 @@ Only archived or superseded documents should remain in `debris/`.
 ## Archived Documents
 
 ### architecture.md
-**Status**: Archived 2026-05-23 after consolidation to wiki.md
+**Status**: Archived 2026-05-23 after consolidation to active docs.
 
 **Why archived**: All hardware architecture, patch documentation, and isochronous support details have been consolidated into:
 - [hardware_architecture.md](../docs/hardware_architecture.md) — canonical reference for hardware design
 - [GitHub Issues #8-11, #15, #43](https://github.com/awtoau/cynthion-workspace/issues) — implementation tracking
 
 **What was in it**:
-- Hardware block diagrams → now in wiki.md
-- Device states and transitions → now in wiki.md  
-- CONTROL_SWITCH architecture → now in wiki.md
-- Firmware patches (#8-#10, #43) → now in wiki.md + GitHub issues
-- Isochronous support (#11) → now in wiki.md + Issue #11 detailed comment
-- Development setup → referenced to wiki.md and cyn CLI
+- Hardware block diagrams → now in [docs/hardware_architecture.md](../docs/hardware_architecture.md)
+- Device states and transitions → now in [docs/hardware_architecture.md](../docs/hardware_architecture.md)
+- CONTROL_SWITCH architecture → now in [docs/hardware_architecture.md](../docs/hardware_architecture.md)
+- Firmware patches (#8-#10, #43) → now in active docs + GitHub issues
+- Isochronous support (#11) → now in active docs + Issue #11 detailed comment
+- Development setup → referenced to [docs/install.md](../docs/install.md) and cyn CLI
 
 **To restore**: If needed, git checkout commits 14db505 or earlier.
 
 ## Boundary Reference
 
 For the canonical active-vs-archived architecture document boundary, see:
-- [architecture_doc_boundary.md](../docs/architecture_doc_boundary.md)
+- [architecture_doc_boundary.md](docs/architecture_doc_boundary.md)
 

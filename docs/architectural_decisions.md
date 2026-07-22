@@ -28,7 +28,7 @@
 - Simpler than subprocess-based approach
 
 ### Consolidated Documentation
-**Decision:** Single wiki.md instead of scattered MD files
+**Decision:** Consolidated docs tree with informative filenames and one optional snapshot (`full.md`)
 
 **Rationale:**
 - Easier to maintain (single source of truth)

@@ -26,4 +26,3 @@
 **Result:** Apollo firmware now builds successfully ✓
 
 ---
-
