@@ -33,9 +33,19 @@ Source: `/mnt/2tb/git/awtoau/awto-cynthion` (base `ef9addb`, on origin/main).
 ## apollo
 
 The apollo boot-to-DFU / JTAG / USB-handoff work (2 commits + a vendor.c
-rewrite) from `/mnt/2tb/git/awtoau/awto-apollo` is preserved separately under
-[../apollo/code-test-2-boot-dfu/](../apollo/code-test-2-boot-dfu/). The earlier
-UART-DMA clone work is under [../apollo/code-test/](../apollo/code-test/).
+rewrite) has been **retired from the filesystem**: each part now has its own
+issue carrying the proposed code, so the patches no longer need to sit in-tree
+(they remain in git history):
+
+- [#67](https://github.com/awtoau/cynthion-workspace/issues/67) — boot-to-DFU vendor command (0xed)
+- [#68](https://github.com/awtoau/cynthion-workspace/issues/68) — FPGA_ADV UART sideband heartbeat (SERCOM1/PA09)
+- [#69](https://github.com/awtoau/cynthion-workspace/issues/69) — vendor-request JTAG-mode gating + EMERGENCY_RESET, to merge into the [#65](https://github.com/awtoau/cynthion-workspace/issues/65) lock
+- [#70](https://github.com/awtoau/cynthion-workspace/issues/70) — mark `fpga_online` volatile
+- [#71](https://github.com/awtoau/cynthion-workspace/issues/71) — fpga_adv EIC edge-count race fix (was `../apollo/fpga-adv-eic-race-fix/`; supersede if #68 lands)
+
+The earlier UART-DMA clone work is under
+[../apollo/code-test/](../apollo/code-test/) and tracked in
+[#66](https://github.com/awtoau/cynthion-workspace/issues/66).
 
 ## Status
 
