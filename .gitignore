@@ -33,3 +33,6 @@ ENV/
 tmp/
 *.log
 .DS_Store
+
+# Large regenerable sim waveforms (exceeds GitHub 100MB limit; regenerate from *.py)
+ecp5-test/led_patterns_button_sim.vcd
