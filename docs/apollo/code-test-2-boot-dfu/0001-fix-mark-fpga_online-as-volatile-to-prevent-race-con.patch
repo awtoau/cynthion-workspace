@@ -1,0 +1,47 @@
+From 6b03aad16037e9e3b7ba3b1d514ddf30d0428182 Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Sat, 23 May 2026 19:46:23 +1000
+Subject: [PATCH 1/2] fix: mark fpga_online as volatile to prevent race
+ conditions
+
+The fpga_online flag is accessed from both USB interrupt context
+(vendor request handlers) and main loop context. Compiler optimizations
+could cause stale cached values. Marking volatile ensures the flag is
+always read/written from memory, eliminating the race condition without
+interrupt overhead.
+
+Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>
+---
+ firmware/src/fpga.c | 2 +-
+ firmware/src/fpga.h | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/firmware/src/fpga.c b/firmware/src/fpga.c
+index 8828307..c3d693a 100644
+--- a/firmware/src/fpga.c
++++ b/firmware/src/fpga.c
+@@ -14,7 +14,7 @@
+ 
+ extern uint8_t jtag_out_buffer[256];
+ 
+-bool fpga_online = false;
++volatile bool fpga_online = false;
+ 
+ /*
+  * ECP5 opcode that enables offline configuration mode
+diff --git a/firmware/src/fpga.h b/firmware/src/fpga.h
+index f5b443b..e8c66fd 100644
+--- a/firmware/src/fpga.h
++++ b/firmware/src/fpga.h
+@@ -10,7 +10,7 @@
+ #ifndef __FPGA_H__
+ #define __FPGA_H__
+ 
+-extern bool fpga_online;
++extern volatile bool fpga_online;
+ 
+ /**
+  * Sets up the I/O pins needed to configure the FPGA.
+-- 
+2.55.0
+

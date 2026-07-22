@@ -1,0 +1,13 @@
+diff --git a/firmware/moondancer/src/bin/moondancer.rs b/firmware/moondancer/src/bin/moondancer.rs
+index a704ecc..2aaffcf 100644
+--- a/firmware/moondancer/src/bin/moondancer.rs
++++ b/firmware/moondancer/src/bin/moondancer.rs
+@@ -133,7 +133,7 @@ impl Firmware<'_> {
+         let board_minor = info.version().read().minor().bits();
+ 
+         // initialize logging
+-        moondancer::log::set_port(moondancer::log::Port::Both);
++        moondancer::log::set_port(moondancer::log::Port::Uart0);
+         moondancer::log::init();
+         info!(
+             "{} {} v{}",
