@@ -443,7 +443,7 @@ make APOLLO_BOARD=cynthion dfu
 #### Build Configuration
 
 - `APOLLO_BOARD=cynthion` → Maps to `cynthion_d11` internally
-- Alternative: `APOLLO_BOARD=luna` (legacy name, same as cynthion)
+- Alternative: `APOLLO_BOARD=luna` (alias for cynthion)
 - `BOARD_REVISION_MAJOR=X BOARD_REVISION_MINOR=Y` → Override auto-detection (needed for r0.5 and older)
 - Apollo flashing uses the Saturn-V DFU bootloader on the connected Cynthion. The device must enumerate as `1d50:60e6` for `make APOLLO_BOARD=cynthion dfu` to work; `1d50:615b` is analyzer/facedancer mode and is not the Apollo flash target.
 
@@ -462,11 +462,6 @@ cyn fpga flash
 Implementation details:
 - `cyn apollo flash` runs `make APOLLO_BOARD=cynthion dfu` in `awto-apollo/firmware`.
 - `cyn fpga flash` runs `apollo configure <.../top.bit>`.
-
-Root cause that previously broke `cyn fpga flash`:
-- The deprecated module path `python -m apollo_fpga.cli` was used.
-- Current package layout exposes CLI entrypoint at `apollo_fpga.commands.cli:main` (console script: `apollo`).
-- Calling the `apollo` command is the canonical and version-stable invocation.
 
 ### Phase 1.2: moondancer Firmware (Rust/RISC-V)
 

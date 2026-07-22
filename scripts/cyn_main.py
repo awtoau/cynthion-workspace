@@ -93,7 +93,7 @@ def _resolve_repos_root() -> Path:
     for base in candidates:
         if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
             return base
-    # Fallback preserves legacy behavior if repos are not checked out yet.
+    # Keep default behavior if repos are not checked out yet.
     return candidates[-1]
 
 REPOS = _resolve_repos_root()
