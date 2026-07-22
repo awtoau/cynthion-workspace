@@ -73,6 +73,10 @@ def run_sbt_main(
     ivy_home: pathlib.Path | None = None,
     coursier_cache: pathlib.Path | None = None,
     no_server: bool = False,
+    sbt_slot_count: int | None = None,
+    sbt_slot_dir: pathlib.Path | None = None,
+    event_log: pathlib.Path | None = None,
+    slot_section: str = "sbt",
 ) -> None:
     ensure_tool("sbt")
     cmd = ["sbt"]
@@ -93,7 +97,59 @@ def run_sbt_main(
     if coursier_cache is not None:
         coursier_cache.mkdir(parents=True, exist_ok=True)
         env["COURSIER_CACHE"] = str(coursier_cache)
-    run_logged(cmd, log_path, cwd=work_dir, env=env)
+    if sbt_slot_count is not None and sbt_slot_count > 0:
+        if sbt_slot_dir is None:
+            raise ValueError("sbt_slot_dir is required when sbt_slot_count is set")
+        with with_sbt_slots(
+            sbt_slot_dir,
+            sbt_slot_count,
+            event_log=event_log,
+            section=slot_section,
+        ):
+            run_logged(cmd, log_path, cwd=work_dir, env=env)
+    else:
+        run_logged(cmd, log_path, cwd=work_dir, env=env)
+
+
+@contextlib.contextmanager
+def with_sbt_slots(
+    slot_dir: pathlib.Path,
+    slot_count: int,
+    event_log: pathlib.Path | None = None,
+    section: str = "sbt",
+):
+    if slot_count < 1:
+        raise ValueError("slot_count must be >= 1")
+
+    slot_dir.mkdir(parents=True, exist_ok=True)
+    start_wait = time.monotonic()
+    append_event(event_log, f"SBT_SLOT_WAIT section={section} slots={slot_count} path={slot_dir}")
+
+    lock_file = None
+    slot_index = -1
+    while lock_file is None:
+        for i in range(slot_count):
+            candidate = slot_dir / f"slot-{i:02d}.lock"
+            fh = candidate.open("w", encoding="utf-8")
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file = fh
+                slot_index = i
+                break
+            except BlockingIOError:
+                fh.close()
+        if lock_file is None:
+            time.sleep(0.2)
+
+    waited = time.monotonic() - start_wait
+    append_event(event_log, f"SBT_SLOT_ACQUIRED section={section} slot={slot_index} waited_sec={waited:.3f}")
+    try:
+        yield
+    finally:
+        if lock_file is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+        append_event(event_log, f"SBT_SLOT_RELEASED section={section} slot={slot_index}")
 
 
 def shared_pipeline_lock_path(root: pathlib.Path) -> pathlib.Path:

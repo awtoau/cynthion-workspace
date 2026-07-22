@@ -109,6 +109,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of profile jobs to dispatch concurrently (default: 1).",
     )
     parser.add_argument(
+        "--sbt-jobs",
+        type=int,
+        default=0,
+        help="Cap concurrent sbt generation jobs (0 means follow --jobs).",
+    )
+    parser.add_argument(
         "--reset-history",
         action="store_true",
         help="Clear metrics CSV before running matrix (clean full recreate).",
@@ -123,6 +129,11 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         default=DEFAULT_TRACE_LOG,
         help="Path to append matrix scheduling/execution trace logs.",
+    )
+    parser.add_argument(
+        "--skip-inotify-check",
+        action="store_true",
+        help="Skip preflight inotify capacity check (not recommended for high --jobs).",
     )
     return parser.parse_args()
 
@@ -186,6 +197,7 @@ def build_invocation(
     skip_log_scan: bool,
     allow_log_scan_fail: bool,
     run_suffix: str,
+    sbt_jobs: int,
 ) -> list[str]:
     tag = f"{profile.tag}_t{threads}" if threads > 0 else profile.tag
     notes = f"{profile.notes}; threads={threads}" if threads > 0 else profile.notes
@@ -207,6 +219,8 @@ def build_invocation(
         str(target_mhz),
         "--run-suffix",
         run_suffix,
+        "--sbt-jobs",
+        str(sbt_jobs),
     ]
     if fail_on_warnings:
         cmd.append("--fail-on-warnings")
@@ -229,6 +243,56 @@ def warn_if_likely_contention(threads: list[int]) -> None:
             f"{warn_threshold} for this host ({cpu_total} logical CPUs)."
         )
         print("WARNING: start with 8-16 threads and only increase if wall time improves.")
+
+
+def _read_int(path: pathlib.Path) -> int | None:
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except Exception:
+        return None
+
+
+def check_inotify_capacity(effective_sbt_jobs: int, trace_log: pathlib.Path) -> bool:
+    if effective_sbt_jobs <= 1:
+        return True
+
+    max_instances = _read_int(pathlib.Path("/proc/sys/fs/inotify/max_user_instances"))
+    max_watches = _read_int(pathlib.Path("/proc/sys/fs/inotify/max_user_watches"))
+    max_events = _read_int(pathlib.Path("/proc/sys/fs/inotify/max_queued_events"))
+
+    if max_instances is None:
+        print("WARNING: could not read /proc/sys/fs/inotify/max_user_instances; continuing.")
+        trace_event(trace_log, "INOTIFY_CHECK skipped reason=unreadable")
+        return True
+
+    # sbt uses many inotify instances during project load; scale by sbt fanout.
+    # Keep a modest floor so small capped runs can proceed without sysctl edits.
+    recommended = max(64, effective_sbt_jobs * 12)
+    if max_instances >= recommended:
+        trace_event(
+            trace_log,
+            f"INOTIFY_CHECK ok sbt_jobs={effective_sbt_jobs} max_user_instances={max_instances} recommended={recommended}",
+        )
+        return True
+
+    print("ERROR: insufficient inotify capacity for requested parallel sbt workload.")
+    print(
+        "ERROR: "
+        f"sbt_jobs={effective_sbt_jobs}, fs.inotify.max_user_instances={max_instances}, recommended>={recommended}"
+    )
+    if max_watches is not None:
+        print(f"INFO: fs.inotify.max_user_watches={max_watches}")
+    if max_events is not None:
+        print(f"INFO: fs.inotify.max_queued_events={max_events}")
+    print("Fix (temporary): sudo sysctl -w fs.inotify.max_user_instances=1024")
+    print("Fix (persistent):")
+    print("  echo 'fs.inotify.max_user_instances=1024' | sudo tee /etc/sysctl.d/99-cynthion-inotify.conf")
+    print("  sudo sysctl --system")
+    trace_event(
+        trace_log,
+        f"INOTIFY_CHECK fail sbt_jobs={effective_sbt_jobs} max_user_instances={max_instances} recommended={recommended}",
+    )
+    return False
 
 
 def main() -> int:
@@ -257,10 +321,18 @@ def main() -> int:
     print(f"Profiles: {', '.join(p.name for p in chosen)}")
     print(f"Threads: {threads}")
     print(f"Jobs: {args.jobs}")
+    effective_sbt_jobs = args.sbt_jobs if args.sbt_jobs > 0 else args.jobs
+    print(f"SBT jobs: {effective_sbt_jobs}")
     trace_event(args.trace_log, f"MATRIX_START profiles={[p.name for p in chosen]} threads={threads} jobs={args.jobs}")
 
     if args.jobs < 1:
         print("ERROR: --jobs must be >= 1")
+        return 2
+    if args.sbt_jobs < 0:
+        print("ERROR: --sbt-jobs must be >= 0")
+        return 2
+    if not args.skip_inotify_check and not check_inotify_capacity(effective_sbt_jobs, args.trace_log):
+        trace_event(args.trace_log, "MATRIX_ABORT reason=inotify_capacity")
         return 2
 
     auto_allow_scan_fail = args.jobs > 1 and not args.fail_on_warnings
@@ -293,6 +365,7 @@ def main() -> int:
                     args.skip_log_scan,
                     allow_scan_fail,
                     f"j{command_count:04d}",
+                    effective_sbt_jobs,
                 )
                 if args.dry_run:
                     print("$", " ".join(cmd))

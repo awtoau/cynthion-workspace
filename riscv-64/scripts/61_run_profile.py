@@ -8,6 +8,8 @@ This replaces per-profile wrapper scripts while preserving reproducibility.
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime as dt
 import json
 import os
 import pathlib
@@ -45,6 +47,9 @@ class Profile:
     notes: str
     top_module: str | None = None
     output_prefix: str | None = None
+    legacy_workdir: str | None = None
+    legacy_luna_platform: str | None = None
+    legacy_tim_path: str | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +73,12 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional suffix for per-run artifacts (useful for concurrent matrix jobs).",
     )
+    parser.add_argument(
+        "--sbt-jobs",
+        type=int,
+        default=0,
+        help="Cap concurrent sbt generation jobs across workers (0 means uncapped).",
+    )
     return parser.parse_args()
 
 
@@ -84,9 +95,91 @@ def load_profiles(path: pathlib.Path) -> dict[str, Profile]:
             notes=item["notes"],
             top_module=item.get("top_module"),
             output_prefix=item.get("output_prefix"),
+            legacy_workdir=item.get("legacy_workdir"),
+            legacy_luna_platform=item.get("legacy_luna_platform"),
+            legacy_tim_path=item.get("legacy_tim_path"),
         )
         by_name[profile.name] = profile
     return by_name
+
+
+CSV_FIELDS = [
+    "timestamp",
+    "git_commit",
+    "tag",
+    "device",
+    "package",
+    "speed",
+    "luts_used",
+    "luts_total",
+    "luts_pct",
+    "ffs_used",
+    "ffs_total",
+    "ffs_pct",
+    "bram_used",
+    "bram_total",
+    "bram_pct",
+    "fmax_mhz",
+    "target_mhz",
+    "timing_pass",
+    "source_log",
+    "notes",
+]
+
+
+def pct(used: int, total: int) -> float:
+    return (used / total) * 100.0 if total > 0 else 0.0
+
+
+def get_git_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def append_metrics_row(csv_path: pathlib.Path, row: dict[str, object]) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = csv_path.exists()
+    with csv_path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def parse_legacy_top_tim(top_tim: pathlib.Path) -> tuple[int, int, int, int, int, int, float | None]:
+    text = top_tim.read_text(encoding="utf-8", errors="replace")
+
+    lut_m = re.search(r"Total LUT4s:\s*([0-9]+)/([0-9]+)", text)
+    ff_m = re.search(r"TRELLIS_FF:\s*([0-9]+)/\s*([0-9]+)", text)
+    bram_m = re.search(r"DP16KD:\s*([0-9]+)/\s*([0-9]+)", text)
+    fmax_matches = re.findall(r"Max frequency for clock\s+'([^']+)':\s*([0-9.]+) MHz", text)
+
+    if lut_m is None or ff_m is None or bram_m is None:
+        raise RuntimeError(f"Failed to parse resource utilization from {top_tim}")
+
+    luts_used, luts_total = int(lut_m.group(1)), int(lut_m.group(2))
+    ffs_used, ffs_total = int(ff_m.group(1)), int(ff_m.group(2))
+    bram_used, bram_total = int(bram_m.group(1)), int(bram_m.group(2))
+
+    # Prefer USB PHY domain clocks when present, then any non-JTAG clock.
+    preferred_phy: float | None = None
+    fallback_non_jtag: float | None = None
+    for clock_name, mhz_text in fmax_matches:
+        mhz = float(mhz_text)
+        if "phy_0__clk__o" in clock_name:
+            preferred_phy = mhz
+        if "jtag" not in clock_name.lower():
+            fallback_non_jtag = mhz
+    fmax = preferred_phy if preferred_phy is not None else fallback_non_jtag
+    return luts_used, luts_total, ffs_used, ffs_total, bram_used, bram_total, fmax
 
 
 def sbt_arg_string(main: str, args: list[str]) -> str:
@@ -150,9 +243,19 @@ def run_core_dev(
     skip_log_scan: bool,
     allow_log_scan_fail: bool,
     run_log: pathlib.Path,
+    sbt_jobs: int,
+    run_suffix: str,
 ) -> None:
     # run_dev_profile already serializes the shared core pipeline.
-    run_sbt_main(WORK, sbt_arg_string(profile.sbt_main, profile.sbt_args), run_log)
+    run_sbt_main(
+        WORK,
+        sbt_arg_string(profile.sbt_main, profile.sbt_args),
+        run_log,
+        sbt_slot_count=sbt_jobs if sbt_jobs > 0 else None,
+        sbt_slot_dir=OUT / ".sbt_slots" if sbt_jobs > 0 else None,
+        event_log=run_log,
+        slot_section=f"{profile.name}:{run_suffix or 'single'}:generate",
+    )
 
     # When scan failures are non-fatal, run dev.py with scan skipped and handle scanner separately.
     effective_skip_scan = skip_log_scan or allow_log_scan_fail
@@ -179,6 +282,7 @@ def run_microsoc_direct(
     allow_log_scan_fail: bool,
     skip_generate: bool,
     run_suffix: str,
+    sbt_jobs: int,
 ) -> None:
     if profile.top_module is None or profile.output_prefix is None:
         raise RuntimeError(f"Profile '{profile.name}' is missing top_module/output_prefix")
@@ -214,6 +318,10 @@ def run_microsoc_direct(
             ivy_home=ws_root / ".ivy2",
             coursier_cache=ws_root / ".coursier",
             no_server=True,
+            sbt_slot_count=sbt_jobs if sbt_jobs > 0 else None,
+            sbt_slot_dir=OUT / ".sbt_slots" if sbt_jobs > 0 else None,
+            event_log=gen_log,
+            slot_section=f"{profile.name}:{suffix or 'single'}:generate",
         )
 
     rtl = find_generated_verilog(isolated_work, start_ts, before_verilog, hint="microsoc")
@@ -283,8 +391,101 @@ def run_microsoc_direct(
                 run_logged(scan_cmd, metrics_log, ROOT)
 
 
+def run_legacy_facedancer(
+    profile: Profile,
+    tag: str,
+    notes: str,
+    target_mhz: float,
+    fail_on_warnings: bool,
+    skip_log_scan: bool,
+    allow_log_scan_fail: bool,
+    run_suffix: str,
+) -> None:
+    legacy_root = pathlib.Path(
+        profile.legacy_workdir
+        or os.environ.get(
+            "CYNTHION_LEGACY_PY_ROOT",
+            "/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python",
+        )
+    )
+    if not legacy_root.exists():
+        raise RuntimeError(f"legacy_workdir does not exist: {legacy_root}")
+
+    if profile.sbt_main != "cynthion.gateware.facedancer.top":
+        raise RuntimeError(
+            "legacy_facedancer profile expects sbt_main='cynthion.gateware.facedancer.top'"
+        )
+
+    suffix = run_suffix.strip() or "single"
+    prefix = profile.output_prefix or f"legacy_facedancer_{profile.name}"
+    if run_suffix.strip():
+        prefix = f"{prefix}_{run_suffix.strip()}"
+
+    build_log = OUT / f"{prefix}_build.log"
+    metrics_log = OUT / f"{prefix}_metrics.log"
+    for p in [build_log, metrics_log]:
+        if p.exists():
+            p.unlink()
+
+    cmd = [sys.executable, "-m", profile.sbt_main] + profile.sbt_args
+    env = os.environ.copy()
+    if profile.legacy_luna_platform:
+        env["LUNA_PLATFORM"] = profile.legacy_luna_platform
+
+    run_logged(cmd, build_log, cwd=legacy_root, env=env)
+
+    top_tim = pathlib.Path(profile.legacy_tim_path) if profile.legacy_tim_path else (legacy_root / "build" / "top.tim")
+    if not top_tim.exists():
+        raise RuntimeError(f"Missing expected timing file: {top_tim}")
+
+    luts_used, luts_total, ffs_used, ffs_total, bram_used, bram_total, fmax = parse_legacy_top_tim(top_tim)
+    row = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "git_commit": get_git_commit(),
+        "tag": tag,
+        "device": "LFE5U-12F",
+        "package": "BG256",
+        "speed": "8",
+        "luts_used": luts_used,
+        "luts_total": luts_total,
+        "luts_pct": f"{pct(luts_used, luts_total):.2f}",
+        "ffs_used": ffs_used,
+        "ffs_total": ffs_total,
+        "ffs_pct": f"{pct(ffs_used, ffs_total):.2f}",
+        "bram_used": bram_used,
+        "bram_total": bram_total,
+        "bram_pct": f"{pct(bram_used, bram_total):.2f}",
+        "fmax_mhz": f"{fmax:.2f}" if fmax is not None else "",
+        "target_mhz": f"{target_mhz:.2f}",
+        "timing_pass": "yes" if (fmax is not None and fmax >= target_mhz) else "no",
+        "source_log": str(top_tim),
+        "notes": notes,
+    }
+
+    csv_path = ROOT / "riscv-64" / "metrics" / "ecp5_usage_history.csv"
+    with with_shared_pipeline_lock(ROOT, event_log=metrics_log, section=f"{profile.name}:metrics"):
+        append_metrics_row(csv_path, row)
+        run_logged([sys.executable, str(SCRIPTS / "44_generate_ecp5_report.py")], metrics_log, ROOT)
+
+        if not skip_log_scan:
+            scan_cmd = [sys.executable, str(SCRIPTS / "45_scan_logs.py")]
+            if fail_on_warnings:
+                scan_cmd.append("--fail-on-warnings")
+            if allow_log_scan_fail:
+                try:
+                    run_logged(scan_cmd, metrics_log, ROOT)
+                except Exception as exc:
+                    print(f"WARNING: non-fatal log scan failure ({profile.name}): {exc}")
+            else:
+                run_logged(scan_cmd, metrics_log, ROOT)
+
+
 def main() -> int:
     args = parse_args()
+
+    if args.sbt_jobs < 0:
+        print("ERROR: --sbt-jobs must be >= 0")
+        return 2
 
     try:
         profiles = load_profiles(args.config)
@@ -321,6 +522,8 @@ def main() -> int:
                 args.skip_log_scan,
                 args.allow_log_scan_fail,
                 run_log,
+                args.sbt_jobs,
+                args.run_suffix,
             )
         elif p.kind == "microsoc_direct":
             run_microsoc_direct(
@@ -333,6 +536,18 @@ def main() -> int:
                 args.skip_log_scan,
                 args.allow_log_scan_fail,
                 args.skip_generate,
+                args.run_suffix,
+                args.sbt_jobs,
+            )
+        elif p.kind == "legacy_facedancer":
+            run_legacy_facedancer(
+                p,
+                tag,
+                notes,
+                args.target_mhz,
+                args.fail_on_warnings,
+                args.skip_log_scan,
+                args.allow_log_scan_fail,
                 args.run_suffix,
             )
         else:
