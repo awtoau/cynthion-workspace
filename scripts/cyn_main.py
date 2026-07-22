@@ -73,7 +73,30 @@ except ImportError:
 # Workspace paths
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
-REPOS = Path.home() / "git" / "awtoau"
+
+def _resolve_repos_root() -> Path:
+    """Find the awtoau repo root on this machine."""
+    env_root = os.getenv("CYN_REPOS_ROOT")
+    if env_root:
+        base = Path(env_root).expanduser().resolve()
+        if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
+            return base
+        print(
+            f"WARNING: CYN_REPOS_ROOT={base} missing awto-cynthion and/or awto-apollo; "
+            "falling back to auto-detection"
+        )
+
+    candidates = [
+        REPO_ROOT.parent / "awtoau",
+        Path.home() / "git" / "awtoau",
+    ]
+    for base in candidates:
+        if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
+            return base
+    # Fallback preserves legacy behavior if repos are not checked out yet.
+    return candidates[-1]
+
+REPOS = _resolve_repos_root()
 INSTALL_PY = SCRIPTS_DIR / "install.py"
 CYN_DAEMON_PY = SCRIPTS_DIR / "cyn-daemon.py"
 PID_FILE = Path("/tmp/cyn-daemon.pid")
@@ -851,17 +874,47 @@ class CynCLI:
 
 
     def _flash_rust(self, log_file):
-        """Flash moondancer to device"""
-        elf_candidates = list(MOONDANCER_FW.glob("target/**/firmware.elf"))
-        if not elf_candidates:
-            elf_candidates = list(MOONDANCER_FW.glob("target/**/*.elf"))
-        if not elf_candidates:
-            print("  ERROR: no ELF found — run 'cyn build rust' first")
+        """Flash moondancer via Apollo (SPI flash + FPGA configure)."""
+        # Match moondancer's documented runner flow (.cargo/cynthion.sh):
+        # 1) ELF -> BIN, 2) apollo flash-program, 3) apollo configure bitstream.
+        cynthion_repo = MOONDANCER_FW.parents[1]
+        bitstream = cynthion_repo / "cynthion" / "python" / "build" / "facedancer.bit"
+        if not bitstream.exists():
+            print("  ERROR: facedancer bitstream not found — build gateware first")
+            print(f"         expected: {bitstream}")
             return 1
 
-        elf = sorted(elf_candidates, key=lambda p: p.stat().st_mtime)[-1]
-        return self._run_tee("probe-rs flash", ["probe-rs", "download", "--chip", "riscv", str(elf)],
-            log_file=log_file)
+        image = MOONDANCER_FW / "target" / "moondancer.bin"
+        image.parent.mkdir(parents=True, exist_ok=True)
+
+        ret = self._run_tee("moondancer objcopy",
+            ["cargo", "objcopy", "--release", "--bin", "moondancer", "--", "-Obinary", str(image)],
+            cwd=MOONDANCER_FW,
+            log_file=log_file,
+            check=False)
+        if ret != 0:
+            print("  ERROR: failed to create moondancer binary image")
+            return ret
+
+        ret = self._run_tee("apollo flash-program",
+            ["apollo", "flash-program", "--offset", "0x000b0000", str(image)],
+            cwd=MOONDANCER_FW,
+            log_file=log_file,
+            check=False)
+        if ret != 0:
+            print("  ERROR: apollo flash-program failed")
+            return ret
+
+        ret = self._run_tee("apollo configure",
+            ["apollo", "configure", str(bitstream)],
+            cwd=MOONDANCER_FW,
+            log_file=log_file,
+            check=False)
+        if ret != 0:
+            print("  ERROR: apollo configure failed")
+            return ret
+
+        return 0
 
     def _flash_apollo(self, log_file):
         """Flash Apollo to device"""
@@ -922,32 +975,49 @@ class CynCLI:
     def cmd_reset(self, args):
         """Reset device to Apollo mode"""
         self._check_venv()
-        log_path = self._log_path("reset")
+        mode = getattr(args, "mode", "normal")
+        hold_apollo = (mode == "hold-apollo")
+        log_path = self._log_path("reset-hold-apollo" if hold_apollo else "reset")
         print(f"==> reset (log: {log_path.relative_to(REPO_ROOT)})")
+        print(f"  mode: {mode}")
 
         reset_script = REPOS / "awto-cynthion" / "scripts" / "reset-cynthion.sh"
         with log_path.open("w") as log:
-            if reset_script.exists():
+            if reset_script.exists() and not hold_apollo:
                 ret = self._run_tee("reset-cynthion", [str(reset_script)],
                     cwd=REPO_ROOT, log_file=log)
             else:
+                if reset_script.exists() and hold_apollo:
+                    print("  hold-apollo mode bypasses reset-cynthion.sh to prevent auto-handoff.")
+                allow_takeover = "False" if hold_apollo else "True"
                 ret = self._run_tee("force-offline",
-                    [str(VENV_PYTHON), "-c", """
+                    [str(VENV_PYTHON), "-c", f"""
 import sys
 try:
     import usb.core
     from apollo_fpga import ApolloDebugger
+    ALLOW_FPGA_TAKEOVER = {allow_takeover}
     FPGA_VID, FPGA_PID = 0x1d50, 0x615b
     if usb.core.find(idVendor=FPGA_VID, idProduct=FPGA_PID) is None:
         print("Device already in Apollo mode (or not connected).")
+        if not ALLOW_FPGA_TAKEOVER:
+            print("Hold mode active; triggering soft reset without USB handoff.")
+            d = ApolloDebugger()
+            d.soft_reset()
+            d.close()
+            print("Reset complete (Apollo hold mode, takeover not allowed).")
         sys.exit(0)
     d = ApolloDebugger(force_offline=True)
     d.soft_reset()
-    d.allow_fpga_takeover_usb()
+    if ALLOW_FPGA_TAKEOVER:
+        d.allow_fpga_takeover_usb()
     d.close()
-    print("Reset complete.")
+    if ALLOW_FPGA_TAKEOVER:
+        print("Reset complete (FPGA takeover allowed).")
+    else:
+        print("Reset complete (Apollo hold mode, takeover not allowed).")
 except Exception as e:
-    print(f"Reset failed: {e}")
+    print(f"Reset failed: {{e}}")
     print("If moondancer has hung: power-cycle the device.")
     sys.exit(1)
 """],
@@ -1144,7 +1214,14 @@ except Exception as e:
 
         # Device management
         subs.add_parser("deploy", help="Build --release + flash riscv + fpga (full cycle)").set_defaults(func=self.cmd_deploy)
-        subs.add_parser("reset", help="Reset device to Apollo mode").set_defaults(func=self.cmd_reset)
+        reset = subs.add_parser("reset", help="Reset device to Apollo mode")
+        reset.add_argument(
+            "--mode",
+            choices=["normal", "hold-apollo"],
+            default="normal",
+            help="normal: allow FPGA takeover after reset; hold-apollo: keep Apollo in control for CDC/UART testing",
+        )
+        reset.set_defaults(func=self.cmd_reset)
         subs.add_parser("monitor", help="Live device monitoring (stub)").set_defaults(func=self.cmd_monitor)
 
         # Daemon management

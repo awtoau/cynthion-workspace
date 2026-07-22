@@ -55,7 +55,23 @@ from logging_utils import setup_logging
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
 LOGS = TMP / "logs"
-REPOS = Path.home() / "git" / "awtoau"
+
+def resolve_repos_root() -> Path:
+    """Resolve the awto repository root with optional env override."""
+    env_root = os.getenv("CYN_REPOS_ROOT")
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+
+    candidates = [
+        ROOT.parent / "awtoau",
+        Path.home() / "git" / "awtoau",
+    ]
+    for base in candidates:
+        if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
+            return base
+    return candidates[-1]
+
+REPOS = resolve_repos_root()
 OSS_CAD_SUITE = Path.home() / "opt" / "oss-cad-suite"
 
 # Global logger instance (initialized in main())
