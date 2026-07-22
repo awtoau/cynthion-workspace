@@ -69,7 +69,7 @@
 - [ ] Document recommended modern flow
 
 **Files to investigate**:
-- `awto-apollo/apollo_fpga/ecp5.py` — ECP5 programmer
+- `awto-apollo_samd11_mcu/apollo_fpga/ecp5.py` — ECP5 programmer
 - `awto-apollo/firmware/src/fpga.c` — Apollo FPGA control
 - `awto-cynthion/docs/source/developer/bitstream_generation.rst` — current flow
 
@@ -177,7 +177,7 @@ cd awto-cynthion/cynthion/python && python -m cynthion.gateware.facedancer.top -
 
 ## Phase 3-8: Implementation
 
-See ../design_proposals/apollo_moondancer_uart_watchdog_design.md for details on:
+See ../apollo_samd11_mcu/apollo_moondancer_uart_watchdog_design.md for details on:
 - Phase 3: JTAG always available (separate from moondancer)
 - Phase 4: FPGA stub gateware test
 - Phase 5: moondancer diagnostic serial build

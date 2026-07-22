@@ -8,7 +8,7 @@
 
 DFU (Device Firmware Update) buffer handling on SAMD11 MCU variant has potential issues:
 
-1. **Tight Memory Constraints**: SAMD11 has only 32KB total RAM
+1. **Tight Memory Constraints**: ATSAMD11D14A has only 4KB SRAM
    - 4KB allocated to DFU buffer (`TUD_DFU_RT_DESCRIPTOR(..., 500, 4096)`)
    - USB stack requires ~2-3KB
    - Application code + stack share remainder

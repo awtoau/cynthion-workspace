@@ -23,7 +23,7 @@ Apollo is the ARM-based debug controller on Cynthion. This review covers three a
 ### Known Considerations
 
 1. **Buffer allocation on SAMD11** (limited RAM)
-   - SAMD11 has only 32KB total RAM
+   - ATSAMD11D14A has 4KB SRAM and 16KB flash
    - 4KB DFU buffer + USB stack + application stack = tight memory
    - No explicit mention of buffer overflow checks
 

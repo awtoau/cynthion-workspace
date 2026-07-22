@@ -3,8 +3,8 @@
 **Status**: Phase 2 Design Review  
 **Related Issues**: [#15](https://github.com/awtoau/cynthion-workspace/issues/15), [#33](https://github.com/awtoau/cynthion-workspace/issues/33)  
 **Reference Docs**: 
-- [`apollo_moondancer_uart_watchdog_design.md`](design_proposals/apollo_moondancer_uart_watchdog_design.md) — Proposed UART redesign
-- [`cynthion_architecture_scan_2026_05_22.md`](research/cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
+- [`apollo_moondancer_uart_watchdog_design.md`](apollo_moondancer_uart_watchdog_design.md) — Proposed UART redesign
+- [`cynthion_architecture_scan_2026_05_22.md`](cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
 - [`apollo_code_review.md`](apollo_code_review.md) — Phase 2 code review findings
 
 ### The Problem
@@ -22,9 +22,9 @@
 
 ### Hardware: ATSAMD11D14A
 
-**Pin Summary** (20-pin LQFP):
+**Pin Summary** (board-level pin usage):
 ```
-SAMD11D14A @ 48 MHz, 32KB RAM, 14KB Flash
+ATSAMD11D14A @ 48 MHz, 4KB SRAM, 16KB flash
 
 Used Pins (currently):
 ├── PA03  ← FPGA_INITN (status input)
@@ -40,7 +40,7 @@ Used Pins (currently):
 
 Unassigned:
 ├── PA00, PA01, PA02, PA05, PA07, PA12, PA13, PA18-PA21, PA24-PA26, PA28-PA31
-│   (Note: SAMD11D14 has only ~20 pins total; upper range varies by package)
+│   (Availability depends on the exact package and board routing.)
 └── PA05  ? CONTROL_RESET_DETECT (not currently defined in firmware)
 ```
 
@@ -72,7 +72,7 @@ case SPI_FPGA_DEBUG:
 
 #### Option 1: UART-Based Watchdog ⭐ **Recommended**
 
-**Reference**: [`apollo_moondancer_uart_watchdog_design.md`](design_proposals/apollo_moondancer_uart_watchdog_design.md)
+**Reference**: [`apollo_moondancer_uart_watchdog_design.md`](apollo_moondancer_uart_watchdog_design.md)
 
 **Architecture**:
 ```
@@ -103,7 +103,7 @@ PA04 ← status ────── ← moondancer status output
 
 #### Option 2: Debug SPI on SERCOM2
 
-**Reference**: [`cynthion_architecture_scan_2026_05_22.md` (Section 5)](research/cynthion_architecture_scan_2026_05_22.md#5-unimplemented-spi_fpga_debug)
+**Reference**: [`cynthion_architecture_scan_2026_05_22.md` (Section 5)](cynthion_architecture_scan_2026_05_22.md#5-unimplemented-spi_fpga_debug)
 
 **Architecture**:
 ```

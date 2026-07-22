@@ -23,7 +23,7 @@ these announcements are interrupted or when the PROGRAM button is
 pressed.
 ```
 
-**Code Location**: `awto-apollo/apollo_fpga/gateware/advertiser.py:42-48`
+**Code Location**: `awto-apollo_samd11_mcu/apollo_fpga/gateware/advertiser.py:42-48`
 ```python
 # Generate clock with 20ms period
 half_period = int(self.clk_freq_hz * 10e-3)  # 10ms
@@ -205,7 +205,7 @@ Replace pulse-train with hardware UART using:
 ## References
 
 **Files Examined**:
-- awto-apollo/apollo_fpga/gateware/advertiser.py - Pulse-train generator
+- awto-apollo_samd11_mcu/apollo_fpga/gateware/advertiser.py - Pulse-train generator
 - awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c - Edge detection logic
 - awto-apollo/firmware/src/boards/cynthion_d11/uart.c - Current UART on JTAG pins
 - awto-apollo/firmware/src/boards/cynthion_d11/spi.c - SPI configuration (unimplemented DEBUG variant)

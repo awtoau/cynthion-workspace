@@ -1,4 +1,4 @@
-# Apollo-Moondancer Communication Architecture Redesign
+# Apollo (SAMD11 ARM Cortex-M0+ MCU) - Moondancer (RISC-V softcore on ECP5 FPGA) Communication Architecture Redesign
 
 **Status**: Design Proposal  
 **Label**: `rover`  
@@ -8,7 +8,7 @@
 
 ### Current Architecture Issues
 
-The current Apollo↔Moondancer communication uses a **crude pulse-train signaling** mechanism that creates several problems:
+The current Apollo (SAMD11 ARM Cortex-M0+ MCU) ↔ Moondancer (RISC-V softcore on ECP5 FPGA) communication uses a **crude pulse-train signaling** mechanism that creates several problems:
 
 1. **USB Port Switching Vulnerability**
    - When moondancer firmware loads, it asserts `FPGA_ADV` pin repeatedly
