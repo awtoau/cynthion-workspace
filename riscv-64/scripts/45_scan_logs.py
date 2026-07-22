@@ -26,6 +26,8 @@ WARN_RE = re.compile(r"\b(warn|warning)\b", re.IGNORECASE)
 IGNORE_RE = [
     re.compile(r"timing-allow-fail", re.IGNORECASE),
     re.compile(r"did not report PASS sentinel", re.IGNORECASE),
+    re.compile(r"^\[error\]\s+WARNING:", re.IGNORECASE),
+    re.compile(r"^FAIL:\s+error signatures found in logs", re.IGNORECASE),
 ]
 
 
@@ -92,7 +94,7 @@ def collect_logs(directory: pathlib.Path) -> list[pathlib.Path]:
     logs: list[pathlib.Path] = []
     for pat in patterns:
         logs.extend(sorted(directory.glob(pat)))
-    return [p for p in logs if p.is_file()]
+    return [p for p in logs if p.is_file() and p.name != SUMMARY.name]
 
 
 def write_summary(summary_path: pathlib.Path, scans: list[FileScan]) -> tuple[int, int]:

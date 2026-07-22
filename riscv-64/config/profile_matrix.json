@@ -1,0 +1,132 @@
+{
+  "profiles": [
+    {
+      "name": "soc_uart_timer",
+      "kind": "microsoc_direct",
+      "sbt_main": "vexiiriscv.soc.micro.MicroSocGen",
+      "sbt_args": [
+        "--xlen", "64",
+        "--with-supervisor",
+        "--with-rvm",
+        "--with-rvc",
+        "--with-rdtime",
+        "--jtag-tap", "false"
+      ],
+      "top_module": "MicroSoc",
+      "output_prefix": "microsoc_uart_timer",
+      "tag": "soc_x64_sv_rvm_rvc_rdtime_clint_uart",
+      "notes": "MicroSoc x64 + CLINT + UART"
+    },
+    {
+      "name": "core_i4k",
+      "kind": "core_dev",
+      "sbt_main": "vexiiriscv.Generate",
+      "sbt_args": [
+        "--xlen", "64",
+        "--with-supervisor",
+        "--with-rvm",
+        "--with-rvc",
+        "--with-rdtime",
+        "--with-fetch-l1",
+        "--fetch-l1-sets", "64",
+        "--fetch-l1-ways", "1"
+      ],
+      "tag": "core_x64_sv_rvm_rvc_rdtime_i4k",
+      "notes": "core x64 + 4KiB I-cache"
+    },
+    {
+      "name": "core_i4k_d4k",
+      "kind": "core_dev",
+      "sbt_main": "vexiiriscv.Generate",
+      "sbt_args": [
+        "--xlen", "64",
+        "--with-supervisor",
+        "--with-rvm",
+        "--with-rvc",
+        "--with-rdtime",
+        "--with-fetch-l1",
+        "--fetch-l1-sets", "64",
+        "--fetch-l1-ways", "1",
+        "--with-lsu-l1",
+        "--lsu-l1-sets", "64",
+        "--lsu-l1-ways", "1"
+      ],
+      "tag": "core_x64_sv_rvm_rvc_rdtime_i4k_d4k",
+      "notes": "core x64 + 4KiB I-cache + 4KiB D-cache"
+    },
+    {
+      "name": "core_i4k_d4k_bpred",
+      "kind": "core_dev",
+      "sbt_main": "vexiiriscv.Generate",
+      "sbt_args": [
+        "--xlen", "64",
+        "--with-supervisor",
+        "--with-rvm",
+        "--with-rvc",
+        "--with-rdtime",
+        "--with-fetch-l1",
+        "--fetch-l1-sets", "64",
+        "--fetch-l1-ways", "1",
+        "--with-lsu-l1",
+        "--lsu-l1-sets", "64",
+        "--lsu-l1-ways", "1",
+        "--with-btb",
+        "--with-gshare",
+        "--with-ras"
+      ],
+      "tag": "core_x64_sv_rvm_rvc_rdtime_i4k_d4k_btb_gshare_ras",
+      "notes": "core x64 + i4k + d4k + btb + gshare + ras"
+    },
+    {
+      "name": "core_i4k_d4k_bpred_dual",
+      "kind": "core_dev",
+      "sbt_main": "vexiiriscv.Generate",
+      "sbt_args": [
+        "--xlen", "64",
+        "--with-supervisor",
+        "--with-rvm",
+        "--with-rvc",
+        "--with-rdtime",
+        "--with-fetch-l1",
+        "--fetch-l1-sets", "64",
+        "--fetch-l1-ways", "1",
+        "--with-lsu-l1",
+        "--lsu-l1-sets", "64",
+        "--lsu-l1-ways", "1",
+        "--with-btb",
+        "--with-gshare",
+        "--with-ras",
+        "--dual-issue"
+      ],
+      "tag": "core_x64_sv_rvm_rvc_rdtime_i4k_d4k_btb_gshare_ras_dual",
+      "notes": "core x64 + i4k + d4k + bpred + dual-issue"
+    },
+    {
+      "name": "soc_cumulative_uart",
+      "kind": "microsoc_direct",
+      "sbt_main": "vexiiriscv.soc.micro.MicroSocGen",
+      "sbt_args": [
+        "--xlen", "64",
+        "--with-supervisor",
+        "--with-rvm",
+        "--with-rvc",
+        "--with-rdtime",
+        "--with-fetch-l1",
+        "--fetch-l1-sets", "64",
+        "--fetch-l1-ways", "1",
+        "--with-lsu-l1",
+        "--lsu-l1-sets", "64",
+        "--lsu-l1-ways", "1",
+        "--with-btb",
+        "--with-gshare",
+        "--with-ras",
+        "--jtag-tap", "false",
+        "--dual-issue"
+      ],
+      "top_module": "MicroSoc",
+      "output_prefix": "microsoc_uart_cumulative",
+      "tag": "soc_x64_sv_rvm_rvc_rdtime_i4k_d4k_btb_gshare_ras_dual_clint_uart",
+      "notes": "microsoc x64 + core stack + clint + uart"
+    }
+  ]
+}

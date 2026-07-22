@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tag",
         default="baseline",
-        help="Short label for this datapoint (e.g. base, with-cache, with-uart).",
+        help="Build ID for this datapoint; include major features in the tag itself.",
     )
     parser.add_argument(
         "--target-mhz",

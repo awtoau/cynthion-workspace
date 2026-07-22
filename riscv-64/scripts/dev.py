@@ -42,6 +42,12 @@ def parse_args() -> argparse.Namespace:
         help="Timing target for step 43.",
     )
     parser.add_argument(
+        "--threads",
+        type=int,
+        default=0,
+        help="nextpnr thread count for step 42 (0 uses nextpnr default).",
+    )
+    parser.add_argument(
         "--skip-timing",
         action="store_true",
         help="Skip step 42 and use existing timing/log artifacts.",
@@ -85,6 +91,8 @@ def main() -> int:
     tag = args.tag or dt.datetime.now().strftime("monitor-%Y%m%d-%H%M%S")
 
     run_log = OUT_DIR / "ecp5_monitor_run.log"
+    run_log.parent.mkdir(parents=True, exist_ok=True)
+    run_log.write_text("", encoding="utf-8")
 
     print(f"Run log: {run_log}")
     print(f"Tag: {tag}")
@@ -104,7 +112,10 @@ def main() -> int:
 
         if not args.skip_timing:
             print("Step 3/6: running timing flow (42)...")
-            run_cmd([sys.executable, str(SCRIPTS_DIR / "42_run_vexii_nextpnr_timing.py")], run_log)
+            timing_cmd = [sys.executable, str(SCRIPTS_DIR / "42_run_vexii_nextpnr_timing.py")]
+            if args.threads > 0:
+                timing_cmd.extend(["--threads", str(args.threads)])
+            run_cmd(timing_cmd, run_log)
         else:
             print("Step 3/6: skipped timing flow (--skip-timing)")
 

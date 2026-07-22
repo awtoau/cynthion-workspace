@@ -12,7 +12,7 @@ R64 = ROOT / "riscv-64"
 OUT = R64 / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 
-TOP = ROOT / "debris" / "awto-cynthion" / "cynthion" / "python" / "src" / "gateware" / "facedancer" / "top.py"
+TOP = Path("/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py")
 
 ASSIGN_RE = re.compile(r"^\s*self\.(?P<name>[a-zA-Z0-9_]+)\s*=\s*(?P<value>.+?)\s*$")
 
