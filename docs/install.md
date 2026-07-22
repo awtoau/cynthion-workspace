@@ -621,5 +621,5 @@ See: [serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_arch
 - [Cynthion Hardware](https://github.com/greatscottgadgets/cynthion-hardware) - Board schematics
 - [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) - FPGA toolchain releases
 - [Amaranth HDL](https://amaranth-lang.org/) - Python HDL framework
-- [claude-toolchain.md](claude-toolchain.md) - Canonical toolchain configuration
+- [build_system.md](build_system.md#toolchain-environment) - Canonical toolchain configuration
 
