@@ -20,6 +20,8 @@ Boot a minimal RV64 Linux userspace on Cynthion (ECP5 LFE5U-12F) using a strippe
 - `scripts/44_generate_ecp5_report.py`: generate Markdown trend report with graphs.
 - `scripts/45_scan_logs.py`: scans generated logs for warning/error signatures.
 - `scripts/dev.py`: one-command runner for steps 40 + 41 + 42 + 43 + 44 + 45.
+- `scripts/61_run_profile.py`: unified profile engine (config-driven, per profile).
+- `scripts/60_run_profile_matrix.py`: run one/all profiles, with thread sweeps and history reset.
 - `code/cynthion_rv64_min.dts`: starter Linux device-tree skeleton.
 - `sim/tb_vexiiriscv_smoke.v`: reusable simulation testbench.
 - `sim/vexii_ecp5_wrap.v`: minimal wrapper top for standalone PnR/timing checks.
@@ -44,6 +46,12 @@ python3 riscv-64/scripts/43_record_ecp5_metrics.py --tag baseline --notes "wrapp
 python3 riscv-64/scripts/44_generate_ecp5_report.py
 python3 riscv-64/scripts/45_scan_logs.py
 python3 riscv-64/scripts/dev.py --tag with-uart --notes "added uart block"
+python3 riscv-64/scripts/61_run_profile.py --profile soc_uart_timer
+python3 riscv-64/scripts/61_run_profile.py --profile core_i4k
+python3 riscv-64/scripts/61_run_profile.py --profile core_i4k_d4k
+python3 riscv-64/scripts/61_run_profile.py --profile core_i4k_d4k_bpred
+python3 riscv-64/scripts/61_run_profile.py --profile core_i4k_d4k_bpred_dual
+python3 riscv-64/scripts/61_run_profile.py --profile soc_cumulative_uart
 ```
 
 Then execute tasks in `BRINGUP_PLAN.md` phase-by-phase.
@@ -67,6 +75,16 @@ The generated report includes BRAM in both DP16KD blocks and KiB capacity.
 Or run all three with one command:
 
 - `python3 riscv-64/scripts/dev.py --tag <change-name> --notes "what changed"`
+- `python3 riscv-64/scripts/dev.py --threads 16 --tag <change-name> --notes "what changed"`
+
+Canonical profile sequence (one-off):
+
+- `python3 riscv-64/scripts/61_run_profile.py --profile soc_uart_timer`
+- `python3 riscv-64/scripts/61_run_profile.py --profile core_i4k`
+- `python3 riscv-64/scripts/61_run_profile.py --profile core_i4k_d4k`
+- `python3 riscv-64/scripts/61_run_profile.py --profile core_i4k_d4k_bpred`
+- `python3 riscv-64/scripts/61_run_profile.py --profile core_i4k_d4k_bpred_dual`
+- `python3 riscv-64/scripts/61_run_profile.py --profile soc_cumulative_uart`
 
 Default `dev.py` flow:
 
@@ -84,7 +102,28 @@ Useful flags:
 - `--skip-timing`
 - `--skip-log-scan`
 - `--fail-on-warnings`
+- `--threads <N>` (for faster nextpnr profiling runs)
 
 Open report:
 
 - `riscv-64/metrics/reports/ecp5_usage_report.md`
+
+## Generic Profile Runner
+
+Use a single generic runner with a config file instead of calling each profile script manually.
+
+- Config file: `riscv-64/config/profile_matrix.json`
+- Runner: `python3 riscv-64/scripts/60_run_profile_matrix.py`
+
+Examples:
+
+- List configured profiles:
+	`python3 riscv-64/scripts/60_run_profile_matrix.py --list`
+- Run one profile at 8 threads (recommended starting point):
+	`python3 riscv-64/scripts/60_run_profile_matrix.py --profile soc_cumulative_uart --threads 8`
+- Run multiple thread tests for one profile:
+	`python3 riscv-64/scripts/60_run_profile_matrix.py --profile core_i4k_d4k_bpred_dual --threads 8,16,32`
+- Run all configured profiles at 8 threads:
+	`python3 riscv-64/scripts/60_run_profile_matrix.py --all --threads 8`
+- Recreate entire dataset from scratch (clean CSV then full sequence):
+	`python3 riscv-64/scripts/60_run_profile_matrix.py --all --threads 8 --reset-history`
