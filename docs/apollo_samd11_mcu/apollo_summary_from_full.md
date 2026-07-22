@@ -1,6 +1,6 @@
-# Apollo Summary (Moved from full.md)
+# Apollo Summary
 
-This document holds Apollo-specific material that was removed from `docs/full.md` to keep the workspace-wide summary focused.
+This document holds Apollo-specific material that was moved out of the workspace-wide overview and into topic-focused docs.
 
 ## Scope
 
@@ -42,6 +42,8 @@ Detailed analysis and recommendations:
 
 ## Related Workspace Docs
 
-- [../full.md](../full.md)
+- [../patchset/patchset_overview.md](../patchset/patchset_overview.md)
+- [../build_system.md](../build_system.md)
+- [../install.md](../install.md)
 - [../implementation_roadmap.md](../implementation_roadmap.md)
 - [../hardware_architecture.md](../hardware_architecture.md)

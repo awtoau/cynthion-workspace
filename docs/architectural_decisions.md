@@ -28,7 +28,7 @@
 - Simpler than subprocess-based approach
 
 ### Consolidated Documentation
-**Decision:** Consolidated docs tree with informative filenames and one optional snapshot (`full.md`)
+**Decision:** Consolidated docs tree with informative filenames and patch-set snapshots for change history
 
 **Rationale:**
 - Easier to maintain (single source of truth)

@@ -598,17 +598,6 @@ Use the detailed runbook in [troubleshooting.md](troubleshooting.md) before appl
 - validate USB mode and command sanity after load,
 - return to canonical local build flow when toolchain is restored.
 
-### Amaranth Not Compatible with Python 3.14
-
-**Status**: ✅ VERIFIED COMPATIBLE
-
-Amaranth 0.5 elaboration tested successfully with Python 3.14.4:
-```bash
-LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3.14 -m cynthion.gateware.analyzer.top --dry-run
-# Output: "Build complete"
-```
-
 ## Next Steps
 
 ### Phase 1 Complete When:
