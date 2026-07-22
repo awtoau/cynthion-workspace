@@ -15,11 +15,15 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = ROOT / "riscv-64" / "scripts"
 DEFAULT_CONFIG = ROOT / "riscv-64" / "config" / "profile_matrix.json"
+DEFAULT_TRACE_LOG = ROOT / "tmp" / "riscv64_matrix_trace.log"
+_TRACE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Clear metrics CSV before running matrix (clean full recreate).",
     )
+    parser.add_argument(
+        "--allow-log-scan-fail",
+        action="store_true",
+        help="Do not fail matrix run when profile log scan exits non-zero.",
+    )
+    parser.add_argument(
+        "--trace-log",
+        type=pathlib.Path,
+        default=DEFAULT_TRACE_LOG,
+        help="Path to append matrix scheduling/execution trace logs.",
+    )
     return parser.parse_args()
 
 
@@ -143,9 +158,21 @@ def select_profiles(all_profiles: list[Profile], selected: list[str], run_all: b
     return [by_name[name] for name in selected]
 
 
-def run_cmd(cmd: list[str]) -> None:
+def trace_event(path: pathlib.Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    with _TRACE_LOCK:
+        with path.open("a", encoding="utf-8") as log:
+            log.write(f"[{stamp}] {message}\n")
+
+
+def run_cmd(cmd: list[str], trace_log: pathlib.Path) -> None:
     print("$", " ".join(cmd))
+    start = time.monotonic()
+    trace_event(trace_log, f"CMD_START pid={os.getpid()} cmd={' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=ROOT)
+    elapsed = time.monotonic() - start
+    trace_event(trace_log, f"CMD_END pid={os.getpid()} rc={result.returncode} duration_sec={elapsed:.3f}")
     if result.returncode != 0:
         raise RuntimeError(f"Command failed ({result.returncode}): {' '.join(cmd)}")
 
@@ -157,6 +184,8 @@ def build_invocation(
     target_mhz: float,
     fail_on_warnings: bool,
     skip_log_scan: bool,
+    allow_log_scan_fail: bool,
+    run_suffix: str,
 ) -> list[str]:
     tag = f"{profile.tag}_t{threads}" if threads > 0 else profile.tag
     notes = f"{profile.notes}; threads={threads}" if threads > 0 else profile.notes
@@ -176,11 +205,15 @@ def build_invocation(
         notes,
         "--target-mhz",
         str(target_mhz),
+        "--run-suffix",
+        run_suffix,
     ]
     if fail_on_warnings:
         cmd.append("--fail-on-warnings")
     if skip_log_scan:
         cmd.append("--skip-log-scan")
+    if allow_log_scan_fail:
+        cmd.append("--allow-log-scan-fail")
     return cmd
 
 
@@ -224,10 +257,17 @@ def main() -> int:
     print(f"Profiles: {', '.join(p.name for p in chosen)}")
     print(f"Threads: {threads}")
     print(f"Jobs: {args.jobs}")
+    trace_event(args.trace_log, f"MATRIX_START profiles={[p.name for p in chosen]} threads={threads} jobs={args.jobs}")
 
     if args.jobs < 1:
         print("ERROR: --jobs must be >= 1")
         return 2
+
+    auto_allow_scan_fail = args.jobs > 1 and not args.fail_on_warnings
+    allow_scan_fail = args.allow_log_scan_fail or auto_allow_scan_fail
+    if auto_allow_scan_fail and not args.allow_log_scan_fail:
+        print("INFO: enabling non-fatal log scan mode for parallel run (--jobs > 1).")
+        trace_event(args.trace_log, "AUTO_ALLOW_LOG_SCAN_FAIL enabled")
 
     if args.reset_history:
         csv = ROOT / "riscv-64" / "metrics" / "ecp5_usage_history.csv"
@@ -240,8 +280,10 @@ def main() -> int:
 
     try:
         commands: list[list[str]] = []
+        command_count = 0
         for p in chosen:
             for t in threads:
+                command_count += 1
                 cmd = build_invocation(
                     p,
                     args.config,
@@ -249,26 +291,31 @@ def main() -> int:
                     args.target_mhz,
                     args.fail_on_warnings,
                     args.skip_log_scan,
+                    allow_scan_fail,
+                    f"j{command_count:04d}",
                 )
                 if args.dry_run:
                     print("$", " ".join(cmd))
+                    trace_event(args.trace_log, f"CMD_DRYRUN cmd={' '.join(cmd)}")
                 else:
                     commands.append(cmd)
 
         if not args.dry_run:
             if args.jobs == 1:
                 for cmd in commands:
-                    run_cmd(cmd)
+                    run_cmd(cmd, args.trace_log)
             else:
                 print("Running in concurrent mode; pipeline lock will serialize shared build sections safely.")
                 with cf.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-                    futures = [ex.submit(run_cmd, cmd) for cmd in commands]
+                    futures = [ex.submit(run_cmd, cmd, args.trace_log) for cmd in commands]
                     for fut in cf.as_completed(futures):
                         fut.result()
     except Exception as exc:
+        trace_event(args.trace_log, f"MATRIX_ERROR error={exc}")
         print(f"ERROR: {exc}")
         return 2
 
+    trace_event(args.trace_log, "MATRIX_END status=ok")
     print("Profile matrix run complete")
     print(f"CSV: {ROOT / 'riscv-64' / 'metrics' / 'ecp5_usage_history.csv'}")
     print(f"Report: {ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")

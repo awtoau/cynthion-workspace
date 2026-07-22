@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 
 from profile_shared import (
+    append_event,
     build_nextpnr_cmd,
     ensure_tool,
     run_dev_profile,
@@ -54,7 +57,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=0, help="nextpnr thread count (0 uses default)")
     parser.add_argument("--fail-on-warnings", action="store_true", help="Fail on scanner warnings")
     parser.add_argument("--skip-log-scan", action="store_true", help="Skip log scanner step")
+    parser.add_argument(
+        "--allow-log-scan-fail",
+        action="store_true",
+        help="Do not fail profile run if log scan exits non-zero.",
+    )
     parser.add_argument("--skip-generate", action="store_true", help="Skip sbt generation for microsoc_direct profiles")
+    parser.add_argument(
+        "--run-suffix",
+        default="",
+        help="Optional suffix for per-run artifacts (useful for concurrent matrix jobs).",
+    )
     return parser.parse_args()
 
 
@@ -80,18 +93,50 @@ def sbt_arg_string(main: str, args: list[str]) -> str:
     return "runMain " + main + " " + " ".join(args)
 
 
-def find_recent_verilog(start_ts: float, hint: str | None = None) -> pathlib.Path:
-    candidates = sorted(WORK.glob("*.v"), key=lambda p: p.stat().st_mtime, reverse=True)
+def prepare_isolated_workspace(run_suffix: str, gen_log: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    token = run_suffix.strip() or f"pid{os.getpid()}"
+    ws_root = OUT / "workspaces" / token
+    iso_work = ws_root / "vexiiriscv"
+
+    if ws_root.exists():
+        shutil.rmtree(ws_root)
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    append_event(gen_log, f"ISOLATED_COPY src={WORK} dst={iso_work}")
+    shutil.copytree(
+        WORK,
+        iso_work,
+        symlinks=True,
+        ignore=shutil.ignore_patterns("target", ".bloop", ".metals", ".idea", "__pycache__"),
+    )
+    return ws_root, iso_work
+
+
+def find_generated_verilog(
+    work_dir: pathlib.Path,
+    start_ts: float,
+    before: set[pathlib.Path],
+    hint: str | None = None,
+) -> pathlib.Path:
+    candidates = sorted(work_dir.glob("*.v"), key=lambda p: p.stat().st_mtime, reverse=True)
+    new_files = [p for p in candidates if p not in before]
+
+    if hint:
+        hinted_new = [p for p in new_files if hint.lower() in p.name.lower()]
+        if hinted_new:
+            return hinted_new[0]
+    if new_files:
+        return new_files[0]
+
     for p in candidates:
-        if p.stat().st_mtime >= start_ts - 1:
-            if hint is None or hint.lower() in p.name.lower():
-                return p
+        if p.stat().st_mtime >= start_ts - 1 and (hint is None or hint.lower() in p.name.lower()):
+            return p
     if hint:
         for p in candidates:
             if hint.lower() in p.name.lower():
                 return p
     if not candidates:
-        raise FileNotFoundError(f"No generated verilog files found in {WORK}")
+        raise FileNotFoundError(f"No generated verilog files found in {work_dir}")
     return candidates[0]
 
 
@@ -103,12 +148,24 @@ def run_core_dev(
     threads: int,
     fail_on_warnings: bool,
     skip_log_scan: bool,
+    allow_log_scan_fail: bool,
     run_log: pathlib.Path,
 ) -> None:
-    # Core generation and downstream flow both rely on shared build artifacts.
-    with with_shared_pipeline_lock(ROOT):
-        run_sbt_main(WORK, sbt_arg_string(profile.sbt_main, profile.sbt_args), run_log)
-        run_dev_profile(ROOT, tag, notes, target_mhz, threads, fail_on_warnings, skip_log_scan, run_log)
+    # run_dev_profile already serializes the shared core pipeline.
+    run_sbt_main(WORK, sbt_arg_string(profile.sbt_main, profile.sbt_args), run_log)
+
+    # When scan failures are non-fatal, run dev.py with scan skipped and handle scanner separately.
+    effective_skip_scan = skip_log_scan or allow_log_scan_fail
+    run_dev_profile(ROOT, tag, notes, target_mhz, threads, fail_on_warnings, effective_skip_scan, run_log)
+
+    if not skip_log_scan and allow_log_scan_fail:
+        scan_cmd = [sys.executable, str(SCRIPTS / "45_scan_logs.py")]
+        if fail_on_warnings:
+            scan_cmd.append("--fail-on-warnings")
+        try:
+            run_logged(scan_cmd, run_log, ROOT)
+        except Exception as exc:
+            print(f"WARNING: non-fatal log scan failure ({profile.name}): {exc}")
 
 
 def run_microsoc_direct(
@@ -119,12 +176,15 @@ def run_microsoc_direct(
     threads: int,
     fail_on_warnings: bool,
     skip_log_scan: bool,
+    allow_log_scan_fail: bool,
     skip_generate: bool,
+    run_suffix: str,
 ) -> None:
     if profile.top_module is None or profile.output_prefix is None:
         raise RuntimeError(f"Profile '{profile.name}' is missing top_module/output_prefix")
 
-    prefix = profile.output_prefix
+    suffix = run_suffix.strip()
+    prefix = profile.output_prefix if not suffix else f"{profile.output_prefix}_{suffix}"
     gen_log = OUT / f"{prefix}_generate.log"
     yosys_log = OUT / f"{prefix}_yosys.log"
     nextpnr_log = OUT / f"{prefix}_nextpnr.log"
@@ -138,22 +198,34 @@ def run_microsoc_direct(
         if p.exists():
             p.unlink()
 
-    # MicroSoc generation relies on shared work paths; lock the full flow section.
-    with with_shared_pipeline_lock(ROOT):
-        start_ts = time.time()
-        if not skip_generate:
-            run_sbt_main(WORK, sbt_arg_string(profile.sbt_main, profile.sbt_args), gen_log)
+    ws_root, isolated_work = prepare_isolated_workspace(run_suffix, gen_log)
+    append_event(metrics_log, f"ISOLATED_WORKSPACE path={isolated_work}")
 
-        rtl = find_recent_verilog(start_ts, hint="microsoc")
+    start_ts = time.time()
+    before_verilog = set(isolated_work.glob("*.v"))
 
-        yosys = ensure_tool("yosys")
-        nextpnr = ensure_tool("nextpnr-ecp5")
+    if not skip_generate:
+        run_sbt_main(
+            isolated_work,
+            sbt_arg_string(profile.sbt_main, profile.sbt_args),
+            gen_log,
+            sbt_boot_dir=ws_root / ".sbt-boot",
+            sbt_dir=ws_root / ".sbt",
+            ivy_home=ws_root / ".ivy2",
+            coursier_cache=ws_root / ".coursier",
+            no_server=True,
+        )
 
-        ys_script = f"read_verilog {rtl}; synth_ecp5 -top {profile.top_module} -json {json_path}; stat"
-        run_logged([yosys, "-q", "-l", str(yosys_log), "-p", ys_script], yosys_log, OUT)
+    rtl = find_generated_verilog(isolated_work, start_ts, before_verilog, hint="microsoc")
 
-        nextpnr_cmd = build_nextpnr_cmd(nextpnr, json_path, textcfg, threads, freq_mhz=25.0)
-        run_logged(nextpnr_cmd, nextpnr_log, OUT)
+    yosys = ensure_tool("yosys")
+    nextpnr = ensure_tool("nextpnr-ecp5")
+
+    ys_script = f"read_verilog {rtl}; synth_ecp5 -top {profile.top_module} -json {json_path}; stat"
+    run_logged([yosys, "-q", "-l", str(yosys_log), "-p", ys_script], yosys_log, OUT)
+
+    nextpnr_cmd = build_nextpnr_cmd(nextpnr, json_path, textcfg, threads, freq_mhz=25.0)
+    run_logged(nextpnr_cmd, nextpnr_log, OUT)
 
     log = nextpnr_log.read_text(encoding="utf-8", errors="replace")
     achieved = re.findall(r"Max frequency for clock '[^']+':\s*([0-9.]+) MHz", log)
@@ -176,31 +248,39 @@ def run_microsoc_direct(
         lines.extend(status_lines)
     summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    run_logged(
-        [
-            sys.executable,
-            str(SCRIPTS / "43_record_ecp5_metrics.py"),
-            "--timing-summary",
-            str(summary),
-            "--nextpnr-log",
-            str(nextpnr_log),
-            "--tag",
-            tag,
-            "--notes",
-            notes,
-            "--target-mhz",
-            str(target_mhz),
-        ],
-        metrics_log,
-        ROOT,
-    )
-    run_logged([sys.executable, str(SCRIPTS / "44_generate_ecp5_report.py")], metrics_log, ROOT)
+    # CSV/report/scan consume shared files; serialize only this tiny section.
+    with with_shared_pipeline_lock(ROOT, event_log=metrics_log, section=f"{profile.name}:metrics"):
+        run_logged(
+            [
+                sys.executable,
+                str(SCRIPTS / "43_record_ecp5_metrics.py"),
+                "--timing-summary",
+                str(summary),
+                "--nextpnr-log",
+                str(nextpnr_log),
+                "--tag",
+                tag,
+                "--notes",
+                notes,
+                "--target-mhz",
+                str(target_mhz),
+            ],
+            metrics_log,
+            ROOT,
+        )
+        run_logged([sys.executable, str(SCRIPTS / "44_generate_ecp5_report.py")], metrics_log, ROOT)
 
-    if not skip_log_scan:
-        scan_cmd = [sys.executable, str(SCRIPTS / "45_scan_logs.py")]
-        if fail_on_warnings:
-            scan_cmd.append("--fail-on-warnings")
-        run_logged(scan_cmd, metrics_log, ROOT)
+        if not skip_log_scan:
+            scan_cmd = [sys.executable, str(SCRIPTS / "45_scan_logs.py")]
+            if fail_on_warnings:
+                scan_cmd.append("--fail-on-warnings")
+            if allow_log_scan_fail:
+                try:
+                    run_logged(scan_cmd, metrics_log, ROOT)
+                except Exception as exc:
+                    print(f"WARNING: non-fatal log scan failure ({profile.name}): {exc}")
+            else:
+                run_logged(scan_cmd, metrics_log, ROOT)
 
 
 def main() -> int:
@@ -220,7 +300,8 @@ def main() -> int:
     tag = args.tag or p.tag
     notes = args.notes or p.notes
 
-    run_log = OUT / f"{p.name}_profile.log"
+    log_suffix = args.run_suffix.strip() or "single"
+    run_log = OUT / f"{p.name}_{log_suffix}_profile.log"
     if run_log.exists():
         run_log.unlink()
 
@@ -238,6 +319,7 @@ def main() -> int:
                 args.threads,
                 args.fail_on_warnings,
                 args.skip_log_scan,
+                args.allow_log_scan_fail,
                 run_log,
             )
         elif p.kind == "microsoc_direct":
@@ -249,7 +331,9 @@ def main() -> int:
                 args.threads,
                 args.fail_on_warnings,
                 args.skip_log_scan,
+                args.allow_log_scan_fail,
                 args.skip_generate,
+                args.run_suffix,
             )
         else:
             raise RuntimeError(f"Unsupported profile kind '{p.kind}'")
