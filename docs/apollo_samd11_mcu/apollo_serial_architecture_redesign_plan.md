@@ -83,6 +83,9 @@ cd awto-cynthion/cynthion/python && python -m cynthion.gateware.facedancer.top -
 
 **Objective**: Address DFU buffers, potential races, dual CDC serial ports.
 
+Mode-exclusivity design reference:
+- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+
 ### P2.1: DFU Memory Buffer Optimization
 - [ ] Review current JTAG buffer sizing (256 bytes fixed)
 - [ ] Review DFU descriptor (4096 bytes configured)

@@ -94,7 +94,64 @@ void fpga_set_state(int state) {
 
 ## Recommended Fixes
 
-### Fix 1: Mutex for FPGA State (Priority: IMMEDIATE)
+### Fix 1: Sticky JTAG Programming Mode (Priority: IMMEDIATE)
+
+Adopt a simple hard rule:
+- If Apollo is in JTAG programming mode, no other mode transitions are allowed.
+- Serial/debug and takeover-related commands must fail fast with explicit status.
+- Only an explicit emergency reset path may preempt JTAG mode.
+
+This directly addresses interruption during programming without requiring a large multi-mode scheduler.
+
+```c
+typedef enum {
+    MODE_APOLLO_HOLD,
+    MODE_JTAG_PROGRAM,
+    MODE_EMERGENCY_RESET
+} apollo_mode_t;
+
+static volatile apollo_mode_t apollo_mode = MODE_APOLLO_HOLD;
+
+bool mode_change_allowed(apollo_mode_t requested) {
+    if (apollo_mode == MODE_JTAG_PROGRAM && requested != MODE_EMERGENCY_RESET) {
+        return false;
+    }
+    return true;
+}
+```
+
+### Fix 2: Gate Vendor Requests by Mode
+
+Apply mode checks in `vendor.c` request handlers:
+- JTAG family requests require `MODE_JTAG_PROGRAM`.
+- Takeover/offline/policy-flip requests are rejected while JTAG mode is active.
+- Serial forwarding handlers pause or return `BUSY` during JTAG mode.
+
+```c
+if (apollo_mode == MODE_JTAG_PROGRAM && request_is_non_jtag(req)) {
+    return vendor_error_response(VENDOR_RESPONSE_BUSY);
+}
+```
+
+### Fix 3: Deterministic Emergency Reset Path
+
+Emergency reset behavior must be explicit and deterministic:
+- cancel active JTAG session
+- clear ownership/lock state
+- return to HOLD mode
+
+```c
+void emergency_reset_mode_override(void) {
+    cancel_jtag_session();
+    apollo_mode = MODE_APOLLO_HOLD;
+}
+```
+
+### Legacy Alternatives (Superseded for now)
+
+The previous mutex and multi-state-transition alternatives remain valid engineering options, but the current recommended path is the simpler sticky JTAG policy because it directly enforces non-interruption with lower implementation complexity.
+
+#### Previous mutex-oriented sketch
 
 ```c
 static mutex_t fpga_state_lock;
@@ -123,7 +180,7 @@ bool fpga_take_over(void) {
 }
 ```
 
-### Fix 2: Atomic State Flag
+#### Previous atomic state-flag sketch
 
 ```c
 typedef enum {
@@ -149,7 +206,7 @@ void fpga_set_state(int state) {
 }
 ```
 
-### Fix 3: Hardware Revision Clarification
+#### Hardware revision clarification (still recommended)
 
 ```c
 // Mark r0.2 as unsupported or document specific behavior
@@ -161,6 +218,23 @@ void fpga_set_state(int state) {
 ---
 
 ## Testing Requirements
+
+### JTAG Non-Interruption Test
+
+```c
+// Enter JTAG programming mode
+// Attempt takeover/policy/serial-mode commands in parallel
+// Verify all non-JTAG commands return BUSY or INVALID_MODE
+// Verify programming sequence completes without handoff interruption
+```
+
+### Emergency Reset Override Test
+
+```c
+// Enter JTAG programming mode
+// Trigger explicit emergency reset command
+// Verify JTAG session is canceled and mode returns to HOLD
+```
 
 ### Concurrent Access Test
 ```c
@@ -187,9 +261,11 @@ void fpga_set_state(int state) {
 
 ## Files Requiring Changes
 
-- `src/vendor.c` — Add mutex to `fpga_take_over()`
-- `src/fpga.c` — Protect `fpga_set_state()` with lock
-- `src/fpga.h` — Export state lock interface
+- `src/vendor.c` — Enforce sticky JTAG-mode policy checks
+- `src/fpga.c` — Ensure offline/reset paths honor mode policy
+- `src/fpga_adv.c` — Block takeover transitions while JTAG mode is active
+- `src/console.c` — Pause or reject serial forwarding while JTAG mode is active
+- `src/fpga.h` — Export mode/ownership helpers if needed
 - `src/debug_spi.c` — Clarify r0.2 behavior
 - Platform headers — Define mutex implementation per MCU
 

@@ -3,6 +3,9 @@
 ## Purpose
 Use this process for Apollo firmware work related to USB mode control, CDC/UART behavior, and issue verification.
 
+Primary design reference for mode arbitration and interface boundaries:
+- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+
 Goals:
 - Keep changes reproducible.
 - Keep evidence attached to each change.
