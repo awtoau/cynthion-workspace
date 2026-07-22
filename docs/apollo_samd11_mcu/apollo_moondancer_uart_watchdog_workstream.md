@@ -1,4 +1,4 @@
-# Apollo-Moondancer UART Watchdog Workstream
+# Apollo (SAMD11 ARM Cortex-M0+ MCU) - Moondancer (RISC-V softcore on ECP5 FPGA) UART Watchdog Workstream
 
 **Status**: Active Workstream
 
@@ -8,7 +8,7 @@
 
 ## Summary
 
-The current Apollo↔Moondancer communication uses a **crude pulse-train signaling** on the FPGA_ADV pin that forces:
+The current Apollo (SAMD11 ARM Cortex-M0+ MCU) ↔ Moondancer (RISC-V softcore on ECP5 FPGA) communication uses a **crude pulse-train signaling** on the FPGA_ADV pin that forces:
 - USB port switching (Apollo surrenders CONTROL port when moondancer boots)
 - Loss of host access if moondancer crashes
 - No bidirectional data exchange
@@ -34,7 +34,7 @@ PA04 GPIO ←───── status
 
 ## Design Document
 
-See [apollo_moondancer_uart_watchdog_design.md](../apollo/apollo_moondancer_uart_watchdog_design.md) for:
+See [apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md) for:
 - Detailed architecture
 - Implementation plan (3 phases)
 - Risk assessment

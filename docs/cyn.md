@@ -79,28 +79,34 @@ cyn --verbose ci apollo
 
 ## Daemon and Client Architecture
 
-### Planned Enhancement (Not Yet Implemented)
+The daemon is implemented (`scripts/cyn-daemon.py`). `cyn` uses **smart routing**:
+detects whether the daemon is running; if so, connects via HTTP (fast, cached
+environment); otherwise runs commands directly (inline).
 
 ```bash
-# Daemon mode (runs as background service)
+# Daemon lifecycle (runs as background service)
 cyn daemon start
 cyn daemon stop
 cyn daemon status
-
-# Client mode (connects to daemon for faster execution)
-cyn --daemon-mode list
-cyn --daemon-mode fpga sim_test
+cyn daemon restart
 ```
+
+### Daemon HTTP API (port 8765)
+- `/health` — health check
+- `/status` — daemon status + uptime
+- `/project/status` — project state
+- `/commands` — available commands list
 
 ### Benefits
 - GUI layer can connect via socket or HTTP
 - Tools can communicate with `cyn` daemon
-- Daemon can keep environment cached for faster sequential commands
+- Daemon keeps environment cached for faster sequential commands
+- Transparent daemon switching; single entry point for all operations
 - Better shutdown and lifecycle behavior
 
 ### Implementation Strategy
-- Phase 1 (current): command-line only
-- Phase 2 (future): daemon mode with `--daemon-mode`, IPC/HTTP layer, and signal handlers
+- Phase 1 (done): command-line entry point
+- Phase 2 (done): daemon mode with HTTP API and smart routing
 - Phase 3 (future): GUI layer on top of daemon
 
 ### Active Shutdown Contract (Canonical)

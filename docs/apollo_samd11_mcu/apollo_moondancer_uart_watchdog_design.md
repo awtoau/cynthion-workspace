@@ -99,6 +99,7 @@ PA11 (TMS) ← available
 3. **Frees JTAG Pins**
    - PA11, PA14 no longer needed for UART
    - JTAG debugging still available via PA10/PA14/PA15/PA11 (current GPIO bit-bang)
+   - Could enable SERCOM0 SPI for other use cases
 
 4. **Hardware Peripheral Integration**
    - Uses native SERCOM2 UART (no bit-banging)
