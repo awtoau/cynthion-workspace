@@ -659,6 +659,21 @@
       "output_prefix": "microsoc_exh_12_i4k_d4k_btb_gshare_ras_dual",
       "tag": "soc_x32_sv_rvm_rvc_rdtime_i4k_d4k_btb_gshare_ras_dual_clint_uart",
       "notes": "soc exhaustive i4k + d4k + btb + gshare + ras + dual + clint + uart"
+    },
+    {
+      "name": "legacy_fd_01",
+      "kind": "legacy_facedancer",
+      "sbt_main": "cynthion.gateware.facedancer.top",
+      "sbt_args": [
+        "--dry-run",
+        "--keep-files"
+      ],
+      "output_prefix": "legacy_facedancer_x32_base",
+      "legacy_workdir": "/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python",
+      "legacy_luna_platform": "cynthion.gateware.platform:CynthionPlatformRev1D4",
+      "legacy_tim_path": "/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/build/top.tim",
+      "tag": "soc_x32_legacy_vexriscv_usb_facedancer",
+      "notes": "legacy facedancer/moondancer fabric build (rv32 vexriscv + usb fabric)"
     }
   ]
 }
