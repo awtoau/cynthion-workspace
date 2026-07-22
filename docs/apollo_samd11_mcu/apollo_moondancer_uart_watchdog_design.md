@@ -4,6 +4,27 @@
 **Label**: `rover`  
 **Related**: Issue #15 (firmware+gateware: use Apollo ARM supervisor for watchdog)
 
+## Executive Architecture Summary
+
+Apollo (SAMD11 ARM Cortex-M0+ MCU) is treated as the always-on supervisor for
+moondancer (RISC-V softcore on ECP5 FPGA).
+
+Current risk without this redesign:
+- no robust watchdog protection for moondancer hangs
+- manual restart required after certain firmware failures
+
+Supervision model:
+1. moondancer sends periodic health responses
+2. Apollo monitors link health and timeout conditions
+3. Apollo asserts reset when watchdog criteria are violated
+4. moondancer recovers automatically after reset
+
+Execution phases:
+1. protocol and signaling design
+2. Apollo supervisor firmware changes
+3. moondancer and gateware integration
+4. validation and failure-mode testing
+
 ## Problem Statement
 
 ### Current Architecture Issues
@@ -78,7 +99,6 @@ PA11 (TMS) ← available
 3. **Frees JTAG Pins**
    - PA11, PA14 no longer needed for UART
    - JTAG debugging still available via PA10/PA14/PA15/PA11 (current GPIO bit-bang)
-   - Could enable SERCOM0 SPI for other use cases
 
 4. **Hardware Peripheral Integration**
    - Uses native SERCOM2 UART (no bit-banging)

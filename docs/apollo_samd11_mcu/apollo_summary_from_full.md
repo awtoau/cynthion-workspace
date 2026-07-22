@@ -6,7 +6,7 @@ This document holds Apollo-specific material that was moved out of the workspace
 
 This summary covers:
 - Apollo watchdog architecture context
-- Apollo/UART/SPI design-conflict context
+- Apollo-to-FPGA SPI design context
 - Apollo-focused roadmap links
 
 ## Watchdog Architecture Context
@@ -17,18 +17,12 @@ Apollo supervises moondancer to improve recovery behavior:
 3. Apollo initiates recovery/reset behavior on heartbeat loss
 
 Detailed design and implementation phases:
-- [apollo_watchdog_architecture.md](apollo_watchdog_architecture.md)
 - [apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md) — canonical design and execution notes
 
-## UART/SPI Conflict Context
+## Apollo-to-FPGA SPI Design Context
 
-Apollo debug and control-path design involves trade-offs between:
-- UART-based watchdog/control signaling
-- SPI-based FPGA debug path
-- Pinmux and JTAG overlap constraints
-
-Detailed analysis and recommendations:
-- [apollo_uart_spi_design_conflict_analysis.md](apollo_uart_spi_design_conflict_analysis.md)
+Dedicated SPI design details:
+- [apollo_to_fpga_spi_design.md](apollo_to_fpga_spi_design.md)
 - [cynthion_architecture_scan_2026_05_22.md](cynthion_architecture_scan_2026_05_22.md)
 - [apollo_code_review.md](apollo_code_review.md)
 
