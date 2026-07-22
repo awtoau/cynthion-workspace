@@ -18,8 +18,7 @@ Apollo supervises moondancer to improve recovery behavior:
 
 Detailed design and implementation phases:
 - [apollo_watchdog_architecture.md](apollo_watchdog_architecture.md)
-- [apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md)
-- [apollo_moondancer_uart_watchdog_workstream.md](apollo_moondancer_uart_watchdog_workstream.md)
+- [apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md) — canonical design and execution notes
 
 ## UART/SPI Conflict Context
 
