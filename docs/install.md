@@ -1,12 +1,14 @@
 # Cynthion Workspace Installation & Build Guide
 
-**Date**: 2026-05-23  
-**Status**: Phase 1 - Toolchain Build (Setup Discovery)  
-**Label**: rover
-
 ## Overview
 
 This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific `/home/dan/...` paths.
+
+## Documentation Ownership
+
+- This document is the canonical install, toolchain, and build-system reference.
+- Phase tracking and success criteria live in [apollo_serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md).
+- Patch and change history lives in [patchset_overview.md](patchset/patchset_overview.md).
 
 ## Version and Update Checks
 
@@ -600,20 +602,8 @@ Use the detailed runbook in [troubleshooting.md](troubleshooting.md) before appl
 
 ## Next Steps
 
-### Phase 1 Complete When:
-- [ ] Apollo firmware builds without errors
-- [ ] moondancer firmware builds without errors
-- [ ] Analyzer gateware elaborates without errors
-- [ ] Facedancer gateware elaborates without errors
-- [ ] Build logs documented in `./tmp/`
-- [ ] All compiler warnings reviewed
-
-### Phase 2: Apollo Firmware Fixes
-- DFU memory buffers (optimize from fixed 256-byte JTAG buffers)
-- Race condition analysis (scheduler, USB, UART)
-- Dual CDC interfaces (JTAG + console/moondancer serial)
-
-See: [serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md)
+Track current phase completion criteria and phase 2+ planning in:
+- [apollo_serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md)
 
 ## References
 
@@ -621,5 +611,4 @@ See: [serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_arch
 - [Cynthion Hardware](https://github.com/greatscottgadgets/cynthion-hardware) - Board schematics
 - [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) - FPGA toolchain releases
 - [Amaranth HDL](https://amaranth-lang.org/) - Python HDL framework
-- This document is the canonical toolchain and build-system reference.
 
