@@ -21,6 +21,10 @@ HOST PC
 - Apollo bootloader: 1d50:60e6 (shown when no gateware is loaded)
 - USB interface subclass: 0x10 = analyzer, 0x20 = moondancer/facedancer
 
+Apollo firmware flashing uses the Saturn-V DFU bootloader state (`1d50:60e6`).
+If the board enumerates as `1d50:615b`, it is in analyzer/facedancer mode and
+is not ready for Apollo DFU flashing.
+
 **UTi261M** — UNI-T thermal imaging camera
 - USB VID:PID: 0bda:5830 (Realtek UVC chip)
 - Proxied through Cynthion TARGET-C port
