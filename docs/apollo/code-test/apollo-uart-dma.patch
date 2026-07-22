@@ -1,0 +1,529 @@
+diff --git a/firmware/src/boards/cynthion_d11/fpga_adv.c b/firmware/src/boards/cynthion_d11/fpga_adv.c
+index c700dcb..7b3eb48 100644
+--- a/firmware/src/boards/cynthion_d11/fpga_adv.c
++++ b/firmware/src/boards/cynthion_d11/fpga_adv.c
+@@ -85,8 +85,13 @@ void fpga_adv_task(void)
+ 	if (board_millis() - last_update < WINDOW_PERIOD_MS) return;
+ 
+ 	// Update edge counts inside time window.
++	// Disable the EIC IRQ to atomically read and clear edge_counter;
++	// without this, EIC_Handler can fire between the read and the clear,
++	// losing edges that arrived in the window.
++	NVIC_DisableIRQ(EIC_IRQn);
+ 	window_edges = edge_counter;
+ 	edge_counter = 0;
++	NVIC_EnableIRQ(EIC_IRQn);
+ 	last_update  = board_millis();
+ 
+     // Take over USB if the FPGA is not requesting the port.
+diff --git a/firmware/src/boards/cynthion_d11/uart.c b/firmware/src/boards/cynthion_d11/uart.c
+index ddf3821..f4b1462 100644
+--- a/firmware/src/boards/cynthion_d11/uart.c
++++ b/firmware/src/boards/cynthion_d11/uart.c
+@@ -16,6 +16,8 @@
+ 
+ #include <peripheral_clk_config.h>
+ 
++#include "uart_dma.h"
++
+ 
+ // Hide the ugly Atmel Sercom object name.
+ typedef Sercom sercom_t;
+@@ -132,8 +134,9 @@ void uart_initialize(bool configure_pinmux, unsigned long baudrate)
+ 	// Wait for our changes to apply.
+ 	while (sercom->USART.SYNCBUSY.bit.CTRLB);
+ 
+-	// Enable our receive interrupt, as we want to asynchronously dump data into
+-	// the UART console.
++	// Enable our receive interrupt.  On this board the DMA path takes over RX
++	// (uart_dma_init clears RXC in INTENCLR), but we keep SERCOM2_IRQn active
++	// for error-flag handling (BUFOVF/FERR/PERR) in SERCOM2_Handler.
+ 	sercom->USART.INTENSET.reg = SERCOM_USART_INTENSET_RXC;
+ 
+ 	// Enable the UART IRQ.
+@@ -143,6 +146,10 @@ void uart_initialize(bool configure_pinmux, unsigned long baudrate)
+ 	sercom->USART.CTRLA.bit.ENABLE = 1;
+ 	while(sercom->USART.SYNCBUSY.bit.ENABLE);
+ 
++	// Initialise DMA ping-pong RX.  This disables the SERCOM RXC interrupt
++	// (DMA handles bytes now) and enables the DMAC channel + IRQ.
++	uart_dma_init();
++
+ }
+ 
+ 
+@@ -154,17 +161,34 @@ __attribute__((weak)) void uart_byte_received_cb(uint8_t byte) {}
+ 
+ /**
+  * UART interrupt handler.
++ *
++ * RXC handling is kept here for completeness but should not fire during normal
++ * operation once uart_dma_init() has disabled INTENSET.RXC; DMA owns the
++ * receive path.  The error-flag check below (BUFOVF/FERR/PERR) remains active
++ * since those flags are independent of the DMA path.
+  */
+ void SERCOM2_Handler(void)
+ {
+ 	// If we've just received a character, handle it.
++	// Under normal operation RXC is masked by uart_dma_init(); this branch
++	// is a fallback for the window before DMA is initialised.
+ 	if (sercom->USART.INTFLAG.bit.RXC)
+ 	{
+-		// Read the relevant character, which marks this interrupt
+-		// as serviced.
++		// Read the relevant character, which marks the RXC interrupt
++		// as serviced (reading DATA clears RXC).
+ 		uint16_t byte = sercom->USART.DATA.reg;
+ 		uart_byte_received_cb(byte);
+ 	}
++
++	// Check and clear any UART error flags.
++	// BUFOVF (buffer overflow), FERR (framing error), PERR (parity error)
++	// are write-1-to-clear.  If BUFOVF is left set, the SERCOM will keep
++	// re-asserting the interrupt immediately after we return, effectively
++	// locking up the CPU in the handler.
++	uint16_t status = sercom->USART.STATUS.reg;
++	if (status & (SERCOM_USART_STATUS_BUFOVF | SERCOM_USART_STATUS_FERR | SERCOM_USART_STATUS_PERR)) {
++		sercom->USART.STATUS.reg = status; // write-1-to-clear
++	}
+ }
+ 
+ 
+diff --git a/firmware/src/boards/cynthion_d11/uart_dma.c b/firmware/src/boards/cynthion_d11/uart_dma.c
+new file mode 100644
+index 0000000..60b0fdd
+--- /dev/null
++++ b/firmware/src/boards/cynthion_d11/uart_dma.c
+@@ -0,0 +1,302 @@
++/**
++ * DMA-backed UART RX driver for the Cynthion ATSAMD11.
++ *
++ * This file is part of Apollo.
++ *
++ * Copyright (c) 2024 Great Scott Gadgets <info@greatscottgadgets.com>
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++/*
++ * Design overview
++ * ---------------
++ * Two 128-byte half-buffers (ping and pong) are used as DMA destinations in
++ * alternation.  The DMAC is configured with a base descriptor pointing at the
++ * ping buffer and a write-back / linked descriptor pointing at the pong buffer.
++ * When a transfer of 128 bytes completes the DMAC raises TCMPL on channel 0,
++ * the ISR copies the completed half to the ring buffer and relinks the
++ * descriptor chain so that the *other* half becomes the new active target.
++ *
++ * Ring buffer
++ * -----------
++ * 512 bytes, power-of-two size, accessed with a head/tail index pair.
++ * head: next byte to write (producer = DMAC ISR)
++ * tail: next byte to read  (consumer = console_task via uart_dma_read)
++ * All index arithmetic is masked with (RING_SIZE - 1).
++ *
++ * DMAC channel
++ * ------------
++ * Channel 0, trigger source = SERCOM2_DMAC_ID_RX.
++ * Beat size = 1 byte.  Trigger action = BEAT (one beat per trigger).
++ * BLOCKACT = NOACT (don't suspend on block completion; TCMPL fires instead).
++ *
++ * Descriptor memory
++ * -----------------
++ * The SAMD11 DMAC requires all descriptors in a single SRAM section aligned
++ * to 16 bytes.  We allocate:
++ *   _dma_descriptors[0]  – base descriptor for channel 0 (ping target)
++ *   _dma_wb[0]           – write-back descriptor for channel 0
++ * A second, separately allocated linked descriptor (_desc_pong) provides the
++ * pong transfer; its DESCADDR loops back to _dma_descriptors[0].
++ */
++
++#include <sam.h>
++#include <stdint.h>
++#include <string.h>
++
++#include <hpl/pm/hpl_pm_base.h>
++#include <hpl/gclk/hpl_gclk_base.h>
++
++#include "uart_dma.h"
++
++/* -------------------------------------------------------------------------
++ * Constants
++ * ---------------------------------------------------------------------- */
++
++#define HALF_BUF_SIZE   128u   /* bytes per ping/pong half-buffer           */
++#define RING_SIZE       512u   /* ring buffer size; must be a power of two  */
++#define RING_MASK       (RING_SIZE - 1u)
++
++/* SERCOM2 DMA RX trigger ID from the SAMD11 datasheet (table 19-8).
++ * SERCOM0=0x04, SERCOM1=0x06, SERCOM2=0x08.                               */
++#define SERCOM2_DMAC_ID_RX  0x08u
++
++/* DMA channel we use for UART RX. */
++#define DMA_CH  0u
++
++/* -------------------------------------------------------------------------
++ * DMA descriptor memory
++ *
++ * The SAMD11/21 DMAC needs two aligned SRAM regions:
++ *   - Base descriptor table   (one entry per channel, indexed by channel)
++ *   - Write-back descriptor   (one entry per channel, updated by hardware)
++ *
++ * Both must be 16-byte aligned.
++ * ---------------------------------------------------------------------- */
++typedef struct {
++    uint16_t BTCTRL;   /* Beat transfer control                            */
++    uint16_t BTCNT;    /* Beat count                                        */
++    uint32_t SRCADDR;  /* Source address                                    */
++    uint32_t DSTADDR;  /* Destination address                               */
++    uint32_t DESCADDR; /* Next descriptor address (0 = end of chain)        */
++} dma_desc_t;
++
++/* Base descriptor table and write-back area placed in a dedicated section
++ * so the linker script can position them in SRAM if needed.  The
++ * __attribute__((aligned(16))) ensures the DMAC's alignment requirement.  */
++static volatile dma_desc_t _dma_descriptors[1] __attribute__((aligned(16)));
++static volatile dma_desc_t _dma_wb[1]           __attribute__((aligned(16)));
++
++/* Pong descriptor is a second standalone descriptor in ordinary SRAM.      */
++static dma_desc_t _desc_pong __attribute__((aligned(16)));
++
++/* -------------------------------------------------------------------------
++ * Ping-pong half-buffers and ring buffer
++ * ---------------------------------------------------------------------- */
++static uint8_t _ping_buf[HALF_BUF_SIZE];
++static uint8_t _pong_buf[HALF_BUF_SIZE];
++
++static uint8_t  _ring[RING_SIZE];
++static volatile uint32_t _ring_head = 0;  /* write index (ISR)              */
++static volatile uint32_t _ring_tail = 0;  /* read  index (console_task)     */
++
++/* Which half-buffer is currently being filled by the DMA (0=ping, 1=pong). */
++static volatile uint8_t _active_half = 0;
++
++/* -------------------------------------------------------------------------
++ * Helpers
++ * ---------------------------------------------------------------------- */
++
++/**
++ * Fill a DMA descriptor for a SERCOM2 RX → buffer transfer.
++ *
++ * @param desc     Pointer to the descriptor to fill.
++ * @param dst      Destination buffer (byte array).
++ * @param count    Number of bytes to transfer.
++ * @param next     DESCADDR to write (address of the next descriptor, or 0).
++ */
++static void _fill_desc(dma_desc_t *desc, uint8_t *dst, uint16_t count, uint32_t next)
++{
++    /*
++     * BTCTRL bits used:
++     *   VALID    = 1  – descriptor is valid
++     *   EVOSEL   = 0  – no event output
++     *   BLOCKACT = 0  – NOACT (do not suspend channel after block; TCMPL fires)
++     *   BEATSIZE = 0  – 1-byte beats
++     *   SRCINC   = 0  – source (SERCOM DATA) address is fixed
++     *   DSTINC   = 1  – destination (SRAM buffer) increments per beat
++     *   STEPSEL  = 0  – step size applies to destination
++     *   STEPSIZE = 0  – x1 step
++     */
++    desc->BTCTRL   = DMAC_BTCTRL_VALID
++                   | DMAC_BTCTRL_BEATSIZE_BYTE
++                   | DMAC_BTCTRL_DSTINC;
++    desc->BTCNT    = count;
++    desc->SRCADDR  = (uint32_t)&SERCOM2->USART.DATA.reg;
++    /* For incrementing destination, SRCADDR must point one past the end.   */
++    desc->DSTADDR  = (uint32_t)(dst + count);
++    desc->DESCADDR = next;
++}
++
++/**
++ * Copy a completed half-buffer into the ring buffer.
++ *
++ * Called from the DMAC ISR.  The ring is a power-of-two so we never have to
++ * worry about wrap-around of the index itself; we only mask on access.
++ *
++ * If the ring is full, bytes are dropped (head advances over tail).
++ * Overflow is a programming error at the chosen buffer sizes; flag it with
++ * a counter for debugging.
++ */
++static volatile uint32_t _ring_overflow_count = 0;
++
++static void _copy_half_to_ring(const uint8_t *src, uint32_t count)
++{
++    for (uint32_t i = 0; i < count; i++) {
++        uint32_t next_head = (_ring_head + 1u) & RING_MASK;
++        if (next_head == _ring_tail) {
++            /* Ring full — drop this byte and all remaining in this burst.  */
++            _ring_overflow_count++;
++            continue;
++        }
++        _ring[_ring_head] = src[i];
++        _ring_head = next_head;
++    }
++}
++
++/* -------------------------------------------------------------------------
++ * Public API
++ * ---------------------------------------------------------------------- */
++
++/**
++ * Initialise the DMAC and begin ping-pong DMA on SERCOM2 RX.
++ */
++void uart_dma_init(void)
++{
++    /* Disable the SERCOM2 RXC interrupt — DMA owns the receive path now.
++     * We leave SERCOM2_IRQn enabled for the error-flag handler in uart.c.  */
++    SERCOM2->USART.INTENCLR.reg = SERCOM_USART_INTENCLR_RXC;
++
++    /* Enable the DMAC APB clock (PM_BUS_AHB for DMAC on SAMD11).          */
++    PM->AHBMASK.bit.DMAC_ = 1;
++    PM->APBBMASK.bit.DMAC_ = 1;
++
++    /* Disable DMAC while configuring.                                       */
++    DMAC->CTRL.bit.DMAENABLE = 0;
++    DMAC->CTRL.bit.SWRST = 1;
++    while (DMAC->CTRL.bit.SWRST);
++
++    /* Point the DMAC at our descriptor and write-back arrays.               */
++    DMAC->BASEADDR.reg = (uint32_t)_dma_descriptors;
++    DMAC->WRBADDR.reg  = (uint32_t)_dma_wb;
++
++    /* Enable priority levels 0–3.                                           */
++    DMAC->CTRL.reg = DMAC_CTRL_DMAENABLE
++                   | DMAC_CTRL_LVLEN(0xFu);
++
++    /* --- Build the initial ping descriptor (channel 0 base). ---           */
++    _fill_desc((dma_desc_t *)&_dma_descriptors[DMA_CH],
++               _ping_buf, HALF_BUF_SIZE,
++               (uint32_t)&_desc_pong);
++
++    /* --- Build the pong descriptor; links back to ping. ---                */
++    _fill_desc(&_desc_pong,
++               _pong_buf, HALF_BUF_SIZE,
++               (uint32_t)&_dma_descriptors[DMA_CH]);
++
++    _active_half = 0; /* DMA will fill ping first.                           */
++
++    /* --- Configure DMAC channel 0. ---
++     *
++     * CHCTRLB:
++     *   TRIGACT = BEAT      – one beat (1 byte) per trigger
++     *   TRIGSRC = SERCOM2RX – trigger from SERCOM2 RX data-ready
++     *   LVL     = 0         – lowest priority level
++     *   EVOE/EVIE = 0       – no event in/out
++     */
++    DMAC->CHID.reg = DMAC_CHID_ID(DMA_CH);
++    DMAC->CHCTRLB.reg = DMAC_CHCTRLB_TRIGACT_BEAT
++                      | DMAC_CHCTRLB_TRIGSRC(SERCOM2_DMAC_ID_RX)
++                      | DMAC_CHCTRLB_LVL(0);
++
++    /* Enable transfer-complete interrupt on channel 0.                      */
++    DMAC->CHINTENSET.reg = DMAC_CHINTENSET_TCMPL;
++
++    /* Enable the channel.                                                   */
++    DMAC->CHCTRLA.bit.ENABLE = 1;
++
++    /* Enable the DMAC IRQ in the NVIC.                                      */
++    NVIC_EnableIRQ(DMAC_IRQn);
++}
++
++
++/**
++ * Returns the number of bytes available in the ring buffer.
++ */
++uint32_t uart_dma_available(void)
++{
++    /* Read head and tail once each to avoid tearing.                        */
++    uint32_t head = _ring_head;
++    uint32_t tail = _ring_tail;
++    return (head - tail) & RING_MASK;
++}
++
++
++/**
++ * Drain up to @p len bytes from the ring buffer into @p buf.
++ */
++uint32_t uart_dma_read(uint8_t *buf, uint32_t len)
++{
++    uint32_t avail = uart_dma_available();
++    if (len > avail) {
++        len = avail;
++    }
++    for (uint32_t i = 0; i < len; i++) {
++        buf[i] = _ring[_ring_tail];
++        _ring_tail = (_ring_tail + 1u) & RING_MASK;
++    }
++    return len;
++}
++
++/* -------------------------------------------------------------------------
++ * DMAC ISR
++ * ---------------------------------------------------------------------- */
++
++/**
++ * DMAC interrupt handler.
++ *
++ * Fires when a half-buffer DMA transfer (HALF_BUF_SIZE bytes) completes.
++ * Copies the completed half into the ring buffer, then alternates the active
++ * half so the DMAC continues into the other buffer.
++ *
++ * The descriptor chain is already circular (ping → pong → ping …) so the
++ * DMAC automatically restarts the transfer into the *other* half as soon as
++ * TCMPL is raised.  We only need to copy the data that just completed.
++ */
++void DMAC_Handler(void)
++{
++    /* Select channel 0 to read its interrupt flags.                         */
++    DMAC->CHID.reg = DMAC_CHID_ID(DMA_CH);
++
++    if (DMAC->CHINTFLAG.bit.TCMPL) {
++        /* Clear the interrupt flag.                                         */
++        DMAC->CHINTFLAG.reg = DMAC_CHINTFLAG_TCMPL;
++
++        /* Copy the half that just completed.  _active_half tells us which
++         * descriptor was running when TCMPL fired.  Because the DMAC has
++         * already advanced to the next descriptor (pong or ping), the
++         * completed data is in the *previous* half.                         */
++        if (_active_half == 0) {
++            _copy_half_to_ring(_ping_buf, HALF_BUF_SIZE);
++            _active_half = 1;
++        } else {
++            _copy_half_to_ring(_pong_buf, HALF_BUF_SIZE);
++            _active_half = 0;
++        }
++    }
++
++    /* Clear any channel error flag (defensive; should not occur).           */
++    if (DMAC->CHINTFLAG.bit.TERR) {
++        DMAC->CHINTFLAG.reg = DMAC_CHINTFLAG_TERR;
++    }
++}
+diff --git a/firmware/src/boards/cynthion_d11/uart_dma.h b/firmware/src/boards/cynthion_d11/uart_dma.h
+new file mode 100644
+index 0000000..031dc91
+--- /dev/null
++++ b/firmware/src/boards/cynthion_d11/uart_dma.h
+@@ -0,0 +1,48 @@
++/**
++ * DMA-backed UART RX driver for the Cynthion ATSAMD11.
++ *
++ * Implements ping-pong DMA on SERCOM2 RX using DMAC channel 0.
++ * Received bytes are deposited into a 512-byte power-of-two ring buffer
++ * that the main task drains via uart_dma_read().
++ *
++ * This file is part of Apollo.
++ *
++ * Copyright (c) 2024 Great Scott Gadgets <info@greatscottgadgets.com>
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++#ifndef __UART_DMA_H__
++#define __UART_DMA_H__
++
++#include <stdint.h>
++#include <stddef.h>
++
++/**
++ * Initialise the DMAC and begin ping-pong DMA on SERCOM2 RX.
++ *
++ * Call this instead of (or after) the NVIC_EnableIRQ(SERCOM2_IRQn) in
++ * uart_initialize().  The SERCOM2 RXC interrupt enable in INTENSET is
++ * cleared here; all byte reception is handled by the DMA transfer-complete
++ * interrupt.
++ *
++ * The SERCOM2_Handler is kept active for error-flag handling (BUFOVF/FERR/PERR)
++ * but its RXC branch is bypassed because RXC will not fire while DMA owns the
++ * receive path.
++ */
++void uart_dma_init(void);
++
++/**
++ * Returns the number of bytes available to read from the DMA ring buffer.
++ */
++uint32_t uart_dma_available(void);
++
++/**
++ * Drain up to @p len bytes from the DMA ring buffer into @p buf.
++ *
++ * @param buf  Destination buffer; must be at least @p len bytes.
++ * @param len  Maximum number of bytes to read.
++ * @return     Number of bytes actually copied (0 … len).
++ */
++uint32_t uart_dma_read(uint8_t *buf, uint32_t len);
++
++#endif /* __UART_DMA_H__ */
+diff --git a/firmware/src/console.c b/firmware/src/console.c
+index 347c347..aace515 100644
+--- a/firmware/src/console.c
++++ b/firmware/src/console.c
+@@ -12,17 +12,39 @@
+ #include "led.h"
+ #include "uart.h"
+ 
++// On the Cynthion D11 board the DMA-backed RX path is available.
++// Include its header only when the board supplies it.
++#if __has_include("uart_dma.h")
++#include "uart_dma.h"
++#define CONSOLE_USE_UART_DMA 1
++#else
++#define CONSOLE_USE_UART_DMA 0
++#endif
++
+ 
+ extern bool uart_active;
+ 
++// Count of UART→host bytes dropped because the TinyUSB TX buffer was full.
++static uint32_t uart_rx_drop_count = 0;
++
+ 
+ /**
+  * Pass any data received via UART directly up to the host.
++ *
++ * Used only on boards that do NOT have DMA RX (CONSOLE_USE_UART_DMA == 0).
++ * Does NOT flush — bytes accumulate in the TinyUSB TX buffer and are flushed
++ * as a batch at the end of console_task().  Flushing after every byte forces
++ * one USB packet per byte, wasting bandwidth and stressing the USB stack.
++ *
++ * The weak symbol in uart.c remains the default; this definition overrides it
++ * when console.c is linked on non-DMA boards.
+  */
+ void uart_byte_received_cb(uint8_t byte)
+ {
+-	tud_cdc_write_char(byte);
+-	tud_cdc_write_flush();
++	if (tud_cdc_write_char(byte) == 0) {
++		// TinyUSB TX buffer is full; the byte is lost.
++		uart_rx_drop_count++;
++	}
+ }
+ 
+ 
+@@ -45,6 +67,29 @@ void console_task(void)
+ 		uart_nonblocking_write(byte);
+ 	}
+ 
++#if CONSOLE_USE_UART_DMA
++	// DMA path: drain the ring buffer into the TinyUSB TX buffer.
++	// uart_dma_available() / uart_dma_read() are safe to call from the main
++	// task; the ring head is only advanced by the DMAC ISR.
++	{
++		uint8_t dma_chunk[64];
++		uint32_t avail;
++		while ((avail = uart_dma_available()) > 0) {
++			uint32_t n = uart_dma_read(dma_chunk,
++			                           avail < sizeof(dma_chunk) ? avail : sizeof(dma_chunk));
++			for (uint32_t i = 0; i < n; i++) {
++				if (tud_cdc_write_char(dma_chunk[i]) == 0) {
++					uart_rx_drop_count++;
++				}
++			}
++		}
++	}
++#endif
++
++	// Flush any UART→host bytes that accumulated in the TinyUSB TX buffer
++	// during this tick.  One flush here sends them as one USB packet rather
++	// than one per byte.
++	tud_cdc_write_flush();
+ }
+ 
+ //
