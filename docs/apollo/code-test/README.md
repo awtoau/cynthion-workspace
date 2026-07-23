@@ -25,7 +25,11 @@ and the serial-architecture docs under
 > *not* UART — so this code documents a deselected branch. It also drives the
 > UART on **PA11/PA14**, which are the JTAG bit-bang pins (TMS/TDI), so this RX
 > path is mutually exclusive with JTAG-over-USB and JTAG-over-SPI. Review the
-> tracking issue before applying.
+> tracking issues before applying:
+> [#66](https://github.com/awtoau/cynthion-workspace/issues/66) (this driver +
+> review findings) and [#65](https://github.com/awtoau/cynthion-workspace/issues/65)
+> (three-way pin exclusivity — PA08/PA09 are **not** free on d11, so the doc's
+> "move UART to PA08/PA09" is not viable here).
 
 `uart_dma.c/.h` implement ping-pong DMA on SERCOM2 RX (DMAC channel 0) into a
 512-byte ring buffer drained by the main task via `uart_dma_read()`.

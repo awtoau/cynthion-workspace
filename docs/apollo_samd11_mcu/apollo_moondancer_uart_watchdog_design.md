@@ -1,8 +1,39 @@
 # Apollo (SAMD11 ARM Cortex-M0+ MCU) - Moondancer (RISC-V softcore on ECP5 FPGA) Communication Architecture Redesign
 
-**Status**: Design Proposal  
+**Status**: Design Proposal — **partially superseded on d11** (see correction below)
 **Label**: `rover`  
 **Related**: Issue #15 (firmware+gateware: use Apollo ARM supervisor for watchdog)
+
+> ## ⚠️ Correction (2026-07-23): the PA08/PA09 UART relocation is NOT viable on d11
+>
+> This document's central mechanism — *"move Apollo's SERCOM2 UART from the JTAG
+> pins to PA08/PA09 to free the JTAG pins"* — **does not work on the Cynthion d11
+> board (ATSAMD11D14A)**, which is the shipping board. The assumption that PA08/PA09
+> are free UART-capable pins is inherited from the **d21 / samd11_xplained** boards;
+> on d11 those pins are already dedicated:
+>
+> - **PA08 = `FPGA_PROGRAM`** — the FPGA PROGRAM_B reset line.
+> - **PA09 = `PHY_RESET` + `FPGA_ADV`** — USB PHY reset *and* the FPGA-ready
+>   advertisement, pinmuxed to `EIC_EXTINT7` in `fpga_adv.c`.
+>
+> Relocating UART there would cost Apollo the ability to reset and detect the FPGA
+> — its core supervisory function. So on d11 the UART is **pin-locked to the JTAG
+> pins (PA11/PA14)**; the JTAG/UART conflict is a hardware dead-end, not a pinmux
+> choice. See [[apollo-d11-pin-exclusivity]],
+> [#65](https://github.com/awtoau/cynthion-workspace/issues/65), and the
+> **arbitration decision** in
+> [`apollo_serial_interface_and_mode_exclusivity_design.md`](apollo_serial_interface_and_mode_exclusivity_design.md#decision-record-arbitration-model-adr).
+>
+> **Consequences for this doc:**
+> - The "Frees JTAG pins" benefit and the Phase 1 PA08/PA09 pinmux change (below)
+>   are **not applicable to d11** — treat them as d21/xplained-only.
+> - The Apollo↔FPGA link on d11 is being pursued as **SPI on SERCOM2**
+>   ([#62](https://github.com/awtoau/cynthion-workspace/issues/62)), not this UART
+>   watchdog. This UART-watchdog design is retained as the *deselected* branch for
+>   historical/other-board context.
+> - Because the pins cannot be freed, JTAG vs UART/console is resolved by a
+>   **sticky mutual-exclusion state machine** (JTAG uninterruptible, locks out the
+>   UART console until explicit exit), not by relocation.
 
 ## Executive Architecture Summary
 
@@ -130,6 +161,9 @@ PA11 (TMS) ← available
 **File**: `awto-apollo/firmware/src/boards/cynthion_d11/uart.c`
 
 Change SERCOM2 UART pinmux from PA11/PA14 (JTAG) to PA08/PA09:
+
+> **d11: NOT viable** — PA08/PA09 are `FPGA_PROGRAM` / `PHY_RESET`+`FPGA_ADV`. This
+> pinmux applies to d21/xplained only. See the correction banner at the top.
 
 ```c
 // OLD (conflicts with JTAG):

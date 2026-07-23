@@ -159,3 +159,142 @@ typedef struct {
 1. Land minimal JTAG lock policy for [#54](https://github.com/awtoau/cynthion-workspace/issues/54).
 2. Re-run UART forwarding validation in [#22](https://github.com/awtoau/cynthion-workspace/issues/22).
 3. Re-open dual-CDC implementation as a new child issue under [#55](https://github.com/awtoau/cynthion-workspace/issues/55), using [#56](https://github.com/awtoau/cynthion-workspace/issues/56) as historical context.
+
+---
+
+## Decision Record: Arbitration Model (ADR)
+
+**Status:** Accepted — 2026-07-23. Resolves item 2 of
+[#65](https://github.com/awtoau/cynthion-workspace/issues/65).
+**Scope:** Cynthion **d11** board (ATSAMD11D14A). The d21 / samd11_xplained
+boards have a different pin budget and are out of scope for the hardware
+constraint below (their arbitration can be softer).
+
+### Context — the constraint is physical, not a policy choice
+
+On d11, four SAMD11 pins are contended by three Apollo subsystems with **no
+hardware arbitration** — each path steals the pins into its own peripheral via
+`gpio_set_pin_function()` (see [[apollo-d11-pin-exclusivity]] and
+[#65](https://github.com/awtoau/cynthion-workspace/issues/65)):
+
+| Pin  | JTAG-over-USB (bit-bang GPIO) | JTAG-over-SPI (SERCOM0)   | UART console (SERCOM2) |
+|------|-------------------------------|---------------------------|------------------------|
+| PA10 | TDO                           | TDO / MISO (PAD2)         | —                      |
+| PA11 | TMS                           | —                         | **RX** (PAD3)          |
+| PA14 | TDI                           | TDI / MOSI (PAD0)         | **TX** (PAD0)          |
+| PA15 | TCK                           | TCK / SCK (PAD1)          | —                      |
+
+PA14 is the triple-overlap (TDI *and* SPI-MOSI *and* UART-TX). The pins **cannot
+be split**: relocating UART to PA08/PA09 is not viable because on d11 those are
+`FPGA_PROGRAM` (PA08) and `PHY_RESET` + `FPGA_ADV`→`EIC_EXTINT7` (PA09) — Apollo's
+core supervisory lines. See the correction note added to
+`apollo_moondancer_uart_watchdog_design.md`.
+
+Because the resource is physically single-owner, arbitration is not a
+convenience feature — it is the only thing standing between a JTAG programming
+sequence and silent corruption when a UART/console consumer repinmuxes PA14
+mid-flash.
+
+### Decision
+
+Adopt the **sticky mutual-exclusion state machine** already sketched in the
+"Proposed Mode Model" above, with these d11-specific bindings and one
+strengthening:
+
+1. **JTAG owns the pins exclusively while `MODE_JTAG_PROGRAM` is active.** Entry
+   into JTAG-program / configure / SVF acquires the pin-owner lock. While held,
+   any handler that would call `gpio_set_pin_function()` on PA10/PA11/PA14/PA15
+   for a non-JTAG peripheral (i.e. `uart_initialize()`, SERCOM2 console, debug
+   SPI) returns `BUSY` and does **not** touch the pinmux.
+
+2. **JTAG programming is uninterruptible.** Once a program/configure/SVF
+   sequence has begun, it runs to completion or to explicit emergency reset.
+   There is no "pause and lend the pins" path. The lock is released only by (a)
+   the JTAG command family completing and issuing explicit stop, or (b)
+   `MODE_EMERGENCY_RESET`. This is stricter than a plain mutex: even the *owner*
+   cannot voluntarily yield mid-sequence, because a half-programmed FPGA is the
+   failure we are preventing.
+
+3. **The lock guards the pinmux, not just the command dispatcher.** The check
+   lives at the point of `gpio_set_pin_function()` / `uart_initialize()`, so a
+   TinyUSB CDC callback (line-coding / DTR change — see `console.c`
+   `tud_cdc_line_coding_cb`, `tud_cdc_line_state_cb`) firing during a flash
+   cannot lazily re-init the UART and steal PA14. Today those callbacks call
+   `uart_initialize()` unconditionally; under this decision they must consult the
+   lock first.
+
+4. **Emergency reset is the sole preemption path** (unchanged from Hard
+   Invariant 5). It cancels JTAG ownership, restores pins to a safe default, and
+   returns to `MODE_APOLLO_HOLD`.
+
+5. **Default HOLD is UART/console-owner.** In `MODE_APOLLO_HOLD` the pins may be
+   held by the UART console bridge; the *first* JTAG entry request repinmuxes
+   them to JTAG and takes the lock. There is no implicit hand-back — returning to
+   HOLD re-enables lazy UART init on the next CDC event.
+
+### Enforcement points (firmware)
+
+- One global `apollo_mode_ctrl_t` (already in the Implementation Sketch).
+- Gate `uart_initialize()` and the three `console.c` CDC callbacks on
+  `mode != MODE_JTAG_PROGRAM`.
+- Gate the JTAG-SPI (`SPI_FPGA_JTAG`) and any future debug-SPI pinmux on the
+  same lock — SPI is a JTAG-family owner, so it is allowed *inside*
+  `MODE_JTAG_PROGRAM` but blocked for a console consumer while JTAG holds it.
+- Entry to programming vendor requests (`flash-program`, `configure`, `svf`,
+  `reconfigure`) acquires the lock; the matching stop releases it.
+
+### Consequences
+
+- The UART console and JTAG are strictly one-at-a-time on d11 — this is now an
+  enforced invariant instead of an undefined race.
+- A host that opens the Apollo CDC port during a flash no longer corrupts the
+  flash; it gets a UART that stays uninitialized (or a `BUSY`) until JTAG exits.
+- No behavioural change on d21 / xplained, which are not pin-starved.
+
+---
+
+## Second virtual serial port (host side): redundant on d11
+
+**Question:** does the sticky-exclusion decision make a *second* USB virtual
+serial port (the deferred dual-CDC work, [#56](https://github.com/awtoau/cynthion-workspace/issues/56))
+redundant, or can it still be used?
+
+**Current reality.** d11 Apollo exposes a **single** CDC interface today
+(`CFG_TUD_CDC 1`; `ITF_NUM_CDC = 0` in `mcu/samd11/usb_descriptors.c`). That one
+CDC is a lazy USB↔UART bridge: `console.c` forwards host bytes to the SERCOM2
+UART on **PA11/PA14** — the JTAG pins. There is no second port; "the second
+virtual serial port" means the dual-CDC idea from #56.
+
+**Decision — the second CDC is redundant *for its originally-intended purpose*
+on d11, but not useless.**
+
+- **Redundant as a second UART bridge.** The obvious use for a second CDC — a
+  separate host serial channel bridged to a *second* physical UART — has no
+  physical UART to bridge to. SAMD11 SERCOM/pin budget on d11 has exactly one
+  UART-capable pin pair, and it is the JTAG-contended one. A second CDC cannot
+  surface a second independent serial line to the FPGA. So the classic
+  "console + second forwarded UART" motivation is dead on d11 (it was only ever
+  viable on the boards with spare PA08/PA09).
+
+- **Still usable as a non-UART control/status channel.** A second CDC endpoint
+  does **not** have to be a UART bridge. Under the exclusion model it is actually
+  attractive as a **pinless side-channel** that stays up while JTAG owns the
+  pins:
+  - a **status/notification port** the host can keep open during a flash to
+    receive `BUSY` / progress / mode-transition events — precisely when the
+    primary UART bridge is (correctly) muted by the lock;
+  - a **control port** for issuing `emergency reset` / mode queries out-of-band,
+    so the operator is never locked out while JTAG is uninterruptible;
+  - a **structured GDB-server / diagnostics** transport (aligns with #20's
+    "GDB over serial path") that carries framed messages rather than raw UART
+    bytes and therefore needs no SERCOM pins at all.
+
+  These consume USB endpoints and ~1–2 KB RAM on the 4 KB-SRAM SAMD11, so
+  feasibility is a memory-budget question (the reason #56 was deferred), **not**
+  a pin question.
+
+**Recommendation.** Keep the second CDC *deferred* as a UART bridge (it can never
+be one on d11), and if dual-CDC is re-opened under #55, re-scope it explicitly as
+a **pinless control/status side-channel** that complements the uninterruptible
+JTAG lock — the one CDC role the pin constraint does not foreclose. Record this
+so #56's revival doesn't re-inherit the dead "second forwarded UART" framing.
