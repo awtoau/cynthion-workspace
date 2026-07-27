@@ -274,6 +274,34 @@ This path is easier than USB host storage, but it is not free. It still requires
 4. a minimal Linux configuration with the relevant USB gadget/network support,
 5. host-side NFS export and a simple network configuration.
 
+### The USB device-side work is still substantial
+
+Item 3 above should not be read as a small step. Choosing the network-root path avoids
+host-mode USB, but it does not avoid hard USB work; it only picks the smaller of two hard
+problems.
+
+What is avoided:
+
+- USB host controller gateware,
+- host-side enumeration and transfer scheduling,
+- mass-storage class transport,
+- the block-device path underneath a filesystem.
+
+What still has to be built:
+
+1. a USB device controller that Linux can drive as a gadget, not just an endpoint set
+	 that satisfies a fixed host-side test script,
+2. endpoint machinery robust enough to carry a USB networking function at FS/HS rates,
+3. interrupt and completion semantics matching what the Linux gadget layer expects,
+4. enough FS/HS device conformance that enumeration and bulk transfer stay reliable
+	 under real host stacks rather than only under a controlled test harness.
+
+The existing LUNA / Cynthion device-side infrastructure is a genuine head start here,
+because the board and gateware are already oriented toward USB device roles. But that
+existing code is built for purpose-specific device personalities, not for presenting a
+generic Linux-drivable gadget controller. Treat the gap between those two as real
+engineering work when scoping the first milestone.
+
 ### Likely USB role split
 
 For this approach, the simplest model is:
