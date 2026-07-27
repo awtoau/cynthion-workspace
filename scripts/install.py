@@ -3,7 +3,7 @@
 Unified installation script for Cynthion workspace.
 
 Handles:
-  - Cloning/pulling forked awtoau repositories
+  - Initializing/updating repo submodules under repos/
   - Initializing submodules (TinyUSB, etc)
   - Installing Python dependencies (Amaranth, cynthion package)
   - Building/testing all firmware and gateware components
@@ -57,19 +57,28 @@ TMP = ROOT / "tmp"
 LOGS = TMP / "logs"
 
 def resolve_repos_root() -> Path:
-    """Resolve the awto repository root with optional env override."""
+    """Resolve the repository root.
+
+    Repos live as git submodules under <workspace>/repos (bare names:
+    cynthion, apollo, ...). CYN_REPOS_ROOT overrides for non-standard checkouts.
+    An older standalone layout used a sibling awtoau/ dir with awto-* names;
+    it is probed as a fallback for backward compatibility.
+    """
     env_root = os.getenv("CYN_REPOS_ROOT")
     if env_root:
         return Path(env_root).expanduser().resolve()
 
     candidates = [
+        ROOT / "repos",
         ROOT.parent / "awtoau",
         Path.home() / "git" / "awtoau",
     ]
     for base in candidates:
+        if (base / "cynthion").exists() and (base / "apollo").exists():
+            return base
         if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
             return base
-    return candidates[-1]
+    return candidates[0]
 
 REPOS = resolve_repos_root()
 OSS_CAD_SUITE = Path.home() / "opt" / "oss-cad-suite"
@@ -77,35 +86,41 @@ OSS_CAD_SUITE = Path.home() / "opt" / "oss-cad-suite"
 # Global logger instance (initialized in main())
 logger: Optional[logging.Logger] = None
 
-# Forked repositories (all at ~/git/awtoau/)
+
+def _repo_path(name: str) -> Path:
+    """Resolve a repo dir under REPOS, tolerating bare or awto-* names."""
+    bare = REPOS / name
+    if bare.exists():
+        return bare
+    prefixed = REPOS / f"awto-{name}"
+    if prefixed.exists():
+        return prefixed
+    return bare  # default to bare name (submodule layout) when absent
+
+# Repositories are git submodules of the workspace, checked out under repos/.
+# Acquisition is 'git submodule update --init <path>' run from the workspace
+# root (WORKSPACE), not per-repo cloning — the submodule's tracked remote and
+# commit are authoritative. luna-soc is no longer a repo checkout (it is a pip
+# dependency), so it is not listed here.
+WORKSPACE = ROOT
 REPOS_MANIFEST = {
-    "awto-apollo": {
-        "url": "https://github.com/greatscottgadgets/apollo.git",
-        "path": REPOS / "awto-apollo",
+    "apollo": {
+        "path": _repo_path("apollo"),
         "required": True,
         "builds": ["apollo-firmware"],
     },
-    "awto-cynthion": {
-        "url": "https://github.com/greatscottgadgets/cynthion.git",
-        "path": REPOS / "awto-cynthion",
+    "cynthion": {
+        "path": _repo_path("cynthion"),
         "required": True,
         "builds": ["moondancer-firmware", "gateware-analyzer", "gateware-facedancer"],
     },
-    "awto-luna": {
-        "url": "https://github.com/greatscottgadgets/luna.git",
-        "path": REPOS / "awto-luna",
+    "luna": {
+        "path": _repo_path("luna"),
         "required": False,
         "builds": [],
     },
-    "awto-luna-soc": {
-        "url": "https://github.com/awtoau/awto-luna-soc.git",
-        "path": REPOS / "awto-luna-soc",
-        "required": True,
-        "builds": [],
-    },
-    "awto-facedancer": {
-        "url": "https://github.com/greatscottgadgets/facedancer.git",
-        "path": REPOS / "awto-facedancer",
+    "facedancer": {
+        "path": _repo_path("facedancer"),
         "required": False,
         "builds": [],
     },
@@ -243,35 +258,42 @@ def run_cmd(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def ensure_repos_dir() -> bool:
-    """Ensure ~/git/awtoau/ exists."""
-    REPOS.mkdir(parents=True, exist_ok=True)
+    """Report the repos directory (a submodule tree, created by git)."""
     log(f"Repos directory: {REPOS}")
     return True
 
 
 def clone_or_pull_repo(name: str, manifest: dict, verbose: bool, dry_run: bool) -> bool:
-    """Clone or pull a single repository."""
-    url = manifest["url"]
-    path = manifest["path"]
+    """Acquire/update a single repo via its git submodule.
 
-    if path.exists():
-        log(f"Pulling {name}...", "INFO")
-        result = run_cmd(["git", "pull", "--quiet"], cwd=path, verbose=verbose, dry_run=dry_run)
-        if result.success:
-            log(f"✓ {name}", "OK")
-            return True
+    Repos are submodules of the workspace, so acquisition is a submodule
+    checkout at the workspace root rather than a standalone clone. When the
+    submodule is already checked out it is updated to its recorded commit.
+    """
+    path = manifest["path"]
+    try:
+        rel = path.relative_to(WORKSPACE)
+    except ValueError:
+        # Path is outside the workspace (e.g. CYN_REPOS_ROOT points elsewhere):
+        # fall back to a plain pull of an existing checkout.
+        if path.exists():
+            log(f"Pulling {name}...", "INFO")
+            result = run_cmd(["git", "pull", "--quiet"], cwd=path, verbose=verbose, dry_run=dry_run)
         else:
-            log(f"Failed to pull {name}", "ERROR")
+            log(f"{name} not present and not a workspace submodule", "ERROR")
             return False
     else:
-        log(f"Cloning {name}...", "INFO")
-        result = run_cmd(["git", "clone", url, str(path)], verbose=verbose, dry_run=dry_run)
-        if result.success:
-            log(f"✓ {name}", "OK")
-            return True
-        else:
-            log(f"Failed to clone {name}", "ERROR")
-            return False
+        log(f"Updating submodule {name}...", "INFO")
+        result = run_cmd(
+            ["git", "submodule", "update", "--init", str(rel)],
+            cwd=WORKSPACE, verbose=verbose, dry_run=dry_run,
+        )
+
+    if result.success:
+        log(f"✓ {name}", "OK")
+        return True
+    log(f"Failed to acquire {name}", "ERROR")
+    return False
 
 
 def init_submodules(repo_path: Path, verbose: bool, dry_run: bool) -> bool:
@@ -302,7 +324,7 @@ def setup_python_environment(verbose: bool, dry_run: bool) -> bool:
 
     # Install cynthion package
     log("Installing cynthion package (editable)...", "INFO")
-    cynthion_dir = REPOS / "awto-cynthion" / "cynthion" / "python"
+    cynthion_dir = _repo_path("cynthion") / "cynthion" / "python"
     result = run_cmd(
         ["pip", "install", "--user", "-e", str(cynthion_dir)],
         verbose=verbose,
@@ -464,7 +486,7 @@ def build_apollo_firmware(verbose: bool, dry_run: bool) -> bool:
     """
     section("Apollo Firmware Build")
 
-    fw_dir = REPOS / "awto-apollo" / "firmware"
+    fw_dir = _repo_path("apollo") / "firmware"
     if not fw_dir.exists():
         logger.error(f"Apollo firmware directory not found: {fw_dir}")
         return False
@@ -525,7 +547,7 @@ def build_moondancer_firmware(verbose: bool, dry_run: bool) -> bool:
     """Build moondancer RISC-V firmware."""
     section("moondancer Firmware Build (Rust/RISC-V)")
 
-    fw_dir = REPOS / "awto-cynthion" / "firmware" / "moondancer"
+    fw_dir = _repo_path("cynthion") / "firmware" / "moondancer"
     if not fw_dir.exists():
         log("moondancer firmware directory not found", "ERROR")
         return False
@@ -551,7 +573,7 @@ def build_gateware_analyzer(verbose: bool, dry_run: bool) -> bool:
     """Build analyzer gateware (Amaranth elaboration)."""
     section("Analyzer Gateware Build")
 
-    gw_dir = REPOS / "awto-cynthion" / "cynthion" / "python"
+    gw_dir = _repo_path("cynthion") / "cynthion" / "python"
     if not gw_dir.exists():
         log("Gateware directory not found", "ERROR")
         return False
@@ -592,7 +614,7 @@ def build_gateware_facedancer(verbose: bool, dry_run: bool) -> bool:
     """
     section("Facedancer Gateware Build")
 
-    gw_dir = REPOS / "awto-cynthion" / "cynthion" / "python"
+    gw_dir = _repo_path("cynthion") / "cynthion" / "python"
     if not gw_dir.exists():
         logger.error(f"Gateware directory not found: {gw_dir}")
         return False
@@ -852,8 +874,8 @@ def cmd_clean(args) -> bool:
 
     paths_to_clean = [
         TMP,
-        REPOS / "awto-apollo" / "firmware" / "build",
-        REPOS / "awto-cynthion" / "firmware" / "moondancer" / "target",
+        _repo_path("apollo") / "firmware" / "build",
+        _repo_path("cynthion") / "firmware" / "moondancer" / "target",
     ]
 
     for path in paths_to_clean:
@@ -1112,7 +1134,7 @@ def cmd_ci_list(args) -> bool:
     gh_dir = Path.cwd() / ".github" / "workflows"
     if not gh_dir.exists():
         log(f"No .github/workflows directory found in {Path.cwd()}", "ERROR")
-        log("Run this command in a repo with GitHub Actions (e.g., awto-apollo)", "WARN")
+        log("Run this command in a repo with GitHub Actions (e.g., repos/apollo)", "WARN")
         return False
 
     log(f"Found workflows in {gh_dir}", "INFO")
@@ -1388,8 +1410,8 @@ def cmd_status(args) -> bool:
 
     # Check builds
     log("Build artifacts:", "INFO")
-    apollo_elf = REPOS / "awto-apollo" / "firmware" / "build" / "cynthion_d11" / "apollo_debug_soc.elf"
-    moondancer_elf = REPOS / "awto-cynthion" / "firmware" / "moondancer" / "target" / "riscv32imac-unknown-none-elf" / "release" / "moondancer"
+    apollo_elf = _repo_path("apollo") / "firmware" / "build" / "cynthion_d11" / "apollo_debug_soc.elf"
+    moondancer_elf = _repo_path("cynthion") / "firmware" / "moondancer" / "target" / "riscv32imac-unknown-none-elf" / "release" / "moondancer"
 
     log(f"{'✓' if apollo_elf.exists() else '✗'} Apollo firmware: {apollo_elf.name}", "OK" if apollo_elf.exists() else "WARN")
     log(f"{'✓' if moondancer_elf.exists() else '✗'} moondancer firmware: {moondancer_elf.name}", "OK" if moondancer_elf.exists() else "WARN")

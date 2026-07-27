@@ -61,51 +61,76 @@ import logging
 import os
 import time
 import signal
+import socket
 from pathlib import Path
 from datetime import datetime
-
-try:
-    import requests
-    HAS_REQUESTS = True
-except ImportError:
-    HAS_REQUESTS = False
 
 # Workspace paths
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 
 def _resolve_repos_root() -> Path:
-    """Find the awtoau repo root on this machine."""
+    """Find the repo root on this machine.
+
+    Submodules live under <workspace>/repos as bare names (cynthion, apollo,
+    ...). Older standalone checkouts used a sibling awtoau/ dir with awto-*
+    names; both layouts are probed for compatibility.
+    """
+    def _has_repos(base: Path) -> bool:
+        return (
+            ((base / "cynthion").exists() and (base / "apollo").exists())
+            or ((base / "awto-cynthion").exists() and (base / "awto-apollo").exists())
+        )
+
     env_root = os.getenv("CYN_REPOS_ROOT")
     if env_root:
         base = Path(env_root).expanduser().resolve()
-        if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
+        if _has_repos(base):
             return base
         print(
-            f"WARNING: CYN_REPOS_ROOT={base} missing awto-cynthion and/or awto-apollo; "
+            f"WARNING: CYN_REPOS_ROOT={base} missing cynthion and/or apollo; "
             "falling back to auto-detection"
         )
 
     candidates = [
+        REPO_ROOT / "repos",
         REPO_ROOT.parent / "awtoau",
         Path.home() / "git" / "awtoau",
     ]
     for base in candidates:
-        if (base / "awto-cynthion").exists() and (base / "awto-apollo").exists():
+        if _has_repos(base):
             return base
     # Keep default behavior if repos are not checked out yet.
-    return candidates[-1]
+    return candidates[0]
 
 REPOS = _resolve_repos_root()
+
+# Repo directory names differ between layouts: submodules use bare names,
+# older standalone clones used awto-* names. Resolve each once.
+def _repo(name: str) -> Path:
+    bare = REPOS / name
+    if bare.exists():
+        return bare
+    prefixed = REPOS / f"awto-{name}"
+    if prefixed.exists():
+        return prefixed
+    return bare  # default to bare name when neither is checked out yet
+
+CYNTHION_REPO = _repo("cynthion")
+APOLLO_REPO = _repo("apollo")
+LUNA_REPO = _repo("luna")
 INSTALL_PY = SCRIPTS_DIR / "install.py"
 CYN_DAEMON_PY = SCRIPTS_DIR / "cyn-daemon.py"
-PID_FILE = Path("/tmp/cyn-daemon.pid")
-DAEMON_URL = "http://localhost:8765"
+# Local IPC is AF_UNIX + JSON-lines (awto-dan orchestration §5), not HTTP.
+# Pidfile and socket live under the workspace ./tmp, matching cyn-daemon.py.
+PID_FILE = REPO_ROOT / "tmp" / "cyn-daemon.pid"
+SOCKET_FILE = REPO_ROOT / "tmp" / "cyn-daemon.sock"
+DAEMON_CONNECT_TIMEOUT_S = 5.0  # local socket; generous ceiling for a wedged accept()
 
 # Hardware-facing paths (from awto.py)
-MOONDANCER_FW = REPOS / "awto-cynthion" / "firmware" / "moondancer"
-APOLLO_FW = REPOS / "awto-apollo" / "firmware"
-GATEWARE_DIR = REPOS / "awto-cynthion" / "cynthion" / "python"
+MOONDANCER_FW = CYNTHION_REPO / "firmware" / "moondancer"
+APOLLO_FW = APOLLO_REPO / "firmware"
+GATEWARE_DIR = CYNTHION_REPO / "cynthion" / "python"
 APP_DIR = REPO_ROOT / "app"
 VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 TMP_DIR = REPO_ROOT / "tmp"
@@ -120,25 +145,41 @@ class Colors:
     CYAN = "\033[96m"
 
 class CynDaemon:
-    """Daemon management (start/stop/status)"""
+    """Daemon management (start/stop/status).
+
+    The daemon speaks AF_UNIX + JSON-lines (see scripts/cyn-daemon.py); this
+    class is the client-side control surface. Liveness is the JSON pidfile plus
+    a real socket connect, so `is_running()` never reports a daemon that has a
+    stale pidfile but is no longer answering.
+    """
+
+    @staticmethod
+    def _read_pid():
+        """Return the PID from the JSON pidfile, or None."""
+        try:
+            record = json.loads(PID_FILE.read_text())
+            return int(record["pid"])
+        except (FileNotFoundError, ValueError, KeyError, OSError):
+            return None
 
     @staticmethod
     def is_running():
-        """Check if daemon is running"""
-        if not PID_FILE.exists():
+        """True if the pidfile's process is alive AND the socket accepts."""
+        pid = CynDaemon._read_pid()
+        if pid is None:
             return False
         try:
-            pid = int(PID_FILE.read_text().strip())
-            os.kill(pid, 0)  # Check if process exists
-            return True
-        except (ProcessNotFoundError, ValueError, OSError):
+            os.kill(pid, 0)
+        except (ProcessLookupError, ValueError, PermissionError):
             return False
+        # Process exists; confirm it is actually serving on the socket.
+        return daemon_call("health") is not None
 
     @staticmethod
     def start():
-        """Start daemon"""
+        """Start daemon and wait until the socket answers (health probe)."""
         if CynDaemon.is_running():
-            print(f"Daemon already running (PID: {PID_FILE.read_text().strip()})")
+            print(f"Daemon already running (PID: {CynDaemon._read_pid()})")
             return 1
 
         print("Starting Cynthion daemon...")
@@ -147,35 +188,37 @@ class CynDaemon:
                 [sys.executable, str(CYN_DAEMON_PY), "start"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True
+                start_new_session=True,
             )
-            # Wait for daemon to start
-            for _ in range(10):
-                if CynDaemon.is_running():
-                    pid = PID_FILE.read_text().strip()
-                    print(f"Daemon started (PID: {pid})")
-                    print(f"HTTP API available at {DAEMON_URL}")
-                    return 0
-                time.sleep(0.5)
-            print("Warning: daemon may not have started. Check logs.")
-            return 1
         except Exception as e:
             print(f"Failed to start daemon: {e}")
             return 1
 
+        # Poll the health endpoint toward a deadline rather than a fixed sleep.
+        # The daemon only has to daemonise and bind an AF_UNIX socket, so it is
+        # ready in well under a second; 5 s is a generous ceiling.
+        deadline = time.monotonic() + DAEMON_CONNECT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if daemon_call("health") is not None:
+                print(f"Daemon started (PID: {CynDaemon._read_pid()})")
+                print(f"Socket: {SOCKET_FILE}")
+                return 0
+            time.sleep(0.05)  # bounded poll toward deadline, not a fixed wait
+        print("Warning: daemon may not have started. Check logs.")
+        return 1
+
     @staticmethod
     def stop():
-        """Stop daemon"""
+        """Stop daemon (delegates graceful TERM→poll→KILL to cyn-daemon.py)."""
         if not CynDaemon.is_running():
             print("Daemon not running")
             return 1
-
         try:
             subprocess.run(
                 [sys.executable, str(CYN_DAEMON_PY), "stop"],
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
             )
             print("Daemon stopped")
             return 0
@@ -185,20 +228,43 @@ class CynDaemon:
 
     @staticmethod
     def status():
-        """Check daemon status"""
+        """Check daemon status."""
         if not CynDaemon.is_running():
             print("Daemon not running")
             return 1
-
         try:
-            subprocess.run(
-                [sys.executable, str(CYN_DAEMON_PY), "status"],
-                check=False
-            )
+            subprocess.run([sys.executable, str(CYN_DAEMON_PY), "status"], check=False)
             return 0
         except Exception as e:
             print(f"Error checking daemon status: {e}")
             return 1
+
+
+def daemon_call(cmd: str, timeout: float = DAEMON_CONNECT_TIMEOUT_S, **kwargs):
+    """Send one JSON-lines request to the daemon socket; return the reply dict.
+
+    Returns None on any transport error or if the socket is absent — callers
+    treat None as "daemon not available" and fall back to running inline.
+    """
+    if not SOCKET_FILE.exists():
+        return None
+    req = {"cmd": cmd, **kwargs}
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(str(SOCKET_FILE))
+            s.sendall((json.dumps(req) + "\n").encode())
+            buf = b""
+            while b"\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+        if not buf:
+            return None
+        return json.loads(buf.split(b"\n", 1)[0].decode())
+    except (OSError, ValueError):
+        return None
 
 
 class CynCLI:
@@ -208,7 +274,6 @@ class CynCLI:
         self.json_mode = json_mode
         self.verbose = verbose
         self.logger = self._setup_logging(logfile)
-        self.daemon_available = HAS_REQUESTS and CynDaemon.is_running()
 
     def _setup_logging(self, logfile):
         """Setup logging"""
@@ -232,21 +297,9 @@ class CynCLI:
 
         return logger
 
-    def daemon_request(self, endpoint, method="GET", data=None):
-        """Send request to daemon (returns raw response or None)"""
-        if not self.daemon_available or not HAS_REQUESTS:
-            return None
-
-        try:
-            url = f"{DAEMON_URL}{endpoint}"
-            if method == "GET":
-                r = requests.get(url, timeout=5)
-            else:
-                r = requests.post(url, json=data, timeout=5)
-            r.raise_for_status()
-            return r.json() if r.text else {}
-        except Exception:
-            return None
+    def daemon_request(self, cmd, **kwargs):
+        """Query the daemon over its AF_UNIX socket; None if unavailable."""
+        return daemon_call(cmd, **kwargs)
 
     def output(self, level, message, **data):
         """Output with JSON/console support"""
@@ -351,26 +404,26 @@ class CynCLI:
                     "type": "ARM firmware (debug controller)",
                     "status": "building",
                     "language": "C",
-                    "path": str(REPOS / "awto-apollo")
+                    "path": str(APOLLO_REPO)
                 },
                 "moondancer": {
                     "type": "RISC-V firmware",
                     "status": "building",
                     "language": "Rust",
-                    "path": str(REPOS / "awto-cynthion" / "firmware" / "moondancer")
+                    "path": str(CYNTHION_REPO / "firmware" / "moondancer")
                 },
                 "analyzer_gateware": {
                     "type": "FPGA gateware (analyzer)",
                     "status": "building",
                     "language": "Python (Amaranth HDL)",
-                    "path": str(REPOS / "awto-cynthion" / "cynthion" / "python")
+                    "path": str(CYNTHION_REPO / "cynthion" / "python")
                 },
                 "facedancer_gateware": {
                     "type": "FPGA gateware (emulation)",
                     "status": "known_issue",
                     "language": "Python (Amaranth HDL)",
                     "issue": "luna_soc SPIflash Field TypeError",
-                    "path": str(REPOS / "awto-cynthion" / "cynthion" / "python")
+                    "path": str(CYNTHION_REPO / "cynthion" / "python")
                 }
             },
             "phase": {
@@ -760,7 +813,7 @@ class CynCLI:
         elif args.subcommand == "apollo":
             ok, _ = self.run_cmd(
                 "act -l",
-                cwd=REPOS / "awto-apollo",
+                cwd=APOLLO_REPO,
                 description="Listing Apollo CI jobs..."
             )
             if ok:
@@ -770,7 +823,7 @@ class CynCLI:
         elif args.subcommand == "cynthion":
             ok, _ = self.run_cmd(
                 "act -l",
-                cwd=REPOS / "awto-cynthion",
+                cwd=CYNTHION_REPO,
                 description="Listing Cynthion CI jobs..."
             )
             if ok:
@@ -780,7 +833,7 @@ class CynCLI:
         elif args.subcommand == "luna":
             ok, _ = self.run_cmd(
                 "act -l",
-                cwd=REPOS / "awto-luna",
+                cwd=LUNA_REPO,
                 description="Listing Luna CI jobs..."
             )
             if ok:
@@ -869,7 +922,7 @@ class CynCLI:
         if ret != 0: return ret
         return self._run_tee("pytest",
             [str(VENV_PYTHON), "-m", "pytest",
-             str(REPOS / "awto-cynthion" / "cynthion" / "python" / "tests"), "-q", "--tb=short"],
+             str(CYNTHION_REPO / "cynthion" / "python" / "tests"), "-q", "--tb=short"],
             cwd=REPO_ROOT, log_file=log_file, check=False)
 
 
@@ -1057,7 +1110,7 @@ sys.exit(1)
             print("Reset complete.")
             return ret
 
-        reset_script = REPOS / "awto-cynthion" / "scripts" / "reset-cynthion.sh"
+        reset_script = CYNTHION_REPO / "scripts" / "reset-cynthion.sh"
         with log_path.open("w") as log:
             if reset_script.exists() and not hold_apollo:
                 ret = self._run_tee("reset-cynthion", [str(reset_script)],
@@ -1197,7 +1250,7 @@ except Exception as e:
     def cmd_monitor(self, args):
         """Device monitoring (stub — apollod integration pending)"""
         print("⚠ Monitor: apollod integration pending (not yet production-ready)")
-        print("  See: /home/dan/git/awtoau/awto-cynthion/scripts/apollod.py")
+        print("  See: repos/cynthion/scripts/apollod.py")
         print("  apollod reads TTYs: ttyACM0=rv0, ttyACM1=fpg, ttyACM2=apl")
         print("  publishes JSON-lines on Unix socket for live device monitoring")
         print("  (architecture: integrate into cyn-daemon as HTTP /monitor endpoint)")
