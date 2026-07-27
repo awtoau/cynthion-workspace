@@ -1012,7 +1012,7 @@ def cmd_versions(args) -> bool:
 
     # Save to JSON file
     if not args.dry_run:
-        versions_file = TMP / "versions.json"
+        versions_file = ROOT / "versions.json"
         try:
             with open(versions_file, 'w') as f:
                 json.dump(versions_dict, f, indent=2)
