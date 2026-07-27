@@ -1,8 +1,8 @@
 {
-  "Git": "git version 2.54.0",
-  "Python 3.14": "Python 3.14.4",
-  "Rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
-  "Cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "Git": "git version 2.55.0",
+  "Python 3.14": "Python 3.14.6",
+  "Rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "Cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
   "ARM GCC": "arm-none-eabi-gcc (Fedora 15.2.0-4.fc44) 15.2.0",
   "GCC": "gcc (GCC) 16.1.1 20260515 (Red Hat 16.1.1-2)",
   "G++": "g++ (GCC) 16.1.1 20260515 (Red Hat 16.1.1-2)",
@@ -15,10 +15,10 @@
   "OSS CAD Suite Location": "/home/dan/opt/oss-cad-suite",
   "amaranth": "0.5.8",
   "luna-usb": "0.2.3",
-  "luna-soc": "0.3.2",
-  "cynthion": "0.2.4.post26+git.4fd1f7a8",
-  "awto-apollo (HEAD)": "04507df",
-  "awto-cynthion (HEAD)": "4fd1f7a",
-  "awto-luna (HEAD)": "6771b6d",
-  "awto-facedancer (HEAD)": "dcbad53"
+  "luna-soc": "0.2.0",
+  "cynthion": "0.2.4.post28+git.56a64c23",
+  "apollo (HEAD)": "6f16848",
+  "cynthion (HEAD)": "edf35c9",
+  "luna (HEAD)": "6771b6d",
+  "facedancer (HEAD)": "9f12988"
 }
