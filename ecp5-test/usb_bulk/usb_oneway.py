@@ -67,7 +67,7 @@ USB_VENDOR_ID  = 0x1d50
 USB_PRODUCT_ID = 0x615b
 
 # Set at build time. Rebuild to move the device to a different port.
-PHY_NAME = "target_phy"
+PHY_NAME = "aux_phy"
 
 APPLET_ID = 0x314f5741   # "1OWA"
 
