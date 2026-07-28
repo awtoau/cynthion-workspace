@@ -147,3 +147,52 @@ also cannot produce them.
 so `SCK = sync / period` with `period >= 2`; at `period = 1` the counter is
 zero-width and elaboration fails outright. On a 60 MHz domain that caps SCK at
 30 MHz — which happens to be exactly where the sampling path tops out anyway.
+
+## Quad SPI (Fast Read Quad Output, 0x6B)
+
+Verified working at **14.92 MB/s**, byte-exact against `apollo flash-read`:
+
+| divisor | SCK | lanes | throughput | verdict |
+|---|---|---|---|---|
+| 1 | 30 MHz | 4 | **14.92 MB/s** | PASS (offset 0) |
+| 1 | 30 MHz | 1 | 3.75 MB/s | PASS (single-lane path) |
+
+Exactly **4× the single-lane rate at the same SCK**, so the gain is lane count
+rather than clocking faster — which is the safer way to get it, since the
+single-lane path had already run out of timing margin at 60 MHz.
+
+The controller is Glasgow's (`glasgow.gateware.qspi`, 0BSD). There is no quad
+SPI core in Amaranth, amaranth-soc or LUNA, and Glasgow's already targets
+Lattice and references this same W25Q32 family.
+
+The Quad Enable bit is **already set** on this board (SR2 = 0x02), so quad
+needs no configuration write and no loss of hardware write protection — setting
+QE would repurpose /WP and /HOLD as IO2 and IO3.
+
+### Two bugs worth recording
+
+**CS was inverted twice.** Glasgow's controller inverts chip select itself,
+expecting an active-high port, while the platform declares `cs` with `PinsN`,
+so the port already carries `invert=True`. The two cancelled: CS was never
+asserted, and every read returned zeros at the correct speed for every offset
+and divisor. The offset-independence is what identified it — a sampling error
+shifts or corrupts data, it does not silence it.
+
+**The read finished one byte early.** `done` fired when the last byte was
+*requested* rather than when it returned, and the controller's pipeline is
+several cycles deep, so the tail was lost: 8 requested returned 7. Found in
+simulation, not on hardware.
+
+### The 60 MHz limit is ours, not the flash's
+
+At `divisor = 0` the reads fail with all zeros. That is not the part giving up
+— it is rated to 104 MHz — but an artefact of how the clock reaches the pin.
+Glasgow generates SCK as two bits per sync cycle, one per half, so it can clock
+at DDR rate. `USRMCLK` accepts only a single-ended clock, so this code forwards
+`o[0]` alone. At divisor 1 and above the two halves agree and nothing is lost;
+at divisor 0 they differ, and half the clock disappears.
+
+Raising this further therefore means either driving `USRMCLK` from a
+double-rate output register, or raising the sync domain and keeping divisor 1.
+Either would reach the 25 MB/s that 50 MHz SCK allows, and the part would still
+have headroom above that.
