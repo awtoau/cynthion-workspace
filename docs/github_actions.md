@@ -55,7 +55,7 @@ jobs:
           path: |
             **/*.elf
             **/*.bin
-            tmp/versions.json
+            versions.json
 ```
 
 Then test locally:

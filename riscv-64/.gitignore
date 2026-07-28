@@ -1,4 +1,5 @@
 out/
-work/
+work/*
+!work/README.md
 __pycache__/
 scripts/__pycache__/
