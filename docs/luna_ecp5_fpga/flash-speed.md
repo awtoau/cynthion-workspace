@@ -239,9 +239,66 @@ drive it is the `USRMCLK` macro. The platform definition says the same thing in
 one line -- "SCK is on pin 9; but doesn't have a traditional I/O buffer" -- and
 gives it no ball number, because it cannot be requested as a pin.
 
-The signal therefore travels fabric -> USRMCLK -> configuration-block mux -> pad,
+The signal therefore travels fabric → USRMCLK → configuration-block mux → pad,
 through silicon the data lines never touch, and that path is what Lattice
 characterises only to 62 MHz.
+
+### This is not a board design fault
+
+Worth stating plainly, because the constraint is easy to mistake for one. The
+r1.4 schematic is correct and had no better option:
+
+| FPGA pin | Function | Flash |
+|---|---|---|
+| T8 | `D0/PICO/IO0/PB11B` | IO0 |
+| T7 | `D1/POCI/IO1/PB11A` | IO1 |
+| M7 | `D2/IO2/PB9B` | IO2 |
+| N7 | `D3/IO3/PB9A` | IO3 |
+| N8 | `CSSPI/PB15A` | CS |
+| **N9** | **MCLK/CCLK** | **CLK** |
+
+The sysCONFIG note is unambiguous: "The MCLK is **always reserved** for use in
+MSPI mode, in most post-configuration applications, as the reference clock for
+performing memory transactions with the external SPI PROM." If the FPGA is to
+configure itself from this flash — the entire purpose of a configuration flash
+— the clock has to be on N9. There is no alternative ball; the boot ROM drives
+that one and nothing else.
+
+Note also that the data pins carry dual designations (`PB11A`, `PB11B`, `PB9A`,
+`PB9B`): they are ordinary bank-8 I/O as well as MSPI pins, which is precisely
+why they keep working at full speed once configuration is done. MCLK has no
+such alternate function. The asymmetry is in the silicon, not in the layout.
+
+Routing the flash clock to a general-purpose pin instead would mean the FPGA
+could no longer boot from it — trading the board's whole configuration
+mechanism for read throughput on a peripheral.
+
+### Unless the board never boots from flash
+
+That trade changes completely if the bitstream is loaded over USB at startup,
+which is the plan here. Then nothing needs MSPI, and the sysCONFIG note's
+reservation stops applying: it says MCLK is reserved "in **most**
+post-configuration applications", a convention rather than a hardware rule, and
+that when `CFGMDN[2:0]` is not in MSPI mode even `CSSPIN` reverts to
+general-purpose I/O.
+
+So a board that loads its bitstream over USB *could* put the flash clock on an
+ordinary bank pin and run it at whatever the flash allows — 104 MHz for quad,
+which is roughly 52 MB/s, against the ~40 MB/s measured at 80 MHz here.
+
+Two caveats:
+
+**It is a PCB change, not a rework.** On r1.4 the only copper to the flash
+clock is from N9. No gateware or configuration change can move it, so this
+applies to a future revision rather than to boards in hand.
+
+**It costs the recovery path.** A board that cannot configure itself from flash
+depends entirely on the debug controller to load a bitstream. That is fine
+while Apollo is healthy and awkward when it is not — the flash is what makes
+the FPGA independently bootable.
+
+Worth designing in only if the USB loading path is considered reliable enough
+to be the sole one.
 
 After configuration the pin can be borrowed for user logic through `USRMCLK` — the sysCONFIG technical note
 (FPGA-TN-02039) says the device "provides a solution for users to choose any
