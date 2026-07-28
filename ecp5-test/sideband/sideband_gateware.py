@@ -20,7 +20,9 @@ the same state, which is what makes a broken link diagnosable rather than
 merely broken.
 """
 
-from amaranth                            import Cat, Const, Mux, Signal, Elaboratable, Module
+from amaranth                            import (Cat, ClockDomain, ClockSignal, Const,
+                                                 DomainRenamer, Elaboratable, Module, Mux,
+                                                 Signal)
 from luna.gateware.interface.i2c         import I2CRegisterInterface
 from luna.gateware.architecture.car      import LunaECP5DomainGenerator
 from luna.gateware.interface.jtag        import JTAGRegisterInterface
@@ -36,6 +38,10 @@ from apollo_fpga.gateware.qspi_flash     import QSPIFlashController, QuadFlashRe
 
 
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
+
+# The responder's clock. Fixed at 60 MHz independently of `sync`, because the
+# UART bit period is a build-time cycle count: see the DomainRenamer below.
+SIDEBAND_CLK_HZ = 60e6
 
 # SCK divisor for the configuration flash: SCK = 60 MHz / period. The stock
 # value of 4 gives 15 MHz, well under the W25Q32's 50 MHz limit for the plain
@@ -84,12 +90,27 @@ class SidebandTest(Elaboratable):
         m.submodules.clocking = LunaECP5DomainGenerator(
             clock_frequencies=CLOCK_FREQUENCIES)
 
+        # A domain that stays at 60 MHz whatever `sync` does. Here they happen
+        # to be the same rate, so it is an alias; the point is that raising
+        # sync later cannot silently change the baud rate.
+        m.domains.sideband = ClockDomain()
+        m.d.comb += ClockSignal("sideband").eq(ClockSignal("usb"))
+
         registers = JTAGRegisterInterface(default_read_value=0xDEADBEEF)
         m.submodules.registers = registers
         registers.add_read_only_register(REGISTER_ID, read=APPLET_ID)
 
-        m.submodules.responder = responder = SidebandResponder(
-            clk_freq_hz=60e6, baud=230400)
+        # The responder is pinned to a 60 MHz domain rather than inheriting
+        # sync, and SIDEBAND_CLK_HZ is the single source of truth for both the
+        # domain and the bit period.
+        #
+        # This matters as soon as a design clocks sync faster. The bit period is
+        # a cycle count fixed at build time, so a responder built for 60 MHz and
+        # run at 120 gets exactly double the baud -- and a UART tolerates about
+        # +/-2%, so the link does not degrade, it dies. Tying both to one
+        # constant makes that impossible to do by accident.
+        m.submodules.responder = responder = DomainRenamer("sideband")(
+            SidebandResponder(clk_freq_hz=SIDEBAND_CLK_HZ, baud=230400))
 
         #
         # Configuration flash.

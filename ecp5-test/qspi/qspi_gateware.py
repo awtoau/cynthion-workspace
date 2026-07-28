@@ -44,7 +44,7 @@ from amaranth.lib.memory                 import Memory
 from luna.gateware.interface.jtag        import JTAGRegisterInterface
 
 from apollo_fpga.gateware.qspi_flash     import QSPIFlashController, QuadFlashReader
-from luna.gateware.architecture.car      import LunaECP5DomainGenerator
+from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
 
 
 # Sync-domain frequency in MHz, fixed at build time. LUNA's generator offers
@@ -53,7 +53,7 @@ from luna.gateware.architecture.car      import LunaECP5DomainGenerator
 # board by the HyperRAM work. It yields SCK of 120, 60, 40, 30, 24, 20 and
 # 15 MHz -- which spans the 30-to-60 region the rebuild-per-frequency ladder
 # had to skip.
-SYNC_MHZ = 120
+SYNC_MHZ = 160
 
 # Sample-point offset, also build-time -- it selects between pipeline stages.
 # 0 is what the earlier sweep found correct at 30 MHz SCK.
@@ -79,8 +79,8 @@ class QSPITest(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        m.submodules.clocking = LunaECP5DomainGenerator(
-            clock_frequencies={"fast": SYNC_MHZ, "sync": SYNC_MHZ, "usb": 60})
+        clocking = VariableClockDomainGenerator(sync_mhz=SYNC_MHZ)
+        m.submodules.clocking = clocking
 
         registers = JTAGRegisterInterface(default_read_value=0xDEADBEEF)
         m.submodules.registers = registers
@@ -170,7 +170,7 @@ class QSPITest(Elaboratable):
         registers.add_read_only_register(
             REGISTER_QUAD_STATUS,
             read=Cat(reader.done, reader.busy, Const(0, 6),
-                     Const(SYNC_MHZ, 16),
+                     Const(int(clocking.actual_sync_mhz), 16),
                      Const(QSPI_OFFSET, 8)))
 
         return m

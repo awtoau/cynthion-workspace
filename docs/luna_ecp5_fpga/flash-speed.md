@@ -222,42 +222,83 @@ build rather than with SCK point at place-and-route variation on the sample
 path, not at the part. Chasing them means constraining that path or sweeping
 the offset per divisor, not clocking slower.
 
-### Why 60–104 MHz is untested
+### The real ceiling is the ECP5 pin, not the flash
 
-The datasheet rates quad output to 104 MHz. 60 MHz passes and 120 MHz fails,
-so the true ceiling is somewhere between — and the most interesting part of
-that range, 60 to 104, is currently **unreachable**, which is a limitation of
-the setup rather than a decision that it does not matter.
+The flash is rated to 104 MHz. It never gets the chance: **the ECP5 pin driving
+it is specified only to 62 MHz.**
 
-`SCK = sync / (divisor + 1)` with an integer divisor, so the reachable rates
-are set by the sync frequency:
+`MCLK` is a *configuration* pin, and unlike the others it never stops being one.
+The sysCONFIG note is explicit about the asymmetry: on entering user mode "the
+Master SPI configuration port pins are tristated with a weak pull-up. This
+allows the SPI pins to be used as user I/O **except MCLK/CCLK which is
+tristated**."
 
-| sync | divisor 0 | 1 | 2 | 3 |
-|---|---|---|---|---|
-| 120 MHz | 120 | **60** | 40 | 30 |
-| 240 MHz | 240 | 120 | **80** | 60 |
+So `CS` and `IO0-3` become ordinary user I/O with ordinary buffers, while the
+clock does not. It stays owned by the configuration block and the only way to
+drive it is the `USRMCLK` macro. The platform definition says the same thing in
+one line -- "SCK is on pin 9; but doesn't have a traditional I/O buffer" -- and
+gives it no ball number, because it cannot be requested as a pin.
 
-240 MHz sync would put 80 MHz squarely in the window. It does not build: the
-design closes timing at about **138 MHz**, and nextpnr refuses outright rather
-than warning.
+The signal therefore travels fabric -> USRMCLK -> configuration-block mux -> pad,
+through silicon the data lines never touch, and that path is what Lattice
+characterises only to 62 MHz.
 
-The first attempt at raising that was worth doing anyway — the critical path
-was `block RAM → LUTs → JTAG instruction register`, entirely the test harness's
-capture readback rather than anything to do with reading flash. Registering it
-removed that path, but only moved fmax from 137 to 138 MHz: the next limit is
-inside Glasgow's controller, on the skid buffer feeding the I/O streamer. That
-is real logic doing real work, so lifting it means pipelining an upstream core.
+After configuration the pin can be borrowed for user logic through `USRMCLK` — the sysCONFIG technical note
+(FPGA-TN-02039) says the device "provides a solution for users to choose any
+user clock as MCLK" — but the frequencies Lattice specifies for it are the
+configuration ones, and that table stops at **62 MHz**:
 
-Two ways to reach the window, then:
+    MCLK Frequency (MHz): 2.4  4.8  9.7  19.4  38.8  62
 
-1. **A sync rate between 120 and 240 MHz.** 160 MHz with divisor 1 gives
-   80 MHz SCK and is under the 138 MHz ceiling — but LUNA's generator only
-   offers 60/120/240, and the custom PLL attempted here did not work (see
-   below).
-2. **Pipeline Glasgow's controller** so the design closes at 240 MHz.
+The family datasheet (FPGA-DS-02012) gives `fMCLK` only as a ±20% tolerance on
+"all selected frequencies" — no maximum is quoted above 62 MHz, because the pin
+was never intended to run there. For comparison it specifies `fCCLK`, the
+configuration clock *input*, at 60 MHz max.
 
-The first is much cheaper, and makes the earlier PLL failure worth revisiting
-rather than a dead end.
+The measurements line up with that exactly:
+
+| SCK | vs the 62 MHz spec | result |
+|---|---|---|
+| 40 MHz | within spec | PASS |
+| 53.3 MHz | within spec | PASS |
+| **62 MHz** | **the documented ceiling** | — |
+| 80 MHz | +29% over | PASS, three runs, byte-exact |
+| 120 MHz | +93% over | FAIL |
+| 160 MHz | +158% over | FAIL |
+
+So 80 MHz works but is **measured, not specified**. It was verified byte-exact
+three times -- on one board, at room temperature, at nominal voltage. Lattice
+publishes nothing above 62 MHz for this pin, so there is no margin figure to
+reason from, and the failure mode is not graceful: 120 MHz corrupts every byte
+rather than degrading.
+
+That makes it a reasonable choice for instrumentation on hardware you can
+re-verify -- the ladder takes about 30 seconds -- and a poor one to bake into
+anything expected to work on an untested board or a warm one.
+
+**53.3 MHz at 26.53 MB/s is the fastest verified point Lattice actually
+specifies**, and is what to use where the margin matters.
+
+This retires several earlier diagnoses in this document. Failures attributed to
+flash timing or to the sampling path were the pin running far beyond its rating.
+Nothing about the W25Q32 was ever the constraint.
+
+### Consequences for going faster
+
+Raising fabric fmax does not help, because the bottleneck is off-chip. Yosys
+`-retime` was tried (with `-noabc9`, since the two are incompatible) and moved
+the design between 145 and 157 MHz — inside the run-to-run variation of the
+default flow, and aimed at the wrong constraint regardless.
+
+The useful direction is **fewer clocks per byte**, not faster ones:
+
+- **Quad I/O (`0xEB`)** rather than quad output (`0x6B`) sends the address on
+  four lanes too, saving six clocks per transaction.
+- **Continuous Read** with wrap avoids re-sending the opcode on sequential
+  bursts.
+- **QPI mode** addresses in as few as 8 clocks.
+
+None of these need a faster pin, which is what makes them the sensible path.
 
 ### The 60 MHz limit is ours, not the flash's
 
