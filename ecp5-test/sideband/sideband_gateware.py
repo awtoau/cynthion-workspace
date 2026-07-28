@@ -30,7 +30,9 @@ from luna.gateware.interface.flash       import ECP5ConfigurationFlashInterface
 from apollo_fpga.gateware.sideband       import SidebandResponder
 from apollo_fpga.gateware.flash_bridge   import SPIStreamController
 from apollo_fpga.gateware.flash_id       import (FlashIDReader, FlashSpeedTest,
-                                                 FlashCapture, SPIMux)
+                                                 FlashCapture, FlashStatusReader,
+                                                 SPIMux)
+from apollo_fpga.gateware.qspi_flash     import QSPIFlashController, QuadFlashReader
 
 
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
@@ -65,6 +67,10 @@ REGISTER_FLASH_TIME = 11 # cycles the last throughput measurement occupied
 REGISTER_FLASH_SUM  = 12 # CRC-8 of the bytes it read, to prove they were real
 REGISTER_CAPTURE_ADDR = 13  # write: byte address into the capture buffer
 REGISTER_CAPTURE_DATA = 14  # read: that byte, plus the captured count
+REGISTER_FLASH_STATUS = 15  # status registers 1-3, plus a valid flag
+REGISTER_QUAD_TIME    = 16  # cycles the quad read occupied
+REGISTER_QUAD_ADDR    = 17  # write: byte address into the quad capture buffer
+REGISTER_QUAD_DATA    = 18  # read: that byte, plus count and done
 
 APPLET_ID = 0x53424E44   # "SBND"
 
@@ -112,9 +118,6 @@ class SidebandTest(Elaboratable):
         # the board is powered, so a single read is enough and re-reading would
         # only give the sideband a way to observe a half-updated value.
         id_started = Signal()
-        with m.If(~id_started):
-            m.d.sync += id_started.eq(1)
-            m.d.comb += flash_id.start.eq(1)
 
         m.d.comb += [
             responder.flash_manufacturer.eq(flash_id.manufacturer),
@@ -140,9 +143,29 @@ class SidebandTest(Elaboratable):
 
         # The ID read finishes before the measurement starts, so the mux is a
         # selector: port 0 until the ID is latched, port 1 thereafter.
+        m.submodules.flash_status = flash_status = FlashStatusReader()
+
+        # Strictly sequential: status, then ID, then the throughput run. Each
+        # waits on the previous one's valid flag, so the selector never has two
+        # requesters at once.
         m.submodules.spi_mux = spi_mux = SPIMux(
-            controller=spi, ports=[flash_id.spi, flash_speed.spi])
-        m.d.comb += spi_mux.select.eq(flash_id.valid)
+            controller=spi,
+            ports=[flash_status.spi, flash_id.spi, flash_speed.spi])
+        m.d.comb += spi_mux.select.eq(
+            Mux(~flash_status.valid, 0, Mux(~flash_id.valid, 1, 2)))
+
+        registers.add_read_only_register(
+            REGISTER_FLASH_STATUS,
+            read=Cat(flash_status.status, flash_status.valid, Const(0, 7)))
+
+        status_started = Signal()
+        with m.If(~status_started):
+            m.d.sync += status_started.eq(1)
+            m.d.comb += flash_status.start.eq(1)
+
+        with m.If(flash_status.valid & ~id_started & ~flash_status.busy):
+            m.d.sync += id_started.eq(1)
+            m.d.comb += flash_id.start.eq(1)
 
         speed_started = Signal()
         m.d.comb += [
