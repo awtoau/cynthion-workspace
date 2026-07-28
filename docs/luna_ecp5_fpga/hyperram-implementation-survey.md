@@ -91,6 +91,36 @@ does small scattered accesses.
 4. **Do not adopt ChipFlow wholesale.** Better structure does not outweigh
    having to write ECP5 DDR I/O from scratch.
 
+## Taking the best of both
+
+The two projects are strong in **non-overlapping** places, so this is a stack
+rather than a merge — nothing has to be rewritten or reconciled:
+
+| Layer | LUNA | ChipFlow | Take |
+|---|---|---|---|
+| ECP5 DDR I/O primitives | yes | **none** | LUNA |
+| HyperBus protocol FSM | yes | yes | LUNA — verified on this board |
+| Latency as runtime CSR | no | yes | ChipFlow |
+| 32-bit Wishbone data bus | no | yes | ChipFlow |
+| CSR control registers | no | yes | ChipFlow |
+
+LUNA owns everything below the protocol; ChipFlow owns everything above it.
+
+Concretely, the plan is:
+
+1. **Keep `HyperRAMInterface` and `HyperRAMPHY` untouched.** They carry the ECP5
+   DDR work and they are the part verified here.
+2. **Write a Wishbone wrapper on top**, shaped after ChipFlow's `data_bus`:
+   32-bit, byte granularity, with a separate CSR bus for control.
+3. **Make latency a CSR field** rather than a constant, as ChipFlow does. That
+   also gives somewhere to put the RWDS fix if it proves worthwhile.
+
+Note that what is being taken from ChipFlow is the **interface shape**, not the
+code — it has no ECP5 layer, so there is nothing in it that would function here
+even if copied verbatim. That makes it a design reference rather than a
+dependency, and sidesteps the attribution question almost entirely. Licences
+are compatible regardless: BSD-2 into a BSD-3 codebase is fine.
+
 ## Method note
 
 This survey looked beyond GitHub as a matter of habit, but the useful results
