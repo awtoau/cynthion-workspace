@@ -8,7 +8,8 @@
 This document defines the SPI-only design path between Apollo (ATSAMD11D14A)
 and FPGA-facing debug/control surfaces. It intentionally excludes watchdog
 control protocol design, which is documented in
-[apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md).
+[apollo_moondancer_uart_watchdog_design.md](../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
 
 ## Problem
 
@@ -92,4 +93,5 @@ High:
 - moondancer supervisory behavior.
 
 Those remain in
-[apollo_moondancer_uart_watchdog_design.md](apollo_moondancer_uart_watchdog_design.md).
+[apollo_moondancer_uart_watchdog_design.md](../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).

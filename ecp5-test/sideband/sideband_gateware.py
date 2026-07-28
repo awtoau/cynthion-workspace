@@ -2,7 +2,7 @@
 #
 # Test bitstream for the FPGA_ADV command protocol.
 # See awtoau/cynthion-workspace#68 and
-# docs/apollo_samd11_mcu/fpga-adv-command-protocol.md.
+# docs/apollo_samd11_mcu/fpga-adv-sideband.md.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -228,17 +228,14 @@ class SidebandTest(Elaboratable):
         #
         # FPGA_ADV.
         #
-        # The pin is declared dir="o" by the platform, so this drives it
-        # push-pull. Apollo never enables its own driver while the protocol is
-        # active, which is what keeps the wire contention-free -- see §2.1 of
-        # the sideband design document.
+        # The platform declares this pin dir="io" with PULLMODE="UP", so it is
+        # tri-state and idles high on the pull-ups. Driving it push-pull would
+        # stop Apollo pulling it low, and no command would ever arrive.
         #
-        # No hasattr guards. An earlier version used them, and when the
-        # platform still declared this pin dir="o" they silently degraded to
-        # tying responder.rx to a constant 1 and driving the pin push-pull
-        # forever -- so the receiver was never connected to the wire and Apollo
-        # could not pull it low against us. It failed quietly instead of
-        # loudly. If the platform regresses to dir="o", this now raises.
+        # No hasattr guards: with a dir="o" platform they degraded silently to
+        # tying responder.rx to a constant 1 and driving the pin forever, so the
+        # receiver was never connected to the wire. If the platform regresses to
+        # dir="o", the missing pad.i/pad.oe now raise instead.
         pad = platform.request("int")
         m.d.comb += [
             responder.rx.eq(pad.i),

@@ -3,7 +3,7 @@
 **Status**: Phase 2 Design Review  
 **Related Issues**: [#15](https://github.com/awtoau/cynthion-workspace/issues/15), [#33](https://github.com/awtoau/cynthion-workspace/issues/33)  
 **Reference Docs**: 
-- [`apollo_moondancer_uart_watchdog_design.md`](apollo_moondancer_uart_watchdog_design.md) — Proposed UART redesign
+- [`apollo_moondancer_uart_watchdog_design.md`](../../debris/docs/apollo_moondancer_uart_watchdog_design.md) — proposed UART redesign, **retired**
 - [`cynthion_architecture_scan_2026_05_22.md`](cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
 - [`apollo_code_review.md`](apollo_code_review.md) — Phase 2 code review findings
 
@@ -72,7 +72,7 @@ case SPI_FPGA_DEBUG:
 
 #### Option 1: UART-Based Watchdog ⭐ **Recommended**
 
-**Reference**: [`apollo_moondancer_uart_watchdog_design.md`](apollo_moondancer_uart_watchdog_design.md)
+**Reference**: [`apollo_moondancer_uart_watchdog_design.md`](../../debris/docs/apollo_moondancer_uart_watchdog_design.md) (retired)
 
 **Architecture**:
 ```

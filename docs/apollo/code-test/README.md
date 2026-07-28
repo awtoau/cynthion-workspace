@@ -15,7 +15,7 @@ otherwise loose working-tree state (not committed, stashed, or pushed anywhere).
 
 A DMA-backed UART RX driver for the Cynthion ATSAMD11 and its integration —
 almost certainly the implementation of the Apollo serial redesign described in
-[../../apollo_samd11_mcu/apollo_moondancer_uart_watchdog_design.md](../../apollo_samd11_mcu/apollo_moondancer_uart_watchdog_design.md)
+[../../../debris/docs/apollo_moondancer_uart_watchdog_design.md](../../../debris/docs/apollo_moondancer_uart_watchdog_design.md) (retired)
 and the serial-architecture docs under
 [../../apollo_samd11_mcu/](../../apollo_samd11_mcu/).
 

@@ -188,7 +188,8 @@ PA14 is the triple-overlap (TDI *and* SPI-MOSI *and* UART-TX). The pins **cannot
 be split**: relocating UART to PA08/PA09 is not viable because on d11 those are
 `FPGA_PROGRAM` (PA08) and `PHY_RESET` + `FPGA_ADV`→`EIC_EXTINT7` (PA09) — Apollo's
 core supervisory lines. See the correction note added to
-`apollo_moondancer_uart_watchdog_design.md`.
+[`apollo_moondancer_uart_watchdog_design.md`](../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
 
 Because the resource is physically single-owner, arbitration is not a
 convenience feature — it is the only thing standing between a JTAG programming
