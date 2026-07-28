@@ -53,13 +53,15 @@ from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
 # board by the HyperRAM work. It yields SCK of 120, 60, 40, 30, 24, 20 and
 # 15 MHz -- which spans the 30-to-60 region the rebuild-per-frequency ladder
 # had to skip.
-SYNC_MHZ = 160
+SYNC_MHZ = 120
 
 # Sample-point offset, also build-time -- it selects between pipeline stages.
 # 0 is what the earlier sweep found correct at 30 MHz SCK.
 QSPI_OFFSET = 0
 
-READ_BYTES    = 4096
+# Read length. 32 KiB exercises the flash across many pages rather than one,
+# while the capture window below stays 4 KiB for timing reasons.
+READ_BYTES    = 32768
 CAPTURE_DEPTH = 1024
 
 APPLET_ID = 0x51535049   # "QSPI"
@@ -71,6 +73,8 @@ REGISTER_QUAD_DATA    = 4   # read: that byte, plus the captured count
 REGISTER_QUAD_STATUS  = 5   # done/busy, and the sync frequency actually built
 REGISTER_QUAD_DIVISOR = 6   # write: SCK divisor; SCK = sync / (divisor + 1)
 REGISTER_QUAD_START   = 7   # write: any changed value re-runs the read
+REGISTER_QUAD_MODE    = 8   # write: bit 0 selects 0xEB quad I/O over 0x6B
+REGISTER_PASS_ERRORS  = 9   # mismatches vs the first pass, and a pass count
 
 
 class QSPITest(Elaboratable):
@@ -102,6 +106,15 @@ class QSPITest(Elaboratable):
         registers.add_register(REGISTER_QUAD_DIVISOR, value_signal=divisor)
         m.d.comb += reader.divisor.eq(divisor)
 
+        # Opcode select: 0x6B quad output by default, 0xEB quad I/O when set.
+        # Both return data on four lanes; 0xEB also sends the address on four,
+        # halving per-transaction overhead from 40 clocks to 20. That is worth
+        # 0.2% on a 4 KiB streaming read and 19% on a 32-byte one, so it
+        # matters for RISC-V executing from flash rather than for bulk copies.
+        mode = Signal(32)
+        registers.add_register(REGISTER_QUAD_MODE, value_signal=mode)
+        m.d.comb += reader.quad_io.eq(mode[0])
+
         # Writing a *different* value to the start register re-runs the read.
         # Edge-triggered rather than level, so the host can sweep the divisor
         # and re-measure without reconfiguring the FPGA.
@@ -131,10 +144,14 @@ class QSPITest(Elaboratable):
         read_port  = memory.read_port(domain="sync")
 
         count = Signal(range(CAPTURE_DEPTH + 1))
+        # Declared here because the write port's enable depends on it: only the
+        # first pass fills the buffer, later passes compare against it.
+        first_pass = Signal(init=1)
         m.d.comb += [
             write_port.addr.eq(count),
             write_port.data.eq(reader.data),
-            write_port.en  .eq(reader.data_strobe & (count < CAPTURE_DEPTH)),
+            write_port.en  .eq(reader.data_strobe & first_pass
+                              & (count < CAPTURE_DEPTH)),
         ]
 
         # Reset the write pointer on each run. Without this a re-measurement
@@ -159,6 +176,44 @@ class QSPITest(Elaboratable):
         # nothing.
         captured_word = Signal(32)
         m.d.sync += captured_word.eq(Cat(read_port.data, Const(0, 8), count))
+
+        #
+        # Repeat-pass checking, in hardware.
+        #
+        # The host verifies the first pass against apollo flash-read, which is
+        # slow: 4 KiB read back one JTAG register at a time. Later passes are
+        # compared here instead, against what the first pass stored, so
+        # repeated runs cost no host time.
+        #
+        # This is what catches intermittency. A rate that works nine times in
+        # ten is indistinguishable from one that always works, if it is only
+        # ever tried once.
+        pass_errors = Signal(16)
+        pass_count  = Signal(16)
+
+        check_port = memory.read_port(domain="sync")
+        m.d.comb += check_port.addr.eq(count)
+
+        # Registered, so block RAM output into a comparator into a counter is
+        # not one combinational path.
+        cmp_valid = Signal()
+        cmp_data  = Signal(8)
+        m.d.sync += [
+            cmp_valid.eq(reader.data_strobe & ~first_pass
+                         & (count < CAPTURE_DEPTH)),
+            cmp_data.eq(reader.data),
+        ]
+
+        with m.If(reader.start):
+            m.d.sync += [pass_errors.eq(0), pass_count.eq(pass_count + 1)]
+        with m.If(cmp_valid & (check_port.data != cmp_data)):
+            m.d.sync += pass_errors.eq(pass_errors + 1)
+
+        with m.If(reader.done & first_pass):
+            m.d.sync += first_pass.eq(0)
+
+        registers.add_read_only_register(
+            REGISTER_PASS_ERRORS, read=Cat(pass_errors, pass_count))
 
         registers.add_read_only_register(REGISTER_QUAD_TIME, read=reader.cycles)
         registers.add_read_only_register(REGISTER_QUAD_DATA,
