@@ -1,0 +1,109 @@
+# RISC-V on Cynthion: where the work actually is
+
+Written to gather scattered prior work into one place, after a session where
+the flash benchmarking hit a wall that only a soft CPU can get past.
+
+## The short version
+
+- **32-bit is enough, and 64-bit is formally parked.** The cores were generated
+  and the sizing question answered: RV64 does not fit the `LFE5U-12F` alongside
+  the USB fabric, and nothing here needs it. Recorded as a decision in
+  `riscv_alternatives.md` rather than left as an open candidate.
+- **VexiiRiscv was already built**, benchmarked, and compared against a
+  Moondancer-like configuration. The tree still exists.
+- **The comparison was found to be not-yet-fair**, and the prior work says so
+  plainly. That is the open question, not the build.
+
+## What exists, and where
+
+The VexiiRiscv work was moved to the wastebasket during a cleanup and is intact:
+
+    /mnt/2tb/wastebasket/cynthion-workspace-20260728-093000/
+        riscv-64-work-vexiiriscv/     868 MB, a real git checkout
+        riscv-64-work-nextpnr/        1.5 GB
+        riscv-64-work-prjtrellis/      16 MB
+        riscv-64-out/                 1.5 GB
+    /mnt/2tb/wastebasket/riscv-sim-workspaces-20260726-000000/
+        workspaces/                    36 GB, 76 simulation workspaces
+
+The checkout is at **VexiiRiscv v0.0.0-1297-gf8774d4** and contains a generated
+`VexiiRiscv.v` (1.7 MB) plus `build.sbt` and `build.mill`. **Nothing needs
+rebuilding** — recovering this is cheaper than regenerating it, and it is the
+exact tree the recorded benchmark numbers came from.
+
+Note the directories are named `riscv-64-*` for historical reasons; the builds
+that were actually benchmarked are RV32.
+
+## Existing documents
+
+| Document | What it settles |
+|---|---|
+| `docs/moondancer/riscv_alternatives.md` | Canonical. Carries the decision to park RV64; retains VexiiRiscv as the RV32 successor. Its later sections are the record of how that was concluded, not an active plan. |
+| `docs/luna_ecp5_fpga/vexriscv_update_blocked.md` | Why the current VexRiscv is frozen: Scala 2.11.12 against Java 25. |
+| `docs/luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md` | The benchmark comparison, and why it is not yet a fair one. |
+
+## The benchmark result
+
+Two RV32 builds, both VexiiRiscv, same benchmarks and compiler flags
+(`-march=rv32imac -mabi=ilp32`, GCC 11.1.0, seed 2):
+
+| Metric | Stripped RV32 | Moondancer-like RV32 | Delta |
+|---|---:|---:|---:|
+| Dhrystone µs/run | 64 | 74 | +15.6% |
+| Dhrystones/sec | 15623 | 13415 | −14.1% |
+| DMIPS/MHz | 0.74 | 0.63 | −14.9% |
+| CoreMark total ticks | 6,133,969 | 6,361,949 | +3.7% |
+| CoreMark/MHz | 1.63 | 1.57 | −3.7% |
+
+The stripped build is more efficient per clock, which is unsurprising — it has
+fewer features.
+
+## Why this is not yet the answer
+
+The report's own conclusion is that **the comparison is valid for new-vs-new CPU
+efficiency but not for equivalence with the legacy VexRiscv system.** Two
+reasons, both stated there:
+
+1. **Several architectural changes were varied at once** — RVA, I-cache, D-cache
+   and supervisor mode all differ between the two configurations, so a 14%
+   Dhrystone delta cannot be attributed to any one of them.
+2. **The system composition differs.** The legacy comparison involves the USB
+   fabric; the new builds do not include it, so area, timing and any
+   USB-active workload are not comparable.
+
+That is a well-formed negative result, and it is worth more than a number would
+have been: it says exactly what to do next rather than leaving a misleading
+figure in circulation.
+
+## What the prior work recommends next
+
+A single-factor matrix, one toggle at a time:
+
+- `base` — xlen32 + rvm + rvc + rdtime
+- `base + supervisor`
+- `base + rva`
+- `base + i4k + d4k`
+- `base + rva + i4k + d4k` — the closest to Moondancer-like
+
+Plus a full-system parity build including the USB fabric, and reporting
+throughput at achieved Fmax alongside CoreMark/MHz.
+
+## Why this matters for the flash work
+
+The flash benchmarking stalled on a measurement problem: a JTAG register read
+takes ~35 ms while a 4-byte flash read takes ~1 µs, so the host cannot time
+short transfers at all. A soft CPU next to the flash controller fixes that —
+it issues reads at fabric speed and times them with a local cycle counter.
+
+That makes the CPU work a dependency of the flash work rather than a parallel
+track, and it gives the CPU a concrete first job: measuring small random reads,
+which is also exactly the XIP pattern a CPU executing from flash would generate.
+
+## Open questions
+
+- Does the VexRiscv toolchain blocker still apply? It was Scala 2.11.12 against
+  Java 25, and **Java 17 is now installed** (`java-17-temurin-jdk`) — which was
+  the incompatibility. Worth re-testing before assuming the freeze holds.
+- Is the recovered tree buildable as-is, or does it need its own toolchain setup?
+- Should the wastebasket copy be restored into the workspace, or rebuilt from
+  upstream at a pinned version?

@@ -13,9 +13,44 @@ This document consolidates the RISC-V CPU alternatives and evaluation criteria t
 	2. Replaced machine-specific absolute paths with portable `${REPOS_ROOT:-$HOME/git/awtoau}` forms.
 	3. Recommendation outcome unchanged: `VexiiRiscv` remains the first RV64 experiment candidate, with `Rocket` as secondary and `CVA6` unlikely on current FPGA budget.
 
+Superseded 2026-07-28: RV64 is parked entirely -- see the decision section
+below. VexiiRiscv is retained, but as the **RV32** successor to VexRiscv rather
+than as an RV64 experiment.
+
 Primary source references:
 - `docs/apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md` (Phase 0, P0.1)
 - `vexriscv_update_blocked.md`
+
+## Decision: 64-bit is parked (2026-07-28)
+
+**RV64 is not being pursued.** The work was done rather than merely considered:
+VexiiRiscv was built, RV32 configurations were benchmarked, and a full set of
+simulation workspaces was produced. The conclusion is that there is **no
+advantage on this board at the moment**, so the effort is stopped here rather
+than carried further.
+
+Why:
+
+- The `LFE5U-12F` cannot host a useful RV64 configuration alongside the USB
+  fabric. That is a capacity fact about the part, not a tuning problem.
+- Nothing in the current or planned workload needs a 64-bit address space or
+  64-bit registers. Moondancer, the flash and HyperRAM drivers, and the
+  instrumentation work are all comfortably RV32 problems.
+- The one motivation that would justify it -- running Linux -- is a separate
+  goal that this board is the wrong size for regardless of core choice.
+
+What survives from that work and remains useful:
+
+- **VexiiRiscv itself**, as the RV32 successor to the frozen VexRiscv baseline.
+  It is RV32/64 capable, so choosing it does not foreclose RV64 later.
+- **The benchmark harness and the RV32 numbers**, which are the basis of the
+  equivalence question that is still open.
+- **The built trees**, recovered rather than rebuilt -- see
+  `docs/moondancer/riscv_state_of_play.md` for where they are.
+
+Everything below this section that discusses RV64 sizing, Linux bring-up and
+64-bit candidate ranking is retained as **the record of how that conclusion was
+reached**, not as an active plan. Read it as history unless the board changes.
 
 ## Current Baseline
 
