@@ -84,7 +84,7 @@ Do not add workflow files back. If something needs automating, extend
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
 | `flutter` | `analyze` + `test` (reported, non-blocking) |
-| `gateware` | analyzer elaboration — **currently broken upstream**, see below |
+| `gateware` | analyzer gateware elaboration (dry run), ~15 s |
 
 Exit status is 0 only if every selected check passed, so it works as a hook:
 
@@ -96,9 +96,11 @@ Each check writes its full output to `tmp/logs/check-<name>.log`. A check whose
 tooling is absent is reported as skipped, not failed, so the runner stays usable
 on a partially-provisioned machine.
 
-**Known-broken:** `gateware` fails because `cynthion/python/src/shared/` is empty
-and untracked upstream, so `top.py`'s `cynthion.shared.usb.bVendorId` has nothing
-to resolve against. It is excluded from `--fast` but deliberately still listed.
+**Gotcha:** do not run gateware elaboration from `repos/cynthion/`. That directory
+contains a `cynthion/` subdirectory which Python treats as a namespace package,
+shadowing the installed one — `cynthion.__file__` becomes `None` and
+`cynthion.shared.usb` fails to resolve. The workspace root works, as does
+`repos/cynthion/cynthion/python`.
 
 ## Python strategy
 

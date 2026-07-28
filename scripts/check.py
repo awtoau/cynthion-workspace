@@ -180,14 +180,14 @@ def build_checks() -> List[Check]:
                 Step(["flutter", "test"], app, informational=True),
             ],
         ),
-        # Currently fails on a pre-existing upstream problem, not a toolchain
-        # one: cynthion/python/src/shared/ is empty and untracked, so
-        # top.py's 'cynthion.shared.usb.bVendorId' has nothing to resolve
-        # against. Kept in the list (and out of --fast) so the breakage stays
-        # visible rather than silently dropped.
+        # Do NOT run this from repos/cynthion: that directory contains a
+        # 'cynthion/' subdirectory which Python picks up as a namespace package,
+        # shadowing the installed one (cynthion.__file__ becomes None, so
+        # 'cynthion.shared.usb' cannot resolve). The workspace root is safe, as
+        # is repos/cynthion/cynthion/python, which is what install.py uses.
         Check(
             name="gateware",
-            description="elaborate analyzer gateware (dry run) — known-broken upstream",
+            description="elaborate analyzer gateware (dry run)",
             slow=True,
             skip_reason=_need_dir(
                 Path.home() / "opt" / "oss-cad-suite", "OSS CAD Suite"),
@@ -197,7 +197,7 @@ def build_checks() -> List[Check]:
                       f"LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2"
                       f":CynthionPlatformRev0D2 "
                       f"{PYTHON} -m cynthion.gateware.analyzer.top --dry-run"],
-                     REPOS / "cynthion"),
+                     ROOT),
             ],
         ),
     ]
