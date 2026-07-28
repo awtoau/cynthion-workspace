@@ -84,14 +84,26 @@ def open_device():
 
 
 def measure_in(device, seconds):
-    """Read continuously and verify the counting sequence.
+    """Read continuously, then verify afterwards.
 
     Returns (bytes, elapsed, mismatches).
-    """
-    total = 0
-    mismatches = 0
-    expected = None
 
+    Nothing touches the data inside the timed region. An earlier version
+    verified byte-by-byte in Python as each chunk arrived, and that loop cost
+    3.4 ms per 64 KiB -- a ceiling of about 150 Mbps, which is *below* the
+    184.7 Mbps it then reported as the link speed. The measurement was
+    measuring itself.
+
+    Worse, it applied only to IN. OUT sends a precomputed buffer and does no
+    per-byte work, so the 56% IN/OUT asymmetry that looked like a gateware
+    defect was entirely this loop. Two agents were sent to hunt for a bug in
+    LUNA's IN endpoint that did not exist.
+
+    Buffering the whole capture costs nothing worth caring about: even a full
+    minute at line rate is 3.5 GB. Verification then happens once, vectorised,
+    after the clock has stopped.
+    """
+    chunks = []
     start = time.perf_counter()
     deadline = start + seconds
 
@@ -102,18 +114,33 @@ def measure_in(device, seconds):
             break
         if not len(data):
             break
+        # Keep the raw buffer. Converting or inspecting it here would put work
+        # back inside the timed region, which is the whole thing being avoided.
+        chunks.append(data)
 
-        # The first byte can be anything -- the device is free-running and the
-        # host joins wherever it happens to be. From there each byte should be
-        # the previous plus one.
-        for byte in data:
-            if expected is not None and byte != expected:
-                mismatches += 1
-            expected = (byte + 1) & 0xFF
+    elapsed = time.perf_counter() - start
 
-        total += len(data)
+    # --- clock has stopped; everything below is free ---
 
-    return total, time.perf_counter() - start, mismatches
+    received = b"".join(bytes(chunk) for chunk in chunks)
+    total = len(received)
+    if total < 2:
+        return total, elapsed, 0
+
+    # The device free-runs, so the host joins the sequence wherever it happens
+    # to be. Build the expected continuation from the first byte actually seen
+    # and compare in one operation rather than a Python loop.
+    first = received[0]
+    pattern = bytes((first + i) & 0xFF for i in range(256))
+    repeats = total // 256 + 2
+    expected = (pattern * repeats)[:total]
+
+    if expected == received:
+        return total, elapsed, 0
+
+    # Only count individually when something is actually wrong.
+    mismatches = sum(1 for a, b in zip(received, expected) if a != b)
+    return total, elapsed, mismatches
 
 
 def measure_out(device, seconds):
