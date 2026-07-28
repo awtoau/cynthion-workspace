@@ -59,6 +59,7 @@ import sys
 import json
 import logging
 import os
+import shutil
 import time
 import signal
 import socket
@@ -132,8 +133,27 @@ MOONDANCER_FW = CYNTHION_REPO / "firmware" / "moondancer"
 APOLLO_FW = APOLLO_REPO / "firmware"
 GATEWARE_DIR = CYNTHION_REPO / "cynthion" / "python"
 APP_DIR = REPO_ROOT / "app"
-VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 TMP_DIR = REPO_ROOT / "tmp"
+
+
+def _resolve_python() -> Path:
+    """The interpreter to run workspace Python with.
+
+    The workspace installs into the default free-threaded interpreter rather
+    than a virtualenv, so there is no .venv to point at. Mirrors the resolution
+    order in install.py and check.py; CYN_PYTHON overrides.
+    """
+    override = os.getenv("CYN_PYTHON")
+    if override:
+        return Path(override)
+    for candidate in ("python3.15t", "python3.14t", "python3.15", "python3.14"):
+        found = shutil.which(candidate)
+        if found:
+            return Path(found)
+    return Path(sys.executable)
+
+
+VENV_PYTHON = _resolve_python()
 
 class Colors:
     """ANSI color codes"""
@@ -387,10 +407,18 @@ class CynCLI:
             return 1
 
     def _check_venv(self):
-        """Check if venv exists, exit if not"""
+        """Check the workspace interpreter has the packages (no venv involved)."""
         if not VENV_PYTHON.exists():
-            print(f"ERROR: venv not found at {VENV_PYTHON}")
-            print(f"  Run:  pip install -r requirements.txt && python -m venv {REPO_ROOT / '.venv'}")
+            print(f"ERROR: interpreter not found: {VENV_PYTHON}")
+            print("  Set CYN_PYTHON, or install free-threaded 3.15t "
+                  "(see docs/install.md)")
+            sys.exit(1)
+        probe = subprocess.run(
+            [str(VENV_PYTHON), "-c", "import cynthion, apollo_fpga"],
+            capture_output=True, text=True)
+        if probe.returncode != 0:
+            print(f"ERROR: workspace packages not importable on {VENV_PYTHON}")
+            print("  Run:  ./scripts/setup-dev.sh")
             sys.exit(1)
 
     def cmd_ai_brief(self, args):
@@ -902,6 +930,55 @@ class CynCLI:
         return self._run_tee("apollo C build", ["make", "APOLLO_BOARD=cynthion"],
             cwd=APOLLO_FW, log_file=log_file)
 
+    def _test_apollo(self, log_file, destructive=False):
+        """Run the Apollo hardware-in-the-loop tests.
+
+        Wraps tests/test_hardware.py so the opt-in environment does not have to
+        be reconstructed by hand every time. Without --destructive only the
+        non-destructive tests run; with it, the flash-write suite runs too --
+        that backs the whole 4 MB flash up first and restores it in teardown.
+        """
+        self._check_venv()
+
+        env = dict(os.environ)
+
+        # The tests shell out to the `apollo` console script, which lives next
+        # to the interpreter the packages were installed into. That directory is
+        # not necessarily on PATH in a non-login shell, so put it there rather
+        # than making every caller do it.
+        # resolve(): the interpreter is often reached via a ~/.local/bin
+        # symlink, whose directory holds no console scripts. The scripts sit
+        # next to the *real* binary.
+        interpreter_bin = str(VENV_PYTHON.resolve().parent)
+        if interpreter_bin not in env.get("PATH", "").split(os.pathsep):
+            env["PATH"] = interpreter_bin + os.pathsep + env.get("PATH", "")
+
+        bitstream = env.get("APOLLO_TEST_BITSTREAM")
+        if not bitstream:
+            # Any valid LFE5U-12F image works; the flash tests only check that
+            # write/read round-trips, not that the gateware functions.
+            default = REPO_ROOT / "ecp5-test" / "led_patterns.bit"
+            if default.exists():
+                bitstream = str(default)
+                env["APOLLO_TEST_BITSTREAM"] = bitstream
+
+        if destructive:
+            if not bitstream:
+                print("  ERROR: destructive flash tests need an LFE5U-12F .bit")
+                print("         set APOLLO_TEST_BITSTREAM=<file>")
+                return 1
+            # Both gates are separate on purpose: writing the config flash, and
+            # flash-fast specifically (which used to wedge Apollo -- see #75).
+            env["APOLLO_TEST_ALLOW_FLASH_WRITE"] = "1"
+            env["APOLLO_TEST_ALLOW_FLASH_FAST"] = "1"
+            print(f"  destructive: flash will be backed up and restored")
+            print(f"  bitstream:   {bitstream}")
+
+        return self._run_tee("apollo hardware tests",
+            [str(VENV_PYTHON), "-m", "pytest", "tests/test_hardware.py",
+             "-v", "--tb=short"],
+            cwd=APOLLO_REPO, log_file=log_file, check=False, env=env)
+
     def _check_gateware(self, log_file):
         """Check gateware"""
         self._check_venv()
@@ -1181,7 +1258,7 @@ except Exception as e:
                 "build": (self._build_apollo, True, False),
                 "flash": (self._flash_apollo, False, False),
                 "check": (self._check_c, False, False),
-                "test": (lambda log: self._run_tee("apollo test", ["make", "APOLLO_BOARD=cynthion"], cwd=APOLLO_FW, log_file=log), False, True),
+                "test": (self._test_apollo, False, True),
                 "clean": (lambda log: self._run_tee("apollo clean", ["make", "clean", "APOLLO_BOARD=cynthion"], cwd=APOLLO_FW, log_file=log, check=False), False, False),
             },
             "fpga": {
@@ -1210,6 +1287,8 @@ except Exception as e:
                         try:
                             if has_release:
                                 ret = handler(log, release)
+                            elif has_destructive:
+                                ret = handler(log, destructive)
                             else:
                                 ret = handler(log)
                             if ret != 0:
@@ -1235,6 +1314,10 @@ except Exception as e:
                 try:
                     if has_release:
                         ret = handler(log, release)
+                    elif has_destructive:
+                        # --destructive was previously unpacked and dropped, so
+                        # the flag silently did nothing.
+                        ret = handler(log, destructive)
                     else:
                         ret = handler(log)
                     if ret != 0:
