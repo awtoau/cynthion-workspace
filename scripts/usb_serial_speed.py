@@ -14,11 +14,17 @@ what a first attempt here did -- it hung on 4 KiB while the gateware counters
 showed 25635 bytes received and 25635 echoed, proving the hardware was fine and
 the script was not.
 
-Throughput is therefore a round-trip figure over a loopback: every byte crosses
-the bus twice. It is a measure of the CDC path rather than of raw USB
-capability, and CDC adds framing and per-transfer overhead that a bulk endpoint
-would not. For a raw speed ceiling, use a bulk endpoint instead -- LUNA's own
-speed_test applet does exactly that, and for the same reason.
+Throughput is a round-trip figure over a loopback, so **every byte crosses the
+bus twice**. Two rates are therefore reported: `payload`, which is what a caller
+receives, and `bus`, which is double that and is what the link actually carried.
+
+The distinction matters. Quoting only the payload rate understates the link by
+exactly a factor of two, and invites the wrong conclusion when compared against
+the 480 Mbps line rate. An earlier version of this script reported payload only.
+
+Even the bus figure sits well below 480 Mbps: CDC adds framing and per-transfer
+overhead, and a round trip pays latency in both directions. For a raw ceiling,
+use a bulk endpoint -- LUNA's own speed_test applet does exactly that.
 
     ./scripts/usb_serial_speed.py
     ./scripts/usb_serial_speed.py --port /dev/ttyACM10 --sizes 4096 65536
@@ -116,7 +122,12 @@ def main():
         emit(handle, f"USB CDC-ACM loopback on {port}")
         emit(handle, "round trip: every byte crosses the bus twice")
         emit(handle)
-        emit(handle, f"  {'bytes':>7} {'ms':>9} {'MB/s':>8} {'Mbps':>9}  data")
+        # Two rates, because one of them is easy to misread. `payload` is what
+        # a caller gets; `bus` is twice that, because a loopback sends every
+        # byte out and receives it back, so the link carries double. Quoting
+        # only the payload figure understates the link by exactly 2x.
+        emit(handle, f"  {'bytes':>7} {'ms':>9} {'payload':>9} {'bus':>9} "
+                     f"{'bus Mbps':>10}  data")
 
         # Calibrated from the first successful transfer, then used to bound
         # every later one. Starts generous because nothing is known yet.
@@ -154,15 +165,23 @@ def main():
             # degraded figure.
             if observed_rate is None or rate > observed_rate:
                 observed_rate = rate
-            emit(handle, f"  {size:>7} {elapsed*1000:>9.2f} {rate/1e6:>8.2f} "
-                         f"{rate*8/1e6:>9.1f}  "
+            bus_rate = 2 * rate
+            emit(handle, f"  {size:>7} {elapsed*1000:>9.2f} {rate/1e6:>8.2f}M "
+                         f"{bus_rate/1e6:>8.2f}M {bus_rate*8/1e6:>10.1f}  "
                          f"{'match' if matched else 'MISMATCH'}")
 
         emit(handle)
-        emit(handle, "CDC framing and per-transfer overhead mean this is well "
-                     "below the raw")
-        emit(handle, "480 Mbps the link negotiates. A bulk endpoint measures "
-                     "the ceiling.")
+        emit(handle, "payload = bytes delivered to the caller; bus = twice "
+                     "that, since a")
+        emit(handle, "loopback carries every byte in both directions. Compare "
+                     "the bus figure")
+        emit(handle, "against the 480 Mbps line rate, not the payload one.")
+        emit(handle)
+        emit(handle, "Still short of 480: CDC adds framing and per-transfer "
+                     "overhead, and a")
+        emit(handle, "round trip pays latency twice. A bulk endpoint measures "
+                     "the true ceiling,")
+        emit(handle, "which is why LUNA's own speed_test applet uses one.")
         emit(handle, f"log: {LOG}")
 
     return 0
