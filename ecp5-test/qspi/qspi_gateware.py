@@ -149,10 +149,20 @@ class QSPITest(Elaboratable):
         registers.add_register(REGISTER_QUAD_ADDR, value_signal=capture_addr)
         m.d.comb += read_port.addr.eq(capture_addr)
 
+        # Register the capture readback before it reaches the JTAG mux.
+        #
+        # Without this the critical path runs block RAM -> LUTs -> JTAG
+        # instruction register and closes at only ~137 MHz, which caps the
+        # whole design and makes a 240 MHz sync domain unbuildable. That is
+        # purely test scaffolding limiting the measurement: the readback is
+        # asynchronous to the transfer, so an extra cycle of latency costs
+        # nothing.
+        captured_word = Signal(32)
+        m.d.sync += captured_word.eq(Cat(read_port.data, Const(0, 8), count))
+
         registers.add_read_only_register(REGISTER_QUAD_TIME, read=reader.cycles)
-        registers.add_read_only_register(
-            REGISTER_QUAD_DATA,
-            read=Cat(read_port.data, Const(0, 8), count))
+        registers.add_read_only_register(REGISTER_QUAD_DATA,
+                                         read=captured_word)
 
         # The sync frequency is reported rather than assumed: it is snapped to
         # the nearest achievable PLL output, which need not equal SYNC_MHZ, and

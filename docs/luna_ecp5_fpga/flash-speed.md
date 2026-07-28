@@ -222,6 +222,43 @@ build rather than with SCK point at place-and-route variation on the sample
 path, not at the part. Chasing them means constraining that path or sweeping
 the offset per divisor, not clocking slower.
 
+### Why 60–104 MHz is untested
+
+The datasheet rates quad output to 104 MHz. 60 MHz passes and 120 MHz fails,
+so the true ceiling is somewhere between — and the most interesting part of
+that range, 60 to 104, is currently **unreachable**, which is a limitation of
+the setup rather than a decision that it does not matter.
+
+`SCK = sync / (divisor + 1)` with an integer divisor, so the reachable rates
+are set by the sync frequency:
+
+| sync | divisor 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| 120 MHz | 120 | **60** | 40 | 30 |
+| 240 MHz | 240 | 120 | **80** | 60 |
+
+240 MHz sync would put 80 MHz squarely in the window. It does not build: the
+design closes timing at about **138 MHz**, and nextpnr refuses outright rather
+than warning.
+
+The first attempt at raising that was worth doing anyway — the critical path
+was `block RAM → LUTs → JTAG instruction register`, entirely the test harness's
+capture readback rather than anything to do with reading flash. Registering it
+removed that path, but only moved fmax from 137 to 138 MHz: the next limit is
+inside Glasgow's controller, on the skid buffer feeding the I/O streamer. That
+is real logic doing real work, so lifting it means pipelining an upstream core.
+
+Two ways to reach the window, then:
+
+1. **A sync rate between 120 and 240 MHz.** 160 MHz with divisor 1 gives
+   80 MHz SCK and is under the 138 MHz ceiling — but LUNA's generator only
+   offers 60/120/240, and the custom PLL attempted here did not work (see
+   below).
+2. **Pipeline Glasgow's controller** so the design closes at 240 MHz.
+
+The first is much cheaper, and makes the earlier PLL failure worth revisiting
+rather than a dead end.
+
 ### The 60 MHz limit is ours, not the flash's
 
 At `divisor = 0` the reads fail with all zeros. The part is rated to 104 MHz and
