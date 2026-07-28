@@ -185,12 +185,45 @@ simulation, not on hardware.
 
 ### The 60 MHz limit is ours, not the flash's
 
-At `divisor = 0` the reads fail with all zeros. That is not the part giving up
-— it is rated to 104 MHz — but an artefact of how the clock reaches the pin.
-Glasgow generates SCK as two bits per sync cycle, one per half, so it can clock
-at DDR rate. `USRMCLK` accepts only a single-ended clock, so this code forwards
-`o[0]` alone. At divisor 1 and above the two halves agree and nothing is lost;
-at divisor 0 they differ, and half the clock disappears.
+At `divisor = 0` the reads fail with all zeros. The part is rated to 104 MHz and
+is not the limit here: it never receives a clock at all. The cause is one
+discarded bit in this code.
+
+Glasgow drives SCK through a **DDR output register**, so `sck.o` is two bits
+rather than one — bit 0 is driven during the first half of the sync cycle, bit 1
+during the second. That is what lets it place clock edges at half-cycle
+resolution:
+
+```
+sck.o[0] = timer*2 >  divisor      # first half
+sck.o[1] = timer*2 >= divisor      # second half
+
+divisor=1:  timer=0 -> 0,0     timer=1 -> 1,1
+            both halves agree; SCK is one full sync cycle low, one high (30 MHz)
+
+divisor=0:  timer=0 -> 0,1
+            a whole clock period inside one sync cycle (60 MHz), and it exists
+            *only* as the difference between the two halves
+```
+
+This code forwards `ddr_o[0]` alone, because `USRMCLK` — the ECP5's
+configuration-clock primitive, the only route to that pin — takes a single clock
+input:
+
+```python
+m.d.comb += self.sck.eq(self._sck_port.ddr_o[0])
+```
+
+At divisor 1 and above the halves are equal, so bit 0 carries the whole
+waveform and nothing is lost. At divisor 0 the halves differ, and keeping bit 0
+alone leaves a constant `0`: no clock, no transaction, and the FPGA samples an
+idle bus. That matches the symptom exactly — divisor 0 failed identically at
+every sample offset, which is what "nothing happened" looks like rather than
+"data arrived wrongly".
+
+The fix is to serialise both halves into one signal before `USRMCLK`, using an
+`ODDRX1F` output register clocked at 2× — the same construction LUNA already
+uses to drive the HyperRAM clock (`i_D0`/`i_D1` into `o_Q`).
 
 Raising this further therefore means either driving `USRMCLK` from a
 double-rate output register, or raising the sync domain and keeping divisor 1.
