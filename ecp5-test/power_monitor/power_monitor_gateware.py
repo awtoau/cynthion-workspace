@@ -93,11 +93,17 @@ class PowerMonitorTest(Elaboratable):
         registers.add_register(REGISTER_DEV_ADDRESS, value_signal=dev_address,
                                name="dev_address", init=CANDIDATE_ADDRESSES[0])
 
+        # data_bytes=2: the measurement registers (VBUS, VSENSE) are all 16-bit,
+        # and the PAC195X auto-increments its address pointer within a read, so
+        # a two-byte read returns the full value MSB-first in one transaction.
+        # Reading a byte at a time would also work but risks tearing -- the two
+        # halves could straddle a REFRESH and come from different samples.
         m.submodules.i2c = i2c = I2CRegisterInterface(
             pads=pmon,
             period_cyc=I2C_PERIOD_CYC,
             address=dev_address,
             clk_stretch=True,
+            data_bytes=2,
         )
 
         reg_address = Signal(8, init=REG_MANUFACTURER_ID)
@@ -109,7 +115,14 @@ class PowerMonitorTest(Elaboratable):
         read_strobe = Signal()
         registers.add_sfr(REGISTER_READ_TRIGGER, read=0, write_strobe=read_strobe)
 
-        read_data = Signal(8)
+        # Transfer size, host-selectable: the identification registers are
+        # single bytes, the measurement registers are 16-bit. Defaults to 2 so
+        # a bare read of a measurement register is correct without setup.
+        read_size = Signal(2, init=2)
+        registers.add_register(REGISTER_READ_SIZE, value_signal=read_size,
+                               name="read_size", init=2)
+
+        read_data = Signal(16)
         done_flag = Signal()
 
         with m.If(read_strobe):
@@ -122,7 +135,7 @@ class PowerMonitorTest(Elaboratable):
 
         m.d.comb += [
             i2c.address      .eq(reg_address),
-            i2c.size         .eq(1),
+            i2c.size         .eq(read_size),
             i2c.read_request .eq(read_strobe),
         ]
 

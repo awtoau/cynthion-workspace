@@ -13,8 +13,9 @@ REGISTER_ID            = 1
 REGISTER_DEV_ADDRESS   = 2  # I2C device address (7-bit), host-writable
 REGISTER_REG_ADDRESS   = 3  # PAC195X register to read
 REGISTER_READ_TRIGGER  = 4  # write anything to start a read
-REGISTER_READ_DATA     = 5  # latched result of the last completed read
+REGISTER_READ_DATA     = 5  # latched result of the last completed read (16-bit)
 REGISTER_STATUS        = 6  # bit 0: done, bit 1: i2c busy
+REGISTER_READ_SIZE     = 7  # bytes per read: 1 for ID registers, 2 for measurements
 
 STATUS_DONE = 0b01
 STATUS_BUSY = 0b10

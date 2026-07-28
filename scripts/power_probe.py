@@ -33,10 +33,14 @@ from power_monitor.registers import (
     APPLET_ID, CANDIDATE_ADDRESSES, ADDRESS_RESISTORS,
     REGISTER_ID, REGISTER_DEV_ADDRESS, REGISTER_REG_ADDRESS,
     REGISTER_READ_TRIGGER, REGISTER_READ_DATA, REGISTER_STATUS,
+    REGISTER_READ_SIZE,
     STATUS_DONE,
     REG_PRODUCT_ID, REG_MANUFACTURER_ID, REG_REVISION_ID,
     EXPECTED_MANUFACTURER_ID, EXPECTED_PRODUCT_ID, EXPECTED_REVISION_ID,
     PRODUCT_IDS,
+    REG_REFRESH, REG_VBUS_BASE, REG_VSENSE_BASE, CHANNEL_PORTS,
+    raw_to_volts, raw_to_amps,
+    VBUS_VOLTS_PER_LSB, AMPS_PER_LSB, SENSE_RESISTOR_OHMS, MAX_CURRENT_AMPS,
 )
 
 from apollo_fpga import ApolloDebugger
@@ -53,15 +57,26 @@ class Probe:
     def __init__(self, registers):
         self.regs = registers
 
-    def read_pac_register(self, dev_address, reg_address):
-        """ Read one PAC195X register. Returns None if the device did not respond. """
+    def read_pac_register(self, dev_address, reg_address, size=1):
+        """ Read one PAC195X register.
+
+        size is the number of bytes to fetch: 1 for the identification
+        registers, 2 for the 16-bit measurement registers. The device
+        auto-increments its address pointer within a read, so asking for two
+        bytes at a single-byte register returns that register followed by the
+        next one -- which is why the size has to match the register.
+
+        Returns None if the device did not respond.
+        """
         self.regs.register_write(REGISTER_DEV_ADDRESS, dev_address)
         self.regs.register_write(REGISTER_REG_ADDRESS, reg_address)
+        self.regs.register_write(REGISTER_READ_SIZE, size)
         self.regs.register_write(REGISTER_READ_TRIGGER, 1)
 
+        mask = 0xFF if size == 1 else 0xFFFF
         for _ in range(POLL_ATTEMPTS):
             if self.regs.register_read(REGISTER_STATUS) & STATUS_DONE:
-                return self.regs.register_read(REGISTER_READ_DATA) & 0xFF
+                return self.regs.register_read(REGISTER_READ_DATA) & mask
         return None
 
 
@@ -160,8 +175,40 @@ def main():
             emit(log, f"FAIL: {failures} identification check(s) failed.")
             return 1
         emit(log, f"PASS: PAC1954 identified at 0x{address:02X}.")
-        emit(log, f"Record this address in the r1.4 platform docs (#82).")
-        return 0
+
+        #
+        # Measurements.
+        #
+        # REFRESH first: it latches VBUS, VSENSE and the accumulators together,
+        # so the four channels come from one sample instant rather than
+        # whenever each register happened to be read.
+        #
+        emit(log)
+        probe.read_pac_register(address, REG_REFRESH, size=1)
+
+        emit(log, "measurements (after REFRESH):")
+        emit(log, f"  {'ch':<3} {'port':<9} {'VBUS raw':>9} {'volts':>9} "
+                  f"{'VSENSE raw':>11} {'current':>10}")
+
+        for channel in range(1, 5):
+            vbus = probe.read_pac_register(address, REG_VBUS_BASE + channel - 1, size=2)
+            vsense = probe.read_pac_register(address, REG_VSENSE_BASE + channel - 1, size=2)
+            port = CHANNEL_PORTS[channel]
+
+            if vbus is None or vsense is None:
+                emit(log, f"  {channel:<3} {port:<9} no response")
+                failures += 1
+                continue
+
+            emit(log, f"  {channel:<3} {port:<9} 0x{vbus:04X}    {raw_to_volts(vbus):7.3f} V "
+                      f"    0x{vsense:04X}  {raw_to_amps(vsense) * 1000:8.2f} mA")
+
+        emit(log)
+        emit(log, f"scale: VBUS {VBUS_VOLTS_PER_LSB * 1e6:.1f} uV/LSB, "
+                  f"current {AMPS_PER_LSB * 1e6:.1f} uA/LSB "
+                  f"({SENSE_RESISTOR_OHMS * 1000:.0f} mohm shunt, "
+                  f"{MAX_CURRENT_AMPS:.0f} A full scale)")
+        return 0 if not failures else 1
 
 
 if __name__ == "__main__":
