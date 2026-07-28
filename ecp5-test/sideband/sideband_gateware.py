@@ -25,10 +25,30 @@ from luna.gateware.interface.i2c         import I2CRegisterInterface
 from luna.gateware.architecture.car      import LunaECP5DomainGenerator
 from luna.gateware.interface.jtag        import JTAGRegisterInterface
 
+from luna.gateware.interface.flash       import ECP5ConfigurationFlashInterface
+
 from apollo_fpga.gateware.sideband       import SidebandResponder
+from apollo_fpga.gateware.flash_bridge   import SPIStreamController
+from apollo_fpga.gateware.flash_id       import (FlashIDReader, FlashSpeedTest,
+                                                 FlashCapture, SPIMux)
 
 
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
+
+# SCK divisor for the configuration flash: SCK = 60 MHz / period. The stock
+# value of 4 gives 15 MHz, well under the W25Q32's 50 MHz limit for the plain
+# 0x03 read -- so the default leaves most of the part's speed unused.
+FLASH_SCK_PERIOD = 2
+
+# How much to read when measuring throughput, and with which opcode. 4 KiB is
+# long enough that the four-byte header and the CS overhead stop dominating, so
+# the figure reflects sustained streaming rather than per-transaction cost.
+FLASH_SPEED_BYTES = 4096
+FLASH_USE_FAST_READ = 0
+
+# How many payload bytes to mirror into block RAM for inspection. The ECP5-12F
+# has 56 DP16KD blocks and this design used none of them, so 1 KiB is free.
+CAPTURE_DEPTH = 1024
 
 # Register 0 is reserved by JTAGRegisterInterface for size auto-negotiation.
 REGISTER_ID        = 1
@@ -40,6 +60,11 @@ REGISTER_EDGES     = 6   # raw FPGA_ADV edge count, independent of framing
 REGISTER_PIN_LEVEL = 7   # current FPGA_ADV level, for a static check
 REGISTER_RX_BYTES  = 8   # count of bytes the UART receiver framed successfully
 REGISTER_LAST_RX   = 9   # the last byte it framed, whatever it was
+REGISTER_FLASH_ID  = 10  # JEDEC ID in the low 24 bits, valid flag in bit 24
+REGISTER_FLASH_TIME = 11 # cycles the last throughput measurement occupied
+REGISTER_FLASH_SUM  = 12 # CRC-8 of the bytes it read, to prove they were real
+REGISTER_CAPTURE_ADDR = 13  # write: byte address into the capture buffer
+REGISTER_CAPTURE_DATA = 14  # read: that byte, plus the captured count
 
 APPLET_ID = 0x53424E44   # "SBND"
 
@@ -58,7 +83,103 @@ class SidebandTest(Elaboratable):
         registers.add_read_only_register(REGISTER_ID, read=APPLET_ID)
 
         m.submodules.responder = responder = SidebandResponder(
-            clk_freq_hz=60e6, baud=115200)
+            clk_freq_hz=60e6, baud=230400)
+
+        #
+        # Configuration flash.
+        #
+        # The SPI master is Apollo's own SPIStreamController and the pin-level
+        # adaptation is LUNA's ECP5ConfigurationFlashInterface: the ECP5 cannot
+        # drive SCK from ordinary fabric, so it has to leave through USRMCLK.
+        #
+        spi = SPIStreamController()
+        spi.period = FLASH_SCK_PERIOD
+        m.submodules.spi = spi
+
+        flash_bus = ECP5ConfigurationFlashInterface(
+            bus=platform.request('spi_flash'), use_cs=True)
+        m.submodules.flash_bus = flash_bus
+        m.d.comb += [
+            flash_bus.sck.eq(spi.bus.sck),
+            flash_bus.sdi.eq(spi.bus.sdi),
+            flash_bus.cs .eq(spi.bus.cs),
+            spi.bus.sdo  .eq(flash_bus.sdo),
+        ]
+
+        m.submodules.flash_id = flash_id = FlashIDReader()
+
+        # Read the ID once, shortly after configuration. It cannot change while
+        # the board is powered, so a single read is enough and re-reading would
+        # only give the sideband a way to observe a half-updated value.
+        id_started = Signal()
+        with m.If(~id_started):
+            m.d.sync += id_started.eq(1)
+            m.d.comb += flash_id.start.eq(1)
+
+        m.d.comb += [
+            responder.flash_manufacturer.eq(flash_id.manufacturer),
+            responder.flash_memory_type .eq(flash_id.memory_type),
+            responder.flash_capacity    .eq(flash_id.capacity),
+            responder.flash_valid       .eq(flash_id.valid),
+        ]
+
+        registers.add_read_only_register(
+            REGISTER_FLASH_ID,
+            read=Cat(flash_id.manufacturer, flash_id.memory_type,
+                     flash_id.capacity, flash_id.valid))
+
+        #
+        # Throughput measurement.
+        #
+        # Runs once after the ID read completes, so the two never contend for
+        # the SPI master. Reports raw sync-domain cycles: the divisor and the
+        # clock are both known to the host, and doing the division in gateware
+        # would spend a divider to produce a less precise number.
+        #
+        m.submodules.flash_speed = flash_speed = FlashSpeedTest()
+
+        # The ID read finishes before the measurement starts, so the mux is a
+        # selector: port 0 until the ID is latched, port 1 thereafter.
+        m.submodules.spi_mux = spi_mux = SPIMux(
+            controller=spi, ports=[flash_id.spi, flash_speed.spi])
+        m.d.comb += spi_mux.select.eq(flash_id.valid)
+
+        speed_started = Signal()
+        m.d.comb += [
+            flash_speed.length.eq(FLASH_SPEED_BYTES),
+            flash_speed.fast_read.eq(FLASH_USE_FAST_READ),
+        ]
+        with m.If(flash_id.valid & ~speed_started & ~flash_id.busy):
+            m.d.sync += speed_started.eq(1)
+            m.d.comb += flash_speed.start.eq(1)
+
+        registers.add_read_only_register(REGISTER_FLASH_TIME,
+                                         read=flash_speed.cycles)
+        registers.add_read_only_register(
+            REGISTER_FLASH_SUM,
+            read=Cat(flash_speed.checksum, flash_speed.done,
+                     Const(0, 23)))
+
+        #
+        # Capture buffer.
+        #
+        # A checksum says only that something is wrong; these bytes say what.
+        # Reading them back verbatim distinguishes a shifted sample point (data
+        # present but rotated) from a dead MISO (all zeros or ones) from real
+        # corruption -- which no single fold can.
+        #
+        m.submodules.capture = capture = FlashCapture(depth=CAPTURE_DEPTH)
+        m.d.comb += [
+            capture.write_strobe.eq(flash_speed.data_strobe),
+            capture.write_data  .eq(flash_speed.data),
+        ]
+
+        capture_addr = Signal(range(CAPTURE_DEPTH))
+        registers.add_register(REGISTER_CAPTURE_ADDR, value_signal=capture_addr)
+        m.d.comb += capture.read_addr.eq(capture_addr)
+        registers.add_read_only_register(
+            REGISTER_CAPTURE_DATA,
+            read=Cat(capture.read_data, Const(0, 8), capture.count))
 
         #
         # FPGA_ADV.
