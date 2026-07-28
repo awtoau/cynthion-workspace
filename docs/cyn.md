@@ -33,13 +33,26 @@ cyn prereqs               # Check prerequisites (fail-fast)
 cyn versions              # Show versions
 ```
 
-### CI/CD Management
+### Workspace checks
+
+The workspace has no GitHub Actions of its own — checks run natively:
+
 ```bash
-cyn ci install            # Install GitHub Actions runner (act)
-cyn ci list               # List available workflows
-cyn ci apollo             # Run Apollo CI locally
-cyn ci cynthion           # Run Cynthion CI locally
-cyn ci luna               # Run Luna CI locally
+./scripts/check.py --fast     # every fast check, ~3s
+./scripts/check.py --list     # what is available on this machine
+```
+
+### CI/CD Management (submodule repos only)
+
+These drive `act` against the **submodule** repos, which keep their own upstream
+workflows. They do not apply to the workspace, which has none by design.
+
+```bash
+cyn ci install            # Install act (runs GitHub workflows locally)
+cyn ci list               # List workflows in the current repo
+cyn ci apollo             # List Apollo CI jobs
+cyn ci cynthion           # List Cynthion CI jobs
+cyn ci luna               # List Luna CI jobs
 ```
 
 ### Global Options

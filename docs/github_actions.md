@@ -1,67 +1,43 @@
 ## GitHub Actions
 
-### Current Workflows
+### This workspace runs nothing on GitHub
 
-**awto-apollo/.github/workflows/firmware.yml**
-- Builds: Apollo firmware for 6 board variants
-- Triggers: push, pull_request, merge_group
-- Runs on: ubuntu-latest
+There is no `.github/workflows/` in this repo, deliberately. The `fast` and
+`full` workflows were deleted on 2026-07-28 and must not be reinstated.
 
-**awto-cynthion/.github/workflows/python.yml**
-- Tests: Python package on 3 OS × 5 Python versions
-- Triggers: push, pull_request, weekly schedule
-- Matrix: 15 jobs
-- Runs on: ubuntu-latest, macos-latest, windows-latest
+Checks run locally instead — see [`scripts/check.py`](../scripts/check.py) and the
+[README](../README.md#checks-run-locally-not-on-github):
 
-**awto-saturn-v/.github/workflows/build.yml**
-- Builds: Saturn-V bootloader on 2 platforms
-- Triggers: push, pull_request, weekly schedule
-
-**awto-luna/.github/workflows/simulate.yml**
-- Runs: HDL simulations
-- Triggers: push, pull_request, weekly schedule
-
-### Missing from GitHub Actions
-- ✗ No FPGA bitstream generation (no Yosys/nextpnr)
-- ✗ No moondancer firmware build
-- ✗ No analyzer/facedancer gateware build
-
-### Enhancement: Full Build Workflow
-
-Create `.github/workflows/full-build.yml` that calls install.py:
-
-```yaml
-name: Complete Build Pipeline
-
-on: [push, pull_request]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - run: |
-          sudo apt-get update && sudo apt-get install -y \
-            arm-none-eabi-gcc binutils bison boost-dev clang cmake \
-            curl dfu-util flex gawk git jq libeigen3-dev libreadline-dev \
-            openocd pkg-config tcl tcl-dev zlib1g-dev
-      - run: ./scripts/install.py setup
-      - uses: actions/upload-artifact@v4
-        with:
-          name: artifacts
-          path: |
-            **/*.elf
-            **/*.bin
-            versions.json
-```
-
-Then test locally:
 ```bash
-act -j build -P ubuntu-latest=ubuntu:22.04
+./scripts/check.py --fast
 ```
 
----
+Reasons this is local rather than hosted:
 
+- The checks that matter need the real toolchain, the real free-threaded 3.15t
+  interpreter, and (for anything beyond compilation) real hardware. A cloud
+  runner can only approximate the first two and never the third.
+- Hosted runs were actively misleading. Both flutter jobs carried
+  `continue-on-error: true`, so they reported green for months while failing —
+  6 analyzer warnings and a failing smoke test went unnoticed the whole time.
+- Running locally is faster than queueing: the full fast set is ~3 s.
+
+If something needs automating, extend `scripts/check.py`. Do not add a workflow.
+
+### Upstream workflows in the submodules
+
+The submodule repos are separate repositories — mostly forks tracking upstream —
+and keep their own CI. Those are **not** covered by the rule above; deleting them
+would diverge the forks from upstream and cause merge conflicts on the next sync.
+
+| Repo | Workflow | What it does |
+|------|----------|--------------|
+| `awto-apollo` | `firmware.yml` | Apollo firmware for 6 board variants; push, PR, merge_group |
+| `awto-cynthion` | `python.yml` | Python package, 3 OS × 5 Python versions (15 jobs); push, PR, weekly |
+| `awto-saturn-v` | `build.yml` | Bootloader on 2 platforms; push, PR, weekly |
+| `awto-luna` | `simulate.yml` | Gateware simulation |
+| `awto-packetry` | 2 workflows | Build + AppImage packaging |
+
+None of them build FPGA bitstreams, moondancer firmware, or the
+analyzer/facedancer gateware — that work only ever happens locally, which is
+another reason the local runner is the real check.

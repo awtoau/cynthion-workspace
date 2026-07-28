@@ -61,10 +61,13 @@ standalone copy at `~/git_mirror/cynthion-hardware/`.
 
 ## Checks run locally, not on GitHub
 
-**Nothing in this repo runs on GitHub Actions.** Both workflows are disabled;
-their YAML is kept only as a reference for what the local runner reproduces.
-Checks run natively on the dev machine, against the real toolchain and the real
+**Nothing in this repo runs on GitHub Actions.** The workflows have been deleted
+outright — there is no `.github/workflows/` here, by design. Checks run natively
+on the dev machine, against the real toolchain, the real hardware, and the real
 free-threaded interpreter — no Docker, no cloud runners, no queue.
+
+Do not add workflow files back. If something needs automating, extend
+`scripts/check.py`.
 
 ```bash
 ./scripts/check.py              # everything
