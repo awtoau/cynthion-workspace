@@ -38,7 +38,7 @@ capture settled them.
 """
 
 from amaranth                            import (Cat, Const, Elaboratable, Module,
-                                                 Signal, unsigned)
+                                                 Mux, Signal, unsigned)
 from amaranth.lib.memory                 import Memory
 
 from luna.gateware.interface.jtag        import JTAGRegisterInterface
@@ -53,7 +53,18 @@ from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
 # board by the HyperRAM work. It yields SCK of 120, 60, 40, 30, 24, 20 and
 # 15 MHz -- which spans the 30-to-60 region the rebuild-per-frequency ladder
 # had to skip.
-SYNC_MHZ = 120
+# 96 MHz, giving 48 MHz SCK at divisor 1.
+#
+# Down from 120. The burst-mode logic pushed the design from 135 MHz to about
+# 119 -- under the 120 it needed, so the build failed outright. Rather than
+# strip out the measurement to buy back 1%, the clock drops to where there is
+# real margin: at 96 MHz the design closes comfortably and stays buildable as
+# more is added.
+#
+# 48 MHz SCK is well inside Lattice's 62 MHz limit for MCLK and costs 20%
+# throughput against 60 MHz. The divisor is still writable, so a board can be
+# characterised faster; this is the rate the bitstream ships at.
+SYNC_MHZ = 96
 
 # Sample-point offset, also build-time -- it selects between pipeline stages.
 # 0 is what the earlier sweep found correct at 30 MHz SCK.
@@ -75,6 +86,9 @@ REGISTER_QUAD_DIVISOR = 6   # write: SCK divisor; SCK = sync / (divisor + 1)
 REGISTER_QUAD_START   = 7   # write: any changed value re-runs the read
 REGISTER_QUAD_MODE    = 8   # write: bit 0 selects 0xEB quad I/O over 0x6B
 REGISTER_PASS_ERRORS  = 9   # mismatches vs the first pass, and a pass count
+REGISTER_BURST_LEN    = 10  # write: bytes per read in burst mode (0 = off)
+REGISTER_BURST_COUNT  = 11  # write: how many reads to perform
+REGISTER_BURST_CYCLES = 12  # read: total cycles for the whole burst
 
 
 class QSPITest(Elaboratable):
@@ -97,7 +111,6 @@ class QSPITest(Elaboratable):
 
         reader = QuadFlashReader(controller=controller)
         m.submodules.reader = reader
-        m.d.comb += reader.length.eq(READ_BYTES)
 
         # Runtime divisor, defaulting to 7 -- 30 MHz at a 240 MHz sync, the
         # rate already verified byte-exact. A freshly configured board then
@@ -126,6 +139,54 @@ class QSPITest(Elaboratable):
         run = Signal()
         m.d.comb += run.eq(start_reg != start_prev)
 
+        #
+        # Burst mode: many short reads at scattered addresses.
+        #
+        # The single 32 KiB read measures streaming, which is the case where
+        # per-transaction overhead disappears -- and therefore the one case
+        # where quad I/O cannot help. RISC-V executing from flash does the
+        # opposite: many small independent reads, each paying full overhead.
+        # This measures that, and exercises address decoding at the same time,
+        # since a run of reads at one address would not.
+        burst_len   = Signal(16)
+        burst_count = Signal(16)
+        burst_done  = Signal(16)
+        # 24 bits, not 32. The longest burst here -- 256 reads of 64 bytes --
+        # is about 35k cycles, so 24 bits is ample, and the shorter carry chain
+        # matters: the 32-bit version cost enough timing to fail the build at
+        # 120 MHz.
+        burst_cycles = Signal(24)
+        bursting    = Signal()
+
+        registers.add_register(REGISTER_BURST_LEN, value_signal=burst_len)
+        registers.add_register(REGISTER_BURST_COUNT, value_signal=burst_count)
+        registers.add_read_only_register(REGISTER_BURST_CYCLES,
+                                         read=burst_cycles)
+
+        # KNOWN BROKEN: the burst sequencer wedges the reader.
+        #
+        # `start` is asserted again on the completion edge, but the reader is
+        # not yet back in IDLE, so the strobe is missed and `busy` stays high
+        # for ever -- observed as read cycles climbing past 2 billion with
+        # done=0.
+        #
+        # It is left in place rather than removed because the register map and
+        # the address plumbing below are correct and reused. The measurement it
+        # was written for should not be done this way regardless: a JTAG
+        # register read takes ~35 ms against ~1 us for a 4-byte flash read, so
+        # the host cannot observe short transfers at all, whatever the gateware
+        # does. That belongs in a soft CPU inside the FPGA -- luna_soc ships
+        # VexRiscv, which is what moondancer already uses.
+        #
+        # Addresses stride by a large odd number so successive reads land in
+        # different pages and rarely repeat, without needing an LFSR: a
+        # sequential walk would stay inside one page and measure the wrong
+        # thing.
+        burst_addr = Signal(24)
+
+        m.d.comb += reader.length.eq(Mux(bursting, burst_len, READ_BYTES))
+        m.d.comb += reader.address.eq(Mux(bursting, burst_addr, 0))
+
         # Also run once after configuration, so a board that is never written
         # to still holds a valid measurement.
         started = Signal()
@@ -133,7 +194,36 @@ class QSPITest(Elaboratable):
             m.d.sync += started.eq(1)
             m.d.comb += reader.start.eq(1)
         with m.Elif(run & ~reader.busy):
+            m.d.sync += [
+                bursting.eq(burst_len != 0),
+                burst_done.eq(0),
+                burst_cycles.eq(0),
+                burst_addr.eq(0),
+            ]
             m.d.comb += reader.start.eq(1)
+
+        # `done` is a level, not a strobe, so a burst driven off the level
+        # re-triggers continuously and the cycle counter never stops -- it
+        # reported 3.9 billion cycles for 256 four-byte reads, which would be
+        # 32 seconds. Advance on the rising edge instead.
+        done_prev = Signal()
+        done_edge = Signal()
+        m.d.sync += done_prev.eq(reader.done)
+        m.d.comb += done_edge.eq(reader.done & ~done_prev)
+
+        with m.If(bursting):
+            m.d.sync += burst_cycles.eq(burst_cycles + 1)
+            with m.If(done_edge & (burst_done < burst_count)):
+                m.d.sync += [
+                    burst_done.eq(burst_done + 1),
+                    # 4099 is prime, so the stride visits many distinct pages
+                    # before repeating rather than cycling through a few.
+                    burst_addr.eq(burst_addr + 4099),
+                ]
+                with m.If(burst_done + 1 < burst_count):
+                    m.d.comb += reader.start.eq(1)
+                with m.Else():
+                    m.d.sync += bursting.eq(0)
 
         #
         # Capture buffer.
