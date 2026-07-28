@@ -36,7 +36,7 @@ from luna.gateware.interface.psram       import HyperRAMPHY, HyperRAMInterface
 
 # The clock under test. HyperRAM is DDR, so the data rate is twice this on an
 # 8-bit bus: 16 bits per clock, 2 bytes, so bytes/s = clock * 2.
-CLOCK_MHZ = 60
+CLOCK_MHZ = 120
 
 # Words to transfer per run. 1024 32-bit words is 4 KiB, long enough that the
 # command and latency phases stop dominating the figure.
@@ -75,7 +75,11 @@ class HyperRAMSpeedTest(Elaboratable):
         m = Module()
 
         m.submodules.clocking = LunaECP5DomainGenerator(
-            clock_frequencies={"fast": CLOCK_MHZ * 2,
+            # `fast` is the 2x edge clock the PHY's ODDRX1F/DELAYF need. The
+            # PLL only offers 60/120/240, so it is clamped rather than computed:
+            # at CLOCK_MHZ=240 a doubled value would be 480 and the generator
+            # raises KeyError.
+            clock_frequencies={"fast": min(CLOCK_MHZ * 2, 240),
                                "sync": CLOCK_MHZ,
                                "usb":  60})
 
