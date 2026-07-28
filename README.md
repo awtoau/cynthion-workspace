@@ -18,9 +18,13 @@ dev-cycle check scripts, and owns CI configuration.
 ```bash
 git clone --recurse-submodules https://github.com/awtoau/cynthion-workspace
 cd cynthion-workspace
-./scripts/setup-dev.sh        # one-time: venv + toolchain checks
-./scripts/check-fast.sh       # run before every commit
+./scripts/setup-dev.sh          # one-time: packages + toolchain checks
+./scripts/install.py prereqs    # verify the environment
 ```
+
+No virtualenv: packages install into the default free-threaded interpreter, so
+plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
+[Python strategy](#python-strategy).
 
 ## Repository map
 
@@ -63,7 +67,42 @@ standalone copy at `~/git_mirror/cynthion-hardware/`.
 
 ## Python strategy
 
-- **Required**: 3.12 (stable, known-good with full dependency stack)
-- **Target**: 3.14t (free-threaded, no-GIL) — in CI as `allowed-to-fail`, promoted once stack proves stable
-- Note: free-threaded builds introduced in 3.13t, 3.14t is current
-- Pinned in `scripts/setup-dev.sh` via `uv`
+**The workspace runs on free-threaded (no-GIL) CPython 3.15t, installed as the
+default `python3`. There is no virtualenv.**
+
+Free-threading is not incidental here: the parallel build path in
+`scripts/install.py` uses real threads, and gateware elaboration is the main
+beneficiary. A GIL-enabled interpreter works but serialises that work.
+
+| | |
+|---|---|
+| Interpreter | CPython **3.15t** free-threaded |
+| Environment | System / default — no venv to create or activate |
+| Install | `python3 -m pip install -e repos/cynthion/cynthion/python -e repos/facedancer` |
+| Verify | `python3 -c "import sys; print(sys._is_gil_enabled())"` → `False` |
+| Override | `CYN_PYTHON=/path/to/python` |
+
+3.15 is still beta and no distro packages a free-threaded build of it, so it is
+installed via `uv python install 3.15t` or built from source with
+`--disable-gil`. `scripts/install.py` resolves the interpreter itself, preferring
+`python3.15t` and falling back through `python3.14t` / `python3.15` /
+`python3.14` for a machine mid-upgrade.
+
+### PATH ordering matters
+
+Console scripts (`cynthion`, `apollo`) install next to the 3.15t interpreter.
+That directory must precede `~/.local/bin`, or a shim left behind by an older
+interpreter shadows them and fails with `ModuleNotFoundError`:
+
+```bash
+export PATH="$HOME/opt/cpython-315t/bin:$PATH"
+```
+
+### Upstream pinning
+
+Upstream `pyproject.toml` files declare open lower bounds (`requires-python =
+">=3.9"`) with no upper cap, so 3.15t is permitted — the pins that previously
+held this workspace on 3.12/3.14 were all in local tooling, not upstream.
+
+CI runs 3.15t as the job that matters; 3.13 and 3.14 remain in the nightly
+matrix only to catch code that accidentally depends on free-threading.

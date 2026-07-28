@@ -21,8 +21,10 @@ jobs:
         working-directory: repos/cynthion/firmware
       - run: make clippy
         working-directory: repos/cynthion/firmware
-      - run: cargo test
-        working-directory: repos/cynthion/firmware
+      # No 'cargo test' step: this is a no_std workspace with no #[test]
+      # functions, and cargo test builds for the host, where lunasoc-hal's
+      # examples cannot link ("unwinding panics are not supported without
+      # std"). It failed on every run without ever executing a test.
 
   c-apollo:
     name: apollo C firmware
@@ -31,34 +33,30 @@ jobs:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - run: sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+      # tinyusb keeps the microchip MCU headers (sam.h) out of tree; they are
+      # fetched on demand rather than vendored, so the build cannot find them
+      # on a fresh checkout. 'samd11' pulls just that family's driver.
+      - run: python3 tools/get_deps.py samd11
+        working-directory: repos/apollo/lib/tinyusb
       - run: make APOLLO_BOARD=cynthion
         working-directory: repos/apollo/firmware
       - run: arm-none-eabi-size _build/cynthion_d11/firmware.elf
         working-directory: repos/apollo/firmware
 
-  python-312:
-    name: python 3.12
+  # 3.15t free-threaded is the workspace's Python: it is what `python3` resolves
+  # to on the dev machine, so CI tests what is actually developed against. The
+  # previous 3.12 and 3.14t jobs both predated that move.
+  python-315t:
+    name: python 3.15t no-GIL
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - uses: astral-sh/setup-uv@v4
-      - run: uv venv .venv --python 3.12
-      - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
-      - run: .venv/bin/python -c "import cynthion; import apollo_fpga; import facedancer"
-      - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short
-        continue-on-error: true
-
-  python-314t:
-    name: python 3.14t no-GIL (experimental)
-    runs-on: ubuntu-latest
+    # 3.15 is still in beta; a broken upstream build should not block merges.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - uses: astral-sh/setup-uv@v4
-      - run: uv venv .venv --python 3.14t
-      - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
+      - run: uv venv .venv --python 3.15t
+      - run: uv pip install pytest -e repos/cynthion/cynthion/python -e repos/facedancer
       - run: .venv/bin/python -c "import cynthion; import apollo_fpga; import facedancer"
       - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -q --tb=short
 
