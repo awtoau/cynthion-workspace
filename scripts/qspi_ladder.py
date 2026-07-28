@@ -4,20 +4,28 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Finds the working (offset, divisor) combinations for quad flash reads.
+Sweeps quad flash SCK by writing the divisor at runtime, and verifies the data.
 
-The sample offset compensates for the round trip from the FPGA, through
-USRMCLK and the pad, into the flash, and back through the input register. That
-delay is roughly fixed in nanoseconds, so the number of clock periods it spans
-grows as SCK rises -- which is why offset and divisor have to be swept together
-rather than independently.
+The divisor is a register in the bitstream, not a build-time constant, so the
+whole ladder runs against ONE configured FPGA: write divisor, trigger a read,
+compare bytes, repeat. A sweep that used to mean a rebuild and reconfigure per
+step -- minutes each -- now takes seconds, and it covers rates a rebuild ladder
+could not reach at all.
 
-Every combination is checked against bytes read through `apollo flash-read`,
-an entirely separate path, because a throughput figure alone cannot tell a
-working quad read from a fast stream of nonsense.
+SCK = sync / (divisor + 1). At the bitstream's 120 MHz sync that gives 120, 60,
+40, 30, 24, 20, 17 and 15 MHz, which spans the 30-to-60 MHz region the earlier
+rebuild-per-frequency ladder jumped straight over.
 
-    ./scripts/qspi_ladder.py
-    ./scripts/qspi_ladder.py --divisors 1 2 --offsets 0 1 2 3 4
+The sample offset is still build-time -- it selects between pipeline registers
+-- so `--offsets` rebuilds, while `--divisors` alone does not.
+
+Every point is checked against bytes read through `apollo flash-read`, an
+entirely separate path, because a throughput figure alone cannot tell a working
+quad read from a fast stream of nonsense.
+
+    ./scripts/qspi_ladder.py                       # runtime sweep, no rebuild
+    ./scripts/qspi_ladder.py --divisors 0 1 2 3
+    ./scripts/qspi_ladder.py --offsets 0 1 2       # rebuilds per offset
 """
 
 import argparse
@@ -37,6 +45,7 @@ READ_BYTES = 4096
 SYNC_MHZ = 60
 
 REG_ID, REG_TIME, REG_ADDR, REG_DATA, REG_STATUS = 1, 2, 3, 4, 5
+REG_DIVISOR, REG_START = 6, 7
 
 
 def emit(handle, text=""):
@@ -49,9 +58,13 @@ def shell_quote(text):
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def build(divisor, offset):
+def build(offset):
+    """Rebuild and reconfigure for a given sample offset.
+
+    Only the offset needs this: it selects between pipeline registers and is
+    fixed in the bitstream. The divisor is a runtime register.
+    """
     text = GATEWARE.read_text()
-    text = re.sub(r"QSPI_DIVISOR = \d+", f"QSPI_DIVISOR = {divisor}", text)
     text = re.sub(r"QSPI_OFFSET = \d+", f"QSPI_OFFSET = {offset}", text)
     GATEWARE.write_text(text)
 
@@ -77,6 +90,59 @@ def build(divisor, offset):
                       cwd=ROOT, capture_output=True).returncode != 0:
         return False, "configure failed"
     return True, ""
+
+
+def measure(divisor):
+    """Set the divisor, re-run the read, and return the result.
+
+    Writing REG_START with a changed value re-triggers; the gateware
+    edge-detects it, so the counter here just has to differ each call.
+    """
+    script = (
+        'import sys; sys.path.insert(0,"repos/apollo")\n'
+        'from apollo_fpga import ApolloDebugger\n'
+        'd = ApolloDebugger()\n'
+        f'd.registers.register_write({REG_DIVISOR}, {divisor})\n'
+        # Re-trigger, then poll `busy` rather than sleeping: the read takes
+        # microseconds and the JTAG round trip alone is longer than that.
+        f'd.registers.register_write({REG_START}, {divisor} + 1)\n'
+        'for _ in range(200):\n'
+        f'    st = d.registers.register_read({REG_STATUS})\n'
+        '    if (st & 1) and not (st >> 1) & 1:\n'
+        '        break\n'
+        f'cyc = d.registers.register_read({REG_TIME})\n'
+        'out = []\n'
+        f'for a in range({COMPARE_BYTES}):\n'
+        f'    d.registers.register_write({REG_ADDR}, a)\n'
+        f'    out.append(d.registers.register_read({REG_DATA}) & 0xFF)\n'
+        'print(st, cyc, " ".join(str(b) for b in out))\n'
+    )
+    result = subprocess.run([sys.executable, "-c", script],
+                            cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.split()
+    status, cycles = int(parts[0]), int(parts[1])
+    return status, cycles, bytes(int(v) for v in parts[2:])
+
+
+def sync_mhz():
+    """The sync frequency the bitstream was actually built at.
+
+    Read from the FPGA rather than assumed, because every rate reported here
+    is derived from it and a stale constant would scale the whole table.
+    """
+    script = (
+        'import sys; sys.path.insert(0,"repos/apollo")\n'
+        'from apollo_fpga import ApolloDebugger\n'
+        'd = ApolloDebugger()\n'
+        f'print(d.registers.register_read({REG_STATUS}))\n'
+    )
+    result = subprocess.run([sys.executable, "-c", script],
+                            cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    return (int(result.stdout.strip()) >> 8) & 0xFFFF
 
 
 def read_back():
@@ -129,62 +195,79 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--divisors", type=int, nargs="+", default=[1, 2, 3])
-    parser.add_argument("--offsets", type=int, nargs="+",
-                        default=[0, 1, 2, 3, 4, 5, 6, 7])
+    parser.add_argument("--divisors", type=int, nargs="+",
+                        default=[0, 1, 2, 3, 4, 5, 7],
+                        help="SCK divisors to sweep at runtime")
+    parser.add_argument("--offsets", type=int, nargs="+", default=None,
+                        help="sample offsets; each one REBUILDS the bitstream")
+    parser.add_argument("--no-build", action="store_true",
+                        help="use whatever is already configured on the FPGA")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
     original = GATEWARE.read_text()
     expected = reference_bytes()
+    offsets = args.offsets if args.offsets is not None else [None]
 
     try:
         with LOG.open("w") as handle:
-            emit(handle, f"quad SPI ladder: {READ_BYTES} bytes per run, "
+            emit(handle, f"quad SPI ladder: {READ_BYTES} bytes per read, "
                          f"first {COMPARE_BYTES} verified against apollo")
             emit(handle, f"reference: "
                          f"{' '.join(f'{b:02x}' for b in expected[:8])} ...")
             emit(handle)
-            emit(handle, f"  {'divisor':>8} {'SCK':>7} {'offset':>7} "
-                         f"{'MB/s':>7}  {'shape':<20} verdict")
 
             found = []
-            for divisor in args.divisors:
-                sck = SYNC_MHZ / (divisor + 1)
-                for offset in args.offsets:
-                    ok, detail = build(divisor, offset)
+            for offset in offsets:
+                if offset is not None and not args.no_build:
+                    ok, detail = build(offset)
                     if not ok:
-                        emit(handle, f"  {divisor:>8} {sck:>6.1f}M {offset:>7} "
-                                     f"{'':>7}  BUILD FAIL: {detail[:40]}")
+                        emit(handle, f"  offset {offset}: BUILD FAIL: {detail}")
                         continue
 
-                    result = read_back()
+                sync = sync_mhz()
+                if sync is None:
+                    emit(handle, "  cannot read the FPGA -- is it configured?")
+                    continue
+
+                label = "" if offset is None else f", offset {offset}"
+                emit(handle, f"  sync {sync} MHz{label}")
+                emit(handle, f"  {'divisor':>8} {'SCK':>8} {'MB/s':>8}  "
+                             f"{'shape':<22} verdict")
+
+                for divisor in args.divisors:
+                    result = measure(divisor)
                     if result is None:
-                        emit(handle, f"  {divisor:>8} {sck:>6.1f}M {offset:>7} "
-                                     f"{'':>7}  NO RESPONSE")
+                        emit(handle, f"  {divisor:>8} {'':>8} {'':>8}  "
+                                     f"NO RESPONSE")
                         continue
 
-                    cycles, status, data = result
-                    rate = (READ_BYTES / (cycles / (SYNC_MHZ * 1e6)) / 1e6
+                    status, cycles, data = result
+                    sck = sync / (divisor + 1)
+                    rate = (READ_BYTES / (cycles / (sync * 1e6)) / 1e6
                             if cycles else 0)
-                    verdict, shape = classify(data, expected)
+
+                    if not status & 1:
+                        verdict, shape = "FAIL", "never completed"
+                    else:
+                        verdict, shape = classify(data, expected)
                     if verdict == "PASS":
-                        found.append((divisor, offset, rate))
+                        found.append((divisor, offset, sck, rate))
 
-                    emit(handle, f"  {divisor:>8} {sck:>6.1f}M {offset:>7} "
-                                 f"{rate:>7.2f}  {shape:<20} {verdict}")
+                    emit(handle, f"  {divisor:>8} {sck:>7.1f}M {rate:>8.2f}  "
+                                 f"{shape:<22} {verdict}")
+                emit(handle)
 
-            emit(handle)
             if found:
-                best = max(found, key=lambda f: f[2])
-                emit(handle, f"fastest working: divisor {best[0]}, "
-                             f"offset {best[1]}, {best[2]:.2f} MB/s")
+                best = max(found, key=lambda f: f[3])
+                where = "" if best[1] is None else f", offset {best[1]}"
+                emit(handle, f"fastest verified: divisor {best[0]}{where} -- "
+                             f"SCK {best[2]:.1f} MHz, {best[3]:.2f} MB/s")
             else:
-                emit(handle, "no working combination found")
+                emit(handle, "no combination verified clean")
             emit(handle, f"log: {LOG}")
     finally:
         GATEWARE.write_text(original)
-        print("\n(gateware source restored)")
 
     return 0
 

@@ -23,8 +23,9 @@ agree on the data, not that one mechanism is self-consistent.
 | 60 MHz | `0x03` | 7.49 MB/s | all zeros | FAIL |
 | 60 MHz | `0x0B` | 7.49 MB/s | all zeros | FAIL |
 
-**30 MHz is the verified working ceiling.** Five reconfigurations there returned
-bit-identical cycle counts and CRCs.
+**30 MHz is the verified ceiling for the single-lane path.** Five
+reconfigurations there returned bit-identical cycle counts and CRCs. Quad
+reaches 60 MHz SCK — see the runtime sweep below.
 
 ### Why 60 MHz fails, and what it is not
 
@@ -182,6 +183,44 @@ shifts or corrupts data, it does not silence it.
 *requested* rather than when it returned, and the controller's pipeline is
 several cycles deep, so the tail was lost: 8 requested returned 7. Found in
 simulation, not on hardware.
+
+### Runtime clock control, and a correction
+
+The divisor is a register in the bitstream, not a build-time constant, so SCK
+can be changed over JTAG without rebuilding. A full sweep now takes about 30
+seconds instead of roughly five minutes per point.
+
+That change immediately overturned an earlier conclusion. **60 MHz SCK works**:
+
+| divisor | SCK | throughput | verdict |
+|---|---|---|---|
+| 0 | 120 MHz | 59.7 MB/s | FAIL — every byte wrong |
+| 1 | **60 MHz** | **29.85 MB/s** | **PASS** |
+| 2 | 40 MHz | 19.90 MB/s | PASS |
+| 3 | 30 MHz | 14.93 MB/s | FAIL — 22/64 bytes differ |
+| 4 | 24 MHz | 11.94 MB/s | PASS |
+| 5 | 20 MHz | 9.95 MB/s | PASS |
+| 7 | 15 MHz | 7.46 MB/s | PASS |
+
+(120 MHz sync, sample offset 0, first 64 bytes checked against
+`apollo flash-read`.)
+
+Two things were wrong in the earlier write-up:
+
+**"60 MHz fails" was a bug, not a limit.** The reader never deselected the chip
+after a read — it relied on the `chip` field of the last payload beat, but by
+then `bytes_left` is 0, so `i_stream.valid` is low and that frame is never
+sent. CS stayed asserted and the flash was left mid-stream. A *single* read
+still worked, so this hid behind every rebuild-and-reconfigure measurement and
+only surfaced once reads could be repeated without reconfiguring. With it fixed,
+60 MHz SCK verifies byte-exact at **double** the previously reported ceiling.
+
+**The remaining failures are not a speed limit either.** Divisor 3 fails while
+both faster (1, 2) and slower (4, 5, 7) divisors pass, repeatably across three
+runs. At 60 MHz sync a different divisor failed. Failures that move with the
+build rather than with SCK point at place-and-route variation on the sample
+path, not at the part. Chasing them means constraining that path or sweeping
+the offset per divisor, not clocking slower.
 
 ### The 60 MHz limit is ours, not the flash's
 
