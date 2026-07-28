@@ -54,6 +54,10 @@ I2C_PERIOD_CYC = 600
 FIRST_ADDRESS = 0x08
 LAST_ADDRESS  = 0x77
 
+# Both FUSB302B controllers sit here -- confirmed by the scan, not assumed.
+FUSB302B_ADDRESS = 0x22
+FUSB_REG_DEVICE_ID = 0x01
+
 APPLET_ID = 0x49324353   # "I2CS"
 
 REGISTER_ID       = 1

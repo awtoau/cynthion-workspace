@@ -79,19 +79,32 @@ change.
 
 So the split should be:
 
-**Gateware** provides the I2C master and exposes it as a peripheral. That part
-is small, already proven on the PAC1954, and does not change when the protocol
-does.
+**Gateware does the minimum to prove the bus works, and no more.** The
+precedent is the PAC1954, where the sideband bitstream uses LUNA's
+`I2CRegisterInterface` to read a single register on a loop and blink an LED
+when it reads the expected value. No state machine, no protocol, no branching —
+a liveness check.
 
-**Firmware on the RISC-V** implements the driver, as a port of the MIT
-implementation. A USB-PD specification change then becomes a firmware edit
-rather than a bitstream rebuild — and firmware can be debugged with a terminal,
-which gateware cannot.
+The equivalent here is reading `DEVICE_ID` (0x01) on each of the two Type-C
+buses and reporting the result. That answers "is the chip there and does the
+bus work" and nothing else, which is exactly what a test bitstream should
+answer.
 
-The only part that might justify gateware is timestamping: if PD messages need
-to be captured with precise timing for analysis, a small capture block next to
-the I2C master would do better than a CPU polling. That is a later refinement,
-not part of getting the port working.
+**Firmware on the RISC-V implements everything else**, as a port of the MIT
+driver: the register-by-register configuration, interrupt handling, PD message
+parsing, retry timers and negotiation state. None of that belongs in an FPGA.
+A USB-PD specification change then becomes a firmware edit rather than a
+bitstream rebuild, and firmware can be debugged with a terminal, which gateware
+cannot.
+
+The line between the two is not a matter of taste. Anything that needs a timer,
+a retry, or a decision based on a previous message is software. Anything that is
+"put this byte on the bus and tell me what came back" is gateware.
+
+The one exception that might later justify gateware is timestamping: if PD
+messages need capturing with precise timing for analysis, a small capture block
+next to the I2C master beats a CPU polling. That is a refinement for the
+analyser use case, not part of getting a port working.
 
 ## What this confirms about the board
 
