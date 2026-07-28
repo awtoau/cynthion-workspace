@@ -70,7 +70,6 @@ sudo dnf install -y \
   make \
   openocd \
   pkg-config \
-  python3.14 python3.14-devel \
   readline-devel \
   tcl tcl-devel \
   zlib-devel
@@ -96,7 +95,6 @@ sudo apt-get update && sudo apt-get install -y \
   libreadline-dev \
   openocd \
   pkg-config \
-  python3.14 python3.14-dev \
   tcl tcl-dev \
   zlib1g-dev
 ```
@@ -124,7 +122,7 @@ sudo apt-get update && sudo apt-get install -y \
 | zlib | latest | Compression | Check: `/usr/include/zlib.h` | Bitstream compression |
 | Eigen3 | 3.3+ | Linear algebra | Check: `/usr/include/eigen3` | Optional, for analysis |
 | **Programming** | | | | |
-| Python | 3.14.x | Gateware framework | `python3.14 --version` | Amaranth, cynthion |
+| Python | 3.15t | Gateware framework | `python3 --version` | Free-threaded; Amaranth, cynthion |
 | Rustup | latest | RISC-V firmware | `rustc --version` | moondancer |
 | **Utilities** | | | | |
 | curl | 7.50+ | HTTP download | `curl --version` | Fetch releases |
@@ -165,8 +163,9 @@ nextpnr-ecp5 --version  # → 0.10-74-gee605e2b
 ### Pre-Flight Checklist
 
 ```bash
-# Check Python 3.14
-python3.14 --version  # → 3.14.4
+# Check Python (must be free-threaded 3.15t)
+python3 --version   # → Python 3.15.0b3
+python3 -c "import sys; print('free-threaded' if not sys._is_gil_enabled() else 'GIL ENABLED - wrong build')"
 
 # Check Rust
 rustc --version && rustup target list --installed | grep riscv
@@ -185,16 +184,25 @@ source ~/opt/oss-cad-suite/environment && yosys --version
 
 If pre-flight checks fail, fix these first instead of continuing:
 
-#### Python 3.14 Not Found
+#### Python 3.15t Not Found
+
+No distro packages free-threaded 3.15 yet — it is a beta. Install a managed
+build:
+
 ```bash
-python3.14 --version
-
-# Fedora/RHEL
-sudo dnf install python3.14 python3.14-devel
-
-# Debian/Ubuntu
-sudo apt-get install python3.14 python3.14-dev
+uv python install 3.15t
 ```
+
+Or build from source with `--disable-gil`. Either way the interpreter must
+report a free-threading build:
+
+```bash
+python3 -c "import sys; print(sys._is_gil_enabled())"   # → False
+```
+
+`scripts/install.py` picks the interpreter itself, preferring `python3.15t`
+and falling back to `python3.14t` / `python3.15` / `python3.14` if a machine is
+mid-upgrade. Override with `CYN_PYTHON=/path/to/python`.
 
 #### Rust RISC-V Target Missing
 ```bash
@@ -336,16 +344,16 @@ nextpnr-ecp5 --version # → 0.10-74-gee605e2b
 
 ### Python & Dependencies
 
-- **Python**: 3.14.4 (system, no-GIL)
+- **Python**: 3.15.0b3 (system, free-threaded / no-GIL)
 - **Amaranth**: 0.5.x (gateware HDL framework)
-  - ✅ Tested compatible with Python 3.14
+  - ✅ Tested compatible with Python 3.15t
   - Elaboration of analyzer gateware succeeds
 - **RISC-V Toolchain**: riscv32-unknown-elf (for moondancer firmware)
 - **ARM Toolchain**: arm-none-eabi-gcc (GCC 15.2.0, for Apollo)
 
 Verify Python and gateware:
 ```bash
-python3.14 --version  # → 3.14.4
+python3 --version  # → Python 3.15.0b3
 which riscv32-unknown-elf-gcc
 which arm-none-eabi-gcc
 ```
@@ -489,12 +497,33 @@ cargo build --release
 
 #### Setup (one-time)
 
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/cynthion/python"
+Packages install into the **default 3.15t environment** — there is no virtualenv
+to create or activate. Run everything with plain `python3`.
 
-# Install cynthion package in editable mode
+```bash
+cd /path/to/cynthion-workspace
+
+# Editable installs into system 3.15t
+python3 -m pip install -e repos/cynthion/cynthion/python -e repos/facedancer
+
+# Gateware builds additionally need the FPGA toolchain on PATH
 source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
-pip install --user -e .
+```
+
+Console scripts (`cynthion`, `apollo`) land in the 3.15t `bin/` directory. That
+directory must come **before** `~/.local/bin` on PATH, or a stale shim from an
+older interpreter will shadow them and fail with `ModuleNotFoundError`:
+
+```bash
+export PATH="$HOME/opt/cpython-315t/bin:$PATH"
+```
+
+Verify the whole chain resolves to one interpreter:
+
+```bash
+python3 -c "import sys, cynthion, apollo_fpga, facedancer; \
+  print(sys.version.split()[0], 'GIL' if sys._is_gil_enabled() else 'free-threaded')"
+which cynthion apollo   # both under opt/cpython-315t/bin
 ```
 
 #### Build
@@ -503,11 +532,11 @@ pip install --user -e .
 # Test elaboration (dry-run)
 source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3.14 -m cynthion.gateware.analyzer.top --dry-run
+  python3 -m cynthion.gateware.analyzer.top --dry-run
 
 # Full synthesis (produces .bit file)
 LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3.14 -m cynthion.gateware.analyzer.top
+  python3 -m cynthion.gateware.analyzer.top
 ```
 
 **Output**: Bitstream file (location depends on Amaranth build output)
@@ -519,7 +548,7 @@ Same as Analyzer, but with facedancer module:
 ```bash
 source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
 LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3.14 -m cynthion.gateware.facedancer.top --dry-run
+  python3 -m cynthion.gateware.facedancer.top --dry-run
 ```
 
 ## Environment Variables
@@ -559,7 +588,7 @@ All build artifacts and logs go to `./tmp/` per CLAUDE.md rules:
 **Error**: `ModuleNotFoundError: No module named 'cynthion'`
 
 **Solutions**:
-1. Ensure cynthion package is installed: `pip install --user -e .`
+1. Ensure cynthion package is installed: `python3 -m pip install -e repos/cynthion/cynthion/python`
 2. Use full platform path: `cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2`
 3. Source OSS CAD Suite environment first
 
@@ -575,12 +604,12 @@ This usually means runtime context mismatch, not hardware failure.
 **Distinguish the three common causes** (diagnose in this order):
 1. **Package missing**: `python -c "import cynthion"` fails in all terminals.
    ```bash
-   "${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -c "import cynthion; print(cynthion.__file__)"
+   python3 -c "import cynthion; print(cynthion.__file__)"
    ```
 2. **Wrong interpreter**: package is installed in one Python, but `apollo-mux` runs under another.
    ```bash
    which python3
-   "${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -m pip show cynthion
+   python3 -m pip show cynthion
    ```
 3. **Wrong cwd/PYTHONPATH context**: `apollo-mux` starts from a context where the expected package path is not visible.
 
@@ -595,17 +624,17 @@ python3 /path/to/awto-cynthion/scripts/apollo-mux.py \
 ```bash
 cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
 
-# Use the same interpreter that has the editable cynthion package.
-"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" -m pip install -e cynthion/python
+# System 3.15t holds the editable cynthion package - no venv involved.
+python3 -m pip install -e cynthion/python
 
 # Validate import path before launching REPL.
-"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" - <<'PY'
+python3 - <<'PY'
 import cynthion
 print(cynthion.__file__)
 PY
 
 # Launch with the same interpreter used for the import check.
-"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/python" scripts/apollo-mux.py \
+python3 scripts/apollo-mux.py \
   --socket "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/tmp/apollod.sock" --no-spinner -v
 ```
 
@@ -637,7 +666,7 @@ find "${REPOS_ROOT:-$HOME/git/awtoau}" -path '*/assets/*' -name 'facedancer.bit'
 **Known fallback command pattern**:
 ```bash
 cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
-"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/cynthion" run \
+cynthion run \
   --bitstream /absolute/path/to/facedancer.bit facedancer
 ```
 
@@ -647,7 +676,7 @@ cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
 lsusb | rg -i '1d50:615b|1d50:615c'
 
 # 2) Verify command path sanity.
-"${REPOS_ROOT:-$HOME/git/awtoau}/cynthion-workspace/.venv/bin/cynthion" run -h
+cynthion run -h
 ```
 
 **When this fallback is appropriate**:

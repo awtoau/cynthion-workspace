@@ -83,6 +83,26 @@ def resolve_repos_root() -> Path:
 REPOS = resolve_repos_root()
 OSS_CAD_SUITE = Path.home() / "opt" / "oss-cad-suite"
 
+# The workspace targets free-threaded (no-GIL) CPython: the parallel build path
+# relies on real threading, and gateware builds are the main beneficiary.
+# 3.15t is the current target; the older 3.14t is accepted as a fallback so a
+# machine mid-upgrade still works. CYN_PYTHON overrides both.
+PYTHON_CANDIDATES = ["python3.15t", "python3.14t", "python3.15", "python3.14"]
+
+
+def resolve_python() -> str:
+    """Pick the interpreter to build with, preferring free-threaded builds."""
+    override = os.getenv("CYN_PYTHON")
+    if override:
+        return override
+    for candidate in PYTHON_CANDIDATES:
+        if shutil.which(candidate):
+            return candidate
+    return "python3"
+
+
+PYTHON = resolve_python()
+
 # Global logger instance (initialized in main())
 logger: Optional[logging.Logger] = None
 
@@ -316,9 +336,9 @@ def setup_python_environment(verbose: bool, dry_run: bool) -> bool:
     section("Python Environment")
 
     # Check Python version
-    result = run_cmd(["python3.14", "--version"], verbose=verbose, dry_run=dry_run)
+    result = run_cmd([PYTHON, "--version"], verbose=verbose, dry_run=dry_run)
     if not result.success:
-        log("Python 3.14 not found", "ERROR")
+        log(f"{PYTHON} not found (set CYN_PYTHON to override)", "ERROR")
         return False
     log(f"✓ {result.stdout.strip()}", "OK")
 
@@ -585,7 +605,7 @@ def build_gateware_analyzer(verbose: bool, dry_run: bool) -> bool:
         "bash",
         "-c",
         f"{env_setup} && LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 "
-        f"python3.14 -m cynthion.gateware.analyzer.top --dry-run"
+        f"{PYTHON} -m cynthion.gateware.analyzer.top --dry-run"
     ]
 
     log("Elaborating analyzer gateware...", "INFO")
@@ -633,7 +653,7 @@ def build_gateware_facedancer(verbose: bool, dry_run: bool) -> bool:
         "bash",
         "-c",
         f"{env_setup} && LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 "
-        f"python3.14 -m cynthion.gateware.facedancer.top --dry-run"
+        f"{PYTHON} -m cynthion.gateware.facedancer.top --dry-run"
     ]
 
     logger.info("Elaborating facedancer gateware...")
@@ -911,7 +931,7 @@ def cmd_versions(args) -> bool:
     print("\n--- System Tools ---")
     tools = {
         "Git": ["git", "--version"],
-        "Python 3.14": ["python3.14", "--version"],
+        f"Python ({PYTHON})": [PYTHON, "--version"],
         "Rustc": ["rustc", "--version"],
         "Cargo": ["cargo", "--version"],
         "ARM GCC": ["arm-none-eabi-gcc", "--version"],
@@ -960,7 +980,7 @@ def cmd_versions(args) -> bool:
     print("\n--- Python Packages ---")
     packages = ["amaranth", "luna-usb", "luna-soc", "cynthion"]
     for pkg in packages:
-        result = run_cmd(["python3.14", "-m", "pip", "show", pkg], verbose=False, dry_run=False)
+        result = run_cmd([PYTHON, "-m", "pip", "show", pkg], verbose=False, dry_run=False)
         if result.success:
             # Extract version from pip output
             for line in result.stdout.split('\n'):
@@ -1242,7 +1262,7 @@ def fail_fast_check(args) -> bool:
         "git": ["git", "--version"],
         "gcc": ["gcc", "--version"],
         "make": ["make", "--version"],
-        "python3.14": ["python3.14", "--version"],
+        PYTHON: [PYTHON, "--version"],
     }
 
     missing_critical = []
@@ -1320,7 +1340,7 @@ def cmd_prereqs(args) -> bool:
 
     checks = {
         "git": ["git", "--version"],
-        "python3.14": ["python3.14", "--version"],
+        PYTHON: [PYTHON, "--version"],
         "rustc": ["rustc", "--version"],
         "arm-none-eabi-gcc": ["arm-none-eabi-gcc", "--version"],
         "gcc": ["gcc", "--version"],
@@ -1367,16 +1387,20 @@ def cmd_prereqs(args) -> bool:
         log("Missing prerequisites. Install with:", "WARN")
         print()
         print("  Fedora/RHEL:")
-        print("    sudo dnf install -y python3.14 python3.14-devel rustup \\")
+        print("    sudo dnf install -y rustup \\")
         print("      arm-none-eabi-gcc-cs gcc gcc-c++ make cmake git \\")
         print("      boost-devel eigen-devel libreadline-devel zlib-devel \\")
         print("      bison flex clang curl jq dfu-util openocd tcl tcl-devel")
         print()
         print("  Debian/Ubuntu:")
-        print("    sudo apt-get install -y python3.14 python3.14-dev rustc cargo \\")
+        print("    sudo apt-get install -y rustc cargo \\")
         print("      arm-none-eabi-gcc gcc g++ make cmake git \\")
         print("      libboost-all-dev libeigen3-dev libreadline-dev zlib1g-dev \\")
         print("      bison flex clang curl jq dfu-util openocd tcl tcl-dev")
+        print()
+        print("  Python (3.15t free-threaded — not packaged by distros yet):")
+        print("    uv python install 3.15t")
+        print("    # or build from source; see docs/install.md")
         print()
         return False
 

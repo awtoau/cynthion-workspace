@@ -44,18 +44,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13']
+        # 3.15t free-threaded is the workspace interpreter and the one that
+        # matters; the GIL-enabled versions are kept only to catch accidental
+        # reliance on free-threading in code meant to be portable.
+        python: ['3.13', '3.14']
         experimental: [false]
         include:
-          - python: '3.14t'
-            experimental: true
+          - python: '3.15t'
+            experimental: true   # 3.15 is still beta
     continue-on-error: ${{ matrix.experimental }}
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - uses: astral-sh/setup-uv@v4
       - run: uv venv .venv --python ${{ matrix.python }}
-      - run: uv pip install -e repos/cynthion/cynthion/python -e repos/facedancer
+      - run: uv pip install pytest -e repos/cynthion/cynthion/python -e repos/facedancer
       - run: .venv/bin/pytest repos/cynthion/cynthion/python/tests/ -v --tb=long
 
   flutter-release:
