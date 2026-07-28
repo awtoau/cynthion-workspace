@@ -1,3 +1,8 @@
+# DISABLED — nothing in this repo runs on GitHub Actions.
+#
+# This workflow is disabled at the repository level and is kept only as a
+# reference for what ./scripts/check.py reproduces locally. Run checks with
+# './scripts/check.py' instead. Do not re-enable without agreeing that first.
 name: fast
 
 on:

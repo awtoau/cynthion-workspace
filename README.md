@@ -20,6 +20,7 @@ git clone --recurse-submodules https://github.com/awtoau/cynthion-workspace
 cd cynthion-workspace
 ./scripts/setup-dev.sh          # one-time: packages + toolchain checks
 ./scripts/install.py prereqs    # verify the environment
+./scripts/check.py --fast       # run the checks before every commit
 ```
 
 No virtualenv: packages install into the default free-threaded interpreter, so
@@ -58,12 +59,43 @@ standalone copy at `~/git_mirror/cynthion-hardware/`.
 ~/git_mirror/packetry/            standalone packetry copy
 ```
 
-## CI levels
+## Checks run locally, not on GitHub
 
-| Level | Trigger | Time | What |
-|-------|---------|------|------|
-| **fast** | every commit + PR | ~2 min | C/Rust check, Python import+unit, gateware elaborate |
-| **full** | nightly + release | ~30 min | Full synthesis, firmware build, artifact generation |
+**Nothing in this repo runs on GitHub Actions.** Both workflows are disabled;
+their YAML is kept only as a reference for what the local runner reproduces.
+Checks run natively on the dev machine, against the real toolchain and the real
+free-threaded interpreter — no Docker, no cloud runners, no queue.
+
+```bash
+./scripts/check.py              # everything
+./scripts/check.py rust python  # just those
+./scripts/check.py --fast       # skip slow checks (~4 s)
+./scripts/check.py --parallel   # concurrent
+./scripts/check.py --list       # what is available, and what is unavailable here
+```
+
+| Check | What |
+|-------|------|
+| `rust` | `cargo check` + `make clippy` for moondancer (riscv32imac) |
+| `apollo` | SAMD11 firmware build + size report |
+| `python` | import check + pytest on the resolved interpreter |
+| `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
+| `flutter` | `analyze` + `test` (reported, non-blocking) |
+| `gateware` | analyzer elaboration — **currently broken upstream**, see below |
+
+Exit status is 0 only if every selected check passed, so it works as a hook:
+
+```bash
+ln -s ../../scripts/check.py .git/hooks/pre-push
+```
+
+Each check writes its full output to `tmp/logs/check-<name>.log`. A check whose
+tooling is absent is reported as skipped, not failed, so the runner stays usable
+on a partially-provisioned machine.
+
+**Known-broken:** `gateware` fails because `cynthion/python/src/shared/` is empty
+and untracked upstream, so `top.py`'s `cynthion.shared.usb.bVendorId` has nothing
+to resolve against. It is excluded from `--fast` but deliberately still listed.
 
 ## Python strategy
 
