@@ -1,6 +1,6 @@
 {
   "Git": "git version 2.55.0",
-  "Python 3.14": "Python 3.14.6",
+  "Python (python3.15t)": "Python 3.15.0b3",
   "Rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
   "Cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
   "ARM GCC": "arm-none-eabi-gcc (Fedora 15.2.0-4.fc44) 15.2.0",
@@ -13,12 +13,12 @@
   "Yosys": "Yosys 0.65+57 (git sha1 9d0cdb855, clang++ 18.1.8 -fPIC -O3)",
   "nextpnr-ecp5": "",
   "OSS CAD Suite Location": "/home/dan/opt/oss-cad-suite",
-  "amaranth": "0.5.8",
+  "amaranth": "0.5.9",
   "luna-usb": "0.2.3",
   "luna-soc": "0.2.0",
-  "cynthion": "0.2.4.post28+git.56a64c23",
+  "cynthion": "0.2.4.post30+git.edf35c99.dirty",
   "apollo (HEAD)": "6f16848",
-  "cynthion (HEAD)": "edf35c9",
+  "cynthion (HEAD)": "fc81a06",
   "luna (HEAD)": "6771b6d",
   "facedancer (HEAD)": "9f12988"
 }
