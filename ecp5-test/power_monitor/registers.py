@@ -55,6 +55,60 @@ REG_PRODUCT_ID      = 0xFD
 REG_MANUFACTURER_ID = 0xFE
 REG_REVISION_ID     = 0xFF
 
+# Measurement registers. All 16-bit, one per channel (DS20006539B Reg 7-5..7-9).
+REG_REFRESH   = 0x00  # Send Byte: latch a coherent sample set before reading
+REG_VBUS_BASE = 0x07  # VBUSn   07h-0Ah
+REG_VSENSE_BASE = 0x0B  # VSENSEn 0Bh-0Eh
+REG_VBUS_AVG_BASE = 0x0F    # VBUSn_AVG   0Fh-12h (8x averaged)
+REG_VSENSE_AVG_BASE = 0x13  # VSENSEn_AVG 13h-16h
+REG_VPOWER_BASE = 0x17      # VPOWERn 17h-1Ah, 32-bit
+
+#
+# Channel -> physical port mapping.
+#
+# Derived from the CLEAN r1.4.0 schematic tag (not the in-progress Coppelia
+# branch) by matching PAC SENSEn pin coordinates to the global labels on the
+# power_distribution sheet, then CONFIRMED against hardware: with the board
+# attached via CONTROL and AUX only, channels 3 and 4 read ~5.2 V while
+# channels 1 and 2 read zero.
+#
+# Note this is NOT the obvious ordering -- channel 1 is TARGET_A, not CONTROL.
+#
+CHANNEL_PORTS = {
+    1: "TARGET_A",
+    2: "TARGET_C",
+    3: "AUX",
+    4: "CONTROL",
+}
+
+#
+# Real-world scaling.
+#
+# VBUS:   0-32 V FSR, 16-bit  -> 32/65536   = 488.3 uV per LSB
+# VSENSE: 0-100 mV FSR, 16-bit -> 0.1/65536 = 1.526 uV per LSB
+# Sense resistors are 0.02 ohm 1% (R1, R2, R42, R59 on the r1.4.0 sheet), so
+# 1.526 uV / 20 mohm = 76.3 uA per LSB, and full scale is 100 mV / 20 mohm = 5 A.
+#
+VBUS_FSR_VOLTS    = 32.0
+VSENSE_FSR_VOLTS  = 0.100
+SENSE_RESISTOR_OHMS = 0.020
+ADC_COUNTS        = 65536
+
+VBUS_VOLTS_PER_LSB = VBUS_FSR_VOLTS / ADC_COUNTS            # 488.3 uV
+VSENSE_VOLTS_PER_LSB = VSENSE_FSR_VOLTS / ADC_COUNTS        # 1.526 uV
+AMPS_PER_LSB = VSENSE_VOLTS_PER_LSB / SENSE_RESISTOR_OHMS   # 76.3 uA
+MAX_CURRENT_AMPS = VSENSE_FSR_VOLTS / SENSE_RESISTOR_OHMS   # 5 A
+
+
+def raw_to_volts(raw):
+    """Convert a 16-bit VBUS reading to volts."""
+    return raw * VBUS_VOLTS_PER_LSB
+
+
+def raw_to_amps(raw):
+    """Convert a 16-bit VSENSE reading to amps, given the 20 mohm shunt."""
+    return raw * AMPS_PER_LSB
+
 EXPECTED_MANUFACTURER_ID = 0x54  # Microchip (DS20006539B, Register 7-38)
 EXPECTED_REVISION_ID     = 0x02  # POR value per the register summary
 
