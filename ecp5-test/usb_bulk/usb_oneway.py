@@ -32,6 +32,12 @@ its own buffering.
 
 Two separate endpoints, so both directions can be exercised in one bitstream
 without sharing a data path.
+
+The PHY is selectable because which port the device appears on matters for
+measurement, not just convenience. Testing whether USB hub depth limits
+throughput means plugging into a different port, and that only works if the
+gateware is driving the PHY behind the port being used -- moving a cable to
+TARGET does nothing while the device is instantiated on AUX.
 """
 
 from amaranth                          import Cat, Const, Elaboratable, Module, Signal
@@ -60,6 +66,9 @@ BULK_OUT_ENDPOINT = 1
 USB_VENDOR_ID  = 0x1d50
 USB_PRODUCT_ID = 0x615b
 
+# Set at build time. Rebuild to move the device to a different port.
+PHY_NAME = "target_phy"
+
 APPLET_ID = 0x314f5741   # "1OWA"
 
 REGISTER_ID       = 1
@@ -78,7 +87,7 @@ class USBOneWay(Elaboratable):
             d.idVendor  = USB_VENDOR_ID
             d.idProduct = USB_PRODUCT_ID
             d.iManufacturer = "Great Scott Gadgets"
-            d.iProduct      = "Cynthion One-Way Bulk Test"
+            d.iProduct      = f"Cynthion One-Way Bulk ({PHY_NAME})"
             d.bNumConfigurations = 1
 
         with descriptors.ConfigurationDescriptor() as c:
@@ -105,7 +114,10 @@ class USBOneWay(Elaboratable):
         m.submodules.registers = registers
         registers.add_read_only_register(REGISTER_ID, read=APPLET_ID)
 
-        bus = platform.request("aux_phy", 0)
+        # Which physical port this device appears on. AUX belongs to the FPGA
+        # outright; TARGET is also free. CONTROL is shared with Apollo and
+        # would need an ApolloAdvertiser to claim, so it is not offered here.
+        bus = platform.request(PHY_NAME, 0)
         usb = USBDevice(bus=bus)
         m.submodules.usb = usb
 
