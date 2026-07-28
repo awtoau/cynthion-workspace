@@ -39,3 +39,8 @@ ecp5-test/led_patterns_button_sim.vcd
 
 # Generated bitstreams from the bring-up gateware
 ecp5-test/power_monitor/build/
+
+# Generated bitstreams from the sideband/advertiser test gateware
+ecp5-test/adv_speed/build*/
+ecp5-test/adv_uart/build/
+ecp5-test/sideband/build/
