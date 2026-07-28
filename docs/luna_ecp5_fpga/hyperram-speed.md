@@ -159,3 +159,32 @@ HyperRAM is ~16× the quad flash rate, which is what a 16-bit DDR bus against a
 4-bit SDR one should give. For a RISC-V system this is the natural place for
 anything write-heavy: flash is a read-mostly store with 45–400 ms sector
 erases, while this is true random-access memory.
+
+## Appendix: USB throughput reference
+
+Recorded here because the USB and HyperRAM figures are only meaningful against
+each other — the capture path is bounded by the slower of the two.
+
+| source | Mbps | MB/s |
+|---|---|---|
+| USB 2.0 high-speed line rate | 480.0 | 60.0 |
+| Protocol maximum, 13 × 512 B per microframe | 426.0 | 53.2 |
+| **Measured, direct root port** | **388.0** | **48.5** |
+| Measured, four hub levels deep | 292.2 | 36.5 |
+| HyperRAM FIFO at 512-byte granularity | 1762 | 220.2 |
+
+The 426 Mbps figure was derived independently from the spec — one 512-byte bulk
+transaction is 4512 bit times at 2.0833 ns, so 13 fit in a 125 µs microframe —
+and matches the commonly quoted `1000 × 8 × 512 × 13 = 53 MB/s`. Two routes to
+the same number is worth more than either alone.
+
+**388.0 Mbps is 91.1% of protocol maximum**, and the device is provably not the
+limiting factor: instrumenting the gateware over 284,306 transactions gives
+exactly 1.0000 ACKs per token, 512.0 bytes per token, and a token-to-first-byte
+latency of one clock cycle (17 ns) against a ~10.6 µs transaction period. No
+NAKs, no retries, and no kernel errors logged during the run. The remaining 9%
+is host-controller scheduling, outside the device.
+
+**HyperRAM has 4.5× headroom over the fastest the USB link can deliver**, so
+the capture buffer is comfortable and USB is the constraint. That ratio is the
+useful conclusion: effort spent making the RAM faster would buy nothing.
