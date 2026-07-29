@@ -20,7 +20,9 @@ finding, we need to know how large a difference the tool produces *against
 itself*.
 
 `./scripts/pnr_noise.py` runs one fixed netlist through nextpnr several times
-with different seeds. On the GSG analyzer, four seeds:
+with different seeds. Four seeds each, on two independent designs:
+
+**GSG analyzer** (target 120 MHz):
 
 | metric | min | max | spread |
 |---|---|---|---|
@@ -31,15 +33,34 @@ with different seeds. On the GSG analyzer, four seeds:
 | Fmax `$glbnet$clk` | 126.25 | 132.80 | **6.55 MHz (5.2%)** |
 | Fmax `aux_phy_0__clk__o` | 82.24 | 87.87 | **5.63 MHz (6.8%)** |
 
+**vexii_hello** (target 90 MHz):
+
+| metric | min | max | spread |
+|---|---|---|---|
+| TRELLIS_COMB | 7257 | 7257 | **0** |
+| TRELLIS_FF | 3386 | 3386 | **0** |
+| DP16KD | 41 | 41 | **0** |
+| MULT18X18D | 4 | 4 | **0** |
+| Fmax `$glbnet$clk` | 96.70 | 99.06 | **2.36 MHz (2.4%)** |
+
 Two consequences, and they set the rules for reading everything below:
 
-- **Utilisation is deterministic.** Packing does not depend on the seed, so
-  *any* LUT/FF/BRAM difference against Diamond is real signal, however small.
-- **Fmax is not.** A single run's Fmax carries roughly +/-6% of noise, so a
-  Diamond-versus-nextpnr frequency gap smaller than about 7% is not a result.
-  This is why the open-flow numbers were obtained by binary search on `--freq`
-  rather than read off one relaxed run, and why any Diamond Fmax must be
-  compared against a constrained run, not an unconstrained one.
+- **Utilisation is deterministic.** Zero spread on every resource, on both
+  designs. Packing does not depend on the seed, so *any* LUT/FF/BRAM
+  difference against Diamond is real signal, however small.
+- **Fmax is not, and how much it varies depends on the design.** 2.4% on
+  vexii_hello, up to 6.8% on the analyzer. So the significance threshold has
+  to be measured per design rather than assumed from one -- quoting a single
+  global figure would be too strict for one design and too lax for the other.
+  This is also why the open-flow numbers were obtained by binary search on
+  `--freq` rather than read off one relaxed run, and why any Diamond Fmax must
+  come from a constrained run.
+
+The instability is easy to see without the control: `vexii_hello` is quoted at
+80.3 MHz in the original brief, its committed `top.tim` reports 97.91 MHz, and
+these four seeds span 96.70-99.06 MHz. Three different numbers for the same
+design, none of them wrong -- which is exactly why the control had to come
+first.
 
 ## The three configurations
 
@@ -89,24 +110,56 @@ re-synthesise it and destroy the separation the mode exists to create.
 ## Cell-level accounting
 
 Totals hide exactly the thing worth finding. nextpnr reports a single
-`TRELLIS_COMB` figure, but the yosys netlist that produced it decomposes into:
+`TRELLIS_COMB` figure, but the yosys netlists that produced these designs
+decompose as:
 
-| primitive | count |
-|---|---|
-| LUT4 | 5635 |
-| PFUMX | 900 |
-| CCU2C | 895 |
-| L6MUX21 | 244 |
-| TRELLIS_FF | 2755 |
-| TRELLIS_IO | 119 |
-| ODDRX1F | 10 |
-| IDDRX1F | 9 |
-| DP16KD | 9 |
-| EHXPLLL | 1 |
+| primitive | analyzer | vexii_hello |
+|---|---|---|
+| LUT4 | 5635 | 5505 |
+| PFUMX | 900 | 801 |
+| CCU2C | 895 | 465 |
+| L6MUX21 | 244 | 134 |
+| TRELLIS_FF | 2755 | 3386 |
+| TRELLIS_DPR16X4 | 22 | 100 |
+| TRELLIS_IO | 119 | 66 |
+| DP16KD | 9 | 41 |
+| MULT18X18D | 0 | 4 |
+| ODDRX1F / IDDRX1F | 10 / 9 | 0 / 0 |
+| EHXPLLL | 1 | 1 |
 
 If Diamond reaches for hard blocks the open flow ignored -- DSPs, wide LUT
 modes, distributed RAM, IOLOGIC -- that is a nameable missing inference in
 yosys, and this breakdown is where it shows up.
+
+Note `MULT18X18D`: yosys already infers 4 DSPs in `vexii_hello`, so DSP
+inference is not simply absent from the open flow. Whether Diamond finds more
+is a question for the comparison rather than an assumption going into it.
+
+**Since the PAR-isolation experiment turned out to be impossible (see
+`docs/diamond-par-isolation-blocked.md`), this table is the only attribution
+mechanism available.** It can show *that* the flows chose different
+primitives; it cannot separate "Synplify/LSE inferred a better structure" from
+"Diamond's mapper packed the same structure better". Conclusions drawn from it
+should carry that caveat.
+
+## Build time
+
+Measured on the GSG analyzer, same machine, same part:
+
+| stage | open flow | Diamond |
+|---|---|---|
+| synthesis | ~22 s (yosys) | **303 s** (LSE) |
+| place & route | ~20 s (nextpnr) | not reached on this design |
+| total | **~42 s** | >303 s |
+
+Diamond's synthesis step alone is roughly **7x the entire open flow**. On
+`vexii_hello` LSE synthesis ran longer still, past 5 minutes.
+
+This matters for the framing of the whole question. Even if Diamond packed
+meaningfully better, a 7x-plus slower synthesis step would keep it out of an
+edit-build-run loop; it could only be justified for release builds. The
+open flow's speed is a real advantage that any utilisation gap has to be
+weighed against, not a footnote.
 
 ## Bitstream options the open flow does not expose
 
