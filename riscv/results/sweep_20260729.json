@@ -22,7 +22,8 @@
       "seconds": 32.454284997002105,
       "lut": 689,
       "ff": 602,
-      "bram": 0
+      "bram": 0,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_003",
@@ -34,7 +35,8 @@
       "seconds": 44.31594317899726,
       "lut": 720,
       "ff": 604,
-      "bram": 0
+      "bram": 0,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_004",
@@ -46,7 +48,8 @@
       "seconds": 61.56538791800267,
       "lut": 782,
       "ff": 606,
-      "bram": 0
+      "bram": 0,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_005",
@@ -58,7 +61,8 @@
       "seconds": 83.42806224199012,
       "lut": 1056,
       "ff": 788,
-      "bram": 4
+      "bram": 4,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_006",
@@ -70,7 +74,8 @@
       "seconds": 88.44096047698986,
       "lut": 963,
       "ff": 824,
-      "bram": 5
+      "bram": 5,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_007",
@@ -82,7 +87,8 @@
       "seconds": 74.50448357001005,
       "lut": 1089,
       "ff": 830,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_008",
@@ -94,7 +100,8 @@
       "seconds": 105.53716784800054,
       "lut": 2072,
       "ff": 1472,
-      "bram": 4
+      "bram": 4,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_009",
@@ -106,7 +113,8 @@
       "seconds": 93.77532470600272,
       "lut": 1981,
       "ff": 1506,
-      "bram": 5
+      "bram": 5,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_010",
@@ -118,7 +126,8 @@
       "seconds": 91.935787016002,
       "lut": 2154,
       "ff": 1510,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_011",
@@ -130,7 +139,8 @@
       "seconds": 55.78795376699418,
       "lut": 1441,
       "ff": 1000,
-      "bram": 6
+      "bram": 6,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_012",
@@ -142,7 +152,8 @@
       "seconds": 43.60221327398904,
       "lut": 1244,
       "ff": 1036,
-      "bram": 7
+      "bram": 7,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_013",
@@ -154,7 +165,8 @@
       "seconds": 57.31062798300991,
       "lut": 1356,
       "ff": 1042,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_014",
@@ -166,7 +178,8 @@
       "seconds": 102.01024522999069,
       "lut": 2596,
       "ff": 1718,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_015",
@@ -178,7 +191,8 @@
       "seconds": 103.37067255600414,
       "lut": 2398,
       "ff": 1752,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_016",
@@ -190,7 +204,8 @@
       "seconds": 112.56001480099803,
       "lut": 2525,
       "ff": 1756,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_017",
@@ -202,7 +217,8 @@
       "seconds": 52.91659160799463,
       "lut": 1541,
       "ff": 1035,
-      "bram": 6
+      "bram": 6,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_018",
@@ -214,7 +230,8 @@
       "seconds": 46.86368655700062,
       "lut": 1394,
       "ff": 1071,
-      "bram": 7
+      "bram": 7,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_019",
@@ -226,7 +243,8 @@
       "seconds": 51.83845952899719,
       "lut": 1523,
       "ff": 1077,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_020",
@@ -238,7 +256,8 @@
       "seconds": 60.14385033999861,
       "lut": 1491,
       "ff": 1154,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_021",
@@ -250,7 +269,8 @@
       "seconds": 56.81907581099949,
       "lut": 1300,
       "ff": 1190,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_022",
@@ -262,7 +282,8 @@
       "seconds": 62.181378562992904,
       "lut": 1443,
       "ff": 1196,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_023",
@@ -274,7 +295,8 @@
       "seconds": 121.59623316999932,
       "lut": 2798,
       "ff": 1753,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_024",
@@ -286,7 +308,8 @@
       "seconds": 105.14855150300718,
       "lut": 2582,
       "ff": 1787,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_025",
@@ -298,7 +321,8 @@
       "seconds": 113.92880865299958,
       "lut": 2728,
       "ff": 1791,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_026",
@@ -310,7 +334,8 @@
       "seconds": 128.36301342499792,
       "lut": 2862,
       "ff": 2002,
-      "bram": 10
+      "bram": 10,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_027",
@@ -322,7 +347,8 @@
       "seconds": 137.5340567069943,
       "lut": 2825,
       "ff": 2036,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_028",
@@ -334,7 +360,8 @@
       "seconds": 114.30307839399029,
       "lut": 2950,
       "ff": 2040,
-      "bram": 15
+      "bram": 15,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_029",
@@ -346,7 +373,8 @@
       "seconds": 55.916731286008144,
       "lut": 1576,
       "ff": 1189,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_030",
@@ -358,7 +386,8 @@
       "seconds": 52.899451571996906,
       "lut": 1468,
       "ff": 1225,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_031",
@@ -370,7 +399,8 @@
       "seconds": 72.63535279699136,
       "lut": 1628,
       "ff": 1231,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_032",
@@ -382,7 +412,8 @@
       "seconds": 133.18588113199803,
       "lut": 3059,
       "ff": 2037,
-      "bram": 10
+      "bram": 10,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_033",
@@ -394,7 +425,8 @@
       "seconds": 128.53290232199652,
       "lut": 2943,
       "ff": 2071,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_core_034",
@@ -406,7 +438,8 @@
       "seconds": 131.4352014890028,
       "lut": 3015,
       "ff": 2075,
-      "bram": 15
+      "bram": 15,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_im_soc_001",
@@ -838,7 +871,8 @@
       "seconds": 32.43685377899965,
       "lut": 676,
       "ff": 602,
-      "bram": 0
+      "bram": 0,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_037",
@@ -850,7 +884,8 @@
       "seconds": 39.18907508200209,
       "lut": 722,
       "ff": 604,
-      "bram": 0
+      "bram": 0,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_038",
@@ -862,7 +897,8 @@
       "seconds": 43.012953925994225,
       "lut": 799,
       "ff": 606,
-      "bram": 0
+      "bram": 0,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_039",
@@ -874,7 +910,8 @@
       "seconds": 40.47275521300617,
       "lut": 1074,
       "ff": 788,
-      "bram": 4
+      "bram": 4,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_040",
@@ -886,7 +923,8 @@
       "seconds": 36.96081761599635,
       "lut": 959,
       "ff": 824,
-      "bram": 5
+      "bram": 5,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_041",
@@ -898,7 +936,8 @@
       "seconds": 36.446882279997226,
       "lut": 1086,
       "ff": 830,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_042",
@@ -910,7 +949,8 @@
       "seconds": 71.27804356200795,
       "lut": 2219,
       "ff": 1472,
-      "bram": 4
+      "bram": 4,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_043",
@@ -922,7 +962,8 @@
       "seconds": 71.76021546099219,
       "lut": 1969,
       "ff": 1506,
-      "bram": 5
+      "bram": 5,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_044",
@@ -934,7 +975,8 @@
       "seconds": 77.73017532400263,
       "lut": 2121,
       "ff": 1510,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_045",
@@ -946,7 +988,8 @@
       "seconds": 59.118360481006675,
       "lut": 1424,
       "ff": 1000,
-      "bram": 6
+      "bram": 6,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_046",
@@ -958,7 +1001,8 @@
       "seconds": 53.424680819996865,
       "lut": 1257,
       "ff": 1036,
-      "bram": 7
+      "bram": 7,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_047",
@@ -970,7 +1014,8 @@
       "seconds": 52.47980127901246,
       "lut": 1393,
       "ff": 1042,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_048",
@@ -982,7 +1027,8 @@
       "seconds": 101.30272924400924,
       "lut": 2589,
       "ff": 1718,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_049",
@@ -994,7 +1040,8 @@
       "seconds": 87.64702636899892,
       "lut": 2391,
       "ff": 1752,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_050",
@@ -1006,7 +1053,8 @@
       "seconds": 105.92020489000424,
       "lut": 2519,
       "ff": 1756,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_051",
@@ -1018,7 +1066,8 @@
       "seconds": 49.89605343899166,
       "lut": 1539,
       "ff": 1035,
-      "bram": 6
+      "bram": 6,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_052",
@@ -1030,7 +1079,8 @@
       "seconds": 55.449625777007896,
       "lut": 1382,
       "ff": 1071,
-      "bram": 7
+      "bram": 7,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_053",
@@ -1042,7 +1092,8 @@
       "seconds": 57.80566094900132,
       "lut": 1523,
       "ff": 1077,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_054",
@@ -1054,7 +1105,8 @@
       "seconds": 60.37418991800223,
       "lut": 1447,
       "ff": 1154,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_055",
@@ -1066,7 +1118,8 @@
       "seconds": 57.009860093006864,
       "lut": 1289,
       "ff": 1190,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_056",
@@ -1078,7 +1131,8 @@
       "seconds": 56.063294473002315,
       "lut": 1445,
       "ff": 1196,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_057",
@@ -1090,7 +1144,8 @@
       "seconds": 96.14008041300985,
       "lut": 2672,
       "ff": 1753,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_058",
@@ -1102,7 +1157,8 @@
       "seconds": 84.11876029100677,
       "lut": 2646,
       "ff": 1787,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_059",
@@ -1114,7 +1170,8 @@
       "seconds": 107.44239106899477,
       "lut": 2723,
       "ff": 1791,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_060",
@@ -1126,7 +1183,8 @@
       "seconds": 113.4438006279961,
       "lut": 2895,
       "ff": 2002,
-      "bram": 10
+      "bram": 10,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_061",
@@ -1138,7 +1196,8 @@
       "seconds": 132.41903561000072,
       "lut": 2769,
       "ff": 2036,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_062",
@@ -1150,7 +1209,8 @@
       "seconds": 120.33271269500256,
       "lut": 2923,
       "ff": 2040,
-      "bram": 15
+      "bram": 15,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_063",
@@ -1162,7 +1222,8 @@
       "seconds": 61.49558192200493,
       "lut": 1568,
       "ff": 1189,
-      "bram": 8
+      "bram": 8,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_064",
@@ -1174,7 +1235,8 @@
       "seconds": 52.23879769300402,
       "lut": 1459,
       "ff": 1225,
-      "bram": 9
+      "bram": 9,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_065",
@@ -1186,7 +1248,8 @@
       "seconds": 53.31154413499462,
       "lut": 1614,
       "ff": 1231,
-      "bram": 13
+      "bram": 13,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_066",
@@ -1198,7 +1261,8 @@
       "seconds": 143.51222684199456,
       "lut": 3171,
       "ff": 2037,
-      "bram": 10
+      "bram": 10,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_067",
@@ -1210,7 +1274,8 @@
       "seconds": 114.24925113999052,
       "lut": 2814,
       "ff": 2071,
-      "bram": 11
+      "bram": 11,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_core_068",
@@ -1222,7 +1287,8 @@
       "seconds": 125.42738715199812,
       "lut": 3185,
       "ff": 2075,
-      "bram": 15
+      "bram": 15,
+      "invalid": "wrapper tied FetchL1/LsuL1 cmd_ready low; core could not fetch and was pruned"
     },
     {
       "name": "x32_rva_soc_039",

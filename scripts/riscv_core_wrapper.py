@@ -16,6 +16,19 @@ output to an unconnected wire and drove the instruction bus with a constant
 
   * every output path drives nothing, so synthesis deletes it as dead logic
     (the generator log reports "567 signals were pruned")
+
+KNOWN DEFECT, unfixed: the input-driving logic below recognises only the
+`FetchCachelessPlugin_*` and `LsuCachelessPlugin_*` port names. A core
+generated WITH caches names them `FetchL1Plugin_*` and `LsuL1Plugin_*`, which
+fall through to the catch-all and are tied to zero -- `cmd_ready` included, so
+the core can never complete a fetch and the pipeline is pruned exactly as the
+tie-off wrapper this file replaces did.
+
+That invalidated all 66 cached `core_dev` rows in the 2026-07-29 sweep. The
+tell is in the data: cached cores measured 676-3185 LUT against 3954-4072 for
+cacheless ones, and a core with caches cannot be smaller than one without. The
+`microsoc_direct` rows are unaffected -- they are real SoCs and do not use this
+wrapper.
   * the instruction bus never misses and never stalls, because it answers
     every request in the same cycle with the same word
   * the data bus responses are constants, so load-use paths fold away
