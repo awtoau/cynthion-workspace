@@ -1,0 +1,44 @@
+{
+  "variants": [
+    {
+      "variant": "cynthion",
+      "core": "VexRiscv",
+      "fmax": 65,
+      "route_attempts": 8,
+      "seconds": 125.0019024249923,
+      "lut": 4739,
+      "ff": 1683,
+      "bram": 5
+    },
+    {
+      "variant": "cynthion+jtag",
+      "core": "VexRiscv",
+      "fmax": 61,
+      "route_attempts": 8,
+      "seconds": 132.7712592309981,
+      "lut": 5410,
+      "ff": 1832,
+      "bram": 5
+    },
+    {
+      "variant": "imac+dcache",
+      "core": "VexRiscv",
+      "fmax": 55,
+      "route_attempts": 8,
+      "seconds": 116.47024903500278,
+      "lut": 4476,
+      "ff": 1712,
+      "bram": 7
+    },
+    {
+      "variant": "imc",
+      "core": "VexRiscv",
+      "fmax": 53,
+      "route_attempts": 8,
+      "seconds": 84.63508084400382,
+      "lut": 3934,
+      "ff": 1452,
+      "bram": 3
+    }
+  ]
+}
