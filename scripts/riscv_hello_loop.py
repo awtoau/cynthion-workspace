@@ -195,28 +195,23 @@ def main():
                              "design will run but")
                 emit(handle, "will not survive a power cycle.")
                 emit(handle)
-                emit(handle, "Check the Apollo firmware version against the "
-                             "repo before looking")
-                emit(handle, "anywhere else:")
+                emit(handle, "Cause not established. The bridge bitstream "
+                             "builds and loads over")
+                emit(handle, "JTAG cleanly, but 1209:000f never appears on the "
+                             "bus at any point.")
                 emit(handle)
-                emit(handle, "    apollo info        # firmware on the "
-                             "microcontroller")
-                emit(handle, "    git -C repos/apollo log --oneline -1")
+                emit(handle, "Ruled out: this design holding the port "
+                             "(flash-fast overwrites it")
+                emit(handle, "first -- 1209:000e is observably gone during the "
+                             "attempt); no cable")
+                emit(handle, "in CONTROL (Apollo enumerates on it); and Apollo "
+                             "firmware skew (the")
+                emit(handle, "unflashed commits touch only fpga_adv/vendor, "
+                             "not USB takeover).")
                 emit(handle)
-                emit(handle, "flash-fast needs both halves to agree. The Python "
-                             "asks Apollo to hand")
-                emit(handle, "the shared CONTROL port to the FPGA "
-                             "(allow_fpga_takeover_usb), and only")
-                emit(handle, "the firmware can actually do it. Editing the "
-                             "firmware source without")
-                emit(handle, "reflashing the microcontroller leaves the request "
-                             "unanswered: the")
-                emit(handle, "bridge never gets the port, never enumerates, and "
-                             "the error blames")
-                emit(handle, "the bridge rather than the version skew.")
-                if not run([PYTHON, str(APOLLO), "configure", str(BUILD)],
-                           handle, "configure"):
-                    return 1
+                emit(handle, "The volatile path above works, so this only costs "
+                             "a reflash after a")
+                emit(handle, "power cycle.")
 
         emit(handle)
         emit(handle, f"reading the console for {args.seconds:.0f}s")
