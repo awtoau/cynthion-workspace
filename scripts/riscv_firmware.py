@@ -221,6 +221,12 @@ def build(target, work, handle):
     if target == "hello":
         (work / "main.c").write_text(HELLO_C)
         sources = [str(work / "start.S"), str(work / "main.c")]
+    elif target == "softfloat":
+        # Measures what floating point costs when libgcc emulates it. Uses the
+        # same console.h as hello, so it needs no CoreMark machinery.
+        sources = [str(work / "start.S"),
+                   str(PORT / "softfloat_bench.c")]
+        extra_flags = [f"-I{work}"]
     elif target == "coremark":
         if not COREMARK.exists():
             emit(handle, f"CoreMark sources not found at {COREMARK}")
@@ -250,7 +256,7 @@ def build(target, work, handle):
     elf = work / f"{target}.elf"
     # -O2 for benchmarks: CoreMark measures the compiler as much as the core,
     # and -Os would understate every configuration equally but pointlessly.
-    optimisation = "-O2" if target == "coremark" else "-Os"
+    optimisation = "-O2" if target in ("coremark", "softfloat") else "-Os"
     command = [CC, *ARCH, optimisation, "-g",
                "-nostdlib", "-nostartfiles", "-ffreestanding",
                "-fno-builtin", "-Wall",
@@ -291,7 +297,8 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", default="hello",
-                        choices=["hello", "dhrystone", "coremark"])
+                        choices=["hello", "dhrystone", "coremark",
+                                 "softfloat"])
     args = parser.parse_args()
 
     for tool in (CC, OBJCOPY, OBJDUMP):
