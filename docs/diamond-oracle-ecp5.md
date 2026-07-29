@@ -5,6 +5,39 @@ runs. That makes it useful for something more specific than "should we switch":
 it can say **where** the open flow loses, so the gap can be closed in yosys or
 nextpnr rather than worked around.
 
+## Status
+
+**No utilisation or Fmax comparison was obtained.** What this work produced
+instead is the apparatus to obtain one, a measured noise floor that determines
+what such a comparison would have to beat to mean anything, four concrete
+upstream bugs, and one structural finding that rules out the cleanest
+attribution method.
+
+Specifically:
+
+- **The noise floor is measured** on two designs. Utilisation is deterministic
+  (spread 0); Fmax varies 2.4-6.8% depending on the design. Any future Fmax
+  claim below the per-design figure is not a result.
+- **Stage attribution by netlist transplant is impossible** -- yosys and
+  Diamond do not share a primitive vocabulary. See
+  `docs/diamond-par-isolation-blocked.md`. This is the main negative result and
+  it is not a matter of trying harder.
+- **Three yosys/Amaranth handoff bugs are fixed and documented** with minimal
+  reproducers (`docs/upstream-yosys-edif-notes.md`), re-checkable via
+  `./scripts/diamond_probe.py --edif-repro`.
+- **Build time already argues against adoption**: Diamond's synthesis alone is
+  ~7x the entire open flow.
+- **IOLOGIC, the MachXO2 gap, is not the ECP5 gap** -- both flows infer the
+  same DDR cells in the same counts.
+
+The one design carried furthest through Diamond (the analyzer) hit a DRC
+failure on a byte-enabled memory write port, and the run that did complete
+synthesis had its memories destroyed by a `memory_map` mistake on my part,
+making its numbers unusable. `vexii_hello` was still in LSE synthesis after
+ten minutes when this was written. So the headline question -- does Diamond
+pack better -- **remains open**, and this document is the means to answer it
+rather than the answer.
+
 This is the same method that produced the nextpnr-machxo2 IOLOGIC work. See
 `/mnt/2tb/git/pluribus/docs/upstream-contributions.md` and
 `docs/diamond-re-oracle.md` for the MachXO2 precedent.
