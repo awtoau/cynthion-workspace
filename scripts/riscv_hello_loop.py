@@ -195,13 +195,15 @@ def main():
                              "design will run but")
                 emit(handle, "will not survive a power cycle.")
                 emit(handle)
-                emit(handle, "The flash bridge enumerates on the same USB port "
-                             "this design uses")
-                emit(handle, "for its console, so a running console build can "
-                             "keep the bridge from")
-                emit(handle, "appearing. Erasing the flash or power-cycling "
-                             "into an idle bitstream")
-                emit(handle, "first is the usual way through it.")
+                emit(handle, "flash-fast loads its own bridge bitstream over "
+                             "JTAG, replacing this")
+                emit(handle, "design, then waits for it to enumerate as "
+                             "1209:000f. On r1.4 the")
+                emit(handle, "bridge uses control_phy -- the CONTROL port -- "
+                             "not the TARGET port")
+                emit(handle, "this console runs on. It cannot appear unless a "
+                             "host cable is in")
+                emit(handle, "CONTROL.")
                 if not run([PYTHON, str(APOLLO), "configure", str(BUILD)],
                            handle, "configure"):
                     return 1
