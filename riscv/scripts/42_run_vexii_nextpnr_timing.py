@@ -53,6 +53,22 @@ def _const_zero(width: str | None) -> str:
 
 
 def generate_wrapper(rtl_path: Path, wrap_path: Path) -> None:
+    """Wrap a bare core so nextpnr has something with few enough pins to place.
+
+    WARNING -- this wrapper does not measure a working core. Every core output
+    is connected to a wire that drives nothing, and the instruction bus is fed
+    a constant `32'h00000013` (a `nop`) rather than a memory. Synthesis
+    therefore deletes the entire output side as dead logic and folds the fetch
+    path to a constant; the generator reports "567 signals were pruned".
+
+    Area and Fmax measured through this wrapper describe whatever survived that
+    pruning. The archived sweep's core rows were produced this way and were
+    discarded.
+
+    `scripts/riscv_core_wrapper.py` in the workspace root replaces this: it
+    attaches block RAM to both buses with a real one-cycle handshake, so the
+    paths that decide Fmax are present and the logic driving them survives.
+    """
     text = rtl_path.read_text(encoding="utf-8", errors="replace")
     m = re.search(r"module\s+VexiiRiscv\s*\((.*?)\);", text, flags=re.S)
     if not m:

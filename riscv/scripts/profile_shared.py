@@ -213,6 +213,20 @@ def build_nextpnr_cmd(
     threads: int,
     freq_mhz: float = 25.0,
 ) -> list[str]:
+    """Assemble a nextpnr invocation.
+
+    WARNING -- the default 25 MHz target does not measure Fmax. Combined with
+    `--timing-allow-fail` below, the router stops optimising once it clears
+    25 MHz and then reports whatever it happened to achieve. That number is a
+    lower bound produced by a relaxed constraint, not a ceiling, and it varies
+    with placement noise rather than with the design.
+
+    The whole archived sweep was run this way and its timing results were
+    discarded because of it. Rerouting one I$+D$ configuration at a 200 MHz
+    target gave 82.6 MHz against the 146.4 MHz this path had reported.
+
+    Pass a freq_mhz above any plausible result if you want a meaningful Fmax.
+    """
     cmd = [
         nextpnr,
         "--12k",
