@@ -76,14 +76,22 @@ def main() -> int:
     for attempt in range(args.repeat):
         debugger = ApolloDebugger()
         try:
-            # A configured FPGA drives the shared lines and will not re-enter ISC;
-            # every configure must start from an offline FPGA. `apollo configure`
-            # gets this via its own --force-offline handling, so do the same here
-            # rather than measuring a state the real tool never runs in.
-            try:
-                debugger.force_fpga_offline()
-            except Exception as exc:
-                logger.debug(f"  force_fpga_offline: {exc!r}")
+            # A configured FPGA drives the shared lines and will not re-enter ISC, so
+            # every configure must start from a reset FPGA. Pulsing PROGRAMN via
+            # TRIGGER_RECONFIGURATION is what actually clears it; force_fpga_offline
+            # is refused (pipe error) once the FPGA is already offline, so it cannot
+            # be relied on here.
+            #
+            # If a previous run left a JTAG session open, Apollo stays latched in
+            # MODE_JTAG_PROGRAMMING and refuses control-plane requests. EMERGENCY_RESET
+            # (0xec) is permitted in that state precisely to break the deadlock.
+            for request, name in ((0xec, "emergency reset"),
+                                  (0xbe, "close JTAG session"),
+                                  (0xc0, "trigger reconfiguration")):
+                try:
+                    debugger.out_request(request)
+                except Exception as exc:
+                    logger.debug(f"  {name}: {exc!r}")
 
             with debugger.jtag as jtag:
                 programmer = ECP5_JTAGProgrammer(jtag)

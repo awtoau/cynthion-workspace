@@ -168,11 +168,32 @@ Speed changes here can corrupt data while still appearing to succeed, so
 asserts `DONE` is set with no `FAIL` or BSE error bits. The racy SPI version described
 above passed a naive "did it throw?" check and failed this one.
 
-One operational note: a configured FPGA drives the shared lines and will not re-enter
-ISC, so **every configure must start from an offline FPGA**. Back-to-back configures
-without `force_fpga_offline()` fail with "Failed to enter ISC" and an all-zero status.
-This is pre-existing behaviour, not caused by these changes, but it produces confusing
-failures when benchmarking in a loop.
+### Getting back to a clean state between runs
+
+A configured FPGA drives the shared lines and will not re-enter ISC, so **every
+configure must start from a reset FPGA**. Back-to-back configures otherwise fail with
+"Failed to enter ISC" and an all-zero status. This is pre-existing behaviour, not
+caused by these changes, but it produces confusing failures when benchmarking in a loop
+and cost real time during this work.
+
+`verify_configure.py` therefore issues three requests before each run:
+
+| request | why |
+|---|---|
+| `0xec` EMERGENCY_RESET | If a previous run left a JTAG session open, Apollo stays latched in `MODE_JTAG_PROGRAMMING` and refuses control-plane requests (surfacing as a pipe error). This is permitted in that state precisely to break the deadlock. |
+| `0xbe` JTAG_STOP | Closes the dangling session. |
+| `0xc0` TRIGGER_RECONFIGURATION | Pulses PROGRAMN, which is what actually resets the FPGA. |
+
+Note that `force_fpga_offline()` is *not* usable for this: once the FPGA is already
+offline the request is refused with a pipe error.
+
+Two further recovery notes, both exercised during this work:
+
+- After a successful configure the FPGA may take over the USB port, so the next
+  operation can fail with "No such device". The device is fine; re-run it.
+- If Apollo ends up in the Saturn-V bootloader ("Cynthion Bootloader"), `fwup-util`
+  may not find it while `dfu-util` will. `dfu-util -d 1d50:615c -a 0 -D <firmware.bin> -R`
+  reflashes and returns to the application.
 
 ## Where the remaining time goes
 
