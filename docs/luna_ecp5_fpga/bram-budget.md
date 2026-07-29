@@ -13,9 +13,12 @@ All built for r1.4, same device, package and speed grade.
 | Facedancer SoC | 45 / 56 (80%) | 12824 | soft CPU + firmware |
 | RISC-V hello SoC | 41 / 56 (73%) | 6811 | soft CPU + firmware |
 
-The facedancer build does not close timing — 72.68 MHz against its own 120 MHz
-target — so it produces no bitstream. Its placement figures are still valid and
-are what the table quotes.
+All three build and produce bitstreams. An earlier draft recorded facedancer as
+failing timing at 72.68 MHz against a 120 MHz target; that was a build error
+here, not an upstream fault. Facedancer is built with `domain="usb"` at 60 MHz
+(`top.py` reads `platform.DEFAULT_CLOCK_FREQUENCIES_MHZ`), and it had been
+instantiated with the default `domain="sync"`, placing 60 MHz logic in a 120 MHz
+domain. Built the way its own build path does it, every clock passes.
 
 ## Capture work barely touches block RAM
 
