@@ -55,15 +55,22 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 RAM_BASE = 0x00000000
 RAM_SIZE = 64 * 1024
 
-# The console peripheral, clear of the 64 KiB RAM window.
+# The console peripheral. Bit 31 must be set, and that is not a style choice.
 #
-# It must also be inside what the decoder can reach. The Wishbone decoder is
-# 30 bits wide with byte granularity, so it spans 0x40000000 -- an address at
-# or above that is silently unreachable. 0x80000000 looked like the obvious
-# "high peripheral" address and produced a design that built, enumerated, and
-# dropped every store on the floor: the CPU wrote, the decoder saw a truncated
-# address, nothing matched, and no error was raised anywhere.
-CONSOLE_BASE = 0x10000000
+# The `cynthion` variant uses DBusCachedPlugin, whose memory translator marks
+# an access as uncached I/O only when address bit 31 is high:
+#
+#     assign DBusCachedPlugin_mmuBus_rsp_isIoAccess =
+#         DBusCachedPlugin_mmuBus_rsp_physicalAddress[31];
+#
+# A peripheral below 0x80000000 is therefore cacheable: stores are absorbed by
+# the write-back data cache and never become a bus cycle, and polling a status
+# register reads back the CPU's own cache line. The design builds, enumerates,
+# and is silent, with the CPU running perfectly the whole time.
+#
+# moondancer puts its CSRs at 0xf0000000 for this reason, and uses 0x10000000
+# for SPI flash, which it *wants* cached.
+CONSOLE_BASE = 0xf0000000
 
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
 
@@ -80,6 +87,16 @@ class ConsolePeripheral(wiring.Component):
     Behind it is a FIFO rather than a single byte. A CPU writing a string
     character by character would otherwise stall on every byte waiting for USB,
     and USB delivers in packets rather than bytes.
+
+    The depth is two 512-byte USB packets: enough that the CPU can fill one
+    while another is in flight, so a burst of output does not stall on the
+    endpoint. Larger buys nothing here -- the firmware prints a line at a time,
+    not megabytes -- and each 1024 bytes is a block RAM that the CPU's own
+    memory then cannot have.
+
+    `ready` is the FIFO's write-side space, and the endpoint's `valid` is its
+    read side. So an empty FIFO with a live USB device means no store from the
+    CPU is landing, rather than anything being wrong downstream.
     """
 
     def __init__(self, *, depth=1024):
@@ -208,6 +225,16 @@ class HelloSoC(Elaboratable):
             endpoint.stream.valid.eq(console.source.valid),
             endpoint.stream.last.eq(0),
             console.source.ready.eq(endpoint.stream.ready),
+
+            # Send a short packet as soon as the FIFO drains, rather than
+            # waiting for 512 bytes to accumulate.
+            #
+            # USBInTransferManager only marks a packet ready when `last` is
+            # asserted, the buffer fills, or `flush` is high. A console emits a
+            # line and then goes quiet, so without this the banner sits in the
+            # buffer until enough later output arrives to fill it -- minutes of
+            # apparent silence from a working CPU.
+            endpoint.flush.eq(~console.source.valid),
         ]
 
         m.d.comb += usb.connect.eq(1)
