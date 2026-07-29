@@ -166,9 +166,22 @@ weighed against, not a footnote.
 `~/lscc/diamond/3.14/ispfpga/ep5c00/data/bitgen.usg` documents generator
 options absent from `ecppack`: `CfgMode` (Disable/Flowthrough/Bypass), `RamCfg`
 (Reset/NoReset), the phase controls `DONEPHASE`/`GOEPHASE`/`GSRPHASE`/
-`GWDPHASE`, `ES`, and `-m` for mask and readback files. None affect
-utilisation or Fmax, so they are not part of the comparison, but `-m` in
-particular has no open-flow equivalent at all.
+`GWDPHASE`, `ES`, and `-m` for mask and readback files.
+
+Confirmed absent by checking `ecppack` directly rather than taking it on
+trust -- none of those option names appear in its strings, and `--help` offers
+only `--freq`, `--compress`, `--spimode` and `--bootaddr`.
+
+None of them affect utilisation or Fmax, so they are outside the comparison.
+Two are worth noting anyway:
+
+- **`-m` (mask/readback files)** has no open-flow equivalent at all. Readback
+  is the basis for verifying a configured device against its bitstream, which
+  the open flow currently cannot do.
+- **`GSRPHASE`/`DONEPHASE`** control the ordering of global set/reset release
+  against DONE. That ordering is exactly the kind of thing that produces a
+  design which works from SRAM and fails from flash, so having no control over
+  it is a real gap even though it never shows up in a utilisation table.
 
 ## Reproducing
 
