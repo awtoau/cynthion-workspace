@@ -1,8 +1,28 @@
 #!/usr/bin/env python3
-"""Query JLCPCB SMT parts API for 1.8V HyperRAM drop-in candidates for S27KS0641."""
+"""Query JLCPCB SMT parts API for 1.8V HyperRAM drop-in candidates for S27KS0641.
+
+Results go to ./tmp/logs/ as well as the terminal: a parts search is worth
+keeping, and stock and pricing change, so the answer is only meaningful
+alongside the date it was fetched.
+"""
 import json
+import pathlib
 import subprocess
 import sys
+
+LOG = pathlib.Path(__file__).resolve().parent.parent / "tmp" / "logs" / "hyperram_search.log"
+_handle = None
+
+
+def emit(text=""):
+    """Print, and record with it."""
+    global _handle
+    if _handle is None:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        _handle = LOG.open("w")
+    print(text, flush=True)
+    _handle.write(str(text) + "\n")
+    _handle.flush()
 
 URL = "https://jlcpcb.com/api/overseas-pcb-order/v1/shoppingCart/smtGood/selectSmtComponentList"
 
@@ -60,25 +80,26 @@ def main():
     seen = {}
     for kw in KEYWORDS:
         keyword, rows, err = query(kw)
-        print(f"\n===== keyword: {keyword} =====")
+        emit(f"\n===== keyword: {keyword} =====")
         if err:
-            print(err)
+            emit(err)
             continue
         if not rows:
-            print("  (no results)")
+            emit("  (no results)")
         for r in rows:
             key = r["lcsc"]
             if key in seen:
                 continue
             seen[key] = r
-            print(f"  {r['opn']:32s} {r['lcsc']:12s} stk={str(r['stock']):>7s} "
+            emit(f"  {r['opn']:32s} {r['lcsc']:12s} stk={str(r['stock']):>7s} "
                   f"p10={r['p10']} lib={r['libType']} buy={r['isBuy']} type={r['type']}")
             if r["noBuyReason"]:
-                print(f"      noBuyReason: {r['noBuyReason']}")
-    print("\n\n===== UNIQUE SUMMARY (sorted by stock) =====")
+                emit(f"      noBuyReason: {r['noBuyReason']}")
+    emit("\n\n===== UNIQUE SUMMARY (sorted by stock) =====")
     for r in sorted(seen.values(), key=lambda x: -(x["stock"] or 0)):
-        print(f"  {r['opn']:34s} {r['lcsc']:12s} stk={str(r['stock']):>7s} "
+        emit(f"  {r['opn']:34s} {r['lcsc']:12s} stk={str(r['stock']):>7s} "
               f"p10={r['p10']} {r['libType']} {r['type']} :: {r['url']}")
+    emit(f"\nlog: {LOG}")
 
 
 if __name__ == "__main__":

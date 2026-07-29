@@ -1,6 +1,27 @@
 #!/usr/bin/env python3
-"""Pull voltage/package/stock attributes from LCSC product detail API for candidate C-codes."""
-import json, subprocess, sys
+"""Pull voltage/package/stock attributes from LCSC product detail API for candidate C-codes.
+
+Results go to ./tmp/logs/ as well as the terminal: stock and pricing change, so
+what was found is only meaningful alongside when it was fetched.
+"""
+import json
+import pathlib
+import subprocess
+import sys
+
+LOG = pathlib.Path(__file__).resolve().parent.parent / "tmp" / "logs" / "lcsc_detail.log"
+_handle = None
+
+
+def emit(text=""):
+    """Print, and record with it."""
+    global _handle
+    if _handle is None:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        _handle = LOG.open("w")
+    print(text, flush=True)
+    _handle.write(str(text) + "\n")
+    _handle.flush()
 
 CODES = sys.argv[1:] or [
     "C2948723",   # S27KS0642GABHI020 (C3334999 jlc)
@@ -16,7 +37,12 @@ CODES = sys.argv[1:] or [
 def detail(code):
     out = subprocess.run(
         ["curl","-s",f"https://wmsc.lcsc.com/ftps/wm/product/detail?productCode={code}",
-         "-H","User-Agent: Mozilla/5.0"], capture_output=True, text=True, timeout=30).stdout
+         "-H","User-Agent: Mozilla/5.0"],
+        capture_output=True, text=True,
+        # A product-detail lookup answers in well under a second; 15 s is the
+        # point at which the API is not going to answer at all, and failing
+        # one code should not stall the rest of the list.
+        timeout=15).stdout
     try:
         r = json.loads(out).get("result") or {}
     except Exception as e:
@@ -38,9 +64,9 @@ def detail(code):
 
 for c in CODES:
     code, d = detail(c)
-    print(f"\n===== {code} =====")
+    emit(f"\n===== {code} =====")
     if "err" in d:
-        print("  ", d["err"]); continue
-    print(f"  model={d['model']}  mfr={d['mfr']}  stock={d['stock']}  pkg={d['pkg']}")
-    print(f"  voltage: {d['voltage_attrs']}")
-    print(f"  capacity: {d['cap_attrs']}")
+        emit("  ", d["err"]); continue
+    emit(f"  model={d['model']}  mfr={d['mfr']}  stock={d['stock']}  pkg={d['pkg']}")
+    emit(f"  voltage: {d['voltage_attrs']}")
+    emit(f"  capacity: {d['cap_attrs']}")
