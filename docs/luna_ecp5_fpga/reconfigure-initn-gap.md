@@ -85,3 +85,52 @@ conclusion drawn was that the image predated the session. Comparing bitstream
 So: identify a flash image by comparing content from a fixed offset, never by
 inferring its length from where the erased region begins. Programming a smaller
 bitstream over a larger one leaves the difference behind.
+
+## Checking the "no fabric path to configuration" claim against Diamond
+
+That claim originally rested on the open tooling's primitive list plus a
+supporting argument: that MachXO2 has `PCNTR` for exactly this and the ECP5
+does not, so the absence is deliberate rather than an oversight.
+
+**The supporting argument was wrong.** Lattice Diamond 3.14 is installed
+locally, and its simulation libraries are the vendor's own declaration of what
+each family exposes. Comparing them:
+
+    ecp5u    171 primitives
+    machxo2  194 primitives
+
+The 23 MachXO2 has that ECP5 does not are arithmetic comparators (`AGEB2`,
+`ALEB2`, `ANEB2`), block RAM variants (`DP8KC`, `SP8KC`, `PDPW8KC`, `FIFO8KB`),
+DDR I/O, PLLs and flip-flop variants. **`PCNTR` is not among them, and does not
+appear in the MachXO2 library at all.**
+
+So the correct statement is that *neither* family exposes a configuration-access
+primitive in Diamond's simulation libraries, not that ECP5 uniquely lacks one.
+
+The ECP5's config-adjacent primitives, from Lattice's own library:
+
+| primitive | function |
+|---|---|
+| `DTR` | die temperature register |
+| `GSR`, `SGSR` | global set/reset |
+| `OSCG` | internal oscillator |
+| `SEDGA` | soft error detection |
+| `USRMCLK` | the configuration clock pin |
+| `EXTREFB` | SERDES reference clock |
+| `SRAMWB` | slice write-data/address mux for distributed LUT RAM |
+
+`SRAMWB` is worth noting because the name suggests SRAM with a Wishbone
+interface. Reading it, its ports are `WDO0..3` and `WADO0..3` — write data and
+write address out, inside a logic slice. It is routing, not configuration.
+
+Diamond also ships no ECP5 configuration-access IP: the EFB-style hits under
+`data/ptmdata/` are for other families (LASC, LMS).
+
+### How strong this is
+
+Strong evidence, not proof. Simulation libraries describe what Diamond
+simulates, and a hardened block reachable only through a soft IP core need not
+appear as a standalone primitive — MachXO2's EFB has configuration access on
+real silicon without being a primitive in this directory. What can be said is
+that for ECP5, neither the primitive library nor the shipped IP offers such a
+path.
