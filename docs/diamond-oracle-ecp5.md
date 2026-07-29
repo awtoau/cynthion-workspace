@@ -135,6 +135,19 @@ Note `MULT18X18D`: yosys already infers 4 DSPs in `vexii_hello`, so DSP
 inference is not simply absent from the open flow. Whether Diamond finds more
 is a question for the comparison rather than an assumption going into it.
 
+**IOLOGIC is not the ECP5 gap it was on MachXO2.** The MachXO2 work found
+nextpnr had no IOLOGIC support at all. Here the open flow infers 10 `ODDRX1F`
+and 9 `IDDRX1F` on the analyzer, and Diamond's LSE independently reached for
+the same class of cells on the same design -- `IDDRX1F` 9, `ODDRX1F` 10, plus
+`IFS1P3IX`/`OFS1P3DX`/`OFS1P3IX` register-in-IO variants. The counts match on
+the DDR cells. Whatever the ECP5 gap turns out to be, it is not a missing
+IOLOGIC implementation, so the MachXO2 fix does not have an obvious analogue
+here.
+
+(That observation survives from the discarded `memory_map` run: the memories
+in it were destroyed, but the IO cells were untouched by that mistake, and
+IO inference does not depend on how memory was expressed.)
+
 **Since the PAR-isolation experiment turned out to be impossible (see
 `docs/diamond-par-isolation-blocked.md`), this table is the only attribution
 mechanism available.** It can show *that* the flows chose different
