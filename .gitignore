@@ -37,7 +37,8 @@ tmp/
 .DS_Store
 
 # Large regenerable sim waveforms (exceeds GitHub 100MB limit; regenerate from *.py)
-ecp5-test/led_patterns_button_sim.vcd
+# Simulation waveforms: written by the sim scripts on every run.
+*.vcd
 
 # Generated bitstreams from the bring-up gateware
 ecp5-test/power_monitor/build/
