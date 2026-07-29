@@ -38,6 +38,14 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tmp" / "riscv_hello"
 LOG = ROOT / "tmp" / "logs" / "riscv_firmware.log"
 
+# CoreMark is vendored in the VexiiRiscv submodule rather than fetched.
+COREMARK = ROOT / "repos" / "vexiiriscv" / "ext" / "NaxSoftware" / "baremetal" / "coremark"
+PORT = ROOT / "ecp5-test" / "riscv" / "coremark_port"
+
+# Enough iterations that the run is dominated by work rather than by startup,
+# and few enough that it finishes in seconds on a 60 MHz core.
+ITERATIONS = 300
+
 CC = "riscv64-linux-gnu-gcc"
 OBJCOPY = "riscv64-linux-gnu-objcopy"
 OBJDUMP = "riscv64-linux-gnu-objdump"
@@ -209,29 +217,53 @@ def build(target, work, handle):
     """Compile, link, and emit a raw binary."""
     write_common(work)
 
+    extra_flags = []
     if target == "hello":
         (work / "main.c").write_text(HELLO_C)
-        sources = ["start.S", "main.c"]
+        sources = [str(work / "start.S"), str(work / "main.c")]
+    elif target == "coremark":
+        if not COREMARK.exists():
+            emit(handle, f"CoreMark sources not found at {COREMARK}")
+            emit(handle, "  They are vendored in the VexiiRiscv submodule; run")
+            emit(handle, "  git submodule update --init --recursive")
+            return None
+        sources = [str(work / "start.S"),
+                   str(PORT / "core_portme.c")]
+        sources += [str(COREMARK / f) for f in
+                    ("core_main.c", "core_list_join.c", "core_matrix.c",
+                     "core_state.c", "core_util.c")]
+        # ITERATIONS is fixed rather than auto-scaled: CoreMark normally grows
+        # the count until a run takes 10 s, which needs a wall clock. Ticks
+        # here are CPU cycles, and a fixed count makes runs directly
+        # comparable between configurations.
+        extra_flags = [f"-I{COREMARK}", f"-I{PORT}",
+                       "-DPERFORMANCE_RUN=1", f"-DITERATIONS={ITERATIONS}",
+                       "-DMAIN_HAS_NOARGC=1", '-DCOMPILER_FLAGS="-O2"',
+                       "-DSEED_METHOD=SEED_VOLATILE"]
     else:
-        emit(handle, f"{target}: not vendored yet.")
-        emit(handle, "  Dhrystone and CoreMark need their sources fetched and "
-                     "a timing")
-        emit(handle, "  hook wired to a cycle counter. Bring `hello` up first "
-                     "-- until the")
-        emit(handle, "  CPU is known to execute and print, a benchmark that "
-                     "produces no")
-        emit(handle, "  output is indistinguishable from a CPU that never "
-                     "started.")
+        emit(handle, f"{target}: not vendored.")
+        emit(handle, "  Dhrystone needs its sources fetched. CoreMark is "
+                     "available as")
+        emit(handle, "  --target coremark.")
         return None
 
     elf = work / f"{target}.elf"
-    command = [CC, *ARCH, "-Os", "-g",
+    # -O2 for benchmarks: CoreMark measures the compiler as much as the core,
+    # and -Os would understate every configuration equally but pointlessly.
+    optimisation = "-O2" if target == "coremark" else "-Os"
+    command = [CC, *ARCH, optimisation, "-g",
                "-nostdlib", "-nostartfiles", "-ffreestanding",
-               "-fno-builtin", "-Wall", "-Wextra",
-               f"-I{work}",
+               "-fno-builtin", "-Wall",
+               f"-I{work}", *extra_flags,
                "-T", str(work / "link.ld"),
                "-o", str(elf),
-               *[str(work / s) for s in sources]]
+               *sources,
+               # libgcc, not a libc: it supplies the soft-float helpers
+               # (__divdf3, __floatunsidf) that CoreMark's own reporting code
+               # needs on a core with no FPU. -nostdlib excludes it, and
+               # patching upstream source to avoid double arithmetic would be
+               # worse than linking the runtime that exists for this.
+               "-lgcc"]
 
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
