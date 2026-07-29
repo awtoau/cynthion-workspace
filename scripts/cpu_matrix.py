@@ -46,6 +46,34 @@ VEXRISCV_VARIANTS = [
     "imc",
 ]
 
+# VexiiRiscv configurations, generated from source. The recovered tree builds
+# under Java 25 once three files deleted from its vendored SpinalHDL are
+# restored -- the blocker recorded against VexRiscv (Scala 2.11.12) does not
+# apply here, since VexiiRiscv uses Scala 2.12/2.13.
+#
+# The middle rows are the single-factor split the RV32 report asked for and
+# never got. Its two configurations differed in three ways at once -- caches,
+# atomics and supervisor mode -- so the 2x Fmax difference between them could
+# not be attributed. These vary one thing at a time from a common base.
+VEXII_ROOT = Path("/mnt/2tb/wastebasket/cynthion-workspace-20260728-093000"
+                  "/riscv-64-work-vexiiriscv")
+
+VEXII_BASE = "--xlen=32 --with-rvm --with-rvc --with-rdtime --without-mmu"
+
+VEXII_CONFIGS = {
+    "vexii-base":        VEXII_BASE,
+    "vexii+supervisor":  f"{VEXII_BASE} --with-supervisor",
+    "vexii+rva":         f"{VEXII_BASE} --with-rva",
+    "vexii+caches":      (f"{VEXII_BASE} --with-fetch-l1 --fetch-l1-sets=64 "
+                          f"--fetch-l1-ways=1 --with-lsu-l1 --lsu-l1-sets=64 "
+                          f"--lsu-l1-ways=1"),
+    # The report's "moondancer-like" row, reproduced so the new rows can be
+    # checked against a figure that already exists.
+    "vexii-moondancer":  (f"{VEXII_BASE} --with-rva --with-fetch-l1 "
+                          f"--fetch-l1-sets=64 --fetch-l1-ways=1 "
+                          f"--with-lsu-l1 --lsu-l1-sets=64 --lsu-l1-ways=1"),
+}
+
 BUILD_TEMPLATE = """
 source "$HOME/opt/oss-cad-suite/environment"
 python3.15t - <<'PYEOF'
@@ -97,6 +125,71 @@ def parse_report(build_dir):
     }
 
 
+def generate_vexii(name, flags):
+    """Run the Scala generator, then synthesise the Verilog it emits.
+
+    Generation and synthesis are separate steps here, unlike the VexRiscv path
+    where the Verilog already exists. Each configuration generates into its own
+    directory, because the generator writes a fixed filename and concurrent
+    runs would overwrite each other.
+    """
+    output_dir = ROOT / "ecp5-test" / "riscv" / "matrix" / name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # The generator has no output-directory option -- it writes VexiiRiscv.v
+    # into the working directory. So configurations are generated one at a
+    # time and the result moved aside, rather than run concurrently where they
+    # would overwrite each other.
+    started = time.perf_counter()
+    result = subprocess.run(
+        ["sbt", f"runMain vexiiriscv.Generate {flags}"],
+        cwd=VEXII_ROOT, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        tail = [l for l in result.stdout.splitlines() if l.startswith("[error]")]
+        return name, None, time.perf_counter() - started, (
+            tail[-1][:70] if tail else "generate failed")
+
+    emitted = VEXII_ROOT / "VexiiRiscv.v"
+    if not emitted.exists():
+        return name, None, time.perf_counter() - started, "no verilog emitted"
+
+    verilog = output_dir / "VexiiRiscv.v"
+    verilog.write_bytes(emitted.read_bytes())
+
+    # Synthesise to the same target as the VexRiscv rows, so the numbers are
+    # comparable: same device, package and speed grade.
+    script = output_dir / "synth.ys"
+    script.write_text(
+        f"read_verilog {verilog}\n"
+        f"hierarchy -top VexiiRiscv\n"
+        f"synth_ecp5 -top VexiiRiscv -json {output_dir}/vexii.json\n"
+        f"stat\n")
+
+    synth = subprocess.run(
+        ["bash", "-c", f'source "$HOME/opt/oss-cad-suite/environment" && '
+                       f'yosys {script}'],
+        cwd=ROOT, capture_output=True, text=True)
+    elapsed = time.perf_counter() - started
+
+    if synth.returncode != 0:
+        return name, None, elapsed, "synthesis failed"
+
+    def count(cell):
+        match = re.search(rf"\s+(\d+)\s+{cell}\b", synth.stdout)
+        return int(match.group(1)) if match else 0
+
+    # No Fmax: yosys alone does not place or route, and running nextpnr would
+    # need a top level with pins. Area is what this row contributes.
+    return name, {
+        "lut":  count("LUT4") + count("CCU2C"),
+        "ff":   count("TRELLIS_FF"),
+        "bram": count("DP16KD"),
+        "fmax": None,
+        "meets": None,
+    }, elapsed, None
+
+
 def build_one(variant):
     """Build a single variant in its own directory, so runs cannot collide."""
     build_dir = f"ecp5-test/riscv/matrix/{variant.replace('+', '_')}"
@@ -127,12 +220,16 @@ def main():
     parser.add_argument("--jobs", type=int, default=8,
                         help="concurrent builds")
     parser.add_argument("--variants", nargs="+", default=VEXRISCV_VARIANTS)
+    parser.add_argument("--skip-vexii", action="store_true",
+                        help="VexRiscv rows only; skips the Scala generator")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
     (ROOT / "ecp5-test" / "riscv" / "matrix").mkdir(parents=True, exist_ok=True)
 
     results = {}
+
+    # VexRiscv builds are independent and run concurrently.
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {pool.submit(build_one, v): v for v in args.variants}
         for future in concurrent.futures.as_completed(futures):
@@ -142,6 +239,15 @@ def main():
             print(f"  built {variant:<20} {elapsed:>6.1f}s  {status}",
                   flush=True)
 
+    # VexiiRiscv generation is serialised: the generator writes a fixed
+    # filename into its own tree, so concurrent runs would race.
+    if not args.skip_vexii:
+        for name, flags in VEXII_CONFIGS.items():
+            name, report, elapsed, error = generate_vexii(name, flags)
+            results[name] = (report, elapsed, error)
+            status = error if error else "ok"
+            print(f"  built {name:<20} {elapsed:>6.1f}s  {status}", flush=True)
+
     with LOG.open("w") as handle:
         emit(handle)
         emit(handle, "CPU area and timing, core plus block RAM, nothing else")
@@ -149,7 +255,11 @@ def main():
         emit(handle, f"  {'variant':<20}{'LUT4':>7}{'FF':>7}{'BRAM':>6}"
                      f"{'Fmax':>9}{'closes':>8}")
 
-        for variant in args.variants:
+        ordered = list(args.variants)
+        if not args.skip_vexii:
+            ordered += list(VEXII_CONFIGS)
+
+        for variant in ordered:
             report, elapsed, error = results.get(variant, (None, 0, "not run"))
             if error:
                 emit(handle, f"  {variant:<20}  {error}")
@@ -157,10 +267,18 @@ def main():
             if report is None:
                 emit(handle, f"  {variant:<20}  no timing report produced")
                 continue
-            closes = "yes" if report["meets"] else "no"
-            emit(handle, f"  {variant:<20}{report['lut']:>7}{report['ff']:>7}"
-                         f"{report['bram']:>6}{report['fmax']:>8.1f}M"
-                         f"{closes:>8}")
+            if report["fmax"] is None:
+                # VexiiRiscv rows are synthesis-only: yosys does not place or
+                # route, so there is no Fmax to report. Said explicitly rather
+                # than left blank, so the gap is not mistaken for a failure.
+                emit(handle, f"  {variant:<20}{report['lut']:>7}"
+                             f"{report['ff']:>7}{report['bram']:>6}"
+                             f"{'synth only':>9}{'':>8}")
+            else:
+                closes = "yes" if report["meets"] else "no"
+                emit(handle, f"  {variant:<20}{report['lut']:>7}"
+                             f"{report['ff']:>7}{report['bram']:>6}"
+                             f"{report['fmax']:>8.1f}M{closes:>8}")
 
         emit(handle)
         emit(handle, "Block RAM counts are low because a CPU with no firmware "

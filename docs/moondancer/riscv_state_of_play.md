@@ -131,6 +131,56 @@ question for this board is therefore not "which core" but **which point on the
 VexiiRiscv curve fits alongside a USB stack**, and that is answerable by
 building rather than arguing.
 
+## The earlier sweep, recovered
+
+The RV32 report quotes two configurations. The work behind it covered far more:
+**57 configurations with place-and-route timing**, 258 exhaustive core builds,
+and 692 log files. Recovered from the wastebasket to `/mnt/2tb/riscv-work/`.
+
+Renamed on the way out: the directories were `riscv-64-*` but the builds are
+RV32, which was actively misleading.
+
+Best Fmax per feature combination, from the `microsoc` series:
+
+| features | Fmax |
+|---|---|
+| i4k + d4k + btb + gshare + ras + dual | **192.1 MHz** |
+| i4k + d4k + btb + gshare | 183.3 MHz |
+| i4k + d4k + dual | 157.8 MHz |
+| i4k + d4k + btb | 154.4 MHz |
+| i4k + d4k + btb + dual | 151.8 MHz |
+| **i4k + d4k** | **146.4 MHz** |
+| i4k + d4k + btb + gshare + ras | 144.5 MHz |
+| i4k + d4k + btb + ras | 134.4 MHz |
+
+### This answers the 73 vs 146 question
+
+The report presented a puzzle it could not resolve: its "stripped" build ran at
+73.4 MHz and its "moondancer-like" build at 146.4 MHz, despite the latter having
+*more* features. It said the comparison was not single-factor — supervisor mode,
+atomics and caches all differed — so the doubling could not be attributed.
+
+The sweep already contained the answer. `microsoc_exh_01_i4k_d4k` measures
+**exactly 146.4 MHz**, and its configuration is caches and nothing else. So the
+report's faster row is that build, and **the caches are what doubled the clock**.
+
+That is the opposite of the intuition that more logic means worse timing, and it
+has a clear mechanism: without a cache every fetch and load crosses the bus and
+the memory controller, and that path is long. A small L1 terminates the common
+case inside the CPU at a block RAM, and the critical path moves somewhere
+shorter.
+
+Branch prediction adds further: `btb + gshare` reaches 183 MHz, and with `ras`
+and dual-issue 192 MHz — though `ras` alone is consistently *worse* than
+`gshare` alone, which is worth knowing before enabling it.
+
+### What is still missing
+
+The sweep recorded timing but not area in the same summaries, and **no CoreMark
+at all** — so performance-per-LUT still cannot be computed from it. The
+`core_exh` series has nextpnr logs that do contain area figures and would fill
+that in.
+
 ## Why this matters for the flash work
 
 The flash benchmarking stalled on a measurement problem: a JTAG register read
