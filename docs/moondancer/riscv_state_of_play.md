@@ -131,44 +131,64 @@ question for this board is therefore not "which core" but **which point on the
 VexiiRiscv curve fits alongside a USB stack**, and that is answerable by
 building rather than arguing.
 
-## The earlier sweep, recovered
+## The earlier sweep, and why its numbers were discarded
 
 The RV32 report quotes two configurations. The work behind it covered far more:
-**57 configurations with place-and-route timing**, 258 exhaustive core builds,
-and 692 log files. Recovered from the wastebasket to `/mnt/2tb/riscv-work/`.
+57 configurations with place-and-route timing, 258 exhaustive core builds, and
+692 log files. All of it has been deleted, because reading the scripts that
+produced it showed the numbers do not mean what they appear to mean.
 
-Renamed on the way out: the directories were `riscv-64-*` but the builds are
-RV32, which was actively misleading.
+**Fmax was routed at a 25 MHz target.** `build_nextpnr_cmd` in
+`riscv-64/scripts/profile_shared.py` passes `--freq 25.0` with
+`--timing-allow-fail`, so the router stops caring once it clears 25 MHz and
+reports whatever it happened to achieve. That is a lower bound produced by a
+relaxed constraint, not a ceiling. Rerouting the same I$+D$ configuration at a
+200 MHz target gives **82.6 MHz** against the 146.4 MHz in the archived data.
 
-Best Fmax per feature combination, from the `microsoc` series:
+**The bare-core builds measured a pruned design.** The wrapper in
+`42_run_vexii_nextpnr_timing.py` ties every core output to an unconnected wire
+and drives the instruction bus with a constant `32'h00000013` — a `nop`.
+Synthesis then removes the output side as dead logic; the generator log reports
+"567 signals were pruned". Whatever those rows measured, it was not a CPU that
+could execute anything.
 
-| features | Fmax |
-|---|---|
-| i4k + d4k + btb + gshare + ras + dual | **192.1 MHz** |
-| i4k + d4k + btb + gshare | 183.3 MHz |
-| i4k + d4k + dual | 157.8 MHz |
-| i4k + d4k + btb | 154.4 MHz |
-| i4k + d4k + btb + dual | 151.8 MHz |
-| **i4k + d4k** | **146.4 MHz** |
-| i4k + d4k + btb + gshare + ras | 144.5 MHz |
-| i4k + d4k + btb + ras | 134.4 MHz |
+**The sweep varied XLEN and the ISA base, and nothing recorded which.** Core
+builds carry no `output_prefix`, so their configuration is unrecoverable from
+the filename — only the SoC builds spell their features out. A report built by
+reading filenames labels every core result as having no features at all.
 
-### This answers the 73 vs 146 question
+### The 73 vs 146 question is still open
 
-The report presented a puzzle it could not resolve: its "stripped" build ran at
-73.4 MHz and its "moondancer-like" build at 146.4 MHz, despite the latter having
-*more* features. It said the comparison was not single-factor — supervisor mode,
-atomics and caches all differed — so the doubling could not be attributed.
+An earlier draft of this document claimed the sweep resolved it: that
+`microsoc_exh_01_i4k_d4k` measured "exactly 146.4 MHz", matching the report's
+faster row, and that caches therefore doubled the clock.
 
-The sweep already contained the answer. `microsoc_exh_01_i4k_d4k` measures
-**exactly 146.4 MHz**, and its configuration is caches and nothing else. So the
-report's faster row is that build, and **the caches are what doubled the clock**.
+That reasoning was wrong. Both figures came from the same 25 MHz-target
+pipeline, and the 73.4 MHz row was one of the pruned bare-core builds — so the
+agreement was two outputs of one broken instrument, not corroboration. The two
+configurations also differ in XLEN, which the table had no column for: the
+archived data splits cleanly with every 32-bit result above 91 MHz and every
+64-bit result below. Most of the "doubling" was ISA width.
 
-That is the opposite of the intuition that more logic means worse timing, and it
-has a clear mechanism: without a cache every fetch and load crosses the bus and
-the memory controller, and that path is long. A small L1 terminates the common
-case inside the CPU at a block RAM, and the critical path moves somewhere
-shorter.
+The mechanism proposed for it — that an L1 terminates the common case inside
+the CPU and shortens the critical path — remains plausible and is worth
+testing. It has not been tested. On the one configuration measured properly so
+far, the critical path runs through LSU address generation into the data bus.
+
+### What replaces it
+
+`scripts/riscv_matrix_config.py` generates configurations for the target that
+exists: 32-bit, bare metal, no supervisor mode. It sweeps cache size at 4, 8
+and 16 KiB, which the old matrix fixed at 4 KiB and never varied — block RAM is
+the scarce resource on a 12F (56 blocks, shared with firmware and USB buffers),
+so the wall is worth finding by measurement.
+
+`scripts/riscv_core_wrapper.py` attaches block RAM to both buses with a real
+one-cycle handshake, so bare cores can be placed without being optimised away.
+
+Neither produces CoreMark. That needs firmware on the core, which needs CPU
+bring-up. No CoreMark output exists in the archived data either — it was never
+run, despite the report implying otherwise.
 
 Branch prediction adds further: `btb + gshare` reaches 183 MHz, and with `ras`
 and dual-issue 192 MHz — though `ras` alone is consistently *worse* than
