@@ -194,6 +194,14 @@ def main():
                 emit(handle, "Falling back to volatile configuration. The "
                              "design will run but")
                 emit(handle, "will not survive a power cycle.")
+                emit(handle)
+                emit(handle, "The flash bridge enumerates on the same USB port "
+                             "this design uses")
+                emit(handle, "for its console, so a running console build can "
+                             "keep the bridge from")
+                emit(handle, "appearing. Erasing the flash or power-cycling "
+                             "into an idle bitstream")
+                emit(handle, "first is the usual way through it.")
                 if not run([PYTHON, str(APOLLO), "configure", str(BUILD)],
                            handle, "configure"):
                     return 1
