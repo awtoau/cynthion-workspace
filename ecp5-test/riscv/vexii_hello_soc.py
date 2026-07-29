@@ -242,6 +242,22 @@ class HelloSoC(Elaboratable):
             endpoint.flush.eq(~console.source.valid),
         ]
 
+        # The single-wire debug link to Apollo. Present in every test design
+        # so a bitstream that says nothing over USB can still be asked what it
+        # is doing -- USB, the PHY and the CPU are all bypassed by this path.
+        sys.path.insert(0, str(ROOT / "ecp5-test"))
+        from sideband_debug import SidebandDebug
+        m.submodules.sideband = sideband = SidebandDebug()
+
+        # Report whether the CPU's buses are moving at all. If USB is silent
+        # and this shows zero activity, the fault is the CPU rather than
+        # anything downstream of it.
+        m.d.comb += [
+            sideband.state.eq(Cat(cpu.ibus.cyc, cpu.dbus.cyc)),
+            sideband.events.eq(console.source.valid),
+            sideband.error.eq(cpu.ibus.err | cpu.dbus.err),
+        ]
+
         m.d.comb += usb.connect.eq(1)
         return m
 
