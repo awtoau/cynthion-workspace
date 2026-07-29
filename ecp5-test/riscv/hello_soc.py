@@ -55,8 +55,15 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 RAM_BASE = 0x00000000
 RAM_SIZE = 64 * 1024
 
-# The console peripheral. Address chosen to sit clear of the RAM window.
-CONSOLE_BASE = 0x80000000
+# The console peripheral, clear of the 64 KiB RAM window.
+#
+# It must also be inside what the decoder can reach. The Wishbone decoder is
+# 30 bits wide with byte granularity, so it spans 0x40000000 -- an address at
+# or above that is silently unreachable. 0x80000000 looked like the obvious
+# "high peripheral" address and produced a design that built, enumerated, and
+# dropped every store on the floor: the CPU wrote, the decoder saw a truncated
+# address, nothing matched, and no error was raised anywhere.
+CONSOLE_BASE = 0x10000000
 
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
 
@@ -172,7 +179,11 @@ class HelloSoC(Elaboratable):
 
         descriptors = DeviceDescriptorCollection()
         with descriptors.DeviceDescriptor() as d:
-            d.idVendor, d.idProduct = 0x1209, 0x0001
+            # 1209:000e is the pid.codes "example" ID that 54-cynthion.rules
+            # already grants uaccess to. Picking an unlisted PID leaves the
+            # device enumerating but unopenable without root, which looks
+            # exactly like a dead CPU.
+            d.idVendor, d.idProduct = 0x1209, 0x000e
             d.iManufacturer, d.iProduct = "Cynthion", "RISC-V console"
             d.bNumConfigurations = 1
         with descriptors.ConfigurationDescriptor() as c:
