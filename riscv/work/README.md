@@ -11,10 +11,16 @@ Toolchain clones and build scratch, all re-creatable from scratch:
 |---|---|
 | `nextpnr/` | YosysHQ/nextpnr |
 | `prjtrellis/` | YosysHQ/prjtrellis |
-| `vexiiriscv/` | SpinalHDL/VexiiRiscv |
 | `trellis-install/` | prjtrellis build output (`make install` prefix) |
 
 Clone from a local mirror if one is configured, otherwise from upstream.
+
+**VexiiRiscv is no longer one of these.** It used to be cloned here, which meant
+the tree the sweep depended on existed only on whichever machine had run the
+clone. It is now a submodule at [`repos/vexiiriscv`](../../repos/vexiiriscv),
+pinned to a specific commit, and needs
+`git submodule update --init --recursive` because its own `ext/` submodules
+carry SpinalHDL.
 
 ## What does not belong here
 
