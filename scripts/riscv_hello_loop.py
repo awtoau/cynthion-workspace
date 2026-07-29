@@ -195,15 +195,25 @@ def main():
                              "design will run but")
                 emit(handle, "will not survive a power cycle.")
                 emit(handle)
-                emit(handle, "flash-fast loads its own bridge bitstream over "
-                             "JTAG, replacing this")
-                emit(handle, "design, then waits for it to enumerate as "
-                             "1209:000f. On r1.4 the")
-                emit(handle, "bridge uses control_phy -- the CONTROL port -- "
-                             "not the TARGET port")
-                emit(handle, "this console runs on. It cannot appear unless a "
-                             "host cable is in")
-                emit(handle, "CONTROL.")
+                emit(handle, "Check the Apollo firmware version against the "
+                             "repo before looking")
+                emit(handle, "anywhere else:")
+                emit(handle)
+                emit(handle, "    apollo info        # firmware on the "
+                             "microcontroller")
+                emit(handle, "    git -C repos/apollo log --oneline -1")
+                emit(handle)
+                emit(handle, "flash-fast needs both halves to agree. The Python "
+                             "asks Apollo to hand")
+                emit(handle, "the shared CONTROL port to the FPGA "
+                             "(allow_fpga_takeover_usb), and only")
+                emit(handle, "the firmware can actually do it. Editing the "
+                             "firmware source without")
+                emit(handle, "reflashing the microcontroller leaves the request "
+                             "unanswered: the")
+                emit(handle, "bridge never gets the port, never enumerates, and "
+                             "the error blames")
+                emit(handle, "the bridge rather than the version skew.")
                 if not run([PYTHON, str(APOLLO), "configure", str(BUILD)],
                            handle, "configure"):
                     return 1
