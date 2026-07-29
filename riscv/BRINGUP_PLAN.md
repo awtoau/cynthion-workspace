@@ -1,248 +1,174 @@
-# Cynthion RV64 Linux Bring-Up Plan
+# Cynthion RISC-V Bring-Up Plan
+
+## Status: 64-bit parked, RV32 is the live target
+
+This plan was written for RV64 Linux. That is no longer the active plan. 64-bit
+was evaluated and parked: it does not fit the LFE5U-12F with any useful
+advantage over RV32, so the sweep tooling now builds `--xlen 32` only
+(`scripts/riscv_matrix_config.py`). The directory was renamed `riscv-64` →
+`riscv` to match.
+
+The RV64 phases below are retained as the record of what was planned and what
+was reached before the decision. Where a phase is 64-bit-specific it is marked.
+Nothing in Phases 2–4 was executed.
 
 ## Objective
 
-Bring up a minimal RV64 Linux system on Cynthion with the highest probability of first boot on ECP5 LFE5U-12F.
+Bring up a minimal RISC-V system on Cynthion (ECP5 LFE5U-12F) with the highest
+probability of first boot.
 
-Primary core choice: VexiiRiscv.
-Secondary fallback: Rocket.
+Primary core: VexiiRiscv (`repos/vexiiriscv`, submodule). Fallback: Rocket.
 
-## Constraints We Must Respect
+## Constraints
 
-- FPGA is LFE5U-12F (tight area and timing margin).
-- On-board SPI flash is 4 MiB.
-- On-board HyperRAM is 8 MiB.
-- Existing gateware path is strongly USB device oriented.
-- First milestone should avoid USB host-mode storage on AUX.
+| Constraint | Value |
+|---|---|
+| FPGA | LFE5U-12F, CABGA256 |
+| Block RAM | 56 × DP16KD = 112 KiB, shared with firmware and USB buffers |
+| SPI flash | 4 MiB |
+| HyperRAM | 8 MiB |
 
-## Bring-Up Strategy
+Existing gateware is USB-device oriented. First milestone avoids USB host-mode
+storage on AUX.
+
+## Strategy
 
 - Validate Linux image, DTB, and bootargs in QEMU before FPGA attempts.
-- Keep the SoC minimal.
-- Keep peripherals minimal for first boot.
-- Boot kernel and DTB from flash.
-- Use HyperRAM as system RAM.
-- Use USB network gadget + host NFS root for userspace.
+- Keep the SoC and its peripherals minimal.
+- Boot kernel and DTB from flash; HyperRAM as system RAM.
+- USB network gadget + host NFS root for userspace.
 
-## Non-Goals for First Boot
+Not in scope for first boot: USB mass-storage host stack on AUX,
+moondancer/facedancer feature parity, performance tuning.
 
-- No USB mass-storage host stack on AUX.
-- No full moondancer/facedancer feature parity.
-- No performance tuning beyond basic boot stability.
+## Phase 0: Baseline and tooling lock
 
-## Phases
-
-## Phase 0: Baseline and Tooling Lock
-
-Deliverables:
-
-- Verified host tool availability report.
-- Captured baseline memory/peripheral map from current SoC code.
-- Local checkout of preferred RV64 core from mirror.
-- QEMU tool availability confirmed.
-
-Tasks:
-
-1. Run `python3 riscv/scripts/00_check_env.py`.
-2. Run `python3 riscv/scripts/10_prepare_workdirs.py`.
-3. Run `python3 riscv/scripts/20_capture_soc_baseline.py`.
-4. Install missing tools reported by phase outputs.
+1. `python3 riscv/scripts/00_check_env.py`
+2. `python3 riscv/scripts/10_prepare_workdirs.py`
+3. `python3 riscv/scripts/20_capture_soc_baseline.py`
+4. Install any tools reported missing.
 5. Confirm `qemu-system-riscv64` is available.
 
-Exit criteria:
+Exit: `riscv/out/env_report.json` and `riscv/out/soc_baseline.json` exist;
+`repos/vexiiriscv` is checked out with `git submodule update --init
+--recursive` (its `ext/` submodules carry SpinalHDL).
 
-- `riscv/out/env_report.json` exists.
-- `riscv/out/soc_baseline.json` exists.
-- `riscv/work/vexiiriscv` exists.
+## Phase 0.5: QEMU Linux configuration gate (64-bit; parked)
 
-## Phase 0.5: QEMU Linux Configuration Gate
+1. Build or obtain a minimal RV64 kernel and initramfs for QEMU `virt`.
+2. Compile a QEMU-specific DTB, or use `virt` defaults if the kernel supports it.
+3. `python3 riscv/scripts/30_qemu_linux_smoke.py --kernel <Image> [--initrd <initramfs>] [--dtb <qemu.dtb>]`
+4. Confirm kernel starts, console works, rootfs handoff occurs.
+5. Freeze the known-good kernel cmdline here.
 
-Deliverables:
+Exit: `riscv/out/qemu_boot.log` shows successful early boot; cmdline and config
+recorded before any FPGA integration.
 
-- One repeatable QEMU boot command for RV64 Linux.
-- Captured UART boot log proving the Linux configuration is sane.
+## Phase 1: Minimal SoC architecture
 
-Tasks:
+1. Fork the current SoC top into a new RISC-V-specific top module.
+2. Keep only CPU, bus, interrupt controller, timer, UART, SPI flash mmap,
+   HyperRAM. Drop non-essential USB endpoints and optional peripherals.
+3. Preserve deterministic reset and boot address behaviour.
 
-1. Build or obtain minimal RV64 kernel and initramfs/rootfs suitable for QEMU `virt`.
-2. Compile a QEMU-specific DTB (or use QEMU `virt` defaults if the kernel supports it).
-3. Run `python3 riscv/scripts/30_qemu_linux_smoke.py --kernel <Image> [--initrd <initramfs>] [--dtb <qemu.dtb>]`.
-4. Validate:
-   - kernel starts,
-   - console works,
-   - expected rootfs handoff behavior occurs.
-5. Freeze known-good kernel cmdline in plan notes.
+Exit: synthesis completes; post-PnR timing and utilisation report generated;
+UART output confirms first instruction execution.
 
-Exit criteria:
+## Phase 1.5: Pre-hardware core validation (reached)
 
-- `riscv/out/qemu_boot.log` contains successful early boot output.
-- Linux command line and config choices are recorded before FPGA integration.
+Standalone core validation before SoC integration.
 
-## Phase 1: Minimal RV64 SoC Architecture
+1. `python3 riscv/scripts/40_run_vexii_rtl_smoke.py`
+2. `python3 riscv/scripts/41_run_vexii_postsynth_smoke.py`
+3. `python3 riscv/scripts/42_run_vexii_nextpnr_timing.py`
 
-Deliverables:
-
-- New SoC top design for RV64 experiment branch.
-- Clearly defined memory map and reset vector.
-- Single UART console + timer + interrupt path operational in simulation or hardware smoke test.
-
-Tasks:
-
-1. Fork current SoC top into a new RV64-specific top module.
-2. Replace RV32 VexRiscv CPU instantiation with RV64 core integration.
-3. Keep only required blocks:
-   - CPU, bus, interrupt controller, timer, UART, SPI flash mmap, HyperRAM.
-4. Drop non-essential USB endpoints and optional peripherals for first build.
-5. Preserve deterministic reset and boot address behavior.
-
-Exit criteria:
-
-- Synthesis completes for RV64 top.
-- Post-PnR timing and utilization report is generated.
-- UART output confirms first instruction execution.
-
-## Phase 1.5: Pre-Hardware Core Validation (Completed)
-
-This phase validates the standalone core before Cynthion SoC integration.
-
-Deliverables:
-
-- Instruction-driven RTL smoke test result.
-- Post-synthesis netlist smoke test result.
-- ECP5 nextpnr timing/place report for a wrapper top.
-
-Tasks:
-
-1. Run `python3 riscv/scripts/40_run_vexii_rtl_smoke.py`.
-2. Run `python3 riscv/scripts/41_run_vexii_postsynth_smoke.py`.
-3. Run `python3 riscv/scripts/42_run_vexii_nextpnr_timing.py`.
-
-Verified outputs:
+Outputs (regenerated into gitignored `riscv/out/`):
 
 - `riscv/out/sim/vexii_smoke_run.log`
 - `riscv/out/sim/vexii_postsynth_run.log`
 - `riscv/out/sim/vexii_ecp5_nextpnr.log`
 - `riscv/out/sim/vexii_ecp5_timing_summary.txt`
 
-Notes:
+**The timing numbers this phase produced are withdrawn.** Script 42 routes at
+`--freq 25.0` with `--timing-allow-fail`, and the wrapper it uses
+(`riscv/sim/vexii_ecp5_wrap.v`) ties core outputs to unconnected wires and
+feeds the instruction bus a constant nop, so synthesis prunes the output side.
+`scripts/riscv_core_wrapper.py` replaces that wrapper with one that attaches
+block RAM to both buses with a one-cycle-latency ready handshake. The
+place-and-route flow itself is still valid; only the numbers are not.
 
-- The timing flow uses `VexiiRiscvWrap` (`riscv/sim/vexii_ecp5_wrap.v`) so IO count fits the ECP5-12F package during standalone core evaluation.
-
-## Phase 2: Boot Chain
-
-Deliverables:
-
-- Flashable boot artifact set.
-- Known-good kernel + DTB placement strategy.
-
-Tasks:
+## Phase 2: Boot chain (not started)
 
 1. Confirm reset vector and ROM/flash mapping.
-2. Build and package:
-   - first-stage boot path,
-   - Linux kernel image,
-   - DTB from `riscv/code/cynthion_rv64_min.dts`.
+2. Build and package first-stage boot path, kernel image, and DTB from
+   `riscv/code/cynthion_rv64_min.dts`.
 3. Define flash layout with offsets and size guardrails.
 4. Validate boot logs over UART.
 
-Exit criteria:
+Exit: board consistently reaches Linux early boot logs; no flash overlap.
 
-- Board consistently reaches Linux early boot logs.
-- No flash overlap or image layout ambiguity.
+Note: the DTS in `riscv/code/` is the RV64 skeleton and has not been revised
+for the RV32 decision.
 
-## Phase 3: Root Filesystem via USB Network + NFS
-
-Deliverables:
-
-- USB networking to host established.
-- NFS root mount from host succeeds.
-
-Tasks:
+## Phase 3: Root filesystem via USB network + NFS (not started)
 
 1. Enable Linux USB gadget network support in kernel config.
-2. Configure fixed host/target addresses for deterministic setup.
-3. Export host rootfs over NFS.
-4. Set kernel command line for NFS root boot.
-5. Validate full userspace startup from host-served rootfs.
+2. Configure fixed host/target addresses.
+3. Export host rootfs over NFS; set the kernel cmdline for NFS root.
 
-Exit criteria:
+Exit: Linux reaches a userspace shell from NFS root and repeats across reboots
+without manual patching.
 
-- Linux reaches userspace shell from NFS root.
-- Reboot repeats successfully without manual patching.
-
-## Phase 4: Stabilization and Measurement
-
-Deliverables:
-
-- Repeatable bring-up playbook.
-- Resource/timing summary and risk list.
-
-Tasks:
+## Phase 4: Stabilisation and measurement (not started)
 
 1. Capture build reproducibility steps and exact tool versions.
 2. Record LUT/BRAM/timing slack at each milestone.
 3. Document failure modes and recovery actions.
-4. Decide next step:
-   - optimize VexiiRiscv config, or
-   - evaluate Rocket fallback.
+4. Decide: optimise the VexiiRiscv config, or evaluate the Rocket fallback.
 
-Exit criteria:
+Exit: another developer reproduces first boot from a clean checkout.
 
-- Another developer can reproduce first boot from clean checkout.
-- Decision memo for next milestone exists.
+## Risks
 
-## Risk Register
-
-1. Area overflow on 12F when enabling Linux-required core features.
-2. Timing closure failures in HyperRAM or bus paths.
-3. Boot-chain complexity in 4 MiB flash budget.
+1. Area overflow on the 12F once Linux-required core features are enabled.
+2. Timing closure on HyperRAM or bus paths.
+3. Boot-chain complexity within the 4 MiB flash budget.
 4. USB gadget networking integration overhead.
-5. Toolchain mismatch across Yosys/nextpnr/ecppack or core generators.
+5. Toolchain mismatch across Yosys/nextpnr/ecppack or the core generators.
 
-## Unexpected Issues Encountered
+## Issues encountered, and their fixes
 
-1. Incomplete submodule tree caused sbt project load failure.
-Cause:
-`No project 'idslplugin' ... Valid project IDs: spinalhdl`
-Fix:
-Run `git submodule update --init --recursive` in `riscv/work/vexiiriscv`.
+| Issue | Cause | Fix |
+|---|---|---|
+| sbt project load failed: `No project 'idslplugin' ... Valid project IDs: spinalhdl` | Incomplete submodule tree | `git submodule update --init --recursive` in `repos/vexiiriscv` |
+| nextpnr build missing Trellis database | `pytrellis` built, but `devices.json` and family DB files absent from the install tree | Populate from the mirrored `prjtrellis-db` into the local trellis install DB path |
+| `yosys-config` absent | Packaged toolchain ships `yosys` but not `yosys-config` | Use `/usr/share/yosys/simcells.v` directly for post-synth simulation |
+| `--pcf` rejected by `nextpnr-ecp5` | This build does not accept the option as some scripts assume | Run unconstrained without `--pcf` for early timing experiments |
+| Raw core top exceeded package IO | Standalone core exposes ~29 top-level bus/debug ports; CABGA256 has no pins for them | Wrapper top exposing only `clk`/`reset`. The original wrapper pruned the design — see Phase 1.5 |
 
-2. Trellis support database was missing when building nextpnr dependencies.
-Cause:
-`pytrellis` was built, but `devices.json` and family DB files were absent in install tree.
-Fix:
-Populate from mirrored `prjtrellis-db` into the local trellis install database path.
+## Next actions
 
-3. `yosys-config` binary is absent on this host.
-Cause:
-The packaged toolchain provides `yosys` but not `yosys-config`.
-Fix:
-Use `/usr/share/yosys/simcells.v` directly for post-synth simulation.
+1. Re-run the sweep with the replacement tooling: `scripts/riscv_matrix_config.py`,
+   `scripts/riscv_core_wrapper.py`, `scripts/riscv_sweep_report.py`. No sweep has
+   been run since the old data was discarded.
+2. Draft the minimal RV32 SoC top and compile once.
+3. Capture utilisation and timing into `riscv/out/`.
 
-4. nextpnr CLI mismatch against expected options.
-Cause:
-This `nextpnr-ecp5` build does not accept `--pcf` in the way some scripts assume.
-Fix:
-Use wrapper top and unconstrained run mode without `--pcf` for early timing/place experiments.
+The Linux-oriented phases above are **RV64-era leftovers and are not the
+current target.** `riscv_alternatives.md` parked RV64 on 2026-07-28 and names
+running Linux as the one motivation that would have justified it -- explicitly
+not being pursued. Moondancer ships the `cynthion+jtag` VexRiscv variant, which
+is bare-metal with no supervisor mode and no MMU.
 
-5. Raw core top exceeded available package IO for ECP5-12F.
-Cause:
-Standalone core exposes many memory bus/debug ports as top-level IO.
-Fix:
-Use a wrapper top that internalizes bus handshakes and exposes only minimal IO (`clk`, `reset`) for PnR timing checks.
+So `scripts/riscv_matrix_config.py` building with supervisor mode off is
+correct, and any phase here that assumes S-mode, an MMU or a Linux boot applies
+only if that decision is revisited.
 
-## Immediate Next Actions
+## Source anchors
 
-1. Run the three setup scripts in `riscv/scripts`.
-2. Validate Linux image config in QEMU with `scripts/30_qemu_linux_smoke.py`.
-3. Create RV64 experiment branch in this workspace.
-4. Draft the new minimal SoC top module and compile once.
-5. Capture utilization/timing report into `riscv/out`.
-
-## Source Anchors Used for This Plan
-
-- `docs/riscv_alternatives.md`
-- `cynthion_control.py`
-- `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/gateware/facedancer/top.py`
-- `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/commands/cynthion_build.py`
-- `/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/src/commands/cynthion_flash.py`
+- `docs/moondancer/riscv_alternatives.md`
+- `docs/moondancer/riscv_state_of_play.md`
+- `debris/code/legacy_cli/cynthion_control.py` (retired since this plan was written)
+- `repos/cynthion/cynthion/python/src/gateware/facedancer/top.py`
+- `repos/cynthion/cynthion/python/src/commands/cynthion_build.py`
+- `repos/cynthion/cynthion/python/src/commands/cynthion_flash.py`

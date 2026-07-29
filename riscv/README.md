@@ -1,129 +1,127 @@
-# RV64 Bring-Up Workspace
+# RISC-V Bring-Up Workspace
 
-This folder contains the focused assets for the Cynthion RV64 Linux bring-up experiment.
+Assets for the Cynthion RISC-V bring-up experiment on ECP5 LFE5U-12F.
 
-## Goal
+**Scope changed.** This started as an RV64 Linux bring-up. 64-bit was evaluated
+and parked — it does not fit the 12F usefully — and the live target is RV32.
+The directory was renamed `riscv-64` → `riscv` to match. See
+[`BRINGUP_PLAN.md`](BRINGUP_PLAN.md); RV64-specific assets that remain are
+marked there.
 
-Boot a minimal RV64 Linux userspace on Cynthion (ECP5 LFE5U-12F) using a stripped-down system architecture.
+**The sweep data this workspace produced was discarded.** Every Fmax and area
+figure it generated is withdrawn — see [Withdrawn results](#withdrawn-results).
+The sweep has not been re-run.
 
-## What is in here
+## Layout
 
-- `BRINGUP_PLAN.md`: execution plan, milestones, and risks.
-- `scripts/00_check_env.py`: checks required host tools and mirror presence.
-- `scripts/10_prepare_workdirs.py`: prepares local working trees from the mirrored core.
-- `scripts/20_capture_soc_baseline.py`: captures current SoC memory/peripheral constants for reference.
-- `scripts/30_qemu_linux_smoke.py`: runs a QEMU RV64 Linux smoke boot and captures console logs.
-- `scripts/40_run_vexii_rtl_smoke.py`: instruction-driven RTL smoke test for standalone VexiiRiscv.
-- `scripts/41_run_vexii_postsynth_smoke.py`: post-synthesis netlist smoke test.
-- `scripts/42_run_vexii_nextpnr_timing.py`: ECP5-12F nextpnr timing/place flow on wrapper top.
-- `scripts/43_record_ecp5_metrics.py`: append one resource/timing datapoint to CSV history.
-- `scripts/44_generate_ecp5_report.py`: generate Markdown trend report with graphs.
-- `scripts/45_scan_logs.py`: scans generated logs for warning/error signatures.
-- `scripts/dev.py`: one-command runner for steps 40 + 41 + 42 + 43 + 44 + 45.
-- `scripts/61_run_profile.py`: unified profile engine (config-driven, per profile).
-- `scripts/60_run_profile_matrix.py`: run one/all profiles, with thread sweeps and history reset.
-- `code/cynthion_rv64_min.dts`: starter Linux device-tree skeleton.
-- `sim/tb_vexiiriscv_smoke.v`: reusable simulation testbench.
-- `sim/vexii_ecp5_wrap.v`: minimal wrapper top for standalone PnR/timing checks.
-- `metrics/ecp5_usage_history.csv`: history ledger for LUT/FF/BRAM/Fmax.
-- `metrics/reports/ecp5_usage_report.md`: generated trend dashboard.
-- `work/`: local source checkouts and generated artifacts.
-- `out/`: generated reports and extracted baseline files.
+| Path | Contents |
+|---|---|
+| `BRINGUP_PLAN.md` | Execution plan, phases, risks |
+| `scripts/` | Legacy flow, steps 00–62 (see below) |
+| `config/*.json` | Profile matrices. `profile_matrix_baremetal_x32.json` is the current one |
+| `code/cynthion_rv64_min.dts` | RV64 device-tree skeleton — not revised for RV32 |
+| `sim/tb_vexiiriscv_smoke.v` | Simulation testbench |
+| `sim/vexii_ecp5_wrap.v` | Old PnR wrapper — prunes the design, superseded |
+| `work/` | Gitignored scratch. See [`work/README.md`](work/README.md) |
+| `out/` | Gitignored generated reports and logs |
 
-## Quick start
+VexiiRiscv is a submodule at `repos/vexiiriscv`, not a clone under `work/`.
+Initialise with `git submodule update --init --recursive` — its `ext/`
+submodules carry SpinalHDL.
 
-Run from repository root:
+## Current tooling
+
+The sweep tooling was rebuilt at workspace root after the old pipeline was found
+defective. Use these, not `62_generate_exhaustive_profile_matrix.py`:
+
+| Script | Role |
+|---|---|
+| `scripts/riscv_matrix_config.py` | Generates the profile matrix. RV32, bare metal, no supervisor mode; sweeps cache sets 64/128/256 (4/8/16 KiB at one way) |
+| `scripts/riscv_core_wrapper.py` | Synthesisable top: block RAM on both buses, one-cycle latency with a real ready handshake |
+| `scripts/riscv_sweep_report.py` | Resolves results against the config JSON by profile name; XLEN and ISA base get their own columns |
+
+Cache size is the axis that matters: the 12F has 56 DP16KD blocks (112 KiB)
+shared between CPU, firmware, and USB buffers, so 16 KiB is swept to find the
+block-RAM wall by measurement.
+
+CoreMark has never been run. It needs firmware on the core, which needs CPU
+bring-up. The report column is kept and left empty.
+
+## Legacy scripts
+
+`riscv/scripts/` is the original flow. It still runs, and its
+simulation/place-and-route steps are still useful; its recorded numbers are not.
+
+| Script | Role |
+|---|---|
+| `00_check_env.py` | Check host tools and mirror presence |
+| `10_prepare_workdirs.py` | Prepare local working trees |
+| `20_capture_soc_baseline.py` | Capture current SoC memory/peripheral constants |
+| `30_qemu_linux_smoke.py` | QEMU RV64 Linux smoke boot (64-bit; parked) |
+| `40_run_vexii_rtl_smoke.py` | Instruction-driven RTL smoke test |
+| `41_run_vexii_postsynth_smoke.py` | Post-synthesis netlist smoke test |
+| `42_run_vexii_nextpnr_timing.py` | ECP5-12F nextpnr timing/place flow |
+| `43`, `44` | Metrics CSV append and trend report — **the CSV and report they wrote are deleted** |
+| `45_scan_logs.py` | Scan logs for warning/error signatures |
+| `60_run_profile_matrix.py` | Run one/all profiles from a config |
+| `61_run_profile.py` | Per-profile engine |
+| `62_generate_exhaustive_profile_matrix.py` | **Superseded** by `scripts/riscv_matrix_config.py` |
+| `dev.py` | Runs 40 → 41 → 42 → 43 → 44 → 45 |
+
+`dev.py` flags: `--skip-rtl-sim`, `--skip-postsynth-sim`, `--skip-timing`,
+`--skip-log-scan`, `--fail-on-warnings`, `--threads <N>`.
+
+`60_run_profile_matrix.py` usage:
 
 ```bash
-python3 riscv/scripts/00_check_env.py
-python3 riscv/scripts/10_prepare_workdirs.py
-python3 riscv/scripts/20_capture_soc_baseline.py
-python3 riscv/scripts/30_qemu_linux_smoke.py --kernel /path/to/Image --initrd /path/to/initramfs.cpio.gz
-python3 riscv/scripts/40_run_vexii_rtl_smoke.py
-python3 riscv/scripts/41_run_vexii_postsynth_smoke.py
-python3 riscv/scripts/42_run_vexii_nextpnr_timing.py
-python3 riscv/scripts/43_record_ecp5_metrics.py --tag baseline --notes "wrapper core-only"
-python3 riscv/scripts/44_generate_ecp5_report.py
-python3 riscv/scripts/45_scan_logs.py
-python3 riscv/scripts/dev.py --tag with-uart --notes "added uart block"
-python3 riscv/scripts/61_run_profile.py --profile soc_uart_timer
-python3 riscv/scripts/61_run_profile.py --profile core_i4k
-python3 riscv/scripts/61_run_profile.py --profile core_i4k_d4k
-python3 riscv/scripts/61_run_profile.py --profile core_i4k_d4k_bpred
-python3 riscv/scripts/61_run_profile.py --profile core_i4k_d4k_bpred_dual
-python3 riscv/scripts/61_run_profile.py --profile soc_cumulative_uart
+python3 riscv/scripts/60_run_profile_matrix.py --list
+python3 riscv/scripts/60_run_profile_matrix.py --profile soc_cumulative_uart --threads 8
+python3 riscv/scripts/60_run_profile_matrix.py --profile core_i4k_d4k_bpred_dual --threads 8,16,32
+python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8
+python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8 --reset-history
 ```
 
-Then execute tasks in `BRINGUP_PLAN.md` phase-by-phase.
-
-## Key Output Logs
+## Output logs
 
 - `riscv/out/sim/vexii_smoke_run.log`
 - `riscv/out/sim/vexii_postsynth_run.log`
 - `riscv/out/sim/vexii_ecp5_nextpnr.log`
 - `riscv/out/sim/vexii_ecp5_timing_summary.txt`
 
-## ECP5 Growth Monitoring
+## Withdrawn results
 
-Use this to track FPGA growth as features are added to the processor.
-The generated report includes BRAM in both DP16KD blocks and KiB capacity.
+`riscv/metrics/` — the usage-history CSV and the generated ECP5 trend report —
+was deleted, along with 1.5 GB of build outputs and 36 GB of per-job sbt
+workspaces. The two tracked files are recoverable from git history at `2b84fe8~`.
 
-1. Run timing flow: `python3 riscv/scripts/42_run_vexii_nextpnr_timing.py`
-2. Record one datapoint: `python3 riscv/scripts/43_record_ecp5_metrics.py --tag <change-name> --notes "what changed"`
-3. Refresh trend report: `python3 riscv/scripts/44_generate_ecp5_report.py`
+Headline figures. The Fmax figures are struck; the area figures are more
+defensible but include SoC glue, so they are not directly comparable with the
+VexRiscv rows in `docs/moondancer/riscv_state_of_play.md`:
 
-Or run all three with one command:
+| Configuration | LUT4 | FF | Fmax |
+|---|---|---|---|
+| VexiiRiscv stripped | 6592 | 2695 | ~~73.4 MHz~~ |
+| VexiiRiscv moondancer-like | 6876 | 3756 | ~~146.4 MHz~~ |
 
-- `python3 riscv/scripts/dev.py --tag <change-name> --notes "what changed"`
-- `python3 riscv/scripts/dev.py --threads 16 --tag <change-name> --notes "what changed"`
+Four defects, found by reading the scripts rather than the outputs:
 
-Canonical profile sequence (one-off):
+1. Fmax was routed at `--freq 25.0` with `--timing-allow-fail`, so the router
+   stopped optimising once it cleared 25 MHz. It is a relaxed-target result, not
+   a ceiling.
+2. Bare-core builds used a wrapper that tied every core output to an
+   unconnected wire and fed the instruction bus a constant nop, so synthesis
+   deleted the output side — the generator log reports "567 signals were pruned".
+   Those rows describe whatever survived, not a CPU.
+3. Core builds carried no `output_prefix`, so features read out of filenames
+   came back as "no features enabled" for 17 rows.
+4. XLEN and ISA base were swept but never recorded, so 32- and 64-bit results
+   were merged.
 
-- `python3 riscv/scripts/61_run_profile.py --profile soc_uart_timer`
-- `python3 riscv/scripts/61_run_profile.py --profile core_i4k`
-- `python3 riscv/scripts/61_run_profile.py --profile core_i4k_d4k`
-- `python3 riscv/scripts/61_run_profile.py --profile core_i4k_d4k_bpred`
-- `python3 riscv/scripts/61_run_profile.py --profile core_i4k_d4k_bpred_dual`
-- `python3 riscv/scripts/61_run_profile.py --profile soc_cumulative_uart`
+The one number with a stated measurement condition that survives: rerouting the
+same I$+D$ configuration at a **200 MHz target gives 82.6 MHz**, against the
+withdrawn 146.4 MHz.
 
-Default `dev.py` flow:
-
-1. RTL smoke sim (40)
-2. Post-synth smoke sim (41)
-3. nextpnr timing flow (42)
-4. metrics append (43)
-5. report generation (44)
-6. log scan for warnings/errors (45)
-
-Useful flags:
-
-- `--skip-rtl-sim`
-- `--skip-postsynth-sim`
-- `--skip-timing`
-- `--skip-log-scan`
-- `--fail-on-warnings`
-- `--threads <N>` (for faster nextpnr profiling runs)
-
-Open report:
-
-- `riscv/metrics/reports/ecp5_usage_report.md`
-
-## Generic Profile Runner
-
-Use a single generic runner with a config file instead of calling each profile script manually.
-
-- Config file: `riscv/config/profile_matrix.json`
-- Runner: `python3 riscv/scripts/60_run_profile_matrix.py`
-
-Examples:
-
-- List configured profiles:
-	`python3 riscv/scripts/60_run_profile_matrix.py --list`
-- Run one profile at 8 threads (recommended starting point):
-	`python3 riscv/scripts/60_run_profile_matrix.py --profile soc_cumulative_uart --threads 8`
-- Run multiple thread tests for one profile:
-	`python3 riscv/scripts/60_run_profile_matrix.py --profile core_i4k_d4k_bpred_dual --threads 8,16,32`
-- Run all configured profiles at 8 threads:
-	`python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8`
-- Recreate entire dataset from scratch (clean CSV then full sequence):
-	`python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8 --reset-history`
+A claim that the sweep had resolved the 73-vs-146 MHz question — that caches
+doubled the clock — was retracted with the data. Both numbers came from the
+same pipeline, and the two configurations also differ in XLEN. The question is
+open and the proposed mechanism is untested.
