@@ -102,6 +102,20 @@ def build_wrapper(ports, mem_words):
     has_fetch = any(n.startswith("FetchCachelessPlugin") for n in names)
     has_lsu = any(n.startswith("LsuCachelessPlugin") for n in names)
 
+    # A core generated with caches names its buses differently and splits the
+    # LSU into separate read and write channels. Handling only the cacheless
+    # names ties L1 `cmd_ready` low through the catch-all, so the core can
+    # never complete a fetch and synthesis prunes the pipeline -- which is
+    # what invalidated 66 rows of the first sweep.
+    has_fetch_l1 = any(n.startswith("FetchL1Plugin") for n in names)
+    has_lsu_l1 = any(n.startswith("LsuL1Plugin") for n in names)
+
+    # The fetch L1 bus returns a whole cache line, so its response is wider
+    # than a word and arrives over several beats.
+    fetch_l1_width = next(
+        (width_of(w) for d, w, n in ports
+         if n == "FetchL1Plugin_logic_bus_rsp_payload_data"), 32)
+
     lines = [
         "`timescale 1ns/1ps",
         "",
@@ -167,6 +181,98 @@ def build_wrapper(ports, mem_words):
             "",
         ]
 
+    if has_fetch_l1:
+        lines += [
+            "  // ---- instruction memory, cache-line fills -----------------",
+            "  // A cached core asks for a whole line, so the response is wider",
+            "  // than a word and arrives over several beats. `rsp_valid` is",
+            "  // held until the core accepts each one.",
+            "  reg [31:0] il1mem [0:MEM_WORDS-1];",
+            "  integer fi;",
+            "  initial for (fi = 0; fi < MEM_WORDS; fi = fi + 1)",
+            "    il1mem[fi] = 32'h00000013;",
+            "",
+            f"  localparam FETCH_BEATS = {max(1, fetch_l1_width // 32)};",
+            "  reg [$clog2(FETCH_BEATS+1)-1:0] fetch_beat;",
+            "  reg fetch_l1_active;",
+            f"  reg [{fetch_l1_width - 1}:0] fetch_l1_data;",
+            "  reg [ADDR_BITS-1:0] fetch_l1_word;",
+            "",
+            "  always @(posedge clk) begin",
+            "    if (reset) begin",
+            "      fetch_l1_active <= 1'b0;",
+            "      fetch_beat <= 0;",
+            "    end else if (!fetch_l1_active) begin",
+            "      if (FetchL1Plugin_logic_bus_cmd_valid) begin",
+            "        fetch_l1_active <= 1'b1;",
+            "        fetch_beat <= 0;",
+            "        fetch_l1_word <=",
+            "          FetchL1Plugin_logic_bus_cmd_payload_address"
+            "[ADDR_BITS+1:2];",
+            "      end",
+            "    end else if (FetchL1Plugin_logic_bus_rsp_ready) begin",
+            "      // Read a fresh word per beat so the memory stays in the",
+            "      // timing path rather than being read once and replayed.",
+            "      fetch_l1_word <= fetch_l1_word + 1'b1;",
+            "      if (fetch_beat + 1 == FETCH_BEATS) begin",
+            "        fetch_l1_active <= 1'b0;",
+            "        fetch_beat <= 0;",
+            "      end else begin",
+            "        fetch_beat <= fetch_beat + 1'b1;",
+            "      end",
+            "    end",
+            "  end",
+            "",
+            "  integer fb;",
+            "  always @(posedge clk) begin",
+            "    for (fb = 0; fb < FETCH_BEATS; fb = fb + 1)",
+            "      fetch_l1_data[fb*32 +: 32] <= il1mem[fetch_l1_word + fb];",
+            "  end",
+            "",
+        ]
+
+    if has_lsu_l1:
+        lines += [
+            "  // ---- data memory, cached core -----------------------------",
+            "  // The cached LSU has separate read and write channels; writes",
+            "  // are a burst terminated by `last`.",
+            "  reg [31:0] dl1mem [0:MEM_WORDS-1];",
+            "  integer di;",
+            "  initial for (di = 0; di < MEM_WORDS; di = di + 1) dl1mem[di] = 0;",
+            "",
+            "  reg [31:0] dl1_rdata;",
+            "  reg dl1_read_active;",
+            "  always @(posedge clk) begin",
+            "    if (reset) dl1_read_active <= 1'b0;",
+            "    else if (LsuL1Plugin_logic_bus_read_cmd_valid &&",
+            "             !dl1_read_active) dl1_read_active <= 1'b1;",
+            "    else if (LsuL1Plugin_logic_bus_read_rsp_ready)",
+            "      dl1_read_active <= 1'b0;",
+            "    dl1_rdata <= dl1mem[LsuL1Plugin_logic_bus_read_cmd_payload"
+            "_address[ADDR_BITS+1:2]];",
+            "  end",
+            "",
+            "  // Writes are accepted every cycle and actually stored, so the",
+            "  // store path is exercised rather than optimised away.",
+            "  reg [ADDR_BITS-1:0] dl1_waddr;",
+            "  always @(posedge clk) begin",
+            "    if (LsuL1Plugin_logic_bus_write_cmd_valid) begin",
+            "      dl1mem[LsuL1Plugin_logic_bus_write_cmd_payload_fragment"
+            "_address[ADDR_BITS+1:2]] <=",
+            "        LsuL1Plugin_logic_bus_write_cmd_payload_fragment_data;",
+            "    end",
+            "  end",
+            "",
+            "  reg dl1_write_rsp;",
+            "  always @(posedge clk) begin",
+            "    if (reset) dl1_write_rsp <= 1'b0;",
+            "    else dl1_write_rsp <= LsuL1Plugin_logic_bus_write_cmd_valid &&",
+            "                          LsuL1Plugin_logic_bus_write_cmd_payload"
+            "_last;",
+            "  end",
+            "",
+        ]
+
     if has_lsu:
         lines += [
             "  // ---- data memory -----------------------------------------",
@@ -219,7 +325,28 @@ def build_wrapper(ports, mem_words):
         bits = width_of(width)
         zero = "1'b0" if bits == 1 else f"{bits}'b0"
 
-        if name.endswith("FetchCachelessPlugin_logic_bus_cmd_ready"):
+        # Cached core: the L1 buses. These must come before the catch-all --
+        # falling through to it ties cmd_ready low, and a core that can never
+        # complete a fetch is pruned to nothing.
+        if name == "FetchL1Plugin_logic_bus_cmd_ready":
+            value = "!fetch_l1_active"
+        elif name == "FetchL1Plugin_logic_bus_rsp_valid":
+            value = "fetch_l1_active"
+        elif name == "FetchL1Plugin_logic_bus_rsp_payload_data":
+            value = "fetch_l1_data"
+        elif name == "LsuL1Plugin_logic_bus_read_cmd_ready":
+            value = "!dl1_read_active"
+        elif name == "LsuL1Plugin_logic_bus_read_rsp_valid":
+            value = "dl1_read_active"
+        elif name == "LsuL1Plugin_logic_bus_read_rsp_payload_data":
+            value = "dl1_rdata"
+        elif name == "LsuL1Plugin_logic_bus_write_cmd_ready":
+            # Writes are always accepted; back-pressure here would need a
+            # queue, and the point is to keep the store path alive.
+            value = "1'b1"
+        elif name == "LsuL1Plugin_logic_bus_write_rsp_valid":
+            value = "dl1_write_rsp"
+        elif name.endswith("FetchCachelessPlugin_logic_bus_cmd_ready"):
             value = "!fetch_pending"
         elif name.endswith("FetchCachelessPlugin_logic_bus_rsp_valid"):
             value = "fetch_pending"
