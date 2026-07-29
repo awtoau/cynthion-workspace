@@ -88,6 +88,49 @@ A single-factor matrix, one toggle at a time:
 Plus a full-system parity build including the USB fabric, and reporting
 throughput at achieved Fmax alongside CoreMark/MHz.
 
+## Area, and what can be removed
+
+The RV32 report's table could not be used to choose a core, because VexRiscv's
+area figure included the whole USB fabric while the VexiiRiscv rows did not.
+Measured properly, core alone, on r1.4:
+
+| core | LUT4 | FF | Fmax |
+|---|---|---|---|
+| VexRiscv `cynthion` | **4739** | 1683 | 64.9 MHz |
+| VexRiscv `cynthion+jtag` | 5410 | 1832 | 58.4 MHz |
+| *JTAG debug module costs* | *671* | *149* | *−6.5 MHz* |
+| VexiiRiscv stripped | 6592 | 2695 | 73.4 MHz |
+| VexiiRiscv moondancer-like | 6876 | 3756 | **146.4 MHz** |
+
+That inverts the naive reading: VexRiscv is about 1900 LUTs **smaller** than
+VexiiRiscv, not 5800 larger. VexiiRiscv's real advantage is **Fmax** — 146 MHz
+against 58–65, so roughly 2.3× the clock for about 30% more area.
+
+The VexiiRiscv rows still include SoC glue the VexRiscv measurement does not, so
+they are closer to like-for-like than before but not equal.
+
+### VexiiRiscv is configurable, and most of it is opt-in
+
+The 5.24 CoreMark/MHz headline is the maximal build. A minimal one is much
+smaller, because the expensive features are **opt-in rather than opt-out**:
+
+| flag | feature | note |
+|---|---|---|
+| `--fetch-l1`, `--lsu-l1` | instruction and data caches | opt-in; largest single saving in both LUTs and BRAM |
+| `--without-mmu` | SV32/SV39 virtual memory | only needed for Linux |
+| `--dual-issue` | second execution lane | opt-in |
+| `--with-btb`, `--with-gshare`, `--with-ras` | branch prediction | all opt-in; BTB consumes block RAM |
+| `--without-late-alu` | second ALU stage | costs IPC, saves area |
+| `--without-div` | hardware divider | software divide instead |
+| `--without-lsu-bypass` | load/store forwarding | costs IPC |
+| `--without-mul` | hardware multiplier | **keep it** — the ECP5 has DSP blocks, so this is cheap |
+
+The stripped configuration measured at 6592 LUTs already omits most of these,
+which is why it reaches only 1.63 CoreMark/MHz rather than 5.24. The interesting
+question for this board is therefore not "which core" but **which point on the
+VexiiRiscv curve fits alongside a USB stack**, and that is answerable by
+building rather than arguing.
+
 ## Why this matters for the flash work
 
 The flash benchmarking stalled on a measurement problem: a JTAG register read
