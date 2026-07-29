@@ -18,8 +18,8 @@ import sys
 from typing import Optional
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-SIM_DIR = REPO_ROOT / "riscv-64" / "out" / "sim"
-METRICS_DIR = REPO_ROOT / "riscv-64" / "metrics"
+SIM_DIR = REPO_ROOT / "riscv" / "out" / "sim"
+METRICS_DIR = REPO_ROOT / "riscv" / "metrics"
 CSV_PATH = METRICS_DIR / "ecp5_usage_history.csv"
 
 

@@ -8,9 +8,9 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VEXII = ROOT / "riscv-64" / "work" / "vexiiriscv"
-TB = ROOT / "riscv-64" / "sim" / "tb_vexiiriscv_smoke.v"
-OUTDIR = ROOT / "riscv-64" / "out" / "sim"
+VEXII = ROOT / "riscv" / "work" / "vexiiriscv"
+TB = ROOT / "riscv" / "sim" / "tb_vexiiriscv_smoke.v"
+OUTDIR = ROOT / "riscv" / "out" / "sim"
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
 RTL = VEXII / "VexiiRiscv.v"

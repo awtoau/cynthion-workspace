@@ -10,10 +10,10 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VEXII = ROOT / "riscv-64" / "work" / "vexiiriscv"
+VEXII = ROOT / "riscv" / "work" / "vexiiriscv"
 RTL = VEXII / "VexiiRiscv.v"
-WRAP = ROOT / "riscv-64" / "out" / "sim" / "vexii_ecp5_autowrap.v"
-OUTDIR = ROOT / "riscv-64" / "out" / "sim"
+WRAP = ROOT / "riscv" / "out" / "sim" / "vexii_ecp5_autowrap.v"
+OUTDIR = ROOT / "riscv" / "out" / "sim"
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
 JSON = OUTDIR / "VexiiRiscv_ecp5.json"

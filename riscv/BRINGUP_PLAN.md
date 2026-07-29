@@ -43,17 +43,17 @@ Deliverables:
 
 Tasks:
 
-1. Run `python3 riscv-64/scripts/00_check_env.py`.
-2. Run `python3 riscv-64/scripts/10_prepare_workdirs.py`.
-3. Run `python3 riscv-64/scripts/20_capture_soc_baseline.py`.
+1. Run `python3 riscv/scripts/00_check_env.py`.
+2. Run `python3 riscv/scripts/10_prepare_workdirs.py`.
+3. Run `python3 riscv/scripts/20_capture_soc_baseline.py`.
 4. Install missing tools reported by phase outputs.
 5. Confirm `qemu-system-riscv64` is available.
 
 Exit criteria:
 
-- `riscv-64/out/env_report.json` exists.
-- `riscv-64/out/soc_baseline.json` exists.
-- `riscv-64/work/vexiiriscv` exists.
+- `riscv/out/env_report.json` exists.
+- `riscv/out/soc_baseline.json` exists.
+- `riscv/work/vexiiriscv` exists.
 
 ## Phase 0.5: QEMU Linux Configuration Gate
 
@@ -66,7 +66,7 @@ Tasks:
 
 1. Build or obtain minimal RV64 kernel and initramfs/rootfs suitable for QEMU `virt`.
 2. Compile a QEMU-specific DTB (or use QEMU `virt` defaults if the kernel supports it).
-3. Run `python3 riscv-64/scripts/30_qemu_linux_smoke.py --kernel <Image> [--initrd <initramfs>] [--dtb <qemu.dtb>]`.
+3. Run `python3 riscv/scripts/30_qemu_linux_smoke.py --kernel <Image> [--initrd <initramfs>] [--dtb <qemu.dtb>]`.
 4. Validate:
    - kernel starts,
    - console works,
@@ -75,7 +75,7 @@ Tasks:
 
 Exit criteria:
 
-- `riscv-64/out/qemu_boot.log` contains successful early boot output.
+- `riscv/out/qemu_boot.log` contains successful early boot output.
 - Linux command line and config choices are recorded before FPGA integration.
 
 ## Phase 1: Minimal RV64 SoC Architecture
@@ -113,20 +113,20 @@ Deliverables:
 
 Tasks:
 
-1. Run `python3 riscv-64/scripts/40_run_vexii_rtl_smoke.py`.
-2. Run `python3 riscv-64/scripts/41_run_vexii_postsynth_smoke.py`.
-3. Run `python3 riscv-64/scripts/42_run_vexii_nextpnr_timing.py`.
+1. Run `python3 riscv/scripts/40_run_vexii_rtl_smoke.py`.
+2. Run `python3 riscv/scripts/41_run_vexii_postsynth_smoke.py`.
+3. Run `python3 riscv/scripts/42_run_vexii_nextpnr_timing.py`.
 
 Verified outputs:
 
-- `riscv-64/out/sim/vexii_smoke_run.log`
-- `riscv-64/out/sim/vexii_postsynth_run.log`
-- `riscv-64/out/sim/vexii_ecp5_nextpnr.log`
-- `riscv-64/out/sim/vexii_ecp5_timing_summary.txt`
+- `riscv/out/sim/vexii_smoke_run.log`
+- `riscv/out/sim/vexii_postsynth_run.log`
+- `riscv/out/sim/vexii_ecp5_nextpnr.log`
+- `riscv/out/sim/vexii_ecp5_timing_summary.txt`
 
 Notes:
 
-- The timing flow uses `VexiiRiscvWrap` (`riscv-64/sim/vexii_ecp5_wrap.v`) so IO count fits the ECP5-12F package during standalone core evaluation.
+- The timing flow uses `VexiiRiscvWrap` (`riscv/sim/vexii_ecp5_wrap.v`) so IO count fits the ECP5-12F package during standalone core evaluation.
 
 ## Phase 2: Boot Chain
 
@@ -141,7 +141,7 @@ Tasks:
 2. Build and package:
    - first-stage boot path,
    - Linux kernel image,
-   - DTB from `riscv-64/code/cynthion_rv64_min.dts`.
+   - DTB from `riscv/code/cynthion_rv64_min.dts`.
 3. Define flash layout with offsets and size guardrails.
 4. Validate boot logs over UART.
 
@@ -205,7 +205,7 @@ Exit criteria:
 Cause:
 `No project 'idslplugin' ... Valid project IDs: spinalhdl`
 Fix:
-Run `git submodule update --init --recursive` in `riscv-64/work/vexiiriscv`.
+Run `git submodule update --init --recursive` in `riscv/work/vexiiriscv`.
 
 2. Trellis support database was missing when building nextpnr dependencies.
 Cause:
@@ -233,11 +233,11 @@ Use a wrapper top that internalizes bus handshakes and exposes only minimal IO (
 
 ## Immediate Next Actions
 
-1. Run the three setup scripts in `riscv-64/scripts`.
+1. Run the three setup scripts in `riscv/scripts`.
 2. Validate Linux image config in QEMU with `scripts/30_qemu_linux_smoke.py`.
 3. Create RV64 experiment branch in this workspace.
 4. Draft the new minimal SoC top module and compile once.
-5. Capture utilization/timing report into `riscv-64/out`.
+5. Capture utilization/timing report into `riscv/out`.
 
 ## Source Anchors Used for This Plan
 

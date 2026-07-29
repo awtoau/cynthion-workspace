@@ -6,7 +6,7 @@
 """
 Writes the profile matrix for the cores that are actually candidates.
 
-`riscv-64/scripts/62_generate_exhaustive_profile_matrix.py` produced the
+`riscv/scripts/62_generate_exhaustive_profile_matrix.py` produced the
 archived sweep, and two of its defaults do not fit this target:
 
   --with-supervisor   defaults on. Supervisor mode exists to run Linux with an
@@ -40,7 +40,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "riscv-64" / "config" / "profile_matrix_baremetal_x32.json"
+OUT = ROOT / "riscv" / "config" / "profile_matrix_baremetal_x32.json"
 LOG = ROOT / "tmp" / "riscv_matrix_config.log"
 
 # Sets per way. The cache is sets x ways x 64-byte lines, so at one way these

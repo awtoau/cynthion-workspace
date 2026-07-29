@@ -20,8 +20,8 @@ import time
 from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = ROOT / "riscv-64" / "scripts"
-DEFAULT_CONFIG = ROOT / "riscv-64" / "config" / "profile_matrix.json"
+SCRIPTS_DIR = ROOT / "riscv" / "scripts"
+DEFAULT_CONFIG = ROOT / "riscv" / "config" / "profile_matrix.json"
 DEFAULT_TRACE_LOG = ROOT / "tmp" / "riscv64_matrix_trace.log"
 _TRACE_LOCK = threading.Lock()
 
@@ -342,7 +342,7 @@ def main() -> int:
         trace_event(args.trace_log, "AUTO_ALLOW_LOG_SCAN_FAIL enabled")
 
     if args.reset_history:
-        csv = ROOT / "riscv-64" / "metrics" / "ecp5_usage_history.csv"
+        csv = ROOT / "riscv" / "metrics" / "ecp5_usage_history.csv"
         if csv.exists():
             archive = csv.with_name(
                 f"{csv.stem}.archive-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}{csv.suffix}"
@@ -390,8 +390,8 @@ def main() -> int:
 
     trace_event(args.trace_log, "MATRIX_END status=ok")
     print("Profile matrix run complete")
-    print(f"CSV: {ROOT / 'riscv-64' / 'metrics' / 'ecp5_usage_history.csv'}")
-    print(f"Report: {ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
+    print(f"CSV: {ROOT / 'riscv' / 'metrics' / 'ecp5_usage_history.csv'}")
+    print(f"Report: {ROOT / 'riscv' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
     return 0
 
 

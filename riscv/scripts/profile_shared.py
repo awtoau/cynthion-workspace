@@ -153,7 +153,7 @@ def with_sbt_slots(
 
 
 def shared_pipeline_lock_path(root: pathlib.Path) -> pathlib.Path:
-    return root / "riscv-64" / "out" / "sim" / ".pipeline.lock"
+    return root / "riscv" / "out" / "sim" / ".pipeline.lock"
 
 
 @contextlib.contextmanager
@@ -185,7 +185,7 @@ def run_dev_profile(
 ) -> None:
     cmd = [
         sys.executable,
-        str(root / "riscv-64" / "scripts" / "dev.py"),
+        str(root / "riscv" / "scripts" / "dev.py"),
         "--skip-rtl-sim",
         "--skip-postsynth-sim",
         "--tag",

@@ -7,7 +7,7 @@
 Builds a feature-column table from the earlier VexiiRiscv sweep.
 
 The sweep left 57 timing summaries and several hundred nextpnr logs, but no
-consolidated report. Configuration lives in `riscv-64/config/*.json`, and the
+consolidated report. Configuration lives in `riscv/config/*.json`, and the
 build scripts name their outputs in three different ways depending on which
 generator ran:
 
@@ -49,7 +49,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SWEEP = Path("/mnt/2tb/riscv-work/out/sim")
-CONFIG = ROOT / "riscv-64" / "config"
+CONFIG = ROOT / "riscv" / "config"
 LOG = ROOT / "tmp" / "riscv_sweep_report.log"
 
 # The features the sweep varied. `i4k`/`d4k` are the instruction and data
@@ -280,7 +280,7 @@ def main():
     with LOG.open("w") as handle:
         emit(handle, "VexiiRiscv feature sweep, recovered from the earlier work")
         emit(handle, f"{len(results)} configurations resolved against "
-                     f"{len(profiles)} profiles in riscv-64/config")
+                     f"{len(profiles)} profiles in riscv/config")
         emit(handle)
 
         header = "  " + "".join(f"{FEATURE_LABELS[f]:>8}" for f in FEATURES)

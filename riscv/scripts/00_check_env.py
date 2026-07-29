@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-R64 = ROOT / "riscv-64"
+R64 = ROOT / "riscv"
 OUT = R64 / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 

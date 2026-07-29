@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scan RV64 build/sim logs for warnings and errors.
 
-Creates a summary file under riscv-64/out/sim so each dev run has a
+Creates a summary file under riscv/out/sim so each dev run has a
 machine-readable and human-readable quality check.
 """
 
@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SIM_OUT = ROOT / "riscv-64" / "out" / "sim"
+SIM_OUT = ROOT / "riscv" / "out" / "sim"
 SUMMARY = SIM_OUT / "ecp5_log_scan_summary.txt"
 
 

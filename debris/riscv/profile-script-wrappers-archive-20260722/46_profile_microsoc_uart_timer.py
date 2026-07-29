@@ -24,9 +24,9 @@ import time
 from profile_shared import build_nextpnr_cmd, ensure_tool, run_logged, run_sbt_main
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "riscv-64" / "scripts"
-WORK = ROOT / "riscv-64" / "work" / "vexiiriscv"
-OUT = ROOT / "riscv-64" / "out" / "sim"
+SCRIPTS = ROOT / "riscv" / "scripts"
+WORK = ROOT / "riscv" / "work" / "vexiiriscv"
+OUT = ROOT / "riscv" / "out" / "sim"
 
 GENERATE_LOG = OUT / "microsoc_uart_timer_generate.log"
 YOSYS_LOG = OUT / "microsoc_uart_timer_yosys.log"
@@ -184,8 +184,8 @@ def main() -> int:
 
     print("MicroSoc UART+CLINT profile complete")
     print(f"Timing summary: {SUMMARY}")
-    print(f"CSV: {ROOT / 'riscv-64' / 'metrics' / 'ecp5_usage_history.csv'}")
-    print(f"Report: {ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
+    print(f"CSV: {ROOT / 'riscv' / 'metrics' / 'ecp5_usage_history.csv'}")
+    print(f"Report: {ROOT / 'riscv' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
     return 0
 
 

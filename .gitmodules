@@ -27,3 +27,6 @@
 [submodule "repos/cynthion-hardware"]
 	path = repos/cynthion-hardware
 	url = https://github.com/awtoau/awto-cynthion-hardware.git
+[submodule "repos/vexiiriscv"]
+	path = repos/vexiiriscv
+	url = https://github.com/SpinalHDL/VexiiRiscv.git

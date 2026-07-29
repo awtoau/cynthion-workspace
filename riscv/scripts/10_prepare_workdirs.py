@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-R64 = ROOT / "riscv-64"
+R64 = ROOT / "riscv"
 WORK = R64 / "work"
 OUT = R64 / "out"
 

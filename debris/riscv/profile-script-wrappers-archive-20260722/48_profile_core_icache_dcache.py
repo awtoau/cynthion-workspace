@@ -14,8 +14,8 @@ import pathlib
 from profile_shared import run_dev_profile, run_sbt_main
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORK = ROOT / "riscv-64" / "work" / "vexiiriscv"
-OUT = ROOT / "riscv-64" / "out" / "sim"
+WORK = ROOT / "riscv" / "work" / "vexiiriscv"
+OUT = ROOT / "riscv" / "out" / "sim"
 LOG = OUT / "core_icache_dcache_profile.log"
 
 
@@ -63,7 +63,7 @@ def main() -> int:
 
     print("Core I-cache + D-cache profile complete")
     print(f"Log: {LOG}")
-    print(f"Report: {ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
+    print(f"Report: {ROOT / 'riscv' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
     return 0
 
 

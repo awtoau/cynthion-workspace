@@ -19,8 +19,8 @@ import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = REPO_ROOT / "riscv-64" / "scripts"
-OUT_DIR = REPO_ROOT / "riscv-64" / "out" / "sim"
+SCRIPTS_DIR = REPO_ROOT / "riscv" / "scripts"
+OUT_DIR = REPO_ROOT / "riscv" / "out" / "sim"
 
 
 def parse_args() -> argparse.Namespace:
@@ -152,9 +152,9 @@ def main() -> int:
         return 2
 
     print("Done.")
-    print(f"CSV: {REPO_ROOT / 'riscv-64' / 'metrics' / 'ecp5_usage_history.csv'}")
-    print(f"Report: {REPO_ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
-    print(f"Log scan summary: {REPO_ROOT / 'riscv-64' / 'out' / 'sim' / 'ecp5_log_scan_summary.txt'}")
+    print(f"CSV: {REPO_ROOT / 'riscv' / 'metrics' / 'ecp5_usage_history.csv'}")
+    print(f"Report: {REPO_ROOT / 'riscv' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
+    print(f"Log scan summary: {REPO_ROOT / 'riscv' / 'out' / 'sim' / 'ecp5_log_scan_summary.txt'}")
     print(f"Run log: {run_log}")
     return 0
 

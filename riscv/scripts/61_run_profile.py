@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unified config-driven RV64 profile runner.
 
-Profile definitions are loaded from riscv-64/config/profile_matrix.json.
+Profile definitions are loaded from riscv/config/profile_matrix.json.
 This replaces per-profile wrapper scripts while preserving reproducibility.
 """
 
@@ -31,10 +31,10 @@ from profile_shared import (
 )
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "riscv-64" / "scripts"
-WORK = ROOT / "riscv-64" / "work" / "vexiiriscv"
-OUT = ROOT / "riscv-64" / "out" / "sim"
-CONFIG_DEFAULT = ROOT / "riscv-64" / "config" / "profile_matrix.json"
+SCRIPTS = ROOT / "riscv" / "scripts"
+WORK = ROOT / "riscv" / "work" / "vexiiriscv"
+OUT = ROOT / "riscv" / "out" / "sim"
+CONFIG_DEFAULT = ROOT / "riscv" / "config" / "profile_matrix.json"
 
 
 @dataclass(frozen=True)
@@ -462,7 +462,7 @@ def run_legacy_facedancer(
         "notes": notes,
     }
 
-    csv_path = ROOT / "riscv-64" / "metrics" / "ecp5_usage_history.csv"
+    csv_path = ROOT / "riscv" / "metrics" / "ecp5_usage_history.csv"
     with with_shared_pipeline_lock(ROOT, event_log=metrics_log, section=f"{profile.name}:metrics"):
         append_metrics_row(csv_path, row)
         run_logged([sys.executable, str(SCRIPTS / "44_generate_ecp5_report.py")], metrics_log, ROOT)
@@ -558,8 +558,8 @@ def main() -> int:
         return 2
 
     print("Profile run complete")
-    print(f"CSV: {ROOT / 'riscv-64' / 'metrics' / 'ecp5_usage_history.csv'}")
-    print(f"Report: {ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
+    print(f"CSV: {ROOT / 'riscv' / 'metrics' / 'ecp5_usage_history.csv'}")
+    print(f"Report: {ROOT / 'riscv' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
     return 0
 
 

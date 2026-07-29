@@ -16,23 +16,34 @@ the flash benchmarking hit a wall that only a soft CPU can get past.
 
 ## What exists, and where
 
-The VexiiRiscv work was moved to the wastebasket during a cleanup and is intact:
+    riscv/                  old pipeline scripts and profile config JSONs
+    scripts/riscv_*.py      the current tooling
+    docs/moondancer/        this document and riscv_alternatives.md
+    repos/vexiiriscv/       the SpinalHDL source the generator runs from
 
-    /mnt/2tb/wastebasket/cynthion-workspace-20260728-093000/
-        riscv-64-work-vexiiriscv/     868 MB, a real git checkout
-        riscv-64-work-nextpnr/        1.5 GB
-        riscv-64-work-prjtrellis/      16 MB
-        riscv-64-out/                 1.5 GB
-    /mnt/2tb/wastebasket/riscv-sim-workspaces-20260726-000000/
-        workspaces/                    36 GB, 76 simulation workspaces
+The VexiiRiscv tree is a **submodule** pinned to **v0.0.0-1297-gf8774d4**, so
+the sweep is reproducible from a clone rather than depending on a directory
+that happened to survive on one machine. It needs
+`git submodule update --init --recursive`: its own `ext/` submodules carry
+SpinalHDL, NaxSoftware and spike, and without them `sbt` fails to load the
+project.
 
-The checkout is at **VexiiRiscv v0.0.0-1297-gf8774d4** and contains a generated
-`VexiiRiscv.v` (1.7 MB) plus `build.sbt` and `build.mill`. **Nothing needs
-rebuilding** — recovering this is cheaper than regenerating it, and it is the
-exact tree the recorded benchmark numbers came from.
+That failure is worth recording, because it was misdiagnosed once. Three files
+appeared to be "missing from vendored SpinalHDL" and were restored by hand; in
+fact the nested submodules had simply never been initialised. A clean recursive
+clone builds with no fix at all.
 
-Note the directories are named `riscv-64-*` for historical reasons; the builds
-that were actually benchmarked are RV32.
+The tree is 322 MB after removing `simWorkspace/` and `target/`, which upstream
+already lists in its own `.gitignore` -- they had grown to 682 MB, more than
+twice the size of everything else combined.
+
+The build outputs that used to sit beside it -- 1.5 GB of sweep results, 36 GB
+of per-job sbt workspaces -- have been deleted. They were regenerable, and the
+numbers in them were not trustworthy; see the sweep section below.
+
+The directory was called `riscv-64` until the builds in it were checked and
+found to be RV32. Renamed to `riscv`, with no width in the name, so the same
+mistake is harder to repeat.
 
 ## Existing documents
 
@@ -99,15 +110,23 @@ Measured properly, core alone, on r1.4:
 | VexRiscv `cynthion` | **4739** | 1683 | 64.9 MHz |
 | VexRiscv `cynthion+jtag` | 5410 | 1832 | 58.4 MHz |
 | *JTAG debug module costs* | *671* | *149* | *−6.5 MHz* |
-| VexiiRiscv stripped | 6592 | 2695 | 73.4 MHz |
-| VexiiRiscv moondancer-like | 6876 | 3756 | **146.4 MHz** |
+| VexiiRiscv stripped | 6592 | 2695 | ~~73.4 MHz~~ |
+| VexiiRiscv moondancer-like | 6876 | 3756 | ~~146.4 MHz~~ |
 
-That inverts the naive reading: VexRiscv is about 1900 LUTs **smaller** than
-VexiiRiscv, not 5800 larger. VexiiRiscv's real advantage is **Fmax** — 146 MHz
-against 58–65, so roughly 2.3× the clock for about 30% more area.
+The VexRiscv rows are sound: they were built through the Amaranth platform at a
+real target and are the same two numbers a rebuild would produce.
 
-The VexiiRiscv rows still include SoC glue the VexRiscv measurement does not, so
-they are closer to like-for-like than before but not equal.
+**The two VexiiRiscv Fmax figures are struck out because they are not
+measurements of a working core.** Both came from the sweep pipeline described
+below — routed at a 25 MHz target, and in the stripped case with the core's
+outputs tied off so synthesis deleted them. The area figures are more defensible
+but still include SoC glue the VexRiscv rows do not.
+
+So the area comparison stands and the timing comparison does not. VexRiscv is
+about 1900 LUTs **smaller** than VexiiRiscv, which does invert the naive reading
+of the original report. Whether VexiiRiscv is correspondingly faster is exactly
+what the rebuild is for; the one configuration measured properly so far reaches
+82.6 MHz, which is closer to VexRiscv than the struck-out 146 MHz suggested.
 
 ### VexiiRiscv is configurable, and most of it is opt-in
 
@@ -139,7 +158,7 @@ The RV32 report quotes two configurations. The work behind it covered far more:
 produced it showed the numbers do not mean what they appear to mean.
 
 **Fmax was routed at a 25 MHz target.** `build_nextpnr_cmd` in
-`riscv-64/scripts/profile_shared.py` passes `--freq 25.0` with
+`riscv/scripts/profile_shared.py` passes `--freq 25.0` with
 `--timing-allow-fail`, so the router stops caring once it clears 25 MHz and
 reports whatever it happened to achieve. That is a lower bound produced by a
 relaxed constraint, not a ceiling. Rerouting the same I$+D$ configuration at a

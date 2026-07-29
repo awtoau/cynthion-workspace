@@ -18,8 +18,8 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_OUT_BY_XLEN = {
-    64: ROOT / "riscv-64" / "config" / "profile_matrix_exhaustive.json",
-    32: ROOT / "riscv-64" / "config" / "profile_matrix_exhaustive_x32.json",
+    64: ROOT / "riscv" / "config" / "profile_matrix_exhaustive.json",
+    32: ROOT / "riscv" / "config" / "profile_matrix_exhaustive_x32.json",
 }
 
 FEATURE_KEYS = ["fetch_l1", "lsu_l1", "btb", "gshare", "ras", "dual_issue"]

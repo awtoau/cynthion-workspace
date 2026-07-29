@@ -46,16 +46,21 @@ VEXRISCV_VARIANTS = [
     "imc",
 ]
 
-# VexiiRiscv configurations, generated from source. The recovered tree builds
-# under Java 25 once three files deleted from its vendored SpinalHDL are
-# restored -- the blocker recorded against VexRiscv (Scala 2.11.12) does not
-# apply here, since VexiiRiscv uses Scala 2.12/2.13.
+# VexiiRiscv configurations, generated from source. The tree is a submodule at
+# repos/vexiiriscv, pinned to v0.0.0-1297-gf8774d4, and builds under Java 25 --
+# the blocker recorded against VexRiscv (Scala 2.11.12) does not apply here,
+# since VexiiRiscv uses Scala 2.12/2.13.
+#
+# An earlier note here claimed the tree needed three files restored to its
+# vendored SpinalHDL. It did not: they were missing because the nested
+# submodules had never been initialised, and a clean clone with
+# `submodule update --init --recursive` builds without any fix.
 #
 # The middle rows are the single-factor split the RV32 report asked for and
 # never got. Its two configurations differed in three ways at once -- caches,
 # atomics and supervisor mode -- so the 2x Fmax difference between them could
 # not be attributed. These vary one thing at a time from a common base.
-VEXII_ROOT = Path("/mnt/2tb/riscv-work/vexiiriscv")
+VEXII_ROOT = ROOT / "repos" / "vexiiriscv"
 
 VEXII_BASE = "--xlen=32 --with-rvm --with-rvc --with-rdtime --without-mmu"
 

@@ -35,7 +35,7 @@ Not identical (intentional config differences):
 - Therefore this is a same-core-family comparison with different feature mixes, not a bit-for-bit same CPU configuration.
 
 ### Area/timing run identities
-From `riscv-64/metrics/ecp5_usage_history.csv`, commit `6930b8e` rows:
+From `riscv/metrics/ecp5_usage_history.csv`, commit `6930b8e` rows:
 - `soc_x32_sv_rvm_rvc_rdtime_clint_uart`
 - `soc_x32_rva_rvm_rvc_rdtime_i4k_d4k_clint_uart`
 - `soc_x32_legacy_vexriscv_usb_facedancer`

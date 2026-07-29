@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "riscv-64" / "out"
+OUT = ROOT / "riscv" / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 LOG = OUT / "qemu_boot.log"
 

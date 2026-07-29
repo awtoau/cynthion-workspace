@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Profile cumulative core path with dual-issue enabled.
+"""Profile a core-only VexiiRiscv configuration with a 4 KiB I-cache.
 
-Cumulative stack:
-- 4 KiB I-cache
-- 4 KiB D-cache
-- BTB + GShare + RAS
-- dual-issue
+Flow:
+1) Generate VexiiRiscv.v with fetch L1 enabled (64 sets x 1 way x 64B line = 4 KiB)
+2) Run timing/metrics/report/log-scan via dev.py (sim steps skipped)
 """
 
 from __future__ import annotations
@@ -16,37 +14,26 @@ import pathlib
 from profile_shared import run_dev_profile, run_sbt_main
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORK = ROOT / "riscv-64" / "work" / "vexiiriscv"
-OUT = ROOT / "riscv-64" / "out" / "sim"
-LOG = OUT / "core_icache_dcache_bpred_dual_issue_profile.log"
+WORK = ROOT / "riscv" / "work" / "vexiiriscv"
+OUT = ROOT / "riscv" / "out" / "sim"
+LOG = OUT / "core_icache_4k_profile.log"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tag",
-        default="core_x64_sv_rvm_rvc_rdtime_i4k_d4k_btb_gshare_ras_dual",
-        help="Datapoint tag for metrics",
-    )
-    parser.add_argument(
-        "--notes",
-        default="Core x64 supervisor+rvm+rvc+rdtime with 4KiB I-cache, 4KiB D-cache, BTB, GShare, RAS, and dual-issue",
-        help="Datapoint notes",
-    )
+    parser.add_argument("--tag", default="core_x64_sv_rvm_rvc_rdtime_i4k", help="Datapoint tag for metrics")
+    parser.add_argument("--notes", default="Core x64 supervisor+rvm+rvc+rdtime with 4KiB I-cache", help="Datapoint notes")
     parser.add_argument("--target-mhz", type=float, default=25.0, help="Timing target")
     parser.add_argument("--threads", type=int, default=0, help="nextpnr thread count (0 uses default)")
     parser.add_argument("--fail-on-warnings", action="store_true", help="Fail run if scanner finds warnings")
     return parser.parse_args()
 
 
-def generate_core() -> None:
+def generate_icache_core() -> None:
     sbt_arg = (
         "runMain vexiiriscv.Generate "
         "--xlen 64 --with-supervisor --with-rvm --with-rvc --with-rdtime "
-        "--with-fetch-l1 --fetch-l1-sets 64 --fetch-l1-ways 1 "
-        "--with-lsu-l1 --lsu-l1-sets 64 --lsu-l1-ways 1 "
-        "--with-btb --with-gshare --with-ras "
-        "--dual-issue"
+        "--with-fetch-l1 --fetch-l1-sets 64 --fetch-l1-ways 1"
     )
     run_sbt_main(WORK, sbt_arg, LOG)
 
@@ -62,16 +49,16 @@ def main() -> int:
         LOG.unlink()
 
     try:
-        generate_core()
+        generate_icache_core()
         run_profile(args.tag, args.notes, args.target_mhz, args.threads, args.fail_on_warnings)
     except Exception as exc:
         print(f"ERROR: {exc}")
         print(f"Log: {LOG}")
         return 2
 
-    print("Core cumulative dual-issue profile complete")
+    print("Core I-cache 4 KiB profile complete")
     print(f"Log: {LOG}")
-    print(f"Report: {ROOT / 'riscv-64' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
+    print(f"Report: {ROOT / 'riscv' / 'metrics' / 'reports' / 'ecp5_usage_report.md'}")
     return 0
 
 

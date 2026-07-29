@@ -1,4 +1,4 @@
-# `riscv-64/work/` — scratch, not source
+# `riscv/work/` — scratch, not source
 
 **This directory is gitignored.** Anything you put here is invisible to git and
 will be lost the next time it is cleaned. Do not put hand-written source here.
