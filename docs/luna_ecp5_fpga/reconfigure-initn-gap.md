@@ -64,3 +64,24 @@ below `CynthionPlatformRev1D4`.
 Whether quad-SPI boot is actually faster. The build side works and ten variants
 build and verify clean; the timing needs the INITN gap resolved or a power
 cycle between variants.
+
+
+## What is in flash now, and a trap in reading it
+
+The board currently boots the `baseline-38.8` blinker the boot-timing work
+built -- 100336 bytes, byte-for-byte identical to
+`tmp/qspiboot/baseline-38.8/top.bit`. That is what the LEDs are doing.
+
+The trap: flash beyond 100336 bytes is **not erased**. It holds the tail of a
+larger bitstream that the smaller one only partly overwrote. Reading flash and
+scanning back from the end for the first non-`0xff` byte therefore reports
+248515 bytes, and no bitstream of that size ever existed.
+
+That measurement sent an identification attempt badly wrong -- it was compared
+against designs of a similar apparent size, none of which could match, and the
+conclusion drawn was that the image predated the session. Comparing bitstream
+*bodies* rather than sizes found the real answer immediately.
+
+So: identify a flash image by comparing content from a fixed offset, never by
+inferring its length from where the erased region begins. Programming a smaller
+bitstream over a larger one leaves the difference behind.
