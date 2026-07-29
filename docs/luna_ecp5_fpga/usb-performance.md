@@ -1,12 +1,9 @@
 # LUNA USB gateware: measured performance
 
-What LUNA's USB2 stack achieves on Cynthion r1.4, how it was measured, and what
-turned out not to be true along the way.
-
-The short version: **LUNA is not the limit.** It reaches 91% of the USB 2.0
-protocol maximum, responds to a token in one clock cycle, and never NAKs. Every
-figure below that fell short of expectation traced to the measurement harness or
-the physical topology, not to the gateware.
+LUNA's USB2 stack on Cynthion r1.4. It reaches 91% of the USB 2.0 protocol
+maximum, responds to a token in one clock cycle, and never NAKs. Every figure
+below that fell short traced to the measurement harness or the physical
+topology, not to the gateware.
 
 ## Results
 
@@ -28,8 +25,8 @@ microframe. That matches the commonly cited `1000 × 8 × 512 × 13 ≈ 53 MB/s`
 
 ## The device is not the constraint
 
-Instrumenting the gateware settles this rather than inferring it. Over **284,306
-transactions** at 388 Mbps (`ecp5-test/usb_bulk/usb_timing.py`):
+Instrumented in gateware over **284,306 transactions** at 388 Mbps
+(`ecp5-test/usb_bulk/usb_timing.py`):
 
 | measurement | value | what it means |
 |---|---|---|
@@ -42,13 +39,13 @@ transactions** at 388 Mbps (`ecp5-test/usb_bulk/usb_timing.py`):
 Against a ~10.6 µs transaction period, the device contributes **0.16% of the
 budget**. The kernel logged no errors, resets, stalls or babble during the run.
 
-This matters because a device that NAKs makes the host back off, and from the
-host that is indistinguishable from a slow host. The ratio being exactly 1.0000
-rules that out.
+A device that NAKs makes the host back off, which from the host is
+indistinguishable from a slow host. The ratio being exactly 1.0000 rules that
+out.
 
 ## Choosing an endpoint type
 
-CDC-ACM and raw bulk were measured back to back with the same loopback:
+CDC-ACM and raw bulk, measured back to back with the same loopback:
 
 | | Mbps |
 |---|---|
@@ -56,33 +53,30 @@ CDC-ACM and raw bulk were measured back to back with the same loopback:
 | Raw bulk, combinational loopback | 188.0 |
 | Raw bulk, FIFO loopback | 244.2 |
 
-**CDC costs essentially nothing.** LUNA's `USBSerialDevice` is
-`USBStreamInEndpoint` plus `USBStreamOutEndpoint` plus descriptors — it adds no
-data path. Swapping CDC for bulk while holding the loopback constant changed
-nothing (bulk was marginally *slower*); swapping the wire for a FIFO gained 26%.
+CDC costs essentially nothing. LUNA's `USBSerialDevice` is `USBStreamInEndpoint`
+plus `USBStreamOutEndpoint` plus descriptors — no added data path. Swapping CDC
+for bulk while holding the loopback constant changed nothing (bulk was marginally
+*slower*); swapping the wire for a FIFO gained 26%. Choose CDC when a tty is
+wanted, bulk when it is not; how the endpoints are connected is what matters.
 
-So choose CDC when a tty is wanted and bulk when it is not. Neither choice
-affects throughput; how the endpoints are connected does.
-
-`max_packet_size` does matter, and defaults wrongly for high speed: it is 64,
-the full-speed bulk limit. Leaving it there enumerates at high speed while
-running at roughly an eighth of the achievable rate.
+`max_packet_size` does matter, and defaults wrongly for high speed: it is 64, the
+full-speed bulk limit. Leaving it there enumerates at high speed while running at
+roughly an eighth of the achievable rate.
 
 ## What limits throughput, in order of size
 
-**1. USB topology — worth 33%.** Four hub levels cost 292.2 Mbps against 388.0
-on a direct root port. Confirmed with the PHY held constant: AUX measured 388.0
-direct and 292.2 through hubs, and TARGET measured 387.8 direct — the two PHYs
-differ by 0.05%, so the entire gain is hub depth. This is a cable move, and it
-recovered more than any code change could have.
+**1. USB topology — 33%.** Four hub levels cost 292.2 Mbps against 388.0 on a
+direct root port. Confirmed with the PHY held constant: AUX measured 388.0 direct
+and 292.2 through hubs, TARGET measured 387.8 direct — the two PHYs differ by
+0.05%, so the entire gain is hub depth.
 
-**2. Combinational loopback — worth 26%.** Wiring `rx.ready` to `tx.ready`
-defeats LUNA's double buffering: while a packet awaits ACK, `tx.ready` drops,
-which drops `rx.ready`, which NAKs the host's next OUT packet. Every packet then
-pays a full bus round trip. A packet-sized FIFO between the streams removes it.
+**2. Combinational loopback — 26%.** Wiring `rx.ready` to `tx.ready` defeats
+LUNA's double buffering: while a packet awaits ACK, `tx.ready` drops, which drops
+`rx.ready`, which NAKs the host's next OUT packet. Every packet then pays a full
+bus round trip. A packet-sized FIFO between the streams removes it.
 
-**3. Host controller scheduling — the remaining 9%.** Outside the device, and
-not recoverable from this side.
+**3. Host controller scheduling — the remaining 9%.** Outside the device, not
+recoverable from this side.
 
 ## Things that turned out not to matter
 
@@ -91,8 +85,7 @@ Recorded so they are not re-investigated:
 - **Host language.** Five implementations — pyserial, pyusb synchronous, libusb1
   async at four queue depths, and native C with no interpreter — all landed
   between 287 and 297 Mbps through the same hub chain. C beat the best Python by
-  1.2%. A bottleneck that does not move when the host changes is not a host
-  bottleneck.
+  1.2%.
 - **Queue depth.** Depths of 1, 4, 8 and 16 are indistinguishable in both
   languages. The hypothesis that unpipelined synchronous I/O was leaving the bus
   idle is false.
@@ -107,17 +100,17 @@ Recorded so they are not re-investigated:
 - **LUNA issue #276**, which caps speed to full speed, applies only to custom
   UTMI PHYs. `USBDevice` sets `always_fs = False` on the ULPI path Cynthion uses.
 
-## Measurement traps encountered
+## Measurement traps
 
-Three of the numbers above were initially wrong, all for the same reason — the
-instrument was doing work inside the timed region:
+Three of the numbers above were initially wrong, all because the instrument was
+doing work inside the timed region.
 
 **Per-byte verification in Python.** Checking a counting sequence byte by byte as
 it arrived cost 3.4 ms per 64 KiB — a ceiling of ~150 Mbps, *below the figure it
-then reported as the link speed*. It applied to IN only, producing a 56%
-IN/OUT asymmetry that looked exactly like a gateware defect and was investigated
-as one. Buffering the capture and verifying afterwards raised IN by 53% and
-collapsed the asymmetry to 9%.
+then reported as the link speed*. It applied to IN only, producing a 56% IN/OUT
+asymmetry that looked exactly like a gateware defect and was investigated as one.
+Buffering the capture and verifying afterwards raised IN by 53% and collapsed the
+asymmetry to 9%.
 
 **Reporting payload instead of bus traffic.** A loopback carries every byte in
 both directions, so the bus figure is double the payload one. Quoting payload
@@ -128,8 +121,8 @@ changes two variables at once. The conclusion happened to be right, but it was a
 inference dressed as a measurement until the fourth cell of the matrix was filled
 in.
 
-The general rule that emerged: **do nothing to the data while the clock is
-running**, and when a result surprises, suspect the instrument before the device.
+Rule: do nothing to the data while the clock is running, and when a result
+surprises, suspect the instrument before the device.
 
 ## Files
 
@@ -153,5 +146,4 @@ The capture path is bounded by the slower of USB and HyperRAM:
 | HyperRAM, FIFO access at 512-byte granularity | 220.2 |
 | USB bulk, direct port | 48.5 |
 
-**4.5× headroom.** USB is the constraint, so effort spent making the memory
-faster buys nothing.
+4.5× headroom. USB is the constraint.

@@ -4,13 +4,12 @@ The r1.4 HyperRAM is a 16-bit DDR self-refreshing DRAM on dedicated FPGA pins:
 8 data lines (`F2 B1 C2 E1 E3 E2 F3 G4`), a differential clock pair
 (`C3`/`D3`), `RWDS` (`D1`), `CS` (`B2`) and `RESET` (`C1`).
 
-## Measured results
+## Streaming: 2048-word burst
 
-Every figure is a write of 2048 16-bit words followed by a read back, with the
-gateware comparing **every word** against the pattern it wrote and counting
-mismatches. There is no independent reference path here — nothing else on the
-board can read this chip — so the test is self-verifying by construction rather
-than by comparison.
+Write 2048 16-bit words, read back, gateware compares **every word** against the
+pattern written and counts mismatches. No independent reference path exists —
+nothing else on the board can read this chip — so the test is self-verifying by
+construction, not by comparison.
 
 | sync clock | write | read | errors | nextpnr timing | verdict |
 |---|---|---|---|---|---|
@@ -18,36 +17,25 @@ than by comparison.
 | 120 MHz | 237.8 MB/s | 237.3 MB/s | 0 / 2048 | *FAIL* 105/120 | **PASS** |
 | 240 MHz | — | — | — | FAIL 124/240 | build refused |
 
-**120 MHz is the verified ceiling: 237.3 MB/s read, 237.8 MB/s write.** Five
-reconfigurations returned bit-identical cycle counts and zero errors each time,
-so this is a stable operating point rather than a lucky sample.
+120 MHz is the verified ceiling. Five reconfigurations returned bit-identical
+cycle counts and zero errors each time.
 
-Bus efficiency is 99.1% on write and 98.9% on read — the 19 and 23 spare cycles
-are the command and latency phases, which a 2048-word burst amortises almost
-completely.
+Bus efficiency is 99.1% write, 98.9% read; the 19 and 23 spare cycles are the
+command and latency phases, amortised over a 2048-word burst.
 
-### Timing closure is not the same as working
-
-At 120 MHz nextpnr reports the design *fails* timing (105 MHz achievable
-against 120 required) and yet every word verifies, repeatably. Its static
-estimate is conservative for this path. This is exactly why the ladder measures
-data rather than trusting the report — and equally why the report is still
-recorded in the table, because relying on a path the tool says does not close
-is a deliberate choice, not an accident.
-
-At 240 MHz nextpnr refuses outright (124 MHz achievable) and produces no
-bitstream, so that is a hard stop rather than a judgement call.
+At 120 MHz nextpnr reports the design fails timing (105 MHz achievable against
+120 required) and yet every word verifies, repeatably. Relying on a path the
+tool says does not close is a deliberate choice. At 240 MHz nextpnr produces no
+bitstream at all, so that is a hard stop.
 
 ## FIFO-style access: alternating writes and reads
 
-A capture buffer does not get a 2048-word burst. Data arrives from USB, sits in
-RAM and leaves for storage, so writes and reads alternate and every turnaround
-pays the command and latency phase again. `hyperram_fifo.py` sweeps chunk size
-under that pattern: write N words, read N words back and verify them, repeat
-until 16384 words have moved each way, at every N from 8 to 4096.
-
-The same volume of data moves at every chunk size, so the cycle counts differ
-only by the number of turnarounds.
+A capture buffer does not get a 2048-word burst — writes and reads alternate and
+every turnaround pays the command and latency phase again. `hyperram_fifo.py`
+sweeps chunk size under that pattern: write N words, read N words back and
+verify, repeat until 16384 words have moved each way, at every N from 8 to 4096.
+The same volume moves at every chunk size, so cycle counts differ only by the
+number of turnarounds.
 
 | chunk | bytes | write | read | combined | % of streaming | errors |
 |---|---|---|---|---|---|---|
@@ -62,62 +50,58 @@ only by the number of turnarounds.
 | 2048 | 4096 | 237.7 MB/s | 237.0 MB/s | 237.3 MB/s | 100.0% | 0 |
 | 4096 | 8192 | 238.8 MB/s | 238.5 MB/s | 238.7 MB/s | 100.6% | 0 |
 
-The combined figure is total bytes through the bus over total time, which is
-what a FIFO sees — not the average of the two rates. All 163840 words verified
-against an address-derived pattern with zero mismatches, and a full rebuild and
-reconfiguration returned bit-identical cycle counts.
+The combined figure is total bytes over total time, which is what a FIFO sees —
+not the average of the two rates. All 163840 words verified against an
+address-derived pattern with zero mismatches; a full rebuild and reconfiguration
+returned bit-identical cycle counts.
 
-**80% of streaming is reached at 128 words (256 bytes); 90% at 256 words
-(512 bytes).** One USB high-speed bulk packet is exactly 512 bytes, so the
-natural granularity for a capture buffer already sits above the 90% mark
-without anything being tuned for it.
+One USB high-speed bulk packet is 512 bytes, which sits above the 90% mark
+without tuning.
 
-### The overhead is a constant, not a rate
+### Overhead is a constant, not a rate
 
-Dividing each phase by its repetition count gives the per-transaction cost, and
-it is the same at every chunk size:
+Dividing each phase by its repetition count:
 
     cycles per write transaction = N + 20
     cycles per read transaction  = N + 26
 
-Exactly 20 and 26 across all ten sizes, with no size dependence whatsoever.
-That is the command and latency phase, and it is why the curve has the shape it
-does: at N=8 the overhead is 2.5-3x the payload, at N=4096 it is half a
-percent. It also reconciles with the streaming test independently — that
-measured 2067 write and 2071 read cycles for 2048 words, against 2068 and 2074
-predicted here.
+Exactly 20 and 26 across all ten sizes, no size dependence. At N=8 the overhead
+is 2.5–3x the payload; at N=4096 it is half a percent. This reconciles with the
+streaming test independently: that measured 2067 write and 2071 read cycles for
+2048 words against 2068 and 2074 predicted here.
 
-Read costs 6 cycles more than write per turnaround, which is the read latency
-the write path does not wait for.
+Read costs 6 cycles more than write per turnaround — the read latency the write
+path does not wait for.
 
-### Enough margin for a USB capture buffer
+### Margin over USB
 
-The fastest USB direction measured on this board is 36.1 MB/s. At the 512-byte
-packet granularity HyperRAM sustains 220.2 MB/s for a simultaneous
-write-and-read FIFO — **6.1x margin**, and still 1.7x at the smallest chunk
-measured (8 words, 61.9 MB/s). HyperRAM is not the constraint on a USB capture
-path at any chunk size worth using.
+The fastest USB direction measured on this board is **48.5 MB/s** (388.0 Mbps,
+bulk IN on a direct root port). At 512-byte granularity HyperRAM sustains
+220.2 MB/s for a simultaneous write-and-read FIFO — a **4.5x margin** — and
+61.9 MB/s at the smallest chunk measured (1.3x). HyperRAM is not the constraint
+at any chunk size worth using.
 
-### Timing report, again
+Topology matters more than either figure: through four hub levels USB drops to
+36.5 MB/s (292.2 Mbps), which would put the margin at 6.0x. Quote the direct
+number, since that is the configuration worth building for.
 
-nextpnr reports this design *passing* at 175/120 MHz, where the streaming build
-was reported as failing at 105/120 MHz — same clock, same PHY, same controller.
-The reports differ by 70 MHz on what is essentially the same critical path, and
-both builds verify every word. Recorded because it is further evidence that the
-static estimate on this path tracks something other than whether the design
-works.
+### Timing report disagreement
+
+nextpnr reports this FIFO design *passing* at 175/120 MHz, where the streaming
+build was reported *failing* at 105/120 MHz — same clock, same PHY, same
+controller. The reports differ by 70 MHz on essentially the same critical path,
+and both builds verify every word. Further evidence that the static estimate on
+this path tracks something other than whether the design works.
 
 ### The limit is the fabric, not the chip
 
-The stop at 240 MHz is a place-and-route failure in our design. The part itself
-is rated far higher, and the 120 MHz result is not near any device limit —
-raising it further is a matter of pipelining the design or using the DQS PHY
-(see below), not of the RAM giving up.
+The stop at 240 MHz is a place-and-route failure in this design, not a device
+limit. Raising it further is a matter of pipelining or using the DQS PHY.
 
-Note the available clocks are only **60, 120 and 240 MHz**:
-`LunaECP5DomainGenerator` drives the sync domain from one of three PLL outputs
-and raises `KeyError` for anything else, so the interesting region between 120
-and 240 cannot be explored without a custom PLL.
+Available clocks are only **60, 120 and 240 MHz**: `LunaECP5DomainGenerator`
+drives the sync domain from one of three PLL outputs and raises `KeyError` for
+anything else, so the region between 120 and 240 cannot be explored without a
+custom PLL.
 
 ## Why the non-DQS PHY
 
@@ -126,26 +110,20 @@ LUNA ships two: `HyperRAMPHY`/`HyperRAMInterface` and
 hardware (`DQSBUFM`, `TSHX2DQSA`, `DDRDLLA`) and should reach higher rates,
 because the strobe travels with the data rather than timing being estimated.
 
-It cannot be used on this board as written. It assigns to `bus.clk` as a single
+It cannot be used on this board as written: it assigns to `bus.clk` as a single
 net, but the platform declares the HyperRAM clock as a **differential pair**, so
-the assignment fails outright. Interposing a buffer does not help either:
-nextpnr requires `DELAYG` to sit directly on a top-level pin and fails packing
-with *"must be connected directly to top level input or output"*.
+the assignment fails. Interposing a buffer does not help — nextpnr requires
+`DELAYG` to sit directly on a top-level pin and fails packing with *"must be
+connected directly to top level input or output"*. Making the DQS path work means
+changing the platform's clock declaration or adapting the PHY.
 
-Making the DQS path work therefore means either changing the platform's clock
-declaration or adapting the PHY, and is the obvious next step for going faster.
+## Trap: the interface is 16 bits, not 32
 
-## A trap worth recording
-
-`HyperRAMInterface` is **16 bits wide, not 32**. A 32-bit test against it
-returns data that looks exactly like a bit-shift — low byte correct, upper bits
-displaced by a consistent amount — which is a convincing impersonation of a
-timing or sampling fault, and was briefly diagnosed as one here.
-
-What settled it was the block-RAM capture: the displacement was too regular
-across every word to be noise. The same technique had already corrected two
-wrong conclusions in the flash work. A pass/fail count says something is wrong;
-only the bytes say what.
+`HyperRAMInterface` is **16 bits wide, not 32**. A 32-bit test against it returns
+data that looks exactly like a bit-shift — low byte correct, upper bits displaced
+by a consistent amount — a convincing impersonation of a timing or sampling
+fault. Capturing the actual bytes into block RAM settles it: the displacement is
+too regular across every word to be noise.
 
 ## Comparison
 
@@ -155,15 +133,11 @@ only the bytes say what.
 | Config flash, quad | 4-bit SDR @ 30 MHz | 14.92 MB/s |
 | Config flash, single | 1-bit SDR @ 30 MHz | 3.75 MB/s |
 
-HyperRAM is ~16× the quad flash rate, which is what a 16-bit DDR bus against a
-4-bit SDR one should give. For a RISC-V system this is the natural place for
-anything write-heavy: flash is a read-mostly store with 45–400 ms sector
-erases, while this is true random-access memory.
+~16x the quad flash rate, which is what a 16-bit DDR bus against a 4-bit SDR one
+should give. Flash is a read-mostly store with 45–400 ms sector erases; this is
+true random-access memory.
 
 ## Appendix: USB throughput reference
-
-Recorded here because the USB and HyperRAM figures are only meaningful against
-each other — the capture path is bounded by the slower of the two.
 
 | source | Mbps | MB/s |
 |---|---|---|
@@ -173,18 +147,8 @@ each other — the capture path is bounded by the slower of the two.
 | Measured, four hub levels deep | 292.2 | 36.5 |
 | HyperRAM FIFO at 512-byte granularity | 1762 | 220.2 |
 
-The 426 Mbps figure was derived independently from the spec — one 512-byte bulk
-transaction is 4512 bit times at 2.0833 ns, so 13 fit in a 125 µs microframe —
-and matches the commonly quoted `1000 × 8 × 512 × 13 = 53 MB/s`. Two routes to
-the same number is worth more than either alone.
-
-**388.0 Mbps is 91.1% of protocol maximum**, and the device is provably not the
-limiting factor: instrumenting the gateware over 284,306 transactions gives
-exactly 1.0000 ACKs per token, 512.0 bytes per token, and a token-to-first-byte
-latency of one clock cycle (17 ns) against a ~10.6 µs transaction period. No
-NAKs, no retries, and no kernel errors logged during the run. The remaining 9%
-is host-controller scheduling, outside the device.
-
-**HyperRAM has 4.5× headroom over the fastest the USB link can deliver**, so
-the capture buffer is comfortable and USB is the constraint. That ratio is the
-useful conclusion: effort spent making the RAM faster would buy nothing.
+388.0 Mbps is 91.1% of protocol maximum; the remaining 9% is host-controller
+scheduling, outside the device. HyperRAM has 4.5x headroom over the fastest the
+USB link delivers, so USB is the constraint. Derivation of the 426 Mbps figure
+and the gateware instrumentation that rules out the device are in
+`usb-performance.md`.

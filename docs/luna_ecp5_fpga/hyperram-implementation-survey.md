@@ -1,11 +1,7 @@
 # HyperRAM implementations: what else is out there
 
-A survey prompted by reasonable scepticism about LUNA's implementation, after
-Glasgow's QSPI controller turned out to be markedly better than what was being
-written by hand for the flash.
-
-**Conclusion: LUNA's is the one to keep**, but with a specific, measurable
-inefficiency worth fixing — and one alternative worth borrowing ideas from.
+**Conclusion: keep LUNA's**, with a specific measurable inefficiency worth
+fixing, and one alternative worth borrowing interface shape from.
 
 ## Candidates found
 
@@ -17,42 +13,45 @@ inefficiency worth fixing — and one alternative worth borrowing ideas from.
 | litex-hyperram | Migen | **none** | Dec 2019 | Unlicensed, 7 years stale |
 | orbtrace | Migen | — | — | Wraps `litehyperbus`, not standalone |
 
-Glasgow has **no** HyperRAM support, so the trick that worked for QSPI does not
-repeat here.
+Glasgow has **no** HyperRAM support. The search that mattered was for *Amaranth*
+implementations specifically; Migen and LiteX ones exist but would need porting.
 
-## Why LUNA wins despite the scepticism
+## Why LUNA wins
 
-The decisive point is that LUNA instantiates real ECP5 DDR hardware —
-`DQSBUFM`, `TSHX2DQSA`, `DDRDLLA`, `ODDRX1F`, `DELAYF`. HyperRAM is a DDR
-interface, and on an FPGA that means vendor I/O primitives; you cannot write it
-portably.
+LUNA instantiates real ECP5 DDR hardware. HyperRAM is a DDR interface, and on an
+FPGA that means vendor I/O primitives; it cannot be written portably.
 
-ChipFlow's is the better-*structured* code by some distance, but it is written
-for ASIC targets and contains **no FPGA I/O primitives at all** — no
-`DDRBuffer`, no `Instance()`. Adapting it would mean writing the ECP5 DDR layer
-from scratch, which is precisely the part LUNA already has working.
+The two PHYs use different primitives, which matters because only one of them
+works on this board:
 
-And LUNA's is verified on this board: 32 KiB bulk write/read, retention across
-~6 ms, and 4096 random-address operations, all with **zero errors** at 120 MHz
+| PHY | primitives | on Cynthion r1.4 |
+|---|---|---|
+| non-DQS (`HyperRAMPHY`) | `ODDRX1F`, `IDDRX1F`, `DELAYF` | **the verified path** |
+| DQS (`HyperRAMDQSPHY`) | `DQSBUFM`, `TSHX2DQSA`, `DDRDLLA` | unusable — no DQS pin group |
+
+Every measurement in `hyperram-speed.md` is on the non-DQS path.
+
+ChipFlow's is the better-*structured* code by some distance, but it targets ASICs
+and contains **no FPGA I/O primitives at all** — no `DDRBuffer`, no `Instance()`.
+Adapting it means writing the ECP5 DDR layer from scratch, which is exactly the
+part LUNA already has working.
+
+LUNA's is verified on this board: 32 KiB bulk write/read, retention across ~6 ms,
+and 4096 random-address operations, all with **zero errors** at 120 MHz
 (`ecp5-test/hyperram/`).
 
 ## What ChipFlow does better
 
-Two things worth taking:
-
-**Latency is a runtime CSR, not a constant.** ChipFlow exposes `latency` as a
-4-bit read/write register field. LUNA hard-codes `LOW_LATENCY_CLOCKS = 7` and
-`HIGH_LATENCY_CLOCKS = 14`.
-
-**It has the Wishbone peripheral already.** ChipFlow's `data_bus` is a 32-bit
-Wishbone interface with byte granularity, plus a separate CSR control bus —
-exactly the wrapper that is missing on the LUNA side, and the reason the
-HyperRAM path stalled while the flash path did not.
+- **Latency is a runtime CSR**, a 4-bit read/write register field. LUNA
+  hard-codes `LOW_LATENCY_CLOCKS = 7` and `HIGH_LATENCY_CLOCKS = 14`.
+- **The Wishbone peripheral already exists.** ChipFlow's `data_bus` is a 32-bit
+  Wishbone interface with byte granularity, plus a separate CSR control bus —
+  exactly the wrapper missing on the LUNA side.
 
 ## The concrete inefficiency in LUNA
 
-`HyperRAMInterface` samples RWDS correctly to detect whether the device is
-asking for extra latency:
+`HyperRAMInterface` samples RWDS correctly to detect whether the device is asking
+for extra latency:
 
     m.d.sync += extra_latency.eq(self.phy.rwds.i)
 
@@ -68,33 +67,23 @@ and then discards the result:
 `extra_latency | 1` is unconditionally true, so the low-latency branch is dead
 code and every transaction takes the 14-clock path.
 
-This is **conservative rather than wrong** — it is an acknowledged shortcut with
-a FIXME against it, and taking the longer latency is always safe. But it costs
-about **7 cycles on every transaction**, which matters here specifically:
-measured overhead is ~23 cycles per transaction against ~1 cycle per word, so
-this is roughly 30% of the fixed cost that makes random access ~25 cycles
-against ~2 for streaming.
+This is conservative rather than wrong — an acknowledged shortcut with a FIXME
+against it, and the longer latency is always safe. It costs about **7 cycles per
+transaction**.
 
-Fixing it is a one-line change plus a test. Whether it is worth doing depends on
-the access pattern: irrelevant for streaming FIFO use, worth having if anything
-does small scattered accesses.
+Measured per-transaction overhead is **20 cycles for a write and 26 for a read**
+at 120 MHz, constant across chunk sizes (`hyperram-speed.md`). So the fixed
+latency shortcut is roughly a third of that overhead. Against a 512-byte
+transfer it disappears into the noise; against a single word it is most of the
+cost.
 
-## Recommendation
+Fixing it is a one-line change plus a test. Irrelevant for streaming FIFO use;
+worth having if anything does small scattered accesses.
 
-1. **Keep LUNA's `HyperRAMInterface`.** The ECP5 DDR work is the hard part, it
-   is done, and it is verified on this hardware.
-2. **Write the Wishbone wrapper**, using ChipFlow's `data_bus` shape as the
-   reference — 32-bit with byte granularity, separate CSR control.
-3. **Consider honouring RWDS** rather than always taking high latency, but
-   measure the gain first. It is ~7 cycles per transaction and therefore
-   invisible in FIFO use.
-4. **Do not adopt ChipFlow wholesale.** Better structure does not outweigh
-   having to write ECP5 DDR I/O from scratch.
+## Plan
 
-## Taking the best of both
-
-The two projects are strong in **non-overlapping** places, so this is a stack
-rather than a merge — nothing has to be rewritten or reconciled:
+The two projects are strong in non-overlapping places, so this is a stack rather
+than a merge:
 
 | Layer | LUNA | ChipFlow | Take |
 |---|---|---|---|
@@ -104,26 +93,14 @@ rather than a merge — nothing has to be rewritten or reconciled:
 | 32-bit Wishbone data bus | no | yes | ChipFlow |
 | CSR control registers | no | yes | ChipFlow |
 
-LUNA owns everything below the protocol; ChipFlow owns everything above it.
-
-Concretely, the plan is:
-
-1. **Keep `HyperRAMInterface` and `HyperRAMPHY` untouched.** They carry the ECP5
-   DDR work and they are the part verified here.
+1. **Keep `HyperRAMInterface` and `HyperRAMPHY` untouched.**
 2. **Write a Wishbone wrapper on top**, shaped after ChipFlow's `data_bus`:
-   32-bit, byte granularity, with a separate CSR bus for control.
-3. **Make latency a CSR field** rather than a constant, as ChipFlow does. That
-   also gives somewhere to put the RWDS fix if it proves worthwhile.
+   32-bit, byte granularity, separate CSR bus for control.
+3. **Make latency a CSR field** rather than a constant. That also gives somewhere
+   to put the RWDS fix if it proves worthwhile — measure the gain first.
+4. **Do not adopt ChipFlow wholesale.**
 
-Note that what is being taken from ChipFlow is the **interface shape**, not the
-code — it has no ECP5 layer, so there is nothing in it that would function here
-even if copied verbatim. That makes it a design reference rather than a
-dependency, and sidesteps the attribution question almost entirely. Licences
-are compatible regardless: BSD-2 into a BSD-3 codebase is fine.
-
-## Method note
-
-This survey looked beyond GitHub as a matter of habit, but the useful results
-were all on GitHub in this case. The search that mattered was for *Amaranth*
-implementations specifically — Migen and LiteX ones exist but would need porting,
-and the two that turned up were an ASIC-targeted design and an empty stub.
+What is taken from ChipFlow is the **interface shape**, not the code — it has no
+ECP5 layer, so nothing in it would function here even if copied verbatim. That
+makes it a design reference rather than a dependency. Licences are compatible
+regardless: BSD-2 into a BSD-3 codebase is fine.
