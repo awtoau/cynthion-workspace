@@ -55,8 +55,7 @@ VEXRISCV_VARIANTS = [
 # never got. Its two configurations differed in three ways at once -- caches,
 # atomics and supervisor mode -- so the 2x Fmax difference between them could
 # not be attributed. These vary one thing at a time from a common base.
-VEXII_ROOT = Path("/mnt/2tb/wastebasket/cynthion-workspace-20260728-093000"
-                  "/riscv-64-work-vexiiriscv")
+VEXII_ROOT = Path("/mnt/2tb/riscv-work/vexiiriscv")
 
 VEXII_BASE = "--xlen=32 --with-rvm --with-rvc --with-rdtime --without-mmu"
 
