@@ -63,6 +63,8 @@ REGISTER_EDGES_B     = 5   # edge counts, second group
 REGISTER_VBUS_CTRL   = 6   # write: VBUS enables, host-driven
 REGISTER_PMOD_IN     = 7   # pmod 0 and 1 read back
 REGISTER_PMOD_OUT    = 8   # write: drive the pmods
+REGISTER_SBU_MODE    = 9   # write: 0 = observe passively, 1 = loopback
+REGISTER_SBU_LEVELS  = 10  # read: SBU pin levels when observing
 
 
 class Loopback(Elaboratable):
@@ -78,6 +80,13 @@ class Loopback(Elaboratable):
         self.drive    = Signal()
         self.saw_high = Signal()
         self.saw_low  = Signal()
+        # When low, the buffer is tri-stated and `level` reports whatever is
+        # on the pin. Loopback proves the pad but is deaf to the outside world:
+        # driving push-pull overpowers any external signal, so a device on the
+        # port cannot be seen. Observation mode is how these pins report
+        # anything about what is attached.
+        self.enable   = Signal(init=1)
+        self.level    = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -85,7 +94,8 @@ class Loopback(Elaboratable):
         m.submodules.buffer = buffer = io.Buffer("io", self.port)
         m.d.comb += [
             buffer.o.eq(self.drive),
-            buffer.oe.eq(1),
+            buffer.oe.eq(self.enable),
+            self.level.eq(buffer.i),
         ]
 
         # Sample one cycle after driving, so the pad has settled. Reading
@@ -191,6 +201,19 @@ class PinSurvey(Elaboratable):
             REGISTER_LOOPBACK,
             read=Cat(*[Cat(b.saw_high, b.saw_low) for b in loopbacks],
                      Const(0, 24)))
+
+        # Observation mode. Writing 0 tri-states all four SBU buffers so their
+        # levels report what is actually on the pins -- which is the only way
+        # this design can say anything about a connected device. Defaults to
+        # loopback so a freshly configured board still self-tests.
+        sbu_mode = Signal(32, init=1)
+        registers.add_register(REGISTER_SBU_MODE, value_signal=sbu_mode)
+        for block in loopbacks:
+            m.d.comb += block.enable.eq(sbu_mode[0])
+
+        registers.add_read_only_register(
+            REGISTER_SBU_LEVELS,
+            read=Cat(*[b.level for b in loopbacks], Const(0, 28)))
 
         #
         # Edge counts on the interesting inputs.
