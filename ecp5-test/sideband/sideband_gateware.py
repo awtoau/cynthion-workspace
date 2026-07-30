@@ -239,10 +239,13 @@ class SidebandTest(Elaboratable):
         pad = platform.request("int")
         m.d.comb += [
             responder.rx.eq(pad.i),
-            pad.o.eq(responder.tx),
-            # Release the line whenever we are not replying, so Apollo can
-            # drive it. Both ends pull up, so it idles high either way.
-            pad.oe.eq(responder.tx_active),
+            # pad_o/pad_oe, not tx/tx_active. The responder is open-drain by
+            # default: it only ever pulls the line low and lets the pull-ups
+            # raise it, so no timing slip can put its driver against Apollo's.
+            # Wiring oe = tx_active instead gave push-pull, and measured up to
+            # 30 us of driven-high-into-driven-low per collision.
+            pad.o.eq(responder.pad_o),
+            pad.oe.eq(responder.pad_oe),
         ]
 
 

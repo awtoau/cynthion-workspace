@@ -73,7 +73,14 @@ class SidebandDebug(Elaboratable):
         when the design has no power monitor.
     """
 
-    def __init__(self, *, clk_freq_hz=60e6, baud=115200, domain="sync"):
+    # 230400 by default, matching ADV_UART_BAUD in the Apollo firmware.
+    #
+    # This defaulted to 115200 while the firmware ran at 230400, so anyone
+    # dropping this block in got a link that was dead rather than slow -- a 2x
+    # baud mismatch against a UART's ~2% tolerance, with no error anywhere,
+    # because both ends simply never frame a byte. The two numbers must be
+    # changed together; there is no build step that sees both.
+    def __init__(self, *, clk_freq_hz=60e6, baud=230400, domain="sync"):
         self.clk_freq_hz = clk_freq_hz
         self.baud = baud
         self.domain = domain
@@ -107,8 +114,12 @@ class SidebandDebug(Elaboratable):
 
         m.d.comb += [
             responder.rx.eq(rx_sync),
-            pin.o.eq(responder.tx),
-            pin.oe.eq(responder.tx_active),
+            # pad_o/pad_oe, not tx/tx_active: the responder decides its own
+            # drive style there. Wiring oe = tx_active gives push-pull, which can
+            # short against Apollo's driver on any timing slip -- and does, for
+            # the 0.75 bit times tx_active leads the first bit onto the wire.
+            pin.o.eq(responder.pad_o),
+            pin.oe.eq(responder.pad_oe),
 
             responder.state.eq(self.state),
             responder.events.eq(self.events),
