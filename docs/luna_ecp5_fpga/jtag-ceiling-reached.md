@@ -164,6 +164,47 @@ was larger than the USB-side loss. Which is also why the chunk change bought les
 arithmetic predicted -- it was fixing the smaller half, and slightly worsening the
 larger one.
 
+## The two remaining levers, quantified before building either
+
+Both measured rather than estimated, because the chunk change taught that arithmetic
+here overpredicts.
+
+| lever | ceiling | what it needs |
+|---|---|---|
+| collapse `SET_OUT_BUFFER` + `SCAN` | **51.3 ms** | one new vendor request, host fallback |
+| double-buffer fill against clocking | **137 ms** | both ends restructured, async host |
+
+**Collapse: 51.3 ms.** A bare control transfer that does almost nothing --
+`GET_ID`, 500 samples -- costs **213.9 us**. That independently reproduces the ~215 us
+figure from the decomposition above. At 240 chunks, removing one of the two requests
+per chunk is 240 x 213.9 us = 51.3 ms, or 10.5% of the 488.9 ms total.
+
+**Double-buffering: 137 ms, and only with perfect overlap.** The split at 512 B is
+351.9 ms USB against 137 ms clocking, so overlapping them perfectly gives
+`max(351.9, 137) = 351.9 ms` -- a saving of exactly the clocking time, 28% of total.
+It cannot do better than that: USB is the longer leg, so the clocking hides inside it
+and the USB time remains exposed.
+
+### Why double-buffering is not a small change
+
+The path is synchronous at three levels, and all three have to change:
+
+- **`handle_jtag_request_scan` clocks then acknowledges.** It calls `jtag_scan()`,
+  which shifts every byte, and only then completes the control transfer. So the host
+  cannot learn the scan finished without waiting for it, and the firmware has no state
+  in which "scan in progress, next buffer accepted" exists.
+- **The host loop blocks.** `_scan_data_chunk` issues `SET_OUT_BUFFER` then `SCAN` and
+  waits, so chunk N+1's fill cannot begin until chunk N's clocking returns.
+- **There is one buffer.** `jtag_out_buffer` is written by USB and read by the SERCOM
+  with nothing between them, so a second fill would corrupt an in-flight scan.
+
+So it needs a second buffer, a non-blocking `SCAN` with completion reporting, and an
+async host loop -- against 137 ms of ceiling on a 489 ms operation.
+
+**The collapse is the better first move** despite the smaller number: one vendor
+request, no restructuring, and it composes with double-buffering later rather than
+being replaced by it.
+
 ## Where the remaining time goes
 
 ### The gap is the whole story
