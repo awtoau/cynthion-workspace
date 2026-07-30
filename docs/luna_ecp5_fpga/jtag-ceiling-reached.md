@@ -135,8 +135,10 @@ One table, both chunk sizes, on the 122880-byte payload throughout.
 | `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms (14.6%) | n/a | n/a |
 | `bb82d39` | 512-byte buffers + `GET_INFO` | 555.4 ms (14.7%) | 488.9 ms (16.8%) | n/a |
 | **`19242e8`** | **two reported limits + 1024-byte writes** | 564.0 ms (14.5%) | 489.5 ms (16.7%) | **457.6 ms (17.9%)** |
+| `cd4a85c` | double-buffered staging | -- | 469.1 ms (17.5%) | 455.6 ms (18.0%) |
+| **direct USB port** | **no code change -- moved off a 4-hub chain** | -- | **425.2 ms (19.3%)** | **409.1 ms (20.0%)** |
 | | | | | |
-| **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | see below |
+| **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | not measured |
 | **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms (100%) | 81.9 ms (100%) | 81.9 ms (100%) |
 
 **Reading the table.** Every time is for the **same 122880-byte payload** -- the columns
@@ -178,8 +180,17 @@ Every `n/a` is an impossibility rather than a gap: those firmwares declare a 256
 buffer and stall anything larger, so the request is refused rather than merely
 unnegotiated.
 
-Cumulative against stock, at 256 B: 1.00x, 1.12x, 1.26x, 1.27x, **1.29x**. Stock to
-HEAD using HEAD's own 512-byte chunk: **1.46x**.
+**Cumulative against stock: 713.9 -> 409.1 ms, 1.75x.**
+
+Rows above `cd4a85c` were measured on the four-hub chain and are ~10% pessimistic. They
+stay comparable with each other, but **only the `direct USB port` row reflects the current
+setup**, so that is the one to quote. Real configure on the same bitstream, in-process:
+**693 ms**, against 741 ms on the hub chain.
+
+Two rows earn their place by being nearly flat. `0e9bfb1` is a pure refactor and moves
+4.8 ms, which sets the noise floor. `cd4a85c` double-buffers the staging so `SCAN` returns
+in 139 us instead of ~895 us -- the overlap provably works -- and buys 1.9 ms at 1024 B,
+because clocking was only 24% of the total and hiding it was the wrong quarter to chase.
 
 **Every `n/a` is an impossibility, not a gap.** Only HEAD has 512-byte buffers.
 Everything before it declares `jtag_out_buffer[256]` and stalls anything larger --
@@ -192,8 +203,9 @@ declines to label a 256-byte run as 512, which is what stops an unimplemented
 Theoretical is chunk-independent by definition: 122880 x 8 / 12 MHz = 81.9 ms,
 1500 KB/s. Chunking is a transport concern and the wire does not see it.
 
-**Read the columns, not the diagonal.** At 256 B, HEAD spends 280 ms of its 555 in
-USB against 275 ms clocking -- half and half. At 512 B it is 352 of 489 in USB against
+**Read the columns, not the diagonal.** Figures in this paragraph are from the hub-chain
+rows, so they overstate the USB share slightly, but the shape holds. At 256 B, 280 ms of
+555 is USB against 275 ms clocking -- half and half. At 512 B it is 352 of 489 in USB against
 137 clocking -- 72/28. The ratio moves because doubling the chunk **halves** the
 firmware-side cost (275 -> 137) while barely touching USB (280 -> 352, and that is
 worse in absolute terms).
