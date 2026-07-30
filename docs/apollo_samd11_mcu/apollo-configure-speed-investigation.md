@@ -1,8 +1,23 @@
 # `apollo configure`: speed investigation and results
 
-How fast ECP5 SRAM configuration over JTAG can be made, what was tried, and what the
-measurements actually showed. **JTAG only** -- programming the W25Q32 configuration
-flash is a separate mechanism, covered in `../luna_ecp5_fpga/flash-speed.md`.
+How fast the ECP5 can be programmed through Apollo, what was tried, and what the
+measurements actually showed.
+
+**This is about the transport, not the destination.** The benchmark shifts into SRAM
+because that is cheap to repeat and leaves the board alone, but what is being measured
+and improved is the path from the host to the ECP5's TAP: USB control transfers into
+the SAMD11, then SERCOM SPI out to JTAG. Everything reached over that path benefits.
+
+That includes **programming the configuration flash**: `apollo flash-program` and
+`flash-erase` open the same `device.jtag` session and go through
+`create_jtag_programmer()`, so the SPI flash is reached *through* the JTAG tunnel, not
+by a separate mechanism. The DMA, chunking and buffer work here applies to them
+unchanged. `apollo flash --fast` is the exception -- it loads a bridge onto the FPGA
+and programs the flash through the FPGA's own USB, bypassing this path entirely.
+
+What this document does **not** cover: the W25Q32's own read modes and QSPI timing
+(`../luna_ecp5_fpga/flash-speed.md`), and loading a bitstream over the FPGA's USB
+rather than Apollo's (`../luna_ecp5_fpga/fast-bitstream-loading.md`).
 
 This file was previously `luna_ecp5_fpga/jtag-ceiling-reached.md`. The old title
 claimed the path was done; it then got 2.22x faster, which is the sort of thing a

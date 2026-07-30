@@ -154,6 +154,20 @@ top.
 
 ## 4. What would actually make this fast
 
+> **Outcome, 2026-07-31.** Items 2 and 3 were built and shipped, plus DMA-clocked
+> JTAG which this list did not anticipate. Measured **713.9 -> 322.2 ms, 2.22x** on a
+> fixed 122880-byte payload -- inside the 3-4x band predicted below, and the ranking
+> held: chunk size and overlap were both cheap and both paid.
+>
+> Item 1 remains the biggest lever and is unbuilt. It is now tracked as **#107 (P0)**,
+> and the estimate here is corroborated: dispatching from the USB ISR was measured at
+> only 3.2% of the remaining gap, which retires software latency as the explanation
+> and leaves the 64-byte control endpoint as the cause -- exactly as stated below.
+>
+> One correction to the framing: the 204 us fixed cost is measured at **~145 us** per
+> transaction on current firmware, against ~47 us of wire time for a 64-byte packet.
+> Details in `../apollo_samd11_mcu/apollo-configure-speed-investigation.md`.
+
 Ranked by payoff per unit of risk. None requires new gateware.
 
 1. **Move the bulk data path off control transfers (biggest win).** Control
