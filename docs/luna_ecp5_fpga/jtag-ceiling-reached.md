@@ -144,12 +144,21 @@ every figure here is comparable with the ones above.
 |---|---|---|---|
 | **theoretical wire**, 12 MHz SCK, 1 bit/clock | **81.9 ms** | **81.9 ms** | 100% |
 | **measured, no USB payload** (`0xb9`) | **275 ms** | **137 ms** | 30% / **60%** |
-| measured, real path (stock `v1.1.1`) | 713.9 ms | -- | 11.5% |
+| measured, real path (stock `v1.1.1`) | 713.9 ms | **n/a** | 11.5% |
 | measured, real path (HEAD) | 558.8 ms | 488.9 ms | 14.7% / **16.8%** |
 
 **Theoretical** is arithmetic: 122880 bytes x 8 bits / 12 MHz = 81.9 ms, 1500 KB/s.
 Nothing can beat it without raising SCK, which the section above establishes is not
 available.
+
+**Stock has no 512-byte figure because it cannot have one**, which is a fact about
+stock rather than a gap in the data. Its buffers are `jtag_out_buffer[256]`, and
+`handle_jtag_request_set_out_buffer` stalls anything larger --
+`if (request->wLength > sizeof(jtag_out_buffer)) return false;`. So a 512-byte
+request is refused by the firmware, not merely unnegotiated. The host would fall
+back to 256 anyway, since stock does not implement `GET_INFO`; the benchmark detects
+that and declines to label a 256-byte run as 512, which is the check that stops an
+unimplemented `GET_INFO` flattering a result.
 
 **No USB payload** is measured, not arithmetic, using vendor request `0xb9`
 (`handle_jtag_benchmark`). It generates the pattern **in firmware** --
