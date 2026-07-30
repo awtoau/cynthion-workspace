@@ -4,7 +4,15 @@ Two proposals — transmit-only DMA, and raising SCK to 24 MHz — were investig
 and **neither was implemented**, because measurement showed both would be
 no-ops or unsafe. This records why, since both looked well-founded.
 
-## There is no CPU cost left for DMA to remove
+> **Superseded in part.** DMA *was* implemented later and is worth **-85 ms, 1.26x** --
+> the largest code win in this document (`d43f765`, see below). The section immediately
+> following is still correct about what it measured, and was still the wrong conclusion:
+> it asked whether DMA could remove **per-byte CPU cost** and rightly answered no. The
+> value of DMA is not the per-byte term at all. It is that a CPU not spinning on SERCOM
+> flags can run `tud_task()`, which is where the ~98 us of NAK per USB transaction was
+> going. A correct measurement can still answer the wrong question.
+
+## There is no CPU cost left for DMA to remove (the right answer to the wrong question)
 
 The "0.455 µs/byte CPU term" that justified TX-only DMA is an artifact of the
 same mistake that produced the earlier 3.93 µs/byte figure: dividing a whole
@@ -81,7 +89,7 @@ Its absence was actively misleading, so this is now the only figure worth quotin
 
 These docs contained roughly **forty distinct millisecond figures** for
 configuration timing with no way to tell which measured the same work. All
-honestly recorded, none comparable: different bitstreams, different firmware,
+accurately recorded, none comparable: different bitstreams, different firmware,
 different scopes -- whole configure versus shift path versus a single `SCAN` call.
 
 Two errors that followed from that, both mine:
@@ -137,6 +145,7 @@ One table, both chunk sizes, on the 122880-byte payload throughout.
 | **`19242e8`** | **two reported limits + 1024-byte writes** | 564.0 ms (14.5%) | 489.5 ms (16.7%) | **457.6 ms (17.9%)** |
 | `cd4a85c` | double-buffered staging | -- | 469.1 ms (17.5%) | 455.6 ms (18.0%) |
 | **direct USB port** | **no code change -- moved off a 4-hub chain** | -- | **425.2 ms (19.3%)** | **409.1 ms (20.0%)** |
+| **`d43f765`** | **clock by DMA, stop blocking `tud_task()`** -- *over flash budget, see below* | -- | **343.3 ms (23.9%)** | **324.4 ms (25.2%)** |
 | | | | | |
 | **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | not measured |
 | **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms (100%) | 81.9 ms (100%) | 81.9 ms (100%) |
@@ -180,12 +189,53 @@ Every `n/a` is an impossibility rather than a gap: those firmwares declare a 256
 buffer and stall anything larger, so the request is refused rather than merely
 unnegotiated.
 
-**Cumulative against stock: 713.9 -> 409.1 ms, 1.75x.**
+**Cumulative against stock: 713.9 -> 324.4 ms, 2.20x.**
 
 Rows above `cd4a85c` were measured on the four-hub chain and are ~10% pessimistic. They
-stay comparable with each other, but **only the `direct USB port` row reflects the current
-setup**, so that is the one to quote. Real configure on the same bitstream, in-process:
-**693 ms**, against 741 ms on the hub chain.
+stay comparable with each other, but **only the `direct USB port` and `d43f765` rows
+reflect the current setup**, so those are the ones to quote. Real configure on the same
+bitstream, in-process: **693 ms**, against 741 ms on the hub chain.
+
+## DMA is the largest code win, and it does not fit
+
+`d43f765` is worth **-85 ms, 1.26x** -- more than every other firmware change in this
+table combined. It is also **over budget: flash 96.65% against a 95% ceiling, RAM 85.16%
+against 85%.** The deficit is **237 bytes of flash and 7 bytes of RAM**. It is committed
+but *not shippable*, and the ceilings were deliberately not raised.
+
+**Why it worked, when the archived version did not.** `debris/code/spi-dma-cynthion-d11.c`
+ran on hardware in an earlier session and measured **+13 to +36 ms slower**, so DMA was
+written off. The defect was one line:
+
+    while (!(DMAC->CHINTFLAG.reg & (DMAC_CHINTFLAG_TCMPL | DMAC_CHINTFLAG_TERR)));
+
+It freed the CPU with DMA and then immediately burned it in a spin, so `tud_task()` stayed
+blocked for the whole transfer and behaviour was identical to polling plus setup cost.
+**DMA was never tested as an asynchronous mechanism.** Arming the channels and returning,
+then polling completion from `jtag_scan_task()`, is the entire difference between -36 ms
+and +85 ms.
+
+Completion is polled from the task rather than served by a DMA interrupt, and that is
+forced: `CHID` is a single register window selecting which channel's registers are
+visible, so the channel-setup sequence is not re-entrant and must not run from an ISR.
+The poll costs one register read per main-loop iteration against a ~700 us spin, so
+nothing is lost.
+
+**Where the 237 bytes went.** About 64 are intrinsic -- DMAC descriptor and write-back
+sections the hardware mandates. The rest is splitting one synchronous function into arm
+and poll halves whose state must be marshalled through a struct. The cheap savings are
+already taken: one aligned allocation instead of two descriptor arrays, a redundant DMAC
+reset and two `.bss` memsets dropped, both scan structs packed, an always-true
+`discard_tdo` field removed -- about 100 bytes of the original ~520. What remains is a
+cheaper arm/poll split, or reclaiming flash from elsewhere in the firmware. Shrinking the
+stack reservation does not qualify: the stack is RAM and cannot pay a flash debt.
+
+**The second buffer is not redundant, which was worth checking.** If DMA had made
+`jtag_tx_alt` unnecessary, its 512 bytes of RAM would have paid for the change outright.
+Forcing the host onto the single-buffer path costs **+74.1 ms (+22.8%)**, so the two
+mechanisms are complementary: DMA stops the CPU blocking on the wire, and the second
+buffer lets the host's *next* fill land during the current chunk. `scripts/jtag_single_buffer_probe.py`
+exists so this is not re-proposed next time flash is tight.
 
 Two rows earn their place by being nearly flat. `0e9bfb1` is a pure refactor and moves
 4.8 ms, which sets the noise floor. `cd4a85c` double-buffers the staging so `SCAN` returns
@@ -876,7 +926,8 @@ some of the successes.
 |---|---|---|
 | `JTAG_BUFFER_SIZE` 512 -> 1024 | **rejected at 95.12% RAM** | doubling costs BOTH halves of the pair, 1024 bytes not 512 |
 | SCK 12 -> 24 MHz | **rejected, unsafe** | divider steps 8/12/24 with nothing between; SAMD11 `tSCK` min 84 ns = 11.9 MHz rated, so 12 is already past |
-| SERCOM DMA | **implemented, marginally slower** | 1711-1751 ms against 1698-1715 polled; no CPU cost left to remove |
+| SERCOM DMA, *spinning on completion* | **implemented, marginally slower -- and the conclusion was wrong** | 1711-1751 ms against 1698-1715 polled. It spun on `TCMPL` after arming, so `tud_task()` stayed blocked and it was polling plus setup cost. Made asynchronous instead: **-85 ms, 1.26x** |
+| DMA making the second buffer redundant | **hypothesis, disproven** | removing `jtag_tx_alt` costs +74.1 ms (+22.8%); DMA and double-buffering are complementary, not alternatives |
 | TX-only (drop TDO entirely) | correct but not worth it | ~2 ms of 950, for a silent-failure surface |
 | bulk streaming | **built, worked, no faster** | 1703 vs 1683 ms; its stated cause was later disproven, so still unexplained |
 | `-fstack-usage` for stack depth | **wrong tool** | LTO inlines across units, so per-function frames stop matching the final binary |
@@ -884,7 +935,15 @@ some of the successes.
 | paint-and-measure, first version | **self-contradictory** | LTO resolved `&_sstack` differently per inlined copy; reported full-region use AND no overflow |
 | word-wise stack scan | **latent bug** | one coincidental `0xDEADBEEF` truncates the scan and understates usage |
 
-Four of these are worth more than a note.
+Five of these are worth more than a note.
+
+**The DMA row is the cautionary one in this whole table.** It reads as "tried, does not
+work" and it stopped anyone retrying for months, when the mechanism was right and one
+line was wrong. The archived file even documents its own spin in a comment. The lesson is
+narrower than "retry failed things": a negative result is only as broad as what was
+actually varied, and what was varied there was *who clocks the bytes* -- never *whether
+the CPU is free while they are clocked*. Record what a failure tested, not just that it
+failed.
 
 **The 1024-byte buffer is the one to not retry.** The reclaimed RAM was counted
 correctly -- 320 from the stack, 256 from the union, 644 already free -- but a doubling
@@ -912,8 +971,11 @@ it happened before the benchmark existed.
 
 ## Repository state worth knowing
 
-The `0xb8` synthetic benchmark and `debris/code/spi-dma-cynthion-d11.c` are
-**not on main** — they live in other agents' worktrees, and the two apollo
-commits have diverged. The flashed firmware has no `0xb8`, so the synthetic
-benchmark was unavailable here; marginal-cost differencing measures the same
-thing without needing new firmware.
+`debris/code/spi-dma-cynthion-d11.c` was recovered from a lost worktree and is now on
+main, which is the only reason the DMA work could be resumed rather than rewritten.
+
+`repos/apollo` sits on a **detached HEAD** at `d43f765` -- normal for a submodule, but the
+parent repo's pointer has not been moved, so the DMA commit is reachable only from the
+submodule's own reflog until that is decided. It is over budget, so moving the pointer
+would put an unshippable firmware on main; that is the reason to leave it, not an
+oversight.
