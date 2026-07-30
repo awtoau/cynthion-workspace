@@ -928,6 +928,7 @@ some of the successes.
 | SCK 12 -> 24 MHz | **rejected, unsafe** | divider steps 8/12/24 with nothing between; SAMD11 `tSCK` min 84 ns = 11.9 MHz rated, so 12 is already past |
 | SERCOM DMA, *spinning on completion* | **implemented, marginally slower -- and the conclusion was wrong** | 1711-1751 ms against 1698-1715 polled. It spun on `TCMPL` after arming, so `tud_task()` stayed blocked and it was polling plus setup cost. Made asynchronous instead: **-85 ms, 1.26x** |
 | DMA making the second buffer redundant | **hypothesis, disproven** | removing `jtag_tx_alt` costs +74.1 ms (+22.8%); DMA and double-buffering are complementary, not alternatives |
+| dropping `button_task()` from the loop | **no measurable gain** | it really does cost ~4.8 us per iteration (PA16 is shared with `LED_A`, so each poll saves the level, flips to input, waits 50 cycles for the pull, samples and restores). But 326.4 vs 327.9 ms is inside the 1.6 ms spread: after DMA the loop spins thousands of times per chunk, so what gates USB is whether `tud_task()` is *reached*, not the loop rate |
 | TX-only (drop TDO entirely) | correct but not worth it | ~2 ms of 950, for a silent-failure surface |
 | bulk streaming | **built, worked, no faster** | 1703 vs 1683 ms; its stated cause was later disproven, so still unexplained |
 | `-fstack-usage` for stack depth | **wrong tool** | LTO inlines across units, so per-function frames stop matching the final binary |
