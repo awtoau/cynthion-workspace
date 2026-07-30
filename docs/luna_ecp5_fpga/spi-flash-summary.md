@@ -13,6 +13,65 @@ datasheet consulted was the FV revision J, whose instruction set matches.
 Quad Enable is **already set** in status register 2 (`SR2 = 0x02`), so quad
 modes need no configuration write and no loss of hardware write protection.
 
+## Vendor maximums (datasheet, not measured)
+
+From the Winbond W25Q32JV datasheet, for reference against the measured table
+below. These are what the *part* can do; what this *board* reaches is lower, and
+for a reason given in [the FPGA pin section](#the-ceiling-is-the-fpga-pin-not-the-flash).
+
+| Operation | Opcode | Max clock | Lanes | Vendor ceiling |
+|---|---|---|---|---|
+| Read | `0x03` | 50 MHz | 1 | 6.25 MB/s |
+| Fast read | `0x0B` | 104 MHz | 1 | 13 MB/s |
+| Fast read dual | `0x3B` / `0xBB` | 104 MHz | 2 | 26 MB/s |
+| Fast read quad | `0x6B` / `0xEB` | 104 MHz | 4 | **52 MB/s** |
+
+Write and erase, from the same datasheet (tPP, tSE, tBE, tCE):
+
+| Operation | Size | Typical | Max |
+|---|---|---|---|
+| Page program | 256 B | 0.7 ms | 3 ms |
+| Sector erase | 4 KiB | 45 ms | 400 ms |
+| Block erase | 32 KiB | 120 ms | 1,600 ms |
+| Block erase | 64 KiB | 150 ms | 2,000 ms |
+| Chip erase | 4 MiB | 10 s | 50 s |
+
+**Write tops out around 0.37 MB/s** (256 B / 0.7 ms typical), falling to
+0.085 MB/s at the worst-case 3 ms. A full 4 MiB erase-and-rewrite is ~22 s
+typical. That is **~70× slower than reads on this board**, and the two ceilings
+have different causes: reads are limited by the FPGA's `USRMCLK` pin, writes by
+the flash die itself.
+
+**There is no bus-side trick for writes, and the vendor says so.** On Quad Input
+Page Program (`0x32`), the datasheet states it helps "applications that have slow
+clock speeds <5MHz" and that "systems with faster clock speed will not realize
+much benefit … since the inherent page program time is much greater than the time
+it takes to clock-in the data." At 48 MHz, shifting 256 bytes takes ~43 µs against
+700 µs of internal programming — the bus idles ~94% of the time and quad recovers
+about 4% end to end. The only things that move the number are workflow, not
+silicon: poll the BUSY bit (SR1 bit 0, via `0x05`) instead of delaying for
+worst-case, which recovers most of the 4× typ/max spread; and erase at the
+largest granularity actually being replaced, since one 64 KiB block erase
+(150 ms) beats sixteen 4 KiB sector erases (720 ms).
+
+Two related notes from the datasheet:
+
+- **Output drive strength defaults to 25%.** `DRV1/DRV0` in SR3 default to `1,1`;
+  100% is available. This affects reads only. It is writable *volatile* via Write
+  Enable for Volatile Status Register (`0x50`) then `0x11`, so it can be tested
+  without any non-volatile write. Worth trying against the non-monotonic clock
+  results in [flash-speed.md](flash-speed.md) — 30 MHz fails while 24 and 40 MHz
+  pass, which a weak driver into pin capacitance could explain.
+- **Erase/Program Suspend (`0x75`/`0x7A`)** interrupts a page program or sector
+  erase to service a read, resuming afterwards. A latency tool, not a throughput
+  one. The datasheet warns that power loss while suspended may corrupt the page or
+  sector being written.
+
+Datasheet consulted for this section was the DigiKey mirror of the JV revision
+(self-labelled "Preliminary-Revision A1"); its timing tables agree with the FV
+revision J used elsewhere in these notes. Mouser's link for the same part serves
+a 14 KB stub rather than the PDF.
+
 ## Measured throughput
 
 All figures verified byte-exact against `apollo flash-read`, which reaches the
