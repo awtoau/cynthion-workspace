@@ -243,15 +243,19 @@ def main():
             return 1
 
         emit()
-        emit(f"PASS for this part on this run: {done:,} rounds, every one "
+        emit(f"PASS for this part at this moment: {done:,} rounds, every one "
              f"checked by the gateware against {expected:#010x}, no mismatch "
              f"latched.")
-        emit("  What this establishes: on this specific part, on this specific "
-             "day, ~20k LUTs of a die sold as 12,288 computed a "
-             "diffusion-heavy function correctly for the duration above.")
-        emit("  What it does not establish: anything about other parts, other "
-             "boards, other temperatures or voltages, or long-term "
-             "reliability. It is one sample.")
+        emit("  Establishes: a design occupying fabric well beyond the 12,288 "
+             "LUTs this part advertises placed, closed timing and computed the "
+             "correct signature. The extra fabric is not plainly dead and not "
+             "plainly unclocked here.")
+        emit("  Does NOT establish: that intermittent per-part defects are "
+             "absent. The salvage explanation predicts occasional wrongness, "
+             "and a run of this length cannot measure a rate -- so it remains "
+             "compatible with what was just observed.")
+        emit("  Nor anything about other parts, boards, temperatures or "
+             "supplies. One sample, one moment.")
         emit(f"log: {LOG}")
 
     return 0

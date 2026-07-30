@@ -110,7 +110,8 @@ must mismatch, and did: 1575/1575, sticky flag set on all 200 reads.
 ```bash
 ./scripts/fabric_sim.py                      # timing vs model, in simulation
 ./scripts/fabric_build.py                    # golden value, build, check LUTs
-./scripts/fabric_run.py --rounds 900000      # load into SRAM, soak
+./scripts/fabric_placement.py                # where the logic actually landed
+./scripts/fabric_run.py --rounds 20000       # load into SRAM, check
 
 # negative control
 ./scripts/fabric_build.py --golden 0xdeadbeef
@@ -155,6 +156,24 @@ accounted for, the remainder being counters and host-visible registers.
 `ecpunpack` reads **device ID `0x21111043`** out of the bitstream — the genuine
 LFE5U-12F IDCODE, confirmed by a tool independent of the one that wrote it.
 
+### Where the logic landed
+
+A utilisation count is compatible with a placement that packs everything into
+one dense corner, which would leave open the possibility that the design never
+touched whatever region a 12F might have failed test in. So
+`fabric_placement.py` parses `top.config` — the placement as the tools finally
+committed it — and counts LUT `INIT` entries per tile row:
+
+- **rows R2 to R48**, 44 of 47 carrying logic
+- the three empty rows are R13, R25 and R37, which are EBR/DSP rows on this die
+  rather than holes in the placement
+- per-row occupancy 372 to 508 entries, mean 459
+- **flatness (min/max row occupancy) 0.73**
+- 69 columns, C2 to C70
+
+So the logic is spread over every logic row and column of the die, not
+concentrated. The design could not have confined itself to a 12k-sized subset.
+
 ### Timing
 
 **86.43 MHz achieved against the 60 MHz constraint — met.** The 12F and 25F
@@ -165,11 +184,17 @@ the extra fabric was clocked gently.
 
 | run | rounds | mismatched | sticky flag | host reads disagreeing |
 |---|---|---|---|---|
-| first, 87.6 s | 20,024 | 0 | never set | 0 / 643 |
-| soak | see `tmp/logs/fabric_run.log` | | | |
+| real bitstream, 8.9 s | 2,002 | 0 | never set | 0 / 65 |
+| real bitstream, 87.6 s | 20,024 | 0 | never set | 0 / 643 |
 | control, `0xdeadbeef` | 1,575 | **1,575** | **set, all 200 reads** | refused to score |
 
 Each round is 262,144 cycles of all 185 blocks.
+
+**No soak was run.** The sticky latching and the mismatch counter exist and are
+demonstrated to work by the control, but this test is deliberately a single
+load-and-check rather than an endurance run. The consequence for the conclusion
+is spelled out below and it is not a small one: intermittent per-part defects are
+**not** excluded by what was measured here.
 
 The control's second finding is the stronger one and was not planned. It is a
 separate build — 20,288 LUT4s rather than 20,143, independently placed and
@@ -183,32 +208,43 @@ measurable supply sag under the larger design.
 
 ## What this establishes, and what it does not
 
-**Establishes**, for this one part on this one day: roughly 20,000 LUTs of a die
-sold as having 12,288 computed a diffusion-heavy function correctly, at 60 MHz
-with timing closed, across the round counts above, with a detector demonstrated
-to fire on a wrong answer. Two independent placements agreed. This is evidence
-against case 3 (independent fusing) as far as logic and clocking go — the extra
-region is clocked by the same global network and computed correctly — and
-evidence for case 1 over case 2 *on this sample*.
+**Establishes**, for this one part at this one moment: a design occupying 20,143
+of 24,288 LUTs placed, routed, closed timing at 60 MHz with 86.43 MHz of margin,
+and computed the correct signature — with the logic spread evenly across every
+logic row of the die, and with a detector demonstrated on the same silicon to
+fire when the answer is wrong.
+
+That kills the cheapest hypothesis: the extra fabric is not *plainly* dead and
+not *plainly* unclocked on this part. It is evidence against case 3 as far as
+logic and clocking go, since the extra region runs off the same global clock
+network and computed correctly.
 
 **Does not establish** anything about:
 
+- **intermittent defects — the binning case is not excluded.** This is one pass
+  at one moment. Case 2 predicts occasional wrongness, and a single check cannot
+  see a rate. The sticky latch and the mismatch counter exist precisely to
+  measure that, and were not used for it here. **A pass of this shape is
+  entirely compatible with case 2.**
 - **any other part.** Case 2 is a per-part claim. One passing device is
   consistent with a population where most extra regions are defective; the
-  correct reading is "this die was whole", not "12F dies are whole". Only a
-  sample of many parts could say otherwise.
-- **other conditions.** One temperature, one supply, one speed grade, one
-  bitstream. Marginal logic often passes at room temperature and fails hot.
-- **long-term reliability.** Hours of running is not qualification. Lattice does
-  not test or warrant the extra region on a 12F, so nothing here makes it
-  supported — only observed to work once.
-- **the routing, comprehensively.** ~83% utilisation exercises a large fraction
-  of the fabric but not every LUT, and the signature is an XOR, so a fault in a
-  bit that a later mix stage happens not to propagate before the round ends
-  could in principle be masked. The diffusion makes that unlikely, not
-  impossible.
+  correct reading is "this die computed correctly once", not "12F dies are
+  whole".
+- **other conditions.** One temperature, one supply, one speed grade. Marginal
+  logic often passes at room temperature and fails hot.
+- **reliability.** Lattice does not test or warrant the extra region on a 12F, so
+  nothing here makes it supported — only observed to work once.
+- **the fabric comprehensively.** ~83% is a large fraction, not all of it, and
+  the signature is an XOR over block state, so a fault in a bit that the mix
+  happens not to propagate before the round ends could in principle be masked.
+  The diffusion makes that unlikely, not impossible.
 
-A single sample cannot separate market segmentation from a favourable draw out
-of a salvage bin. What it does do is remove the possibility that the extra
-fabric is *plainly* dead or *plainly* unclocked on this part, which was the
-cheapest of the three hypotheses to kill.
+The unplanned corroboration is the control build: 20,288 LUT4s, independently
+placed and routed, a physically different arrangement of logic, computing the
+same `0x26f028c8`. Two distinct placements at ~83% agreed with each other and
+with the specification. That is two samples of the placement, still one sample of
+the part.
+
+To move past this would take the thing deliberately not done here — a long run
+for a mismatch *rate* — and, for any claim about LFE5U-12F as a family rather
+than this die, more than one board.
