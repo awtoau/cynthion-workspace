@@ -148,17 +148,27 @@ def encode_led_release():
 # --------------------------------------------------------------------------
 
 def decode_status(status):
-    """The status byte as flags plus the 2-bit design-defined state field."""
+    """The status byte as flags plus the 2-bit design-defined state field.
+
+    The heartbeat is annotated as toggling because it **toggles on every
+    response by design** (`sideband.py:692`, "so it blinks under polling").
+    Consecutive STATUS replies therefore differ -- `41c0` then `0107` then `41c0`
+    -- and both are correct. Reporting it as a plain flag makes that alternation
+    look like the responder returning inconsistent values, which cost a debugging
+    detour: `0107` also happens to resemble a PING payload, so it read as a
+    reply-offset bug that did not exist.
+    """
     flags = []
-    for bit, name in ((gw.STATUS_OK, "ok"),
-                      (gw.STATUS_EVENTS, "events"),
-                      (gw.STATUS_ERROR, "ERROR"),
-                      (gw.STATUS_RECONFIG, "reconfigured"),
-                      (gw.STATUS_HEARTBEAT, "heartbeat")):
+    for bit, label in ((gw.STATUS_OK, "ok"),
+                       (gw.STATUS_EVENTS, "events"),
+                       (gw.STATUS_ERROR, "ERROR"),
+                       (gw.STATUS_RECONFIG, "reconfigured")):
         if status & (1 << bit):
-            flags.append(name)
+            flags.append(label)
+    beat = 1 if status & (1 << gw.STATUS_HEARTBEAT) else 0
     state = (status >> gw.STATUS_STATE_SHIFT) & 0x3
-    return f"state={state} " + (",".join(flags) if flags else "none")
+    return (f"state={state} heartbeat={beat}(toggles) "
+            + (",".join(flags) if flags else "no flags"))
 
 
 def decode_ping(payload):

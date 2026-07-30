@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Framing, decoding and command encoding all live in sideband_decoder so this
 # script and any other consumer cannot disagree about them.
 from sideband_decoder import (
-    check, decode, commands, reply_length,
+    crc8, check, decode, decode_status, commands, reply_length,
     encode_leds, encode_led_colours, encode_led_release, LED_COLOURS,
 )
 
@@ -86,14 +86,16 @@ def send_leds(dev, spec):
     touches the FPGA. Before the sideband existed there was no host path to
     these at all.
 
-    Sending expects no reply, so there is nothing to CRC-check. It goes as an
-    OUT transfer rather than an IN of length zero: the firmware skips its receive
-    loop when the wanted length is 0, but a zero-length IN control transfer still
-    waits on a data stage that never comes and fails with a libusb timeout. The
-    direction bit is what distinguishes "send this" from "send this and reply".
+    **Every command gets a reply, including this one.** The responder's FSM has
+    no branch that skips it: the LED case sets a zero-length payload and falls
+    through to TURNAROUND like the rest, so the reply is status + CRC, 2 bytes.
+    An earlier version of this function sent the command as an OUT transfer with
+    no data stage on the belief that nothing came back, which abandoned those two
+    bytes in Apollo's receive path.
 
-    Whether it took is confirmed by looking at the board, which is the point of
-    an LED.
+    So it collects and checks the reply, and reports whether the responder
+    acknowledged the command rather than leaving that to be inferred from
+    looking at the board.
     """
     if spec.strip().lower() in ("release", "off-override"):
         opcode = encode_led_release()
@@ -106,8 +108,13 @@ def send_leds(dev, spec):
         opcode = encode_led_colours(*colours)
         described = "lit: " + ", ".join(colours)
 
-    dev.ctrl_transfer(OUT, REQ, W_COMMAND, (0 << 8) | opcode, None)
-    return f"0x{opcode:02x}  {described}"
+    # Two bytes: status + CRC, no payload.
+    reply = bytes(dev.ctrl_transfer(IN, REQ, W_COMMAND, (2 << 8) | opcode, 2))
+    if len(reply) != 2:
+        return f"0x{opcode:02x}  {described} -- NO REPLY (got {len(reply)} bytes)"
+    if crc8(reply[:-1]) != reply[-1]:
+        return f"0x{opcode:02x}  {described} -- CRC BAD ({reply.hex()})"
+    return f"0x{opcode:02x}  {described}  [ack: {decode_status(reply[0])}]"
 
 
 def health(dev):
