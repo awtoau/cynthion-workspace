@@ -1,5 +1,27 @@
 # SERCOM DMA does not help, and the number that motivated it was an artifact
 
+> **RETIRED 2026-07-31. THE TITLE OF THIS DOCUMENT IS WRONG.**
+>
+> DMA is the single largest code win in this project: **-85 ms, 1.26x** (`d43f765`).
+> This document is why it went untried for months, so it is kept as a record of how
+> a correct measurement produced a wrong conclusion.
+>
+> What it measured was real. The implementation it tested **spun on `TCMPL` after
+> arming the channels**, so the CPU was freed by DMA and immediately burned in a
+> spin; `tud_task()` stayed blocked for the whole transfer and the result was
+> polling plus setup cost. That is the +13 to +36 ms recorded below.
+>
+> DMA was never tested as an *asynchronous* mechanism. Arming the channels and
+> returning -- polling completion from `jtag_scan_task()` -- is the entire difference
+> between -36 ms and +85 ms.
+>
+> The narrower lesson, worth more than the result: **a negative result is only as
+> broad as what was actually varied.** What varied here was *who clocks the bytes*,
+> never *whether the CPU is free while they are clocked*.
+>
+> Current record: `docs/luna_ecp5_fpga/jtag-ceiling-reached.md`.
+
+
 DMA was implemented, verified on hardware and measured. It is **marginally
 slower** than the existing polled path, so it was not shipped. The useful part
 is why.

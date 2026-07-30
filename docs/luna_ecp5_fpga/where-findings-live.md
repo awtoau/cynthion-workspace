@@ -23,17 +23,25 @@ Board findings — things that depend on Cynthion r1.4, Apollo, or this design.
 
 **Programming and configuration:**
 
-- `jtag-ceiling-reached.md` — the path is done; 88% of configure time is USB, not
-  JTAG. SCK cannot be raised: the divider steps 12 to 24 MHz with nothing
-  between, and the SAMD11 is rated to 11.9 MHz.
-- `jtag-synthetic-benchmark.md` — the firmware benchmark that measures JTAG
-  without USB in the loop.
-- `dma-negative-result.md` — DMA does not help, and why the figure that motivated
-  it was an artifact.
+- **`jtag-ceiling-reached.md` — the single document for JTAG configuration speed.**
+  Final result **713.9 → 322.2 ms, 2.22x**, shipped. The remaining time is USB, not
+  JTAG: the transport costs 3.9x what the bits do. SCK cannot be raised — the divider
+  steps 12 to 24 MHz with nothing between, and the SAMD11 is rated to 11.9 MHz.
+  Includes the synthetic (no-USB) benchmark, the DMA result, every failed attempt, and
+  recovering a clean state between runs.
+
+  **Do not start a second document on this topic.** Four accumulated and three had to
+  be retired; two of them stated conclusions that were the opposite of the truth, and
+  one of those cost months. Add to the table in that file instead.
 - `dynamic-opcode-probe.md` — the live-silicon opcode sweep. Its generic ECP5
   facts are summarised in pluribus's README; the Apollo specifics stay here.
 - `flash-partitioning.md`, `reconfigure-initn-gap.md`, `flash-speed.md`,
   `spi-flash-summary.md` — flash, boot selection, and the INITN gap.
+
+**Retired to `debris/docs/`** — kept for reasoning, wrong on their numbers or their
+titles: `apollo-configure-speed.md`, `jtag_configure_bottleneck.md` (both predate the
+fixed-payload benchmark, so their milliseconds are non-comparable) and
+`dma-negative-result.md` (its title asserts the opposite of what is now measured).
 
 **Optimisation and device fit:**
 

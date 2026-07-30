@@ -1,5 +1,18 @@
 # Where `apollo configure` actually spends its time
 
+> **RETIRED 2026-07-31. Superseded by `docs/luna_ecp5_fpga/jtag-ceiling-reached.md`.**
+>
+> Kept for its reasoning, not its numbers. **Every millisecond figure here is
+> non-comparable with current work**: it predates `scripts/jtag_fixed_benchmark.py`
+> and was measured on whatever bitstream was to hand, so a "faster" result can be a
+> smaller bitstream. That is the exact confusion the fixed-payload benchmark exists
+> to prevent -- it produced a claimed 1.89x that was really 1.09x.
+>
+> The current answer is **713.9 -> 322.2 ms, 2.22x**, on a committed 122880-byte
+> payload. The one section here not in the replacement -- recovering a clean state
+> between runs -- has been merged into it.
+
+
 Measured on Cynthion r1.4, SAMD11D14AM, firmware `a7b8283`, 2026-07-29.
 Bitstream `ecp5-test/led_patterns.bit`, 100698 bytes. Every configure quoted here
 was verified through the ECP5 status register (`DONE=1`, `FAIL=0`, `BSE_ERR=0`);

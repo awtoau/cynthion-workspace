@@ -1,5 +1,18 @@
 # Speeding up `apollo configure`
 
+> **RETIRED 2026-07-31. Superseded by `docs/luna_ecp5_fpga/jtag-ceiling-reached.md`.**
+>
+> Kept for its reasoning, not its numbers. **Every millisecond figure here is
+> non-comparable with current work**: it predates `scripts/jtag_fixed_benchmark.py`
+> and was measured on whatever bitstream was to hand, so a "faster" result can be a
+> smaller bitstream. That is the exact confusion the fixed-payload benchmark exists
+> to prevent -- it produced a claimed 1.89x that was really 1.09x.
+>
+> The current answer is **713.9 -> 322.2 ms, 2.22x**, on a committed 122880-byte
+> payload. The one section here not in the replacement -- recovering a clean state
+> between runs -- has been merged into it.
+
+
 Making ECP5 SRAM configuration over JTAG faster. All numbers below are **measured on
 hardware** (Cynthion r1.4, SAMD11D14 Apollo, 304726-byte bitstream) unless explicitly
 marked as an estimate. Correctness was gated on the ECP5 status register, not on the

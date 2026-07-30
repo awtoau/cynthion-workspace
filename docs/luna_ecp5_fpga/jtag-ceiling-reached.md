@@ -1016,6 +1016,37 @@ against a recorded 1680 ms and reported 1.89x. Different bitstreams. Same payloa
 846 -> 774 ms, or 1.09x. That is what the fixed-payload benchmark exists to prevent, and
 it happened before the benchmark existed.
 
+## Getting back to a clean state between runs
+
+Merged from `apollo-configure-speed.md`, which this document replaced. Earned during
+that work and still true.
+
+A configured FPGA drives the shared lines and will not re-enter ISC, so **every
+configure must start from a reset FPGA**. Back-to-back configures otherwise fail with
+"Failed to enter ISC" and an all-zero status. Pre-existing behaviour rather than
+anything these changes caused, but it produces confusing failures when benchmarking in
+a loop and cost real time.
+
+`verify_configure.py` therefore issues three requests before each run:
+
+| request | why |
+|---|---|
+| `0xec` `EMERGENCY_RESET` | If a previous run left a JTAG session open, Apollo stays latched in `MODE_JTAG_PROGRAMMING` and refuses control-plane requests, surfacing as a pipe error. This request is permitted in that state precisely to break the deadlock. |
+| `0xbe` `JTAG_STOP` | Closes the dangling session. |
+| `0xc0` `TRIGGER_RECONFIGURATION` | Pulses PROGRAMN, which is what actually resets the FPGA. |
+
+`force_fpga_offline()` is **not** usable for this: once the FPGA is already offline the
+request is refused with a pipe error.
+
+Two recovery notes, both exercised:
+
+- After a successful configure the FPGA may take over the USB port, so the next
+  operation can fail with "No such device". The device is fine -- re-run it.
+- If Apollo ends up in the Saturn-V bootloader, `fwup-util` may not find it while
+  `dfu-util` will: `dfu-util -d 1d50:615c -a 0 -D <firmware.bin> -R`. Since this work
+  there is also `apollo enter-dfu` for the outbound direction and
+  `scripts/apollo_reflash.py` for the whole cycle.
+
 ## Repository state worth knowing
 
 `debris/code/spi-dma-cynthion-d11.c` was recovered from a lost worktree and is now on
