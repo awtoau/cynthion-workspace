@@ -109,7 +109,8 @@ def build_at(commit):
     # 103% RAM because stock has no LTO. Both are artifacts of mixing eras, not
     # facts about either commit.
     moved = []
-    for name in ("stack_probe.c", "stack_probe.h"):
+    for name in ("stack_probe.c", "stack_probe.h",
+                 "apollo_mode.c", "apollo_mode.h"):
         path = FIRMWARE / "src" / name
         tracked = subprocess.run(["git", "ls-tree", commit, f"firmware/src/{name}"],
                                  cwd=APOLLO, capture_output=True, text=True).stdout

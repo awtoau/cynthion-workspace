@@ -125,12 +125,24 @@ path, so this is five direct measurements rather than a search. All at 256 B/chu
 because 512 needs `GET_INFO`, which only HEAD implements -- on older firmware the
 host silently falls back to 256, so a "512" row would read as no change.
 
-| commit | what | 256 B/chunk |
-|---|---|---|
-| `4bf7691` | enable LTO | 639.1 ms |
-| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** |
-| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms |
-| `HEAD` | 512-byte buffers + `GET_INFO` | 555.4 ms |
+| commit | what | 256 B/chunk | delta | cumulative |
+|---|---|---|---|---|
+| **`v1.1.1`** | **stock release** | **713.9 ms** | -- | 1.00x |
+| `4bf7691` | enable LTO | 639.1 ms | +74.8 | 1.12x |
+| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** | +72.2 | 1.26x |
+| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms | +4.8 | 1.27x |
+| `HEAD` | 512-byte buffers + `GET_INFO` | 555.4 ms | +6.7 | 1.29x |
+
+**Stock to HEAD at its own 512-byte chunk: 713.9 -> 488.9 ms, 1.46x.**
+
+Verified behaviourally rather than by version string, which is worth noting: the
+build reports `v1.1.1-41-gbb82d39-dirty` even when the code is stock, because the
+version comes from `git describe` on the working tree rather than from the checked-out
+firmware. Confirmed stock instead by both project-added vendor requests stalling --
+`GET_INFO` (0xb8) and `GET_STACK_USAGE` (0xa5).
+
+Stock builds at **94.17% ROM / 86.52% RAM**, which is why it needed no LTO to fit
+its own feature set and why ours does.
 
 **So `e034daa` is 639 -> 567 ms, or 1.13x -- not the 1.53x recorded at the time.**
 That original figure was a whole-configure measurement on a different payload, and
@@ -140,13 +152,12 @@ about a quarter the size claimed.
 The `0e9bfb1` row is the useful control: a pure refactor, and it moves 4.8 ms, which
 sets the noise floor for reading the others.
 
-Stock `v1.1.1` could not be measured. Two artifacts of mixing eras rather than facts
-about it: `SOURCES` is a wildcard over `src/*.c`, so files this project added stay in
-the build after an older checkout (they are untracked there, so git leaves them),
-and building `stack_probe.c` against stock fails on `-Werror=array-bounds` and then
-at **107% ROM / 103% RAM** because stock has no LTO. The script now sets such files
-aside per commit. That the stock Makefile cannot fit our firmware is itself the
-clearest evidence LTO is load-bearing here.
+Getting stock to build at all took two fixes, both artifacts of mixing eras rather
+than facts about stock. `SOURCES` is a wildcard over `src/*.c`, so **four** files this
+project added stay in the build after an older checkout -- they are untracked at
+`v1.1.1`, so git leaves them alone: `stack_probe.c/h` and `apollo_mode.c/h`. With
+those still present, stock fails on `-Werror=array-bounds` and then at 107% ROM /
+103% RAM. The script now sets all four aside per commit.
 
 ## Repository state worth knowing
 
