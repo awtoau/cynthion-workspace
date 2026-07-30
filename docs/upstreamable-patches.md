@@ -1,5 +1,20 @@
 # Patches worth sending upstream
 
+> **Superseded for planning purposes.** The full inventory, ordering and
+> validation procedure now live in
+> [`upstream-patch-plan.md`](upstream-patch-plan.md) and
+> [`upstream-patch-process.md`](upstream-patch-process.md). This file is kept for
+> its per-patch diagnostic write-ups, which are still the best explanation of
+> *why* each bug is a bug — the exit-DFU reasoning and the INITN analysis in
+> particular.
+>
+> Known errors in this file, corrected in the plan: apollo is **34** commits
+> ahead, not 20; `repos/cynthion` has 25 local commits and is not covered here at
+> all; the ROM-savings commits are described as possibly "irrelevant" to upstream
+> when upstream in fact builds at **96.04%, 568 bytes free**, which makes them
+> load-bearing; and the INITN fix is listed under "Ready — a clear bug with a
+> verified fix" while its own text says it is not yet attempted.
+
 `repos/apollo` is 20 commits ahead of upstream. Some of that is local
 scaffolding, but several are fixes to real upstream bugs that other Cynthion
 users will hit. Tracked here so they are not lost in a submodule bump.
