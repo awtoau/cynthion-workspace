@@ -146,6 +146,9 @@ One table, both chunk sizes, on the 122880-byte payload throughout.
 | `cd4a85c` | double-buffered staging | -- | 469.1 ms (17.5%) | 455.6 ms (18.0%) |
 | **direct USB port** | **no code change -- moved off a 4-hub chain** | -- | **425.2 ms (19.3%)** | **409.1 ms (20.0%)** |
 | **`d43f765`** | **clock by DMA, stop blocking `tud_task()`** -- *over flash budget, see below* | -- | **343.3 ms (23.9%)** | **324.4 ms (25.2%)** |
+| `e4bc0f0` | LED patterns out, paying for DMA -- speed unchanged, budget restored | -- | 348.8 ms (23.5%) | 327.9 ms (25.0%) |
+| **`7060149`** | **LED + button on a 5 ms tick, not every pass** | -- | **330.2 ms (24.8%)** | **318.1 ms (25.7%)** |
+| `6520707` | tick relaxed to 20 ms -- correct rate, not a speed change | -- | 341.2 ms (24.0%) | 322.2 ms (25.4%) |
 | | | | | |
 | **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | not measured |
 | **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms (100%) | 81.9 ms (100%) | 81.9 ms (100%) |
@@ -189,7 +192,7 @@ Every `n/a` is an impossibility rather than a gap: those firmwares declare a 256
 buffer and stall anything larger, so the request is refused rather than merely
 unnegotiated.
 
-**Cumulative against stock: 713.9 -> 324.4 ms, 2.20x.**
+**Cumulative against stock: 713.9 -> 318.1 ms, 2.24x.**
 
 Rows above `cd4a85c` were measured on the four-hub chain and are ~10% pessimistic. They
 stay comparable with each other, but **only the `direct USB port` and `d43f765` rows
@@ -928,7 +931,9 @@ some of the successes.
 | SCK 12 -> 24 MHz | **rejected, unsafe** | divider steps 8/12/24 with nothing between; SAMD11 `tSCK` min 84 ns = 11.9 MHz rated, so 12 is already past |
 | SERCOM DMA, *spinning on completion* | **implemented, marginally slower -- and the conclusion was wrong** | 1711-1751 ms against 1698-1715 polled. It spun on `TCMPL` after arming, so `tud_task()` stayed blocked and it was polling plus setup cost. Made asynchronous instead: **-85 ms, 1.26x** |
 | DMA making the second buffer redundant | **hypothesis, disproven** | removing `jtag_tx_alt` costs +74.1 ms (+22.8%); DMA and double-buffering are complementary, not alternatives |
-| dropping `button_task()` from the loop | **no measurable gain** | it really does cost ~4.8 us per iteration (PA16 is shared with `LED_A`, so each poll saves the level, flips to input, waits 50 cycles for the pull, samples and restores). But 326.4 vs 327.9 ms is inside the 1.6 ms spread: after DMA the loop spins thousands of times per chunk, so what gates USB is whether `tud_task()` is *reached*, not the loop rate |
+| dropping `button_task()` alone | **no measurable gain -- but see below** | 326.4 vs 327.9 ms, inside the 1.6 ms spread. It really does cost ~4.8 us per iteration (PA16 is shared with `LED_A`, so each poll saves the level, flips to input, waits 50 cycles for the pull, samples and restores) |
+| masking the EIC during JTAG | **no measurable gain** | 326.7 vs 327.9 ms, inside a 4.0 ms spread. `fpga_adv_task()` has no JTAG gate, unlike `console_task()`, so the EIC stays armed on a pin the FPGA has tri-stated -- but it costs nothing measurable |
+| **the conclusion drawn from those two** | **wrong, and worth more than either** | both were tested *in isolation*, where removing one poll of five leaves the other four setting the loop period. Cutting the LED and button together from ~200 kHz to 200 Hz measured **327.9 -> 318.1 ms**, 9.8 ms against a 5.3 ms spread (`7060149`). The null results were real; "loop-level work is noise" did not follow from them |
 | TX-only (drop TDO entirely) | correct but not worth it | ~2 ms of 950, for a silent-failure surface |
 | bulk streaming | **built, worked, no faster** | 1703 vs 1683 ms; its stated cause was later disproven, so still unexplained |
 | `-fstack-usage` for stack depth | **wrong tool** | LTO inlines across units, so per-function frames stop matching the final binary |
@@ -936,7 +941,7 @@ some of the successes.
 | paint-and-measure, first version | **self-contradictory** | LTO resolved `&_sstack` differently per inlined copy; reported full-region use AND no overflow |
 | word-wise stack scan | **latent bug** | one coincidental `0xDEADBEEF` truncates the scan and understates usage |
 
-Five of these are worth more than a note.
+Six of these are worth more than a note.
 
 **The DMA row is the cautionary one in this whole table.** It reads as "tried, does not
 work" and it stopped anyone retrying for months, when the mechanism was right and one
