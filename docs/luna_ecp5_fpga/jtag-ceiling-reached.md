@@ -218,6 +218,55 @@ ceiling around 320 ms rather than the 352 ms the USB portion implies. Timing a s
 `SET_OUT_BUFFER` of 512 bytes in isolation, against one of 8 bytes, would separate
 payload from fixed cost directly.
 
+## 1024-byte chunks DO fit, if JTAG may claim what is idle
+
+I previously said the buffer merge saves only 256 bytes and that 1024-byte chunks
+therefore do not fit. **That was wrong** -- it counted only the console ring and
+missed everything else that is idle during a JTAG session.
+
+The reasoning that makes the rest claimable: **during JTAG programming everything
+else is off, and the board is rebooted afterwards.** So any buffer private to a
+subsystem that is gated off is on the table, and its contents need not survive.
+
+| source | bytes | why claimable |
+|---|---|---|
+| already unallocated | 644 | free today |
+| `uart_rx_ring` | 256 | `console_task()` returns immediately while the JTAG lock is held |
+| `_cdcd_itf` | 296 | TinyUSB CDC class state -- the console is gated off, and CDC is not the JTAG path |
+| stack reservation | 336 | 1024 reserved, **344 measured** high-water; keeping 2x margin at 688 still frees 336 |
+| **total** | **1532** | |
+
+**2 x 1024 needs +1024, and 1532 is available.** 2 x 1536 needs +2048 and does not
+fit, so 1024 is the last doubling.
+
+That is worth roughly **51 ms** by the request-count arithmetic -- 120 chunks instead
+of 240, at 213.9 us of fixed cost per request -- which is the same as the collapse, for
+no protocol change.
+
+### What each claim actually requires
+
+They are not equally easy, and the order matters:
+
+**The stack claim is the safest and needs no code**, only a linker flag. The script
+already reads `STACK_SIZE = DEFINED (STACK_SIZE) ? STACK_SIZE : ... : 0x400`, so
+`-Wl,--defsym=STACK_SIZE=0x2b0` sets 688 bytes with no linker-script edit. It rests
+entirely on the measurement being trustworthy, which is why the paint-and-measure work
+came first: 344 bytes is a **lower bound**, since depth already in use when painting
+ran is invisible and one run does not prove a worst case. 2x margin is the hedge.
+
+**The ring claim is a union**, with the exclusivity proven by the JTAG lock spanning
+`jtag_init()` to `jtag_deinit()` rather than by convention.
+
+**The `_cdcd_itf` claim is the awkward one and probably should not be taken.** It is
+TinyUSB's internal state, not ours: reusing it means either patching TinyUSB or
+aliasing a structure whose layout is not ours to rely on. And CDC is not merely idle
+during JTAG -- the host may still have the port open, so TinyUSB could touch that
+state on an unrelated control transfer. Without it the total is 1236, which still
+covers the 1024 needed.
+
+So: **1024-byte chunks fit using the unallocated space, the ring, and the stack
+reduction alone.** `_cdcd_itf` is not needed and carries the most risk.
+
 ## The two remaining levers, quantified before building either
 
 Both measured rather than estimated, because the chunk change taught that arithmetic
