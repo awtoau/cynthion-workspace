@@ -419,6 +419,50 @@ the same rate, and the only saving available was the per-transfer framing, which
 small fraction of the total. The attempt did what it was designed to do; the design could
 not have helped much.
 
+### Endpoints available, and one idea parked
+
+What Apollo actually exposes, read off the live device rather than from the source:
+
+| interface | class | endpoints |
+|---|---|---|
+| 0 | Communications (CDC control) | EP 0x81 IN, interrupt, 8 B |
+| 1 | CDC Data | **EP 0x02 OUT and EP 0x83 IN, bulk, 64 B** |
+| 2 | DFU runtime | **none** -- EP0 only |
+
+Plus EP0, where **all** JTAG traffic goes today, since the vendor requests are control
+transfers. JTAG has no endpoint of its own.
+
+**So a bulk path needs no new endpoint.** The pair already exists, TinyUSB is already
+paying for the descriptor space, and CDC is provably idle during a JTAG session -- the
+same JTAG-lock argument that justified sharing the buffers, applied to endpoints.
+`console_task()` already returns immediately while the lock is held, so those endpoints
+are idle rather than merely quiet. An alternate interface setting, or claiming the
+interface on a bulk-mode vendor request, would let both use them.
+
+The SAMD11's descriptor table is `sram_registers[8][2]`, so eight endpoints of space.
+Reusing CDC's rather than declaring a fourth pair avoids spending any of it.
+
+### Parked: the bootloader could use bulk too
+
+Worth a look, not now.
+
+The bootloader and the application **never run at the same time** -- Saturn-V runs, jumps
+to the app, and is gone until the next reset. So the bootloader has the *entire* endpoint
+budget free, with nothing to be exclusive with, and it currently does all its flashing
+over **EP0 control transfers** at the same 5.8 packets/frame measured above. That is why
+flashing a 12 KB image takes as long as it does.
+
+The same 3.3x argument applies, and it is architecturally cleaner than the application
+case: no exclusivity reasoning is needed at all, because nothing else exists to contend.
+
+Two things to check before anyone acts on it. The app's DFU interface is **DFU *runtime***
+(`TUD_DFU_RT_DESCRIPTOR`, `usb_descriptors.c:104`) and is functional rather than vestigial
+-- `vendor.c:441` calls `tud_dfu_runtime_reboot_to_dfu_cb()` -- so it is not dead weight to
+be removed. And it has no endpoints, so removing it would free none. The bootloader-side
+change is entirely within Saturn-V, which is a separate submodule (`repos/saturn-v`) with
+a **2 KB** flash budget and `-flto` already enabled, so there may be no room for a bulk
+implementation regardless.
+
 ### But a DEDICATED bulk endpoint is a different proposition, and worth 3.3x
 
 The paragraph above concluded that no endpoint type changes the per-byte cost. **That is
