@@ -443,6 +443,68 @@ Two traps, both hit while collecting the numbers in the table above:
   bit. Called from a context that leaves the TAP elsewhere, it reports a mismatch on
   every byte -- harness misuse, not corrupted data.
 
+## The RAM work, one change at a time
+
+Four changes, each built, flashed and tested on its own before the next. Two of them
+deliberately bought **no** speed, which is the point of testing separately: a speed
+change there would have meant something went wrong.
+
+| change | RAM | 512 B time | what it bought |
+|---|---|---|---|
+| baseline | 84.28% | 489.4 ms | |
+| stack sized from measurement | 78.52% | unchanged | **320 bytes** |
+| console ring shares the JTAG union | 72.27% | 491.0 ms | **256 bytes** |
+| `spi_send()` accepts NULL receive | 72.27% | unchanged | capability |
+| `FLAG_DISCARD_TDO` | 72.27% | 492.6 ms | capability |
+
+**576 bytes reclaimed, no measurable speed change.** All three time figures sit inside
+a 1.0-6.9 ms spread, so they are one number.
+
+### Why each was tested alone
+
+**Stack from measurement.** `STACK_SIZE=0x2C0` (704 bytes) against 344 measured, so
+just over 2x margin. Verified on hardware afterwards -- idle, 300 control transfers, 50
+sideband commands, a full JTAG configure -- and the high-water came back **344, exactly
+as with 1024 reserved**. That is the expected result and worth stating: usage does not
+depend on the reservation, so shrinking it changes nothing until something actually
+overflows. On a part with no MPU that would be silent `.bss` corruption rather than a
+fault, which is why the margin is generous rather than tight.
+
+**The union.** The console ring and the JTAG buffers share storage, with exclusivity
+proven by the JTAG lock spanning `jtag_init()` to `jtag_deinit()` -- and
+`console_task()` returning immediately while it is held. Deliberately **not** aliased:
+`jtag_in_buffer` and `jtag_out_buffer` stay separate, because `spi_send()` takes both in
+one call and overlapping them would corrupt every transfer.
+
+That change introduced one hazard and closed it: the buffers became **pointers rather
+than arrays**, so `sizeof()` on them silently yields 4. Six sites used
+`sizeof(jtag_out_buffer)` as a bound, including the `SET_OUT_BUFFER` length check --
+which would have become a 4-byte limit rejecting every real request. All six now use
+`JTAG_BUFFER_SIZE`.
+
+**`spi_send()` NULL receive.** SPI is inherently bidirectional, so the hardware hands
+over a byte whether the caller wants it or not, and both store sites wrote to the
+caller's pointer unconditionally -- passing NULL wrote to address 0. The `DATA` register
+is still read when discarding, and must be: `RXC` stays set until `DATA` is read and the
+loop waits on `RXC`, so skipping the read **hangs** rather than merely dropping a byte.
+
+**`FLAG_DISCARD_TDO`.** `ignore_response` previously suppressed only the host's own
+`GET_IN_BUFFER` call; the firmware still captured every byte. Bit 2 of the SCAN flags
+now tells it. Backward compatible both ways -- older firmware masks only the flags it
+knows, so an unrecognised bit is ignored rather than misread, and an older host simply
+does not set it.
+
+### What this was all for
+
+`jtag_in_buffer` is now **provably untouched during a configure**, which is the
+precondition for handing its 512 bytes to the transmit path. That is the remaining route
+to 1024-byte chunks after the direct attempt hit 95% RAM, and is worth roughly 51 ms by
+request count.
+
+The two capability changes are the interesting entry in the table precisely because
+they moved nothing: they stopped a store into RAM, and the store was never the
+bottleneck. Their value is entirely in what they make possible next.
+
 ## Things tried that did not work
 
 Recorded so they are not retried, and because the failures were more informative than
