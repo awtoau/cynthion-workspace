@@ -178,14 +178,23 @@ class HelloSoC(Elaboratable):
         m.submodules.csr_bridge = csr_bridge
         decoder.add(csr_bridge.wb_bus, addr=CONSOLE_BASE, name="console")
 
-        # Both CPU ports share one decoder through an arbiter, so instruction
-        # fetch and data access cannot corrupt each other.
+        # All three CPU ports share one decoder through an arbiter, so no two
+        # can corrupt each other.
+        #
+        # `iobus` is the uncached path and it is not optional: the console is in
+        # a `main=0` PMA region, so every console access arrives there rather
+        # than on `dbus`. Omitting it is a silent failure -- synthesis warns
+        # about undriven ACK/DAT_MISO/ERR and then produces a CPU that runs,
+        # passes timing and enumerates over USB while every store to a
+        # peripheral waits forever for an acknowledgement nothing drives. That
+        # cost two sessions of looking for a firmware bug.
         arbiter = wishbone.Arbiter(addr_width=30, data_width=32,
                                    granularity=8,
                                    features={"cti", "bte", "err"})
         m.submodules.arbiter = arbiter
         arbiter.add(cpu.ibus)
         arbiter.add(cpu.dbus)
+        arbiter.add(cpu.iobus)
         wiring.connect(m, arbiter.bus, decoder.bus)
 
         # USB CDC-ACM. The console stream is the IN endpoint's data source;
@@ -252,10 +261,15 @@ class HelloSoC(Elaboratable):
         # Report whether the CPU's buses are moving at all. If USB is silent
         # and this shows zero activity, the fault is the CPU rather than
         # anything downstream of it.
+        # `iobus` rather than `dbus` for the second state bit: the console lives
+        # on the uncached path, so dbus activity says the CPU is running while
+        # iobus activity says it is actually reaching the peripheral. Those are
+        # different questions, and conflating them is what made this SoC look
+        # dead when it was only mute.
         m.d.comb += [
-            sideband.state.eq(Cat(cpu.ibus.cyc, cpu.dbus.cyc)),
+            sideband.state.eq(Cat(cpu.ibus.cyc, cpu.iobus.cyc)),
             sideband.events.eq(console.source.valid),
-            sideband.error.eq(cpu.ibus.err | cpu.dbus.err),
+            sideband.error.eq(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err),
         ]
 
         m.d.comb += usb.connect.eq(1)

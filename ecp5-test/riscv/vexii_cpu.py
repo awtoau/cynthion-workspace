@@ -155,6 +155,28 @@ class VexiiRiscv(wiring.Component):
             "dbus": Out(wishbone.Signature(
                 addr_width=30, data_width=32, granularity=8,
                 features=("err", "cti", "bte"))),
+
+            # The uncached data path, and the reason this CPU has three masters
+            # where VexRiscv has two.
+            #
+            # A write-back cache can only move whole lines, so MMIO cannot go
+            # through `dbus`: the cache would fetch a line (reading registers
+            # nobody asked to read), modify one word, and write the line back
+            # (disturbing neighbours) whenever it happened to evict -- not when
+            # the store was issued. Volatile peripheral access needs a path that
+            # does exactly the transfer requested, exactly when requested.
+            #
+            # So every access to a `main=0` PMA region arrives here instead.
+            # VexRiscv achieves the same split with one bus and a hardcoded
+            # "uncached iff address bit 31"; VexiiRiscv makes it declarative per
+            # region, which is more capable and less forgiving -- leaving this
+            # port unconnected costs nothing at synthesis and produces a CPU
+            # that runs, passes timing, enumerates, and never reaches a
+            # peripheral, because the store waits forever for an ACK that has
+            # no driver.
+            "iobus": Out(wishbone.Signature(
+                addr_width=30, data_width=32, granularity=8,
+                features=("err", "cti", "bte"))),
         })
 
     def elaborate(self, platform):
@@ -206,5 +228,20 @@ class VexiiRiscv(wiring.Component):
             i_LsuL1WishbonePlugin_logic_bus_DAT_MISO=self.dbus.dat_r,
             i_LsuL1WishbonePlugin_logic_bus_ACK=self.dbus.ack,
             i_LsuL1WishbonePlugin_logic_bus_ERR=self.dbus.err,
+
+            # Uncached I/O bus. Same geometry as dbus -- 30-bit word address,
+            # 4-bit select -- so it decodes identically; only the routing
+            # differs.
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_CYC=self.iobus.cyc,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_STB=self.iobus.stb,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_WE=self.iobus.we,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_ADR=self.iobus.adr,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_SEL=self.iobus.sel,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_DAT_MOSI=self.iobus.dat_w,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_CTI=self.iobus.cti,
+            o_LsuCachelessWishbonePlugin_logic_bridge_down_BTE=self.iobus.bte,
+            i_LsuCachelessWishbonePlugin_logic_bridge_down_DAT_MISO=self.iobus.dat_r,
+            i_LsuCachelessWishbonePlugin_logic_bridge_down_ACK=self.iobus.ack,
+            i_LsuCachelessWishbonePlugin_logic_bridge_down_ERR=self.iobus.err,
         )
         return m
