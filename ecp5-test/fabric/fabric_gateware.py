@@ -110,12 +110,18 @@ from luna.gateware.interface.jtag   import JTAGRegisterInterface
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
 SYNC_MHZ = 60
 
-# How many 32-bit blocks. Each costs roughly 190 LUT4s once the mix and the
-# LFSR feedback are packed, so 100 blocks lands near 19-20k of the 24,288 the
-# die offers -- comfortably past the 12,288 an LFE5U-12F advertises, which is
-# the entire point, while leaving routing headroom so a failure to place is not
-# mistaken for a failure of the silicon.
-BLOCKS = 100
+# How many 32-bit blocks.
+#
+# This number was measured, not guessed. Two trial builds gave 1,527 LUT4s at
+# 10 blocks and 3,619 at 30, so the marginal cost is 104.6 LUT4s per block over
+# a fixed 481 for the PLL, the JTAG register interface and the LEDs. 185 blocks
+# therefore lands near 19,900 of the 24,288 the die offers -- about 82%.
+#
+# The target is roughly 80% rather than as high as it will go. Past that,
+# routing congestion starts to be the thing that fails, and a build that will
+# not place is evidence about nextpnr, not about whether the silicon computes
+# correctly. Leaving headroom keeps the experiment pointed at the question.
+BLOCKS = 185
 
 # Cycles per round, as a power of two so the boundary is one counter bit.
 #
