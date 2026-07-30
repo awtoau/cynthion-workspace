@@ -13,10 +13,23 @@ specific rather than general.
 | `luna-usb` | 0.2.3 | 0.2.3 | current |
 | `facedancer` | 3.1.3 | 3.1.3 | current |
 | `usb-protocol` | 0.9.2 | 0.9.2 | current |
-| **`luna-soc`** | **0.2.0** | **0.3.2** | **behind, and it is the one that matters** |
+| `luna-soc` | **0.3.2+awto.1** | 0.3.2 | current -- see below, it was never behind |
 
-So "everything is stale" is not the situation. **One package is behind**, and it
-is the one carrying the vendored `amaranth_soc`.
+So nothing is stale. Measured rather than assumed: the fork is **zero commits
+behind upstream**, upstream `main` **is** the `0.3.2` tag, and `0.3.2` is an
+ancestor of the fork. It was reporting `0.2.0` because the version comes from git
+tags via `setuptools-git-versioning` and the fork carried **no tags**, so it fell
+back to `starting_version = "0.2.0"` while actually containing 0.3.2.
+
+Now tagged `0.3.2+awto.1` and reinstalled, so it reports what it is. A package that
+misreports its version is what made this look like a stale-dependency problem when
+the dependency was current -- worth more than the tag itself.
+
+The tag had to be the PEP 440 **local** form. `0.3.2-awto.1` breaks the wheel
+build outright: `setuptools-git-versioning` parses the tag through
+`packaging.version.Version`, which rejects a hyphen, so the failure is a build
+error rather than a wrong version string. Caught because the reinstall failed
+loudly.
 
 ## The pins are ranges, not hard pins
 
