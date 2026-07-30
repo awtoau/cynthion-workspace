@@ -164,6 +164,60 @@ was larger than the USB-side loss. Which is also why the chunk change bought les
 arithmetic predicted -- it was fixing the smaller half, and slightly worsening the
 larger one.
 
+## USB transfers already use DMA, and that reframes the levers
+
+Asked whether USB transfers use DMA. **They do**, and the answer matters more than
+expected.
+
+The SAMD USB peripheral **is** a DMA engine. `dcd_edpt_xfer()` at
+`dcd_samd.c:276` does:
+
+    bank->ADDR.reg = (uint32_t) buffer;
+
+so the caller's buffer address goes straight to the hardware, which moves the bytes
+itself. Zero copy, no CPU involvement. That is also what `sram_registers[8][2]` is --
+the endpoint descriptor table the hardware reads to find those addresses, which is
+why it is silicon-mandated and not reclaimable.
+
+**So there is no CPU-side data-movement cost to remove on the USB side either.** This
+is the same conclusion the DMA investigation reached for the SPI side, arrived at from
+the opposite direction: both halves of the transport are already hardware-driven.
+
+### Where the 1466 us per chunk actually goes
+
+At 512 B the USB portion is 351.9 ms over 240 chunks, so **1466 us per chunk**.
+Decomposing what is known:
+
+| component | per chunk | how known |
+|---|---|---|
+| two control transfers, fixed cost | 428 us | 2 x 213.9 us measured |
+| 512 bytes of payload at 12 Mbit/s | 341 us | arithmetic |
+| **unaccounted** | **~700 us** | |
+
+**Half the USB cost is neither request overhead nor data movement.** That is the
+single most useful thing in this section, because both remaining levers target the
+428 us: the collapse removes half of it, and double-buffering hides clocking behind
+it. Neither touches the 700 us.
+
+Candidates for the 700 us, none yet established:
+
+- **Frame scheduling.** Full-speed USB schedules control transfers per 1 ms frame,
+  and a transfer with a data stage plus a status stage may not complete within one
+  frame. If each chunk costs a whole frame boundary somewhere, that alone is
+  hundreds of microseconds and is a property of the bus rather than of either end.
+- **Host-side per-call cost** in libusb or the kernel, above the 213.9 us measured
+  for a near-empty transfer -- the measurement used a 32-byte reply, so a 512-byte
+  data stage may cost more than the payload arithmetic suggests.
+- **`tud_task()` latency**: the firmware processes the transfer from the main loop,
+  not from the ISR, so completion waits on a loop iteration.
+
+**This should be measured before either lever is built.** If the 700 us is frame
+scheduling then the collapse is worth its 51 ms and double-buffering is worth its
+137 ms, and both leave 168 ms of frame cost untouched -- which would make the real
+ceiling around 320 ms rather than the 352 ms the USB portion implies. Timing a single
+`SET_OUT_BUFFER` of 512 bytes in isolation, against one of 8 bytes, would separate
+payload from fixed cost directly.
+
 ## The two remaining levers, quantified before building either
 
 Both measured rather than estimated, because the chunk change taught that arithmetic
