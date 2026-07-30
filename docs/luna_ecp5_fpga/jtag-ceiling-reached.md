@@ -125,47 +125,43 @@ path, so this is five direct measurements rather than a search. All at 256 B/chu
 because 512 needs `GET_INFO`, which only HEAD implements -- on older firmware the
 host silently falls back to 256, so a "512" row would read as no change.
 
-| commit | what | 256 B/chunk | delta | cumulative |
-|---|---|---|---|---|
-| **`v1.1.1`** | **stock release** | **713.9 ms** | -- | 1.00x |
-| `4bf7691` | enable LTO | 639.1 ms | +74.8 | 1.12x |
-| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** | +72.2 | 1.26x |
-| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms | +4.8 | 1.27x |
-| `HEAD` | 512-byte buffers + `GET_INFO` | 555.4 ms | +6.7 | 1.29x |
+One table, so the progression and the ceiling read together. All 256 B/chunk unless
+noted, all on the 122880-byte payload.
 
-**Stock to HEAD at its own 512-byte chunk: 713.9 -> 488.9 ms, 1.46x.**
+| commit / limit | what | time | delta | cumulative | of theoretical |
+|---|---|---|---|---|---|
+| **`v1.1.1`** | **stock release** | **713.9 ms** | -- | 1.00x | 11.5% |
+| `4bf7691` | enable LTO | 639.1 ms | +74.8 | 1.12x | 12.8% |
+| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** | +72.2 | 1.26x | 14.4% |
+| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms | +4.8 | 1.27x | 14.6% |
+| `HEAD` | 512-byte buffers + `GET_INFO` | 555.4 ms | +6.7 | 1.29x | 14.7% |
+| `HEAD` **at 512 B** | the same firmware using its own buffer | **488.9 ms** | +66.5 | **1.46x** | **16.8%** |
+| | | | | | |
+| **no USB payload** | `0xb9`, pattern generated in firmware, 512 B | **137 ms** | | | **60%** |
+| **theoretical wire** | 12 MHz SCK, 1 bit per clock | **81.9 ms** | | | 100% |
 
-## How close is this to theoretical?
+The last two rows are the ceiling, and they are what the progression was missing:
+without them 1.46x has no denominator.
 
-The rows the progression table was missing. Same 122880-byte payload throughout, so
-every figure here is comparable with the ones above.
-
-| what | 256 B | 512 B | of theoretical |
-|---|---|---|---|
-| **theoretical wire**, 12 MHz SCK, 1 bit/clock | **81.9 ms** | **81.9 ms** | 100% |
-| **measured, no USB payload** (`0xb9`) | **275 ms** | **137 ms** | 30% / **60%** |
-| measured, real path (stock `v1.1.1`) | 713.9 ms | **n/a** | 11.5% |
-| measured, real path (HEAD) | 558.8 ms | 488.9 ms | 14.7% / **16.8%** |
-
-**Theoretical** is arithmetic: 122880 bytes x 8 bits / 12 MHz = 81.9 ms, 1500 KB/s.
-Nothing can beat it without raising SCK, which the section above establishes is not
-available.
-
-**Stock has no 512-byte figure because it cannot have one**, which is a fact about
-stock rather than a gap in the data. Its buffers are `jtag_out_buffer[256]`, and
-`handle_jtag_request_set_out_buffer` stalls anything larger --
-`if (request->wLength > sizeof(jtag_out_buffer)) return false;`. So a 512-byte
-request is refused by the firmware, not merely unnegotiated. The host would fall
-back to 256 anyway, since stock does not implement `GET_INFO`; the benchmark detects
-that and declines to label a 256-byte run as 512, which is the check that stops an
-unimplemented `GET_INFO` flattering a result.
-
-**No USB payload** is measured, not arithmetic, using vendor request `0xb9`
-(`handle_jtag_benchmark`). It generates the pattern **in firmware** --
+**No USB payload is measured, not arithmetic.** Vendor request `0xb9`
+(`handle_jtag_benchmark`) generates its pattern **in firmware** --
 `jtag_out_buffer[i] = i * 7 + 1` -- specifically so no bulk data crosses USB, and
-returns elapsed milliseconds plus a TDO mismatch count. This is the honest floor for
-the current SERCOM and firmware: whatever the transport does, the path cannot beat
-it.
+returns elapsed milliseconds plus a TDO mismatch count. So it is the honest floor for
+this SERCOM and this firmware: whatever the transport does, the path cannot beat it.
+Theoretical is arithmetic: 122880 x 8 / 12 MHz = 81.9 ms, 1500 KB/s.
+
+**Stock has no 512-byte figure because it cannot have one.** Its buffers are
+`jtag_out_buffer[256]` and `handle_jtag_request_set_out_buffer` stalls anything
+larger -- `if (request->wLength > sizeof(jtag_out_buffer)) return false;`. A 512-byte
+request is refused by the firmware, not merely unnegotiated. The host would fall back
+to 256 regardless since stock lacks `GET_INFO`, and the benchmark detects that and
+declines to label a 256-byte run as 512 -- the check that stops an unimplemented
+`GET_INFO` flattering a result.
+
+At 512 bytes: **352 ms of the 489 -- 72% -- is USB transport.** Only 137 ms is the
+microcontroller clocking bits.
+
+## Where the remaining time goes
 
 ### The gap is the whole story
 
