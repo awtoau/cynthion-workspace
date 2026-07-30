@@ -15,9 +15,9 @@ by a separate mechanism. The DMA, chunking and buffer work here applies to them
 unchanged. `apollo flash --fast` is the exception -- it loads a bridge onto the FPGA
 and programs the flash through the FPGA's own USB, bypassing this path entirely.
 
-What this document does **not** cover: the W25Q32's own read modes and QSPI timing
-(`../luna_ecp5_fpga/flash-speed.md`), and loading a bitstream over the FPGA's USB
-rather than Apollo's (`../luna_ecp5_fpga/fast-bitstream-loading.md`).
+What this document does **not** cover: the W25Q32's own read modes and QSPI timing,
+which is `../luna_ecp5_fpga/flash-speed.md` -- a different chip, reached by the FPGA
+rather than by the host.
 
 This file was previously `luna_ecp5_fpga/jtag-ceiling-reached.md`. The old title
 claimed the path was done; it then got 2.22x faster, which is the sort of thing a
@@ -1039,6 +1039,141 @@ against a 0.667 wire floor.
 against a recorded 1680 ms and reported 1.89x. Different bitstreams. Same payload it was
 846 -> 774 ms, or 1.09x. That is what the fixed-payload benchmark exists to prevent, and
 it happened before the benchmark existed.
+
+## Why not bypass Apollo entirely? Because the ECP5 cannot load itself
+
+Folded in from `fast-bitstream-loading.md`, now retired to `debris/docs/`. It is here
+rather than filed away because the audience for a configure-speed document is exactly
+the audience tempted to propose an FPGA-side loader, and these are hard negatives with
+primary sources -- expensive to establish, cheap to re-propose.
+
+Tracked as **#108**.
+
+## 1. The ECP5 cannot reconfigure its own SRAM
+
+This is the crux, and it is a hard negative.
+
+**There is no ICAP-equivalent on ECP5.** The complete list of configuration and
+miscellaneous primitives is `JTAGG`, `OSCG`, `SEDGA`, `DTR`, `USRMCLK`, `GSR` --
+verified from three independent sources that agree exactly:
+`prjtrellis/libtrellis/src/Chip.cpp:261-268`, `nextpnr/ecp5/arch.cc:1035`, and
+the Yosys ECP5 blackbox library. None of them accepts configuration data.
+
+Ruling out the near-misses one at a time:
+
+- **`JTAGG`** is the primitive people expect to be a backdoor. It is not. Its
+  only two parameters are `ER1`/`ER2` (`nextpnr/ecp5/bitstream.cc:1517-1521`),
+  which are user-defined shift registers selected when an *external* JTAG master
+  shifts their instruction into the IR. Its `TCK`/`TMS`/`TDI` ports are marked
+  `iopad_external_pin` -- bonded to the pads, not drivable from fabric. The
+  configuration opcodes (`ISC_ENABLE`, `LSC_BITSTREAM_BURST`, ...) are decoded by
+  hard logic behind the TAP IR, and fabric never sees the IR.
+- **`USRMCLK`** drives the MCLK *pin*, for a soft SPI master talking to the
+  external flash. It is a path to flash, not to the configuration engine.
+- **`SEDGA`** reads configuration memory for CRC checking. Read-only.
+- **`PCNTR`**, which on MachXO2/XO3 *does* give fabric a limited poke at the
+  config engine, **does not exist on ECP5** --
+  `prjtrellis/libtrellis/src/Chip.cpp:472` instantiates it only in the MachXO2
+  branch. This is the most telling result: Lattice documents such a mechanism
+  where it exists, and for ECP5 it does not.
+
+**`--background` does not do what the issue assumes.** It sets three CRAM bits in
+tile `EFB0_PICB0` plus CR0 bits 29/27/26/25 (`ecppack.cpp:158-165`,
+`Bitstream.cpp:34,917-921`). Its effect is to keep I/O pins live during a
+reconfiguration driven by an *external* master, enabling partial reconfiguration
+over JTAG. Project Trellis states the mechanism explicitly: partial bitstreams
+require `BACKGROUND_RECONFIG`, and then "instructions 0x79 ... and 0x74 ... must
+be sent **over JTAG**". Lattice FPGA-TN-02039 section 6.2 is blunter still: "When
+the ECP5 ... devices are in Background mode, **only read type commands are
+supported**."
+
+**Reconfiguration cannot even be *triggered* from fabric.** FPGA-TN-02039
+section 5.5 lists exactly three exits from user mode: PROGRAMN asserted, a
+REFRESH command on a configuration port, or power cycling. PROGRAMN is a
+dedicated **input** (ECP5 datasheet FPGA-DS-02012) with no output driver and no
+fabric routing. REFRESH is accepted "only [on] the JTAG port and the Slave SPI
+port", both requiring an external master. `BOOTADDR` is CRAM fixed at pack time
+(`ecppack.cpp:167-194`), not a runtime register.
+
+So the only route from user logic is: write the image to SPI flash with a soft
+SPI master, then have *something external* trigger a reboot. The running design
+does not survive it. That is precisely what Apollo's existing
+`FlashBridge`/`flash-fast` already does -- and it is why that code writes flash
+rather than SRAM. The issue's own table rules that route out on erase/program
+time.
+
+## 2. The FPGA-side transfer really is ~6 ms -- and it does not matter
+
+`ecp5-test/loader/bitstream_sink.py` is the receiving half of the proposed
+loader: a bulk OUT endpoint on TARGET-C that counts bytes and never
+back-pressures. It builds (110 MHz against a 60 MHz constraint), loads, and
+enumerates at `1209:000e`. Pushing a 304726-byte bitstream at it:
+
+    wrote 304726 bytes in 7.89 ms (38.6 MB/s, 309 Mbps)
+
+**The issue's ~6 ms estimate was essentially correct.** This is the strongest
+single piece of evidence in the investigation, and it cuts against the issue's
+own conclusion: the leg that was assumed to be the expensive one is ~350x
+cheaper than the path in use, and it was never the problem. Even if the ECP5
+*could* configure itself from this data -- it cannot -- adopting this transport
+would remove 7.89 ms from a 2746 ms operation.
+
+The same image over the JTAG path takes 2746 ms. The difference is entirely
+which chip the bytes pass through.
+
+## 3. Why the JTAG path is actually slow
+
+The issue attributes ~3.0 s to "JTAG clock". The code and the measurements both
+disagree.
+
+`ECP5_JTAGProgrammer.configure` sends the whole image in a single
+`LSC_BITSTREAM_BURST` data scan (`ecp5.py:457`). But `JTAGChain._scan_data`
+splits that scan into `max_bits_per_scan` chunks (`jtag.py:306-321`), and the
+SAMD11's staging buffer is 256 bytes (`firmware/src/jtag.c:30-31`). Each chunk
+costs **two USB control transfers**: `SET_OUT_BUFFER` carrying the data, then
+`SCAN` telling the MCU to clock it out.
+
+Decomposing those two transfers by varying payload size and bit count
+independently:
+
+| transfer | 0-8 B / 8 bits | 256 B / 2048 bits | marginal |
+|---|---|---|---|
+| `SET_OUT_BUFFER` (data in, no JTAG work) | 167 us | 846 us | **2.53 us/byte** |
+| `SCAN` (no payload, pure JTAG work) | 138 us | 497 us | **1.40 us/byte** |
+
+Fitting `SET_OUT_BUFFER`: **204 us fixed + 2.53 us/byte** (a second run gave
+195 us + 2.51 us/byte; the figures below use the first).
+
+The decisive comparison is the two marginal columns. **Getting a byte into the
+SAMD11 costs nearly twice what clocking it onto the JTAG wire costs.** The wire
+is not the bottleneck; the pipe feeding it is. The SAMD11 clocks JTAG over
+hardware SPI at `baud_divider=1` (`boards/cynthion_d21/jtag.c:25`), which is fast
+enough that it spends most of its time waiting for data.
+
+### The ceiling nobody mentioned
+
+The Apollo debug controller enumerates at **12 Mbps full-speed** with a 64-byte
+EP0 (`/sys/bus/usb/devices/.../speed` = 12; `CFG_TUD_ENDPOINT0_SIZE 64`).
+
+This is the single most important fact for issue #100, because the 388 Mbps
+figure the issue reasons from is the throughput of the **FPGA's** USB PHY, on a
+different port and a different chip. The bitstream does not travel that path. It
+travels the SAMD11's full-speed link, whose raw ceiling is 1.5 MB/s.
+
+At the measured 2.53 us/byte the control path runs at 0.40 MB/s -- **26% of the
+full-speed wire**. That inefficiency is the opportunity.
+
+| bound | time for a 304726 B image |
+|---|---|
+| measured today (end to end) | **2746 ms** |
+| SAMD11 ingest at measured 0.40 MB/s | 771 ms |
+| JTAG clocking alone at 1.40 us/byte | 427 ms |
+| 100% of full-speed wire | **203 ms** -- floor for *any* SAMD11 path |
+| issue #100's target | 6 ms -- **not reachable through this MCU** |
+
+Note the end-to-end 2746 ms exceeds the 771 ms ingest figure, because the
+per-transfer fixed cost (204 us x 1191 chunks) and the `SCAN` transfers add on
+top.
 
 ## Getting back to a clean state between runs
 

@@ -1,5 +1,20 @@
 # Fast bitstream loading: what the measurements say
 
+> **RETIRED 2026-07-31. Folded into
+> `docs/apollo_samd11_mcu/apollo-configure-speed-investigation.md`, section "Why not
+> bypass Apollo entirely?", and tracked as #108.**
+>
+> Its conclusions held. Items 2 and 3 of section 4 (enlarge the staging buffer, overlap
+> ingest with clocking) were both built, and the 3-4x estimate landed at **2.22x
+> measured** -- 713.9 to 322.2 ms. Item 1, moving bulk data off control transfers, is
+> still the biggest lever and is now #107.
+>
+> Two figures here are superseded: the 204 us per-transfer fixed cost measures at
+> **~145 us** on current firmware, and the ~3.0 s baseline is now 322.2 ms on the
+> standard payload. The hard negatives in sections 1-3 are unchanged and are the
+> reason this was folded in rather than deleted.
+
+
 Investigation of issue #100, deliverable 1 ("a very fast loader"). The proposal
 was to load the ECP5's SRAM over a USB bulk endpoint on the FPGA instead of over
 JTAG, on the expectation that a 294 KB image would take ~6 ms of transfer
