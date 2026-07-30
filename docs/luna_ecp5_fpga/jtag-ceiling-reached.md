@@ -331,6 +331,75 @@ covers the 1024 needed.
 So: **1024-byte chunks fit using the unallocated space, the ring, and the stack
 reduction alone.** `_cdcd_itf` is not needed and carries the most risk.
 
+## The unexplained USB cost, measured: it is bus efficiency, not frame scheduling
+
+This was the largest open question and it now has an answer, which changes what the
+remaining levers are worth.
+
+`scripts/usb_transfer_cost.py` issues the same `SET_OUT_BUFFER` at several payload sizes
+and fits `cost = fixed + per_byte x size`. Frame scheduling predicts a nearly flat line
+-- 8 bytes and 1024 bytes both costing about a 1 ms frame. Per-transfer overhead plus
+real payload cost predicts a slope.
+
+    8 B:    215.8 us      wire alone would be    5.3 us
+   64 B:    301.4 us                            42.7 us
+  256 B:    822.4 us                           170.7 us
+  512 B:   1516.7 us                           341.3 us
+ 1024 B:   2941.3 us                           682.7 us
+
+    fit: 144.7 us fixed + 2.717 us/byte
+
+**It scales, so it is not frame scheduling.** The line is clean and the slope is large:
+**2.72 us/byte against a 0.667 us/byte wire**, so 75% of the per-byte cost is overhead.
+Effective throughput is **2.94 Mbit/s of a 12 Mbit/s bus -- 25% efficiency.**
+
+That is a property of control transfers on a 64-byte endpoint: each packet carries token,
+data and handshake phases, so most of the time is protocol rather than payload. Neither
+end controls it.
+
+### What this does to the two remaining levers
+
+The model predicts the measured transport cost closely, which is what makes it usable:
+
+| chunk | chunks | predicted | of which fixed | of which payload |
+|---|---|---|---|---|
+| 512 B | 240 | 403 ms | 69 ms | 334 ms |
+| 1024 B | 120 | 369 ms | 35 ms | 334 ms |
+
+Measured USB portion at 1024 B is 320.6 ms, against 369 predicted -- close enough to
+trust the split.
+
+**The payload term is constant at 334 ms and does not depend on chunk size at all.**
+That is the wall.
+
+So:
+
+- **Collapsing `SET_OUT_BUFFER` + `SCAN` is worth about 17 ms at 1024 B, not the 51 ms
+  estimated earlier.** The 51 ms figure came from 240 chunks at 213.9 us; at 1024-byte
+  chunks there are only 120, and the correct fixed cost is 144.7 us. That is **4% of
+  total** for a protocol change.
+- **Double-buffering's ceiling stands at 137 ms** -- it hides clocking behind USB, and
+  USB is still much the longer leg. It remains the largest available lever by a wide
+  margin.
+- **Larger chunks are now clearly exhausted.** Each doubling halves only the fixed term,
+  which at 1024 B is already down to 35 ms of 457.
+
+### And it names the real ceiling
+
+Nothing on this transport beats roughly **334 ms of payload cost plus 137 ms of
+clocking**, and those overlap at best. So the floor for this architecture is about
+**334 ms**, not the 81.9 ms the wire suggests.
+
+Against that, the current 457.6 ms is **73% of achievable** rather than 18% of
+theoretical. The 5.6x gap to the wire is real but mostly not addressable: it is a
+64-byte control endpoint on a full-speed bus.
+
+**The one change that would move the payload term is a bulk endpoint**, which allows
+larger packets and far less per-packet overhead. That is what the earlier bulk-streaming
+attempt was aiming at -- and its failure to help is now more surprising rather than less,
+since the theory says it should. That result remains unexplained and is the more
+interesting thread than either remaining lever.
+
 ## The two remaining levers, quantified before building either
 
 Both measured rather than estimated, because the chunk change taught that arithmetic
