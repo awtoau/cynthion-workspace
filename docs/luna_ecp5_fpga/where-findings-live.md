@@ -1,0 +1,53 @@
+# Where the ECP5 findings live
+
+The ECP5 work split into two kinds, and they belong in different repositories.
+
+The test: **would this be useful to someone with a different ECP5 board?**
+
+## In pluribus (`docs/ecp5/`)
+
+Toolchain findings — true of the ECP5 and its tools regardless of hardware:
+
+| doc | subject |
+|---|---|
+| `toolchain-gap-findings.md` | `BASE_TYPE` degeneracy; the four-layer gap matrix |
+| `sedga-findings.md` | SEDGA's encoding was already in prjtrellis |
+| `diamond-family-trap.md` | `ep5c00` is LatticeECP3, not ECP5 |
+| `ecp5-primitive-coverage.md` | which introspection primitives the open flow supports |
+| `ecp5-real-world-corpus.md` | 243 bitstreams, and what a self-built corpus cannot reveal |
+| `README.md` | index, issues #85-#90, and what blocks pushing |
+
+## Here
+
+Board findings — things that depend on Cynthion r1.4, Apollo, or this design.
+
+**Programming and configuration:**
+
+- `jtag-ceiling-reached.md` — the path is done; 88% of configure time is USB, not
+  JTAG. SCK cannot be raised: the divider steps 12 to 24 MHz with nothing
+  between, and the SAMD11 is rated to 11.9 MHz.
+- `jtag-synthetic-benchmark.md` — the firmware benchmark that measures JTAG
+  without USB in the loop.
+- `dma-negative-result.md` — DMA does not help, and why the figure that motivated
+  it was an artifact.
+- `dynamic-opcode-probe.md` — the live-silicon opcode sweep. Its generic ECP5
+  facts are summarised in pluribus's README; the Apollo specifics stay here.
+- `flash-partitioning.md`, `reconfigure-initn-gap.md`, `flash-speed.md`,
+  `spi-flash-summary.md` — flash, boot selection, and the INITN gap.
+
+**Optimisation and device fit:**
+
+- `bram-budget.md` — who actually uses block RAM. The analyzer uses 9 of 56; the
+  heavy consumers are soft CPUs, and it is firmware storage rather than buffers.
+- `hyperram-speed.md`, `usb-performance.md` — measured throughput, and the
+  measurement traps encountered getting them.
+
+## One finding worth not losing
+
+**The ECP5 has DSP blocks, so a hardware multiplier is cheap.** Recorded in
+`docs/moondancer/riscv_state_of_play.md` as a reason to keep `mul` in a soft-CPU
+build rather than falling back to software.
+
+Confirmed by measurement: integer multiply costs **16 cycles** against 123 for a
+soft-float single-precision multiply. That is the DSP blocks doing the work, and
+it is why `rv32im` earns its area on this part.
