@@ -419,9 +419,66 @@ the same rate, and the only saving available was the per-transfer framing, which
 small fraction of the total. The attempt did what it was designed to do; the design could
 not have helped much.
 
-The 2.72 us/byte is therefore not a control-transfer artifact but the **full-speed bus
-itself** on a 64-byte endpoint, and no endpoint type on this device changes it. Only a
-high-speed link would, and Apollo is a full-speed device.
+### But a DEDICATED bulk endpoint is a different proposition, and worth 3.3x
+
+The paragraph above concluded that no endpoint type changes the per-byte cost. **That is
+wrong**, and the arithmetic that shows it is simple enough that I should have done it
+before writing the conclusion.
+
+Packet size is not the variable that matters. **Packets per frame is.**
+
+| | packets per 1 ms frame | us/byte |
+|---|---|---|
+| full-speed bulk, by spec | **19** (1216 B/frame) | **0.822** |
+| measured, control transfers | **5.8** | 2.717 |
+
+So the measured cost is **3.3x worse than a full-speed bulk endpoint can do**, and the
+gap is scheduling opportunity, not signalling. A control transfer carries SETUP, DATA and
+STATUS stages and the host schedules them conservatively; bulk packets stream back to
+back until the frame is full.
+
+Sanity check on the measurement: a 1024-byte control transfer took 2941 us, which is
+about three frames, and works out at 174 us per 64-byte packet. A frame holds 1000 us, so
+5.8 packets fit. Against 19 for bulk.
+
+What that means for a dedicated bulk path -- **shutting down CDC and using its endpoints
+for JTAG, or declaring new ones**:
+
+| | payload for 122880 B |
+|---|---|
+| today, control | 334 ms |
+| bulk at 50% of theoretical | **202 ms** |
+| bulk at theoretical | **101 ms** |
+
+Plus the 35 ms of per-chunk framing that disappears when the transfer is one stream
+rather than 120 chunks.
+
+**So this is the largest remaining lever by a wide margin** -- bigger than
+double-buffering's 137 ms -- and it changes the floor rather than shaving the overhead.
+It is also the one that requires the most work: a bulk protocol needs its own framing and
+error handling, where a control transfer gets a status stage for free.
+
+### And it re-opens the old streaming result rather than closing it
+
+Two paragraphs ago I wrote that the earlier bulk-streaming attempt was now explained --
+that bulk and control move bytes at the same rate at full speed, so it could not have
+helped. **That explanation is also wrong.** Bulk should have been up to 3.3x faster on
+the payload term, and it measured 1703 ms against 1683 ms.
+
+So the question is back, and sharper than before: **why did a working bulk implementation
+perform like control?** Candidates worth testing, none established:
+
+- **The firmware could not keep the endpoint fed.** If it clocks a chunk to the FPGA
+  before accepting the next bulk packet, the bus idles and the achieved rate collapses to
+  whatever the turnaround allows -- which would look exactly like control.
+- **The host submitted synchronously**, one transfer at a time, so the bus idled between
+  submissions regardless of endpoint type.
+- **`tud_task()` latency**: transfers are processed from the main loop, so completion
+  waits on a loop iteration.
+
+All three predict that bulk's advantage is only available with **double-buffering**, since
+that is what keeps the endpoint fed while the SERCOM clocks. Which would make the two
+levers one change rather than two independent ones.
 
 ## The two remaining levers, quantified before building either
 
