@@ -1,5 +1,44 @@
 # JTAG configuration: the path is done, the time is in USB
 
+## Final result
+
+**713.9 -> 322.2 ms at 1024-byte chunks: 2.22x against the stock release**, on the
+122880-byte fixed payload, measured on a direct USB port. Shipped as `6520707`
+(`awtoau/awto-apollo`), flash 94.92% and RAM 84.77% of a 14 KB / 4 KB part, both under
+ceilings that were never raised. Verified on hardware: IDCODE `0x21111043`, configure
+`rc=0`, `check.py` 6 passed.
+
+Where the 391.7 ms came from, largest first:
+
+| change | worth | how |
+|---|---|---|
+| **DMA-clocked JTAG** (`d43f765`) | **-85 ms** | the CPU stops spinning on SERCOM flags, so `tud_task()` runs while bytes are on the wire |
+| USB topology | -46 ms | moved off a 4-hub chain. No code |
+| 512- then 1024-byte chunks | -109 ms | fewer transactions, each amortising a fixed ~145 us cost |
+| pipelined `spi_send` + LTO | -147 ms | keep the shifter fed; reclaim 2968 bytes to afford the rest |
+| housekeeping on a 20 ms tick (`7060149`) | -6 ms | stop polling human-scale inputs at 200 kHz |
+
+Those sum to 393 ms against an actual 392 -- the difference is the double-buffering
+step and rounding, since each figure is a difference of two independently measured
+rows rather than an isolated A/B.
+
+**The remaining gap is 240.3 ms, and it is USB, not JTAG.** Wire time for this payload
+is 81.9 ms, so the transport still costs 3.9x what the bits do. Per-transaction cost is
+~145 us against ~47 us of wire for a 64-byte packet.
+
+**The next lever is not the one this work assumed.** Dispatching SETUP from the USB
+interrupt was built and measured (`c8b9c1f`, unshipped) and is worth **7.8 ms -- 3.2% of
+the remaining gap**. That bounds the whole software-latency theory: even a perfect
+version of it leaves ~230 ms unexplained. What is left is the 64-byte control endpoint
+itself, and the only change with the right order of magnitude is a **dedicated bulk
+endpoint** -- 19 packets per frame against control's measured 5.8, so ~3.3x on the
+transport term. See "But a DEDICATED bulk endpoint is a different proposition".
+
+---
+
+The rest of this document is the working record: what was measured, what was tried,
+and what turned out to be wrong. It starts where the work started.
+
 Two proposals — transmit-only DMA, and raising SCK to 24 MHz — were investigated
 and **neither was implemented**, because measurement showed both would be
 no-ops or unsafe. This records why, since both looked well-founded.
@@ -149,6 +188,8 @@ One table, both chunk sizes, on the 122880-byte payload throughout.
 | `e4bc0f0` | LED patterns out, paying for DMA -- speed unchanged, budget restored | -- | 348.8 ms (23.5%) | 327.9 ms (25.0%) |
 | **`7060149`** | **LED + button on a 5 ms tick, not every pass** | -- | **330.2 ms (24.8%)** | **318.1 ms (25.7%)** |
 | `6520707` | tick relaxed to 20 ms -- correct rate, not a speed change | -- | 341.2 ms (24.0%) | 322.2 ms (25.4%) |
+| | | | | |
+| `c8b9c1f` | *dispatch SETUP from the USB ISR* -- **NOT SHIPPED**, stalls and is 246 B over budget | -- | 328.3 ms (25.0%) | 314.4 ms (26.0%) |
 | | | | | |
 | **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | not measured |
 | **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms (100%) | 81.9 ms (100%) | 81.9 ms (100%) |
