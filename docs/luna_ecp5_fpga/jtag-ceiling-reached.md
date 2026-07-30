@@ -236,8 +236,32 @@ subsystem that is gated off is on the table, and its contents need not survive.
 | stack reservation | 336 | 1024 reserved, **344 measured** high-water; keeping 2x margin at 688 still frees 336 |
 | **total** | **1532** | |
 
-**2 x 1024 needs +1024, and 1532 is available.** 2 x 1536 needs +2048 and does not
-fit, so 1024 is the last doubling.
+**Attempted, and it does not fit.** This was tried and reverted -- the arithmetic
+above is wrong in a way worth recording, because it is an easy mistake to repeat.
+
+Setting `JTAG_BUFFER_SIZE` to 1024 puts RAM at **95.12%**, and the budget check in
+`check.py` rejected it. The error: the reclaimed bytes were counted correctly, but
+doubling the buffer costs **both** of them -- `jtag_in` and `jtag_out` -- so the price
+is 1024 bytes, not the 512 the "one more doubling" framing suggests. And the union
+cannot absorb it, since the console ring is 256 bytes against a JTAG pair that would
+be 2048.
+
+Working backwards from the 85% ceiling: non-union `.bss` is 1144 bytes and the stack
+is 704, so the union may be at most about 1634 bytes -- **a JTAG pair of roughly
+2 x 817.** 512 stands; 1024 does not.
+
+To actually reach 1024-byte chunks, one of these would have to happen first:
+
+- **Drop `jtag_in_buffer` during writes.** It is the larger half of the pair and
+  configure never reads TDO -- `ecp5.py` passes `ignore_response=True`. But
+  `spi_send()` dereferences its receive pointer unconditionally, so this needs a
+  NULL-receive path in the SPI driver first.
+- **Find another 400+ bytes.** `_cdcd_itf` at 296 is the only remaining candidate of
+  size, and it is TinyUSB's internal state with the CDC port possibly still open
+  during JTAG -- the riskiest claim available and still not enough alone.
+
+So the request-count lever is exhausted at 512 bytes on this part, and the ~51 ms it
+would have bought is not available without one of the above.
 
 That is worth roughly **51 ms** by the request-count arithmetic -- 120 chunks instead
 of 240, at 213.9 us of fixed cost per request -- which is the same as the collapse, for
