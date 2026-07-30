@@ -137,8 +137,27 @@ noted, all on the 122880-byte payload.
 | `HEAD` | 512-byte buffers + `GET_INFO` | 555.4 ms | +6.7 | 1.29x | 14.7% |
 | `HEAD` **at 512 B** | the same firmware using its own buffer | **488.9 ms** | +66.5 | **1.46x** | **16.8%** |
 | | | | | | |
-| **no USB payload** | `0xb9`, pattern generated in firmware, 512 B | **137 ms** | | | **60%** |
+| **no USB payload, 256 B** | `0xb9`, pattern generated in firmware | **275 ms** | | | 30% |
+| **no USB payload, 512 B** | as above, at HEAD's own chunk | **137 ms** | | | **60%** |
 | **theoretical wire** | 12 MHz SCK, 1 bit per clock | **81.9 ms** | | | 100% |
+
+**Compare like with like.** Every commit row is 256 B, so the row to compare them
+against is the **256 B** no-USB figure of 275 ms, not the 512 B one:
+
+| at 256 B | time | what it means |
+|---|---|---|
+| stock real path | 713.9 ms | |
+| HEAD real path | 555.4 ms | 1.29x of stock |
+| **no USB payload** | **275 ms** | the firmware floor at this chunk |
+| theoretical wire | 81.9 ms | |
+
+So at 256 bytes HEAD spends **280 ms of its 555 in USB** and 275 ms clocking. Almost
+exactly half and half. At 512 bytes the split moves to 352 ms USB against 137 ms
+clocking -- 72/28 -- because doubling the chunk halves the firmware-side cost while
+barely touching the USB cost.
+
+That is the same asymmetry stated two ways, and it is why the chunk change helped
+less than the arithmetic predicted: it was fixing the smaller half.
 
 The last two rows are the ceiling, and they are what the progression was missing:
 without them 1.46x has no denominator.
