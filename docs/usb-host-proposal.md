@@ -547,9 +547,8 @@ Upstream:
 - `greatscottgadgets/cynthion` #230 (GSG pointing at Tiliqua), #174
 - Zephyr UHC API — `include/zephyr/drivers/usb/uhc.h`, `drivers/usb/uhc/`
 
-Note on `import luna`: it resolves to
-`/home/dan/opt/cpython-315t/lib/python3.15t/site-packages/luna`, not
-`repos/luna`. The checkout was read for this analysis; the installed copy is what
+Note on `import luna`: it resolves to the interpreter's own
+`site-packages/luna`, not `repos/luna`. The checkout was read for this analysis; the installed copy is what
 the measured builds ran against. Both are device-only.
 
 **No hardware was touched in producing this proposal. All figures are from

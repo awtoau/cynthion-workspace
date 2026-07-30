@@ -197,7 +197,7 @@ Building needs the OSS CAD Suite on PATH and the real interpreter, since that
 environment sets `PYTHONHOME` and hijacks a bare `python3.15t`:
 
     PATH=$HOME/opt/oss-cad-suite/bin:$HOME/opt/oss-cad-suite/py3bin:$PATH \
-      /home/dan/opt/cpython-315t/bin/python3.15t ecp5-test/loader/bitstream_sink.py --build
+      $HOME/opt/cpython-315t/bin/python3.15t ecp5-test/loader/bitstream_sink.py --build
 
 Logs land in `tmp/logs/fast_loader-*.log`.
 
