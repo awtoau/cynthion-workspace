@@ -127,16 +127,56 @@ host silently falls back to 256, so a "512" row would read as no change.
 
 One table, both chunk sizes, on the 122880-byte payload throughout.
 
-| commit / limit | what | 256 B | 512 B | of theoretical |
+| commit / limit | what | 256 B | 512 B | 1024 B |
 |---|---|---|---|---|
-| **`v1.1.1`** | **stock release** | **713.9 ms** | n/a | 11.5% |
-| `4bf7691` | enable LTO | 639.1 ms | n/a | 12.8% |
-| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** | n/a | 14.4% |
-| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms | n/a | 14.6% |
-| **`HEAD`** | **512-byte buffers + `GET_INFO`** | **555.4 ms** | **488.9 ms** | 14.7% / **16.8%** |
+| **`v1.1.1`** | **stock release** | **713.9 ms** (11.5%) | n/a | n/a |
+| `4bf7691` | enable LTO | 639.1 ms (12.8%) | n/a | n/a |
+| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** (14.4%) | n/a | n/a |
+| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms (14.6%) | n/a | n/a |
+| `bb82d39` | 512-byte buffers + `GET_INFO` | 555.4 ms (14.7%) | 488.9 ms (16.8%) | n/a |
+| **`19242e8`** | **two reported limits + 1024-byte writes** | 564.0 ms (14.5%) | 489.5 ms (16.7%) | **457.6 ms (17.9%)** |
 | | | | | |
-| **no USB payload** | `0xb9`, pattern generated in firmware | **275 ms** | **137 ms** | 30% / **60%** |
-| **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms | 81.9 ms | 100% |
+| **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | see below |
+| **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms (100%) | 81.9 ms (100%) | 81.9 ms (100%) |
+
+**Reading the table.** Every time is for the **same 122880-byte payload** -- the columns
+are the JTAG *chunk size* the transport used to move it, not different amounts of work.
+So a row compares one firmware against itself at different chunk sizes, and a column
+compares firmwares at the same chunk size.
+
+The percentage in each cell is **that cell against the theoretical wire time for the
+same payload**, 81.9 ms. So `457.6 ms (17.9%)` means: at 1024-byte chunks this firmware
+takes 457.6 ms to move 122880 bytes, which is 17.9% of the 81.9 ms the wire alone would
+need. Higher is better, 100% is unreachable.
+
+**Cumulative against stock**, each on the best chunk size it supports:
+**713.9 -> 457.6 ms, 1.56x.**
+
+**The no-USB row at 1024 B is not measured, and the attempt broke the board twice.**
+`0xb9` encoded its chunk size in a single `wIndex` byte with "0 means full buffer",
+which was silently wrong once the buffer exceeded 256: asking for 512 truncated to 0,
+read as "full buffer", so a 512 x 240 request clocked **245760 bytes in one
+uninterruptible loop**. That overran the host's control-transfer timeout and took the
+device off the bus entirely -- a physical replug was needed.
+
+Re-encoding it in 64-byte units fixed the truncation, and a 65536-byte work bound was
+added. **The bound was off by one case**: 1024 x 64 is exactly 65536, so `> 65536` is
+false, the request passes, and the clocking still overruns. It wedged a second time,
+though that one recovered without a replug.
+
+So the correct bound is on *time*, not bytes, and it has to account for the whole
+control transfer rather than just the clocking. Until that is fixed the 1024-byte
+no-USB figure is unavailable -- which leaves the 1024 column without a denominator, the
+same gap that the 256-byte column had before it was filled.
+
+**Real configure**, in-process and therefore comparable, same bitstream:
+**778.0 ms at 512 B, 741.0 ms at 1024 B.** The shift benchmark and the real configure
+agree on direction and roughly on magnitude -- 32.0 ms against 37.0 ms -- which is the
+first time in this work the two instruments have been cross-checked.
+
+Every `n/a` is an impossibility rather than a gap: those firmwares declare a 256-byte
+buffer and stall anything larger, so the request is refused rather than merely
+unnegotiated.
 
 Cumulative against stock, at 256 B: 1.00x, 1.12x, 1.26x, 1.27x, **1.29x**. Stock to
 HEAD using HEAD's own 512-byte chunk: **1.46x**.
