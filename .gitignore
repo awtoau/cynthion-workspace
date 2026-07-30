@@ -47,3 +47,7 @@ ecp5-test/power_monitor/build/
 ecp5-test/adv_speed/build*/
 ecp5-test/adv_uart/build/
 ecp5-test/sideband/build/
+
+# Agent worktrees: transient checkouts, created and removed by the tooling.
+# Their branches are merged into main; ten rescue/* tags anchor the commits.
+.claude/worktrees/
