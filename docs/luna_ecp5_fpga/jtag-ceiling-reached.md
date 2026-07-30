@@ -238,6 +238,59 @@ project added stay in the build after an older checkout -- they are untracked at
 those still present, stock fails on `-Werror=array-bounds` and then at 107% ROM /
 103% RAM. The script now sets all four aside per commit.
 
+## The synthetic benchmark (0xb9), and the floor that was not a floor
+
+Merged from a separate document, because two files about JTAG timing is how these
+docs came to hold forty non-comparable figures in the first place.
+
+Vendor request `0xb9` (`handle_jtag_benchmark`) exists to measure clocking with **no
+bulk USB traffic at all**: it generates its own pattern in firmware
+(`jtag_out_buffer[i] = i * 7 + 1`), clocks it, verifies TDO, and returns elapsed
+milliseconds. It also accepts a SERCOM divider, so SCK can be swept with nothing in
+the way to confound the result.
+
+### What it originally concluded, and why that was wrong
+
+Sweeping the divider with every readback bit-exact gave:
+
+    time per byte = 8/SCK + 1.11 us
+
+The second term was constant across an 8x SCK range, which was read as: the wire
+needs 0.667 us/byte at 12 MHz, so the polled loop was spending **1.11 us/byte of CPU
+on top**, and the path was CPU-bound rather than wire-bound.
+
+**That was an artifact**, and the same one that produced the 3.93 us/byte figure
+elsewhere: dividing a whole call by its payload charges the fixed per-call cost to
+per-byte clocking. Measuring the *marginal* cost instead -- differencing 64-bit
+against 2048-bit scans so the fixed cost cancels -- gives 0.663-0.715 us/byte against
+a 0.667 us/byte wire floor. **2-3% overhead, not 166%.**
+
+So `spi_send()`'s pipelining did take a real win, but the "1.11 us/byte of CPU" it
+was credited with removing never existed as a per-byte cost. It was per-chunk cost,
+mis-attributed.
+
+### Two false results its own controls caught
+
+Worth keeping, because both looked clean:
+
+- The DMA and baseline firmwares measured **identically** on the first isolation
+  attempt -- 329.7 against 329.1 us. A positive control asserting that `SCAN` is
+  accepted *and* that its cost scales with bit count is what surfaced it: a stalled
+  or no-op request looks exactly like a fast one on a stopwatch.
+- The first harness used **wrong request numbers** -- `0xb5` is `GOTO_STATE`, not
+  `SCAN`. Checking against the firmware enum rather than trusting plausible timings
+  is what caught that.
+
+### Using it correctly
+
+Two traps, both hit while collecting the numbers in the table above:
+
+- **`blocks` in the reply is in 256-byte units**, not bytes -- `blocks = chunk *
+  repeats / 256` at `jtag.c:337`. Reading it as bytes doubles the apparent payload.
+- **The mismatch counter is only meaningful in BYPASS**, where TDO is TDI delayed one
+  bit. Called from a context that leaves the TAP elsewhere, it reports a mismatch on
+  every byte -- harness misuse, not corrupted data.
+
 ## Repository state worth knowing
 
 The `0xb8` synthetic benchmark and `debris/code/spi-dma-cynthion-d11.c` are
