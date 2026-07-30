@@ -443,6 +443,49 @@ Two traps, both hit while collecting the numbers in the table above:
   bit. Called from a context that leaves the TAP elsewhere, it reports a mismatch on
   every byte -- harness misuse, not corrupted data.
 
+## Things tried that did not work
+
+Recorded so they are not retried, and because the failures were more informative than
+some of the successes.
+
+| attempt | outcome | why |
+|---|---|---|
+| `JTAG_BUFFER_SIZE` 512 -> 1024 | **rejected at 95.12% RAM** | doubling costs BOTH halves of the pair, 1024 bytes not 512 |
+| SCK 12 -> 24 MHz | **rejected, unsafe** | divider steps 8/12/24 with nothing between; SAMD11 `tSCK` min 84 ns = 11.9 MHz rated, so 12 is already past |
+| SERCOM DMA | **implemented, marginally slower** | 1711-1751 ms against 1698-1715 polled; no CPU cost left to remove |
+| TX-only (drop TDO entirely) | correct but not worth it | ~2 ms of 950, for a silent-failure surface |
+| bulk streaming | **built, worked, no faster** | 1703 vs 1683 ms; its stated cause was later disproven, so still unexplained |
+| `-fstack-usage` for stack depth | **wrong tool** | LTO inlines across units, so per-function frames stop matching the final binary |
+| `git bisect` across apollo history | **failed on all 5 points** | checking out old apollo replaces `apollo_fpga/`, removing `boot_to_dfu()` -- one of our own additions |
+| paint-and-measure, first version | **self-contradictory** | LTO resolved `&_sstack` differently per inlined copy; reported full-region use AND no overflow |
+| word-wise stack scan | **latent bug** | one coincidental `0xDEADBEEF` truncates the scan and understates usage |
+
+Four of these are worth more than a note.
+
+**The 1024-byte buffer is the one to not retry.** The reclaimed RAM was counted
+correctly -- 320 from the stack, 256 from the union, 644 already free -- but a doubling
+buys `jtag_in` and `jtag_out` together, so it costs 1024. Working back from the 85%
+ceiling: non-union `.bss` is 1144 and the stack 704, so the union caps near 1634 bytes,
+a JTAG pair of about **2 x 817**. The only route left is dropping the receive buffer for
+writes, which `spi_send()` now permits.
+
+**The bisect failure is a trap worth naming.** `boot_to_dfu()` is this project's
+addition and is absent from stock `v1.1.1`, so checking out an old commit removes the
+method needed to flash it. Every point failed with `AttributeError` before touching the
+board, and the run left it in the bootloader. Fixed by checking out `firmware/` only,
+which also keeps the host library constant and removes it as a variable.
+
+**Two measurement errors, same root cause.** The 3.93 us/byte and 1.11 us/byte figures
+that drove decisions for a long time are the same artifact measured twice: dividing a
+whole `SCAN` call by its payload charges a fixed ~215 us round trip to per-byte
+clocking, inflating it about 5x. Marginal-cost differencing gives 0.663-0.715 us/byte
+against a 0.667 wire floor.
+
+**And a comparison error of mine, for completeness.** I timed new firmware at 890 ms
+against a recorded 1680 ms and reported 1.89x. Different bitstreams. Same payload it was
+846 -> 774 ms, or 1.09x. That is what the fixed-payload benchmark exists to prevent, and
+it happened before the benchmark existed.
+
 ## Repository state worth knowing
 
 The `0xb8` synthetic benchmark and `debris/code/spi-dma-cynthion-d11.c` are
