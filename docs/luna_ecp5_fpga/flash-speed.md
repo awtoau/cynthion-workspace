@@ -3,7 +3,7 @@
 The r1.4 configuration flash is a **Winbond W25Q32**, JEDEC ID `EF 40 16`
 (manufacturer `EF`, type `40`, capacity `16` = 2^22 = **4 MiB**). Read by the
 FPGA over SPI and confirmed independently by `apollo flash-info`, which reports
-the same ID plus unique ID `355027cba3ac60de`.
+the same ID plus unique ID `<flash UID redacted>`.
 
 If the FPGA is loaded over USB at startup rather than from flash, the whole
 4 MiB is free — see [Using it as RISC-V storage](#using-it-as-risc-v-storage).
