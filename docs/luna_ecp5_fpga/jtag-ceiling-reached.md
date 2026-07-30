@@ -27,8 +27,9 @@ is 81.9 ms, so the transport still costs 3.9x what the bits do. Per-transaction 
 ~145 us against ~47 us of wire for a 64-byte packet.
 
 **The next lever is not the one this work assumed.** Dispatching SETUP from the USB
-interrupt was built and measured (`c8b9c1f`, unshipped) and is worth **7.8 ms -- 3.2% of
-the remaining gap**. That bounds the whole software-latency theory: even a perfect
+interrupt was built and measured (`c8b9c1f`, unshipped -- **still open, see #100**; it
+works and is faster, but stalls on a chunk-size change and is 246 bytes over budget) and
+is worth **7.8 ms -- 3.2% of the remaining gap**. That bounds the whole software-latency theory: even a perfect
 version of it leaves ~230 ms unexplained. What is left is the 64-byte control endpoint
 itself, and the only change with the right order of magnitude is a **dedicated bulk
 endpoint** -- 19 packets per frame against control's measured 5.8, so ~3.3x on the
