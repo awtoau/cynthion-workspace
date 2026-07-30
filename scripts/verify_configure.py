@@ -1,17 +1,22 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.15t
 """
-Verify that an `apollo configure` actually configured the ECP5, rather than merely
-running fast.
+Configure the ECP5 over JTAG and prove it actually worked.
 
-Configures the FPGA, then reads the ECP5 status register and asserts the DONE bit is
-set and no error bits are flagged. This is the correctness gate for the performance
-work: a change that speeds up configuration but corrupts TDO will still "succeed"
-from the host's point of view, so DONE must be checked explicitly.
+The synthetic benchmark measures the JTAG path in isolation, but the change it
+motivates -- pipelining spi_send() so the SERCOM transmitter runs a byte ahead
+of the receiver -- sits on the path every real configuration uses. A faster
+transfer that quietly corrupts a bitstream is worse than a slow one, and a naive
+"did apollo configure exit cleanly" check does not catch it: the tool can report
+success while the FPGA has silently failed to come up.
 
-Logs to ./tmp/logs/verify_configure.log as well as the terminal.
+So this gates on the ECP5's own status register: DONE set, and none of the
+error bits. It also times the end-to-end configure, which is the number to
+compare against the synthetic one -- they measure different things, and the gap
+between them is the USB cost.
 
-Usage:
-    python3.15t scripts/verify_configure.py --bitstream tmp/bitstreams/bench-298k.bit
+Configuration is volatile. This never writes flash.
+
+Logs to ./tmp/logs/verify_configure.log.
 """
 
 import argparse
@@ -20,121 +25,123 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-LOG_DIR = ROOT / "tmp" / "logs"
-LOG_PATH = LOG_DIR / "verify_configure.log"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "repos" / "apollo"))
 
-sys.path.insert(0, str(ROOT / "repos" / "apollo"))
+from apollo_fpga import ApolloDebugger  # noqa: E402
+from apollo_fpga.ecp5 import ECP5_JTAGProgrammer, ECP5_JTAGDebugSPIConnection  # noqa: E402
 
 
-def setup_logging() -> logging.Logger:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+def setup_logging():
+    log_dir = REPO_ROOT / "tmp" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("verify_configure")
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
-
-    fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s",
-                            datefmt="%Y-%m-%dT%H:%M:%S%z")
-
-    fh = logging.FileHandler(LOG_PATH, mode="a", encoding="utf-8")
-    fh.setFormatter(fmt)
+    fh = logging.FileHandler(log_dir / "verify_configure.log", mode="a")
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s"))
     logger.addHandler(fh)
-
     sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
+    sh.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(sh)
-
     return logger
 
 
+# Bits that mean the configuration did not take. Checked explicitly rather than
+# trusting a clean exit from the programming call.
+ERROR_FLAGS = [
+    ("FAIL", 1 << 13),
+    ("EXECUTION_FAIL", 1 << 26),
+    ("ID_ERROR", 1 << 27),
+    ("INVALID_COMMAND", 1 << 28),
+]
+DONE_FLAG = 1 << 8
+BUSY_FLAG = 1 << 12
+
+
+def check_status(status: int, log) -> bool:
+    log.info(f"ECP5 status register: 0x{status:08x}")
+
+    ok = True
+    if not (status & DONE_FLAG):
+        log.error("  DONE is NOT set -- the FPGA did not finish configuring")
+        ok = False
+    else:
+        log.info("  DONE set")
+
+    if status & BUSY_FLAG:
+        log.error("  BUSY still set -- configuration logic has not settled")
+        ok = False
+
+    for name, mask in ERROR_FLAGS:
+        if status & mask:
+            log.error(f"  {name} set")
+            ok = False
+
+    if ok:
+        log.info("  no error bits set")
+    return ok
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--bitstream", "-b", type=Path,
-                        default=ROOT / "tmp" / "bitstreams" / "bench-298k.bit")
-    parser.add_argument("--repeat", "-n", type=int, default=1,
-                        help="verify this many consecutive configures (default: 1)")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "bitstream",
+        nargs="?",
+        default=str(REPO_ROOT / "ecp5-test" / "led_patterns.bit"),
+        help="bitstream to configure with (volatile; flash is never written)",
+    )
+    parser.add_argument("--runs", type=int, default=3,
+                        help="how many times to configure, to check repeatability")
     args = parser.parse_args()
 
-    logger = setup_logging()
+    log = setup_logging()
+    log.info("=" * 66)
+    log.info(f"configure verification, {time.strftime('%Y-%m-%dT%H:%M:%S%z')}")
+    log.info("=" * 66)
 
-    if not args.bitstream.exists():
-        logger.error(f"bitstream not found: {args.bitstream}")
-        return 1
+    data = Path(args.bitstream).read_bytes()
+    log.info(f"bitstream: {args.bitstream} ({len(data)} bytes)")
 
-    bitstream = args.bitstream.read_bytes()
+    dev = ApolloDebugger()
+    log.info(f"firmware : {dev.get_firmware_version()}")
 
-    from apollo_fpga import ApolloDebugger
-    from apollo_fpga.ecp5 import ECP5_JTAGProgrammer
+    all_ok = True
+    timings = []
 
-    logger.info("=" * 72)
-    logger.info("verify_configure")
-    logger.info(f"  bitstream: {args.bitstream} ({len(bitstream)} bytes)")
+    for run in range(1, args.runs + 1):
+        log.info("")
+        log.info(f"--- run {run} of {args.runs} ---")
 
-    failures = 0
+        dev.force_fpga_offline()
 
-    for attempt in range(args.repeat):
-        debugger = ApolloDebugger()
-        try:
-            # A configured FPGA drives the shared lines and will not re-enter ISC, so
-            # every configure must start from a reset FPGA. Pulsing PROGRAMN via
-            # TRIGGER_RECONFIGURATION is what actually clears it; force_fpga_offline
-            # is refused (pipe error) once the FPGA is already offline, so it cannot
-            # be relied on here.
-            #
-            # If a previous run left a JTAG session open, Apollo stays latched in
-            # MODE_JTAG_PROGRAMMING and refuses control-plane requests. EMERGENCY_RESET
-            # (0xec) is permitted in that state precisely to break the deadlock.
-            for request, name in ((0xec, "emergency reset"),
-                                  (0xbe, "close JTAG session"),
-                                  (0xc0, "trigger reconfiguration")):
-                try:
-                    debugger.out_request(request)
-                except Exception as exc:
-                    logger.debug(f"  {name}: {exc!r}")
+        start = time.perf_counter()
+        with dev.jtag as jtag:
+            programmer = dev.create_jtag_programmer(jtag)
+            programmer.configure(data)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        timings.append(elapsed_ms)
 
-            with debugger.jtag as jtag:
-                programmer = ECP5_JTAGProgrammer(jtag)
+        # Read status through a fresh JTAG session, so the check does not
+        # depend on state left over from the programming session.
+        with dev.jtag as jtag:
+            programmer = dev.create_jtag_programmer(jtag)
+            status = programmer._read_status()
 
-                start = time.perf_counter()
-                programmer.configure(bitstream)
-                elapsed = time.perf_counter() - start
+        log.info(f"configure took {elapsed_ms:.1f} ms")
+        if not check_status(status, log):
+            all_ok = False
 
-                # Read the status register back and decode the bits that matter.
-                status = programmer._read_status()
-                done = bool(status & (1 << 8))
-                isc_enabled = bool(status & (1 << 9))
-                fail = bool(status & (1 << 13))
+    log.info("")
+    log.info("=" * 66)
+    log.info(f"end-to-end configure: best {min(timings):.1f} ms, "
+             f"worst {max(timings):.1f} ms over {args.runs} runs")
+    log.info(f"bitstream {len(data)} bytes -> "
+             f"{min(timings) * 1000 / len(data):.3f} us/byte end to end")
+    log.info(f"verdict: {'PASS' if all_ok else 'FAIL'}")
+    log.info("=" * 66)
 
-                # Bits 23:23 upward carry the BSE error code; non-zero means the
-                # bitstream was rejected (CRC, bad command, wrong device, ...).
-                bse_error = (status >> 23) & 0x7
-
-                ok = done and not fail and bse_error == 0
-                if not ok:
-                    failures += 1
-
-                logger.info(
-                    f"  run {attempt + 1}/{args.repeat}: {elapsed * 1e3:8.1f} ms  "
-                    f"status=0x{status:08x} DONE={int(done)} FAIL={int(fail)} "
-                    f"ISC={int(isc_enabled)} BSE_ERR={bse_error}  "
-                    f"{'PASS' if ok else 'FAIL'}")
-        except Exception as exc:
-            failures += 1
-            logger.error(f"  run {attempt + 1}/{args.repeat}: EXCEPTION: {exc!r}")
-        finally:
-            try:
-                debugger.close()
-            except Exception:
-                pass
-
-    if failures:
-        logger.error(f"  RESULT: {failures}/{args.repeat} runs FAILED verification")
-    else:
-        logger.info(f"  RESULT: all {args.repeat} run(s) verified -- DONE set, no errors")
-    logger.info("=" * 72)
-
-    return 1 if failures else 0
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":
