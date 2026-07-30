@@ -125,60 +125,44 @@ path, so this is five direct measurements rather than a search. All at 256 B/chu
 because 512 needs `GET_INFO`, which only HEAD implements -- on older firmware the
 host silently falls back to 256, so a "512" row would read as no change.
 
-One table, so the progression and the ceiling read together. All 256 B/chunk unless
-noted, all on the 122880-byte payload.
+One table, both chunk sizes, on the 122880-byte payload throughout.
 
-| commit / limit | what | time | delta | cumulative | of theoretical |
-|---|---|---|---|---|---|
-| **`v1.1.1`** | **stock release** | **713.9 ms** | -- | 1.00x | 11.5% |
-| `4bf7691` | enable LTO | 639.1 ms | +74.8 | 1.12x | 12.8% |
-| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** | +72.2 | 1.26x | 14.4% |
-| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms | +4.8 | 1.27x | 14.6% |
-| `HEAD` | 512-byte buffers + `GET_INFO` | 555.4 ms | +6.7 | 1.29x | 14.7% |
-| `HEAD` **at 512 B** | the same firmware using its own buffer | **488.9 ms** | +66.5 | **1.46x** | **16.8%** |
-| | | | | | |
-| **no USB payload, 256 B** | `0xb9`, pattern generated in firmware | **275 ms** | | | 30% |
-| **no USB payload, 512 B** | as above, at HEAD's own chunk | **137 ms** | | | **60%** |
-| **theoretical wire** | 12 MHz SCK, 1 bit per clock | **81.9 ms** | | | 100% |
+| commit / limit | what | 256 B | 512 B | of theoretical |
+|---|---|---|---|---|
+| **`v1.1.1`** | **stock release** | **713.9 ms** | n/a | 11.5% |
+| `4bf7691` | enable LTO | 639.1 ms | n/a | 12.8% |
+| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** | n/a | 14.4% |
+| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms | n/a | 14.6% |
+| **`HEAD`** | **512-byte buffers + `GET_INFO`** | **555.4 ms** | **488.9 ms** | 14.7% / **16.8%** |
+| | | | | |
+| **no USB payload** | `0xb9`, pattern generated in firmware | **275 ms** | **137 ms** | 30% / **60%** |
+| **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms | 81.9 ms | 100% |
 
-**Compare like with like.** Every commit row is 256 B, so the row to compare them
-against is the **256 B** no-USB figure of 275 ms, not the 512 B one:
+Cumulative against stock, at 256 B: 1.00x, 1.12x, 1.26x, 1.27x, **1.29x**. Stock to
+HEAD using HEAD's own 512-byte chunk: **1.46x**.
 
-| at 256 B | time | what it means |
-|---|---|---|
-| stock real path | 713.9 ms | |
-| HEAD real path | 555.4 ms | 1.29x of stock |
-| **no USB payload** | **275 ms** | the firmware floor at this chunk |
-| theoretical wire | 81.9 ms | |
+**Every `n/a` is an impossibility, not a gap.** Only HEAD has 512-byte buffers.
+Everything before it declares `jtag_out_buffer[256]` and stalls anything larger --
+`if (request->wLength > sizeof(jtag_out_buffer)) return false;` -- so a 512-byte
+request is refused by the firmware itself. The host would also fall back to 256
+regardless, since `GET_INFO` arrived with HEAD; the benchmark detects that and
+declines to label a 256-byte run as 512, which is what stops an unimplemented
+`GET_INFO` from flattering a result.
 
-So at 256 bytes HEAD spends **280 ms of its 555 in USB** and 275 ms clocking. Almost
-exactly half and half. At 512 bytes the split moves to 352 ms USB against 137 ms
-clocking -- 72/28 -- because doubling the chunk halves the firmware-side cost while
-barely touching the USB cost.
+Theoretical is chunk-independent by definition: 122880 x 8 / 12 MHz = 81.9 ms,
+1500 KB/s. Chunking is a transport concern and the wire does not see it.
 
-That is the same asymmetry stated two ways, and it is why the chunk change helped
-less than the arithmetic predicted: it was fixing the smaller half.
+**Read the columns, not the diagonal.** At 256 B, HEAD spends 280 ms of its 555 in
+USB against 275 ms clocking -- half and half. At 512 B it is 352 of 489 in USB against
+137 clocking -- 72/28. The ratio moves because doubling the chunk **halves** the
+firmware-side cost (275 -> 137) while barely touching USB (280 -> 352, and that is
+worse in absolute terms).
 
-The last two rows are the ceiling, and they are what the progression was missing:
-without them 1.46x has no denominator.
-
-**No USB payload is measured, not arithmetic.** Vendor request `0xb9`
-(`handle_jtag_benchmark`) generates its pattern **in firmware** --
-`jtag_out_buffer[i] = i * 7 + 1` -- specifically so no bulk data crosses USB, and
-returns elapsed milliseconds plus a TDO mismatch count. So it is the honest floor for
-this SERCOM and this firmware: whatever the transport does, the path cannot beat it.
-Theoretical is arithmetic: 122880 x 8 / 12 MHz = 81.9 ms, 1500 KB/s.
-
-**Stock has no 512-byte figure because it cannot have one.** Its buffers are
-`jtag_out_buffer[256]` and `handle_jtag_request_set_out_buffer` stalls anything
-larger -- `if (request->wLength > sizeof(jtag_out_buffer)) return false;`. A 512-byte
-request is refused by the firmware, not merely unnegotiated. The host would fall back
-to 256 regardless since stock lacks `GET_INFO`, and the benchmark detects that and
-declines to label a 256-byte run as 512 -- the check that stops an unimplemented
-`GET_INFO` flattering a result.
-
-At 512 bytes: **352 ms of the 489 -- 72% -- is USB transport.** Only 137 ms is the
-microcontroller clocking bits.
+That last point is the one the single-column version hid: **going to 512 bytes made
+the USB portion bigger, not smaller.** It won overall because the firmware-side saving
+was larger than the USB-side loss. Which is also why the chunk change bought less than
+arithmetic predicted -- it was fixing the smaller half, and slightly worsening the
+larger one.
 
 ## Where the remaining time goes
 
