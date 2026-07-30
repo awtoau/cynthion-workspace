@@ -394,11 +394,34 @@ Against that, the current 457.6 ms is **73% of achievable** rather than 18% of
 theoretical. The 5.6x gap to the wire is real but mostly not addressable: it is a
 64-byte control endpoint on a full-speed bus.
 
-**The one change that would move the payload term is a bulk endpoint**, which allows
-larger packets and far less per-packet overhead. That is what the earlier bulk-streaming
-attempt was aiming at -- and its failure to help is now more surprising rather than less,
-since the theory says it should. That result remains unexplained and is the more
-interesting thread than either remaining lever.
+### Bulk would not move the payload term either, and this explains the old result
+
+I first wrote that a bulk endpoint would fix this, "which allows larger packets and far
+less per-packet overhead". **That is wrong at full speed, and the descriptors say so.**
+
+Apollo already exposes bulk endpoints -- EP2 OUT and EP3 IN, the CDC console's -- and
+both are **`wMaxPacketSize 64`, identical to control.** That is not a design choice: the
+USB 2.0 spec caps a full-speed bulk endpoint at 64 bytes. The 512-byte bulk packets worth
+having exist only at high speed, which is the FPGA's PHY, not Apollo's.
+
+So bulk offers **no packet-size advantage here**. What it does offer is the removal of
+per-transfer framing: a control transfer costs SETUP, DATA and STATUS stages, while bulk
+is data packets back to back.
+
+That bounds it precisely. Per 1024-byte chunk the cost is `2 x 144.7 us fixed +
+2782 us payload`. If bulk removed the fixed cost **entirely** it would save 289 us per
+chunk, or **35 ms of 457** -- about 8%, and only if the per-byte cost were unchanged.
+
+**Which retires the mystery rather than deepening it.** The earlier bulk-streaming attempt
+measured 1703 ms against 1683 ms and was recorded as an unexplained failure -- built,
+working, and no faster. It is now explained: at full speed, bulk and control move bytes at
+the same rate, and the only saving available was the per-transfer framing, which is a
+small fraction of the total. The attempt did what it was designed to do; the design could
+not have helped much.
+
+The 2.72 us/byte is therefore not a control-transfer artifact but the **full-speed bus
+itself** on a 64-byte endpoint, and no endpoint type on this device changes it. Only a
+high-speed link would, and Apollo is a full-speed device.
 
 ## The two remaining levers, quantified before building either
 
