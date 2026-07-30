@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+#
+# Self-checking large-utilisation design, to ask whether an LFE5U-12F's
+# fabric beyond the advertised 12,288 LUTs actually computes correctly.
+# See awtoau/pluribus#98.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""
+Fills ~80% of the LFE5U-25F die on a part marked LFE5U-12F, and checks the
+result against a golden value computed on the host.
+
+The question this answers is narrow. LFE5U-12F and LFE5U-25F are the same die
+and the open flow already hands a `--12k` target all 24,288 LUTs. Three
+explanations remain: the die is whole and the extra fabric works; 12F parts are
+salvage that failed test in the extra region; or something is fused off
+separately. Only the second is dangerous, and it is dangerous specifically
+because it would fail *intermittently* -- so this design is built to be
+self-checking and to run indefinitely, not to blink an LED once.
+
+Structure
+---------
+
+`BLOCKS` independent blocks. Each block holds a 32-bit state and advances it
+every cycle by:
+
+  1. a Galois LFSR step with a per-block polynomial, then
+  2. a fixed combinational mix: XOR of three rotations of the state, then
+     AND and OR of two more pairs of rotations, then a per-block constant.
+
+Step 1 alone would be nearly free -- 32 flops and a handful of LUTs -- which is
+exactly why it is not sufficient. Step 2 is the part that costs fabric: every
+output bit depends on seven state bits, which no single LUT4 can do, so each bit
+becomes a small tree. That, times 32 bits times `BLOCKS`, is what pushes the
+design past 12,288 LUTs.
+
+Both steps are pure integer arithmetic on a 32-bit word, so `block_step()` below
+is simultaneously the specification, the Python golden model, and a readable
+description of the hardware. There is no second implementation to drift.
+
+Rounds, and why the states restart
+----------------------------------
+
+A round is `ROUND_CYCLES` advances of every block, after which the XOR of all
+block states is latched as the round's signature -- and every block is reloaded
+with its seed, so the next round recomputes the *same* function.
+
+That reload is the design's central compromise, and it is deliberate. The
+hardware advances 100 blocks per cycle at 60 MHz; the host's golden model
+manages about 86,000 cycles per second. The hardware is roughly 700 times
+faster, so a scheme where round N's value depends on rounds 1..N-1 gives a
+golden model that can verify only a brief prefix and then falls permanently
+behind -- the part would run for an hour unchecked, which is precisely the case
+this test exists to catch.
+
+With the reload, one golden value covers every round forever. The hardware can
+therefore check itself, against a build-time constant, on every round without
+the host present, and it can do so for as long as it is powered. The cost is
+that a fault is not *accumulated* across rounds; it is caught in the round in
+which it occurs, and latched stickily so it survives.
+
+Intermittency is still covered: a bad bit anywhere in a round changes that
+round's signature, because the signature is an XOR over all 32 bits of all
+blocks and the mix diffuses any single-bit error across the word within a few
+cycles. What is lost is only the ability to say *which* cycle went wrong, which
+was never the question.
+
+Why it cannot be optimised away
+-------------------------------
+
+  * Every block's state is XORed into the signature, which is read over JTAG
+    and also drives the LEDs. Nothing is dangling, so yosys cannot prune a
+    block.
+  * Every block has a distinct polynomial *and* a distinct seed *and* a distinct
+    mix constant. Identical blocks would be merged by resource sharing; these
+    cannot be, because no two compute the same function of the same inputs.
+  * The reload is to the seed, not to zero, so the states never collapse to a
+    common value that would let the tools share logic between blocks.
+  * The post-synthesis LUT count is checked by the build script against a
+    floor, so "it used the extra fabric" is a measured number, and a build that
+    quietly shrank below the target fails rather than passing quietly.
+
+What the host sees
+------------------
+
+  REG_ID          APPLET_ID, so a stale bitstream is not mistaken for this one
+  REG_SIGNATURE   XOR of all block states, latched at the end of each round
+  REG_ROUNDS      completed rounds, 32-bit wrapping
+  REG_MISMATCHES  rounds whose signature did not match the golden constant
+  REG_STATUS      bit 0 sticky mismatch, bit 1 at least one round complete,
+                  bits 15:8 the block count, bits 31:16 the sync clock in MHz
+  REG_GOLDEN      the golden constant the gateware was built with
+
+The sticky mismatch bit and the mismatch counter are set by the *gateware*, not
+the host. A failure that happens between two JTAG polls is still recorded, and
+the count says how many rounds were bad rather than merely that one was.
+"""
+
+from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable,
+                      Module, Signal)
+
+from luna.gateware.architecture.car import LunaECP5DomainGenerator
+from luna.gateware.interface.jtag   import JTAGRegisterInterface
+
+
+# The clock this runs at. 60 MHz is the rate the board's PLL already produces
+# for `sync` in every other design here, so it is the rate whose timing closure
+# is a known quantity -- a fabric result confounded by a clock nobody has run
+# before would be a worse experiment, not a better one.
+CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
+SYNC_MHZ = 60
+
+# How many 32-bit blocks. Each costs roughly 190 LUT4s once the mix and the
+# LFSR feedback are packed, so 100 blocks lands near 19-20k of the 24,288 the
+# die offers -- comfortably past the 12,288 an LFE5U-12F advertises, which is
+# the entire point, while leaving routing headroom so a failure to place is not
+# mistaken for a failure of the silicon.
+BLOCKS = 100
+
+# Cycles per round, as a power of two so the boundary is one counter bit.
+#
+# This is a counter width, not a delay: nothing waits on it. The value trades
+# two things off. Larger means more fabric activity per checked result, and a
+# host golden model that takes longer to compute once at build time. Smaller
+# means more checks per second but a larger share of each round spent in the
+# signature tree's pipeline latency.
+#
+# 2**18 = 262,144 cycles is 4.4 ms of hardware time at 60 MHz, and about 3
+# seconds of host time to compute the golden value once. So the hardware
+# performs roughly 228 fully-checked rounds per second, and a minute of running
+# is on the order of 13,000 independent verdicts.
+ROUND_BITS = 18
+ROUND_CYCLES = 1 << ROUND_BITS
+
+APPLET_ID = 0x46414252   # "FABR"
+
+# Register 0 is reserved by JTAGRegisterInterface for size auto-negotiation.
+REG_ID         = 1
+REG_SIGNATURE  = 2
+REG_ROUNDS     = 3
+REG_STATUS     = 4
+REG_GOLDEN     = 5
+REG_MISMATCHES = 6
+
+MASK = 0xFFFFFFFF
+
+
+def rotl(value, amount):
+    """32-bit rotate left."""
+    amount &= 31
+    if amount == 0:
+        return value & MASK
+    return ((value << amount) | (value >> (32 - amount))) & MASK
+
+
+# Maximal-length Galois tap sets for 32-bit LFSRs. Any of these gives period
+# 2**32-1; using several means no two blocks share a recurrence.
+POLYNOMIALS = [
+    0x80000057, 0x80000062, 0x8000006A, 0x80000091, 0x800000B8,
+    0x800000C2, 0x800000D6, 0x800000E1, 0x8000012D, 0x80000108,
+    0x8000015D, 0x80000162, 0x8000018E, 0x800001A6, 0x800001B4,
+    0x800001DC, 0x800001EA, 0x8000021C, 0x8000022C, 0x80000232,
+]
+
+
+def block_params(index):
+    """(polynomial, seed, mix constant) for one block.
+
+    All three differ per block. The polynomials come from the table above so
+    every block has full period; the seeds and constants are derived by an
+    odd-multiplier hash of the index, which makes them distinct and non-zero
+    without another table.
+
+    Distinctness is a correctness requirement, not decoration: two blocks with
+    the same polynomial and the same seed compute the same sequence, and yosys
+    will happily keep one copy and wire it to both. The design would then report
+    a full LUT count in source and a fraction of it in silicon.
+    """
+    poly = POLYNOMIALS[index % len(POLYNOMIALS)]
+    # 0x9E3779B9 is the golden-ratio odd constant; multiplying an index by an
+    # odd number mod 2**32 is a bijection, so no two indices collide, and the
+    # `| 1` guarantees a non-zero seed (a Galois LFSR at zero is stuck there).
+    seed = (((index + 1) * 0x9E3779B9) & MASK) | 1
+    mix = ((index + 1) * 0x85EBCA6B) & MASK
+    return poly, seed, mix
+
+
+def block_step(state, poly, mix):
+    """One cycle of one block. The specification, and the golden model.
+
+    Galois step: shift right, and XOR the polynomial in when the bit shifted
+    out was set. Then the mix, whose only job is to cost LUTs while staying
+    exactly reproducible in 32-bit integer arithmetic.
+    """
+    lsb = state & 1
+    state >>= 1
+    if lsb:
+        state ^= poly
+
+    # Seven state bits reach every output bit. Rotations are free in fabric
+    # (pure wiring); it is the AND/OR/XOR combining of them that occupies logic,
+    # and seven inputs cannot fit one LUT4, so each bit becomes a small tree.
+    mixed = rotl(state, 7) ^ rotl(state, 13) ^ rotl(state, 23)
+    mixed ^= rotl(state, 3) & rotl(state, 17)
+    mixed ^= rotl(state, 11) | rotl(state, 29)
+    return (state ^ mixed ^ mix) & MASK
+
+
+class FabricBlock(Elaboratable):
+    """One 32-bit block: Galois LFSR plus the LUT-hungry mix.
+
+    `reload` returns the state to its seed, which is how a round restarts.
+    """
+
+    def __init__(self, poly, seed, mix):
+        self.poly = poly
+        self.seed = seed
+        self.mix = mix
+        self.state = Signal(32, init=seed)
+        self.reload = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+        state = self.state
+
+        # Galois step, written so it is visibly the same operation as
+        # `block_step` above: shift right, conditionally XOR the polynomial.
+        shifted = Signal(32)
+        m.d.comb += shifted.eq((state >> 1) ^ (Const(self.poly, 32) & state[0].replicate(32)))
+
+        def rot(amount):
+            amount &= 31
+            if amount == 0:
+                return shifted
+            return Cat(shifted[32 - amount:], shifted[:32 - amount])
+
+        mixed = Signal(32)
+        m.d.comb += mixed.eq(
+            (rot(7) ^ rot(13) ^ rot(23))
+            ^ (rot(3) & rot(17))
+            ^ (rot(11) | rot(29))
+        )
+
+        with m.If(self.reload):
+            m.d.sync += state.eq(self.seed)
+        with m.Else():
+            m.d.sync += state.eq(shifted ^ mixed ^ Const(self.mix, 32))
+        return m
+
+
+class FabricTest(Elaboratable):
+    """The whole design: BLOCKS blocks, a signature, and a JTAG window."""
+
+    def __init__(self, blocks=BLOCKS, round_bits=ROUND_BITS, golden=None,
+                 simulate=False):
+        self.blocks = blocks
+        self.round_bits = round_bits
+        # `simulate` omits the PLL and the JTAG primitive, which are ECP5
+        # hard blocks that need a platform. Everything under test -- the
+        # blocks, the signature tree, the round timing and the self-check --
+        # is the same logic either way, so what the simulator verifies is what
+        # the hardware runs. It is not a separate description.
+        self.simulate = simulate
+        # The golden signature for one round, baked in so the gateware can
+        # latch its own mismatch without the host being present. None disables
+        # the self-check, which is only useful for a utilisation-only build.
+        self.golden = golden
+
+        # Exposed so a simulation can observe the result without shifting JTAG.
+        # These are the same signals the registers below read, not a parallel
+        # copy: a testbench that watched a duplicate could pass while the
+        # register the host reads showed something else.
+        self.signature = Signal(32)
+        self.rounds = Signal(32)
+        self.mismatches = Signal(32)
+        self.mismatch = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+
+        registers = None
+        if not self.simulate:
+            m.submodules.clocking = LunaECP5DomainGenerator(
+                clock_frequencies=CLOCK_FREQUENCIES)
+
+            registers = JTAGRegisterInterface(default_read_value=0xDEADBEEF)
+            m.submodules.registers = registers
+            registers.add_read_only_register(REG_ID, read=APPLET_ID)
+
+        #
+        # Round timing.
+        #
+        # The counter runs from 0 to ROUND_CYCLES-1. `last` is the final cycle,
+        # so the state written on that clock edge is the seed again -- meaning
+        # each block performs exactly ROUND_CYCLES-1 advances from its seed
+        # before the reload, and the signature must be sampled from the state
+        # *as it was on that cycle*, before the reload takes effect.
+        #
+        cycle = Signal(self.round_bits)
+        m.d.sync += cycle.eq(cycle + 1)
+
+        last = Signal()
+        m.d.comb += last.eq(cycle == (1 << self.round_bits) - 1)
+
+        #
+        # The blocks.
+        #
+        states = []
+        for index in range(self.blocks):
+            poly, seed, mix = block_params(index)
+            block = FabricBlock(poly, seed, mix)
+            m.submodules[f"block_{index}"] = block
+            m.d.comb += block.reload.eq(last)
+            states.append(block.state)
+
+        #
+        # Signature. A balanced XOR tree over every bit of every block, so no
+        # block is dangling and none can be pruned. Registered in stages
+        # because a 100-input XOR per bit is deep enough to be the critical
+        # path otherwise, and a design that fails timing would then be telling
+        # us about the tree rather than about the fabric under test.
+        #
+        layer = states
+        depth = 0
+        while len(layer) > 1:
+            nxt = []
+            for i in range(0, len(layer), 4):
+                group = layer[i:i + 4]
+                node = Signal(32, name=f"xor_s{depth}_{i // 4}")
+                acc = group[0]
+                for extra in group[1:]:
+                    acc = acc ^ extra
+                m.d.sync += node.eq(acc)
+                nxt.append(node)
+            layer = nxt
+            depth += 1
+        live = layer[0]
+
+        # The tree is `depth` registered stages, so `live` this cycle is the
+        # XOR of the states as they were `depth` cycles ago. To latch the
+        # signature of the intended cycle, the sample pulse is `last` delayed by
+        # the same `depth`. Getting this wrong would produce a stable but wrong
+        # signature -- a mismatch caused by the measurement rather than by the
+        # silicon, which is the single most misleading failure this design
+        # could have.
+        pipe = Signal(depth)
+        m.d.sync += pipe.eq(Cat(last, pipe[:-1]))
+        sample = pipe[-1]
+
+        signature = self.signature
+        rounds = self.rounds
+        mismatches = self.mismatches
+        mismatch = self.mismatch
+        started = Signal()
+
+        with m.If(sample):
+            m.d.sync += [
+                signature.eq(live),
+                rounds.eq(rounds + 1),
+                started.eq(1),
+            ]
+            if self.golden is not None:
+                # Sticky, and never cleared: an intermittent fault that spoils
+                # one round out of a million stays visible for as long as the
+                # part holds configuration. The counter says how many.
+                with m.If(live != Const(self.golden, 32)):
+                    m.d.sync += [
+                        mismatch.eq(1),
+                        mismatches.eq(mismatches + 1),
+                    ]
+
+        #
+        # Host window.
+        #
+        if registers is not None:
+            registers.add_read_only_register(REG_SIGNATURE, read=signature)
+            registers.add_read_only_register(REG_ROUNDS, read=rounds)
+            registers.add_read_only_register(REG_MISMATCHES, read=mismatches)
+            registers.add_read_only_register(
+                REG_STATUS,
+                read=Cat(mismatch, started, Const(0, 6),
+                         Const(self.blocks, 8), Const(SYNC_MHZ, 16)))
+            registers.add_read_only_register(
+                REG_GOLDEN,
+                read=Const(self.golden if self.golden is not None else 0, 32))
+
+        #
+        # LEDs. Not the evidence -- the JTAG registers are -- but a board that
+        # can be looked at is a board whose state can be sanity-checked without
+        # a host, and a mismatch that only exists in a register nobody read is
+        # not much of an alarm.
+        #
+        # Red alone, steady: sticky mismatch latched.
+        # Green walking across the six: running, no mismatch yet.
+        #
+        # LEDs are declared invert=True on this platform, so 1 lights them.
+        #
+        if platform is not None:
+            leds = Cat(platform.request("led", n).o for n in range(6))
+            # A plain counter, not signature bits: the display then reports
+            # "the clock is running" independently of whether the data is right,
+            # so a wedged design and a wrong-answer design look different.
+            tick = Signal(25)
+            m.d.sync += tick.eq(tick + 1)
+            walk = Signal(6)
+            m.d.comb += walk.eq(1 << tick[-3:])
+            with m.If(mismatch):
+                m.d.comb += leds.eq(0b000001)
+            with m.Else():
+                m.d.comb += leds.eq(walk[:6])
+
+        return m
