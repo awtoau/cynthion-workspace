@@ -23,7 +23,9 @@ Board findings — things that depend on Cynthion r1.4, Apollo, or this design.
 
 **Programming and configuration:**
 
-- **`jtag-ceiling-reached.md` — the single document for JTAG configuration speed.**
+- **`../apollo_samd11_mcu/apollo-configure-speed-investigation.md` — the single
+  document for JTAG configuration speed.** It lives with the Apollo firmware docs
+  because that is what it changes; it is indexed here because the work started here.
   Final result **713.9 → 322.2 ms, 2.22x**, shipped. The remaining time is USB, not
   JTAG: the transport costs 3.9x what the bits do. SCK cannot be raised — the divider
   steps 12 to 24 MHz with nothing between, and the SAMD11 is rated to 11.9 MHz.

@@ -1,4 +1,12 @@
-# JTAG configuration: the path is done, the time is in USB
+# `apollo configure`: speed investigation and results
+
+How fast ECP5 SRAM configuration over JTAG can be made, what was tried, and what the
+measurements actually showed. **JTAG only** -- programming the W25Q32 configuration
+flash is a separate mechanism, covered in `../luna_ecp5_fpga/flash-speed.md`.
+
+This file was previously `luna_ecp5_fpga/jtag-ceiling-reached.md`. The old title
+claimed the path was done; it then got 2.22x faster, which is the sort of thing a
+title should not assert.
 
 ## Final result
 

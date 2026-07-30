@@ -1,6 +1,6 @@
 # Where `apollo configure` actually spends its time
 
-> **RETIRED 2026-07-31. Superseded by `docs/luna_ecp5_fpga/jtag-ceiling-reached.md`.**
+> **RETIRED 2026-07-31. Superseded by `docs/apollo_samd11_mcu/apollo-configure-speed-investigation.md`.**
 >
 > Kept for its reasoning, not its numbers. **Every millisecond figure here is
 > non-comparable with current work**: it predates `scripts/jtag_fixed_benchmark.py`

@@ -19,7 +19,7 @@
 > broad as what was actually varied.** What varied here was *who clocks the bytes*,
 > never *whether the CPU is free while they are clocked*.
 >
-> Current record: `docs/luna_ecp5_fpga/jtag-ceiling-reached.md`.
+> Current record: `docs/apollo_samd11_mcu/apollo-configure-speed-investigation.md`.
 
 
 DMA was implemented, verified on hardware and measured. It is **marginally
