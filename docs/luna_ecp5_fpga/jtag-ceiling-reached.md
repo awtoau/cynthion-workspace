@@ -505,6 +505,63 @@ The two capability changes are the interesting entry in the table precisely beca
 they moved nothing: they stopped a store into RAM, and the store was never the
 bottleneck. Their value is entirely in what they make possible next.
 
+### 1024-byte chunks: the shift path gets faster, and the read bound is the blocker
+
+Attempted properly this time -- not by growing RAM, but by re-carving the union so the
+transmit buffer takes the **whole** region and the receive buffer becomes its second
+half. That works because `FLAG_DISCARD_TDO` proves the receive half is untouched during
+a write.
+
+**RAM did not grow: 70.12%, and after reverting, 59.77%** -- the re-carve stopped
+allocating two separate halves, which is a genuine gain the revert kept.
+
+The shift benchmark improved as predicted:
+
+| chunk | chunks | best |
+|---|---|---|
+| 256 B | 480 | 564.0 ms |
+| 512 B | 240 | 490.7 ms |
+| **1024 B** | **120** | **457.5 ms** |
+
+33 ms over 512, 106 ms over 256. Real and measured.
+
+**But it was reverted, because of a flaw I introduced.** `GET_INFO` reports one size,
+and there are now **two** limits: the transmit buffer is the whole region, while a
+capturing scan is bounded by the read half. The host negotiated 1024 and had no way to
+know reads must stay under 512. Demonstrated directly:
+
+    capturing scan of  512 B: accepted
+    capturing scan of 1024 B: REFUSED (USBError)
+
+`_execute_command()` in `ecp5.py` defaults to `ignore_response=False`, so parts of the
+configure sequence do capture TDO. They are small today, but the protocol now has a
+limit the host cannot discover.
+
+**The fix is to report both limits** -- `GET_INFO` already returns eight bytes with four
+unused, so a read limit fits with no new request. That is the next change rather than a
+blocker.
+
+### A measurement error worth recording, because it nearly reversed the conclusion
+
+The real configure appeared to get **slower** at 1024 -- 831 ms against a recorded
+774 ms at 512 -- while the shift benchmark got faster. Six samples said 832-854 ms, so
+it was not noise, and the contradiction looked like a real regression.
+
+It was the measurement. Those figures timed `subprocess.run(python cli.py configure)`,
+which includes **Python interpreter startup** -- roughly 80 ms that has nothing to do
+with JTAG. Measured in-process instead, same session, both sizes back to back:
+
+    configure at 256 B: 850.9 ms
+    configure at 512 B: 776.1 ms
+
+The 774 ms reproduces exactly. So the "1024 is slower" reading was an artifact of
+process startup, and the earlier 774 figure was only comparable because it happened to
+be measured the same way.
+
+**The lesson is the same one the fixed-payload benchmark exists for**, arriving from a
+new direction: it is not enough to fix the payload, the harness has to be fixed too. A
+per-process measurement cannot resolve a 33 ms difference when startup costs 80.
+
 ## Things tried that did not work
 
 Recorded so they are not retried, and because the failures were more informative than
