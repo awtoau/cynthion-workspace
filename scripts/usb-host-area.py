@@ -71,14 +71,23 @@ def now() -> str:
     return datetime.now(AEST).isoformat(timespec="seconds")
 
 
-# nextpnr-ecp5 reports utilisation as e.g. "Info: TRELLIS_COMB:  4712/24288    19%"
+# nextpnr-ecp5 reports utilisation as e.g.
+#   "Info: \t        TRELLIS_COMB:    4103/  24288    16%"
+# Note the padding spaces on both sides of the slash.
 _UTIL_RE = re.compile(
-    r"^\s*Info:\s+(?P<cell>[A-Z0-9_]+):\s+(?P<used>\d+)/(?P<total>\d+)\s+(?P<pct>\d+)%",
+    r"^\s*Info:\s+(?P<cell>[A-Z0-9_]+):\s+(?P<used>\d+)\s*/\s*(?P<total>\d+)\s+(?P<pct>\d+)%",
     re.MULTILINE,
 )
 
 # Cells worth surfacing; everything else is noise for an area discussion.
-_CELLS_OF_INTEREST = ("TRELLIS_COMB", "TRELLIS_FF", "DP16KD", "MULT18X18D", "TRELLIS_IO")
+_CELLS_OF_INTEREST = (
+    "TRELLIS_COMB",   # LUT4-equivalent logic cells -- the headline area number
+    "TRELLIS_FF",     # flip-flops
+    "TRELLIS_RAMW",   # LUTs consumed as distributed RAM
+    "DP16KD",         # block RAM
+    "MULT18X18D",     # hard multipliers
+    "TRELLIS_IO",     # pins
+)
 
 
 def parse_utilisation(text: str) -> dict[str, dict[str, int]]:
@@ -97,6 +106,31 @@ def parse_utilisation(text: str) -> dict[str, dict[str, int]]:
     return found
 
 
+# nextpnr prints e.g.
+#   "Info: Max frequency for clock '$glbnet$clk': 117.45 MHz (PASS at 60.00 MHz)"
+_FMAX_RE = re.compile(
+    r"Max frequency for clock\s+'(?P<clock>[^']+)':\s+(?P<fmax>[\d.]+)\s+MHz"
+    r"\s+\((?P<verdict>PASS|FAIL) at (?P<target>[\d.]+) MHz\)"
+)
+
+
+def parse_timing(text: str) -> dict[str, dict]:
+    """Collect nextpnr's per-clock fmax verdicts.
+
+    A 480 Mbit host has to close timing on the 60 MHz ULPI domain, so whether
+    the design passes is as load-bearing as how many LUTs it uses.
+    """
+    clocks: dict[str, dict] = {}
+    for match in _FMAX_RE.finditer(text):
+        # Later reports supersede earlier ones (post-route beats post-place).
+        clocks[match.group("clock")] = {
+            "fmax_mhz": float(match.group("fmax")),
+            "target_mhz": float(match.group("target")),
+            "verdict": match.group("verdict"),
+        }
+    return clocks
+
+
 def build_example(example: str, guh_dir: Path, python: str) -> dict:
     """Synthesise one GUH example for Cynthion and return its area figures."""
     log.info("[%s] building for Cynthion r1.4 ...", example)
@@ -107,12 +141,20 @@ def build_example(example: str, guh_dir: Path, python: str) -> dict:
 
     env = dict(os.environ)
     env["LUNA_PLATFORM"] = CYNTHION_PLATFORM
-    # Keep each build's artifacts separate so nextpnr logs do not overwrite.
-    build_dir = WORKSPACE / "tmp" / "host-research" / "build" / example
-    build_dir.mkdir(parents=True, exist_ok=True)
-    env["BUILD_DIR"] = str(build_dir)
 
-    # --dry-run stops short of touching a board; we only want synth + pnr.
+    # LUNA's top_level_cli always builds into ./build relative to the cwd, so
+    # that is where nextpnr's artifacts land regardless of what we ask for.
+    build_dir = guh_dir / "build"
+
+    # Clear the previous example's reports, otherwise a failed build silently
+    # reports the last example's numbers.
+    for name in ("top.tim", "top.rpt", "top.bit"):
+        leftover = build_dir / name
+        if leftover.exists():
+            leftover.unlink()
+
+    # --dry-run builds the bitstream without programming a board. Cynthion is
+    # never opened, so this is safe to run while hardware is in use elsewhere.
     cmd = [python, str(script), "--dry-run", "--keep-files"]
     log.debug("[%s] cmd: %s", example, " ".join(cmd))
 
@@ -128,21 +170,19 @@ def build_example(example: str, guh_dir: Path, python: str) -> dict:
 
     # top_level_cli writes into ./build by default; search both locations for
     # whatever log nextpnr left behind.
-    util = parse_utilisation(output)
-    if not util:
-        for candidate in list(build_dir.rglob("*.log")) + list(
-            (guh_dir / "build").rglob("*.log")
-        ):
-            util = parse_utilisation(candidate.read_text(errors="replace"))
-            if util:
-                log.debug("[%s] utilisation recovered from %s", example, candidate)
-                break
+    # LUNA runs nextpnr as `--quiet --log top.tim`, so the utilisation table and
+    # the timing verdicts are in that file rather than on stdout.
+    report = build_dir / "top.tim"
+    report_text = report.read_text(errors="replace") if report.is_file() else ""
+
+    util = parse_utilisation(report_text) or parse_utilisation(output)
 
     result = {
         "example": example,
         "ok": proc.returncode == 0 and bool(util),
         "returncode": proc.returncode,
         "utilisation": util,
+        "timing": parse_timing(report_text or output),
     }
     if not util:
         # Surface the tail of the output so a failure is diagnosable from the log.
@@ -161,6 +201,15 @@ def build_example(example: str, guh_dir: Path, python: str) -> dict:
             bram.get("used", "?"),
             bram.get("total", "?"),
         )
+        for clock, t in result["timing"].items():
+            log.info(
+                "[%s]   clock %-6s %.2f MHz vs %.2f MHz target -- %s",
+                example,
+                clock,
+                t["fmax_mhz"],
+                t["target_mhz"],
+                t["verdict"],
+            )
     return result
 
 
