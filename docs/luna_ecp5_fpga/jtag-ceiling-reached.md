@@ -331,6 +331,66 @@ covers the 1024 needed.
 So: **1024-byte chunks fit using the unallocated space, the ring, and the stack
 reduction alone.** `_cdcd_itf` is not needed and carries the most risk.
 
+## USB topology: the largest single win, and not a code change
+
+Apollo was plugged **four chained hubs deep**, on a full-speed segment shared with an
+audio device, a HID and two other CDC devices. Moving it to a port one level from the
+root hub, with nothing else on that segment:
+
+| | four hubs deep | direct port |
+|---|---|---|
+| fixed cost per transfer | 144.7 us | **122.7 us** |
+| per-byte cost | 2.717 us | **2.267 us** |
+| effective throughput | 2.94 Mbit/s | **3.53 Mbit/s** (29% of the bus) |
+| shift path, 1024 B chunks | 455.6 ms | **409.1 ms** |
+| real configure | 741 ms | **693 ms** |
+
+**46 ms from moving a cable** -- more than double-buffering, the chunk increase, the
+pipelined `spi_send()` or the TDO suppression bought individually.
+
+Every full-speed transaction below a high-speed hub is split-transaction scheduled by the
+nearest hub, and the 12 Mbit/s of that segment is *shared* with everything else on it.
+Four hubs of chaining plus contention was costing 17% of the per-byte rate.
+
+**This should be stated whenever a figure is quoted.** Every measurement in this document
+before this section was taken on the hub chain, so they are internally comparable but all
+about 10% pessimistic. The table above is the corrected baseline.
+
+### It also bounds the remaining levers more tightly
+
+Since per-byte cost is the wall, and it improved by moving the *host-side* topology rather
+than anything on the device, the interesting question is how much of the remaining 2.267
+us/byte is still contention rather than protocol. The wire is 0.667 us/byte, so 71% is
+still overhead -- but the split between "control transfer protocol" and "this host, this
+controller, this cable" is now known to be non-zero and was previously assumed to be zero.
+
+### On Linux-side priority: there is nothing to tune
+
+Checked, because it is the obvious next thought. `usbcore` exposes only `autosuspend`,
+`authorized_default` and `initial_descriptor_timeout` -- no scheduling parameters.
+Control-transfer priority is fixed by the USB spec (10% of frame budget, best-effort) and
+implemented by the host controller, which here is **xHCI** -- so the scheduling happens in
+controller firmware walking transfer rings, not in the kernel driver. There is no knob.
+
+### Isochronous would be faster, and is probably not worth it
+
+Full-speed isochronous allows **1023 bytes per endpoint per frame** with *guaranteed*
+bandwidth, against control's measured ~360 KB/s:
+
+| | staging for 122880 B |
+|---|---|
+| control, measured | 340 ms |
+| isochronous, theoretical | **120 ms** |
+
+2.8x, and it is the only transfer type with a bandwidth guarantee rather than
+best-effort scheduling.
+
+The catch is that **isochronous has no handshake and no retry** -- a dropped packet is
+simply gone. For a bitstream that means an integrity layer would have to be built on top:
+the ECP5's own CRC detects corruption but cannot recover from it, so a failed configure
+would have to be retried whole. That is a large amount of new machinery for a path that is
+already at 693 ms.
+
 ## The unexplained USB cost, measured: it is bus efficiency, not frame scheduling
 
 This was the largest open question and it now has an answer, which changes what the
