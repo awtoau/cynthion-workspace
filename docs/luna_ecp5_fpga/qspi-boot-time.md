@@ -2,7 +2,7 @@
 
 Testing whether `ecppack --spimode qspi` makes the Cynthion r1.4 boot faster
 from its SPI configuration flash. Investigated 2026-07-29 on a Cynthion r1.4
-(serial `<board serial redacted>`, LFE5U-12F, Winbond W25Q32 `ef4016`).
+(serial `S4DKJHSMGJJVCIBAEA3D4FYP74`, LFE5U-12F, Winbond W25Q32 `ef4016`).
 
 ## Answer
 

@@ -263,7 +263,8 @@ must switch images standalone.
 
 ## 6. Measured on hardware
 
-Board: Cynthion r1.4, flash W25Q32DV (JEDEC `ef4016`).
+Board: Cynthion r1.4, `S4DKJHSMGJJVCIBAEA3D4FYP74`, flash W25Q32DV
+(`ef4016`), UID `355027cba3ac60de`.
 
 **Full 4 MiB backed up and verified** —
 `tmp/flashbackup/full-4MiB-verified.bin`, sha256
