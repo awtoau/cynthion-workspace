@@ -137,6 +137,18 @@ def build_checks() -> List[Check]:
                 Step(["make", "APOLLO_BOARD=cynthion"], apollo_fw),
                 Step(["arm-none-eabi-size", "_build/cynthion_d11/firmware.elf"],
                      apollo_fw, informational=True),
+                # Not informational: this one fails. The size output above
+                # cannot, so a change taking flash from 89% to 99% passed the
+                # loop and was caught only if someone read the log -- on a part
+                # with 14 KB of usable flash and 4 KB of RAM.
+                #
+                # The stack figure is the measurement from stack_probe.c: 344
+                # bytes at the deepest path exercised, against a 1024-byte
+                # reservation. Passed in rather than re-measured because
+                # measuring it needs the board, and this check has to work
+                # without hardware attached.
+                Step([PYTHON, "scripts/apollo_budget_check.py",
+                      "--stack-measured", "344"], ROOT),
             ],
         ),
         Check(
