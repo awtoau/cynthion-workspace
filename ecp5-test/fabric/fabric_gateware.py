@@ -406,13 +406,33 @@ class FabricTest(Elaboratable):
             # A plain counter, not signature bits: the display then reports
             # "the clock is running" independently of whether the data is right,
             # so a wedged design and a wrong-answer design look different.
-            tick = Signal(25)
+            # A free-running counter divides the 60 MHz clock down to something
+            # an eye can follow: bit 22 toggles at about 7 Hz, so `step` advances
+            # the walk roughly seven times a second.
+            tick = Signal(23)
             m.d.sync += tick.eq(tick + 1)
+            step = Signal()
+            m.d.sync += step.eq(tick[-1])
+
+            # An explicit 0..5 phase, not the top bits of the counter. A 3-bit
+            # slice counts to 7, and the two extra phases light nothing once the
+            # position is decoded -- giving two dark steps in every eight. A dark
+            # LED bank is exactly how a wedged design looks, so the display must
+            # not have a resting state that mimics failure.
+            phase = Signal(range(6))
+            with m.If(tick[-1] & ~step):
+                with m.If(phase == 5):
+                    m.d.sync += phase.eq(0)
+                with m.Else():
+                    m.d.sync += phase.eq(phase + 1)
+
             walk = Signal(6)
-            m.d.comb += walk.eq(1 << tick[-3:])
+            for position in range(6):
+                m.d.comb += walk[position].eq(phase == position)
+
             with m.If(mismatch):
-                m.d.comb += leds.eq(0b000001)
+                m.d.comb += leds.eq(0b000001)   # red alone, steady
             with m.Else():
-                m.d.comb += leds.eq(walk[:6])
+                m.d.comb += leds.eq(walk)
 
         return m
