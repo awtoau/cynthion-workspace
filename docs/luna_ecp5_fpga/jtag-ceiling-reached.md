@@ -135,6 +135,61 @@ host silently falls back to 256, so a "512" row would read as no change.
 
 **Stock to HEAD at its own 512-byte chunk: 713.9 -> 488.9 ms, 1.46x.**
 
+## How close is this to theoretical?
+
+The rows the progression table was missing. Same 122880-byte payload throughout, so
+every figure here is comparable with the ones above.
+
+| what | 256 B | 512 B | of theoretical |
+|---|---|---|---|
+| **theoretical wire**, 12 MHz SCK, 1 bit/clock | **81.9 ms** | **81.9 ms** | 100% |
+| **measured, no USB payload** (`0xb9`) | **275 ms** | **137 ms** | 30% / **60%** |
+| measured, real path (stock `v1.1.1`) | 713.9 ms | -- | 11.5% |
+| measured, real path (HEAD) | 558.8 ms | 488.9 ms | 14.7% / **16.8%** |
+
+**Theoretical** is arithmetic: 122880 bytes x 8 bits / 12 MHz = 81.9 ms, 1500 KB/s.
+Nothing can beat it without raising SCK, which the section above establishes is not
+available.
+
+**No USB payload** is measured, not arithmetic, using vendor request `0xb9`
+(`handle_jtag_benchmark`). It generates the pattern **in firmware** --
+`jtag_out_buffer[i] = i * 7 + 1` -- specifically so no bulk data crosses USB, and
+returns elapsed milliseconds plus a TDO mismatch count. This is the honest floor for
+the current SERCOM and firmware: whatever the transport does, the path cannot beat
+it.
+
+### The gap is the whole story
+
+At 512 bytes the real path takes **488.9 ms** where the same clocking with no USB
+payload takes **137 ms**. So roughly **352 ms, 72% of the total, is USB transport**,
+and only 137 ms is the microcontroller clocking bits.
+
+And the no-USB figure is itself only 60% of theoretical, so there are two distinct
+gaps:
+
+- **81.9 -> 137 ms** is the SERCOM and its loop: 55 ms of per-byte overhead the wire
+  does not account for. The marginal-cost differencing above puts clocking at
+  0.663-0.715 us/byte against a 0.667 us/byte wire floor, which is 2-3% -- so most
+  of this 55 ms is per-*chunk* cost (pinmux, setup, the verify loop), not per-byte.
+- **137 -> 488.9 ms** is USB. This is the part the two untried levers attack.
+
+Note the no-USB figure halves cleanly from 256 to 512 bytes (275 -> 137 ms) while the
+real path improves only 12% (558.8 -> 488.9). That asymmetry is the clearest single
+statement of where the time goes: doubling the chunk halves the firmware-side
+per-chunk cost, and barely dents the USB cost.
+
+### Two caveats on the 0xb9 numbers
+
+**`blocks` in the reply is in 256-byte units, not bytes** -- `blocks = chunk *
+repeats / 256` at `jtag.c:337`. Reading it as bytes doubles the apparent payload,
+which it did on the first attempt here.
+
+**The mismatch counter only means anything in BYPASS.** The benchmark expects TDO to
+be TDI delayed by one bit, which holds in SHIFT-DR with BYPASS selected. Run from a
+context that leaves the TAP elsewhere and it reports mismatches on every byte -- as
+it did here. That is the harness being used wrongly, not a data-integrity failure,
+and the counter is worthless unless the TAP state is set up deliberately.
+
 Verified behaviourally rather than by version string, which is worth noting: the
 build reports `v1.1.1-41-gbb82d39-dirty` even when the code is stock, because the
 version comes from `git describe` on the working tree rather than from the checked-out
