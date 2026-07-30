@@ -90,6 +90,50 @@ now known, and was not before:
   contains one line and searching it proves nothing (an earlier "zero undriven
   wires" claim here was made against the wrong file and was meaningless)
 
+## The sideband cannot currently diagnose this, and why
+
+The obvious instrument is the FPGA_ADV sideband: a separate wire (T6) that
+touches neither USB nor the JTAG data pins, already instantiated in both SoCs,
+with `console.source.valid` routed to it. It did not answer, and the reasons are
+worth recording because none of them is "the link is broken".
+
+**The vendor ABI is not what a reader would guess.** Request `0xc3` overloads
+`wValue`: `0xFFFF` reads the mode, `0xFFFE` issues a command (command in the
+`wIndex` low byte, expected reply length in the high byte), `0xFFFD` toggles a
+diagnostic square wave, `0xFFFC` reads link health. Any *other* `wValue` **sets
+the mode**. So an initial query with `wValue=0` did not read anything — it
+selected EIC mode, the opposite of what was wanted.
+
+**UART mode must be selected explicitly.** EIC is the power-on default, so a
+host that never chooses behaves like older firmware. With `wValue=1` the mode
+reads back as `1`, confirming the ABI is right.
+
+**Commands still return zero bytes, which the firmware documents as timeout** —
+the FPGA is not answering.
+
+**And the link-health counters that would confirm that are not in the flashed
+firmware.** The board runs `v1.1.1-17-ga7b8283`; `0xFFFC` arrived in `b48d4bf`,
+one commit later, so it stalls with a pipe error. Expected, not a fault.
+
+Baud was checked and ruled out: the gateware responder and
+`ecp5-test/sideband_debug.py` both default to 115200, matching the flashed
+firmware. `b48d4bf` raises it to 230400, which *would* break the link if the
+gateware were rebuilt against it while the MCU stayed on `a7b8283` — worth
+knowing before flashing that commit.
+
+So the sideband is a sound instrument that currently cannot be read. Making it
+diagnostic means flashing `b48d4bf` or later, which is a firmware change and
+should be done deliberately rather than mid-diagnosis.
+
+## Block RAM cannot be read back over JTAG
+
+The natural alternative — write markers to RAM and read them over JTAG — does
+not work either. `LSC_EBR_READ` (0xB0) was probed on live silicon and is
+**inert**, so there is no JTAG path to block RAM contents. A probe firmware was
+written on that assumption before this was rechecked; it is kept at
+`scripts/riscv_probe_firmware.py` because its staged markers are the right
+design, but they need a readback path that exists.
+
 ## Next, in order
 
 1. **Instrument the FIFO write side.** `console.source.valid` is already routed
