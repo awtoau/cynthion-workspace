@@ -283,3 +283,30 @@ python3 scripts/amaranth_soc_dropin_test.py     # → tmp/logs/amaranth_soc_drop
 Creates `tmp/amaranth-soc-dropin-venv`, installs real amaranth-soc from
 `tmp/forks/amaranth-soc` (or git), and runs all six probes. Never touches the
 system environment.
+
+## Hardware state at time of writing
+
+Recorded so a later session can tell whether anything here disturbed the board.
+**Nothing in this investigation touched the gateware** — no build, no flash. The
+board was only read.
+
+Observed 2026-07-30, Cynthion r1.4, firmware `v1.1.1-35-g74db0e6`:
+
+```
+python3 repos/apollo/apollo_fpga/commands/cli.py info
+    Hardware: Cynthion r1.4   ADC reading: 3207   USB API 1.2
+
+python3 scripts/sideband_read.py
+    4/4 commands CRC OK (PING, STATUS, POWER, DEVICES)
+    firmware health: ok=4 crc_fail=0 timeout=0
+    PASS
+
+python3 scripts/sideband_read.py --soak 5000
+    good 5000  short 0  crc_bad 0   100.00%
+    PASS
+```
+
+The sideband test bitstream is intact and the link is clean over 5000
+transactions. `DEVICES` reports flash Winbond type 0x40 4 MiB and **hyperram
+absent**, and `POWER` returns the fixed test pattern rather than real
+measurements — both are the expected behaviour of this bitstream, not faults.
