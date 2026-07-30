@@ -60,6 +60,43 @@ it does, drop the fork and take upstream. If it does not, rebase the fork onto
 0.3.2. Neither is a version bump -- both need the facedancer gateware build,
 which is the thing the original patches were for, re-tested afterwards.
 
+## A live bug: the vendored amaranth_soc predates the Python 3.14 fix
+
+Reproduced on this machine, not inferred.
+
+`amaranth-soc` commit
+[`d8b5892`](https://github.com/amaranth-lang/amaranth-soc/commit/d8b58925533d9dd6be64a2ca9993bfe3a6d46ae9)
+(2026-01-28, "csr.reg: add Python 3.14 annotation support") replaces
+
+    if hasattr(self, "__annotations__"):
+        ... filter_fields(self.__annotations__)
+
+with `annotationlib.get_annotations(type(self))` on 3.14+, falling back to
+`type(self).__dict__.get("__annotations__", {})` below it.
+
+**On Python 3.14+ every class has `__annotations__`**, so the old path reads
+*inherited* annotations and the guard never distinguishes anything. We run
+**3.15t**, so this bites:
+
+    class Probe(csr.Register, access="rw"):
+        value: csr.Field(csr.action.RW, 8)
+
+    TypeError: Field collection must be a dict, list, or Field, not None
+
+The **dict form still works**, which is why `ecp5-test/i2c/multiplexed.py` builds
+-- it happens to pass a dict. But the annotation form is the documented style, and
+it fails with a message that points nowhere near the cause.
+
+**Bumping luna-soc does not fix it.** Checked: upstream
+`greatscottgadgets/luna-soc@main` vendors the *same unfixed* `reg.py` --
+`annotationlib` absent, the old `hasattr` path present. So 0.3.2 carries the bug
+too, and the fix exists only in `amaranth-soc` upstream, which luna-soc has not
+re-synced from.
+
+That changes the upgrade calculus recorded above: the fork is not merely a legacy
+of old patches to be dropped, it is **where this fix has to live** until luna-soc
+re-vendors.
+
 ## What this did NOT explain
 
 The CSR failures being chased when this audit started were **mine, not version
