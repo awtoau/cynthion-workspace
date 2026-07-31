@@ -251,10 +251,21 @@ class HelloSoC(Elaboratable):
             serial.tx.valid.eq(console.source.valid),
             serial.tx.first.eq(0),
 
-            # `last` marks a packet boundary. Asserting it whenever the FIFO drains sends
-            # a short packet immediately, rather than holding the banner until 512 bytes
-            # accumulate -- which reads as minutes of silence from a working CPU.
-            serial.tx.last.eq(~console.source.valid),
+            # `last` marks the final beat OF A PACKET, and the endpoint only observes it
+            # on a beat where `valid` is high. An earlier version here drove
+            # `last = ~valid`, which is unsatisfiable: the two are never high together, so
+            # no packet was ever terminated and nothing reached the host -- with the CPU
+            # running and the FIFO filling the whole time.
+            #
+            # USBStreamInEndpoint has a `flush` input for exactly this, but
+            # USBSerialDevice does not expose it -- it lives on the endpoint the device
+            # constructs internally. So the packet boundary has to come from `last`.
+            #
+            # One byte per packet. A console emits a line and goes quiet, so waiting for
+            # 512 bytes would hold the banner indefinitely. The cost is a USB transaction
+            # per byte, which for a console at human-readable rates is irrelevant, and
+            # correctness here matters more than throughput.
+            serial.tx.last.eq(1),
 
             console.source.ready.eq(serial.tx.ready),
             serial.rx.ready.eq(1),
