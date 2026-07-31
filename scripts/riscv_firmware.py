@@ -46,20 +46,6 @@ PORT = ROOT / "ecp5-test" / "riscv" / "coremark_port"
 # and few enough that it finishes in seconds on a 60 MHz core.
 ITERATIONS = 300
 
-# How many erase/program/verify passes the flash soak runs before stopping.
-#
-# BOUNDED, NOT INDEFINITE, and the reason is endurance rather than runtime. The
-# W25Q32 is specified for 100,000 erase cycles per sector; an unbounded soak
-# left running would consume that budget on one sector for no additional
-# information. 100 passes is enough to expose an intermittent fault -- the
-# failures worth catching here are marginal sample timing and CS dropping
-# mid-page, both of which are per-pass probabilistic rather than gradual -- while
-# using 0.1% of the sector's rated life.
-#
-# On completion the firmware stops erasing and settles into a read-only loop, so
-# the board is left running and observable rather than dead or still writing.
-SOAK_PASSES = 100
-
 CC = "riscv64-linux-gnu-gcc"
 OBJCOPY = "riscv64-linux-gnu-objcopy"
 OBJDUMP = "riscv64-linux-gnu-objdump"
@@ -95,32 +81,28 @@ CONSOLE_BASE = 0xf0000000
 # and FLASH_TEST_OFFSET there.
 FLASH_BASE = 0x10000000
 FLASH_CSR_BASE = 0xf0000100
-# The offset the firmware reads twice, and benchmarks.
+# The offset the firmware reads twice, and benchmarks. Read only -- the write
+# tests use FLASH_SCRATCH below.
 #
-# 128 KiB in, which is INSIDE the bitstream, and that is deliberate.
+# Choosing this took three tries, and the two rejected values are worth
+# recording because the mistake is easy to repeat. Both were CORRECT data, and
+# both were useless as test values:
 #
-# 3 MiB was tried first, and the result is worth recording because the mistake
-# is easy to repeat. That region is erased flash, so it read ffffffff -- which
-# was CORRECT data, not a fault. But ffffffff is also what a floating bus
-# returns when nothing drives it, which is the most common way this read fails.
-# A test whose passing value is identical to its most likely failure value
-# cannot distinguish the two, and the first run here was briefly misread as a
-# flash fault on that basis.
+#   0x300000  erased flash, reads ffffffff -- which is also what a floating bus
+#             returns when nothing drives it. The first run here was briefly
+#             misread as a flash fault on exactly that basis.
+#   0x020000  reads 00000000 on this board, because the bitstream actually
+#             stored in flash is shorter than the one built locally. That is
+#             also what a bus with nothing driving it at all returns.
 #
-# Bitstream bytes are varied and stable, so a correct read looks obviously
-# correct and a wrong one looks obviously wrong. Pick test data that cannot be
-# confused with the default failure.
+# A test whose passing value is identical to a likely failure value cannot
+# distinguish success from failure.
 #
-# Read only -- the write tests use FLASH_SCRATCH below.
-#
-# 128 KiB was the second try and is ALSO degenerate on this board: the
-# bitstream actually stored in flash is shorter than the one built locally, so
-# that offset reads 00000000 -- correct data again, and again identical to a
-# standard failure (nothing driving the bus at all).
-#
-# 0x40 is inside the bitstream header, where `apollo flash-read` shows
-# 2a558800: varied in all four bytes, stable, and not confusable with either
-# ffffffff or 00000000.
+# 0x40 is inside the bitstream header and reads 2a558800 -- varied in all four
+# bytes, stable, and not confusable with either degenerate pattern. Confirmed
+# independently with `apollo flash-read --offset 0 --length 256`, indexed to
+# 0x40, because flash-read requires a page-aligned offset and silently writes
+# an empty file for one that is not.
 FLASH_TEST_OFFSET = 0x00000040
 
 # The 4 KiB sector the write and erase tests own outright.
@@ -621,7 +603,15 @@ HELLO_C = """
    their first line, losing exactly the values under test, and no amount of
    opening the port faster fixes it. Reprinting means a reader attaching at any
    moment sees a complete report within one period. */
-static void flash_report(unsigned int pass) {
+/* Returns 1 if the flash answered and the rest of the pass is worth running,
+   0 if the command path is dead.
+
+   FAIL FAST. If the controller cannot issue a command and get an answer, then
+   nothing after this point can be interpreted: a read cannot be trusted, and a
+   write cannot be verified at all -- you would be programming a sector whose
+   state you cannot observe. Printing the failure and stopping the pass is the
+   only useful thing left to do. */
+static int flash_report(unsigned int pass) {
     print("--- flash pass ");
     print_hex(pass);
     print("\\r\\n");
@@ -644,19 +634,34 @@ static void flash_report(unsigned int pass) {
 
           This cannot come through the memory map: 0x9f is a register read, and
           the memory map issues one opcode, a read of a 24-bit address. */
+    /* The controller's status register before anything is queued. tx_ready
+       (bit 1) must be set or no transfer can ever be pushed; rx_ready (bit 0)
+       should be clear on an idle controller. Printing it separates "the
+       command was never sent" from "the command was sent and the flash did not
+       answer", which the ID value alone cannot distinguish -- both give
+       000000. */
+    print("spi status   ");
+    print_hex(FLASH_STATUS);
+    print("\\r\\n");
+
     unsigned int id = flash_jedec_id();
     print("jedec        ");
     print_hex(id);
     if (id == 0x000000u) {
-        print("  NO RESPONSE (all zeros)");
-    } else if ((id & 0xffffffu) == 0xffffffu) {
-        print("  NO RESPONSE (floating high)");
-    } else {
-        print("  capacity ");
-        print_hex(1u << (id & 0xffu));
-        print(" bytes");
+        print("  NO RESPONSE (all zeros)\\r\\n");
+        print("stopping     command path is dead; nothing after this is "
+              "interpretable\\r\\n");
+        return 0;
     }
-    print("\\r\\n");
+    if ((id & 0xffffffu) == 0xffffffu) {
+        print("  NO RESPONSE (floating high)\\r\\n");
+        print("stopping     command path is dead; nothing after this is "
+              "interpretable\\r\\n");
+        return 0;
+    }
+    print("  capacity ");
+    print_hex(1u << (id & 0xffu));
+    print(" bytes\\r\\n");
 
     /* 2. The memory map itself: an ordinary load from FLASH_BASE. Offset 0 is
           the start of the FPGA bitstream, so this is a value with a known
@@ -674,7 +679,7 @@ static void flash_report(unsigned int pass) {
     unsigned int t0 = flash_cycles();
     unsigned int second = flash_read32(FLASH_TEST_OFFSET);
     unsigned int t1 = flash_cycles();
-    print("read @128K   ");
+    print("read @test   ");
     print_hex(first);
     print(" ");
     print_hex(second);
@@ -709,6 +714,7 @@ static void flash_report(unsigned int pass) {
     print(" words, sum ");
     print_hex(sum);
     print("\\r\\n");
+    return 1;
 }
 
 /* Erase a sector, program a page into it, and read it back through the memory
@@ -735,6 +741,23 @@ static void flash_write_test(unsigned int pass) {
        readback matching the previous pass's data would be ambiguous between
        the two. */
     unsigned int after_erase = flash_read32_uncached(FLASH_SCRATCH);
+
+    print("erase 4K     ");
+    print_hex(erase_cycles);
+    print(" cycles, after ");
+    print_hex(after_erase);
+    print(after_erase == 0xffffffffu ? "  erased\\r\\n" : "  NOT ERASED\\r\\n");
+
+    /* Stop BEFORE programming rather than after. If the erase did not take, a
+       verify afterwards cannot distinguish "the program worked" from "the old
+       contents happened to match", and programming over un-erased flash can
+       only clear bits -- so the result would be neither a clean write nor a
+       clean failure. */
+    if (after_erase != 0xffffffffu) {
+        print("stopping     sector did not erase; not programming into an "
+              "unknown state\\r\\n");
+        return;
+    }
 
     unsigned int program_cycles =
         flash_page_program(FLASH_SCRATCH, page, FLASH_PAGE_SIZE / 4);
@@ -765,12 +788,6 @@ static void flash_write_test(unsigned int pass) {
        mapping and it is worth showing rather than hiding -- it is what any
        future driver here will have to deal with. */
     unsigned int cached = flash_read32(FLASH_SCRATCH);
-
-    print("erase 4K     ");
-    print_hex(erase_cycles);
-    print(" cycles, after ");
-    print_hex(after_erase);
-    print(after_erase == 0xffffffffu ? "  erased\\r\\n" : "  NOT ERASED\\r\\n");
 
     print("program 256B ");
     print_hex(program_cycles);
@@ -822,9 +839,9 @@ int main(void) {
     unsigned int pass = 0;
     for (;;) {
         print("\\r\\n");
-        flash_report(pass);
-
-        if (WRITE_TESTS && pass < WRITE_PASSES) {
+        /* The write test runs ONLY if the read path answered. A write verified
+           through a broken read path is not verified at all. */
+        if (flash_report(pass) && WRITE_TESTS && pass < WRITE_PASSES) {
             flash_write_test(pass);
         }
 

@@ -58,7 +58,7 @@ EXPECTED = {
     # both of which the checker interprets rather than the pattern.
     "jedec":  re.compile(r"^jedec        ([0-9a-f]{8})  (.+)$"),
     "at0":    re.compile(r"^read @0      ([0-9a-f]{8})$"),
-    "atbench": re.compile(r"^read @0x40   ([0-9a-f]{8}) ([0-9a-f]{8})  "
+    "atbench": re.compile(r"^read @test   ([0-9a-f]{8}) ([0-9a-f]{8})  "
                          r"(same|DIFFER)  2nd read ([0-9a-f]{8}) cycles$"),
     "bench":  re.compile(r"^read bench   ([0-9a-f]{8}) cycles / ([0-9a-f]{8})"
                          r" words, sum ([0-9a-f]{8})$"),
@@ -162,18 +162,30 @@ def expected_words():
     values it saw without comparing rather than inventing an expectation.
     """
     MIRROR.parent.mkdir(parents=True, exist_ok=True)
+
+    # `apollo flash-read` requires a PAGE-ALIGNED offset and a page-sized
+    # length: an unaligned offset raises inside the tool and leaves a
+    # zero-length file behind, which read back as 00000000 and looked exactly
+    # like a flash returning zeros. So whole pages are read and indexed into.
+    PAGE = 256
     words = {}
+    pages = {}
     for offset in (0, BENCH_OFFSET):
-        target = MIRROR.with_suffix(f".{offset:08x}.bin")
-        result = subprocess.run(
-            [sys.executable, str(APOLLO_CLI), "flash-read",
-             "--offset", str(offset), "--length", "4", str(target)],
-            capture_output=True, text=True, cwd=str(ROOT))
-        if result.returncode != 0 or not target.exists():
-            return {}
-        chunk = target.read_bytes()[:4]
-        if len(chunk) < 4:
-            return {}
+        page_base = (offset // PAGE) * PAGE
+        if page_base not in pages:
+            target = MIRROR.with_suffix(f".{page_base:08x}.bin")
+            result = subprocess.run(
+                [sys.executable, str(APOLLO_CLI), "flash-read",
+                 "--offset", str(page_base), "--length", str(PAGE),
+                 str(target)],
+                capture_output=True, text=True, cwd=str(ROOT))
+            if result.returncode != 0 or not target.exists():
+                return {}
+            data = target.read_bytes()
+            if len(data) < PAGE:
+                return {}
+            pages[page_base] = data
+        chunk = pages[page_base][offset - page_base:offset - page_base + 4]
         words[offset] = f"{int.from_bytes(chunk, 'little'):08x}"
     return words
 
@@ -385,14 +397,14 @@ def check(handle, lines, expected):
                             "this is a failed read rather than erased flash")
         if want is not None:
             if first != want:
-                failures.append(f"read @0x40: read {first}, "
+                failures.append(f"read @test: read {first}, "
                                 f"bitstream has {want}")
                 note = f"  WRONG (bitstream: {want})"
             else:
                 note = "  matches the bitstream file"
-        emit(handle, f"  read @0x40  {first} {second}  {verdict}{note}")
+        emit(handle, f"  read @test  {first} {second}  {verdict}{note}")
     else:
-        failures.append("no `read @0x40` line")
+        failures.append("no `read @test` line")
 
     # 4. Throughput, derived rather than asserted -- there is no threshold to
     #    pass, only a number to report.
