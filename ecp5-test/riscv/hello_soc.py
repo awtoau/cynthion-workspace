@@ -42,12 +42,6 @@ from amaranth.lib.fifo              import SyncFIFOBuffered
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
 
-# Import order matters. amaranth_soc is vendored inside luna_soc rather than
-# installed standalone, and importing a luna_soc peripheral is what aliases it
-# onto sys.modules under the bare name. Importing the vendored path directly
-# instead yields a *different* class object for wishbone.Interface, so
-# Decoder.add() rejects a bus that is structurally identical -- these must come
-# first, and the bare name must be used afterwards.
 from luna_soc.gateware.core         import blockram
 from luna_soc.gateware.cpu          import VexRiscv
 

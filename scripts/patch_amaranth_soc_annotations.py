@@ -4,6 +4,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
+OBSOLETE as of 2026-07-31 -- kept only as a record of what the bug was.
+
+The workspace no longer uses the vendored `amaranth_soc`. Real `amaranth-soc` is
+installed, and `luna_soc/__init__.py` only appends its vendor directory to
+`sys.path` when `import amaranth_soc` fails -- so with upstream present the
+vendored tree is never reached and the file this script patches is never
+imported. Upstream already contains d8b5892, so there is nothing to backport.
+
+See `docs/toolchain-versions.md`, section "De-vendored, 2026-07-31", and
+`scripts/amaranth_soc_devendor_verify.py` for the replacement check. Do not run
+this script; it would edit a file that no longer participates in any build.
+
+---
+
 Backports the Python 3.14 annotation fix into the vendored `amaranth_soc`.
 
 `csr.Register` subclasses that declare fields as annotations are broken on Python

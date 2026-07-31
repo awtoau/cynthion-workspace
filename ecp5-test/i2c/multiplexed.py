@@ -61,12 +61,6 @@ from amaranth import Elaboratable, Module, Signal, Cat, Mux
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-# Import order is load-bearing, and this is not decoration. `amaranth_soc` is
-# vendored inside `luna_soc` rather than installed standalone, and importing a
-# luna_soc peripheral is what puts it on the module path. Importing
-# `amaranth_soc` first raises ModuleNotFoundError. The same note appears in
-# ecp5-test/riscv/hello_soc.py for the same reason.
-import luna_soc.gateware.core.blockram    # noqa: F401  (aliases amaranth_soc)
 from amaranth_soc import csr
 
 

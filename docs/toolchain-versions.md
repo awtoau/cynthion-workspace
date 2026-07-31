@@ -50,12 +50,16 @@ session. Either install it editable or stop treating the checkout as live.
 Installed editable (so edits do take effect): `apollo_fpga`, `awto_probe`,
 `cynthion`, `facedancer`. Not editable, so edits do nothing: `luna`, `luna_soc`.
 
-**`amaranth_soc` has no version and is vendored.** It lives at
+**`amaranth_soc` has no version and is vendored.** ~~It lives at
 `site-packages/luna_soc/gateware/vendor/amaranth_soc/`, reports version
 `unknown`, and is reachable only after importing a `luna_soc` module first --
 importing `amaranth_soc` directly raises `ModuleNotFoundError`. Both
 `ecp5-test/riscv/hello_soc.py` and `ecp5-test/i2c/multiplexed.py` carry a comment
-about that import order because it is invisible otherwise.
+about that import order because it is invisible otherwise.~~
+
+**Fixed 2026-07-31 — see "De-vendored" below.** Real `amaranth-soc` is now
+installed, so it wins over the vendored copy and the import-order comments are
+gone.
 
 ## Why bumping luna-soc is not a one-liner
 
@@ -109,6 +113,67 @@ re-synced from.
 That changes the upgrade calculus recorded above: the fork is not merely a legacy
 of old patches to be dropped, it is **where this fix has to live** until luna-soc
 re-vendors.
+
+## De-vendored, 2026-07-31
+
+Resolved, and more cheaply than the section above assumed. **Nothing had to be
+patched and luna-soc did not have to be forked further.** The whole thing came
+down to one detail in `luna_soc/__init__.py`:
+
+    try:
+        import amaranth_soc
+        import amaranth_stdio
+    except:
+        sys.path.append(.../gateware/vendor)
+
+The vendor directory is appended to `sys.path` **only when the real package is
+missing**. So `pip install amaranth-soc` is the entire fix: the `try` succeeds,
+the vendor path is never added, and our designs *and* luna_soc's own peripherals
+all bind to upstream. The vendored tree is still on disk, simply never reached.
+
+Installed `amaranth-soc 0.1a1.dev32+g3e3d8b7` (upstream `main` at `3e3d8b7`).
+Note the PyPI package named `amaranth-soc` is a **placeholder** -- version "0",
+no modules -- so it has to come from git.
+
+**Upstream already contains everything the vendored copy had, and four fixes it
+did not.** The vendored copy was behind, not ahead:
+
+| upstream commit | date | what |
+|---|---|---|
+| `d8b5892` | 2026-01-28 | the Python 3.14 annotation fix, backported by hand into the vendored copy |
+| `b4f8bb0` | 2026-02-24 | `csr.Bridge` with integer parts of the name |
+| `c9cd4cd` | 2026-03-03 | `wishbone.bus` optional-feature compatibility (adds `_FeatureShim`) |
+| `99d0837` | 2026-03-03 | `csr.Register` signature flow corrected `Out` -> `In` |
+
+The vendored copy's only genuinely local changes were the hand-backported
+`d8b5892` and a one-line tweak preserving `Register` docstrings for the SVD
+generator. `99d0837` flips the flow of the `element` member, which sounds like
+a breaking change but is internally consistent -- `csr.bus` was flipped to match
+in the same commit, and every consumer here goes through `csr.Builder` /
+`csr.Bridge` rather than touching `element` directly.
+
+`scripts/patch_amaranth_soc_annotations.py` is therefore **obsolete**: the fix it
+backported is upstream, and the file it patched is no longer imported.
+
+Verified by elaboration, not by imports, in
+`scripts/amaranth_soc_devendor_verify.py`:
+
+- `import amaranth_soc` standalone, with no `luna_soc` import first, resolving
+  outside the vendor tree -- which is what retires the import-order comments
+- all 11 `luna_soc` modules that import `amaranth_soc` still import, and
+  `amaranth_soc` is *still* upstream afterwards (no silent two-copy mix)
+- `multiplexed.py`, `vexii_cpu.py`, `vexii_irq.py` converted to RTLIL;
+  `hello_soc.py` (7115 lines) and `vexii_hello_soc.py` (12128 lines) taken to a
+  Verilog netlist through the real Cynthion platform with `do_build=False`, so
+  no yosys/nextpnr run and no hardware touched
+
+The `csr.Field` annotation form now works with no `luna_soc` import at all,
+which was the original bug.
+
+**Not yet done:** `cynthion` still pins `luna-soc` to the `awtoau/awto-luna-soc`
+fork, and nothing declares a dependency on `amaranth-soc`. The install is
+currently manual, so a fresh environment silently falls back to the vendored
+copy again. The durable fix is an explicit `amaranth-soc` dependency.
 
 ## What this did NOT explain
 
