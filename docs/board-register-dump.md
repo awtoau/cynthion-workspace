@@ -147,6 +147,14 @@ CR0's — the address decode is incomplete), not the memory array (stamping memo
 - **Ten of the MIR's eighteen words**, `0x100c`–`0x1011`. Queued for the Rust CLI (#109):
   every read here cost a gateware build, a flash and a JTAG read, which is why the sweep
   stopped where it did. A CPU on the bus reads all eighteen in microseconds.
-- **Block RAM verification** on the ECP5 — the fabric test proved LUT4s only.
+- **Block RAM has not been walked** the way the fabric was — the fabric test proved LUT4s
+  only. It is nonetheless **taken as working**, on the strength of ordinary use rather
+  than a dedicated test: nextpnr reports 56 DP16KD (the 25F figure, not the 12F's 28),
+  every build places 41 of them, and those blocks carry the CPU's I-cache, D-cache, 64 KiB
+  of program memory and the console FIFO. The CPU fetches from block RAM, executes, and
+  computes `0x12345678 * 3` correctly while the FIFO delivers characters uncorrupted.
+  Marginal block RAM would surface as garbage instructions or dropped bytes well before
+  anything subtle. Worth revisiting only if a fault appears that smells like memory
+  corruption.
 - **Flash writes and erases.** Everything above is reads; write and erase timing has never
   been measured (#93).
