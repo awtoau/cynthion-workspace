@@ -1,0 +1,25 @@
+[package]
+name = "cynthion-soc"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Firmware for the Cynthion r1.4 VexiiRiscv SoC"
+
+# Current crates, deliberately.
+#
+# Cynthion's own moondancer pins riscv-rt 0.11 and riscv 0.10, and lunasoc-hal pins
+# embedded-hal to =1.0.0-alpha.9 -- a pre-1.0 alpha whose serial traits were REMOVED
+# before 1.0 shipped. Following those pins would inherit seven major versions of drift
+# and a HAL interface that no longer exists upstream.
+#
+# No HAL crate at all: the console needs core::fmt::Write, which is in core. That is
+# what makes writeln! work, and it is about six lines to implement.
+[dependencies]
+riscv = "0.16"
+riscv-rt = "0.18"
+
+[profile.release]
+opt-level = "s"      # size: this links into 64 KiB of block RAM
+lto = true
+codegen-units = 1
+debug = true         # kept -- costs nothing in the binary, and .elf is what gets read

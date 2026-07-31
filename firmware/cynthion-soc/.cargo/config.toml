@@ -1,0 +1,8 @@
+[build]
+# Matches what the CPU generates: --with-rvm --with-rvc --with-rva.
+# The firmware was previously built rv32im_zicsr, which left the C and A extensions
+# enabled in hardware and never executed.
+target = "riscv32imac-unknown-none-elf"
+
+[target.riscv32imac-unknown-none-elf]
+rustflags = ["-C", "link-arg=-Tmemory.x", "-C", "link-arg=-Tlink.x"]

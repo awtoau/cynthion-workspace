@@ -178,6 +178,12 @@ def wait_for_tty(name, settles=60):
                 serial.Serial(node, 115200, timeout=0.1).close()
                 return node
             except Exception:
+                # The node exists but will not open. That is usually the console service
+                # holding it exclusively, which is not absence -- returning None here sent
+                # callers chasing a hardware fault that was another process doing its job.
+                # A caller that reads through the service does not need to open it.
+                if find_usb(name) is not None:
+                    return node
                 continue
         # Remember whether the USB device was ever seen. A device present on the bus but
         # without a bound tty is mid-enumeration, not absent, and giving up on it produces
