@@ -364,9 +364,28 @@ static inline unsigned int flash_pop(void) {{
    printed. Queueing all four transfers keeps r_rdy high throughout, so CS stays
    asserted for the whole command as the flash requires.
 
-   The controller shifts MSB-first from the top of a 32-bit word, so an 8-bit
-   transfer sends bits 31..24 -- hence the << 24 on the opcode. Received data
-   arrives right-aligned. Four transfers is well inside the 16-deep FIFOs. */
+   THE DATA IS PASSED RIGHT-ALIGNED, NOT PRE-SHIFTED, and getting this wrong is
+   what made the ID read zeros for most of this investigation.
+
+   The PHY left-justifies for you:
+
+       sr_out.eq(source.data << (len(source.data) - source.len))
+
+   so an 8-bit transfer of 0x9f becomes 0x9f000000 in the shift register and
+   goes out MSB first. Passing 0x9f << 24 means the PHY shifts it a FURTHER 24
+   bits, the register becomes zero, and the flash is clocked 8 zero bits instead
+   of an opcode. It answers nothing, because it was never asked anything.
+
+   The ILA caught this directly: dq_o0 was high in 0 of the 465 samples in the
+   controller's chip-select window, while the memory-mapped control asserted it
+   8 times in the same capture. The comment that used to sit here asserted the
+   opposite of what the PHY does.
+
+   32-bit transfers are unaffected -- (32 - 32) is a shift of zero -- which is
+   why the address-bearing commands below already pack the opcode into bits
+   31..24 and are correct as written.
+
+   Four transfers is well inside the 16-deep FIFOs. */
 static inline unsigned int flash_jedec_id(void) {{
     unsigned int id = 0;
 
@@ -377,7 +396,7 @@ static inline unsigned int flash_jedec_id(void) {{
     FLASH_HOLD = 1;
 
     flash_phy_set(8, 1, 0x1);        /* 8 bits out on DQ0 */
-    flash_push(0x9fu << 24);
+    flash_push(0x9fu);
 
     flash_phy_set(8, 1, 0x0);        /* 8 bits in, DQ released */
     flash_push(0);
@@ -443,14 +462,14 @@ static inline void flash_drain(unsigned int count) {{
    operation, never one at the start of a batch. */
 static inline void flash_command(unsigned int opcode) {{
     flash_phy_set(8, 1, 0x1);
-    flash_push(opcode << 24);
+    flash_push(opcode);
     flash_drain(1);
 }}
 
 /* Read status register 1. Bit 0 is BUSY, bit 1 is the write-enable latch. */
 static inline unsigned int flash_status1(void) {{
     flash_phy_set(8, 1, 0x1);
-    flash_push(FLASH_CMD_READ_STATUS1 << 24);
+    flash_push(FLASH_CMD_READ_STATUS1);
     flash_phy_set(8, 1, 0x0);
     flash_push(0);
     flash_drain(1);                 /* the byte clocked in during the command */
