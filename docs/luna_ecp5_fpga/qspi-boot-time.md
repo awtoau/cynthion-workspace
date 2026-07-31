@@ -62,7 +62,7 @@ a continuum. Second — and usefully — **62.0 MHz is both the top of ecppack's
 list and the top of Lattice's MCLK frequency table** (FPGA-TN-02039). The tool
 will not let you request an out-of-spec configuration clock, so the
 "out of spec if it appears to work" hazard noted for *user-mode* flash reads
-(see [spi-flash-summary.md](spi-flash-summary.md), where 80 MHz worked but was
+(see [flash-detailed.md](flash-detailed.md), where 80 MHz worked but was
 out of spec) does not arise for *configuration*.
 
 `--freq` writes one field at bitstream offset `0x38`, inside control register 0,
@@ -270,7 +270,7 @@ the fixed overheads do not.
 
 ## Relationship to the existing flash-speed work
 
-[spi-flash-summary.md](spi-flash-summary.md) measured **user-mode** reads from
+[flash-detailed.md](flash-detailed.md) measured **user-mode** reads from
 this flash through gateware: 3.75 MB/s single-lane at 30 MHz, 23.9 MB/s quad at
 48 MHz — a clean 4× from lane count. That is what motivates this experiment.
 

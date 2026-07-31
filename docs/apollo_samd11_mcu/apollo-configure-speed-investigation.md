@@ -16,7 +16,7 @@ unchanged. `apollo flash --fast` is the exception -- it loads a bridge onto the 
 and programs the flash through the FPGA's own USB, bypassing this path entirely.
 
 What this document does **not** cover: the W25Q32's own read modes and QSPI timing,
-which is `../luna_ecp5_fpga/flash-speed.md` -- a different chip, reached by the FPGA
+which is `../luna_ecp5_fpga/flash-detailed.md` -- a different chip, reached by the FPGA
 rather than by the host.
 
 This file was previously `luna_ecp5_fpga/jtag-ceiling-reached.md`. The old title

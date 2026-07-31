@@ -1,5 +1,13 @@
 # Configuration flash over SPI: what was done, and what it measured
 
+> **RETIRED 2026-07-31. Merged into `docs/luna_ecp5_fpga/flash-detailed.md`.**
+>
+> It covered the same part from the same angle as `flash-speed.md` -- the chip, measured
+> throughput, the pin ceiling, clocking -- so the two were consolidated. Everything here
+> that was not already in that document (vendor maximums, the two CS bugs, what is not
+> done, the file map) was carried across.
+
+
 A summary of the SPI/QSPI flash work, parked at a working state. Detail lives in
 [flash-speed.md](flash-speed.md); this is the shape of it, the numbers, and an
 explicit list of what was **not** finished.

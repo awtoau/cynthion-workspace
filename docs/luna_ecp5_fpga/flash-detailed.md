@@ -1,5 +1,31 @@
 # Configuration flash: identification, read modes and speed
 
+The configuration flash on Cynthion r1.4, in detail: what the part is, how fast it goes,
+what it supports, and how much of it there actually is.
+
+## Capacity: exactly 4 MiB, verified three ways
+
+Asked because the ECP5 on this board carries more usable silicon than its marking
+suggests (`ecp5-test/fabric/FABRIC_TEST.md`, pluribus#98), and SPI NOR capacity is
+literally one byte of the JEDEC ID -- so the question was cheap. See #109.
+
+**The flash is what it says it is.** `scripts/flash_capacity_probe.py`, entirely
+read-only:
+
+| test | result |
+|---|---|
+| **SFDP density** | declares 4 MiB. The strong test -- the die publishes this independently of the ID byte |
+| reads at 4, 8, 12 MiB | all alias offset 0 exactly |
+| 4-byte addressing | absent, ADS clear, nothing responds past 16 MiB |
+
+The aliasing comparison is sound because offset 0 held real bitstream data -- `Part:
+LFE5U-12` is legible in the hex -- rather than erased `0xFF`. Two blank regions would
+match trivially and prove nothing; that trap is why the probe compares against live data.
+
+**Contrast with the HyperRAM on the same board, which is 8 MiB against a declared 4**
+(`hyperram-detailed.md`). Same question, opposite answer, which is worth knowing before
+assuming either way about a part.
+
 The r1.4 configuration flash is a **Winbond W25Q32**, JEDEC ID `EF 40 16`
 (manufacturer `EF`, type `40`, capacity `16` = 2^22 = **4 MiB**). Read by the
 FPGA over SPI and confirmed independently by `apollo flash-info`, which reports
@@ -328,3 +354,128 @@ The useful direction is **fewer clocks per byte**:
 - **QPI mode** addresses in as few as 8 clocks.
 
 None of these need a faster pin.
+
+
+## Open work
+
+| issue | what | blocked on |
+|---|---|---|
+| **#89** | SPI/QSPI parked at 48 MHz quad -- the deliberately-unfinished list: broken burst sequencer, dual modes (`0x3B`/`0xBB`) unimplemented, QPI and Continuous Read untried, 80 MHz verified on one board only | nothing -- these are buildable now |
+| **#93** | Small reads, writes and soak | **a RISC-V core.** A JTAG register read takes ~35 ms against a ~1 us flash read, so the instrument is 35,000x slower than the thing measured. No host-side arrangement fixes that |
+| #100 | Reaching the achievable speed on the loading path | see `../apollo_samd11_mcu/apollo-configure-speed-investigation.md` |
+| #109 | The capacity question above | **answered for the flash** -- clean negative, nothing further unless someone tries vendor-specific commands |
+
+The recurring theme is #93's: **writes and erases are entirely untested, and everything
+here is reads.** That is the largest single gap in this document.
+
+---
+
+# Merged from `flash-detailed.md`
+
+That document covered the same part from the same angle -- the chip, its measured
+throughput, the pin ceiling, clocking -- and is retired to `debris/docs/`. What follows is
+the material it held that this one did not.
+
+## Vendor maximums (datasheet, not measured)
+
+From the Winbond W25Q32JV datasheet, for reference against the measured table
+below. These are what the *part* can do; what this *board* reaches is lower, and
+for a reason given in [the FPGA pin section](#the-ceiling-is-the-fpga-pin-not-the-flash).
+
+| Operation | Opcode | Max clock | Lanes | Vendor ceiling |
+|---|---|---|---|---|
+| Read | `0x03` | 50 MHz | 1 | 6.25 MB/s |
+| Fast read | `0x0B` | 104 MHz | 1 | 13 MB/s |
+| Fast read dual | `0x3B` / `0xBB` | 104 MHz | 2 | 26 MB/s |
+| Fast read quad | `0x6B` / `0xEB` | 104 MHz | 4 | **52 MB/s** |
+
+Write and erase, from the same datasheet (tPP, tSE, tBE, tCE):
+
+| Operation | Size | Typical | Max |
+|---|---|---|---|
+| Page program | 256 B | 0.7 ms | 3 ms |
+| Sector erase | 4 KiB | 45 ms | 400 ms |
+| Block erase | 32 KiB | 120 ms | 1,600 ms |
+| Block erase | 64 KiB | 150 ms | 2,000 ms |
+| Chip erase | 4 MiB | 10 s | 50 s |
+
+**Write tops out around 0.37 MB/s** (256 B / 0.7 ms typical), falling to
+0.085 MB/s at the worst-case 3 ms. A full 4 MiB erase-and-rewrite is ~22 s
+typical. That is **~70× slower than reads on this board**, and the two ceilings
+have different causes: reads are limited by the FPGA's `USRMCLK` pin, writes by
+the flash die itself.
+
+**There is no bus-side trick for writes, and the vendor says so.** On Quad Input
+Page Program (`0x32`), the datasheet states it helps "applications that have slow
+clock speeds <5MHz" and that "systems with faster clock speed will not realize
+much benefit … since the inherent page program time is much greater than the time
+it takes to clock-in the data." At 48 MHz, shifting 256 bytes takes ~43 µs against
+700 µs of internal programming — the bus idles ~94% of the time and quad recovers
+about 4% end to end. The only things that move the number are workflow, not
+silicon: poll the BUSY bit (SR1 bit 0, via `0x05`) instead of delaying for
+worst-case, which recovers most of the 4× typ/max spread; and erase at the
+largest granularity actually being replaced, since one 64 KiB block erase
+(150 ms) beats sixteen 4 KiB sector erases (720 ms).
+
+Two related notes from the datasheet:
+
+- **Output drive strength defaults to 25%.** `DRV1/DRV0` in SR3 default to `1,1`;
+  100% is available. This affects reads only. It is writable *volatile* via Write
+  Enable for Volatile Status Register (`0x50`) then `0x11`, so it can be tested
+  without any non-volatile write. Worth trying against the non-monotonic clock
+  results in [flash-detailed.md](flash-detailed.md) — 30 MHz fails while 24 and 40 MHz
+  pass, which a weak driver into pin capacitance could explain.
+- **Erase/Program Suspend (`0x75`/`0x7A`)** interrupts a page program or sector
+  erase to service a read, resuming afterwards. A latency tool, not a throughput
+  one. The datasheet warns that power loss while suspended may corrupt the page or
+  sector being written.
+
+Datasheet consulted for this section was the DigiKey mirror of the JV revision
+(self-labelled "Preliminary-Revision A1"); its timing tables agree with the FV
+revision J used elsewhere in these notes. Mouser's link for the same part serves
+a 14 KB stub rather than the PDF.
+
+## Two bugs worth remembering
+
+**CS was inverted twice.** Glasgow's controller inverts chip select internally,
+expecting an active-high port, while the platform declares `cs` with `PinsN`.
+The two cancelled: CS was never asserted, and every read returned zeros at the
+correct speed for every offset and divisor. Offset-independence is what
+identified it — a sampling error shifts or corrupts data, it does not silence it.
+
+**The chip was never deselected.** The reader relied on the `chip` field of the
+final payload beat, but by then `bytes_left` is 0 so `valid` is low and that
+frame was never sent. A *single* read still worked, so this hid behind every
+rebuild-and-reconfigure measurement and only appeared once reads could repeat
+without reconfiguring. Fixing it doubled the apparent ceiling.
+
+## What is NOT done
+
+- **The burst sequencer is broken.** It asserts `start` on the completion edge
+  while the reader has not returned to IDLE, so `busy` latches high. Committed
+  deliberately, marked in the source.
+- **Small-read performance is unmeasured.** A JTAG register read takes ~35 ms;
+  a 4-byte flash read takes ~1 µs. The instrument is 35,000× slower than the
+  thing measured, so the host cannot time short transfers however the gateware
+  is arranged. This needs a soft CPU inside the FPGA.
+- **`0xEB`'s benefit is predicted, not measured.** The 42%/19% figures above are
+  arithmetic. Confirming them needs the same in-FPGA measurement.
+- **Dual modes (`0x3B`, `0xBB`) are unimplemented**, as are Continuous Read with
+  wrap and QPI mode — all of which reduce clocks per byte rather than needing a
+  faster pin.
+- **80 MHz is verified on one board only**, at room temperature and nominal
+  voltage, and the failure mode is abrupt rather than graceful.
+- **Write and erase are untested.** Everything here is reads.
+
+## Files
+
+| Path | What |
+|---|---|
+| `repos/apollo/apollo_fpga/gateware/qspi_flash.py` | Glasgow controller wrapper, USRMCLK bridge, quad reader |
+| `repos/apollo/apollo_fpga/gateware/flash_id.py` | JEDEC ID, status registers, capture buffer |
+| `repos/apollo/apollo_fpga/gateware/variable_clock.py` | ecppll-driven PLL |
+| `ecp5-test/qspi/qspi_gateware.py` | Test bitstream |
+| `scripts/qspi_ladder.py` | Divisor/offset sweep, verified against apollo |
+| `scripts/qspi_burst.py` | Small-read comparison (blocked, see above) |
+| `scripts/flash_modes.py` | Opcode and clock sweep |
+
