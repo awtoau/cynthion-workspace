@@ -2,22 +2,24 @@
 
 Everything measured about the r1.4 HyperRAM, in one place.
 
-## The part: IS66WVH8M8, 64 Mbit, 8 MiB -- and it is exactly that
+## The part: Winbond W956A8MBYA6I, 64 Mbit, 8 MiB -- and it is exactly that
 
 Nothing in this workspace recorded what this chip was. Throughput had been characterised
 in detail without anyone naming the manufacturer or the density, and the platform file
 declares pins only. `scripts/hyperram_identify.py` asks the chip directly.
 
-**ID0 `0x0c86`**, decoded against `sources/ISSI-IS66WVH8M8-64Mbit-HyperRAM.pdf`:
+**ID0 `0x0c86`**, decoded against `sources/Winbond-W956A8MBYA-64Mbit-HyperRAM.pdf`
+(the part's own datasheet; the ISSI files are equivalents kept for comparison):
 
 | field | bits | raw | meaning |
 |---|---|---|---|
 | row address bits | 12:8 | `01100` = 12 | **13 bits** -- 8192 rows |
 | column address bits | 7:4 | `1000` = 8 | **9 bits** -- 512 columns |
-| manufacturer | 3:0 | `0110` = 6 | datasheet gives ISSI as `0011` -- unresolved |
+| manufacturer | 3:0 | `0110` = 6 | **Winbond** -- table 8 of its datasheet |
 
-**Both fields are count-minus-one.** Table 5.2 gives `00000` as *"One Row address bit"*.
-So 8192 x 512 x 2 = **8 MiB**, and table 5.7 states "Array Rows: 8192" independently.
+**Both fields are count-minus-one.** Section 8.1.1 states it directly for this part:
+*"9 column and 13 row address bits ... 2^22 = 4M words = 8M bytes"*, 8192 rows. So
+8192 x 512 x 2 = **8 MiB**.
 
 **64 Mbit is 8 MiB.** That is the whole story, and it is where three earlier wrong
 answers came from.
@@ -64,10 +66,35 @@ and the top die answers with nothing at every address including its own ID0. **T
 single-die 64 Mbit part**, not the 128 Mbit stack, and not the 256 Mbit `32M8` -- 16 and
 24 MiB were probed directly and are dead.
 
-## Undocumented read-only content at register 0x1000
+## Register 0x1000 is Winbond's Manufacturer Information Register
 
 HyperBus specifies four registers -- ID0 `0x0`, ID1 `0x1`, CR0 `0x800`, CR1 `0x801`.
-Sweeping beyond them found a block that answers and is none of the obvious artifacts.
+Sweeping beyond them found a block that answers, and it turned out to be documented --
+in the Winbond datasheet, which was not in hand when the block was found.
+
+**Section 9.1, table 5, "Register Space Address Map"** lists a fifth register:
+
+    Manufacturer Information Register (0~17) read   C0h or E0h ... 02h 00h 00h 00h~11h
+
+The table maps system address bits 18~11 to CA[31:24], so `02h` is `0x02 << 11` =
+**`0x1000`**. The same arithmetic gives `0x0000` for ID0/ID1 and `0x0800` for CR0/CR1,
+which confirms the decoding rather than fitting it. The register spans `0x1000`-`0x1011`
+-- 18 words -- and is marked **read only**, matching the measured write refusal.
+
+Table 6 notes that `06h~0Ah` and `0Fh~11h` are reserved. The `3320 3320` observed at
+`0x1006`/`0x1007` sits inside that reserved span.
+
+**The register is named but not defined.** Section 9 has subsections for ID0/ID1 (9.3),
+CR0 (9.4) and CR1 (9.5) -- none for the MIR. So the ASCII `00029740` reading remains a
+plausible lot or date code rather than a vendor-confirmed one, and only 8 of its 18 words
+have been read.
+
+It is also a W956-family extension: neither the 128 Mbit nor the 256 Mbit register map
+has an MIR entry.
+
+The exclusions below were done before the datasheet arrived. They are kept because they
+are what established the block was real, and because the same method applies to any
+undocumented register block.
 
     0x1000-0x1007:  3030 3230 3739 3034 0736 4c8d 3320 3320
     0x1008-0x100b:  repeats -- the block is 8 addresses wide
@@ -95,12 +122,47 @@ them: factory content, not scratch and not a writable trim.
 CR0 is volatile -- a power cycle restores `0x8f2f` -- and the committed script writes
 CR0's own value back rather than keeping the flip.
 
-### What this does not tell us
+### Still open: what the code means, and 10 unread words
 
-What the code means, and whether anything else lives further out. `0x1000`-`0x100b` is
-where the sweep stopped, not where the content ends. The Winbond W956A8MBYA6I datasheet
-is not in `sources/` -- only the ISSI equivalents -- so there is no primary source to
-check it against.
+The datasheet names the register and stops there. `0x1000`-`0x100b` is where the sweep
+stopped; the register runs to `0x1011`, so **10 of its 18 words have never been read**.
+
+Reading the rest is queued behind the RISC-V bring-up (#91). A CPU on the bus can walk
+all 18 words in microseconds, where each JTAG-mediated read costs a build-flash-read
+cycle -- see "Read the whole MIR from the Rust CLI" below.
+
+### The fields are not sized for a larger die
+
+The obvious suspicion -- that one silicon is configured down and the registers would show
+it -- is answerable now that both densities are in `sources/`:
+
+| bits | 64 Mbit (table 8) | 128 Mbit (table 6) |
+|---|---|---|
+| `[15:14]` | MCP die address, 4 die | DDP die address, 2 die |
+| `[12:8]` row | `01100b` = 13 bits | `01100b` = 13 bits |
+| `[7:4]` column | `1000b` = 9 bits | `1000b` = 9 bits |
+
+**Identical.** Density scales by **die count** in `[15:14]`, not by widening the count
+fields, and the 128 Mbit part reports 13/9 because it is two 64 Mbit dies in a DDP -- ID0
+is documented "for each die".
+
+The contrast is the 256 Mbit single-die `W958D8NBYA`: row widens to `01110b` (15 bits)
+and `[15:14]` becomes Reserved. So a larger die *does* report differently. Ours does not.
+
+## Read the whole MIR from the Rust CLI (queued behind #91)
+
+Once a RISC-V core can drive the HyperBus, the MIR should be dumped in full as a CLI
+command rather than through gateware built per question.
+
+Why it belongs there rather than here: every register read in this document cost a
+gateware build, a flash and a JTAG read -- minutes per address, which is why only 8 of 18
+words were read and why the sweep stopped at `0x100b`. A CPU on the bus reads all 18 in
+microseconds, so the whole register becomes one command instead of a project.
+
+Worth having it emit both the raw words and an ASCII rendering, since the only structure
+found so far was visible as text (`00029740`), and worth reading the reserved spans
+(`06h~0Ah`, `0Fh~11h`) rather than skipping them -- `0x1006`/`0x1007` are reserved and
+returned `3320` rather than nothing.
 
 ### What the probe is still good for
 
