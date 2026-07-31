@@ -85,11 +85,18 @@ def main():
     import serial
     import usb_ids
 
+    # Wait rather than exit. During a build-and-test cycle the board spends much of its
+    # time with no bitstream loaded, so "not there yet" is the normal startup state, not a
+    # failure. --once keeps the old behaviour, since a one-shot read has nothing to wait
+    # for.
     node = usb_ids.wait_for_tty("riscv_console")
-    if not node:
+    if not node and args.once:
         print("no RISC-V console found.", file=sys.stderr)
         print("Is a SoC bitstream loaded? Check `lsusb -d 1d50:6180`.", file=sys.stderr)
         return 1
+    while not node:
+        print("waiting for a SoC bitstream...", flush=True)
+        node = usb_ids.wait_for_tty("riscv_console", settles=60)
 
     print(f"console: {node}  ({usb_ids.product_string('riscv_console')})", flush=True)
 
@@ -100,11 +107,32 @@ def main():
                          daemon=True).start()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
-    port = serial.Serial(node, 115200, timeout=3)
     try:
         with LOG.open("a") as handle:
+            port = serial.Serial(node, 115200, timeout=3)
             while True:
-                data = port.read(BURST_BYTES)
+                # Reconfiguring the FPGA tears the tty down, and that is ROUTINE here --
+                # every build-and-test cycle does it. pyserial raises SerialException
+                # ("device reports readiness to read but returned no data"), which is not
+                # an error worth exiting on: the device is coming back in a moment.
+                #
+                # So reattach instead of dying. wait_for_tty settles and confirms the port
+                # opens, so this waits for the NEW node rather than racing the old one.
+                try:
+                    data = port.read(BURST_BYTES)
+                except (serial.SerialException, OSError):
+                    print("\n[device went away -- reattaching]", flush=True)
+                    try:
+                        port.close()
+                    except Exception:
+                        pass
+                    node = usb_ids.wait_for_tty("riscv_console")
+                    if not node:
+                        print("[device did not come back]", flush=True)
+                        return 1
+                    print(f"[reattached: {node}]", flush=True)
+                    port = serial.Serial(node, 115200, timeout=3)
+                    continue
                 if data:
                     text = data.decode("ascii", "replace")
                     sys.stdout.write(text)
