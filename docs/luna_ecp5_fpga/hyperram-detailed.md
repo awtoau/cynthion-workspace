@@ -2,18 +2,53 @@
 
 Everything measured about the r1.4 HyperRAM, in one place.
 
-## The part, identified for the first time
+## The part: a dual-die stack, and ID0 describes one die
 
 Nothing in this workspace recorded what this chip was. Throughput had been characterised
 in detail without anyone naming the manufacturer or the density, and the platform file
 declares pins only. `scripts/hyperram_identify.py` asks the chip directly.
 
-**ID0 `0x0c86`** -- ISSI, die generation 8, **12 row address bits**. ID1 `0x0001`,
-CR0 `0x8f2f`, CR1 `0xffc1`.
+**ID0 `0x0c86`.** Decoded against the ISSI datasheets now in `sources/`:
 
-With HyperBus's 9 column address bits that declares 4096 x 512 x 2 = **4 MiB / 32 Mbit**.
+| field | bits | value | meaning |
+|---|---|---|---|
+| die address | 15:14 | `00` | **die 0 of a stack** -- bottom die |
+| row address bits | 12:8 | `01100` = 12 | 4096 rows |
+| column address bits | 7:4 | `1000` = 8 | 9 column bits, 512 columns |
+| manufacturer | 3:0 | `0110` = 6 | **not ISSI** -- the datasheet gives ISSI as `0011` |
 
-## It is actually 8 MiB. Exactly twice its marking.
+So ID0 declares 4096 x 512 x 2 = **4 MiB for the die it is describing**, and bits 15:14
+say that is die 0 of a stack rather than a whole part.
+
+ID1 `0x0001`, CR0 `0x8f2f`, CR1 `0xffc1`.
+
+## It holds 8 MiB, and the datasheet explains why
+
+The measurement below found storage to 8 MiB against ID0's declared 4. **That is not
+undocumented capacity.** `sources/ISSI-IS66WVH16M8-128Mbit-HyperRAM.pdf` states it
+directly: *"The device is a dual die stack of two 64Mb die"*, and its table 5.2
+repurposes ID0 bits 15:14 -- reserved on the single-die 64 Mbit part -- as a **Die
+Address**, `00` for the bottom die and `01` for the top.
+
+Two 64 Mb dies of 4 MiB each is 8 MiB, which is exactly what was measured.
+
+**A larger stack was checked and ruled out on hardware.** The family does include a
+256 Mbit part (`32M8`, named in the 128 Mbit datasheet's ordering table), so 4x was a
+live possibility rather than a theoretical one. Probing 8, 16 and 24 MiB directly returns
+`0x8484` at every point: the part ends at 8 MiB. It is the 128 Mbit dual-die device, not
+the 256 Mbit one.
+
+**This corrects an earlier reading of the same data.** Before the datasheets were
+fetched, ID0's 4 MiB was taken as the whole part and the 8 MiB result was reported as a
+part carrying twice its marking. The measurement was right; the interpretation was wrong,
+because a single-die field was being read on a stacked part.
+
+One field remains unexplained: the datasheet gives ISSI as manufacturer `0011` and this
+part reports `0110`. So either it is not ISSI, or the encoding differs from these two
+datasheets. Naming it ISSI was a guess from a lookup table written before the primary
+source was available, and that guess is now removed from the tooling.
+
+## The measurement itself
 
 Asked because the ECP5 on this board carries more usable fabric than its marking implies
 (`ecp5-test/fabric/FABRIC_TEST.md`, pluribus#98). See #109.
@@ -28,9 +63,10 @@ The boundary was **bracketed on hardware**, not assumed:
 | **7.94 MiB** | **holds its marker** |
 | **8 MiB** | **`0x8484` -- nothing there** |
 | 9, 10.5, 12 MiB | nothing there |
+| **16 MiB, 24 MiB** | **nothing there** -- tested directly, so a 256 Mbit (4x) part is excluded |
 
-The edge falls exactly on 2x the declared capacity, which is a die size rather than an
-arbitrary boundary.
+The edge falls exactly on 2x the per-die capacity -- which is the second die ending,
+exactly as a two-die stack predicts.
 
 ### Three ways this could have been fake, each tested
 
@@ -49,13 +85,18 @@ the readback. HyperRAM is DRAM: it self-refreshes on a ~64 ms per-row budget, an
 controller refreshes only the region it believes exists. Space above the declared end
 would decay inside that window if it were unrefreshed. It does not.
 
-### What this does not establish
+### What this establishes, now that the datasheet is in hand
 
-Behaviour over temperature, or over hours rather than milliseconds. Whether it holds for
-other boards. One part, one moment -- the same scope the ECP5 test claimed for itself.
+**8 MiB is real, documented capacity** -- a 128 Mbit dual-die part, not a 64 Mbit part
+with a bonus. That is a stronger result than the original reading: the vendor *has*
+committed to it, so a design can use it.
 
-**Unmarked capacity is untested capacity.** The vendor has not committed to it, so this
-is a fact about this hardware rather than a licence to rely on 8 MiB in a design.
+What the probe adds beyond the datasheet is that both dies are actually reachable and
+independently addressable through the LUNA controller at 0-8 MiB linear, with no die-select
+handling needed in gateware. That was not obvious in advance and is worth having.
+
+Still not established: behaviour over temperature or over hours rather than milliseconds,
+and whether other boards carry the same part.
 
 ### No temperature sensor -- and why that matters here
 

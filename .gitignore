@@ -51,3 +51,7 @@ ecp5-test/sideband/build/
 # Agent worktrees: transient checkouts, created and removed by the tooling.
 # Their branches are merged into main; ten rescue/* tags anchor the commits.
 .claude/worktrees/
+
+# Third-party datasheets: freely fetchable from the vendor, several MB each, and not
+# ours to redistribute. sources/README.md is the manifest with URLs.
+sources/*.pdf

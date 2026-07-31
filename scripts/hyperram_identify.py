@@ -64,17 +64,17 @@ BANK_WORDS = 1024 * 1024
 BANKS = 4
 
 # HyperBus manufacturer codes, JEP106 low nibble as reported in ID0[3:0].
+# From the ISSI IS66WVH16M8 datasheet table 5.2 (sources/): ISSI is 0011. Values here
+# beyond that are NOT vendor-confirmed -- an earlier version of this table guessed 0x6 as
+# ISSI and was wrong, which then mislabelled the part in two documents. Anything not
+# listed is reported as an unknown code rather than named.
 MANUFACTURERS = {
-    0x1: "Cypress/Infineon (S27KL/S70KL)",
-    0x3: "Winbond (W956/W957)",
-    0x6: "ISSI (IS66WVH)",
-    0xE: "AP Memory / Espressif-adjacent (APS)",
+    0x3: "ISSI (datasheet-confirmed)",
 }
 
-# Column address bits are fixed at 9 for HyperBus, so capacity is decided by the row
-# count. Stated as a constant rather than derived, because getting it wrong silently
-# scales every capacity figure by a power of two.
-COLUMN_BITS = 9
+# Read from ID0[7:4] rather than assumed: the field is "column address bit count minus
+# one". Deriving it matters because assuming the wrong value scales every capacity figure
+# by a power of two.
 
 
 def decode_id0(value):
@@ -84,13 +84,18 @@ def decode_id0(value):
     manufacturer = value & 0xF
     generation = (value >> 4) & 0xF
     row_bits = (value >> 8) & 0x3F
-    name = MANUFACTURERS.get(manufacturer, f"unknown (0x{manufacturer:x})")
+    name = MANUFACTURERS.get(manufacturer, "not datasheet-confirmed")
     if not 1 <= row_bits <= 32:
         return (f"0x{value:04x}: manufacturer {name}, generation {generation}, "
                 f"row bits {row_bits} (implausible)"), None
-    capacity = (1 << row_bits) * (1 << COLUMN_BITS) * 2
-    return (f"0x{value:04x}: manufacturer {name}, die generation {generation}, "
-            f"{row_bits} row address bits"), capacity
+    column_bits = ((value >> 4) & 0xF) + 1
+    capacity = (1 << row_bits) * (1 << column_bits) * 2
+    die = (value >> 14) & 0x3
+    return (f"0x{value:04x}: manufacturer code 0x{manufacturer:x} ({name}), "
+            f"{row_bits} row + {column_bits} column address bits, "
+            f"die address {die:02b}\n"
+            f"       NOTE: on a dual-die stack ID0 describes ONE DIE, not the package -- "
+            f"bits 15:14 select which"), capacity
 
 
 def configure():
