@@ -20,6 +20,12 @@ Usage:
   python3 led_pattern_gateware_hello_world.py
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent))
+import usb_ids
+
+
 from amaranth import *
 from amaranth.lib.fifo import SyncFIFO
 from luna.usb2 import USBDevice
@@ -39,8 +45,8 @@ from usb_protocol.types import USBRequestType
 from luna.usb2 import USBStreamInEndpoint, USBStreamOutEndpoint
 from usb_protocol.types import USBDirection, USBTransferType
 
-VENDOR_ID = 0x1209   # https://pid.codes/1209/
-PRODUCT_ID = 0x0001
+VENDOR_ID = usb_ids.VENDOR_ID
+PRODUCT_ID = usb_ids.product_id("led_gateware")
 
 MAX_PACKET_SIZE = 512
 

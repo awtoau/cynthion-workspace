@@ -26,6 +26,12 @@ to a USB endpoint instead of a shift register.
     ./ecp5-test/riscv/hello_soc.py --build --program
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent.parent))
+import usb_ids
+
+
 import argparse
 import sys
 from pathlib import Path
@@ -200,7 +206,7 @@ class HelloSoC(Elaboratable):
             # already grants uaccess to. Picking an unlisted PID leaves the
             # device enumerating but unopenable without root, which looks
             # exactly like a dead CPU.
-            d.idVendor, d.idProduct = 0x1209, 0x000e
+            d.idVendor, d.idProduct = usb_ids.VENDOR_ID, usb_ids.product_id("riscv_vex_console")
             d.iManufacturer, d.iProduct = "Cynthion", "RISC-V console"
             d.bNumConfigurations = 1
         with descriptors.ConfigurationDescriptor() as c:

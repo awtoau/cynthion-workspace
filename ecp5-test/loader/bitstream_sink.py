@@ -44,6 +44,12 @@ it to go, which is the point.
     ./scripts/fast_loader.py --mode sink-test --bitstream <file.bit>
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent.parent))
+import usb_ids
+
+
 import argparse
 import sys
 from pathlib import Path
@@ -71,8 +77,8 @@ BULK_OUT_ENDPOINT = 1
 # 1209:000e is the pid.codes "example" ID that 54-cynthion.rules already grants
 # uaccess to. An unlisted PID enumerates but cannot be opened without root,
 # which looks identical to broken gateware.
-USB_VENDOR_ID = 0x1209
-USB_PRODUCT_ID = 0x000e
+USB_VENDOR_ID  = usb_ids.VENDOR_ID
+USB_PRODUCT_ID = usb_ids.product_id("bitstream_sink")
 
 # TARGET-C. The CONTROL port is shared with the Apollo debug controller and
 # would need an ApolloAdvertiser to claim; TARGET is free. Note that on r1.4 the

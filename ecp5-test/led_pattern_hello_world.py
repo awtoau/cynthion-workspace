@@ -16,6 +16,12 @@ Gateware Side:
   - Vendor request 0x03: GET_BUTTON (read user button state)
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent))
+import usb_ids
+
+
 import sys
 import time
 from pathlib import Path
@@ -33,8 +39,8 @@ class CynthionLEDController:
     """Control Cynthion LEDs via USB."""
     
     # USB IDs (from gateware example)
-    VENDOR_ID = 0x1209
-    PRODUCT_ID = 0x0001
+    VENDOR_ID = usb_ids.VENDOR_ID
+    PRODUCT_ID = usb_ids.product_id("led_patterns")
     
     # Vendor request codes
     VENDOR_SET_LED_PATTERN = 0x01

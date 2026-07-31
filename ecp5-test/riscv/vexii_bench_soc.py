@@ -25,6 +25,12 @@ two disagree -- which is the more diagnosable failure.
     ./ecp5-test/riscv/vexii_bench_soc.py --build
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent.parent))
+import usb_ids
+
+
 import argparse
 import sys
 from pathlib import Path
@@ -106,7 +112,7 @@ class VexiiBenchSoC(Elaboratable):
         with descriptors.DeviceDescriptor() as d:
             # 1209:000e is granted uaccess by the shipped udev rules; an
             # unlisted product ID enumerates but cannot be opened without root.
-            d.idVendor, d.idProduct = 0x1209, 0x000e
+            d.idVendor, d.idProduct = usb_ids.VENDOR_ID, usb_ids.product_id("riscv_bench")
             d.iManufacturer, d.iProduct = "Cynthion", "VexiiRiscv benchmark"
             d.bNumConfigurations = 1
         with descriptors.ConfigurationDescriptor() as c:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# A RISC-V core on block RAM, printing over USB CDC-ACM.
+# A RISC-V core on block RAM, printing over USB CDC-ACM on the AUX port.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
@@ -11,7 +11,16 @@ cache, no bus wrapper and no latency tuning, so the only things that can be
 wrong are the CPU, its reset vector and the peripheral it writes to. HyperRAM
 would mean debugging a CPU and a latency-sensitive memory at once.
 
-Output goes over USB CDC-ACM from the FPGA rather than through the Apollo UART.
+Output goes over USB CDC-ACM from the FPGA rather than through the Apollo UART, on the
+AUX port, appearing as an ordinary `/dev/ttyACM*` tty.
+
+**This was not true until now.** The design claimed CDC-ACM in three places while
+building a bare vendor-specific interface with one bulk IN endpoint and no CDC
+descriptors, so no tty node ever appeared -- the kernel is right to refuse a serial
+driver for a vendor-specific class. An investigation into the resulting silence spent
+time reading `/dev/ttyACM1`, which is an ST-LINK. It now uses LUNA's `USBSerialDevice`,
+the same gateware measured at 195.4 Mbps loopback in
+`../../docs/luna_ecp5_fpga/usb-performance.md`.
 On r1.4 the `uart 0` pins (R14/T14) are shared with JTAG TDI/TMS, so a design
 that drives them competes with the thing loading its own bitstream. The USB path
 has no such conflict, and the CDC gateware is already measured -- 195 Mbps
@@ -35,6 +44,9 @@ from amaranth.lib                   import wiring, stream
 from amaranth.lib.fifo              import SyncFIFOBuffered
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import usb_ids
 
 # Import order matters. amaranth_soc is vendored inside luna_soc rather than
 # installed standalone, and importing a luna_soc peripheral is what aliases it
@@ -197,58 +209,55 @@ class HelloSoC(Elaboratable):
         arbiter.add(cpu.iobus)
         wiring.connect(m, arbiter.bus, decoder.bus)
 
-        # USB CDC-ACM. The console stream is the IN endpoint's data source;
-        # nothing reads from the host, since phase 1 only needs output.
-        from luna.gateware.usb.usb2.device import USBDevice
-        from luna.gateware.usb.request.standard import StandardRequestHandler
-        from luna.gateware.usb.usb2.endpoints.stream import USBStreamInEndpoint
-        from usb_protocol.emitters import DeviceDescriptorCollection
+        # USB CDC-ACM, on the AUX port.
+        #
+        # This was previously a bare USBDevice with one bulk IN endpoint and no CDC
+        # descriptors -- despite the comment claiming CDC-ACM. That is why no ttyACM node
+        # ever appeared: the kernel correctly declines to bind a serial driver to a
+        # vendor-specific interface, and an investigation chasing the silence ended up
+        # reading /dev/ttyACM1, which is an ST-LINK.
+        #
+        # USBSerialDevice is the same gateware measured at 195.4 Mbps CDC-ACM loopback in
+        # docs/luna_ecp5_fpga/usb-performance.md -- CDC costs essentially nothing over raw
+        # bulk, since it is the same two stream endpoints plus descriptors.
+        from luna.gateware.usb.devices.acm import USBSerialDevice
 
-        ulpi = platform.request("target_phy")
-        usb = USBDevice(bus=ulpi)
-        m.submodules.usb = usb
+        # AUX rather than CONTROL: CONTROL is shared with Apollo and needs an
+        # ApolloAdvertiser to claim, while AUX belongs to the FPGA outright. The previous
+        # code used `target_phy`, which is the port under test rather than a debug port.
+        bus = platform.request("aux_phy", 0)
 
-        descriptors = DeviceDescriptorCollection()
-        with descriptors.DeviceDescriptor() as d:
-            # 1209:000e is the pid.codes "example" ID that 54-cynthion.rules
-            # already grants uaccess to. Picking an unlisted PID leaves the
-            # device enumerating but unopenable without root, which looks
-            # exactly like a dead CPU.
-            d.idVendor, d.idProduct = 0x1209, 0x000e
-            d.iManufacturer, d.iProduct = "Cynthion", "RISC-V console"
-            d.bNumConfigurations = 1
-        with descriptors.ConfigurationDescriptor() as c:
-            with c.InterfaceDescriptor() as i:
-                i.bInterfaceNumber = 0
-                with i.EndpointDescriptor() as e:
-                    e.bEndpointAddress = 0x81
-                    # 512 is the high-speed bulk maximum. The default is 64,
-                    # the full-speed limit, which enumerates at high speed and
-                    # then runs at an eighth of the achievable rate.
-                    e.wMaxPacketSize = 512
-        usb.add_standard_control_endpoint(descriptors)
+        # 512 is the high-speed bulk maximum. The default of 64 is the full-speed limit,
+        # which enumerates at high speed and then runs at an eighth of the achievable rate.
+        # ID from the central allocation, never a locally chosen number. 0x615c -- what
+        # this used to claim -- is Apollo's own debugger and bootloader ID, so this
+        # bitstream was impersonating the debugger. See ecp5-test/usb_ids.py.
+        serial = USBSerialDevice(bus=bus,
+                                 idVendor=usb_ids.VENDOR_ID,
+                                 idProduct=usb_ids.product_id("riscv_console"),
+                                 manufacturer_string="Great Scott Gadgets",
+                                 product_string=usb_ids.product_string("riscv_console"),
+                                 max_packet_size=512)
+        m.submodules.serial = serial
 
-        endpoint = USBStreamInEndpoint(endpoint_number=1, max_packet_size=512)
-        usb.add_endpoint(endpoint)
+        # Connect immediately: nothing here needs to initialise first, and a device that
+        # only appears after a host poke is harder to diagnose than one simply present.
+        m.d.comb += serial.connect.eq(1)
 
-        # LUNA's StreamInterface predates amaranth.lib.stream and is wired by
-        # assignment rather than wiring.connect. `last` stays low so the
-        # endpoint emits full packets instead of terminating one per byte.
+        # Console FIFO -> host. The receive direction is tied off: phase 1 only needs
+        # output, and leaving rx.ready low would stall the endpoint rather than discard.
         m.d.comb += [
-            endpoint.stream.payload.eq(console.source.payload),
-            endpoint.stream.valid.eq(console.source.valid),
-            endpoint.stream.last.eq(0),
-            console.source.ready.eq(endpoint.stream.ready),
+            serial.tx.payload.eq(console.source.payload),
+            serial.tx.valid.eq(console.source.valid),
+            serial.tx.first.eq(0),
 
-            # Send a short packet as soon as the FIFO drains, rather than
-            # waiting for 512 bytes to accumulate.
-            #
-            # USBInTransferManager only marks a packet ready when `last` is
-            # asserted, the buffer fills, or `flush` is high. A console emits a
-            # line and then goes quiet, so without this the banner sits in the
-            # buffer until enough later output arrives to fill it -- minutes of
-            # apparent silence from a working CPU.
-            endpoint.flush.eq(~console.source.valid),
+            # `last` marks a packet boundary. Asserting it whenever the FIFO drains sends
+            # a short packet immediately, rather than holding the banner until 512 bytes
+            # accumulate -- which reads as minutes of silence from a working CPU.
+            serial.tx.last.eq(~console.source.valid),
+
+            console.source.ready.eq(serial.tx.ready),
+            serial.rx.ready.eq(1),
         ]
 
         # The single-wire debug link to Apollo. Present in every test design
@@ -266,13 +275,31 @@ class HelloSoC(Elaboratable):
         # iobus activity says it is actually reaching the peripheral. Those are
         # different questions, and conflating them is what made this SoC look
         # dead when it was only mute.
+        # STICKY, not live. `cyc` is a Wishbone strobe -- high only during a
+        # transaction, a few cycles at a time -- and the sideband samples whenever the
+        # host happens to ask. Reporting it directly answers "is a transaction in flight
+        # at this instant", which is 0 most of the time even on a busy CPU, and reads as
+        # a dead core. These latch on the first assertion and never clear, so they answer
+        # "has this bus EVER moved" -- which is the question actually being asked.
+        ever_fetched = Signal()
+        ever_io      = Signal()
+        ever_errored = Signal()
+        ever_console = Signal()
+        with m.If(cpu.ibus.cyc):
+            m.d.sync += ever_fetched.eq(1)
+        with m.If(cpu.iobus.cyc):
+            m.d.sync += ever_io.eq(1)
+        with m.If(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err):
+            m.d.sync += ever_errored.eq(1)
+        with m.If(console.source.valid):
+            m.d.sync += ever_console.eq(1)
+
         m.d.comb += [
-            sideband.state.eq(Cat(cpu.ibus.cyc, cpu.iobus.cyc)),
-            sideband.events.eq(console.source.valid),
-            sideband.error.eq(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err),
+            sideband.state.eq(Cat(ever_fetched, ever_io)),
+            sideband.events.eq(ever_console),
+            sideband.error.eq(ever_errored),
         ]
 
-        m.d.comb += usb.connect.eq(1)
         return m
 
 

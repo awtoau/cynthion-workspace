@@ -40,6 +40,12 @@ gateware is driving the PHY behind the port being used -- moving a cable to
 TARGET does nothing while the device is instantiated on AUX.
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent.parent))
+import usb_ids
+
+
 from amaranth                          import Cat, Const, Elaboratable, Module, Signal
 
 from luna.gateware.architecture.car    import LunaECP5DomainGenerator
@@ -63,8 +69,8 @@ BULK_OUT_ENDPOINT = 1
 # Reuses Cynthion's own product ID deliberately: the udev rules grant access
 # only to 615b/615c, and a fresh ID gives a permission error rather than a
 # measurement. Worth a dedicated rule if this becomes permanent.
-USB_VENDOR_ID  = 0x1d50
-USB_PRODUCT_ID = 0x615b
+USB_VENDOR_ID  = usb_ids.VENDOR_ID
+USB_PRODUCT_ID = usb_ids.product_id("usb_oneway")
 
 # Set at build time. Rebuild to move the device to a different port.
 PHY_NAME = "aux_phy"

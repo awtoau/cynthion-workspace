@@ -45,6 +45,12 @@ Build and flash:
     apollo configure ecp5-test/usb_bulk/build/top.bit
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent.parent))
+import usb_ids
+
+
 from amaranth                       import (Cat, DomainRenamer, Elaboratable,
                                             Module, Signal)
 from amaranth.lib.fifo              import SyncFIFOBuffered
@@ -64,12 +70,15 @@ CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
 # 512 is the high-speed bulk maximum, and matches the CDC bitstream.
 MAX_PACKET_SIZE = 512
 
-# Great Scott Gadgets' VID. 0x615b is Cynthion's own gateware PID, which the
-# installed udev rules already grant user access to via `uaccess` -- libusb
-# needs that, and reusing it avoids editing system udev rules for a test
-# bitstream. It is distinct from the CDC bitstream's 0x615c.
-USB_VENDOR_ID  = 0x1d50
-USB_PRODUCT_ID = 0x615b
+# From the central allocation in ecp5-test/usb_ids.py, never a locally chosen number.
+#
+# This previously claimed LUNA's 0x615b -- as did usb_oneway.py and usb_timing.py, so
+# three bitstreams were indistinguishable from each other and from LUNA itself. The
+# reason given at the time was that the installed udev rules already grant uaccess to
+# that ID, which libusb needs. scripts/install_udev.py now grants it per allocated ID
+# instead, so correctness does not depend on borrowing someone else's identity.
+USB_VENDOR_ID  = usb_ids.VENDOR_ID
+USB_PRODUCT_ID = usb_ids.product_id("usb_bulk")
 
 BULK_ENDPOINT_NUMBER = 1
 

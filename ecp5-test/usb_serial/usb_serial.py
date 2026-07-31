@@ -37,6 +37,12 @@ host's tty plumbing, without needing anything else in the design to be working
 first.
 """
 
+import sys as _uid_sys
+from pathlib import Path as _uid_Path
+_uid_sys.path.insert(0, str(_uid_Path(__file__).resolve().parent.parent))
+import usb_ids
+
+
 from amaranth                       import Cat, Const, Elaboratable, Module, Signal
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
@@ -54,8 +60,8 @@ MAX_PACKET_SIZE = 512
 
 # Great Scott Gadgets' vendor ID, with a product ID from the range used for
 # development bitstreams rather than a shipping product.
-USB_VENDOR_ID  = 0x1d50
-USB_PRODUCT_ID = 0x615c
+USB_VENDOR_ID  = usb_ids.VENDOR_ID
+USB_PRODUCT_ID = usb_ids.product_id("usb_serial")
 
 APPLET_ID = 0x55534244   # "USBD"
 
