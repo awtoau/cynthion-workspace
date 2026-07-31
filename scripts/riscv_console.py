@@ -89,6 +89,16 @@ def main():
     # time with no bitstream loaded, so "not there yet" is the normal startup state, not a
     # failure. --once keeps the old behaviour, since a one-shot read has nothing to wait
     # for.
+    clients = []
+    lock = threading.Lock()
+    if args.serve:
+        # Listen FIRST, before waiting on hardware. Otherwise the service refuses
+        # connections for the whole time the board is between bitstreams -- which during
+        # active development is most of a build, about a minute at a time -- and a client
+        # attaching then sees "connection refused" rather than a service that is waiting.
+        threading.Thread(target=serve, args=(args.serve, clients, lock),
+                         daemon=True).start()
+
     node = usb_ids.wait_for_tty("riscv_console")
     if not node and args.once:
         print("no RISC-V console found.", file=sys.stderr)
@@ -99,12 +109,6 @@ def main():
         node = usb_ids.wait_for_tty("riscv_console", settles=60)
 
     print(f"console: {node}  ({usb_ids.product_string('riscv_console')})", flush=True)
-
-    clients = []
-    lock = threading.Lock()
-    if args.serve:
-        threading.Thread(target=serve, args=(args.serve, clients, lock),
-                         daemon=True).start()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -126,10 +130,19 @@ def main():
                         port.close()
                     except Exception:
                         pass
-                    node = usb_ids.wait_for_tty("riscv_console")
-                    if not node:
-                        print("[device did not come back]", flush=True)
-                        return 1
+                    # Keep waiting rather than exiting. Between an agent tearing down one
+                    # bitstream and configuring the next, the SoC is legitimately absent
+                    # from the bus for the length of a build -- about a minute. Giving up
+                    # after one timeout means the watcher dies during ordinary
+                    # development and has to be restarted by hand.
+                    node = None
+                    waited = 0
+                    while not node:
+                        node = usb_ids.wait_for_tty("riscv_console")
+                        if not node:
+                            waited += 1
+                            print(f"[no device -- still waiting, attempt {waited}]",
+                                  flush=True)
                     print(f"[reattached: {node}]", flush=True)
                     port = serial.Serial(node, 115200, timeout=3)
                     continue
