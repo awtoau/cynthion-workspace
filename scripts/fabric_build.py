@@ -61,7 +61,7 @@ import sys
 sys.path.insert(0, "ecp5-test")
 sys.path.insert(0, "repos/apollo")
 from fabric.fabric_gateware import FabricTest
-from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
 design = FabricTest(blocks={blocks}, round_bits={round_bits}, golden={golden})
 CynthionPlatformRev1D4().build(design, do_program=False,

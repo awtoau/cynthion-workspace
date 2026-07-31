@@ -42,7 +42,7 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 LOG_DIR = WORKSPACE / "tmp" / "logs"
 LOG_PATH = LOG_DIR / "usb-host-area.log"
 
-CYNTHION_PLATFORM = "cynthion.gateware.platform:CynthionPlatformRev1D4"
+CYNTHION_PLATFORM = "cynthion_platform:CynthionPlatformRev1D4"
 EXAMPLES = ("midi_host", "keyboard_host", "msc_host")
 
 log = logging.getLogger("usb-host-area")
@@ -141,6 +141,13 @@ def build_example(example: str, guh_dir: Path, python: str) -> dict:
 
     env = dict(os.environ)
     env["LUNA_PLATFORM"] = CYNTHION_PLATFORM
+    # LUNA resolves LUNA_PLATFORM by importing the module by name, in this
+    # subprocess, with cwd set to the example directory. cynthion_platform lives
+    # under ecp5-test/ and would not otherwise be importable there, so put it on
+    # the path explicitly rather than relying on the old cynthion package having
+    # been pip-installed.
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [str(WORKSPACE / "ecp5-test"), env.get("PYTHONPATH", "")]))
 
     # LUNA's top_level_cli always builds into ./build relative to the cwd, so
     # that is where nextpnr's artifacts land regardless of what we ask for.

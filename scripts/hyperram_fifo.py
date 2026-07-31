@@ -83,7 +83,7 @@ def build():
         'import sys; sys.path.insert(0,"ecp5-test"); '
         'sys.path.insert(0,"repos/apollo")\n'
         'from hyperram.hyperram_fifo import HyperRAMFIFOTest\n'
-        'from cynthion.gateware.platform.cynthion_r1_4 import '
+        'from cynthion_platform.cynthion_r1_4 import '
         'CynthionPlatformRev1D4\n'
         'CynthionPlatformRev1D4().build(HyperRAMFIFOTest(), do_program=False, '
         f'build_dir="{BUILD_DIR.relative_to(ROOT)}")\n'

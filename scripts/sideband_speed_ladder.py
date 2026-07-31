@@ -97,7 +97,7 @@ def build_and_flash(handle, baud):
          'source "$HOME/opt/oss-cad-suite/environment" && python3.15t - <<PY\n'
          'import sys; sys.path.insert(0,"ecp5-test"); sys.path.insert(0,"repos/apollo")\n'
          'from sideband.sideband_gateware import SidebandTest\n'
-         'from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4\n'
+         'from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4\n'
          'CynthionPlatformRev1D4().build(SidebandTest(), do_program=False,\n'
          '                               build_dir="ecp5-test/sideband/build")\n'
          'PY'],

@@ -141,7 +141,8 @@ def build_variant(label, spimode, freq):
     script = BUILD_ROOT / f"_build_{label}.py"
     opts = ecppack_opts_for(spimode, freq)
     script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_text(BUILD_SCRIPT_TEMPLATE.format(opts=opts, outdir=str(outdir)))
+    script.write_text(BUILD_SCRIPT_TEMPLATE.format(
+        opts=opts, outdir=str(outdir), ecp5=str(ROOT / "ecp5-test")))
 
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}/bin:{OSS_CAD}/py3bin:" + env["PATH"]
@@ -169,9 +170,10 @@ def build_variant(label, spimode, freq):
 
 BUILD_SCRIPT_TEMPLATE = '''\
 import os, sys
+sys.path.insert(0, {ecp5!r})
 from amaranth import Elaboratable, Module, Signal
 from amaranth.build.plat import TemplatedPlatform
-from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
 
 class Blink(Elaboratable):
