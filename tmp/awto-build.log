@@ -1,5 +1,0 @@
-
-=== flutter app ===
-flutter build linux --release
-Building Linux application...                                   
-✓ Built build/linux/x64/release/bundle/cynthion_monitor
