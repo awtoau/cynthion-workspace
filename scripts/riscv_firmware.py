@@ -541,7 +541,13 @@ static inline unsigned int flash_page_program(unsigned int offset,
 #define PROBE_SCK_EDGES (*(volatile unsigned short *)(FLASH_PROBE_BASE + 0x2))
 #define PROBE_DQ_DRIVEN (*(volatile unsigned char *)(FLASH_PROBE_BASE + 0x4))
 #define PROBE_GRANTS    (*(volatile unsigned short *)(FLASH_PROBE_BASE + 0x6))
-#define PROBE_CLEAR     (*(volatile unsigned char *)(FLASH_PROBE_BASE + 0x8))
+/* SCK edges that happened while the DQ output driver was still enabled. During
+   the receive phase of a read this must be ZERO: the controller has to release
+   DQ so the flash can drive it, and if the FPGA is still driving, the two fight
+   and the sampled value is the FPGA's own output rather than the flash's
+   answer. A non-zero count here explains a read of all zeros exactly. */
+#define PROBE_OE_EDGES  (*(volatile unsigned short *)(FLASH_PROBE_BASE + 0x8))
+#define PROBE_CLEAR     (*(volatile unsigned char *)(FLASH_PROBE_BASE + 0xa))
 
 /* Zero every counter, so what follows measures ONE operation rather than a
    total since reset. A total cannot separate "this transaction did nothing"
@@ -560,6 +566,8 @@ static inline void probe_report(const char *label) {{
     print_hex(PROBE_DQ_DRIVEN);
     print("  grants ");
     print_hex(PROBE_GRANTS);
+    print("  oe_clk ");
+    print_hex(PROBE_OE_EDGES);
     print("\\r\\n");
 }}
 

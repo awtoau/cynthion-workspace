@@ -437,6 +437,8 @@ class FlashPinProbe(wiring.Component):
                                         access="r")
         self._grants     = csr.Register({"count": csr.Field(csr.action.R, 16)},
                                         access="r")
+        self._oe_edges   = csr.Register({"count": csr.Field(csr.action.R, 16)},
+                                        access="r")
         # Written to clear every counter, so the firmware can measure the
         # DIFFERENCE across one operation rather than a total since reset. A
         # total cannot separate "this transaction did nothing" from "this
@@ -449,6 +451,7 @@ class FlashPinProbe(wiring.Component):
         builder.add("sck_edges", self._sck_edges)
         builder.add("dq_driven", self._dq_driven)
         builder.add("grants",    self._grants)
+        builder.add("oe_edges", self._oe_edges)
         builder.add("clear",     self._clear)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
@@ -473,6 +476,8 @@ class FlashPinProbe(wiring.Component):
         dq_driven = Signal()
         sck_count = Signal(16)
         grant_count = Signal(16)
+        # SCK edges that occurred while the DQ output driver was enabled.
+        oe_edges = Signal(16)
 
         # Edge detection needs the previous value of each signal.
         cs_prev    = Signal(reset=1)
@@ -492,6 +497,7 @@ class FlashPinProbe(wiring.Component):
                 dq_driven.eq(0),
                 sck_count.eq(0),
                 grant_count.eq(0),
+                oe_edges.eq(0),
             ]
         with m.Else():
             # CS is active low at the pad. The platform declares it PinsN, so
@@ -502,6 +508,18 @@ class FlashPinProbe(wiring.Component):
 
             with m.If(self.dq_oe):
                 m.d.sync += dq_driven.eq(1)
+
+            # Output enable asserted while the clock is running is the
+            # interesting case, not merely asserted at some point. During the
+            # RECEIVE phase of a read the controller must release DQ so the
+            # flash can drive it; if the output driver is still on while SCK
+            # toggles, the FPGA and the flash are fighting over the same wire
+            # and the sampled data is whatever the FPGA is driving -- which
+            # would read back as the controller's own idle level rather than
+            # the flash's answer.
+            with m.If(self.dq_oe & self.sck & ~sck_prev):
+                with m.If(oe_edges != 0xFFFF):
+                    m.d.sync += oe_edges.eq(oe_edges + 1)
 
             # Rising edges only, and saturating.
             with m.If(self.sck & ~sck_prev):
@@ -517,6 +535,7 @@ class FlashPinProbe(wiring.Component):
             self._sck_edges.f.count.r_data.eq(sck_count),
             self._dq_driven.f.seen.r_data.eq(dq_driven),
             self._grants.f.count.r_data.eq(grant_count),
+            self._oe_edges.f.count.r_data.eq(oe_edges),
         ]
         return m
 
