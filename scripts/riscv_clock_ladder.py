@@ -123,14 +123,9 @@ def verify():
     import serial
     import usb_ids
 
-    node = None
-    for _ in range(TTY_SETTLE_LIMIT):
-        node = usb_ids.find_tty("riscv_console")
-        if node:
-            break
-        # Blocks until the kernel's uevent queue drains, so this waits on enumeration
-        # actually finishing rather than burning through a counter in microseconds.
-        subprocess.run(["udevadm", "settle"], capture_output=True)
+    # Settles, and confirms the port opens -- immediately after a reconfigure find_tty()
+    # can still return the node from before it, which then fails to open.
+    node = usb_ids.wait_for_tty("riscv_console", settles=TTY_SETTLE_LIMIT)
     if not node:
         return False, "no console tty appeared"
 

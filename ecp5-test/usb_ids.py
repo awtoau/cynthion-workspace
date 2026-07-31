@@ -136,6 +136,41 @@ def find_tty(name):
     return None
 
 
+def wait_for_tty(name, settles=20):
+    """Wait for a bitstream's tty to appear and be openable, or return None.
+
+    Use this after configuring the FPGA, not `find_tty()` alone. Two things go wrong
+    otherwise, and both have:
+
+    **Spinning is not waiting.** A bare `for _ in range(600): find_tty(...)` loop completes
+    in microseconds, long before the FPGA has reconfigured, the device re-enumerated and
+    the kernel bound a CDC driver. It returns None for a perfectly healthy board -- a false
+    negative that condemned every frequency in a clock ladder before it was caught.
+
+    **The old node lingers.** Immediately after a reconfigure, `find_tty()` can return the
+    node from *before* it, which then fails to open. So this settles first and confirms the
+    port actually opens rather than trusting the path to exist.
+
+    Each iteration blocks on `udevadm settle`, which drains the kernel's uevent queue, so
+    the loop advances on real progress rather than a counter. `settles` bounds how many to
+    wait through.
+    """
+    import subprocess
+
+    import serial
+
+    for _ in range(settles):
+        subprocess.run(["udevadm", "settle"], capture_output=True)
+        node = find_tty(name)
+        if node:
+            try:
+                serial.Serial(node, 115200, timeout=0.1).close()
+                return node
+            except Exception:
+                continue
+    return None
+
+
 def find_usb(name):
     """Return the pyusb device for a bitstream, or None. Same rule as find_tty()."""
     import usb.core
