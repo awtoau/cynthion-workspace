@@ -33,7 +33,7 @@ place-and-route -- which would isolate PAR from synthesis -- is structurally
 impossible, and that is a settled finding rather than an untried idea: yosys
 emits Project Trellis's own primitive vocabulary (`TRELLIS_DPR16X4`,
 `TRELLIS_FF`, LUT4 `INIT`) which Diamond's `ngdbuild` has no cells for.  See
-`/mnt/2tb/git/pluribus/docs/ecp5/diamond-par-isolation-blocked.md`.  This script
+the pluribus repo's `docs/ecp5/diamond-par-isolation-blocked.md`.  This script
 re-checks that blocker with `--check-edif` so the claim stays live rather than
 inherited, then runs the comparison that is possible:
 

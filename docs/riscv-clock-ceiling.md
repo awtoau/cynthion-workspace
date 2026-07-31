@@ -121,7 +121,7 @@ yosys emits Project Trellis's primitive vocabulary (`TRELLIS_DPR16X4`,
 toolchains meet at the bitstream, not at the netlist. No fourth blocker has
 appeared -- the three documented handoff bugs are still worked around
 successfully, and this is the wall behind them. See
-`/mnt/2tb/git/pluribus/docs/ecp5/diamond-par-isolation-blocked.md`.
+the pluribus repo's `docs/ecp5/diamond-par-isolation-blocked.md`.
 
 **Whole-toolchain (`--mode lse`) did not complete.** Diamond's LSE synthesis was
 stopped after **21 minutes 23 seconds at 98-99% CPU without emitting a
