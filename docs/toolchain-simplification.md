@@ -274,6 +274,135 @@ submission.
 Steps 1–3 are safe and can be done immediately. Step 4 is the one that actually
 retires the fork, and it is a build test, not a judgement call.
 
+## Done 2026-07-31: the `cynthion` package is out of `ecp5-test/`
+
+A sixth step, not in the list above, turned out to be the cheapest of all and
+has been taken.
+
+The question this document asks is "can we drop `luna_soc`", and the answer kept
+being "not while `cynthion` depends on it". But we were never using `cynthion`
+for anything except **one class**: `CynthionPlatformRev1D4`, the r1.4 pin map.
+Getting it dragged in the whole stack, because `CynthionPlatform` inherits
+`LUNAApolloPlatform` → `LUNAPlatform` from `luna`, and the `cynthion` package
+pins `luna-soc` to the fork.
+
+That pin map is board wiring. It changes when the hardware revision changes,
+which for r1.4 is never. So it is now vendored at `ecp5-test/cynthion_platform/`
+and the dependency is gone from our gateware.
+
+### What it cost
+
+| File | Lines | What |
+|---|---|---|
+| `cynthion_r1_4.py` | 229 | the pin map, byte-identical to upstream from the class declaration down; the extra lines over upstream's 206 are the header explaining not to edit it |
+| `core.py` | 158 | `CynthionPlatform`, ~60 lines of code where upstream had 134, the balance being the record of what was dropped and why |
+| `resources.py` | 77 | `LEDResources` and `ULPIResource`, inlined |
+| `__init__.py` | 24 | re-export, plus the naming warning |
+| **total** | **488** | replacing the `cynthion` → `luna` → `luna-soc`-fork chain |
+
+Imports are `amaranth` and `amaranth.build` only.
+
+### What turned out to be dead weight
+
+Checked rather than assumed, which mattered — the guesses were not all right.
+
+**`toolchain_program`, `toolchain_flash`, `toolchain_erase`,
+`_ensure_unconfigured`** — dead. Every `build()` call site in this workspace
+passes `do_program=False`; the FPGA is configured through `apollo_fpga` directly
+by our own scripts. Dropping them also drops `apollo_fpga` as a platform
+dependency.
+
+**`LUNAPlatform` in its entirety** — `create_usb3_phy`, `get_led`,
+`request_optional` and `NullPin` are portability shims for designs that target
+several boards. Nothing here uses them. `LUNAApolloPlatform` contributed exactly
+one live method, `port_sharing`; its `apollo_gateware_phy` is unused.
+
+**`clock_domain_generator = LunaECP5DomainGenerator`** — already superseded by
+`VariableClockDomainGenerator`, which is why it was safe to drop the default.
+
+### What was load-bearing, against expectation
+
+**`pseudo_power_supply_fragment`** is the one to keep. r1.4 strands I/O balls to
+VCCIO and GND that must be *driven* to source and sink additional supply
+current, and Amaranth leaves an unrequested pin undriven. Cut it and the board
+runs on less supply than it was designed for, with no build error to say so.
+It needs `prepare()` alongside it, which is the only reason that override
+survived.
+
+**`toolchain_prepare`** sets `--freq 38.8`, the SPI configuration clock the
+board reads its bitstream at on power-on. Not cosmetic.
+
+**`DEFAULT_CLOCK_FREQUENCIES_MHZ`** is read by
+`ecp5-test/adv_speed/adv_speed_gateware.py` to size a UART divisor.
+
+### Two things the plan did not anticipate
+
+**`amaranth_boards` is not installed on this machine.** It is vendored *inside*
+the `cynthion` package, which injects it into `sys.modules` from its `__init__`
+under a comment reading "Mildly evil hack". So `import amaranth_boards` only
+works once `cynthion` has been imported — a platform depending on it would still
+be pulling `cynthion` in, just invisibly. Only two constructors are used,
+`LEDResources` and `ULPIResource`, both a dozen lines of pure `amaranth.build`,
+so they are copied verbatim into `resources.py`. Verbatim and not tidied: they
+build the pin records the map is expressed in, and a "cleaner" version that
+constructed a subsignal differently would silently change the pin map.
+
+**The package cannot be called `platform`.** `ecp5-test/` goes on `sys.path`, so
+a package named `platform` there shadows the **standard library** `platform`
+module for the whole process. `amaranth/tracer.py` imports it. Found by doing it
+and watching the stdlib import resolve to our `__init__.py`. Hence
+`cynthion_platform`. Do not rename it back.
+
+### Proof
+
+`scripts/platform_vendor_compare.py` does not diff source — a copy is exactly
+the change that reviews clean and is wrong on the bench. It runs the real
+place-and-route both ways, upstream platform and vendored, on the same design
+text, and compares what nextpnr decided:
+
+```
+blinky: utilisation identical -- TRELLIS_COMB=39, TRELLIS_FF=28, TRELLIS_IO=59, DCCA=1, GSR=1, ...
+blinky: pin assignment identical -- 59 pins located
+wide:   utilisation identical -- TRELLIS_COMB=61, TRELLIS_FF=28, TRELLIS_IO=105, DCCA=1, GSR=1, ...
+wide:   pin assignment identical -- 105 pins located
+```
+
+`wide` exercises both ULPI PHYs, HyperRAM, QSPI flash, the sideband pins and
+both Type-C controllers, so the 105 located pins cover the bulk of the resource
+list where a transposition would be easiest to miss by eye. Utilisation alone
+would not catch a swapped pin; the per-signal ball comparison is the part that
+does.
+
+Five designs then elaborated to a bitstream against the vendored platform:
+`hyperram_identify`, `hyperram_regfuzz`, `hello_soc`, `vexii_bench_soc`,
+`bitstream_sink`. `scripts/check.py` is 6/6.
+
+```bash
+python3 scripts/platform_vendor_compare.py   # → tmp/logs/platform_vendor_compare.log
+```
+
+### What still imports `cynthion`, and why that is correct
+
+Nothing in `ecp5-test/` does, except `riscv/vexii_hello_soc.py`, which was left
+alone only because another investigation owned it at the time; its change is the
+same one-line import swap.
+
+In `scripts/`, the remaining importers consume upstream's **own gateware and
+register maps**, not our board definition, so vendoring the pin map does not
+help them: `selftest_leds.py`, `selftest_led_modes.py` and `phy_probe.py` use
+`cynthion.selftest.registers`; `check.py` and `install.py` elaborate upstream's
+analyzer and facedancer gateware against r0.2 as a toolchain smoke test;
+`cyn_main.py` drives the same. `platform_vendor_compare.py` imports it
+deliberately, as the baseline it compares against.
+
+**This does not by itself retire the fork.** `luna` is still a real dependency of
+`ecp5-test/` for USB (`USBDevice`, `USBSerialDevice`, the stream endpoints),
+HyperRAM (`HyperRAMInterface`) and `JTAGRegisterInterface`, and `luna_soc` still
+supplies `blockram` and the CPU wrappers. What changed is that the dependency is
+now on `luna` for things `luna` actually provides, rather than on the entire
+`cynthion` → `luna` → `luna-soc`-fork chain for a list of pin names. Step 4
+above is still the one that retires the fork.
+
 ## Reproducing
 
 ```bash
