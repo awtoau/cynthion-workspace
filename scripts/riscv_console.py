@@ -125,7 +125,17 @@ def main():
                 try:
                     data = port.read(BURST_BYTES)
                 except (serial.SerialException, OSError):
-                    print("\n[device went away -- reattaching]", flush=True)
+                    # Distinguish "the board went away" from "another process stole the
+                    # port". If the USB device is still on the bus, this is contention,
+                    # not a reconfigure -- reattaching in that case produces a stream of
+                    # went-away/reattached messages while the CPU never restarts, which
+                    # is what happened when soc_run.py also opened the tty.
+                    still_present = usb_ids.find_usb("riscv_console") is not None
+                    if still_present:
+                        print("\n[port taken by another reader -- reclaiming]",
+                              flush=True)
+                    else:
+                        print("\n[device went away -- reattaching]", flush=True)
                     try:
                         port.close()
                     except Exception:
