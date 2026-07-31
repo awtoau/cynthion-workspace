@@ -611,6 +611,10 @@ HELLO_C = """
    write cannot be verified at all -- you would be programming a sector whose
    state you cannot observe. Printing the failure and stopping the pass is the
    only useful thing left to do. */
+/* The last JEDEC value read, so the held banner can report what was actually
+   seen rather than a generic failure. */
+static unsigned int last_jedec = 0;
+
 static int flash_report(unsigned int pass) {
     print("--- flash pass ");
     print_hex(pass);
@@ -645,6 +649,7 @@ static int flash_report(unsigned int pass) {
     print("\\r\\n");
 
     unsigned int id = flash_jedec_id();
+    last_jedec = id;
     print("jedec        ");
     print_hex(id);
     if (id == 0x000000u) {
@@ -837,17 +842,45 @@ int main(void) {
        Every pass reports its own numbers rather than a running summary: a
        summary hides which pass went wrong and what it saw. */
     unsigned int pass = 0;
+    /* Latched once the command path is found dead, so the failure is reported
+       once in full and then held rather than re-run every second. */
+    int dead = 0;
+    unsigned int dead_id = 0;
     for (;;) {
-        print("\\r\\n");
-        /* The write test runs ONLY if the read path answered. A write verified
-           through a broken read path is not verified at all. */
-        if (flash_report(pass) && WRITE_TESTS && pass < WRITE_PASSES) {
-            flash_write_test(pass);
-        }
+        if (dead) {
+            /* HELD STATE, not fresh work.
 
-        print("tick ");
-        print_hex(pass);
-        print("\\r\\n");
+               Once the command path is known dead there is nothing left worth
+               running, but the report cannot simply stop either: the firmware
+               starts printing before the host has enumerated the device and
+               opened the tty, so a reader attaching at an arbitrary moment
+               would see silence and be unable to tell a dead board from a
+               finished one.
+
+               So the failure block is printed ONCE and then held as a single
+               terse line. A late reader still learns the state within a
+               second; the log stops filling with identical multi-line blocks;
+               and nothing after the failure produces numbers that cannot be
+               trusted. 184 repetitions of the full report was the behaviour
+               this replaces. */
+            print("held         flash command path dead (jedec ");
+            print_hex(dead_id);
+            print("); nothing further will run\\r\\n");
+        } else {
+            print("\\r\\n");
+            /* The write test runs ONLY if the read path answered. A write
+               verified through a broken read path is not verified at all. */
+            if (!flash_report(pass)) {
+                dead = 1;
+                dead_id = last_jedec;
+            } else if (WRITE_TESTS && pass < WRITE_PASSES) {
+                flash_write_test(pass);
+            }
+
+            print("tick ");
+            print_hex(pass);
+            print("\\r\\n");
+        }
         pass++;
 
         /* Roughly a second, so the stream is readable rather than a blur. Not
