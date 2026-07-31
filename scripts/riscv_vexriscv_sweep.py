@@ -64,7 +64,7 @@ sys.path.insert(0, {ecp5!r})
 import riscv.cpu_area as cpu_area
 cpu_area.VARIANT = {variant!r}
 
-from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 CynthionPlatformRev1D4().build(cpu_area.CPUArea(), do_program=False,
                                build_dir={build_dir!r})
 """

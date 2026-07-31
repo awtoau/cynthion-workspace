@@ -72,7 +72,7 @@ def build(offset):
         'import sys; sys.path.insert(0,"ecp5-test"); '
         'sys.path.insert(0,"repos/apollo")\n'
         'from qspi.qspi_gateware import QSPITest\n'
-        'from cynthion.gateware.platform.cynthion_r1_4 import '
+        'from cynthion_platform.cynthion_r1_4 import '
         'CynthionPlatformRev1D4\n'
         'CynthionPlatformRev1D4().build(QSPITest(), do_program=False, '
         'build_dir="ecp5-test/qspi/build")\n'

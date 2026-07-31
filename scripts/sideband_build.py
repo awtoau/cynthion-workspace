@@ -39,7 +39,7 @@ import sys
 sys.path.insert(0, "ecp5-test")
 sys.path.insert(0, "repos/apollo")
 from sideband.sideband_gateware import SidebandTest
-from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 CynthionPlatformRev1D4().build(SidebandTest(), do_program=False,
                                build_dir="ecp5-test/sideband/build")
 print("BUILD OK")

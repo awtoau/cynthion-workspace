@@ -157,7 +157,7 @@ def elaborate_on_platform(label: str, build, build_dir: Path) -> bool:
     place-and-route or going anywhere near the board.
     """
     try:
-        from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+        from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
         plan = CynthionPlatformRev1D4().build(
             build(), do_build=False, do_program=False,
             build_dir=str(build_dir))
