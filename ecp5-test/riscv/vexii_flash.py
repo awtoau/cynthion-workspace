@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+#
+# Memory-mapped configuration SPI flash for the VexiiRiscv SoC.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""
+The configuration flash on the Wishbone bus, as read-only memory the CPU can
+address directly.
+
+luna_soc already ships every part of this -- `SPIFlashMemoryMap` for the bus
+side, `SPIPHYController` for the shift registers, `ECP5ConfigurationFlashInterface`
+for the ECP5's `USRMCLK` special case -- so nothing here is a controller written
+from scratch. What it adds is one thing luna_soc's version does not have: a
+choice of read mode.
+
+`luna_soc.gateware.core.spiflash.mmap.SPIFlashMemoryMap` hardcodes `0xeb`, Quad
+I/O Fast Read, in the body of `elaborate`:
+
+    flash_read_opcode = 0xeb
+    flash_addr_width  = 4
+    flash_bus_width   = 4
+    flash_dummy_bits  = 24
+
+That is the mode worth having, but it is the wrong mode to bring up *first*.
+Quad puts the address, the dummy cycles and the data all on four lanes at once,
+so a wiring fault, a sample-timing fault and a mode fault are indistinguishable
+-- every one of them returns wrong bytes. Single-lane `0x03` uses one output pin
+and one input pin, with no dummy cycles at all, so it either works or the wiring
+is wrong, and nothing else is in the way.
+
+`ModalSPIFlashMemoryMap` is the same FSM with those four constants moved into
+`__init__`. Two modes are defined:
+
+    SINGLE  0x03 Read Data       cmd/addr/data all 1-lane, 0 dummy bits
+    QUAD    0xeb Quad I/O Read   cmd 1-lane, addr/dummy/data 4-lane, 24 dummy bits
+
+The dummy value `0xff0000` for quad is not arbitrary. `0xeb` sends the four
+address-phase bits M7-M0 immediately after the address; `0xff` there is *not*
+`0xax`, so the flash does not enter Continuous Read mode and the next
+transaction still needs its opcode. Sending `0xa0` instead would leave the chip
+expecting an address where the controller sends a command, and every read after
+the first would be garbage -- while the first one looked perfect.
+
+Quad also requires the Quad Enable bit in status register 2. On this board it is
+already set (SR2 = 0x02, recorded in docs/luna_ecp5_fpga/flash-detailed.md), so
+nothing here writes to the flash. Nothing here ever writes to the flash: the
+bitstream lives at offset 0.
+
+## What the PHY divisor means
+
+`SPIPHYController(divisor=d)` clocks SCK at `sync / (2 * (1 + d))`. At the
+80 MHz sync this SoC runs:
+
+    d=0   40.0 MHz    within the ECP5 MCLK pin's 62 MHz specification
+    d=1   20.0 MHz
+    d=2   13.3 MHz
+
+40 MHz is the fast end of what Lattice specifies for this pin -- `MCLK` is a
+configuration pin, tristated into user mode and reachable only through
+`USRMCLK`, and FPGA-TN-02039 characterises it to 62 MHz. Faster has been
+measured to work on this board and is not what a default should assume.
+"""
+
+from amaranth               import Cat, C, Module, Signal, DomainRenamer
+from amaranth.lib           import wiring
+
+from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
+from luna_soc.gateware.core.spiflash.utils import WaitTimer
+
+
+# Read modes, as (opcode, addr_width, bus_width, dummy_bits, dummy_value).
+#
+# `addr_width` and `bus_width` are lane counts, not bit counts: 1 for ordinary
+# SPI, 4 for quad. The command phase is always one lane -- the flash has to be
+# able to understand it before it knows what mode to switch to.
+READ_MODES = {
+    # 0x03 Read Data. One lane throughout, no dummy cycles. The flash is
+    # specified for this at up to 50 MHz, which is above the 40 MHz this SoC
+    # produces at divisor 0.
+    "single": dict(opcode=0x03, addr_width=1, bus_width=1,
+                   dummy_bits=0, dummy_value=0x000000),
+
+    # 0xeb Fast Read Quad I/O. Address and data on four lanes, 24 dummy bits
+    # (six clocks of mode byte plus four dummy clocks, expressed as 4-lane
+    # transfers). See the note on 0xff above.
+    "quad":   dict(opcode=0xeb, addr_width=4, bus_width=4,
+                   dummy_bits=24, dummy_value=0xff0000),
+}
+
+
+class ModalSPIFlashMemoryMap(SPIFlashMemoryMap):
+    """luna_soc's memory-mapped flash controller with a selectable read mode.
+
+    Identical FSM; the four flash-protocol constants come from `READ_MODES`
+    instead of being written into `elaborate`. Everything else -- burst
+    continuation, the chip-select hold timer, the byte-order swap -- is
+    upstream's and unmodified.
+    """
+
+    def __init__(self, *, size, mode="single", data_width=32, granularity=8,
+                 name=None, domain="sync", byteorder="little"):
+        if mode not in READ_MODES:
+            raise ValueError(f"read mode {mode!r} is not one of "
+                             f"{sorted(READ_MODES)}")
+        self.mode = mode
+        super().__init__(size=size, data_width=data_width,
+                         granularity=granularity, name=name, domain=domain,
+                         byteorder=byteorder)
+
+    def elaborate(self, platform):
+        m = Module()
+
+        params = READ_MODES[self.mode]
+        flash_read_opcode = params["opcode"]
+        flash_cmd_bits    = 8
+        flash_addr_bits   = 24
+        flash_data_bits   = 32
+        flash_cmd_width   = 1
+        flash_addr_width  = params["addr_width"]
+        flash_bus_width   = params["bus_width"]
+        flash_dummy_bits  = params["dummy_bits"]
+        flash_dummy_value = params["dummy_value"]
+
+        source = self.source
+        sink   = self.sink
+        cs     = self.cs
+        bus    = self.bus
+
+        # Burst control. A sequential read that continues where the last one
+        # ended skips the command, address and dummy phases entirely -- which is
+        # the whole reason a memory map is faster than a register-poked
+        # controller for the access pattern a CPU generates.
+        burst_cs      = Signal()
+        burst_adr     = Signal(len(self.bus.adr), reset_less=True)
+        burst_timeout = WaitTimer(self.MMAP_DEFAULT_TIMEOUT, domain=self._domain)
+        m.submodules.burst_timeout = burst_timeout
+
+        with m.FSM(domain=self._domain):
+            with m.State("IDLE"):
+                m.d.comb += [
+                    burst_timeout.wait.eq(1),
+                    cs.eq(burst_cs),
+                ]
+                m.d.sync += burst_cs.eq(burst_cs & ~burst_timeout.done)
+                with m.If(bus.cyc & bus.stb & ~bus.we):
+                    with m.If(burst_cs & (bus.adr == burst_adr)):
+                        m.next = "BURST-REQ"
+                    with m.Else():
+                        m.d.comb += cs.eq(0)
+                        m.next = "BURST-CMD"
+
+            with m.State("BURST-CMD"):
+                m.d.comb += [
+                    cs           .eq(1),
+                    source.valid .eq(1),
+                    source.data  .eq(flash_read_opcode),
+                    source.len   .eq(flash_cmd_bits),
+                    source.width .eq(flash_cmd_width),
+                    source.mask  .eq(self.OE_MASK[flash_cmd_width]),
+                ]
+                with m.If(source.ready):
+                    m.next = "CMD-RET"
+
+            with m.State("CMD-RET"):
+                m.d.comb += [cs.eq(1), sink.ready.eq(1)]
+                with m.If(sink.valid):
+                    m.next = "BURST-ADDR"
+
+            with m.State("BURST-ADDR"):
+                # `bus.adr` is a word address; the flash wants bytes, so two
+                # zero bits are appended below it.
+                m.d.comb += [
+                    cs           .eq(1),
+                    source.valid .eq(1),
+                    source.width .eq(flash_addr_width),
+                    source.mask  .eq(self.OE_MASK[flash_addr_width]),
+                    source.data  .eq(Cat(C(0, 2), bus.adr)),
+                    source.len   .eq(flash_addr_bits),
+                ]
+                m.d.sync += [
+                    burst_cs  .eq(1),
+                    burst_adr .eq(bus.adr),
+                ]
+                with m.If(source.ready):
+                    m.next = "ADDR-RET"
+
+            with m.State("ADDR-RET"):
+                m.d.comb += [cs.eq(1), sink.ready.eq(1)]
+                with m.If(sink.valid):
+                    if flash_dummy_bits == 0:
+                        m.next = "BURST-REQ"
+                    else:
+                        m.next = "DUMMY"
+
+            # Skipped entirely in single-lane mode: 0x03 has no dummy cycles,
+            # and issuing one would offset every byte read by a clock.
+            #
+            # NOTE the `if` above is Python, not `m.If`. Upstream writes
+            # `with m.If(flash_dummy_bits == 0)`, which compares two Python ints
+            # and yields a Python bool that Amaranth then treats as a constant
+            # condition -- it works, but it emits both branches. This decides at
+            # elaboration.
+            if flash_dummy_bits:
+                with m.State("DUMMY"):
+                    m.d.comb += [
+                        cs           .eq(1),
+                        source.valid .eq(1),
+                        source.width .eq(flash_addr_width),
+                        source.mask  .eq(self.OE_MASK[flash_addr_width]),
+                        source.data  .eq(flash_dummy_value),
+                        source.len   .eq(flash_dummy_bits),
+                    ]
+                    with m.If(source.ready):
+                        m.next = "DUMMY-RET"
+
+                with m.State("DUMMY-RET"):
+                    m.d.comb += [cs.eq(1), sink.ready.eq(1)]
+                    with m.If(sink.valid):
+                        m.next = "BURST-REQ"
+
+            with m.State("BURST-REQ"):
+                # mask=0 means every DQ pin is an input for this phase: the
+                # flash is driving now, and holding an output enable on would
+                # fight it. In single-lane mode DQ0 is still the controller's
+                # output pin electrically, but nothing is being sent, so
+                # releasing it is harmless and keeps one code path.
+                m.d.comb += [
+                    cs           .eq(1),
+                    source.valid .eq(1),
+                    source.width .eq(flash_bus_width),
+                    source.mask  .eq(0),
+                    source.len   .eq(flash_data_bits),
+                ]
+                with m.If(source.ready):
+                    m.next = "BURST-DAT"
+
+            with m.State("BURST-DAT"):
+                word = (self.reverse_bytes(sink.data)
+                        if self.byteorder == "little" else sink.data)
+                m.d.comb += [
+                    cs         .eq(1),
+                    sink.ready .eq(1),
+                    bus.dat_r  .eq(word),
+                ]
+                with m.If(sink.valid):
+                    m.d.comb += bus.ack.eq(1)
+                    m.d.sync += burst_adr.eq(burst_adr + 1)
+                    m.next = "IDLE"
+
+        if self._domain != "sync":
+            m = DomainRenamer({"sync": self._domain})(m)
+
+        return m
+
+
+class QSPIFlashPins(wiring.Component):
+    """Requests `qspi_flash` and wires it to a `PinSignature`.
+
+    luna_soc has `provider.QSPIFlashProvider` for this, and it is not used here
+    for one reason: it wraps `platform.request` in a bare `except:` that logs a
+    warning and returns an empty module. A platform typo, a renamed resource or
+    a resource already claimed elsewhere then produces a design that builds
+    cleanly, passes timing, and reads zeros forever -- and the only trace is one
+    log line among thousands. This lets the exception out.
+    """
+
+    def __init__(self, name="qspi_flash", index=0):
+        from luna_soc.gateware.core import spiflash
+        self._name  = name
+        self._index = index
+        super().__init__({"pins": wiring.In(spiflash.PinSignature())})
+
+    def elaborate(self, platform):
+        m = Module()
+        qspi = platform.request(self._name, self._index)
+        m.d.comb += [
+            self.pins.dq.i .eq(qspi.dq.i),
+            qspi.dq.oe     .eq(self.pins.dq.oe),
+            qspi.dq.o      .eq(self.pins.dq.o),
+            qspi.cs.o      .eq(self.pins.cs.o),
+        ]
+        return m

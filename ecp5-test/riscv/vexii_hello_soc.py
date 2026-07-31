@@ -63,7 +63,9 @@ from luna_soc.gateware.core         import blockram
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
+import vexii_cpu
 from vexii_cpu import VexiiRiscv
+from vexii_flash import ModalSPIFlashMemoryMap, QSPIFlashPins
 
 from amaranth_soc                   import csr, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -91,6 +93,59 @@ RAM_SIZE = 64 * 1024
 # moondancer puts its CSRs at 0xf0000000 for this reason, and uses 0x10000000
 # for SPI flash, which it *wants* cached.
 CONSOLE_BASE = 0xf0000000
+
+# The configuration SPI flash, memory-mapped and read-only.
+#
+# 0x10000000 is what `repos/cynthion/.../facedancer/top.py` uses for
+# `spiflash_base`, and matching it means firmware written for one SoC finds the
+# flash where it expects on the other.
+#
+# It is a `main=1` PMA region, so the D-cache backs it and the I-cache can fetch
+# from it -- see FLASH_REGION below. That is not a performance nicety: a
+# `main=0` region routes to the uncached `iobus`, where every single load is a
+# complete flash transaction (command, 24-bit address, dummy, data) with no
+# burst continuation and no line reuse. Nothing fails; it just runs at a
+# fraction of the rate, silently.
+FLASH_BASE = 0x10000000
+
+# The SPI controller's own registers -- the arbitrary-command path, used here
+# only to read the JEDEC ID.
+#
+# This has to sit inside the CSR region declared `main=0`, alongside the
+# console, and not next to the flash's memory map: these are volatile registers
+# where a read has a side effect (it pops the RX FIFO). Caching them would mean
+# the second read of `data` returns the first read's byte from a cache line,
+# forever. The flash's *memory* wants the cache; the flash controller's
+# *registers* must never see it.
+FLASH_CSR_BASE = 0xf0000100
+
+# 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
+# above that aliases back to offset 0, so mapping more would map the same chip
+# twice under two addresses.
+FLASH_SIZE = 4 * 1024 * 1024
+
+# THE BITSTREAM LIVES AT OFFSET 0. Nothing in this design writes or erases --
+# `ModalSPIFlashMemoryMap` issues read opcodes only and the FSM has no write
+# path -- but the offset the firmware reads for its data check is chosen well
+# clear of the bitstream anyway, because a read of a region being actively
+# rewritten by something else would be an unstable test.
+#
+# 0x00300000 is 3 MiB in, past a 308 KiB bitstream by an order of magnitude.
+FLASH_TEST_OFFSET = 0x00300000
+
+# Read mode. "single" is 0x03, one lane, no dummy cycles -- the mode to bring up
+# first, because there is nothing in it to get subtly wrong. "quad" is 0xeb.
+# See ecp5-test/riscv/vexii_flash.py.
+FLASH_MODE = "single"
+
+# SCK = sync / (2 * (1 + divisor)). At 80 MHz sync, divisor 0 gives 40 MHz,
+# which is inside the ECP5 MCLK pin's 62 MHz specification (FPGA-TN-02039) and
+# inside the flash's own 50 MHz rating for the single-lane 0x03 opcode.
+#
+# Faster than this has been measured to work on this board and is not what the
+# default should be: MCLK is a configuration pin reached through USRMCLK, and
+# above 62 MHz Lattice publishes nothing to reason about margin from.
+FLASH_DIVISOR = 0
 
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
@@ -190,7 +245,20 @@ class HelloSoC(Elaboratable):
         # regenerating the core, not using it.
         # Caches are not optional on the Wishbone path: the cacheless bridge
         # asserts !withAmo, and the firmware needs atomics.
-        cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=64)
+        # The PMA regions, spelled out. VexiiRiscv routes an access by which
+        # declared region it falls in, and an address in no region traps -- so
+        # this list is the address map as far as the CPU is concerned, and the
+        # decoder below is only the address map as far as the fabric is
+        # concerned. The two have to agree.
+        #
+        # main=1 for the flash is the point of this whole exercise. It puts
+        # flash accesses on the cached `dbus` and lets the I-cache fetch from
+        # it; exe=1 permits instruction fetch, so code can execute in place.
+        regions = list(vexii_cpu.DEFAULT_REGIONS) + [
+            f"base={FLASH_BASE:08x},size={FLASH_SIZE:08x},main=1,exe=1",
+        ]
+
+        cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=64, regions=regions)
         m.submodules.cpu = cpu
 
         ram = blockram.Peripheral(size=RAM_SIZE, init=self.firmware)
@@ -210,6 +278,76 @@ class HelloSoC(Elaboratable):
         csr_bridge = WishboneCSRBridge(console.bus, data_width=32)
         m.submodules.csr_bridge = csr_bridge
         decoder.add(csr_bridge.wb_bus, addr=CONSOLE_BASE, name="console")
+
+        # The configuration SPI flash, memory-mapped read-only.
+        #
+        # Four objects, each doing one thing, and all four must be submodules --
+        # `flash_bus` in particular looks like a passive adapter and is not: its
+        # elaborate() is what instantiates USRMCLK, so leaving it out produces a
+        # design with no clock reaching the flash at all, and reads that return
+        # a constant.
+        #
+        #   flash_pins  requests `qspi_flash` (T8 T7 M7 N7, CS on N8)
+        #   flash_bus   routes SCK through USRMCLK -- see below
+        #   flash_phy   shift registers and clock generation
+        #   flash_mmap  Wishbone side: address decode, burst continuation
+        #
+        # SCK is not a pin that can be requested. On the ECP5 the configuration
+        # clock MCLK is tristated on entry to user mode and stays owned by the
+        # configuration block; the only route to it is the USRMCLK macro. The
+        # platform's `qspi_flash` resource accordingly has dq and cs but no
+        # clock, and `ECP5ConfigurationFlashInterface` exists to bridge that
+        # gap: it proxies every other attribute through to the real pins while
+        # supplying `sck` as a plain signal that USRMCLK consumes.
+        from luna_soc.gateware.core.spiflash import ECP5ConfigurationFlashInterface, SPIPHYController
+
+        m.submodules.flash_pins = flash_pins = QSPIFlashPins("qspi_flash")
+        m.submodules.flash_bus  = flash_bus  = ECP5ConfigurationFlashInterface(
+            bus=flash_pins.pins)
+        m.submodules.flash_phy  = flash_phy  = SPIPHYController(
+            pads=flash_bus, divisor=FLASH_DIVISOR, domain="sync")
+        # `spiflash.Peripheral` builds the mmap core, a CSR-poked controller,
+        # and the round-robin crossbar that lets both share one PHY.
+        #
+        # The controller is here for one reason: the JEDEC ID. `0x9f` is a
+        # register read, not an address read, so it cannot come through the
+        # memory map -- the mmap FSM knows exactly one opcode and it is a read
+        # of a 24-bit address. Identifying the chip needs a path that can issue
+        # an arbitrary command, and that is what the controller's `phy`/`data`
+        # registers are.
+        #
+        # It can also write. Nothing here does, and nothing should: the
+        # bitstream is at offset 0. It is an arbitrary-command path, so the
+        # discipline has to come from the firmware rather than the gateware.
+        from luna_soc.gateware.core import spiflash as spiflash_core
+
+        # `with_mmap=False`, then the mode-selectable mmap appended by hand.
+        # Upstream's Peripheral builds its own mmap with the read opcode fixed
+        # at 0xeb and offers no parameter to change it; `cores` is just the list
+        # of things the crossbar arbitrates, so adding to it is the supported
+        # shape of the class rather than a reach into its internals.
+        flash = spiflash_core.Peripheral(
+            flash_phy,
+            with_controller = True,
+            controller_name = "spi0",
+            with_mmap       = False,
+            domain          = "sync")
+
+        flash_mmap = ModalSPIFlashMemoryMap(
+            size=FLASH_SIZE, mode=FLASH_MODE, name="spiflash", domain="sync")
+        flash.spi_mmap = flash_mmap
+        flash.bus      = flash_mmap.bus
+        flash.cores.append(flash_mmap)
+
+        m.submodules.flash = flash
+
+        decoder.add(flash.bus, addr=FLASH_BASE, name="spiflash")
+
+        # The controller's CSRs, on the same CSR bridge shape as the console.
+        flash_csr_bridge = WishboneCSRBridge(flash.csr, data_width=32)
+        m.submodules.flash_csr_bridge = flash_csr_bridge
+        decoder.add(flash_csr_bridge.wb_bus, addr=FLASH_CSR_BASE,
+                    name="spi0")
 
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.
