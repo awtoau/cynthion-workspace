@@ -95,6 +95,7 @@ REGISTER_STATE     = 8   # FSM progress, so a hang is diagnosable
 REGISTER_BANK1     = 9   # what bank 1 actually holds, not merely whether it differs
 REGISTER_BANK2     = 10
 REGISTER_BANK3     = 11
+REGISTER_FUZZ_BASE = 12   # 8 swept register addresses
 
 # Candidate bank boundaries, in 16-bit words. A 32 Mbit part is 2 Mi words, so these step
 # through the densities the package could plausibly hold.

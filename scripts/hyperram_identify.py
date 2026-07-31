@@ -83,19 +83,21 @@ def decode_id0(value):
         return f"0x{value:04x} -- no valid response", None
     manufacturer = value & 0xF
     generation = (value >> 4) & 0xF
-    row_bits = (value >> 8) & 0x3F
+    # The field is COUNT MINUS ONE: the datasheet's table 5.2 gives 00000 as "One Row
+    # address bit". Reading it as the count directly halves every capacity figure, which
+    # is what made an ordinary 64 Mbit part look like it held twice its marking.
+    row_bits = ((value >> 8) & 0x1F) + 1
     name = MANUFACTURERS.get(manufacturer, "not datasheet-confirmed")
     if not 1 <= row_bits <= 32:
         return (f"0x{value:04x}: manufacturer {name}, generation {generation}, "
                 f"row bits {row_bits} (implausible)"), None
-    column_bits = ((value >> 4) & 0xF) + 1
+    column_bits = ((value >> 4) & 0xF) + 1   # same minus-one encoding
     capacity = (1 << row_bits) * (1 << column_bits) * 2
     die = (value >> 14) & 0x3
     return (f"0x{value:04x}: manufacturer code 0x{manufacturer:x} ({name}), "
             f"{row_bits} row + {column_bits} column address bits, "
             f"die address {die:02b}\n"
-            f"       NOTE: on a dual-die stack ID0 describes ONE DIE, not the package -- "
-            f"bits 15:14 select which"), capacity
+            f"       fields are count-minus-one; 64 Mbit = 8 MiB, not 4"), capacity
 
 
 def configure():
