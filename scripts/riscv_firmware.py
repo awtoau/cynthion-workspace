@@ -610,7 +610,7 @@ static inline void probe_report(const char *label) {{
      4 sample       the clock generator's sample strobe
      5 update       the clock generator's update strobe
      6 in_xfer      PHY FSM is in XFER
-     7 in_xfer_end  PHY FSM is in XFER-END
+     7 dq_o0        what the PHY DRIVES on DQ0 -- the outgoing command bit
 
    The relationship between bit 3 and bit 0 is the measurement. Bits 6 and 7
    show the transitions between the four transfers of a JEDEC read, which is

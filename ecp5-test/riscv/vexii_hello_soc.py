@@ -454,7 +454,7 @@ class HelloSoC(Elaboratable):
             flash_ila.sample_stb  .eq(flash_phy.o_sample),
             flash_ila.update_stb  .eq(flash_phy.o_update),
             flash_ila.in_xfer     .eq(flash_phy.o_in_xfer),
-            flash_ila.in_xfer_end .eq(flash_phy.o_in_xfer_end),
+            flash_ila.dq_o0       .eq(flash_phy.o_dq_o0),
         ]
 
         flash_ila_bridge = WishboneCSRBridge(flash_ila.bus, data_width=32)
