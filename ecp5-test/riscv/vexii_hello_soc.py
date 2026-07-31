@@ -41,7 +41,7 @@ from pathlib import Path
 
 from amaranth                       import Elaboratable, Module, Signal, Cat
 from amaranth.lib                   import wiring, stream
-from amaranth.lib.fifo              import SyncFIFOBuffered
+from amaranth.lib.fifo              import AsyncFIFOBuffered
 
 # Not LunaECP5DomainGenerator: it clocks `sync` at 60 MHz and offers only 60/120/240
 # elsewhere, so a speed ladder can only step in factors of two. Nothing in the hardware
@@ -98,7 +98,7 @@ CONSOLE_BASE = 0xf0000000
 # 60 is a constraint here rather than a limit: the design already meets 72-91 MHz by
 # nextpnr's own estimate, and the die is a 25F sharing a speed grade with the 12F it is
 # marked as (ecp5-test/fabric/FABRIC_TEST.md). See #110.
-SYNC_MHZ = 60
+SYNC_MHZ = 80
 
 
 class ConsolePeripheral(wiring.Component):
@@ -148,7 +148,18 @@ class ConsolePeripheral(wiring.Component):
         m.submodules.bridge = self._bridge
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
-        fifo = SyncFIFOBuffered(width=8, depth=self.depth)
+        # ASYNC, not Sync. The CPU writes from `sync` and the USB endpoint reads from
+        # `usb`, which are different domains the moment sync is not 60 MHz.
+        #
+        # A SyncFIFOBuffered here worked only because sync and usb were both 60 MHz, so
+        # the crossing was accidentally safe. Raising sync to 80 produced a stream with
+        # correct counter VALUES and dropped CHARACTERS -- `tic 00000`, `tck 000001`,
+        # `ick 0000` -- because bytes were being lost in transit while the CPU-side
+        # arithmetic was untouched. That is the signature of an unsynchronised crossing:
+        # its pointers are not gray-coded and its ready flags are sampled in the wrong
+        # domain.
+        fifo = AsyncFIFOBuffered(width=8, depth=self.depth,
+                                 w_domain="sync", r_domain="usb")
         m.submodules.fifo = fifo
 
         m.d.comb += [
