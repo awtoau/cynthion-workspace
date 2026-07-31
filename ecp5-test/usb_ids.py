@@ -169,6 +169,7 @@ def wait_for_tty(name, settles=60):
 
     import serial
 
+    on_bus = False
     for _ in range(settles):
         subprocess.run(["udevadm", "settle"], capture_output=True)
         node = find_tty(name)
@@ -178,6 +179,25 @@ def wait_for_tty(name, settles=60):
                 return node
             except Exception:
                 continue
+        # Remember whether the USB device was ever seen. A device present on the bus but
+        # without a bound tty is mid-enumeration, not absent, and giving up on it produces
+        # the false negative this function exists to prevent.
+        if not on_bus and find_usb(name) is not None:
+            on_bus = True
+
+    # One last, longer look if the device is on the bus. Callers kept working around this
+    # by checking lsusb themselves and looking again -- which always found it. Doing that
+    # here means they do not have to.
+    if on_bus or find_usb(name) is not None:
+        for _ in range(settles):
+            subprocess.run(["udevadm", "settle"], capture_output=True)
+            node = find_tty(name)
+            if node:
+                try:
+                    serial.Serial(node, 115200, timeout=0.1).close()
+                    return node
+                except Exception:
+                    continue
     return None
 
 
