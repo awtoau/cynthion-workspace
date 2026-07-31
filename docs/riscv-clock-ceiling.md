@@ -123,10 +123,18 @@ appeared -- the three documented handoff bugs are still worked around
 successfully, and this is the wall behind them. See
 `/mnt/2tb/git/pluribus/docs/ecp5/diamond-par-isolation-blocked.md`.
 
-**Whole-toolchain (`--mode lse`) is impractical here.** Diamond's LSE synthesis
-ran **over 16 minutes on this design without finishing**, against roughly 20
-seconds for the entire yosys + nextpnr flow. That matches the previously
-measured ~7x on a smaller design and is worse here.
+**Whole-toolchain (`--mode lse`) did not complete.** Diamond's LSE synthesis was
+stopped after **21 minutes 23 seconds at 98-99% CPU without emitting a
+netlist** -- no `.ngd`, so map, par, trce and bitgen were never reached. The
+entire yosys + nextpnr flow on the same RTL takes roughly 20 seconds, so this is
+over 60x the whole open flow spent on synthesis alone, still unfinished. The
+earlier measurement of ~7x on the smaller analyzer design was optimistic for
+this one.
+
+That is a bounded negative rather than a partial result: no Diamond frequency
+figure exists for this design, claimed or verified, because Diamond never
+produced anything to measure. It was stopped deliberately rather than left to
+run, per the standing instruction not to spend unbounded effort on the handoff.
 
 One handoff detail is worth recording for anyone repeating this: `behavioural.v`
 already *contains* the VexiiRiscv module, because yosys read the pre-generated
@@ -134,6 +142,19 @@ core in and re-emitted it. Passing `VexiiRiscv.v` again as an extra source stops
 LSE immediately:
 
     ERROR - synthesis: extra0.v(11603): duplicate module name VexiiRiscv. VERI-1206
+
+### The frequency table, as asked for
+
+| requested | nextpnr claimed | nextpnr verified | Diamond claimed | Diamond verified |
+|---|---|---|---|---|
+| 60 | 89.0 MHz | **PASS** | -- | -- |
+| 90 | 86.1 MHz | no enumeration (PHY clock) | none (synthesis unfinished) | -- |
+| 100 | 92.0 MHz | enumerates, output corrupt | none (synthesis unfinished) | -- |
+| 110 | 96.0 MHz | enumerates, output corrupt | none (synthesis unfinished) | -- |
+
+Diamond built **nothing** at any frequency, so it did not build where nextpnr
+refused. The comparison was therefore not obtained -- and it was also rendered
+moot, because the ceiling turned out not to be place-and-route.
 
 ## What #110 should do now
 
