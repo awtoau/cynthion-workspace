@@ -467,12 +467,26 @@ static inline void flash_command(unsigned int opcode) {{
 }}
 
 /* Read status register 1. Bit 0 is BUSY, bit 1 is the write-enable latch. */
+/* Read status register 1 as ONE 16-bit transfer rather than two 8-bit ones.
+
+   The obvious fix -- assert FLASH_HOLD around an 8-bit opcode plus an 8-bit
+   data byte, the way flash_jedec_id does -- hangs the CPU. flash_wait_ready
+   polls this in a tight loop for the whole 45 ms of a sector erase, so that
+   version toggles the hold register thousands of times, and any iteration that
+   leaves CS asserted wedges the PHY and takes the USB console down with it.
+   Confirmed by isolation: reverting this function restored the console.
+
+   A single 16-bit transfer needs no hold at all. The FIFO holds CS for the
+   duration of one transfer on its own, which is exactly why the 32-bit
+   address-bearing commands never needed a hold either. The opcode goes in the
+   high byte and the flash's reply arrives in the low byte of the same word.
+
+   mask=0x1 drives DQ0 throughout. The flash ignores what is on DQ0 while it is
+   driving DQ1, so sending zeros during the reply half is harmless, and it
+   avoids a mid-transfer mask change that would need two FIFO entries again. */
 static inline unsigned int flash_status1(void) {{
-    flash_phy_set(8, 1, 0x1);
-    flash_push(FLASH_CMD_READ_STATUS1);
-    flash_phy_set(8, 1, 0x0);
-    flash_push(0);
-    flash_drain(1);                 /* the byte clocked in during the command */
+    flash_phy_set(16, 1, 0x1);
+    flash_push(FLASH_CMD_READ_STATUS1 << 8);
     return flash_pop() & 0xff;
 }}
 
@@ -508,6 +522,11 @@ static inline unsigned int flash_sector_erase(unsigned int offset) {{
        top `len` bits of the word, so a 32-bit transfer of
        (opcode << 24 | address) is exactly the four bytes the flash wants, in
        order, and keeps the whole command inside a single FIFO burst. */
+    /* One 32-bit transfer: opcode in bits 31..24 then the 24-bit address. At
+       len=32 the PHY's left-justify is a shift of zero, so this word goes out
+       byte-for-byte as written -- unlike an 8-bit transfer, which must be
+       passed right-aligned. A single transfer also means CS is held for the
+       whole command by the FIFO alone. */
     flash_phy_set(32, 1, 0x1);
     flash_push((FLASH_CMD_SECTOR_ERASE << 24) | (offset & 0x00ffffffu));
     flash_drain(1);
