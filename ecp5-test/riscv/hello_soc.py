@@ -271,10 +271,9 @@ def main():
         print("nothing to do; pass --build")
         return 0
 
-    # The installed cynthion package, not the in-repo source tree: the repo
-    # copy pulls in amaranth_boards, which is not installed here, while the
-    # packaged platform has no such dependency.
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    # The locally vendored r1.4 pin map -- no cynthion package, and so no luna /
+    # luna-soc stack behind it. See ecp5-test/cynthion_platform/core.py.
+    from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
     CynthionPlatformRev1D4().build(
         HelloSoC(firmware=words),
