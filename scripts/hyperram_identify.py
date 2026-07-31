@@ -55,10 +55,12 @@ REGISTER_ALIAS     = 6
 REGISTER_BANK_DATA = 7
 REGISTER_STATE     = 8
 REGISTER_BANK1     = 9
+REGISTER_BANK2     = 10
+REGISTER_BANK3     = 11
 
 APPLET_ID = 0x48594944  # "HYID"
 
-BANK_WORDS = 2 * 1024 * 1024
+BANK_WORDS = 1024 * 1024
 BANKS = 4
 
 # HyperBus manufacturer codes, JEP106 low nibble as reported in ID0[3:0].
@@ -151,6 +153,8 @@ def main():
             alias = regs.register_read(REGISTER_ALIAS) & 0xF
             bank0 = regs.register_read(REGISTER_BANK_DATA) & 0xFFFF
             bank1 = regs.register_read(REGISTER_BANK1) & 0xFFFF
+            bank2 = regs.register_read(REGISTER_BANK2) & 0xFFFF
+            bank3 = regs.register_read(REGISTER_BANK3) & 0xFFFF
 
         emit(f"FSM state: 0x{state:02x}"
              + ("  (complete)" if state == 0xD0 else "  *** DID NOT COMPLETE"))
@@ -168,7 +172,17 @@ def main():
 
         emit("2. Address aliasing")
         emit(f"   bank 0 holds 0x{bank0:04x} after all {BANKS} banks were written")
-        emit(f"   bank 1 holds 0x{bank1:04x} (expected 0xb001 if it is real storage)")
+        banks = [bank0, bank1, bank2, bank3]
+        emit()
+        emit("   Every bank must hold its OWN marker. If any two addresses are the same")
+        emit("   storage, the later write clobbered the earlier and one will be wrong --")
+        emit("   which is how mirroring is excluded rather than assumed away.")
+        for n, value in enumerate(banks):
+            want = 0xB000 | n
+            emit(f"     bank {n} @ word 0x{n * BANK_WORDS:07x}: "
+                 f"0x{value:04x}  want 0x{want:04x}  "
+                 f"{'ok' if value == want else '*** WRONG'}")
+        all_own = all(v == (0xB000 | n) for n, v in enumerate(banks))
         if state != 0xD0:
             emit("   inconclusive -- the FSM did not finish")
         elif alias == 0:
@@ -181,10 +195,11 @@ def main():
 
         emit("=" * 62)
         expected_written = 0xB000 | (BANKS - 1)
-        if state == 0xD0 and bank0 == 0xB000 and alias == 0 and bank1 == 0xB001:
-            emit("RESULT: bank 1 holds its OWN marker one full part-width above bank 0.")
-            emit("Not merely 'differs from bank 0' -- it holds exactly what was written")
-            emit("there, which unbacked addresses returning 0x0000/0xFFFF cannot fake.")
+        if state == 0xD0 and all_own:
+            emit("RESULT: all four banks hold their own markers, after a retention wait.")
+            emit("Not mirrored -- mirroring would make a later write clobber an earlier")
+            emit("bank, and every bank kept its own value. Not unbacked -- an address")
+            emit("with no storage returns 0x0000/0xFFFF, not the exact byte written.")
             emit()
             emit(f"ID0 declares {4} MiB. Storage responds independently to at least")
             emit(f"{BANKS * BANK_WORDS * 2 >> 20} MiB. Those disagree, and the disagreement")

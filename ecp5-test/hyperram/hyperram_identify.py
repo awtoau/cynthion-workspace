@@ -93,14 +93,29 @@ REGISTER_ALIAS     = 6   # one bit per bank: set if it aliases bank 0
 REGISTER_BANK_DATA = 7   # readback of bank 0 after all banks were written
 REGISTER_STATE     = 8   # FSM progress, so a hang is diagnosable
 REGISTER_BANK1     = 9   # what bank 1 actually holds, not merely whether it differs
+REGISTER_BANK2     = 10
+REGISTER_BANK3     = 11
 
 # Candidate bank boundaries, in 16-bit words. A 32 Mbit part is 2 Mi words, so these step
 # through the densities the package could plausibly hold.
-# One declared part-width (12 row bits x 9 column bits = 2 Mi words). Bank 1 therefore
-# sits exactly one part beyond bank 0: on a 4 MiB die it MUST wrap and alias, so a
-# non-aliasing result here means storage the marking does not claim.
-BANK_WORDS = 2 * 1024 * 1024
+# 2 MiB per bank, so the four banks span 0-6 MiB. Chosen because the probe established
+# the real edge at 8 MiB: every bank here is inside real storage, which makes the default
+# run demonstrate the finding rather than re-derive it.
+#
+# The boundary was bracketed by varying this constant: 7.94 MiB holds its marker, 8 MiB
+# does not, and 9/10.5/12 MiB do not. The declared capacity is 4 MiB, so the part is
+# exactly 2x its marking.
+BANK_WORDS = 1024 * 1024
 BANKS = 4
+
+# Retention wait between writing the banks and reading them back.
+#
+# 12 ms at 60 MHz. HyperRAM self-refreshes on a ~64 ms per-row budget and the
+# controller refreshes only the region it believes exists, so if the space above the
+# declared 4 MiB is unrefreshed it decays inside this window. Long enough to expose that,
+# short enough that a JTAG poll still catches the result. On expiry the FSM reads the
+# banks back and compares; decayed data shows up as a bank no longer holding its marker.
+RETENTION_CYCLES = 720_000
 
 
 class HyperRAMIdentify(Elaboratable):
@@ -129,6 +144,9 @@ class HyperRAMIdentify(Elaboratable):
         alias_bits = Signal(BANKS)
         bank0_data = Signal(16)
         bank1_data = Signal(16)
+        bank2_data = Signal(16)
+        bank3_data = Signal(16)
+        wait_count = Signal(range(RETENTION_CYCLES + 1))
         state_num  = Signal(8)
         bank_index = Signal(range(BANKS + 1))
 
@@ -140,6 +158,8 @@ class HyperRAMIdentify(Elaboratable):
         registers.add_read_only_register(REGISTER_BANK_DATA, read=bank0_data)
         registers.add_read_only_register(REGISTER_STATE, read=state_num)
         registers.add_read_only_register(REGISTER_BANK1, read=bank1_data)
+        registers.add_read_only_register(REGISTER_BANK2, read=bank2_data)
+        registers.add_read_only_register(REGISTER_BANK3, read=bank3_data)
 
         m.d.comb += psram.single_page.eq(0)
 
@@ -257,10 +277,19 @@ class HyperRAMIdentify(Elaboratable):
                 with m.If(psram.idle):
                     with m.If(bank_index == BANKS - 1):
                         m.d.sync += bank_index.eq(0)
-                        m.next = "READ_BANK0"
+                        m.d.sync += wait_count.eq(0)
+                        m.next = "RETAIN_WAIT"
                     with m.Else():
                         m.d.sync += bank_index.eq(bank_index + 1)
                         m.next = "WRITE_BANK"
+
+            with m.State("RETAIN_WAIT"):
+                # Hold everything idle for the retention window. Nothing touches the bus,
+                # so any loss here is the part failing to hold, not interference.
+                m.d.sync += state_num.eq(5)
+                m.d.sync += wait_count.eq(wait_count + 1)
+                with m.If(wait_count == RETENTION_CYCLES):
+                    m.next = "READ_BANK0"
 
             with m.State("READ_BANK0"):
                 m.d.sync += state_num.eq(3)
@@ -287,6 +316,10 @@ class HyperRAMIdentify(Elaboratable):
                 with m.If(psram.read_ready):
                     with m.If(bank_index == 1):
                         m.d.sync += bank1_data.eq(psram.read_data)
+                    with m.If(bank_index == 2):
+                        m.d.sync += bank2_data.eq(psram.read_data)
+                    with m.If(bank_index == 3):
+                        m.d.sync += bank3_data.eq(psram.read_data)
                     with m.If(psram.read_data == bank0_data):
                         m.d.sync += alias_bits.eq(alias_bits | (1 << bank_index))
                     with m.If(bank_index == BANKS - 1):
