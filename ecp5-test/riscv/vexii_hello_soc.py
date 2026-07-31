@@ -65,8 +65,8 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
-from vexii_flash import (FairSPIControlPortCrossbar, ModalSPIFlashMemoryMap,
-                         QSPIFlashPins)
+from vexii_flash import (FairSPIControlPortCrossbar, FlashPinProbe,
+                         ModalSPIFlashMemoryMap, QSPIFlashPins)
 
 from amaranth_soc                   import csr, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -119,6 +119,11 @@ FLASH_BASE = 0x10000000
 # forever. The flash's *memory* wants the cache; the flash controller's
 # *registers* must never see it.
 FLASH_CSR_BASE = 0xf0000100
+
+# The pin probe's registers. Same uncached CSR region as everything else here:
+# these are counters that change underneath the CPU, so a cached read would
+# return a stale line and report no activity on a busy bus.
+FLASH_PROBE_BASE = 0xf0000200
 
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
 # above that aliases back to offset 0, so mapping more would map the same chip
@@ -368,6 +373,38 @@ class HelloSoC(Elaboratable):
         m.submodules.flash_csr_bridge = flash_csr_bridge
         decoder.add(flash_csr_bridge.wb_bus, addr=FLASH_CSR_BASE,
                     name="spi0")
+
+        # Instrumentation on the pins themselves.
+        #
+        # Simulation and hardware disagree about this path and only the pins can
+        # settle it. Every stage passes in simulation -- controller, PHY,
+        # crossbar, and the whole chain end to end, all producing the expected
+        # eight SCK edges -- while on hardware the JEDEC ID reads zeros and an
+        # erase "completes" 14,000 times faster than the datasheet allows.
+        #
+        # These taps are downstream of everything: `flash_pins.pins` is what
+        # QSPIFlashPins drives onto the pads, so a count here means the signal
+        # genuinely left the fabric. `flash_bus.sck` is the signal handed to
+        # USRMCLK, which is as close to the clock pad as this device allows --
+        # MCLK has no ordinary I/O buffer and cannot be read back.
+        #
+        # The crossbar grant is included so the starvation fix can be confirmed
+        # on hardware rather than resting on a simulation result, which is
+        # precisely the kind of claim this investigation has found unreliable.
+        m.submodules.flash_probe = flash_probe = FlashPinProbe()
+        m.d.comb += [
+            flash_probe.cs         .eq(flash_pins.pins.cs.o),
+            flash_probe.sck        .eq(flash_bus.sck),
+            flash_probe.dq_oe      .eq(flash_pins.pins.dq.oe),
+            # Port 0 is the controller. `grant == 0` means the controller holds
+            # the PHY; the probe counts rising edges of that condition.
+            flash_probe.grant_ctrl .eq(flash_xbar.grant == 0),
+        ]
+
+        flash_probe_bridge = WishboneCSRBridge(flash_probe.bus, data_width=32)
+        m.submodules.flash_probe_bridge = flash_probe_bridge
+        decoder.add(flash_probe_bridge.wb_bus, addr=FLASH_PROBE_BASE,
+                    name="flash_probe")
 
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.

@@ -81,6 +81,7 @@ CONSOLE_BASE = 0xf0000000
 # and FLASH_TEST_OFFSET there.
 FLASH_BASE = 0x10000000
 FLASH_CSR_BASE = 0xf0000100
+FLASH_PROBE_BASE = 0xf0000200
 # The offset the firmware reads twice, and benchmarks. Read only -- the write
 # tests use FLASH_SCRATCH below.
 #
@@ -521,6 +522,47 @@ static inline unsigned int flash_page_program(unsigned int offset,
     return flash_wait_ready();
 }}
 
+/* ------------------------------------------------------------------------
+   The pin probe: what actually happened on the SPI pins.
+
+   Counters in the gateware, sampled at the pads rather than anywhere in the
+   fabric, so a non-zero reading means the signal genuinely left the design.
+   See FlashPinProbe in ecp5-test/riscv/vexii_flash.py.
+
+   All sticky or cumulative, never live. An SCK edge is one cycle wide and the
+   CPU reads these thousands of cycles later, so a live sample would read zero
+   essentially always -- the same trap that nearly had the CPU declared dead
+   when the sideband reported raw Wishbone strobes.
+   ------------------------------------------------------------------------ */
+
+#define FLASH_PROBE_BASE {flash_probe_base:#x}u
+
+#define PROBE_CS_FELL   (*(volatile unsigned char *)(FLASH_PROBE_BASE + 0x0))
+#define PROBE_SCK_EDGES (*(volatile unsigned short *)(FLASH_PROBE_BASE + 0x2))
+#define PROBE_DQ_DRIVEN (*(volatile unsigned char *)(FLASH_PROBE_BASE + 0x4))
+#define PROBE_GRANTS    (*(volatile unsigned short *)(FLASH_PROBE_BASE + 0x6))
+#define PROBE_CLEAR     (*(volatile unsigned char *)(FLASH_PROBE_BASE + 0x8))
+
+/* Zero every counter, so what follows measures ONE operation rather than a
+   total since reset. A total cannot separate "this transaction did nothing"
+   from "this transaction did nothing but an earlier one did". */
+static inline void probe_clear(void) {{
+    PROBE_CLEAR = 1;
+}}
+
+static inline void probe_report(const char *label) {{
+    print(label);
+    print(" cs ");
+    print_hex(PROBE_CS_FELL);
+    print("  sck ");
+    print_hex(PROBE_SCK_EDGES);
+    print("  dq_oe ");
+    print_hex(PROBE_DQ_DRIVEN);
+    print("  grants ");
+    print_hex(PROBE_GRANTS);
+    print("\\r\\n");
+}}
+
 /* Displace every D-cache line, so a following memory-mapped read reaches the
    flash rather than returning a line cached before the flash changed.
 
@@ -664,6 +706,30 @@ static int flash_report(unsigned int pass) {
 
           This cannot come through the memory map: 0x9f is a register read, and
           the memory map issues one opcode, a read of a 24-bit address. */
+    /* --- THE POSITIVE CONTROL, and it runs first on purpose.
+
+       A memory-mapped read is the one flash operation known to work here: its
+       results match `apollo flash-read` byte for byte at two offsets, through
+       entirely separate hardware. So the probe MUST show chip select asserting
+       and SCK toggling during it.
+
+       If it does not, the instrument is broken and nothing measured after it
+       means anything -- the same discipline as the fabric test's 0xdeadbeef
+       control, which has caught bad measurements in this project repeatedly.
+       Read this line before reading the controller line below it. */
+    probe_clear();
+    (void)flash_read32(FLASH_TEST_OFFSET + 0x80);   /* uncached by construction:
+                                                       a fresh line, not one the
+                                                       benchmark already pulled in */
+    probe_report("probe mmap  ");
+
+    /* --- THE MEASUREMENT. Same counters, same pins, around a controller
+       transaction instead. The difference between this line and the one above
+       is the entire experiment. */
+    probe_clear();
+    (void)flash_jedec_id();
+    probe_report("probe ctrl  ");
+
     /* The controller's status register before anything is queued. tx_ready
        (bit 1) must be set or no transfer can ever be pushed; rx_ready (bit 0)
        should be clear on an idle controller. Printing it separates "the
@@ -987,7 +1053,8 @@ def write_common(work):
         FLASH_H.format(flash_base=FLASH_BASE,
                        flash_csr_base=FLASH_CSR_BASE,
                        flash_test_offset=FLASH_TEST_OFFSET,
-                       flash_scratch=FLASH_SCRATCH))
+                       flash_scratch=FLASH_SCRATCH,
+                       flash_probe_base=FLASH_PROBE_BASE))
 
 
 def build(target, work, handle, write_tests=False):

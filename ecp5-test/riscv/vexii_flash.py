@@ -61,10 +61,19 @@ configuration pin, tristated into user mode and reachable only through
 measured to work on this board and is not what a default should assume.
 """
 
-from amaranth               import Cat, C, Module, Signal, DomainRenamer
+from amaranth               import Cat, C, Module, Signal, DomainRenamer, unsigned
 from amaranth.lib           import wiring
 
+# luna_soc first, and the order is load-bearing. amaranth_soc is VENDORED
+# inside luna_soc rather than installed standalone, and importing a luna_soc
+# peripheral is what aliases it onto sys.modules under the bare name. Importing
+# `amaranth_soc` before any luna_soc import fails outright; importing the
+# vendored path directly instead yields a DIFFERENT class object for
+# wishbone.Interface, so Decoder.add() rejects a bus that is structurally
+# identical. Same constraint the SoC file documents at its own imports.
 from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
+
+from amaranth_soc           import csr
 from luna_soc.gateware.core.spiflash.port  import SPIControlPort
 from luna_soc.gateware.core.spiflash.utils import WaitTimer
 
@@ -302,6 +311,13 @@ class FairSPIControlPortCrossbar(wiring.Component):
             **{f"slave{i}": wiring.In(SPIControlPort(data_width))
                for i in range(num_ports)}))
 
+        # Which port currently holds the grant, brought out so instrumentation
+        # can confirm on HARDWARE that the controller is actually being served.
+        # The starvation bug this class replaces was proven fixed in simulation
+        # only, and "fixed in simulation" is exactly the claim that the rest of
+        # this investigation has found wanting.
+        self.grant = Signal(range(num_ports))
+
     def get_port(self, index):
         return getattr(self, f"slave{index}")
 
@@ -310,7 +326,7 @@ class FairSPIControlPortCrossbar(wiring.Component):
 
         ports = [self.get_port(i) for i in range(self._num_ports)]
 
-        grant = Signal(range(self._num_ports))
+        grant = self.grant
         # `locked` marks a transfer in flight. Re-arbitrating in the middle of
         # one would swap the PHY's data source between the request and its
         # response, so the grant only moves while nothing is outstanding.
@@ -370,6 +386,138 @@ class FairSPIControlPortCrossbar(wiring.Component):
         if self._domain != "sync":
             m = DomainRenamer({"sync": self._domain})(m)
 
+        return m
+
+
+class FlashPinProbe(wiring.Component):
+    """Counts what actually happens on the SPI flash pins, readable as CSRs.
+
+    This exists because simulation and hardware flatly contradict each other.
+    Every stage of the controller path passes in simulation -- the controller
+    alone, the PHY alone, controller through crossbar to PHY, and the full
+    wishbone/CSR/controller/crossbar/PHY chain, all producing the expected eight
+    SCK edges for an eight-bit transfer. On hardware the same path reads the
+    JEDEC ID as zeros and an erase completes 14,000 times too fast to be real.
+    Something between the CPU and the pads is not doing what the model says, and
+    no amount of further simulation can say what.
+
+    An ILA would answer it. So does this, with far less machinery: the questions
+    are countable rather than waveform-shaped. Does chip select ever assert? Does
+    the clock ever toggle? Is the data pin ever driven? Does the crossbar ever
+    grant the controller? Four counters and a sticky bit each, read over a
+    console that has been reliable all session and shares nothing with the SPI
+    path.
+
+    STICKY, NOT LIVE, and that distinction has already cost this project a wrong
+    conclusion once. The sideband debug bits were raw Wishbone `cyc` strobes
+    sampled whenever the host happened to ask; `cyc` is high for a few cycles per
+    transaction, so reading zero was near-certain even on a perfectly busy CPU,
+    and the core was nearly reported dead on that basis. An SCK edge is one cycle
+    wide and the CPU reads these registers thousands of cycles later. Latching
+    turns "is this happening at the instant I looked" -- which is always no --
+    into "has this ever happened", which is the actual question.
+
+    The counters are saturating rather than wrapping. A count that rolls over to
+    a small number is indistinguishable from one that barely moved, and the
+    difference between "eight edges" and "eight edges plus a multiple of 65536"
+    is not worth the ambiguity when the thing being tested is whether anything
+    happens at all.
+    """
+
+    def __init__(self):
+        # 16-bit counters: an 8-bit JEDEC sequence is 32 edges, a 1 KiB
+        # memory-mapped read is a few thousand. 16 bits holds a whole
+        # positive-control read without saturating, which matters because the
+        # control has to produce an obviously large number.
+        self._cs_fell    = csr.Register({"seen": csr.Field(csr.action.R, 1)},
+                                        access="r")
+        self._sck_edges  = csr.Register({"count": csr.Field(csr.action.R, 16)},
+                                        access="r")
+        self._dq_driven  = csr.Register({"seen": csr.Field(csr.action.R, 1)},
+                                        access="r")
+        self._grants     = csr.Register({"count": csr.Field(csr.action.R, 16)},
+                                        access="r")
+        # Written to clear every counter, so the firmware can measure the
+        # DIFFERENCE across one operation rather than a total since reset. A
+        # total cannot separate "this transaction did nothing" from "this
+        # transaction did nothing but an earlier one did".
+        self._clear      = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
+                                        access="w")
+
+        builder = csr.Builder(addr_width=5, data_width=8)
+        builder.add("cs_fell",   self._cs_fell)
+        builder.add("sck_edges", self._sck_edges)
+        builder.add("dq_driven", self._dq_driven)
+        builder.add("grants",    self._grants)
+        builder.add("clear",     self._clear)
+        self._bridge = csr.Bridge(builder.as_memory_map())
+
+        super().__init__({
+            "bus":       wiring.In(csr.Signature(addr_width=5, data_width=8)),
+            # Sampled from the pins and the crossbar. All inputs; this module
+            # drives nothing into the flash path and cannot perturb what it is
+            # measuring.
+            "cs":        wiring.In(unsigned(1)),
+            "sck":       wiring.In(unsigned(1)),
+            "dq_oe":     wiring.In(unsigned(1)),
+            "grant_ctrl": wiring.In(unsigned(1)),
+        })
+        self.bus.memory_map = self._bridge.bus.memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.bridge = self._bridge
+        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
+
+        cs_fell   = Signal()
+        dq_driven = Signal()
+        sck_count = Signal(16)
+        grant_count = Signal(16)
+
+        # Edge detection needs the previous value of each signal.
+        cs_prev    = Signal(reset=1)
+        sck_prev   = Signal()
+        grant_prev = Signal()
+        m.d.sync += [
+            cs_prev.eq(self.cs),
+            sck_prev.eq(self.sck),
+            grant_prev.eq(self.grant_ctrl),
+        ]
+
+        clear = self._clear.f.strobe.w_stb
+
+        with m.If(clear):
+            m.d.sync += [
+                cs_fell.eq(0),
+                dq_driven.eq(0),
+                sck_count.eq(0),
+                grant_count.eq(0),
+            ]
+        with m.Else():
+            # CS is active low at the pad. The platform declares it PinsN, so
+            # the signal here is already the logical "selected" sense -- high
+            # means selected. A falling edge of the PAD is a rising edge here.
+            with m.If(self.cs & ~cs_prev):
+                m.d.sync += cs_fell.eq(1)
+
+            with m.If(self.dq_oe):
+                m.d.sync += dq_driven.eq(1)
+
+            # Rising edges only, and saturating.
+            with m.If(self.sck & ~sck_prev):
+                with m.If(sck_count != 0xFFFF):
+                    m.d.sync += sck_count.eq(sck_count + 1)
+
+            with m.If(self.grant_ctrl & ~grant_prev):
+                with m.If(grant_count != 0xFFFF):
+                    m.d.sync += grant_count.eq(grant_count + 1)
+
+        m.d.comb += [
+            self._cs_fell.f.seen.r_data.eq(cs_fell),
+            self._sck_edges.f.count.r_data.eq(sck_count),
+            self._dq_driven.f.seen.r_data.eq(dq_driven),
+            self._grants.f.count.r_data.eq(grant_count),
+        ]
         return m
 
 
