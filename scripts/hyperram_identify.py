@@ -60,7 +60,7 @@ REGISTER_BANK3     = 11
 
 APPLET_ID = 0x48594944  # "HYID"
 
-BANK_WORDS = 1024 * 1024
+BANK_WORDS = 2 * 1024 * 1024
 BANKS = 4
 
 # HyperBus manufacturer codes, JEP106 low nibble as reported in ID0[3:0].

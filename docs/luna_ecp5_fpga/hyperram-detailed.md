@@ -22,31 +22,63 @@ say that is die 0 of a stack rather than a whole part.
 
 ID1 `0x0001`, CR0 `0x8f2f`, CR1 `0xffc1`.
 
-## It holds 8 MiB, and the datasheet explains why
+## One die, holding twice what its ID register declares
 
-The measurement below found storage to 8 MiB against ID0's declared 4. **That is not
-undocumented capacity.** `sources/ISSI-IS66WVH16M8-128Mbit-HyperRAM.pdf` states it
-directly: *"The device is a dual die stack of two 64Mb die"*, and its table 5.2
-repurposes ID0 bits 15:14 -- reserved on the single-die 64 Mbit part -- as a **Die
-Address**, `00` for the bottom die and `01` for the top.
+**A single die holds 8 MiB while ID0 reports 12 row address bits, which decodes to
+4 MiB.** There is no second die.
 
-Two 64 Mb dies of 4 MiB each is 8 MiB, which is exactly what was measured.
+This took two wrong answers to reach, both recorded below, because the dual-die
+hypothesis is seductive and fits a partial view of the data.
 
-**A larger stack was checked and ruled out on hardware.** The family does include a
-256 Mbit part (`32M8`, named in the 128 Mbit datasheet's ordering table), so 4x was a
-live possibility rather than a theoretical one. Probing 8, 16 and 24 MiB directly returns
-`0x8484` at every point: the part ends at 8 MiB. It is the 128 Mbit dual-die device, not
-the 256 Mbit one.
+### How the die question was settled
 
-**This corrects an earlier reading of the same data.** Before the datasheets were
-fetched, ID0's 4 MiB was taken as the whole part and the 8 MiB result was reported as a
-part carrying twice its marking. The measurement was right; the interpretation was wrong,
-because a single-die field was being read on a stacked part.
+`CA35` (address bit A22) is the die-select on a stacked part -- the 128 Mbit datasheet is
+explicit: *"Configuration Register 0, 1 must be set per each die individually by CA35
+(0 or 1). CA35 (A22) = 0 for bottom die, CA35 (A22) = 1 for top die."* The LUNA
+controller passes address bit 22 straight through to `CA35` (`psram.py:143-150`), so
+both dies are addressable if both exist.
 
-One field remains unexplained: the datasheet gives ISSI as manufacturer `0011` and this
-part reports `0110`. So either it is not ISSI, or the encoding differs from these two
-datasheets. Naming it ISSI was a guess from a lookup table written before the primary
-source was available, and that guess is now removed from the tooling.
+| probe | A22 | result |
+|---|---|---|
+| memory at 0, 2, 4, 6 MiB | 0 | **all four hold their own markers** |
+| memory at 8, 12, 16, 24 MiB | 1 | all `0x8484` |
+| registers ID0, ID1, CR0, CR1 | 0 | `0x0c86`, `0x0001`, `0x8f2f`, `0xffc1` -- all valid |
+| registers ID0, ID1, CR0 | 1 | **all `0x8484`** |
+
+The register reads are the decisive pair. Identical code, identical path, one bit of
+address different: the bottom die answers with plausible values and the top die answers
+with nothing, at *every* address including its own ID0. A dual-die stack cannot do that.
+
+So the 8 MiB is all on one die, addressed 0-8 MiB with A22 low throughout.
+
+### Two wrong answers on the way here, both mine
+
+**First:** ID0's 12 row bits were read as the whole part, so 8 MiB looked like a part
+carrying twice its marking -- reported as undocumented capacity.
+
+**Second:** the 128 Mbit datasheet says *"The device is a dual die stack of two 64Mb
+die"*, and its table 5.2 repurposes ID0 bits 15:14 as a Die Address. That fit the
+arithmetic beautifully -- two 4 MiB dies is 8 MiB -- and I published it as the
+explanation. It is wrong, and the probe that would have caught it was one I had already
+run without noticing: **all four of my banks were at A22=0, so I had tested the bottom
+die four times and called it a stack.**
+
+The lesson worth keeping: a hypothesis that explains the total can still be wrong about
+the mechanism, and the test that separates them is usually the one varying the bit the
+hypothesis is actually about.
+
+### What is still unexplained
+
+- **ID0 under-reports.** 13 row bits would give the observed 8 MiB; the register says 12.
+- **The manufacturer code does not match.** Both datasheets give ISSI as `0011`; this
+  part reports `0110`.
+
+Neither datasheet in `sources/` describes a single-die 8 MiB part in this family: `8M8`
+is 64 Mbit single-die, `16M8` is 128 Mbit dual-die. The part on this board matches
+neither exactly, which is why the identification is still open.
+
+The 256 Mbit `32M8` is excluded -- 16 and 24 MiB were probed directly and return
+`0x8484`.
 
 ## The measurement itself
 

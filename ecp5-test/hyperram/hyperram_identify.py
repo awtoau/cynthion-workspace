@@ -105,7 +105,7 @@ REGISTER_BANK3     = 11
 # The boundary was bracketed by varying this constant: 7.94 MiB holds its marker, 8 MiB
 # does not, and 9/10.5/12 MiB do not. The declared capacity is 4 MiB, so the part is
 # exactly 2x its marking.
-BANK_WORDS = 1024 * 1024
+BANK_WORDS = 2 * 1024 * 1024
 BANKS = 4
 
 # Retention wait between writing the banks and reading them back.
@@ -195,6 +195,9 @@ class HyperRAMIdentify(Elaboratable):
 
             with m.State("ID1"):
                 with m.If(psram.idle):
+                    # ID0 of the TOP die: A22 set. On a real dual-die stack this returns
+                    # a valid ID with bits 15:14 = 01. On a single die it returns junk or
+                    # mirrors the bottom die's ID0.
                     m.d.comb += issue(0x000001, register=1, write=0)
                     m.next = "ID1_WAIT"
             with m.State("ID1_WAIT"):
@@ -209,6 +212,7 @@ class HyperRAMIdentify(Elaboratable):
 
             with m.State("CR0"):
                 with m.If(psram.idle):
+                    # CR0 of the top die, same reasoning.
                     m.d.comb += issue(0x000800, register=1, write=0)
                     m.next = "CR0_WAIT"
             with m.State("CR0_WAIT"):
@@ -223,6 +227,7 @@ class HyperRAMIdentify(Elaboratable):
 
             with m.State("CR1"):
                 with m.If(psram.idle):
+                    # ID0 of the top die (address 0, A22 set) -- the decisive one.
                     m.d.comb += issue(0x000801, register=1, write=0)
                     m.next = "CR1_WAIT"
             with m.State("CR1_WAIT"):
