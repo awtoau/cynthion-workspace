@@ -43,7 +43,12 @@ from amaranth                       import Elaboratable, Module, Signal, Cat
 from amaranth.lib                   import wiring, stream
 from amaranth.lib.fifo              import SyncFIFOBuffered
 
-from luna.gateware.architecture.car import LunaECP5DomainGenerator
+# Not LunaECP5DomainGenerator: it clocks `sync` at 60 MHz and offers only 60/120/240
+# elsewhere, so a speed ladder can only step in factors of two. Nothing in the hardware
+# requires that -- the PLL runs a 480 MHz VCO and each output divides it, so 80, 96, 100
+# and the rest are all reachable. This one takes an arbitrary frequency, derives real
+# dividers with ecppll, and reports what it actually produced.
+from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import usb_ids
@@ -87,7 +92,13 @@ RAM_SIZE = 64 * 1024
 # for SPI flash, which it *wants* cached.
 CONSOLE_BASE = 0xf0000000
 
-CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}
+# The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
+# requires it and it is not a free parameter -- while this is arbitrary.
+#
+# 60 is a constraint here rather than a limit: the design already meets 72-91 MHz by
+# nextpnr's own estimate, and the die is a 25F sharing a speed grade with the 12F it is
+# marked as (ecp5-test/fabric/FABRIC_TEST.md). See #110.
+SYNC_MHZ = 60
 
 
 class ConsolePeripheral(wiring.Component):
@@ -161,8 +172,7 @@ class HelloSoC(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        m.submodules.car = LunaECP5DomainGenerator(
-            clock_frequencies=CLOCK_FREQUENCIES)
+        m.submodules.car = car = VariableClockDomainGenerator(sync_mhz=SYNC_MHZ)
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
         # toolchain freeze against Java 25 does not apply -- that blocks
@@ -276,7 +286,11 @@ class HelloSoC(Elaboratable):
         # is doing -- USB, the PHY and the CPU are all bypassed by this path.
         sys.path.insert(0, str(ROOT / "ecp5-test"))
         from sideband_debug import SidebandDebug
-        m.submodules.sideband = sideband = SidebandDebug()
+        # The sideband's bit period is a cycle count derived from the domain frequency, so a
+        # design that raises `sync` and leaves this at its default gets a DEAD link rather
+        # than a slow one -- a UART tolerates about +/-2% and the error scales with the
+        # clock. Passing SYNC_MHZ keeps the two in step by construction.
+        m.submodules.sideband = sideband = SidebandDebug(clk_freq_hz=SYNC_MHZ * 1e6)
 
         # Report whether the CPU's buses are moving at all. If USB is silent
         # and this shows zero activity, the fault is the CPU rather than
@@ -286,6 +300,38 @@ class HelloSoC(Elaboratable):
         # iobus activity says it is actually reaching the peripheral. Those are
         # different questions, and conflating them is what made this SoC look
         # dead when it was only mute.
+        #
+        # Status LEDs. The board has six FPGA LEDs and nothing was driving them, so a
+        # working design and a dead one looked identical -- which is most of why the
+        # silence here was hard to diagnose.
+        #
+        # Colour order on r1.4 is red, orange, yellow, green, blue, violet.
+        #
+        #   red     ERROR -- solid on any bus error, and it LATCHES. A fault that clears
+        #           itself is still a fault, and one that blinks past unobserved is worse
+        #           than one that stays lit.
+        #   orange  the CPU has fetched at least one instruction
+        #   yellow  the CPU has reached the I/O bus -- the third master is alive
+        #   green   HEARTBEAT, flashing. Flashing rather than solid because a stuck-high
+        #           output and a healthy design must not look the same; motion proves the
+        #           clock is running and the design is not frozen.
+        #   blue    console data has been queued at least once
+        #   violet  USB is connected and configured
+        #
+        # Every one except green is sticky, for the same reason the sideband bits are:
+        # these events are brief, and a human glancing at the board samples at an
+        # arbitrary moment.
+        leds = Cat(platform.request("led", n).o for n in range(6))
+
+        # ~0.36 s on, ~0.36 s off at 60 MHz. Fast enough to read as deliberate, slow
+        # enough to be unmistakably a flash rather than a flicker.
+        heartbeat = Signal(range(int(SYNC_MHZ * 1e6 // 2) + 1))
+        heartbeat_on = Signal()
+        with m.If(heartbeat == int(SYNC_MHZ * 1e6 // 2)):
+            m.d.sync += [heartbeat.eq(0), heartbeat_on.eq(~heartbeat_on)]
+        with m.Else():
+            m.d.sync += heartbeat.eq(heartbeat + 1)
+
         # STICKY, not live. `cyc` is a Wishbone strobe -- high only during a
         # transaction, a few cycles at a time -- and the sideband samples whenever the
         # host happens to ask. Reporting it directly answers "is a transaction in flight
@@ -309,6 +355,13 @@ class HelloSoC(Elaboratable):
             sideband.state.eq(Cat(ever_fetched, ever_io)),
             sideband.events.eq(ever_console),
             sideband.error.eq(ever_errored),
+
+            leds.eq(Cat(ever_errored,          # red    -- error, latched
+                        ever_fetched,          # orange -- fetching
+                        ever_io,               # yellow -- I/O bus reached
+                        heartbeat_on,          # green  -- heartbeat, flashing
+                        ever_console,          # blue   -- console data queued
+                        serial.connect)),      # violet -- USB up
         ]
 
         return m
