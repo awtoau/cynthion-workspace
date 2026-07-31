@@ -64,6 +64,44 @@ and the top die answers with nothing at every address including its own ID0. **T
 single-die 64 Mbit part**, not the 128 Mbit stack, and not the 256 Mbit `32M8` -- 16 and
 24 MiB were probed directly and are dead.
 
+## Undocumented read-only content at register 0x1000
+
+HyperBus specifies four registers -- ID0 `0x0`, ID1 `0x1`, CR0 `0x800`, CR1 `0x801`.
+Sweeping beyond them found a block that answers and is none of the obvious artifacts.
+
+    0x1000-0x1007:  3030 3230 3739 3034 0736 4c8d 3320 3320
+    0x1008-0x100b:  repeats -- the block is 8 addresses wide
+
+Little-endian, the first eight bytes are ASCII **`00029740`**: a lot or date code.
+
+### Four ways it could be an artifact, each excluded
+
+| candidate | test | result |
+|---|---|---|
+| dead bus | dead reads `0x8484` here -- established from memory above 8 MiB and the whole top-die register space | `0x3030` is not that |
+| mirror of a documented register | `0x2`/`0x4`/`0x400` return ID0's value, `0x802`/`0xc00` return CR0's -- the decode is incomplete | `0x3030` matches nothing on the part |
+| the memory array showing through | stamp memory at word `0x1000` with `0xDEAD`, then read both spaces in one run | memory `0xdead`, register space `0x3030` -- **separate storage** |
+| bitstream bleed | search `top.bit` for the pattern | absent |
+
+### And it is read-only, with a control that proves the write path
+
+Writing `0x5a5a` to `0x1000` leaves it reading `0x3030`.
+
+On its own that is worthless -- indistinguishable from writes silently failing. So the
+same run writes CR0 too. Flipping drive-strength bit 12 (`0x8f2f` -> `0x9f2f`) **read back
+changed**, on the same code path in register space. So writes work, and `0x1000` refuses
+them: factory content, not scratch and not a writable trim.
+
+CR0 is volatile -- a power cycle restores `0x8f2f` -- and the committed script writes
+CR0's own value back rather than keeping the flip.
+
+### What this does not tell us
+
+What the code means, and whether anything else lives further out. `0x1000`-`0x100b` is
+where the sweep stopped, not where the content ends. The Winbond W956A8MBYA6I datasheet
+is not in `sources/` -- only the ISSI equivalents -- so there is no primary source to
+check it against.
+
 ### What the probe is still good for
 
 The capacity question is answered and boring. What the work leaves behind that is not:

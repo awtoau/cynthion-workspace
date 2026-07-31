@@ -77,6 +77,26 @@ PROBE_ADDRESSES = [
 # Read as MEMORY rather than register space, as the control for the fall-through test.
 MEMORY_CONTROL = 0x1000
 
+# Register-space write test. CR0/CR1 are volatile on HyperRAM, so a power cycle restores
+# defaults and nothing here is permanent -- the realistic downside of a bad register write
+# is a bus that needs a replug, not a damaged part.
+#
+# Two writes, in order:
+#   1. CR0 <- its own current value (0x8f2f). Changes nothing, and proves the write path
+#      works. Without this control a "no change" result at 0x1000 is meaningless, since it
+#      would be indistinguishable from writes not happening at all.
+#   2. 0x1000 <- 0x5A5A. If it reads back changed, that block is writable scratch. If it
+#      reads back as 0x3030, it is read-only -- a lot code or factory trim.
+CR0_ADDRESS   = 0x0800
+# CR0's own current value. The write path was proven separately by flipping drive-strength
+# bit 12 (0x8f2f -> 0x9f2f), which read back changed -- so a "no change" result at
+# WRITE_TARGET means read-only rather than writes silently failing. That flip is not kept
+# here: a repeatable script should not alter a working configuration, and CR0 is volatile
+# so the board restores 0x8f2f on a power cycle regardless.
+CR0_VALUE     = 0x8f2f
+WRITE_TARGET  = 0x1000
+WRITE_PATTERN = 0x5A5A
+
 
 class HyperRAMRegFuzz(Elaboratable):
     """Reads each address in PROBE_ADDRESSES and exposes the results over JTAG."""
@@ -103,10 +123,16 @@ class HyperRAMRegFuzz(Elaboratable):
 
         index = Signal(range(len(PROBE_ADDRESSES) + 1))
         mem_control = Signal(16)
+        after_write = Signal(16)
+        cr0_after   = Signal(16)
         state_num = Signal(8)
         registers.add_read_only_register(REGISTER_STATE, read=state_num)
         registers.add_read_only_register(REGISTER_BASE + len(PROBE_ADDRESSES),
                                          read=mem_control)
+        registers.add_read_only_register(REGISTER_BASE + len(PROBE_ADDRESSES) + 1,
+                                         read=after_write)
+        registers.add_read_only_register(REGISTER_BASE + len(PROBE_ADDRESSES) + 2,
+                                         read=cr0_after)
 
         addresses = Array([C(a, 32) for a in PROBE_ADDRESSES])
 
@@ -154,7 +180,7 @@ class HyperRAMRegFuzz(Elaboratable):
             with m.State("ISSUE"):
                 m.d.sync += state_num.eq(1)
                 with m.If(index == len(PROBE_ADDRESSES)):
-                    m.next = "MEMCHECK"
+                    m.next = "CRWRITE"
                 with m.Elif(psram.idle):
                     m.d.comb += [
                         psram.address.eq(addresses[index]),
@@ -175,6 +201,76 @@ class HyperRAMRegFuzz(Elaboratable):
                 with m.If(psram.idle):
                     m.d.sync += index.eq(index + 1)
                     m.next = "ISSUE"
+
+            # Control write: CR0 gets its own value back.
+            with m.State("CRWRITE"):
+                m.d.sync += state_num.eq(0xB0)
+                m.d.comb += [
+                    psram.perform_write.eq(1),
+                    psram.write_data.eq(CR0_VALUE),
+                    psram.register_space.eq(1),
+                ]
+                with m.If(psram.idle):
+                    m.d.comb += [psram.address.eq(CR0_ADDRESS),
+                                 psram.start_transfer.eq(1)]
+                    m.next = "CRWRITE_BUSY"
+            with m.State("CRWRITE_BUSY"):
+                m.d.comb += [psram.perform_write.eq(1),
+                             psram.write_data.eq(CR0_VALUE),
+                             psram.register_space.eq(1)]
+                with m.If(~psram.idle):
+                    m.next = "CRWRITE_WAIT"
+            with m.State("CRWRITE_WAIT"):
+                m.d.comb += [psram.perform_write.eq(1),
+                             psram.write_data.eq(CR0_VALUE),
+                             psram.register_space.eq(1)]
+                with m.If(psram.idle):
+                    m.next = "FUZZWRITE"
+
+            # The test write, into the undocumented block.
+            with m.State("FUZZWRITE"):
+                m.d.sync += state_num.eq(0xB1)
+                m.d.comb += [psram.perform_write.eq(1),
+                             psram.write_data.eq(WRITE_PATTERN),
+                             psram.register_space.eq(1)]
+                with m.If(psram.idle):
+                    m.d.comb += [psram.address.eq(WRITE_TARGET),
+                                 psram.start_transfer.eq(1)]
+                    m.next = "FUZZWRITE_BUSY"
+            with m.State("FUZZWRITE_BUSY"):
+                m.d.comb += [psram.perform_write.eq(1),
+                             psram.write_data.eq(WRITE_PATTERN),
+                             psram.register_space.eq(1)]
+                with m.If(~psram.idle):
+                    m.next = "FUZZWRITE_WAIT"
+            with m.State("FUZZWRITE_WAIT"):
+                m.d.comb += [psram.perform_write.eq(1),
+                             psram.write_data.eq(WRITE_PATTERN),
+                             psram.register_space.eq(1)]
+                with m.If(psram.idle):
+                    m.next = "READBACK"
+
+            # Re-read both, so the run reports before-and-after in one pass.
+            with m.State("READBACK"):
+                with m.If(psram.idle):
+                    m.d.comb += [psram.address.eq(WRITE_TARGET),
+                                 psram.register_space.eq(1),
+                                 psram.start_transfer.eq(1)]
+                    m.next = "READBACK_WAIT"
+            with m.State("READBACK_WAIT"):
+                with m.If(psram.read_ready):
+                    m.d.sync += after_write.eq(psram.read_data)
+                    m.next = "CRREAD"
+            with m.State("CRREAD"):
+                with m.If(psram.idle):
+                    m.d.comb += [psram.address.eq(CR0_ADDRESS),
+                                 psram.register_space.eq(1),
+                                 psram.start_transfer.eq(1)]
+                    m.next = "CRREAD_WAIT"
+            with m.State("CRREAD_WAIT"):
+                with m.If(psram.read_ready):
+                    m.d.sync += cr0_after.eq(psram.read_data)
+                    m.next = "MEMCHECK"
 
             with m.State("MEMCHECK"):
                 with m.If(psram.idle):
