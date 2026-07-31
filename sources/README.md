@@ -15,20 +15,19 @@ Fetch anything missing with the URL below. `sources/*.pdf` is gitignored.
 
 **What these settled** (#109, `../docs/luna_ecp5_fpga/hyperram-detailed.md`):
 
-The board's HyperRAM reads `ID0 = 0x0c86`, which decodes as 12 row + 9 column address
-bits — apparently 4 MiB. Probing found storage to 8 MiB, and that looked like a part
-carrying twice its marking.
+**The part is 8 MiB and always was.** `ID0 = 0x0c86` gives raw fields of 12 and 8, and
+**both are count-minus-one** — table 5.2 states `00000` = *"One Row address bit"*. So it
+is 13 row + 9 column bits: 8192 x 512 x 2 = 8 MiB. Table 5.7 independently states "Array
+Rows: 8192".
 
-The 128 Mbit datasheet explains it instead: *"The device is a dual die stack of two 64Mb
-die"*, and its table 5.2 repurposes ID0 bits 15:14 — reserved on the single-die part — as
-a **Die Address**. `0x0c86` has those bits `00`, so **ID0 is describing die 0 of a stack,
-not the whole package**. Two 4 MiB dies is 8 MiB, exactly as measured. Documented
-capacity, not hidden capacity.
+**64 Mbit is 8 MiB**, and misreading that as 4 MiB is what made a perfectly ordinary part
+look like it held twice its marking. Two further hypotheses were published to explain
+that non-existent 2x gap — including a dual-die reading of ID0[15:14], which the 128 Mbit
+datasheet does document but which does not apply here. Both are retracted; the detail is
+in `../docs/luna_ecp5_fpga/hyperram-detailed.md`.
 
-The 64 Mbit datasheet is the control: same family, single die, bits 15:14 reserved.
-
-One field still unexplained: both datasheets give ISSI as manufacturer code `0011`, and
-this part reports `0110`.
+These datasheets were still worth fetching: they are what settled it, and the 128 Mbit
+one is the control that let the dual-die hypothesis be tested and dropped.
 
 ### The board's actual part is Winbond, and its datasheet is NOT here
 
