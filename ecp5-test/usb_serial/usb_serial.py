@@ -91,7 +91,7 @@ class USBSerialTerminal(Elaboratable):
             idVendor=USB_VENDOR_ID,
             idProduct=USB_PRODUCT_ID,
             manufacturer_string="Great Scott Gadgets",
-            product_string="Cynthion USB Serial",
+            product_string=usb_ids.product_string("usb_serial"),
             max_packet_size=MAX_PACKET_SIZE)
         m.submodules.serial = serial
 

@@ -94,7 +94,7 @@ class USBTiming(Elaboratable):
             d.idVendor  = USB_VENDOR_ID
             d.idProduct = USB_PRODUCT_ID
             d.iManufacturer = "Great Scott Gadgets"
-            d.iProduct      = "Cynthion USB Timing"
+            d.iProduct      = usb_ids.product_string("usb_timing")
             d.bNumConfigurations = 1
 
         with descriptors.ConfigurationDescriptor() as c:

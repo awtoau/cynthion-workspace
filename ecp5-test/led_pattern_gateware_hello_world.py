@@ -149,7 +149,7 @@ class LEDPatternGateware(Elaboratable):
             d.idVendor = VENDOR_ID
             d.idProduct = PRODUCT_ID
             d.iManufacturer = "Cynthion Project"
-            d.iProduct = "LED Pattern Hello World"
+            d.iProduct = usb_ids.product_string("led_gateware")
             d.bNumConfigurations = 1
 
         with descriptors.ConfigurationDescriptor() as c:

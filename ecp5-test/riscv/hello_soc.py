@@ -207,7 +207,7 @@ class HelloSoC(Elaboratable):
             # device enumerating but unopenable without root, which looks
             # exactly like a dead CPU.
             d.idVendor, d.idProduct = usb_ids.VENDOR_ID, usb_ids.product_id("riscv_vex_console")
-            d.iManufacturer, d.iProduct = "Cynthion", "RISC-V console"
+            d.iManufacturer, d.iProduct = usb_ids.product_string("riscv_vex_console"), usb_ids.product_string("riscv_vex_console")
             d.bNumConfigurations = 1
         with descriptors.ConfigurationDescriptor() as c:
             with c.InterfaceDescriptor() as i:

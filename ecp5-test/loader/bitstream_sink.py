@@ -110,7 +110,7 @@ class BitstreamSink(Elaboratable):
             d.idVendor = USB_VENDOR_ID
             d.idProduct = USB_PRODUCT_ID
             d.iManufacturer = "Cynthion"
-            d.iProduct = "Bitstream sink"
+            d.iProduct = usb_ids.product_string("bitstream_sink")
             d.bNumConfigurations = 1
 
         with descriptors.ConfigurationDescriptor() as c:

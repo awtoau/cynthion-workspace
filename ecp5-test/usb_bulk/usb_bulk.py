@@ -114,7 +114,7 @@ class USBBulkLoopback(Elaboratable):
             d.idVendor           = USB_VENDOR_ID
             d.idProduct          = USB_PRODUCT_ID
             d.iManufacturer      = "Great Scott Gadgets"
-            d.iProduct           = "Cynthion USB Bulk Loopback"
+            d.iProduct           = usb_ids.product_string("usb_bulk")
             d.iSerialNumber      = "bulk-loopback"
             d.bNumConfigurations = 1
 

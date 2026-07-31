@@ -47,25 +47,36 @@ RESERVED = {
     0x615b: "LUNA",
 }
 
-# One per bitstream. The string is what the device reports as its product name, so it is
-# also what a human sees in `lsusb` and what `find_device()` matches on.
+# One per bitstream: (product_id, description, port).
+#
+# The product string is built from the last two as "Cynthion <PORT>: <description>", so
+# `lsusb` answers the question a human actually has -- **which socket do I plug into** --
+# without needing to open the source. Cynthion has three USB ports and they are not
+# interchangeable:
+#
+#   AUX      belongs to the FPGA outright. Most test gateware lives here.
+#   TARGET   the port under test. Gateware here is talking to a device, not to you.
+#   CONTROL  shared with Apollo; claiming it needs an ApolloAdvertiser.
+#
+# Plugging into the wrong one gives a device that never enumerates, which looks exactly
+# like a bitstream that failed to load.
 PRODUCTS = {
     # RISC-V SoCs. Three separate bitstreams that all claimed 1209:000e, so a host tool
     # could not tell which core it had just configured.
-    "riscv_console":     (0x6180, "Cynthion RISC-V console"),
-    "riscv_vex_console": (0x6186, "Cynthion VexRiscv console"),
-    "riscv_bench":       (0x6187, "Cynthion RISC-V benchmark"),
+    "riscv_console":     (0x6180, "VexiiRiscv console",   "AUX"),
+    "riscv_vex_console": (0x6186, "VexRiscv console",      "TARGET"),
+    "riscv_bench":       (0x6187, "RISC-V benchmark",      "TARGET"),
 
     # USB test gateware. usb_bulk, usb_oneway and usb_timing all claimed LUNA's 1d50:615b.
-    "usb_serial":        (0x6181, "Cynthion USB Serial"),
-    "usb_bulk":          (0x6182, "Cynthion USB bulk"),
-    "usb_oneway":        (0x6188, "Cynthion USB one-way"),
-    "usb_timing":        (0x6183, "Cynthion USB timing"),
+    "usb_serial":        (0x6181, "USB serial terminal",  "AUX"),
+    "usb_bulk":          (0x6182, "USB bulk loopback",     "AUX"),
+    "usb_oneway":        (0x6188, "USB one-way sink",      "AUX"),
+    "usb_timing":        (0x6183, "USB timing",            "AUX"),
 
     # Loader and LED bring-up. The two LED bitstreams shared 1209:0001.
-    "bitstream_sink":    (0x6184, "Cynthion bitstream sink"),
-    "led_patterns":      (0x6185, "Cynthion LED patterns"),
-    "led_gateware":      (0x6189, "Cynthion LED gateware"),
+    "bitstream_sink":    (0x6184, "bitstream sink",       "TARGET"),
+    "led_patterns":      (0x6185, "LED patterns",         "AUX"),
+    "led_gateware":      (0x6189, "LED gateware",         "TARGET"),
 }
 
 
@@ -79,8 +90,20 @@ def product_id(name):
 
 
 def product_string(name):
-    """The product string for a bitstream, by name."""
-    return PRODUCTS[name][1]
+    """The USB product string: "Cynthion <PORT>: <description>".
+
+    The port comes first because it is the actionable part -- a human reading `lsusb`
+    wants to know which socket to use before they care what the gateware does.
+    """
+    if name not in PRODUCTS:
+        raise KeyError(f"no USB product ID allocated for {name!r}")
+    _, description, port = PRODUCTS[name]
+    return f"Cynthion {port}: {description}"
+
+
+def port(name):
+    """Which physical USB port this bitstream appears on: AUX, TARGET or CONTROL."""
+    return PRODUCTS[name][2]
 
 
 def find_tty(name):
@@ -119,13 +142,51 @@ def find_usb(name):
     return usb.core.find(idVendor=VENDOR_ID, idProduct=product_id(name))
 
 
+def check_ports():
+    """Verify each bitstream's declared port matches the PHY it actually requests.
+
+    A wrong port label is worse than none: it sends someone to the wrong socket, where the
+    device never enumerates, which looks exactly like a bitstream that failed to load.
+    Returns a list of problems, empty if consistent.
+    """
+    import re
+    from pathlib import Path
+
+    here = Path(__file__).resolve().parent
+    problems = []
+    for name in PRODUCTS:
+        matches = list(here.rglob("*.py"))
+        for path in matches:
+            src = path.read_text()
+            if f'product_id("{name}")' not in src:
+                continue
+            phys = set(re.findall(r'"(aux|target|control)_phy"', src))
+            if not phys:
+                continue
+            declared = port(name).lower()
+            if declared not in phys:
+                problems.append(
+                    f"{path.name}: declared {declared.upper()} but requests "
+                    f"{'/'.join(sorted(p.upper() for p in phys))}")
+    return problems
+
+
 if __name__ == "__main__":
     print(f"vendor 0x{VENDOR_ID:04x}\n")
     print("reserved:")
     for pid, what in sorted(RESERVED.items()):
         print(f"  0x{pid:04x}  {what}")
     print("\nallocated:")
-    for name, (pid, string) in sorted(PRODUCTS.items()):
+    for name, (pid, description, prt) in sorted(PRODUCTS.items(),
+                                                key=lambda kv: kv[1][0]):
         node = find_tty(name)
         where = f"  -> {node}" if node else ""
-        print(f"  0x{pid:04x}  {name:<16} {string}{where}")
+        print(f"  0x{pid:04x}  {prt:<7} {name:<18} {description}{where}")
+
+    problems = check_ports()
+    if problems:
+        print("\nPORT MISMATCHES:")
+        for problem in problems:
+            print(f"  {problem}")
+    else:
+        print("\nevery declared port matches the PHY its gateware requests")

@@ -113,7 +113,7 @@ class VexiiBenchSoC(Elaboratable):
             # 1209:000e is granted uaccess by the shipped udev rules; an
             # unlisted product ID enumerates but cannot be opened without root.
             d.idVendor, d.idProduct = usb_ids.VENDOR_ID, usb_ids.product_id("riscv_bench")
-            d.iManufacturer, d.iProduct = "Cynthion", "VexiiRiscv benchmark"
+            d.iManufacturer, d.iProduct = usb_ids.product_string("riscv_bench"), usb_ids.product_string("riscv_bench")
             d.bNumConfigurations = 1
         with descriptors.ConfigurationDescriptor() as c:
             with c.InterfaceDescriptor() as i:
