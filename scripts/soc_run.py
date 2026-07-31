@@ -144,24 +144,22 @@ def main():
         if args.no_read:
             return 0
 
-        import usb_ids
-        # Two settle passes. A fresh configure can take longer than one pass to produce a
-        # bound tty, and the cost of a second look is a second of waiting against a false
-        # "no device" that reads as a hardware fault.
-        node = usb_ids.wait_for_tty("riscv_console") or \
-               usb_ids.wait_for_tty("riscv_console")
-        if not node:
-            emit("no console tty appeared.")
-            emit("Check `lsusb -d 1d50:6180` -- the device being on the bus without a")
-            emit("bound tty is a transient state after a reconfigure, not a fault.")
-            return 1
-        emit(f"console: {node}")
-
-        # The console service, if running, holds the port exclusively. Reading through it
-        # rather than fighting for the tty is what makes this work alongside a watcher.
+        # Read through the console service if one is running, and NEVER open the tty
+        # while it is. Both processes reading the same port interleaves the stream --
+        # each takes bytes the other never sees, giving output like "ivlive0alive" --
+        # and every steal makes the service drop and reattach, which looked like the
+        # FPGA reconfiguring in a loop. It was not: the tick counter kept climbing, so
+        # the CPU never restarted. Two readers, one port.
         import socket
+
+        served = False
         try:
-            sock = socket.create_connection(("127.0.0.1", 9000), timeout=5)
+            sock = socket.create_connection(("127.0.0.1", 9000), timeout=3)
+            served = True
+        except OSError:
+            sock = None
+
+        if served:
             sock.settimeout(12)
             buf = b""
             while len(buf) < 400:
@@ -173,10 +171,22 @@ def main():
                 except OSError:
                     break
             sock.close()
-            emit("--- console (via service on 9000) ---")
+            emit("--- console (via the service on 9000) ---")
             emit(buf.decode("ascii", "replace").strip()[:500])
-        except OSError:
+        else:
+            import usb_ids
             import serial
+
+            # Two settle passes: a fresh configure can take longer than one to produce a
+            # bound tty, and a false "no device" reads as a hardware fault.
+            node = (usb_ids.wait_for_tty("riscv_console")
+                    or usb_ids.wait_for_tty("riscv_console"))
+            if not node:
+                emit("no console tty appeared.")
+                emit("Check `lsusb -d 1d50:6180`: a device on the bus without a bound")
+                emit("tty is a transient state after a reconfigure, not a fault.")
+                return 1
+            emit(f"console: {node}")
             port = serial.Serial(node, 115200, timeout=8)
             data = port.read(400)
             port.close()
