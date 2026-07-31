@@ -136,7 +136,7 @@ def find_tty(name):
     return None
 
 
-def wait_for_tty(name, settles=20):
+def wait_for_tty(name, settles=60):
     """Wait for a bitstream's tty to appear and be openable, or return None.
 
     Use this after configuring the FPGA, not `find_tty()` alone. Two things go wrong
@@ -154,6 +154,16 @@ def wait_for_tty(name, settles=20):
     Each iteration blocks on `udevadm settle`, which drains the kernel's uevent queue, so
     the loop advances on real progress rather than a counter. `settles` bounds how many to
     wait through.
+
+    **The default was 20 and that was not enough.** Under load -- a build running, several
+    agents working -- a reconfigure can take longer than 20 settles to produce a bound tty,
+    and the result is a false negative on a board that is working perfectly. That has now
+    happened three times, and once it cost an entire investigation: an agent read "no
+    console", concluded the environment had broken underneath it, stashed working changes
+    and stopped. The device was on the USB bus the whole time.
+
+    So 60. The cost of waiting too long is a slow script; the cost of not waiting long
+    enough is a wrong conclusion about hardware.
     """
     import subprocess
 
