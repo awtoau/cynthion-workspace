@@ -345,7 +345,7 @@ class HyperRAMIdentify(Elaboratable):
 
 if __name__ == "__main__":
     if "--build" in sys.argv:
-        from cynthion.gateware.platform import CynthionPlatformRev1D4
+        from cynthion_platform import CynthionPlatformRev1D4
         CynthionPlatformRev1D4().build(
             HyperRAMIdentify(),
             build_dir=str(Path(__file__).parent / "identify_build"),

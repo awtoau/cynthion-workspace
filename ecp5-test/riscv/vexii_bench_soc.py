@@ -158,7 +158,7 @@ def main():
         print("pass --build to synthesise")
         return 0
 
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
     CynthionPlatformRev1D4().build(VexiiBenchSoC(), do_program=False,
                                    build_dir=str(ROOT / args.build_dir))
     return 0

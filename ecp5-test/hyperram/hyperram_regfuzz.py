@@ -294,7 +294,7 @@ class HyperRAMRegFuzz(Elaboratable):
 
 if __name__ == "__main__":
     if "--build" in sys.argv:
-        from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+        from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
         CynthionPlatformRev1D4().build(
             HyperRAMRegFuzz(),
             build_dir=str(Path(__file__).parent / "regfuzz_build"),
