@@ -429,6 +429,11 @@ class ObservablePHY(SPIPHYController):
         self.o_update      = Signal()
         self.o_clk         = Signal()
         self.o_dq_i1       = Signal()
+        # What the PHY DRIVES on DQ0. The input side alone shows the flash
+        # staying silent but not whether the command it was sent was correct,
+        # and "the flash ignored a valid 0x9f" and "the flash was sent
+        # something that is not 0x9f" are different faults.
+        self.o_dq_o0       = Signal()
         self.o_in_xfer     = Signal()
         self.o_in_xfer_end = Signal()
 
@@ -555,6 +560,7 @@ class ObservablePHY(SPIPHYController):
             self.o_update      .eq(clkgen.update),
             self.o_clk         .eq(clkgen.clk),
             self.o_dq_i1       .eq(dq_i[1]),
+            self.o_dq_o0       .eq(dq_o[0]),
         ]
 
         if self._domain != "sync":
@@ -856,8 +862,13 @@ class FlashILA(wiring.Component):
     # The eight signals, in bit order. This list IS the trace format: the host
     # side decodes by position, so changing the order changes the meaning of
     # every captured byte.
+    # Bit 7 carries the OUTGOING data bit rather than in_xfer_end. The FSM
+    # windows are already understood from the previous capture; what is not
+    # known is whether the command actually driven onto DQ0 is the command the
+    # firmware asked for. Eight bits is one BRAM-friendly byte per sample and
+    # this is the more valuable eighth signal.
     SIGNAL_NAMES = ["sck", "dq_i1", "cs", "sr_in_shift",
-                    "sample", "update", "in_xfer", "in_xfer_end"]
+                    "sample", "update", "in_xfer", "dq_o0"]
 
     def __init__(self, *, sample_depth=1024):
         self.sample_depth = sample_depth
@@ -892,7 +903,7 @@ class FlashILA(wiring.Component):
             "sample_stb":   wiring.In(unsigned(1)),
             "update_stb":   wiring.In(unsigned(1)),
             "in_xfer":      wiring.In(unsigned(1)),
-            "in_xfer_end":  wiring.In(unsigned(1)),
+            "dq_o0":        wiring.In(unsigned(1)),
             # Asserted by software immediately before the transaction to be
             # captured. Triggering on the TRANSACTION rather than on `cs`
             # falling is the point: if the fault were that nothing is issued,
@@ -909,7 +920,7 @@ class FlashILA(wiring.Component):
 
         signals = [self.sck, self.dq_i1, self.cs, self.sr_in_shift,
                    self.sample_stb, self.update_stb, self.in_xfer,
-                   self.in_xfer_end]
+                   self.dq_o0]
 
         # samples_pretrigger=2 doubles as a synchroniser for the pin inputs,
         # and catches the couple of cycles before the trigger so the first

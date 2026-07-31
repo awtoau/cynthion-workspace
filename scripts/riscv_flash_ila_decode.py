@@ -43,7 +43,7 @@ sys.path.insert(0, str(ROOT / "ecp5-test"))
 # This list IS the trace format; the gateware packs by position.
 BITS = {
     "sck": 0, "dq_i1": 1, "cs": 2, "sr_in_shift": 3,
-    "sample": 4, "update": 5, "in_xfer": 6, "in_xfer_end": 7,
+    "sample": 4, "update": 5, "in_xfer": 6, "dq_o0": 7,
 }
 
 # How long to wait for a line of console output, in seconds.
