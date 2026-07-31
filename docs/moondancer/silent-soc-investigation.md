@@ -1,4 +1,59 @@
-# The silent RISC-V SoC: one real bug fixed, and two wrong diagnoses
+# The silent RISC-V SoC: solved, after two real bugs and three wrong diagnoses
+
+**Resolved 2026-07-31.** The console prints:
+
+    prod 369d0368
+    tick 00000000
+    tick 00000001
+
+`0x12345678 * 3 = 0x369d0368`, so the CPU does real multiplication rather than storing a
+constant, and the tick counter advances between separate reads -- it executes rather than
+replaying a buffer.
+
+## The two faults, and why one hid the other
+
+**1. VexiiRiscv had an unconnected bus master** (`d35e0b5`). The core generates three
+Wishbone masters and the wrapper wired two, leaving every uncached I/O access -- including
+every console write -- routed to a port with no `ACK`, `DAT_MISO` or `ERR` driver. Detail
+below; the fix is right regardless of what else was wrong.
+
+**2. The console was never CDC-ACM** (`49ebdfa`). It claimed to be in three comments while
+building a bare vendor-specific interface with one bulk IN endpoint and no CDC
+descriptors, so the kernel correctly declined to bind a serial driver and no tty node ever
+appeared. That is what sent this investigation to read `/dev/ttyACM1`, an ST-LINK.
+
+Swapping it to LUNA's `USBSerialDevice` produced a real tty -- and still no output,
+because the swap introduced a third fault of mine:
+
+    serial.tx.last.eq(~console.source.valid)
+
+`last` marks the final beat of a packet and the endpoint only observes it on a beat where
+`valid` is high, so that expression is **unsatisfiable**. No packet was ever terminated.
+`USBStreamInEndpoint` has a `flush` input for exactly this, but `USBSerialDevice` does not
+expose it, so the boundary must come from `last` asserted alongside `valid`.
+
+**Why it took so long:** two independent faults in series. Fixing either alone changes
+nothing observable, so each fix looked like it had failed.
+
+## The lesson worth keeping
+
+Every wrong diagnosis here shared a shape: **a null result treated as evidence before the
+measurement was shown capable of producing a non-null one.** A silent console, a
+`state=0` sideband read, a zero-byte tty read -- each was consistent with the fault and
+equally consistent with the instrument not working.
+
+The sideband case is the sharpest. `state` was wired to `Cat(cpu.ibus.cyc, cpu.iobus.cyc)`
+-- Wishbone strobes, high only during a transaction, sampled whenever the host happens to
+ask. Reading 0 was near-certain even on a busy CPU, and it nearly got reported as a dead
+core. Latching them sticky ("has this bus **ever** moved") turned the same wires into a
+decisive answer: `state=3`, both buses active, CPU confirmed running while the console was
+still silent -- which is what localised the fault to the last hop.
+
+---
+
+Original record follows, kept because the reasoning is what got here.
+
+---
 
 Both SoCs — VexRiscv and VexiiRiscv — enumerate over USB and produce no output.
 This records what was established, what was fixed, and two diagnoses that were
