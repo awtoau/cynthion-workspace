@@ -27,9 +27,14 @@ is a real negative rather than a broken test. 12F and 25F share a speed grade, s
 timing margin is genuine rather than a gently-clocked design.
 
 **Not established:** intermittent defects. This is one part, and binning for occasional
-wrongness is not excluded by a passing run. Block RAM was never given the equivalent
-treatment — the toolchain reports 56 DP16KD and builds place 41 of them successfully, so
-25F-sized BRAM is relied on in practice but has not been walked.
+wrongness is not excluded by a passing run.
+
+**Block RAM is taken as working** without an equivalent test. nextpnr reports 56 DP16KD —
+the 25F figure rather than the 12F's 28 — and every build places 41 of them into the CPU's
+caches, 64 KiB of program memory and the console FIFO. The CPU fetches from block RAM,
+executes, and computes correctly while the FIFO carries characters uncorrupted. That is
+ordinary use rather than a dedicated walk, but marginal block RAM surfaces as garbage
+instructions or dropped bytes, not as something subtle.
 
 ## Configuration flash — Winbond W25Q32
 
