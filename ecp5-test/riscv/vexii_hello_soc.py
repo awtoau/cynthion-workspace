@@ -148,6 +148,12 @@ FLASH_MODE = "single"
 # which is inside the ECP5 MCLK pin's 62 MHz specification (FPGA-TN-02039) and
 # inside the flash's own 50 MHz rating for the single-lane 0x03 opcode.
 #
+# Divisor 1 (20 MHz at 60 MHz sync) was tried against the JEDEC failure and
+# changed nothing -- the ID still read zeros while the benchmark slowed from
+# 0x4873 to 0x80f3 cycles, confirming the divisor genuinely took effect. So the
+# PHY's divisor-0 special case in XFER-END, where the last bit is captured a
+# state later, is not the cause.
+#
 # Faster than this has been measured to work on this board and is not what the
 # default should be: MCLK is a configuration pin reached through USRMCLK, and
 # above 62 MHz Lattice publishes nothing to reason about margin from.
