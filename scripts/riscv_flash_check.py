@@ -58,7 +58,7 @@ EXPECTED = {
     # both of which the checker interprets rather than the pattern.
     "jedec":  re.compile(r"^jedec        ([0-9a-f]{8})  (.+)$"),
     "at0":    re.compile(r"^read @0      ([0-9a-f]{8})$"),
-    "at128k": re.compile(r"^read @128K   ([0-9a-f]{8}) ([0-9a-f]{8})  "
+    "atbench": re.compile(r"^read @0x40   ([0-9a-f]{8}) ([0-9a-f]{8})  "
                          r"(same|DIFFER)  2nd read ([0-9a-f]{8}) cycles$"),
     "bench":  re.compile(r"^read bench   ([0-9a-f]{8}) cycles / ([0-9a-f]{8})"
                          r" words, sum ([0-9a-f]{8})$"),
@@ -132,7 +132,7 @@ TTY_ROUNDS = 60
 
 # The offset the firmware reads twice and benchmarks. Must match
 # FLASH_TEST_OFFSET in scripts/riscv_firmware.py.
-BENCH_OFFSET = 0x00020000
+BENCH_OFFSET = 0x00000040
 
 
 def emit(handle, text=""):
@@ -370,8 +370,8 @@ def check(handle, lines, expected):
         else:
             emit(handle, f"  flash @0     {got}  matches the bitstream file")
 
-    if "at128k" in seen:
-        first, second, verdict = seen["at128k"][0]
+    if "atbench" in seen:
+        first, second, verdict = seen["atbench"][0]
         want = expected.get(BENCH_OFFSET)
         note = ""
         if verdict != "same":
@@ -385,14 +385,14 @@ def check(handle, lines, expected):
                             "this is a failed read rather than erased flash")
         if want is not None:
             if first != want:
-                failures.append(f"flash @128K: read {first}, "
+                failures.append(f"read @0x40: read {first}, "
                                 f"bitstream has {want}")
                 note = f"  WRONG (bitstream: {want})"
             else:
                 note = "  matches the bitstream file"
-        emit(handle, f"  flash @128K  {first} {second}  {verdict}{note}")
+        emit(handle, f"  read @0x40  {first} {second}  {verdict}{note}")
     else:
-        failures.append("no `flash @128K` line")
+        failures.append("no `read @0x40` line")
 
     # 4. Throughput, derived rather than asserted -- there is no threshold to
     #    pass, only a number to report.

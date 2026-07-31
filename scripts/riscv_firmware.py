@@ -112,7 +112,16 @@ FLASH_CSR_BASE = 0xf0000100
 # confused with the default failure.
 #
 # Read only -- the write tests use FLASH_SCRATCH below.
-FLASH_TEST_OFFSET = 0x00020000
+#
+# 128 KiB was the second try and is ALSO degenerate on this board: the
+# bitstream actually stored in flash is shorter than the one built locally, so
+# that offset reads 00000000 -- correct data again, and again identical to a
+# standard failure (nothing driving the bus at all).
+#
+# 0x40 is inside the bitstream header, where `apollo flash-read` shows
+# 2a558800: varied in all four bytes, stable, and not confusable with either
+# ffffffff or 00000000.
+FLASH_TEST_OFFSET = 0x00000040
 
 # The 4 KiB sector the write and erase tests own outright.
 #

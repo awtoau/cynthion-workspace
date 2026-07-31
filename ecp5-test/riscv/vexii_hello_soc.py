@@ -65,7 +65,8 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
-from vexii_flash import ModalSPIFlashMemoryMap, QSPIFlashPins
+from vexii_flash import (FairSPIControlPortCrossbar, ModalSPIFlashMemoryMap,
+                         QSPIFlashPins)
 
 from amaranth_soc                   import csr, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -319,32 +320,51 @@ class HelloSoC(Elaboratable):
         # It can also write. Nothing here does, and nothing should: the
         # bitstream is at offset 0. It is an arbitrary-command path, so the
         # discipline has to come from the firmware rather than the gateware.
-        from luna_soc.gateware.core import spiflash as spiflash_core
+        from luna_soc.gateware.core.spiflash.controller import SPIController
 
-        # `with_mmap=False`, then the mode-selectable mmap appended by hand.
-        # Upstream's Peripheral builds its own mmap with the read opcode fixed
-        # at 0xeb and offers no parameter to change it; `cores` is just the list
-        # of things the crossbar arbitrates, so adding to it is the supported
-        # shape of the class rather than a reach into its internals.
-        flash = spiflash_core.Peripheral(
-            flash_phy,
-            with_controller = True,
-            controller_name = "spi0",
-            with_mmap       = False,
-            domain          = "sync")
-
+        # The two cores and the crossbar are built here rather than by
+        # `spiflash.Peripheral`, which would construct all three -- but with
+        # upstream's `SPIControlPortCrossbar`, whose arbitration starves the
+        # controller whenever the memory map holds chip select. That is a real
+        # bug with a precise and misleading symptom: memory-mapped reads work
+        # perfectly while every controller command returns zeros, which reads
+        # as a broken controller when in fact its requests never reach the PHY.
+        # It cost a hardware run to find and a simulation to prove
+        # (scripts/riscv_flash_crossbar_sim.py). See
+        # FairSPIControlPortCrossbar for the mechanism.
+        #
+        # Upstream's Peripheral also hardcodes the mmap read opcode at 0xeb with
+        # no parameter to change it, which is the other reason it is not used.
         flash_mmap = ModalSPIFlashMemoryMap(
             size=FLASH_SIZE, mode=FLASH_MODE, name="spiflash", domain="sync")
-        flash.spi_mmap = flash_mmap
-        flash.bus      = flash_mmap.bus
-        flash.cores.append(flash_mmap)
+        m.submodules.flash_mmap = flash_mmap
 
-        m.submodules.flash = flash
+        flash_ctrl = SPIController(data_width=32, name="spi0", domain="sync")
+        m.submodules.flash_ctrl = flash_ctrl
 
-        decoder.add(flash.bus, addr=FLASH_BASE, name="spiflash")
+        m.submodules.flash_xbar = flash_xbar = FairSPIControlPortCrossbar(
+            data_width=32, num_ports=2, domain="sync")
+
+        # Port 0 is the controller, port 1 the memory map. The order is not
+        # arbitrary: the round-robin starts from the port after the current
+        # holder, so the memory map -- which requests far more often -- yielding
+        # to port 0 is the common case and the one that must work.
+        wiring.connect(m, flash_ctrl.source, flash_xbar.slave0.source)
+        wiring.connect(m, flash_ctrl.sink,   flash_xbar.slave0.sink)
+        m.d.comb += flash_xbar.slave0.cs.eq(flash_ctrl.cs)
+
+        wiring.connect(m, flash_mmap.source, flash_xbar.slave1.source)
+        wiring.connect(m, flash_mmap.sink,   flash_xbar.slave1.sink)
+        m.d.comb += flash_xbar.slave1.cs.eq(flash_mmap.cs)
+
+        wiring.connect(m, flash_xbar.controller.source, flash_phy.source)
+        wiring.connect(m, flash_xbar.controller.sink,   flash_phy.sink)
+        m.d.comb += flash_phy.cs.eq(flash_xbar.controller.cs)
+
+        decoder.add(flash_mmap.bus, addr=FLASH_BASE, name="spiflash")
 
         # The controller's CSRs, on the same CSR bridge shape as the console.
-        flash_csr_bridge = WishboneCSRBridge(flash.csr, data_width=32)
+        flash_csr_bridge = WishboneCSRBridge(flash_ctrl.bus, data_width=32)
         m.submodules.flash_csr_bridge = flash_csr_bridge
         decoder.add(flash_csr_bridge.wb_bus, addr=FLASH_CSR_BASE,
                     name="spi0")

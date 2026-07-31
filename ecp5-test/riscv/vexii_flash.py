@@ -65,6 +65,7 @@ from amaranth               import Cat, C, Module, Signal, DomainRenamer
 from amaranth.lib           import wiring
 
 from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
+from luna_soc.gateware.core.spiflash.port  import SPIControlPort
 from luna_soc.gateware.core.spiflash.utils import WaitTimer
 
 
@@ -246,6 +247,125 @@ class ModalSPIFlashMemoryMap(SPIFlashMemoryMap):
                     m.d.comb += bus.ack.eq(1)
                     m.d.sync += burst_adr.eq(burst_adr + 1)
                     m.next = "IDLE"
+
+        if self._domain != "sync":
+            m = DomainRenamer({"sync": self._domain})(m)
+
+        return m
+
+
+class FairSPIControlPortCrossbar(wiring.Component):
+    """Share one SPI PHY between two cores, without either starving the other.
+
+    luna_soc's `SPIControlPortCrossbar` cannot do this, and the reason is one
+    line:
+
+        with m.Switch(rr.grant):
+            for i in range(self._num_ports):
+                with m.Case(i):
+                    connect(m, ...)
+                    m.d.comb += grant_update.eq(~rr.valid | ~rr.requests[i])
+
+    `grant_update` -- the round-robin's enable -- is asserted only when the
+    port that currently HOLDS the grant stops asking for it. So the arbiter
+    re-evaluates only when the incumbent yields, and a port that holds `cs`
+    indefinitely owns the PHY indefinitely.
+
+    `SPIFlashMemoryMap` holds `cs` for `MMAP_DEFAULT_TIMEOUT` -- 256 cycles --
+    after every burst, deliberately: keeping chip select asserted is what lets
+    a sequential read skip the command, address and dummy phases, and that is
+    most of why a memory map beats a register-poked controller for the access
+    pattern a CPU generates. It is a good optimisation. It also means that on a
+    SoC whose firmware reads flash at all regularly, the memory map is holding
+    `cs` essentially always, and the controller sharing the crossbar is never
+    granted.
+
+    The symptom is precise and misleading: memory-mapped reads work perfectly
+    while every command issued through the controller returns zeros. It reads
+    like a broken controller, and the controller is fine -- its requests never
+    reach the PHY. Verified in simulation
+    (scripts/riscv_flash_crossbar_sim.py): with the memory map holding `cs`,
+    the controller is not granted in 600 cycles; with it idle, the grant
+    arrives.
+
+    This version re-arbitrates whenever the PHY is between transfers rather
+    than only when the incumbent yields, so a port holding `cs` keeps its burst
+    but cannot monopolise the PHY. Chip select is driven by whichever port
+    holds the grant, so a burst is never interrupted mid-transfer.
+    """
+
+    def __init__(self, *, data_width=32, num_ports=2, domain="sync"):
+        self._domain = domain
+        self._num_ports = num_ports
+        super().__init__(dict(
+            controller=wiring.Out(SPIControlPort(data_width)),
+            **{f"slave{i}": wiring.In(SPIControlPort(data_width))
+               for i in range(num_ports)}))
+
+    def get_port(self, index):
+        return getattr(self, f"slave{index}")
+
+    def elaborate(self, platform):
+        m = Module()
+
+        ports = [self.get_port(i) for i in range(self._num_ports)]
+
+        grant = Signal(range(self._num_ports))
+        # `locked` marks a transfer in flight. Re-arbitrating in the middle of
+        # one would swap the PHY's data source between the request and its
+        # response, so the grant only moves while nothing is outstanding.
+        locked = Signal()
+
+        # Arbitrate on `source.valid` -- a port with a transfer actually ready
+        # to send -- NOT on `cs`.
+        #
+        # This is the correction that matters, and getting it wrong is what
+        # makes upstream starve. `cs` is a HOLD signal: the memory map keeps it
+        # asserted for 256 cycles after a burst so a following sequential read
+        # can skip the command and address phases. It says "do not deselect the
+        # chip yet", not "I have work". Treating it as a request hands the PHY
+        # to a port that is idle but unwilling to let go.
+        #
+        # `source.valid` is the real request. A port between bursts holds `cs`
+        # with `valid` low, so the grant can move to the other port, and the
+        # only cost is that the next burst re-sends its command -- a few
+        # microseconds, against a controller path that otherwise never runs at
+        # all.
+        requests = Cat(port.source.valid for port in ports)
+
+        with m.If(~locked):
+            # Round-robin from the port after the current holder, so a
+            # continuously requesting port cannot starve the others. Searching
+            # upward first and wrapping gives each port its turn.
+            for offset in reversed(range(1, self._num_ports + 1)):
+                candidate = (grant + offset) % self._num_ports
+                with m.If(requests.bit_select(candidate, 1)):
+                    m.d.sync += grant.eq(candidate)
+
+        # A transfer is outstanding from the cycle the PHY accepts a command
+        # until it returns the corresponding data.
+        with m.If(self.controller.source.valid & self.controller.source.ready):
+            m.d.sync += locked.eq(1)
+        with m.Elif(self.controller.sink.valid & self.controller.sink.ready):
+            m.d.sync += locked.eq(0)
+
+        with m.Switch(grant):
+            for index, port in enumerate(ports):
+                with m.Case(index):
+                    m.d.comb += [
+                        self.controller.source.data  .eq(port.source.data),
+                        self.controller.source.len   .eq(port.source.len),
+                        self.controller.source.width .eq(port.source.width),
+                        self.controller.source.mask  .eq(port.source.mask),
+                        self.controller.source.valid .eq(port.source.valid),
+                        port.source.ready            .eq(self.controller.source.ready),
+
+                        port.sink.data               .eq(self.controller.sink.data),
+                        port.sink.valid              .eq(self.controller.sink.valid),
+                        self.controller.sink.ready   .eq(port.sink.ready),
+
+                        self.controller.cs           .eq(port.cs),
+                    ]
 
         if self._domain != "sync":
             m = DomainRenamer({"sync": self._domain})(m)
