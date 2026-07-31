@@ -67,19 +67,23 @@ def generate():
 
     lines = [HEADER, ""]
     lines.append("# USB devices.")
-    for name, (pid, string) in sorted(usb_ids.PRODUCTS.items(), key=lambda kv: kv[1][0]):
+    for name, (pid, description, port) in sorted(usb_ids.PRODUCTS.items(),
+                                                 key=lambda kv: kv[1][0]):
         lines.append(
             f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{usb_ids.VENDOR_ID:04x}", '
-            f'ATTR{{idProduct}}=="{pid:04x}", TAG+="uaccess"   # {name}')
+            f'ATTR{{idProduct}}=="{pid:04x}", TAG+="uaccess"'
+            f'   # {port} -- {name}')
 
     lines.append("")
     lines.append("# The tty interfaces some of them expose. SUBSYSTEM==\"tty\" matches the")
     lines.append("# interface, so vendor/product come from the parent device and need ATTRS.")
-    for name, (pid, string) in sorted(usb_ids.PRODUCTS.items(), key=lambda kv: kv[1][0]):
+    for name, (pid, description, port) in sorted(usb_ids.PRODUCTS.items(),
+                                                 key=lambda kv: kv[1][0]):
         if "console" in name or "serial" in name:
             lines.append(
                 f'SUBSYSTEM=="tty", ATTRS{{idVendor}}=="{usb_ids.VENDOR_ID:04x}", '
-                f'ATTRS{{idProduct}}=="{pid:04x}", TAG+="uaccess"   # {name}')
+                f'ATTRS{{idProduct}}=="{pid:04x}", TAG+="uaccess"'
+                f'   # {port} -- {name}')
     return "\n".join(lines) + "\n"
 
 
