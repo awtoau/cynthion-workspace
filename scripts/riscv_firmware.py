@@ -256,6 +256,11 @@ FLASH_H = """
    below is derived from this constant and nothing else. */
 #define FLASH_SCRATCH {flash_scratch:#x}u
 
+/* Where flash_cache_flush() reads from: 1 MiB in, a whole 4 KiB clear of both
+   FLASH_SCRATCH and the bitstream, so displacing the cache never pulls in the
+   lines under test. Read only. */
+#define FLASH_FLUSH_REGION 0x00100000u
+
 /* SPIController register map. Byte offsets from luna_soc's csr.Builder layout
    (addr_width=5, data_width=8), verified against the elaborated memory map
    rather than assumed:
@@ -516,6 +521,27 @@ static inline unsigned int flash_page_program(unsigned int offset,
     return flash_wait_ready();
 }}
 
+/* Displace every D-cache line, so a following memory-mapped read reaches the
+   flash rather than returning a line cached before the flash changed.
+
+   VexiiRiscv is built here with --lsu-l1-sets 64 --lsu-l1-ways 1 and a 64-byte
+   line, so the data cache is 64 * 1 * 64 = 4096 bytes, direct-mapped. Reading
+   4 KiB of DISTINCT addresses at line stride therefore touches every set once
+   and evicts whatever was in it.
+
+   This is a workaround, and the proper fix is named so nobody has to rediscover
+   it: VexiiRiscv can be generated with Zicbom (--with-rvZcbm) for `cbo.inval`,
+   which invalidates a line directly. This SoC is not built with it, and turning
+   on an untested CPU extension to support a test is the wrong order of work.
+
+   The reads come from a region far from FLASH_SCRATCH so the displacement
+   itself does not populate the lines being tested. */
+static inline void flash_cache_flush(void) {{
+    for (unsigned int i = 0; i < 4096; i += 64) {{
+        (void)*(volatile unsigned int *)(FLASH_BASE + FLASH_FLUSH_REGION + i);
+    }}
+}}
+
 /* Read one word through the CONTROLLER rather than the memory map.
 
    This exists because of cache coherency, and the problem it solves is easy to
@@ -652,21 +678,26 @@ static int flash_report(unsigned int pass) {
     last_jedec = id;
     print("jedec        ");
     print_hex(id);
+    /* A failed ID is reported and the pass CONTINUES.
+
+       The reads and the benchmark below go through the memory map, which is
+       independently verified against `apollo flash-read` and works whether or
+       not the controller can read a response back. Skipping them on a JEDEC
+       failure threw away good measurements from a working path because a
+       different path was broken. The return value tells the caller what
+       happened; it does not mean "nothing else is valid". */
+    int answered = 1;
     if (id == 0x000000u) {
         print("  NO RESPONSE (all zeros)\\r\\n");
-        print("stopping     command path is dead; nothing after this is "
-              "interpretable\\r\\n");
-        return 0;
-    }
-    if ((id & 0xffffffu) == 0xffffffu) {
+        answered = 0;
+    } else if ((id & 0xffffffu) == 0xffffffu) {
         print("  NO RESPONSE (floating high)\\r\\n");
-        print("stopping     command path is dead; nothing after this is "
-              "interpretable\\r\\n");
-        return 0;
+        answered = 0;
+    } else {
+        print("  capacity ");
+        print_hex(1u << (id & 0xffu));
+        print(" bytes\\r\\n");
     }
-    print("  capacity ");
-    print_hex(1u << (id & 0xffu));
-    print(" bytes\\r\\n");
 
     /* 2. The memory map itself: an ordinary load from FLASH_BASE. Offset 0 is
           the start of the FPGA bitstream, so this is a value with a known
@@ -719,7 +750,7 @@ static int flash_report(unsigned int pass) {
     print(" words, sum ");
     print_hex(sum);
     print("\\r\\n");
-    return 1;
+    return answered;
 }
 
 /* Erase a sector, program a page into it, and read it back through the memory
@@ -744,8 +775,19 @@ static void flash_write_test(unsigned int pass) {
     /* Erased flash is all ones. Checking this before programming separates "the
        erase did nothing" from "the program did nothing" -- without it, a
        readback matching the previous pass's data would be ambiguous between
-       the two. */
-    unsigned int after_erase = flash_read32_uncached(FLASH_SCRATCH);
+       the two.
+
+       READ THROUGH THE MEMORY MAP, not through the controller. The controller's
+       response path is the one that is broken -- the JEDEC ID comes back as
+       zeros through it -- so a verify built on it could not distinguish a
+       failed write from a failed read. The memory map is independently
+       cross-checked against `apollo flash-read` at two offsets, so it is the
+       only trustworthy observer here.
+
+       The flush is required because that mapping is cached: a line read before
+       the erase would otherwise survive it and report pre-erase contents. */
+    flash_cache_flush();
+    unsigned int after_erase = flash_read32(FLASH_SCRATCH);
 
     print("erase 4K     ");
     print_hex(erase_cycles);
@@ -767,15 +809,17 @@ static void flash_write_test(unsigned int pass) {
     unsigned int program_cycles =
         flash_page_program(FLASH_SCRATCH, page, FLASH_PAGE_SIZE / 4);
 
-    /* Verify through the UNCACHED path. See flash_read32_uncached: the memory
-       map is cached, so it would happily return pre-erase contents from a cache
-       line and call a write that never happened a success. Counts mismatches
-       and keeps the first -- a count says how bad it is, the first bad word
-       says what went wrong. */
+    /* Verify through the MEMORY MAP -- the path that is proven correct against
+       an independent reader. Flushed first so every word comes from the flash
+       rather than from a line cached before the program.
+
+       Counts mismatches and keeps the first: a count says how bad it is, the
+       first bad word says what went wrong. */
+    flash_cache_flush();
     unsigned int bad = 0;
     unsigned int bad_index = 0, bad_want = 0, bad_got = 0;
     for (unsigned int i = 0; i < FLASH_PAGE_SIZE / 4; i++) {
-        unsigned int got = flash_read32_uncached(FLASH_SCRATCH + i * 4);
+        unsigned int got = flash_read32(FLASH_SCRATCH + i * 4);
         if (got != page[i]) {
             if (!bad) {
                 bad_index = i;
@@ -786,13 +830,17 @@ static void flash_write_test(unsigned int pass) {
         }
     }
 
-    /* The same word through the cached memory map, reported alongside rather
-       than checked. On the first pass it agrees; on later passes it may return
-       an earlier pass's data, because nothing invalidates the line when the
-       flash changes beneath it. That is a real property of a cached, writable
-       mapping and it is worth showing rather than hiding -- it is what any
-       future driver here will have to deal with. */
-    unsigned int cached = flash_read32(FLASH_SCRATCH);
+    /* The same word through the CONTROLLER, reported alongside rather than
+       checked. This is the diagnostic the whole write test doubles as.
+
+       The controller's response path is broken -- the JEDEC ID reads zeros
+       through it. If the memory map above shows the programmed data, then the
+       controller successfully ISSUED the erase and program commands and only
+       fails to READ RESPONSES back. If the memory map shows unchanged data,
+       the controller is not issuing commands at all. Those are different
+       faults with different fixes, and no simulation has been able to tell
+       them apart because every stage passes in simulation. */
+    unsigned int via_ctrl = flash_read32_uncached(FLASH_SCRATCH);
 
     print("program 256B ");
     print_hex(program_cycles);
@@ -813,11 +861,12 @@ static void flash_write_test(unsigned int pass) {
     }
     print("\\r\\n");
 
-    print("cached word  ");
-    print_hex(cached);
+    print("via ctrl     ");
+    print_hex(via_ctrl);
     print(" want ");
     print_hex(page[0]);
-    print(cached == page[0] ? "  coherent\\r\\n" : "  STALE (cache)\\r\\n");
+    print(via_ctrl == page[0] ? "  controller reads OK\\r\\n"
+                              : "  controller read path broken\\r\\n");
 }
 
 int main(void) {
@@ -868,13 +917,42 @@ int main(void) {
             print("); nothing further will run\\r\\n");
         } else {
             print("\\r\\n");
-            /* The write test runs ONLY if the read path answered. A write
-               verified through a broken read path is not verified at all. */
-            if (!flash_report(pass)) {
+            int answered = flash_report(pass);
+
+            /* THE WRITE TEST RUNS EVEN WHEN THE JEDEC READ FAILED, and that is
+               the point of running it.
+
+               The earlier version gated this on `answered`, on the reasoning
+               that a write verified through a broken read path is not
+               verified. That reasoning applied when the verify read back
+               through the controller. It no longer does: the verify now uses
+               the MEMORY MAP, which is independently cross-checked against
+               `apollo flash-read` at two offsets and is the one path here known
+               to be correct.
+
+               So this is a diagnostic rather than a dependant. Erase and
+               program are commands the controller ISSUES; their effect is
+               observable through a reader that works. JEDEC is a command whose
+               RESPONSE comes back through the controller. If the programmed
+               data appears, the controller issues commands correctly and the
+               fault is confined to reading responses. If it does not, the
+               controller is not issuing commands at all. Those are different
+               faults, and no simulation has separated them -- every stage
+               passes in simulation. */
+            if (WRITE_TESTS && pass < WRITE_PASSES) {
+                flash_write_test(pass);
+            } else if (!answered) {
+                /* Nothing further to learn: the command path is dead and there
+                   is no write test to interrogate it with. */
                 dead = 1;
                 dead_id = last_jedec;
-            } else if (WRITE_TESTS && pass < WRITE_PASSES) {
-                flash_write_test(pass);
+            }
+
+            /* Latch after the write passes are spent, so the held banner
+               reports the final state rather than pre-empting the experiment. */
+            if (!answered && WRITE_TESTS && pass + 1 >= WRITE_PASSES) {
+                dead = 1;
+                dead_id = last_jedec;
             }
 
             print("tick ");
