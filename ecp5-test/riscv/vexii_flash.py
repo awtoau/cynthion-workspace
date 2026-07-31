@@ -76,7 +76,10 @@ from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
 from amaranth_soc           import csr
 from luna_soc.gateware.core.spiflash.phy   import (SPIPHYController,
                                                    SPIClockGenerator)
-from luna_soc.gateware.core.spiflash.port  import SPIControlPort
+from luna_soc.gateware.core.spiflash.controller import SPIController
+from luna_soc.gateware.core.spiflash.port  import (SPIControlPort,
+                                                   StreamCore2PHY,
+                                                   StreamPHY2Core)
 from luna_soc.gateware.core.spiflash.utils import WaitTimer
 
 from luna.gateware.debug.ila import IntegratedLogicAnalyzer
@@ -556,6 +559,117 @@ class ObservablePHY(SPIPHYController):
 
         if self._domain != "sync":
             m = DomainRenamer({"sync": self._domain})(m)
+
+        return m
+
+
+class HoldableSPIController(wiring.Component):
+    """luna_soc's SPIController with a chip select that software can hold down.
+
+    The ILA capture (scripts/riscv_flash_ila_decode.py) shows upstream's chip
+    select dropping between every transfer of a multi-part command: four
+    separate 8-bit windows for a JEDEC read, with CS deasserted for 81, 36 and
+    36 samples in between. The flash resets its command state on every rising
+    edge of CS, so the 24 clocks after the command byte are shifted in with no
+    command pending and the chip drives nothing -- dq_i[1] reads zero for all
+    32 bits, which is exactly what the ID register reported.
+
+    The cause is in upstream's chip select generation:
+
+        with m.State("RISE"):  m.d.comb += cs.eq(tx_fifo.r_rdy)
+        with m.State("FALL"):  m.d.comb += cs.eq(self._cs.f.select.w_data
+                                                 | tx_fifo.r_rdy)
+
+    `self._cs.f.select` is a csr.action.W field, so `w_data` is valid only
+    during the cycle of the write strobe. It is a pulse, not a latch, so the
+    `cs` register cannot hold chip select down across transfers and CS collapses
+    to `tx_fifo.r_rdy` alone.
+
+    Software cannot work around that. Queueing every transfer before draining
+    any was tried and does not help: the CPU issues CSR writes far more slowly
+    than the PHY drains the FIFO, so the FIFO empties mid-command regardless of
+    the order of operations. The 81-sample gap in the capture is precisely the
+    CPU writing registers while the FIFO sits empty.
+
+    So the hold has to be in gateware. This wraps the upstream controller and
+    replaces its chip select with `held | upstream_cs`, where `held` is a proper
+    latching register: write 1 to assert, write 0 to release. A command becomes
+
+        hold(1); push...; pop...; hold(0);
+
+    and CS stays low throughout regardless of how slowly the CPU feeds the FIFO.
+
+    Everything else -- the FIFOs, the PHY stream handshake, the register map --
+    is upstream's, untouched. The `cs` register keeps its original pulse
+    behaviour so existing firmware is unaffected; `hold` is a new register at
+    its own offset.
+    """
+
+    def __init__(self, *, data_width=32, name=None, domain="sync"):
+        self._domain = domain
+        self._inner = SPIController(data_width=data_width, name=name,
+                                    domain=domain)
+
+        self._hold = csr.Register({"select": csr.Field(csr.action.RW, 1)},
+                                  access="rw")
+        builder = csr.Builder(addr_width=2, data_width=8)
+        builder.add("hold", self._hold)
+        self._hold_bridge = csr.Bridge(builder.as_memory_map())
+
+        # Two CSR windows behind one decoder: upstream's registers where
+        # firmware already expects them, and `hold` after them.
+        self._decoder = csr.Decoder(addr_width=6, data_width=8)
+        self._decoder.add(self._inner.bus, addr=0x00)
+        self._decoder.add(self._hold_bridge.bus, addr=0x20)
+
+        super().__init__({
+            "bus":    wiring.In(self._decoder.bus.signature),
+            "source": wiring.Out(StreamCore2PHY(data_width)),
+            "sink":   wiring.In(StreamPHY2Core(data_width)),
+            "cs":     wiring.Out(unsigned(1)),
+        })
+        self.bus.memory_map = self._decoder.bus.memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.inner       = self._inner
+        m.submodules.hold_bridge = self._hold_bridge
+        m.submodules.decoder     = self._decoder
+
+        # Wired by hand. Both `self.bus` and the decoder's bus are CSR targets,
+        # so wiring.connect() sees two drivers on r_data and refuses, while
+        # flipping either side puts two drivers on addr instead. Explicit
+        # assignment is unambiguous: the external bridge drives address and
+        # write data in, the decoder drives read data back out.
+        m.d.comb += [
+            self._decoder.bus.addr   .eq(self.bus.addr),
+            self._decoder.bus.r_stb  .eq(self.bus.r_stb),
+            self._decoder.bus.w_stb  .eq(self.bus.w_stb),
+            self._decoder.bus.w_data .eq(self.bus.w_data),
+            self.bus.r_data          .eq(self._decoder.bus.r_data),
+        ]
+
+        # Wired by hand rather than with wiring.connect. The component's own
+        # `source`/`sink` face outward while the inner controller's face inward,
+        # so a connect() of the two sees two drivers on the same members and
+        # refuses. Explicit assignment states the direction of each signal.
+        m.d.comb += [
+            self.source.data    .eq(self._inner.source.data),
+            self.source.len     .eq(self._inner.source.len),
+            self.source.width   .eq(self._inner.source.width),
+            self.source.mask    .eq(self._inner.source.mask),
+            self.source.valid   .eq(self._inner.source.valid),
+            self._inner.source.ready .eq(self.source.ready),
+
+            self._inner.sink.data  .eq(self.sink.data),
+            self._inner.sink.valid .eq(self.sink.valid),
+            self.sink.ready        .eq(self._inner.sink.ready),
+        ]
+
+        # The whole point: CS is asserted while software holds it OR while the
+        # upstream controller wants it. The OR rather than a replacement means
+        # a command that does not bother to hold still works exactly as before.
+        m.d.comb += self.cs.eq(self._hold.f.select.data | self._inner.cs)
 
         return m
 

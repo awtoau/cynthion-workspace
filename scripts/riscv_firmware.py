@@ -283,6 +283,19 @@ FLASH_H = """
 #define FLASH_RX     (*(volatile unsigned int  *)(FLASH_CSR_BASE + 0x8))
 #define FLASH_TX     (*(volatile unsigned int  *)(FLASH_CSR_BASE + 0xc))
 
+/* Chip select hold, a LATCHING register at offset 0x20 -- see
+   HoldableSPIController in ecp5-test/riscv/vexii_flash.py.
+
+   The `cs` register at 0x4 is a write-pulse and cannot hold chip select across
+   transfers; upstream's CS collapses to the TX FIFO's occupancy, so it drops
+   whenever the CPU is slower than the PHY, which is always. The ILA caught the
+   consequence directly: four separate 8-bit windows for a JEDEC read with CS
+   deasserted between them, so the flash reset its command state each time and
+   drove nothing for the 24 response clocks.
+
+   Assert this before a multi-transfer command and release it after. */
+#define FLASH_HOLD   (*(volatile unsigned char *)(FLASH_CSR_BASE + 0x20))
+
 #define FLASH_STATUS_RX_READY 0x1u
 #define FLASH_STATUS_TX_READY 0x2u
 
@@ -357,6 +370,12 @@ static inline unsigned int flash_pop(void) {{
 static inline unsigned int flash_jedec_id(void) {{
     unsigned int id = 0;
 
+    /* Hold chip select down for the WHOLE command. Without this the FIFO
+       empties between transfers and CS drops, which is the fault the ILA
+       found. Queueing everything up front does not help -- the CPU cannot
+       refill faster than the PHY drains. */
+    FLASH_HOLD = 1;
+
     flash_phy_set(8, 1, 0x1);        /* 8 bits out on DQ0 */
     flash_push(0x9fu << 24);
 
@@ -373,6 +392,7 @@ static inline unsigned int flash_jedec_id(void) {{
         id = (id << 8) | (flash_pop() & 0xff);
     }}
 
+    FLASH_HOLD = 0;
     return id;
 }}
 

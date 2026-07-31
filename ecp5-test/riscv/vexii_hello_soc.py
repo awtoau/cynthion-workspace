@@ -66,7 +66,8 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
-                         ModalSPIFlashMemoryMap, ObservablePHY, QSPIFlashPins)
+                         HoldableSPIController, ModalSPIFlashMemoryMap,
+                         ObservablePHY, QSPIFlashPins)
 
 from amaranth_soc                   import csr, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -348,7 +349,6 @@ class HelloSoC(Elaboratable):
         # It can also write. Nothing here does, and nothing should: the
         # bitstream is at offset 0. It is an arbitrary-command path, so the
         # discipline has to come from the firmware rather than the gateware.
-        from luna_soc.gateware.core.spiflash.controller import SPIController
 
         # The two cores and the crossbar are built here rather than by
         # `spiflash.Peripheral`, which would construct all three -- but with
@@ -367,7 +367,15 @@ class HelloSoC(Elaboratable):
             size=FLASH_SIZE, mode=FLASH_MODE, name="spiflash", domain="sync")
         m.submodules.flash_mmap = flash_mmap
 
-        flash_ctrl = SPIController(data_width=32, name="spi0", domain="sync")
+        # HoldableSPIController, not SPIController: upstream's chip select
+        # collapses to the TX FIFO's occupancy, so it drops between transfers of
+        # a multi-part command and the flash resets its command state each time.
+        # The ILA caught this directly -- four separate 8-bit windows for a
+        # JEDEC read with CS deasserted for 81, 36 and 36 samples between them.
+        # This adds a latching `hold` register so software can keep CS asserted
+        # across a whole command.
+        flash_ctrl = HoldableSPIController(data_width=32, name="spi0",
+                                           domain="sync")
         m.submodules.flash_ctrl = flash_ctrl
 
         m.submodules.flash_xbar = flash_xbar = FairSPIControlPortCrossbar(
