@@ -53,12 +53,23 @@ EXPECTED = {
     "banner": re.compile(r"^RISC-V on Cynthion: block RAM, USB console\.$"),
     "sum":    re.compile(r"^sum  ([0-9a-f]{8})$"),
     "prod":   re.compile(r"^prod ([0-9a-f]{8})$"),
-    "jedec":  re.compile(r"^flash jedec  ([0-9a-f]{8})$"),
-    "at0":    re.compile(r"^flash @0     ([0-9a-f]{8})$"),
-    "at128k": re.compile(r"^flash @128K  ([0-9a-f]{8}) ([0-9a-f]{8})  "
-                         r"(same|DIFFER)$"),
-    "bench":  re.compile(r"^flash bench  ([0-9a-f]{8}) cycles / ([0-9a-f]{8})"
+    "pass":   re.compile(r"^--- flash pass ([0-9a-f]{8})$"),
+    # The trailing text is either a capacity report or a no-response verdict,
+    # both of which the checker interprets rather than the pattern.
+    "jedec":  re.compile(r"^jedec        ([0-9a-f]{8})  (.+)$"),
+    "at0":    re.compile(r"^read @0      ([0-9a-f]{8})$"),
+    "at128k": re.compile(r"^read @128K   ([0-9a-f]{8}) ([0-9a-f]{8})  "
+                         r"(same|DIFFER)  2nd read ([0-9a-f]{8}) cycles$"),
+    "bench":  re.compile(r"^read bench   ([0-9a-f]{8}) cycles / ([0-9a-f]{8})"
                          r" words, sum ([0-9a-f]{8})$"),
+    "erase":  re.compile(r"^erase 4K     ([0-9a-f]{8}) cycles, after "
+                         r"([0-9a-f]{8})  (erased|NOT ERASED)$"),
+    "program": re.compile(r"^program 256B ([0-9a-f]{8}) cycles$"),
+    "verify": re.compile(r"^verify       ([0-9a-f]{8}) of ([0-9a-f]{8}) words"
+                         r" differ(, first @([0-9a-f]{8}) want ([0-9a-f]{8})"
+                         r" got ([0-9a-f]{8}))?$"),
+    "cached": re.compile(r"^cached word  ([0-9a-f]{8}) want ([0-9a-f]{8})  "
+                         r"(coherent|STALE \(cache\))$"),
     "tick":   re.compile(r"^tick ([0-9a-f]{8})$"),
 }
 
@@ -68,9 +79,26 @@ EXPECTED = {
 EXPECT_SUM = "acf13568"
 EXPECT_PROD = "369d0368"
 
-# JEDEC EF 40 16 -- Winbond W25Q32, 4 MiB. Printed as a 32-bit hex word, so the
-# top byte is zero.
-EXPECT_JEDEC = "00ef4016"
+# The JEDEC ID is checked STRUCTURALLY, not against a value.
+#
+# This board reads 00ef4016 -- Winbond (ef), SPI NOR (40), capacity 2^0x16 =
+# 4 MiB -- and that is recorded here so the expected value is on the record. It
+# is deliberately not asserted: ef4017 is the 8 MiB W25Q64, ef4018 the 16 MiB
+# W25Q128, c22016 a Macronix equivalent and 9d6016 an ISSI one. All are healthy
+# parts that an equality check would call a failure, and what the read is
+# actually testing is whether the controller can issue an arbitrary command and
+# get a sane answer -- not which chip is fitted.
+#
+# So only the two "nothing answered" patterns fail: all-zeros means nothing
+# drove the bus, all-ones means it floated high.
+JEDEC_THIS_BOARD = "00ef4016"
+JEDEC_NO_RESPONSE = ("00000000", "00ffffff", "ffffffff")
+
+# The capacity the rest of the SoC assumes. The memory map is sized at 4 MiB and
+# everything above it aliases back to offset 0, so a part reporting a different
+# capacity would make the address map wrong -- worth failing on, unlike the
+# manufacturer bytes.
+EXPECT_CAPACITY = 4 * 1024 * 1024
 
 # The CPU clock, for turning cycle counts into a rate. Must match SYNC_MHZ in
 # ecp5-test/riscv/vexii_hello_soc.py.
@@ -96,9 +124,10 @@ LINES_WANTED = 12
 # reported as-is -- a partial transcript is diagnostic, a hang is not.
 LINE_TIMEOUT_S = 3.0
 
-# How many `udevadm settle` rounds to wait through for the console to appear.
-# The same value scripts/riscv_clock_ladder.py uses against the same board.
-TTY_SETTLE_LIMIT = 20
+# How many rounds to wait through for the console to appear after a
+# reconfigure. See wait_for_console() for why this cannot be a bare
+# `udevadm settle` loop.
+TTY_ROUNDS = 60
 
 
 # The offset the firmware reads twice and benchmarks. Must match
@@ -167,25 +196,71 @@ def configure(handle):
     return True
 
 
+def wait_for_console(handle):
+    """Block until the RISC-V console tty appears and opens, or give up.
+
+    `usb_ids.wait_for_tty` is the right helper and is used here to do the actual
+    identification -- by VID:PID out of sysfs, never by node number, because
+    this workstation has eleven ttyACM nodes across four vendors and an earlier
+    investigation spent hours reading an ST-LINK.
+
+    What it cannot do alone is wait. Each of its iterations blocks on
+    `udevadm settle`, which drains the kernel's uevent queue and then returns --
+    and immediately after `apollo configure` that queue is ALREADY EMPTY,
+    because the FPGA has not finished reconfiguring and the device has not begun
+    to enumerate, so there are no events yet to drain. All of its rounds
+    complete in milliseconds and it reports nothing found, on a board whose
+    console appears healthily a second later. That happened twice here before
+    it was understood; its own docstring warns about the bare-poll version of
+    this exact mistake.
+
+    So this blocks on `udevadm monitor` instead, which does not drain a queue --
+    it subscribes to the kernel's uevent stream and emits a line per device
+    event as it happens. Reading one line from it is a genuine block until the
+    kernel does something, which is the condition actually being waited on.
+    Each tty add during enumeration wakes the loop, and the check runs again.
+
+    Waiting for: FPGA reconfiguration, USB enumeration, and the kernel binding a
+    CDC-ACM driver. Why these values: the monitor is killed after TTY_ROUNDS
+    events or when the console is found, whichever comes first; enumerating this
+    board produces a few dozen events, so 60 covers it with margin while
+    bounding a dead board to the events it does produce plus the poll below. On
+    expiry: return None and report it -- never fall back to a guessed node.
+    """
+    import usb_ids
+
+    # Check first: with --no-configure, or a board that never went away, the
+    # console is already there and no event will ever arrive to announce it.
+    node = usb_ids.wait_for_tty("riscv_console", settles=1)
+    if node:
+        return node
+
+    monitor = subprocess.Popen(
+        ["udevadm", "monitor", "--udev", "--subsystem-match=tty"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        for _ in range(TTY_ROUNDS):
+            # Blocks until the kernel reports a tty event. This is the line
+            # that makes the loop a wait rather than a spin.
+            if monitor.stdout.readline() == "":
+                break
+            node = usb_ids.wait_for_tty("riscv_console", settles=1)
+            if node:
+                emit(handle, "  console appeared after a tty event")
+                return node
+    finally:
+        monitor.terminate()
+        monitor.wait()
+    return None
+
+
 def collect(handle):
     """Open the console by USB identity and return the lines it printed."""
     import serial
 
     import usb_ids
 
-    # `usb_ids.wait_for_tty` settles udev and confirms the port actually opens,
-    # rather than trusting a path to exist -- immediately after a reconfigure
-    # the node from BEFORE it can still be present, and it will not open.
-    #
-    # Waiting for: the CDC-ACM device to enumerate after reconfiguration. Why
-    # this many settles: each iteration blocks on `udevadm settle`, which drains
-    # the kernel's uevent queue, so the loop advances on real device activity
-    # rather than on a counter. TTY_SETTLE_LIMIT is the value
-    # scripts/riscv_clock_ladder.py already uses for the same board and the same
-    # device. On expiry: report that nothing appeared -- never fall back to
-    # reading whatever node happens to exist, which on this workstation means an
-    # ST-LINK.
-    node = usb_ids.wait_for_tty("riscv_console", settles=TTY_SETTLE_LIMIT)
+    node = wait_for_console(handle)
     if node is None:
         emit(handle, "no riscv_console tty appeared")
         emit(handle, "  the SoC did not enumerate, or USB is not up")
@@ -249,13 +324,33 @@ def check(handle, lines, expected):
     else:
         emit(handle, f"  ticks        {ticks}  consecutive")
 
-    # 2. The flash identifies itself.
-    jedec = seen.get("jedec", [("",)])[0][0]
-    if jedec != EXPECT_JEDEC:
-        failures.append(f"jedec: got {jedec!r}, want {EXPECT_JEDEC}")
-        emit(handle, f"  jedec        {jedec}  WRONG (want {EXPECT_JEDEC})")
+    # 2. The controller's command path answers.
+    #
+    #    Structural, not an equality check against this board's part number --
+    #    see JEDEC_THIS_BOARD. Only "nothing answered" fails, plus a capacity
+    #    that contradicts the 4 MiB the address map is built around.
+    if "jedec" not in seen:
+        failures.append("no `jedec` line -- the firmware did not get that far")
     else:
-        emit(handle, f"  jedec        {jedec}  Winbond W25Q32, 4 MiB")
+        jedec, detail = seen["jedec"][0]
+        if jedec in JEDEC_NO_RESPONSE:
+            failures.append(f"jedec {jedec}: nothing answered on the command "
+                            f"path ({detail})")
+            emit(handle, f"  jedec        {jedec}  {detail}")
+        else:
+            capacity = 1 << (int(jedec, 16) & 0xff)
+            note = ""
+            if capacity != EXPECT_CAPACITY:
+                failures.append(
+                    f"jedec {jedec}: capacity byte says {capacity} bytes, but "
+                    f"the memory map is sized for {EXPECT_CAPACITY} and the "
+                    f"region above it aliases offset 0")
+                note = "  CAPACITY MISMATCH"
+            elif jedec != JEDEC_THIS_BOARD:
+                # A different but plausible part. Not a failure.
+                note = f"  (this board previously read {JEDEC_THIS_BOARD})"
+            emit(handle, f"  jedec        {jedec}  command path works, "
+                         f"{capacity // (1024 * 1024)} MiB{note}")
 
     # 3. Reads through the memory map, checked against Apollo's own read of the
     #    same offsets.
@@ -312,7 +407,42 @@ def check(handle, lines, expected):
         if total == 0:
             failures.append("bench sum is zero -- every word read as zero")
 
-    # 5. Dropped characters.
+    # 5. Erase, program and verify -- only present in a --write-tests image.
+    if "erase" in seen:
+        cyc, after, verdict = seen["erase"][0]
+        seconds = int(cyc, 16) / (SYNC_MHZ * 1e6)
+        emit(handle, f"  erase 4K     {int(cyc, 16)} cycles = "
+                     f"{seconds * 1e3:.1f} ms, reads back {after} ({verdict})")
+        if verdict != "erased":
+            failures.append(f"sector did not erase: reads {after}, want "
+                            f"ffffffff")
+
+    if "program" in seen:
+        cyc = int(seen["program"][0][0], 16)
+        seconds = cyc / (SYNC_MHZ * 1e6)
+        emit(handle, f"  program 256B {cyc} cycles = {seconds * 1e3:.2f} ms")
+
+    if "verify" in seen:
+        for groups in seen["verify"]:
+            bad, total = int(groups[0], 16), int(groups[1], 16)
+            if bad:
+                index, want, got = groups[3], groups[4], groups[5]
+                failures.append(
+                    f"verify: {bad} of {total} words differ, first at word "
+                    f"{int(index, 16)}: wrote {want}, read {got}")
+                emit(handle, f"  verify       {bad}/{total} differ, first "
+                             f"@{int(index, 16)} want {want} got {got}")
+            else:
+                emit(handle, f"  verify       {total}/{total} words match")
+
+    if "cached" in seen:
+        for got, want, verdict in seen["cached"]:
+            # Reported, never failed on. A stale cached read after a write is a
+            # real property of a cacheable mapping with no invalidate
+            # instruction built into this CPU -- see flash_read32_uncached.
+            emit(handle, f"  cached word  {got} (wrote {want}) -- {verdict}")
+
+    # 6. Dropped characters.
     if malformed:
         for line in malformed:
             failures.append(f"malformed line {line!r} -- dropped characters?")
