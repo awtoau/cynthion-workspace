@@ -82,6 +82,8 @@ CONSOLE_BASE = 0xf0000000
 FLASH_BASE = 0x10000000
 FLASH_CSR_BASE = 0xf0000100
 FLASH_PROBE_BASE = 0xf0000200
+FLASH_ILA_BASE = 0xf0000300
+ILA_DEPTH = 1024
 # The offset the firmware reads twice, and benchmarks. Read only -- the write
 # tests use FLASH_SCRATCH below.
 #
@@ -571,6 +573,85 @@ static inline void probe_report(const char *label) {{
     print("\\r\\n");
 }}
 
+/* ------------------------------------------------------------------------
+   The logic analyser.
+
+   Captures eight signals per sync cycle into gateware memory, dumped afterwards
+   over this console. The pin probe established that the controller reaches the
+   pins correctly; what it cannot show is WHEN the input bit is latched relative
+   to the clock, which is what is left.
+
+   Trace format, one byte per sample, bit 0 first:
+
+     0 sck          the SPI clock as handed to USRMCLK
+     1 dq_i1        the flash's output pin, as the PHY sees it
+     2 cs           chip select (high = selected)
+     3 sr_in_shift  THE CAPTURE STROBE -- when an input bit is shifted in
+     4 sample       the clock generator's sample strobe
+     5 update       the clock generator's update strobe
+     6 in_xfer      PHY FSM is in XFER
+     7 in_xfer_end  PHY FSM is in XFER-END
+
+   The relationship between bit 3 and bit 0 is the measurement. Bits 6 and 7
+   show the transitions between the four transfers of a JEDEC read, which is
+   where a strobe that fires only on the first transfer would show itself.
+   ------------------------------------------------------------------------ */
+
+#define FLASH_ILA_BASE {flash_ila_base:#x}u
+#define ILA_DEPTH      {ila_depth}u
+
+#define ILA_STATUS (*(volatile unsigned char  *)(FLASH_ILA_BASE + 0x0))
+#define ILA_ARM    (*(volatile unsigned char  *)(FLASH_ILA_BASE + 0x1))
+#define ILA_INDEX  (*(volatile unsigned short *)(FLASH_ILA_BASE + 0x2))
+#define ILA_SAMPLE (*(volatile unsigned char  *)(FLASH_ILA_BASE + 0x4))
+
+#define ILA_STATUS_COMPLETE 0x1u
+#define ILA_STATUS_SAMPLING 0x2u
+
+/* Arm the capture. The very next thing the caller does is the transaction
+   under test, so the window starts at the transaction rather than at some
+   symptom of it. */
+static inline void ila_arm(void) {{
+    ILA_ARM = 1;
+}}
+
+/* Dump the trace as hex, one line per 32 samples.
+
+   Printed raw rather than decoded on-target. A decoder here would be one more
+   thing that can be wrong between the signal and the reader, and the whole
+   point of this instrument is to see what the hardware did rather than what
+   something believes about it. The host script decodes.
+
+   Waits for `complete` first. The capture is 1024 sync cycles, a few
+   microseconds, and the CPU takes far longer than that to reach this line --
+   but polling the flag is what makes that a fact rather than an assumption. If
+   the ILA never completes this spins, which is the correct failure: a partial
+   trace read as though it were whole would be worse. */
+static inline void ila_dump(const char *label) {{
+    while (!(ILA_STATUS & ILA_STATUS_COMPLETE)) {{ }}
+
+    print("ila ");
+    print(label);
+    print("\\r\\n");
+    for (unsigned int i = 0; i < ILA_DEPTH; i++) {{
+        if ((i & 31) == 0) {{
+            print("  ");
+            print_hex(i);
+            print(" ");
+        }}
+        ILA_INDEX = i;
+        /* One dead read: ILA_INDEX feeds a synchronous memory read port, so
+           the sample for index i is only valid the cycle after the address
+           lands. Reading once and discarding costs nothing and removes an
+           off-by-one that would shift the entire trace by one sample. */
+        (void)ILA_SAMPLE;
+        unsigned char s = ILA_SAMPLE;
+        putch("0123456789abcdef"[(s >> 4) & 0xf]);
+        putch("0123456789abcdef"[s & 0xf]);
+        if ((i & 31) == 31) print("\\r\\n");
+    }}
+}}
+
 /* Displace every D-cache line, so a following memory-mapped read reaches the
    flash rather than returning a line cached before the flash changed.
 
@@ -714,6 +795,30 @@ static int flash_report(unsigned int pass) {
 
           This cannot come through the memory map: 0x9f is a register read, and
           the memory map issues one opcode, a read of a 24-bit address. */
+    /* --- THE ILA CAPTURES. Only on pass 0: the trace is 1024 samples printed
+       as hex and there is no reason to send it more than once, and a reader
+       attaching late still gets the pin-probe counters below every pass.
+
+       Two captures with an IDENTICAL configuration -- a memory-mapped read,
+       which is known to work, and a controller read, which is not. Diffing them
+       is the entire reason this instrument exists: both sample the same
+       dq_i[1] through the same PHY, so if the capture strobe behaves
+       differently between them, that difference IS the fault.
+
+       The memory-mapped capture is the positive control and is taken first. If
+       it shows no clock and no strobe on a path proven correct against
+       `apollo flash-read`, the instrument is wrong and nothing it says about
+       the controller means anything. */
+    if (pass == 0) {
+        ila_arm();
+        (void)flash_read32(FLASH_TEST_OFFSET + 0x100);
+        ila_dump("mmap (positive control)");
+
+        ila_arm();
+        (void)flash_jedec_id();
+        ila_dump("ctrl (jedec)");
+    }
+
     /* --- THE POSITIVE CONTROL, and it runs first on purpose.
 
        A memory-mapped read is the one flash operation known to work here: its
@@ -1062,7 +1167,9 @@ def write_common(work):
                        flash_csr_base=FLASH_CSR_BASE,
                        flash_test_offset=FLASH_TEST_OFFSET,
                        flash_scratch=FLASH_SCRATCH,
-                       flash_probe_base=FLASH_PROBE_BASE))
+                       flash_probe_base=FLASH_PROBE_BASE,
+                       flash_ila_base=FLASH_ILA_BASE,
+                       ila_depth=ILA_DEPTH))
 
 
 def build(target, work, handle, write_tests=False):

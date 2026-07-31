@@ -65,8 +65,8 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
-from vexii_flash import (FairSPIControlPortCrossbar, FlashPinProbe,
-                         ModalSPIFlashMemoryMap, QSPIFlashPins)
+from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
+                         ModalSPIFlashMemoryMap, ObservablePHY, QSPIFlashPins)
 
 from amaranth_soc                   import csr, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -124,6 +124,19 @@ FLASH_CSR_BASE = 0xf0000100
 # these are counters that change underneath the CPU, so a cached read would
 # return a stale line and report no activity on a busy bus.
 FLASH_PROBE_BASE = 0xf0000200
+
+# The logic analyser's registers, in the same uncached CSR region.
+FLASH_ILA_BASE = 0xf0000300
+
+# Capture depth, in samples of the sync clock.
+#
+# 32 SCK edges at divisor 0 is 64 sync cycles of clocking, plus the FSM
+# transitions between the four transfers of a JEDEC read. 1024 spans all of it
+# with room to spare and costs exactly one DP16KD at 8 bits wide -- the SoC uses
+# 41 of 56, so nothing else has to give way. Depth over width was the right
+# trade here: the question is when a strobe fires across a whole multi-transfer
+# command, not what a dozen other signals are doing.
+ILA_DEPTH = 1024
 
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
 # above that aliases back to offset 0, so mapping more would map the same chip
@@ -316,7 +329,11 @@ class HelloSoC(Elaboratable):
         m.submodules.flash_pins = flash_pins = QSPIFlashPins("qspi_flash")
         m.submodules.flash_bus  = flash_bus  = ECP5ConfigurationFlashInterface(
             bus=flash_pins.pins)
-        m.submodules.flash_phy  = flash_phy  = SPIPHYController(
+        # ObservablePHY, not SPIPHYController: behaviourally identical (verified
+        # in simulation -- same edge count, same completion cycle) but with the
+        # internal input-capture strobes brought out so the ILA below can see
+        # WHEN a bit is latched, which is the question left after the pin probe.
+        m.submodules.flash_phy  = flash_phy  = ObservablePHY(
             pads=flash_bus, divisor=FLASH_DIVISOR, domain="sync")
         # `spiflash.Peripheral` builds the mmap core, a CSR-poked controller,
         # and the round-robin crossbar that lets both share one PHY.
@@ -411,6 +428,31 @@ class HelloSoC(Elaboratable):
         m.submodules.flash_probe_bridge = flash_probe_bridge
         decoder.add(flash_probe_bridge.wb_bus, addr=FLASH_PROBE_BASE,
                     name="flash_probe")
+
+        # The logic analyser, on the same signals plus the PHY's internals.
+        #
+        # Triggered by software immediately before the transaction under test,
+        # rather than by chip select falling. If the fault were that nothing is
+        # issued, triggering on the symptom's absence would capture an empty
+        # window and confirm only what is already known -- and the trigger has
+        # to cover the gaps BETWEEN the four transfers of a JEDEC read, because
+        # "does the capture strobe still fire on transfer 2" is the hypothesis.
+        m.submodules.flash_ila = flash_ila = FlashILA(sample_depth=ILA_DEPTH)
+        m.d.comb += [
+            flash_ila.sck         .eq(flash_bus.sck),
+            flash_ila.dq_i1       .eq(flash_phy.o_dq_i1),
+            flash_ila.cs          .eq(flash_pins.pins.cs.o),
+            flash_ila.sr_in_shift .eq(flash_phy.o_sr_in_shift),
+            flash_ila.sample_stb  .eq(flash_phy.o_sample),
+            flash_ila.update_stb  .eq(flash_phy.o_update),
+            flash_ila.in_xfer     .eq(flash_phy.o_in_xfer),
+            flash_ila.in_xfer_end .eq(flash_phy.o_in_xfer_end),
+        ]
+
+        flash_ila_bridge = WishboneCSRBridge(flash_ila.bus, data_width=32)
+        m.submodules.flash_ila_bridge = flash_ila_bridge
+        decoder.add(flash_ila_bridge.wb_bus, addr=FLASH_ILA_BASE,
+                    name="flash_ila")
 
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.

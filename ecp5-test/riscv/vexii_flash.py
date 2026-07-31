@@ -74,8 +74,12 @@ from amaranth.lib           import wiring
 from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
 
 from amaranth_soc           import csr
+from luna_soc.gateware.core.spiflash.phy   import (SPIPHYController,
+                                                   SPIClockGenerator)
 from luna_soc.gateware.core.spiflash.port  import SPIControlPort
 from luna_soc.gateware.core.spiflash.utils import WaitTimer
+
+from luna.gateware.debug.ila import IntegratedLogicAnalyzer
 
 
 # Read modes, as (opcode, addr_width, bus_width, dummy_bits, dummy_value).
@@ -389,6 +393,173 @@ class FairSPIControlPortCrossbar(wiring.Component):
         return m
 
 
+class ObservablePHY(SPIPHYController):
+    """luna_soc's SPI PHY with its internal capture strobes brought out.
+
+    The pin probe cornered the JEDEC fault at the input sampling path: the
+    controller asserts chip select, clocks out a valid 0x9f, releases DQ for
+    exactly the right 24 response edges, and reads back zeros. What counters
+    cannot show is PHASE -- whether the input bit is latched on the wrong edge,
+    a cycle early or late, or not at all on the second through fourth transfers.
+    That is a waveform question, and answering it needs the signal that decides
+    WHEN an input bit is captured.
+
+    In `SPIPHYController.elaborate` that signal is `sr_in_shift`, a local. This
+    subclass re-implements the same elaborate body verbatim and assigns the
+    interesting signals to attributes so an ILA can reach them.
+
+    RE-IMPLEMENTED RATHER THAN PATCHED, and the copy is deliberate: the point of
+    this class is to observe what the real PHY does, so any behavioural
+    difference between this and upstream would invalidate the measurement. The
+    body below is upstream's, unchanged except for the assignments that expose
+    signals. If upstream changes, this must be re-synced or it is measuring a
+    different circuit than the one that ships.
+    """
+
+    def __init__(self, pads, data_width=32, divisor=0, domain="sync"):
+        super().__init__(pads, data_width=data_width, divisor=divisor,
+                         domain=domain)
+        # Exposed for instrumentation. Driven in elaborate().
+        self.o_sr_in_shift = Signal()
+        self.o_sr_out_load = Signal()
+        self.o_sample      = Signal()
+        self.o_update      = Signal()
+        self.o_clk         = Signal()
+        self.o_dq_i1       = Signal()
+        self.o_in_xfer     = Signal()
+        self.o_in_xfer_end = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+
+        pads   = self.pads
+        sink   = self.sink
+        source = self.source
+
+        m.submodules.clkgen = clkgen = SPIClockGenerator(self.divisor,
+                                                        domain=self._domain)
+        spi_clk_divisor = self.divisor
+
+        cs_delay = 0
+        cs_enable = Signal()
+        if cs_delay > 0:
+            m.submodules.cs_timer = cs_timer = WaitTimer(cs_delay + 1,
+                                                         domain=self._domain)
+            m.d.comb += [
+                cs_timer.wait.eq(self.cs),
+                cs_enable.eq(cs_timer.done),
+            ]
+        else:
+            m.d.comb += cs_enable.eq(self.cs)
+
+        dq_o  = Signal.like(pads.dq.o)
+        dq_i  = Signal.like(pads.dq.i)
+        dq_oe = Signal.like(pads.dq.oe)
+        m.d.sync += [
+            pads.sck   .eq(clkgen.clk),
+            pads.cs.o  .eq(cs_enable),
+            pads.dq.o  .eq(dq_o),
+            pads.dq.oe .eq(dq_oe),
+            dq_i       .eq(pads.dq.i),
+        ]
+        if hasattr(pads.cs, "oe"):
+            m.d.comb += pads.cs.oe.eq(1)
+
+        sr_cnt       = Signal(8, reset_less=True)
+        sr_out_load  = Signal()
+        sr_out_shift = Signal()
+        sr_out       = Signal(len(source.data), reset_less=True)
+        sr_in_shift  = Signal()
+        sr_in        = Signal(len(source.data), reset_less=True)
+
+        m.d.comb += dq_oe.eq(source.mask)
+        with m.Switch(source.width):
+            with m.Case(1):
+                m.d.comb += dq_o.eq(sr_out[-1:])
+            with m.Case(2):
+                m.d.comb += dq_o.eq(sr_out[-2:])
+            with m.Case(4):
+                m.d.comb += dq_o.eq(sr_out[-4:])
+            with m.Case(8):
+                m.d.comb += dq_o.eq(sr_out[-8:])
+
+        with m.If(sr_out_load):
+            m.d.sync += sr_out.eq(
+                source.data << (len(source.data) - source.len).as_unsigned())
+
+        with m.If(sr_out_shift):
+            with m.Switch(source.width):
+                with m.Case(1):
+                    m.d.sync += sr_out.eq(Cat(C(0, 1), sr_out))
+                with m.Case(2):
+                    m.d.sync += sr_out.eq(Cat(C(0, 2), sr_out))
+                with m.Case(4):
+                    m.d.sync += sr_out.eq(Cat(C(0, 4), sr_out))
+                with m.Case(8):
+                    m.d.sync += sr_out.eq(Cat(C(0, 8), sr_out))
+
+        with m.If(sr_in_shift):
+            with m.Switch(source.width):
+                with m.Case(1):
+                    m.d.sync += sr_in.eq(Cat(dq_i[1], sr_in))
+                with m.Case(2):
+                    m.d.sync += sr_in.eq(Cat(dq_i[:2], sr_in))
+                with m.Case(4):
+                    m.d.sync += sr_in.eq(Cat(dq_i[:4], sr_in))
+                with m.Case(8):
+                    m.d.sync += sr_in.eq(Cat(dq_i[:8], sr_in))
+
+        m.d.comb += sink.data.eq(sr_in)
+
+        with m.FSM(domain=self._domain) as fsm:
+            with m.State("WAIT-CMD-DATA"):
+                with m.If(cs_enable & source.valid):
+                    m.d.sync += sr_cnt.eq(source.len - source.width)
+                    m.d.comb += sr_out_load.eq(1)
+                    m.next = "XFER"
+
+            with m.State("XFER"):
+                m.d.comb += [
+                    clkgen.en   .eq(1),
+                    sr_in_shift .eq(clkgen.sample),
+                    sr_out_shift.eq(clkgen.update),
+                ]
+                with m.If(clkgen.update):
+                    m.d.sync += sr_cnt.eq(sr_cnt - source.width)
+                    with m.If(sr_cnt == 0):
+                        m.next = "XFER-END"
+
+            with m.State("XFER-END"):
+                with m.If((spi_clk_divisor > 0) | clkgen.sample):
+                    m.d.comb += source.ready.eq(1)
+                    m.d.comb += sr_in_shift.eq(spi_clk_divisor == 0)
+                    m.next = "SEND-STATUS-DATA"
+
+            with m.State("SEND-STATUS-DATA"):
+                m.d.comb += sink.valid.eq(1)
+                with m.If(sink.ready):
+                    m.next = "WAIT-CMD-DATA"
+
+            m.d.comb += [
+                self.o_in_xfer     .eq(fsm.ongoing("XFER")),
+                self.o_in_xfer_end .eq(fsm.ongoing("XFER-END")),
+            ]
+
+        m.d.comb += [
+            self.o_sr_in_shift .eq(sr_in_shift),
+            self.o_sr_out_load .eq(sr_out_load),
+            self.o_sample      .eq(clkgen.sample),
+            self.o_update      .eq(clkgen.update),
+            self.o_clk         .eq(clkgen.clk),
+            self.o_dq_i1       .eq(dq_i[1]),
+        ]
+
+        if self._domain != "sync":
+            m = DomainRenamer({"sync": self._domain})(m)
+
+        return m
+
+
 class FlashPinProbe(wiring.Component):
     """Counts what actually happens on the SPI flash pins, readable as CSRs.
 
@@ -536,6 +707,109 @@ class FlashPinProbe(wiring.Component):
             self._dq_driven.f.seen.r_data.eq(dq_driven),
             self._grants.f.count.r_data.eq(grant_count),
             self._oe_edges.f.count.r_data.eq(oe_edges),
+        ]
+        return m
+
+
+class FlashILA(wiring.Component):
+    """A logic analyser on the flash path, read back over the CPU's console.
+
+    The pin probe answered "does anything happen" and cornered the fault at the
+    input sampling path. It cannot answer what is left, because what is left is
+    PHASE: whether the input bit is latched on the wrong edge, a cycle early or
+    late, or not at all on the second through fourth transfers of a multi-part
+    command. Counters have no time axis. This does.
+
+    Built on LUNA's `IntegratedLogicAnalyzer`, which is the capture engine --
+    trigger, sample memory and a read port. What is added here is a CSR face, so
+    samples come back over the USB console rather than needing a spare UART pin.
+    That matters on r1.4: the `uart` pins are shared with JTAG TDI/TMS, so a
+    design that drives them fights the adapter loading its own bitstream, and
+    `AsyncSerialILA` would need exactly those pins.
+
+    NARROW AND DEEP, deliberately. Eight signals is enough to answer the
+    question and 1024 samples is 32 SCK edges at divisor 0 with room for the
+    gaps between transfers -- the window has to span all four transfers of a
+    JEDEC read, because "does the strobe still fire on transfer 2" is the
+    hypothesis. A wider capture would buy signals nobody is asking about at the
+    cost of the depth that makes the trace readable.
+
+    One DP16KD at 8 bits x 1024. The SoC uses 41 of 56, so this fits without
+    touching anything else -- which is the constraint that matters, since a
+    build that no longer reproduces the fault would waste the run.
+    """
+
+    # The eight signals, in bit order. This list IS the trace format: the host
+    # side decodes by position, so changing the order changes the meaning of
+    # every captured byte.
+    SIGNAL_NAMES = ["sck", "dq_i1", "cs", "sr_in_shift",
+                    "sample", "update", "in_xfer", "in_xfer_end"]
+
+    def __init__(self, *, sample_depth=1024):
+        self.sample_depth = sample_depth
+
+        self._status = csr.Register({
+            "complete": csr.Field(csr.action.R, 1),
+            "sampling": csr.Field(csr.action.R, 1),
+        }, access="r")
+        self._arm = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
+                                 access="w")
+        # Which sample to read. 16 bits covers any depth this will ever have.
+        self._index = csr.Register({"value": csr.Field(csr.action.RW, 16)},
+                                   access="rw")
+        self._sample = csr.Register({"bits": csr.Field(csr.action.R, 8)},
+                                    access="r")
+
+        builder = csr.Builder(addr_width=5, data_width=8)
+        builder.add("status", self._status)
+        builder.add("arm",    self._arm)
+        builder.add("index",  self._index)
+        builder.add("sample", self._sample)
+        self._bridge = csr.Bridge(builder.as_memory_map())
+
+        super().__init__({
+            "bus": wiring.In(csr.Signature(addr_width=5, data_width=8)),
+            # The probed signals. All inputs -- this module drives nothing into
+            # the flash path and cannot perturb what it measures.
+            "sck":          wiring.In(unsigned(1)),
+            "dq_i1":        wiring.In(unsigned(1)),
+            "cs":           wiring.In(unsigned(1)),
+            "sr_in_shift":  wiring.In(unsigned(1)),
+            "sample_stb":   wiring.In(unsigned(1)),
+            "update_stb":   wiring.In(unsigned(1)),
+            "in_xfer":      wiring.In(unsigned(1)),
+            "in_xfer_end":  wiring.In(unsigned(1)),
+            # Asserted by software immediately before the transaction to be
+            # captured. Triggering on the TRANSACTION rather than on `cs`
+            # falling is the point: if the fault were that nothing is issued,
+            # triggering on the symptom's absence would capture nothing and
+            # confirm only what is already known.
+            "trigger":      wiring.In(unsigned(1)),
+        })
+        self.bus.memory_map = self._bridge.bus.memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.bridge = self._bridge
+        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
+
+        signals = [self.sck, self.dq_i1, self.cs, self.sr_in_shift,
+                   self.sample_stb, self.update_stb, self.in_xfer,
+                   self.in_xfer_end]
+
+        # samples_pretrigger=2 doubles as a synchroniser for the pin inputs,
+        # and catches the couple of cycles before the trigger so the first
+        # clock edge is not lost off the front of the window.
+        m.submodules.ila = ila = IntegratedLogicAnalyzer(
+            signals=signals, sample_depth=self.sample_depth,
+            samples_pretrigger=2)
+
+        m.d.comb += [
+            ila.trigger.eq(self.trigger | self._arm.f.strobe.w_stb),
+            ila.captured_sample_number.eq(self._index.f.value.data),
+            self._sample.f.bits.r_data.eq(ila.captured_sample),
+            self._status.f.complete.r_data.eq(ila.complete),
+            self._status.f.sampling.r_data.eq(ila.sampling),
         ]
         return m
 
