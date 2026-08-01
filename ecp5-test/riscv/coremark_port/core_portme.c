@@ -30,17 +30,22 @@ volatile ee_s32 seed3_volatile = 0x8;
 volatile ee_s32 seed4_volatile = ITERATIONS;
 volatile ee_s32 seed5_volatile = 0;
 
-/* Console: matches ConsolePeripheral in ecp5-test/riscv/hello_soc.py. Bit 31
- * is set because the data cache treats an access as uncached I/O only when it
- * is -- a peripheral below 0x80000000 has its stores absorbed by the cache. */
+/* Console: the NS16550A in ecp5-test/riscv/uart16550.py. Bit 31 is set because
+ * the data cache treats an access as uncached I/O only when it is -- a
+ * peripheral below 0x80000000 has its stores absorbed by the cache.
+ *
+ * THR at +0, LSR at +5. They are four bytes apart on purpose: LSR is what this
+ * loop polls, and it must not share a 32-bit word with a register whose read
+ * has a side effect. */
 #define CONSOLE_BASE  0xf0000000u
-#define CONSOLE_DATA  (*(volatile unsigned char *)(CONSOLE_BASE + 0))
-#define CONSOLE_READY (*(volatile unsigned char *)(CONSOLE_BASE + 1))
+#define CONSOLE_THR   (*(volatile unsigned char *)(CONSOLE_BASE + 0))
+#define CONSOLE_LSR   (*(volatile unsigned char *)(CONSOLE_BASE + 5))
+#define CONSOLE_THRE  0x20u
 
 static void putch(char c)
 {
-    while (!CONSOLE_READY) { }
-    CONSOLE_DATA = (unsigned char)c;
+    while (!(CONSOLE_LSR & CONSOLE_THRE)) { }
+    CONSOLE_THR = (unsigned char)c;
 }
 
 /* mcycle is 64-bit, read as two 32-bit halves. The retry guards the case where

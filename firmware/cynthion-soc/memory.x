@@ -7,11 +7,43 @@
  * with the reads, not the flash.
  *
  * Sizes must match ecp5-test/riscv/vexii_hello_soc.py: RAM_BASE and RAM_SIZE.
+ *
+ * This is the HARDWARE script, named `memory.x` because that is what the `-Tmemory.x` in
+ * .cargo/config.toml asks for, so it is what every plain `cargo build` uses. Its
+ * counterpart is memory-qemu.x, selected only by scripts/soc_test.py. Keep the exported
+ * symbols (_stack_start, _payload_start, _payload_size, _stext) identical in both: the
+ * firmware reads them from the linker precisely so it does not have to know which target
+ * it is on.
+ */
+/* RAM is split in two so the shell can load and run a second image without a
+ * gateware rebuild.
+ *
+ * The shell lives in the low half and stays resident. The high half is a slot the
+ * `load` command fills over the console and `go` jumps to. That turns a firmware
+ * edit from a ~60 s bitstream rebuild into a few seconds of typing.
+ *
+ * The payload is NOT position-independent, and does not need to be: it is linked
+ * for PAYLOAD_ORIGIN, a fixed address we choose. Position-independent code would
+ * only buy "load anywhere", and we control both linker scripts.
  */
 MEMORY
 {
-    RAM : ORIGIN = 0x00000000, LENGTH = 64K
+    RAM     : ORIGIN = 0x00000000, LENGTH = 32K
+    PAYLOAD : ORIGIN = 0x00008000, LENGTH = 32K
 }
+
+/* Pin the stack to the top of the SHELL half.
+ *
+ * riscv-rt defaults _stack_start to the end of REGION_STACK, which before the split
+ * was the end of all 64K -- i.e. the top of what is now the payload slot. Loading an
+ * image would have grown down into the live stack and corrupted it silently: the
+ * bytes land, `go` jumps, and the fault appears somewhere unrelated.
+ */
+_stack_start = ORIGIN(RAM) + LENGTH(RAM);
+
+/* Exported so the shell knows where to write and where to jump. */
+_payload_start = ORIGIN(PAYLOAD);
+_payload_size  = LENGTH(PAYLOAD);
 
 /* riscv-rt 0.18 region aliases. All in RAM for the reason above. */
 REGION_ALIAS("REGION_TEXT",   RAM);

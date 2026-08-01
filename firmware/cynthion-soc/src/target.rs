@@ -1,0 +1,103 @@
+//! Where the peripherals are, and nothing else.
+//!
+//! This used to be two files -- `target_soc.rs` and `target_qemu.rs` -- each with
+//! its own console driver, because the SoC's bespoke console and QEMU's 16550
+//! were different hardware with different register maps. They are now the same
+//! hardware: `ecp5-test/riscv/uart16550.py` is an NS16550A and `-M virt` is an
+//! NS16550A, so `src/uart.rs` drives both and the difference collapses to a list
+//! of addresses and a linker script.
+//!
+//! That is the prize. `scripts/soc_test.py` boots this firmware under QEMU and
+//! asserts what its shell says; that gate is only evidence about the board to the
+//! extent that the two builds share source. Two console drivers meant the gate
+//! tested one of them. One driver means it tests the one that ships.
+//!
+//! Addresses below are read out of the two designs, not assumed:
+//!
+//!     qemu-system-riscv32 -M virt -machine dumpdtb=tmp/virt.dtb -display none
+//!     dtc -I dtb -O dts tmp/virt.dtb
+//!
+//! gives `serial@10000000 { compatible = "ns16550a"; }` and `memory@80000000`;
+//! `CONSOLE_BASE`, `APOLLO_UART_BASE` and `FLASH_BASE` are the constants of the
+//! same name in `ecp5-test/riscv/vexii_hello_soc.py`.
+
+/// Every 16550 this build can talk on. The first is the primary console: the one
+/// that gets the boot banner, the bootloader's reports and any panic.
+///
+/// The order is the address map's order, and firmware treats index 0 specially
+/// and the rest identically. Adding a third is a line here plus an instance in
+/// the gateware.
+#[cfg(not(feature = "qemu"))]
+pub const UART_BASES: &[usize] = &[
+    // The USB CDC-ACM console on the AUX port -- an ordinary /dev/ttyACM node.
+    0xf000_0000,
+    // The Apollo-facing serial port on the shared JTAG pins (R14/T14). See the
+    // comment on APOLLO_UART_BASE in ecp5-test/riscv/vexii_hello_soc.py for why
+    // firmware must never speak first on this one.
+    0xf000_0500,
+];
+
+/// `virt` has one UART. The multi-console code paths still run -- the loop just
+/// iterates once -- so the shared logic is exercised either way.
+#[cfg(feature = "qemu")]
+pub const UART_BASES: &[usize] = &[0x1000_0000];
+
+/// Consoles that announce themselves while idle.
+///
+/// Index 0 only, and this is a hardware constraint rather than a preference. The
+/// second UART's TX pin (T14) is wired to the same net as JTAG TMS, which the
+/// Apollo microcontroller drives whenever it is configuring the FPGA or scanning
+/// the chain. The FPGA tri-states its side except while transmitting, so the two
+/// only contend if the FPGA transmits unbidden. A console that re-banners every
+/// couple of seconds does exactly that, forever.
+///
+/// So: the FPGA never speaks first on a shared pin. Type on the Apollo tty and it
+/// answers; leave it alone and it is electrically absent. That bounds the
+/// contention window to "a human is using this port", which is not a window in
+/// which anyone is also running `apollo jtag-scan`.
+pub const ANNOUNCING: usize = 1;
+
+/// Memory-mapped configuration flash, `main=1 exe=1` so the D-cache backs it.
+/// Offset 0 holds the bitstream, which is why `615000ff` is a known-good value.
+///
+/// Note for anyone reading both branches below: QEMU's `virt` puts its 16550 at
+/// this exact address. That collision is why flash is reached through
+/// `flash_word()` rather than by the shell dereferencing a constant.
+#[cfg(not(feature = "qemu"))]
+const FLASH_BASE: usize = 0x1000_0000;
+
+/// One 32-bit word from the memory-mapped configuration flash.
+///
+/// `offset` is a byte offset from the start of flash and must already be word
+/// aligned; the caller bounds it to the 4 MiB the part holds, because above that
+/// the address aliases back onto offset 0 and would read as real data.
+#[cfg(not(feature = "qemu"))]
+pub fn flash_word(offset: usize) -> u32 {
+    // SAFETY: inside the 4 MiB flash window, which the SoC decodes as
+    // `main=1 exe=1` memory. Volatile because the mapping is a device, not RAM
+    // the compiler may cache.
+    unsafe { core::ptr::read_volatile((FLASH_BASE + offset) as *const u32) }
+}
+
+/// Stand-in for the SoC's memory-mapped configuration flash.
+///
+/// `virt` has no flash, and the address the SoC uses for it (0x1000_0000) is
+/// where this machine's UART lives -- so the hardware path cannot simply be left
+/// in place. A read of an unmapped `virt` address is worse than wrong: it raises
+/// a load access fault, the default trap handler never returns, and `check` would
+/// hang the test rather than fail it.
+///
+/// The two constants are the values the real part holds at those offsets
+/// (bitstream header at 0, and 0x40), so `check` exercises the same comparison
+/// and formatting code on both targets and prints `ok` on both. This is the one
+/// place where a QEMU pass is weaker than hardware: it confirms `check` reports
+/// what it read, not what the flash contains. Everything else `check` covers --
+/// the arithmetic, the CPU, the formatting -- is the real thing.
+#[cfg(feature = "qemu")]
+pub fn flash_word(offset: usize) -> u32 {
+    match offset {
+        0x00 => 0x6150_00ff,
+        0x40 => 0x2a55_8800,
+        _ => 0,
+    }
+}

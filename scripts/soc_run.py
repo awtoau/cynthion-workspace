@@ -13,6 +13,20 @@ already being run; the value is that none of them can now be skipped or mistyped
     ./scripts/soc_run.py                 # build everything, load, read the console
     ./scripts/soc_run.py --no-build      # just load what is already built, and read
     ./scripts/soc_run.py --c-firmware    # the C generator instead of the Rust crate
+    ./scripts/soc_run.py --skip-tests    # configure without the QEMU gate first
+
+## The gate
+
+`scripts/soc_test.py` runs the same shell under QEMU and asserts what it says, and this
+refuses to configure the board if it fails. It goes FIRST, before cargo and before the
+~60 s gateware build, because the whole point is to not spend a minute of synthesis and
+a reconfigure discovering something an emulator could have said in three seconds.
+
+It only covers the Rust shell's logic -- it cannot see the USB console peripheral, the
+HyperRAM, or the flash, all of which are stubbed on that target. A pass means "if the
+board misbehaves, the shell's logic is not why", which is exactly the question that has
+been expensive to answer by hand. `--c-firmware` skips it: the gate tests the Rust crate,
+which that path does not build.
 
 ## What it does to the board
 
@@ -69,6 +83,8 @@ def main():
                         help="C firmware only: compile in the flash erase/program tests")
     parser.add_argument("--no-read", action="store_true",
                         help="do not read the console afterwards")
+    parser.add_argument("--skip-tests", action="store_true",
+                        help="configure even though the QEMU shell tests have not run")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +94,28 @@ def main():
             handle.write(text + "\n")
 
         firmware = FIRMWARE_BIN
+
+        # The gate. Before everything, including --no-build: a bitstream built earlier
+        # from firmware that fails these assertions is no safer to load than one built
+        # now, and the source it is tested against is the source on disk either way.
+        if args.skip_tests:
+            emit("shell tests SKIPPED (--skip-tests)")
+        elif args.c_firmware:
+            emit("shell tests skipped: they cover the Rust crate, not the C generator")
+        else:
+            # Output is streamed rather than captured. This runs a QEMU boot and a
+            # handful of assertions; watching them tick past is the point, and a
+            # captured block printed afterwards would arrive only once it no longer
+            # mattered.
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "soc_test.py")], cwd=ROOT)
+            if result.returncode != 0:
+                emit("shell tests FAILED -- not configuring the board.")
+                emit("The same shell logic misbehaves under QEMU, so a reconfigure")
+                emit("would only reproduce it an order of magnitude more slowly.")
+                emit("Details above and in tmp/logs/soc_test.log; --skip-tests")
+                emit("overrides this if the board is what you are debugging.")
+                return 1
 
         if not args.no_build:
             if args.c_firmware:
@@ -192,6 +230,25 @@ def main():
             port.close()
             emit("--- console ---")
             emit(data.decode("ascii", "replace").strip()[:500])
+
+            # An empty read here has two causes and they look identical: the firmware
+            # said nothing, or something else read what it said. A tty has one reader,
+            # and a `./tio_user.py` left running in another terminal takes every byte
+            # while this reports a blank console. That has been mistaken for dead
+            # firmware on a board that was working perfectly.
+            if not data.strip():
+                sys.path.insert(0, str(ROOT / "scripts"))
+                from soc_shell import other_readers
+
+                thieves = other_readers(node)
+                if thieves:
+                    emit()
+                    emit("*** ANOTHER PROCESS IS READING THIS PORT ***")
+                    for pid, command in thieves:
+                        emit(f"      pid {pid}: {command}")
+                    emit("The blank console above is contention, not silence. Stop it,")
+                    emit("or restart it as `./tio_user.py --serve` so this reads through")
+                    emit("its socket on port 9000 instead of competing for the tty.")
 
         emit()
         emit(f"log: {LOG}")

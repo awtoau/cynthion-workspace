@@ -1,0 +1,13 @@
+[package]
+name = "cynthion-payload"
+version = "0.1.0"
+edition = "2021"
+
+# No riscv-rt: see .cargo/config.toml. This image is entered by a jump from the shell,
+# not by a reset vector, so it needs no runtime at all.
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

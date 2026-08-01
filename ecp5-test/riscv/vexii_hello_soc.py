@@ -26,10 +26,17 @@ that drives them competes with the thing loading its own bitstream. The USB path
 has no such conflict, and the CDC gateware is already measured -- 195 Mbps
 loopback -- so it is known to work.
 
-That means the console peripheral is not `luna_soc.gateware.core.uart`: that one
-instantiates AsyncSerialTX and drives pins. This one presents the same
-register shape to software (write a byte, poll a ready bit) but hands the byte
-to a USB endpoint instead of a shift register.
+The console peripheral is a standard NS16550A (`uart16550.py`) whose stream ports
+go to that USB endpoint instead of to a shift register. It is not
+`luna_soc.gateware.core.uart`, which instantiates AsyncSerialTX and drives pins,
+and it is no longer the bespoke two-register thing that preceded it -- that one
+had a read with a side effect (popping the RX FIFO) one byte away from the
+register the firmware polls, and firmware that polled it went silent. See the
+module docstring in `uart16550.py`.
+
+A second instance of the same peripheral faces Apollo on the shared JTAG pins,
+with a real asynchronous serial PHY behind it. Same register map, same driver,
+different transport -- which is the point of using a standard part.
 
     ./ecp5-test/riscv/hello_soc.py --build
     ./ecp5-test/riscv/hello_soc.py --build --program
@@ -40,8 +47,9 @@ import sys
 from pathlib import Path
 
 from amaranth                       import Elaboratable, Module, Signal, Cat
-from amaranth.lib                   import wiring, stream
-from amaranth.lib.fifo              import AsyncFIFOBuffered
+from amaranth.lib                   import wiring
+from amaranth.lib.cdc               import FFSynchronizer
+from amaranth_stdio.serial          import AsyncSerial
 
 # Not LunaECP5DomainGenerator: it clocks `sync` at 60 MHz and offers only 60/120/240
 # elsewhere, so a speed ladder can only step in factors of two. Nothing in the hardware
@@ -65,6 +73,8 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
+from uart16550 import Uart16550
+from stream_buffer import StreamBuffer
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
@@ -94,7 +104,72 @@ RAM_SIZE = 64 * 1024
 #
 # moondancer puts its CSRs at 0xf0000000 for this reason, and uses 0x10000000
 # for SPI flash, which it *wants* cached.
+#
+# The 16550's eight registers occupy eight bytes here, so LSR at +5 lands in the
+# SECOND 32-bit word and RBR at +0 in the first. That separation is the whole
+# reason for adopting the standard map -- see uart16550.py.
 CONSOLE_BASE = 0xf0000000
+
+# The second 16550, facing Apollo over the shared JTAG pins.
+#
+# It is a plain 115200 8N1 line to the SAMD11's SERCOM2, which the Apollo firmware
+# forwards to the host as its single CDC-ACM interface -- the same path moondancer
+# logs on (`repos/cynthion/.../facedancer/top.py`, `uart0`).
+#
+# THE PINS ARE SHARED WITH JTAG AND THE SHARING IS ONE-SIDED. On r1.4 the `uart`
+# resource is R14/T14, and those nets are JTAG TDI (R11) and TMS (T11); on the
+# SAMD11 they are PA14/PA11, which its firmware moves between SERCOM2 and JTAG in
+# `jtag_platform_init`/`_deinit` (`repos/apollo/firmware/src/boards/cynthion_d11/
+# jtag.c:20,38`, called from `jtag_tap.c:150,183` on vendor requests 0xbf/0xbe).
+#
+# Nothing tells the FPGA that a JTAG session is in progress. There is no such
+# signal on the board and none in the gateware, upstream or here. So the FPGA's
+# only defence is the one the platform resource already provides: `dir="oe"` on
+# tx, driven only while a byte is actually going out, with PULLMODE="UP" holding
+# the idle mark. That is what luna_soc's UARTProvider does and it is what
+# moondancer relies on.
+#
+# Which leaves a policy, and it belongs in the firmware: **never transmit
+# unbidden on this port**. `target::ANNOUNCING` in firmware/cynthion-soc keeps the
+# idle re-banner on the USB console only, so this port is electrically absent
+# unless a human is typing on it -- and a human typing on the Apollo console is
+# not simultaneously running `apollo jtag-scan`. moondancer does not take that
+# precaution; it logs here whenever it feels like it, and contends.
+APOLLO_UART_BASE = 0xf0000500
+
+# 115200 8N1, which is what the SAMD11 side is configured for
+# (`repos/apollo/firmware/src/boards/cynthion_d11/uart.c`) and what every terminal
+# opens an Apollo tty at.
+APOLLO_UART_BAUD = 115200
+
+# Buffering, per transport, sized where the transport is chosen -- see
+# stream_buffer.py for why this is not inside the 16550.
+#
+# USB CDC console. The endpoint takes one byte per packet (`serial.tx.last.eq(1)`,
+# for latency: a console emits a line and goes quiet, so waiting to fill a 512-byte
+# packet would hold the banner indefinitely). So the stall this covers is one host
+# poll interval, which is a handful of bytes, and the 16550's own 16-byte FIFO
+# already absorbs most of it.
+#
+# The predecessor used 1024, justified as "two 512-byte USB packets" -- a reason
+# that stopped being true when the endpoint went to one byte per packet, and went
+# on costing a DP16KD anyway. 16 entries of 8 bits map to distributed LUT RAM
+# (TRELLIS_DPR16X4); 1024 map to a block RAM, of which this design uses 44 of 56.
+CONSOLE_TX_DEPTH = 16
+CONSOLE_RX_DEPTH = 16
+
+# The Apollo serial line. 115200 is ~87 us per byte, which is four orders of
+# magnitude slower than the CPU can produce them, so this is the one path here
+# where deep buffering earns its keep: without it a `help` listing would spend its
+# entire length inside the 16550's bounded write spin, dropping most of itself.
+#
+# 64 bytes is a line of shell output. Beyond that the CPU should wait, because a
+# port nobody is draining is a port nobody is reading.
+APOLLO_TX_DEPTH = 64
+
+# Receive is a human at a keyboard. 16 is already more than anyone types between
+# polls, and the 16550 has 16 of its own behind it.
+APOLLO_RX_DEPTH = 16
 
 # The configuration SPI flash, memory-mapped and read-only.
 #
@@ -128,6 +203,14 @@ FLASH_PROBE_BASE = 0xf0000200
 
 # The logic analyser's registers, in the same uncached CSR region.
 FLASH_ILA_BASE = 0xf0000300
+
+# The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
+#
+# Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
+# is set by gateware while the CPU spins on it. A cached read would return the same line
+# forever and the poll would never complete, giving a bootloader that hangs on a HyperRAM
+# that is working perfectly.
+BOOTRAM_BASE = 0xf0000400
 
 # Capture depth, in samples of the sync clock.
 #
@@ -182,79 +265,6 @@ FLASH_DIVISOR = 0
 SYNC_MHZ = 60
 
 
-class ConsolePeripheral(wiring.Component):
-    """A byte sink that looks like a UART to software and a stream to USB.
-
-    Software sees two registers: write a byte to `data`, and poll `ready` to
-    find out whether there is room for another. That is the same contract as
-    the luna_soc UART peripheral, so firmware written against one works against
-    the other -- which matters because phase 2 wants to run benchmarks whose
-    output routing should not be their concern.
-
-    Behind it is a FIFO rather than a single byte. A CPU writing a string
-    character by character would otherwise stall on every byte waiting for USB,
-    and USB delivers in packets rather than bytes.
-
-    The depth is two 512-byte USB packets: enough that the CPU can fill one
-    while another is in flight, so a burst of output does not stall on the
-    endpoint. Larger buys nothing here -- the firmware prints a line at a time,
-    not megabytes -- and each 1024 bytes is a block RAM that the CPU's own
-    memory then cannot have.
-
-    `ready` is the FIFO's write-side space, and the endpoint's `valid` is its
-    read side. So an empty FIFO with a live USB device means no store from the
-    CPU is landing, rather than anything being wrong downstream.
-    """
-
-    def __init__(self, *, depth=1024):
-        self.depth = depth
-        self._data = csr.Register({"data": csr.Field(csr.action.W, 8)},
-                                  access="w")
-        self._ready = csr.Register({"ready": csr.Field(csr.action.R, 1)},
-                                   access="r")
-
-        builder = csr.Builder(addr_width=4, data_width=8)
-        builder.add("data", self._data)
-        builder.add("ready", self._ready)
-        self._bridge = csr.Bridge(builder.as_memory_map())
-
-        super().__init__({
-            "bus":    wiring.In(csr.Signature(addr_width=4, data_width=8)),
-            "source": wiring.Out(stream.Signature(8)),
-        })
-        self.bus.memory_map = self._bridge.bus.memory_map
-
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.bridge = self._bridge
-        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-
-        # ASYNC, not Sync. The CPU writes from `sync` and the USB endpoint reads from
-        # `usb`, which are different domains the moment sync is not 60 MHz.
-        #
-        # A SyncFIFOBuffered here worked only because sync and usb were both 60 MHz, so
-        # the crossing was accidentally safe. Raising sync to 80 produced a stream with
-        # correct counter VALUES and dropped CHARACTERS -- `tic 00000`, `tck 000001`,
-        # `ick 0000` -- because bytes were being lost in transit while the CPU-side
-        # arithmetic was untouched. That is the signature of an unsynchronised crossing:
-        # its pointers are not gray-coded and its ready flags are sampled in the wrong
-        # domain.
-        fifo = AsyncFIFOBuffered(width=8, depth=self.depth,
-                                 w_domain="sync", r_domain="usb")
-        m.submodules.fifo = fifo
-
-        m.d.comb += [
-            fifo.w_data.eq(self._data.f.data.w_data),
-            fifo.w_en.eq(self._data.f.data.w_stb),
-            self._ready.f.ready.r_data.eq(fifo.w_rdy),
-
-            self.source.payload.eq(fifo.r_data),
-            self.source.valid.eq(fifo.r_rdy),
-            fifo.r_en.eq(self.source.ready),
-        ]
-        return m
-
-
 class HelloSoC(Elaboratable):
     """VexRiscv, 64 KiB of block RAM, and a USB serial console."""
 
@@ -264,6 +274,12 @@ class HelloSoC(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
+        # No `fast` domain: HyperRAMPHY (the non-DQS PHY, which is what BootRAM uses)
+        # drives ODDRX1F/IDDRX1F, single-clock DDR primitives that produce double-rate
+        # output from `sync` alone. Only HyperRAMDQSPHY needs an ECLK at 2x, and we do
+        # not use it. Requesting `fast` anyway cost a PLL output, a global buffer, and
+        # forced CLKOP_DIV to be even -- which needlessly restricts which sync
+        # frequencies are reachable.
         m.submodules.car = car = VariableClockDomainGenerator(sync_mhz=SYNC_MHZ)
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
@@ -290,11 +306,15 @@ class HelloSoC(Elaboratable):
         ram = blockram.Peripheral(size=RAM_SIZE, init=self.firmware)
         m.submodules.ram = ram
 
-        console = ConsolePeripheral()
-        m.submodules.console = console
+        # Two 16550s, identical apart from where the decoder puts them and what
+        # their streams are attached to. `Uart16550` holds no module-level state
+        # and knows nothing about its own address, so a third would be three more
+        # lines.
+        m.submodules.console = console = Uart16550()
+        m.submodules.apollo_uart = apollo_uart = Uart16550()
 
-        # Wishbone: RAM only. The console is a CSR peripheral behind its own
-        # bridge, added to the same decoder through a wishbone-to-CSR bridge.
+        # Wishbone: RAM only. The consoles are CSR peripherals behind their own
+        # bridges, added to the same decoder through wishbone-to-CSR bridges.
         decoder = Decoder(addr_width=30, data_width=32, granularity=8,
                           features={"cti", "bte", "err"})
         m.submodules.decoder = decoder
@@ -304,6 +324,11 @@ class HelloSoC(Elaboratable):
         csr_bridge = WishboneCSRBridge(console.bus, data_width=32)
         m.submodules.csr_bridge = csr_bridge
         decoder.add(csr_bridge.wb_bus, addr=CONSOLE_BASE, name="console")
+
+        apollo_csr_bridge = WishboneCSRBridge(apollo_uart.bus, data_width=32)
+        m.submodules.apollo_csr_bridge = apollo_csr_bridge
+        decoder.add(apollo_csr_bridge.wb_bus, addr=APOLLO_UART_BASE,
+                    name="apollo_uart")
 
         # The configuration SPI flash, memory-mapped read-only.
         #
@@ -462,6 +487,23 @@ class HelloSoC(Elaboratable):
         decoder.add(flash_ila_bridge.wb_bus, addr=FLASH_ILA_BASE,
                     name="flash_ila")
 
+        # HyperRAM, and the JTAG path Apollo stages firmware through.
+        #
+        # This is what makes a firmware change cost seconds instead of a ~60 s
+        # resynthesis: the image goes into HyperRAM over JTAG, and a resident
+        # bootloader copies it into block RAM. See ecp5-test/riscv/vexii_bootram.py.
+        from vexii_bootram import BootRAM
+
+        m.submodules.bootram = bootram = BootRAM()
+        bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
+        m.submodules.bootram_bridge = bootram_bridge
+        decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
+
+        # No external reset source: the CPU reboots itself by jumping to `_start`, which
+        # re-runs riscv-rt's init. Held reset only mattered while Apollo staged images
+        # over JTAG, and that path is gone.
+        m.d.comb += cpu.ext_reset.eq(0)
+
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.
         #
@@ -516,11 +558,29 @@ class HelloSoC(Elaboratable):
         # only appears after a host poke is harder to diagnose than one simply present.
         m.d.comb += serial.connect.eq(1)
 
-        # Console FIFO -> host. The receive direction is tied off: phase 1 only needs
-        # output, and leaving rx.ready low would stall the endpoint rather than discard.
+        # The elastic buffers between the 16550 and the USB endpoint.
+        #
+        # ASYNC, and that is not optional: the CPU and its 16550 run in `sync`, the
+        # endpoint runs in `usb`, and those are different clocks the moment SYNC_MHZ
+        # is not 60. A synchronous FIFO here worked only because both happened to be
+        # 60 MHz; raising sync to 80 produced a stream with correct counter VALUES
+        # and dropped CHARACTERS -- `tic 00000`, `tck 000001` -- because bytes were
+        # lost in transit while the arithmetic that produced them was untouched.
+        #
+        # The 16550 keeps its own 16-byte FIFOs and knows nothing about any of this.
+        # See stream_buffer.py.
+        m.submodules.console_tx_buf = console_tx_buf = StreamBuffer(
+            depth=CONSOLE_TX_DEPTH, i_domain="sync", o_domain="usb")
+        m.submodules.console_rx_buf = console_rx_buf = StreamBuffer(
+            depth=CONSOLE_RX_DEPTH, i_domain="usb", o_domain="sync")
+
+        wiring.connect(m, console.source, console_tx_buf.sink)
+        wiring.connect(m, console_rx_buf.source, console.sink)
+
+        # Console -> host.
         m.d.comb += [
-            serial.tx.payload.eq(console.source.payload),
-            serial.tx.valid.eq(console.source.valid),
+            serial.tx.payload.eq(console_tx_buf.source.payload),
+            serial.tx.valid.eq(console_tx_buf.source.valid),
             serial.tx.first.eq(0),
 
             # `last` marks the final beat OF A PACKET, and the endpoint only observes it
@@ -539,8 +599,70 @@ class HelloSoC(Elaboratable):
             # correctness here matters more than throughput.
             serial.tx.last.eq(1),
 
-            console.source.ready.eq(serial.tx.ready),
-            serial.rx.ready.eq(1),
+            console_tx_buf.source.ready.eq(serial.tx.ready),
+
+            # Host -> CPU. This used to be `serial.rx.ready.eq(1)`, which accepted every
+            # byte and threw it away, so typing at the console did nothing at all.
+            console_rx_buf.sink.payload.eq(serial.rx.payload),
+            console_rx_buf.sink.valid.eq(serial.rx.valid),
+            serial.rx.ready.eq(console_rx_buf.sink.ready),
+        ]
+
+        # ---- the Apollo-facing serial port ---------------------------------
+        #
+        # The same peripheral, on a transport that genuinely is a UART. The 16550
+        # supplies no baud rate -- it is a byte pipe by design -- so the bit timing
+        # lives here, in the module that chose the wire.
+        #
+        # R14/T14 are shared with JTAG TDI/TMS. `dir="oe"` on tx and the policy of
+        # never transmitting unbidden are the whole of the mitigation; see the
+        # comment on APOLLO_UART_BASE.
+        apollo_pins = platform.request("uart", 0)
+
+        # divisor = clock / baud, in whole `sync` cycles. At 60 MHz and 115200 that
+        # is 520, an error of 0.03% -- a UART tolerates about 2%, and the error
+        # scales with the clock, so a design that raises SYNC_MHZ and leaves this
+        # expression alone stays correct by construction. Hardcoding 520 would not.
+        m.submodules.apollo_phy = apollo_phy = AsyncSerial(
+            divisor=int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD),
+            data_bits=8, parity="none")
+
+        # 115200 is four orders of magnitude slower than the CPU, so this is the
+        # path where a deep transmit buffer earns its keep. Same domain both sides,
+        # so this is a plain synchronous FIFO -- the crossing is a property of the
+        # USB transport, not of buffering.
+        m.submodules.apollo_tx_buf = apollo_tx_buf = StreamBuffer(
+            depth=APOLLO_TX_DEPTH)
+        m.submodules.apollo_rx_buf = apollo_rx_buf = StreamBuffer(
+            depth=APOLLO_RX_DEPTH)
+
+        wiring.connect(m, apollo_uart.source, apollo_tx_buf.sink)
+        wiring.connect(m, apollo_rx_buf.source, apollo_uart.sink)
+
+        m.d.comb += [
+            # AsyncSerial predates amaranth.lib.stream and uses rdy/ack rather than
+            # valid/ready, with the sense of `ack` reversed from what a stream port
+            # means by it: on the TX side `ack` is the PRODUCER saying "take this".
+            apollo_phy.tx.data.eq(apollo_tx_buf.source.payload),
+            apollo_phy.tx.ack.eq(apollo_tx_buf.source.valid),
+            apollo_tx_buf.source.ready.eq(apollo_phy.tx.rdy),
+
+            apollo_rx_buf.sink.payload.eq(apollo_phy.rx.data),
+            apollo_rx_buf.sink.valid.eq(apollo_phy.rx.rdy),
+            apollo_phy.rx.ack.eq(apollo_rx_buf.sink.ready),
+
+            apollo_phy.rx.i.eq(apollo_pins.rx.i),
+            apollo_pins.tx.o.eq(apollo_phy.tx.o),
+
+            # RELEASE THE LINE WHEN IDLE. `tx.rdy` is high exactly when the
+            # transmitter has nothing in flight, so this drives T14 only for the
+            # duration of a character and lets PULLMODE="UP" hold the idle mark the
+            # rest of the time. Without it the FPGA would hold a JTAG signal at
+            # whatever level it last transmitted and fight the SAMD11 for the whole
+            # of every `apollo configure`. This is what luna_soc's UARTProvider
+            # does (`.../luna_soc/gateware/core/uart.py:95`) and it is the only
+            # arbitration that exists on the FPGA side.
+            apollo_pins.tx.oe.eq(~apollo_phy.tx.rdy),
         ]
 
         # The single-wire debug link to Apollo. Present in every test design
@@ -613,8 +735,37 @@ class HelloSoC(Elaboratable):
         with m.If(console.source.valid):
             m.d.sync += ever_console.eq(1)
 
+        # Where a byte gets to, as two sticky HANDSHAKE flags.
+        #
+        # `ever_console` above is only `valid`, which a byte sitting in a FIFO that
+        # nothing drains asserts forever -- so it says "the CPU wrote one", not "it
+        # went anywhere". These two say where it went, and between them they split
+        # the path at the only two places it can stop:
+        #
+        #   state[0]  the 16550 handed a byte to the elastic buffer (sync side)
+        #   state[1]  the elastic buffer handed a byte to the USB endpoint (usb side)
+        #
+        # Both zero with `events` set means the transmit chain is stalled at its
+        # first stage; [0] set and [1] clear means the domain crossing or the
+        # endpoint is the problem; both set means the bytes left the FPGA and the
+        # fault is on the host side of the wire. That is three distinct diagnoses
+        # from a link that works when USB does not, which is the entire reason the
+        # sideband is in this design.
+        ever_buffered = Signal()
+        with m.If(console.source.valid & console.source.ready):
+            m.d.sync += ever_buffered.eq(1)
+
+        # Set in `usb`, read in `sync`. Sticky and one-directional, so the only
+        # hazard is sampling the 0->1 edge, which FFSynchronizer covers.
+        usb_took = Signal()
+        with m.If(serial.tx.valid & serial.tx.ready):
+            m.d.usb += usb_took.eq(1)
+        ever_usb = Signal()
+        m.submodules.usb_took_sync = FFSynchronizer(usb_took, ever_usb,
+                                                    o_domain="sync")
+
         m.d.comb += [
-            sideband.state.eq(Cat(ever_fetched, ever_io)),
+            sideband.state.eq(Cat(ever_buffered, ever_usb)),
             sideband.events.eq(ever_console),
             sideband.error.eq(ever_errored),
 
@@ -635,6 +786,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--program", action="store_true")
+    parser.add_argument("--placeholder", type=Path,
+                        help="build with this random image as block RAM init, so real "
+                             "firmware can be swapped in later without resynthesis")
     parser.add_argument("--firmware", type=Path,
                         default=ROOT / "tmp" / "riscv_hello" / "hello.bin")
     args = parser.parse_args()
@@ -648,6 +802,28 @@ def main():
     if len(raw) > RAM_SIZE:
         print(f"firmware is {len(raw)} bytes, block RAM is {RAM_SIZE}")
         return 1
+
+    # --placeholder builds a bitstream whose block RAM holds a known RANDOM image
+    # instead of firmware, so `scripts/soc_swap_firmware.py` can substitute real
+    # firmware later with ecpbram -- one second, no synthesis.
+    #
+    # It has to be random rather than the real image. ecpbram locates the old contents
+    # BY VALUE, and a real firmware image is ~87% zeroes; those zeroes also fill every
+    # unused BRAM tile on the die, so the pattern is not unique and ecpbram refuses with
+    # "Conflicting from pattern". A random image appears exactly once.
+    if args.placeholder:
+        if not args.placeholder.exists():
+            print(f"no placeholder at {args.placeholder}")
+            print("generate one with:")
+            print(f"  ecpbram -g {args.placeholder} -w 32 -d {RAM_SIZE // 4} -s 1")
+            return 1
+        raw = bytes.fromhex("".join(
+            # The hex file is one big-endian word per line; block RAM init is a list of
+            # integers, so parse rather than concatenate.
+            f"{int(line, 16):08x}"
+            for line in args.placeholder.read_text().split()))
+        print(f"placeholder image: {len(raw)} bytes "
+              f"(swap real firmware in with scripts/soc_swap_firmware.py)")
 
     # Block RAM is 32 bits wide, so the image is loaded as words.
     padded = raw + b"\x00" * (-len(raw) % 4)
@@ -664,10 +840,28 @@ def main():
     # packaged platform has no such dependency.
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
+    build_dir = ROOT / "tmp" / "vexii_hello" / "build"
+
     CynthionPlatformRev1D4().build(
         HelloSoC(firmware=words),
         do_program=args.program,
-        build_dir=str(ROOT / "tmp" / "vexii_hello" / "build"))
+        build_dir=str(build_dir))
+
+    # Record the exact BRAM contents alongside the bitstream.
+    #
+    # This is what `scripts/soc_swap_firmware.py` matches against: ecpbram finds the old
+    # contents BY VALUE and substitutes new ones, replacing firmware in a built bitstream
+    # in about a second instead of a ~60 s resynthesis. It can only do that if it is
+    # handed exactly what was synthesised, so this is written here rather than
+    # reconstructed later -- a reconstruction differing by one word would simply fail to
+    # match.
+    #
+    # Padded to the full RAM, because that is the geometry that ends up in the BRAM:
+    # `words` covers only the image, while the initialiser covers every location.
+    hex_words = words + [0] * (RAM_SIZE // 4 - len(words))
+    (build_dir / "firmware.hex").write_text(
+        "".join(f"{word:08x}\n" for word in hex_words))
+
     return 0
 
 

@@ -64,6 +64,19 @@ GENERATE_FLAGS = [
     # native and unconnected, and the only symptom is undriven
     # LsuPlugin_logic_bus_* wires.
     "--fetch-wishbone", "--lsu-wishbone", "--lsu-l1-wishbone",
+
+    # RISC-V debug module, reached through the ECP5's EXISTING JTAG chain.
+    #
+    # --debug-jtag-instruction, not --debug-jtag-tap: the tap variant builds its own TAP
+    # needing four dedicated pins, and on this board JTAG belongs to Apollo, which uses
+    # it to configure the FPGA. The instruction variant hangs the debug module off a user
+    # instruction (ER1/ER2) in the chain that is already there -- the same mechanism
+    # LUNA's JTAGRegisterInterface uses -- so openocd and Apollo share one TAP.
+    #
+    # This buys halt, step, register and memory inspection. Without it a CPU that stops
+    # printing is indistinguishable from a CPU that stopped running, which is exactly the
+    # ambiguity that has cost the most time on this project.
+    "--debug-jtag-instruction",
 ]
 
 
@@ -193,10 +206,48 @@ class VexiiRiscv(wiring.Component):
         rdtime = Signal(64)
         m.d.sync += rdtime.eq(rdtime + 1)
 
+        # The RISC-V debug module, hung off the ECP5's user JTAG.
+        #
+        # JTAGG exposes the config TAP's user instructions. ER2 rather than ER1:
+        # Apollo's own debug SPI (ECP5_JTAGDebugSPIConnection) claims ER1 = 0x32, and two
+        # things answering one instruction would corrupt both. ER2 = 0x38 is free now
+        # that the HyperRAM JTAG loader is gone.
+        #
+        # JRSTN is active low, and `capture` is the non-shift half of the enable window --
+        # JTAGG gives an enable and a shift phase rather than a discrete capture strobe.
+        jtck = Signal()
+        jtdi = Signal()
+        jtdo = Signal()
+        jshift = Signal()
+        jupdate = Signal()
+        jrstn = Signal()
+        jce2 = Signal()
+
+        m.submodules.jtagg = Instance(
+            "JTAGG",
+            o_JTCK=jtck,
+            o_JTDI=jtdi,
+            o_JSHIFT=jshift,
+            o_JUPDATE=jupdate,
+            o_JRSTN=jrstn,
+            o_JCE2=jce2,
+            i_JTDO2=jtdo,
+        )
+
         m.submodules.cpu = Instance(
             "VexiiRiscv",
             i_clk=ClockSignal("sync"),
             i_reset=ResetSignal("sync") | self.ext_reset,
+
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_tck=jtck,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_tdi=jtdi,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_enable=jce2,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_capture=jce2 & ~jshift,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_shift=jshift,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_update=jupdate,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_reset=~jrstn,
+            o_EmbeddedRiscvJtag_logic_jtagInstruction_tdo=jtdo,
+            i_EmbeddedRiscvJtag_logic_debug_reset=ResetSignal("sync"),
 
             i_PrivilegedPlugin_logic_rdtime=rdtime,
             i_PrivilegedPlugin_logic_harts_0_int_m_external=self.irq_external,

@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+#
+# Run the SoC shell under QEMU and assert what it says.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""
+Boots the RISC-V firmware on `qemu-system-riscv32 -M virt`, drives its shell over a
+pipe, and checks the replies. Non-interactive; exit status 0 if every assertion held.
+
+    ./scripts/soc_test.py            # build the QEMU variant and test it
+    ./scripts/soc_test.py --no-build # test what is already built
+    ./scripts/soc_test.py -v         # also dump the full session transcript
+
+`scripts/soc_run.py` runs this before it configures the board, and will not configure if
+it fails. `--skip-tests` there is the escape hatch.
+
+## Why an emulator at all
+
+Every question asked of this shell so far has cost a ~60 s bitstream rebuild, a
+reconfigure, and a USB enumeration that reliably eats the first half second of output.
+That loop is too slow to debug a line editor with, and worse, it cannot distinguish
+"the shell logic is wrong" from "the console peripheral is not delivering bytes" --
+both look like a board that says nothing. QEMU removes the peripheral from the question:
+if the shell misbehaves here, the bug is in the firmware's logic, and if it behaves here
+and not on the board, the bug is below the firmware.
+
+That argument only holds because both builds are the same source, and it got considerably
+stronger when the SoC's console became a standard NS16550A
+(`ecp5-test/riscv/uart16550.py`). `virt` presents an NS16550A too, so `src/uart.rs` --
+the console driver itself, the thing that polls LSR and pokes THR -- is now compiled
+unchanged for both. `--features qemu` selects a different list of base addresses in
+`src/target.rs`, a flash stand-in, and a RAM array in place of the three HyperRAM MMIO
+primitives. Nothing else.
+
+That matters because the failure this SoC has actually suffered was *in the console
+peripheral*, not above it: a read with a side effect sharing a 32-bit word with the
+register the poll loop reads. A test running against a re-implemented console driver
+could not have seen it and did not. This one at least drives the same driver.
+
+The line editor, `run()`, `parse_hex()`, the idle re-banner and the CRLF translation are
+literally the same instructions. If that ever stops being true this script stops being
+evidence, so keep the differences in `src/target.rs`.
+
+## What is asserted, and why each one
+
+Every check below is a failure that has actually happened, or one that would be
+invisible from the host if it happened:
+
+  banner            the firmware reached `main` and the console works at all
+  <enter> -> prompt Enter is recognised; the shell is not wedged in its poll loop
+  help / ?          dispatch works, and the alias is not a separate code path
+  unknown command   the fallthrough arm exists -- silence here reads as a hang
+  check             the CPU's own arithmetic, and that results are formatted, not
+                    hardcoded (0x12345678 * 3 == 0x369d0368)
+  backspace         the on-screen erase AND the line buffer edit agree
+  CRLF              no bare LF ever reaches the wire
+
+The CRLF one is the reason this file exists. On a raw CDC-ACM pipe nothing supplies a
+line discipline, so a bare `\\n` from `writeln!` moves the cursor down a line without
+returning it to column zero: output marches diagonally off the screen and the prompt is
+never where it should be. It presents as "the shell is ignoring my keystrokes" while
+every keystroke is in fact being handled. That fix has been made and reverted once
+already, which is exactly what an assertion is for.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+LOG = ROOT / "tmp" / "logs" / "soc_test.log"
+CRATE = ROOT / "firmware" / "cynthion-soc"
+
+# A target dir of its own, NOT the crate's.
+#
+# The QEMU build differs by a feature and a linker script, so sharing `target/` would
+# make every alternation a full rebuild -- and, far worse, would leave a QEMU-linked
+# binary at the path soc_run.py objcopies into the bitstream. An image linked for
+# 0x80000000 in block RAM at 0 is a board that fetches from nothing.
+BUILD_DIR = ROOT / "tmp" / "qemu-build"
+ELF = BUILD_DIR / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
+
+QEMU = "qemu-system-riscv32"
+
+# `virt`, because its 16550 at 0x10000000 and DRAM at 0x80000000 are what
+# firmware/cynthion-soc/memory-qemu.x and the qemu branch of src/target.rs are written
+# against. Both addresses were read out of `-machine dumpdtb`, not assumed.
+#
+# `-bios none` matters: the default is OpenSBI, which loads at 0x80000000 -- exactly
+# where our .text goes. `-kernel` with an ELF then makes QEMU's reset stub jump straight
+# to our entry point in machine mode, which is the mode riscv-rt's _start expects.
+QEMU_ARGS = [
+    "-M", "virt",
+    "-cpu", "rv32",
+    "-m", "64M",
+    "-display", "none",
+    "-monitor", "none",
+    "-serial", "stdio",
+    "-bios", "none",
+]
+
+# How long to wait for the firmware's first byte.
+#
+# The firmware itself prints within microseconds of the CPU starting; essentially all of
+# this budget is QEMU's own startup -- fork/exec, dynamic linking, TCG init -- measured
+# here at well under 0.5 s. 5 s is an order of magnitude of headroom so a loaded machine
+# cannot produce a spurious failure. Expiry means the firmware never wrote to the UART at
+# all, which is a real result and reported as one.
+BOOT_S = 5.0
+
+# How long to wait for the shell to answer one command.
+#
+# Under TCG the shell parses and prints a reply in well under a millisecond of wall time.
+# The budget is for pipe scheduling between two processes, not for the guest. Expiry
+# means the shell did not respond to a command it should have -- the exact symptom this
+# script is chasing -- so it is reported with what was expected and everything received.
+REPLY_S = 3.0
+
+# How long to allow for the idle re-banner.
+#
+# The firmware re-announces after 12,000,000 turns of its poll loop, sized for ~2 s at
+# 60 MHz on the board. Under TCG each turn costs one emulated MMIO read, which lands in
+# the same place: measured at 2.05 s here, against 0.04 s to the first banner. 8 s is
+# ~4x that, enough that a machine under load does not fail the check, and short enough
+# that a shell which has genuinely stopped re-announcing is reported quickly. Expiry
+# means the poll loop stopped turning or `spoken` latched with nothing typed -- which is
+# precisely the symptom the board shows.
+IDLE_S = 8.0
+
+# How often the expect loop rechecks the buffer while waiting.
+#
+# The reader thread appends as bytes arrive, so this only sets how promptly a satisfied
+# assertion is noticed. 20 ms costs at most 20 ms per assertion and a few dozen wakeups a
+# second; polling faster just burns CPU racing a pipe that is already being drained.
+POLL_S = 0.02
+
+
+class Session:
+    """One QEMU run, with its serial console on a pipe.
+
+    Output is drained by a thread rather than read on demand. A guest that prints while
+    nothing is reading fills the pipe buffer and blocks inside `put()`, which would look
+    from here exactly like a hung shell -- the failure this script exists to detect,
+    manufactured by the test harness. So: always draining, and `expect` only ever reads
+    from the buffer.
+    """
+
+    def __init__(self, elf):
+        self.proc = subprocess.Popen(
+            [QEMU, *QEMU_ARGS, "-kernel", str(elf)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, bufsize=0)
+        self.buf = bytearray()
+        self.lock = threading.Lock()
+        self.errors = bytearray()
+        self.reader = threading.Thread(target=self._drain, daemon=True)
+        self.reader.start()
+        self.errs = threading.Thread(target=self._drain_err, daemon=True)
+        self.errs.start()
+
+    def _drain(self):
+        while True:
+            chunk = self.proc.stdout.read(1)
+            if not chunk:
+                return
+            with self.lock:
+                self.buf.extend(chunk)
+
+    def _drain_err(self):
+        # QEMU's own complaints (bad machine, missing accelerator) land here and are the
+        # difference between "the firmware is silent" and "QEMU never started".
+        while True:
+            chunk = self.proc.stderr.read(1)
+            if not chunk:
+                return
+            self.errors.extend(chunk)
+
+    def snapshot(self):
+        with self.lock:
+            return bytes(self.buf)
+
+    def send(self, data):
+        self.proc.stdin.write(data)
+        self.proc.stdin.flush()
+
+    def expect(self, needle, budget, since=0):
+        """Wait for `needle` to appear at or after offset `since`. Index, or None."""
+        deadline = time.monotonic() + budget
+        while True:
+            found = self.snapshot().find(needle, since)
+            if found >= 0:
+                return found
+            if time.monotonic() >= deadline:
+                return None
+            if self.proc.poll() is not None:
+                # A dead QEMU will never produce it; do not sit out the budget.
+                return None
+            time.sleep(POLL_S)
+
+    def close(self):
+        # Terminate rather than wait: this firmware is an infinite loop by design and
+        # has no exit path. There is nothing to flush -- the reader thread has already
+        # taken every byte QEMU wrote.
+        self.proc.kill()
+        self.proc.wait()
+
+
+def show(data):
+    """Bytes as something readable in a log, with the line endings still visible."""
+    return (data.decode("ascii", "replace")
+            .replace("\r", "<CR>").replace("\n", "<LF>\n"))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--no-build", action="store_true",
+                        help="test the existing tmp/qemu-build image")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="print the whole session transcript")
+    args = parser.parse_args()
+
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("w") as handle:
+        def emit(text=""):
+            print(text, flush=True)
+            handle.write(text + "\n")
+            handle.flush()
+
+        failures = []
+
+        def check(name, ok, detail=""):
+            emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
+            if not ok:
+                failures.append(name)
+                for line in detail.splitlines():
+                    emit(f"        {line}")
+
+        if not args.no_build:
+            # RUSTFLAGS, not CARGO_TARGET_<TRIPLE>_RUSTFLAGS: cargo JOINS the
+            # target-specific env var with the same key from .cargo/config.toml, which
+            # hands the linker both memory.x and memory-qemu.x and fails with "region
+            # 'RAM' already defined". RUSTFLAGS replaces them outright. It is not passed
+            # to host build scripts, because the build is cross-compiling.
+            env = dict(os.environ)
+            env["RUSTFLAGS"] = ("-C link-arg=-Tmemory-qemu.x "
+                                "-C link-arg=-Tlink.x")
+            build = subprocess.run(
+                ["cargo", "build", "--release", "--features", "qemu",
+                 "--target-dir", str(BUILD_DIR)],
+                cwd=CRATE, env=env, capture_output=True, text=True)
+            if build.returncode != 0:
+                emit("cargo build (qemu) failed:")
+                emit((build.stderr or build.stdout).strip()[-1500:])
+                return 1
+            emit(f"built {ELF.relative_to(ROOT)}: {ELF.stat().st_size} bytes")
+
+        if not ELF.exists():
+            emit(f"no QEMU image at {ELF.relative_to(ROOT)}; drop --no-build")
+            return 1
+
+        emit(f"qemu: {QEMU} {' '.join(QEMU_ARGS)}")
+        emit()
+
+        session = Session(ELF)
+        try:
+            # --- the firmware speaks at all -------------------------------------
+            banner = b"Cynthion RISC-V SoC - Rust firmware"
+            at = session.expect(banner, BOOT_S)
+            check("banner appears at boot", at is not None,
+                  f"expected: {banner!r}\n"
+                  f"received in {BOOT_S}s: {show(session.snapshot()) or '(nothing)'}\n"
+                  f"qemu stderr: {bytes(session.errors).decode('ascii', 'replace')}")
+            if at is None:
+                # Nothing else can be meaningful, and every later assertion would
+                # produce the same noise. Stop with the one useful message.
+                emit()
+                emit("firmware never reached the console; later checks skipped")
+                return 1
+
+            check("banner names the help commands",
+                  session.expect(b"type `help` or `?` for commands",
+                                 REPLY_S, at) is not None,
+                  "the second banner line did not follow the first")
+
+            # --- the idle re-banner ---------------------------------------------
+            # Must come before anything is sent: the first keypress latches `spoken` and
+            # the shell never re-announces again. This is the board's reported symptom
+            # -- one banner at boot and then silence forever -- so it is worth an
+            # assertion even though it costs a couple of seconds.
+            again = session.expect(banner, IDLE_S, at + len(banner))
+            check("the shell re-announces itself while idle", again is not None,
+                  f"no second banner within {IDLE_S}s of the first.\n"
+                  "The poll loop stopped turning, or `spoken` latched with nothing\n"
+                  "typed. An idle shell that never speaks cannot be told apart from a\n"
+                  "dead one.\n"
+                  f"received: {show(session.snapshot()[at:]) or '(nothing)'}")
+
+            # --- Enter produces a prompt ----------------------------------------
+            mark = len(session.snapshot())
+            session.send(b"\r")
+            got = session.expect(b"> ", REPLY_S, mark)
+            check("<enter> produces a prompt", got is not None,
+                  f"expected a '> ' prompt after CR\n"
+                  f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+
+            # --- help -----------------------------------------------------------
+            def command(text, needles, name):
+                """Send a line, require every needle in what comes back."""
+                mark = len(session.snapshot())
+                session.send(text.encode() + b"\r")
+                missing = [n for n in needles
+                           if session.expect(n, REPLY_S, mark) is None]
+                reply = session.snapshot()[mark:]
+                check(name, not missing,
+                      f"sent: {text!r}\n"
+                      f"missing: {missing}\n"
+                      f"received in {REPLY_S}s: {show(reply) or '(nothing)'}")
+                return reply
+
+            listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
+                       b"load <hex>", b"go", b"reset"]
+            command("help", listing, "`help` lists every command")
+            command("?", listing, "`?` behaves as `help`")
+
+            # --- unknown command --------------------------------------------------
+            command("frobnicate", [b"unknown command; try `help`"],
+                    "an unknown command says so")
+
+            # --- check ------------------------------------------------------------
+            # The arithmetic lines only. `check` also reports two flash words, and on
+            # this target those come from the stand-in in src/target.rs -- virt has
+            # no flash, and its UART sits at the address the SoC's flash window uses.
+            # Asserting them would be asserting the stub.
+            command("check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
+                    "`check` computes 0x12345678*3 == 0x369d0368")
+
+            # --- backspace --------------------------------------------------------
+            # Type a command with one wrong character, rub it out, and require the
+            # command to run. This is the assertion that the buffer edit and the screen
+            # edit agree: if backspace only erased on screen, `helpX` would reach run()
+            # and come back "unknown command".
+            mark = len(session.snapshot())
+            session.send(b"helpX\x08\r")
+            ran = session.expect(b"help, ?", REPLY_S, mark)
+            reply = session.snapshot()[mark:]
+            check("backspace removes a character from the line buffer",
+                  ran is not None and b"unknown command" not in reply,
+                  "sent: 'helpX' BS CR\n"
+                  f"received: {show(reply) or '(nothing)'}")
+            check("backspace erases on screen too",
+                  b"\x08 \x08" in reply,
+                  "expected the destructive-backspace sequence BS SP BS to be echoed\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # Backspace on an empty line must be a no-op, not an underflow. `len` is a
+            # usize; without the guard this wraps to 4294967295 and the next character
+            # written indexes far outside a 64-byte array.
+            mark = len(session.snapshot())
+            session.send(b"\x08\x08\x08help\r")
+            check("backspace at an empty prompt does not corrupt the shell",
+                  session.expect(b"help, ?", REPLY_S, mark) is not None,
+                  "the shell stopped responding after backspacing past the start\n"
+                  f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+
+            # --- line endings -----------------------------------------------------
+            # Over the whole session, not per command: one stray writeln! anywhere is
+            # enough to wreck the display, and it is cheapest to catch here.
+            whole = session.snapshot()
+            bare = [i for i, byte in enumerate(whole)
+                    if byte == 0x0a and (i == 0 or whole[i - 1] != 0x0d)]
+            context = ""
+            if bare:
+                first = bare[0]
+                context = ("first at offset %d, in: %s"
+                           % (first, show(whole[max(0, first - 60):first + 4])))
+            check("every LF is preceded by CR",
+                  not bare,
+                  f"{len(bare)} bare LF byte(s) reached the wire.\n"
+                  "On a raw CDC-ACM pipe there is no line discipline, so a bare LF\n"
+                  "drops a line without returning to column zero and the shell looks\n"
+                  "unresponsive. The fix belongs in Console's core::fmt::Write impl.\n"
+                  + context)
+
+            check("CRLF is actually present",
+                  b"\r\n" in whole,
+                  "no CRLF at all -- the console produced nothing line-shaped")
+
+            transcript = session.snapshot()
+        finally:
+            session.close()
+
+        emit()
+        if args.verbose:
+            emit("--- transcript ---")
+            emit(show(transcript))
+            emit("--- end ---")
+            emit()
+
+        if failures:
+            emit(f"{len(failures)} FAILED: {', '.join(failures)}")
+        else:
+            emit("all checks passed")
+        emit(f"log: {LOG.relative_to(ROOT)}")
+        return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
