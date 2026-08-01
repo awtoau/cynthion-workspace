@@ -83,6 +83,7 @@ from vexii_cpu import VexiiRiscv
 from uart16550 import Uart16550
 from vexii_plic import Plic
 from stream_buffer import StreamBuffer
+from wishbone_pipe import RegisteredResponse
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
@@ -602,7 +603,26 @@ class HelloSoC(Elaboratable):
         arbiter.add(cpu.ibus)
         arbiter.add(cpu.dbus)
         arbiter.add(cpu.iobus)
-        wiring.connect(m, arbiter.bus, decoder.bus)
+
+        # A flip-flop between the arbiter and the decoder, on the return path.
+        #
+        # Without it one clock edge has to carry the grant register through the
+        # address mux, the decoder's window compare, every subordinate's
+        # acknowledge, the gather back, and then VexiiRiscv's PMA check and
+        # commit -- 16.45 ns measured, of which 13.64 ns was wire. That is 60.8
+        # MHz against a 60 MHz constraint: it passes, and a placement run that
+        # went slightly differently would not.
+        #
+        # The cost is one cycle per bus beat and it is paid only by traffic that
+        # reaches the bus at all; a cache hit never does. See wishbone_pipe.py
+        # for the duplicate-strobe hazard this handles, which is the reason it
+        # is not simply a register on `ack`, and scripts/soc_bus_sim.py for the
+        # measurement of both.
+        m.submodules.bus_pipe = bus_pipe = RegisteredResponse(
+            addr_width=30, data_width=32, granularity=8,
+            features={"cti", "bte", "err"})
+        wiring.connect(m, arbiter.bus, bus_pipe.intr_bus)
+        wiring.connect(m, bus_pipe.sub_bus, decoder.bus)
 
         # USB CDC-ACM, on the AUX port.
         #
