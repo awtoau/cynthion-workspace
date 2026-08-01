@@ -27,10 +27,22 @@
 //!
 //! The shell is not a singleton and neither is the console. `Shell` holds one line
 //! editor's worth of state, and the main loop runs one per UART in `target::UART_BASES`,
-//! polling each in turn. Two people on two ports get two independent prompts; a command
-//! typed on one replies on that one. The only asymmetry is index 0, which is the port the
-//! boot banner, the bootloader's reports and any panic go to, because those happen before
-//! or outside any prompt.
+//! taking a byte from each in turn. Two people on two ports get two independent prompts; a
+//! command typed on one replies on that one. The only asymmetry is index 0, which is the
+//! port the boot banner, the bootloader's reports and any panic go to, because those happen
+//! before or outside any prompt.
+//!
+//! ## Received bytes arrive by interrupt, not by polling
+//!
+//! Each UART raises a PLIC source when a byte lands; the handler in `src/irq.rs` moves it
+//! into a per-console ring, and the loop below takes bytes out with `irq::pop`. The shell
+//! reads identically from a user's point of view -- what changed is that the byte was
+//! already collected before the loop asked for it, so a console that is busy printing no
+//! longer has to be back at `uart.get()` in time.
+//!
+//! Transmit is still a bounded spin in `Uart::put`, deliberately. See `IER_ERBFI` in
+//! `src/uart.rs` for why enabling the transmit-empty interrupt on this peripheral would be
+//! a storm rather than a service.
 
 #![no_std]
 #![no_main]
@@ -42,6 +54,8 @@ use core::ptr::{read_volatile, write_volatile};
 use riscv_rt::entry;
 
 mod hyperram;
+mod irq;
+mod plic;
 mod target;
 mod uart;
 
@@ -53,7 +67,11 @@ use uart::Uart;
 /// Sized rather than allocated: `Shell` is ~80 bytes and there is no allocator. Four is
 /// well past the two the hardware has and costs a third of a kilobyte of the 32 KiB the
 /// shell half of block RAM gives us.
-const MAX_CONSOLES: usize = 4;
+///
+/// `src/irq.rs` allocates one receive ring per slot, so this is now the dominant term in
+/// the firmware's static footprint: four rings of 256 bytes. Raising it costs a quarter of
+/// a kilobyte a console.
+pub const MAX_CONSOLES: usize = 4;
 
 // A base address with no shell behind it would be a port that silently never answers,
 // which is the exact class of failure this firmware keeps being bitten by. Catch it at
@@ -93,8 +111,13 @@ impl Shell {
     /// It is off for every console but the first, because on this board the second one's
     /// TX pin is shared with JTAG TMS and an unbidden transmission is bus contention.
     /// See `target::ANNOUNCING`.
-    fn poll(&mut self, uart: &mut Uart, announce: bool) {
-        let byte = match uart.get() {
+    /// `index` selects this console's receive ring in `src/irq.rs`, and is also what
+    /// `load` needs to know which port a transfer is arriving on. It is the index into
+    /// `target::UART_BASES`, so it is the same number everywhere.
+    fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool) {
+        // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
+        // for everything this function ECHOES; only the receive direction moved.
+        let byte = match irq::pop(index) {
             Some(byte) => byte,
             None => {
                 if announce && !self.spoken {
@@ -129,7 +152,7 @@ impl Shell {
                     let mut line = [0u8; 64];
                     line[..len].copy_from_slice(&self.line[..len]);
                     self.len = 0;
-                    run(uart, &line[..len]);
+                    run(index, uart, &line[..len]);
                 }
                 let _ = write!(uart, "> ");
             }
@@ -192,15 +215,28 @@ fn main() -> ! {
     // can be told what went wrong, one that hangs cannot.
     try_boot(&mut console);
 
+    // Interrupts on, and not before now.
+    //
+    // After `Uart::init()` on every port, so nothing is asking yet; and after `try_boot`,
+    // because that either jumps to a payload -- which has its own trap vector and knows
+    // nothing about this firmware's handler -- or returns, in which case the shell is what
+    // runs and the shell is what wants the interrupts.
+    irq::init();
+
     let mut shells = [Shell::NEW; MAX_CONSOLES];
 
     loop {
         // Round-robin, one byte per console per pass. Fair by construction and with no
         // arbitration to get wrong: a console that is being pasted into cannot starve
         // the others, because it still only gets one byte per turn.
+        //
+        // The bytes now come from the interrupt handler's rings rather than from LSR, so
+        // this loop no longer has to be back here in time to catch anything. What it still
+        // does is bound how much of one console's input is handled before the other's --
+        // which is a fairness property of the shell and worth keeping.
         for (index, &base) in target::UART_BASES.iter().enumerate() {
             let mut uart = Uart::new(base);
-            shells[index].poll(&mut uart, index < target::ANNOUNCING);
+            shells[index].poll(index, &mut uart, index < target::ANNOUNCING);
         }
     }
 }
@@ -211,7 +247,10 @@ fn banner(uart: &mut Uart) {
 }
 
 /// Dispatch one command line.
-fn run(uart: &mut Uart, line: &[u8]) {
+///
+/// `index` is which console this arrived on, needed by `load` so a transfer reads from the
+/// right receive ring.
+fn run(index: usize, uart: &mut Uart, line: &[u8]) {
     // Split off the first word; the rest is the argument.
     let (cmd, rest) = match line.iter().position(|&b| b == b' ') {
         Some(i) => (&line[..i], &line[i + 1..]),
@@ -225,6 +264,7 @@ fn run(uart: &mut Uart, line: &[u8]) {
             let _ = writeln!(uart, "  read <hex>    read a word from flash");
             let _ = writeln!(uart, "  check         arithmetic and known flash values");
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
+            let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  load <hex>    receive N bytes into the payload slot");
             let _ = writeln!(uart, "  go            jump to the loaded payload");
             let _ = writeln!(uart, "  reset         restart the firmware");
@@ -245,6 +285,30 @@ fn run(uart: &mut Uart, line: &[u8]) {
                 let present = scratch_responds(base);
                 let _ = writeln!(uart, "  {} {:08x} {}", index, base,
                                  if present { "ok" } else { "NO RESPONSE" });
+            }
+        }
+        b"irq" => {
+            // The evidence that this shell is interrupt-driven and not quietly polling.
+            //
+            // A count that climbs as you type is the whole proof: the byte reached the
+            // handler, the handler reached the ring, and the shell reached the ring. If
+            // the interrupt path were broken there would be nothing to read here and no
+            // prompt to type it at, so the useful failure is the subtler one -- a count
+            // that stays at zero for the *other* console, or `pending` stuck with a bit
+            // set, which is a claim that was never completed.
+            //
+            // Every register read below is side-effect free. In particular this does NOT
+            // read the claim register: that would take an interrupt away from the handler
+            // and never complete it, killing the console from a diagnostic command. See
+            // `Plic::claim`.
+            let plic = plic::Plic::new(target::PLIC_BASE);
+            let _ = writeln!(uart, "plic  @{:08x} pending {:08x} enabled {:08x}",
+                             target::PLIC_BASE, plic.pending(), plic.enabled());
+            for console in 0..target::UART_BASES.len() {
+                let (interrupts, stalls, buffered) = irq::stats(console);
+                let _ = writeln!(uart, "  {} src {} irqs {} stalls {} buffered {}",
+                                 console, target::UART_IRQS[console],
+                                 interrupts, stalls, buffered);
             }
         }
         b"read" => match parse_hex(rest) {
@@ -283,7 +347,7 @@ fn run(uart: &mut Uart, line: &[u8]) {
                              if f40 == 0x2a55_8800 { "ok" } else { "BAD" });
         }
         b"load" => match parse_hex(rest) {
-            Some(len) => load(uart, len),
+            Some(len) => load(index, uart, len),
             None => {
                 let _ = writeln!(uart, "usage: load <hex byte count>");
             }
@@ -306,6 +370,12 @@ fn run(uart: &mut Uart, line: &[u8]) {
         b"go" => {
             let _ = writeln!(uart, "jumping to {:08x}", payload_start());
 
+            // Interrupts off before leaving. The payload has its own trap vector -- or
+            // none -- and this firmware's handler would be dispatching into a ring the
+            // payload has since overwritten. The fault would surface somewhere unrelated
+            // with nothing pointing back here.
+            irq::shutdown();
+
             // Flush before fetching. The payload arrived as DATA through the D-cache,
             // so without this the I-side may fetch stale lines from before the load --
             // executing whatever was there, which presents as a hang or a wild fault
@@ -319,6 +389,7 @@ fn run(uart: &mut Uart, line: &[u8]) {
         }
         b"reset" => {
             let _ = writeln!(uart, "restarting");
+            irq::shutdown();
             // No reset controller yet, so jump to the reset vector. This re-runs main
             // without re-initialising .bss or the stack pointer -- enough to restart the
             // shell, not a true reset. A real one needs a CSR the SoC does not have.
@@ -383,7 +454,7 @@ fn payload_size() -> u32 {
 /// is a reboot, and a reboot is exactly what block RAM does not survive intact: the
 /// shell doing the receiving is executing from it. HyperRAM is external and keeps its
 /// contents across a CPU reset.
-fn load(uart: &mut Uart, len: u32) {
+fn load(index: usize, uart: &mut Uart, len: u32) {
     if len == 0 || len > hyperram::MAX_IMAGE {
         let _ = writeln!(uart, "length must be 1..{:x}", hyperram::MAX_IMAGE);
         return;
@@ -401,9 +472,19 @@ fn load(uart: &mut Uart, len: u32) {
     while received < len {
         // Blocking on THIS console, and only this one: once the sender has started there
         // is nothing else to do, and returning to the prompt mid-transfer would interpret
-        // the image as commands. The other consoles are not serviced for the duration,
+        // the image as commands. The other consoles' shells are not run for the duration,
         // which is correct -- a transfer in flight is not a moment to run a command.
-        let byte = match uart.get() {
+        //
+        // Their interrupts still fire and still fill their rings; the handler does not
+        // know or care that this loop is running. That is a change for the better: on the
+        // polled version, anything typed on the other port during a transfer was lost to
+        // a 16-byte FIFO overrun. Here it waits.
+        //
+        // This must read the ring rather than the UART. The handler has already taken the
+        // byte out of the 16550's FIFO, so `uart.get()` would spin forever on an LSR.DR
+        // that the handler keeps clearing -- a `load` that hangs with the data arriving
+        // perfectly.
+        let byte = match irq::pop(index) {
             Some(b) => b,
             None => continue,
         };
@@ -425,6 +506,12 @@ fn load(uart: &mut Uart, len: u32) {
     let crc = crc.finish();
     hyperram::write_header(len, crc);
     let _ = writeln!(uart, "staged {} bytes, crc {:08x}; rebooting", received, crc);
+
+    // Quiet before the reboot. riscv-rt's `_abs_start` zeroes `mie` and `mip` as its first
+    // instructions, so this is belt and braces -- but `.bss` is re-zeroed on the way back
+    // up, and an interrupt landing in that window would push into a ring being cleared
+    // underneath it.
+    irq::shutdown();
 
     // Reboot into the bootloader path at the top of main().
     unsafe {

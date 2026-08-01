@@ -54,6 +54,20 @@ invisible from the host if it happened:
                     hardcoded (0x12345678 * 3 == 0x369d0368)
   backspace         the on-screen erase AND the line buffer edit agree
   CRLF              no bare LF ever reaches the wire
+  irq               the console is interrupt-driven, and the count is climbing
+
+The interrupt check has a weaker sibling that is already implicit in every check
+above it: the shell reads received bytes ONLY from the ring that
+`firmware/cynthion-soc/src/irq.rs` fills from the machine external interrupt
+handler. Nothing polls LSR for input any more. So a broken interrupt path is a
+shell that never answers, and every assertion here would fail at once.
+
+`irq` is asserted anyway because that failure mode is the loud one. The quiet
+one is a source that is enabled and never fires, or a claim that was taken and
+never completed -- which on a two-console board leaves one port dead while the
+other works perfectly. The count and the pending word are what distinguish them,
+and this target has a real PLIC (`plic@c000000`, the 16550 on source 10) rather
+than a stand-in, so the check means the same thing here as on the board.
 
 The CRLF one is the reason this file exists. On a raw CDC-ACM pipe nothing supplies a
 line discipline, so a bare `\\n` from `writeln!` moves the cursor down a line without
@@ -324,7 +338,7 @@ def main():
                 return reply
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
-                       b"load <hex>", b"go", b"reset"]
+                       b"irq", b"load <hex>", b"go", b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
 
@@ -339,6 +353,38 @@ def main():
             # Asserting them would be asserting the stub.
             command("check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
                     "`check` computes 0x12345678*3 == 0x369d0368")
+
+            # --- the console is interrupt-driven ------------------------------------
+            # `virt`'s PLIC is at 0x0c000000 and its 16550 is on source 10, both read
+            # out of the device tree (see src/target.rs). Assert the firmware found it
+            # there, and that the handler has actually run.
+            reply = command("irq", [b"plic  @0c000000", b"src 10"],
+                            "`irq` finds the PLIC and names the console's source")
+
+            # The count itself. Everything typed so far arrived through the handler, so
+            # this cannot be small -- but the assertion that matters is `> 0`, because
+            # zero means the shell is answering from somewhere other than the interrupt
+            # path, which would make every check above it evidence about the wrong code.
+            served = 0
+            for chunk in reply.split(b"irqs ")[1:]:
+                digits = bytes(byte for byte in chunk.split(b" ")[0]
+                               if 0x30 <= byte <= 0x39)
+                if digits:
+                    served = int(digits)
+            check("the machine external handler has actually run", served > 0,
+                  f"`irq` reported {served} interrupts on console 0.\n"
+                  "Zero means bytes are reaching the shell without the handler, so\n"
+                  "either something still polls LSR or this is not the firmware that\n"
+                  "was built.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            check("no interrupt source is left claimed", b"pending 00000000" in reply,
+                  "a bit set in `pending` while the shell is idle is a source that "
+                  "asserted and was never serviced, or -- worse -- a claim that was "
+                  "taken and never completed. The second kind is permanent: that "
+                  "console is dead for the rest of the session with nothing else to "
+                  "show for it.\n"
+                  f"received: {show(reply) or '(nothing)'}")
 
             # --- backspace --------------------------------------------------------
             # Type a command with one wrong character, rub it out, and require the

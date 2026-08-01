@@ -31,6 +31,26 @@ const LSR_DR: u8 = 1 << 0;
 /// Transmit holding register empty: there is room to write.
 const LSR_THRE: u8 = 1 << 5;
 
+/// IER bit 0, ERBFI: interrupt while the receive FIFO holds a byte.
+///
+/// The ONLY IER bit this firmware ever sets. Bit 1 (ETBEI, transmit holding
+/// register empty) is deliberately left alone: THRE is true whenever the
+/// transmit FIFO has room, which is nearly always, so enabling it without a
+/// transmit ring to drain gives an interrupt that re-asserts the instant the
+/// handler returns.
+///
+/// On a real NS16550A that storm is broken by reading IIR, which clears the
+/// transmit-empty interrupt. The SoC's peripheral deliberately does NOT
+/// implement that, because it would be a state-changing read at +2, sharing a
+/// 32-bit word with RBR at +0 -- the exact hazard the standard register map was
+/// adopted to eliminate. See the IIR block in `ecp5-test/riscv/uart16550.py`.
+///
+/// So transmit stays a bounded spin in `put()`. It costs nothing worth having:
+/// the 16-byte FIFO plus the gateware's elastic buffer absorb a line of output,
+/// and a console that occasionally spins for a few microseconds is not a
+/// problem anyone has.
+pub const IER_ERBFI: u8 = 1 << 0;
+
 /// 8 data bits, no parity, one stop bit -- and, critically, DLAB clear.
 ///
 /// With DLAB set, offset 0 is the baud divisor latch rather than the data
@@ -89,13 +109,47 @@ impl Uart {
         // SAFETY: `base` is a peripheral address in an uncached region on the
         // SoC (`main=0` PMA) and a device address under QEMU. All writes.
         unsafe {
-            // Interrupts off first. Nothing installs a handler, and an
-            // unexpected external interrupt on a core with the default trap
-            // vector is an unrecoverable jump.
+            // Interrupts off first, and they stay off until `irq::init()` has
+            // a handler, a PLIC and the CPU's `mie`/`mstatus` set up. An
+            // external interrupt raised before that reaches riscv-rt's
+            // `DefaultHandler`, which is an abort.
+            //
+            // This also matters on the way back round: a `j _start` reboot
+            // restarts the CPU without resetting the peripherals, so a UART
+            // left with ERBFI set would interrupt during init if the FIFOs
+            // still held anything.
             write_volatile(self.reg(IER), 0);
             write_volatile(self.reg(LCR), LCR_8N1);
             write_volatile(self.reg(FCR), FCR_ENABLE_AND_CLEAR);
         }
+    }
+
+    /// Ask for an interrupt whenever a byte is waiting.
+    ///
+    /// Separate from `init()` because ordering matters: every UART must be quiet
+    /// before the PLIC is configured and `mstatus.MIE` is set, and only then may
+    /// any of them start asking. `irq::init()` does both halves in that order.
+    ///
+    /// Writes the whole register rather than or-ing a bit in, because the other
+    /// three IER bits must stay clear -- see `IER_ERBFI` for what setting bit 1
+    /// would do -- and a read-modify-write from outside a critical section could
+    /// resurrect one the handler had just cleared.
+    pub fn enable_rx_interrupt(&mut self) {
+        // SAFETY: a fixed peripheral address; write only.
+        unsafe { write_volatile(self.reg(IER), IER_ERBFI) }
+    }
+
+    /// Stop asking for interrupts on this port.
+    ///
+    /// The receive FIFO keeps whatever is in it and LSR still reports it; only
+    /// the interrupt line drops. That is what makes this usable as flow control:
+    /// when the software ring fills, the handler calls this, returns, and lets
+    /// the consumer run. Without it a level-sensitive source with a full ring
+    /// re-enters the handler forever and the CPU makes no progress at all --
+    /// which looks exactly like a hung board.
+    pub fn disable_rx_interrupt(&mut self) {
+        // SAFETY: as above.
+        unsafe { write_volatile(self.reg(IER), 0) }
     }
 
     /// Writes one byte, waiting for room in the transmit FIFO.

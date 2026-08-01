@@ -38,6 +38,13 @@ A second instance of the same peripheral faces Apollo on the shared JTAG pins,
 with a real asynchronous serial PHY behind it. Same register map, same driver,
 different transport -- which is the point of using a standard part.
 
+Both UARTs' interrupt lines go to a standard RISC-V PLIC (`vexii_plic.py`) at
+`PLIC_BASE`, whose output is the CPU's single machine external interrupt. The
+console is interrupt-driven rather than polled as a result. The same argument
+applies as for the 16550: QEMU's `-M virt` has a PLIC too, so
+`firmware/cynthion-soc/src/plic.rs` is compiled unchanged for both targets and
+`scripts/soc_test.py` exercises the interrupt path that ships.
+
     ./ecp5-test/riscv/hello_soc.py --build
     ./ecp5-test/riscv/hello_soc.py --build --program
 """
@@ -74,6 +81,7 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
 from uart16550 import Uart16550
+from vexii_plic import Plic
 from stream_buffer import StreamBuffer
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
@@ -212,6 +220,34 @@ FLASH_ILA_BASE = 0xf0000300
 # that is working perfectly.
 BOOTRAM_BASE = 0xf0000400
 
+# The interrupt controller: a standard RISC-V PLIC, in its own 4 MiB window.
+#
+# 4 MiB because that is the smallest window a spec-compliant PLIC fits in -- the
+# claim register is at offset 0x200004 and the map is not negotiable, since the
+# whole point of being standard is that a driver that has never heard of this SoC
+# can find its way around. See ecp5-test/riscv/vexii_plic.py.
+#
+# 0xf0400000 rather than somewhere tidier: it must be 4 MiB aligned (the Wishbone
+# decoder requires a window aligned to its size), it must be inside the `main=0`
+# CSR region declared in vexii_cpu.DEFAULT_REGIONS -- a cached PLIC would return
+# a stale pending word forever -- and it must clear the peripherals above, which
+# all live below 0xf0001000.
+#
+# QEMU's `-M virt` puts its PLIC at 0x0c000000 with the 16550 on source 10. Same
+# register map, different base, and that difference is two constants in
+# firmware/cynthion-soc/src/target.rs -- which is what keeps src/plic.rs the same
+# code on both targets, exactly as src/uart.rs already is.
+PLIC_BASE = 0xf0400000
+
+# Interrupt source numbers. 0 is reserved by the spec as "nothing pending", so
+# these start at 1 and the order matches UART_BASES in src/target.rs.
+#
+# The console is the LOWER number deliberately. The PLIC breaks a priority tie by
+# lowest source number, and if both ports are busy at equal priority the one a
+# human is watching should be serviced first.
+IRQ_CONSOLE = 1
+IRQ_APOLLO = 2
+
 # Capture depth, in samples of the sync clock.
 #
 # 32 SCK edges at divisor 0 is 64 sync cycles of clocking, plus the FSM
@@ -329,6 +365,29 @@ class HelloSoC(Elaboratable):
         m.submodules.apollo_csr_bridge = apollo_csr_bridge
         decoder.add(apollo_csr_bridge.wb_bus, addr=APOLLO_UART_BASE,
                     name="apollo_uart")
+
+        # The interrupt controller, and the two UART lines into it.
+        #
+        # Both 16550s already have an `irq` output; before this it went nowhere
+        # and both consoles were polled round-robin by the firmware. The lines
+        # are LEVELS, held for as long as the condition holds, which is what the
+        # PLIC's gateway expects -- see the docstrings in vexii_plic.py and
+        # uart16550.py for why an edge here would lose everything after the
+        # first burst.
+        # Indexed by the IRQ_* constants rather than concatenated in order, so
+        # the source numbers the firmware writes into the PLIC's enable register
+        # and the wires they select are the same names in the same file. A Cat()
+        # here would encode them positionally and silently renumber everything
+        # if a third source were ever inserted in the middle.
+        m.submodules.plic = plic = Plic(sources=2)
+        m.d.comb += [
+            plic.sources[IRQ_CONSOLE].eq(console.irq),
+            plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
+        ]
+
+        plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
+        m.submodules.plic_bridge = plic_bridge
+        decoder.add(plic_bridge.wb_bus, addr=PLIC_BASE, name="plic")
 
         # The configuration SPI flash, memory-mapped read-only.
         #
@@ -503,6 +562,28 @@ class HelloSoC(Elaboratable):
         # re-runs riscv-rt's init. Held reset only mattered while Apollo staged images
         # over JTAG, and that path is gone.
         m.d.comb += cpu.ext_reset.eq(0)
+
+        # The machine external interrupt, from the PLIC.
+        #
+        # This input existed and was connected to nothing -- an undriven `In`
+        # port of a Component reads as zero, so the SoC had an interrupt path
+        # that could never fire and nothing said so. That is why the firmware
+        # polled.
+        #
+        # The other two are tied off EXPLICITLY rather than left undriven, for
+        # the same reason: "0 because nobody wired it" and "0 because there is
+        # deliberately no source" look identical in the netlist and completely
+        # different when something stops working.
+        #
+        #   irq_timer     needs a CLINT (mtimecmp). The CPU has --with-rdtime,
+        #                 so `rdtime` counts, but nothing compares it against a
+        #                 target. RTIC's monotonic timer will want this.
+        #   irq_software  needs a CLINT msip register. No use for one yet.
+        m.d.comb += [
+            cpu.irq_external.eq(plic.irq_out),
+            cpu.irq_timer.eq(0),
+            cpu.irq_software.eq(0),
+        ]
 
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.

@@ -27,7 +27,20 @@ used a non-standard `ExternalInterruptArrayPlugin` with mask and pending
 registers inside the CPU at custom CSRs 0xBC0/0xFC0; VexiiRiscv implements only
 standard RISC-V, where the external interrupt is a single wire. Concentrating
 many sources onto it, and letting software find out which fired, needs a
-separate peripheral -- see `vexii_irq.py`.
+separate peripheral, and **that peripheral is `vexii_plic.py`** -- a standard
+RISC-V PLIC, which is what `vexii_hello_soc.py` drives `irq_external` from.
+
+`vexii_irq.py` is the earlier, smaller concentrator: pending and enable, no
+claim or complete, laid out to keep moondancer's generated PAC compiling. It is
+not in any SoC here and should not be chosen for a new one without reading the
+"Why the standard PLIC and not something smaller" section of `vexii_plic.py`
+first -- the short version is that QEMU's `-M virt` has a PLIC, so a standard one
+is what keeps the firmware's interrupt path the same code on the board and under
+the test gate.
+
+`irq_timer` and `irq_software` need a CLINT and there is not one yet; SoCs here
+tie them off explicitly rather than leaving them undriven, so that "no source"
+and "nobody wired it" do not look identical.
 
     from vexii_cpu import VexiiRiscv
     cpu = VexiiRiscv(reset_addr=0x100b0000)

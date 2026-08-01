@@ -74,6 +74,22 @@ following exist only so a generic driver's setup sequence succeeds:
     this peripheral exists to eliminate. Silence about overrun is the cheaper
     lie: use the transport's own buffering to avoid it (see `stream_buffer.py`).
 
+## The interrupt, and the one place this is deliberately not an NS16550A
+
+`irq` is a level, asserted while `(IER.ERBFI and LSR.DR)` or
+`(IER.ETBEI and LSR.THRE)`, and reported through IIR in the standard encoding.
+It goes to `vexii_plic.py`. IER resets to zero, so a design that ignores this
+output and polls LSR -- which is what everything here did until now -- is
+unaffected.
+
+**Reading IIR does not clear anything.** On a real part it clears the
+transmit-empty interrupt, which would be a state-changing read at +2, in the
+same 32-bit word as RBR at +0: the exact hazard this file was written to remove,
+moved over by two bytes. The full argument, and what a driver must do instead,
+is in the comment on the IIR block below. It is the only behavioural difference
+between this peripheral and the one QEMU's `-M virt` presents, and it is
+therefore the only thing `scripts/soc_test.py` cannot speak for.
+
 ## Buffering is not this module's business
 
 The FIFOs here are 16 bytes because the NS16550A's are 16 bytes, and that is the
@@ -164,6 +180,11 @@ class Uart16550(wiring.Component):
         Bytes written to THR, in order. Attach to whatever transmits.
     sink : stream.Signature(8), in
         Bytes to be delivered to RBR. Attach to whatever receives.
+    irq : Signal(), out
+        The interrupt request, active high and LEVEL sensitive. Attach to a
+        source input of `vexii_plic.Plic`, or leave it unconnected and poll LSR
+        as before -- it costs nothing when nothing reads it, and IER resets to
+        zero, so this line is low until a driver asks for it.
 
     The bus, the FIFOs and both stream ports are all in the `sync` domain. If a
     transport runs in another domain, cross it *outside* this module -- see
@@ -225,6 +246,7 @@ class Uart16550(wiring.Component):
             "bus":    In(csr.Signature(addr_width=3, data_width=8)),
             "source": Out(stream.Signature(8)),
             "sink":   In(stream.Signature(8)),
+            "irq":    Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -261,10 +283,17 @@ class Uart16550(wiring.Component):
         dll = Signal(8, init=1)
         dlm = Signal(8, init=0)
 
-        # Interrupt enable. Stored only -- this peripheral has no interrupt
-        # output, so IER is state a driver can set and read and nothing else.
-        # A driver that enables interrupts and then waits for one will wait
-        # forever; every driver in this tree polls.
+        # Interrupt enable, and it now enables interrupts.
+        #
+        #   bit 0  ERBFI  received data available
+        #   bit 1  ETBEI  transmit holding register empty
+        #   bit 2  ELSI   receiver line status -- no error can occur here, so
+        #                 setting it enables nothing (see the module docstring
+        #                 on LSR bits 1..4)
+        #   bit 3  EDSSI  modem status -- MSR is a constant, so likewise
+        #
+        # This used to be storage and nothing else, with a comment saying a
+        # driver that enabled interrupts would wait forever. It no longer waits.
         ier = Signal(8)
 
         # FCR bit 0. Reported back through IIR bits 7:6 so a driver's FIFO probe
@@ -305,14 +334,49 @@ class Uart16550(wiring.Component):
             with m.Else():
                 m.d.sync += ier.eq(ier_reg.w_data)
 
+        # ---- the interrupt ---------------------------------------------------
+        #
+        # Two conditions, each a FIFO flag ANDed with its IER bit, and no state
+        # of any kind:
+        #
+        #   rx_pending   IER.ERBFI and a byte is waiting  (LSR.DR)
+        #   tx_pending   IER.ETBEI and there is room       (LSR.THRE)
+        #
+        # LEVEL SENSITIVE, held for as long as the condition holds. The PLIC in
+        # front of this expects a level (`vexii_plic.py`), and so does a handler
+        # that drains only part of a FIFO: an edge would mean the remaining
+        # bytes are never announced, giving a console that accepts one burst and
+        # then appears to hang.
+        rx_pending = Signal()
+        tx_pending = Signal()
+        m.d.comb += [
+            rx_pending.eq(ier[0] & rx.r_rdy),
+            tx_pending.eq(ier[1] & tx.w_rdy),
+            self.irq.eq(rx_pending | tx_pending),
+        ]
+
         # ---- +2  IIR (R) / FCR (W) ------------------------------------------
         iir = self._iir_fcr.f.data
+
+        # The interrupt id, per the standard's priority order. We can raise only
+        # two of the five, so the order collapses to: receive beats transmit.
+        #
+        #   0b011  receiver line status  -- no error can occur, never raised
+        #   0b010  received data available
+        #   0b110  character timeout     -- no timer, never raised
+        #   0b001  transmit holding register empty
+        #   0b000  modem status          -- MSR is a constant, never raised
+        iir_id = Signal(3)
+        m.d.comb += iir_id.eq(Mux(rx_pending, 0b010, 0b001))
+
         m.d.comb += [
-            # Bit 0 set means NO interrupt pending, which is always true here.
-            # Bits 3:1 are the interrupt id and are meaningless while bit 0 is
-            # set. Bits 7:6 mirror the FIFO-enable bit, which is how a driver
-            # tells a 16550A from a 16550 or a 16450.
-            iir.r_data.eq(Cat(C(1, 1), C(0, 5), fifo_en, fifo_en)),
+            # Bit 0 CLEAR means an interrupt is pending -- the sense is
+            # inverted, and getting it the wrong way round gives a driver that
+            # services an interrupt it was never told about.
+            # Bits 3:1 are the id, meaningless while bit 0 is set.
+            # Bits 5:4 are always zero. Bits 7:6 mirror the FIFO-enable bit,
+            # which is how a driver tells a 16550A from a 16550 or a 16450.
+            iir.r_data.eq(Cat(~self.irq, iir_id, C(0, 2), fifo_en, fifo_en)),
 
             # A clear is a strobe, not a stored bit: FCR bits 1 and 2 are
             # self-clearing on a real part and nothing reads them back.
@@ -321,6 +385,36 @@ class Uart16550(wiring.Component):
         ]
         with m.If(iir.w_stb):
             m.d.sync += fifo_en.eq(iir.w_data[0])
+
+        # READING IIR HERE HAS NO SIDE EFFECT, AND ON A REAL NS16550A IT DOES.
+        #
+        # On the real part, reading IIR while the pending interrupt is "transmit
+        # holding register empty" CLEARS that interrupt. That is a read with a
+        # side effect, at +2, in the SAME 32-bit word as RBR at +0 -- precisely
+        # the arrangement this peripheral exists to eliminate, and precisely the
+        # one that cost a day here when it was RBR being popped by a widened
+        # read. Implementing it faithfully would put the trap back, one byte
+        # over, and the failure it produced would be a transmit path that wedges
+        # forever after some unrelated agent touched the low word.
+        #
+        # So the THRE interrupt is a level instead, and it clears when the
+        # condition clears: write bytes until the FIFO is full, or clear ETBEI.
+        # A correct driver already does one of those -- Linux's 8250 clears
+        # IER.THRI in __stop_tx when its ring empties -- so this is invisible to
+        # anything well behaved.
+        #
+        # What it is NOT invisible to: a driver that sets ETBEI with nothing to
+        # send, takes the interrupt, reads IIR, and returns without writing or
+        # masking. On a real part that is one interrupt. Here it is an interrupt
+        # storm, because THRE is still true. The firmware in this tree does not
+        # do that -- it never sets ETBEI at all (see
+        # firmware/cynthion-soc/src/irq.rs) -- and this comment is the reason a
+        # future one must not either.
+        #
+        # This is the only place where the board and QEMU's `-M virt` 16550
+        # differ in behaviour rather than in address. It is written down here
+        # because `scripts/soc_test.py` is only evidence about the board to the
+        # extent that the two agree.
 
         # ---- +5  LSR --------------------------------------------------------
         #

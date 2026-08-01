@@ -42,6 +42,45 @@ pub const UART_BASES: &[usize] = &[
 #[cfg(feature = "qemu")]
 pub const UART_BASES: &[usize] = &[0x1000_0000];
 
+/// The interrupt controller.
+///
+/// A standard RISC-V PLIC on both targets, which is the whole reason
+/// `src/plic.rs` needs no `#[cfg]`. `PLIC_BASE` here is the constant of the same
+/// name in `ecp5-test/riscv/vexii_plic.py`'s instantiation.
+#[cfg(not(feature = "qemu"))]
+pub const PLIC_BASE: usize = 0xf040_0000;
+
+/// `virt`'s PLIC, read out of the device tree rather than assumed:
+///
+///     qemu-system-riscv32 -M virt -machine dumpdtb=tmp/virt.dtb -display none
+///     dtc -I dtb -O dts tmp/virt.dtb
+///
+/// gives `plic@c000000 { compatible = "sifive,plic-1.0.0", "riscv,plic0"; }`
+/// with `interrupts-extended = <cpu 11>, <cpu 9>` -- 11 being the machine
+/// external interrupt, so context 0 is hart 0 in machine mode on this machine
+/// exactly as it is on the SoC.
+#[cfg(feature = "qemu")]
+pub const PLIC_BASE: usize = 0x0c00_0000;
+
+/// The PLIC source number each entry of `UART_BASES` is wired to, in the same
+/// order.
+///
+/// Source 0 is reserved by the specification as "nothing pending", so real
+/// sources start at 1. On the SoC these are `IRQ_CONSOLE` and `IRQ_APOLLO` in
+/// `ecp5-test/riscv/vexii_hello_soc.py`.
+#[cfg(not(feature = "qemu"))]
+pub const UART_IRQS: &[u32] = &[1, 2];
+
+/// `virt` puts its 16550 on source 10 -- `serial@10000000 { interrupts = <0x0a>; }`
+/// in the device tree above.
+#[cfg(feature = "qemu")]
+pub const UART_IRQS: &[u32] = &[10];
+
+// A UART with no source number, or a source number with no UART, would be a
+// console that never interrupts or a handler that dispatches to nothing. Both
+// are silent failures; catch them where they are declared.
+const _: () = assert!(UART_BASES.len() == UART_IRQS.len());
+
 /// Consoles that announce themselves while idle.
 ///
 /// Index 0 only, and this is a hardware constraint rather than a preference. The

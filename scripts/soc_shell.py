@@ -9,6 +9,7 @@ Sends one or more commands to the RISC-V shell and reports the reply.
     ./scripts/soc_shell.py help
     ./scripts/soc_shell.py check id "read 40"
     ./scripts/soc_shell.py --listen        # just watch, send nothing
+    ./scripts/soc_shell.py --port /dev/ttyACM0 help    # the Apollo-facing console
 
 ## Why this exists
 
@@ -39,6 +40,24 @@ reader in /proc and names it. Silence with an explanation is a result; silence w
 is a trap.
 
 Exit status is 1 if the shell said nothing at all, so this can be used as a check.
+
+## `--port`, and the reason it exists
+
+The firmware answers on every UART in `target::UART_BASES`, not just the USB one.
+The second is the Apollo-facing port on the shared JTAG pins, which the host sees
+as the Apollo debugger's own CDC-ACM node (`/dev/ttyACM0` here: `1d50:615c`).
+
+That is the way out of the contention above without touching someone else's
+process. When another reader owns the USB console, the board is not unreachable
+-- it is unreachable *on that port*. `--port` talks to the other one, which is a
+completely independent 16550 with its own interrupt source, so a reply there is
+evidence about the firmware and the interrupt path rather than about who holds a
+tty.
+
+It is also the only way to exercise the second console at all. `target::ANNOUNCING`
+keeps that port silent unless spoken to, because its TX pin is JTAG TMS and the
+FPGA must never transmit on it unbidden -- so nothing appears there until
+something types, and this is what types.
 """
 
 import argparse
@@ -115,7 +134,24 @@ class Link:
         self.sock, self.port, self.how, self.node = sock, port, how, node
 
     @classmethod
-    def open(cls):
+    def open(cls, node=None):
+        import serial
+
+        # An explicit node bypasses both the service and the USB lookup. The
+        # service on 9000 forwards the USB console specifically, so routing an
+        # explicit port through it would silently talk to a different console
+        # than the one that was asked for -- which is worse than not offering it.
+        if node:
+            for _ in range(OPEN_ATTEMPTS):
+                subprocess.run(["udevadm", "settle"], capture_output=True)
+                try:
+                    return cls(port=serial.Serial(node, 115200,
+                                                  timeout=REPLY_S + 2),
+                               how=node, node=node)
+                except Exception as error:
+                    last = f"{node}: {error}"
+            raise RuntimeError(last)
+
         try:
             sock = socket.create_connection(("127.0.0.1", 9000), timeout=3)
             sock.settimeout(REPLY_S + 2)
@@ -123,7 +159,6 @@ class Link:
         except OSError:
             pass
 
-        import serial
         import usb_ids
 
         last = "no console tty appeared"
@@ -171,6 +206,9 @@ def main():
     parser.add_argument("commands", nargs="*", help="commands to send, in order")
     parser.add_argument("--listen", action="store_true",
                         help="print whatever arrives; send nothing")
+    parser.add_argument("--port",
+                        help="a tty node to use instead of the USB console; "
+                             "/dev/ttyACM0 is the Apollo-facing one")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +218,7 @@ def main():
             handle.write(text + "\n")
 
         try:
-            link = Link.open()
+            link = Link.open(args.port)
         except RuntimeError as error:
             emit(f"could not reach the console: {error}")
             return 1
