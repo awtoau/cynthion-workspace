@@ -225,6 +225,34 @@ impl Monitor {
     pub fn read(&mut self, bus: &I2c, mux: &Mux)
         -> Result<[Reading; 4], i2c::Error>
     {
+        match self.read_once(bus, mux) {
+            // The one collision this driver can have with itself.
+            //
+            // The part is unavailable for 1 ms after a REFRESH (DS20006539B
+            // 5.2) and answers a read inside that window by acknowledging its
+            // address and then NACKing the register pointer. The background
+            // poll issues a REFRESH every 50 ms, so a read requested from the
+            // shell has about a 2% chance of arriving in it -- an intermittent
+            // "no acknowledge" on a bus that is working perfectly, which is
+            // precisely the class of report that costs a day.
+            //
+            // Waiting it out is the whole fix. 2 ms rather than the datasheet's
+            // 1 because the window opened before this call did and the cost of
+            // being generous is a millisecond in a command a human typed. A
+            // second failure is a real bus fault and is reported as one.
+            Err(i2c::Error::NackRegister) => {
+                let started = clock::now();
+                while started.elapsed(clock::now()) < clock::millis(2) {}
+                self.read_once(bus, mux)
+            }
+            other => other,
+        }
+    }
+
+    /// One attempt. See [`Monitor::read`] for why there are two.
+    fn read_once(&mut self, bus: &I2c, mux: &Mux)
+        -> Result<[Reading; 4], i2c::Error>
+    {
         // Point the one controller at this bus, every time and without
         // remembering. Two other devices share it -- both FUSB302Bs, both at
         // 0x22 -- so a stale select does not produce an error, it produces a

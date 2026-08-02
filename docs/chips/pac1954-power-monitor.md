@@ -186,6 +186,14 @@ power @10  poll 50 ms  change 100 mA
 `power` reads on demand, ignoring the change threshold — a command that inherited
 it could not answer "what is it right now".
 
+**A read requested while the background poll's REFRESH is still settling gets one
+retry.** The part is unavailable for 1 ms after REFRESH and answers a read inside
+that window by acknowledging its address and then NACKing the register pointer;
+the poll issues one every 50 ms, so a hand-typed `power` has about a 2% chance of
+landing in it. Untreated that is an intermittent "no acknowledge" on a bus that
+is working perfectly. The driver waits 2 ms and tries once more; a second failure
+is a real bus fault and is reported as one.
+
 The firmware also **polls every 50 ms in the background** and prints only when a
 channel moves by **100 mA or more from the last value it announced**, or crosses
 that channel's floor. Comparing against the last *announced* value rather than the
