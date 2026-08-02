@@ -353,6 +353,13 @@ pub fn command(uart: &mut Uart) {
 }
 
 /// The `misa` extension bits the gateware says the core was generated with.
+///
+/// `'a' as u32 - 'a' as u32` is zero and clippy's `eq_op` says so, correctly.
+/// It is written out anyway: every line here is `letter - 'a'`, which is what
+/// the specification says bit 25..0 means, and the one line that read `1 << 0`
+/// instead would be the one a reader has to decode. Allowed rather than
+/// special-cased, so the four lines stay comparable at a glance.
+#[allow(clippy::eq_op)]
 fn isa_from(cpu: u32) -> u32 {
     let mut bits = 1 << ('i' as u32 - 'a' as u32);
     if cpu & gateware::CPU_M != 0 {

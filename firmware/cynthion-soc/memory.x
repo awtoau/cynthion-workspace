@@ -18,10 +18,18 @@
 /* RAM is split in two so the shell can load and run a second image without a
  * gateware rebuild.
  *
- * The shell lives at the bottom and stays resident. Above it is a slot the `load`
- * command fills over the console, `scripts/soc_jtag_stage.py` fills over JTAG, and
- * `go` jumps to. That turns a firmware edit from a ~60 s bitstream rebuild into a
- * few seconds of typing.
+ * The shell lives at the bottom and stays resident. Above it is the payload slot:
+ * where `try_boot` COPIES a staged image once it has verified its CRC, and where
+ * `go` jumps. That turns a firmware edit from a ~60 s bitstream rebuild into a few
+ * seconds of typing.
+ *
+ * Nothing writes the slot directly. An image arrives in HyperRAM first -- over the
+ * console with `load`, or over JTAG with `scripts/soc_jtag_stage.py` while the CPU
+ * is held in reset -- and only the bootloader moves it from there into block RAM.
+ * That indirection is the architecture and not an accident of the implementation:
+ * block RAM cannot stage its own replacement, because the shell is executing out of
+ * it while the bytes arrive, and HyperRAM is an external part that survives the
+ * reset in between. `src/hyperram.rs` holds the header layout both ends agree on.
  *
  * The payload is NOT position-independent, and does not need to be: it is linked
  * for PAYLOAD_ORIGIN, a fixed address we choose. Position-independent code would
@@ -42,9 +50,17 @@
  * Costs nothing in gateware: the block RAM is 64 KiB either way (RAM_SIZE in
  * ecp5-test/riscv/vexii_hello_soc.py), the decoder sees one window, and no timing
  * path changes. It is a division of an address space, made in one file plus the
- * four places that must agree with it -- firmware/cynthion-payload/memory.x,
- * scripts/soc_payload.py, scripts/soc_jtag_stage.py and src/hyperram.rs, all of
- * which name the slot's size or its base.
+ * four that must hold the SAME NUMBERS -- not merely mention them:
+ *
+ *   firmware/cynthion-payload/memory.x   ORIGIN 0x0000b000, LENGTH 20K
+ *   firmware/cynthion-soc/src/hyperram.rs  MAX_IMAGE = 20 * 1024
+ *   scripts/soc_payload.py               PAYLOAD_SIZE = 20 * 1024
+ *   scripts/soc_jtag_stage.py            MAX_IMAGE = 20 * 1024
+ *
+ * `hyperram::staged` is the one that matters most: it rejects a header whose length
+ * is past MAX_IMAGE, and if that constant were larger than the slot the bootloader
+ * would accept an image it cannot fit and copy it over the shell that is doing the
+ * copying. A slot smaller than MAX_IMAGE is not a tighter bound, it is a hole.
  *
  * The shell's stack is what is left between .bss and _stack_start, so the 12 KiB
  * this buys is stack: measured at 2,820 bytes before it, which was the healthiest

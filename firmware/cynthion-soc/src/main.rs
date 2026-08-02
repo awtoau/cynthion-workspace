@@ -68,6 +68,7 @@ use core::ptr::{read_volatile, write_volatile};
 
 use riscv_rt::entry;
 
+mod board;
 mod bus;
 mod clock;
 mod events;
@@ -410,6 +411,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
             let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
+            let _ = writeln!(uart, "  board         every port: rail, pd \
+                                    controller and phy, as a tree");
             let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
             let _ = writeln!(uart, "  i2c [bus]     scan a bus: power, target, aux");
             let _ = writeln!(uart, "  power [floor <port> <mA>]  the four rails, \
@@ -536,6 +539,11 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
         }
         b"info" => info::command(uart),
         b"selftest" => selftest::command(uart),
+        // Registered on every target, unlike its neighbours below: it reads no
+        // bus at all, so a boardless build renders the same tree with every leaf
+        // reporting what it does not have -- which is what `scripts/soc_test.py`
+        // drives. See `src/board.rs`.
+        b"board" => board::tree(uart, &devices.power, &devices.type_c),
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart, rest, devices),
         b"power" => board_power(uart, rest, devices),

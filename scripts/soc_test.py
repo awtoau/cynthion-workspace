@@ -379,7 +379,7 @@ def main():
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
                        b"selftest", b"ports", b"irq", b"time",
-                       b"log [n]", b"led", b"i2c", b"power",
+                       b"log [n]", b"board", b"led", b"i2c", b"power",
                        b"phy", b"typec", b"sideband", b"load <hex>", b"go",
                        b"reset"]
             command("help", listing, "`help` lists every command")
@@ -550,6 +550,81 @@ def main():
                   b"skip" in reply and b"skipped" in reply,
                   "the gateware and phy items must report `skip` under QEMU, and\n"
                   "the summary must count them separately from the passes.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # --- the board tree -----------------------------------------------
+            #
+            # `board` is the one hardware command that renders in full on this
+            # target, because it reads no bus: every number it prints comes from
+            # a cache that is simply empty here. So the formatting under QEMU is
+            # the formatting on the board with nothing fed into it, and that is
+            # what makes the assertions below evidence about the shipped code
+            # rather than about a stub.
+            #
+            # What is checked is the property the tree exists for, not the
+            # cosmetics: that an absent thing renders as absent, that every value
+            # is dated, and that CONTROL is not printed as a third copy of the
+            # same port.
+            reply = command(
+                "board",
+                [b"+- CONTROL", b"+- AUX", b"+- TARGET",
+                 b"rail       control", b"rail       aux",
+                 b"rail       target_c", b"rail       target_a"],
+                "`board` prints a branch per connector and every rail under one")
+
+            # Absent is not zero. Nothing has ever sampled the monitor here, so
+            # every rail must say so -- four rows of `0.000 V  0.000 mA` would be
+            # four measurements that were never made, and they would be
+            # indistinguishable from a board with every port unplugged.
+            check("an unsampled rail renders as absent, not as zero",
+                  b"NOT SAMPLED" in reply and b"0.000 V" not in reply
+                  and b"0.000 mA" not in reply,
+                  "a rail printed a fabricated zero, or failed to say it had no\n"
+                  "sample. An unplugged rail on this board measures 0.76-0.92 mA\n"
+                  "of ADC offset, so a small number is exactly what absence looks\n"
+                  "like -- which is why absence has to be a word and not a value.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # The age field. `NEVER sampled` is what this target's empty cache
+            # produces; on the board the same field carries milliseconds. Either
+            # way it is present, which is the point: a tree of plausible numbers
+            # from a stopped poller is worse than an obviously empty one.
+            check("every branch is dated", b"[NEVER sampled]" in reply,
+                  "the power header carried no age. A sample with no age cannot\n"
+                  "be told apart from a poller that stopped an hour ago.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # CONTROL genuinely differs -- Type-C connector, no FUSB302B, and a
+            # PHY that belongs to Apollo. Three identical-looking branches with
+            # two values missing would read as a bug in the command.
+            check("CONTROL is shown as the port that differs",
+                  b"NO fusb302b" in reply and b"APOLLO'S" in reply,
+                  "CONTROL was printed like AUX and TARGET. It has no PD\n"
+                  "controller and its PHY is Apollo's, and a tree that implies\n"
+                  "three identical ports is answering a question about a board\n"
+                  "that does not exist.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # The other two absences, each with its own reason rather than a
+            # shared shrug: no I2C bus for the controllers, no ULPI window for
+            # the PHY.
+            check("an absent controller and an absent PHY each say why",
+                  b"ABSENT: no i2c bus on this target" in reply
+                  and b"ABSENT: no ulpi window on this target" in reply,
+                  "a missing part reported nothing, or reported it without a\n"
+                  "reason. `--` with no cause is the same screen as a part that\n"
+                  "is present and silent.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # And it touched no bus getting there. `board` reads only what the
+            # poller and the interrupt path cached, so on a target whose
+            # `target::BOARD` is None it cannot have reached for a controller --
+            # and the shape of that mistake is the bus error it would print.
+            check("`board` reaches no bus", b"no acknowledge" not in reply,
+                  "`board` produced an I2C error, which means it issued a\n"
+                  "transaction. It must read caches only: it touches every\n"
+                  "device on the board, so a live sweep is the single most\n"
+                  "likely thing to land inside the PAC1954's REFRESH window.\n"
                   f"received: {show(reply) or '(nothing)'}")
 
             # --- the deferred interrupt log ----------------------------------------

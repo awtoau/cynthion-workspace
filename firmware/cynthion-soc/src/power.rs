@@ -297,16 +297,7 @@ impl Monitor {
 
     /// How old [`Monitor::latest`] is, as far as the counter can say truthfully.
     pub fn age(&self) -> Age {
-        let sample = match self.sample {
-            Some(sample) => sample,
-            None => return Age::Never,
-        };
-        let ticks = sample.latched.elapsed(clock::now());
-        if ticks >= clock::millis(AGE_LIMIT_MS) {
-            Age::Older
-        } else {
-            Age::Millis(clock::to_millis(ticks))
-        }
+        age_of(self.sample.map(|sample| sample.latched))
     }
 
     /// One REFRESH cycle: fetch what the last one latched, and ask for the next.
@@ -474,6 +465,26 @@ impl Monitor {
                 self.state[channel] = Some(state);
             }
         }
+    }
+}
+
+/// How old a cached value is, for anything in this firmware that keeps one.
+///
+/// Here rather than in `src/clock.rs`, because what makes the answer truthful is
+/// [`AGE_LIMIT_MS`] -- a bound chosen against the counter's 71.6 second wrap --
+/// and that belongs with the interval it was reasoned about. `src/board.rs` uses
+/// it for the Type-C controllers' cached state, which is dated the same way and
+/// must be reported in the same words.
+pub fn age_of(at: Option<Instant>) -> Age {
+    let at = match at {
+        Some(at) => at,
+        None => return Age::Never,
+    };
+    let ticks = at.elapsed(clock::now());
+    if ticks >= clock::millis(AGE_LIMIT_MS) {
+        Age::Older
+    } else {
+        Age::Millis(clock::to_millis(ticks))
     }
 }
 

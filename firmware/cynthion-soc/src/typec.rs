@@ -60,6 +60,16 @@ pub struct Controllers {
     /// What was last reported about each port, so a service that finds nothing
     /// changed says nothing. `None` until the first successful read.
     state: [Option<State>; 2],
+    /// When each port's state was last CONFIRMED by a read, which is not when it
+    /// last changed.
+    ///
+    /// Set wherever `state` was read successfully, including when the answer was
+    /// the same as before -- `announce` deliberately says nothing in that case,
+    /// and a timestamp that only moved on a change would date the reading to the
+    /// last event rather than to the last look. `src/board.rs` prints it, and the
+    /// difference between the two is what makes an old value readable as "this
+    /// port has not moved" instead of as staleness.
+    confirmed: [Option<Instant>; 2],
     /// The last `fault` level seen, so only transitions are announced.
     fault: [bool; 2],
     last_poll: Instant,
@@ -79,6 +89,7 @@ impl Controllers {
         Controllers {
             configured: false,
             state: [None; 2],
+            confirmed: [None; 2],
             fault: [false; 2],
             last_poll: Instant::ZERO,
             serviced: [0; 2],
@@ -97,6 +108,7 @@ impl Controllers {
                 Ok(()) => match fusb302::state(bus, port) {
                     Ok(state) => {
                         self.state[index(port)] = Some(state);
+                        self.confirmed[index(port)] = Some(clock::now());
                         crate::log!(uart,
                             "type-c {}: device {:02x}, vbus {}, {}",
                             port.name(), state.device_id,
@@ -152,7 +164,15 @@ impl Controllers {
                             port.name(), error.as_str());
             } else {
                 match fusb302::state(bus, port) {
-                    Ok(state) => self.announce(uart, port, state),
+                    Ok(state) => {
+                        // Dated on every successful read, including one that
+                        // found nothing changed -- `announce` says nothing in
+                        // that case, and a timestamp that moved only on a
+                        // change would date the reading to the last event
+                        // rather than to the last look. `board` prints it.
+                        self.confirmed[index] = Some(clock::now());
+                        self.announce(uart, port, state);
+                    }
                     Err(error) => {
                         crate::log!(uart, "type-c {}: {}", port.name(),
                                     error.as_str());
@@ -194,6 +214,24 @@ impl Controllers {
                 crate::log!(uart, "type-c {}: fault {}", port.name(),
                             if faulting { "ASSERTED" } else { "cleared" });
             }
+        }
+    }
+
+    /// What is known about one port without touching the bus, and when it was
+    /// learnt.
+    ///
+    /// The state and its instant are one fact and are returned as one: a caller
+    /// that could take the reading without the date could print a value it has no
+    /// way to judge. `None` is a controller nothing has ever read -- at boot
+    /// before [`Controllers::start`], or on a board whose bus never answered.
+    ///
+    /// This is what `board` prints. `typec` reads the part instead, because
+    /// "what is it now" and "what was last confirmed" are different questions and
+    /// the command that touches no bus must answer the second one.
+    pub fn cached(&self, port: Port) -> Option<(State, Instant)> {
+        match (self.state[index(port)], self.confirmed[index(port)]) {
+            (Some(state), Some(at)) => Some((state, at)),
+            _ => None,
         }
     }
 
