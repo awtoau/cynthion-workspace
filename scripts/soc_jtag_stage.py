@@ -76,14 +76,14 @@ HDR_LENGTH = 2
 HDR_CRC    = 4
 IMAGE_WORD = 16
 MAGIC      = 0x4359_4e42
-MAX_IMAGE  = 32 * 1024
+MAX_IMAGE  = 20 * 1024
 
 # How many console reads to make while waiting for the bootloader to speak.
 #
 # Bounded by reads, not by a clock: each returns as soon as bytes arrive and only
 # blocks for the port's own timeout when there are none. The bootloader prints its
 # verdict within a few milliseconds of the reset being released -- the CRC is a
-# bitwise pass over at most 32 KiB -- so this is generous by orders of magnitude and
+# bitwise pass over at most 20 KiB -- so this is generous by orders of magnitude and
 # costs nothing when the board is answering.
 CONSOLE_READS = 40
 

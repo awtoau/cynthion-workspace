@@ -1471,6 +1471,144 @@
       </registers>
     </peripheral>
     <peripheral>
+      <name>BOARD_GATEWARE</name>
+      <description>board/gateware: 7 registers at 0xf0000640</description>
+      <baseAddress>0xF0000640</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>MAGIC</name>
+          <description>BOARD_GATEWARE.MAGIC, 32 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GIT</name>
+          <description>BOARD_GATEWARE.GIT, 32 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BUILT</name>
+          <description>BOARD_GATEWARE.BUILT, 32 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SYNC_HZ</name>
+          <description>BOARD_GATEWARE.SYNC_HZ, 32 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CPU</name>
+          <description>BOARD_GATEWARE.CPU, 32 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>USB_HZ</name>
+          <description>BOARD_GATEWARE.USB_HZ, 32 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DIE</name>
+          <description>BOARD_GATEWARE.DIE, 9 bits at +0x18</description>
+          <addressOffset>0x18</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [8:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>9</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
       <name>PLIC</name>
       <description>plic: 9 registers at 0xf0400000</description>
       <baseAddress>0xF0400000</baseAddress>

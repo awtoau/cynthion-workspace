@@ -18,21 +18,45 @@
 /* RAM is split in two so the shell can load and run a second image without a
  * gateware rebuild.
  *
- * The shell lives in the low half and stays resident. The high half is a slot the
- * `load` command fills over the console and `go` jumps to. That turns a firmware
- * edit from a ~60 s bitstream rebuild into a few seconds of typing.
+ * The shell lives at the bottom and stays resident. Above it is a slot the `load`
+ * command fills over the console, `scripts/soc_jtag_stage.py` fills over JTAG, and
+ * `go` jumps to. That turns a firmware edit from a ~60 s bitstream rebuild into a
+ * few seconds of typing.
  *
  * The payload is NOT position-independent, and does not need to be: it is linked
  * for PAYLOAD_ORIGIN, a fixed address we choose. Position-independent code would
  * only buy "load anywhere", and we control both linker scripts.
+ *
+ * 44K + 20K, not 32K + 32K. The even split was chosen when the two halves were
+ * symmetric: one held a resident image, the other held an image being tried, and
+ * neither had a reason to be the larger. They are no longer symmetric.
+ *
+ *   * The shell is what grows. It is one image with every command in it, and
+ *     .text + .rodata + .bss is 33,248 bytes as this is written -- 480 bytes past
+ *     what an even split allows, with no stack at all. Three separate changes have
+ *     already been made to claw bytes back (opt-level "z", discarding .eh_frame),
+ *     and they do not compose: each measured the slack the others had left.
+ *   * The payload does not grow. `firmware/cynthion-payload` is the only image
+ *     this tree builds for the slot and it is under 4 KiB. 20K is five times it.
+ *
+ * Costs nothing in gateware: the block RAM is 64 KiB either way (RAM_SIZE in
+ * ecp5-test/riscv/vexii_hello_soc.py), the decoder sees one window, and no timing
+ * path changes. It is a division of an address space, made in one file plus the
+ * four places that must agree with it -- firmware/cynthion-payload/memory.x,
+ * scripts/soc_payload.py, scripts/soc_jtag_stage.py and src/hyperram.rs, all of
+ * which name the slot's size or its base.
+ *
+ * The shell's stack is what is left between .bss and _stack_start, so the 12 KiB
+ * this buys is stack: measured at 2,820 bytes before it, which was the healthiest
+ * any branch had managed.
  */
 MEMORY
 {
-    RAM     : ORIGIN = 0x00000000, LENGTH = 32K
-    PAYLOAD : ORIGIN = 0x00008000, LENGTH = 32K
+    RAM     : ORIGIN = 0x00000000, LENGTH = 44K
+    PAYLOAD : ORIGIN = 0x0000b000, LENGTH = 20K
 }
 
-/* Pin the stack to the top of the SHELL half.
+/* Pin the stack to the top of the SHELL region.
  *
  * riscv-rt defaults _stack_start to the end of REGION_STACK, which before the split
  * was the end of all 64K -- i.e. the top of what is now the payload slot. Loading an
@@ -67,10 +91,10 @@ _stext = ORIGIN(REGION_TEXT);
  * `compiler_builtins` rlibs, which is why `-C force-unwind-tables=no` on this crate
  * does not remove it.
  *
- * riscv-rt's link.x places it in REGION_RODATA, so on this design it is 1892 bytes of
- * the 32 KiB the shell gets -- and it comes out of the stack, because the stack is
+ * riscv-rt's link.x places it in REGION_RODATA, so on this design it was 1892 bytes of
+ * the 32 KiB the shell then had -- and it comes out of the stack, because the stack is
  * whatever is left between .bss and _stack_start. Recovering it took the stack from
- * 928 bytes back to 2820.
+ * 928 bytes back to 2820, which is the measurement the 44K/20K split above is against.
  *
  * A debugger loses nothing: `debug = true` in Cargo.toml emits DWARF `.debug_frame`,
  * which is not loaded and is what gdb uses here anyway.

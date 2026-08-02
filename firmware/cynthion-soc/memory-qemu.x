@@ -1,6 +1,6 @@
 /* QEMU `-M virt` memory map -- the counterpart to memory.x.
  *
- * memory.x is the hardware one (RAM at 0x00000000, 32K + a 32K payload slot, matching
+ * memory.x is the hardware one (RAM at 0x00000000, 44K + a 20K payload slot, matching
  * the block RAM in ecp5-test/riscv/vexii_hello_soc.py). This file exists because virt
  * puts DRAM at 0x80000000 and nothing whatsoever at 0, so the same image cannot be
  * linked for both. Selected by scripts/soc_test.py, which passes
@@ -20,19 +20,20 @@
 MEMORY
 {
     RAM     : ORIGIN = 0x80000000, LENGTH = 1M
-    PAYLOAD : ORIGIN = 0x80100000, LENGTH = 32K
+    PAYLOAD : ORIGIN = 0x80100000, LENGTH = 20K
 }
 
 /* Roomier than the board on purpose, and only here.
  *
- * The hardware split is 32K+32K because that is how much block RAM exists. Under QEMU
+ * The hardware split is 44K+20K out of the 64 KiB of block RAM that exists. Under QEMU
  * the constraint is gone, and the firmware needs the slack: hyperram.rs's QEMU backend
- * stands the staging buffer up in .bss, which is 32 KiB the board keeps in an external
- * part. Sizing this to match the board would fail the link with a region overflow rather
- * than fail a test, so it would never have been a useful check.
+ * stands the staging buffer up in .bss, which is a slot's worth the board keeps in an
+ * external part. Sizing RAM to match the board would fail the link with a region
+ * overflow rather than fail a test, so it would never have been a useful check.
  *
- * The payload slot keeps its 32K so `_payload_size` means the same thing on both, and
- * `go` reports a plausible address.
+ * The payload slot matches the board's 20K exactly, so `_payload_size` means the same
+ * thing on both, `go` reports a plausible address, and an image that would overflow the
+ * slot is refused here as well.
  */
 
 /* Pin the stack to the top of the shell half, as on hardware: a `load` that grew down

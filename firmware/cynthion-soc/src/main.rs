@@ -74,10 +74,12 @@ mod events;
 mod gpio;
 mod hyperram;
 mod fusb302;
+mod info;
 mod irq;
 mod log;
 mod plic;
 mod power;
+mod selftest;
 mod sideband;
 mod target;
 mod timer;
@@ -92,8 +94,8 @@ use uart::Uart;
 /// The most consoles this build will run shells for.
 ///
 /// Sized rather than allocated: `Shell` is ~80 bytes and there is no allocator. Four is
-/// well past the two the hardware has and costs a third of a kilobyte of the 32 KiB the
-/// shell half of block RAM gives us.
+/// well past the two the hardware has and costs a third of a kilobyte of the 44 KiB of
+/// block RAM the shell gets.
 ///
 /// `src/irq.rs` allocates one receive ring per slot, so this is now the dominant term in
 /// the firmware's static footprint: four rings of 256 bytes. Raising it costs a quarter of
@@ -402,6 +404,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  id            flash JEDEC id and capacity");
             let _ = writeln!(uart, "  read <hex>    read a word from flash");
             let _ = writeln!(uart, "  check         arithmetic and known flash values");
+            let _ = writeln!(uart, "  info          this image, this CPU, this gateware");
+            let _ = writeln!(uart, "  selftest      run each of them and report");
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
@@ -512,7 +516,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // Converting would be a 64-bit divide by a value only known at run
             // time, and on rv32 that is a call to `__udivdi3` -- 912 bytes of
             // compiler-builtins, measured, which is the difference between this
-            // firmware fitting in its 32 KiB half of block RAM and not. The
+            // firmware fitting in its share of block RAM and not. The
             // reader that needs milliseconds is `scripts/soc_test.py`, which has
             // `at {} Hz` on the same line and a language where the division is
             // free.
@@ -530,6 +534,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  cost    worst {} ticks  late worst {} ticks",
                              cost, late);
         }
+        b"info" => info::command(uart),
+        b"selftest" => selftest::command(uart),
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart, rest, devices),
         b"power" => board_power(uart, rest, devices),
@@ -630,7 +636,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // PRINTED rather than compared here, and `scripts/soc_test.py` holds
             // the expected string. Comparing in firmware needed a `core::fmt`
             // sink over a byte slice and seven `&str`s to check against, and
-            // this build has 32 KiB for everything -- the same reason the `sum`
+            // this build has 44 KiB for everything -- the same reason the `sum`
             // and `prod` values above are asserted by the test rather than by
             // the shell. What the firmware must supply is the bytes its own
             // formatter produces, and that is exactly what this is.

@@ -137,6 +137,22 @@ pub const TIME_HZ: u32 = 60_000_000;
 #[cfg(feature = "qemu")]
 pub const TIME_HZ: u32 = 10_000_000;
 
+/// The gateware's own account of itself -- git ref, build time, `sync`
+/// frequency, cache geometry -- or `None` on a target that is not a bitstream.
+///
+/// Separate from `BOARD` even though both are `Some` on the same target,
+/// because they answer different questions. `BOARD` is about hardware attached
+/// to the SoC; this is about the SoC. A build that dropped every board
+/// peripheral would still want it, and QEMU is not a bitstream at all, so under
+/// `-M virt` `info` says so rather than inventing an identity.
+///
+/// See `ecp5-test/riscv/gateware_id.py` for the register map.
+#[cfg(not(feature = "qemu"))]
+pub const GATEWARE: Option<usize> = Some(cynthion_soc_pac::base::BOARD_GATEWARE);
+
+#[cfg(feature = "qemu")]
+pub const GATEWARE: Option<usize> = None;
+
 /// One PLIC source per FUSB302B `int` line, in `fusb302::Port::ALL` order.
 ///
 /// Not one OR-ed source: a shared level obliges its handler to clear every

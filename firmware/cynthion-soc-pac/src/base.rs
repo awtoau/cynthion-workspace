@@ -84,6 +84,11 @@ pub const BOARD_I2C_MUX_TARGET_IRQ: u32 = 4;
 /// PLIC source number wired to BOARD_I2C_MUX_AUX.
 pub const BOARD_I2C_MUX_AUX_IRQ: u32 = 5;
 
+/// board/gateware: 7 registers at 0xf0000640
+pub const BOARD_GATEWARE: usize = 0xf0000640;
+/// Size of the BOARD_GATEWARE window, in bytes.
+pub const BOARD_GATEWARE_SIZE: usize = 0x00000020;
+
 /// plic: 9 registers at 0xf0400000
 pub const PLIC: usize = 0xf0400000;
 /// Size of the PLIC window, in bytes.

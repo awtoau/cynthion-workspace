@@ -11,7 +11,7 @@
 //!   shell, which is still resident and still owns the low half of RAM.
 //! - **No zero-initialised statics.** Nothing zeroes `.bss` -- that is normally
 //!   `riscv-rt`'s job. Keep state in locals.
-//! - **Do not write below `0x8000`.** That is the live shell and the live stack.
+//! - **Do not write below `0xb000`.** That is the live shell and the live stack.
 //!
 //! Returning from `payload_main` returns to the shell's prompt, because the shell
 //! called us with a normal `jalr` and `ra` still points into it.
@@ -64,7 +64,7 @@ impl Write for Console {
 /// Entry stub, placed at the very base of the payload slot by `memory.x`.
 ///
 /// The shell jumps to the slot's ADDRESS -- it has no symbol table for this image -- so
-/// whatever sits at `0x8000` is what runs. `.start` is placed first for exactly that
+/// whatever sits at `0xb000` is what runs. `.start` is placed first for exactly that
 /// reason, and `naked` guarantees the compiler emits no prologue ahead of the jump.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]
