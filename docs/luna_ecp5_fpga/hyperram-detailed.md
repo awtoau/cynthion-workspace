@@ -375,19 +375,62 @@ drives the sync domain from one of three PLL outputs and raises `KeyError` for
 anything else, so the region between 120 and 240 cannot be explored without a
 custom PLL.
 
-## Why the non-DQS PHY
+## Why the non-DQS PHY — and why that is now a choice rather than a limit
 
 LUNA ships two: `HyperRAMPHY`/`HyperRAMInterface` and
 `HyperRAMDQSPHY`/`HyperRAMDQSInterface`. The DQS variant uses the ECP5's DQS
 hardware (`DQSBUFM`, `TSHX2DQSA`, `DDRDLLA`) and should reach higher rates,
 because the strobe travels with the data rather than timing being estimated.
 
-It cannot be used on this board as written: it assigns to `bus.clk` as a single
-net, but the platform declares the HyperRAM clock as a **differential pair**, so
-the assignment fails. Interposing a buffer does not help — nextpnr requires
-`DELAYG` to sit directly on a top-level pin and fails packing with *"must be
-connected directly to top level input or output"*. Making the DQS path work means
-changing the platform's clock declaration or adapting the PHY.
+**Upstream's DQS PHY cannot be instantiated on r1.4, for three reasons that are
+all about I/O and none about DQS:**
+
+- it assigns `bus.clk` as a single net, and the platform declares the HyperRAM
+  clock as a `DiffPairs`;
+- it instantiates `BB` on `bus.dq.io`/`bus.rwds.io`, which exist only on a raw
+  (`dir="-"`) request, while writing `bus.clk`/`bus.cs` as if buffered;
+- it never drives `bus.reset` — the record carries the field and the elaboration
+  ignores it, leaving RESET# floating.
+
+`ecp5-test/riscv/hyperram_dqs_phy.py` replaces that layer and keeps the
+controller above it. `ecp5-test/hyperram/hyperram_dqs_top.py --build` runs the
+result through yosys and nextpnr.
+
+### The board IS wired for DQS
+
+This document previously recorded the DQS path as *"unusable — no DQS pin
+group"*. **That was wrong**, and it was never checked against the device
+database. prjtrellis tags RWDS (D1) `LDQS8` — the strobe pin of left group 8 —
+and every DQ line `LDQ8`/`LDQSN8`, same group, same bank 7.
+
+`scripts/hyperram_dqs_pins.py` checks it; nextpnr agrees, reporting
+`Constrained DQSBUFM 'phy.U$4' to LDQS8`.
+
+Note `function` is the wrong field to look at: it is populated for 58 of 197
+PIOs and empty for every HyperRAM pin, so a check written against it reports "no
+DQS group" for a board that has one.
+
+### `DELAYG` packs where it is put, and the differential clock is one buffer
+
+The recorded blocker *"nextpnr requires `DELAYG` to sit directly on a top-level
+pin"* did not reappear. Amaranth drives an LVCMOS33D pair by driving the **true**
+pin only and letting the bank generate the complement, so the clock path is
+`ODDRX2F → DELAYG → OBZ → C3` and nothing else — one buffer, not an interposed
+one. Driving `.n` as well would be two drivers on one pair.
+
+### Built, not run
+
+Neither build below has been on hardware; the board was in use.
+
+| sync | fast | DQSBUFM | usb | nextpnr Fmax |
+|---|---|---|---|---|
+| 60 MHz | 120 MHz | `LDQS8` | 60.000 MHz | 223.06 MHz, PASS |
+| 120 MHz | 240 MHz | `LDQS8` | 60.000 MHz | 230.79 MHz, PASS |
+
+The second row is the interesting one: **at 120 MHz the DQS design closes timing
+where the non-DQS one does not** (105 MHz achievable against 120 required). It is
+a bare design — HyperRAM, a clock and six LEDs — so this is the PHY path's own
+margin and not the SoC's.
 
 ## Trap: the interface is 16 bits, not 32
 
@@ -430,7 +473,7 @@ and the gateware instrumentation that rules out the device are in
 | issue | what | blocked on |
 |---|---|---|
 | **#90** | Wishbone peripheral, so a CPU can reach the HyperRAM at all. There is a working low-level driver and no bus adapter, which is why the memory work stalled while the flash work did not | nothing -- design work, survey already done |
-| **#92** | Bring up the DQS path. The variant in use times reads against a fixed latency count; the DQS variant uses the ECP5's DQS hardware and is what would make 120 MHz safe rather than merely observed-working | #90, and a RISC-V to drive it |
+| **#92** | Bring up the DQS path. **Blocker removed and the design builds** — PHY, `fast` domain and a self-checking top; what remains is running it on the board and pushing the clock | a board, and time on it |
 | #91 | RISC-V bring-up | the SoC is silent; cause not established |
 | #109 | The capacity question above | **answered: 8 MiB against a declared 4.** What remains is retention over hours rather than milliseconds, and whether other boards behave the same |
 
@@ -442,7 +485,8 @@ change that.
 
 And the 120 MHz result relies on a path **nextpnr says does not close** (105 MHz
 achievable against 120 required) while every word verifies repeatably. That is a
-deliberate choice, and #92's DQS path is the principled fix.
+deliberate choice, and #92's DQS path is the principled fix — which now builds,
+and which nextpnr says *does* close at 120 MHz.
 
 ---
 
@@ -475,9 +519,10 @@ works on this board:
 | PHY | primitives | on Cynthion r1.4 |
 |---|---|---|
 | non-DQS (`HyperRAMPHY`) | `ODDRX1F`, `IDDRX1F`, `DELAYF` | **the verified path** |
-| DQS (`HyperRAMDQSPHY`) | `DQSBUFM`, `TSHX2DQSA`, `DDRDLLA` | unusable — no DQS pin group |
+| DQS (`HyperRAMDQSPHY`) | `DQSBUFM`, `TSHX2DQSA`, `DDRDLLA` | upstream's does not elaborate here; ours does, and places on `LDQS8` |
 
-Every measurement in `hyperram-detailed.md` is on the non-DQS path.
+Every *measurement* in this document is on the non-DQS path. The DQS path has
+been built and not run.
 
 ChipFlow's is the better-*structured* code by some distance, but it targets ASICs
 and contains **no FPGA I/O primitives at all** — no `DDRBuffer`, no `Instance()`.

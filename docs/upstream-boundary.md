@@ -132,18 +132,54 @@ Rust dependencies, tracked in this repository's issues.
 | [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | moondancer | `gcp/moondancer.rs` | clamp endpoint `max_packet_size` to 512 (the HS limit) instead of rejecting SuperSpeed devices |
 | [#65](https://github.com/awtoau/cynthion-workspace/issues/65) | apollo | `uart.c`, `console.c`, `vendor.c`, `apollo_mode.c` | JTAG/UART arbitration on the shared PA11/PA14 pins — see [`hardware.md`](hardware.md#pin-sharing--the-two-hazards) |
 
-## Not yet decided
+## Decided: HyperRAM splits at the PHY
 
-**HyperRAM.** We use `HyperRAMInterface` and `HyperRAMPHY` as-is, and they work — 220.2
-MB/s, 92.8% of theoretical. But there is **no Wishbone peripheral**, so a CPU cannot reach
-it at all (#90), and the DQS path is unfinished (#92). Writing that adapter is unavoidable;
-whether it wraps upstream's controller or replaces it is open, and worth deciding
-deliberately rather than by accident.
+**We keep upstream's controller and replace upstream's PHY.** The split is at the record
+between them, and it falls out of the policy rather than being a compromise: `HyperBus` is
+a published protocol and the layer that speaks it is generic; the layer below it is ECP5
+I/O for r1.4's pin map, which is exactly the "genuinely Cynthion-specific" the policy
+reserves — and reserving it means writing it, because nobody else has this board.
+
+| layer | whose | why |
+|---|---|---|
+| `HyperRAMInterface`, `HyperRAMDQSInterface` | **upstream, unchanged** | command encoding, latency, burst. Verified: 220.2 MB/s on the non-DQS path |
+| `HyperRAMPHY` (non-DQS) | **upstream, unchanged** | it elaborates here and it works |
+| `HyperRAMDQSPHY` | **ours** (`ecp5-test/riscv/hyperram_dqs_phy.py`) | upstream's cannot be instantiated on r1.4 at all — see below |
+
+**Wrapping upstream's DQS PHY was not an option.** It fails for three separate reasons,
+none of them about DQS: it assigns `bus.clk` as a single net where the platform declares a
+`DiffPairs`; it instantiates `BB` on `bus.dq.io`/`bus.rwds.io`, which exist only on a raw
+request, while writing `bus.clk`/`bus.cs` as if buffered; and it never drives `bus.reset`,
+leaving RESET# floating. There is no wrapper that fixes an assignment inside another
+module's `elaborate`.
+
+**And the board was wired for DQS all along.** `hyperram-detailed.md` recorded "unusable —
+no DQS pin group"; the device database says RWDS is on `LDQS8` and every DQ line is in the
+same group, and nextpnr agrees. `scripts/hyperram_dqs_pins.py` is the check.
+
+Two upstream defects are **left in place, deliberately**, both in the controller:
+
+- `RECOVERY` carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
+  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). The gap is held by the
+  caller instead, where it can be counted. `scripts/soc_hyperram_sim.py` asserts
+  back-to-back transactions violate it and that holding the gap fixes it.
+- `with m.If(extra_latency | 1)` makes the low-latency branch dead, which #90 reports as
+  costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
+  reads `0x8f2f`, which selects *fixed* latency, so the device takes the long count every
+  time and RWDS says nothing about the transaction. Honouring RWDS pays only after CR0 is
+  reprogrammed to variable latency — two changes, not one, and worth measuring rather than
+  assuming.
+
+**Still open: the Wishbone peripheral (#90).** Nothing here settles it, because a bus
+adapter is ours by construction — there is no upstream one to take.
 
 Three bugs were found in *our own* use of that interface, not in it: `final_word` must be
 held rather than pulsed, `perform_write`/`write_data` must be held for the whole transfer,
 and `CHID` is a single register window so channel setup is not re-entrant. All three
-produced plausible wrong answers rather than failures.
+produced plausible wrong answers rather than failures. The first two are now asserted in
+simulation rather than only written down.
+
+## Not yet decided
 
 **`luna-soc` fork.** `cynthion` pins `luna-soc` to `awtoau/awto-luna-soc`. The fork existed
 for an Amaranth API change and 40+ patched CSR classes; upstream is now **ahead**, so the
