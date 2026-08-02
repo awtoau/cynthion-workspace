@@ -505,12 +505,23 @@ static inline unsigned int flash_status1(void) {{
    will never clear", and the second is exactly what happened while the command path
    was faulty -- the CPU hung with no output and looked dead.
 
-   FLASH_WAIT_LIMIT is ~10x the datasheet maximum for the slowest operation here
-   (block erase, tBE 2000 ms typical / 4000 ms max at 60 MHz). Anything past that is
-   not a slow flash, it is a broken read. On expiry this returns with the top bit set
-   so the caller can report a timeout rather than silently believing the operation
-   finished. */
-#define FLASH_WAIT_LIMIT 0x20000000u
+   FLASH_WAIT_LIMIT COUNTS TRANSACTIONS, NOT CYCLES, and that distinction is the whole
+   sizing. Each spin is a full 16-bit status read: 16 SCK at 30 MHz (sync 60 / 2*(1+0))
+   plus four uncached CSR accesses, each a Wishbone round trip -- order 2 us, not one
+   cycle. An earlier value of 0x20000000 was derived as though spins were cycles, which
+   made the bound about eighteen minutes rather than the few seconds intended. A timeout
+   that long is not a bound; nobody waits for it, so the hang it exists to diagnose looks
+   exactly like the hang it was meant to distinguish.
+
+   The slowest operation this firmware issues is a 4 KiB SECTOR erase -- there is no
+   block or chip erase opcode here -- so tSE, 400 ms maximum, is what binds. Ten times
+   that is 4 s, and at ~2 us a spin that is ~2M transactions.
+
+   Too small is worse than too large: it reports a timeout on an erase that was going to
+   finish. 10x the datasheet maximum is the headroom that makes a expiry mean a broken
+   read rather than a slow flash. On expiry this returns with the top bit set so the
+   caller can report a timeout rather than silently believing the operation finished. */
+#define FLASH_WAIT_LIMIT 0x200000u
 #define FLASH_WAIT_TIMEOUT 0x80000000u
 
 static inline unsigned int flash_wait_ready(void) {{
