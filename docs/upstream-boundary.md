@@ -5,19 +5,36 @@ from, and why. Written because the boundary was becoming emergent rather than de
 things were being replaced one at a time, as each one broke, without anyone stating the
 policy.
 
-**The short version: we keep their USB and expect to take more of their gateware later.
-We have diverged on four components and the pin map, each for a measured reason.**
-
-**Standing direction on Great Scott Gadgets code:** reserve it for work that is genuinely
-Cynthion-specific — the r1.4 pin map, the USB stack we already depend on, gateware unique
-to this product. For anything general (an interrupt controller, a timer, a bus primitive)
-look at upstream `amaranth-soc` first, then the wider Amaranth ecosystem, then write our
-own. Writing our own is an acceptable outcome, not a last resort.
+**The short version: `luna`'s USB gateware is good and we keep it. `luna_soc` is a
+different matter — three defects have been traced to it — and the standing rule is now
+that Great Scott Gadgets code is reserved for the genuinely Cynthion-specific.**
 
 ## The policy
 
-**Use upstream where it works.** Their USB stack in particular is good, widely exercised,
-and reimplementing it would be a large amount of work to arrive at something worse.
+**Reserve Great Scott Gadgets code for work that is genuinely Cynthion-specific** — the
+r1.4 pin map, the USB stack we already depend on, gateware unique to this product. For
+anything general (an interrupt controller, a timer, a UART, a bus primitive) look at
+upstream `amaranth-soc` first, then the wider Amaranth ecosystem, then a published
+standard register map, then write our own. **Writing our own is an acceptable outcome,
+not a last resort.**
+
+This is a change of direction, and it is worth being explicit about what changed. The
+earlier framing here was "we expect to take more of their gateware later", with the
+luna_soc peripheral set — timer, uart, gpio, spi — listed as things we would adopt rather
+than write. That is no longer the plan.
+
+**Distinguish `luna` from `luna_soc`.** They are not the same quality of code and should
+not be treated as one decision:
+
+- **`luna`** — the USB gateware. Good, widely exercised, and reimplementing it would be a
+  large amount of work to arrive at something worse. **No defect has been found in it.**
+- **`luna_soc`** — the SoC peripherals. **Three defects traced to it so far**, all three
+  found on this board, all three in code paths their own firmware happens not to
+  exercise: the SPI crossbar starvation, the CS-hold register type, and `oe = ~tx.rdy`
+  releasing the UART's stop bit early. Each is documented below with a reproducer.
+
+Three faults in three peripherals is a pattern rather than bad luck, and it is the reason
+generic peripherals are now written here or taken from a published standard map instead.
 
 **Replace what blocks us, and say so here.** Every divergence below exists because
 something was measurably wrong or measurably limiting, not because we preferred our own
@@ -25,7 +42,9 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 
 **Vendor the board definition rather than inheriting a stack for it.** The r1.4 pin map is
 340 lines of hardware wiring; taking it via `cynthion` pulls in `LUNAApolloPlatform`,
-`LUNAPlatform` and a `luna-soc` fork pin.
+`LUNAPlatform` and a `luna-soc` fork pin. Now vendored at
+`ecp5-test/cynthion_platform/cynthion_r1_4.py`; see
+[`hardware.md`](hardware.md).
 
 ## Used as-is, and we intend to keep using it
 
@@ -102,6 +121,39 @@ flash.
 Ours uses a latching `csr.action.RW` hold register. Confirmed by ILA: CS is one unbroken
 run.
 
+### UART pad output enable — the stop bit was never driven
+
+`ecp5-test/riscv/serial_line.py`, replacing the `oe` derivation `luna_soc`'s
+`UARTProvider` uses.
+
+**Upstream bug, third of three, and the same shape as the CS one: a hold expressed as a
+ready.** The pad's output enable came off `~phy.tx.rdy`. `rdy` is combinational on the
+transmitter's IDLE state, and the FSM enters IDLE *on the same cycle it shifts the stop
+bit out* — so `oe` fell at the **start** of the stop bit and the last bit of every
+character was left to the pad's pull-up.
+
+Measured directly at divisor 8: data bits end at cycle 79, `o` goes high at 80, `rdy`
+goes high at 80, and the stop bit occupies 80..87. **It was driven for none of it.**
+
+An ECP5 internal pull-up is tens of kilohms and every ASCII character has bit 7 low, so
+the line was released from a hard 0 and had to RC-charge to a valid mark before the
+SAMD11's oversampler sampled the middle of the bit. It has enough time on a good day —
+which is why this presented as intermittent console corruption rather than a dead link.
+
+Ours counts the frame instead of inferring it: `oe` is held from the cycle the byte is
+accepted for `(1 + frame_bits) * divisor` cycles, and released **after** the stop bit. The
+period is one bit longer than the frame because `AsyncSerialTX` holds the mark for a full
+bit period between accepting the byte and emitting the start bit. A reload-wins-over-
+decrement rule keeps `oe` continuously asserted across back-to-back characters instead of
+blinking between them.
+
+Reproducer: `scripts/soc_serial_sim.py`, which measures the transmitter directly and fails
+if the constant drifts from what the PHY actually does. Fixed in commit `52c607a` (#113).
+
+Releasing when idle is still the policy — it is the only arbitration that exists on the
+FPGA side of these shared pins. Holding the line during a transmission is not a change to
+that policy; it is what the policy meant.
+
 ### Interrupt controller — ours, written to the RISC-V PLIC spec
 
 `ecp5-test/riscv/vexii_plic.py`. **No upstream code was used, from luna-soc or anywhere
@@ -171,36 +223,49 @@ base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins 
 the `awtoau/awto-luna-soc` fork. The target is a self-contained platform depending only on
 `amaranth`, `amaranth.build` and `amaranth_boards.resources`.
 
-## Expected to come back for more
+## Still expected from upstream — and it is Cynthion-specific work
 
-**This is not an exit.** Vendoring the pin map and replacing three broken components is not
-a decision to stop using upstream, and the list below is expected to grow in the *other*
-direction as more of their work becomes useful.
-
-Their gateware that we have not needed yet, and probably will:
+**This is not an exit.** The policy reserves Great Scott Gadgets code for the genuinely
+Cynthion-specific, and there is a lot of that: it is their product, and the parts of their
+tree that are *about this board* are exactly the parts worth taking.
 
 | what | where | likely use |
 |---|---|---|
-| USB analyzer | `cynthion` gateware | the product's actual purpose -- capture and decode |
+| USB analyzer | `cynthion` gateware | the product's actual purpose — capture and decode |
 | `ApolloAdvertiser` | `apollo_fpga.gateware.advertiser` | claiming the CONTROL port, which AUX-only designs avoid today |
 | Facedancer gateware | `cynthion/.../gateware/facedancer` | device emulation; also the SoC moondancer targets |
 | `flash_bridge` | `apollo_fpga.gateware` | `flash --fast`, an FPGA-side flash writer |
 | selftest bitstream | `cynthion.selftest` | already used by some scripts here |
-| `luna_soc` peripherals | timer, uart, gpio, usb2 | needed for moondancer; none built yet |
 
-Moondancer itself is the clearest case: it targets `riscv32imac` (which our CPU is), it
-expects `blockram` at `0x00000000` and `spiflash` at `0x100b0000` (which we now have), and
-it needs leds, gpio0, gpio1, timer0, timer1, spi0 and a USB peripheral — **all of which are
-luna_soc peripherals we would take rather than write.**
+Every row is board-specific. **The generic peripherals are no longer on this list.**
 
-So the rule is not "leave upstream behind". It is:
+Moondancer is the case that used to argue the other way, and it is worth stating how it
+now reads. It targets `riscv32imac` (which our CPU is), expects `blockram` at `0x00000000`
+and `spiflash` at `0x100b0000` (which we now have), and needs leds, gpio0, gpio1, timer0,
+timer1, spi0 and a USB peripheral. Those are luna_soc peripherals — but what moondancer
+actually depends on is the **register interface**, not the implementation behind it. Three
+of that peripheral set have now been reimplemented here after defects, and the compatible
+thing to supply is the map, not the module.
 
-- **take what works**, and most of it does
+So the rule is:
+
+- **take what is about this board**, and most of that is good
+- **write, or take from a published standard map, anything generic**
 - **replace what is measurably broken or limiting**, with the reason recorded here
-- **do not inherit a stack to get one file** -- vendor the file
+- **do not inherit a stack to get one file** — vendor the file
 
-The divergences above are three components and a pin map. Everything else stays, and more
-is expected to arrive.
+## Patches carried against vendored trees
+
+Not gateware divergences — these are source patches applied to the vendored Python and
+Rust dependencies, tracked in this repository's issues.
+
+| Issue | Component | File | What |
+|---|---|---|---|
+| [#8](https://github.com/awtoau/cynthion-workspace/issues/8) | facedancer | `configuration.py` | skip pre-interface descriptors (e.g. IAD) before the first interface |
+| [#9](https://github.com/awtoau/cynthion-workspace/issues/9) | facedancer | `backends/base.py` | downgrade a duplicate-endpoint-address exception to a warning (UVC alt settings) |
+| [#10](https://github.com/awtoau/cynthion-workspace/issues/10) | facedancer | `backends/moondancer.py` | deduplicate endpoints by address before `configure_endpoints` |
+| [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | moondancer | `gcp/moondancer.rs` | clamp endpoint `max_packet_size` to 512 (the HS limit) instead of rejecting SuperSpeed devices |
+| [#65](https://github.com/awtoau/cynthion-workspace/issues/65) | apollo | `uart.c`, `console.c`, `vendor.c`, `apollo_mode.c` | JTAG/UART arbitration on the shared PA11/PA14 pins — see [`hardware.md`](hardware.md#pin-sharing--the-two-hazards) |
 
 ## Not yet decided
 
@@ -221,13 +286,23 @@ amaranth-soc reason is gone. Whether anything else still needs it has not been c
 
 ## Reporting upstream
 
-Two clean defects with standalone reproducers — the crossbar starvation and the CS hold —
-both in `greatscottgadgets/luna-soc`, both reachable only by memory-mapping flash *and*
-using arbitrary commands. Cynthion's own SoC instantiates exactly that combination
+**Three clean defects with standalone reproducers**, all in
+`greatscottgadgets/luna-soc` — not in `luna`, whose USB gateware has been solid
+throughout.
+
+| defect | reproducer | why nobody upstream hit it |
+|---|---|---|
+| SPI crossbar starvation | `scripts/riscv_flash_crossbar_sim.py` | needs flash memory-mapped **and** arbitrary commands; upstream grants at cycle 0 when the map is idle and never in 600 cycles when it holds `cs` |
+| CS hold as a one-cycle `csr.action.W` | ILA capture; CS fragmented into four 8-bit windows during a JEDEC read | moondancer's `read_flash_uuid` writes all 13 command bytes into the 16-deep FIFO before reading, so `r_rdy` never drops |
+| `oe = ~tx.rdy` releasing the stop bit | `scripts/soc_serial_sim.py` | the released line RC-charges through a pull-up and usually arrives in time; it presents as intermittent corruption, not a dead link |
+
+The first two are reachable only by memory-mapping flash *and* using arbitrary commands.
+Cynthion's own SoC instantiates exactly that combination
 (`with_controller=True, with_mmap=True`), so this is their code on their hardware.
 
-Worth reporting as one issue rather than two: the CS bug is the interesting half, and the
-explanation of why their firmware survives it is what makes the report actionable.
+The first two are worth reporting as one issue rather than two: the CS bug is the
+interesting half, and the explanation of why their firmware survives it is what makes the
+report actionable. The UART one stands alone.
 
 Per the workspace rules, upstream repos need three checks before anything is filed. Draft
 locally first.

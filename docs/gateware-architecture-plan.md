@@ -34,47 +34,22 @@ mattering.
 
 ## One I2C controller, three bus pin-sets
 
-r1.4 has **three physically separate I2C buses**, which is not obvious and
-changes the design:
+r1.4 has **three physically separate I2C buses**, and the reason is forced rather
+than chosen: **both FUSB302Bs sit at address `0x22`**, so they cannot be
+distinguished on one bus. The bus table, the pins and the addresses are in
+[`hardware.md`](hardware.md#the-buses); the chip notes are
+[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) and
+[`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md).
 
-| resource | pins | device |
-|---|---|---|
-| `target_type_c` | A4 / C4 | FUSB302B @ `0x22` |
-| `aux_type_c` | H12 / G14 | FUSB302B @ `0x22` |
-| `power_monitor` | D7 / C7 | PAC1954 @ `0x10` |
+The consequence for this plan: "just use one bus" is not available in hardware,
+but one *controller* is. A single I2C master with a 2-bit bus select driving three
+pin-sets is the multiplexed master #98 already asks for, and it replaces three
+replicated controllers with one plus a mux.
 
-**The two FUSB302Bs share address `0x22`, which is why they are on separate
-buses** -- they cannot be distinguished on one. So "just use one bus" is not
-available in hardware.
-
-But one *controller* is: a single I2C master with a 2-bit bus select driving three
-pin-sets. That is the multiplexed master #98 already asks for, and it replaces
-three replicated controllers with one plus a mux.
-
-### The interrupt lines can be OR-ed together
-
-Each Type-C bus brings an `int` and a `fault` line, so six signals for two
-devices. They do **not** need six PLIC sources: OR the `int` lines into one.
-
-This is not only a logic saving, it follows from the mux. With a single
-controller only one device can be talked to at a time, so per-device sources buy
-nothing -- the handler has to serialise its register reads over the shared bus
-regardless. And nothing is lost by merging them: the FUSB302B's interrupt
-register has to be read to decode *and clear* the cause, so that read happens
-either way.
-
-**The trap, when this is built:** a shared line is level-sensitive, so the
-handler must read and clear *every* asserted device before it returns, not just
-the first one it finds. Missing one leaves the line asserted, the interrupt
-re-fires immediately, and the result is a storm that presents as a hung CPU --
-which on this project has repeatedly been mistaken for dead gateware.
-
-Keep `fault` distinct from `int`. It means something different, and it is the one
-worth noticing unambiguously rather than after a register read.
-
-Not urgent. PD negotiation is not on the critical path; the value of the
-interrupt is that a state change can be looked into when it happens instead of
-polled.
+The interrupt lines can be OR-ed together, and the level-sensitive trap that comes
+with doing so is described in
+[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
+negotiation is not on the critical path.
 
 **On presenting the LEDs as a fake I2C device:** attractive for uniformity and
 wrong here. The LEDs are six wires in the same fabric -- wrapping them in a
@@ -115,6 +90,9 @@ bitstream will configure the ports differently. The point is proving all three
 
 **HyperRAM ID and serial readback.** Small, and closes a real gap: DEVICES
 currently reports `hyperram absent` as a presence bit with no identity behind it.
+The registers themselves are already read and decoded from a standalone bitstream
+— [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) — so what is missing is
+the CPU-side path, not the knowledge.
 
 **FUSB302B and die temperature over the sideband.** Small, because the gateware
 exists -- `ecp5-test/pins/fusb302_id.py` already reads both controllers. What is

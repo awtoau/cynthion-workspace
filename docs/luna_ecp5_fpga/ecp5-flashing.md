@@ -208,4 +208,5 @@ holding the nodes.
 - [Cynthion selftest gateware](../../repos/cynthion/cynthion/python/src/gateware/selftest/top.py) — buildable top used in the examples above
 - [Apollo selftest harness](../../repos/apollo/apollo_fpga/support/selftest.py) — `ApolloSelfTestCase`, `@named_test`
 - [scripts/cyn_main.py](../../scripts/cyn_main.py) — `cyn flash gateware`, wired to `build/top.bit`
-- [docs/hardware_architecture.md](../hardware_architecture.md)
+- [docs/hardware.md](../hardware.md) — the board index
+- [docs/chips/w25q32-config-flash.md](../chips/w25q32-config-flash.md) — the flash part itself
