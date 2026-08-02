@@ -102,21 +102,45 @@ Full throughput characterisation and the measurement traps:
 
 12 signals, `IO_TYPE="LVCMOS33"`, `SLEWRATE="FAST"`, DDR on the data path.
 
-| signal | ECP5 pin |
-|---|---|
-| `clk` P / N (LVCMOS33D differential) | C3 / D3 |
-| `dq[0..7]` | F2, B1, C2, E1, E3, E2, F3, G4 |
-| `rwds` | D1 |
-| `cs` (active low) | B2 |
-| `reset` (active low) | C1 |
+| signal | ECP5 pin | DQS group |
+|---|---|---|
+| `clk` P / N (LVCMOS33D differential) | C3 / D3 | `LDQ8` |
+| `dq[0..7]` | F2, B1, C2, E1, E3, E2, F3, G4 | `LDQ8`, except E2 = `LDQSN8` |
+| `rwds` | D1 | **`LDQS8` — the group's strobe pin** |
+| `cs` (active low) | B2 | `LDQ8` |
+| `reset` (active low) | C1 | `LDQ8` |
+
+**Everything is in left DQS group 8, bank 7, and RWDS is on the strobe pin.** So
+the ECP5's `DQSBUFM` can reach this part: the board was wired for the DQS read
+path. `scripts/hyperram_dqs_pins.py` checks it against the prjtrellis database,
+and nextpnr confirms it (`Constrained DQSBUFM 'phy.U$4' to LDQS8`).
+
+E2 carries `dq[5]` on the group's DQSN pin, which is free because RWDS is
+single-ended.
 
 ## How software reaches it
 
 `HyperRAMInterface` / `HyperRAMPHY` from luna, used as-is and working. **There is
-no Wishbone peripheral, so a CPU cannot reach it at all** (#90), and the DQS path
-is unfinished (#92). Writing that adapter is unavoidable; whether it wraps
-upstream's controller or replaces it is open —
-[`../upstream-boundary.md`](../upstream-boundary.md).
+no Wishbone peripheral, so a CPU cannot reach it at all** (#90).
+
+The DQS path (#92) now builds: upstream's controller with our PHY under it, which
+is the boundary [`../upstream-boundary.md`](../upstream-boundary.md) settles.
+It has not been on hardware.
+
+## Timing this design can violate without a symptom
+
+**tCSHI, 10 ns of CS# high between transactions.** Longer than one 120 MHz cycle
+(8.33 ns), and `HyperRAMDQSInterface`'s `RECOVERY` state carries
+`# TODO: implement recovery` and falls straight through to `IDLE` — so the
+controller keeps no gap and the caller must. A violation does not fail; it
+occasionally returns the wrong word.
+
+**Fixed latency changes what a latency "fix" is worth.** CR0 `0x8f2f` has the
+fixed-latency bit set, so the part takes the long count on every transaction and
+RWDS during the command period is not a signal about that transaction. LUNA's
+`extra_latency | 1` — reported as a defect in #90 — is therefore the correct
+behaviour here. Shortening the latency needs CR0 reprogrammed first, and then
+measuring; one without the other reads early.
 
 Three bugs were found in *our own* use of that interface, not in it, and all three
 produced plausible wrong answers rather than failures:
@@ -129,6 +153,9 @@ produced plausible wrong answers rather than failures:
 
 | | |
 |---|---|
+| `scripts/hyperram_dqs_pins.py` | is the DQS group reachable? Device database, no board |
+| `scripts/soc_hyperram_sim.py` | the protocol layer against a model of this part |
+| `ecp5-test/hyperram/hyperram_dqs_top.py` | DQS bring-up bitstream (`--build` never programs) |
 | `scripts/hyperram_identify.py` | ID0/ID1/CR0/CR1 and bank aliasing |
 | `scripts/hyperram_regfuzz.py` | the `0x1000` register block, plus a write test |
 | `scripts/hyperram_ladder.py`, `hyperram_fifo.py` | throughput and clock ceiling |
