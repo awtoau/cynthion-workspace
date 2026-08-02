@@ -64,10 +64,12 @@
 //! `AtomicU8`/`AtomicUsize` with acquire/release gives that, and on riscv32imac
 //! it compiles to ordinary loads and stores with `fence`s.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize,
+                         Ordering};
 
 use riscv::interrupt::Interrupt;
 
+use crate::events;
 use crate::plic::Plic;
 use crate::target;
 use crate::uart::UartRx;
@@ -220,11 +222,71 @@ fn machine_external() {
     while let Some(source) = plic.claim() {
         if let Some(index) = console_of(source) {
             service(index);
+        } else if Some(source) == target::TYPE_C_IRQ {
+            defer_type_c(&plic);
         }
         // ALWAYS, including for a source with no handler. A claim that is never
         // completed gates that source off for the rest of the session, with
         // `pending` reading zero and the peripheral asserting into the void.
         plic.complete(source);
+    }
+}
+
+/// A shared, level-sensitive Type-C line, handled by NOT handling it here.
+///
+/// The two FUSB302Bs' `int` lines are OR-ed into one source, and clearing one
+/// means reading three read-to-clear registers over I2C -- about a millisecond
+/// at 80 kHz, on the single controller the power monitor's poll is also using.
+/// Doing that here would be a long spin inside an interrupt AND a second master
+/// on a peripheral with no lock, either of which is worse than the problem.
+///
+/// So: mask the source, record the event, return. The line stays asserted and
+/// the PLIC keeps its pending bit; nothing is lost. `type_c::service` in normal
+/// context clears every asserting device and re-enables the source, which is
+/// where the "clear EVERY device" rule in `docs/chips/fusb302b-type-c.md`
+/// actually lives. The storm that rule warns about cannot happen, because the
+/// source is off for the entire window in which the line is still high.
+///
+/// `log_from_irq!` records; it does not print. See `src/events.rs` for why a
+/// handler that printed would hang this board.
+fn defer_type_c(plic: &Plic) {
+    plic.disable(TYPE_C_SOURCE.load(Ordering::Relaxed));
+    PENDING_TYPE_C.store(true, Ordering::Release);
+    // The mux's LINES register would say which controller asserted, but reading
+    // it needs a base address this module has no business knowing and the
+    // answer is re-read by the service routine anyway -- between here and there
+    // the other controller may assert too, and acting on the older picture is
+    // exactly how one gets left set.
+    let _ = crate::log_from_irq!(events::TYPE_C_INT);
+}
+
+/// Set by the handler, cleared by [`take_type_c`]. `Release`/`Acquire` so the
+/// mask is visible before the flag that publishes it.
+static PENDING_TYPE_C: AtomicBool = AtomicBool::new(false);
+
+/// The source number the handler masks, so `defer_type_c` needs no target
+/// import at the point of use. Written once by `init`.
+static TYPE_C_SOURCE: AtomicU32 = AtomicU32::new(0);
+
+/// Has the Type-C source fired and not yet been serviced?
+///
+/// Consuming, so the main loop services once per assertion rather than on every
+/// pass. The source stays masked until [`resume_type_c`] is called, which is
+/// what makes the sequence safe to be slow.
+pub fn take_type_c() -> bool {
+    PENDING_TYPE_C.swap(false, Ordering::Acquire)
+}
+
+/// Re-enable the Type-C source, after every asserting device has been cleared.
+///
+/// Called by normal context and only there. If a device is still asserting when
+/// this runs, the interrupt fires again immediately -- which is correct, there
+/// is still work -- and the deferral repeats rather than spinning, because the
+/// handler masks again on the way in.
+pub fn resume_type_c() {
+    let source = TYPE_C_SOURCE.load(Ordering::Relaxed);
+    if source != 0 {
+        Plic::new(target::PLIC_BASE).enable(source);
     }
 }
 
@@ -253,6 +315,16 @@ pub fn init() {
         //
         // Harmless when there is nothing to release: completing a source that
         // was not claimed clears a bit that was already clear.
+        plic.complete(source);
+    }
+
+    // The Type-C source, if this target has one. Same priority as the consoles:
+    // nothing here is more urgent than a keystroke, and a plug event that waits
+    // a few microseconds is a plug event nobody notices waited.
+    if let Some(source) = target::TYPE_C_IRQ {
+        TYPE_C_SOURCE.store(source, Ordering::Relaxed);
+        plic.set_priority(source, 1);
+        plic.enable(source);
         plic.complete(source);
     }
 

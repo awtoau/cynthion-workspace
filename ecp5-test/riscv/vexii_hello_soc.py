@@ -86,6 +86,9 @@ from serial_line import SerialLine
 from i2c_master import I2CMaster, prescale_for
 from sideband_csr import SidebandControl
 from ulpi_window import UlpiRegisters
+from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
+                     BUS_AUX_C as I2C_MUX_AUX_C,
+                     BUS_POWER_MONITOR as I2C_MUX_POWER)
 from stream_buffer import StreamBuffer
 from wishbone_pipe import RegisteredResponse
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
@@ -164,6 +167,7 @@ APOLLO_UART_BASE = 0xf0000500
 #   +0x10  i2c        8 bytes  i2c_master.I2CMaster
 #   +0x18  sideband   1 byte   sideband_csr.SidebandControl
 #   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
+#   +0x20  i2c_mux    2 bytes  i2c_mux.I2CBusMux
 #
 # The sub-addresses are the peripherals' natural sizes and each window is
 # aligned to its own size, which is what MemoryMap requires. The decoder is 64
@@ -175,6 +179,7 @@ GPIO_BASE      = BOARD_BASE + 0x00
 I2C_BASE       = BOARD_BASE + 0x10
 SIDEBAND_BASE  = BOARD_BASE + 0x18
 ULPI_BASE      = BOARD_BASE + 0x1c
+I2C_MUX_BASE   = BOARD_BASE + 0x20
 
 # What is on each GPIO pin.
 #
@@ -329,6 +334,28 @@ IRQ_APOLLO = 2
 # wire is here so that a future driver -- one feeding the sideband's power
 # payload from a timer, say -- does not need a bitstream change to use it.
 IRQ_I2C = 3
+
+# The two FUSB302Bs' `int` lines, OR-ed into ONE source.
+#
+# Fourth, so nothing above it renumbers. One source for two devices because with
+# a single muxed controller only one of them can be addressed at a time: the
+# handler has to serialise its register reads over the shared bus whatever the
+# PLIC says, and it has to read the mux's LINES register to decide which device
+# to service either way, so a second source would buy nothing and cost a second
+# claim/complete pair.
+#
+# THE LINE IS A LEVEL AND IT IS SHARED, which is the trap
+# `docs/chips/fusb302b-type-c.md` warns about: whatever services it must clear
+# EVERY asserting device before the source is re-enabled, or the line stays high
+# and the interrupt re-fires immediately -- a storm that presents as a hung CPU.
+# The firmware's answer is in `src/irq.rs`: the handler masks the source and
+# records the event, and normal context clears every device and re-enables. That
+# also keeps the one I2C controller out of a handler that would otherwise be
+# racing the foreground for it.
+#
+# `fault` is deliberately NOT in this OR. It means something different from
+# `int` and is worth noticing unambiguously rather than after a register read.
+IRQ_TYPE_C = 4
 
 # Capture depth, in samples of the sync clock.
 #
@@ -496,6 +523,11 @@ class HelloSoC(Elaboratable):
         # that evicted the SoC to make room.
         m.submodules.target_ulpi = target_ulpi = UlpiRegisters()
 
+        # The bus select for the one I2C controller, and the four Type-C signals
+        # that come with it. See i2c_mux.py: both FUSB302Bs answer to 0x22, so
+        # they are on separate pin-sets and a mux is forced rather than chosen.
+        m.submodules.i2c_mux = i2c_mux = I2CBusMux()
+
         board_csr = csr.Decoder(addr_width=6, data_width=8)
         m.submodules.board_csr = board_csr
         board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
@@ -506,16 +538,19 @@ class HelloSoC(Elaboratable):
                       name="sideband")
         board_csr.add(target_ulpi.bus,   addr=ULPI_BASE     - BOARD_BASE,
                       name="ulpi")
+        board_csr.add(i2c_mux.bus,       addr=I2C_MUX_BASE  - BOARD_BASE,
+                      name="i2c_mux")
 
         board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
         m.submodules.board_bridge = board_bridge
         decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
 
-        m.submodules.plic = plic = Plic(sources=3)
+        m.submodules.plic = plic = Plic(sources=4)
         m.d.comb += [
             plic.sources[IRQ_CONSOLE].eq(console.irq),
             plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
             plic.sources[IRQ_I2C].eq(i2c.irq),
+            plic.sources[IRQ_TYPE_C].eq(i2c_mux.irq),
         ]
 
         # The same three lines, keyed by the decoder window each peripheral lives
@@ -530,9 +565,10 @@ class HelloSoC(Elaboratable):
         # `decoder.add()` and `board_csr.add()`, joined -- see `walk()` in the
         # generator for why the board's three sub-windows are named that way.
         self.interrupt_sources = {
-            "console":     IRQ_CONSOLE,
-            "apollo_uart": IRQ_APOLLO,
-            "board_i2c":   IRQ_I2C,
+            "console":       IRQ_CONSOLE,
+            "apollo_uart":   IRQ_APOLLO,
+            "board_i2c":     IRQ_I2C,
+            "board_i2c_mux": IRQ_TYPE_C,
         }
 
         plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
@@ -1067,6 +1103,13 @@ class HelloSoC(Elaboratable):
 
         power_monitor = platform.request("power_monitor", 0)
 
+        # The two Type-C controllers' buses and their `int` / `fault` lines. All
+        # four signals are declared `PinsN` in the platform, so Amaranth has
+        # already undone the active-low sense and a 1 on `.i` means the device is
+        # asserting.
+        type_c_target = platform.request("target_type_c", 0)
+        type_c_aux = platform.request("aux_type_c", 0)
+
         # PWRDN is active low on the pad. The GPIO block drives it only in
         # push-pull mode, so the reset state is a 0 here, a 1 on the pad, and a
         # PAC1954 that is running -- which is what the I2C bus below needs.
@@ -1109,18 +1152,52 @@ class HelloSoC(Elaboratable):
             target_ulpi.nxt_i.eq(target_phy.nxt.i),
         ]
 
-        # ---- the power monitor's I2C bus ------------------------------------
+        # ---- the three I2C buses, from one controller -----------------------
         #
-        # One bus, two wires, and whatever is on it. `scl` is `dir="o"` on this
-        # platform, so it is driven push-pull and nothing on the bus may stretch
-        # the clock; `sda` is `dir="io"` and is driven properly open-drain. See
-        # i2c_master.py for what that rules out.
+        # `scl` is `dir="o"` on all three, so it is driven push-pull and nothing
+        # on any of them may stretch the clock; `sda` is `dir="io"` and is driven
+        # properly open-drain. See i2c_master.py for what that rules out.
+        #
+        # `power_monitor` was requested above for its PWRDN pin, so it is passed
+        # in rather than requested again -- a resource may only be requested
+        # once, and the second request is an error rather than a second copy.
         m.d.comb += [
-            power_monitor.scl.o.eq(i2c.scl_o),
-            power_monitor.sda.o.eq(i2c.sda_o),
-            power_monitor.sda.oe.eq(i2c.sda_oe),
-            i2c.sda_i.eq(power_monitor.sda.i),
+            i2c_mux.idle.eq(i2c.idle),
+            i2c_mux.target_int.eq(type_c_target.int.i),
+            i2c_mux.aux_int.eq(type_c_aux.int.i),
+            i2c_mux.target_fault.eq(type_c_target.fault.i),
+            i2c_mux.aux_fault.eq(type_c_aux.fault.i),
         ]
+
+        for select_value, port in ((I2C_MUX_TARGET_C, type_c_target),
+                                   (I2C_MUX_AUX_C, type_c_aux),
+                                   (I2C_MUX_POWER, power_monitor)):
+            chosen = i2c_mux.select == select_value
+            m.d.comb += [
+                # Unselected buses are driven IDLE -- SCL high, SDA released --
+                # rather than left undriven. These pins carry PULLMODE="NONE", so
+                # an undriven line floats rather than idling high, and a floating
+                # SDA is a transient that a device listening on that bus reads as
+                # a START.
+                port.scl.o.eq(Mux(chosen, i2c.scl_o, 1)),
+                # Open drain: a one is sent by releasing the line, so the output
+                # value is always zero and only the enable moves.
+                port.sda.o.eq(i2c.sda_o),
+                port.sda.oe.eq(chosen & i2c.sda_oe),
+            ]
+
+        # Idle high by default, so a select value with no bus behind it -- 3,
+        # which two bits can hold and nothing assigns -- reads as an idle bus
+        # rather than as SDA held low. An undriven `sda_i` reads 0, which this
+        # controller correctly reports as arbitration lost, and chasing
+        # "something is holding SDA down" when the answer is "you selected bus 3"
+        # is a bad afternoon.
+        m.d.comb += i2c.sda_i.eq(1)
+        for select_value, port in ((I2C_MUX_TARGET_C, type_c_target),
+                                   (I2C_MUX_AUX_C, type_c_aux),
+                                   (I2C_MUX_POWER, power_monitor)):
+            with m.If(i2c_mux.select == select_value):
+                m.d.comb += i2c.sda_i.eq(port.sda.i)
 
         return m
 

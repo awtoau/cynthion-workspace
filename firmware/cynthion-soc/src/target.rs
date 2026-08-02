@@ -122,6 +122,21 @@ pub const TIME_HZ: u32 = 60_000_000;
 #[cfg(feature = "qemu")]
 pub const TIME_HZ: u32 = 10_000_000;
 
+/// The PLIC source both FUSB302Bs' `int` lines are OR-ed onto, or `None` on a
+/// target that has none.
+///
+/// An `Option` rather than a sentinel, so `src/irq.rs` cannot accidentally
+/// enable source 0 -- which the specification reserves as "nothing pending" and
+/// which a PLIC is free to ignore or to treat as a real source. The handler
+/// compares against it directly, so a target with no Type-C hardware simply
+/// never matches.
+#[cfg(not(feature = "qemu"))]
+pub const TYPE_C_IRQ: Option<u32> = Some(cynthion_soc_pac::base::BOARD_I2C_MUX_IRQ);
+
+/// `virt` has no Type-C controllers and nothing raises this.
+#[cfg(feature = "qemu")]
+pub const TYPE_C_IRQ: Option<u32> = None;
+
 /// Consoles that announce themselves while idle.
 ///
 /// Index 0 only, and this is a hardware constraint rather than a preference. The
@@ -164,6 +179,9 @@ pub struct Board {
     /// `sideband_csr.SidebandControl`, which decides what the FPGA_ADV link
     /// reports.
     pub sideband: usize,
+    /// `i2c_mux.I2CBusMux`: which of the three I2C buses the one controller
+    /// drives, and the two Type-C controllers' `int` and `fault` lines.
+    pub i2c_mux: usize,
     /// `ulpi_window.UlpiRegisters`, on TARGET_PHY and only on TARGET_PHY.
     ///
     /// One window, not three. AUX carries the USB console this firmware answers
@@ -187,6 +205,7 @@ pub const BOARD: Option<Board> = Some(Board {
     gpio: cynthion_soc_pac::base::BOARD_GPIO,
     i2c: cynthion_soc_pac::base::BOARD_I2C,
     sideband: cynthion_soc_pac::base::BOARD_SIDEBAND,
+    i2c_mux: cynthion_soc_pac::base::BOARD_I2C_MUX,
     ulpi: cynthion_soc_pac::base::BOARD_ULPI,
     i2c_prescale: 149,
 });

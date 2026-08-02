@@ -1,15 +1,15 @@
 #[doc = "Register `PENDING` reader"]
 pub type R = crate::R<PendingSpec>;
-#[doc = "Field `BITS` reader - bits \\[3:0\\]"]
+#[doc = "Field `BITS` reader - bits \\[4:0\\]"]
 pub type BitsR = crate::FieldReader;
 impl R {
-    #[doc = "Bits 0:3 - bits \\[3:0\\]"]
+    #[doc = "Bits 0:4 - bits \\[4:0\\]"]
     #[inline(always)]
     pub fn bits_(&self) -> BitsR {
-        BitsR::new(self.bits & 0x0f)
+        BitsR::new(self.bits & 0x1f)
     }
 }
-#[doc = "PLIC.PENDING, 4 bits at +0x1000\n\nYou can [`read`](crate::Reg::read) this register and get [`pending::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "PLIC.PENDING, 5 bits at +0x1000\n\nYou can [`read`](crate::Reg::read) this register and get [`pending::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct PendingSpec;
 impl crate::RegisterSpec for PendingSpec {
     type Ux = u8;

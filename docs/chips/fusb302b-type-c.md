@@ -52,11 +52,8 @@ register that sets a comparator threshold, and the result appears in `STATUS0` a
 `COMP` — so getting an actual voltage means binary-searching six bits. `VBUSOK` in
 `STATUS0` bit 7 needs no configuration and answers "is this port powered" directly.
 
-**Nothing in this tree configures these parts.** `int` and `fault` therefore stay
-inactive no matter what is plugged in: until the CC pull-downs and measure block
-are enabled in `SWITCHES0`, the controller performs no detection at all. Whether
-the control registers still hold their reset defaults — which would settle whether
-anything has *ever* configured them — has not been checked.
+~~**Nothing in this tree configures these parts.**~~ **Superseded.** The RISC-V
+SoC firmware now configures both at boot — see *From the SoC shell* below.
 
 **Not measured:** anything requiring configuration — attach detection, CC
 orientation, PD negotiation, per-port voltage.
@@ -174,7 +171,9 @@ is that a state change can be looked into when it happens instead of polled.
 |---|---|
 | liveness gateware | `ecp5-test/pins/fusb302_id.py` — JTAG applet `0x46555342` "FUSB" |
 | bus scanner | `ecp5-test/pins/i2c_scan.py` — applet `0x49324353` "I2CS" |
-| multiplexed master — **simulation only, never on silicon** | `ecp5-test/i2c/multiplexed.py`, `test_multiplexed.py` |
+| multiplexed master — superseded, and **it was never on silicon** | `ecp5-test/i2c/multiplexed.py`, `test_multiplexed.py` |
+| the mux that *is* on silicon | `ecp5-test/riscv/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
+| firmware | `firmware/cynthion-soc/src/mux.rs`, `fusb302.rs`, `typec.rs` |
 | `DEVICE_ID` decode helper | `scripts/sideband_decoder.py` |
 
 **There is no host-side script for either applet.** The values above were read ad
@@ -185,4 +184,94 @@ The scanner and the ID reader are **separate bitstreams** because two I2C master
 cannot share a bus: LUNA's `I2CInitiator` and `I2CRegisterInterface` both drive
 SDA, and instantiating both against the same pads is a `DriverConflict`.
 
-Tracking: [#98](https://github.com/awtoau/cynthion-workspace/issues/98).
+## From the SoC shell — `typec` and `i2c <bus>`
+
+Both controllers are reached from the RISC-V SoC over **one** I2C controller whose
+clock and data fan out to three pin-sets under a two-bit select
+(`ecp5-test/riscv/i2c_mux.py`). That mux is what makes two devices at `0x22`
+addressable at all, and **this is its first appearance on silicon** — the earlier
+`ecp5-test/i2c/multiplexed.py` was only ever simulated. Confirmed working:
+
+```
+> i2c target
+i2c   @f0000610 prescale 149 bus 0 (target_type_c)
+  22 answers
+> i2c aux
+i2c   @f0000610 prescale 149 bus 1 (aux_type_c)
+  22 answers
+> i2c power
+i2c   @f0000610 prescale 149 bus 2 (power_monitor)
+  10 PAC1954-1 manufacturer 54 revision 02
+
+> typec
+type-c @f0000620  lines 00  irq serviced 0  configured
+  target device 91  vbus present  nothing on CC           int 0  fault 0
+  aux    device 91  vbus present  vRd-3.0A                int 0  fault 0
+```
+
+`device 91` is version 9 revision 1 — FUSB302B revision B — on both, matching
+what `fusb302_id.py` read over JTAG. `typec init` re-runs the configuration.
+
+**The select is written before every transaction and never remembered.** Nothing
+in a reply says which bus it came from: both controllers answer `0x22` and both
+report `0x91`, so a stale select does not produce an error, it produces a
+plausible answer from the wrong chip. The gateware also holds a select written
+mid-transfer until the controller is idle, so a firmware mistake cannot become a
+bus-level one — switching pin-sets between a START and its STOP would leave one
+bus half-driven and put an edge on another that every device on it reads as a
+START. The mux **resets** to the power monitor, so the rails are readable before
+any firmware writes that register.
+
+### What is configured, and the one thing that is not
+
+Enough to interrupt on a state change, and nothing that changes what a port
+presents to whatever is plugged into it:
+
+| register | value | why |
+|---|---|---|
+| `RESET` | `SW_RES` | start from documented values, not from what a previous bitstream left |
+| `POWER` | bandgap+wake, measure, receiver | not the internal oscillator — that is only needed to *send* PD messages |
+| `SWITCHES0` | `MEAS_CC1` | routes CC1 to the comparator; **drives nothing** |
+| `MASK` | `I_BC_LVL` and `I_VBUSOK` unmasked | CC level and VBUS: the two state changes worth an interrupt |
+| `MASKA`, `MASKB` | all masked | PD and hard-reset events, which nothing acts on yet — an unmasked interrupt with no handler is a storm on a shared level line |
+| `CONTROL0` | `INT_MASK` cleared | the switch that lets the `INT` pin assert at all. Its reset value is *masked*, which is why these parts never interrupted before |
+
+**The CC pull-downs (`PDWN1`/`PDWN2`) are deliberately NOT enabled.** They would
+give full attach detection and they are the only bit in that sequence that
+changes a port electrically: presenting Rd tells a source this port is a sink.
+One of these two controllers is on **AUX — the port carrying the USB console the
+shell answers on** — so the cost of getting it wrong is losing the console, on a
+board whose CC lines nothing in this tree has ever driven. `MEAS_CC1` still gives
+`BC_LVL` (the voltage a source's Rp puts on CC) and `VBUSOK`, which is a state
+change on both ports obtained without asserting anything onto a connector.
+Enabling them is a one-line change with a known consequence.
+
+### The interrupt, and where the level-sensitive trap is actually handled
+
+Both `int` lines are OR-ed onto **one** PLIC source. Clearing one means reading
+three read-to-clear registers over I2C — about a millisecond at 80 kHz, on the
+same controller the power monitor's 50 ms poll uses. So the handler does **not**
+do it:
+
+| context | what it does |
+|---|---|
+| interrupt handler (`src/irq.rs`) | masks the PLIC source, records the event, returns |
+| main loop (`src/typec.rs`) | reads the mux's `LINES` once, clears **every** asserting device, re-enables the source |
+
+That is where "clear every asserted device before returning" lives. Missing one
+leaves the shared line high — but because the source is *masked* for the whole
+window, the re-fire cannot become a storm; it becomes one more deferred pass with
+the CPU making progress in between. It also keeps the single I2C controller out
+of a handler that would otherwise be racing the foreground for it.
+
+The handler **records rather than prints**: printing from a handler spins on a
+UART FIFO inside an interrupt. See `firmware/cynthion-soc/src/events.rs` and
+`docs/hardware.md`.
+
+`fault` is kept out of the interrupt entirely. It means something different from
+`int` and is meant to be distinguishable without a register read, so it is
+reported in `LINES` and polled at 50 ms alongside the rails; a change in either
+direction is announced once.
+
+Tracking: [#98](https://github.com/awtoau/cynthion-workspace/issues/98),
+[#121](https://github.com/awtoau/cynthion-workspace/issues/121).

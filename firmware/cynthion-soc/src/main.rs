@@ -57,12 +57,15 @@ mod clock;
 mod events;
 mod gpio;
 mod hyperram;
+mod fusb302;
 mod i2c;
 mod irq;
+mod mux;
 mod plic;
 mod power;
 mod sideband;
 mod target;
+mod typec;
 mod uart;
 mod ulpi;
 
@@ -98,11 +101,15 @@ const _: () = assert!(target::UART_BASES.len() <= MAX_CONSOLES);
 /// the commands that report it compile and run on both targets.
 struct Devices {
     power: power::Monitor,
+    type_c: typec::Controllers,
 }
 
 impl Devices {
     const fn new() -> Self {
-        Devices { power: power::Monitor::new() }
+        Devices {
+            power: power::Monitor::new(),
+            type_c: typec::Controllers::new(),
+        }
     }
 }
 
@@ -244,6 +251,26 @@ fn main() -> ! {
     // can be told what went wrong, one that hangs cannot.
     try_boot(&mut console);
 
+    let mut devices = Devices::new();
+
+    // The board's I2C controller, set up once rather than per command.
+    //
+    // `I2c::init` is idempotent, but it writes CTR and clears the interrupt
+    // flag, and the power monitor's poll runs twenty times a second --
+    // re-initialising a bus on that cadence would be a needless write to a
+    // peripheral three devices now share. The `i2c` scan command still calls it,
+    // because a scan is also how a wedged bus gets recovered.
+    if let Some(board) = target::BOARD {
+        i2c::I2c::new(board.i2c).init(board.i2c_prescale);
+
+        // Both Type-C controllers, configured so they interrupt on a state
+        // change rather than needing to be polled. AFTER the controller is set
+        // up, obviously, and BEFORE `irq::init()`, so that nothing is asserting
+        // when the source is first enabled -- `configure` clears the parts'
+        // interrupt registers on the way through for exactly that reason.
+        devices.type_c.start(&mut console);
+    }
+
     // Interrupts on, and not before now.
     //
     // After `Uart::init()` on every port, so nothing is asking yet; and after `try_boot`,
@@ -253,18 +280,6 @@ fn main() -> ! {
     irq::init();
 
     let mut shells = [Shell::NEW; MAX_CONSOLES];
-    let mut devices = Devices::new();
-
-    // The power monitor's bus, set up once rather than per command.
-    //
-    // `I2c::init` is idempotent, but it writes CTR and clears the interrupt
-    // flag, and the monitor's poll runs twenty times a second -- re-initialising
-    // a bus on that cadence would be a needless write to a peripheral that a
-    // second master might one day be sharing. The `i2c` scan command still calls
-    // it, because a scan is also how a wedged bus gets recovered.
-    if let Some(board) = target::BOARD {
-        i2c::I2c::new(board.i2c).init(board.i2c_prescale);
-    }
 
     loop {
         // The board's own periodic work, before the consoles.
@@ -286,6 +301,13 @@ fn main() -> ! {
         // which is the entire arrangement: a handler cannot reach a `Uart`, and
         // `events::drain` cannot be called without one. See `src/events.rs`.
         events::drain(&mut console);
+
+        // A deferred Type-C interrupt, if one is waiting. Every pass rather than
+        // on a timer: the source is MASKED between the handler and here, so the
+        // only latency is one turn of this loop and nothing is lost while it
+        // takes. See `src/typec.rs`.
+        devices.type_c.service(&mut console);
+        devices.type_c.poll(&mut console);
 
         // Round-robin, one byte per console per pass. Fair by construction and with no
         // arbitration to get wrong: a console that is being pasted into cannot starve
@@ -329,10 +351,11 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
             let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
-            let _ = writeln!(uart, "  i2c           scan the power monitor bus");
+            let _ = writeln!(uart, "  i2c [bus]     scan a bus: power, target, aux");
             let _ = writeln!(uart, "  power [floor <port> <mA>]  the four rails, \
                                     volts and milliamps");
             let _ = writeln!(uart, "  phy           the TARGET USB3343's ULPI registers");
+            let _ = writeln!(uart, "  typec         the two FUSB302B Type-C controllers");
             let _ = writeln!(uart, "  sideband [hex]  what the FPGA_ADV link reports");
             let _ = writeln!(uart, "  load <hex>    receive N bytes into the payload slot");
             let _ = writeln!(uart, "  go            jump to the loaded payload");
@@ -390,9 +413,10 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                              events::waiting(), events::dropped());
         }
         b"led" => board_led(uart, rest),
-        b"i2c" => board_i2c(uart),
+        b"i2c" => board_i2c(uart, rest),
         b"power" => board_power(uart, rest, devices),
         b"phy" => board_phy(uart),
+        b"typec" => typec::command(uart, rest, &mut devices.type_c),
         b"log" => {
             // Pushes through the SAME `events::push` an interrupt handler uses,
             // from normal context, which is exactly what makes it a test of the
@@ -580,15 +604,34 @@ fn board_led(uart: &mut Uart, rest: &[u8]) {
 /// The scan covers 0x08..0x77 because 0x00..0x07 and 0x78..0x7f are reserved by
 /// the I2C specification for general call, ten-bit addressing and the like --
 /// probing them can put a device into a mode nobody asked for.
-fn board_i2c(uart: &mut Uart) {
+fn board_i2c(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
         None => return board_absent(uart),
     };
-    let bus = i2c::I2c::new(board.i2c);
-    bus.init(board.i2c_prescale);
 
-    let _ = writeln!(uart, "i2c   @{:08x} prescale {}", board.i2c, board.i2c_prescale);
+    // Which of the three buses. There is one controller and three pin-sets, and
+    // nothing in a reply says which bus it came from -- both FUSB302Bs answer
+    // 0x22 with the same identity byte -- so the select is named explicitly
+    // rather than remembered.
+    let which = trim(rest);
+    let (bus_select, label) = match which {
+        b"" | b"power" => (mux::BUS_POWER_MONITOR, "power_monitor"),
+        b"target" => (mux::BUS_TARGET_C, "target_type_c"),
+        b"aux" => (mux::BUS_AUX_C, "aux_type_c"),
+        _ => {
+            let _ = writeln!(uart, "usage: i2c [power|target|aux]");
+            return;
+        }
+    };
+
+    let bus = i2c::I2c::new(board.i2c);
+    let selector = mux::Mux::new(board.i2c_mux);
+    bus.init(board.i2c_prescale);
+    selector.select(bus_select);
+
+    let _ = writeln!(uart, "i2c   @{:08x} prescale {} bus {} ({})",
+                     board.i2c, board.i2c_prescale, bus_select, label);
 
     let mut found = [0u8; 8];
     let mut count = 0usize;
@@ -693,7 +736,8 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     }
 
     let bus = i2c::I2c::new(board.i2c);
-    let readings = match devices.power.read(&bus) {
+    let selector = mux::Mux::new(board.i2c_mux);
+    let readings = match devices.power.read(&bus, &selector) {
         Ok(readings) => readings,
         Err(error) => {
             let _ = writeln!(uart, "power monitor at {:02x}: {} during {}",

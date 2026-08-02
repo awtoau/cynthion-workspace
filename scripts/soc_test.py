@@ -339,7 +339,8 @@ def main():
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
                        b"irq", b"log [n]", b"led", b"i2c", b"power",
-                       b"phy", b"sideband", b"load <hex>", b"go", b"reset"]
+                       b"phy", b"typec", b"sideband", b"load <hex>", b"go",
+                       b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
 
@@ -359,13 +360,15 @@ def main():
             # would only confirm that a model agrees with the driver. What the
             # drivers do is checked in `scripts/soc_board_sim.py` against the
             # gateware, and on the board.
-            for name in ("led", "i2c", "power", "phy", "sideband"):
+            for name in ("led", "i2c", "power", "phy", "typec", "sideband"):
                 command(name, [b"no board peripherals on this target"],
                         f"`{name}` is registered and reports the target has none")
             command("led green on", [b"no board peripherals on this target"],
                     "`led` with arguments reaches the same handler")
             command("power floor aux 25", [b"no board peripherals on this target"],
                     "`power floor` parses its arguments on a boardless target")
+            command("i2c target", [b"no board peripherals on this target"],
+                    "`i2c` takes a bus name on a boardless target too")
 
             # The monotonic clock, and the background poll built on it.
             #

@@ -106,6 +106,27 @@ impl Plic {
         }
     }
 
+    /// Stop context 0 being interrupted by `source`, without losing it.
+    ///
+    /// The peripheral keeps asserting and the PLIC keeps the pending bit; only
+    /// the path to the CPU is cut. That is what makes this usable as deferral:
+    /// a source whose service needs something a handler may not do -- a
+    /// millisecond of I2C, a console write -- is masked by the handler and
+    /// re-enabled by normal context once the work is done. Without it a
+    /// level-sensitive source that the handler cannot clear re-enters
+    /// immediately and forever, which is a hang that looks like a dead CPU.
+    ///
+    /// Read-modify-write, like `enable`, and with the same caveat: it is not
+    /// interrupt-safe against another writer of this register. The handler is
+    /// the only thing that calls it, and a handler cannot preempt itself.
+    pub fn disable(&self, source: u32) {
+        // SAFETY: as above.
+        unsafe {
+            let reg = self.reg(ENABLE_BASE);
+            write_volatile(reg, read_volatile(reg) & !(1 << source));
+        }
+    }
+
     /// Mask every source at or below `level` for context 0.
     ///
     /// 0 lets anything with a nonzero priority through, which is what this

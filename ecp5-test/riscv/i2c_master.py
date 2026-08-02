@@ -184,6 +184,14 @@ class I2CMaster(wiring.Component):
         Level, asserted while `IF and CTR.IEN`. Attach to a `vexii_plic.Plic`
         source, or leave it and poll SR.TIP -- IEN resets to zero, so this line
         is low until a driver asks for it.
+    idle : Signal(), out
+        High when no transfer is in progress and no START is outstanding -- the
+        two status bits SR.BUSY and SR.TIP, both clear. Brought out for
+        `i2c_mux.I2CBusMux`, which must not move the bus select underneath a
+        transfer: switching pin-sets between a START and its STOP would leave one
+        bus half-driven and put an edge on another that every device on it reads
+        as a START. Nothing else needs it, and a driver can read the same two
+        bits from SR.
     """
 
     def __init__(self):
@@ -223,6 +231,7 @@ class I2CMaster(wiring.Component):
             "sda_oe": Out(1),
             "sda_i":  In(1),
             "irq":    Out(1),
+            "idle":   Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -306,6 +315,10 @@ class I2CMaster(wiring.Component):
                 Cat(irq_flag, tip, C(0, 3), arb_lost, busy, rx_ack)),
             txr.r_data.eq(rxr),
             self.irq.eq(irq_flag & ien),
+
+            # The same two bits SR reports, as a wire. No extra state: a second
+            # idea of "busy" could disagree with the one software reads.
+            self.idle.eq(~busy & ~tip),
 
             # A one is sent by releasing the line. `sda_o` is therefore hardwired
             # to zero and only `sda_oe` ever changes: an open-drain driver that

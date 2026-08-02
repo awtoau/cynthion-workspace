@@ -51,6 +51,16 @@ with doing so is described in
 [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
 negotiation is not on the critical path.
 
+**Done, and on silicon** (#121). `ecp5-test/riscv/i2c_mux.py` is the select and
+the four Type-C signals; `ecp5-test/riscv/i2c_master.py` gained an `idle` output
+so the select cannot move underneath a transfer. Both `int` lines are one PLIC
+source, and the level-sensitive trap is handled by the handler *masking* the
+source rather than clearing it — clearing needs a millisecond of I2C on the
+controller the foreground is also using, which is not a thing an interrupt
+handler may do. Normal context clears every asserting device and re-enables.
+Note the earlier `ecp5-test/i2c/multiplexed.py` was never on silicon and is
+superseded.
+
 **On presenting the LEDs as a fake I2C device:** attractive for uniformity and
 wrong here. The LEDs are six wires in the same fabric -- wrapping them in a
 serial protocol adds a state machine, a byte-time of latency and an error path to

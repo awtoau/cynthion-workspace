@@ -47,6 +47,7 @@ use core::fmt::Write;
 
 use crate::clock::{self, Instant};
 use crate::i2c::{self, I2c};
+use crate::mux::{self, Mux};
 use crate::uart::Uart;
 
 /// The address the PAC1954 on r1.4 is strapped to.
@@ -221,7 +222,16 @@ impl Monitor {
     /// Returns the four readings in channel order, or the bus error that stopped
     /// it. Does not touch the announcement state: reading on demand must not
     /// swallow the change event that would otherwise have been printed.
-    pub fn read(&mut self, bus: &I2c) -> Result<[Reading; 4], i2c::Error> {
+    pub fn read(&mut self, bus: &I2c, mux: &Mux)
+        -> Result<[Reading; 4], i2c::Error>
+    {
+        // Point the one controller at this bus, every time and without
+        // remembering. Two other devices share it -- both FUSB302Bs, both at
+        // 0x22 -- so a stale select does not produce an error, it produces a
+        // plausible answer from the wrong chip. One uncached byte store against
+        // a transfer of milliseconds.
+        mux.select(mux::BUS_POWER_MONITOR);
+
         // READ FIRST, THEN REFRESH -- and that order is the whole trick.
         //
         // The datasheet (DS20006539B 5.2) says the readable registers "will be
@@ -291,8 +301,9 @@ impl Monitor {
             None => return,
         };
         let bus = I2c::new(board.i2c);
+        let mux = Mux::new(board.i2c_mux);
 
-        let readings = match self.read(&bus) {
+        let readings = match self.read(&bus, &mux) {
             Ok(readings) => readings,
             Err(error) => {
                 self.failures = self.failures.saturating_add(1);

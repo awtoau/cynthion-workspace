@@ -36,6 +36,12 @@ this design's to get wrong.
 other direction: the fabric's bits reach the responder until the CPU claims the
 link, and the claim is a single bit that resets clear.
 
+**The I2C bus mux** has never run on silicon in any form -- `ecp5-test/i2c/multiplexed.py`
+is marked simulation-only -- so the checks here are about the two properties that
+would be expensive to discover on a board: that the select cannot move underneath
+a transfer, and that the shared interrupt is the OR of the two `int` lines and
+does NOT include `fault`.
+
 **The ULPI register window** is driven against a model PHY written here, for the
 same reason the I2C slave is: a model in Amaranth would share the window's idea
 of the protocol and agree with it whether or not either was right. This one
@@ -61,6 +67,9 @@ from amaranth_soc import gpio
 from i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
 from sideband_csr import SidebandControl
 from ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
+from i2c_mux import (I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR,
+                     LINE_TARGET_INT, LINE_AUX_INT, LINE_TARGET_FAULT,
+                     LINE_AUX_FAULT)
 
 
 # Small enough that a byte is a few hundred simulated cycles rather than a few
@@ -851,6 +860,153 @@ def run_ulpi_checks(checks, verbose):
         f"timeout flag must also be cleared by the next START, not left set.")
 
 
+# i2c_mux.I2CBusMux register offsets.
+MUX_SELECT, MUX_LINES = 0, 1
+
+
+def run_i2c_mux_checks(checks, verbose):
+    dut = I2CBusMux()
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+
+        # Out of reset the controller points at the power monitor, so the rail
+        # readings work before anything touches the select. A mux that came up
+        # pointing at a Type-C bus would make the power monitor unreachable until
+        # some firmware happened to write this register.
+        ctx.set(dut.idle, 1)
+        await ctx.tick()
+        seen["reset_select"] = ctx.get(dut.select)
+
+        await bus.write(MUX_SELECT, BUS_TARGET_C)
+        await ctx.tick()
+        seen["selected"] = ctx.get(dut.select)
+        seen["readback"] = await bus.read(MUX_SELECT)
+
+        # THE ONE THAT MATTERS: a select written while a transfer is in flight
+        # must not reach the pins. Switching pin-sets between a START and its
+        # STOP leaves one bus half-driven and puts an edge on another that every
+        # device listening reads as a START.
+        ctx.set(dut.idle, 0)
+        await bus.write(MUX_SELECT, BUS_AUX_C)
+        await ctx.tick().repeat(4)
+        seen["held"] = ctx.get(dut.select)
+        seen["held_readback"] = await bus.read(MUX_SELECT)
+
+        # ...and it takes effect when the transfer ends, rather than being lost.
+        ctx.set(dut.idle, 1)
+        await ctx.tick().repeat(2)
+        seen["applied"] = ctx.get(dut.select)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6)
+    sim.add_testbench(testbench)
+    sim.run()
+
+    checks.check(
+        "the mux comes out of reset pointing at the power monitor",
+        seen.get("reset_select") == BUS_POWER_MONITOR,
+        f"select was {seen.get('reset_select')!r}, expected "
+        f"{BUS_POWER_MONITOR}. Anything else makes the rail readings depend on "
+        f"firmware having written this register first.")
+    checks.check(
+        "a select written while idle reaches the pins and reads back",
+        seen.get("selected") == BUS_TARGET_C
+        and seen.get("readback") == BUS_TARGET_C,
+        f"select was {seen.get('selected')!r} and read back "
+        f"{seen.get('readback')!r} after writing {BUS_TARGET_C}.")
+    checks.check(
+        "a select written mid-transfer does NOT move the pins",
+        seen.get("held") == BUS_TARGET_C,
+        f"select moved to {seen.get('held')!r} while the controller was busy. "
+        f"Switching pin-sets between a START and its STOP leaves one bus "
+        f"half-driven and puts a START on another.")
+    checks.check(
+        "and the register still reads back what was asked for",
+        seen.get("held_readback") == BUS_AUX_C,
+        f"the register read {seen.get('held_readback')!r}; a write that is "
+        f"deferred must not also be forgotten, or firmware cannot tell the "
+        f"difference between deferred and ignored.")
+    checks.check(
+        "the deferred select applies once the transfer ends",
+        seen.get("applied") == BUS_AUX_C,
+        f"select was {seen.get('applied')!r} after idle went high; the write "
+        f"was dropped rather than held.")
+
+    # --- the shared interrupt ------------------------------------------------
+    dut = I2CBusMux()
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+        ctx.set(dut.idle, 1)
+
+        # FFSynchronizer is two stages, so give every level four edges to
+        # arrive. Sampling earlier would read the synchroniser rather than the
+        # signal, and would pass or fail on timing rather than on logic.
+        async def settle():
+            await ctx.tick().repeat(4)
+
+        await settle()
+        seen["quiet"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+
+        ctx.set(dut.target_int, 1)
+        await settle()
+        seen["target"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+
+        ctx.set(dut.aux_int, 1)
+        await settle()
+        seen["both"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+
+        ctx.set(dut.target_int, 0)
+        ctx.set(dut.aux_int, 0)
+        ctx.set(dut.target_fault, 1)
+        ctx.set(dut.aux_fault, 1)
+        await settle()
+        seen["fault"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+        # Twice: LINES must be pure. The FUSB302B's own interrupt registers are
+        # read-to-clear and that is where clearing belongs -- a CSR here that
+        # cleared on read would be a state-changing read one byte from the
+        # register the handler polls.
+        seen["fault_again"] = await bus.read(MUX_LINES)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6)
+    sim.add_testbench(testbench)
+    sim.run()
+
+    checks.check(
+        "nothing asserting means no interrupt and no lines set",
+        seen.get("quiet") == (0, 0),
+        f"(irq, lines) was {seen.get('quiet')!r} with every input low.")
+    checks.check(
+        "one controller's int raises the shared source",
+        seen.get("target") == (1, 1 << LINE_TARGET_INT),
+        f"(irq, lines) was {seen.get('target')!r}, expected "
+        f"(1, {1 << LINE_TARGET_INT}) with only target int asserting.")
+    checks.check(
+        "both asserting is still one source, and both bits are visible",
+        seen.get("both")
+        == (1, (1 << LINE_TARGET_INT) | (1 << LINE_AUX_INT)),
+        f"(irq, lines) was {seen.get('both')!r}. The handler decides which "
+        f"devices to clear from these bits, and clearing only one of two leaves "
+        f"the shared level asserted -- which is the storm this design has to "
+        f"avoid.")
+    checks.check(
+        "fault does NOT raise the interrupt, and is still reported",
+        seen.get("fault")
+        == (0, (1 << LINE_TARGET_FAULT) | (1 << LINE_AUX_FAULT)),
+        f"(irq, lines) was {seen.get('fault')!r}. `fault` means something "
+        f"different from `int` and is meant to be distinguishable without a "
+        f"register read.")
+    checks.check(
+        "reading the lines register twice gives the same answer",
+        seen.get("fault_again") == seen.get("fault", (None, None))[1],
+        f"first read {seen.get('fault', (None, None))[1]!r}, second "
+        f"{seen.get('fault_again')!r}.")
+
+
 def run_gpio_checks(checks, verbose):
     """The handover: fabric drives until the CPU takes a pin."""
     dut = gpio.Peripheral(pin_count=8, addr_width=4, data_width=8)
@@ -1009,6 +1165,10 @@ def main():
 
         emit("sideband_csr.SidebandControl")
         run_sideband_checks(checks, args.verbose)
+        emit()
+
+        emit("i2c_mux.I2CBusMux -- bus select and the shared Type-C interrupt")
+        run_i2c_mux_checks(checks, args.verbose)
         emit()
 
         emit("ulpi_window.UlpiRegisters -- against a model USB3343")

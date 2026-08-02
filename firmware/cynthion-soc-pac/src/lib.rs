@@ -100,14 +100,23 @@ impl core::fmt::Debug for BoardUlpi {
 }
 #[doc = "board/ulpi: 4 registers at 0xf000061c"]
 pub mod board_ulpi;
-#[doc = "plic: 7 registers at 0xf0400000"]
+#[doc = "board/i2c_mux: 2 registers at 0xf0000620"]
+pub type BoardI2cMux = crate::Periph<board_i2c_mux::RegisterBlock, 0xf000_0620>;
+impl core::fmt::Debug for BoardI2cMux {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("BoardI2cMux").finish()
+    }
+}
+#[doc = "board/i2c_mux: 2 registers at 0xf0000620"]
+pub mod board_i2c_mux;
+#[doc = "plic: 8 registers at 0xf0400000"]
 pub type Plic = crate::Periph<plic::RegisterBlock, 0xf040_0000>;
 impl core::fmt::Debug for Plic {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("Plic").finish()
     }
 }
-#[doc = "plic: 7 registers at 0xf0400000"]
+#[doc = "plic: 8 registers at 0xf0400000"]
 pub mod plic;
 #[no_mangle]
 static mut DEVICE_PERIPHERALS: bool = false;
@@ -134,6 +143,8 @@ pub struct Peripherals {
     pub board_sideband: BoardSideband,
     #[doc = "BOARD_ULPI"]
     pub board_ulpi: BoardUlpi,
+    #[doc = "BOARD_I2C_MUX"]
+    pub board_i2c_mux: BoardI2cMux,
     #[doc = "PLIC"]
     pub plic: Plic,
 }
@@ -168,6 +179,7 @@ impl Peripherals {
             board_i2c: BoardI2c::steal(),
             board_sideband: BoardSideband::steal(),
             board_ulpi: BoardUlpi::steal(),
+            board_i2c_mux: BoardI2cMux::steal(),
             plic: Plic::steal(),
         }
     }

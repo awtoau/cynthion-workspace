@@ -79,7 +79,7 @@ by the START of the next transaction rather than by reading STATUS, for the same
 reason.
 """
 
-from amaranth               import Module, Cat, C, Signal, ResetInserter
+from amaranth               import Module, Signal, ResetInserter
 from amaranth.lib           import wiring
 from amaranth.lib.cdc       import FFSynchronizer
 from amaranth.lib.wiring    import In, Out

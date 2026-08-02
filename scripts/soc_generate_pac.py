@@ -452,6 +452,7 @@ def cross_check(peripherals, emit):
         "BOARD_I2C": soc_module.I2C_BASE,
         "BOARD_SIDEBAND": soc_module.SIDEBAND_BASE,
         "BOARD_ULPI": soc_module.ULPI_BASE,
+        "BOARD_I2C_MUX": soc_module.I2C_MUX_BASE,
         "PLIC": soc_module.PLIC_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,

@@ -407,9 +407,10 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health | — |
 | `log [n]` | push *n* deferred events, as an interrupt handler would | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
-| `i2c` | scan a bus and identify what answers | below |
+| `i2c [power\|target\|aux]` | scan one of the three I2C buses and identify what answers | below |
 | `power [floor <port> <mA>]` | the four rails, and the change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | `phy` | the TARGET USB3343's ULPI registers, plus a walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
+| `typec [init]` | both FUSB302B controllers, their CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
 | `load <hex>`, `go`, `reset` | stage and run a payload | — |
 
@@ -453,6 +454,23 @@ Printing from a handler is a **compile error**, not a convention:
 method and no `core::fmt::Write`. `scripts/soc_irq_log_check.py` (the `irqlog`
 check in `scripts/check.py`) covers what the compiler cannot — Rust's privacy
 cannot stop a sibling module naming `Uart`.
+
+**`i2c <bus>`** names the bus rather than remembering one. There is a single I2C
+controller behind a two-bit select driving three pin-sets — forced by both
+FUSB302Bs answering `0x22` — and nothing in a reply says which bus it came from,
+so a stale select gives a plausible answer from the wrong chip rather than an
+error. The select resets to the power monitor, so the rails are readable before
+firmware writes anything.
+
+**`typec`** reports both controllers live: device id, VBUS, the CC voltage band,
+and the raw `int`/`fault` lines. A state change is *not* polled — the controllers
+are configured at boot to interrupt, both `int` lines are OR-ed onto one PLIC
+source, and the line is shared and level-sensitive. The handler masks the source
+and records the event; the main loop clears **every** asserting device and
+re-enables it. A `type-c <port>: vbus …, <cc>` line means that port's state
+changed and what it changed to. `fault` is deliberately outside the interrupt and
+polled at 50 ms, because it means something different and is worth telling apart
+without a register read.
 
 **`phy`** reports the TARGET PHY's vendor and product IDs, function and OTG
 control, line state, and a walking-bit test across the scratch register. It reads

@@ -292,6 +292,41 @@ impl I2c {
         Ok(())
     }
 
+    /// Write one byte to a device register.
+    ///
+    /// START, address+W, register, value, STOP -- no repeated START, because
+    /// nothing turns around. The acknowledge is checked after every byte rather
+    /// than only after the address: a part that runs out of write buffer NACKs
+    /// mid-transfer, and a driver that only looked at the address would report
+    /// a configuration write as successful when the value never landed.
+    pub fn write_register(&self, address: u8, register: u8, value: u8)
+        -> Result<(), Error>
+    {
+        let result = self.write_register_inner(address, register, value);
+        if result.is_err() {
+            self.release();
+        }
+        result
+    }
+
+    fn write_register_inner(&self, address: u8, register: u8, value: u8)
+        -> Result<(), Error>
+    {
+        self.put(address << 1);
+        if self.command(CR_STA | CR_WR)? & SR_RXACK != 0 {
+            return Err(Error::Nack);
+        }
+        self.put(register);
+        if self.command(CR_WR)? & SR_RXACK != 0 {
+            return Err(Error::Nack);
+        }
+        self.put(value);
+        if self.command(CR_WR | CR_STO)? & SR_RXACK != 0 {
+            return Err(Error::Nack);
+        }
+        Ok(())
+    }
+
     /// Clear IF and drop the interrupt line, without moving anything on the bus.
     ///
     /// A command with none of START, STOP, READ or WRITE set is an acknowledge
