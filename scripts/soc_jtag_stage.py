@@ -10,6 +10,8 @@ Loads firmware into a Cynthion whose console is not answering.
     ./scripts/soc_jtag_stage.py --status               # ask the sink what it sees
     ./scripts/soc_jtag_stage.py --hold                 # hold the CPU in reset
     ./scripts/soc_jtag_stage.py --release              # let it go
+    ./scripts/soc_jtag_stage.py --selftest             # write a scratch address
+    ./scripts/soc_jtag_stage.py --benchmark            # time it against a register path
     ./scripts/soc_jtag_stage.py IMAGE --port /dev/ttyACM0   # Apollo's console
 
 Needs a configured FPGA and nothing else: no USB enumeration of the SoC, no console,
@@ -36,7 +38,7 @@ cannot tell a JTAG-staged image from a console-staged one.
 One `shift_data` carries the whole image, the way `LSC_BITSTREAM_BURST` carries a
 bitstream: `apollo_fpga` chunks it into USB transfers but the TAP never leaves
 SHIFT-DR, so the cost is the JTAG clock and not a round trip per word. The run
-prints bytes per second; `docs/comparisons.md` section 15 records what it should be.
+prints bytes per second; `docs/decisions.md` section 15 records what it should be.
 
 ## Reading the console afterwards
 
@@ -83,7 +85,17 @@ MAX_IMAGE  = 32 * 1024
 # verdict within a few milliseconds of the reset being released -- the CRC is a
 # bitwise pass over at most 32 KiB -- so this is generous by orders of magnitude and
 # costs nothing when the board is answering.
-CONSOLE_READS = 12
+CONSOLE_READS = 40
+
+# A HyperRAM word address well past anything the bootloader reads, so `--selftest`
+# and `--benchmark` cannot damage a staged image.
+SCRATCH_WORD = 0x10_0000
+
+# How much work each benchmark does. The register figure is per word and the
+# transport is USB-latency bound at tens of milliseconds a word, so ten of them is
+# already a third of a second; the streamed sizes bracket a real firmware image.
+BENCHMARK_WORDS = 10
+BENCHMARK_SIZES = (1024, 16 * 1024, 32 * 1024)
 
 
 class Sink:
@@ -91,8 +103,6 @@ class Sink:
 
     def __init__(self, chain):
         self.chain = chain
-        self.shifted_bytes = 0
-        self.shift_seconds = 0.0
 
     def _frame(self, payload, capture=False):
         """Shift one frame. Returns the status word when `capture` is set.
@@ -118,9 +128,6 @@ class Sink:
                              state_after='DRPAUSE')
             response = None
         elapsed = time.perf_counter() - started
-
-        self.shifted_bytes += len(payload)
-        self.shift_seconds += elapsed
         return (int(response) if response is not None else None), elapsed
 
     def status(self):
@@ -132,6 +139,8 @@ class Sink:
             "overflow":  (value >> 48) & 1,
             "busy":      (value >> 49) & 1,
             "cpu_reset": (value >> 50) & 1,
+            "command":   (value >> 51) & 0xff,
+            "frames":    (value >> 59) & 0x1f,
         }
 
     def set_reset(self, hold):
@@ -147,11 +156,17 @@ class Sink:
 def describe(status):
     return (f"signature {status['signature']:#06x}, staged {status['staged']} words, "
             f"overflow {status['overflow']}, busy {status['busy']}, "
-            f"cpu_reset {status['cpu_reset']}")
+            f"cpu_reset {status['cpu_reset']}, command {status['command']:#04x}, "
+            f"frames {status['frames']}")
 
 
 def stage(sink, image, emit):
-    """Write the image and its header. Returns (image seconds, total seconds)."""
+    """Write the image and its header.
+
+    Returns (image seconds, total seconds, status after the image frame). The status
+    is read THERE and not at the end: `staged` counts the words of the most recent
+    `write` frame, and the most recent frame is the two-word magic.
+    """
     crc = zlib.crc32(image) & 0xffff_ffff
 
     # HyperRAM is 16 bits wide, so an odd-length image still fills its last word.
@@ -161,6 +176,7 @@ def stage(sink, image, emit):
 
     started = time.perf_counter()
     image_seconds = sink.write(IMAGE_WORD, padded)
+    image_status = sink.status()
 
     # Length and CRC first, magic last, matching `hyperram::write_header`. A run
     # that dies between the two leaves a header the bootloader ignores rather than
@@ -170,7 +186,46 @@ def stage(sink, image, emit):
     total = time.perf_counter() - started
 
     emit(f"crc32 {crc:#010x} over {len(image)} bytes")
-    return image_seconds, total
+    return image_seconds, total, image_status
+
+
+def benchmark(chain, sink, emit):
+    """Time this path against the register interface it replaced.
+
+    Both numbers come off the same chain in the same run, so nothing about the host,
+    the cable or the SAMD11's clock differs between them. That matters: the
+    per-transfer cost is USB latency, and quoting it from two sessions would compare
+    two machines as much as two mechanisms.
+    """
+    emit(f"chain: {chain.max_bits_per_scan // 8} byte scan buffer, "
+         f"{chain.alt_buffer_bytes} byte second buffer")
+
+    # The shape of `ECP5_JTAGRegisters.register_transaction`: one shift into the
+    # meta-JTAG instruction register, one into its data register, each an IR shift
+    # plus a DR shift plus run_test. Nothing in this bitstream answers ER1 this way
+    # any more -- what is being timed is the transport, and that does not depend on
+    # whether anything is listening.
+    def register_word():
+        for opcode, width in ((0x32, 32), (0x38, 16)):
+            chain.shift_instruction(opcode, state_after='IRPAUSE', length=8)
+            chain.shift_data(tdi=b"\x00" * (width // 8), length=width,
+                             state_after='DRPAUSE')
+            chain.run_test(32)
+
+    register_word()
+    started = time.perf_counter()
+    for _ in range(BENCHMARK_WORDS):
+        register_word()
+    per_word = (time.perf_counter() - started) / BENCHMARK_WORDS
+    emit(f"register interface: {per_word * 1e3:.1f} ms per 16-bit word "
+         f"= {2 / per_word:.0f} B/s")
+
+    # A scratch address, so a benchmark cannot damage a staged image.
+    for size in BENCHMARK_SIZES:
+        elapsed = sink.write(SCRATCH_WORD, bytes(size))
+        emit(f"streamed {size:>6} bytes in {elapsed * 1e3:6.1f} ms "
+             f"= {size / elapsed / 1024:7.1f} KiB/s "
+             f"= {per_word / (elapsed / (size / 2)):.0f}x the register interface")
 
 
 def read_console(link, emit, want):
@@ -192,6 +247,10 @@ def main():
     parser.add_argument("image", type=Path, nargs="?", help="raw binary to stage")
     parser.add_argument("--status", action="store_true",
                         help="read the sink's status and stop")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="time this path against a JTAG register interface")
+    parser.add_argument("--selftest", action="store_true",
+                        help="write to a scratch address and report what the sink counts")
     parser.add_argument("--hold", action="store_true",
                         help="hold the CPU in reset and stop")
     parser.add_argument("--release", action="store_true",
@@ -218,7 +277,8 @@ def main():
                 emit(f"image is {len(image)} bytes; the slot is 1..{MAX_IMAGE}")
                 return 1
             emit(f"{args.image.name}: {len(image)} bytes")
-        elif not (args.status or args.hold or args.release):
+        elif not (args.status or args.hold or args.release
+                  or args.selftest or args.benchmark):
             emit("nothing to do; pass an image, --status, --hold or --release")
             return 1
 
@@ -258,6 +318,19 @@ def main():
                     link.close()
                 return 1
 
+            if args.benchmark:
+                benchmark(chain, sink, emit)
+                return 0
+
+            if args.selftest:
+                # Frames of three different lengths, at a scratch address, so
+                # this runs against a board with an image already staged. `staged`
+                # must report this frame's count and not a running total.
+                for count in (0, 3, 5):
+                    sink.write(SCRATCH_WORD, b"\x5a\xa5" * count)
+                    emit(f"wrote {count} words -> {describe(sink.status())}")
+                return 0
+
             if args.status:
                 if link:
                     link.close()
@@ -276,9 +349,7 @@ def main():
             sink.set_reset(True)
             emit("CPU held in reset")
 
-            image_seconds, total_seconds = stage(sink, image, emit)
-
-            after = sink.status()
+            image_seconds, total_seconds, after = stage(sink, image, emit)
             emit(f"sink: {describe(after)}")
 
             words = (len(image) + 1) // 2

@@ -1038,8 +1038,11 @@ fn payload_size() -> u32 {
 /// Receive `len` bytes over the console and stage them in HyperRAM, then reboot.
 ///
 /// The bytes arrive over the USB bulk OUT endpoint -- the same transport `apollo
-/// flash-write` uses, and about four orders of magnitude faster than the JTAG register
-/// path this replaced (34 ms per 16-bit word, measured).
+/// flash-write` uses, and about four orders of magnitude faster than a JTAG register
+/// interface, which `scripts/soc_jtag_stage.py --benchmark` measures at 28 ms per 16-bit
+/// word. That is a property of poking a control-plane register per word, not of JTAG:
+/// the streaming sink in `ecp5-test/riscv/jtag_stage.py` moves 32 KiB over the same wire
+/// in 85 ms, and unlike this path it needs no running CPU.
 ///
 /// They go to HyperRAM rather than straight into the payload slot because the next step
 /// is a reboot, and a reboot is exactly what block RAM does not survive intact: the

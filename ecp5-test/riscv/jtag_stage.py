@@ -55,11 +55,18 @@ all-ones -- what an idle or floating chain shifts -- does nothing.
     48      overflow, sticky: a word arrived with the FIFO full
     49      busy: words are still on their way to HyperRAM
     50      the CPU is held in reset
-    51..63  zero
+    51..58  the last command byte decoded
+    59..63  frames decoded, modulo 32
 
 The register is reloaded on every JTCK edge outside a shift and shifts LSB first
-during one, so TDO carries the status of the moment the frame began. Reading it
-changes nothing.
+during one, so TDO carries the state of the moment the frame began -- including,
+usefully, what the frame before it did.
+
+**Nothing here has a read side effect.** `staged` and `overflow` are cleared by a
+`write` frame and by nothing else, so a `nop` may be repeated at any rate and answers
+the same each time. The last two fields exist because a sink that answers with a
+plausible-looking signature and a wrong command byte is the failure this design
+actually had, and no other field distinguishes it.
 
 ## Rates
 
@@ -72,6 +79,10 @@ The sink drains 3.6x faster than JTAG can fill it, so the FIFO is a clock crossi
 and a jitter buffer rather than a store, and 32 entries is generous. A JTAG shift
 cannot be stalled, so `overflow` records the case where that margin is wrong
 instead of losing words silently.
+
+Measured end to end by `scripts/soc_jtag_stage.py`: 32 KiB in 85 ms, 377 KiB/s. For
+comparison, on the same board in the same session a register interface moves a 16-bit
+word in 28 ms and `apollo configure` moves a bitstream at 294 KiB/s.
 """
 
 from amaranth           import Cat, ClockDomain, ClockSignal, Const, Elaboratable
@@ -187,11 +198,27 @@ class JTAGStager(Elaboratable):
 
         # A clock domain on TCK, which runs only while the host is clocking the chain.
         #
+        # **The FALLING edge, and this is not a style choice.** The ECP5's TAP samples
+        # TDI on the rising edge of TCK and JTAGG passes it out as JTDI, so JTDI,
+        # JSHIFT and JCE1 all change on the rising edge -- sampling them there is a
+        # hold-time race with no timing arc for nextpnr to close. It does not fail
+        # cleanly: it fails per placement. Two builds of identical RTL decoded the
+        # same command byte as 0xa2 and 0xc4, and in the 0xa2 build one comparison of
+        # that byte read true while another read false in the same cycle, because
+        # each saw `tdi` through a different amount of routing.
+        #
+        # On the falling edge every JTAGG output has been stable for half a TCK. TDO
+        # is correct on the same edge for the mirror-image reason: JTAGG registers
+        # JTDO1 on the falling edge, capturing the value from before it, which is the
+        # bit the host is about to sample. `luna.gateware.interface.jtag` makes the
+        # same choice on the same primitive.
+        #
         # Asynchronously reset from `sync`, so `cpu_hold` is known to be clear at
         # power-up. A synchronous reset could not do that: with no JTAG attached there
         # is no edge to apply it on, and a board that came up with its CPU held in
         # reset would look identical to a dead one.
-        m.domains.jtck = ClockDomain("jtck", local=True, async_reset=True)
+        m.domains.jtck = ClockDomain("jtck", local=True, async_reset=True,
+                                     clk_edge="neg")
         m.d.comb += [
             ClockSignal("jtck").eq(self.tck),
             ResetSignal("jtck").eq(ResetSignal("sync")),
@@ -200,11 +227,25 @@ class JTAGStager(Elaboratable):
         m.submodules.fifo = fifo = AsyncFIFO(
             width=18, depth=self._depth, w_domain="jtck", r_domain="sync")
 
-        # High exactly while ER1 payload bits are on the wire. Everything else --
-        # capture, update, pause, idle -- resets the frame decoder, so the decoder
-        # depends on nothing about JCE1 beyond this one property.
+        # High while the TAP is shifting ER1 data. Everything else -- capture, update,
+        # pause, idle -- is "not shifting", so the frame decoder depends on nothing
+        # about JCE1 beyond this one property.
         active = Signal()
         m.d.comb += active.eq(self.ce & self.shift)
+
+        # The same thing, one falling edge later, and the input path uses it.
+        #
+        # JSHIFT and JCE1 are decodes of the TAP state, which advances on the rising
+        # edge; JTDI is the bit the TAP sampled on that same edge. So at a falling
+        # edge, `active` describes the bit being clocked NOW while `tdi` still holds
+        # the one before it. Capturing `tdi` under `active` therefore takes one
+        # garbage bit ahead of the payload and shifts the whole frame: the command
+        # byte decodes as 0x44 instead of 0xa2, and nothing else can be right after
+        # that. `shifting` lines the enable up with the data.
+        #
+        # The output path deliberately does NOT use it -- see `tdo_sr` below.
+        shifting = Signal()
+        m.d.jtck += shifting.eq(active)
 
         command  = Signal(8)
         have_cmd = Signal()
@@ -230,7 +271,7 @@ class JTAGStager(Elaboratable):
                                Mux(word_index == 1, TAG_ADDR_HI, TAG_DATA)))
 
         word_done = Signal()
-        m.d.comb += word_done.eq(active & have_cmd & (bit_index == 15))
+        m.d.comb += word_done.eq(shifting & have_cmd & (bit_index == 15))
 
         m.d.comb += [
             fifo.w_data.eq(Cat(word_now, tag)),
@@ -241,32 +282,43 @@ class JTAGStager(Elaboratable):
         busy_jtck = Signal()
         m.submodules.busy_cdc = FFSynchronizer(busy, busy_jtck, o_domain="jtck")
 
+        frames = Signal(5)
         status = Cat(Const(SIGNATURE, 16), staged, overflow, busy_jtck, cpu_hold,
-                     Const(0, 13))
+                     command, frames)
         tdo_sr = Signal(64)
         m.d.comb += self.tdo.eq(tdo_sr[0])
 
+        # The output path runs on `active`, not `shifting`.
+        #
+        # JTAGG registers JTDO1 into the TDO pad on the falling edge, taking the value
+        # from BEFORE that edge -- which is the bit the host samples in the low period
+        # that follows. So shifting on the same edge the host is clocking presents the
+        # right bit; delaying it the way the input path is delayed would present each
+        # bit twice.
         with m.If(~active):
+            m.d.jtck += tdo_sr.eq(status)
+        with m.Else():
+            m.d.jtck += tdo_sr.eq(tdo_sr[1:])
+
+        with m.If(~shifting):
             m.d.jtck += [
                 have_cmd.eq(0),
                 bit_index.eq(0),
                 word_index.eq(0),
-                tdo_sr.eq(status),
             ]
         with m.Else():
-            m.d.jtck += tdo_sr.eq(tdo_sr[1:])
-
             with m.If(~have_cmd):
                 m.d.jtck += [
                     cmd_sr.eq(cmd_now),
                     bit_index.eq(bit_index + 1),
                 ]
                 with m.If(bit_index == 7):
-                    m.d.jtck += [have_cmd.eq(1), bit_index.eq(0), command.eq(cmd_now)]
+                    m.d.jtck += [have_cmd.eq(1), bit_index.eq(0), command.eq(cmd_now),
+                                 frames.eq(frames + 1)]
 
-                    # Cleared here rather than at the start of the frame, so that a
-                    # `nop` frame reports what the previous `write` did. A counter
-                    # cleared per frame could only ever read back zero.
+                    # Only a `write` clears the counters, so reading the status
+                    # cannot destroy what it reports. A `nop` frame may be repeated
+                    # any number of times and answers the same each time.
                     with m.If(cmd_now == CMD_WRITE):
                         m.d.jtck += [staged.eq(0), overflow.eq(0)]
 

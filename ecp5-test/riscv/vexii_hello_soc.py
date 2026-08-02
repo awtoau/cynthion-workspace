@@ -40,6 +40,17 @@ QEMU's `-M virt` has a PLIC too, so `firmware/cynthion-soc/src/plic.rs` compiles
 unchanged for both and `scripts/soc_test.py` exercises the interrupt path that
 ships.
 
+## Two ways to load firmware
+
+    path                     needs                       script
+    -----------------------  --------------------------  -----------------------
+    JTAG ER1 into HyperRAM   a configured FPGA           `soc_jtag_stage.py`
+    console into HyperRAM    a running shell             `soc_payload.py`
+
+The JTAG sink holds the CPU in reset while it writes, so it works on a board whose
+console is wedged -- which the console path by definition cannot. Both leave the same
+header for the bootloader. See `jtag_stage.py`.
+
 ## Board peripherals
 
 GPIO (six LEDs, PWRDN, the USER button), a multiplexed I2C master reaching the
@@ -1275,8 +1286,12 @@ def main():
         return 1
 
     # --placeholder builds a bitstream whose block RAM holds a known RANDOM image
-    # instead of firmware, so `scripts/soc_swap_firmware.py` can substitute real
-    # firmware later with ecpbram -- one second, no synthesis.
+    # instead of firmware, so `ecpbram` can substitute real firmware into the built
+    # bitstream later -- one second, no synthesis.
+    #
+    # Kept because it is the only path that replaces the RESIDENT shell without a
+    # rebuild; a payload goes in over JTAG (`scripts/soc_jtag_stage.py`) or the
+    # console (`scripts/soc_payload.py`), and neither touches block RAM init.
     #
     # It has to be random rather than the real image. ecpbram locates the old contents
     # BY VALUE, and a real firmware image is ~87% zeroes; those zeroes also fill every
@@ -1293,8 +1308,8 @@ def main():
             # integers, so parse rather than concatenate.
             f"{int(line, 16):08x}"
             for line in args.placeholder.read_text().split()))
-        print(f"placeholder image: {len(raw)} bytes "
-              f"(swap real firmware in with scripts/soc_swap_firmware.py)")
+        print(f"placeholder image: {len(raw)} bytes; substitute firmware with "
+              f"`ecpbram -f {{old}}.hex -t {{new}}.hex -i top.config -o out.config`")
 
     # Block RAM is 32 bits wide, so the image is loaded as words.
     padded = raw + b"\x00" * (-len(raw) % 4)
@@ -1320,12 +1335,11 @@ def main():
 
     # Record the exact BRAM contents alongside the bitstream.
     #
-    # This is what `scripts/soc_swap_firmware.py` matches against: ecpbram finds the old
-    # contents BY VALUE and substitutes new ones, replacing firmware in a built bitstream
-    # in about a second instead of a ~60 s resynthesis. It can only do that if it is
-    # handed exactly what was synthesised, so this is written here rather than
-    # reconstructed later -- a reconstruction differing by one word would simply fail to
-    # match.
+    # This is what `ecpbram` matches against: it finds the old contents BY VALUE and
+    # substitutes new ones, replacing firmware in a built bitstream in about a second
+    # instead of a ~60 s resynthesis. It can only do that if it is handed exactly what
+    # was synthesised, so this is written here rather than reconstructed later -- a
+    # reconstruction differing by one word would simply fail to match.
     #
     # Padded to the full RAM, because that is the geometry that ends up in the BRAM:
     # `words` covers only the image, while the initialiser covers every location.

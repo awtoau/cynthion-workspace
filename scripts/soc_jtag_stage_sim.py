@@ -21,8 +21,13 @@ be stalled -- so every framing and clock-crossing error here presents on the boa
 as a corrupt image and nothing else. That is a CRC failure at the far end of a
 staging run, which says a byte is wrong and nothing about which byte or why.
 
-The two properties worth stating outright:
+The three properties worth stating outright:
 
+  * **The edges are modelled, not assumed.** `Chain` reproduces the half-cycle
+    relationship between JTCK, JTDI, JSHIFT and the TDO pad, because that is where
+    this design's real bug was: JTAGG's outputs all move on the rising edge, and a
+    sink clocked there decodes correctly in simulation and races on silicon. A
+    testbench that clocked everything together would have passed the broken design.
   * **A frame is self-delimiting.** The decoder is reset by any JTCK edge outside a
     shift, so it depends on nothing about how the ECP5 asserts JCE1 in CAPTURE-DR or
     UPDATE-DR -- only that JCE1 and JSHIFT are both high exactly while ER1 payload
@@ -83,10 +88,15 @@ MAGIC = 0x4359_4e42
 class Chain:
     """A JTAG TAP driving ER1, one bit at a time, the way Apollo's firmware does.
 
-    `jtag_tap_shift` sets TDI, drives TCK low, reads TDO, then drives TCK high. So
-    the sink shifts on the rising edge and TDO is sampled during the preceding low
-    period -- which is what makes a combinational TDO off the shift register's low
-    bit correct, with no negative-edge logic anywhere.
+    `jtag_tap_shift` sets TDI, drives TCK low, reads TDO, then drives TCK high, so the
+    TAP samples TDI on the rising edge. What this models that a naive testbench would
+    not is the half cycle after that: JTAGG's JTDI, JSHIFT and JCE1 all change on the
+    rising edge, and JTAGG registers JTDO1 on the falling one. So TDI is presented
+    before the rising edge, TDO is sampled just before the falling edge, and the sink
+    is expected to do all of its work on the falling edge.
+
+    Driving this the other way round -- everything on the rising edge -- passes in
+    simulation and races on silicon, which is exactly what happened.
     """
 
     def __init__(self, ctx, dut, verbose=False):
@@ -96,17 +106,28 @@ class Chain:
         self.half = 1 / (2 * JTCK_HZ)
 
     async def _pulse(self, tdi_bit):
+        """One TCK, in the order Apollo's firmware produces: low, read, high.
+
+        TCK rests high. The falling edge is where the sink does its work and where
+        JTAGG latches JTDO1 into the TDO pad -- taking the value from before that
+        edge, which is why TDO is sampled here and not after. The rising edge is
+        where the TAP samples the pin, so JTDI only carries this bit from then on:
+        at the falling edge the sink sees the PREVIOUS bit, and modelling that lag is
+        the difference between a testbench that catches the alignment bug and one
+        that does not.
+        """
         ctx = self.ctx
+        out = ctx.get(self.dut.tdo)
+        ctx.set(self.dut.tck, 0)
+        await ctx.delay(self.half)
+        ctx.set(self.dut.tck, 1)
         ctx.set(self.dut.tdi, tdi_bit)
         await ctx.delay(self.half)
-        out = ctx.get(self.dut.tdo)
-        ctx.set(self.dut.tck, 1)
-        await ctx.delay(self.half)
-        ctx.set(self.dut.tck, 0)
         return out
 
     async def idle(self, pulses=4):
         """TCK with neither enable asserted, as TAP navigation produces."""
+        self.ctx.set(self.dut.tck, 1)
         self.ctx.set(self.dut.ce, 0)
         self.ctx.set(self.dut.shift, 0)
         for _ in range(pulses):

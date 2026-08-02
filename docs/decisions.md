@@ -32,7 +32,7 @@ Numbers are measured unless marked *unverified*.
 | 12 | [SPI flash CS hold](#12-spi-flash-chip-select-hold) | ours | upstream defect |
 | 13 | [UART pad output enable](#13-uart-pad-output-enable) | ours | upstream defect |
 | 14 | [`amaranth-soc` source](#14-amaranth-soc-upstream-vs-vendored) | upstream package | settled |
-| 15 | [Firmware loading](#15-firmware-loading) | USB bulk + HyperRAM | untested end to end (#114) |
+| 15 | [Firmware loading](#15-firmware-loading) | JTAG stream, and USB bulk | settled (#132); USB half untested end to end (#114) |
 | 16 | [Emulation](#16-emulation-and-simulation) | QEMU `-M virt` + targeted sims | settled |
 | 17 | [Register access](#17-register-access-transcription-vs-generated-pac) | generated PAC, addresses only | settled |
 | 18 | [Logging from handlers](#18-logging-from-an-interrupt-handler) | deferred ring | settled (#122/#124) |
@@ -443,18 +443,41 @@ Baseline: firmware is block RAM init, so it lives inside the bitstream and chang
 byte costs a full resynthesis — **about 60 s** for a design whose logic is bit-for-bit
 identical.
 
-| | `ecpbram` placeholder | JTAG staging | **USB bulk + HyperRAM** |
+| | `ecpbram` placeholder | JTAG registers | **JTAG stream** | **USB bulk + HyperRAM** |
+|---|---|---|---|---|
+| Mechanism | rewrite BRAM init in a built bitstream | one register write per 16-bit word | one DR shift carries the whole image | the CPU writes HyperRAM itself |
+| Time for 32 KiB | ~1 s | **28 ms per 16-bit word** → ~7.6 min | **85 ms** | a few seconds of serial transfer |
+| Needs | a matching random placeholder | a debug session | a configured FPGA and nothing else | a running CPU, console and USB |
+| Works with a wedged console | yes | yes | **yes** | no |
+| Verdict | works, rejected as a coupling | **slower than the 60 s rebuild it existed to replace** | chosen for recovery | chosen for iteration |
+
+Two of these are kept. The USB path is what a working board uses; the JTAG stream is
+what a board whose console is not answering uses, and it is the one that can hold the
+CPU in reset while it works — the USB path needs a running shell to receive its own
+replacement (#114).
+
+**The register and stream figures differ by 5400x on the same wire.** Both are JTAG
+through the same SAMD11 at the same 12 MHz TCK; `scripts/soc_jtag_stage.py --benchmark`
+measures them one after the other in a single session, so nothing about the host differs
+between them. Measured on r1.4:
+
+| payload | time | rate | vs the register interface |
 |---|---|---|---|
-| Time per change | ~1 s | **34 ms per 16-bit word**, USB round-trip bound → ~9 min for 32 KiB | a few seconds of serial transfer |
-| Image ceiling | block RAM | HyperRAM (8 MiB) | HyperRAM (8 MiB) |
-| Coupling | every rebuild needs a matching magic placeholder file; a stale `.config` silently yields the wrong firmware | needs an Apollo debug session | none — the CPU writes HyperRAM itself |
-| Arbiter | — | JTAG and CPU both reach HyperRAM | none: same master in two phases |
-| Verdict | works, rejected as a coupling | **slower than the 60 s rebuild it existed to replace** | chosen |
+| one 16-bit word, register interface | 28.0 ms | 71 B/s | 1x |
+| 1 KiB, streamed | 9.0 ms | 111 KiB/s | 1593x |
+| 16 KiB, streamed | 46.0 ms | 348 KiB/s | 4986x |
+| 32 KiB, streamed | 85.0 ms | 377 KiB/s | 5400x |
+| 374 KiB bitstream, `apollo configure` | 1273 ms | 294 KiB/s | — |
+
+The streamed image is **faster than Apollo's own bitstream path on the same board in the
+same session**, which is the strongest available statement that the transport is not
+what was slow. A register interface is a control-plane mechanism; the ~28 ms is two
+IR+DR shift pairs plus `run_test`, and every one of them is a USB control transfer at
+~13 ms. Bulk transport does not become fast by being asked for two bytes at a time.
 
 `ecpbram` locates the old contents **by value**, and a real firmware image is ~87% zeroes,
 which also fill every unused BRAM tile on the die — so it refuses with "Conflicting from
-pattern" unless the design was synthesised against a known *random* placeholder. The
-observed failure is in `tmp/logs/soc_swap_firmware.log`:
+pattern" unless the design was synthesised against a known *random* placeholder:
 
     firmware: 8268 bytes into 16384 words (65536 bytes of block RAM)
     ecpbram failed:
@@ -466,16 +489,30 @@ executing from it. The bootloader's CPU-side read port moves one 16-bit word at 
 with no FIFO and no side-effecting read: roughly **8 ms for a 32 KiB image at 60 MHz**,
 against the ~60 s it replaces. Bursting is available later.
 
-*Unverified:* the 34 ms/word JTAG figure appears in `ecp5-test/riscv/vexii_bootram.py` and
-`firmware/cynthion-soc/src/main.rs`, both introduced in `b27f196`, both saying "measured"
-with no harness or log cited. No underlying artefact survives in the tree.
+Both staging paths land in the same layout — magic `CYNB`, length, CRC32, image from
+word 16 — so `try_boot` cannot tell them apart and needed no change to accept a
+JTAG-staged image.
 
-*Also missing:* `scripts/soc_swap_firmware.py` is referenced by `vexii_hello_soc.py`
-(three times) and by `vexii_bootram.py`, but the file is not in the tree — only its log.
+**What the JTAG stream cost.** 234 LUT, 259 FF, 10 LUT-RAM slices; block RAM unchanged
+at 42 of 56, because the FIFO is 32 entries and fits in distributed RAM. `sync` Fmax
+fell from a median of 83.88 MHz over 6 runs to **76.75 over 12**, min 78.36 → 70.47,
+max 86.71 → 82.30. Every run still closes the 60 MHz constraint with 17% or more to
+spare, but the minimum now sits on the 70 MHz line rather than comfortably above it.
+The critical path stays where it was — the arbiter's grant register and the CPU's
+execute stage — so this is congestion and a second clock network on the die, not a new
+path through the sink. `scripts/soc_timing_sweep.py --compare uart-final jtag-sink`.
 
-**Status: untested end to end (#114).** `load` → reboot → `try_boot` has never been run on
-hardware; each half is exercised separately. The QEMU gate cannot cover it, because the
-emulated staging buffer lives in `.bss` and does not survive `j _start`.
+**Verified on hardware, end to end**, which #114 asks for and the USB path still lacks:
+the CPU held in reset over ER1, a 2438-byte payload staged, the reset released, and the
+bootloader answering `staged image: 2438 bytes, crc 8b0eb054` / `crc ok; starting payload
+at 00008000`, followed by the payload's own output. Repeated at 16 KiB and 32 KiB with
+`overflow 0` and the word count matching.
+
+**The 34 ms/word figure is reproduced, not fabricated.** `--benchmark` measures 28.0 ms
+per 16-bit word through the register-interface shape on r1.4; the difference from 34 is
+autodetection and session overhead the original would have included. It was previously
+cited as "measured" in `ecp5-test/riscv/vexii_bootram.py` and
+`firmware/cynthion-soc/src/main.rs` with no surviving harness; there is one now.
 
 **Adjacent hard negative** — an FPGA-side *bitstream* loader is impossible on this part.
 The ECP5 has no fabric path into its own configuration engine: the complete primitive list
@@ -742,9 +779,7 @@ argue for the bit engine we currently have no use for.
 
 | claim | where | what is missing |
 |---|---|---|
-| JTAG staging at 34 ms per 16-bit word | `ecp5-test/riscv/vexii_bootram.py`, `firmware/cynthion-soc/src/main.rs` | no harness or log; both sites introduced in `b27f196` |
-| `scripts/soc_swap_firmware.py` | referenced four times | the file is not in the tree |
 | Renode as an emulation alternative | — | never evaluated on the record |
 | Verilator as a simulation alternative | — | never evaluated on the record |
 | Type-C physical attach/detach | commit `bd7867b` | interrupt path verified; a real attach has not been exercised |
-| Firmware staging end to end | #114 | each half exercised, the round trip is not |
+| Firmware staging over USB bulk, end to end | #114 | each half exercised, the round trip is not. The JTAG path's round trip **is** verified — decision 15 |
