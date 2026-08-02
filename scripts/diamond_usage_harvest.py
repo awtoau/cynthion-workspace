@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DIAMOND = Path("/home/dan/lscc/diamond/3.14")
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"
 WORKTREE = Path(__file__).resolve().parent.parent
 OUT = WORKTREE / "tmp" / "diamond-mine"
 LOGDIR = WORKTREE / "tmp" / "logs"
@@ -375,7 +375,7 @@ def cross_reference() -> dict:
     dest.mkdir(parents=True, exist_ok=True)
     out = {}
 
-    ecppack = Path("/home/dan/.local/bin/ecppack")
+    ecppack = Path.home() / ".local/bin/ecppack"
     if ecppack.exists():
         cp = subprocess.run(
             ["strings", "-n", "3", str(ecppack)],
@@ -398,7 +398,7 @@ def cross_reference() -> dict:
         log.warning("ecppack not found at %s", ecppack)
 
     for name in ("nextpnr-ecp5",):
-        exe = Path("/home/dan/.local/bin") / name
+        exe = Path.home() / ".local/bin" / name
         if not exe.exists():
             log.warning("%s not found", name)
             continue

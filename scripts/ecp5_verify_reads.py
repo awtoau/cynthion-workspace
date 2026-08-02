@@ -34,7 +34,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 LOG_DIR = REPO / "tmp" / "logs"
 PROBE = Path(__file__).resolve().parent / "ecp5_cmd_probe.py"
-PYTHON = "/home/dan/opt/cpython-315t/bin/python3.15t"
+PYTHON = str(Path.home() / "opt" / "cpython-315t" / "bin" / "python3.15t")
 
 LOG_NAME = "ecp5_verify_reads"
 log = logging.getLogger(LOG_NAME)

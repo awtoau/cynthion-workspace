@@ -25,10 +25,10 @@ import sys
 import zlib
 from pathlib import Path
 
-WORKTREE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
+WORKTREE = Path(__file__).resolve().parent.parent
 OUT_DIR = WORKTREE / "tmp" / "diamond-mine" / "pkg"
 LOG_DIR = WORKTREE / "tmp" / "logs"
-DIAMOND = Path("/home/dan/lscc/diamond/3.14/ispfpga")
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14" / "ispfpga"
 
 PKG_FILES = {
     "ep5c00": ["ep5c97x146.pkg"],

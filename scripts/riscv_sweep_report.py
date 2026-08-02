@@ -43,12 +43,16 @@ same core.
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SWEEP = Path("/mnt/2tb/riscv-work/out/sim")
+# The sweep outputs are large and live outside the workspace on this machine;
+# set RISCV_SWEEP_OUT to wherever 60_run_sweep.py wrote them.
+SWEEP = Path(os.environ.get("RISCV_SWEEP_OUT",
+                            ROOT / "riscv" / "out" / "sim"))
 CONFIG = ROOT / "riscv" / "config"
 LOG = ROOT / "tmp" / "riscv_sweep_report.log"
 

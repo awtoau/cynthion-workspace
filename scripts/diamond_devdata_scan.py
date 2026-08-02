@@ -18,10 +18,10 @@ import string
 import sys
 from pathlib import Path
 
-WORKTREE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
+WORKTREE = Path(__file__).resolve().parent.parent
 OUT_DIR = WORKTREE / "tmp" / "diamond-mine"
 LOG_DIR = WORKTREE / "tmp" / "logs"
-DIAMOND = Path("/home/dan/lscc/diamond/3.14")
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"
 
 # DEVICE-TREE MAP, verified from data/DiamondDevFile.xml (<Family text=...> and
 # every <Part ach=...>).  The ECP5 trees are the sa5p00 ones -- NOT ep5c00.

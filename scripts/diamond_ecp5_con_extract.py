@@ -28,10 +28,10 @@ import re
 import sys
 from pathlib import Path
 
-WORKTREE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
+WORKTREE = Path(__file__).resolve().parent.parent
 OUT_DIR = WORKTREE / "tmp" / "diamond-mine" / "con"
 LOG_DIR = WORKTREE / "tmp" / "logs"
-DIAMOND = Path("/home/dan/lscc/diamond/3.14/ispfpga")
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14" / "ispfpga"
 TREES = {
     "sa5p00": "ECP5U (LFE5U-*) <- Cynthion",
     "sa5p00m": "ECP5UM (LFE5UM-*)",

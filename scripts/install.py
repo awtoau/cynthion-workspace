@@ -971,7 +971,11 @@ def cmd_versions(args) -> bool:
             versions_dict["nextpnr-ecp5"] = version
 
         print(f"  Location{' ' * 12} {OSS_CAD_SUITE}")
-        versions_dict["OSS CAD Suite Location"] = str(OSS_CAD_SUITE)
+        # Recorded relative to $HOME. versions.json is committed to a public
+        # repo, and an absolute path here names the account it was generated
+        # on -- which `scripts/check.py paths` then rejects.
+        versions_dict["OSS CAD Suite Location"] = (
+            f"$HOME/{OSS_CAD_SUITE.relative_to(Path.home())}")
     else:
         print(f"  OSS CAD Suite{' ' * 7} NOT INSTALLED")
         versions_dict["OSS CAD Suite"] = "NOT INSTALLED"

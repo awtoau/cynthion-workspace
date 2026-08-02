@@ -92,6 +92,9 @@ Do not add workflow files back. If something needs automating, extend
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
 | `flutter` | `analyze` + `test` (reported, non-blocking) |
+| `socmap` | the committed SVD still matches the SoC's memory map |
+| `irqlog` | no interrupt handler can reach a console |
+| `paths` | no tracked file names one machine's filesystem — this repo is public |
 | `gateware` | analyzer gateware elaboration (dry run), ~15 s |
 
 Exit status is 0 only if every selected check passed, so it works as a hook:

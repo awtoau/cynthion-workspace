@@ -21,12 +21,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
-DIAMOND = Path("/home/dan/lscc/diamond/3.14")
+WORKSPACE = Path(__file__).resolve().parent.parent
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"
 SIM = DIAMOND / "cae_library/simulation/verilog"
 SYN = DIAMOND / "cae_library/synthesis/verilog"
-YOSYS_ECP5 = Path("/home/dan/opt/oss-cad-suite/share/yosys/ecp5")
-NEXTPNR_BIN = Path("/home/dan/opt/oss-cad-suite/libexec/nextpnr-ecp5")
+YOSYS_ECP5 = Path.home() / "opt/oss-cad-suite/share/yosys/ecp5"
+NEXTPNR_BIN = Path.home() / "opt/oss-cad-suite/libexec/nextpnr-ecp5"
 OUT = WORKSPACE / "tmp" / "diamond-mine"
 LOGDIR = WORKSPACE / "tmp" / "logs"
 

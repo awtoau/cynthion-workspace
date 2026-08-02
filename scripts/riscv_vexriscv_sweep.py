@@ -54,7 +54,7 @@ VARIANTS = ["cynthion", "cynthion+jtag", "imac+dcache", "imac+litex", "imc"]
 # same thing. 2 MHz is finer than run-to-run placement noise.
 FMAX_LOW, FMAX_HIGH, FMAX_RESOLUTION = 20, 260, 2
 
-PYTHON = "/home/dan/opt/cpython-315t/bin/python3.15t"
+PYTHON = str(Path.home() / "opt" / "cpython-315t" / "bin" / "python3.15t")
 
 BUILD = """
 import sys

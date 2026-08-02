@@ -3,10 +3,10 @@
 This file is preserved from an archived `awto-cynthion` snapshot.
 
 This archive no longer mirrors the broader source tree. Exact duplicates of the
-live `/mnt/2tb/git/awtoau/awto-cynthion` checkout were removed, leaving only the
-small set of files that still differ locally.
+live `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion` checkout were removed,
+leaving only the small set of files that still differ locally.
 
-For the full live source tree, use `/mnt/2tb/git/awtoau/awto-cynthion`.
+For the full live source tree, use `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion`.
 For patch-form deltas, use `patches/cynthion/` in this workspace.
 
 The original upstream README content follows.
