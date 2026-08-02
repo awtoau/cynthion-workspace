@@ -4,16 +4,22 @@
 //! split matters because the interesting behaviour is not in either register
 //! write -- it is in *where* the work happens:
 //!
-//!     interrupt        mask the source, record the event, return   src/irq.rs
-//!     normal context   clear every asserting device, re-enable     here
+//!     interrupt        mask that port's source, record which, return  src/irq.rs
+//!     normal context   clear that port's device, re-enable it         here
 //!
-//! and the second half is where the trap in `docs/chips/fusb302b-type-c.md`
-//! lives. Both `int` lines are OR-ed onto one PLIC source, that line is a level,
-//! and clearing it means an I2C transaction per device. A handler that cleared
-//! only the device it expected would leave the other asserting, the line high
-//! and the interrupt re-firing immediately -- a storm that presents as a hung
-//! CPU. So [`Controllers::service`] iterates over EVERY port whose bit is set,
-//! and only then re-enables the source.
+//! Each `int` line has its own PLIC source, so the handler already knows which
+//! device asserted and [`Controllers::service`] services exactly the ports that
+//! did. It does NOT read the mux's `LINES` register to find out.
+//!
+//! That is the reversal in `docs/decisions.md` decision 8. With one shared
+//! source this loop had to clear EVERY asserting device before re-enabling, or
+//! the level stayed high and the interrupt re-fired immediately -- a storm that
+//! presents as a hung CPU, guarded only by a scan being written correctly. One
+//! source per device removes the obligation instead of documenting it.
+//!
+//! What has not changed: servicing still serialises, because one muxed I2C
+//! controller means one device at a time. This buys knowing *which*, not
+//! concurrency.
 
 use core::fmt::Write;
 
@@ -29,10 +35,20 @@ use crate::uart::Uart;
 /// enough that a person who caused the event is still watching, and slow enough
 /// to be free -- this poll is one uncached CSR read, not a bus transaction.
 ///
-/// `fault` is polled rather than wired to the interrupt deliberately. It means
-/// something different from `int`, and mixing them would mean a fault could only
-/// be distinguished from an ordinary state change by a register read, which is
-/// exactly the ambiguity `docs/chips/fusb302b-type-c.md` says to avoid.
+/// `fault` is polled rather than given a PLIC source of its own, and that stayed
+/// true when the `int` lines each got one. Two reasons, and the second is the
+/// binding one:
+///
+///   * It means something different from `int`; mixing them would make a fault
+///     distinguishable from an ordinary state change only by a register read,
+///     which is the ambiguity `docs/chips/fusb302b-type-c.md` says to avoid.
+///   * **Nothing here can clear it.** It drops when the device's fault does. An
+///     interrupt on a level the firmware cannot clear has to stay masked until
+///     something notices the level has gone -- which is this poll. It would add
+///     a handler, a deferral and a re-enable path, and keep the poll.
+///
+/// `int` is different in exactly that respect: it is clearable, by the three
+/// read-to-clear registers `fusb302::clear` reads, so masking terminates.
 const FAULT_POLL_MS: u32 = 50;
 
 /// Both controllers' last known state, and whether they have been set up.
@@ -47,10 +63,15 @@ pub struct Controllers {
     /// The last `fault` level seen, so only transitions are announced.
     fault: [bool; 2],
     last_poll: Instant,
-    /// Interrupts serviced, for the `typec` command. Direct evidence that the
-    /// deferral path works end to end: the handler masked, the loop serviced,
-    /// the source came back.
-    pub serviced: u32,
+    /// Interrupts serviced, per port, for the `typec` command. Direct evidence
+    /// that the deferral path works end to end: the handler masked, the loop
+    /// serviced, the source came back.
+    ///
+    /// Per port rather than one total, because with a source each the two are
+    /// separate facts. One port's count climbing while the other stays at zero
+    /// is a statement about which connector something is happening on, which a
+    /// single total could not make.
+    pub serviced: [u32; 2],
 }
 
 impl Controllers {
@@ -60,7 +81,7 @@ impl Controllers {
             state: [None; 2],
             fault: [false; 2],
             last_poll: Instant::ZERO,
-            serviced: 0,
+            serviced: [0; 2],
         }
     }
 
@@ -98,54 +119,56 @@ impl Controllers {
         self.configured = all;
     }
 
-    /// Service a deferred Type-C interrupt, if one is waiting.
+    /// Service whichever Type-C ports the handler deferred.
     ///
     /// Called from the main loop on every pass -- not on a timer. The whole
-    /// point of the deferral is that the source is MASKED between the handler
-    /// and this, so the latency here is whatever the loop takes to come round,
-    /// and nothing is lost while it does.
+    /// point of the deferral is that the port's source is MASKED between the
+    /// handler and this, so the latency here is whatever the loop takes to come
+    /// round, and nothing is lost while it does.
+    ///
+    /// The bitmap comes from the PLIC source that fired, so this services the
+    /// port that asserted and does not look at the other one. There is no
+    /// `LINES` read here at all: with one source per device there is nothing to
+    /// decode, and the register that used to be read to find out is now read
+    /// only by `command` and `poll`.
     pub fn service(&mut self, uart: &mut Uart, bus: &mut Bus) {
-        if !irq::take_type_c() {
+        let pending = irq::take_type_c();
+        if pending == 0 {
             return;
         }
-        self.serviced = self.serviced.wrapping_add(1);
 
-        // Read the lines ONCE and act on that picture. Reading per device would
-        // let one assert between the two reads, and acting on a snapshot that
-        // never existed is how the second device gets left set.
-        let lines = bus.lines();
-
-        // EVERY asserting device, not the first one. This is the rule the
-        // module comment is about: a device left uncleared holds the shared line
-        // high, and since this function re-enables the source at the end, that
-        // would be an interrupt that re-fires forever.
         for port in Port::ALL {
-            if !fusb302::asserting(lines, port) {
+            let index = index(port);
+            if pending & (1 << index) == 0 {
                 continue;
             }
+            self.serviced[index] = self.serviced[index].wrapping_add(1);
+
             if let Err(error) = fusb302::clear(bus, port) {
                 let _ = writeln!(uart, "type-c {}: could not clear: {}",
                                  port.name(), error.as_str());
-                // Carry on to the other port anyway. Giving up here would leave
-                // the OTHER device asserting as well, turning one unreachable
-                // controller into a dead interrupt source.
-                continue;
-            }
-            match fusb302::state(bus, port) {
-                Ok(state) => self.announce(uart, port, state),
-                Err(error) => {
-                    let _ = writeln!(uart, "type-c {}: {}", port.name(),
-                                     error.as_str());
+            } else {
+                match fusb302::state(bus, port) {
+                    Ok(state) => self.announce(uart, port, state),
+                    Err(error) => {
+                        let _ = writeln!(uart, "type-c {}: {}", port.name(),
+                                         error.as_str());
+                    }
                 }
             }
-        }
 
-        // Only now. If a device is still asserting -- because it re-asserted
-        // while this ran, or because the clear failed -- the interrupt fires
-        // again immediately, the handler masks again, and this runs again. That
-        // is a loop with the CPU making progress between iterations, which is
-        // the difference between "busy" and "hung".
-        irq::resume_type_c();
+            // Re-enable even after a failed clear, and re-enable per port. If
+            // this device is still asserting -- because it re-asserted while
+            // this ran, or because the clear failed -- its interrupt fires
+            // again immediately, the handler masks it again, and this runs
+            // again. That is a loop with the CPU making progress between
+            // iterations, which is the difference between "busy" and "hung".
+            // Leaving it masked instead would be a source silently dead for the
+            // rest of the session, which is the worse of the two.
+            //
+            // The other port is untouched throughout: it was never masked.
+            irq::resume_type_c(index);
+        }
     }
 
     /// Look at the `fault` lines, and report a change.
@@ -210,8 +233,8 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
 
     let lines = bus.lines();
 
-    let _ = writeln!(uart, "type-c @{:08x}  lines {:02x}  irq serviced {}  {}",
-                     bus.mux_base(), lines, controllers.serviced,
+    let _ = writeln!(uart, "type-c @{:08x}  lines {:02x}  {}",
+                     bus.mux_base(), lines,
                      if controllers.configured { "configured" }
                      else { "NOT configured" });
 
@@ -227,12 +250,14 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
         match fusb302::state(bus, port) {
             Ok(state) => {
                 let _ = writeln!(uart,
-                    "  {:6} device {:02x}  vbus {:7}  {:22}  int {}  fault {}",
+                    "  {:6} device {:02x}  vbus {:7}  {:22}  int {}  fault {}  \
+                     serviced {}",
                     port.name(), state.device_id,
                     if state.vbus { "present" } else { "absent" },
                     state.cc(),
                     fusb302::asserting(lines, port) as u8,
-                    fusb302::faulting(lines, port) as u8);
+                    fusb302::faulting(lines, port) as u8,
+                    controllers.serviced[index(port)]);
                 if state.device_id != 0x91 {
                     // 0x91 is version 9 revision 1, FUSB302B revision B, which
                     // is what both parts on this board read. Anything else means

@@ -433,9 +433,15 @@ firmware never transmits there unbidden.
 Ports are named — `target_a`, `target_c`, `aux`, `control` — and never numbered,
 because the PAC's channel order is not the port order anyone would guess.
 
-**`irq`** ends with `log  waiting N dropped M`. That is the deferred log an
+**`irq`** lists the PLIC's pending and enabled words, then a line per console and
+a line per Type-C source. The Type-C lines are per controller, not one total: a
+`target` count that climbs while `aux` stays at zero says which connector
+something is happening on. A source missing from `enabled` is one the handler has
+masked and the main loop has not finished servicing.
+
+It ends with `log  waiting N dropped M`. That is the deferred log an
 interrupt handler writes to instead of printing — a handler that prints spins on
-a UART FIFO inside an interrupt, which on a level-sensitive shared source is a
+a UART FIFO inside an interrupt, which on a level-sensitive source is a
 hang that presents as a dead CPU. Handlers record a code and two words; the main
 loop formats and prints them.
 
@@ -466,14 +472,16 @@ error. The select resets to the power monitor, so the rails are readable before
 firmware writes anything.
 
 **`typec`** reports both controllers live: device id, VBUS, the CC voltage band,
-and the raw `int`/`fault` lines. A state change is *not* polled — the controllers
-are configured at boot to interrupt, both `int` lines are OR-ed onto one PLIC
-source, and the line is shared and level-sensitive. The handler masks the source
-and records the event; the main loop clears **every** asserting device and
-re-enables it. A `type-c <port>: vbus …, <cc>` line means that port's state
-changed and what it changed to. `fault` is deliberately outside the interrupt and
-polled at 50 ms, because it means something different and is worth telling apart
-without a register read.
+and the raw `int`/`fault` lines, and how many interrupts each port has been
+serviced for. A state change is *not* polled — the controllers are configured at
+boot to interrupt, and **each `int` line has its own PLIC source**, so the claim
+says which controller asserted. The lines are levels, so the handler masks that
+one source and records which port; the main loop clears that one device and
+re-enables that one source. Clearing is a millisecond of I2C, which is why the
+handler defers rather than doing it. A `type-c <port>: vbus …, <cc>` line means
+that port's state changed and what it changed to. `fault` is deliberately outside
+the interrupt and polled at 50 ms: it means something different, and nothing here
+can clear it — it drops when the device's fault does.
 
 **`phy`** reports the TARGET PHY's vendor and product IDs, function and OTG
 control, line state, and a walking-bit test across the scratch register. It reads

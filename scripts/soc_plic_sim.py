@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Proves `vexii_plic.Plic` and `Uart16550.irq` behave before a bitstream is built.
+Proves `vexii_plic.Plic`, `Uart16550.irq` and the Type-C sources behave before a
+bitstream is built.
 
     ./scripts/soc_plic_sim.py          # run every check
     ./scripts/soc_plic_sim.py -v       # and print each bus access
@@ -20,6 +21,12 @@ design one question, and an interrupt controller is mostly questions of the form
 returns the lower source number on a priority tie, and that `complete` is ignored
 for a source that is not enabled -- are single-cycle behaviours that no amount of
 typing at a console can distinguish from working.
+
+The third section is the one thing here that is about a design choice rather than
+a specification: each FUSB302B has its own source, and the checks assert that a
+handler can service the device it claimed without reading, scanning or clearing
+anything belonging to the other. `docs/decisions.md` decision 8 is the argument;
+these are the assertions that it is built that way.
 
 The one that actually matters most is `pending_read_has_no_side_effect`. This
 SoC has lost two multi-day stretches to registers whose reads changed state, so
@@ -44,15 +51,19 @@ LOG = ROOT / "tmp" / "logs" / "soc_plic_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 
+from amaranth import Module                  # noqa: E402
 from amaranth.hdl import Fragment            # noqa: E402
 from amaranth.sim import Simulator           # noqa: E402
 
+from i2c_mux import I2CBusMux                # noqa: E402
 from uart16550 import Uart16550              # noqa: E402
 from vexii_plic import Plic, CONTEXT_BASE, ENABLE_BASE, PENDING_BASE  # noqa: E402
 
 # Source numbers, matching what ecp5-test/riscv/vexii_hello_soc.py wires up.
 CONSOLE = 1
 APOLLO = 2
+TYPE_C_TARGET = 4
+TYPE_C_AUX = 5
 
 CLAIM = CONTEXT_BASE + 0x4
 THRESHOLD = CONTEXT_BASE + 0x0
@@ -426,6 +437,155 @@ def run_uart_checks(checks, verbose):
     sim.run()
 
 
+def run_type_c_checks(checks, verbose):
+    """One PLIC source per FUSB302B, driven from the mux that raises them.
+
+    The mux alone is checked in `scripts/soc_board_sim.py`; what is checked here
+    is the composition `vexii_hello_soc.py` builds -- each `int` line on its own
+    source -- and the property the split exists for:
+
+    **A handler learns which device asserted from the claim, and touches nothing
+    belonging to the other one.** On the OR-ed source that was impossible: the
+    claim said "Type-C", the mux's `LINES` register had to be read to say which,
+    and every asserting device had to be cleared before the source could come
+    back or the level re-fired forever.
+    """
+    m = Module()
+    m.submodules.mux = mux = I2CBusMux()
+    m.submodules.plic = plic = Plic(sources=TYPE_C_AUX)
+    m.d.comb += [
+        plic.sources[TYPE_C_TARGET].eq(mux.target_irq),
+        plic.sources[TYPE_C_AUX].eq(mux.aux_irq),
+    ]
+
+    async def testbench(ctx):
+        bus = Bus(ctx, plic.bus, verbose)
+
+        # FFSynchronizer is two stages inside the mux, so give every pad level
+        # four edges to reach the PLIC. Sampling earlier would be testing the
+        # synchroniser rather than the dispatch.
+        async def settle():
+            await ctx.tick().repeat(4)
+
+        await bus.write(ENABLE_BASE,
+                        (1 << TYPE_C_TARGET) | (1 << TYPE_C_AUX))
+        await bus.write(priority_addr(TYPE_C_TARGET), 1)
+        await bus.write(priority_addr(TYPE_C_AUX), 1)
+
+        # --- one device asserting is claimed as that device -------------------
+        ctx.set(mux.aux_int, 1)
+        await settle()
+        claimed = await bus.read(CLAIM)
+        checks.check(
+            "the claim names the device that asserted",
+            claimed == TYPE_C_AUX,
+            f"claim returned {claimed}, expected {TYPE_C_AUX} with only AUX's "
+            f"`int` asserting.\n"
+            "This is what the split buys. One OR-ed source would have returned "
+            "the same number whichever controller it was, and the handler "
+            "would have had to read the mux over I2C's neighbour to find out.")
+
+        # --- and the OTHER device's source was never involved -----------------
+        #
+        # The assertion the issue is about: servicing AUX requires nothing to be
+        # read, scanned or cleared on TARGET.
+        pending = await bus.read(PENDING_BASE)
+        checks.check(
+            "one device asserting leaves the other's source untouched",
+            not pending & (1 << TYPE_C_TARGET),
+            f"pending was {pending:#x} with only AUX asserting; TARGET's bit "
+            f"is set.\n"
+            "A handler is entitled to service exactly the source it claimed. "
+            "If the quiet device's source can be pending anyway, then every "
+            "handler has to scan both again and the shared-line obligation is "
+            "back under a different name.")
+
+        # --- masking one does not mask the other ------------------------------
+        #
+        # The firmware defers by DISABLING the source it claimed, because
+        # clearing a FUSB302B is ~1 ms of I2C on the controller the foreground
+        # is also using. With one source that masked both devices for the whole
+        # window; with two it masks one.
+        await bus.write(CLAIM, TYPE_C_AUX)
+        await bus.write(ENABLE_BASE, 1 << TYPE_C_TARGET)
+        await settle()
+        checks.check(
+            "a deferred device masks only itself",
+            ctx.get(plic.irq_out) == 0,
+            "AUX is still asserting -- the firmware has not cleared it yet -- "
+            "and disabling its source must silence it, or the deferral spins.")
+
+        ctx.set(mux.target_int, 1)
+        await settle()
+        claimed = await bus.read(CLAIM)
+        checks.check(
+            "the other device still interrupts while one is deferred",
+            claimed == TYPE_C_TARGET,
+            f"claim returned {claimed}, expected {TYPE_C_TARGET}.\n"
+            "TARGET asserted while AUX was masked awaiting its I2C clear. On "
+            "the OR-ed source this event was invisible until AUX had been "
+            "serviced; that is the concrete cost the split removes.")
+
+        # --- pending still reports the masked device --------------------------
+        pending = await bus.read(PENDING_BASE)
+        checks.check(
+            "a masked device is still visible in pending",
+            pending & (1 << TYPE_C_AUX),
+            f"pending was {pending:#x}; AUX is asserting and disabled, and the "
+            f"spec distinguishes 'requesting' from 'this context will be "
+            f"interrupted'. The `irq` command reads this to show which source "
+            f"is mid-deferral.")
+
+        # --- re-enabling after the devices were cleared -----------------------
+        #
+        # `fusb302::clear` reads the three read-to-clear registers, the `int`
+        # line drops, and `irq::resume_type_c` re-enables just that source.
+        ctx.set(mux.target_int, 0)
+        ctx.set(mux.aux_int, 0)
+        await settle()
+        await bus.write(CLAIM, TYPE_C_TARGET)
+        await bus.write(ENABLE_BASE, (1 << TYPE_C_TARGET) | (1 << TYPE_C_AUX))
+        await settle()
+        checks.check(
+            "re-enabling a cleared device raises nothing",
+            ctx.get(plic.irq_out) == 0 and (await bus.read(CLAIM)) == 0,
+            "the device was cleared before its source came back, so there is "
+            "nothing to claim. A re-enable that immediately re-fires is the "
+            "storm, and here it can only mean the clear did not take.")
+
+        # --- a device that was NOT cleared re-fires, which is correct ---------
+        ctx.set(mux.aux_int, 1)
+        await settle()
+        claimed = await bus.read(CLAIM)
+        checks.check(
+            "a device still asserting when re-enabled fires again",
+            claimed == TYPE_C_AUX,
+            f"claim returned {claimed}, expected {TYPE_C_AUX}. A level that is "
+            f"still high must re-interrupt -- there is still work -- and the "
+            f"handler masks again on the way in, so this is a loop with the "
+            f"CPU making progress between passes rather than a storm.")
+        await bus.write(CLAIM, TYPE_C_AUX)
+
+        # --- fault is on neither source ---------------------------------------
+        ctx.set(mux.aux_int, 0)
+        ctx.set(mux.target_int, 0)
+        ctx.set(mux.target_fault, 1)
+        ctx.set(mux.aux_fault, 1)
+        await settle()
+        checks.check(
+            "fault reaches no source at all",
+            ctx.get(plic.irq_out) == 0 and (await bus.read(PENDING_BASE)) == 0,
+            "`fault` is polled, not wired: nothing in the firmware can clear "
+            "it -- it drops when the device's fault does -- so an interrupt on "
+            "it would have to stay masked until a poll saw the level go, which "
+            "means adding a handler and keeping the poll.")
+
+    sim = Simulator(Fragment.get(m, None))
+    sim.add_clock(1e-6)
+    sim.add_testbench(testbench)
+    sim.run()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -448,6 +608,9 @@ def main():
         emit()
         emit("uart16550.Uart16550.irq")
         run_uart_checks(checks, args.verbose)
+        emit()
+        emit("i2c_mux.I2CBusMux -> Plic -- a source per FUSB302B")
+        run_type_c_checks(checks, args.verbose)
         emit()
 
         if checks.failures:

@@ -8,8 +8,10 @@ pub enum Interrupt {
     APOLLO_UART = 2,
     #[doc = "3 - BOARD_I2C"]
     BOARD_I2C = 3,
-    #[doc = "4 - BOARD_I2C_MUX"]
-    BOARD_I2C_MUX = 4,
+    #[doc = "4 - BOARD_I2C_MUX_TARGET"]
+    BOARD_I2C_MUX_TARGET = 4,
+    #[doc = "5 - BOARD_I2C_MUX_AUX"]
+    BOARD_I2C_MUX_AUX = 5,
 }
 #[doc = r" TryFromInterruptError"]
 #[derive(Debug, Copy, Clone)]
@@ -22,7 +24,8 @@ impl Interrupt {
             1 => Ok(Interrupt::CONSOLE),
             2 => Ok(Interrupt::APOLLO_UART),
             3 => Ok(Interrupt::BOARD_I2C),
-            4 => Ok(Interrupt::BOARD_I2C_MUX),
+            4 => Ok(Interrupt::BOARD_I2C_MUX_TARGET),
+            5 => Ok(Interrupt::BOARD_I2C_MUX_AUX),
             _ => Err(TryFromInterruptError(())),
         }
     }

@@ -146,21 +146,27 @@ Step 4 is the one that matters for the state the board is in today.
 
 ## Interrupts
 
-Each Type-C bus brings an `int` and a `fault` line, so six signals for two devices.
-They do **not** need six PLIC sources — the `int` lines can be OR-ed into one.
-With a multiplexed controller only one device can be talked to at a time, so
-per-device sources buy nothing: the handler has to serialise its register reads
-over the shared bus regardless, and the interrupt register has to be read to decode
-*and clear* the cause either way.
+Each Type-C bus brings an `int` and a `fault` line, so four signals for two devices.
+**Each `int` gets its own PLIC source** — TARGET on 4, AUX on 5. Neither `fault` gets
+one.
 
-**The trap, when this is built:** a shared line is level-sensitive, so the handler
-must read and clear *every* asserted device before it returns. Missing one leaves
-the line asserted, the interrupt re-fires immediately, and the result is a storm
-that presents as a hung CPU — which on this project has repeatedly been mistaken
-for dead gateware.
+The `int` lines were OR-ed onto a single source until #135. The argument for the OR
+was that with a multiplexed controller only one device can be talked to at a time,
+so per-device sources buy nothing. Servicing does serialise, and always will, but
+that is a fact about the bus rather than about which device the handler is told to
+service. See [`../decisions.md`](../decisions.md) decision 8.
 
-Keep `fault` distinct from `int`. It means something different, and it is the one
-worth noticing unambiguously rather than after a register read.
+**The trap the OR carried:** a shared line is level-sensitive, so the handler must
+read and clear *every* asserted device before the source is re-enabled. Missing one
+leaves the line asserted, the interrupt re-fires immediately, and the result is a
+storm that presents as a hung CPU — which on this project has repeatedly been
+mistaken for dead gateware. One source per device makes that unmissable by
+construction: there is only ever one device behind the level being cleared.
+
+`fault` stays outside the interrupt, and not only because it means something
+different from `int`. **Nothing in the firmware can clear it** — it drops when the
+device's fault does — so an interrupt on it would have to stay masked until a poll
+saw the level go away. That would add a handler and keep the poll.
 
 Not urgent: PD negotiation is not on the critical path. The value of the interrupt
 is that a state change can be looked into when it happens instead of polled.
@@ -249,30 +255,35 @@ Enabling them is a one-line change with a known consequence.
 
 ### The interrupt, and where the level-sensitive trap is actually handled
 
-Both `int` lines are OR-ed onto **one** PLIC source. Clearing one means reading
-three read-to-clear registers over I2C — about a millisecond at 80 kHz, on the
-same controller the power monitor's 50 ms poll uses. So the handler does **not**
-do it:
+Each `int` line has its own PLIC source. Clearing a controller means reading three
+read-to-clear registers over I2C — about a millisecond at 80 kHz, on the same
+controller the power monitor's 50 ms poll uses. So the handler does **not** do it:
 
 | context | what it does |
 |---|---|
-| interrupt handler (`src/irq.rs`) | masks the PLIC source, records the event, returns |
-| main loop (`src/typec.rs`) | reads the mux's `LINES` once, clears **every** asserting device, re-enables the source |
+| interrupt handler (`src/irq.rs`) | masks **that** source, records **which** port, returns |
+| main loop (`src/typec.rs`) | clears that one device, re-enables that one source |
 
-That is where "clear every asserted device before returning" lives. Missing one
-leaves the shared line high — but because the source is *masked* for the whole
-window, the re-fire cannot become a storm; it becomes one more deferred pass with
-the CPU making progress in between. It also keeps the single I2C controller out
-of a handler that would otherwise be racing the foreground for it.
+The deferral is about the I2C, not about the sharing, which is why it survived the
+split. What the split changed is the obligation: with one source the loop had to
+clear *every* asserting device before re-enabling, and missing one left the shared
+line high. Now there is one device behind each source and nothing to miss. The mask
+is per device too, so a TARGET awaiting its clear no longer blinds AUX.
+
+A device still asserting when its source comes back re-fires immediately, which is
+correct — there is still work — and the handler masks it again, so it is a loop with
+the CPU making progress between passes rather than a storm.
 
 The handler **records rather than prints**: printing from a handler spins on a
 UART FIFO inside an interrupt. See `firmware/cynthion-soc/src/events.rs` and
-`docs/hardware.md`.
+`docs/hardware.md`. The record now carries the port, which the shared source could
+not supply without a register read.
 
 `fault` is kept out of the interrupt entirely. It means something different from
-`int` and is meant to be distinguishable without a register read, so it is
-reported in `LINES` and polled at 50 ms alongside the rails; a change in either
-direction is announced once.
+`int` and is meant to be distinguishable without a register read, and **nothing
+here can clear it** — it drops when the device's fault does. It is reported in
+`LINES` and polled at 50 ms alongside the rails; a change in either direction is
+announced once.
 
 Tracking: [#98](https://github.com/awtoau/cynthion-workspace/issues/98),
 [#121](https://github.com/awtoau/cynthion-workspace/issues/121).

@@ -43,12 +43,17 @@ state-changing read one byte from the register the handler polls
   * **Idle buses are DRIVEN idle.** Unselected buses get SCL high and SDA
     released every cycle. These pins are `PULLMODE="NONE"`, so undriven means
     floating, and a floating SDA is a transient that reads as a START.
-  * **`irq` is the OR of the two `int` lines**, level-sensitive, one PLIC
-    source. With one controller only one device is addressable at a time, so
-    per-device sources buy nothing (`docs/chips/fusb302b-type-c.md`).
-  * **`fault` is deliberately NOT in `irq`.** It means something different from
-    `int` and is worth noticing without a register read. Reported in LINES,
-    left to the poller.
+  * **One PLIC source per `int` line**, not an OR of the two. Both are levels.
+    A shared level obliges its handler to clear EVERY asserting device before
+    returning, and missing one is a storm that presents as a hung CPU; two
+    sources delete that obligation rather than documenting it. The PLIC has 27
+    spare sources, so nothing was saved by sharing (`../../docs/decisions.md`,
+    decision 8).
+  * **`fault` gets no source at all.** It means something different from `int`,
+    and nothing here can clear it -- it drops when the device's fault does. An
+    interrupt on a level the firmware cannot clear must stay masked until a
+    poll says the level has gone, so it would add a handler and keep the poll.
+    Reported in LINES, left to the 50 ms poller.
 """
 
 from amaranth               import Module, Mux, Signal
@@ -85,7 +90,7 @@ LINE_AUX_FAULT = 3
 
 
 class I2CBusMux(wiring.Component):
-    """The bus select, the Type-C signals, and one PLIC source.
+    """The bus select, the Type-C signals, and a PLIC source for each `int`.
 
     Attributes
     ----------
@@ -100,9 +105,12 @@ class I2CBusMux(wiring.Component):
         Straight from the pads. Active HIGH here: the platform declares all four
         `PinsN`, so Amaranth has already undone the active-low sense and a 1
         means the device is asserting.
-    irq : Signal(), out
-        The OR of the two `int` lines. Level sensitive; attach to a
-        `vexii_plic.Plic` source.
+    target_irq, aux_irq : Signal(), out
+        One per controller, each its own `int` line and nothing else. Level
+        sensitive; attach each to its own `vexii_plic.Plic` source. Separate
+        rather than OR-ed so a handler knows which device asserted without
+        reading LINES, and so clearing one cannot leave the other holding the
+        line up.
     """
 
     def __init__(self):
@@ -140,7 +148,8 @@ class I2CBusMux(wiring.Component):
             "aux_int":      In(1),
             "target_fault": In(1),
             "aux_fault":    In(1),
-            "irq":          Out(1),
+            "target_irq":   Out(1),
+            "aux_irq":      Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -176,10 +185,13 @@ class I2CBusMux(wiring.Component):
             self._lines.f.target_fault.r_data.eq(target_fault),
             self._lines.f.aux_fault.r_data.eq(aux_fault),
 
-            # LEVEL, and only the two `int` lines. See the module docstring for
-            # why `fault` is not in here and why one source is enough for two
-            # devices.
-            self.irq.eq(target_int | aux_int),
+            # LEVELS, one per device, and only the `int` lines. Post-CDC rather
+            # than from the pad: an interrupt raised by a metastable sample is
+            # an interrupt that fires when nothing happened, the hardest kind of
+            # fault to attribute. See the module docstring for why these are two
+            # signals and why `fault` is neither of them.
+            self.target_irq.eq(target_int),
+            self.aux_irq.eq(aux_int),
         ]
 
         # The select the pins actually see, which follows the register only while

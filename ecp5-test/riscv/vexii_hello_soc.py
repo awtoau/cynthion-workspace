@@ -349,27 +349,38 @@ IRQ_APOLLO = 2
 # payload from a timer, say -- does not need a bitstream change to use it.
 IRQ_I2C = 3
 
-# The two FUSB302Bs' `int` lines, OR-ed into ONE source.
+# The two FUSB302Bs' `int` lines, ONE SOURCE EACH.
 #
-# Fourth, so nothing above it renumbers. One source for two devices because with
-# a single muxed controller only one of them can be addressed at a time: the
-# handler has to serialise its register reads over the shared bus whatever the
-# PLIC says, and it has to read the mux's LINES register to decide which device
-# to service either way, so a second source would buy nothing and cost a second
-# claim/complete pair.
+# Fourth and fifth, so nothing above them renumbers -- TARGET keeps the number
+# the OR-ed source had. These were one source until #135; the reasoning that put
+# them there was true about the I2C mux and false about the PLIC. With one muxed
+# controller only one device can be addressed at a time, so this buys no
+# concurrency and never will. What it buys is knowing WHICH, and it deletes an
+# obligation rather than documenting one:
 #
-# THE LINE IS A LEVEL AND IT IS SHARED, which is the trap
-# `docs/chips/fusb302b-type-c.md` warns about: whatever services it must clear
-# EVERY asserting device before the source is re-enabled, or the line stays high
-# and the interrupt re-fires immediately -- a storm that presents as a hung CPU.
-# The firmware's answer is in `src/irq.rs`: the handler masks the source and
-# records the event, and normal context clears every device and re-enables. That
-# also keeps the one I2C controller out of a handler that would otherwise be
-# racing the foreground for it.
+# A SHARED LEVEL MUST BE CLEARED ON EVERY ASSERTING DEVICE before the source is
+# re-enabled, or the line stays high and the interrupt re-fires immediately -- a
+# storm that presents as a hung CPU, which is the trap
+# `docs/chips/fusb302b-type-c.md` warns about and the symptom this project has
+# repeatedly misread. One source per device makes that unmissable by
+# construction: there is only ever one device behind the level being cleared.
 #
-# `fault` is deliberately NOT in this OR. It means something different from
-# `int` and is worth noticing unambiguously rather than after a register read.
-IRQ_TYPE_C = 4
+# The PLIC supports 31 sources and this design now uses 5, so the OR conserved
+# nothing scarce. See `docs/decisions.md` decision 8 for the reversal.
+#
+# What does NOT change: the handler still defers. Clearing is ~1 ms of I2C on the
+# controller the foreground also uses, so `src/irq.rs` masks the asserting source
+# and records the event, and normal context clears that one device and re-enables
+# that one source. Per-device masking means a deferred TARGET no longer blinds
+# AUX, which the shared source could not offer.
+#
+# `fault` gets no source at all. It means something different from `int`, and
+# nothing in the firmware can clear it -- it drops when the device's fault does.
+# An interrupt on an uncleanable level would have to stay masked until a poll saw
+# the level go away, so it would add a handler and keep the poll. It stays in
+# LINES, read every 50 ms by `src/typec.rs`.
+IRQ_TYPE_C_TARGET = 4
+IRQ_TYPE_C_AUX = 5
 
 # Capture depth, in samples of the sync clock.
 #
@@ -575,15 +586,16 @@ class HelloSoC(Elaboratable):
         m.submodules.board_bridge = board_bridge
         decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
 
-        m.submodules.plic = plic = Plic(sources=4)
+        m.submodules.plic = plic = Plic(sources=5)
         m.d.comb += [
             plic.sources[IRQ_CONSOLE].eq(console.irq),
             plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
             plic.sources[IRQ_I2C].eq(i2c.irq),
-            plic.sources[IRQ_TYPE_C].eq(i2c_mux.irq),
+            plic.sources[IRQ_TYPE_C_TARGET].eq(i2c_mux.target_irq),
+            plic.sources[IRQ_TYPE_C_AUX].eq(i2c_mux.aux_irq),
         ]
 
-        # The same three lines, keyed by the decoder window each peripheral lives
+        # The same five lines, keyed by the decoder window each peripheral lives
         # in, so `scripts/soc_generate_pac.py` can put an <interrupt> element on
         # the right peripheral in the SVD.
         #
@@ -594,11 +606,18 @@ class HelloSoC(Elaboratable):
         # with nothing to see anywhere. The names are the `name=` arguments to
         # `decoder.add()` and `board_csr.add()`, joined -- see `walk()` in the
         # generator for why the board's three sub-windows are named that way.
+        #
+        # A dict value rather than a number where ONE window raises more than one
+        # source, which the mux does: each entry becomes its own <interrupt> and
+        # its own `<WINDOW>_<SUFFIX>_IRQ` constant. SVD allows several per
+        # peripheral and svd2rust wants their names distinct, which is also what
+        # firmware wants -- the two numbers are not interchangeable.
         self.interrupt_sources = {
             "console":       IRQ_CONSOLE,
             "apollo_uart":   IRQ_APOLLO,
             "board_i2c":     IRQ_I2C,
-            "board_i2c_mux": IRQ_TYPE_C,
+            "board_i2c_mux": {"TARGET": IRQ_TYPE_C_TARGET,
+                              "AUX":    IRQ_TYPE_C_AUX},
         }
 
         plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
