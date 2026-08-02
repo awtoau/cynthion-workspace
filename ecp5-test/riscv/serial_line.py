@@ -131,6 +131,15 @@ class SerialLine(wiring.Component):
         Diagnostic: saturating count of frames dropped for a bad stop bit. It
         saturates rather than wrapping, because "255" answers the question this
         counter is asked ("is this line noisy") and a wrapped 3 does not.
+    frame_error : Signal(), out
+        One cycle per frame dropped for a bad stop bit -- the same event the
+        counter above counts. Wire to a 16550's `frame_error`, which turns it
+        into LSR.FE.
+    overrun : Signal(), out
+        One cycle per byte this module destroyed because nothing was ready for
+        it. `source.valid` is a one-cycle pulse whatever `source.ready` says, so
+        a byte offered to a full sink is GONE -- this line is the only record
+        that it existed. Wire to a 16550's `overrun`, which turns it into LSR.OE.
     """
 
     def __init__(self, *, divisor, data_bits=8, idle_bits=12):
@@ -157,6 +166,8 @@ class SerialLine(wiring.Component):
             "sink":         In(stream.Signature(data_bits)),
             "armed":        Out(1),
             "frame_errors": Out(8),
+            "frame_error":  Out(1),
+            "overrun":      Out(1),
         })
 
     @property
@@ -218,10 +229,21 @@ class SerialLine(wiring.Component):
             good.eq(armed & phy.rx.rdy & ~phy.rx.err.frame),
             self.source.payload.eq(phy.rx.data),
             self.source.valid.eq(good),
+
+            # What this module loses, reported rather than inferred.
+            #
+            # `valid` is one cycle and does not wait for `ready`, so a byte
+            # offered while the sink is full is destroyed here -- which is
+            # exactly what "receiver overrun" means on a line with no flow
+            # control, and it is otherwise a byte that nothing anywhere ever
+            # mentions. The 16550 downstream cannot see it: its own `sink`
+            # backpressures, so a full FIFO there is a stall and not a loss.
+            self.overrun.eq(self.source.valid & ~self.source.ready),
+            self.frame_error.eq(armed & phy.rx.rdy & phy.rx.err.frame),
         ]
 
         # A framing error disarms. See the module docstring for what this costs.
-        with m.If(armed & phy.rx.rdy & phy.rx.err.frame):
+        with m.If(self.frame_error):
             m.d.sync += armed.eq(0)
             with m.If(self.frame_errors != 0xff):
                 m.d.sync += self.frame_errors.eq(self.frame_errors + 1)

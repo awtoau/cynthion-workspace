@@ -331,6 +331,14 @@ fn main() -> ! {
         // `events::drain` cannot be called without one. See `src/events.rs`.
         events::drain(&mut console);
 
+        // Anything a console has LOST, on the same terms and for the same
+        // reason: the read of LSR that discovers an overrun happens inside the
+        // interrupt handler, which may not print. The bits wait in
+        // `src/uart.rs` until here. A console that drops input silently is the
+        // failure this board keeps meeting; this is where it stops being
+        // silent.
+        uart::report_errors(&mut console);
+
         // A deferred Type-C interrupt, if one is waiting. Every pass rather than
         // on a timer: the source is MASKED between the handler and here, so the
         // only latency is one turn of this loop and nothing is lost while it
@@ -429,9 +437,15 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                              target::PLIC_BASE, plic.pending(), plic.enabled());
             for console in 0..target::UART_BASES.len() {
                 let (interrupts, stalls, buffered) = irq::stats(console);
-                let _ = writeln!(uart, "  {} src {} irqs {} stalls {} buffered {}",
+                // `lost` counts LSR reads that found an error bit set -- an
+                // overrun or a framing error, both of which mean input that
+                // never reached the shell. Zero is the only good value; a
+                // number that climbs while nothing is typed is a noisy line.
+                let _ = writeln!(uart,
+                                 "  {} src {} irqs {} stalls {} buffered {} lost {}",
                                  console, target::UART_IRQS[console],
-                                 interrupts, stalls, buffered);
+                                 interrupts, stalls, buffered,
+                                 uart::error_reads(console));
             }
             // The deferred log's own health. A handler may not print, so it
             // records; if the ring fills, records are dropped rather than the

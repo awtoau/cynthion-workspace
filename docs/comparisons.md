@@ -38,6 +38,7 @@ Numbers are measured unless marked *unverified*.
 | 18 | [Logging from handlers](#18-logging-from-an-interrupt-handler) | deferred ring | settled (#122/#124) |
 | 19 | [RTOS](#19-rtos-bare-loop-vs-rtic-vs-zephyr) | bare loop | **open** (#112/#115) |
 | 20 | [Device ownership](#20-multi-transaction-device-protocols) | one owner, cached reads | in progress (#123) |
+| 21 | [16550: written vs vendored](#21-16550-written-from-the-spec-vs-a-vendored-core) | ours, spec-checked against OpenCores | settled (#128) |
 
 ---
 
@@ -155,13 +156,51 @@ The second reason is the test gate: `-M virt` presents an NS16550A, so
 unchanged and `scripts/soc_test.py` exercises the code that ships rather than a lookalike.
 `target_soc.rs` and `target_qemu.rs` collapsed into one `target.rs`.
 
-**One deliberate deviation from the NS16550A: reading IIR clears nothing.** On a real part
-that read clears the transmit-empty interrupt — a state-changing read at +2, in the same
-32-bit word as RBR at +0, which is the exact hazard the standard map was adopted to
-eliminate. THRE is level-derived instead. Consequence: a driver that sets IER.ETBEI with
-nothing to send and returns gets a storm. The firmware here never sets ETBEI, and Linux's
-8250 driver clears IER.THRI in `__stop_tx` when its ring empties, so this is invisible to
-anything well behaved. **It is also the only thing `scripts/soc_test.py` cannot speak for.**
+**One deliberate deviation was made and then reversed: reading IIR used to clear
+nothing.** The reasoning was that IIR at +2 shares a 32-bit word with RBR at +0, so a
+state-changing read there could strobe RBR if the CPU widened a byte access — the same
+shape as the bug this peripheral replaced. THRE was made level-derived instead.
+
+It was hardening against the wrong thing, and #128 reversed it:
+
+| | what was assumed | what was measured |
+|---|---|---|
+| Does this CPU widen a byte read? | it might | **no.** `LsuCachelessWishbonePlugin` drives a single-byte `sel` (`VexiiRiscv.v:7499-7515`), found during the PAC work |
+| Does the bridge strobe the other lanes? | unknown | **no.** `amaranth_soc.csr.wishbone` asserts `r_stb` per lane, `sel_index & ~we` |
+| Could a cache line fill reach it? | unknown | **no.** the console is in a `main=0` PMA region |
+| What actually protects the poll loop? | the absence of side effects | **the layout.** LSR at +5 is a different 32-bit word from RBR at +0, which holds whatever IIR does |
+
+The cost of the divergence was the property the standard map was chosen for. A driver that
+sets ETBEI, takes the interrupt, reads IIR and returns — which is what the standard says to
+do and what every 8250 driver does — got an interrupt storm. Read-to-clear status is a
+common, well-understood idiom; fighting it means fighting every 16550 driver ever written
+to buy a guarantee the layout already gives.
+
+Two further divergences were found while restoring it, both of which would have broken a
+stock driver and neither of which was deliberate:
+
+  * **LSR.THRE reported "the transmit FIFO has room" rather than "the transmit FIFO is
+    empty".** The standard's promise is the second one, and Linux's 8250 takes it up:
+    `serial8250_tx_chars` writes `up->tx_loadsz` — 16 — bytes after seeing THRE once. Against
+    the old bit that is fifteen bytes into a FIFO with room for one. OpenCores agrees:
+    `assign lsr5 = (tf_count==5'b0 && thre_set_en)`.
+  * **IIR read `0xc3` at rest**, holding the transmit id in bits 3:1 while bit 0 said "no
+    interrupt pending". The standard's table has one entry for idle, `0b0001`.
+
+LSR's error bits are now reported too — OE, FE and the bit 7 summary, cleared by the read
+that reports them. They were previously wired to zero for the same withdrawn reason. The
+peripheral cannot see an overrun itself: its `sink` backpressures, so a full FIFO there is
+a stall and not a loss, and the transport reports a destroyed byte on a pulse. Only the
+Apollo port can produce one — a line with no flow control — because the USB CDC endpoint
+NAKs while its buffer is full and the host retries.
+
+**The acceptance test — could a stock 8250 driver drive this unmodified?** Walked against
+`8250_port.c` in
+[`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md): yes, including
+`autoconfig`'s presence test and the TXEN-bug test, with one gap — `autoconfig_irq`, which
+needs the *data* half of MCR loopback to discover an unknown interrupt line. A driver told
+its interrupt by a devicetree never runs it. Two of the fixes above (THRE, and MCR.LOOP
+routing MCR into MSR) came out of that walk rather than out of the issue.
 
 ### 5. UART FIFO depth: 8250 / 16550 / 16750
 
@@ -542,6 +581,14 @@ wait-free, and free in a handler since the hardware already cleared MIE on trap 
 alternative, a compare-exchange loop to reserve a slot, would be lock-free rather than
 wait-free and would still need the payload published separately.
 
+**Where the ring is the wrong shape: a UART overrun (#128).** The discovery is in the same
+place — an LSR read inside the handler — but the report has to survive the conditions that
+produce it, and a push is DROPPED when the ring fills, under exactly the load that causes
+an overrun. So `src/uart.rs` ORs the LSR error bits into a per-console `AtomicU8` that the
+main loop prints and clears. Bits cannot be lost, only coalesced; the count of reads that
+saw one is a separate `AtomicU32` the `irq` command prints. The ring is for events with
+arguments worth reading individually, which this is not.
+
 **Open (#124): the record encoding.** A 32-bit code with a typed 64-bit payload, tag in the
 code's upper bits (0 none, 1 u8, 2 u16, 3 u32, 4 u64, 5 f32, 8 f64, 16 8×u8, 17 8 ASCII).
 Entry size `u32` + `u64` is 12 bytes; padding to 16 makes indexing a shift, and is worth
@@ -614,6 +661,73 @@ an Amaranth API change and 40+ patched CSR classes; upstream is now ahead, so th
 amaranth-soc reason is gone. Whether anything else still needs it has not been checked.
 
 ---
+
+### 21. 16550: written from the spec vs a vendored core
+
+**The default is to take a proven implementation and change its back end. That default was
+not applied when this peripheral was written, and no candidate was looked at.** Recorded
+here because the omission is the interesting part: the decision that follows survives the
+review, but it was not made on the evidence at the time.
+
+The survey, run for #128:
+
+| | **ours** (`ecp5-test/riscv/uart16550.py`) | OpenCores `uart16550` | RoaLogic `apb4_uart16550` |
+|---|---|---|---|
+| Language | Amaranth | Verilog-2001 | SystemVerilog (packages, packed structs, enums) |
+| Licence | BSD-3-Clause, as the rest of this tree | **LGPL 2.1**, in every file header | BSD-2-Clause |
+| Size | ~130 lines of logic | 12 files, ~135 KB | 5 files, ~65 KB |
+| Bus | `amaranth_soc` CSR, granularity 8 | Wishbone B3 | APB4 |
+| Proven by | 34 assertions in `scripts/uart16550_sim.py`, plus QEMU parity through `soc_test.py` | two decades in OpenRISC/OpenCores SoCs | its own Verilator bench |
+| Back end | `amaranth.lib.stream` ports | RS-232 bit engine, **instantiated inside `uart_regs.v`** | RS-232 bit engine, separate files |
+| Has | DR, OE, FE, THRE/TEMT, IIR read-to-clear, 16-byte FIFOs | all of that plus character timeout, per-character error tags, break detection, RX trigger levels | same as OpenCores |
+
+There is no Amaranth- or Migen-native 16550, so vendoring means a Verilog black box —
+which is a road already taken here: `ecp5-test/riscv/vexii_cpu.py` instantiates
+`VexiiRiscv.v` through `platform.add_file`.
+
+**Why ours stays.**
+
+  * **The back end is the surgery, and in the mature core it is not at the boundary.**
+    OpenCores instantiates `uart_transmitter` and `uart_receiver` *inside* `uart_regs.v`
+    (lines 379 and 399) and derives the register semantics from their internals: `lsr6`
+    reads the transmitter FSM's `tstate`, `lsr5` its `tf_count`, and PE/FE/BI come out of
+    the receive FIFO as tag bits stored beside each byte (`rf_data_out[0:2]`). Cutting the
+    bit engine off means editing the one file that holds every register meaning — modifying
+    the proven part, which forfeits the proof. What would be inherited is the register file,
+    which is the half that is cheap to write and cheap to assert.
+  * **Neither of this board's two ports wants a stock back end.** The console is a USB CDC
+    byte pipe: no baud rate, no start or stop bits, so a stock core could only be left
+    unmodified by feeding its serial pins through a serialiser and a matching deserialiser —
+    a divisor and a shift register's latency invented so that a module could be told it was
+    a UART. The Apollo port genuinely is a serial line, but on pins shared with JTAG, which
+    needs an output enable held across the stop bit, an idle qualifier and a pad
+    synchroniser. A stock 16550 has none of those; that is issue #113, and `serial_line.py`
+    is the answer to it.
+  * **Licence.** The most-proven candidate is LGPL 2.1 and this tree is BSD-3-Clause, as is
+    everything it builds against. RoaLogic's BSD-2 would be fine, and its separation is
+    cleaner, but it is APB4 SystemVerilog with a package — a bus adapter and a yosys
+    SystemVerilog dependency on top of the same back-end surgery.
+  * **The memory map would stop being generated.** `scripts/soc_generate_pac.py` reads
+    `amaranth_soc` memory maps and emits the SVD the firmware's addresses come from. A black
+    box has no memory map, so the peripheral's description would go back to being
+    hand-written — which is exactly what decision 17 exists to prevent.
+
+**What a vendored core would not have solved either way:** the granularity-8 CSR semantics
+(a multi-byte register latches a shadow on its low byte and commits on its high byte), the
+`sync`↔`usb` crossing, and the elastic buffering sized per transport. Those are ours
+whatever sits in front of them.
+
+**What was taken from the proven core instead: its behaviour, as the specification.**
+`uart_regs.v` was read line by line against ours while #128 was implemented, and it caught
+two divergences that assertions written from our own understanding would not have —
+THRE meaning "FIFO empty" rather than "FIFO has room", and IIR's idle encoding. That is the
+principle applied at the level where it pays here. The other half is already in place: the
+driver is exercised against QEMU's `ns16550a`, a proven implementation, on every run of
+`scripts/soc_test.py`.
+
+**Revisit if** a third transport appears that genuinely is an RS-232 line with no shared
+pins, or if character timeout and per-character error tagging turn out to be wanted. Both
+argue for the bit engine we currently have no use for.
 
 ## What is not decided
 

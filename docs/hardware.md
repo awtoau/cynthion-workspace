@@ -65,7 +65,10 @@ What the memory map does **not** carry is prose: `csr.Register` rewrites
 "A CSR register" and the SVD's descriptions are mechanical. Bit-level meaning is
 only present where the gateware declares separate CSR fields — the 16550's
 registers are each one 8-bit field, so `LSR.DR` and `IER.ERBFI` live in
-`ecp5-test/riscv/uart16550.py` and nowhere else.
+`ecp5-test/riscv/uart16550.py`, and the standard's own offsets and read side
+effects are restated once, in
+[`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — they are the
+NS16550A's rather than ours, and cannot drift with the memory map.
 
 **Do not go looking for SoC register offsets in the gateware source or in Apollo's
 firmware, and do not restate them in a document.** That is precisely how firmware
@@ -403,8 +406,8 @@ command is *for*. Anything hardware-specific is in that chip's note.
 |---|---|---|
 | `check` | CPU arithmetic and two known flash words | — |
 | `id`, `read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| `ports` | which 16550s answer | — |
-| `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health | — |
+| `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
+| `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `log [n]` | push *n* deferred events, as an interrupt handler would | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
 | `i2c [power\|target\|aux]` | scan one of the three I2C buses and identify what answers | below |

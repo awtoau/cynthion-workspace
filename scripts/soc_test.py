@@ -458,6 +458,19 @@ def main():
                   "was built.\n"
                   f"received: {show(reply) or '(nothing)'}")
 
+            # Nothing was lost getting here. `lost` counts LSR reads that found an
+            # error bit -- overrun or framing -- and every one of them is input the
+            # shell never saw. QEMU's ns16550a sets LSR.OE for real when its FIFO
+            # overflows, so this is a live assertion and not a constant: everything
+            # typed above went through the same driver, the same handler and the
+            # same ring as it does on the board.
+            check("no console has lost a byte", b"lost 0" in reply,
+                  "`irq` reports a nonzero `lost` count. Bytes reached the UART and "
+                  "were destroyed before the CPU read them, which above all means "
+                  "the assertions before this one were made against a truncated "
+                  "conversation.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
             check("no interrupt source is left claimed", b"pending 00000000" in reply,
                   "a bit set in `pending` while the shell is idle is a source that "
                   "asserted and was never serviced, or -- worse -- a claim that was "

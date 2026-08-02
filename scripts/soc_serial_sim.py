@@ -39,6 +39,14 @@ rather than behavioural: a simulation has no metastability to reproduce. It is
 checked by construction instead -- that `SerialLine` puts an `FFSynchronizer`
 between `rx_i` and everything else, and that no design hands a raw pad to
 `AsyncSerialRX`.
+
+## What the line reports losing
+
+A separate group, and not about #113. `source.valid` is one cycle and does not
+wait for `source.ready`, so a byte offered to a full sink is destroyed here and
+the 16550 downstream cannot see it -- its own `sink` backpressures, so a full
+FIFO there is a stall rather than a loss. `overrun` and `frame_error` are the
+only record that either happened, and they become LSR.OE and LSR.FE.
 """
 
 import argparse
@@ -388,6 +396,68 @@ def run_jtag_noise_check(checks, verbose):
     sim.run()
 
 
+def count_pulses(frames, *, ready, bits_before=20, divisor=DIVISOR):
+    """Drive frames into a SerialLine and count what it reports losing.
+
+    `ready` is what the downstream sink says: 1 for a sink with room, 0 for one
+    that is full, which is the condition that destroys a byte here.
+    """
+    dut = SerialLine(divisor=divisor, data_bits=8)
+    seen = {"overrun": 0, "frame_error": 0}
+
+    async def sampler(ctx):
+        while True:
+            seen["overrun"] += ctx.get(dut.overrun)
+            seen["frame_error"] += ctx.get(dut.frame_error)
+            await ctx.tick()
+
+    async def testbench(ctx):
+        ctx.set(dut.source.ready, ready)
+        await idle(ctx, dut.rx_i, bits_before, divisor)
+        for frame in frames:
+            await drive_frame(ctx, dut.rx_i, frame, divisor)
+        ctx.set(dut.rx_i, 1)
+        await ctx.tick().repeat(4 * divisor)
+        seen["frame_errors"] = ctx.get(dut.frame_errors)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6)
+    sim.add_testbench(sampler, background=True)
+    sim.add_testbench(testbench)
+    sim.run()
+    return seen
+
+
+def run_error_report_checks(checks, verbose):
+    """What the line loses has to reach the 16550, or LSR is a comfortable lie.
+
+    `source.valid` is one cycle and does not wait for `source.ready`, so a byte
+    offered to a full sink is destroyed HERE. The 16550 downstream cannot see it:
+    its own `sink` backpressures, so a full FIFO there is a stall and not a loss.
+    These two outputs are the only record, and they become LSR.OE and LSR.FE.
+    """
+    seen = count_pulses([frame_bits(b) for b in b"abc"], ready=0)
+    checks.check(
+        "a byte delivered to a sink with no room is reported as an overrun",
+        seen["overrun"] == 3,
+        f"three characters were destroyed and {seen['overrun']} were reported. "
+        f"Unreported, they are bytes that nothing anywhere ever mentions.")
+
+    seen = count_pulses([frame_bits(b) for b in b"abc"], ready=1)
+    checks.check(
+        "and a sink that takes them reports none",
+        seen["overrun"] == 0,
+        f"{seen['overrun']} overrun(s) reported for a receiver that lost "
+        f"nothing; LSR.OE would cry wolf on every busy moment.")
+
+    seen = count_pulses([frame_bits(0x5a, stop=0)], ready=1)
+    checks.check(
+        "a framing error is reported once, alongside the count it increments",
+        seen["frame_error"] == 1 and seen["frame_errors"] == 1,
+        f"frame_error pulsed {seen['frame_error']} time(s), the counter reads "
+        f"{seen.get('frame_errors')}")
+
+
 def run_structural_checks(checks, verbose):
     """The synchroniser is a structural property; simulation cannot see it."""
     import inspect
@@ -462,6 +532,10 @@ def main():
         emit("serial_line.SerialLine -- receive")
         run_rx_checks(checks, args.verbose)
         run_jtag_noise_check(checks, args.verbose)
+        emit()
+
+        emit("serial_line.SerialLine -- what it reports losing")
+        run_error_report_checks(checks, args.verbose)
         emit()
 
         emit("serial_line.SerialLine -- structure")

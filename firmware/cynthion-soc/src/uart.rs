@@ -10,8 +10,37 @@
 //! find out whether you may.** RBR at +0 pops the FIFO; LSR at +5 is in a
 //! different 32-bit word and cannot be aliased onto it. See the module
 //! docstring in `ecp5-test/riscv/uart16550.py`.
+//!
+//! ## A read of LSR destroys what it returns
+//!
+//! LSR reports overrun, parity, framing and break in bits 1..4, and the read
+//! that reports them CLEARS them -- on this peripheral, on QEMU's, and on the
+//! part both copy. So a poll loop that reads LSR and throws the value away
+//! throws away the only report of a lost byte there will ever be.
+//!
+//! [`read_lsr`] is therefore the only place this driver reads it, and it folds
+//! the error bits into [`take_errors`] before returning. Both LSR readers -- the
+//! transmit spin in [`Uart::put`] and the receive check in [`UartRx::get`] --
+//! go through it. A new one that does not is a silent regression, and it looks
+//! exactly like a healthy console.
+//!
+//! Which reads change state, on the peripheral and on QEMU alike:
+//!
+//! | read | changes |
+//! |---|---|
+//! | RBR at +0, DLAB clear | pops the receive FIFO |
+//! | IIR at +2 | clears the transmit-empty interrupt while IIR reports it |
+//! | LSR at +5 | clears OE, PE, FE, BI and the bit 7 summary |
+//!
+//! This driver reads RBR and LSR and never reads IIR: it enables only
+//! `IER.ERBFI`, so the one interrupt it can take needs no identifying and is
+//! cleared by draining the FIFO. See `src/irq.rs`.
 
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+
+use crate::target;
+use crate::MAX_CONSOLES;
 
 /// Receive buffer (read) and transmit holding (write). Reading pops a byte.
 const RBR_THR: usize = 0;
@@ -26,27 +55,43 @@ const LSR: usize = 5;
 
 /// Data ready: the receive FIFO holds at least one byte.
 const LSR_DR: u8 = 1 << 0;
-/// Transmit holding register empty: there is room to write.
+/// Overrun: a byte was destroyed before anything read it.
+const LSR_OE: u8 = 1 << 1;
+/// Framing: a character arrived without a stop bit and was dropped.
+const LSR_FE: u8 = 1 << 3;
+/// Transmit holding register empty: the transmit FIFO is EMPTY.
+///
+/// Not "there is room". The standard promises that a driver seeing this set may
+/// write a whole FIFO -- 16 bytes -- without looking again, which is what Linux's
+/// 8250 does. This driver writes one byte at a time and so does not take the
+/// promise up; the constant is still the standard's bit.
 const LSR_THRE: u8 = 1 << 5;
+
+/// The bits a read of LSR clears: OE, PE, FE, BI, and the bit 7 summary.
+///
+/// Named as a mask rather than checked bit by bit because the point is that
+/// [`read_lsr`] must keep ALL of them: a reader that looks at overrun alone
+/// still destroys the other three.
+const LSR_ERRORS: u8 = 0x9e;
 
 /// IER bit 0, ERBFI: interrupt while the receive FIFO holds a byte.
 ///
-/// The ONLY IER bit this firmware ever sets. Bit 1 (ETBEI, transmit holding
-/// register empty) is deliberately left alone: THRE is true whenever the
-/// transmit FIFO has room, which is nearly always, so enabling it without a
-/// transmit ring to drain gives an interrupt that re-asserts the instant the
-/// handler returns.
+/// The ONLY IER bit this firmware ever sets, and the choice is the shell's
+/// shape rather than the peripheral's.
 ///
-/// On a real NS16550A that storm is broken by reading IIR, which clears the
-/// transmit-empty interrupt. The SoC's peripheral deliberately does NOT
-/// implement that, because it would be a state-changing read at +2, sharing a
-/// 32-bit word with RBR at +0 -- the exact hazard the standard register map was
-/// adopted to eliminate. See the IIR block in `ecp5-test/riscv/uart16550.py`.
+/// Bit 1 (ETBEI, transmit holding register empty) would be usable: reading IIR
+/// clears that interrupt here exactly as it does on a real part, so the standard
+/// take-interrupt, read-IIR, write, return sequence terminates. What is missing
+/// is anything to write from -- the shell formats straight into `Uart::put` with
+/// no transmit ring behind it, so an interrupt saying "the FIFO is empty" would
+/// have nothing to hand it. Bit 2 (ELSI, receiver line status) is likewise left
+/// clear: an overrun is picked up by the next LSR read either way, and an
+/// interrupt would only arrive sooner at somewhere that cannot print.
 ///
 /// So transmit stays a bounded spin in `put()`. It costs nothing worth having:
-/// the 16-byte FIFO plus the gateware's elastic buffer absorb a line of output,
-/// and a console that occasionally spins for a few microseconds is not a
-/// problem anyone has.
+/// the FIFO plus the gateware's elastic buffer absorb a line of output, and a
+/// console that occasionally spins for a few microseconds is not a problem
+/// anyone has.
 pub const IER_ERBFI: u8 = 1 << 0;
 
 /// 8 data bits, no parity, one stop bit -- and, critically, DLAB clear.
@@ -67,6 +112,94 @@ const LCR_8N1: u8 = 0x03;
 /// mid-line would otherwise leave the remainder of that line in the receive FIFO
 /// to be interpreted as the first command of the new session.
 const FCR_ENABLE_AND_CLEAR: u8 = 0x07;
+
+/// The error bits seen on each console and not yet printed, OR-ed together.
+///
+/// A bitmask rather than a queued record, because the report has to survive the
+/// conditions that produce it. An event pushed into `src/events.rs` is dropped
+/// when that ring fills, and the ring fills under exactly the load that causes
+/// an overrun -- so the one message worth having would be the one lost. Bits
+/// OR-ed into a word cannot be lost, only coalesced.
+///
+/// Indexed the same way `target::UART_BASES` is. Written from any context,
+/// including the interrupt handler, which is why it is atomic and why nothing
+/// here prints.
+static ERRORS: [AtomicU8; MAX_CONSOLES] = [const { AtomicU8::new(0) }; MAX_CONSOLES];
+
+/// How many LSR reads have seen an error bit, per console, since boot. Never
+/// reset, and printed by the `irq` shell command: a count that keeps climbing is
+/// a line that keeps losing bytes, which a coalesced bitmask alone would hide.
+static ERROR_READS: [AtomicU32; MAX_CONSOLES] =
+    [const { AtomicU32::new(0) }; MAX_CONSOLES];
+
+/// Read LSR once, keeping the error bits the read destroyed.
+///
+/// Every LSR read in this driver goes through here. See the module comment for
+/// why there may not be another.
+fn read_lsr(base: usize) -> u8 {
+    // SAFETY: a fixed peripheral address in an uncached region; volatile because
+    // the value changes underneath the compiler and because the read has a side
+    // effect that must happen exactly once.
+    let lsr = unsafe { read_volatile((base + LSR) as *const u8) };
+
+    let bits = lsr & LSR_ERRORS;
+    if bits != 0 {
+        // Linear search over at most two entries, and only on the rare path
+        // where something went wrong. It keeps `Uart::new(base)` -- which the
+        // panic handler and every shell command use -- free of an index it
+        // would have to be told and could be told wrongly.
+        let mut index = 0;
+        while index < target::UART_BASES.len() {
+            if target::UART_BASES[index] == base {
+                ERRORS[index].fetch_or(bits, Ordering::Relaxed);
+                ERROR_READS[index].fetch_add(1, Ordering::Relaxed);
+                return lsr;
+            }
+            index += 1;
+        }
+    }
+    lsr
+}
+
+/// Error bits seen on console `index` since the last call, and cleared by it.
+pub fn take_errors(index: usize) -> u8 {
+    ERRORS[index].swap(0, Ordering::Relaxed)
+}
+
+/// How many LSR reads have seen an error on console `index` since boot.
+pub fn error_reads(index: usize) -> u32 {
+    ERROR_READS[index].load(Ordering::Relaxed)
+}
+
+/// Print anything the consoles have lost, on the console the caller owns.
+///
+/// Called from the main loop, alongside `events::drain`, and for the same
+/// reason: an overrun is discovered inside an interrupt handler, which may not
+/// print. Reported once per occurrence rather than once per pass, because a
+/// line that says the same thing forever is a line nobody reads.
+///
+/// It prints on the PRIMARY console whichever port lost the byte. The second
+/// port's transmit pin is JTAG TMS and this firmware never speaks there unbidden
+/// -- see `target::ANNOUNCING` -- and a port that is dropping input is the last
+/// one to announce it on.
+pub fn report_errors(uart: &mut Uart) {
+    use core::fmt::Write;
+
+    let mut index = 0;
+    while index < target::UART_BASES.len() {
+        let bits = take_errors(index);
+        if bits != 0 {
+            let _ = writeln!(uart,
+                "uart {}: LSR {:02x}{}{} -- input lost before the CPU read it \
+                 ({} so far)",
+                index, bits,
+                if bits & LSR_OE != 0 { " overrun" } else { "" },
+                if bits & LSR_FE != 0 { " framing" } else { "" },
+                error_reads(index));
+        }
+        index += 1;
+    }
+}
 
 /// A 16550 at a fixed base address.
 ///
@@ -122,9 +255,16 @@ impl Uart {
         }
     }
 
-    /// Writes one byte, waiting for room in the transmit FIFO.
+    /// Writes one byte, waiting for the transmit FIFO to be empty.
     ///
     /// Bounded, not an infinite spin.
+    ///
+    /// Waiting for EMPTY rather than for room, because that is what LSR.THRE
+    /// means -- the standard's promise is that a driver seeing it set may write a
+    /// whole FIFO, so the bit cannot also mean "one slot free". This driver takes
+    /// the promise up one byte at a time, which costs a poll per byte and leaves
+    /// the FIFO holding at most one: the elastic buffer behind it is what absorbs
+    /// a line of output, and that is where buffering was deliberately put.
     ///
     /// An unbounded wait here blocks the CPU INSIDE the banner whenever the
     /// transmit FIFO fills before something drains it -- which is the normal case
@@ -142,12 +282,19 @@ impl Uart {
         unsafe {
             // 200,000 turns of a loop whose body is one uncached MMIO read --
             // several milliseconds at 60 MHz, and several orders of magnitude
-            // longer than the microsecond a 16-byte FIFO needs to drain into a
-            // USB endpoint that is being serviced. Reaching it therefore means
+            // longer than the microsecond a byte needs to reach the elastic
+            // buffer behind a USB endpoint that is being serviced. That is why
+            // the bound did not move when THRE became "empty" rather than "has
+            // room": what it is waiting on is the transport, not the FIFO depth,
+            // and the transport is what stops. Reaching it therefore means
             // nothing is draining at all, and the only useful response to that
             // is to carry on and let the next byte try again.
             let mut spins = 0u32;
-            while read_volatile(self.reg(LSR)) & LSR_THRE == 0 {
+            // `read_lsr`, not a bare read: this loop is the busiest LSR reader in
+            // the firmware, and a bare read here would clear an overrun the
+            // receive path had not noticed yet -- a transmit spin quietly eating
+            // the report of lost input.
+            while read_lsr(self.base) & LSR_THRE == 0 {
                 spins += 1;
                 if spins > 200_000 {
                     return;
@@ -230,8 +377,13 @@ impl UartRx {
         // the whole reason LSR lives at +5 -- a different 32-bit word from RBR at
         // +0 -- so that no widening, prefetch or replay of this poll can reach
         // the data register.
+        //
+        // `read_lsr` keeps the error bits this read clears. On the port that is
+        // a real serial line they are the only evidence a byte was lost, and
+        // this is the read most likely to be the one that sees them -- the
+        // handler runs the instant a byte lands.
         unsafe {
-            if read_volatile(self.reg(LSR)) & LSR_DR == 0 {
+            if read_lsr(self.base) & LSR_DR == 0 {
                 None
             } else {
                 Some(read_volatile(self.reg(RBR_THR)))

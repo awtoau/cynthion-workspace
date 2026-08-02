@@ -934,6 +934,22 @@ class HelloSoC(Elaboratable):
         wiring.connect(m, apollo_line.source, apollo_rx_buf.sink)
 
         m.d.comb += [
+            # What the line loses, on into LSR.
+            #
+            # This is the port where a byte can actually be destroyed: an async
+            # serial line has no flow control, `SerialLine.source.valid` is one
+            # cycle whatever the buffer says, and a frame with a bad stop bit is
+            # dropped rather than delivered. The 16550 cannot see either -- its
+            # own `sink` backpressures, so a full FIFO there is a stall and not a
+            # loss -- so the transport reports both and the peripheral latches
+            # them as LSR.OE and LSR.FE.
+            #
+            # The USB console has no equivalent and drives neither input: the CDC
+            # endpoint NAKs while its buffer is full and the host retries, so
+            # that path loses nothing to report.
+            apollo_uart.overrun.eq(apollo_line.overrun),
+            apollo_uart.frame_error.eq(apollo_line.frame_error),
+
             # The pad, and nothing else. SerialLine owns the synchroniser, the
             # idle qualifier and the output enable -- which is the point of it
             # being a module rather than nine lines of comb here.
