@@ -55,6 +55,9 @@ invisible from the host if it happened:
   backspace         the on-screen erase AND the line buffer edit agree
   CRLF              no bare LF ever reaches the wire
   irq               the console is interrupt-driven, and the count is climbing
+  stats             `mcycle` and `minstret` are live, the busy/idle split
+                    attributes work to busy, and the 50 ms poll is meeting its
+                    interval
 
 The interrupt check has a weaker sibling that is already implicit in every check
 above it: the shell reads received bytes ONLY from the ring that
@@ -266,12 +269,22 @@ def tree_is_dirty():
     return bool(status.stdout.strip())
 
 
-def ask_fresh_qemu(text, needle, seconds):
-    """Boot a new image and run one command on it. `None` if it never spoke."""
+def ask_fresh_qemu(text, needle, seconds, settle=None, settle_s=0):
+    """Boot a new image and run one command on it. `None` if it never spoke.
+
+    `settle` is something to wait for BEFORE asking. One caller needs it: a
+    measurement of an idle machine taken 40 ms after boot is mostly a
+    measurement of the command that asked, so `stats` waits for the idle
+    re-banner first and gets a couple of seconds of doing nothing to average
+    over.
+    """
     session = Session(ELF)
     try:
-        if session.expect(b"Cynthion RISC-V SoC", BOOT_S) is None:
+        first = session.expect(b"Cynthion RISC-V SoC", BOOT_S)
+        if first is None:
             return None
+        if settle is not None:
+            session.expect(settle, settle_s, first + 1)
         mark = len(session.snapshot())
         session.send(text.encode() + b"\r")
         session.expect(needle, seconds, mark)
@@ -378,7 +391,7 @@ def main():
                 return reply
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
-                       b"selftest", b"ports", b"irq", b"time",
+                       b"selftest", b"ports", b"irq", b"time", b"stats",
                        b"log [n]", b"board", b"led", b"i2c", b"power",
                        b"phy", b"typec", b"sideband", b"load <hex>",
                        b"reset"]
@@ -866,6 +879,154 @@ def main():
                  f"ticks, worst lateness "
                  f"{late.group(1).decode() if late else '?'} ticks, "
                  f"of 10000 in a period")
+
+            # --- where the cycles go ------------------------------------------------
+            #
+            # `mcycle` and `minstret` are decoded by the SoC's generated core
+            # (`--with-rdtime` adds `zicntr`, which instantiates the plugin --
+            # see src/metrics.rs) and by `virt`. An UNDECODED CSR read traps, so
+            # a core without them is not a zero here, it is an illegal
+            # instruction in the main loop -- which is why the liveness check
+            # below is the one that matters and why it runs on this target at
+            # all rather than waiting for a bitstream.
+            def stats_state(name):
+                """`stats`, parsed: (window, busy basis points, ipc per 1000,
+                turns, mean, worst, polls, worst gap ms)."""
+                reply = command("stats", [b"cycles   window", b"loop     turns",
+                                          b"poll     every"], name)
+                cycles = re.search(rb"window (\d+)\s+busy (\d+)\.(\d\d)%"
+                                   rb"\s+ipc (\d+)\.(\d\d\d)", reply)
+                loop = re.search(rb"turns (\d+)\s+mean (\d+) cycles"
+                                 rb"\s+worst (\d+) cycles", reply)
+                poll = re.search(rb"every (\d+) ms\s+polls (\d+)"
+                                 rb"\s+worst gap (\d+) ms", reply)
+                if not (cycles and loop and poll):
+                    return None, reply
+                return (int(cycles.group(1)),
+                        int(cycles.group(2)) * 100 + int(cycles.group(3)),
+                        int(cycles.group(4)) * 1000 + int(cycles.group(5)),
+                        int(loop.group(1)), int(loop.group(2)),
+                        int(loop.group(3)),
+                        int(poll.group(2)), int(poll.group(3))), reply
+
+            # Twice, either side of a known amount of work, because the
+            # interesting number is the DIFFERENCE. The first reading is an
+            # idle shell -- the harness has been waiting on replies, so almost
+            # every turn found nothing -- and it is the figure issue #129 is
+            # after: how much of the machine is spare.
+            idle, reply = stats_state("`stats` reports cycles, loop and poll")
+
+            # 20 ms of spinning inside the firmware, in ONE turn of the main
+            # loop, reached through `irq::pop` -- so it is charged busy by
+            # construction and it is large enough to show against an otherwise
+            # idle shell. The same command the tick's drift assertion uses, for
+            # the same reason: the interval is real and the harness spends no
+            # wall-clock budget on it.
+            command("log 20", [b"log pushed 15 of 20"],
+                    "an overfull log drops the excess and counts it, once more")
+            stats, reply = stats_state("`stats` answers again after a busy turn")
+
+            if idle is not None:
+                emit(f"        idle shell: busy {idle[1] / 100:.2f}% of "
+                     f"{idle[0]} cycles, ipc {idle[2] / 1000:.3f}")
+
+            if stats is None or idle is None:
+                check("the cycle and instruction counters are live", False,
+                      "`stats` could not be parsed, so there is nothing to "
+                      "check.\n"
+                      f"received: {show(reply) or '(nothing)'}")
+            else:
+                (window, busy, ipc, turns, mean, worst, polls, gap) = stats
+
+                # `--` in any of the three fields is a denominator too small to
+                # scale by, which after a whole session of commands can only
+                # mean a counter that is not advancing.
+                check("the cycle and instruction counters are live",
+                      window > 0 and ipc > 0 and mean > 0 and turns > 0,
+                      f"window {window} cycles, ipc {ipc}/1000, mean {mean} "
+                      f"cycles over {turns} turns.\n"
+                      "A zero in any of these is `mcycle` or `minstret` "
+                      "standing still, which\n"
+                      "makes every figure this command prints a ratio of "
+                      "nothing.\n"
+                      f"received: {show(reply) or '(nothing)'}")
+
+                # The whole point of the command: that work MOVES the number.
+                # `log 20` spent 20 ms in one busy turn between the two
+                # readings, so the fraction must have risen. A comparison
+                # rather than `> 0` because it survives the window halving --
+                # halving preserves the ratio exactly -- and because a split
+                # that charged everything to busy would also pass `> 0`.
+                check("work moves the busy fraction", busy > idle[1],
+                      f"busy was {idle[1] / 100:.2f}% and is "
+                      f"{busy / 100:.2f}% after a command that spends 20 ms\n"
+                      "inside the firmware in a single turn. Nothing is "
+                      "calling metrics::busy,\n"
+                      "or the flag is being consumed before the turn it "
+                      "belongs to closes.\n"
+                      f"received: {show(reply) or '(nothing)'}")
+
+                # A fraction that exceeds its whole is a scaling bug, and it is
+                # the one failure mode of `parts()` that would still print
+                # something plausible-looking.
+                check("the busy fraction is a fraction", busy <= 10_000,
+                      f"`stats` reported {busy / 100:.2f}% busy, which is more "
+                      "than all of the cycles.")
+
+                # A maximum below the mean it is drawn from cannot happen, so
+                # this catches the two being taken over different windows --
+                # which they are: `worst` is since boot and `mean` is windowed.
+                check("the worst turn bounds the mean turn", worst >= mean,
+                      f"worst turn {worst} cycles is below the mean of {mean}.")
+
+                # The poll's own interval, measured by the poll rather than
+                # assumed from the constant. It CANNOT be below the nominal --
+                # the poll only runs once the interval has elapsed -- so a
+                # smaller number means the gap is being measured against the
+                # wrong instant. It is not bounded above here: under TCG the
+                # gap is the host scheduler's, exactly as `late` is, and a
+                # bound would measure this machine. The value is reported.
+                check("the power poll is meeting its 50 ms interval",
+                      polls > 0 and gap >= 50,
+                      f"{polls} poll(s), worst gap {gap} ms against a nominal "
+                      "50 ms.\n"
+                      "Zero polls means the interval check never passed; a gap "
+                      "below the\n"
+                      "interval means it is being timed from the wrong "
+                      "instant.\n"
+                      f"received: {show(reply) or '(nothing)'}")
+
+                emit(f"        after 20 ms of work: busy {busy / 100:.2f}% of "
+                     f"{window} cycles, ipc {ipc / 1000:.3f}, turn mean {mean} "
+                     f"worst {worst} cycles, {polls} polls worst gap {gap} ms")
+
+            # The headline number, on a shell nobody has touched.
+            #
+            # The readings above are taken after a session of commands, three
+            # of which spend 20 ms spinning, so they measure the test. A fresh
+            # machine measures the thing issue #129 asks about: how much of the
+            # CPU an idle shell leaves spare, and therefore whether an RTOS
+            # would fit. It waits for the idle re-banner before asking, so the
+            # window averaged over is a couple of seconds of doing nothing
+            # rather than the 40 ms between boot and the question -- over which
+            # the command itself would be most of the answer.
+            fresh = ask_fresh_qemu("stats", b"poll     every", REPLY_S,
+                                   settle=b"Cynthion RISC-V SoC",
+                                   settle_s=IDLE_S)
+            resting = re.search(rb"busy (\d+)\.(\d\d)%", fresh or b"")
+            resting = (int(resting.group(1)) * 100 + int(resting.group(2))
+                       if resting else None)
+            check("an untouched shell is mostly idle",
+                  resting is not None and resting < 5_000,
+                  "a freshly booted shell that nobody has typed at reported "
+                  f"{'no busy figure' if resting is None else f'{resting / 100:.2f}% busy'}.\n"
+                  "Over half the machine spent on a loop that is only asking "
+                  "means the split\n"
+                  "is charging idle turns to busy, and the figure cannot be "
+                  "used to size an RTOS.\n"
+                  f"received: {show(fresh or b'') or '(nothing)'}")
+            if resting is not None:
+                emit(f"        untouched shell: busy {resting / 100:.2f}%")
 
             # --- backspace --------------------------------------------------------
             # Type a command with one wrong character, rub it out, and require the

@@ -371,6 +371,11 @@ pub fn command(uart: &mut Uart) {
                 // `src/clock.rs` is the only thing here that knows how much
                 // time has passed, and it is `rdtime` and nothing else. A core
                 // generated without it does not fail -- it traps.
+                //
+                // This line covers `stats` as well. `--with-rdtime` adds
+                // `zicntr`, and `zicntr` is what instantiates the plugin that
+                // decodes `mcycle` and `minstret` -- one flag, both CSRs, so
+                // one warning. See `src/metrics.rs`.
                 let _ = writeln!(uart, "         NO RDTIME: this core was not \
                                         generated with the time counter");
             }

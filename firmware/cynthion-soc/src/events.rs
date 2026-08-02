@@ -225,6 +225,8 @@ pub fn drain(uart: &mut Uart) {
         let b = SLOTS[tail].b.load(Ordering::Relaxed);
         let at = log::Stamp::at(SLOTS[tail].at.load(Ordering::Relaxed));
         TAIL.store((tail + 1) % RING, Ordering::Release);
+        // Formatting a record is work, and it is work an interrupt caused.
+        crate::metrics::busy();
         report(uart, at, code, a, b);
     }
 

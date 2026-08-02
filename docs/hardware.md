@@ -411,6 +411,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `time` | the 1 ms CLINT tick: uptime, `mtime`, and what the handler costs | below |
+| `stats` | where the cycles go: busy against idle, IPC, turn length, poll jitter | below |
 | `log [n]` | push *n* deferred events, as an interrupt handler would | below |
 | `board` | every port as a tree: its rail, its PD controller, its PHY | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
@@ -586,6 +587,80 @@ method and no `core::fmt::Write`. `scripts/soc_irq_log_check.py` (the `irqlog`
 check in `scripts/check.py`) covers what the compiler cannot — Rust's privacy
 cannot stop a sibling module naming `Uart`.
 
+**`stats`** is what the machine is *doing*, where `info` is what it *is*. Three
+lines, from the CPU's own counters and one `rdtime` read:
+
+```bash
+python3 scripts/soc_shell.py stats                      # the USB console
+python3 scripts/soc_shell.py --port /dev/ttyACM0 stats   # the Apollo console
+```
+
+The shape of it — **numbers illustrative, none of them measured on the board**:
+
+```
+cycles   window 1073741824  busy 0.15%  ipc 0.412
+loop     turns 1874233  mean 572 cycles  worst 141202 cycles
+poll     every 50 ms  polls 24019  worst gap 61 ms
+```
+
+| field | from | says |
+|---|---|---|
+| `window` | `mcycle` deltas | cycles the other figures are ratios of |
+| `busy` | those deltas, split | fraction that did work rather than asked |
+| `ipc` | `minstret` / `mcycle` | instructions per cycle on an in-order cached core |
+| `mean`, `worst` | one turn of the main loop | how long a poller can be kept waiting |
+| `worst gap` | `rdtime` at each poll | the largest interval the 50 ms poll achieved |
+
+**"% CPU" had to be defined before it could be measured.** There is no scheduler
+and nothing is ever descheduled, so a utilisation figure taken the usual way
+reads 100% forever. The split here is *useful work against spinning*: a turn of
+the main loop is **busy** if something during it called `metrics::busy`, and
+**idle** otherwise — an idle turn is one that polled `irq::pop`, found nothing,
+and came back. Marked busy by `irq::pop` (a byte arrived), the 50 ms power poll,
+`events::drain`, `typec::service`, `uart::report_errors`, and the idle
+re-banner.
+
+**The 1 ms tick is deliberately not one of them.** Its cycles land in the idle
+column, because the question this number exists to answer is whether an RTOS
+would fit — and an RTOS brings its own tick. The amount is not unaccounted for:
+`time` prints the handler's worst cost and its rate.
+
+**Measured under QEMU: an untouched shell is 0.15% busy.** 99.85% of cycles are
+`irq::pop` returning `None`. That is the figure to weigh against RTIC or Zephyr,
+with the caveat that TCG is not the board — `mcycle` there advances once per
+instruction, so IPC reads 1.000 and means nothing, and the board's cache misses
+and Wishbone stalls are absent by construction. `scripts/soc_test.py` asserts the
+split attributes work to busy and that the poll is meeting its interval; the
+numbers it prints are on its own transcript.
+
+The counters accumulate into a **window** that is halved when it reaches 2^30
+cycles — 17.9 s at 60 MHz. Halving preserves every ratio exactly, so what is
+reported is a lifetime figure weighting the recent past. The alternative was a
+64-bit divide, which on rv32 is `__udivdi3`: 912 bytes, and the same reason
+`time` prints a raw `mtime`.
+
+**What the core has, checked against the generated Verilog rather than assumed**
+— an undecoded CSR read traps rather than reading zero, so this is not a
+detail:
+
+| CSR | in this core | why |
+|---|---|---|
+| `mcycle`, `minstret`, and high halves | **yes** | `--with-rdtime` adds `zicntr`, which instantiates `PerformanceCounterPlugin` |
+| `mcountinhibit` | yes | same plugin; unused here |
+| `mhpmcounter3..31`, `mhpmevent3..31` | **decode, read hardwired zero** | allocated as WARL-zero dummies while `additionalCounterCount` is 0 |
+
+So `--with-rdtime` in `ecp5-test/riscv/vexii_cpu.py` gates `rdtime` and these
+counters together, and `info`'s `NO RDTIME` line is the one warning for both.
+**Cache miss counts are not available**: they would live in the HPM counters,
+and reaching them needs `--performance-counters N` added to `GENERATE_FLAGS`, a
+new bitstream, and a board to check it on. Reading one today is not a trap and
+not a measurement.
+
+Still only gateware can answer these, and none of them is built: Wishbone stall
+cycles (what the response register in `18c1fa5` costs in service), UART FIFO
+high-water marks, I2C bus occupancy, and PLIC-assert-to-handler-entry latency.
+Each is a counter and a CSR.
+
 **`i2c <bus>`** names the bus rather than remembering one. There is a single I2C
 controller behind a two-bit select driving three pin-sets — forced by both
 FUSB302Bs answering `0x22` — and nothing in a reply says which bus it came from,
@@ -612,8 +687,10 @@ its format strings are `.rodata`, and what is left over is the *stack*, which th
 linker sizes last and silently — but it costs space in the half that is meant to
 grow rather than in the half a board is recovered with.
 
-With `board`, `info`, `selftest` and `time` all present it measures `.text` 25,224
-+ `.rodata` 9,700 + `.bss` 1,412 = 36,336 bytes, leaving **28,152 free** of 64,512.
+With `board`, `info`, `selftest`, `time` and `stats` all present it measures
+`.text` 25,996 + `.rodata` 9,976 + `.bss` 1,460 = 37,432 bytes, leaving **27,048
+free** of 64,512. `stats` and the collection behind it account for 1,088 of
+that — 772 of code, 260 of format strings and 48 of counters.
 Under the previous 32 KiB split the same firmware was over by 3,748 bytes with no
 stack at all and did not link. Two reclamations from that period stay because they
 were genuine deletions of waste: `.eh_frame`, ~1800 bytes of unwind tables lld was

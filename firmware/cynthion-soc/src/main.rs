@@ -90,6 +90,7 @@ mod fusb302;
 mod info;
 mod irq;
 mod log;
+mod metrics;
 mod plic;
 mod power;
 mod selftest;
@@ -213,6 +214,9 @@ impl Shell {
                     // its own value.
                     if self.idle >= 12_000_000 {
                         self.idle = 0;
+                        // Two lines printed is work, even though nobody asked
+                        // for them. See `src/metrics.rs`.
+                        metrics::busy();
                         banner(uart);
                         let _ = write!(uart, "> ");
                     }
@@ -328,6 +332,11 @@ fn main() -> ! {
     let mut shells = [Shell::NEW; MAX_CONSOLES];
 
     loop {
+        // Close the turn that just ended: two `csrr`s, charged to busy or idle
+        // by whether anything called `metrics::busy` during it. See
+        // `src/metrics.rs` for why the tick is not one of the things that does.
+        metrics::turn();
+
         // The board's own periodic work, before the consoles.
         //
         // Here rather than in an interrupt handler: the power monitor's poll
@@ -409,6 +418,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
+            let _ = writeln!(uart, "  stats         where the cycles go: busy, ipc, poll jitter");
             let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
             let _ = writeln!(uart, "  board         every port: rail, pd \
                                     controller and phy, as a tree");
@@ -535,6 +545,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  cost    worst {} ticks  late worst {} ticks",
                              cost, late);
         }
+        b"stats" => metrics::command(uart),
         b"info" => info::command(uart),
         b"selftest" => selftest::command(uart),
         // Registered on every target, unlike its neighbours below: it reads no
