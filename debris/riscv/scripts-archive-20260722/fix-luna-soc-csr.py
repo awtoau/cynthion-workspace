@@ -9,10 +9,15 @@ classes to proper __init__ methods.
 import re
 from pathlib import Path
 
+# The fork these scripts patched, as a checkout under $HOME rather than one
+# machine's absolute path. Retired code: luna_soc's vendored amaranth-soc is no
+# longer a dependency, so nothing here runs.
+LUNA_SOC = str(Path.home() / "git" / "awtoau" / "awto-luna-soc")
+
 
 def fix_uart():
     """Fix uart.py - UART peripheral registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/uart.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/uart.py")
     content = file_path.read_text()
 
     # Fix TxData
@@ -86,7 +91,7 @@ def fix_uart():
 
 def fix_timer():
     """Fix timer.py - Timer peripheral registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/timer.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/timer.py")
     content = file_path.read_text()
 
     replacements = [
@@ -137,7 +142,7 @@ def fix_timer():
 
 def fix_ila():
     """Fix ila.py - Logic analyzer peripheral registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/ila.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/ila.py")
     content = file_path.read_text()
 
     replacements = [
@@ -175,7 +180,7 @@ def fix_ila():
 
 def fix_device():
     """Fix usb2/device.py - USB device registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/usb2/device.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/usb2/device.py")
     content = file_path.read_text()
 
     # Read the file to find exact patterns
@@ -214,7 +219,7 @@ def fix_device():
 
 def fix_ep_control():
     """Fix usb2/ep_control.py - Endpoint control registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/usb2/ep_control.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/usb2/ep_control.py")
     content = file_path.read_text()
 
     import re
@@ -250,7 +255,7 @@ def fix_ep_control():
 
 def fix_ep_in():
     """Fix usb2/ep_in.py - Endpoint IN registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/usb2/ep_in.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/usb2/ep_in.py")
     if not file_path.exists():
         return
 
@@ -288,7 +293,7 @@ def fix_ep_in():
 
 def fix_ep_out():
     """Fix usb2/ep_out.py - Endpoint OUT registers."""
-    file_path = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core/usb2/ep_out.py")
+    file_path = Path(f"{LUNA_SOC}/luna_soc/gateware/core/usb2/ep_out.py")
     if not file_path.exists():
         return
 

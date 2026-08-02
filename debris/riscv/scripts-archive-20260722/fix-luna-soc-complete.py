@@ -7,7 +7,7 @@ Systematically finds and fixes ALL annotation-only CSR.Register classes.
 import re
 from pathlib import Path
 
-BASE_PATH = Path("/home/dan/git/awtoau/awto-luna-soc")
+BASE_PATH = Path.home() / "git" / "awtoau" / "awto-luna-soc"
 
 def parse_and_fix_file(file_path):
     """Parse file, find CSR.Register classes, and fix annotation-only ones."""

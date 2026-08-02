@@ -29,12 +29,12 @@ MINE = ROOT / "tmp/diamond-mine"
 LOGS = ROOT / "tmp/logs"
 
 YOSYS_BB_CANDIDATES = [
-    Path("/home/dan/opt/oss-cad-suite/share/yosys/ecp5/cells_bb.v"),
-    Path("/home/dan/.local/share/yosys/ecp5/cells_bb.v"),
+    Path.home() / "opt/oss-cad-suite/share/yosys/ecp5/cells_bb.v",
+    Path.home() / ".local/share/yosys/ecp5/cells_bb.v",
     Path("/usr/share/yosys/ecp5/cells_bb.v"),
 ]
-NEXTPNR = Path("/home/dan/.local/bin/nextpnr-ecp5")
-TRELLIS_DB = Path("/home/dan/opt/oss-cad-suite/share/trellis/database/ECP5")
+NEXTPNR = Path.home() / ".local/bin/nextpnr-ecp5"
+TRELLIS_DB = Path.home() / "opt/oss-cad-suite/share/trellis/database/ECP5"
 
 
 def setup_logging(name: str) -> logging.Logger:
@@ -105,7 +105,7 @@ def nextpnr_strings(log: logging.Logger) -> set[str]:
     make every primitive look unsupported -- so warn loudly if the token count
     is implausibly low rather than reporting a bogus gap.
     """
-    for cand in (Path("/home/dan/opt/oss-cad-suite/libexec/nextpnr-ecp5"), NEXTPNR):
+    for cand in (Path.home() / "opt/oss-cad-suite/libexec/nextpnr-ecp5", NEXTPNR):
         if not cand.exists():
             continue
         p = subprocess.run(["strings", str(cand)], capture_output=True, text=True, errors="replace")

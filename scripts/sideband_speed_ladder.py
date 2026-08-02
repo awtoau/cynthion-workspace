@@ -82,7 +82,8 @@ def divisor_error(baud):
 
 def build_and_flash(handle, baud):
     env = dict(os.environ)
-    env["PATH"] = "/home/dan/opt/cpython-315t/bin:" + env["PATH"]
+    env["PATH"] = (str(Path.home() / "opt" / "cpython-315t" / "bin")
+                   + os.pathsep + env["PATH"])
 
     subprocess.run(["make", "APOLLO_BOARD=cynthion"], cwd=FIRMWARE,
                    env=env, capture_output=True)

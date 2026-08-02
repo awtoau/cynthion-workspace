@@ -40,7 +40,7 @@ from pathlib import Path
 # would fail to read the console and report it as a silent CPU. Yosys still
 # needs that environment, so the fix is to escape it here rather than ask the
 # caller not to source it.
-_REAL_PYTHON = "/home/dan/opt/cpython-315t/bin/python3.15t"
+_REAL_PYTHON = str(Path.home() / "opt" / "cpython-315t" / "bin" / "python3.15t")
 if os.environ.get("PYTHONHOME") and sys.executable != _REAL_PYTHON:
     _clean = {k: v for k, v in os.environ.items()
               if k not in ("PYTHONHOME", "PYTHONPATH")}
@@ -61,7 +61,7 @@ VID, PID = 0x1209, 0x000e
 # it, so a subprocess launched as "python3.15t" gets an interpreter with no
 # standard library -- it fails on `import __future__`, which looks like a
 # broken Apollo rather than a hijacked interpreter.
-PYTHON = "/home/dan/opt/cpython-315t/bin/python3.15t"
+PYTHON = _REAL_PYTHON
 
 
 def clean_env():

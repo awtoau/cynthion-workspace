@@ -18,7 +18,7 @@ The workspace vendors seven Great Scott Gadgets repos as git submodules under
 Each submodule clone carries two remotes: `origin` (the awtoau fork) and
 `upstream` (greatscottgadgets, read-only source of new commits).
 
-**Local mirror:** `/mnt/2tb/git_mirror/greatscottgadgets` — plain clones of the
+**Local mirror:** `${GIT_MIRROR:-$HOME/git_mirror}/greatscottgadgets` — plain clones of the
 seven upstream repos, usable as an offline reference.
 
 ## The four places a submodule lives

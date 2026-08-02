@@ -28,7 +28,10 @@ class ConnectionPainter extends CustomPainter {
 
   static void _log(String msg) {
     try {
-      final f = File('/home/dan/git/cynthion-workspace/app/tmp/connection_debug.log');
+      // Relative to the process working directory -- `app/` when the app is
+      // run the documented way. An absolute path here named one machine, and
+      // went stale the first time the checkout moved.
+      final f = File('tmp/connection_debug.log');
       if (!_logInited) {
         f.writeAsStringSync('=== ConnectionPainter debug ${DateTime.now()} ===\n');
         _logInited = true;

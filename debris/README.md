@@ -18,13 +18,14 @@ These were never committed and have been removed:
 ## Files Currently in This Directory
 
 - `architecture.md` — archived hardware architecture and patch summary retained for historical reference
+- `docs/archived_ai_chats/` — recovered Copilot transcripts, retired from `docs/` because they are raw event records rather than documentation; kept because they cannot be regenerated from anything in the repo
 
 ## Curated Prototype Archives
 
 - `code/cynthion-workspace-prototype/` — preserved human-authored subset of an older workspace snapshot after removing generated files, VCS metadata, and exact duplicates
 - `code/legacy_cli/` — superseded root CLI preserved after migration to the `cyn` command stack
 - `code/cynthion-app-prototype/` — preserved human-authored subset of an older Flutter app snapshot after removing generated files and platform boilerplate
-- `code/awto-cynthion-reference/` — remaining non-duplicate local deltas from an archived `awto-cynthion` snapshot after removing files identical to the live `/mnt/2tb/git/awtoau/awto-cynthion` checkout
+- `code/awto-cynthion-reference/` — remaining non-duplicate local deltas from an archived `awto-cynthion` snapshot after removing files identical to the live `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion` checkout
 
 ## Future Documentation
 

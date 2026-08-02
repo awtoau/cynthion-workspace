@@ -222,6 +222,21 @@ def build_checks() -> List[Check]:
                 Step([PYTHON, "scripts/soc_irq_log_check.py"], ROOT),
             ],
         ),
+        Check(
+            name="paths",
+            description="no tracked file names one machine's filesystem",
+            steps=[
+                # This repo is public. A home directory or a local mount point
+                # in a committed file says which account and which disk the
+                # work was done on, and is wrong for everyone who clones it.
+                # It has also already broken once here, when the checkout
+                # moved and every absolute path in the docs went stale.
+                #
+                # Tracked files only, text only; no board, no toolchain,
+                # well under a second.
+                Step([PYTHON, "scripts/private_path_check.py"], ROOT),
+            ],
+        ),
         # Do NOT run this from repos/cynthion: that directory contains a
         # 'cynthion/' subdirectory which Python picks up as a namespace package,
         # shadowing the installed one (cynthion.__file__ becomes None, so

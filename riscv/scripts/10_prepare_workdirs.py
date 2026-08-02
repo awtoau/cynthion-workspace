@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -11,7 +12,9 @@ R64 = ROOT / "riscv"
 WORK = R64 / "work"
 OUT = R64 / "out"
 
-MIRROR = Path("/mnt/2tb/git_mirror/SpinalHDL/VexiiRiscv.git")
+# Set GIT_MIRROR if the local plain-clone mirror is not under $HOME.
+GIT_MIRROR = Path(os.environ.get("GIT_MIRROR", Path.home() / "git_mirror"))
+MIRROR = GIT_MIRROR / "SpinalHDL" / "VexiiRiscv.git"
 VEXII_WORKTREE = WORK / "vexiiriscv"
 
 

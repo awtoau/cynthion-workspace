@@ -38,7 +38,7 @@ top_level_cli(LEDChase)
 ## Step 2: Build Gateware
 
 ```bash
-cd /mnt/2tb/git/cynthion-workspace
+cd ecp5-test          # from the repo root
 
 # Generate Verilog RTL
 python3 led_patterns_simple.py generate -t rtlil -o led_patterns.il

@@ -57,7 +57,8 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
 
   static void _dbgLog(String msg) {
     try {
-      File('/home/dan/git/cynthion-workspace/app/tmp/connection_debug.log').writeAsStringSync(
+      // Same file as ConnectionPainter._log, and relative for the same reason.
+      File('tmp/connection_debug.log').writeAsStringSync(
         '${DateTime.now().toIso8601String().substring(11, 23)} [canvas] $msg\n',
         mode: FileMode.append,
       );

@@ -82,6 +82,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def expand(value: str | None) -> str | None:
+    """Expand `$VAR` and `~` in a path read from a profile.
+
+    Profiles are committed, so they name checkouts that live outside this
+    workspace as `$REPOS_ROOT/...` rather than as one machine's absolute path.
+    An unset variable is left as written, which shows up in the "does not
+    exist" error below naming the variable that needs setting.
+    """
+    if value is None:
+        return None
+    return os.path.expanduser(os.path.expandvars(value))
+
+
 def load_profiles(path: pathlib.Path) -> dict[str, Profile]:
     data = json.loads(path.read_text(encoding="utf-8"))
     by_name: dict[str, Profile] = {}
@@ -95,9 +108,9 @@ def load_profiles(path: pathlib.Path) -> dict[str, Profile]:
             notes=item["notes"],
             top_module=item.get("top_module"),
             output_prefix=item.get("output_prefix"),
-            legacy_workdir=item.get("legacy_workdir"),
+            legacy_workdir=expand(item.get("legacy_workdir")),
             legacy_luna_platform=item.get("legacy_luna_platform"),
-            legacy_tim_path=item.get("legacy_tim_path"),
+            legacy_tim_path=expand(item.get("legacy_tim_path")),
         )
         by_name[profile.name] = profile
     return by_name
@@ -405,7 +418,9 @@ def run_legacy_facedancer(
         profile.legacy_workdir
         or os.environ.get(
             "CYNTHION_LEGACY_PY_ROOT",
-            "/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python",
+            str(pathlib.Path(os.environ.get(
+                "REPOS_ROOT", pathlib.Path.home() / "git" / "awtoau"))
+                / "awto-cynthion" / "cynthion" / "python"),
         )
     )
     if not legacy_root.exists():

@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-OSS = Path("/home/dan/opt/oss-cad-suite/bin")
+OSS = Path.home() / "opt" / "oss-cad-suite" / "bin"
 YOSYS = OSS / "yosys"
 NEXTPNR = OSS / "nextpnr-ecp5"
 

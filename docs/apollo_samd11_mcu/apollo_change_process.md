@@ -12,7 +12,7 @@ Goals:
 - Keep issue status aligned with runtime proof.
 
 ## Scope
-- Apollo source tree: `/mnt/2tb/git/awtoau/awto-apollo`
+- Apollo source tree: `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo`
 - Workspace evidence and patch archive: this repo
 - Primary issue tracking: GitHub issue comments (for example issue 22)
 
@@ -97,7 +97,7 @@ For each meaningful firmware change set, collect all of the following:
 
 3. Build and flash
 - Build:
-  - `cd /mnt/2tb/git/awtoau/awto-apollo/firmware`
+  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"`
   - `make APOLLO_BOARD=cynthion`
 - Flash:
   - `make APOLLO_BOARD=cynthion dfu`
@@ -111,13 +111,13 @@ For each meaningful firmware change set, collect all of the following:
 
 5. Export patch files
 - Preferred (commit-based patch):
-  - `cd /mnt/2tb/git/awtoau/awto-apollo`
+  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"`
   - `git add <files>`
   - `git commit -m "apollo: <summary>"`
-  - `mkdir -p /mnt/2tb/git/cynthion-workspace/patches/apollo`
-  - `git format-patch -1 HEAD -o /mnt/2tb/git/cynthion-workspace/patches/apollo`
+  - `mkdir -p "$WORKSPACE/patches/apollo"` (`$WORKSPACE` = this repo's root)
+  - `git format-patch -1 HEAD -o "$WORKSPACE/patches/apollo"`
 - If not ready to commit (WIP snapshot):
-  - `git diff > /mnt/2tb/git/cynthion-workspace/patches/apollo/0000-wip-<topic>.diff`
+  - `git diff > "$WORKSPACE/patches/apollo/0000-wip-<topic>.diff"`
 
 6. Update issue with evidence
 - Post one concise comment containing:
@@ -160,7 +160,7 @@ Append one entry per firmware change set.
 ## Current Work Notes (Issue 22)
 Latest active Apollo files changed:
 
-1. `/mnt/2tb/git/awtoau/awto-apollo/firmware/src/console.c`
-2. `/mnt/2tb/git/awtoau/awto-apollo/firmware/src/main.c`
+1. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/console.c`
+2. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/main.c`
 
 Patch export is required before final closure of issue 22.

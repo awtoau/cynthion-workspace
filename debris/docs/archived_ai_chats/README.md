@@ -1,11 +1,22 @@
 # Archived AI Chats
 
-Recovered Copilot chat transcripts for this workspace after path migration from ~/git to /mnt/2tb/git.
+Recovered Copilot chat transcripts for this workspace, from the July 2026 move
+of the checkout to a different filesystem.
+
+Retired here from `docs/` because they are raw event records rather than
+documentation: what they concluded already lives in
+`docs/moondancer/riscv_alternatives.md`, and nothing else in the tree cites
+them. Kept rather than deleted because they cannot be regenerated -- the source
+below is per-machine editor state, not a repository.
+
+Machine-specific paths in these files were replaced with placeholders
+(`<workspace>`, `<repos-root>`, `<home>`, ...) before this repo was published;
+the transcripts are otherwise verbatim.
 
 ## Source
 
 - VS Code workspace storage ID: c7267954bd2c8b231b54032a6f9ca56a
-- Source folder: /home/dan/.config/Code - Insiders/User/workspaceStorage/c7267954bd2c8b231b54032a6f9ca56a/GitHub.copilot-chat/transcripts/
+- Source folder: `<home>/.config/Code - Insiders/User/workspaceStorage/<id>/GitHub.copilot-chat/transcripts/`
 
 ## Archived Sessions
 

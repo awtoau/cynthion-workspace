@@ -10,7 +10,8 @@ from pathlib import Path
 
 def fix_all_csr_classes():
     """Find and fix all CSR.Register classes in luna-soc."""
-    luna_soc_core = Path("/home/dan/git/awtoau/awto-luna-soc/luna_soc/gateware/core")
+    luna_soc_core = (Path.home() / "git" / "awtoau" / "awto-luna-soc"
+                     / "luna_soc" / "gateware" / "core")
 
     py_files = list(luna_soc_core.rglob("*.py"))
     total_fixed = 0

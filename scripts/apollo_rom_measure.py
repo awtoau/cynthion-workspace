@@ -18,7 +18,7 @@ FIRMWARE = WORKSPACE / "repos" / "apollo" / "firmware"
 LOG = WORKSPACE / "tmp" / "apollo_rom_measure.log"
 
 # Prepend the pinned CPython used by this workspace's toolchain.
-EXTRA_PATH = "/home/dan/opt/cpython-315t/bin"
+EXTRA_PATH = str(pathlib.Path.home() / "opt" / "cpython-315t" / "bin")
 
 
 def build(label: str) -> tuple[int, int, str]:
