@@ -293,6 +293,19 @@ pub const BOARD: Option<Board> = None;
 #[cfg(not(feature = "qemu"))]
 const FLASH_BASE: usize = cynthion_soc_pac::base::SPIFLASH;
 
+/// How much flash the memory map decodes: 4 MiB, which is what the part holds.
+/// Above it the address aliases back onto offset 0, so a read past the end
+/// succeeds and returns offset 0's data. `src/bench.rs` bounds its walk with
+/// this.
+#[cfg(not(feature = "qemu"))]
+pub const FLASH_SIZE: usize = cynthion_soc_pac::base::SPIFLASH_SIZE;
+
+/// The same bound on the target with no flash, so the code that bounds itself
+/// against it compiles and runs identically. What `flash_word` returns inside
+/// the window is a stand-in; the window is not.
+#[cfg(feature = "qemu")]
+pub const FLASH_SIZE: usize = 0x0040_0000;
+
 /// One 32-bit word from the memory-mapped configuration flash.
 ///
 /// `offset` is a byte offset from the start of flash and must already be word

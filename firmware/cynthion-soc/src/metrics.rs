@@ -139,8 +139,9 @@ static WORST_GAP: AtomicU32 = AtomicU32::new(0);
 /// see `scripts/soc_irq_log_check.py`.
 const RELAXED: Ordering = Ordering::Relaxed;
 
-/// The low half of `mcycle`.
-fn mcycle() -> u32 {
+/// The low half of `mcycle`. Public so `src/bench.rs` times with the same
+/// counter this module accounts with, rather than reading it a second way.
+pub fn mcycle() -> u32 {
     let value: u32;
     // SAFETY: a read of an implemented, side-effect-free machine counter. The
     // module comment names where it is decoded in the generated core.
@@ -151,8 +152,8 @@ fn mcycle() -> u32 {
     value
 }
 
-/// The low half of `minstret`.
-fn minstret() -> u32 {
+/// The low half of `minstret`. Public for the reason `mcycle` is.
+pub fn minstret() -> u32 {
     let value: u32;
     // SAFETY: as `mcycle`; the same plugin decodes both.
     unsafe {

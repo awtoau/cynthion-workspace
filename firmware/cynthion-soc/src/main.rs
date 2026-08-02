@@ -80,6 +80,7 @@ use core::ptr::{read_volatile, write_volatile};
 
 use riscv_rt::entry;
 
+mod bench;
 mod board;
 mod bus;
 mod clock;
@@ -419,6 +420,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
             let _ = writeln!(uart, "  stats         where the cycles go: busy, ipc, poll jitter");
+            let _ = writeln!(uart, "  bench [region]  memory speed and the cache: \
+                                    bram, flash, hyperram");
             let _ = writeln!(uart, "  log [n|tags]  push n deferred events, as a handler would");
             let _ = writeln!(uart, "  board         every port: rail, pd \
                                     controller and phy, as a tree");
@@ -546,6 +549,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                              cost, late);
         }
         b"stats" => metrics::command(uart),
+        b"bench" => bench::command(uart, trim(rest)),
         b"info" => info::command(uart),
         b"selftest" => selftest::command(uart),
         // Registered on every target, unlike its neighbours below: it reads no

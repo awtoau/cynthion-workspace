@@ -58,6 +58,9 @@ invisible from the host if it happened:
   stats             `mcycle` and `minstret` are live, the busy/idle split
                     attributes work to busy, and the 50 ms poll is meeting its
                     interval
+  bench             every memory walk terminates, the table is formatted, and a
+                    write walk leaves the block RAM pattern intact -- an index
+                    that escapes its mask corrupts `.bss` here as on the board
 
 The interrupt check has a weaker sibling that is already implicit in every check
 above it: the shell reads received bytes ONLY from the ring that
@@ -392,9 +395,9 @@ def main():
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
                        b"selftest", b"ports", b"irq", b"time", b"stats",
-                       b"log [n|tags]", b"board", b"led", b"i2c", b"power",
-                       b"phy", b"typec", b"sideband", b"load <hex>",
-                       b"reset"]
+                       b"bench [region]", b"log [n|tags]", b"board", b"led",
+                       b"i2c", b"power", b"phy", b"typec", b"sideband",
+                       b"load <hex>", b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
 
@@ -1113,6 +1116,43 @@ def main():
                   f"received: {show(fresh or b'') or '(nothing)'}")
             if resting is not None:
                 emit(f"        untouched shell: busy {resting / 100:.2f}%")
+
+            # --- bench ------------------------------------------------------------
+            # What this target can and cannot say about `bench`.
+            #
+            # It CAN say that every walk terminates, that the arithmetic never
+            # divides by zero, that the table is formatted, and -- the one that
+            # matters -- that the block RAM pattern survives a write walk. That
+            # last is the check for an index that escapes its mask: a walk that
+            # ran off the end of the buffer would corrupt `.bss` here exactly as
+            # it would on the board.
+            #
+            # It CANNOT say anything about speed. `virt` has no D-cache to prove
+            # live and `flash_word` is a two-value stand-in rather than an SPI
+            # part. Timing evidence is the board's.
+            command("bench bram",
+                    [b"region", b"cycles/acc", b"bram", b"read seq",
+                     b"read rnd", b"write seq", b"write rnd",
+                     b"0 words wrong"],
+                    "`bench bram` walks block RAM and the pattern survives it")
+            command("bench flash", [b"flash", b"read seq", b"read rnd", b"ok"],
+                    "`bench flash` reads the window and checks known content")
+
+            # The HyperRAM answer here is the REFUSAL, and asserting it is worth
+            # more than asserting a walk would be. The QEMU backend is a `.bss`
+            # array sized for a staged image, about 32k words; `bench` walks at
+            # word 0x10000, deliberately above anything staging uses, so on this
+            # target the port does not answer. What that exercises is the guard:
+            # every spin in `hyperram::read_word` is bounded at 100_000 rather
+            # than unbounded, so a dead port makes the walks take about a minute
+            # instead of failing -- which reads as a hung shell. The probe is
+            # what turns that into a sentence, and this is the check that it
+            # short-circuits rather than grinding.
+            command("bench hyperram", [b"hyperram did not answer"],
+                    "`bench hyperram` refuses a port that does not answer "
+                    "instead of spinning on it")
+            command("bench frobnicate", [b"usage: bench"],
+                    "`bench` with an unknown region says how to call it")
 
             # --- backspace --------------------------------------------------------
             # Type a command with one wrong character, rub it out, and require the

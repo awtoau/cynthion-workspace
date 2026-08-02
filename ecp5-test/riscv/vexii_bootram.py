@@ -34,8 +34,13 @@ Fetch a 16-bit word, auto-increment, raise a flag the firmware polls.
     many times it has been read. That last class of bug cost a day on the SPI
     controller, where reading `data` popped a FIFO and a cached line then
     returned the first byte forever.
-  * The cost is one HyperRAM transaction per word instead of a burst: roughly
-    8 ms for a 32 KiB image at 60 MHz. Bursting is available later.
+  * The cost is one HyperRAM transaction per word instead of a burst. Measured
+    by the shell's `bench hyperram` at sync 60 MHz: 156 cycles per 16-bit word
+    read and 113 per word written, which is 0.77 MB/s and 1.06 MB/s -- so a
+    32 KiB image is 43 ms to read back and 31 ms to write. The 8 ms this said
+    before was an estimate and was five times optimistic. Bursting is available
+    later; #90 is what would make this a `main=1` region and let the D-cache
+    line-fill from it.
 
 Placeholder-BRAM (`ecpbram`), JTAG staging and this USB path are compared in
 `../../docs/decisions.md`.

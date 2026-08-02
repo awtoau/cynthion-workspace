@@ -62,6 +62,15 @@ pub fn seek_image() {
     seek(IMAGE_WORD);
 }
 
+/// Point it at an arbitrary word.
+///
+/// Staging only ever needs `seek_image` and the header offsets, so this exists
+/// for `src/bench.rs`, which walks an area well above the image and must be able
+/// to jump about inside it. Nothing else should be addressing this part directly.
+pub fn seek_word(word: u32) {
+    seek(word);
+}
+
 fn write_u32(word_addr: u32, value: u32) {
     seek(word_addr);
     write_word(value as u16);
