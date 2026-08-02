@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT / "ecp5-test"))
 
 # Must match MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs. The firmware
 # range-checks too and answers with its own limit -- this is the earlier, clearer error.
-PAYLOAD_SIZE = 20 * 1024
+PAYLOAD_SIZE = 32 * 1024
 
 # Pacing for the transfer.
 #

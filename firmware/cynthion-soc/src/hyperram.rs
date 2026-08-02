@@ -38,7 +38,7 @@ const HDR_CRC: u32 = 4;
 pub const IMAGE_WORD: u32 = 16;
 
 /// Largest image we will accept, bounded by the block RAM slot it must fit into.
-pub const MAX_IMAGE: u32 = 20 * 1024;
+pub const MAX_IMAGE: u32 = 32 * 1024;
 
 /// Point the address register at the first word of the image area.
 pub fn seek_image() {

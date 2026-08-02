@@ -95,8 +95,8 @@ use uart::Uart;
 /// The most consoles this build will run shells for.
 ///
 /// Sized rather than allocated: `Shell` is ~80 bytes and there is no allocator. Four is
-/// well past the two the hardware has and costs a third of a kilobyte of the 44 KiB of
-/// block RAM the shell gets.
+/// well past the two the hardware has and costs a third of a kilobyte of the 32 KiB the
+/// shell half of block RAM gives us.
 ///
 /// `src/irq.rs` allocates one receive ring per slot, so this is now the dominant term in
 /// the firmware's static footprint: four rings of 256 bytes. Raising it costs a quarter of
@@ -519,7 +519,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // Converting would be a 64-bit divide by a value only known at run
             // time, and on rv32 that is a call to `__udivdi3` -- 912 bytes of
             // compiler-builtins, measured, which is the difference between this
-            // firmware fitting in its share of block RAM and not. The
+            // firmware fitting in its 32 KiB half of block RAM and not. The
             // reader that needs milliseconds is `scripts/soc_test.py`, which has
             // `at {} Hz` on the same line and a language where the division is
             // free.
@@ -644,7 +644,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // PRINTED rather than compared here, and `scripts/soc_test.py` holds
             // the expected string. Comparing in firmware needed a `core::fmt`
             // sink over a byte slice and seven `&str`s to check against, and
-            // this build has 44 KiB for everything -- the same reason the `sum`
+            // this build has 32 KiB for everything -- the same reason the `sum`
             // and `prod` values above are asserted by the test rather than by
             // the shell. What the firmware must supply is the bytes its own
             // formatter produces, and that is exactly what this is.

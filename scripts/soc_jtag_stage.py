@@ -8,6 +8,7 @@ Loads firmware into a Cynthion whose console is not answering.
 
     ./scripts/soc_jtag_stage.py tmp/payload.bin        # hold, stage, release, read
     ./scripts/soc_jtag_stage.py --status               # ask the sink what it sees
+    ./scripts/soc_jtag_stage.py --clear                # forget the staged image
     ./scripts/soc_jtag_stage.py --hold                 # hold the CPU in reset
     ./scripts/soc_jtag_stage.py --release              # let it go
     ./scripts/soc_jtag_stage.py --selftest             # write a scratch address
@@ -76,14 +77,14 @@ HDR_LENGTH = 2
 HDR_CRC    = 4
 IMAGE_WORD = 16
 MAGIC      = 0x4359_4e42
-MAX_IMAGE  = 20 * 1024
+MAX_IMAGE  = 32 * 1024
 
 # How many console reads to make while waiting for the bootloader to speak.
 #
 # Bounded by reads, not by a clock: each returns as soon as bytes arrive and only
 # blocks for the port's own timeout when there are none. The bootloader prints its
 # verdict within a few milliseconds of the reset being released -- the CRC is a
-# bitwise pass over at most 20 KiB -- so this is generous by orders of magnitude and
+# bitwise pass over at most 32 KiB -- so this is generous by orders of magnitude and
 # costs nothing when the board is answering.
 CONSOLE_READS = 40
 
@@ -251,6 +252,8 @@ def main():
                         help="time this path against a JTAG register interface")
     parser.add_argument("--selftest", action="store_true",
                         help="write to a scratch address and report what the sink counts")
+    parser.add_argument("--clear", action="store_true",
+                        help="zero the staged header so the next reset reaches the shell")
     parser.add_argument("--hold", action="store_true",
                         help="hold the CPU in reset and stop")
     parser.add_argument("--release", action="store_true",
@@ -278,8 +281,9 @@ def main():
                 return 1
             emit(f"{args.image.name}: {len(image)} bytes")
         elif not (args.status or args.hold or args.release
-                  or args.selftest or args.benchmark):
-            emit("nothing to do; pass an image, --status, --hold or --release")
+                  or args.selftest or args.benchmark or args.clear):
+            emit("nothing to do; pass an image, --status, --clear, --hold "
+                 "or --release")
             return 1
 
         from apollo_fpga import ApolloDebugger
@@ -329,6 +333,35 @@ def main():
                 for count in (0, 3, 5):
                     sink.write(SCRATCH_WORD, b"\x5a\xa5" * count)
                     emit(f"wrote {count} words -> {describe(sink.status())}")
+                return 0
+
+            if args.clear:
+                # The way back to a prompt, and the reason it needs one.
+                #
+                # `try_boot` leaves a good header in place after it has run the
+                # image -- deliberately, so a staged payload survives a reset --
+                # and the payload in `firmware/cynthion-payload` ends in a spin
+                # loop. Together that is a board that boots the same payload
+                # forever and never reaches the shell again, with the header the
+                # only thing that could be changed and no shell to change it
+                # from. Only the bootloader clears it, and only on a CRC failure.
+                #
+                # Zeroing the magic is what `hyperram::invalidate` does, and the
+                # length and CRC are left alone for the same reason it leaves
+                # them: the magic is the field that decides, so one write is the
+                # whole operation and a run that dies mid-way cannot leave a
+                # header that half means something.
+                #
+                # The CPU is held across it. The shell owns the same HyperRAM
+                # through its own CSR port, and two masters mid-transaction on
+                # one controller is the failure this whole path holds reset to
+                # avoid.
+                sink.set_reset(True)
+                sink.write(HDR_MAGIC, struct.pack("<I", 0))
+                sink.set_reset(False)
+                emit("staged header cleared; the next reset reaches the shell")
+                if link:
+                    link.close()
                 return 0
 
             if args.status:

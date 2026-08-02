@@ -423,7 +423,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 
 **`info`** prints seven lines: the image (git hash, branch, dirty flag, build
 timestamp), the compiler and target triple, the section sizes and what is left of
-the shell's 44 KiB, `misa` decoded, `mstatus`/`mtvec`, the PLIC's threshold and
+the 32 KiB shell half, `misa` decoded, `mstatus`/`mtvec`, the PLIC's threshold and
 enables, and the gateware.
 
 The gateware line is the reason the command exists. **Firmware and bitstream are
@@ -603,16 +603,22 @@ that port's state changed and what it changed to. `fault` is deliberately outsid
 the interrupt and polled at 50 ms: it means something different, and nothing here
 can clear it — it drops when the device's fault does.
 
-**The shell lives in 44 KiB of block RAM, and every new command is measured
-against it.** `memory.x` divides the SoC's 64 KiB — the resident shell low, the
-20 KiB payload slot above it — so a command is not free: it is `.text`, its format
+**The shell lives in 32 KiB of block RAM, and every new command is measured
+against it.** `memory.x` splits the SoC's 64 KiB in half — the resident shell low,
+the payload slot high — so a command is not free: it is `.text`, its format
 strings are `.rodata`, and what is left over is the *stack*, which the linker sizes
 last and silently. Two things were reclaimed while these commands were
 being added: `.eh_frame`, ~1800 bytes of unwind tables that lld was placing in
 RAM for a target that cannot unwind (`/DISCARD/` in both linker scripts), and
-`opt-level = "z"` in place of `"s"`, another 1612. Neither was enough — with
-`board`, `info`, `selftest` and `time` all present the image was 480 bytes past
-an even split, which is why the split itself moved from 32/32 to 44/20.
+`opt-level = "z"` in place of `"s"`, another 1612.
+
+**Neither was enough.** With `board`, `info`, `selftest` and `time` all present the
+board image does not link: `.text` 25,496 + `.rodata` 9,584 + `.bss` 1,412 is
+36,514 bytes against 32,768, **over by 3,748 with no stack at all**. Widening the
+region is not the fix — the shell is the resident image, so what grows is what is
+pinned at `0x0` and the slot that does not grow has the other half. The QEMU build
+still links (`memory-qemu.x` has a megabyte), so `scripts/soc_test.py` and the
+simulations still run against the merged firmware.
 
 Check the headroom after any firmware change with:
 

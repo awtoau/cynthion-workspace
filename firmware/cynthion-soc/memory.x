@@ -35,44 +35,20 @@
  * for PAYLOAD_ORIGIN, a fixed address we choose. Position-independent code would
  * only buy "load anywhere", and we control both linker scripts.
  *
- * 44K + 20K, not 32K + 32K. The even split was chosen when the two halves were
- * symmetric: one held a resident image, the other held an image being tried, and
- * neither had a reason to be the larger. They are no longer symmetric.
- *
- *   * The shell is what grows. It is one image with every command in it, and
- *     .text + .rodata + .bss is 33,248 bytes as this is written -- 480 bytes past
- *     what an even split allows, with no stack at all. Three separate changes have
- *     already been made to claw bytes back (opt-level "z", discarding .eh_frame),
- *     and they do not compose: each measured the slack the others had left.
- *   * The payload does not grow. `firmware/cynthion-payload` is the only image
- *     this tree builds for the slot and it is under 4 KiB. 20K is five times it.
- *
- * Costs nothing in gateware: the block RAM is 64 KiB either way (RAM_SIZE in
- * ecp5-test/riscv/vexii_hello_soc.py), the decoder sees one window, and no timing
- * path changes. It is a division of an address space, made in one file plus the
- * four that must hold the SAME NUMBERS -- not merely mention them:
- *
- *   firmware/cynthion-payload/memory.x   ORIGIN 0x0000b000, LENGTH 20K
- *   firmware/cynthion-soc/src/hyperram.rs  MAX_IMAGE = 20 * 1024
- *   scripts/soc_payload.py               PAYLOAD_SIZE = 20 * 1024
- *   scripts/soc_jtag_stage.py            MAX_IMAGE = 20 * 1024
- *
- * `hyperram::staged` is the one that matters most: it rejects a header whose length
- * is past MAX_IMAGE, and if that constant were larger than the slot the bootloader
- * would accept an image it cannot fit and copy it over the shell that is doing the
- * copying. A slot smaller than MAX_IMAGE is not a tighter bound, it is a hole.
- *
- * The shell's stack is what is left between .bss and _stack_start, so the 12 KiB
- * this buys is stack: measured at 2,820 bytes before it, which was the healthiest
- * any branch had managed.
+ * Both halves are 32K, which is where this started and where it remains. The shell
+ * has outgrown it -- see the note at the end of this file -- and moving the boundary
+ * was considered and rejected: the shell is the resident image, so what grows is what
+ * is pinned at 0x0, and dividing the same 64 KiB differently only postpones the
+ * question. The answer is a bootloader that does not have to keep the growing image
+ * resident, and that is a restructure rather than a linker script.
  */
 MEMORY
 {
-    RAM     : ORIGIN = 0x00000000, LENGTH = 44K
-    PAYLOAD : ORIGIN = 0x0000b000, LENGTH = 20K
+    RAM     : ORIGIN = 0x00000000, LENGTH = 32K
+    PAYLOAD : ORIGIN = 0x00008000, LENGTH = 32K
 }
 
-/* Pin the stack to the top of the SHELL region.
+/* Pin the stack to the top of the SHELL half.
  *
  * riscv-rt defaults _stack_start to the end of REGION_STACK, which before the split
  * was the end of all 64K -- i.e. the top of what is now the payload slot. Loading an
@@ -107,10 +83,10 @@ _stext = ORIGIN(REGION_TEXT);
  * `compiler_builtins` rlibs, which is why `-C force-unwind-tables=no` on this crate
  * does not remove it.
  *
- * riscv-rt's link.x places it in REGION_RODATA, so on this design it was 1892 bytes of
- * the 32 KiB the shell then had -- and it comes out of the stack, because the stack is
+ * riscv-rt's link.x places it in REGION_RODATA, so on this design it is 1892 bytes of
+ * the 32 KiB the shell gets -- and it comes out of the stack, because the stack is
  * whatever is left between .bss and _stack_start. Recovering it took the stack from
- * 928 bytes back to 2820, which is the measurement the 44K/20K split above is against.
+ * 928 bytes back to 2820.
  *
  * A debugger loses nothing: `debug = true` in Cargo.toml emits DWARF `.debug_frame`,
  * which is not loaded and is what gdb uses here anyway.
@@ -122,3 +98,32 @@ SECTIONS
 {
     /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
 }
+
+/* WHAT THIS DOES NOT CURRENTLY HOLD, measured 2026-08-02.
+ *
+ * With every command merged -- `board`, `info`, `selftest`, `time` -- the shell does
+ * not link against the 32K above. lld reports the sections ending at 0x8ea4:
+ *
+ *     .text     25,496
+ *     .rodata    9,584   (plus 22 bytes of .init.rust)
+ *     .data           0
+ *     .bss       1,412
+ *     ------------------
+ *     total     36,514   against 32,768: over by 3,748 bytes, and no stack at all
+ *
+ * That number is recorded rather than worked around. The two reclamations that are
+ * in this tree -- discarding .eh_frame above, and `opt-level = "z"` in Cargo.toml --
+ * are genuine deletions of waste and stay whatever happens next; three separate
+ * branches each measured the slack they left (1292, 2820, 3592 bytes) and those were
+ * three measurements of the same space, not three savings that add.
+ *
+ * Widening this region is not the fix. The shell is the RESIDENT image, so the thing
+ * that grows is the thing pinned at 0x0, and the slot that does not grow got the
+ * other half; any division of the same 64 KiB buys one more command. Inverting that
+ * -- a bootloader that does not have to keep the growing image resident -- is filed
+ * separately.
+ *
+ * Until then a board image needs a build that leaves something out. `--features qemu`
+ * still links, because memory-qemu.x has a megabyte, so scripts/soc_test.py and every
+ * simulation continue to run against the merged firmware.
+ */
