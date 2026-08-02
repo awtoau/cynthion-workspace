@@ -167,7 +167,46 @@ rather than vanishes.**
 |---|---|
 | host over JTAG | `ecp5-test/power_monitor/power_monitor_gateware.py` (applet `0x504D4F4E` "PMON") + `scripts/power_probe.py` |
 | free-running poller | `ecp5-test/sideband/sideband_gateware.py` — reads one register on a loop, blinks an LED when it sees `0x54` |
-| RISC-V CPU | `ecp5-test/riscv/i2c_master.py` (OpenCores register map) wired in `ecp5-test/riscv/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/i2c.rs`, shell command `board_i2c` |
+| RISC-V CPU | `ecp5-test/riscv/i2c_master.py` (OpenCores register map) wired in `ecp5-test/riscv/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/i2c.rs` and `src/power.rs`, shell commands `i2c` and `power` |
+
+### From the SoC shell
+
+```
+> power
+power @10  poll 50 ms  change 100 mA
+  target_a  0.000 V      0.686 mA  disconnected
+  target_c  0.006 V      0.762 mA  disconnected
+  aux       5.165 V     34.408 mA  connected
+  control   5.156 V     29.144 mA  connected
+  target_a floor 10.000 mA
+  ...
+> power floor aux 25          # in milliamps; stored as microamps
+```
+
+`power` reads on demand, ignoring the change threshold — a command that inherited
+it could not answer "what is it right now".
+
+The firmware also **polls every 50 ms in the background** and prints only when a
+channel moves by **100 mA or more from the last value it announced**, or crosses
+that channel's floor. Comparing against the last *announced* value rather than the
+last *sample* matters: against the last sample, a rail ramping at 90 mA per poll
+would never announce anything however far it travelled.
+
+The floor exists because an unplugged rail measures 0.76–0.92 mA of ADC offset
+here, and without it that noise walks across a threshold and emits change events
+from a port with nothing in it. 10 mA by default — an order of magnitude above the
+offset, a factor of three below the smallest real draw measured (29 mA).
+
+**The conversions are exact integer rationals, not approximations.** VBUS
+millivolts are `raw × 125 / 256` (32 V / 65536 = 488.28125 µV/LSB) and current in
+microamps is `raw × 78125 / 1024` (0.1 V / 65536 / 20 mΩ = 76.2939453125 µA/LSB).
+No floating point is linked into a 64 KiB block RAM, and there is no rounding
+constant to drift. The current multiply is done in `u64` because 65535 × 78125
+overflows 32 bits — at high current, which is exactly when a wrong number matters.
+
+Background lines go to the **USB console only**. The Apollo-facing port's TX pin
+is JTAG TMS, and a background monitor transmitting there unbidden is bus
+contention (`target::ANNOUNCING`).
 
 The I2C master is ours, written to the OpenCores "I2C-Master Core" register map
 (Herveille, rev 0.9) — public, with a Linux driver (`i2c-ocores`), and **no read

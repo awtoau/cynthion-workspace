@@ -384,6 +384,49 @@ They are kept here because they recur.
 | "`spi.c` uses PA08/PA09/PA10" | Its **comment** says that. The code below muxes PA14/PA15/PA10. PA08 is FPGA_PROGRAM and PA09 is FPGA_ADV. |
 | "ttyACM0/1/2 — three consoles" | Still a plan. `CFG_TUD_CDC` is **1**, so exactly one CDC interface exists. |
 
+## The SoC shell — reaching this hardware from a prompt
+
+The RISC-V SoC (`ecp5-test/riscv/vexii_hello_soc.py`, firmware
+`firmware/cynthion-soc/`) answers a line-oriented shell on **both** its consoles:
+the USB CDC node on AUX, and the Apollo-facing port on the shared JTAG pins.
+
+```bash
+python3 scripts/soc_run.py                       # build, load, read the console
+python3 scripts/soc_shell.py help                # the USB console
+python3 scripts/soc_shell.py --port /dev/ttyACM0 help   # the Apollo console
+```
+
+`help` in the shell is the authoritative list; the table below is what each
+command is *for*. Anything hardware-specific is in that chip's note.
+
+| command | what it reports | chip note |
+|---|---|---|
+| `check` | CPU arithmetic and two known flash words | — |
+| `id`, `read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
+| `ports` | which 16550s answer | — |
+| `irq` | PLIC pending/enabled, per-console interrupt counts | — |
+| `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
+| `i2c` | scan a bus and identify what answers | below |
+| `power [floor <port> <mA>]` | the four rails, and the change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
+| `sideband [hex]` | what the FPGA_ADV link reports | — |
+| `load <hex>`, `go`, `reset` | stage and run a payload | — |
+
+**`power`** reads all four rails on demand and prints, per port, bus volts,
+current in milliamps, and whether that port is above its own floor. Units are
+volts and milliamps throughout; the floor is set in milliamps and stored in
+microamps.
+
+Separately, the firmware **polls the monitor every 50 ms in the background** and
+prints a line only when a rail moves by **100 mA or more**, or crosses its floor
+in either direction. That threshold is why the console is not a wall of text at
+twenty samples a second, and the floor is why an unplugged port — which measures
+0.76–0.92 mA of ADC offset — does not emit events from noise. Background lines go
+to the **USB console only**: the second port's TX pin is JTAG TMS and this
+firmware never transmits there unbidden.
+
+Ports are named — `target_a`, `target_c`, `aux`, `control` — and never numbered,
+because the PAC's channel order is not the port order anyone would guess.
+
 ## Also worth knowing
 
 - **`int` (T6)** is the FPGA_ADV keepalive and sideband line, not a

@@ -105,6 +105,23 @@ pub const UART_IRQS: &[u32] = &[10];
 // are silent failures; catch them where they are declared.
 const _: () = assert!(UART_BASES.len() == UART_IRQS.len());
 
+/// How many times the `time` CSR advances per second.
+///
+/// On the board it is a counter incremented once per `sync` cycle inside the CPU
+/// wrapper (`rdtime` in `ecp5-test/riscv/vexii_cpu.py`), so it is the `sync`
+/// frequency and nothing else -- raise `SYNC_MHZ` in the gateware and this must
+/// follow, or every interval built on it stretches or shrinks in proportion. The
+/// symptom of forgetting is a "50 ms" poll that runs at 37 ms, which nothing
+/// fails on and nobody notices.
+#[cfg(not(feature = "qemu"))]
+pub const TIME_HZ: u32 = 60_000_000;
+
+/// `virt`'s CLINT runs at 10 MHz -- `timebase-frequency = <0x989680>` in the
+/// device tree dumped in the comment on `PLIC_BASE` above. Read out of the
+/// machine rather than assumed, like every other constant in this file.
+#[cfg(feature = "qemu")]
+pub const TIME_HZ: u32 = 10_000_000;
+
 /// Consoles that announce themselves while idle.
 ///
 /// Index 0 only, and this is a hardware constraint rather than a preference. The

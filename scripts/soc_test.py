@@ -338,8 +338,8 @@ def main():
                 return reply
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
-                       b"irq", b"led", b"i2c", b"sideband", b"load <hex>",
-                       b"go", b"reset"]
+                       b"irq", b"led", b"i2c", b"power", b"sideband",
+                       b"load <hex>", b"go", b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
 
@@ -359,11 +359,34 @@ def main():
             # would only confirm that a model agrees with the driver. What the
             # drivers do is checked in `scripts/soc_board_sim.py` against the
             # gateware, and on the board.
-            for name in ("led", "i2c", "sideband"):
+            for name in ("led", "i2c", "power", "sideband"):
                 command(name, [b"no board peripherals on this target"],
                         f"`{name}` is registered and reports the target has none")
             command("led green on", [b"no board peripherals on this target"],
                     "`led` with arguments reaches the same handler")
+            command("power floor aux 25", [b"no board peripherals on this target"],
+                    "`power floor` parses its arguments on a boardless target")
+
+            # The monotonic clock, and the background poll built on it.
+            #
+            # `Monitor::poll` reads the `time` CSR every turn of the main loop on
+            # BOTH targets and skips only the bus access when `target::BOARD` is
+            # None -- so a `time` CSR that trapped would be an illegal
+            # instruction in the main loop, and this gate would catch it in
+            # seconds rather than a reconfigure finding it in minutes. Every
+            # check above is that assertion; this one is the other half of it.
+            #
+            # Nothing about the power monitor may be printed here. The poll has
+            # run several hundred times by now -- 50 ms apart, against a shell
+            # that has been answering for seconds -- so a `poll` that reached for
+            # the bus on a target that has none would have said so many times
+            # over. Silence is the evidence that the board check comes before the
+            # bus access and not after it.
+            noise = session.snapshot()
+            check("the background poll says nothing on a target with no board",
+                  b"power:" not in noise,
+                  f"the shell printed a power-monitor line under QEMU:\n"
+                  f"{show(noise)}")
 
             # --- check ------------------------------------------------------------
             # The arithmetic lines only. `check` also reports two flash words, and on

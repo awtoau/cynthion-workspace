@@ -53,11 +53,13 @@ use core::ptr::{read_volatile, write_volatile};
 
 use riscv_rt::entry;
 
+mod clock;
 mod gpio;
 mod hyperram;
 mod i2c;
 mod irq;
 mod plic;
+mod power;
 mod sideband;
 mod target;
 mod uart;
@@ -80,6 +82,27 @@ pub const MAX_CONSOLES: usize = 4;
 // which is the exact class of failure this firmware keeps being bitten by. Catch it at
 // compile time instead.
 const _: () = assert!(target::UART_BASES.len() <= MAX_CONSOLES);
+
+/// The board state the shell carries between commands.
+///
+/// Owned by `main` and passed down by `&mut`, not held in a `static`. That is
+/// not a style preference: a `static mut` reachable from any module is exactly
+/// the thing that lets an interrupt handler print, and this firmware makes that
+/// impossible by construction rather than by convention. See `src/irq.rs` and
+/// the `irqlog` check in `scripts/check.py`.
+///
+/// Empty on a target with no board -- `target::BOARD` is `None` under QEMU, so
+/// every field here is state about hardware that is not there, kept anyway so
+/// the commands that report it compile and run on both targets.
+struct Devices {
+    power: power::Monitor,
+}
+
+impl Devices {
+    const fn new() -> Self {
+        Devices { power: power::Monitor::new() }
+    }
+}
 
 /// One console's line editor and its idle state.
 ///
@@ -117,7 +140,8 @@ impl Shell {
     /// `index` selects this console's receive ring in `src/irq.rs`, and is also what
     /// `load` needs to know which port a transfer is arriving on. It is the index into
     /// `target::UART_BASES`, so it is the same number everywhere.
-    fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool) {
+    fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool,
+            devices: &mut Devices) {
         // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
         // for everything this function ECHOES; only the receive direction moved.
         let byte = match irq::pop(index) {
@@ -155,7 +179,7 @@ impl Shell {
                     let mut line = [0u8; 64];
                     line[..len].copy_from_slice(&self.line[..len]);
                     self.len = 0;
-                    run(index, uart, &line[..len]);
+                    run(index, uart, &line[..len], devices);
                 }
                 let _ = write!(uart, "> ");
             }
@@ -227,8 +251,34 @@ fn main() -> ! {
     irq::init();
 
     let mut shells = [Shell::NEW; MAX_CONSOLES];
+    let mut devices = Devices::new();
+
+    // The power monitor's bus, set up once rather than per command.
+    //
+    // `I2c::init` is idempotent, but it writes CTR and clears the interrupt
+    // flag, and the monitor's poll runs twenty times a second -- re-initialising
+    // a bus on that cadence would be a needless write to a peripheral that a
+    // second master might one day be sharing. The `i2c` scan command still calls
+    // it, because a scan is also how a wedged bus gets recovered.
+    if let Some(board) = target::BOARD {
+        i2c::I2c::new(board.i2c).init(board.i2c_prescale);
+    }
 
     loop {
+        // The board's own periodic work, before the consoles.
+        //
+        // Here rather than in an interrupt handler: the power monitor's poll
+        // spins on an I2C bus for a couple of milliseconds and prints when a
+        // rail changes, and a handler may do neither -- see `src/irq.rs`. A 50
+        // ms period does not need a handler to be met, and one turn of this
+        // loop is microseconds.
+        //
+        // It reports on the PRIMARY console only. The second port's TX pin is
+        // JTAG TMS and this firmware never transmits there unbidden, which is
+        // exactly what a background monitor would be doing -- see
+        // `target::ANNOUNCING`.
+        devices.power.poll(&mut console);
+
         // Round-robin, one byte per console per pass. Fair by construction and with no
         // arbitration to get wrong: a console that is being pasted into cannot starve
         // the others, because it still only gets one byte per turn.
@@ -239,7 +289,8 @@ fn main() -> ! {
         // which is a fairness property of the shell and worth keeping.
         for (index, &base) in target::UART_BASES.iter().enumerate() {
             let mut uart = Uart::new(base);
-            shells[index].poll(index, &mut uart, index < target::ANNOUNCING);
+            shells[index].poll(index, &mut uart, index < target::ANNOUNCING,
+                               &mut devices);
         }
     }
 }
@@ -253,7 +304,7 @@ fn banner(uart: &mut Uart) {
 ///
 /// `index` is which console this arrived on, needed by `load` so a transfer reads from the
 /// right receive ring.
-fn run(index: usize, uart: &mut Uart, line: &[u8]) {
+fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
     // Split off the first word; the rest is the argument.
     let (cmd, rest) = match line.iter().position(|&b| b == b' ') {
         Some(i) => (&line[..i], &line[i + 1..]),
@@ -270,6 +321,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8]) {
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
             let _ = writeln!(uart, "  i2c           scan the power monitor bus");
+            let _ = writeln!(uart, "  power [floor <port> <mA>]  the four rails, \
+                                    volts and milliamps");
             let _ = writeln!(uart, "  sideband [hex]  what the FPGA_ADV link reports");
             let _ = writeln!(uart, "  load <hex>    receive N bytes into the payload slot");
             let _ = writeln!(uart, "  go            jump to the loaded payload");
@@ -319,6 +372,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8]) {
         }
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart),
+        b"power" => board_power(uart, rest, devices),
         b"sideband" => board_sideband(uart, rest),
         b"read" => match parse_hex(rest) {
             Some(offset) => {
@@ -550,6 +604,86 @@ fn board_i2c(uart: &mut Uart) {
     }
 }
 
+/// `power`, or `power floor <port> <mA>`.
+///
+/// Reads all four rails on demand, regardless of the change threshold the
+/// background poll applies -- the threshold exists to keep the log readable, and
+/// a command that inherited it could not answer "what is it right now".
+///
+/// Ports are named, never numbered, for the same reason the LEDs are: the PAC's
+/// channel order is not the port order anyone would guess (channel 1 is
+/// TARGET_A), and "channel 3" in a bug report means nothing to the person
+/// holding the board.
+fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    let board = match target::BOARD {
+        Some(board) => board,
+        None => return board_absent(uart),
+    };
+
+    let rest = trim(rest);
+    if rest.starts_with(b"floor") {
+        let rest = trim(&rest[b"floor".len()..]);
+        let (name, value) = match rest.iter().position(|&b| b == b' ') {
+            Some(i) => (&rest[..i], trim(&rest[i + 1..])),
+            None => (rest, &rest[..0]),
+        };
+        let channel = match power::PORTS.iter().position(|&p| p.as_bytes() == name) {
+            Some(channel) => channel,
+            None => {
+                let _ = writeln!(uart, "no port of that name; they are \
+                                        target_a, target_c, aux, control");
+                return;
+            }
+        };
+        match parse_decimal(value) {
+            // Milliamps in, microamps stored. The limit is what a `u32` of
+            // microamps can hold, which is 4294 mA -- below the part's own 5 A
+            // full scale, so a floor above this could never be crossed anyway
+            // and is a typo rather than a request.
+            Some(milliamps) if milliamps <= 4294 =>
+                devices.power.set_floor(channel, milliamps * 1000),
+            _ => {
+                let _ = writeln!(uart, "usage: power floor <port> <mA>  \
+                                        (0..4294)");
+                return;
+            }
+        }
+    } else if !rest.is_empty() {
+        let _ = writeln!(uart, "usage: power [floor <port> <mA>]");
+        return;
+    }
+
+    let bus = i2c::I2c::new(board.i2c);
+    let readings = match devices.power.read(&bus) {
+        Ok(readings) => readings,
+        Err(error) => {
+            let _ = writeln!(uart, "power monitor at {:02x}: {} during {}",
+                             power::ADDRESS, error.as_str(),
+                             devices.power.phase());
+            return;
+        }
+    };
+
+    let _ = writeln!(uart, "power @{:02x}  poll {} ms  change {} mA",
+                     power::ADDRESS, power::INTERVAL_MS,
+                     power::CHANGE_UA / 1000);
+    for channel in 0..4 {
+        let floor = devices.power.floor(channel);
+        power::report(uart, channel, &readings[channel],
+                      readings[channel].current_ua >= floor);
+    }
+    for channel in 0..4 {
+        let _ = writeln!(uart, "  {:8} floor {}.{:03} mA",
+                         power::PORTS[channel],
+                         devices.power.floor(channel) / 1000,
+                         devices.power.floor(channel) % 1000);
+    }
+    if devices.power.failures > 0 {
+        let _ = writeln!(uart, "  {} failed poll(s) since the last good one",
+                         devices.power.failures);
+    }
+}
+
 /// `sideband`, or `sideband <hex>` to write the control register.
 fn board_sideband(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
@@ -766,6 +900,29 @@ fn try_boot(uart: &mut Uart) {
         let entry: extern "C" fn() -> ! = core::mem::transmute(payload_start() as usize);
         entry();
     }
+}
+
+/// Parse an ASCII decimal number. `None` if empty or malformed.
+///
+/// Separate from `parse_hex` rather than a base parameter, because the two are
+/// used for different things and confusing them is silent: `power floor aux 20`
+/// meaning 32 mA would be a threshold nobody could explain. Addresses and
+/// lengths are hex here; quantities a person states in engineering units are
+/// decimal.
+fn parse_decimal(text: &[u8]) -> Option<u32> {
+    let text = trim(text);
+    if text.is_empty() {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for &byte in text {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            _ => return None,
+        };
+        value = value.checked_mul(10)?.checked_add(digit as u32)?;
+    }
+    Some(value)
 }
 
 /// Parse an ASCII hex number. `None` if empty or malformed -- better than a wrong

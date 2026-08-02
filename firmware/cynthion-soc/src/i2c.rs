@@ -73,8 +73,19 @@ pub enum Error {
     /// Something else was holding SDA down. On a single-master bus that is a
     /// wedged slave, not a competitor.
     ArbitrationLost,
-    /// Nothing acknowledged the address or the byte.
+    /// Nothing acknowledged the device address at the START of a transfer.
     Nack,
+    /// The device acknowledged its address and then not the register pointer.
+    NackRegister,
+    /// The device acknowledged the write half of a register read and then not
+    /// its own address at the repeated START.
+    ///
+    /// Distinct from `Nack` because it means something quite different: the
+    /// device is present and listening, and it declined to turn the bus around.
+    /// A part that is busy internally -- the PAC195x for 1 ms after a REFRESH --
+    /// fails exactly here and nowhere else, and lumping it in with "nothing
+    /// answered" sends the next person looking for a wiring fault.
+    NackRestart,
 }
 
 impl Error {
@@ -82,7 +93,9 @@ impl Error {
         match self {
             Error::Timeout => "timeout",
             Error::ArbitrationLost => "arbitration lost (SDA held low)",
-            Error::Nack => "no acknowledge",
+            Error::Nack => "no acknowledge (address)",
+            Error::NackRegister => "no acknowledge (register pointer)",
+            Error::NackRestart => "no acknowledge (repeated start)",
         }
     }
 }
@@ -228,12 +241,12 @@ impl I2c {
 
         self.put(register);
         if self.command(CR_WR)? & SR_RXACK != 0 {
-            return Err(Error::Nack);
+            return Err(Error::NackRegister);
         }
 
         self.put((address << 1) | 1);
         if self.command(CR_STA | CR_WR)? & SR_RXACK != 0 {
-            return Err(Error::Nack);
+            return Err(Error::NackRestart);
         }
 
         let last = out.len() - 1;
@@ -248,6 +261,33 @@ impl I2c {
             };
             self.command(command)?;
             *slot = self.take();
+        }
+        Ok(())
+    }
+
+    /// Send one byte to a device with no register pointer in front of it.
+    ///
+    /// This is SMBus's "Send Byte", and the PAC1954's `REFRESH` is one: the
+    /// command IS the register address, and there is no payload. Writing it as
+    /// a register write with a dummy data byte would work on most parts and not
+    /// on this one -- the byte after the pointer would land in whatever
+    /// register the auto-increment moved on to.
+    pub fn send_byte(&self, address: u8, byte: u8) -> Result<(), Error> {
+        let result = self.send_byte_inner(address, byte);
+        if result.is_err() {
+            self.release();
+        }
+        result
+    }
+
+    fn send_byte_inner(&self, address: u8, byte: u8) -> Result<(), Error> {
+        self.put(address << 1);
+        if self.command(CR_STA | CR_WR)? & SR_RXACK != 0 {
+            return Err(Error::Nack);
+        }
+        self.put(byte);
+        if self.command(CR_WR | CR_STO)? & SR_RXACK != 0 {
+            return Err(Error::Nack);
         }
         Ok(())
     }
