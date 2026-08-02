@@ -74,9 +74,11 @@ mod events;
 mod gpio;
 mod hyperram;
 mod fusb302;
+mod info;
 mod irq;
 mod plic;
 mod power;
+mod selftest;
 mod sideband;
 mod target;
 mod typec;
@@ -386,6 +388,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  id            flash JEDEC id and capacity");
             let _ = writeln!(uart, "  read <hex>    read a word from flash");
             let _ = writeln!(uart, "  check         arithmetic and known flash values");
+            let _ = writeln!(uart, "  info          this image, this CPU, this gateware");
+            let _ = writeln!(uart, "  selftest      run each of them and report");
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
@@ -457,6 +461,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  log  waiting {} dropped {}",
                              events::waiting(), events::dropped());
         }
+        b"info" => info::command(uart),
+        b"selftest" => selftest::command(uart),
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart, rest, devices),
         b"power" => board_power(uart, rest, devices),

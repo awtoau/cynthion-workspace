@@ -41,7 +41,7 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 qemu = []
 
 [profile.release]
-opt-level = "s"      # size: this links into 64 KiB of block RAM
+opt-level = "z"      # size, hardest setting: the shell links into 32 KiB of block RAM
 lto = true
 codegen-units = 1
 debug = true         # kept -- costs nothing in the binary, and .elf is what gets read

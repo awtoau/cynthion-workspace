@@ -57,3 +57,18 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * agree: a mismatch gives a CPU that fetches from an address nothing answers, which
  * looks exactly like a dead core. */
 _stext = ORIGIN(REGION_TEXT);
+
+/* Unwind tables, in a firmware with nothing to unwind.
+ *
+ * lld emits .eh_frame for every function that could propagate a panic, and links it
+ * into RAM because link.x gives it no home of its own. It was 1776 bytes of the 32 KiB
+ * shell half -- and this target panics into a spin loop with no unwinder, so not one
+ * byte of it can ever be read. Discarding it is not an optimisation with a trade-off;
+ * it is deleting a table that has no reader.
+ *
+ * Keep this identical in memory-qemu.x, or the two builds stop being the same image
+ * with different addresses. */
+SECTIONS
+{
+  /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
+}

@@ -57,3 +57,12 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * present exactly as it does on the board: a CPU fetching from an address nothing
  * answers, indistinguishable from a dead core. */
 _stext = ORIGIN(REGION_TEXT);
+
+/* Unwind tables, discarded. `virt` has a megabyte and does not need the space; this is
+ * here so that the two builds are the same image with different addresses, and so that
+ * what `info` reports about section sizes under QEMU means the same thing it does on
+ * the board. See memory.x for the argument. */
+SECTIONS
+{
+  /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
+}

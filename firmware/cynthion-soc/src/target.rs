@@ -36,7 +36,7 @@
 //!     `src/gpio.rs`). A `u16` access is a different bus transaction from the two
 //!     ordered byte accesses the hardware specifies.
 //!
-//! Hand-transcribed constants versus a generated PAC: `docs/comparisons.md`.
+//! Hand-transcribed constants versus a generated PAC: `docs/decisions.md`.
 
 /// Every 16550 this build can talk on. The first is the primary console: the one
 /// that gets the boot banner, the bootloader's reports and any panic.
@@ -117,6 +117,22 @@ pub const TIME_HZ: u32 = 60_000_000;
 /// machine rather than assumed, like every other constant in this file.
 #[cfg(feature = "qemu")]
 pub const TIME_HZ: u32 = 10_000_000;
+
+/// The gateware's own account of itself -- git ref, build time, `sync`
+/// frequency, cache geometry -- or `None` on a target that is not a bitstream.
+///
+/// Separate from `BOARD` even though both are `Some` on the same target,
+/// because they answer different questions. `BOARD` is about hardware attached
+/// to the SoC; this is about the SoC. A build that dropped every board
+/// peripheral would still want it, and QEMU is not a bitstream at all, so under
+/// `-M virt` `info` says so rather than inventing an identity.
+///
+/// See `ecp5-test/riscv/gateware_id.py` for the register map.
+#[cfg(not(feature = "qemu"))]
+pub const GATEWARE: Option<usize> = Some(cynthion_soc_pac::base::BOARD_GATEWARE);
+
+#[cfg(feature = "qemu")]
+pub const GATEWARE: Option<usize> = None;
 
 /// The PLIC source both FUSB302Bs' `int` lines are OR-ed onto, or `None` on a
 /// target that has none.

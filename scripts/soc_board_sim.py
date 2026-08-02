@@ -66,6 +66,8 @@ from amaranth_soc import gpio
 
 from i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
 from sideband_csr import SidebandControl
+from gateware_id import (GatewareId, MAGIC, pack_built, pack_cpu,
+                         CPU_M, CPU_A, CPU_C, CPU_RDTIME)
 from ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
 from i2c_mux import (I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR,
                      LINE_TARGET_INT, LINE_AUX_INT, LINE_TARGET_FAULT,
@@ -1148,6 +1150,94 @@ def run_sideband_checks(checks, verbose):
         f"{seen.get('readback_again')!r}")
 
 
+def run_gateware_id_checks(checks, verbose):
+    """The build-id window, byte by byte, in the order firmware reads it.
+
+    The values are constants, so what is being simulated is the map: that seven
+    registers land where `src/info.rs` looks for them, that a 32-bit value comes
+    back little-endian from four byte reads, and that the packing of `built` and
+    `cpu` survives the trip. An offset that is wrong here reports a plausible
+    number from the wrong register on the board, which is the failure this whole
+    peripheral exists to make loud.
+    """
+    from datetime import datetime, timezone
+
+    # Fixed inputs, so the expected words are arithmetic rather than whatever
+    # the tree happened to be when the test ran.
+    built = datetime(2026, 8, 2, 11, 20, 3, tzinfo=timezone.utc)
+    dut = GatewareId(sync_hz=60_000_000, usb_hz=60_000_000, cache_sets=64,
+                     built=built, git=0x8123_4567)
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+
+        async def word(offset):
+            # Low byte FIRST: reading the lowest address is what latches the
+            # multiplexer's shadow, and firmware does the same.
+            value = 0
+            for index in range(4):
+                value |= await bus.read(offset + index) << (8 * index)
+            return value
+
+        for name, offset in (("magic", 0x00), ("git", 0x04), ("built", 0x08),
+                             ("sync_hz", 0x0c), ("cpu", 0x10),
+                             ("usb_hz", 0x14)):
+            seen[name] = await word(offset)
+        seen["die_low"] = await bus.read(0x18)
+        seen["die_high"] = await bus.read(0x19)
+        # Twice, because a register whose read changed something would be a
+        # register a diagnostic could not poll.
+        seen["magic_again"] = await word(0x00)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6)
+    sim.add_testbench(testbench)
+    sim.run()
+
+    checks.check(
+        "the build-id window answers with its magic",
+        seen.get("magic") == MAGIC,
+        f"read {seen.get('magic')!r}, expected {MAGIC:#010x}. Zero here is what "
+        f"an address that decodes to nothing reads as, which is exactly the "
+        f"case the magic is there to distinguish.")
+    checks.check(
+        "the git word carries the hash and the dirty bit",
+        seen.get("git") == 0x8123_4567,
+        f"read {seen.get('git')!r}; bit 31 is dirty and the rest is the short "
+        f"hash, the same encoding build_helpers.usercode() stamps into USERCODE")
+    checks.check(
+        "the build time packs and unpacks",
+        seen.get("built") == pack_built(built)
+        and (seen.get("built", 0) >> 26) + 2000 == 2026
+        and (seen.get("built", 0) >> 22) & 0xf == 8,
+        f"read {seen.get('built')!r}, expected {pack_built(built):#010x} for "
+        f"{built.isoformat()}")
+    checks.check(
+        "the clock frequencies are reported in Hz",
+        seen.get("sync_hz") == 60_000_000 and seen.get("usb_hz") == 60_000_000,
+        f"sync {seen.get('sync_hz')!r} usb {seen.get('usb_hz')!r}; these are "
+        f"what target::TIME_HZ is checked against")
+    checks.check(
+        "the cpu word carries the cache geometry and the ISA",
+        seen.get("cpu") == pack_cpu(64, 1, CPU_M | CPU_A | CPU_C | CPU_RDTIME),
+        f"read {seen.get('cpu')!r}: sets {seen.get('cpu', 0) & 0xffff}, ways "
+        f"{(seen.get('cpu', 0) >> 16) & 0xff}. misa on this core reports rv32im "
+        f"whatever it was generated with, so this is the other account.")
+    checks.check(
+        "with no platform there is no DTR, and the register says so",
+        seen.get("die_low") == 0 and seen.get("die_high") == 0,
+        f"die read {seen.get('die_high')!r}{seen.get('die_low')!r}. The block is "
+        f"a hard macro instantiated only when a device is being built for; a "
+        f"reading of zero from a design that HAS one would mean a conversion "
+        f"that never completed, and bit 8 is what tells those apart.")
+    checks.check(
+        "reading the window twice gives the same answer",
+        seen.get("magic_again") == seen.get("magic"),
+        f"{seen.get('magic')!r} then {seen.get('magic_again')!r}; no read here "
+        f"may change anything")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -1187,6 +1277,10 @@ def main():
 
         emit("ulpi_window.UlpiRegisters -- against a model USB3343")
         run_ulpi_checks(checks, args.verbose)
+        emit()
+
+        emit("gateware_id.GatewareId -- what the bitstream says it is")
+        run_gateware_id_checks(checks, args.verbose)
         emit()
 
         if checks.failures:

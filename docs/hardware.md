@@ -405,6 +405,8 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | command | what it reports | chip note |
 |---|---|---|
 | `check` | CPU arithmetic and two known flash words | — |
+| `info` | what this image is, what CPU it is on, what bitstream it is inside | below |
+| `selftest` | runs the CPU, the block RAM and each identity register | below |
 | `id`, `read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
@@ -416,6 +418,69 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `typec [init]` | both FUSB302B controllers, their CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
 | `load <hex>`, `go`, `reset` | stage and run a payload | — |
+
+**`info`** prints seven lines: the image (git hash, branch, dirty flag, build
+timestamp), the compiler and target triple, the section sizes and what is left of
+the 32 KiB shell half, `misa` decoded, `mstatus`/`mtvec`, the PLIC's threshold and
+enables, and the gateware.
+
+The gateware line is the reason the command exists. **Firmware and bitstream are
+built separately and need never have been built together** — `load` replaces the
+firmware over the console without rebuilding the bitstream, which is the point of
+it. So the bitstream carries its own git hash in a register
+(`ecp5-test/riscv/gateware_id.py`), `info` prints both, and it says `MISMATCH`
+when they differ. Same for the clock: the register holds what the PLL actually
+produced, and `SYNC MISMATCH` means every interval derived from
+`target::TIME_HZ` is wrong by that ratio.
+
+The identifier is the one `ecp5-test/build_helpers.py` stamps into the ECP5's
+USERCODE — short hash, bit 31 set for a dirty tree — so what Apollo reads over
+JTAG and what the CPU reads from inside are the same number by construction.
+
+Two lines are worth reading carefully:
+
+* **`misa` reports `rv32im`** on this core while it is generated `--with-rva
+  --with-rvc`. VexiiRiscv hardwires the register; the compressed and atomic
+  instructions the shell executes on every line are the counter-evidence, and
+  `selftest` runs them. `info` prints the gateware's account beside it.
+* **`die N C` is a DTR reading, not a measurement.** The ECP5's temperature block
+  emits a 6-bit code, and the code-to-degrees table (FPGA-TN-02210 Table 4.3) is
+  not linear. The data sheet says the block "is not specifically calibrated for
+  absolute accuracy" and publishes no tolerance.
+
+**What the ECP5 will not tell the firmware**, each checked rather than assumed:
+USERCODE, IDCODE and the 64-bit TraceID are reachable over JTAG and from nowhere
+in the fabric — there is no primitive for any of them in Lattice's `ecp5u.v`, in
+yosys, in prjtrellis or in nextpnr. **The chip cannot tell the CPU which chip it
+is**, and IDCODE — the field that distinguishes a 12F (`0x21111043`) from a 25F
+(`0x41111043`), which is the question this board raises — is Apollo's to read,
+not the SoC's. Soft-error detection exists in silicon and in prjtrellis, but
+yosys has no `SEDGA` cell and nextpnr's bitstream writer never emits the SED
+configuration, so it cannot be enabled from this flow. PLL lock needs no
+register: the domain generator holds `sync` in reset until the PLL locks, so a
+CPU that is executing has already answered.
+
+**`selftest`** reports one line per item and one summary. It runs the base
+integer set on operands the compiler cannot fold, `M` (including signed division
+and division by zero), `C` (three compressed instructions, checked to occupy six
+bytes — the same answer from 32-bit encodings would prove nothing), `A` (lr/sc
+and three `amo` forms), a block RAM address and data walk over the payload slot,
+that `rdtime` advances, each 16550's scratch register, the gateware magic, the
+flash's known first word, and the TARGET PHY's identity.
+
+`A` has an item of its own because atomics are why the cached CPU configuration
+is mandatory: the cacheless Wishbone bridge asserts `!withAmo`. That is a
+gateware decision the firmware cannot see, and its symptom is an illegal
+instruction from a line that looks like arithmetic.
+
+It deliberately does **not** touch I2C (one owner per device protocol — `power`
+and `typec` report what their drivers cached), does not write flash (**the
+bitstream is at offset 0**), does not read the PLIC's claim register (that would
+take an interrupt from the handler and never complete it), and does not walk the
+PHY's scratch register (`phy` does that, and it writes). The one thing it writes
+is the payload slot, which is unused while a prompt is up. Items it cannot answer
+for on a given target report `skip`, and the summary counts them separately from
+the passes.
 
 **`power`** reads all four rails on demand and prints, per port, bus volts,
 current in milliamps, and whether that port is above its own floor. Units are
@@ -498,7 +563,7 @@ after a 68 µs gateware timeout, not zeros.
 
 | topic | doc |
 |---|---|
-| every alternative weighed, and why, in tables | [`comparisons.md`](comparisons.md) |
+| every alternative weighed, and why, in tables | [`decisions.md`](decisions.md) |
 | what we take from upstream and what we replaced | [`upstream-boundary.md`](upstream-boundary.md) |
 | making the test gateware reusable by the CPU | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
 | how fast the soft CPU can be clocked on this part | [`riscv-clock-ceiling.md`](riscv-clock-ceiling.md) |

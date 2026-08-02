@@ -28,7 +28,7 @@ point of a standard part. `serial_line.py` is the PHY behind index 1.
     (`../../docs/luna_ecp5_fpga/usb-performance.md`).
   * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
     share a 32-bit word with RBR at +0. See `uart16550.py`, and
-    `../../docs/comparisons.md` for what that replaced.
+    `../../docs/decisions.md` for what that replaced.
 
 ## Interrupts
 
@@ -87,6 +87,7 @@ from vexii_plic import Plic
 from serial_line import SerialLine
 from i2c_master import I2CMaster, prescale_for
 from sideband_csr import SidebandControl
+from gateware_id import GatewareId
 from ulpi_window import UlpiRegisters
 from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_AUX_C as I2C_MUX_AUX_C,
@@ -170,18 +171,26 @@ APOLLO_UART_BASE = 0xf0000500
 #   +0x18  sideband   1 byte   sideband_csr.SidebandControl
 #   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
 #   +0x20  i2c_mux    2 bytes  i2c_mux.I2CBusMux
+#   +0x40  gateware  32 bytes  gateware_id.GatewareId
 #
 # The sub-addresses are the peripherals' natural sizes and each window is
-# aligned to its own size, which is what MemoryMap requires. The decoder is 64
+# aligned to its own size, which is what MemoryMap requires. The decoder is 128
 # bytes rather than the 32 the first three fit in, because a peripheral added
 # later should not have to move an existing one -- and moving one changes every
 # address in the generated PAC at once.
+#
+# `gateware` is not a board peripheral and is here anyway: it is the one window
+# whose whole purpose is to be readable, and a second Wishbone window for it
+# would be another comparator on the address path the paragraph above is about.
+# The decoder it goes in is inside an already-decoded window and costs one more
+# address bit.
 BOARD_BASE     = 0xf0000600
 GPIO_BASE      = BOARD_BASE + 0x00
 I2C_BASE       = BOARD_BASE + 0x10
 SIDEBAND_BASE  = BOARD_BASE + 0x18
 ULPI_BASE      = BOARD_BASE + 0x1c
 I2C_MUX_BASE   = BOARD_BASE + 0x20
+GATEWARE_BASE  = BOARD_BASE + 0x40
 
 # What is on each GPIO pin.
 #
@@ -411,6 +420,12 @@ FLASH_DIVISOR = 0
 # marked as (ecp5-test/fabric/FABRIC_TEST.md). See #110.
 SYNC_MHZ = 60
 
+# Sets in each of the two L1 caches, one way each. A constant rather than a
+# literal at the instantiation because `gateware_id.py` reports it to the
+# firmware, and a geometry reported from a different number than the one the
+# core was generated with would be worse than not reporting it.
+CACHE_SETS = 64
+
 
 class HelloSoC(Elaboratable):
     """VexRiscv, 64 KiB of block RAM, and a USB serial console."""
@@ -530,7 +545,15 @@ class HelloSoC(Elaboratable):
         # they are on separate pin-sets and a mux is forced rather than chosen.
         m.submodules.i2c_mux = i2c_mux = I2CBusMux()
 
-        board_csr = csr.Decoder(addr_width=6, data_width=8)
+        # What this bitstream is, so the firmware can say whether it was built
+        # against this one. The frequencies are what the PLL solver landed on
+        # rather than what was asked for -- see gateware_id.py.
+        m.submodules.gateware_id = gateware_id = GatewareId(
+            sync_hz=round(car.actual_sync_mhz * 1e6),
+            usb_hz=round(car.actual_usb_mhz * 1e6),
+            cache_sets=CACHE_SETS)
+
+        board_csr = csr.Decoder(addr_width=7, data_width=8)
         m.submodules.board_csr = board_csr
         board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
                       name="gpio")
@@ -542,6 +565,8 @@ class HelloSoC(Elaboratable):
                       name="ulpi")
         board_csr.add(i2c_mux.bus,       addr=I2C_MUX_BASE  - BOARD_BASE,
                       name="i2c_mux")
+        board_csr.add(gateware_id.bus,   addr=GATEWARE_BASE - BOARD_BASE,
+                      name="gateware")
 
         board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
         m.submodules.board_bridge = board_bridge
@@ -1279,6 +1304,17 @@ def main():
 
     build_dir = ROOT / "tmp" / "vexii_hello" / "build"
 
+    # No `**ecppack_opts()` here, and it was tried: `CynthionPlatformRev1D4`
+    # passes its own `ecppack_opts` in `toolchain_prepare`
+    # (`repos/cynthion/.../platform/core.py:59-64`) before **kwargs, so supplying
+    # one is a duplicate keyword and the build fails outright. Stamping this
+    # bitstream's USERCODE therefore means patching the vendored platform.
+    #
+    # Until then the identity lives in a register instead -- `gateware_id.py`,
+    # same encoding, read by the CPU rather than by JTAG. USERCODE is not
+    # fabric-readable on this part in any case: it is a command in the
+    # bitstream's command stream rather than a bit in a tile, so there is
+    # nothing for a primitive to read.
     CynthionPlatformRev1D4().build(
         HelloSoC(firmware=words),
         do_program=args.program,

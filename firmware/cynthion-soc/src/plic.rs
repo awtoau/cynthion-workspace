@@ -137,6 +137,16 @@ impl Plic {
         unsafe { write_volatile(self.reg(THRESHOLD), level) }
     }
 
+    /// What context 0's threshold is set to. No side effects.
+    ///
+    /// The counterpart to `set_threshold`, for `info`: a threshold that is not
+    /// what `init` wrote masks sources that look enabled everywhere else, and
+    /// the enable bitmap alone cannot show it.
+    pub fn threshold(&self) -> u32 {
+        // SAFETY: as above.
+        unsafe { read_volatile(self.reg(THRESHOLD)) }
+    }
+
     /// Which sources are requesting service, as a bitmap. No side effects.
     pub fn pending(&self) -> u32 {
         // SAFETY: as above. This register is combinational from the source

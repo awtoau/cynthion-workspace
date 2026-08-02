@@ -229,6 +229,56 @@ def show(data):
             .replace("\r", "<CR>").replace("\n", "<LF>\n"))
 
 
+def build_firmware():
+    """Build the QEMU image. `None` on success, otherwise the error text.
+
+    RUSTFLAGS, not CARGO_TARGET_<TRIPLE>_RUSTFLAGS: cargo JOINS the
+    target-specific env var with the same key from .cargo/config.toml, which
+    hands the linker both memory.x and memory-qemu.x and fails with "region
+    'RAM' already defined". RUSTFLAGS replaces them outright. It is not passed
+    to host build scripts, because the build is cross-compiling -- which is why
+    `firmware/cynthion-soc/build.rs` compiles for the host regardless.
+    """
+    env = dict(os.environ)
+    env["RUSTFLAGS"] = ("-C link-arg=-Tmemory-qemu.x "
+                        "-C link-arg=-Tlink.x")
+    build = subprocess.run(
+        ["cargo", "build", "--release", "--features", "qemu",
+         "--target-dir", str(BUILD_DIR)],
+        cwd=CRATE, env=env, capture_output=True, text=True)
+    if build.returncode != 0:
+        return (build.stderr or build.stdout).strip()[-1500:]
+    return None
+
+
+def tree_is_dirty():
+    """What both build stamps call dirty.
+
+    Plain `--porcelain`, untracked files included, because that is what
+    `ecp5-test/build_helpers.py:usercode()` uses for the ECP5's USERCODE and
+    what `firmware/cynthion-soc/build.rs` copies from it. The two definitions
+    have to be the same one: `info` compares the words and would otherwise
+    report a mismatch that is not one.
+    """
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT,
+                            capture_output=True, text=True)
+    return bool(status.stdout.strip())
+
+
+def ask_fresh_qemu(text, needle, seconds):
+    """Boot a new image and run one command on it. `None` if it never spoke."""
+    session = Session(ELF)
+    try:
+        if session.expect(b"Cynthion RISC-V SoC", BOOT_S) is None:
+            return None
+        mark = len(session.snapshot())
+        session.send(text.encode() + b"\r")
+        session.expect(needle, seconds, mark)
+        return session.snapshot()[mark:]
+    finally:
+        session.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -256,21 +306,10 @@ def main():
                     emit(f"        {line}")
 
         if not args.no_build:
-            # RUSTFLAGS, not CARGO_TARGET_<TRIPLE>_RUSTFLAGS: cargo JOINS the
-            # target-specific env var with the same key from .cargo/config.toml, which
-            # hands the linker both memory.x and memory-qemu.x and fails with "region
-            # 'RAM' already defined". RUSTFLAGS replaces them outright. It is not passed
-            # to host build scripts, because the build is cross-compiling.
-            env = dict(os.environ)
-            env["RUSTFLAGS"] = ("-C link-arg=-Tmemory-qemu.x "
-                                "-C link-arg=-Tlink.x")
-            build = subprocess.run(
-                ["cargo", "build", "--release", "--features", "qemu",
-                 "--target-dir", str(BUILD_DIR)],
-                cwd=CRATE, env=env, capture_output=True, text=True)
-            if build.returncode != 0:
+            failed = build_firmware()
+            if failed is not None:
                 emit("cargo build (qemu) failed:")
-                emit((build.stderr or build.stdout).strip()[-1500:])
+                emit(failed)
                 return 1
             emit(f"built {ELF.relative_to(ROOT)}: {ELF.stat().st_size} bytes")
 
@@ -337,7 +376,8 @@ def main():
                       f"received in {REPLY_S}s: {show(reply) or '(nothing)'}")
                 return reply
 
-            listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
+            listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
+                       b"selftest", b"ports",
                        b"irq", b"log [n]", b"led", b"i2c", b"power",
                        b"phy", b"typec", b"sideband", b"load <hex>", b"go",
                        b"reset"]
@@ -398,6 +438,91 @@ def main():
             # Asserting them would be asserting the stub.
             command("check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
                     "`check` computes 0x12345678*3 == 0x369d0368")
+
+            # --- info -------------------------------------------------------------
+            # Shape, not values. The hash, the branch, the timestamp and the
+            # compiler are different on every machine and every commit, so what
+            # is asserted is that each line is there and that the two fields this
+            # script can derive independently agree with it.
+            reply = command("info",
+                            [b"image ", b"tools ", b"memory ", b"cpu ",
+                             b"trap ", b"plic ", b"gateware "],
+                            "`info` reports every section")
+
+            check("`info` names the target triple it was built for",
+                  b"riscv32imac-unknown-none-elf" in reply,
+                  "the tools line must carry the triple, or the report cannot\n"
+                  "distinguish this image from one built for another target.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # The dirty flag, against git rather than against itself. A hash
+            # with no dirty flag beside it is a claim nobody can check, which is
+            # worse than no hash at all.
+            expected = b"dirty" if tree_is_dirty() else b"clean"
+            image_line = next((line for line in reply.split(b"\r\n")
+                               if line.startswith(b"image ")), b"")
+            check(f"`info` reports this tree as {expected.decode()}",
+                  expected in image_line,
+                  f"git says the tree is {expected.decode()}.\n"
+                  f"image line: {show(image_line) or '(none)'}")
+
+            check("`info` reports a block RAM budget",
+                  b" free of " in reply and b"text " in reply,
+                  "the memory line must give the sections and what is left of\n"
+                  "the RAM half, which is the number that decides whether the\n"
+                  "next command fits.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            check("`info` decodes misa to an ISA string",
+                  b"misa " in reply and b"rv32" in reply,
+                  "misa is what the core says it implements, and the point of\n"
+                  "printing it is to compare that against what it was built with.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # `virt` is not a bitstream, so there is no build-id window to read
+            # and `target::GATEWARE` is None. Saying so is the assertion: an
+            # `info` that invented an identity here would be reporting a
+            # peripheral that does not exist.
+            check("`info` says this target carries no gateware id",
+                  b"gateware none" in reply,
+                  "under QEMU the gateware line must report that this target is\n"
+                  "not a bitstream, not a hash read from an unmapped address.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # --- selftest -----------------------------------------------------------
+            # The CPU items are the real ones here: `virt` runs the same
+            # rv32imac image the board does, so the M, C and A paths and the
+            # block RAM walk are the instructions and the memory that ship.
+            reply = command("selftest",
+                            [b"alu", b"muldiv", b"comp", b"atomic", b"ram",
+                             b"clock", b"uart", b"gateware", b"flash", b"phy"],
+                            "`selftest` runs every item")
+
+            check("no selftest item failed", b"FAIL" not in reply,
+                  "at least one item reported FAIL.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            check("`selftest` proves the compressed encodings are two bytes",
+                  b"in 6 bytes" in reply,
+                  "the C item measures the three instructions it ran with a\n"
+                  "label difference. Six bytes is the whole assertion: the same\n"
+                  "answer from 32-bit encodings would prove nothing about C.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            check("`selftest` walks the block RAM address and data lines",
+                  b"addresses" in reply and b"32 data lines" in reply,
+                  "the ram item must report how many addresses it walked; a\n"
+                  "data-line walk alone passes on a shorted address line.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # Skipped, not passed. A target with no board cannot answer for the
+            # PHY, and counting that as a pass would make the summary claim more
+            # than it knows.
+            check("`selftest` skips what this target has not got",
+                  b"skip" in reply and b"skipped" in reply,
+                  "the gateware and phy items must report `skip` under QEMU, and\n"
+                  "the summary must count them separately from the passes.\n"
+                  f"received: {show(reply) or '(nothing)'}")
 
             # --- the deferred interrupt log ----------------------------------------
             #
@@ -533,6 +658,46 @@ def main():
             transcript = session.snapshot()
         finally:
             session.close()
+
+        # --- a modified tree must be reported as modified -----------------------
+        #
+        # The assertion above compares `info` against whatever state this tree
+        # happens to be in. If that state was clean, the dirty path has not been
+        # exercised -- and the dirty path is the one that matters: an image built
+        # from an edit, reporting the commit it was edited from, is a hash that
+        # lies.
+        #
+        # So modify the tree and rebuild. The modification is an untracked file
+        # inside `src/`, which is deliberate on both counts: untracked is what
+        # `build_helpers.usercode()` counts as dirty, so the two stamps agree,
+        # and `src/` is a rerun trigger in build.rs, so cargo cannot serve a
+        # cached "clean" from before it appeared. No tracked file is touched and
+        # nothing is checked out, so a concurrent editor in this tree cannot lose
+        # work to this test.
+        if args.no_build:
+            emit("  SKIP  a modified tree is reported as dirty (--no-build)")
+        elif tree_is_dirty():
+            emit("  (the tree is already modified; the check above covered "
+                 "the dirty path)")
+        else:
+            marker = CRATE / "src" / "soc-test-dirty-marker"
+            try:
+                marker.write_text("`info` must call this tree dirty.\n")
+                failed = build_firmware()
+                reply = None if failed else ask_fresh_qemu(
+                    "info", b"image ", REPLY_S)
+                check("a modified tree is reported as dirty",
+                      reply is not None and b"dirty" in reply,
+                      f"build: {failed or 'ok'}\n"
+                      "an untracked file was added under firmware/cynthion-soc/src\n"
+                      "and the image rebuilt; `info` still did not say dirty.\n"
+                      f"received: {show(reply or b'') or '(nothing)'}")
+            finally:
+                marker.unlink(missing_ok=True)
+                # Rebuild clean, so the image left behind is the one this tree
+                # describes and `soc_run.py` does not configure a board with an
+                # image stamped from a state that no longer exists.
+                build_firmware()
 
         emit()
         if args.verbose:
