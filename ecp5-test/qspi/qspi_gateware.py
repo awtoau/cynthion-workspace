@@ -37,6 +37,8 @@ produced two wrong conclusions from summary statistics before byte-level
 capture settled them.
 """
 
+import os
+
 from amaranth                            import (Cat, Const, Elaboratable, Module,
                                                  Mux, Signal, unsigned)
 from amaranth.lib.memory                 import Memory
@@ -64,15 +66,34 @@ from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
 # 48 MHz SCK is well inside Lattice's 62 MHz limit for MCLK and costs 20%
 # throughput against 60 MHz. The divisor is still writable, so a board can be
 # characterised faster; this is the rate the bitstream ships at.
-SYNC_MHZ = 96
+#
+# Overridable by environment variable so that `scripts/flash_ceiling.py` can
+# build a ladder of sync frequencies in parallel from one source file.
+#
+# This is the ONE parameter that genuinely cannot be a register: the ECP5's PLL
+# output dividers are programmed during configuration and are not writable
+# afterwards. Everything else this sweep varies -- SCK divisor, opcode, the
+# 0xEB mode byte, burst length and count -- is a JTAG register, so one
+# bitstream covers every rung below its own sync rate without a rebuild.
+#
+# Divisor 0 is legal and gives SCK = sync, measured byte-exact to 144 MHz, so
+# the sync rate a bitstream is built at IS its top SCK. Not every value is
+# reachable: `usb` divides the same VCO and the ULPI PHY needs exactly 60 MHz,
+# so the generator refuses the rest.
+SYNC_MHZ = float(os.environ.get("QSPI_SYNC_MHZ", 96))
 
 # Sample-point offset, also build-time -- it selects between pipeline stages.
 # 0 is what the earlier sweep found correct at 30 MHz SCK.
 QSPI_OFFSET = 0
 
-# Read length. 32 KiB exercises the flash across many pages rather than one,
-# while the capture window below stays 4 KiB for timing reasons.
-READ_BYTES    = 32768
+# Read length.
+#
+# Down from 32 KiB. A clock ceiling announces itself in the first bytes -- the
+# HyperRAM sweep next door found its ceiling where 88% of words were wrong from
+# the first word -- so a long read buys nothing a short one does not already
+# have, and this one only has to fill the 1 KiB capture buffer and give the
+# cycle counter something to count. 2 KiB is 28 us at the slowest rate here.
+READ_BYTES    = 2048
 CAPTURE_DEPTH = 1024
 
 APPLET_ID = 0x51535049   # "QSPI"
@@ -84,7 +105,13 @@ REGISTER_QUAD_DATA    = 4   # read: that byte, plus the captured count
 REGISTER_QUAD_STATUS  = 5   # done/busy, and the sync frequency actually built
 REGISTER_QUAD_DIVISOR = 6   # write: SCK divisor; SCK = sync / (divisor + 1)
 REGISTER_QUAD_START   = 7   # write: any changed value re-runs the read
-REGISTER_QUAD_MODE    = 8   # write: bit 0 selects 0xEB quad I/O over 0x6B
+# Read mode and Continuous Read, in one word:
+#
+#   1:0    read mode -- 0 = 0x6B, 1 = 0xEB, 2 = 0x03, 3 = 0x0B
+#   2      force the next read to omit its opcode (Continuous Read recovery)
+#   15:8   the mode byte 0xEB sends after the address. 0xA0 enters Continuous
+#          Read, 0xFF leaves it, and the part remembers across a reconfigure.
+REGISTER_QUAD_MODE    = 8
 REGISTER_PASS_ERRORS  = 9   # mismatches vs the first pass, and a pass count
 REGISTER_BURST_LEN    = 10  # write: bytes per read in burst mode (0 = off)
 REGISTER_BURST_COUNT  = 11  # write: how many reads to perform
@@ -113,8 +140,7 @@ class BurstSequencer(Elaboratable):
       controller's pipeline, backpressures `i_stream` and wedges the next read.
     - A trigger is latched, not sampled. The write that arrives while a run is
       in flight starts the next run instead of being dropped.
-    - `pending` starts set, so a freshly configured board performs one
-      `single_length` read without being asked.
+    - `pending` starts CLEAR: every read is one the host asked for.
 
     ============  ===  =========================================================
     Signal        Dir  Meaning
@@ -166,7 +192,18 @@ class BurstSequencer(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        pending = Signal(init=1)
+        # Starts CLEAR. It used to start set, so a freshly configured board
+        # performed one read unasked -- and that read, not any the host chose,
+        # became the reference every later pass was compared against. Its
+        # divisor and opcode were whatever the registers reset to, and if the
+        # part had been left in Continuous Read by a previous bitstream it was
+        # not a valid transaction at all. The comparator then reported the same
+        # three mismatch counts at 120 MHz and at 144 MHz, which is the tell: a
+        # timing fault does not produce identical counts at two clock rates.
+        #
+        # The host now triggers the reference read explicitly, at a rate it has
+        # verified.
+        pending = Signal(init=0)
         index   = Signal(16)
         count   = Signal(16)
         addr    = Signal(24)
@@ -266,14 +303,16 @@ class QSPITest(Elaboratable):
         registers.add_register(REGISTER_QUAD_DIVISOR, value_signal=divisor)
         m.d.comb += reader.divisor.eq(divisor)
 
-        # Opcode select: 0x6B quad output by default, 0xEB quad I/O when set.
-        # Both return data on four lanes; 0xEB also sends the address on four,
-        # halving per-transaction overhead from 40 clocks to 20. That is worth
-        # 0.2% on a 4 KiB streaming read and 19% on a 32-byte one, so it
-        # matters for RISC-V executing from flash rather than for bulk copies.
+        # Opcode select, Continuous Read override and the 0xEB mode byte. See
+        # the field list at REGISTER_QUAD_MODE.
         mode = Signal(32)
         registers.add_register(REGISTER_QUAD_MODE, value_signal=mode)
-        m.d.comb += reader.quad_io.eq(mode[0])
+        m.d.comb += [
+            reader.read_mode.eq(mode[0:2]),
+            reader.xip_force.eq(mode[2]),
+            reader.mode_byte.eq(mode[8:16]),
+        ]
+
 
         # Writing a *different* value to the start register re-runs the read.
         # Edge-triggered rather than level, so the host can sweep the divisor
@@ -283,8 +322,14 @@ class QSPITest(Elaboratable):
         registers.add_register(REGISTER_QUAD_START, value_signal=start_reg)
         m.d.sync += start_prev.eq(start_reg)
 
+        # Registered, not combinational. `start_reg` is a JTAG register, so a
+        # comb path from it runs the whole width of the register decode and
+        # then into `sequencer.pending` -- and with the pass comparator
+        # pipelined, that decode became this design's critical path and
+        # therefore its SCK ceiling. The sequencer latches its trigger, so a
+        # cycle of delay costs nothing it can observe.
         run = Signal()
-        m.d.comb += run.eq(start_reg != start_prev)
+        m.d.sync += run.eq(start_reg != start_prev)
 
         #
         # Burst mode: many short reads at scattered addresses.
@@ -384,22 +429,52 @@ class QSPITest(Elaboratable):
         check_port = memory.read_port(domain="sync")
         m.d.comb += check_port.addr.eq(count)
 
-        # Registered, so block RAM output into a comparator into a counter is
-        # not one combinational path.
+        # Two stages, not one, and the second one is what sets this design's
+        # fmax -- which is what sets the top SCK, because SCK is sync/2 at
+        # best.
+        #
+        # With one stage the critical path was the block RAM's own output:
+        # 4.26 ns of clock-to-Q from `memory.1.0.DOB1`, then three LUT levels
+        # of comparison, into `pass_errors`' clock enable -- 7.61 ns, so
+        # 131 MHz and no higher however the rest of the design is arranged.
+        # Registering the RAM output alongside the byte it is compared against
+        # cuts that path at the RAM's own pins and moves the limit elsewhere.
+        # The comparison is still of the same two bytes; both sides are simply
+        # one cycle later.
         cmp_valid = Signal()
         cmp_data  = Signal(8)
+        chk_valid = Signal()
+        chk_data  = Signal(8)
+        ram_data  = Signal(8)
         m.d.sync += [
             cmp_valid.eq(reader.data_strobe & ~first_pass & capturing
                          & (count < CAPTURE_DEPTH)),
             cmp_data.eq(reader.data),
+
+            chk_valid.eq(cmp_valid),
+            chk_data .eq(cmp_data),
+            ram_data .eq(check_port.data),
         ]
 
         with m.If(reader.start & capturing):
             m.d.sync += [pass_errors.eq(0), pass_count.eq(pass_count + 1)]
-        with m.If(cmp_valid & (check_port.data != cmp_data)):
+        with m.If(chk_valid & (ram_data != chk_data)):
             m.d.sync += pass_errors.eq(pass_errors + 1)
 
-        with m.If(reader.done & first_pass & capturing):
+        # The rising edge of `done`, not the level.
+        #
+        # `reader.done` stays high until the next read starts, so it is still
+        # set from the *previous* read while this one is being armed -- and
+        # `capturing` is updated one cycle before `start`. A burst followed by
+        # an ordinary read therefore cleared `first_pass` during the arming
+        # cycle, before a single byte had been captured, and the comparator
+        # spent the rest of the session checking every pass against a buffer
+        # nothing had ever written. It reported the same three mismatch counts
+        # at 120 and at 144 MHz, which is what gave it away: a timing fault
+        # does not produce identical numbers at two clock rates.
+        done_prev = Signal()
+        m.d.sync += done_prev.eq(reader.done)
+        with m.If(reader.done & ~done_prev & first_pass & capturing):
             m.d.sync += first_pass.eq(0)
 
         registers.add_read_only_register(
@@ -416,6 +491,7 @@ class QSPITest(Elaboratable):
         #   bit    meaning
         #   0      done   -- the run has finished and its results are settled
         #   1      busy   -- a run is in flight
+        #   2      xip    -- the part is believed to be in Continuous Read
         #   8:24   sync frequency actually built, MHz
         #   24:32  sample-point offset the bitstream was built with
         #
@@ -435,7 +511,7 @@ class QSPITest(Elaboratable):
         ]
         registers.add_read_only_register(
             REGISTER_QUAD_STATUS,
-            read=Cat(run_done, run_busy, Const(0, 6),
+            read=Cat(run_done, run_busy, reader.xip, Const(0, 5),
                      Const(int(clocking.actual_sync_mhz), 16),
                      Const(QSPI_OFFSET, 8)))
 

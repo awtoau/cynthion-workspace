@@ -13,7 +13,8 @@ marking says.
 | JEDEC ID | `EF 40 16` | Winbond, type `0x40`, capacity `0x16` = 2^22 | `scripts/flash_capacity_probe.py`, `apollo flash-info` |
 | **SFDP density** | **4 MiB** | the die's own declaration, independent of the ID byte | `scripts/flash_capacity_probe.py` |
 | unique ID | `355027cba3ac60de` | per-part | `apollo flash-info` |
-| status register 3 | `0x60`, ADS clear | no 4-byte addressing | `scripts/flash_capacity_probe.py` |
+| status register 2 | `0x02`, **QE set** | quad needs no register write | `scripts/flash_ceiling.py --status` |
+| status register 3 | `0x60`, ADS clear, **DRV 25%** | no 4-byte addressing; weakest output drive | `scripts/flash_ceiling.py --status` |
 
 **Capacity confirmed three ways** — SFDP, the ID byte, and aliasing. Reads at 4, 8
 and 12 MiB all return offset 0 exactly; reads past 16 MiB get no response.
@@ -39,20 +40,45 @@ Values are from one board. A second has not been checked.
 Declared in `ecp5-test/cynthion_platform/cynthion_r1_4.py`. All four quad data
 lines are wired, so quad mode is a gateware question, not rework.
 
-## The measured ceiling is the ECP5 pin, not the flash
+## No read ceiling has been found (NEW, 2026-08-03)
 
-The flash is rated to **104 MHz**. The ECP5 path driving it is specified only to
-**62 MHz**, because `MCLK` never stops being a configuration pin — it is tristated
-into the configuration block on entering user mode, and the only route to it is
-`USRMCLK`. Measured:
+**Nothing fails.** Every mode reads byte-exact at every rate reachable, up to
+**144 MHz SCK** — 38% past the part's 104 MHz rating and 132% past the 62 MHz
+Lattice specifies for `MCLK`. Stating that once: the top of this table is past
+both ratings and there is no margin figure to reason from.
 
-| SCK | vs the 62 MHz spec | result |
-|---|---|---|
-| 40 MHz | within | PASS |
-| 53.3 MHz | within | PASS, 26.53 MB/s |
-| 80 MHz | +29% over | PASS, three runs, byte-exact |
-| 120 MHz | +93% over | FAIL |
-| 160 MHz | +158% over | FAIL |
+The limit reached is **the test design's own fmax**, not the flash and not the
+pin. SCK is `sync / (divisor + 1)`, so the sync clock a bitstream is built at is
+its top SCK; this design closes at 149 MHz and 144 is the fastest legal PLL rate
+below that. Two fixes moved it from 131 to 149 (`ecp5-test/qspi/qspi_gateware.py`);
+above that the critical path is inside Glasgow's own `IOStreamer`, which is the
+part that has to run at SCK.
+
+60 points, 5 modes × 4 divisors × 3 sync rates, all PASS:
+
+| SCK | `0x03` | `0x0B` | `0x6B` | `0xEB` | `0xEB` continuous |
+|---|---|---|---|---|---|
+| **144 MHz** | 17.96 | 17.95 | 71.22 | 71.56 | **71.70 MB/s** |
+| 130 MHz | 16.21 | 16.21 | 64.29 | 64.61 | 64.73 |
+| 120 MHz | 14.97 | 14.96 | 59.35 | 59.64 | 59.75 |
+| 72 MHz | 8.98 | 8.98 | 35.63 | 35.80 | 35.87 |
+| 30 MHz | 3.74 | 3.74 | 14.85 | 14.92 | 14.95 |
+
+`scripts/flash_ceiling.py --run`. Each point is verified against
+`apollo flash-read` at **both ends** of a 1 KiB capture window — bytes 0-15 and
+1008-1023 — because the first bytes of a read are the ones a marginal clock gets
+right, so checking only the start checks the easiest part.
+
+**`0x03` runs at 144 MHz**, which the datasheet rates at 50. The opcode's rating
+is not a wall on this board.
+
+### Superseded
+
+| was recorded | now |
+|---|---|
+| divisor 0 produces no clock; SCK capped at sync/2 | **wrong.** Divisor 0 reads byte-exact at every rung, at exactly half the cycle count of divisor 1 |
+| 120 MHz FAIL, 160 MHz FAIL | both were divisor-0 points, disbelieved for the reason above. 120 MHz passes |
+| 80 MHz is the fastest verified | 144 MHz, five modes |
 
 **No DDR.** The datasheet contains no DTR opcodes; DDR reads belong to the W25Q-DTR
 family, which this is not. Its "equivalent 208/416 MHz" claim is lane parallelism,
@@ -60,6 +86,43 @@ not double-edge clocking. Genuine DDR on this board is the HyperRAM.
 
 Full speed table, read modes, clock domains and the bugs found getting there:
 [`../luna_ecp5_fpga/flash-detailed.md`](../luna_ecp5_fpga/flash-detailed.md).
+
+## Cache-line refill, which is what firmware execution pays (NEW, 2026-08-03)
+
+A VexiiRiscv I-cache miss costs one transaction plus 64 bytes and nothing else,
+so this is the number that decides whether flash is the bottleneck. Timed in the
+FPGA across 256 reads at strided addresses, since one read is microseconds and
+the host's JTAG access is not:
+
+| mode | overhead | 144 MHz SCK | 36 MHz SCK |
+|---|---|---|---|
+| `0x03` single | 32 clocks | 3833 ns | 15181 ns |
+| `0x6B` quad output | 40 | 1222 ns | 4736 ns |
+| `0xEB` quad I/O | 20 | 1083 ns | 4181 ns |
+| `0xEB` continuous | 12 | **1028 ns** | 3958 ns |
+
+Measured within 5% of the clock count arithmetic throughout, so the model holds
+and intermediate rates can be read off it.
+
+- **Quad is the big win**: 3.1× on a cache line, from four lanes.
+- **`0xEB` over `0x6B` is 11%** — it sends the address on four lanes too, halving
+  transaction overhead from 40 clocks to 20. Worth 0.2% on a bulk copy; this is
+  the case it exists for.
+- **Continuous Read is a further 5%.** Verified byte-exact with the opcode
+  genuinely omitted, not just faster.
+- Against the SoC's current 30 MHz single-lane, 18.1 µs per line, `0xEB`
+  continuous at 144 MHz is **17.6× faster**.
+
+### Continuous Read is device state
+
+`0xEB`'s mode byte `M5-4 = (1,0)` — `0xA0` — makes the *next* transaction omit
+its opcode. `0xFF` leaves. The part **remembers this across an FPGA
+reconfiguration**, and a part left in it answers an opcode with an address
+phase. Worse, it does not return obvious nonsense: with no opcode sent it reads
+the first eight DQ0 bits of the x4 address and mode byte *as* an opcode — for
+address 0 and mode `0xFF` that spells `0x03` — and answers with real flash
+contents from an unintended address. Anything that enters it must leave it on
+every exit path.
 
 ## What is in it, and how software reaches it
 
@@ -80,9 +143,48 @@ Boot-image selection, slot layout and the partition work:
 Whether quad SPI speeds up configuration:
 [`../luna_ecp5_fpga/qspi-boot-time.md`](../luna_ecp5_fpga/qspi-boot-time.md).
 
+## Registers that affect read speed (NEW, 2026-08-03)
+
+- **QE (SR2 bit 1) is already set.** Quad needs no write to this part, and
+  setting it would have cost hardware write protection by repurposing /WP and
+  /HOLD as IO2 and IO3.
+- **Output drive is 25%, the default, and it does not need raising.** 100% is
+  available and writable *volatile*, but nothing fails at 25% up to 144 MHz, so
+  there is no failure for a stronger driver to fix. A volatile write attempted
+  through Apollo's background SPI (`0x50` then `0x11`) **did not take** — SR3
+  read back unchanged at `0x60`. The part was not modified.
+- **No dummy-cycle register applies.** `0xEB` in SPI mode is fixed at 4 dummy
+  clocks after the 2-clock mode byte. The configurable count (`0xC0` Set Read
+  Parameters) is a QPI-mode command, and this design does not use QPI.
+
+## What would need to change in the SoC (NEW, 2026-08-03)
+
+The SoC reads at `FLASH_MODE = "single"`, `FLASH_DIVISOR = 0`, 60 MHz sync —
+30 MHz SCK, 3.75 MB/s, 18.1 µs per cache line. Three things stand between that
+and the numbers above, in order of value:
+
+| change | gets | cost |
+|---|---|---|
+| `FLASH_MODE = "quad"` | 4× | none. `ModalSPIFlashMemoryMap` already implements `0xEB` with `dummy_value=0xff0000`, and QE is set |
+| raise `SYNC_MHZ` | 2× at 120 MHz | the CPU clock moves with it; `usb` must stay exactly 60 MHz |
+| replace luna_soc's PHY | 2× again | `SPIPHYController` toggles a flip-flop, so **SCK is structurally capped at sync/2**. Glasgow's controller reaches sync/1, which is how 144 MHz was measured |
+
+`FLASH_DIVISOR` **cannot be made a CSR as written**: `SPIClockGenerator` uses it
+to size its counter (`bits_for(div)`) at elaboration. Fixing the width and
+comparing against a register would make it one. `FLASH_MODE` changes the FSM's
+state list, so it is structural in a way the opcode and dummy value are not —
+those two are already plain constants a register could hold.
+
 ## Not measured
 
 **Write and erase timing.** Everything above is reads (#93).
+
+**Anything above 144 MHz SCK.** The instrument runs out before the flash does.
+Reaching further means either lifting the test design's fmax past 149 MHz — the
+critical path is inside Glasgow's `IOStreamer` — or generating SCK in a 2× clock
+domain so the fabric need not run at SCK. An `ODDRX1F` cannot do it: nextpnr
+refuses one whose `Q` drives anything but a top-level output, and `USRMCLK` is
+not one.
 
 ## Scripts
 
@@ -90,6 +192,7 @@ Whether quad SPI speeds up configuration:
 |---|---|
 | `scripts/flash_capacity_probe.py` | JEDEC, SFDP, aliasing — read-only |
 | `scripts/flash_backup.py` | full image backup |
-| `scripts/flash_speed_ladder.py`, `flash_modes.py`, `qspi_ladder.py` | speed and mode characterisation |
+| `scripts/flash_ceiling.py` | **the current one.** Bitstream ladder, verified SCK sweep, cache-line refill, status registers |
+| `scripts/flash_speed_ladder.py`, `flash_modes.py`, `qspi_ladder.py` | earlier speed and mode characterisation |
 | `scripts/test_flash_id.py` | JEDEC read |
 | `apollo flash-info` | JEDEC and unique ID |

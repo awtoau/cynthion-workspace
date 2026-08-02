@@ -324,7 +324,7 @@ def simulate(sequencer, *, burst_len, burst_count, quad_io=False,
     out = Run()
 
     async def testbench(ctx):
-        ctx.set(dut.reader.quad_io, 1 if quad_io else 0)
+        ctx.set(dut.reader.read_mode, 1 if quad_io else 0)
         ctx.set(dut.seq.burst_len, burst_len)
         ctx.set(dut.seq.burst_count, burst_count)
 
