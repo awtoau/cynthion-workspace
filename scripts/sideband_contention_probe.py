@@ -14,6 +14,12 @@ reports those boundaries and the measured conflict durations rather than
 asserting anything, so the numbers in the report come from the simulator and not
 from reading the FSM.
 
+Probes `SidebandResponder` -- the test bitstream's responder, whose 18-byte POWER
+reply is the longest ownership window in the protocol and therefore the worst
+case. `ecp5-test/sideband_link.py` shares the pad discipline (open-drain, `oe`
+tracking the bit) and holds the line for at most four bytes, so this bounds it
+too.
+
 Findings go to ./tmp/logs/sideband_contention_probe.log as well as stdout.
 """
 

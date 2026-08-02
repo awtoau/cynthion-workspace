@@ -15,6 +15,11 @@ exercises the turnaround, which a one-way stream would not -- and turnaround is
 the part expected to fail first, since Apollo bit-bangs its transmit and that
 jitter does not shrink as the bit period does.
 
+**That makes this a test-bitstream tool** (`ecp5-test/sideband/`): the shipping
+link's longest reply is four bytes and it does not implement POWER. The rate
+ceiling it finds is a property of the wire and both ends' UARTs, so it carries
+over -- but the measurement has to be made against the design that answers.
+
 Both ends must agree on the rate, so each step rebuilds the firmware and the
 bitstream and reflashes. That is slow (a few minutes per rate) but it is the
 only honest way to test: a mismatched pair fails for the wrong reason.

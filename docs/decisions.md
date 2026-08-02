@@ -40,6 +40,8 @@ Numbers are measured unless marked *unverified*.
 | 20 | [Device ownership](#20-multi-transaction-device-protocols) | one owner, cached reads | in progress (#123) |
 | 21 | [16550: written vs vendored](#21-16550-written-from-the-spec-vs-a-vendored-core) | ours, spec-checked against OpenCores | settled (#128) |
 | 22 | [What is resident at 0x0](#22-what-is-resident-at-0x0) | a 492-byte bootloader; the shell is an image | settled (#138) |
+| 23 | [What the sideband answers](#23-what-the-sideband-link-answers) | PING, STATUS, a byte each way; the rest removed | settled (#137) |
+| 24 | [Advertisement on the sideband wire](#24-fpga_adv-advertisement-and-sideband-on-one-wire) | Apollo's UART-mode frame | settled (#137); **unverified on hardware** |
 
 ---
 
@@ -358,6 +360,125 @@ bit out.
 Reproducer `scripts/soc_serial_sim.py`; fixed in `52c607a`, issue #113. `SerialLine` also
 adds the receive synchroniser, the framing-error drop and the idle qualifier that
 `AsyncSerial` leaves to the instantiator — see its module docstring.
+
+### 23. What the sideband link answers
+
+**Why the rich version existed.** During bring-up FPGA_ADV was the *only* channel that
+worked. There was no console, USB did not enumerate reliably, and a bitstream that said
+nothing gave no way to separate a dead CPU from a wedged peripheral from a working design
+whose output never reached the host. So the responder grew commands that read hardware
+directly — `POWER` from the PAC1954, `DEVICES` from the flash JEDEC ID and a HyperRAM
+presence bit, `LED` to drive the board display — and answered them from the fabric, with
+no CPU involved. That was correct for the problem it had.
+
+**Why it stopped being the right shape.** Every one of those facts is now available, in
+better form, from a path that did not exist then:
+
+| what the sideband reported | what reports it now |
+|---|---|
+| PAC1954 power | `power`, over I2C, all four rails |
+| flash JEDEC ID, HyperRAM presence | `board`, from the caches rather than the bus |
+| image, CPU, gateware identity | `info` and `selftest`, from inside the process |
+
+Two consoles on independent ports (#128), and the SoC reading its own hardware (#126,
+#127), left the sideband as a second, lower-fidelity path to facts already available.
+
+**The shipping link is `ecp5-test/sideband_link.py`, and it has three commands:** `PING`,
+`STATUS`, and `0x80`–`0xFF` to deliver a byte to the CPU. That is a heartbeat and a byte
+each way, which is the whole of what the shipping bitstream needs the wire for. The
+responder with the full set stays in `apollo_fpga.gateware.sideband` and is instantiated
+by `ecp5-test/sideband/sideband_gateware.py` — a test bitstream, whose job is exactly a
+board that will not boot far enough to have a console.
+
+**`POWER` and `DEVICES` are removed, not stubbed.** The alternative was to keep answering
+them with a correct frame length, a valid CRC and zeros in the payload, so the host side
+would not have to change:
+
+| | zero-filled | **removed** |
+|---|---|---|
+| A `POWER` query returns | a well-formed measurement of nothing | unknown command, OK bit clear |
+| The reader must know | which fields are real in which bitstream | nothing; the reply says |
+| Host decoder | keeps opcodes no gateware implements | matches the gateware |
+
+Zero-filling is a read-old-format fallback wearing a protocol's clothes. A design must not
+answer as though it might have a capability it does not have, and a decoder that knows
+opcodes its bitstream never implements can only mislead. `PING`'s version byte went 1 → 2
+so the two maps are told apart at runtime rather than inferred from a command that failed.
+`scripts/sideband_decoder.py` is now the shipping map alone; the test bitstream's extra
+commands moved to `ecp5-test/sideband/test_protocol.py`, beside the bitstream that
+answers them.
+
+**Apollo needs no change.** Its firmware never knew these opcodes — the host supplies the
+command byte and the expected length through vendor request `0xC3`, and
+`fpga_adv_transceive()` shifts whatever it is given
+(`repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c:437`). The only opcode-derived
+constant is `ADV_RESPONSE_MAX 18` at line 143, sized for `POWER`; the shipping link's
+longest reply is 4 bytes, so it is now larger than needed and still correct.
+
+**Measured, `scripts/sideband_cost.py`:**
+
+| | logic | FF |
+|---|---|---|
+| `SidebandResponder`, as the SoC drove it | 245 | 109 |
+| `SidebandLink` | 226 | 96 |
+| **saved** | **19** | **13** |
+| sourcing the removed fields would have cost | +299 | +0 |
+
+**Nineteen cells, 0.16% of an LFE5U-12F.** The saving is small and the change does not
+stand on it. It stands on the reply: the design says what it is rather than answering for
+what it is not. The 299 is what those commands would have cost had anything driven them —
+the SoC never did, so the fields were already constant-folded and that cost was never
+being paid.
+
+Issue #137.
+
+### 24. FPGA_ADV: advertisement and sideband on one wire
+
+**The pin's primary purpose upstream is port takeover, and we were not using it for
+that.** `ApolloAdvertiser` drives FPGA_ADV as a 25 Hz square wave; Apollo keeps the CONTROL
+port switched to the FPGA only while that continues. Every bitstream here is AUX-only, so
+the pin was free to carry the sideband instead — and the SoC consequently had **no way to
+ask for CONTROL at all**.
+
+A square wave and a UART cannot share the wire: the square wave is low for half of every
+20 ms and no byte survives it.
+
+| approach | verdict |
+|---|---|
+| Square wave, sideband dropped | forfeits the link that works when USB does not |
+| Square wave and sideband time-sliced | Apollo's EIC mode counts *edges*, and sideband traffic is edges — a poll reads as a port request |
+| **The frame `C1 14 01 A5` on the same UART** | Apollo's `FPGA_ADV_MODE_UART` already defines exactly this, and already routes bytes to the pattern matcher only when no command is in flight |
+| "The link is alive" as the advertisement | Apollo grants on the frame and on nothing else; a reply is deliberately never offered to the matcher |
+
+The third row is not a new protocol — it is the one Apollo's firmware has implemented since
+the sideband landed, and which **no gateware ever emitted**. `ecp5-test/sideband_advertise.py`
+emits it. The decision was to find the mechanism rather than invent one.
+
+**What it costs.** The link's rule was "the FPGA never transmits unasked", which made it
+collision-free by construction. An advertisement breaks that rule, at a bounded price: a
+frame occupies 174 µs of every 100 ms (**0.17% duty**), both ends are open-drain so an
+overlap is two pull-downs rather than a short, an overlapped command or reply fails
+Apollo's CRC and is retried, and an overlapped advertisement is one of three inside the
+300 ms `HEARTBEAT_TIMEOUT_MS`. A 20-bit-period idle guard removes the larger risk — a
+frame starting *inside* the 40 µs turnaround the FPGA already knows about.
+
+Measured cost: **+124 logic cells and +82 flip-flops**, against a shipping sideband of 350
+logic and 178 FF — 2.9% of an LFE5U-12F. The port request is the larger part of this
+issue's net change by some margin: decision 23 removes 19 cells, this adds 124.
+
+**Polarity is inverted from upstream.** `ApolloAdvertiser` advertises from configuration
+and `ApolloAdvertiserRequestHandler` supplies `stop`; here the bit resets clear and
+firmware sets it. A bitstream that seized CONTROL the moment it configured would take the
+port away from Apollo's own debug interface, which is the path used to recover a board
+that will not boot. The `stop` signal is what says the handover was always meant to be
+software-controlled from the FPGA side; this makes the *request* software-controlled too.
+
+Sideband control register bit 5, `sideband::ADVERTISE`. Issue #137, and it closes the
+`ApolloAdvertiser` row in [`upstream-boundary.md`](upstream-boundary.md).
+
+**Not verified on hardware.** No bitstream has been built or flashed with this, and Apollo
+has never been put into `FPGA_ADV_MODE_UART` from the host — see
+[Unverified](#unverified).
 
 ---
 
@@ -848,3 +969,5 @@ means a second decoder window rather than a linker boundary, and the decode path
 | Verilator as a simulation alternative | — | never evaluated on the record |
 | Type-C physical attach/detach | commit `bd7867b` | interrupt path verified; a real attach has not been exercised |
 | Firmware staging over USB bulk, end to end | #114 | each half exercised, the round trip is not. The JTAG path's round trip **is** verified — decision 15 |
+| The port request grants CONTROL | decision 24 | simulated frame-exact against Apollo's matcher; no bitstream built, and Apollo has never been put into `FPGA_ADV_MODE_UART` from the host |
+| The bootloader's sideband byte | `firmware/cynthion-boot` | written on every boot and **never read back** — nothing host-side speaks the sideband protocol to Apollo. `scripts/sideband_decoder.py` decodes a reply; no tool fetches one |

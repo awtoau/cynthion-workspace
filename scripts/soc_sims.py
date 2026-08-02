@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Runs the nine simulations under `scripts/` and prints how many checks each made.
+Runs the simulations under `scripts/` and prints how many checks each made.
 
     ./scripts/soc_sims.py            # every simulation
     ./scripts/soc_sims.py plic clint # only the ones whose name contains these
@@ -59,6 +59,8 @@ SIMS = [
     "soc_i2c_owner_sim",
     "soc_jtag_stage_sim",
     "soc_board_sim",
+    "sideband_link_sim",
+    "sideband_advertise_sim",
     "soc_test",
 ]
 

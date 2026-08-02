@@ -10,10 +10,18 @@ Apollo → FPGA:  [CMD]
 FPGA  → Apollo: [STATUS][payload ...][CRC8]
 ```
 
-Implementations: [sideband.py](../../repos/apollo/apollo_fpga/gateware/sideband.py)
-(responder), [fpga_adv.c](../../repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c)
-(master), [sideband_gateware.py](../../ecp5-test/sideband/sideband_gateware.py)
-(test bitstream).
+Implementations:
+
+| | shipping SoC | test bitstream |
+|---|---|---|
+| Responder | [sideband_link.py](../../ecp5-test/sideband_link.py) | [sideband.py](../../repos/apollo/apollo_fpga/gateware/sideband.py) |
+| Wired to the pad by | [sideband_debug.py](../../ecp5-test/sideband_debug.py) | [sideband_gateware.py](../../ecp5-test/sideband/sideband_gateware.py) |
+| Host side | [sideband_decoder.py](../../scripts/sideband_decoder.py) | [test_protocol.py](../../ecp5-test/sideband/test_protocol.py) |
+| `PING` reports | v2 | v1 |
+
+Common to both: [fpga_adv.c](../../repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c)
+(master), [sideband_advertise.py](../../ecp5-test/sideband_advertise.py) (the
+CONTROL port request, §9.1).
 
 Tracking: [#68](https://github.com/awtoau/cynthion-workspace/issues/68),
 [#84](https://github.com/awtoau/cynthion-workspace/issues/84),
@@ -132,17 +140,42 @@ with one constant feeding both the domain and the responder.
 
 ## 3. Commands
 
+**Two opcode maps, one envelope.** The shipping SoC and the test bitstream
+answer different commands, share the framing, and are told apart by `PING`'s
+version byte.
+
+### 3.1 Shipping — `ecp5-test/sideband_link.py`, protocol v2
+
+| CMD | Name | Response | Total |
+|---|---|---|---|
+| `0x01` | `PING` | STATUS + protocol version + the CPU's byte + CRC8 | 4 B |
+| `0x02` | `STATUS` | STATUS + CRC8 | 2 B |
+| `0x80`–`0xFF` | write | STATUS + CRC8; low 7 bits reach the CPU | 2 B |
+
+A heartbeat and a byte each way, and nothing else. The CPU's end is
+`ecp5-test/riscv/sideband_csr.py`: `tx` is what `PING` returns, `rx` and `rxcnt`
+are what arrived.
+
+Seven bits inbound rather than eight because the opcode and the value share one
+byte. Widening it needs a second byte and a length the FPGA must parse, which
+makes the responder stateful and then makes it need a timeout (§7).
+
+**`POWER`, `DEVICES` and `LED` are not implemented here** and are answered as
+unknown commands. Answering them with a well-formed frame of zeros was
+considered and rejected: it reads as a working query returning nothing, and
+every reader then has to know which fields are real in which bitstream. See
+[decision 23](../decisions.md#23-what-the-sideband-link-answers).
+
+### 3.2 Test bitstream — `apollo_fpga.gateware.sideband`, protocol v1
+
 | CMD | Name | Response | Total |
 |---|---|---|---|
 | `0x01` | `PING` | STATUS + 2 (protocol version, build ID) + CRC8 | 4 B |
 | `0x02` | `STATUS` | STATUS + CRC8 | 2 B |
+| `0x03` | `LED_RELEASE` | STATUS + CRC8 | 2 B |
 | `0x2B` | `POWER` | STATUS + 16 (VBUS×4, VSENSE×4, LE16 each) + CRC8 | 18 B |
 | `0x2C` | `DEVICES` | STATUS + 4 (flash JEDEC ID ×3, flags) + CRC8 | 6 B |
 | `0x40`–`0x7F` | `LED` | STATUS + CRC8 | 2 B |
-
-**Response length is fixed per command and known to both sides at compile
-time** — no length field, the way an SPI register read works. This removes
-length parsing from both ends and removes the FPGA's need for any timeout (§7).
 
 `POWER` returns full 16-bit values rather than high bytes only: losing
 measurement precision to save 700 µs on a 10 Hz poll is a poor trade.
@@ -155,8 +188,21 @@ power-on zeros cannot be mistaken for a device that answered with zeros.
 `LED` carries its pattern in the low six bits of the opcode, so the command fits
 in one byte and the protocol stays stateless. `0x40` all off, `0x7F` all on.
 
+### 3.3 Common
+
+**Response length is fixed per command and known to both sides at compile
+time** — no length field, the way an SPI register read works. This removes
+length parsing from both ends and removes the FPGA's need for any timeout (§7).
+
 Unknown commands return `STATUS` alone with bit 0 clear, so the master can tell
 "not understood" from "not there".
+
+**Apollo knows neither map.** The host supplies the command byte and the
+expected length through vendor request `0xC3` and `fpga_adv_transceive()` shifts
+whatever it is given (`fpga_adv.c:437`). The only opcode-derived constant in the
+firmware is `ADV_RESPONSE_MAX 18` (line 143), sized for `POWER`; the shipping
+link's longest reply is 4 bytes, so it is larger than needed and still correct.
+**No firmware change is required by either map.**
 
 ## 4. Status byte
 
@@ -165,8 +211,13 @@ separate heartbeat transaction.
 
 | Bit | Meaning |
 |---|---|
+Identical in both maps, which is what makes liveness one question rather than
+two.
+
+| Bit | Meaning |
+|---|---|
 | 0 | Command OK. Clear means the payload is not valid. |
-| 1 | Events pending, including a latched button press |
+| 1 | Events pending |
 | 2 | Error flag set since last read |
 | 3 | FPGA reconfigured since last poll |
 | 4-5 | FPGA state: 0 idle, 1 active, 2 fault, 3 reserved |
@@ -177,10 +228,11 @@ Bit 6 is a toggle rather than a counter because a value that *changes* proves
 the FPGA is executing, where a repeated value could be a wedged state machine
 replaying a stale buffer.
 
-Bit 1 is read-and-clear, cleared only once a response carrying it has been
-**fully transmitted** — clearing on receipt would lose a press if the reply were
-lost. A press arriving mid-response re-sets the latch rather than being
-swallowed.
+**Test bitstream only:** bit 1 also carries a latched USER button press, read-and-
+clear, cleared only once a response carrying it has been **fully transmitted** —
+clearing on receipt would lose a press if the reply were lost. The shipping link
+has no button input; bits 1–5 there are whatever the fabric or the CPU reports
+(`ecp5-test/riscv/sideband_csr.py`).
 
 ## 5. CRC-8
 
@@ -264,8 +316,10 @@ They **saturate at 255 rather than wrapping** — a count stuck at 255 still say
 "this link is bad", where a wrapped counter can read as healthy. Reading clears
 them, giving the count since the last look.
 
-The responder drives the six board LEDs from its own state, so a failing link is
-diagnosable by looking at the board:
+**Test bitstream only.** Its responder drives the six board LEDs from its own
+state, so a failing link is diagnosable by looking at the board. The shipping
+SoC's LEDs report the CPU and the buses instead — it has a console, so the link
+does not have to be its own display:
 
 | LED | Meaning |
 |---|---|
@@ -313,6 +367,49 @@ While a command is in flight, received bytes are its response and are never
 offered to the pattern matcher, so a reply containing pattern bytes cannot be
 mistaken for an advertisement.
 
+### 9.1 The advertisement, from the FPGA side
+
+**This is the pin's primary purpose upstream, and the reason UART mode exists.**
+`ApolloAdvertiser` drives FPGA_ADV as a 25 Hz square wave and Apollo holds the
+CONTROL port switch only while that continues — which cannot share the wire with
+this protocol, since the square wave is low for half of every 20 ms.
+
+UART mode is the reconciliation, and `ecp5-test/sideband_advertise.py` is the
+gateware half that was missing: the same 8-N-1 UART, transmitting the frame
+`C1 14 01 A5` unsolicited.
+
+| | |
+|---|---|
+| Frame | `C1 14 01 A5`, 8-N-1, LSB first — 40 bit periods, 174 µs |
+| Interval | 100 ms, so three frames fit inside `HEARTBEAT_TIMEOUT_MS` |
+| Duty | 0.17% |
+| Enable | off at reset; sideband control bit 5, `sideband::ADVERTISE` |
+| Guard | 20 bit periods of continuous idle-high before a frame may start |
+
+**§11's "no unsolicited FPGA transmission" is deliberately broken here**, and
+that is the whole cost of the decision. What replaces it:
+
+- **The responder wins the wire.** The advertiser holds off while `tx_active`,
+  so a reply is never corrupted by the FPGA's own advertisement.
+- **The idle guard exceeds the longest gap inside a transaction.** The 40 µs
+  turnaround is 9.2 bit periods; requiring 20 proves no transaction is in flight
+  rather than merely that the wire is quiet this instant.
+- **Both ends open-drain.** An overlap is two pull-downs, not a short (§1's
+  hazard), so the residual risk is a corrupted byte rather than a damaged driver.
+- **Both directions recover.** An overlapped command or reply fails the CRC and
+  Apollo retries; an overlapped advertisement is one of three in the window.
+
+**Off at reset, which is the opposite of upstream.** `ApolloAdvertiser`
+advertises from configuration and `ApolloAdvertiserRequestHandler` supplies a
+`stop` vendor request to end it. Here the FPGA asks rather than assumes: a
+bitstream that seized CONTROL on configuration would take the port from Apollo's
+own debug interface, which is the path used to recover a board that will not
+boot. Clearing bit 5 hands the port back one timeout later.
+
+Simulated frame-exact by `scripts/sideband_advertise_sim.py`. **Not verified on
+hardware** — no bitstream has been built with it, and nothing has yet put Apollo
+into UART mode from the host.
+
 ## 10. Runtime JTAG channel
 
 The sideband neither replaces JTAG nor reclaims its pins.
@@ -354,8 +451,9 @@ caught by the timeout, a corrupted one by the CRC.
 byte's high bits so the FPGA still knows the frame size from byte one,
 preserving the stateless property in §7.
 
-**Unsolicited FPGA transmission.** Excluded so the link is collision-free
-without arbitration.
+**Unsolicited FPGA transmission.** Excluded for commands, so request/response is
+collision-free without arbitration. The port-request advertisement (§9.1) is the
+one deliberate exception, and §9.1 states what it costs and what bounds it.
 
 **Leaving either driver permanently enabled.** Two push-pull drivers enabled at
 once short against each other. Each end enables its driver only while

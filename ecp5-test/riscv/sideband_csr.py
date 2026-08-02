@@ -20,7 +20,23 @@ and knows more than the fabric does. This register lets the firmware say so.
                     bit 2    events
                     bit 3    error
                     bit 4    reconfigured
+                    bit 5    advertise -- ask Apollo for the CONTROL port
                     bit 7    own -- take the link from the hardwired bits
+    +1  tx     RW   the byte a PING returns
+    +2  rx     R    the low seven bits of the last byte Apollo sent
+    +3  rxcnt  R    how many such bytes have arrived, wrapping at 256
+
+## The byte channel
+
+`tx` out, `rx` in, and `rxcnt` to tell a repeat from a silence.
+
+**`rxcnt` rather than a ready flag, and rather than read-to-clear.** A flag
+cleared by reading `rx` makes reading a side-effecting operation, which is the
+hazard `uart16550.py` spends a page on. A count has no such hazard -- the CPU
+keeps its own copy and compares -- and it distinguishes "Apollo sent the same
+byte again" from "Apollo has sent nothing", which a flag cannot. It wraps rather
+than saturating: the CPU is comparing against its own last value, so wrapping is
+correct and saturation would look like silence.
 
 **`own` resets to 0 and the hardwired bits win until it is set.** That ordering
 is the point: a design that never reaches its firmware, or reaches it and hangs
@@ -28,22 +44,38 @@ before this register is written, still answers the sideband with the fabric's
 own account of itself. The register adds a voice; it does not replace the one
 that was there for the case where the CPU is the problem.
 
+## The port request is not part of the payload
+
+`advertise` is outside `own`: it is not something the link *reports*, it is
+something the FPGA *does* -- emit the frame Apollo matches to grant the CONTROL
+port (`ecp5-test/sideband_advertise.py`). The fabric has no opinion to override,
+so there is no `fabric_advertise`.
+
+**It resets to 0, which is the opposite of upstream.** `ApolloAdvertiser`
+advertises from configuration and `ApolloAdvertiserRequestHandler` provides a
+`stop` request to end it. Inverting that here is deliberate: a bitstream that
+seized CONTROL the moment it configured would take the port away from Apollo's
+own debug interface, which is the path used to recover a board that will not
+boot. Asking for the port is a decision firmware makes after it is running;
+clearing the bit hands the port back one Apollo timeout later.
+
 ## Register discipline
 
-One address, read/write, plain storage. Reading it returns what was written and
-changes nothing, so it is outside the class of hazards `uart16550.py` describes
-entirely. There is no status here to keep clear of a side-effecting register
-because there is no side-effecting register.
+Four addresses, plain storage, and **no register whose read changes anything**.
+`ctrl` and `tx` read back what was written; `rx` and `rxcnt` are windows onto
+state the link updates. That keeps the whole peripheral outside the class of
+hazards `uart16550.py` describes, and it is why the receive side is a count
+rather than a flag.
 
 ## What is not here
 
-The responder also accepts a 128-bit `power_data` payload -- four VBUS and four
-VSENSE readings -- which this design leaves at zero. Filling it from the PAC1954
-on the I2C bus would let Apollo read board power over a wire that needs neither
-USB nor the CPU's console, which is a genuinely good use of the link. It is not
-here because it is 128 more flip-flops in service of a path that cannot be
-tested from this side: verifying it means driving the sideband protocol from
-Apollo, and nothing in this workspace does that yet.
+No flash identity, no HyperRAM presence, no power payload, and no registers for
+them -- the shipping link does not implement those commands at all. The SoC reads
+all of it better: `power` over I2C from the PAC1954, `board` for the memories,
+`info` and `selftest` for the image. A design that answered a POWER query with
+zeros would look like a working measurement of nothing, which is worse than a
+command that is not there. `ecp5-test/sideband/sideband_gateware.py` is the test
+bitstream and carries the full set.
 """
 
 from amaranth               import Module, Signal
@@ -61,20 +93,30 @@ CTRL_STATE  = 0     # two bits
 CTRL_EVENTS = 2
 CTRL_ERROR  = 3
 CTRL_RECONF = 4
+CTRL_ADV    = 5
 CTRL_OWN    = 7
 
 
 class SidebandControl(wiring.Component):
-    """One byte of CSR that can take the sideband payload from the fabric.
+    """Four bytes of CSR: what the link reports, and a byte each way.
 
     Attributes
     ----------
-    bus : csr.Interface(addr_width=1, data_width=8)
-        The single register.
+    bus : csr.Interface(addr_width=2, data_width=8)
+        ctrl, tx, rx, rxcnt.
     fabric_state, fabric_events, fabric_error, fabric_reconfigured : in
         What the design reports when the CPU has not taken the link.
     state, events, error, reconfigured : out
         What to feed to `SidebandDebug`.
+    message : Signal(8), out
+        The `tx` register, straight through. What a PING returns.
+    received : Signal(7), in
+    received_strobe : Signal(), in
+        A byte from Apollo, valid for the one cycle the strobe is high. Latched
+        into `rx`, counted in `rxcnt`.
+    advertise : Signal(), out
+        Ask Apollo for the CONTROL port. Straight from bit 5, outside `own`,
+        because it is an action rather than a reported value.
     own : Signal(), out
         Which of the two is being reported. Brought out so a design can show it
         somewhere -- an operator looking at a board wants to know whether they
@@ -84,25 +126,40 @@ class SidebandControl(wiring.Component):
     def __init__(self):
         self._ctrl = csr.Register({"data": csr.Field(csr.action.RW, 8)},
                                   access="rw")
+        self._tx = csr.Register({"data": csr.Field(csr.action.RW, 8)},
+                                access="rw")
+        # R, not RW: the link writes these, and a CPU write would be a value the
+        # next byte from Apollo silently discards.
+        self._rx = csr.Register({"data": csr.Field(csr.action.R, 8)},
+                                access="r")
+        self._rxcnt = csr.Register({"data": csr.Field(csr.action.R, 8)},
+                                   access="r")
 
-        # addr_width=1 -- exactly one register, so the window is one byte and
-        # nothing can alias a second address onto it.
-        builder = csr.Builder(addr_width=1, data_width=8)
+        # addr_width=2 -- exactly four registers, so the window is four bytes and
+        # nothing can alias a fifth address onto it.
+        builder = csr.Builder(addr_width=2, data_width=8)
         builder.add("ctrl", self._ctrl)
+        builder.add("tx", self._tx)
+        builder.add("rx", self._rx)
+        builder.add("rxcnt", self._rxcnt)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
         super().__init__({
-            "bus":                 In(csr.Signature(addr_width=1, data_width=8)),
+            "bus":                 In(csr.Signature(addr_width=2, data_width=8)),
 
             "fabric_state":        In(2),
             "fabric_events":       In(1),
             "fabric_error":        In(1),
             "fabric_reconfigured": In(1),
+            "received":            In(7),
+            "received_strobe":     In(1),
 
             "state":               Out(2),
             "events":              Out(1),
             "error":               Out(1),
             "reconfigured":        Out(1),
+            "message":             Out(8),
+            "advertise":           Out(1),
             "own":                 Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
@@ -115,7 +172,26 @@ class SidebandControl(wiring.Component):
         ctrl = self._ctrl.f.data.data
         own  = ctrl[CTRL_OWN]
 
-        m.d.comb += self.own.eq(own)
+        m.d.comb += [
+            self.own.eq(own),
+            # Not gated on `own`: the fabric has no advertisement to be overridden.
+            self.advertise.eq(ctrl[CTRL_ADV]),
+            # Nor is the outgoing byte: there is no fabric value it could shadow.
+            # A design whose firmware never runs sends zero, which is what it has
+            # to say.
+            self.message.eq(self._tx.f.data.data),
+        ]
+
+        # The receive side. Latched, and counted separately so the CPU can tell a
+        # repeat from a silence without a read that clears anything.
+        rx_data  = Signal(8)
+        rx_count = Signal(8)
+        with m.If(self.received_strobe):
+            m.d.sync += [rx_data.eq(self.received), rx_count.eq(rx_count + 1)]
+        m.d.comb += [
+            self._rx.f.data.r_data.eq(rx_data),
+            self._rxcnt.f.data.r_data.eq(rx_count),
+        ]
 
         with m.If(own):
             m.d.comb += [

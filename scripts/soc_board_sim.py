@@ -34,7 +34,12 @@ this design's to get wrong.
 
 **The sideband control** is checked for the same handover property, from the
 other direction: the fabric's bits reach the responder until the CPU claims the
-link, and the claim is a single bit that resets clear.
+link, and the claim is a single bit that resets clear. Three things sit outside
+that claim and are checked separately, because they are not values the fabric
+could have an opinion about -- the port request, the outgoing byte, and the
+received byte with its count. The count is checked for the property it exists
+for: that neither read clears anything, so a repeated byte and a silence are
+distinguishable without a side-effecting register.
 
 **The I2C bus mux** has never run on silicon in any form -- `ecp5-test/i2c/multiplexed.py`
 is marked simulation-only -- so the checks here are about the two properties that
@@ -1137,6 +1142,7 @@ def run_sideband_checks(checks, verbose):
         await ctx.tick()
         seen["fabric"] = (ctx.get(dut.state), ctx.get(dut.events),
                           ctx.get(dut.error), ctx.get(dut.own))
+        seen["advertise_reset"] = ctx.get(dut.advertise)
 
         # Written, but not owned: still the fabric's.
         await bus.write(0, 0b0000_0001)
@@ -1149,6 +1155,33 @@ def run_sideband_checks(checks, verbose):
                          ctx.get(dut.own))
         seen["readback"] = await bus.read(0)
         seen["readback_again"] = await bus.read(0)
+
+        # The port request, on its own and without the ownership bit: it is an
+        # action rather than a reported value, so `own` has no say in it.
+        await bus.write(0, 0b0010_0000)
+        seen["advertise_alone"] = (ctx.get(dut.advertise), ctx.get(dut.own),
+                                   ctx.get(dut.state))
+        await bus.write(0, 0b0000_0000)
+        seen["advertise_cleared"] = ctx.get(dut.advertise)
+
+        # The byte channel. `tx` is what a PING returns; it is outside `own` for
+        # the same reason `advertise` is -- the fabric has no byte to be
+        # overridden, so there is nothing to arbitrate.
+        await bus.write(1, 0x5A)
+        seen["message"] = ctx.get(dut.message)
+
+        # And the receive side: latched, counted, and neither read clears
+        # anything.
+        seen["rx_reset"] = (await bus.read(2), await bus.read(3))
+        for value in (0x2A, 0x2A, 0x7F):
+            ctx.set(dut.received, value)
+            ctx.set(dut.received_strobe, 1)
+            await ctx.tick()
+            ctx.set(dut.received_strobe, 0)
+            await ctx.tick()
+        seen["rx"] = await bus.read(2)
+        seen["rxcnt"] = await bus.read(3)
+        seen["rx_again"] = (await bus.read(2), await bus.read(3))
 
     sim = Simulator(Fragment.get(dut, None))
     sim.add_clock(1e-6)
@@ -1177,6 +1210,43 @@ def run_sideband_checks(checks, verbose):
         and seen.get("readback_again") == seen.get("readback"),
         f"read back {seen.get('readback')!r} then "
         f"{seen.get('readback_again')!r}")
+    checks.check(
+        "the CONTROL port is not requested out of reset",
+        seen.get("advertise_reset") == 0,
+        f"advertise was {seen.get('advertise_reset')!r}. A bitstream that seized "
+        f"CONTROL on configuration would take the port from the Apollo debug "
+        f"interface used to recover a board that will not boot.")
+    checks.check(
+        "the port request is independent of the ownership bit",
+        seen.get("advertise_alone") == (1, 0, 0b10),
+        f"(advertise, own, state) was {seen.get('advertise_alone')!r}, expected "
+        f"(1, 0, 0b10): asking for the port must not also take the payload from "
+        f"the fabric.")
+    checks.check(
+        "and clearing it hands the port back",
+        seen.get("advertise_cleared") == 0,
+        f"advertise was {seen.get('advertise_cleared')!r} after the bit was "
+        f"cleared; there would be no way to release CONTROL from firmware.")
+    checks.check(
+        "the outgoing byte reaches the link without the ownership bit",
+        seen.get("message") == 0x5A,
+        f"message was {seen.get('message')!r}, expected 0x5a")
+    checks.check(
+        "nothing has been received before anything is sent",
+        seen.get("rx_reset") == (0, 0),
+        f"(rx, rxcnt) was {seen.get('rx_reset')!r}; a count that is not zero out "
+        f"of reset would read as traffic that never happened")
+    checks.check(
+        "a byte from Apollo is latched and counted",
+        seen.get("rx") == 0x7F and seen.get("rxcnt") == 3,
+        f"(rx, rxcnt) was ({seen.get('rx')!r}, {seen.get('rxcnt')!r}), expected "
+        f"(0x7f, 3). The count is what tells a repeated byte from silence -- the "
+        f"two 0x2a values must count twice.")
+    checks.check(
+        "and reading either of them changes neither",
+        seen.get("rx_again") == (seen.get("rx"), seen.get("rxcnt")),
+        f"read back {seen.get('rx_again')!r} the second time; a read-to-clear "
+        f"flag is the hazard this peripheral is shaped to avoid")
 
 
 def run_gateware_id_checks(checks, verbose):

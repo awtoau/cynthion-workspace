@@ -82,6 +82,7 @@ whether the reason was a defect, a limit, or a standard we preferred to adopt.
 | I2C master | `I2CMaster` (`ecp5-test/riscv/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [10](decisions.md#10-i2c-register-map) |
 | `amaranth_soc` | **upstream**, not luna_soc's vendored copy | **stale vendor.** The vendored tree reported version `unknown` and was four commits behind, including fixes it never had | [14](decisions.md#14-amaranth-soc-upstream-vs-vendored) |
 | Board platform | vendored at `ecp5-test/cynthion_platform/` | **in progress.** `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to the `awtoau/awto-luna-soc` fork. Target: a self-contained platform depending only on `amaranth`, `amaranth.build` and `amaranth_boards.resources` | — |
+| CONTROL port request | `SidebandAdvertiser` (`ecp5-test/sideband_advertise.py`) | **incompatible with the pin's other use.** `ApolloAdvertiser` drives FPGA_ADV as a 25 Hz square wave, which cannot share the wire with the sideband UART. Apollo's own `FPGA_ADV_MODE_UART` already defines the alternative — the frame `C1 14 01 A5` — and no gateware emitted it. #137 | [24](decisions.md#24-fpga_adv-advertisement-and-sideband-on-one-wire) |
 
 **Worth noting rather than using:** luna-soc's `InterruptController` exposes
 `add(peripheral, name=, number=)` and `interrupts()`, which its SVD generator reads. Any
@@ -97,7 +98,6 @@ tree that are *about this board* are exactly the parts worth taking.
 | what | where | likely use |
 |---|---|---|
 | USB analyzer | `cynthion` gateware | the product's actual purpose — capture and decode |
-| `ApolloAdvertiser` | `apollo_fpga.gateware.advertiser` | claiming the CONTROL port, which AUX-only designs avoid today |
 | Facedancer gateware | `cynthion/.../gateware/facedancer` | device emulation; also the SoC moondancer targets |
 | `flash_bridge` | `apollo_fpga.gateware` | `flash --fast`, an FPGA-side flash writer |
 | selftest bitstream | `cynthion.selftest` | already used by some scripts here |
