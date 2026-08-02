@@ -1,9 +1,24 @@
-//! Firmware for the Cynthion r1.4 VexiiRiscv SoC.
+//! Firmware for the Cynthion r1.4 VexiiRiscv SoC: a `no_std` shell over the board.
 //!
-//! Deliberately minimal, and deliberately not built on `lunasoc-hal`: that crate pins
-//! `embedded-hal` to `=1.0.0-alpha.9`, a pre-1.0 alpha whose serial traits were removed
-//! before 1.0 shipped. All a console needs is `core::fmt::Write`, which is in `core` and
-//! is implemented in `src/uart.rs` in about six lines. That is what makes `writeln!` work.
+//! `riscv-rt` provides the reset vector and the trap entry, and there is no HAL crate
+//! under that. The drivers here are small enough to read in one sitting, and the addresses
+//! they use are generated from the gateware into `cynthion_soc_pac` and checked by the
+//! `socmap` step of `scripts/check.py` -- so a HAL would sit between this firmware and a
+//! memory map it already has from the machine that defines it. A console is
+//! `core::fmt::Write` over a standard 16550 in `src/uart.rs`, about six lines, and that is
+//! what makes `writeln!` work.
+//!
+//! ## One bus, one owner per device
+//!
+//! The board's parts hang off one I2C controller behind a three-way mux, and `src/bus.rs`
+//! owns both. It is the only module that can construct a controller, every transfer names
+//! the bus it wants, and each device whose protocol spans transactions has exactly one
+//! driver running it: `power::Monitor::poll` for the PAC1954's REFRESH cycle,
+//! `typec::Controllers` for the FUSB302Bs' read-to-clear interrupt registers. Commands
+//! report what those drivers cached rather than reading the parts on their own account --
+//! `power` prints a sample and its age and touches nothing. `Devices` below holds the one
+//! `Bus` and lends it out by `&mut`; see `src/bus.rs` for why that is structure and not a
+//! lock.
 //!
 //! ## Two targets, one shell, one driver
 //!
