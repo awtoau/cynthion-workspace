@@ -47,6 +47,21 @@ impl Instant {
     /// consequence is that the first interval measured from it may be short.
     pub const ZERO: Instant = Instant(0);
 
+    /// An `Instant` at a counter value that came from somewhere other than
+    /// [`now`].
+    ///
+    /// One caller: `src/timer.rs`, which compares the CLINT's `mtimecmp`
+    /// against a reading to find out how late a tick was. That is sound because
+    /// the CLINT compares against this very counter -- `vexii_clint.py` takes
+    /// `mtime` from the CPU's `rdtime` rather than keeping one of its own -- so
+    /// a deadline and a reading are values on the same scale.
+    ///
+    /// Not a way to invent a time. Anything that constructs one out of a number
+    /// with a different origin gets an interval that means nothing.
+    pub const fn at(ticks: u32) -> Instant {
+        Instant(ticks)
+    }
+
     /// Ticks since `self`, correct across one wrap of the counter.
     pub fn elapsed(&self, now: Instant) -> u32 {
         now.0.wrapping_sub(self.0)

@@ -415,8 +415,8 @@ impl Monitor {
                 // the change threshold, applied to failure.
                 if self.live {
                     self.live = false;
-                    let _ = writeln!(uart, "power: monitor unreachable: {} \
-                                     during {}", error.as_str(), self.phase);
+                    crate::log!(uart, "power: monitor unreachable: {} during {}",
+                                error.as_str(), self.phase);
                 }
                 return;
             }
@@ -425,7 +425,7 @@ impl Monitor {
         if !self.live {
             self.live = true;
             self.failures = 0;
-            let _ = writeln!(uart, "power: monitor responding");
+            crate::log!(uart, "power: monitor responding");
         }
 
         // The first pass has read the registers as they were before any REFRESH.
@@ -466,7 +466,10 @@ impl Monitor {
             };
 
             if announce {
-                report(uart, channel, &readings[channel],
+                // A change nobody asked to see, so it is a log line and carries
+                // the time. The `power` command's rows do not -- see the table
+                // in `src/log.rs`.
+                report(uart, &crate::log::now(), channel, &readings[channel],
                        state != State::Disconnected);
                 self.state[channel] = Some(state);
             }
@@ -477,9 +480,15 @@ impl Monitor {
 /// One line about one channel, in the same shape whether it came from a change
 /// event or from the `power` command -- so a log line and a manual reading can
 /// be compared without translating between two formats.
-pub fn report(uart: &mut Uart, channel: usize, reading: &Reading, connected: bool) {
-    let _ = writeln!(uart, "  {:8} {:2}.{:03} V  {:5}.{:03} mA  {}",
-                     PORTS[channel],
+///
+/// `lead` is what goes in front: a timestamp when the monitor noticed a change
+/// on its own, and a space when the reader asked. One parameter rather than two
+/// functions, because the columns after it must stay identical -- two format
+/// strings for one table is how they drift apart.
+pub fn report(uart: &mut Uart, lead: &dyn core::fmt::Display, channel: usize,
+              reading: &Reading, connected: bool) {
+    let _ = writeln!(uart, "{} {:8} {:2}.{:03} V  {:5}.{:03} mA  {}",
+                     lead, PORTS[channel],
                      reading.bus_mv / 1000, reading.bus_mv % 1000,
                      reading.current_ua / 1000, reading.current_ua % 1000,
                      if connected { "connected" } else { "disconnected" });

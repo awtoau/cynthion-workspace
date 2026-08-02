@@ -86,3 +86,8 @@ pub const BOARD_I2C_MUX_IRQ: u32 = 4;
 pub const PLIC: usize = 0xf0400000;
 /// Size of the PLIC window, in bytes.
 pub const PLIC_SIZE: usize = 0x00400000;
+
+/// clint: 5 registers at 0xf0800000
+pub const CLINT: usize = 0xf0800000;
+/// Size of the CLINT window, in bytes.
+pub const CLINT_SIZE: usize = 0x00010000;

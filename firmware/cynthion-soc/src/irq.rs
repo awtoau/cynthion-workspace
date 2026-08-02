@@ -324,7 +324,8 @@ pub fn init() {
     }
 }
 
-/// Stop interrupts reaching this firmware's handler.
+/// Stop interrupts reaching this firmware's handlers -- the external one below
+/// and the timer in `src/timer.rs`.
 ///
 /// Called before jumping to a loaded payload, which has its own trap vector, its
 /// own idea of where the rings are, and quite possibly neither. Taking an
@@ -340,6 +341,16 @@ pub fn shutdown() {
     for &base in target::UART_BASES {
         UartRx::new(base).disable_rx_interrupt();
     }
+    // The timer is one of this firmware's handlers too, and it is the one a
+    // payload is most likely to walk into: `mstatus.MIE` above stops everything
+    // while it stays clear, but a payload that enables interrupts for its own
+    // purposes inherits a deadline that is already in the past and takes a timer
+    // interrupt into a vector that knows nothing about it. `timer::shutdown`
+    // pushes the deadline out of reach as well as clearing the bit.
+    //
+    // Here rather than at each of the three call sites, so the pairing cannot be
+    // half-remembered by the fourth.
+    crate::timer::shutdown();
 }
 
 /// One byte from console `index`, or `None`. Never blocks.

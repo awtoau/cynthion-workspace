@@ -1,7 +1,10 @@
 //! What an interrupt handler is allowed to say, and when it gets said.
 //!
-//! [`push`] records a code and two words in a ring; the main loop drains it with
-//! [`drain`] and formats there, on a console it owns.
+//! [`push`] records a code, two words and the time in a ring; the main loop
+//! drains it with [`drain`] and formats there, on a console it owns.
+//!
+//! The time is captured by [`push`] and not by [`drain`], which is the one
+//! thing about this ring that is easy to get backwards -- see `src/log.rs`.
 //!
 //! ## A handler must never print
 //!
@@ -62,6 +65,7 @@
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
+use crate::log;
 use crate::uart::Uart;
 
 /// Records held between a handler and the main loop.
@@ -96,7 +100,7 @@ pub const TYPE_C_FAULT: u32 = 2;
 /// `a` is the sequence number the command gave it.
 pub const TEST: u32 = 3;
 
-/// One record. Three plain words, no allocation, no formatting.
+/// One record. Four plain words, no allocation, no formatting.
 ///
 /// Parallel atomics rather than a struct behind an `UnsafeCell`, for the same
 /// reason `src/irq.rs` uses `[AtomicU8; N]`: it needs no `unsafe impl Sync` and
@@ -106,6 +110,13 @@ struct Slot {
     code: AtomicU32,
     a: AtomicU32,
     b: AtomicU32,
+    /// When this record was PUSHED, in milliseconds since the tick started.
+    ///
+    /// The fourth word, and the reason it is here rather than being read by
+    /// [`drain`]: a record drained a hundred milliseconds after the event would
+    /// otherwise report the drain. See the module comment in `src/log.rs` --
+    /// the events worth timing are exactly the ones this ring carries.
+    at: AtomicU32,
 }
 
 impl Slot {
@@ -114,6 +125,7 @@ impl Slot {
             code: AtomicU32::new(NONE),
             a: AtomicU32::new(0),
             b: AtomicU32::new(0),
+            at: AtomicU32::new(0),
         }
     }
 }
@@ -156,6 +168,10 @@ pub fn push(code: u32, a: u32, b: u32) -> bool {
         SLOTS[head].code.store(code, Ordering::Relaxed);
         SLOTS[head].a.store(a, Ordering::Relaxed);
         SLOTS[head].b.store(b, Ordering::Relaxed);
+        // HERE, not in `drain`. One atomic load of a counter the tick handler
+        // maintains -- no MMIO, no division, nothing that could make a push
+        // expensive enough to think about.
+        SLOTS[head].at.store(log::now().millis(), Ordering::Relaxed);
         // Release: the payload must be visible before the index that publishes
         // it, or the consumer can read a slot before it was written.
         HEAD.store(next, Ordering::Release);
@@ -203,8 +219,9 @@ pub fn drain(uart: &mut Uart) {
         let code = SLOTS[tail].code.load(Ordering::Relaxed);
         let a = SLOTS[tail].a.load(Ordering::Relaxed);
         let b = SLOTS[tail].b.load(Ordering::Relaxed);
+        let at = log::Stamp::at(SLOTS[tail].at.load(Ordering::Relaxed));
         TAIL.store((tail + 1) % RING, Ordering::Release);
-        report(uart, code, a, b);
+        report(uart, at, code, a, b);
     }
 
     // Losses, once each. Reported here rather than only by the `irq` command
@@ -215,9 +232,13 @@ pub fn drain(uart: &mut Uart) {
     let reported = REPORTED.load(Ordering::Relaxed);
     if dropped != reported {
         REPORTED.store(dropped, Ordering::Relaxed);
-        let _ = writeln!(uart, "irq log: {} event(s) LOST -- the ring filled \
-                                faster than the shell drained it",
-                         dropped - reported);
+        // Stamped NOW rather than at a push, because this line is not about a
+        // record -- it is about the ring, and the moment it describes is the
+        // moment the loss was noticed. The lost records' own times are the gap
+        // in the column either side of it.
+        crate::log!(uart, "irq log: {} event(s) LOST -- the ring filled \
+                           faster than the shell drained it",
+                    dropped - reported);
     }
 }
 
@@ -227,20 +248,24 @@ pub fn drain(uart: &mut Uart) {
 /// normal context. That is deliberate: a code whose arguments are formatted at
 /// the push site would be formatting inside a handler again, one indirection
 /// further away where nobody would notice.
-fn report(uart: &mut Uart, code: u32, a: u32, b: u32) {
+///
+/// `at` is when the record was PUSHED. Every arm uses it and none of them reads
+/// the clock; see `src/log.rs` for why that distinction is the point of the
+/// field.
+fn report(uart: &mut Uart, at: log::Stamp, code: u32, a: u32, b: u32) {
     match code {
         TYPE_C_INT => {
-            let _ = writeln!(uart, "type-c: int asserted, controllers {:02x}", a);
+            crate::log_at!(uart, at, "type-c: int asserted, controllers {:02x}", a);
         }
         TYPE_C_FAULT => {
-            let _ = writeln!(uart, "type-c: FAULT asserted, controllers {:02x}", a);
+            crate::log_at!(uart, at, "type-c: FAULT asserted, controllers {:02x}", a);
         }
         TEST => {
-            let _ = writeln!(uart, "log test {}", a);
+            crate::log_at!(uart, at, "log test {}", a);
         }
         _ => {
-            let _ = writeln!(uart, "irq log: unknown code {} {:08x} {:08x}",
-                             code, a, b);
+            crate::log_at!(uart, at, "irq log: unknown code {} {:08x} {:08x}",
+                           code, a, b);
         }
     }
 }

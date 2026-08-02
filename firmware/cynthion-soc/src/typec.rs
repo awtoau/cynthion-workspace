@@ -76,7 +76,7 @@ impl Controllers {
                 Ok(()) => match fusb302::state(bus, port) {
                     Ok(state) => {
                         self.state[index(port)] = Some(state);
-                        let _ = writeln!(uart,
+                        crate::log!(uart,
                             "type-c {}: device {:02x}, vbus {}, {}",
                             port.name(), state.device_id,
                             if state.vbus { "present" } else { "absent" },
@@ -84,14 +84,14 @@ impl Controllers {
                     }
                     Err(error) => {
                         all = false;
-                        let _ = writeln!(uart, "type-c {}: {}", port.name(),
-                                         error.as_str());
+                        crate::log!(uart, "type-c {}: {}", port.name(),
+                                    error.as_str());
                     }
                 },
                 Err(error) => {
                     all = false;
-                    let _ = writeln!(uart, "type-c {}: configure failed: {}",
-                                     port.name(), error.as_str());
+                    crate::log!(uart, "type-c {}: configure failed: {}",
+                                port.name(), error.as_str());
                 }
             }
         }
@@ -124,8 +124,8 @@ impl Controllers {
                 continue;
             }
             if let Err(error) = fusb302::clear(bus, port) {
-                let _ = writeln!(uart, "type-c {}: could not clear: {}",
-                                 port.name(), error.as_str());
+                crate::log!(uart, "type-c {}: could not clear: {}",
+                            port.name(), error.as_str());
                 // Carry on to the other port anyway. Giving up here would leave
                 // the OTHER device asserting as well, turning one unreachable
                 // controller into a dead interrupt source.
@@ -134,8 +134,8 @@ impl Controllers {
             match fusb302::state(bus, port) {
                 Ok(state) => self.announce(uart, port, state),
                 Err(error) => {
-                    let _ = writeln!(uart, "type-c {}: {}", port.name(),
-                                     error.as_str());
+                    crate::log!(uart, "type-c {}: {}", port.name(),
+                                error.as_str());
                 }
             }
         }
@@ -165,8 +165,8 @@ impl Controllers {
             let faulting = fusb302::faulting(lines, port);
             if faulting != self.fault[index(port)] {
                 self.fault[index(port)] = faulting;
-                let _ = writeln!(uart, "type-c {}: fault {}", port.name(),
-                                 if faulting { "ASSERTED" } else { "cleared" });
+                crate::log!(uart, "type-c {}: fault {}", port.name(),
+                            if faulting { "ASSERTED" } else { "cleared" });
             }
         }
     }
@@ -182,9 +182,9 @@ impl Controllers {
             return;
         }
         self.state[index(port)] = Some(state);
-        let _ = writeln!(uart, "type-c {}: vbus {}, {}", port.name(),
-                         if state.vbus { "present" } else { "absent" },
-                         state.cc());
+        crate::log!(uart, "type-c {}: vbus {}, {}", port.name(),
+                    if state.vbus { "present" } else { "absent" },
+                    state.cc());
     }
 }
 

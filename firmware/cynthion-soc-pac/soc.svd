@@ -1622,5 +1622,107 @@
         </register>
       </registers>
     </peripheral>
+    <peripheral>
+      <name>CLINT</name>
+      <description>clint: 5 registers at 0xf0800000</description>
+      <baseAddress>0xF0800000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x10000</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>MSIP</name>
+          <description>CLINT.MSIP, 1 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x1</resetMask>
+          <fields>
+            <field>
+              <name>PENDING</name>
+              <description>pending [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIMECMP_LO</name>
+          <description>CLINT.MTIMECMP_LO, 32 bits at +0x4000</description>
+          <addressOffset>0x4000</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0xFFFFFFFF</resetValue>
+          <resetMask>0xFFFFFFFF</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIMECMP_HI</name>
+          <description>CLINT.MTIMECMP_HI, 32 bits at +0x4004</description>
+          <addressOffset>0x4004</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0xFFFFFFFF</resetValue>
+          <resetMask>0xFFFFFFFF</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIME_LO</name>
+          <description>CLINT.MTIME_LO, 32 bits at +0xbff8</description>
+          <addressOffset>0xBFF8</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIME_HI</name>
+          <description>CLINT.MTIME_HI, 32 bits at +0xbffc</description>
+          <addressOffset>0xBFFC</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
   </peripherals>
 </device>

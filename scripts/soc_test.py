@@ -79,6 +79,7 @@ already, which is exactly what an assertion is for.
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -338,7 +339,7 @@ def main():
                 return reply
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
-                       b"irq", b"log [n]", b"led", b"i2c", b"power",
+                       b"irq", b"time", b"log [n]", b"led", b"i2c", b"power",
                        b"phy", b"typec", b"sideband", b"load <hex>", b"go",
                        b"reset"]
             command("help", listing, "`help` lists every command")
@@ -399,6 +400,34 @@ def main():
             command("check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
                     "`check` computes 0x12345678*3 == 0x369d0368")
 
+            # The timestamp format, at the seven values `check` formats.
+            #
+            # The firmware prints what its own `core::fmt` produced and this is
+            # what it must be. Each column is a way the format can go wrong:
+            #
+            #   000000.000  zero pads to the full width, not "0.0"
+            #   000000.001  the milliseconds field pads, not "000000.1"
+            #   000000.999  the last value before a carry into seconds
+            #   000001.000  the carry itself
+            #   000061.000  two digits of seconds, still six columns wide
+            #   999999.999  the largest the six-digit field can hold
+            #   000000.000  one millisecond past it -- WRAPS, and does not widen
+            #
+            # The last column is the one worth the line. Without the modulo in
+            # `log::Stamp`, a machine up for 11.57 days prints a seven-digit
+            # seconds field and every line after it is misaligned -- which is a
+            # failure nobody will be running a test for when it happens.
+            #
+            # The expected string lives here rather than in the firmware because
+            # comparing in firmware cost a `core::fmt` sink and seven `&str`s to
+            # compare against, and this build has 32 KiB for everything. Same
+            # reason `sum` and `prod` above are asserted here.
+            command("check",
+                    [b"stamp 000000.000 000000.001 000000.999 000001.000 "
+                     b"000061.000 999999.999 000000.000"],
+                    "the timestamp format is right at zero, at a carry, and past "
+                    "the six-digit field")
+
             # --- the deferred interrupt log ----------------------------------------
             #
             # The ring in src/events.rs is what an interrupt handler uses instead
@@ -410,14 +439,44 @@ def main():
             # to mean empty, so the completely-full state is not representable).
             # Ten fit, drain, ten more fit -- which only works if the indices wrap
             # correctly, since the second ten start past the end of the array.
-            command("log 10", [b"log pushed 10 of 10"],
-                    "ten records fit in the deferred log")
+            reply = command("log 10", [b"log pushed 10 of 10"],
+                            "ten records fit in the deferred log")
             check("the main loop drains the log and formats it",
                   b"log test 9" in session.snapshot(),
                   "the records pushed by `log 10` never appeared on the console.\n"
                   "A handler that records and is never drained is a handler that\n"
                   "silently said nothing.\n"
                   f"received: {show(session.snapshot()[-400:])}")
+
+            # THE ASSERTION THIS WHOLE SECTION IS FOR: the timestamp on a
+            # deferred line is when the record was PUSHED, not when it was
+            # printed.
+            #
+            # `log n` waits a millisecond between pushes, so the ten records are
+            # a millisecond apart. Nothing drains the ring until the command
+            # returns -- the main loop is what calls `events::drain` -- so all
+            # ten are printed in one burst, in microseconds.
+            #
+            # Push-time capture therefore spreads the stamps across ~9 ms.
+            # Drain-time capture collapses them onto one or two milliseconds,
+            # because that is how long the printing takes. There is no tolerance
+            # that admits both, which is what makes this worth asserting: the
+            # bug it catches is invisible in every other check, and it is exactly
+            # wrong for the events the ring exists for -- a Type-C state change,
+            # an overrun, a fault.
+            stamps = [int(s) * 1000 + int(ms) for s, ms in
+                      re.findall(rb"(\d{6})\.(\d{3}) log test \d", reply)]
+            spread = stamps[-1] - stamps[0] if len(stamps) >= 2 else 0
+            check("a deferred line is stamped when it was pushed, not when it "
+                  "was drained",
+                  len(stamps) == 10 and spread >= 5
+                  and stamps == sorted(stamps),
+                  f"the ten `log test` lines were pushed a millisecond apart and\n"
+                  f"drained together, so their stamps should span about 9 ms.\n"
+                  f"found {len(stamps)} stamps spanning {spread} ms: {stamps}\n"
+                  f"A span of 0 or 1 means the stamp is being read in "
+                  f"`events::drain`\n"
+                  f"rather than stored by `events::push`.")
 
             command("log 10", [b"log pushed 10 of 10"],
                     "and ten more fit after the ring has wrapped")
@@ -478,6 +537,121 @@ def main():
                   "console is dead for the rest of the session with nothing else to "
                   "show for it.\n"
                   f"received: {show(reply) or '(nothing)'}")
+
+            # --- the 1 ms tick ------------------------------------------------------
+            #
+            # `virt` has a real CLINT at 0x02000000 -- `clint@2000000` in the
+            # device tree, with `interrupts-extended = <cpu 3>, <cpu 7>` -- so
+            # `src/timer.rs` is compiled unchanged for this target and for the
+            # board, exactly as `src/plic.rs` and `src/uart.rs` are. What is
+            # exercised here is the tick that ships, not a stand-in.
+            def tick_state(name):
+                """`time`, parsed: (uptime ms, counter ms, ticks).
+
+                The counter arrives as the raw 64-bit `mtime` and its rate, and
+                the division into milliseconds happens HERE. On rv32 that divide
+                costs 912 bytes of `__udivdi3` -- measured, and more than the
+                firmware's remaining room in block RAM -- so the shell prints the
+                two numbers and lets a language with free 64-bit arithmetic do
+                the rest.
+                """
+                reply = command("time", [b"uptime", b"clint   @02000000"], name)
+                uptime = re.search(rb"uptime\s+(\d{6})\.(\d{3})", reply)
+                mtime = re.search(rb"mtime ([0-9a-f]{8}):([0-9a-f]{8}) at (\d+) Hz",
+                                  reply)
+                ticks = re.search(rb"ticks (\d+)", reply)
+                if not (uptime and mtime and ticks):
+                    return None, reply
+                counter = (int(mtime.group(1), 16) << 32) | int(mtime.group(2), 16)
+                hertz = int(mtime.group(3))
+                return (int(uptime.group(1)) * 1000 + int(uptime.group(2)),
+                        counter * 1000 // hertz, int(ticks.group(1))), reply
+
+            first, reply = tick_state("`time` finds the CLINT where the device "
+                                      "tree says it is")
+            check("the tick is running", first is not None
+                  and b"running" in reply and first[2] > 0,
+                  "`time` did not report a running tick with a nonzero count.\n"
+                  "A CLINT whose mtimecmp was never programmed, or an mie.MTIE\n"
+                  "that was never set, both look exactly like this.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # A known interval, without the test sleeping for it.
+            #
+            # `log 20` spends 20 ms inside the firmware, waiting on `rdtime`
+            # between pushes -- a bounded spin on the free-running counter, which
+            # is INDEPENDENT of the tick. So the interval is real, it is measured
+            # by something the tick does not drive, and the harness spends no
+            # wall-clock budget on it beyond the command's own round trip.
+            command("log 20", [b"log pushed 15 of 20"],
+                    "an overfull log drops the excess and counts it, again")
+            second, reply = tick_state("`time` still answers after the interval")
+
+            # THE DRIFT ASSERTION. Two independent measurements of one interval:
+            # `uptime` is accumulated one millisecond at a time by the tick
+            # handler, `counter` is read from the 64-bit mtime nothing periodic
+            # touches. They must advance together.
+            #
+            #   tick stopped or masked      -- uptime stands still, counter moves
+            #   mtimecmp reloaded from now  -- uptime falls behind by the latency
+            #                                  of every period, cumulatively
+            #   period computed wrong       -- the two diverge by a fixed ratio
+            #
+            # None of those is visible from any other check in this file: the
+            # shell answers perfectly with a tick that is silently 30% slow.
+            if first is None or second is None:
+                check("the tick and the free-running counter agree", False,
+                      "`time` could not be parsed, so there is nothing to compare.\n"
+                      f"received: {show(reply) or '(nothing)'}")
+            else:
+                by_tick = second[0] - first[0]
+                by_counter = second[1] - first[1]
+                # A tenth, or 3 ms, whichever is larger. The interval is only a
+                # few tens of milliseconds, so a fixed floor is needed for the
+                # quantisation at both ends; the ratio is what catches a tick
+                # running at the wrong rate over a longer one.
+                slack = max(3, by_counter // 10)
+                check("the tick and the free-running counter agree",
+                      by_counter > 0 and abs(by_tick - by_counter) <= slack,
+                      f"over one interval the tick counted {by_tick} ms and the\n"
+                      f"free-running counter counted {by_counter} ms, which differ\n"
+                      f"by more than {slack} ms.\n"
+                      "These are two independent measurements of the same interval.\n"
+                      "Disagreement means the tick is not firing at the rate it\n"
+                      "claims -- which nothing else here would notice.")
+
+            # What the tick costs, as a fraction of the period it repeats at.
+            #
+            # This is the first unconditional periodic load in the system, so the
+            # question worth asking is whether it can sustain itself: a handler
+            # that took longer than its own period would be re-entered on the way
+            # out and the CPU would never reach the shell again. Half a period is
+            # the bound because anything approaching it is a design problem
+            # rather than a measurement.
+            #
+            # `late` is deliberately NOT asserted on. Under emulation it is
+            # dominated by the host's scheduler -- 2563 counter ticks has been
+            # seen on an idle machine -- so a bound on it would measure this
+            # laptop rather than the firmware. It is reported below, and it is
+            # worth watching on the board where it means something.
+            cost = re.search(rb"cost\s+worst (\d+) ticks", reply)
+            late = re.search(rb"late worst (\d+) ticks", reply)
+            # 10 MHz on this machine (`timebase-frequency` in the device tree),
+            # so a 1 ms period is 10000 counter ticks.
+            check("the tick handler costs well under the period it repeats at",
+                  cost is not None and 0 < int(cost.group(1)) < 5000,
+                  "`time` reported a worst-case handler duration of half a period "
+                  "or\n"
+                  "more, or none at all. A handler that cannot finish inside its "
+                  "own\n"
+                  "period is re-entered on the way out, and the CPU never reaches "
+                  "the\n"
+                  "shell again.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+            emit(f"        tick cost {cost.group(1).decode() if cost else '?'} "
+                 f"ticks, worst lateness "
+                 f"{late.group(1).decode() if late else '?'} ticks, "
+                 f"of 10000 in a period")
 
             # --- backspace --------------------------------------------------------
             # Type a command with one wrong character, rub it out, and require the

@@ -75,10 +75,12 @@ mod gpio;
 mod hyperram;
 mod fusb302;
 mod irq;
+mod log;
 mod plic;
 mod power;
 mod sideband;
 mod target;
+mod timer;
 mod typec;
 mod uart;
 mod ulpi;
@@ -308,6 +310,19 @@ fn main() -> ! {
     // runs and the shell is what wants the interrupts.
     irq::init();
 
+    // The 1 ms tick, and with it the millisecond count every line below is
+    // stamped from.
+    //
+    // After `irq::init()`, which is what sets `mstatus.MIE`; `timer::start`
+    // programs the deadline and sets its own `mie` bit, and neither ordering
+    // between the two is load-bearing. After `try_boot` for the same reason
+    // `irq::init` is: a payload has its own trap vector and must not inherit a
+    // timer that is already due.
+    //
+    // Everything printed before this point is stamped 000000.000, which is
+    // true: there was no clock to tell those lines apart. See `src/log.rs`.
+    timer::start();
+
     let mut shells = [Shell::NEW; MAX_CONSOLES];
 
     loop {
@@ -365,8 +380,9 @@ fn main() -> ! {
 }
 
 fn banner(uart: &mut Uart) {
-    let _ = writeln!(uart, "\nCynthion RISC-V SoC - Rust firmware");
-    let _ = writeln!(uart, "type `help` or `?` for commands");
+    let _ = write!(uart, "\n");
+    crate::log!(uart, "Cynthion RISC-V SoC - Rust firmware");
+    crate::log!(uart, "type `help` or `?` for commands");
 }
 
 /// Dispatch one command line.
@@ -388,6 +404,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  check         arithmetic and known flash values");
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
+            let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
             let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
             let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
             let _ = writeln!(uart, "  i2c [bus]     scan a bus: power, target, aux");
@@ -457,6 +474,49 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  log  waiting {} dropped {}",
                              events::waiting(), events::dropped());
         }
+        b"time" => {
+            // The tick, and the evidence that it is a tick rather than a
+            // counter someone reads.
+            //
+            // `uptime` comes from the tick handler's own count; `counter` comes
+            // from `rdtime`, which nothing periodic touches. **The two are
+            // independent measurements of the same interval**, so agreement is
+            // the whole assertion: a tick that stopped, or that is firing at
+            // the wrong rate, shows up as the two diverging, and nothing else
+            // in this shell can distinguish those from a slow clock.
+            //
+            // `cost` is the worst time the handler has ever spent, `late` the
+            // worst gap between a deadline and the handler starting, both in
+            // counter ticks and both since boot. See `src/timer.rs`; `late`
+            // growing without bound is the failure worth watching for, because
+            // it means something is holding interrupts off for longer than a
+            // period.
+            let (ticks, cost, late) = timer::stats();
+
+            // The whole 64-bit counter, in hex, and NOT converted to
+            // milliseconds here.
+            //
+            // Converting would be a 64-bit divide by a value only known at run
+            // time, and on rv32 that is a call to `__udivdi3` -- 912 bytes of
+            // compiler-builtins, measured, which is the difference between this
+            // firmware fitting in its 32 KiB half of block RAM and not. The
+            // reader that needs milliseconds is `scripts/soc_test.py`, which has
+            // `at {} Hz` on the same line and a language where the division is
+            // free.
+            //
+            // The low word alone would have divided in one instruction and
+            // wrapped every 71.6 s at 60 MHz (see `src/clock.rs`), which is
+            // shorter than the intervals this line exists to be compared over.
+            let mtime = timer::mtime();
+            let _ = writeln!(uart, "  uptime  {}  ticks {}  period {} ms  {}",
+                             log::now(), ticks, timer::PERIOD_MS,
+                             if timer::running() { "running" } else { "STOPPED" });
+            let _ = writeln!(uart, "  clint   @{:08x}  mtime {:08x}:{:08x} at {} Hz",
+                             target::CLINT_BASE, (mtime >> 32) as u32,
+                             mtime as u32, target::TIME_HZ);
+            let _ = writeln!(uart, "  cost    worst {} ticks  late worst {} ticks",
+                             cost, late);
+        }
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart, rest, devices),
         b"power" => board_power(uart, rest, devices),
@@ -480,6 +540,23 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let count = parse_decimal(rest).unwrap_or(1);
             let mut pushed = 0u32;
             for index in 0..count {
+                // One millisecond between pushes, and this spacing is the test.
+                //
+                // Nothing drains the ring until this command returns -- the
+                // main loop is what calls `events::drain`, and it is currently
+                // several frames below us -- so every record is pushed before
+                // any is printed, and the printing takes microseconds. The
+                // stamps therefore come out either a millisecond apart, which
+                // can only be the push times, or all equal, which can only be
+                // the drain time. `scripts/soc_test.py` asserts the former.
+                //
+                // Waiting on `clock::now()` rather than on the tick, so this
+                // works before `timer::start` has run and cannot spin forever
+                // on a machine whose tick is broken -- which is one of the
+                // things the test is here to catch.
+                let until = clock::now();
+                while until.elapsed(clock::now()) < clock::millis(1) {}
+
                 if crate::log_from_irq!(events::TEST, index) {
                     pushed += 1;
                 }
@@ -522,6 +599,34 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                              if f0 == 0x6150_00ff { "ok" } else { "BAD" });
             let _ = writeln!(uart, "@40   {:08x} {}", f40,
                              if f40 == 0x2a55_8800 { "ok" } else { "BAD" });
+
+            // The timestamp format, at the values where it can go wrong.
+            //
+            //   0              zero pads to the full width, not "0.0"
+            //   1              the milliseconds field pads, not "000000.1"
+            //   999            the last value before a carry into seconds
+            //   1_000          the carry itself
+            //   61_000         two digits of seconds, still six columns wide
+            //   999_999_999    the largest the six-digit field can hold
+            //   1_000_000_000  one past it -- wraps the column, does not widen it
+            //
+            // The last is the one worth having: without the modulo in
+            // `log::Stamp`, a machine up for 11.57 days starts printing a
+            // seven-digit field and every line after it is misaligned.
+            //
+            // PRINTED rather than compared here, and `scripts/soc_test.py` holds
+            // the expected string. Comparing in firmware needed a `core::fmt`
+            // sink over a byte slice and seven `&str`s to check against, and
+            // this build has 32 KiB for everything -- the same reason the `sum`
+            // and `prod` values above are asserted by the test rather than by
+            // the shell. What the firmware must supply is the bytes its own
+            // formatter produces, and that is exactly what this is.
+            let _ = write!(uart, "stamp");
+            for millis in [0u32, 1, 999, 1_000, 61_000,
+                           999_999_999, 1_000_000_000] {
+                let _ = write!(uart, " {}", log::Stamp::at(millis));
+            }
+            let _ = writeln!(uart);
         }
         b"load" => match parse_hex(rest) {
             Some(len) => load(index, uart, len),
@@ -817,7 +922,9 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         Some(sample) => {
             for channel in 0..4 {
                 let floor = devices.power.floor(channel);
-                power::report(uart, channel, &sample.readings[channel],
+                // A space, not a stamp: this is the reply to a typed command.
+                // The indent it produces is the one the rows always had.
+                power::report(uart, &" ", channel, &sample.readings[channel],
                               sample.readings[channel].current_ua >= floor);
             }
         }

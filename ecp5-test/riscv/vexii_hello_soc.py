@@ -36,9 +36,14 @@ Both UARTs' `irq` lines go to a standard RISC-V PLIC (`vexii_plic.py`), whose
 output is the CPU's single machine external interrupt, so the consoles are
 interrupt-driven.
 
-QEMU's `-M virt` has a PLIC too, so `firmware/cynthion-soc/src/plic.rs` compiles
-unchanged for both and `scripts/soc_test.py` exercises the interrupt path that
-ships.
+The machine timer and software interrupts come from a standard RISC-V CLINT
+(`vexii_clint.py`), comparing against the same counter `rdtime` reads. A 1 ms
+tick is `mtimecmp += period` in the handler; `firmware/cynthion-soc/src/timer.rs`
+is the driver.
+
+QEMU's `-M virt` has both a PLIC and a CLINT, so `src/plic.rs` and `src/timer.rs`
+compile unchanged for both and `scripts/soc_test.py` exercises the interrupt
+paths that ship.
 
 ## Board peripherals
 
@@ -84,6 +89,7 @@ import vexii_cpu
 from vexii_cpu import VexiiRiscv
 from uart16550 import Uart16550
 from vexii_plic import Plic
+from vexii_clint import Clint
 from serial_line import SerialLine
 from i2c_master import I2CMaster, prescale_for
 from sideband_csr import SidebandControl
@@ -315,6 +321,16 @@ BOOTRAM_BASE = 0xf0000400
 # firmware/cynthion-soc/src/target.rs -- which is what keeps src/plic.rs the same
 # code on both targets, exactly as src/uart.rs already is.
 PLIC_BASE = 0xf0400000
+
+# The machine timer and software interrupts: a standard RISC-V CLINT, in its own
+# 64 KiB window. Same reasoning as PLIC_BASE above -- the offsets inside are not
+# negotiable (mtime is at 0xbff8), the window must be aligned to its size and
+# inside the `main=0` CSR region, and it must clear the PLIC's 4 MiB below it.
+#
+# QEMU's `-M virt` puts its CLINT at 0x02000000 (`clint@2000000` in the device
+# tree), so again the difference is one constant in
+# firmware/cynthion-soc/src/target.rs and src/timer.rs is the same code on both.
+CLINT_BASE = 0xf0800000
 
 # Interrupt source numbers. 0 is reserved by the spec as "nothing pending", so
 # these start at 1 and the order matches UART_BASES in src/target.rs.
@@ -577,6 +593,16 @@ class HelloSoC(Elaboratable):
         m.submodules.plic_bridge = plic_bridge
         decoder.add(plic_bridge.wb_bus, addr=PLIC_BASE, name="plic")
 
+        # The CLINT, comparing against the CPU's own `rdtime` counter rather
+        # than one of its own. Two counters could disagree; one cannot, and
+        # `csrr time` and a load from mtime have to return the same number.
+        m.submodules.clint = clint = Clint()
+        m.d.comb += clint.mtime.eq(cpu.mtime)
+
+        clint_bridge = WishboneCSRBridge(clint.bus, data_width=32)
+        m.submodules.clint_bridge = clint_bridge
+        decoder.add(clint_bridge.wb_bus, addr=CLINT_BASE, name="clint")
+
         # The configuration SPI flash, memory-mapped read-only.
         #
         # Four objects, each doing one thing, and all four must be submodules --
@@ -758,19 +784,14 @@ class HelloSoC(Elaboratable):
         # that could never fire and nothing said so. That is why the firmware
         # polled.
         #
-        # The other two are tied off EXPLICITLY rather than left undriven, for
-        # the same reason: "0 because nobody wired it" and "0 because there is
-        # deliberately no source" look identical in the netlist and completely
-        # different when something stops working.
-        #
-        #   irq_timer     needs a CLINT (mtimecmp). The CPU has --with-rdtime,
-        #                 so `rdtime` counts, but nothing compares it against a
-        #                 target. RTIC's monotonic timer will want this.
-        #   irq_software  needs a CLINT msip register. No use for one yet.
+        # The other two come from the CLINT above, and nothing here is tied off
+        # any more. `irq_timer` is `mtime >= mtimecmp` and is what the firmware's
+        # 1 ms tick rides on; `irq_software` is msip, which nothing raises yet
+        # but which a driver can now reach rather than write into a hole.
         m.d.comb += [
             cpu.irq_external.eq(plic.irq_out),
-            cpu.irq_timer.eq(0),
-            cpu.irq_software.eq(0),
+            cpu.irq_timer.eq(clint.irq_timer),
+            cpu.irq_software.eq(clint.irq_software),
         ]
 
         # All three CPU ports share one decoder through an arbiter, so no two
