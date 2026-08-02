@@ -157,7 +157,11 @@ class Peripheral:
         self.size = size            # window size in bytes
         self.kind = kind            # "registers" or "buffer"
         self.registers = []         # (name, offset, footprint, register object)
-        self.irq = None             # PLIC source number, or None
+        # (interrupt name, PLIC source number), in the order declared. A list
+        # rather than one number because a window may raise more than one
+        # source: `i2c_mux.I2CBusMux` gives each FUSB302B its own, so that a
+        # handler knows which device asserted without a register read.
+        self.irqs = []
 
     @property
     def name(self):
@@ -305,10 +309,14 @@ def build_svd(peripherals, description):
         sub(block, "size", f"0x{peripheral.size:X}")
         sub(block, "usage", peripheral.kind)
 
-        if peripheral.irq is not None:
+        # SVD allows several <interrupt> children per peripheral, and svd2rust
+        # requires their names to be distinct across the device. Both fall out
+        # of the naming below: a window with one source is named after itself,
+        # and one with several appends the suffix it declared.
+        for irq_name, number in peripheral.irqs:
             interrupt = sub(element, "interrupt")
-            sub(interrupt, "name", peripheral.name)
-            sub(interrupt, "value", peripheral.irq)
+            sub(interrupt, "name", irq_name)
+            sub(interrupt, "value", number)
 
         if peripheral.kind != "registers":
             continue
@@ -478,7 +486,8 @@ def cross_check(peripherals, emit):
     target = (src / "target.rs").read_text()
     firmware_ok = True
     for name in ("CONSOLE", "APOLLO_UART", "PLIC", "BOARD_GPIO", "BOARD_I2C",
-                 "BOARD_SIDEBAND", "SPIFLASH", "CONSOLE_IRQ", "APOLLO_UART_IRQ"):
+                 "BOARD_SIDEBAND", "SPIFLASH", "CONSOLE_IRQ", "APOLLO_UART_IRQ",
+                 "BOARD_I2C_MUX_TARGET_IRQ", "BOARD_I2C_MUX_AUX_IRQ"):
         if f"cynthion_soc_pac::base::{name}" not in target:
             emit(f"  target.rs no longer refers to base::{name}")
             firmware_ok = False
@@ -535,10 +544,9 @@ def write_bases(peripherals, emit):
         lines.append(f"/// Size of the {peripheral.name} window, in bytes.")
         lines.append(f"pub const {peripheral.name}_SIZE: usize = "
                      f"0x{peripheral.size:08x};")
-        if peripheral.irq is not None:
-            lines.append(f"/// PLIC source number wired to {peripheral.name}.")
-            lines.append(f"pub const {peripheral.name}_IRQ: u32 = "
-                         f"{peripheral.irq};")
+        for irq_name, number in peripheral.irqs:
+            lines.append(f"/// PLIC source number wired to {irq_name}.")
+            lines.append(f"pub const {irq_name}_IRQ: u32 = {number};")
         lines.append("")
 
     path = OUT / "src" / "base.rs"
@@ -617,18 +625,39 @@ def run(args, emit):
 
     # The PLIC source numbers, from where they are wired rather than from a
     # second list that could disagree with the wiring.
+    #
+    # A window declares either one number, and the interrupt is named after the
+    # window, or a `{suffix: number}` mapping when it raises several -- the mux
+    # gives each FUSB302B its own source, and the two are not interchangeable, so
+    # they cannot share a name.
     sources = getattr(soc, "interrupt_sources", {})
     by_name = {peripheral.name: peripheral for peripheral in peripherals}
-    for name, number in sources.items():
+    for name, declared in sources.items():
         if name.upper() not in by_name:
-            emit(f"  PROBLEM: interrupt source {number} names {name!r}, which is "
-                 f"not a window in the memory map")
+            emit(f"  PROBLEM: interrupt source {declared} names {name!r}, which "
+                 f"is not a window in the memory map")
             return 1
-        by_name[name.upper()].irq = number
+        peripheral = by_name[name.upper()]
+        if isinstance(declared, dict):
+            peripheral.irqs = [(f"{peripheral.name}_{suffix.upper()}", number)
+                               for suffix, number in declared.items()]
+        else:
+            peripheral.irqs = [(peripheral.name, declared)]
+
+    # Two wires on one source number is a handler that dispatches to the wrong
+    # device, and it is invisible until the wrong device is the one asserting.
+    taken = {}
+    for peripheral in peripherals:
+        for irq_name, number in peripheral.irqs:
+            if number in taken:
+                emit(f"  PROBLEM: source {number} is claimed by both "
+                     f"{taken[number]} and {irq_name}")
+                return 1
+            taken[number] = irq_name
 
     emit(f"{len(peripherals)} peripherals:")
     for peripheral in peripherals:
-        irq = f"  irq {peripheral.irq}" if peripheral.irq is not None else ""
+        irq = "".join(f"  irq {number}" for _, number in peripheral.irqs)
         emit(f"  {peripheral.name:<16} 0x{peripheral.base:08x} "
              f"+0x{peripheral.size:<8x} {len(peripheral.registers):>2} regs"
              f"{irq}")

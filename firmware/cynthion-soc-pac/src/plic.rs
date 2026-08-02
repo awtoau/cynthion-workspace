@@ -9,13 +9,15 @@ pub struct RegisterBlock {
     priority3: Priority3,
     _reserved3: [u8; 0x03],
     priority4: Priority4,
-    _reserved4: [u8; 0x0fef],
+    _reserved4: [u8; 0x03],
+    priority5: Priority5,
+    _reserved5: [u8; 0x0feb],
     pending: Pending,
-    _reserved5: [u8; 0x0fff],
+    _reserved6: [u8; 0x0fff],
     enable: Enable,
-    _reserved6: [u8; 0x001f_dfff],
+    _reserved7: [u8; 0x001f_dfff],
     threshold: Threshold,
-    _reserved7: [u8; 0x03],
+    _reserved8: [u8; 0x03],
     claim: Claim,
 }
 impl RegisterBlock {
@@ -39,12 +41,17 @@ impl RegisterBlock {
     pub const fn priority4(&self) -> &Priority4 {
         &self.priority4
     }
-    #[doc = "0x1000 - PLIC.PENDING, 5 bits at +0x1000"]
+    #[doc = "0x14 - PLIC.PRIORITY5, 3 bits at +0x14"]
+    #[inline(always)]
+    pub const fn priority5(&self) -> &Priority5 {
+        &self.priority5
+    }
+    #[doc = "0x1000 - PLIC.PENDING, 6 bits at +0x1000"]
     #[inline(always)]
     pub const fn pending(&self) -> &Pending {
         &self.pending
     }
-    #[doc = "0x2000 - PLIC.ENABLE, 5 bits at +0x2000"]
+    #[doc = "0x2000 - PLIC.ENABLE, 6 bits at +0x2000"]
     #[inline(always)]
     pub const fn enable(&self) -> &Enable {
         &self.enable
@@ -80,15 +87,20 @@ pub mod priority3;
 pub type Priority4 = crate::Reg<priority4::Priority4Spec>;
 #[doc = "PLIC.PRIORITY4, 3 bits at +0x10"]
 pub mod priority4;
-#[doc = "PENDING (r) register accessor: PLIC.PENDING, 5 bits at +0x1000\n\nYou can [`read`](crate::Reg::read) this register and get [`pending::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@pending`] module"]
+#[doc = "PRIORITY5 (rw) register accessor: PLIC.PRIORITY5, 3 bits at +0x14\n\nYou can [`read`](crate::Reg::read) this register and get [`priority5::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`priority5::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@priority5`] module"]
+#[doc(alias = "PRIORITY5")]
+pub type Priority5 = crate::Reg<priority5::Priority5Spec>;
+#[doc = "PLIC.PRIORITY5, 3 bits at +0x14"]
+pub mod priority5;
+#[doc = "PENDING (r) register accessor: PLIC.PENDING, 6 bits at +0x1000\n\nYou can [`read`](crate::Reg::read) this register and get [`pending::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@pending`] module"]
 #[doc(alias = "PENDING")]
 pub type Pending = crate::Reg<pending::PendingSpec>;
-#[doc = "PLIC.PENDING, 5 bits at +0x1000"]
+#[doc = "PLIC.PENDING, 6 bits at +0x1000"]
 pub mod pending;
-#[doc = "ENABLE (rw) register accessor: PLIC.ENABLE, 5 bits at +0x2000\n\nYou can [`read`](crate::Reg::read) this register and get [`enable::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`enable::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@enable`] module"]
+#[doc = "ENABLE (rw) register accessor: PLIC.ENABLE, 6 bits at +0x2000\n\nYou can [`read`](crate::Reg::read) this register and get [`enable::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`enable::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@enable`] module"]
 #[doc(alias = "ENABLE")]
 pub type Enable = crate::Reg<enable::EnableSpec>;
-#[doc = "PLIC.ENABLE, 5 bits at +0x2000"]
+#[doc = "PLIC.ENABLE, 6 bits at +0x2000"]
 pub mod enable;
 #[doc = "THRESHOLD (rw) register accessor: PLIC.THRESHOLD, 3 bits at +0x200000\n\nYou can [`read`](crate::Reg::read) this register and get [`threshold::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`threshold::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@threshold`] module"]
 #[doc(alias = "THRESHOLD")]

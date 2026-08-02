@@ -447,6 +447,19 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                                  interrupts, stalls, buffered,
                                  uart::error_reads(console));
             }
+            // The Type-C sources, one per FUSB302B rather than one for both.
+            //
+            // Separately visible is half the point of giving them a source
+            // each: a TARGET count that climbs while AUX stays at zero says
+            // which connector something is happening on, and a shared source
+            // could only ever have shown the sum. The `enabled` word above is
+            // the other half -- a port whose bit is clear there is one the
+            // handler has masked and `typec` has not finished servicing.
+            for (port, &source) in target::TYPE_C_IRQS.iter().enumerate() {
+                let _ = writeln!(uart, "  type-c {:6} src {} irqs {}",
+                                 fusb302::Port::ALL[port].name(), source,
+                                 irq::type_c_interrupts(port));
+            }
             // The deferred log's own health. A handler may not print, so it
             // records; if the ring fills, records are dropped rather than the
             // handler stalling, and this is where that shows up. A nonzero

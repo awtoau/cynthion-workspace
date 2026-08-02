@@ -24,7 +24,7 @@
 //! ## Nothing in this file may print
 //!
 //! A handler that writes to a console spins on `LSR.THRE` inside an interrupt,
-//! which on a level-sensitive shared source is a hang that presents as a dead
+//! which on a level-sensitive source is a hang that presents as a dead
 //! CPU. So the receive path uses [`UartRx`] -- the receive and interrupt-control
 //! half of a 16550, with no transmit method and no `core::fmt::Write`, so
 //! `write!` here does not compile. What a handler wants to say goes through
@@ -45,8 +45,7 @@
 //! Interrupt-driven rather than polled because RTIC cannot be layered on a polled
 //! main loop; see `docs/decisions.md`.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize,
-                         Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
 use riscv::interrupt::Interrupt;
 
@@ -160,6 +159,22 @@ fn console_of(source: u32) -> Option<usize> {
     None
 }
 
+/// Which Type-C port a PLIC source number belongs to.
+///
+/// The same shape as [`console_of`], over the slice that is empty under QEMU --
+/// so a target with no Type-C hardware simply never matches and needs no
+/// `#[cfg]` here.
+fn type_c_of(source: u32) -> Option<usize> {
+    let mut index = 0;
+    while index < target::TYPE_C_IRQS.len() {
+        if target::TYPE_C_IRQS[index] == source {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
 /// Move everything the UART has into the ring, or mask it if there is no room.
 fn service(index: usize) {
     let ring = &RINGS[index];
@@ -203,8 +218,8 @@ fn machine_external() {
     while let Some(source) = plic.claim() {
         if let Some(index) = console_of(source) {
             service(index);
-        } else if Some(source) == target::TYPE_C_IRQ {
-            defer_type_c(&plic);
+        } else if let Some(port) = type_c_of(source) {
+            defer_type_c(&plic, source, port);
         }
         // ALWAYS, including for a source with no handler. A claim that is never
         // completed gates that source off for the rest of the session, with
@@ -213,62 +228,85 @@ fn machine_external() {
     }
 }
 
-/// A shared, level-sensitive Type-C line, handled by NOT handling it here.
+/// A level-sensitive Type-C line, handled by NOT handling it here.
 ///
-/// The two FUSB302Bs' `int` lines are OR-ed into one source, and clearing one
-/// means reading three read-to-clear registers over I2C -- about a millisecond
-/// at 80 kHz, on the single controller the power monitor's poll is also using.
-/// Doing that here would be a long spin inside an interrupt AND a second master
-/// on a peripheral with no lock, either of which is worse than the problem.
+/// Clearing a FUSB302B means reading three read-to-clear registers over I2C --
+/// about a millisecond at 80 kHz, on the single controller the power monitor's
+/// poll is also using. Doing that here would be a long spin inside an interrupt
+/// AND a second master on a peripheral with no lock, either of which is worse
+/// than the problem. **That is why the deferral survives per-device sources**:
+/// what made a handler unable to clear was the I2C, not the sharing.
 ///
-/// So: mask the source, record the event, return. The line stays asserted and
+/// So: mask THIS source, record which port, return. The line stays asserted and
 /// the PLIC keeps its pending bit; nothing is lost. `type_c::service` in normal
-/// context clears every asserting device and re-enables the source, which is
-/// where the "clear EVERY device" rule in `docs/chips/fusb302b-type-c.md`
-/// actually lives. The storm that rule warns about cannot happen, because the
-/// source is off for the entire window in which the line is still high.
+/// context clears that one device and re-enables that one source.
+///
+/// What per-device sources changed is the shape of the obligation. A shared
+/// level had to be cleared on *every* asserting device before it could be
+/// re-enabled, and missing one was a storm that presents as a hung CPU. Here
+/// there is one device behind the source, so there is nothing to miss, and a
+/// deferred TARGET no longer masks AUX's ability to interrupt.
 ///
 /// `log_from_irq!` records; it does not print. See `src/events.rs` for why a
-/// handler that printed would hang this board.
-fn defer_type_c(plic: &Plic) {
-    plic.disable(TYPE_C_SOURCE.load(Ordering::Relaxed));
-    PENDING_TYPE_C.store(true, Ordering::Release);
-    // The mux's LINES register would say which controller asserted, but reading
-    // it needs a base address this module has no business knowing and the
-    // answer is re-read by the service routine anyway -- between here and there
-    // the other controller may assert too, and acting on the older picture is
-    // exactly how one gets left set.
-    let _ = crate::log_from_irq!(events::TYPE_C_INT);
+/// handler that printed would hang this board. The record now carries the port
+/// bitmap, which the shared source could not supply without a register read.
+fn defer_type_c(plic: &Plic, source: u32, port: usize) {
+    plic.disable(source);
+    TYPE_C_INTERRUPTS[port].fetch_add(1, Ordering::Relaxed);
+    // Release: the mask must be visible before the bit that publishes it.
+    PENDING_TYPE_C.fetch_or(1 << port, Ordering::Release);
+    let _ = crate::log_from_irq!(events::TYPE_C_INT, 1 << port);
 }
 
-/// Set by the handler, cleared by [`take_type_c`]. `Release`/`Acquire` so the
-/// mask is visible before the flag that publishes it.
-static PENDING_TYPE_C: AtomicBool = AtomicBool::new(false);
+/// How many Type-C ports this firmware can track.
+///
+/// Two on the board, none under QEMU. Fixed rather than derived so the counters
+/// below are a `static` array; the assertion catches a third controller being
+/// wired without this following.
+pub const MAX_TYPE_C: usize = 2;
 
-/// The source number the handler masks, so `defer_type_c` needs no target
-/// import at the point of use. Written once by `init`.
-static TYPE_C_SOURCE: AtomicU32 = AtomicU32::new(0);
+const _: () = assert!(target::TYPE_C_IRQS.len() <= MAX_TYPE_C);
 
-/// Has the Type-C source fired and not yet been serviced?
+/// Which ports the handler has deferred, one bit each, cleared by
+/// [`take_type_c`].
+///
+/// A bitmap rather than a flag per port because the main loop wants one atomic
+/// swap: reading two flags leaves a window in which the second is set after the
+/// first was read and cleared, and a port that is pending but not serviced stays
+/// masked forever.
+static PENDING_TYPE_C: AtomicU32 = AtomicU32::new(0);
+
+/// Interrupts deferred per port, for the `irq` command. Separately visible is
+/// the diagnostic half of the per-device sources: a TARGET count that climbs
+/// while AUX stays at zero is a fact about the board, not about the firmware.
+static TYPE_C_INTERRUPTS: [AtomicU32; MAX_TYPE_C] =
+    [const { AtomicU32::new(0) }; MAX_TYPE_C];
+
+/// Which Type-C ports have fired and not yet been serviced, as a bitmap.
 ///
 /// Consuming, so the main loop services once per assertion rather than on every
-/// pass. The source stays masked until [`resume_type_c`] is called, which is
-/// what makes the sequence safe to be slow.
-pub fn take_type_c() -> bool {
-    PENDING_TYPE_C.swap(false, Ordering::Acquire)
+/// pass. Each port's source stays masked until [`resume_type_c`] is called for
+/// it, which is what makes the sequence safe to be slow.
+pub fn take_type_c() -> u32 {
+    PENDING_TYPE_C.swap(0, Ordering::Acquire)
 }
 
-/// Re-enable the Type-C source, after every asserting device has been cleared.
+/// Re-enable one port's source, after that device has been cleared.
 ///
-/// Called by normal context and only there. If a device is still asserting when
-/// this runs, the interrupt fires again immediately -- which is correct, there
-/// is still work -- and the deferral repeats rather than spinning, because the
-/// handler masks again on the way in.
-pub fn resume_type_c() {
-    let source = TYPE_C_SOURCE.load(Ordering::Relaxed);
-    if source != 0 {
+/// Called by normal context and only there, per port, because the mask is per
+/// port. If the device is still asserting when this runs the interrupt fires
+/// again immediately -- which is correct, there is still work -- and the
+/// deferral repeats rather than spinning, because the handler masks again on the
+/// way in.
+pub fn resume_type_c(port: usize) {
+    if let Some(&source) = target::TYPE_C_IRQS.get(port) {
         Plic::new(target::PLIC_BASE).enable(source);
     }
+}
+
+/// Deferrals recorded for Type-C port `port`, for the `irq` command.
+pub fn type_c_interrupts(port: usize) -> u32 {
+    TYPE_C_INTERRUPTS[port].load(Ordering::Relaxed)
 }
 
 /// Configure the PLIC and the UARTs, then let interrupts happen.
@@ -299,11 +337,13 @@ pub fn init() {
         plic.complete(source);
     }
 
-    // The Type-C source, if this target has one. Same priority as the consoles:
-    // nothing here is more urgent than a keystroke, and a plug event that waits
-    // a few microseconds is a plug event nobody notices waited.
-    if let Some(source) = target::TYPE_C_IRQ {
-        TYPE_C_SOURCE.store(source, Ordering::Relaxed);
+    // One Type-C source per controller, on a target that has them. Same
+    // priority as the consoles: nothing here is more urgent than a keystroke,
+    // and a plug event that waits a few microseconds is a plug event nobody
+    // notices waited. Equal to each other too, so the PLIC's tie-break decides
+    // between the two ports -- TARGET first, which is the port a person plugs
+    // a device under test into.
+    for &source in target::TYPE_C_IRQS {
         plic.set_priority(source, 1);
         plic.enable(source);
         plic.complete(source);

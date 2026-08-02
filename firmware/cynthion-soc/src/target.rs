@@ -118,20 +118,26 @@ pub const TIME_HZ: u32 = 60_000_000;
 #[cfg(feature = "qemu")]
 pub const TIME_HZ: u32 = 10_000_000;
 
-/// The PLIC source both FUSB302Bs' `int` lines are OR-ed onto, or `None` on a
-/// target that has none.
+/// One PLIC source per FUSB302B `int` line, in `fusb302::Port::ALL` order.
 ///
-/// An `Option` rather than a sentinel, so `src/irq.rs` cannot accidentally
-/// enable source 0 -- which the specification reserves as "nothing pending" and
-/// which a PLIC is free to ignore or to treat as a real source. The handler
-/// compares against it directly, so a target with no Type-C hardware simply
-/// never matches.
+/// Not one OR-ed source: a shared level obliges its handler to clear every
+/// asserting device before returning, and one source per device removes that
+/// obligation rather than documenting it. See `docs/decisions.md` decision 8.
+///
+/// A slice, empty on a target with no Type-C hardware, so `src/irq.rs` matches a
+/// claimed source against it exactly as it does `UART_IRQS` -- an empty slice
+/// never matches, and there is no sentinel that could be mistaken for source 0.
+/// The index a match yields is the port, which is what the deferral bitmap and
+/// `src/typec.rs` are indexed by.
 #[cfg(not(feature = "qemu"))]
-pub const TYPE_C_IRQ: Option<u32> = Some(cynthion_soc_pac::base::BOARD_I2C_MUX_IRQ);
+pub const TYPE_C_IRQS: &[u32] = &[
+    cynthion_soc_pac::base::BOARD_I2C_MUX_TARGET_IRQ,
+    cynthion_soc_pac::base::BOARD_I2C_MUX_AUX_IRQ,
+];
 
-/// `virt` has no Type-C controllers and nothing raises this.
+/// `virt` has no Type-C controllers and nothing raises these.
 #[cfg(feature = "qemu")]
-pub const TYPE_C_IRQ: Option<u32> = None;
+pub const TYPE_C_IRQS: &[u32] = &[];
 
 /// Consoles that announce themselves while idle.
 ///

@@ -948,7 +948,7 @@ def run_i2c_mux_checks(checks, verbose):
         f"select was {seen.get('applied')!r} after idle went high; the write "
         f"was dropped rather than held.")
 
-    # --- the shared interrupt ------------------------------------------------
+    # --- one interrupt per controller ----------------------------------------
     dut = I2CBusMux()
     seen = {}
 
@@ -962,23 +962,36 @@ def run_i2c_mux_checks(checks, verbose):
         async def settle():
             await ctx.tick().repeat(4)
 
+        def irqs():
+            return (ctx.get(dut.target_irq), ctx.get(dut.aux_irq))
+
         await settle()
-        seen["quiet"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+        seen["quiet"] = (irqs(), await bus.read(MUX_LINES))
 
         ctx.set(dut.target_int, 1)
         await settle()
-        seen["target"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
-
-        ctx.set(dut.aux_int, 1)
-        await settle()
-        seen["both"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+        seen["target"] = (irqs(), await bus.read(MUX_LINES))
 
         ctx.set(dut.target_int, 0)
+        ctx.set(dut.aux_int, 1)
+        await settle()
+        seen["aux"] = (irqs(), await bus.read(MUX_LINES))
+
+        ctx.set(dut.target_int, 1)
+        await settle()
+        seen["both"] = (irqs(), await bus.read(MUX_LINES))
+
+        # Only one goes away. The other line must be unaffected -- this is the
+        # property that makes clearing one device unable to strand the other.
         ctx.set(dut.aux_int, 0)
+        await settle()
+        seen["one_cleared"] = (irqs(), await bus.read(MUX_LINES))
+
+        ctx.set(dut.target_int, 0)
         ctx.set(dut.target_fault, 1)
         ctx.set(dut.aux_fault, 1)
         await settle()
-        seen["fault"] = (ctx.get(dut.irq), await bus.read(MUX_LINES))
+        seen["fault"] = (irqs(), await bus.read(MUX_LINES))
         # Twice: LINES must be pure. The FUSB302B's own interrupt registers are
         # read-to-clear and that is where clearing belongs -- a CSR here that
         # cleared on read would be a state-changing read one byte from the
@@ -992,28 +1005,44 @@ def run_i2c_mux_checks(checks, verbose):
 
     checks.check(
         "nothing asserting means no interrupt and no lines set",
-        seen.get("quiet") == (0, 0),
-        f"(irq, lines) was {seen.get('quiet')!r} with every input low.")
+        seen.get("quiet") == ((0, 0), 0),
+        f"((target_irq, aux_irq), lines) was {seen.get('quiet')!r} with every "
+        f"input low.")
     checks.check(
-        "one controller's int raises the shared source",
-        seen.get("target") == (1, 1 << LINE_TARGET_INT),
-        f"(irq, lines) was {seen.get('target')!r}, expected "
-        f"(1, {1 << LINE_TARGET_INT}) with only target int asserting.")
+        "target int raises the TARGET source and only that one",
+        seen.get("target") == ((1, 0), 1 << LINE_TARGET_INT),
+        f"((target_irq, aux_irq), lines) was {seen.get('target')!r}, expected "
+        f"((1, 0), {1 << LINE_TARGET_INT}) with only target int asserting. A "
+        f"source that answers for the other device is a handler that clears "
+        f"the wrong one.")
     checks.check(
-        "both asserting is still one source, and both bits are visible",
+        "aux int raises the AUX source and only that one",
+        seen.get("aux") == ((0, 1), 1 << LINE_AUX_INT),
+        f"((target_irq, aux_irq), lines) was {seen.get('aux')!r}, expected "
+        f"((0, 1), {1 << LINE_AUX_INT}) with only aux int asserting.")
+    checks.check(
+        "both asserting raises both sources",
         seen.get("both")
-        == (1, (1 << LINE_TARGET_INT) | (1 << LINE_AUX_INT)),
-        f"(irq, lines) was {seen.get('both')!r}. The handler decides which "
-        f"devices to clear from these bits, and clearing only one of two leaves "
-        f"the shared level asserted -- which is the storm this design has to "
-        f"avoid.")
+        == ((1, 1), (1 << LINE_TARGET_INT) | (1 << LINE_AUX_INT)),
+        f"((target_irq, aux_irq), lines) was {seen.get('both')!r}. Two devices "
+        f"asserting is two claims, and the PLIC's loop takes both -- neither "
+        f"waits on the other being decoded.")
     checks.check(
-        "fault does NOT raise the interrupt, and is still reported",
+        "one device going away leaves the other's source asserted",
+        seen.get("one_cleared") == ((1, 0), 1 << LINE_TARGET_INT),
+        f"((target_irq, aux_irq), lines) was {seen.get('one_cleared')!r} after "
+        f"aux dropped and target stayed. THIS IS WHY THERE ARE TWO SOURCES: on "
+        f"one OR-ed line, clearing aux left the level high with nothing saying "
+        f"target was the reason, and a handler that returned there re-fired "
+        f"forever.")
+    checks.check(
+        "fault raises NEITHER source, and is still reported",
         seen.get("fault")
-        == (0, (1 << LINE_TARGET_FAULT) | (1 << LINE_AUX_FAULT)),
-        f"(irq, lines) was {seen.get('fault')!r}. `fault` means something "
-        f"different from `int` and is meant to be distinguishable without a "
-        f"register read.")
+        == ((0, 0), (1 << LINE_TARGET_FAULT) | (1 << LINE_AUX_FAULT)),
+        f"((target_irq, aux_irq), lines) was {seen.get('fault')!r}. `fault` "
+        f"means something different from `int`, nothing in the firmware can "
+        f"clear it, and it is meant to be distinguishable without a register "
+        f"read.")
     checks.check(
         "reading the lines register twice gives the same answer",
         seen.get("fault_again") == seen.get("fault", (None, None))[1],
@@ -1181,7 +1210,7 @@ def main():
         run_sideband_checks(checks, args.verbose)
         emit()
 
-        emit("i2c_mux.I2CBusMux -- bus select and the shared Type-C interrupt")
+        emit("i2c_mux.I2CBusMux -- bus select and a Type-C interrupt per device")
         run_i2c_mux_checks(checks, args.verbose)
         emit()
 

@@ -25,7 +25,7 @@ Numbers are measured unless marked *unverified*.
 | 5 | [FIFO depth](#5-uart-fifo-depth-8250--16550--16750) | fixed 16 | settled |
 | 6 | [Buffering](#6-buffering-deep-fifo-vs-elastic-buffer) | elastic buffer at the transport | settled |
 | 7 | [Interrupt controller](#7-interrupt-controller) | PLIC, written from spec | settled |
-| 8 | [PLIC source granularity](#8-per-device-plic-sources-vs-or-ed) | OR-ed for the Type-C pair | settled |
+| 8 | [PLIC source granularity](#8-per-device-plic-sources-vs-or-ed) | per device | **reversed** (#121 → #135) |
 | 9 | [I2C topology](#9-i2c-three-controllers-vs-one-plus-a-mux) | one controller plus a mux | forced |
 | 10 | [I2C register map](#10-i2c-register-map) | OpenCores rev 0.9 | settled |
 | 11 | [SPI flash crossbar](#11-spi-flash-crossbar) | ours | upstream defect |
@@ -406,26 +406,49 @@ ignored.
 
 ### 8. Per-device PLIC sources vs OR-ed
 
-**OR-ed, for the Type-C pair only.** Both FUSB302B `int` lines go to one source (4).
+**Per device.** Each FUSB302B `int` line has its own source — TARGET on 4, AUX on 5.
+**This reverses the original decision** (#121), which OR-ed both onto source 4; #135
+undid it.
 
-| | per-device sources | **OR-ed** |
+| | **per device** | OR-ed |
 |---|---|---|
-| What it would buy | knowing which device asserted without a read | — |
-| Reality | with one muxed controller only one device is addressable at a time, and the handler must read the mux's `LINES` register to decide which to service either way | one claim/complete pair instead of two |
+| Which device asserted | the claim says so | read the mux's `LINES` over the CSR bus |
+| Clearing obligation | one device behind the source; nothing to miss | **must clear *every* asserting device before re-enabling**, or the level re-fires forever |
+| A device mid-deferral | masks itself | masks both — the other port's event is invisible until the first is serviced |
+| Diagnostics | `irq` counts TARGET and AUX separately | one total |
+| Cost | one more priority register, pending bit and comparator | — |
 
-Two devices × (`int` + `fault`) would be six signals; they do not need six sources.
+**Why the original reasoning was wrong.** It was true and it was about the wrong thing.
+With one muxed I2C controller only one device can be addressed at a time — that is
+[decision 9](#9-i2c-three-controllers-vs-one-plus-a-mux), it is forced by hardware, and it
+has not changed. The conclusion drawn from it was that per-device *interrupt* sources buy
+nothing, and that does not follow: serialised servicing is a statement about the bus, not
+about which device the handler is told to service. The PLIC supports 31 sources and the
+design uses 5, so the OR conserved nothing scarce. It was an optimisation by analogy with
+a constraint, applied where the constraint did not reach — the same class of error as
+sizing the console FIFO for USB packets ([decision 5](#5-uart-fifo-depth-8250--16550--16750)).
 
-**The trap that comes with a shared level, and how it is handled.** Clearing the condition
-means reading three read-to-clear registers over I2C — about a millisecond at 80 kHz — on
-the single controller the power monitor's poll is also using: a long spin in interrupt
-context *and* a second master on a peripheral with no lock. So the handler does **not**
-clear it. It masks the source and records the event through the ring (decision 18); normal
-context clears every asserting device and re-enables. **The storm cannot happen, because
-the source is off for the whole window in which the line is still high**; the re-fire
-becomes one more deferred pass with the CPU making progress in between.
+**What it does not buy: concurrency.** Servicing still serialises. This buys *knowing
+which*, and it deletes a correctness obligation rather than documenting one.
 
-`fault` is deliberately kept out of the OR and polled: it means something different from
-`int` and is worth telling apart without a register read.
+**The deferral survives, and per-device masking improves it.** Clearing a controller means
+reading three read-to-clear registers over I2C — about a millisecond at 80 kHz — on the
+single controller the power monitor's poll is also using: a long spin in interrupt context
+*and* a second master on a peripheral with no lock. So the handler still does **not** clear
+it. It masks the source it claimed and records which port through the ring (decision 18);
+normal context clears that device and re-enables that source. What changed is that the mask
+is now per device, so a TARGET awaiting its I2C clear no longer blinds AUX.
+
+`fault` got **no** source, and that was re-examined rather than inherited. Two reasons, the
+second binding: it means something different from `int` and is worth telling apart without
+a register read; and **nothing in the firmware can clear it** — it drops when the device's
+fault does. An interrupt on an uncleanable level must stay masked until something notices
+the level has gone, which is the 50 ms poll, so it would add a handler and keep the poll.
+`int` is clearable, which is why masking terminates there.
+
+Asserted in `scripts/soc_plic_sim.py` (the mux wired to a PLIC: the claim names the device,
+and the quiet device's source is never involved) and `scripts/soc_board_sim.py` (one line
+dropping leaves the other asserted).
 
 **One source is wired but not enabled:** I2C transfer completion (source 3). The gateware
 raises it; `CTR.IEN` resets to zero and the firmware polls `SR.TIP` instead. A shell

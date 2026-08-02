@@ -78,8 +78,12 @@ const RING: usize = 16;
 /// A code with no arguments worth printing.
 pub const NONE: u32 = 0;
 
-/// A shared Type-C interrupt line asserted. `a` is a bitmap of which
-/// controllers were asserting, `b` is unused.
+/// A Type-C `int` line asserted. `a` is the port's bit -- 1 for TARGET, 2 for
+/// AUX -- and `b` is unused.
+///
+/// Exact rather than a guess, because each controller has its own PLIC source:
+/// the handler knows which one from the claim, with no register read. Two
+/// records, not one with two bits, if both assert.
 pub const TYPE_C_INT: u32 = 1;
 
 /// A Type-C `fault` line asserted. `a` is the bitmap.
@@ -230,7 +234,7 @@ pub fn drain(uart: &mut Uart) {
 fn report(uart: &mut Uart, code: u32, a: u32, b: u32) {
     match code {
         TYPE_C_INT => {
-            let _ = writeln!(uart, "type-c: int asserted, controllers {:02x}", a);
+            let _ = writeln!(uart, "type-c: int asserted, port {:02x}", a);
         }
         TYPE_C_FAULT => {
             let _ = writeln!(uart, "type-c: FAULT asserted, controllers {:02x}", a);
