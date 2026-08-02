@@ -45,12 +45,24 @@ both of which are counts. The round counter advancing between polls is what
 proves the fabric is running; wall-clock time is recorded only so a mismatch
 rate can be reported per second.
 
+Die temperature
+---------------
+
+REG_DIE is read before and after the polling loop. The ECP5's DTR reports an
+uncalibrated code rather than degrees, so the code is what is recorded -- but it
+turns "one operating point" from a caveat into a number. Across a sweep of
+placements it says whether they all ran at the same temperature, and if a soak
+ever shows mismatches correlating with it, that is the signature of a marginal
+part rather than a hard defect. This test cannot currently tell those apart.
+
     ./scripts/fabric_run.py                    # load, then watch
     ./scripts/fabric_run.py --no-load          # watch what is already loaded
     ./scripts/fabric_run.py --rounds 2000000   # a longer soak
+    ./scripts/fabric_run.py --bitstream tmp/fabric-coverage/seed-003/top.bit
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -64,10 +76,10 @@ sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fabric.fabric_gateware import (APPLET_ID, BLOCKS, ROUND_BITS,
-                                    ROUND_CYCLES, REG_ID, REG_SIGNATURE,
-                                    REG_ROUNDS, REG_STATUS, REG_GOLDEN,
-                                    REG_MISMATCHES, SYNC_MHZ)
+from fabric.fabric_gateware import (APPLET_ID, BLOCKS, DIE_PRESENT, ROUND_BITS,
+                                    ROUND_CYCLES, REG_DIE, REG_ID,
+                                    REG_SIGNATURE, REG_ROUNDS, REG_STATUS,
+                                    REG_GOLDEN, REG_MISMATCHES, SYNC_MHZ)
 
 # The volatile configuration path. `configure` writes SRAM; `flash` would write
 # the board's boot gateware, which this script must never do.
@@ -77,13 +89,27 @@ CONFIGURE = [sys.executable,
              "configure"]
 
 
-def load(emit):
+def die_note(value):
+    """Describe REG_DIE, without pretending an uncalibrated code is degrees.
+
+    FPGA-TN-02210 Table 4.3 maps the 6-bit DTR code to a temperature band. The
+    mapping is documented as uncalibrated and part-dependent, so the code is
+    what gets recorded and compared; what matters for this test is whether the
+    operating point moved between configurations, and the code answers that
+    without a conversion that would imply an accuracy nobody measured.
+    """
+    if not value & DIE_PRESENT:
+        return "no DTR in this bitstream"
+    return f"code {value & 0x3F} (raw DTROUT {value & 0xFF:#04x})"
+
+
+def load(bitstream, emit):
     """Configure the FPGA over JTAG, into SRAM. Returns True on success."""
-    if not BITSTREAM.exists():
-        emit(f"no bitstream at {BITSTREAM} -- run scripts/fabric_build.py")
+    if not bitstream.exists():
+        emit(f"no bitstream at {bitstream} -- run scripts/fabric_build.py")
         return False
-    emit(f"loading {BITSTREAM.name} into SRAM (volatile; a power cycle undoes it)")
-    result = subprocess.run(CONFIGURE + [str(BITSTREAM)], cwd=ROOT,
+    emit(f"loading {bitstream} into SRAM (volatile; a power cycle undoes it)")
+    result = subprocess.run(CONFIGURE + [str(bitstream)], cwd=ROOT,
                             capture_output=True, text=True)
     for line in ((result.stdout or "") + (result.stderr or "")).splitlines():
         emit(f"  {line}")
@@ -106,10 +132,27 @@ def main():
                              "forever if the round counter is stuck")
     parser.add_argument("--report-every", type=int, default=500,
                         help="polls between progress lines")
+    parser.add_argument("--bitstream", type=Path, default=BITSTREAM,
+                        help="which bitstream to load; a sweep builds one per "
+                             "placement and each lives in its own directory")
+    parser.add_argument("--result-json", type=Path, default=None,
+                        help="write the verdict here as well, so a driver "
+                             "reads numbers rather than re-parsing this "
+                             "transcript")
+    parser.add_argument("--log", type=Path, default=LOG,
+                        help="where this run's transcript is appended")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("a") as handle:
+    result = {"bitstream": str(args.bitstream), "verdict": "incomplete"}
+
+    def finish(code):
+        if args.result_json:
+            args.result_json.parent.mkdir(parents=True, exist_ok=True)
+            args.result_json.write_text(json.dumps(result, indent=2))
+        return code
+
+    args.log.parent.mkdir(parents=True, exist_ok=True)
+    with args.log.open("a") as handle:
         def emit(text=""):
             print(text, flush=True)
             handle.write(text + "\n")
@@ -117,6 +160,7 @@ def main():
 
         started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         emit(f"=== fabric test run, {started_at} ===")
+        result["started"] = started_at
 
         # Recompute the golden value here, from the specification, rather than
         # reading it out of the build log. A gateware built against a wrong
@@ -128,9 +172,12 @@ def main():
         expected = compute_golden(BLOCKS, ROUND_CYCLES)
         emit(f"golden signature, computed on the host: {expected:#010x}")
 
+        result["expected_golden"] = f"{expected:#010x}"
+
         if not args.no_load:
-            if not load(emit):
-                return 1
+            if not load(args.bitstream, emit):
+                result["verdict"] = "load failed"
+                return finish(1)
 
         from apollo_fpga import ApolloDebugger
         dut = ApolloDebugger()
@@ -141,7 +188,8 @@ def main():
             emit(f"wrong bitstream: REG_ID {applet:#010x}, expected "
                  f"{APPLET_ID:#010x} -- refusing to report a result for "
                  f"gateware that is not this test")
-            return 1
+            result["verdict"] = "wrong bitstream"
+            return finish(1)
         emit(f"REG_ID {applet:#010x} -- the fabric test is running")
 
         status = dut.registers.register_read(REG_STATUS)
@@ -151,6 +199,15 @@ def main():
         emit(f"gateware reports {blocks} blocks at {clock} MHz")
         emit(f"gateware's own golden constant: {built_golden:#010x}")
 
+        # Read before the polling loop and again after it, so the pair says
+        # whether the part warmed up while the design ran rather than only what
+        # it read at one instant.
+        die_before = dut.registers.register_read(REG_DIE)
+        emit(f"die temperature at start: {die_note(die_before)}")
+        result.update(blocks=blocks, sync_mhz=clock,
+                      built_golden=f"{built_golden:#010x}",
+                      die_before=die_before)
+
         if built_golden != expected:
             emit(f"REFUSING: the gateware checks itself against "
                  f"{built_golden:#010x} but the host computes "
@@ -158,7 +215,8 @@ def main():
             emit("  A clean result from this bitstream would be meaningless, "
                  "because the constant it compares against is not the right "
                  "answer. Rebuild.")
-            return 1
+            result["verdict"] = "golden mismatch between gateware and host"
+            return finish(1)
         emit("the gateware's constant and the host's model agree")
         if blocks != BLOCKS:
             emit(f"note: gateware built for {blocks} blocks, this script's "
@@ -212,10 +270,14 @@ def main():
 
         elapsed = time.perf_counter() - start
         done = rounds - first_rounds
+        die_after = dut.registers.register_read(REG_DIE)
 
         emit()
         emit(f"=== result, {time.strftime('%Y-%m-%dT%H:%M:%S%z')} ===")
         emit(f"ran {elapsed:.1f}s, {polls} JTAG polls")
+        emit(f"die temperature at end: {die_note(die_after)}"
+             + (f", from {die_note(die_before)} at the start"
+                if die_after != die_before else " (unchanged)"))
         emit(f"rounds completed by the gateware: {done:,}")
         emit(f"  each round is {ROUND_CYCLES} cycles of {blocks} blocks, so "
              f"{done * ROUND_CYCLES:,} block-cycles, "
@@ -225,11 +287,17 @@ def main():
         emit(f"host signature reads: {signature_reads}, "
              f"disagreeing with the model: {signature_bad}")
 
+        result.update(seconds=round(elapsed, 1), polls=polls, rounds=done,
+                      mismatches=worst_mismatches, sticky=ever_mismatch,
+                      signature_reads=signature_reads,
+                      signature_bad=signature_bad, die_after=die_after)
+
         if done == 0:
             emit()
             emit("INCONCLUSIVE -- the round counter never advanced. The design "
                  "is loaded but not running, so nothing was exercised.")
-            return 1
+            result["verdict"] = "inconclusive"
+            return finish(1)
 
         if ever_mismatch or worst_mismatches or signature_bad:
             emit()
@@ -240,7 +308,8 @@ def main():
                  "not proof of it: a timing marginality or a supply problem "
                  "would look the same. Rerun, and rerun a build that fits "
                  "inside 12,288 LUTs for comparison.")
-            return 1
+            result["verdict"] = "mismatch"
+            return finish(1)
 
         emit()
         emit(f"PASS for this part at this moment: {done:,} rounds, every one "
@@ -256,9 +325,10 @@ def main():
              "compatible with what was just observed.")
         emit("  Nor anything about other parts, boards, temperatures or "
              "supplies. One sample, one moment.")
-        emit(f"log: {LOG}")
+        emit(f"log: {args.log}")
+        result["verdict"] = "pass"
 
-    return 0
+    return finish(0)
 
 
 if __name__ == "__main__":

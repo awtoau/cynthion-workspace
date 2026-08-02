@@ -90,6 +90,7 @@ What the host sees
   REG_STATUS      bit 0 sticky mismatch, bit 1 at least one round complete,
                   bits 15:8 the block count, bits 31:16 the sync clock in MHz
   REG_GOLDEN      the golden constant the gateware was built with
+  REG_DIE         bits 7:0 the DTR temperature code, bit 8 a DTR is present
 
 The sticky mismatch bit and the mismatch counter are set by the *gateware*, not
 the host. A failure that happens between two JTAG polls is still recorded, and
@@ -97,7 +98,7 @@ the count says how many rounds were bad rather than merely that one was.
 """
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable,
-                      Module, Signal)
+                      Instance, Module, Signal)
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
 from luna.gateware.interface.jtag   import JTAGRegisterInterface
@@ -147,8 +148,23 @@ REG_ROUNDS     = 3
 REG_STATUS     = 4
 REG_GOLDEN     = 5
 REG_MISMATCHES = 6
+REG_DIE        = 7
 
 MASK = 0xFFFFFFFF
+
+# How often a temperature conversion is started, as a power of two `sync`
+# cycles. This is not a delay and nothing waits on it: it is the width of a
+# free-running counter whose wrap issues STARTPULSE. 2**19 at 60 MHz is 8.7 ms,
+# which is far slower than the block's 8-cycle conversion and far faster than
+# the die's thermal time constant, so the reading is never stale and never
+# retriggered mid-conversion. The same figure `riscv/gateware_id.py` uses.
+DTR_PERIOD_BITS = 19
+
+# In REG_DIE: this build contains a DTR block at all. Without it, "0" from a
+# simulation build and "0" from a conversion that never completed would read
+# the same, and a temperature of 0 would be indistinguishable from no
+# temperature.
+DIE_PRESENT = 1 << 8
 
 
 def rotl(value, amount):
@@ -389,6 +405,48 @@ class FabricTest(Elaboratable):
             registers.add_read_only_register(
                 REG_GOLDEN,
                 read=Const(self.golden if self.golden is not None else 0, 32))
+
+        #
+        # Die temperature.
+        #
+        # The result of this test is "one part, one operating point, one
+        # moment", and without this the operating point is the part that has to
+        # be taken on trust. Reading the DTR makes it data: a sweep of
+        # configurations then carries the temperature each one ran at, and a
+        # mismatch that correlates with temperature is a marginal part, while a
+        # mismatch that does not is a hard defect. The current test cannot tell
+        # those apart at all.
+        #
+        # It costs a counter, a latch and a hard block that consumes no fabric,
+        # against ~19,900 LUTs -- and it is entirely outside the signature path,
+        # so it cannot change the answer the test is checking.
+        #
+        # FPGA-TN-02210 Table 4.3 maps the 6-bit code to a temperature range.
+        # The code is reported raw; converting it here would present an
+        # uncalibrated lookup as a measurement in degrees.
+        #
+        if platform is not None and registers is not None:
+            dtr_counter = Signal(DTR_PERIOD_BITS)
+            m.d.sync += dtr_counter.eq(dtr_counter + 1)
+
+            dtr_bits = [Signal(name=f"dtrout{index}") for index in range(8)]
+            m.submodules.dtr = Instance(
+                "DTR",
+                i_STARTPULSE=(dtr_counter == 0),
+                **{f"o_DTROUT{index}": bit
+                   for index, bit in enumerate(dtr_bits)})
+
+            # DTROUT[7] is the valid flag. Sampling without it latches whatever
+            # the outputs hold part-way through a conversion, which is a number
+            # that looks like a temperature and is not one.
+            die = Signal(8)
+            with m.If(dtr_bits[7]):
+                m.d.sync += die.eq(Cat(*dtr_bits))
+
+            registers.add_read_only_register(
+                REG_DIE, read=Cat(die, Const(1, 1), Const(0, 23)))
+        elif registers is not None:
+            registers.add_read_only_register(REG_DIE, read=Const(0, 32))
 
         #
         # LEDs. Not the evidence -- the JTAG registers are -- but a board that

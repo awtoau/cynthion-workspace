@@ -22,8 +22,19 @@ Rows with no entries are worth reading carefully rather than as gaps: on this
 die every twelfth row is EBR or DSP rather than logic, so an empty row there is
 the floorplan, not a hole in the placement.
 
+Comparing configurations
+------------------------
+
+`--compare` takes several configs and reports how much of the placement they
+share. A sweep that varies the nextpnr seed is only worth its build time if the
+seed actually moves the logic; "different seed" is an input, not a result. The
+overlap is measured as the share of occupied LUT sites two builds have in
+common -- the exact `RxCy` tile and `SLICEn.Kn` position, not a row histogram,
+because two placements can have identical row totals and share no site at all.
+
     ./scripts/fabric_placement.py
     ./scripts/fabric_placement.py --config path/to/top.config
+    ./scripts/fabric_placement.py --compare tmp/fabric-coverage/seed-*/top.config
 """
 
 import argparse
@@ -37,6 +48,7 @@ LOG = ROOT / "tmp" / "logs" / "fabric_placement.log"
 CONFIG = ROOT / "ecp5-test" / "fabric" / "build" / "top.config"
 
 TILE = re.compile(r"^\.tile\s+R(\d+)C(\d+)")
+SITE = re.compile(r"^word:\s+(SLICE[A-D]\.K\d)\.INIT")
 
 
 def survey(path):
@@ -60,12 +72,145 @@ def survey(path):
     return rows, columns, total
 
 
+def sites(path):
+    """Returns {(row, column, "SLICEn.Kn")} -- every site holding a function.
+
+    The identity of a placement, at the finest granularity the config records.
+    Two builds that disagree here put the logic in physically different LUTs,
+    which is what a differing seed is supposed to achieve and what has to be
+    checked rather than assumed.
+    """
+    placed = set()
+    row = column = None
+    for line in path.read_text().splitlines():
+        match = TILE.match(line)
+        if match:
+            row, column = int(match.group(1)), int(match.group(2))
+            continue
+        match = SITE.match(line)
+        if match and row is not None:
+            placed.add((row, column, match.group(1)))
+    return placed
+
+
+def overlap(first, second):
+    """Share of occupied sites two placements have in common, 0.0 to 1.0."""
+    union = first | second
+    return len(first & second) / len(union) if union else 1.0
+
+
+def forced_overlap(first, second, total_sites):
+    """The smallest overlap two placements of these sizes could possibly have.
+
+    A design occupying 20,300 of the die's 24,288 LUT sites cannot be moved very
+    far, because there is nowhere for it to go: two such placements must share
+    at least |A|+|B|-N sites however differently they are placed. Quoting a raw
+    overlap without this floor makes a dense design look like it barely moved
+    when in fact it moved as much as the die allows -- and the whole reason to
+    fill the die is the fabric question, so the density is not negotiable.
+    """
+    least = max(0, len(first) + len(second) - total_sites)
+    union = min(total_sites, len(first | second))
+    return least / union if union else 1.0
+
+
+def compare(paths, emit, total_sites=24288):
+    """Pairwise placement overlap, against the floor density forces.
+
+    `total_sites` is the die's LUT4 count -- 24,288 for the LFE5U-12F -- because
+    a LUT site is one LUT4 and that is what bounds how far a placement can move.
+    """
+    placements = {}
+    for path in paths:
+        placements[path] = sites(path)
+        emit(f"{path}: {len(placements[path])} occupied LUT sites of "
+             f"{total_sites} on the die "
+             f"({100 * len(placements[path]) / total_sites:.1f}%)")
+    emit()
+
+    names = [p.parent.name or p.name for p in paths]
+    width = max(len(n) for n in names)
+    # The full matrix is worth printing while it is readable. Past ten
+    # configurations each row is wider than a terminal and the eye gets nothing
+    # from it that the min/mean/max below does not say better.
+    show = len(paths) <= 10
+    if show:
+        emit("pairwise overlap, as a share of the union of occupied sites:")
+        emit(" " * (width + 2) + " ".join(f"{n[-6:]:>7}" for n in names))
+    values = []
+    floors = []
+    for i, first in enumerate(paths):
+        cells = []
+        for j, second in enumerate(paths):
+            share = overlap(placements[first], placements[second])
+            cells.append(f"{share:7.3f}")
+            if i < j:
+                values.append(share)
+                floors.append(forced_overlap(placements[first],
+                                             placements[second], total_sites))
+        if show:
+            emit(f"{names[i]:<{width}}  " + " ".join(cells))
+    if not show:
+        emit(f"{len(paths)} configurations; the {len(values)}-pair matrix is "
+             f"too wide to read, so only its range is reported")
+
+    emit()
+    if not values:
+        emit("only one configuration -- nothing to compare")
+        return {"pairs": 0}
+    worst, best = max(values), min(values)
+    mean = sum(values) / len(values)
+    floor = sum(floors) / len(floors)
+    emit(f"over {len(values)} pairs: overlap min {best:.3f}, "
+         f"mean {mean:.3f}, max {worst:.3f}")
+    emit(f"density forces at least {floor:.3f} of it: two placements this "
+         f"large cannot share less")
+    # What is left after the floor is what the seed actually bought, expressed
+    # as a share of the room it had to move in. This is the number that says
+    # whether the extra builds were different designs; the raw overlap above
+    # mostly reports how full the die is.
+    room = 1.0 - floor
+    moved = (1.0 - mean) / room if room > 0 else 0.0
+    emit(f"of the {100 * room:.0f}% of sites that were free to move, the seed "
+         f"moved {100 * moved:.0f}%")
+    if moved < 0.25:
+        emit("  The seed barely moved the logic. The extra configurations are "
+             "near-repeats of the first and the coverage they add is small; "
+             "check the arc measurement before claiming otherwise.")
+    else:
+        emit("  The seed moved the placement about as far as a design this "
+             "dense can move. Site occupancy is largely forced, so the real "
+             "question is how much routing changed -- see fabric_arcs.py, "
+             "which measures it directly rather than inferring it from here.")
+    return {"pairs": len(values), "min": best, "mean": mean, "max": worst,
+            "forced_floor": floor, "moved_share": moved,
+            "sites": {str(p): len(s) for p, s in placements.items()}}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=CONFIG)
+    parser.add_argument("--compare", nargs="+", type=Path, default=None,
+                        help="several configs; report how much placement they "
+                             "share instead of surveying one")
     args = parser.parse_args()
+
+    if args.compare:
+        for path in args.compare:
+            if not path.exists():
+                print(f"no config at {path}")
+                return 1
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("w") as handle:
+            def emit(text=""):
+                print(text, flush=True)
+                handle.write(text + "\n")
+                handle.flush()
+            compare(args.compare, emit)
+            emit(f"log: {LOG}")
+        return 0
 
     if not args.config.exists():
         print(f"no config at {args.config} -- run scripts/fabric_build.py")
