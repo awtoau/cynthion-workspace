@@ -6,30 +6,30 @@
 """
 Attaches to the SoC console and prints it.
 
-    ./console.py
+    ./tio_user.py
 
 At the repo root because it is meant to be run by hand and left running, unlike the
 scripts under `scripts/` that agents invoke.
 
 ## This owns the port
 
-Only one process can read a tty. Two readers interleave the stream -- each takes bytes
-the other never sees, giving output like `ivlive0alive` -- and every steal makes the
-other drop and reattach, which reads as the board reconfiguring in a loop when nothing
-of the sort is happening.
+**Run this, and nothing else opens the port.** Only one process can read a tty.
 
-So: **run this, and nothing else opens the port.** `scripts/soc_run.py` checks for a
-service on port 9000 and reads through that instead of competing. Pass `--serve` here to
-provide it.
+  * Two readers interleave the stream, each taking bytes the other never sees --
+    output like `ivlive0alive`.
+  * Every steal makes the other drop and reattach, which reads as the board
+    reconfiguring in a loop when nothing of the sort is happening.
+  * `scripts/soc_run.py` checks for a service on port 9000 and reads through that
+    instead of competing. Pass `--serve` here to provide it.
 
 ## What it does that `tio` does not
 
-**Finds the port by identity**, resolving VID:PID `1d50:6180` through sysfs rather than
-by node number. This machine has eleven `/dev/ttyACM*` nodes across four vendors, and an
-earlier investigation spent hours reading `/dev/ttyACM1`, an ST-LINK.
-
-**Waits for a board.** During a gateware rebuild the SoC is legitimately absent for
-about a minute. That is not an error worth exiting on.
+  * **Finds the port by identity**, resolving VID:PID `1d50:6180` through sysfs
+    rather than by node number. This machine has eleven `/dev/ttyACM*` nodes
+    across four vendors, and one earlier investigation spent hours reading
+    `/dev/ttyACM1`, an ST-LINK.
+  * **Waits for a board.** During a gateware rebuild the SoC is legitimately
+    absent for about a minute, which is not an error worth exiting on.
 
 `tio` is fine if you prefer it -- it reconnects too, and the by-id path is stable:
 

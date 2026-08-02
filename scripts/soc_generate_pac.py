@@ -116,9 +116,9 @@ def build_soc():
     soc = vexii_hello_soc.HelloSoC(firmware=firmware)
 
     # Elaborate before reading the map. The decoder and every peripheral window are
-    # created INSIDE elaborate(), so a freshly constructed SoC has no memory map at all --
-    # which is why this used to report "could not find a memory map" rather than anything
-    # about elaboration.
+    # created INSIDE elaborate(), so a freshly constructed SoC has no memory map at all
+    # and the failure reads as "could not find a memory map" rather than as a missing
+    # elaboration.
     #
     # A real platform is needed, not None: elaborate() calls platform.request() for the
     # ULPI PHY, the flash pins and the LEDs. Requesting resources needs no toolchain and
@@ -370,10 +370,10 @@ def verify_svd(path, peripherals, emit):
     """Parse the file back and check it describes what was asked for.
 
     Structural, not cosmetic: a zero-byte SVD and an SVD full of empty peripherals
-    both "succeed" if nothing reads the result back, and this file was zero bytes
-    until now. Everything below compares the parsed document against the memory
-    map it came from, so a silently truncated write or a peripheral that lost its
-    registers fails here rather than in `svd2rust`'s error output.
+    both "succeed" if nothing reads the result back. Everything below compares the
+    parsed document against the memory map it came from, so a silently truncated
+    write or a peripheral that lost its registers fails here rather than in
+    `svd2rust`'s error output.
     """
     tree = ET.parse(path)
     root = tree.getroot()

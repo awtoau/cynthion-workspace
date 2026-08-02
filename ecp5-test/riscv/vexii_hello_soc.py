@@ -6,54 +6,49 @@
 """
 A VexiiRiscv SoC on block RAM: a core, memory, and a way to see it run.
 
-The point is a prompt, not a benchmark. Block RAM is single-cycle and needs no cache, no
-bus wrapper and no latency tuning, so the only things that can be wrong are the CPU, its
-reset vector and the peripheral it writes to. Bringing HyperRAM up at the same time would
-mean debugging a CPU and a latency-sensitive memory at once.
+    ./ecp5-test/riscv/vexii_hello_soc.py --build
+    ./ecp5-test/riscv/vexii_hello_soc.py --build --program
+
+Block RAM is single-cycle and needs no cache, bus wrapper or latency tuning, so
+the only things that can be wrong are the CPU, its reset vector and the
+peripheral it writes to.
 
 ## Two consoles, one register map
 
-The console peripheral is a standard NS16550A (`uart16550.py`) whose stream ports go to a
-USB CDC-ACM endpoint on the AUX port instead of to a shift register. It appears on the
-host as an ordinary `/dev/ttyACM*`.
+    index  peripheral   transport                       appears as
+    0      Uart16550    USB CDC-ACM on the AUX port     /dev/ttyACM*
+    1      Uart16550    async serial on R14/T14         Apollo's CDC
 
-A second instance faces Apollo on the shared JTAG pins, with a real asynchronous serial
-PHY behind it (`serial_line.py`). Same register map, same driver, different transport --
-which is the whole point of using a standard part rather than a bespoke one.
+Same NS16550A register map, same driver, different transport -- which is the
+point of a standard part. `serial_line.py` is the PHY behind index 1.
 
-Standard rather than bespoke for a measured reason. The peripheral this replaced packed
-four byte-registers into one 32-bit word, and reading the receive register popped its
-FIFO -- a side-effecting read one byte from the register firmware polls. On a 16550, LSR
-at +5 cannot share a word with RBR at +0, so that hazard is structurally impossible
-rather than merely avoided. See `uart16550.py`.
-
-USB rather than the Apollo UART for the console, because on r1.4 the `uart` pins
-(R14/T14) are shared with JTAG TDI/TMS, so a design driving them competes with the thing
-loading its own bitstream. The USB path has no such conflict and the CDC gateware is
-measured at 195.4 Mbps loopback (`../../docs/luna_ecp5_fpga/usb-performance.md`).
+  * **USB carries the primary console** because R14/T14 are the same wires as
+    JTAG TDI/TMS, so a design driving them competes with the thing loading its
+    own bitstream. The CDC gateware measures 195.4 Mbps loopback
+    (`../../docs/luna_ecp5_fpga/usb-performance.md`).
+  * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
+    share a 32-bit word with RBR at +0. See `uart16550.py`, and
+    `../../docs/comparisons.md` for what that replaced.
 
 ## Interrupts
 
-Both UARTs' interrupt lines go to a standard RISC-V PLIC (`vexii_plic.py`), whose output
-is the CPU's single machine external interrupt, so the consoles are interrupt-driven
-rather than polled.
+Both UARTs' `irq` lines go to a standard RISC-V PLIC (`vexii_plic.py`), whose
+output is the CPU's single machine external interrupt, so the consoles are
+interrupt-driven.
 
-The same argument applies as for the 16550: QEMU's `-M virt` has a PLIC too, so
-`firmware/cynthion-soc/src/plic.rs` compiles unchanged for both targets and
-`scripts/soc_test.py` exercises the interrupt path that actually ships.
+QEMU's `-M virt` has a PLIC too, so `firmware/cynthion-soc/src/plic.rs` compiles
+unchanged for both and `scripts/soc_test.py` exercises the interrupt path that
+ships.
 
 ## Board peripherals
 
-GPIO (six LEDs, PWRDN, the USER button), a multiplexed I2C master reaching the PAC1954
-power monitor and both FUSB302B Type-C controllers, a ULPI register window on the TARGET
-PHY, the sideband link to Apollo, and memory-mapped SPI flash.
+GPIO (six LEDs, PWRDN, the USER button), a multiplexed I2C master reaching the
+PAC1954 and both FUSB302Bs, a ULPI register window on the TARGET PHY, the
+sideband link to Apollo, and memory-mapped SPI flash.
 
 Peripheral base addresses are generated from this SoC's own memory map by
-`scripts/soc_generate_pac.py`; `scripts/check.py` fails if firmware writes one as a
-literal.
-
-    ./ecp5-test/riscv/vexii_hello_soc.py --build
-    ./ecp5-test/riscv/vexii_hello_soc.py --build --program
+`scripts/soc_generate_pac.py`; `scripts/check.py` fails if firmware writes one
+as a literal.
 """
 
 import argparse
@@ -241,10 +236,10 @@ APOLLO_UART_BAUD = 115200
 # poll interval, which is a handful of bytes, and the 16550's own 16-byte FIFO
 # already absorbs most of it.
 #
-# The predecessor used 1024, justified as "two 512-byte USB packets" -- a reason
-# that stopped being true when the endpoint went to one byte per packet, and went
-# on costing a DP16KD anyway. 16 entries of 8 bits map to distributed LUT RAM
-# (TRELLIS_DPR16X4); 1024 map to a block RAM, of which this design uses 44 of 56.
+# Do not size this for USB packets. 16 entries of 8 bits map to distributed LUT
+# RAM (TRELLIS_DPR16X4); 1024 map to a block RAM, of which this design uses 42 of
+# 56. A depth justified as "two 512-byte USB packets" costs a DP16KD and buys
+# packet pipelining on a path that sends one byte per packet.
 CONSOLE_TX_DEPTH = 16
 CONSOLE_RX_DEPTH = 16
 
@@ -818,27 +813,25 @@ class HelloSoC(Elaboratable):
 
         # USB CDC-ACM, on the AUX port.
         #
-        # This was previously a bare USBDevice with one bulk IN endpoint and no CDC
-        # descriptors -- despite the comment claiming CDC-ACM. That is why no ttyACM node
-        # ever appeared: the kernel correctly declines to bind a serial driver to a
-        # vendor-specific interface, and an investigation chasing the silence ended up
-        # reading /dev/ttyACM1, which is an ST-LINK.
+        # CDC descriptors are what make a /dev/ttyACM node appear at all -- the kernel
+        # declines to bind a serial driver to a vendor-specific interface, and a bulk
+        # endpoint without them is silent with nothing to say why.
         #
-        # USBSerialDevice is the same gateware measured at 195.4 Mbps CDC-ACM loopback in
-        # docs/luna_ecp5_fpga/usb-performance.md -- CDC costs essentially nothing over raw
-        # bulk, since it is the same two stream endpoints plus descriptors.
+        # USBSerialDevice measures 195.4 Mbps CDC-ACM loopback in
+        # docs/luna_ecp5_fpga/usb-performance.md; CDC costs essentially nothing over raw
+        # bulk, being the same two stream endpoints plus descriptors.
         from luna.gateware.usb.devices.acm import USBSerialDevice
 
-        # AUX rather than CONTROL: CONTROL is shared with Apollo and needs an
-        # ApolloAdvertiser to claim, while AUX belongs to the FPGA outright. The previous
-        # code used `target_phy`, which is the port under test rather than a debug port.
+        # AUX rather than CONTROL or TARGET: CONTROL is shared with Apollo and needs an
+        # ApolloAdvertiser to claim, TARGET is the port under test, and AUX belongs to the
+        # FPGA outright.
         bus = platform.request("aux_phy", 0)
 
         # 512 is the high-speed bulk maximum. The default of 64 is the full-speed limit,
         # which enumerates at high speed and then runs at an eighth of the achievable rate.
-        # ID from the central allocation, never a locally chosen number. 0x615c -- what
-        # this used to claim -- is Apollo's own debugger and bootloader ID, so this
-        # bitstream was impersonating the debugger. See ecp5-test/usb_ids.py.
+        # ID from the central allocation in ecp5-test/usb_ids.py, never a locally chosen
+        # number: 0x615c is Apollo's own debugger and bootloader ID, and a bitstream
+        # claiming it impersonates the debugger on the host's device list.
         serial = USBSerialDevice(bus=bus,
                                  idVendor=usb_ids.VENDOR_ID,
                                  idProduct=usb_ids.product_id("riscv_console"),
@@ -894,8 +887,9 @@ class HelloSoC(Elaboratable):
 
             console_tx_buf.source.ready.eq(serial.tx.ready),
 
-            # Host -> CPU. This used to be `serial.rx.ready.eq(1)`, which accepted every
-            # byte and threw it away, so typing at the console did nothing at all.
+            # Host -> CPU. `serial.rx.ready` must come from the buffer, not be tied
+            # high: tied high accepts every byte and discards it, and typing at the
+            # console then does nothing at all.
             console_rx_buf.sink.payload.eq(serial.rx.payload),
             console_rx_buf.sink.valid.eq(serial.rx.valid),
             serial.rx.ready.eq(console_rx_buf.sink.ready),
@@ -918,12 +912,10 @@ class HelloSoC(Elaboratable):
         # scales with the clock, so a design that raises SYNC_MHZ and leaves this
         # expression alone stays correct by construction. Hardcoding 520 would not.
         #
-        # SerialLine rather than a bare AsyncSerial. This used to be an
-        # AsyncSerial wired straight to the pads here, and all three of the ways
-        # that was wrong are issue #113: the receive pad reached the FSM with no
-        # synchroniser, framing errors were delivered as characters, and the
-        # output enable came off `~tx.rdy`, which falls at the start of the stop
-        # bit rather than after it. serial_line.py has the full account.
+        # SerialLine, not a bare AsyncSerial wired to the pads. AsyncSerial alone
+        # leaves the receive pad unsynchronised, delivers framing errors as
+        # characters, and gives no output enable that survives the stop bit --
+        # issue #113, and serial_line.py has the full account.
         m.submodules.apollo_line = apollo_line = SerialLine(
             divisor=int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD), data_bits=8)
 
@@ -991,12 +983,12 @@ class HelloSoC(Elaboratable):
         # these events are brief, and a human glancing at the board samples at an
         # arbitrary moment.
         #
-        # THESE ARE NOW THE DEFAULT RATHER THAN THE ONLY THING. The GPIO
-        # peripheral above can take any LED, one at a time, by putting that pin
-        # in push-pull mode -- and until it does, the diagnostic below drives it,
-        # exactly as before. `amaranth_soc.gpio` calls that mode INPUT_ONLY and
-        # documents it as "the pin output is disabled", which is precisely the
-        # claim being made: while the CPU is not driving, something else is.
+        # THE DIAGNOSTIC IS THE DEFAULT, NOT THE ONLY DRIVER. The GPIO peripheral
+        # above can take any LED, one at a time, by putting that pin in push-pull
+        # mode; while it does not, the diagnostic below drives it.
+        # `amaranth_soc.gpio` calls the other mode INPUT_ONLY and documents it as
+        # "the pin output is disabled", which is exactly the claim being made:
+        # while the CPU is not driving, something else is.
         #
         # The reset value of Mode is INPUT_ONLY for every pin, so a bitstream
         # whose firmware never runs still lights the LEDs with the fabric's own

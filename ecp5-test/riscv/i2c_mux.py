@@ -5,72 +5,50 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Which I2C bus the one controller is driving, and which Type-C controller is
-asking for attention.
+Which I2C bus the one controller drives, and which Type-C controller wants
+attention.
 
-r1.4 has **three physically separate I2C buses**, and the reason is forced rather
-than chosen:
+r1.4 has three physically separate I2C buses, and the split is forced:
 
-    target_type_c    A4 / C4      FUSB302B @ 0x22
-    aux_type_c       H12 / G14    FUSB302B @ 0x22
-    power_monitor    D7 / C7      PAC1954  @ 0x10
+    select  bus              pins        device
+    0       target_type_c    A4 / C4     FUSB302B @ 0x22
+    1       aux_type_c       H12 / G14   FUSB302B @ 0x22
+    2       power_monitor    D7 / C7     PAC1954  @ 0x10
 
-**Both FUSB302Bs answer to 0x22**, so they cannot be distinguished on one bus.
-"Just put them on one bus" is not available in hardware. What IS available is one
-*controller*: `i2c_master.I2CMaster`'s clock and data fan out to three pin-sets
-under a two-bit select, which is the shape `docs/gateware-architecture-plan.md`
-asks for and replaces three replicated controllers with one plus a mux.
+**Both FUSB302Bs answer 0x22**, so they cannot share a bus. One `I2CMaster`
+fans out to all three pin-sets under this two-bit select --
+`docs/gateware-architecture-plan.md`, and `../../docs/comparisons.md` for the
+alternatives.
 
-## Why the select and the interrupt lines are one peripheral
-
-They describe one thing: which device the controller can currently talk to, and
-which devices want to be talked to. Splitting them would be two CSR windows for
-six bits, and the handler needs both in the same breath -- it reads `lines` to
-find out which controller asserted, then writes `select` to reach it.
+Select and interrupt lines are one peripheral because the handler needs both in
+the same breath: read `lines` to find who asserted, write `select` to reach it.
 
 ## Registers
 
-    +0  SELECT  rw  2 bits: 0 target_type_c, 1 aux_type_c, 2 power_monitor
+    +0  SELECT  rw  2 bits, values above
     +1  LINES   r   bit 0 target int, bit 1 aux int,
                     bit 2 target fault, bit 3 aux fault
 
-Both reads are pure. SELECT is a latch and LINES is a wire from four synchronised
-pads; reading either twice gives the same answer and neither clears anything. The
-FUSB302B's own interrupt registers are read-to-clear, and that is where the
-clearing belongs -- in the device, over the bus, by the driver. A CSR here that
-cleared on read would put a state-changing read one byte from the register the
-handler polls, which is the arrangement this project keeps finding at the bottom
-of its longest bugs (`uart16550.py`).
+Both reads are pure. The FUSB302B's own interrupt registers are read-to-clear
+and that is where clearing belongs -- a clear-on-read CSR here would put a
+state-changing read one byte from the register the handler polls
+(`uart16550.py`).
 
-## The select does not move under a transfer
+## Traps this is shaped around
 
-`applied` follows SELECT only while the controller is idle. Switching buses
-mid-transfer would leave the old bus with a half-finished transaction and SCL
-wherever it stood, and would put an edge on the new one that every device
-listening reads as a START -- so a write to SELECT during a transfer is held and
-takes effect when it ends, rather than being obeyed at the worst moment. Firmware
-should still select before it starts; this is what stops a firmware bug from
-becoming a bus-level one.
-
-## Idle buses are DRIVEN idle, not left floating
-
-Every bus is driven every cycle. The unselected ones get SCL high and SDA
-released, which is the idle condition -- not left undriven. These pins carry
-`PULLMODE="NONE"`, so an undriven line floats rather than idling high, and a
-floating SDA on an unselected bus is a transient that a device listening on it
-reads as a START.
-
-## The interrupt
-
-`irq` is the OR of the two `int` lines, level-sensitive, for one PLIC source. Per
-`docs/chips/fusb302b-type-c.md`: with one controller only one device can be
-addressed at a time, so per-device sources buy nothing -- the handler has to
-serialise its register reads over the shared bus regardless, and it must read
-`lines` to decide which device to service either way.
-
-**`fault` is deliberately NOT in `irq`.** It means something different from
-`int`, and it is the one worth noticing unambiguously rather than after a
-register read. It is reported in LINES and left for the poller.
+  * **The select does not move under a transfer.** `applied` follows SELECT
+    only while the controller is idle. Switching mid-transfer leaves the old
+    bus half-driven and puts an edge on the new one that every device on it
+    reads as a START. A write during a transfer is held, not obeyed.
+  * **Idle buses are DRIVEN idle.** Unselected buses get SCL high and SDA
+    released every cycle. These pins are `PULLMODE="NONE"`, so undriven means
+    floating, and a floating SDA is a transient that reads as a START.
+  * **`irq` is the OR of the two `int` lines**, level-sensitive, one PLIC
+    source. With one controller only one device is addressable at a time, so
+    per-device sources buy nothing (`docs/chips/fusb302b-type-c.md`).
+  * **`fault` is deliberately NOT in `irq`.** It means something different from
+    `int` and is worth noticing without a register read. Reported in LINES,
+    left to the poller.
 """
 
 from amaranth               import Module, Mux, Signal

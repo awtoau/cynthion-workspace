@@ -1,17 +1,15 @@
 //! An NS16550A driver, parameterised by base address.
 //!
-//! One type, any number of instances, and -- the point of the exercise -- the
-//! same code on the FPGA and under QEMU. `-M virt` presents an `ns16550a` at
-//! 0x10000000 and `ecp5-test/riscv/uart16550.py` presents the same register map
-//! at whatever address the SoC's decoder puts it. Nothing below is conditional
-//! on the target, so `scripts/soc_test.py` exercises the driver the board runs
-//! rather than a second implementation that merely agrees with it.
+//! One type, any number of instances, and the same code on the FPGA and under
+//! QEMU: `-M virt` presents an `ns16550a` at 0x10000000 and
+//! `ecp5-test/riscv/uart16550.py` presents the same register map at whatever
+//! address the SoC's decoder gives it. Nothing below is conditional on the
+//! target, so `scripts/soc_test.py` exercises the driver the board runs.
 //!
-//! This replaces a bespoke two-register console whose receive path had a read
-//! with a side effect one byte away from the register firmware polls. See the
-//! module docstring in `ecp5-test/riscv/uart16550.py` for what that cost. The
-//! discipline the driver inherits is: **poll LSR, act on RBR/THR, and never read
-//! anything else to find out whether you may.**
+//! **The discipline: poll LSR, act on RBR/THR, and never read anything else to
+//! find out whether you may.** RBR at +0 pops the FIFO; LSR at +5 is in a
+//! different 32-bit word and cannot be aliased onto it. See the module
+//! docstring in `ecp5-test/riscv/uart16550.py`.
 
 use core::ptr::{read_volatile, write_volatile};
 

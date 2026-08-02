@@ -1,43 +1,27 @@
 #!/usr/bin/env python3
 #
-# A CSR-mapped interrupt controller, replacing VexRiscv's in-CPU registers.
+# A pending/enable interrupt concentrator, as a CSR peripheral.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Concentrates many interrupt sources onto the one line standard RISC-V defines.
+Concentrates up to 32 interrupt sources onto the one machine external line
+standard RISC-V gives the CPU.
 
-VexRiscv used a non-standard `ExternalInterruptArrayPlugin`: a 32-bit
-`irq_external` input, with the mask and pending registers living *inside the
-CPU* at custom CSRs 0xBC0 (`mim`) and 0xFC0 (`mip`). luna_soc's
-`InterruptController` is therefore a pure concentrator -- it wires each
-peripheral's `irq` to a bit and the CPU does the rest.
-
-VexiiRiscv implements only standard RISC-V, where the machine external
-interrupt is a single wire (`PrivilegedPlugin.scala:185`). There is no
-interrupt array and no equivalent of those CSRs. Moondancer has around twenty
-sources -- three USB devices with control/in/out endpoints each, two timers --
-so something has to tell software which one fired, and let it mask them
-individually.
-
-This does that in a peripheral instead of in the CPU:
-
-    pending   read-only    one bit per source, the concentrated irq lines
-    enable    read-write   mask
+    pending   R    one bit per source, the concentrated irq lines
+    enable    RW   mask
     irq_out = (pending & enable) != 0
 
-That is deliberately the same information VexRiscv's CSRs carried, in the same
-bit order. The firmware's dispatch reads pending, takes `ilog2()` and converts
-to an `Interrupt` enum (`moondancer-pac/src/csr.rs:55-66`); swapping a CSR read
-for an MMIO load leaves that logic, and the ~500-line match on `pac::Interrupt`
-behind it, compiling unchanged.
+No claim, no complete, no priorities. Software reads `pending`, takes
+`ilog2()` and dispatches -- which is what moondancer's firmware already does
+(`moondancer-pac/src/csr.rs:55-66`), so its ~500-line match on
+`pac::Interrupt` compiles against this unchanged. `add()` and `interrupts()`
+keep luna_soc's signatures so `luna_soc/generate/svd.py` still finds the map
+and the generated PAC keeps its interrupt numbering.
 
-A PLIC would be the standard answer, but VexiiRiscv's is Tilelink-only, larger,
-and has claim/complete semantics the firmware does not use -- it would force
-firmware changes to solve a problem the firmware does not have.
-
-`add()` and `interrupts()` keep luna_soc's signatures so the SVD generator
-(`luna_soc/generate/svd.py`, via `introspect.interrupts()`) still finds the
-map and the regenerated PAC keeps the same interrupt numbering.
+**For a new SoC, use `vexii_plic.py` instead.** A standard PLIC is what keeps
+the firmware's interrupt path identical on the board and under QEMU's `-M
+virt`, which is where the test gate runs. This peripheral is kept for
+moondancer's existing PAC. See `../../docs/comparisons.md`.
 """
 
 from amaranth             import Module, Signal, Cat
@@ -54,8 +38,8 @@ class InterruptController(wiring.Component):
     Parameters
     ----------
     width : int
-        How many interrupt sources. 32 matches what VexRiscv's array carried,
-        so bit numbering is preserved across the swap.
+        How many interrupt sources. 32 is the width moondancer's PAC numbers
+        against, so anything less renumbers its `Interrupt` enum.
     """
 
     class Pending(csr.Register, access="r"):

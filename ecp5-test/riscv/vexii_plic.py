@@ -4,111 +4,61 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-A PLIC: many interrupt sources onto the one wire standard RISC-V gives the CPU.
+A RISC-V PLIC: many interrupt sources onto the one machine external wire.
 
-VexiiRiscv implements only standard RISC-V privileged mode, where the machine
-external interrupt is a single input (`PrivilegedPlugin`, and
-`irq_external` in `vexii_cpu.py`). Anything that concentrates several
-peripherals onto that wire, lets software mask them individually, and tells
-software which one fired, has to be a peripheral. This is that peripheral, and
-it is the standard one.
+Standard, not bespoke, so that `firmware/cynthion-soc/src/plic.rs` and RTIC's
+RISC-V backend both work unchanged -- QEMU's `-M virt` has a PLIC too, which is
+what makes `scripts/soc_test.py` evidence about the interrupt path that ships.
+The alternatives weighed are in `../../docs/comparisons.md`.
 
-## Why the standard PLIC and not something smaller
+## Register map -- fixed by riscv-plic-spec 1.0.0, not chosen here
 
-A pending/enable pair with `irq = (pending & enable) != 0` is about thirty lines
-and would work. It was nearly built. The reason it is not what is here:
-
-**QEMU's `-M virt` has a PLIC, at 0x0c000000, with the 16550 on source 10.**
-This SoC's console driver is already shared between the board and the emulator
--- `src/uart.rs` is compiled unchanged for both, because both are an NS16550A --
-and that is the entire reason `scripts/soc_test.py` is evidence about the board
-rather than about a second implementation of the same shell. A bespoke interrupt
-controller would have broken exactly that property for the interrupt path: the
-QEMU build would have needed a different one, and the gate would have stopped
-covering the code that ships.
-
-With a PLIC on both sides, `src/plic.rs` is also compiled unchanged, and the
-whole hardware/QEMU difference stays where the rest of it already is -- two
-constants in `src/target.rs`, a base address and a source number.
-
-The other reason is the one that comes later: RTIC's RISC-V backend, and every
-generic Rust PLIC driver (`riscv-peripheral`), expect this register map. A
-non-standard controller means writing an RTIC backend before RTIC can be used.
-
-## The register map, which is fixed by the spec, not chosen here
-
-Byte offsets from the base of a 4 MiB window (riscv-plic-spec 1.0.0):
+Byte offsets from the base of a 4 MiB window:
 
     0x000000 + 4*i   priority[i]   RW   per source, i in 1..sources
-    0x001000         pending       R    bit i set: source i is requesting
-    0x002000         enable        RW   bit i set: context 0 accepts source i
-    0x200000         threshold     RW   sources with priority <= this are masked
-    0x200004         claim         R    take the highest-priority pending source
-                     complete      W    finish the source whose id is written
+    0x001000         pending       R    bit i: source i is requesting
+    0x002000         enable        RW   bit i: context 0 accepts source i
+    0x200000         threshold     RW   priority <= this is masked
+    0x200004         claim (R)     take the highest-priority pending source
+                     complete (W)  finish the source whose id is written
 
-One context, which is hart 0 machine mode. `virt` has two (M and S), so its
-context stride matters and ours does not; the offsets above are context 0's in
-both, which is why firmware written for one works on the other.
+  * One context: hart 0, machine mode. `virt`'s context 0 is the same, so no
+    stride calculation is needed on either.
+  * Source 0 does not exist -- it is the "nothing pending" answer to a claim.
+  * Offsets are the spec's; WIDTHS are only as wide as this design has bits
+    for. Bytes above the implemented width read zero and ignore writes, which
+    is what the spec says reserved bits do.
 
-Source 0 does not exist. It is the PLIC's "no interrupt pending" answer from a
-claim, so its priority register is not mapped here and reads back zero.
+## Register discipline
 
-The **offsets** above are the spec's; the **widths** are only as wide as this
-design has bits for. A priority register holds three bits rather than
-thirty-two, `pending` holds one bit per source. The offsets are what a driver
-addresses, and every access it makes is a 32-bit word access at one of them; the
-byte lanes above the implemented width read back zero and ignore writes, which
-is exactly what the spec says reserved bits do. Declaring them full width would
-cost flip-flops and address decode to store zeroes.
+The rule (see `uart16550.py`): **a read must never change state, and nothing
+anyone polls may share a 32-bit word with one that does.** The standard map
+already complies:
 
-## The register discipline, and how the standard map happens to satisfy it
+  * `claim` at 0x200004 is the only side-effecting read, and it is alone in its
+    word -- `threshold` is a full word below it.
+  * `pending`, the register a poll loop reads, is two megabytes away.
+  * `pending`, `priority`, `enable`, `threshold` have no side effects either
+    way.
 
-The rule this SoC enforces, after two multi-hour bugs (see the module docstring
-in `uart16550.py`): **a read must never change state, except in a register whose
-defined purpose is that, and nothing anyone polls may share a 32-bit word with
-one that does.**
+## Level-sensitive sources -- and the livelock they can cause
 
-A PLIC has exactly one side-effecting read, the claim at 0x200004, and it is the
-same kind of read as a UART's RBR -- "give me the next one and take it off the
-queue". Everything else about the layout is in its favour:
+`pending[i]` is `sources[i] & ~claimed[i]`: a wire from the source, gated by
+this context's claim. No edge detector, no latch.
 
-  * `claim` is alone in its 32-bit word. `threshold` is the nearest register and
-    is a full word below it at 0x200000.
-  * `pending`, the register a poll loop would read, is at 0x001000 -- two
-    megabytes away from the claim. No widening, prefetch, replay or byte-lane
-    sweep can reach one from the other.
-  * `pending`, `priority`, `enable` and `threshold` are all free of side effects
-    in both directions. Reading any of them twice gives the same answer.
-
-So the standard map needed no adjustment to comply, which is the same thing that
-was true of the 16550's: register maps that have survived thirty years of being
-put behind widening bridges tend to have this property already.
-
-## Level-sensitive sources
-
-`pending[i]` is `sources[i] & ~claimed[i]` -- a wire from the source, gated by
-whether this context has claimed it and not yet completed. There is no edge
-detector and no latch.
-
-That is the right gateway for what is attached: a 16550's interrupt output is a
-level, high for as long as its receive FIFO has a byte in it and IER says to
-care. Latching an edge would mean a handler that drains only part of the FIFO
-never hears about the rest, which is a console that stops accepting input after
-one burst and looks like a hang.
-
-The claim gate is what stops the level from re-entering the handler that is
-already servicing it. `complete` releases it; if the source is still asserted at
-that point the interrupt is raised again immediately, which is correct -- there
-is still work -- and terminates, because the handler either drains the source or
-masks it (see `IER` handling in `firmware/cynthion-soc/src/irq.rs`).
+  * That is right for a 16550, whose `irq` stays high while its FIFO holds a
+    byte. Latching an edge would lose the rest of a partly-drained FIFO and
+    present as a console that accepts one burst and then hangs.
+  * **The claim gate is what stops the level re-entering the handler servicing
+    it.** `complete` releases it; a still-asserted source re-fires immediately,
+    which is correct, and terminates only because the handler drains or masks
+    it. See `firmware/cynthion-soc/src/irq.rs`.
 
 ## Cost
 
-Everything here is combinational except one flip-flop per source (`claimed`),
-the priority and enable storage, and the threshold. The address decode is the
-expensive part, because the spec's offsets span 22 bits and every mapped byte
-address is compared against all of them. That is the price of the map being the
-standard one, and it is paid in LUTs on a device with plenty of them.
+Combinational except one flip-flop per source (`claimed`), the priority and
+enable storage, and the threshold. The address decode dominates, because the
+spec's offsets span 22 bits -- the price of the map being the standard one.
 """
 
 from amaranth              import Module, Mux, Cat, C, Signal, unsigned

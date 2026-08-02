@@ -1,72 +1,59 @@
 //! What an interrupt handler is allowed to say, and when it gets said.
 //!
-//! **A handler must never print.** `Uart::put` waits for `LSR.THRE`, so writing
-//! to a console from a handler blocks it for as long as the host takes to drain
-//! a FIFO. On a level-sensitive shared source that is not a delay, it is a hang:
-//! the line is still asserted, the interrupt is taken again the moment the
-//! handler returns, and the result presents as a dead CPU with a running clock.
-//! This project has mistaken that for dead gateware more than once.
+//! [`push`] records a code and two words in a ring; the main loop drains it with
+//! [`drain`] and formats there, on a console it owns.
+//!
+//! ## A handler must never print
+//!
+//! `Uart::put` waits for `LSR.THRE`, so writing to a console from a handler
+//! blocks it for as long as the host takes to drain a FIFO. **On a
+//! level-sensitive shared source that is not a delay, it is a hang** -- the line
+//! is still asserted, the interrupt is retaken the moment the handler returns,
+//! and it presents as a dead CPU with a running clock. This project has mistaken
+//! that for dead gateware more than once.
+//!
+//! Formatting is deferred for a second reason: `core::fmt` is not cheap. A
+//! `writeln!` with two arguments is a dispatch through `Arguments`, a conversion
+//! per value and a call per fragment. A code and two `u32`s is three stores.
 //!
 //! ## How the rule is enforced
 //!
-//! Mostly by ownership, and deliberately so. `main` owns the `Uart` values and
-//! passes them down by `&mut`; a handler is a free function with no arguments
-//! and nothing to be handed one from. There is no global `print!`, no logging
-//! singleton and no `static mut` anywhere in this crate, so the only route to a
-//! console from handler context is to construct a `Uart` from a base address --
-//! which is why `src/irq.rs` uses [`crate::uart::UartRx`], a receive-only view
-//! with no transmit method and no `core::fmt::Write`, and imports nothing else.
+//!   * **Ownership.** `main` owns the `Uart` values and passes them down by
+//!     `&mut`; a handler is a free function with nothing to be handed one from.
+//!     No global `print!`, no logging singleton, no `static mut` in this crate.
+//!     `src/irq.rs` takes [`crate::uart::UartRx`], which has no transmit method
+//!     and no `core::fmt::Write`, so `write!` there does not compile.
+//!   * **Grep, for the rest.** Rust's privacy is per-module-tree, so a private
+//!     item in the crate root is nameable from every child module.
+//!     `scripts/soc_irq_log_check.py` fails any module containing a handler that
+//!     mentions `write!`, `writeln!`, `fmt::Write` or `Uart`. It is the `irqlog`
+//!     check in `scripts/check.py`.
 //!
-//! What ownership cannot do is stop someone importing `Uart` into a handler
-//! module tomorrow. Rust's privacy is per-module-tree, so a private item in the
-//! crate root is still reachable from every child module; there is no way to
-//! make `Uart` unnameable from `irq.rs` without splitting the crate in two. So
-//! the remainder is a grep: `scripts/soc_irq_log_check.py` finds every module
-//! containing an interrupt handler and fails if one of them mentions `write!`,
-//! `writeln!`, `fmt::Write` or `Uart`. It runs as the `irqlog` check in
-//! `scripts/check.py`.
+//! A rule with no alternative gets worked around rather than followed, which is
+//! why a handler CAN log -- it just cannot be what formats and transmits.
 //!
-//! ## The pattern that makes the rule followable
+//! ## Wait-free, bounded, lossy on purpose
 //!
-//! A rule with no alternative gets worked around rather than followed, so a
-//! handler CAN log -- it just cannot be the thing that formats and transmits.
-//! [`push`] records a code and two words in a ring; the main loop drains it with
-//! [`drain`] and does the formatting there, on a console it owns.
-//!
-//! Formatting is deferred rather than done in the handler because
-//! `core::fmt` is not cheap: a `writeln!` with two arguments is a dispatch
-//! through `Arguments`, a decimal or hex conversion per value and a call per
-//! fragment. A code and two `u32`s is three stores.
-//!
-//! ## Wait-free, bounded, and lossy on purpose
-//!
-//! [`push`] never spins and never waits. If the ring is full the record is
-//! DROPPED and a counter incremented -- a storm must degrade to lost lines, not
-//! to a stalled handler, because a stalled handler on this SoC is the failure
-//! this whole file exists to prevent.
-//!
-//! **The drop count is reported.** [`dropped`] is printed by the `irq` shell
-//! command and by [`drain`] itself the first time it notices a loss. Silently
-//! losing log lines is how a fault becomes invisible, and a queue that quietly
-//! discards under exactly the conditions you most want to see is worse than no
-//! queue at all.
+//!   * [`push`] never spins and never waits. A full ring DROPS the record and
+//!     increments a counter: a storm must degrade to lost lines, not to a
+//!     stalled handler.
+//!   * **The drop count is reported** by the `irq` shell command and by
+//!     [`drain`] the first time it notices a loss. A queue that quietly discards
+//!     under exactly the conditions you most want to see is worse than no queue.
 //!
 //! ## One producer at a time, on one hart
 //!
-//! The handler is the natural producer and normal context is the natural
-//! consumer, which would make this a plain SPSC ring like the receive rings in
-//! `src/irq.rs`. But [`log_from_irq!`] is meant to be usable from ANY context --
-//! a rule that only works in half the program is a rule people learn to ignore
-//! -- and a push from normal context can be interrupted halfway through by a
-//! push from a handler.
+//! [`log_from_irq!`] is meant to be usable from ANY context -- a rule that works
+//! in half the program is a rule people learn to ignore -- and a push from normal
+//! context can be interrupted halfway by a push from a handler. So [`push`]
+//! clears `mstatus.MIE` for the length of the copy and restores it: three or four
+//! instructions, no loop, still wait-free.
 //!
-//! So [`push`] clears `mstatus.MIE` for the length of the copy and restores it.
-//! Three or four instructions, no loop, still wait-free. **In a handler this
-//! costs nothing and changes nothing**: the hardware already cleared MIE on trap
-//! entry and this firmware never sets it inside a handler, so the save/restore
-//! writes back the zero it read. The alternative -- a compare-exchange loop to
-//! reserve a slot -- would be lock-free rather than wait-free and would still
-//! need the payload published separately.
+//! **In a handler this costs nothing and changes nothing**: the hardware already
+//! cleared MIE on trap entry and this firmware never sets it inside a handler, so
+//! the save/restore writes back the zero it read. A compare-exchange loop to
+//! reserve a slot would be lock-free rather than wait-free and would still need
+//! the payload published separately.
 //!
 //! Nothing here is target-specific. It is compiled unchanged for the FPGA and
 //! for QEMU, and `scripts/soc_test.py` exercises fill, wrap and drop counting

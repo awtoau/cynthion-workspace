@@ -1,55 +1,38 @@
 #!/usr/bin/env python3
 #
-# HyperRAM as a firmware staging buffer: Apollo writes it, the CPU boots from it.
+# HyperRAM as a firmware staging buffer: the CPU writes it, the bootloader reads it.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Lets Apollo load RISC-V firmware over JTAG without rebuilding the bitstream.
+Loads RISC-V firmware without rebuilding the bitstream.
 
-## The problem
+    host --USB bulk--> CPU --CSR--> HyperRAM --bootloader--> block RAM --> run
 
-Firmware is block RAM init, so it lives *inside* the bitstream. Changing one byte means
-a full resynthesis -- about 60 s -- to produce a design whose logic is bit-for-bit
-identical.
+Firmware is block RAM init, so it normally lives inside the bitstream and
+changing one byte costs a ~60 s resynthesis. Here the image goes into HyperRAM
+(8 MiB, so images are not block-RAM sized) and a small resident bootloader
+copies it into block RAM and jumps to it.
 
-`ecpbram` can swap BRAM contents in a built bitstream in about a second, and that works,
-but it needs the design synthesised with a known *random* placeholder image: it locates
-the old contents by value, and a real firmware image is ~87% zeroes, which also fill
-every unused BRAM tile on the die. It refuses with "Conflicting from pattern". Building
-against a placeholder couples every rebuild to a magic file, and a stale `.config`
-silently yields the wrong firmware.
+## One master, two phases
 
-## The path this takes
+The CPU stages the image, then a reset runs the bootloader that reads it back.
+Same master both times, so there is no arbiter and nothing to be fair about --
+a deliberate contrast with `FairSPIControlPortCrossbar`, where two masters do
+compete.
 
-    Apollo --JTAG--> HyperRAM --bootloader--> block RAM --> run
+## The CPU port moves one word at a time
 
-Apollo writes the image into HyperRAM over JTAG, releases the CPU from reset, and a small
-resident bootloader in block RAM copies it across and jumps to it. Nothing rewrites the
-bitstream, nothing depends on matching synthesised contents, and the image can be as
-large as HyperRAM (8 MiB) rather than as large as block RAM.
+Fetch a 16-bit word, auto-increment, raise a flag the firmware polls.
 
-## Two masters, never at once
+  * No FIFO, no side-effecting read, no register whose value depends on how
+    many times it has been read. That last class of bug cost a day on the SPI
+    controller, where reading `data` popped a FIFO and a cached line then
+    returned the first byte forever.
+  * The cost is one HyperRAM transaction per word instead of a burst: roughly
+    8 ms for a 32 KiB image at 60 MHz. Bursting is available later.
 
-HyperRAM is reached by JTAG *and* by the CPU, but never simultaneously: Apollo holds the
-CPU in reset while it writes, and only reads happen after the CPU is released. So this
-uses a strict priority rather than a fair arbiter -- there is no contention to be fair
-about. That is a deliberate contrast with `FairSPIControlPortCrossbar`, where two masters
-genuinely do compete and starvation was a real bug.
-
-## Why the CPU port is one word at a time
-
-The JTAG side bursts through a FIFO, because that is what the upstream diagnostic does
-and it is proven. The CPU side deliberately does not: it fetches a single 16-bit word,
-auto-increments the address, and raises a valid flag the firmware polls.
-
-No FIFO, no side-effecting reads, and no register whose value depends on how many times
-it has been read -- the class of bug that cost a day on the SPI controller, where reading
-`data` popped a FIFO and a cached line made every subsequent read return the first byte
-forever.
-
-It is slower: one HyperRAM transaction per word instead of a burst. For a 32 KiB image
-that is roughly 8 ms at 60 MHz, against the ~60 s it replaces. Bursting is an
-optimisation available later; correctness first.
+Placeholder-BRAM (`ecpbram`), JTAG staging and this USB path are compared in
+`../../docs/comparisons.md`.
 """
 
 from amaranth import Elaboratable, Module, Mux, Signal
@@ -200,16 +183,11 @@ class HyperRAMBoot(wiring.Component):
 class BootRAM(Elaboratable):
     """HyperRAM with a single CPU-side port.
 
-    There is no JTAG loader here any more. Apollo used to stage images through
-    `JTAGRegisterInterface`, and it worked -- but at 34 ms per 16-bit word, entirely USB
-    round-trip bound, a 32 KiB image took about nine minutes: slower than the ~60 s
-    bitstream rebuild it existed to replace. The CPU receives images over the USB bulk
-    endpoint it already has and writes them here itself, which is the same transport
-    `apollo flash-write` uses and roughly four orders of magnitude faster.
-
-    That also removes the arbiter. The only two users were JTAG and the CPU; now the CPU
-    stages an image and, after a reset, the bootloader reads it back -- the same master in
-    two phases, which cannot collide with itself.
+    The CPU is the only master: it stages an image over its USB bulk endpoint and,
+    after a reset, the bootloader reads it back. There is deliberately no JTAG port
+    -- `JTAGRegisterInterface` staging measured 34 ms per 16-bit word, USB
+    round-trip bound, which is nine minutes for a 32 KiB image against the ~60 s
+    rebuild it would have replaced (`../../docs/comparisons.md`).
 
     Attributes
     ----------

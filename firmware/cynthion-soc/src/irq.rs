@@ -1,68 +1,49 @@
 //! The machine external interrupt handler, and the receive rings behind it.
 //!
-//! This is where the console stopped being polled. The shell used to sit in a
-//! loop reading LSR on every UART in turn; now each UART raises a PLIC source
-//! when a byte lands, the handler below moves it into a ring, and the shell
-//! takes bytes out of the ring. The shell's behaviour is unchanged from the
-//! outside -- same prompt, same echo, same idle re-banner.
-//!
-//! ## Why bother, when polling worked
-//!
-//! Because RTIC cannot be layered on a polled main loop. RTIC's model is that
-//! hardware raises an interrupt, the runtime dispatches to a task, and priorities
-//! decide who preempts whom; every part of that needs an interrupt controller
-//! reporting which source fired. That is what `src/plic.rs` and
-//! `ecp5-test/riscv/vexii_plic.py` now provide, and this file is the minimum
-//! that proves the path works end to end.
-//!
-//! ## Nothing in this file may print
-//!
-//! This is the module the machine external handler lives in, and a handler that
-//! writes to a console spins on `LSR.THRE` inside an interrupt -- on a
-//! level-sensitive shared source that is a hang, and it presents as a dead CPU.
-//! So the receive path uses [`UartRx`], which is the receive and
-//! interrupt-control half of a 16550 and has no transmit method and no
-//! `core::fmt::Write`: `write!` here does not compile. What a handler says
-//! instead goes through `src/events.rs`, which records a code and two words and
-//! lets the main loop do the formatting.
-//!
-//! `scripts/soc_irq_log_check.py` (the `irqlog` check) enforces the rest by
-//! grep, because Rust's privacy cannot stop a sibling module naming `Uart`.
-//!
-//! ## No `#[cfg]` here either
-//!
-//! Nothing in this file is target-specific. The PLIC is standard on both the SoC
-//! and QEMU's `-M virt`, so the only differences -- where it is, and which source
-//! number each UART is on -- are constants in `src/target.rs`, exactly as the
-//! UART base addresses already were. `scripts/soc_test.py` therefore exercises
-//! this handler, not a stand-in for it.
+//! Each UART raises a PLIC source when a byte lands; the handler moves it into a
+//! per-console ring; the shell takes bytes out. Nothing in this file is
+//! target-specific -- the PLIC is standard on the SoC and on QEMU's `-M virt`, so
+//! `scripts/soc_test.py` exercises this handler rather than a stand-in.
 //!
 //! ## The livelock this is written to avoid
 //!
-//! A 16550's interrupt is a LEVEL: high for as long as a byte is waiting and
-//! IER.ERBFI is set. If the handler returns without clearing the condition, the
-//! interrupt is taken again before the interrupted code executes a single
-//! instruction, forever. The CPU is then fully occupied and the board looks
-//! hung, with a clock that is running and a peripheral that is working.
+//! A 16550's interrupt is a LEVEL: high while a byte is waiting and IER.ERBFI is
+//! set. **A handler that returns without clearing the condition is re-entered
+//! before the interrupted code executes one instruction, forever** -- a board
+//! that looks hung, with a running clock and a working peripheral.
 //!
-//! There are exactly two ways for the handler to clear the condition, and it
-//! uses both:
+//! Two ways to clear it, and this handler uses both:
 //!
-//!   * drain the byte -- which is the normal case, and
-//!   * if the ring has no room, **mask the source** (`disable_rx_interrupt`) and
-//!     let the consumer run. [`pop`] re-arms it.
+//!   * drain the byte -- the normal case
+//!   * if the ring is full, **mask the source** (`disable_rx_interrupt`) and let
+//!     the consumer run. [`pop`] re-arms it.
 //!
-//! What it must never do is read a byte it has nowhere to put. That byte is gone
-//! from the FIFO the instant RBR is read, so the room is checked first.
+//! **Never read a byte with nowhere to put it.** RBR pops the FIFO on read, so
+//! the room is checked first.
+//!
+//! ## Nothing in this file may print
+//!
+//! A handler that writes to a console spins on `LSR.THRE` inside an interrupt,
+//! which on a level-sensitive shared source is a hang that presents as a dead
+//! CPU. So the receive path uses [`UartRx`] -- the receive and interrupt-control
+//! half of a 16550, with no transmit method and no `core::fmt::Write`, so
+//! `write!` here does not compile. What a handler wants to say goes through
+//! `src/events.rs` as a code and two words for the main loop to format.
+//!
+//! Rust's privacy cannot stop a sibling module naming `Uart`, so the rest is
+//! enforced by grep: `scripts/soc_irq_log_check.py`, the `irqlog` check.
 //!
 //! ## Concurrency, on one hart with no preemption
 //!
-//! One producer (this handler) and one consumer (the shell). The handler cannot
+//! One producer (this handler), one consumer (the shell). The handler cannot
 //! preempt itself -- `mstatus.MIE` is cleared by hardware on trap entry and this
 //! firmware never re-enables it inside a handler -- so the ring needs no lock,
 //! only that the two indices are read and written atomically and in order.
 //! `AtomicU8`/`AtomicUsize` with acquire/release gives that, and on riscv32imac
 //! it compiles to ordinary loads and stores with `fence`s.
+//!
+//! Interrupt-driven rather than polled because RTIC cannot be layered on a polled
+//! main loop; see `docs/comparisons.md`.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize,
                          Ordering};

@@ -7,41 +7,32 @@
 A stream in, the same stream out, with a chosen amount of slack and an optional
 clock-domain crossing in between.
 
-## Why this is not part of the UART
-
-`uart16550.py` has fixed 16-byte FIFOs because the NS16550A has fixed 16-byte
-FIFOs. Every byte of buffering beyond that exists to cover a property of the
-*transport* -- how long the far end can be busy, how large a packet it moves,
-what clock it runs on -- and none of those are properties of a register map.
-
-They used to live in one module and quietly invalidated each other. The console
-peripheral's 1024-byte FIFO was justified in a comment as "two 512-byte USB
-packets: enough that the CPU can fill one while another is in flight". Later,
-`serial.tx.last.eq(1)` changed the endpoint to one byte per packet, so a console
-line would not sit unsent waiting for 512 characters that a console never emits.
-Both decisions were right. Together they left a block RAM spent on packet
-pipelining for a path that no longer pipelines packets, and nothing pointed at
-the contradiction because it was inside a module about register layout.
-
-So: buffering is declared where the transport is chosen, next to the reason.
+Buffering lives HERE, next to where the transport is chosen -- not in
+`uart16550.py`, whose 16-byte FIFOs are 16 bytes because the NS16550A's are.
+Every byte beyond that covers a property of the transport (how long the far end
+can be busy, its packet size, its clock), and none of those are properties of a
+register map.
 
 ## Sizing
 
-The number to pick is "how many bytes may the CPU produce while the far end is
-not accepting any". For the USB CDC console with one byte per packet that is
-roughly one USB frame's worth of stall, which is a handful of bytes -- the CPU
-writes a byte, the endpoint takes it, the host polls. Small.
+The question is "how many bytes may the CPU produce while the far end accepts
+none".
 
-The reason to care on this board: 16 entries of 8 bits map to distributed LUT
-RAM (TRELLIS_DPR16X4) on the ECP5, while 1024 entries of 8 bits map to a block
-RAM (DP16KD). The design uses 44 of the 56 DP16KD this die has, and the CPU's
-caches, the block RAM the firmware runs from, the USB endpoint buffers and the
-flash ILA all want them. A buffer sized by habit rather than by measurement is
-paid for out of that budget.
+  * USB CDC console, one byte per packet: roughly one frame's worth of stall --
+    a handful of bytes.
+  * Do not guess large. On the ECP5, 16 entries of 8 bits are distributed LUT
+    RAM (TRELLIS_DPR16X4); 1024 entries are a block RAM (DP16KD). This design
+    uses 42 of the die's 56 DP16KD, and the caches, firmware BRAM, USB endpoint
+    buffers and flash ILA all compete for the rest.
 
-Overflow is dropped at the *producer* side by backpressure: `sink.ready` goes low
-and the 16550 stops accepting from its own FIFO, so the CPU sees THRE clear and
-waits. Nothing is silently lost as long as the producer honours ready.
+## Overflow
+
+Dropped at the PRODUCER by backpressure: `sink.ready` goes low, the 16550 stops
+accepting, the CPU sees THRE clear and waits. Nothing is lost as long as the
+producer honours `ready`.
+
+Why elastic buffering at the transport rather than a deep FIFO in the UART:
+`../../docs/comparisons.md`.
 """
 
 from amaranth               import Module

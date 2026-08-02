@@ -72,11 +72,10 @@ MAX_PACKET_SIZE = 512
 
 # From the central allocation in ecp5-test/usb_ids.py, never a locally chosen number.
 #
-# This previously claimed LUNA's 0x615b -- as did usb_oneway.py and usb_timing.py, so
-# three bitstreams were indistinguishable from each other and from LUNA itself. The
-# reason given at the time was that the installed udev rules already grant uaccess to
-# that ID, which libusb needs. scripts/install_udev.py now grants it per allocated ID
-# instead, so correctness does not depend on borrowing someone else's identity.
+# Borrowing LUNA's 0x615b makes this bitstream indistinguishable from LUNA and from
+# every other bitstream that borrows it. The pull towards doing so is that libusb needs
+# uaccess and the installed udev rules already grant it for that ID;
+# scripts/install_udev.py grants it per allocated ID instead.
 USB_VENDOR_ID  = usb_ids.VENDOR_ID
 USB_PRODUCT_ID = usb_ids.product_id("usb_bulk")
 

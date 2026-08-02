@@ -1,49 +1,55 @@
 #!/usr/bin/env python3
 #
-# VexiiRiscv as a drop-in replacement for luna_soc's VexRiscv component.
+# An RV32IMAC VexiiRiscv core with caches, on Wishbone.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Wraps a Wishbone-configured VexiiRiscv in the shape luna_soc's VexRiscv has.
-
-The moondancer SoC attaches its CPU by two Wishbone masters, `ibus` and `dbus`,
-each 30-bit addressed with 32-bit data and the `err`/`cti`/`bte` features. If a
-replacement presents the same signature, the rest of the SoC does not have to
-change: the arbiter, the decoder, the CSR bridge and every peripheral see a
-Wishbone master and do not care what generates it.
-
-VexiiRiscv's *default* configuration would be a poor fit -- 41 top-level ports
-across three native SpinalHDL stream buses. But it ships Wishbone bridges
-upstream, and with them the core presents exactly two Wishbone masters.
-
-**Caches are not optional here.** The cacheless Wishbone bridge asserts
-`!up.p.withAmo` (`LsuCachelessBridge.scala:203`), so it cannot be built with
-atomics. Moondancer's firmware targets `riscv32imac`, and the A is atomics. The
-L1 bridge carries no such assertion, so the cached configuration is the only one
-that can run the existing firmware.
-
-Three interrupt lines replace VexRiscv's 32-bit `irq_external` array. VexRiscv
-used a non-standard `ExternalInterruptArrayPlugin` with mask and pending
-registers inside the CPU at custom CSRs 0xBC0/0xFC0; VexiiRiscv implements only
-standard RISC-V, where the external interrupt is a single wire. Concentrating
-many sources onto it, and letting software find out which fired, needs a
-separate peripheral, and **that peripheral is `vexii_plic.py`** -- a standard
-RISC-V PLIC, which is what `vexii_hello_soc.py` drives `irq_external` from.
-
-`vexii_irq.py` is the earlier, smaller concentrator: pending and enable, no
-claim or complete, laid out to keep moondancer's generated PAC compiling. It is
-not in any SoC here and should not be chosen for a new one without reading the
-"Why the standard PLIC and not something smaller" section of `vexii_plic.py`
-first -- the short version is that QEMU's `-M virt` has a PLIC, so a standard one
-is what keeps the firmware's interrupt path the same code on the board and under
-the test gate.
-
-`irq_timer` and `irq_software` need a CLINT and there is not one yet; SoCs here
-tie them off explicitly rather than leaving them undriven, so that "no source"
-and "nobody wired it" do not look identical.
+A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
 
     from vexii_cpu import VexiiRiscv
     cpu = VexiiRiscv(reset_addr=0x100b0000)
+
+## Ports
+
+    ibus          Out  instruction fetch, through the L1 I-cache
+    dbus          Out  data, through the L1 D-cache -- `main=1` PMA regions only
+    iobus         Out  uncached data -- every `main=0` (I/O) PMA region
+    irq_external  In   one wire; drive it from `vexii_plic.py`
+    irq_timer     In   needs a CLINT; tie off until there is one
+    irq_software  In   likewise
+
+All three buses are 30-bit addressed, 32-bit data, granularity 8, with
+`err`/`cti`/`bte` -- the signature every peripheral and bridge in this tree
+expects.
+
+## Constraints, each of which fails silently if ignored
+
+  * **Caches are mandatory.** The cacheless Wishbone bridge asserts
+    `!up.p.withAmo` (`LsuCachelessBridge.scala:203`), so it cannot carry
+    atomics, and the firmware target is `riscv32imac`. The L1 bridge has no
+    such assertion.
+  * **`--lsu-l1-wishbone` is a separate flag from `--lsu-wishbone`**, and both
+    are needed with caches on. See `GENERATE_FLAGS`.
+  * **Every memory region must be declared.** VexiiRiscv's `defaultPma` covers
+    only 0x80000000 and 0x10000000; anything else traps on every access,
+    including stack pushes, and presents as a dead CPU. See `generate`.
+  * **`iobus` must be connected.** Leaving it dangling synthesises, meets
+    timing and enumerates -- and every peripheral store waits forever for an
+    ACK with no driver.
+
+## Interrupts
+
+Standard RISC-V: one machine external wire, not VexRiscv's 32-bit
+`irq_external` array with mask/pending in CPU CSRs. Concentrating sources and
+reporting which fired is therefore a peripheral's job -- `vexii_plic.py`, a
+standard PLIC. Tie `irq_timer`/`irq_software` off explicitly so "no source" and
+"nobody wired it" do not look identical.
+
+`vexii_irq.py` is a smaller pending/enable concentrator kept for moondancer's
+generated PAC. It is in no SoC here; prefer the PLIC.
+
+The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
+cacheless, PLIC vs a smaller concentrator -- are in `../../docs/comparisons.md`.
 """
 
 import subprocess
@@ -122,8 +128,7 @@ def generate(reset_addr, cache_sets=64, output=None, regions=None):
     # a dead CPU.
     #
     # main=1 means normal cacheable memory; main=0 marks I/O, which is what
-    # keeps peripheral accesses out of the data cache. That replaces
-    # VexRiscv's hardcoded "uncached iff address bit 31".
+    # keeps peripheral accesses out of the data cache and routes it to `iobus`.
     for region in regions:
         flags += ["--region", region]
 
@@ -149,11 +154,11 @@ def generate(reset_addr, cache_sets=64, output=None, regions=None):
 
 
 class VexiiRiscv(wiring.Component):
-    """VexiiRiscv presenting luna_soc's VexRiscv interface.
+    """A VexiiRiscv core as an Amaranth component.
 
-    `irq_external` is a single line rather than VexRiscv's 32-bit array,
-    because that is what standard RISC-V defines. Everything else matches, so
-    this substitutes into `facedancer/top.py` without touching the bus fabric.
+    The bus signature -- 30-bit address, 32-bit data, granularity 8, with
+    `err`/`cti`/`bte` -- is what every arbiter, decoder and CSR bridge in this
+    tree connects to.
     """
 
     name       = "vexiiriscv"

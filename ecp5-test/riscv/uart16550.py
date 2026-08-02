@@ -4,113 +4,80 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-The ordinary 16550 UART, as a CSR peripheral. Its value is being unremarkable.
+A standard NS16550A register map in front of an `amaranth.lib.stream` byte pipe.
 
-## Why this replaces the bespoke console peripheral
+Its value is being unremarkable: byte-identical to the NS16550A QEMU's `-M virt`
+presents, so `firmware/cynthion-soc/src/uart.rs` and `scripts/soc_test.py` cover
+the driver that ships on the board.
 
-The peripheral this supersedes packed four byte registers into one 32-bit word:
+## Registers
 
-    +0  data      W   write a byte
-    +1  ready     R   room to write
-    +2  rx_data   R   READING THIS POPPED THE RX FIFO
-    +3  rx_valid  R   a byte is waiting
-
-Firmware polls `rx_valid` in a tight loop, and a side-effecting register one byte
-away from the polled one is a trap laid for every layer between the CPU and the
-FIFO. Anything that widens, prefetches, speculates, replays or retries a read --
-a cache line fill, a bus bridge that sweeps all four byte lanes, a debugger
-peeking at memory -- consumes a received byte that no software ever asked for,
-and there is nothing in the firmware to see. On this board a build that never
-called `Console::get()` printed normally while one that polled it went silent.
-
-**The rule this file enforces: a read must never change state, and status must
-never share a 32-bit word with a side-effecting register.** The same class of bug
-cost a day on `luna_soc`'s SPIController, where reading `data` pops its RX FIFO.
-
-Here RBR is at +0 and LSR is at +5. They are in *different 32-bit words*, so the
-poll loop and the pop can no longer be aliased by anything, whatever the bus
-fabric does with byte enables. That is the structural fix; the standard register
-map just happens to be laid out correctly for it, which is not a coincidence --
-16550s have lived behind widening bridges since 1987.
-
-## Strictly standard, and deliberately dull
-
-    +0  RBR (R) / THR (W)  receive buffer / transmit holding   (DLL when LCR.DLAB)
-    +1  IER                interrupt enable                    (DLM when LCR.DLAB)
+    +0  RBR (R) / THR (W)  receive / transmit           (DLL when LCR.DLAB)
+    +1  IER                interrupt enable             (DLM when LCR.DLAB)
     +2  IIR (R) / FCR (W)  interrupt id / FIFO control
-    +3  LCR                line control (bit 7 is DLAB)
+    +3  LCR                line control; bit 7 is DLAB
     +4  MCR                modem control
-    +5  LSR (R)            line status: bit 0 DR, bit 5 THRE, bit 6 TEMT
+    +5  LSR (R)            bit 0 DR, bit 5 THRE, bit 6 TEMT
     +6  MSR (R)            modem status
     +7  SCR                scratch
 
-Fixed 16-byte FIFOs. No depth register, no 16650/16750 extensions, no enhanced
-mode -- adding those would buy a driver nobody has and cost the one property
-worth having, which is that this is byte-identical to the NS16550A QEMU's
-`-M virt` presents. The firmware that drives the board and the firmware
-`scripts/soc_test.py` drives under QEMU are then the same code, so a green test
-says something about the hardware instead of about a second implementation of
-the same shell.
+Fixed 16-byte FIFOs. No 16650/16750 extensions, no enhanced mode.
+
+## The rule this peripheral exists to enforce
+
+**A read must never change state, and nothing anyone polls may share a 32-bit
+word with a register that does.**
+
+RBR is at +0 and LSR is at +5, so they are in different words and no widening,
+prefetch, replay or byte-lane sweep can pop the RX FIFO on behalf of a poll
+loop. That is structural, not a convention someone has to remember.
+
+  * **Reading IIR clears nothing here.** On a real part it clears the
+    transmit-empty interrupt -- a state-changing read at +2, in the same word as
+    RBR. This is the only behavioural difference from QEMU's 16550, and
+    therefore the only thing `soc_test.py` cannot speak for. What a driver must
+    do instead is on the IIR block below.
+  * **LSR bits 1..4 always read 0.** Overrun really can happen (a byte arriving
+    with the RX FIFO full is dropped) but a real part reports it in a bit that
+    a read of LSR clears. Silence is the cheaper lie; size the transport buffer
+    instead (`stream_buffer.py`).
 
 ## There is no UART in this UART
 
-No baud rate generator, no start bits, no shift register, no line at all. This
-is a byte pipe onto an `amaranth.lib.stream` source/sink pair; what sits behind
-it is the instantiator's choice (USB CDC here, an FPGA pin elsewhere). The
-following exist only so a generic driver's setup sequence succeeds:
+No baud generator, no start bits, no line. Bytes go in and out on stream ports;
+the transport is the instantiator's choice (USB CDC, or a pin via
+`serial_line.py`). These exist only so a generic driver's setup sequence
+succeeds, and each is stored and otherwise ignored:
 
-  * DLL/DLM (the divisor latches) store and read back and set no rate whatsoever.
-    They are here because a driver that sets DLAB, writes a divisor and clears
-    DLAB again would otherwise transmit the divisor as two characters.
-  * LCR's word-length, parity and stop-bit fields are stored and ignored. There
-    are no bits on a wire to frame.
-  * MCR is stored and ignored -- including bit 4, LOOP: no loopback is wired.
-  * MSR reads a constant "modem ready" (CTS, DSR and DCD asserted, no deltas), so
-    a driver that waits for CTS before transmitting does not wait forever.
-  * LSR bits 1..4 (overrun, parity, framing, break) always read 0. Parity,
-    framing and break cannot occur without a line. Overrun can -- a byte arriving
-    with the RX FIFO full is dropped -- but a real 16550 reports it in a bit that
-    a *read of LSR clears*, and a read that changes state is the entire thing
-    this peripheral exists to eliminate. Silence about overrun is the cheaper
-    lie: use the transport's own buffering to avoid it (see `stream_buffer.py`).
+    DLL/DLM   set no rate; without them a driver would transmit its divisor
+    LCR       word length, parity, stop bits -- no bits on a wire to frame
+    MCR       including bit 4 LOOP; no loopback is wired
+    MSR       reads a constant "modem ready" so a CTS wait terminates
 
-## The interrupt, and the one place this is deliberately not an NS16550A
+## Interrupt
 
-`irq` is a level, asserted while `(IER.ERBFI and LSR.DR)` or
-`(IER.ETBEI and LSR.THRE)`, and reported through IIR in the standard encoding.
-It goes to `vexii_plic.py`. IER resets to zero, so a design that ignores this
-output and polls LSR -- which is what everything here did until now -- is
-unaffected.
-
-**Reading IIR does not clear anything.** On a real part it clears the
-transmit-empty interrupt, which would be a state-changing read at +2, in the
-same 32-bit word as RBR at +0: the exact hazard this file was written to remove,
-moved over by two bytes. The full argument, and what a driver must do instead,
-is in the comment on the IIR block below. It is the only behavioural difference
-between this peripheral and the one QEMU's `-M virt` presents, and it is
-therefore the only thing `scripts/soc_test.py` cannot speak for.
+`irq` is a LEVEL, asserted while `(IER.ERBFI and LSR.DR)` or
+`(IER.ETBEI and LSR.THRE)`, reported through IIR in the standard encoding, and
+wired to `vexii_plic.py`. IER resets to zero, so a design that polls LSR and
+ignores `irq` is unaffected.
 
 ## Buffering is not this module's business
 
-The FIFOs here are 16 bytes because the NS16550A's are 16 bytes, and that is the
-only reason. Deep or elastic buffering belongs between this peripheral and
-whatever transport carries the bytes, sized for that transport -- see
-`ecp5-test/riscv/stream_buffer.py`. The two concerns were previously in one
-module and silently invalidated each other: a 1024-byte FIFO justified as "two
-512-byte USB packets" outlived the change to one byte per packet
-(`serial.tx.last.eq(1)`, for console latency) and went on costing a block RAM for
-a reason that no longer existed.
+16 bytes because the NS16550A has 16 bytes. Anything deeper belongs between
+this peripheral and the transport, sized for that transport --
+`stream_buffer.py`.
 
 ## Instantiating more than one
 
-Nothing here knows its own address. There is no module-level state, no fixed
-base, and no name baked into the register map, so a design may instantiate as
-many as it has stream endpoints to attach:
+Nothing here knows its own address: no module state, no fixed base, no name in
+the register map.
 
     console = Uart16550()
     apollo  = Uart16550()
 
-and place each with its own `WishboneCSRBridge` at its own base address.
+Place each behind its own `WishboneCSRBridge` at its own base address.
+
+Bespoke vs 16550, and the FIFO-depth options, are in `../../docs/comparisons.md`.
 """
 
 from amaranth               import Module, Mux, Cat, C, Signal
@@ -283,7 +250,7 @@ class Uart16550(wiring.Component):
         dll = Signal(8, init=1)
         dlm = Signal(8, init=0)
 
-        # Interrupt enable, and it now enables interrupts.
+        # Interrupt enable. Bits 0 and 1 drive `irq`; 2 and 3 are stored only.
         #
         #   bit 0  ERBFI  received data available
         #   bit 1  ETBEI  transmit holding register empty
@@ -291,9 +258,6 @@ class Uart16550(wiring.Component):
         #                 setting it enables nothing (see the module docstring
         #                 on LSR bits 1..4)
         #   bit 3  EDSSI  modem status -- MSR is a constant, so likewise
-        #
-        # This used to be storage and nothing else, with a comment saying a
-        # driver that enabled interrupts would wait forever. It no longer waits.
         ier = Signal(8)
 
         # FCR bit 0. Reported back through IIR bits 7:6 so a driver's FIFO probe

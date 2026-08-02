@@ -66,163 +66,27 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 
 ## Diverged, with reasons
 
-### Clock generation — `VariableClockDomainGenerator`
+Each row below is a divergence from upstream. **The technical detail — what upstream does,
+what the measurement showed, what ours does instead — lives in
+[`comparisons.md`](comparisons.md).** This table is the policy view: what we replaced, and
+whether the reason was a defect, a limit, or a standard we preferred to adopt.
 
-Replaces `LunaECP5DomainGenerator`. In `repos/apollo/apollo_fpga/gateware/variable_clock.py`.
+| what | ours | why it diverged | detail |
+|---|---|---|---|
+| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. #111 | [3](comparisons.md#3-clock-generation) |
+| SPI crossbar | `FairSPIControlPortCrossbar` (`ecp5-test/riscv/vexii_flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [11](comparisons.md#11-spi-flash-crossbar) |
+| SPI controller | `HoldableSPIController` (same file) | **upstream defect.** The CS field is `csr.action.W` — a one-cycle pulse — used as a latch. Reproducer: ILA capture | [12](comparisons.md#12-spi-flash-chip-select-hold) |
+| UART pad output enable | `SerialLine` (`ecp5-test/riscv/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. #113 | [13](comparisons.md#13-uart-pad-output-enable) |
+| Console peripheral | `Uart16550` (`ecp5-test/riscv/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [4](comparisons.md#4-console-peripheral) |
+| Interrupt controller | `Plic` (`ecp5-test/riscv/vexii_plic.py`) | **nothing usable upstream.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; `amaranth_soc`'s `EventMonitor` does not elaborate; VexiiRiscv's is Tilelink-only | [7](comparisons.md#7-interrupt-controller) |
+| I2C master | `I2CMaster` (`ecp5-test/riscv/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [10](comparisons.md#10-i2c-register-map) |
+| `amaranth_soc` | **upstream**, not luna_soc's vendored copy | **stale vendor.** The vendored tree reported version `unknown` and was four commits behind, including fixes it never had | [14](comparisons.md#14-amaranth-soc-upstream-vs-vendored) |
+| Board platform | vendored at `ecp5-test/cynthion_platform/` | **in progress.** `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to the `awtoau/awto-luna-soc` fork. Target: a self-contained platform depending only on `amaranth`, `amaranth.build` and `amaranth_boards.resources` | — |
 
-Upstream offers **60, 120 and 240 MHz only** — hardcoded PLL taps, so any speed ladder
-steps in factors of two. That blocked two separate investigations: the HyperRAM ceiling is
-recorded as "somewhere between 120 and 240" because nothing between could be built, and the
-RISC-V clock sweep failed with `KeyError: 80`.
-
-Nothing in the hardware requires those values. The PLL has four independent output
-dividers; ours solves for `sync` **and** `usb` together so `usb` lands on exactly 60 MHz —
-which `ecppll` does not do, because it optimises its primary output and lets the secondary
-fall where it may. Asking it for 80/60 gives `usb` at 62.2 MHz, 3.7% out, and the ULPI PHY
-does not enumerate.
-
-See #111.
-
-### SPI crossbar — `FairSPIControlPortCrossbar`
-
-Replaces `luna_soc`'s `SPIControlPortCrossbar`. In `ecp5-test/riscv/vexii_flash.py`.
-
-**Upstream bug.** It re-arbitrates only when the port holding the grant stops asserting
-`cs` — but `cs` is a *hold* signal, not a request, and `SPIFlashMemoryMap` asserts it for
-256 cycles after every burst. Any SoC that memory-maps flash *and* wants arbitrary commands
-starves the controller permanently.
-
-Reproducer: `scripts/riscv_flash_crossbar_sim.py`. Upstream grants at cycle 0 when the map
-is idle and **never in 600 cycles** when it holds `cs`.
-
-### SPI controller — `HoldableSPIController`
-
-Replaces `luna_soc`'s `SPIController`. In `ecp5-test/riscv/vexii_flash.py`.
-
-**Upstream bug, and an instructive one.** The CS register field is `csr.action.W` — a
-one-cycle write pulse — while the code uses it as a latch:
-
-    m.d.comb += cs.eq(self._cs.f.select.w_data | tx_fifo.r_rdy)
-
-The comment above that line says *"Only disable chip select after the current TX FIFO is
-emptied"*, so the **intent is exactly right**; the field type does not implement it. CS
-collapses to `tx_fifo.r_rdy` and drops whenever the FIFO drains.
-
-Found by ILA: chip select fragmented into four separate 8-bit windows during a JEDEC read,
-deasserted for 81, 36 and 36 samples between them. The flash resets its command state on
-each CS rise, so the response clocks ran with no command pending.
-
-**Why nobody upstream hit it:** moondancer's `read_flash_uuid` writes all 13 command bytes
-into the 16-deep FIFO in one loop before reading anything back, so `tx_fifo.r_rdy` never
-goes low and the broken hold is never load-bearing. That workaround has a hard ceiling at
-16 bytes — a 256-byte page program cannot fit — which predicts that flash *writes* from the
-CPU have never worked in their design either. Consistent with nothing in moondancer writing
-flash.
-
-Ours uses a latching `csr.action.RW` hold register. Confirmed by ILA: CS is one unbroken
-run.
-
-### UART pad output enable — the stop bit was never driven
-
-`ecp5-test/riscv/serial_line.py`, replacing the `oe` derivation `luna_soc`'s
-`UARTProvider` uses.
-
-**Upstream bug, third of three, and the same shape as the CS one: a hold expressed as a
-ready.** The pad's output enable came off `~phy.tx.rdy`. `rdy` is combinational on the
-transmitter's IDLE state, and the FSM enters IDLE *on the same cycle it shifts the stop
-bit out* — so `oe` fell at the **start** of the stop bit and the last bit of every
-character was left to the pad's pull-up.
-
-Measured directly at divisor 8: data bits end at cycle 79, `o` goes high at 80, `rdy`
-goes high at 80, and the stop bit occupies 80..87. **It was driven for none of it.**
-
-An ECP5 internal pull-up is tens of kilohms and every ASCII character has bit 7 low, so
-the line was released from a hard 0 and had to RC-charge to a valid mark before the
-SAMD11's oversampler sampled the middle of the bit. It has enough time on a good day —
-which is why this presented as intermittent console corruption rather than a dead link.
-
-Ours counts the frame instead of inferring it: `oe` is held from the cycle the byte is
-accepted for `(1 + frame_bits) * divisor` cycles, and released **after** the stop bit. The
-period is one bit longer than the frame because `AsyncSerialTX` holds the mark for a full
-bit period between accepting the byte and emitting the start bit. A reload-wins-over-
-decrement rule keeps `oe` continuously asserted across back-to-back characters instead of
-blinking between them.
-
-Reproducer: `scripts/soc_serial_sim.py`, which measures the transmitter directly and fails
-if the constant drifts from what the PHY actually does. Fixed in commit `52c607a` (#113).
-
-Releasing when idle is still the policy — it is the only arbitration that exists on the
-FPGA side of these shared pins. Holding the line during a transmission is not a change to
-that policy; it is what the policy meant.
-
-### Interrupt controller — ours, written to the RISC-V PLIC spec
-
-`ecp5-test/riscv/vexii_plic.py`. **No upstream code was used, from luna-soc or anywhere
-else.** Three candidates were looked at first:
-
-| candidate | why not |
-|---|---|
-| `luna_soc.gateware.cpu.ic.InterruptController` | Policy: GSG code is reserved for genuinely Cynthion-specific work (the board pin map, the USB stack). This is neither. It is also a pure concentrator for VexRiscv's non-standard in-CPU mask/pending CSRs, which VexiiRiscv does not have. |
-| `amaranth_soc.csr.event.EventMonitor` | **Broken upstream.** It constructs and then fails to elaborate: `connect(m, self.bus, self._mux.bus)` is the wrong direction, so `bus.r_data` gets two drivers and Amaranth raises `DriverConflict`. It is also written against a `csr.Register`/`Element` API that no longer exists (`reg.element.w_stb`, `Field(FieldAction, ...)`), and `amaranth_soc.event.EventMap.add()` no longer takes the `name` its own caller passes. Nothing in the package imports it, which is presumably why nobody noticed. Reproducer: construct an `EventMonitor` with one source and call `rtlil.convert` on it. |
-| VexiiRiscv's own PLIC | Tilelink only, and generated by the Scala toolchain rather than instantiable from Amaranth. |
-
-So it is ours, and being ours is not a concession here — a PLIC is small, completely
-specified by `riscv-plic-spec 1.0.0`, and the register discipline this workspace enforces
-(no state-changing reads; nothing polled sharing a 32-bit word with something that does)
-matters more than reuse. The standard map satisfies that discipline without adjustment:
-the only side-effecting read is the claim at `0x200004`, alone in its word and two
-megabytes from `pending`.
-
-The reason it is a *standard* PLIC rather than the thirty-line pending/enable pair in
-`ecp5-test/riscv/vexii_irq.py` is the same reason the console is a standard 16550: QEMU's
-`-M virt` has one, so `firmware/cynthion-soc/src/plic.rs` is compiled unchanged for the
-board and for `scripts/soc_test.py`. A bespoke controller would have made the gate stop
-covering the interrupt path that ships. RTIC's RISC-V backend expects this map too.
-
-**Worth noting rather than using:** luna-soc's `InterruptController` has one thing we did
-copy the *shape* of — `add(peripheral, name=, number=)` and `interrupts()`, which its SVD
-generator reads to name interrupts in the generated PAC. If a PAC is ever wanted here, that
-is the interface to grow, and `vexii_irq.py` already has it.
-
-### I2C master — ours, written to the OpenCores register map
-
-`ecp5-test/riscv/i2c_master.py`, driving the power monitor's bus (D7/C7).
-
-| candidate | why not |
-|---|---|
-| `amaranth-soc` | Has no I2C peripheral at all. The package is `gpio`, `event`, `memory` and the bus fabric; there is nothing to take. |
-| `amaranth-stdio` | Likewise — it is `serial.py` and nothing else. |
-| `luna_soc` gpio/timer/uart peripherals | Policy: reserved. And there is no I2C among them anyway. |
-
-Written, therefore — but not the register map. That is the OpenCores "I2C-Master Core"
-(Herveille, rev 0.9), chosen for the same reason `uart16550.py` is a 16550: it is public,
-it has a Linux driver (`i2c-ocores`), and **it has no read with a side effect anywhere in
-it**. Status comes from SR, which is pure; the interrupt flag is cleared by *writing* IACK.
-The one place a register map usually violates this project's rule is already correct.
-
-The bit engine is ours and is deliberately a table rather than a derivation: every I2C
-interval is a whole number of slots, so the timing numbers in the docstring can be checked
-by reading, and `scripts/soc_board_sim.py` measures them in cycles against a model slave
-that knows nothing about the controller.
-
-### `amaranth_soc` — upstream, not the vendored copy
-
-`luna_soc` vendors `amaranth_soc` and appends it to `sys.path` **only when
-`import amaranth_soc` fails**. Nothing declared a dependency on the real package, so it
-failed on every fresh environment and every `from amaranth_soc import ...` silently
-resolved to a fork reporting version `unknown` — four commits behind upstream, including a
-py3.14 annotation fix that had been hand-backported into it.
-
-Fixed by declaring `amaranth-soc` explicitly in `cynthion`'s `pyproject.toml`, from git
-(the PyPI package is a placeholder: version "0", no modules). The `try` then succeeds and
-luna_soc's own peripherals bind to upstream too.
-
-### Board platform — vendored
-
-In progress. `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line
-base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to
-the `awtoau/awto-luna-soc` fork. The target is a self-contained platform depending only on
-`amaranth`, `amaranth.build` and `amaranth_boards.resources`.
+**Worth noting rather than using:** luna-soc's `InterruptController` exposes
+`add(peripheral, name=, number=)` and `interrupts()`, which its SVD generator reads. Any
+replacement that wants to keep that generator working has to keep those signatures —
+`ecp5-test/riscv/vexii_irq.py` does, which is why it is still in the tree.
 
 ## Still expected from upstream — and it is Cynthion-specific work
 

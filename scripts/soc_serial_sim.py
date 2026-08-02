@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Simulate the Apollo-facing serial line, and the three ways it used to be wrong.
+# Simulate the Apollo-facing serial line, and the three ways a pad can be mis-wired.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
@@ -37,8 +37,8 @@ passes against `SerialLine`:
 The fourth fault, the missing synchroniser on the receive pad, is structural
 rather than behavioural: a simulation has no metastability to reproduce. It is
 checked by construction instead -- that `SerialLine` puts an `FFSynchronizer`
-between `rx_i` and everything else, and that the design no longer hands a raw
-pad to `AsyncSerialRX`.
+between `rx_i` and everything else, and that no design hands a raw pad to
+`AsyncSerialRX`.
 """
 
 import argparse
@@ -301,7 +301,7 @@ def run_rx_checks(checks, verbose):
         "not releasing and nothing will ever be received.")
 
     # A frame with a space where the stop bit belongs. This is what a bad bit on
-    # the wire produces, and it used to be delivered as a character.
+    # the wire produces, and delivering it as a character is the #113 fault.
     got, seen = receive(20, [frame_bits(0x5a, stop=0)])
     checks.check(
         "a frame with a bad stop bit is dropped, not delivered  (the #113 bug)",
@@ -404,7 +404,7 @@ def run_structural_checks(checks, verbose):
 
     soc = (ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py").read_text()
     checks.check(
-        "and the SoC no longer hands a raw pad to an AsyncSerial",
+        "and the SoC does not hand a raw pad to an AsyncSerial",
         "rx.i.eq(apollo_pins.rx.i)" not in soc,
         "vexii_hello_soc.py still wires apollo_pins.rx.i straight into a PHY.")
 

@@ -48,16 +48,16 @@ PAYLOAD_SIZE = 32 * 1024
 
 # Pacing for the transfer.
 #
-# There is still no per-chunk ack, so this cannot detect a dropped byte as it happens --
-# but it no longer has to. The firmware CRC32s the image on the way out of HyperRAM and
-# refuses to boot a mismatch, so a truncated transfer is reported rather than executed.
-# Pacing is now about keeping the RX FIFO fed, not about correctness.
+# There is no per-chunk ack, so this cannot detect a dropped byte as it happens -- and it
+# does not have to. The firmware CRC32s the image on the way out of HyperRAM and refuses
+# to boot a mismatch, so a truncated transfer is reported rather than executed. Pacing is
+# about keeping the RX FIFO fed, not about correctness.
 #
 # CHUNK matches the 64-byte RX FIFO so a burst cannot exceed what it holds even if the
 # CPU stalls. The pause is deliberately generous -- far longer than the ~64 us the
 # firmware needs to drain 64 bytes at 60 MHz -- because the cost of being too slow is a
-# few seconds and the cost of being too fast used to be a silent corruption. An 8 KB
-# image takes about 0.3 s.
+# few seconds and the cost of being too fast is a corrupt image. An 8 KB image takes
+# about 0.3 s.
 CHUNK = 64
 CHUNK_PAUSE_S = 0.002
 

@@ -1,46 +1,42 @@
 //! Where the peripherals are, and nothing else.
 //!
-//! This used to be two files -- `target_soc.rs` and `target_qemu.rs` -- each with
-//! its own console driver, because the SoC's bespoke console and QEMU's 16550
-//! were different hardware with different register maps. They are now the same
-//! hardware: `ecp5-test/riscv/uart16550.py` is an NS16550A and `-M virt` is an
-//! NS16550A, so `src/uart.rs` drives both and the difference collapses to a list
-//! of addresses and a linker script.
+//! Every difference between the FPGA build and the QEMU build lives in this file
+//! and in a linker script. `src/uart.rs` and `src/plic.rs` are compiled unchanged
+//! for both, because the SoC's console is an NS16550A and `-M virt`'s is an
+//! NS16550A, and both have a standard PLIC. `scripts/soc_test.py` is evidence
+//! about the board only to the extent that the two builds share source, so
+//! resist adding a `#[cfg]` anywhere else.
 //!
-//! That is the prize. `scripts/soc_test.py` boots this firmware under QEMU and
-//! asserts what its shell says; that gate is only evidence about the board to the
-//! extent that the two builds share source. Two console drivers meant the gate
-//! tested one of them. One driver means it tests the one that ships.
+//! ## Where the addresses come from
 //!
-//! Addresses below are read out of the two designs, not assumed.
+//!   * **Hardware:** `cynthion_soc_pac::base`, which `scripts/soc_generate_pac.py`
+//!     writes out of `HelloSoC.decoder.bus.memory_map` -- the SoC's own
+//!     description of itself. Move a peripheral in the gateware and the constant
+//!     follows; rename one and this file stops compiling. Nothing here is
+//!     transcribed by hand.
+//!   * **QEMU:** the machine's own device tree.
 //!
-//! The hardware ones come from `cynthion_soc_pac::base`, which
-//! `scripts/soc_generate_pac.py` writes out of `HelloSoC.decoder.bus.memory_map`
-//! -- the SoC's own description of itself. Nothing here is transcribed any more.
-//! Move a peripheral in the gateware and the constant follows it; rename one and
-//! this file stops compiling. That is the whole point: every address in this file
-//! used to be a number a human had copied out of `vexii_hello_soc.py`, and three
-//! peripherals were added in one sitting that way.
+//!         qemu-system-riscv32 -M virt -machine dumpdtb=tmp/virt.dtb -display none
+//!         dtc -I dtb -O dts tmp/virt.dtb
 //!
-//! The QEMU ones come from the machine's own device tree:
+//!     gives `serial@10000000 { compatible = "ns16550a"; }` and `memory@80000000`.
 //!
-//!     qemu-system-riscv32 -M virt -machine dumpdtb=tmp/virt.dtb -display none
-//!     dtc -I dtb -O dts tmp/virt.dtb
+//! ## The PAC supplies addresses and nothing else
 //!
-//! gives `serial@10000000 { compatible = "ns16550a"; }` and `memory@80000000`.
+//! Its svd2rust register accessors are deliberately unused, for two independent
+//! reasons:
 //!
-//! **The PAC supplies addresses and nothing else, and that is deliberate.** It
-//! also contains svd2rust register accessors, which this firmware does not use,
-//! for two independent reasons. The first is this file's reason for existing: a
-//! PAC generated from our map hardcodes our bases, so a driver written against
-//! `pac::console` would be a driver that cannot run under QEMU, and the shared
-//! source that makes `scripts/soc_test.py` evidence about the board would be
-//! gone. The second is that svd2rust emits one natural-width volatile access per
-//! register, while every CSR here sits behind an `amaranth_soc` multiplexer with
-//! a granularity of 8 bits, where a multi-byte register is read by latching a
-//! shadow from its low byte and written by committing on its high byte -- see
-//! `Gpio::set_mode` in `src/gpio.rs`. A `u16` access is a different bus
-//! transaction from the two ordered byte accesses the hardware specifies.
+//!   * A PAC generated from our map hardcodes our bases, so a driver written
+//!     against `pac::console` could not run under QEMU -- and the shared source
+//!     that makes the test gate meaningful would be gone.
+//!   * svd2rust emits one natural-width volatile access per register, but every
+//!     CSR here sits behind an `amaranth_soc` multiplexer with granularity 8,
+//!     where a multi-byte register is read by latching a shadow from its low byte
+//!     and written by committing on its high byte (see `Gpio::set_mode` in
+//!     `src/gpio.rs`). A `u16` access is a different bus transaction from the two
+//!     ordered byte accesses the hardware specifies.
+//!
+//! Hand-transcribed constants versus a generated PAC: `docs/comparisons.md`.
 
 /// Every 16550 this build can talk on. The first is the primary console: the one
 /// that gets the boot banner, the bootloader's reports and any panic.

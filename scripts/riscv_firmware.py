@@ -205,8 +205,8 @@ CONSOLE_H = """
 
    LSR is at +5 and not next to THR on purpose: it is the register a poll loop
    reads, and it must not share a 32-bit word with anything whose read has a
-   side effect. The peripheral this replaced put a FIFO-popping read one byte
-   from the polled one, and firmware that polled it went silent. */
+   side effect. A FIFO-popping read one byte from the polled one is what makes
+   firmware that polls go silent while firmware that never reads prints fine. */
 #define CONSOLE_THR   (*(volatile unsigned char *)(CONSOLE_BASE + 0))
 #define CONSOLE_LSR   (*(volatile unsigned char *)(CONSOLE_BASE + 5))
 #define CONSOLE_THRE  0x20u   /* transmit holding register empty */
@@ -383,8 +383,8 @@ static inline unsigned int flash_pop(void) {{
 
    The ILA caught this directly: dq_o0 was high in 0 of the 465 samples in the
    controller's chip-select window, while the memory-mapped control asserted it
-   8 times in the same capture. The comment that used to sit here asserted the
-   opposite of what the PHY does.
+   8 times in the same capture -- so the PHY does left-justify, whatever a
+   comment might assert.
 
    32-bit transfers are unaffected -- (32 - 32) is a shift of zero -- which is
    why the address-bearing commands below already pack the opcode into bits

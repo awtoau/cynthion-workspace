@@ -2,9 +2,9 @@
 """
 Local check runner for the Cynthion workspace.
 
-Replaces the GitHub Actions workflows: everything runs natively on this
-machine, against the real toolchain and the real free-threaded 3.15t
-interpreter, with no Docker and no cloud runners.
+The only place checks run: natively on this machine, against the real
+toolchain and the real free-threaded 3.15t interpreter, with no Docker,
+no cloud runners and no GitHub Actions.
 
     ./scripts/check.py                 # every check
     ./scripts/check.py rust python     # only the named checks
@@ -294,7 +294,7 @@ def main() -> int:
     names = [c.name for c in checks]
 
     parser = argparse.ArgumentParser(
-        description="Run the workspace checks locally (replaces GitHub Actions).",
+        description="Run the workspace checks locally.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("checks", nargs="*", metavar="CHECK",

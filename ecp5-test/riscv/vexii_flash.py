@@ -7,58 +7,49 @@
 The configuration flash on the Wishbone bus, as read-only memory the CPU can
 address directly.
 
-luna_soc already ships every part of this -- `SPIFlashMemoryMap` for the bus
-side, `SPIPHYController` for the shift registers, `ECP5ConfigurationFlashInterface`
-for the ECP5's `USRMCLK` special case -- so nothing here is a controller written
-from scratch. What it adds is one thing luna_soc's version does not have: a
-choice of read mode.
+The bus side, the shift registers and the ECP5 `USRMCLK` special case are all
+luna_soc's (`SPIFlashMemoryMap`, `SPIPHYController`,
+`ECP5ConfigurationFlashInterface`). What this file adds:
 
-`luna_soc.gateware.core.spiflash.mmap.SPIFlashMemoryMap` hardcodes `0xeb`, Quad
-I/O Fast Read, in the body of `elaborate`:
+  * a selectable read mode (`ModalSPIFlashMemoryMap`) -- upstream hardcodes
+    quad in the body of `elaborate`
+  * an arbiter that cannot starve a port (`FairSPIControlPortCrossbar`)
+  * a chip select that holds across CPU register writes (see `HoldSPIController`)
+  * an ILA on the SPI wires, readable over the USB console
 
-    flash_read_opcode = 0xeb
-    flash_addr_width  = 4
-    flash_bus_width   = 4
-    flash_dummy_bits  = 24
+`../../docs/comparisons.md` records why each is ours rather than upstream's.
 
-That is the mode worth having, but it is the wrong mode to bring up *first*.
-Quad puts the address, the dummy cycles and the data all on four lanes at once,
-so a wiring fault, a sample-timing fault and a mode fault are indistinguishable
--- every one of them returns wrong bytes. Single-lane `0x03` uses one output pin
-and one input pin, with no dummy cycles at all, so it either works or the wiring
-is wrong, and nothing else is in the way.
+## Read modes
 
-`ModalSPIFlashMemoryMap` is the same FSM with those four constants moved into
-`__init__`. Two modes are defined:
+    SINGLE  0x03 Read Data       cmd/addr/data 1-lane, 0 dummy bits
+    QUAD    0xeb Quad I/O Read   cmd 1-lane, addr/dummy/data 4-lane, 24 dummy
 
-    SINGLE  0x03 Read Data       cmd/addr/data all 1-lane, 0 dummy bits
-    QUAD    0xeb Quad I/O Read   cmd 1-lane, addr/dummy/data 4-lane, 24 dummy bits
+  * **Bring up in SINGLE.** Quad puts address, dummy cycles and data on four
+    lanes at once, so a wiring fault, a sample-timing fault and a mode fault
+    are indistinguishable -- every one returns wrong bytes. Single uses one
+    output and one input pin with no dummy cycles.
+  * **The quad dummy value `0xff0000` is not arbitrary.** `0xeb` sends mode
+    bits M7-M0 straight after the address; `0xff` is not `0xax`, so the flash
+    does not enter Continuous Read and the next transaction still needs its
+    opcode. `0xa0` would leave the chip expecting an address where the
+    controller sends a command -- every read after the first is garbage, while
+    the first looks perfect.
+  * Quad needs the Quad Enable bit in status register 2. It is already set on
+    this board (SR2 = 0x02, `docs/luna_ecp5_fpga/flash-detailed.md`). Nothing
+    here ever writes to the flash; the bitstream lives at offset 0.
 
-The dummy value `0xff0000` for quad is not arbitrary. `0xeb` sends the four
-address-phase bits M7-M0 immediately after the address; `0xff` there is *not*
-`0xax`, so the flash does not enter Continuous Read mode and the next
-transaction still needs its opcode. Sending `0xa0` instead would leave the chip
-expecting an address where the controller sends a command, and every read after
-the first would be garbage -- while the first one looked perfect.
+## PHY divisor
 
-Quad also requires the Quad Enable bit in status register 2. On this board it is
-already set (SR2 = 0x02, recorded in docs/luna_ecp5_fpga/flash-detailed.md), so
-nothing here writes to the flash. Nothing here ever writes to the flash: the
-bitstream lives at offset 0.
+`SPIPHYController(divisor=d)` clocks SCK at `sync / (2 * (1 + d))`. At 80 MHz:
 
-## What the PHY divisor means
-
-`SPIPHYController(divisor=d)` clocks SCK at `sync / (2 * (1 + d))`. At the
-80 MHz sync this SoC runs:
-
-    d=0   40.0 MHz    within the ECP5 MCLK pin's 62 MHz specification
+    d=0   40.0 MHz
     d=1   20.0 MHz
     d=2   13.3 MHz
 
-40 MHz is the fast end of what Lattice specifies for this pin -- `MCLK` is a
-configuration pin, tristated into user mode and reachable only through
-`USRMCLK`, and FPGA-TN-02039 characterises it to 62 MHz. Faster has been
-measured to work on this board and is not what a default should assume.
+40 MHz is the fast end of what Lattice specifies: `MCLK` is a configuration
+pin, tristated into user mode and reachable only through `USRMCLK`, and
+FPGA-TN-02039 characterises it to 62 MHz. Faster has been measured to work on
+this board, which is not what a default should assume.
 """
 
 from amaranth               import Cat, C, Module, Signal, DomainRenamer, unsigned
@@ -273,41 +264,24 @@ class ModalSPIFlashMemoryMap(SPIFlashMemoryMap):
 class FairSPIControlPortCrossbar(wiring.Component):
     """Share one SPI PHY between two cores, without either starving the other.
 
-    luna_soc's `SPIControlPortCrossbar` cannot do this, and the reason is one
-    line:
+    Re-arbitrates whenever the PHY is between transfers, so a port holding `cs`
+    keeps its burst but cannot monopolise the PHY. Chip select follows the
+    grant, so no burst is interrupted mid-transfer.
 
-        with m.Switch(rr.grant):
-            for i in range(self._num_ports):
-                with m.Case(i):
-                    connect(m, ...)
-                    m.d.comb += grant_update.eq(~rr.valid | ~rr.requests[i])
+    **The starvation this avoids.** luna_soc's `SPIControlPortCrossbar` gates
+    its round-robin on `grant_update.eq(~rr.valid | ~rr.requests[i])` -- it
+    re-evaluates only when the incumbent stops asking, so a port holding `cs`
+    indefinitely owns the PHY indefinitely. `SPIFlashMemoryMap` holds `cs` for
+    `MMAP_DEFAULT_TIMEOUT` (256 cycles) after every burst, which is what lets a
+    sequential read skip the command, address and dummy phases -- so on a SoC
+    whose firmware reads flash regularly, the controller sharing the crossbar
+    is never granted.
 
-    `grant_update` -- the round-robin's enable -- is asserted only when the
-    port that currently HOLDS the grant stops asking for it. So the arbiter
-    re-evaluates only when the incumbent yields, and a port that holds `cs`
-    indefinitely owns the PHY indefinitely.
-
-    `SPIFlashMemoryMap` holds `cs` for `MMAP_DEFAULT_TIMEOUT` -- 256 cycles --
-    after every burst, deliberately: keeping chip select asserted is what lets
-    a sequential read skip the command, address and dummy phases, and that is
-    most of why a memory map beats a register-poked controller for the access
-    pattern a CPU generates. It is a good optimisation. It also means that on a
-    SoC whose firmware reads flash at all regularly, the memory map is holding
-    `cs` essentially always, and the controller sharing the crossbar is never
-    granted.
-
-    The symptom is precise and misleading: memory-mapped reads work perfectly
-    while every command issued through the controller returns zeros. It reads
-    like a broken controller, and the controller is fine -- its requests never
-    reach the PHY. Verified in simulation
-    (scripts/riscv_flash_crossbar_sim.py): with the memory map holding `cs`,
-    the controller is not granted in 600 cycles; with it idle, the grant
-    arrives.
-
-    This version re-arbitrates whenever the PHY is between transfers rather
-    than only when the incumbent yields, so a port holding `cs` keeps its burst
-    but cannot monopolise the PHY. Chip select is driven by whichever port
-    holds the grant, so a burst is never interrupted mid-transfer.
+    The symptom is misleading: memory-mapped reads work perfectly while every
+    controller command returns zeros, which reads as a broken controller.
+    Measured in `scripts/riscv_flash_crossbar_sim.py` -- with the memory map
+    holding `cs`, the controller is not granted in 600 cycles; with it idle the
+    grant arrives. See `../../docs/comparisons.md`.
     """
 
     def __init__(self, *, data_width=32, num_ports=2, domain="sync"):
@@ -318,11 +292,10 @@ class FairSPIControlPortCrossbar(wiring.Component):
             **{f"slave{i}": wiring.In(SPIControlPort(data_width))
                for i in range(num_ports)}))
 
-        # Which port currently holds the grant, brought out so instrumentation
-        # can confirm on HARDWARE that the controller is actually being served.
-        # The starvation bug this class replaces was proven fixed in simulation
-        # only, and "fixed in simulation" is exactly the claim that the rest of
-        # this investigation has found wanting.
+        # Which port holds the grant, brought out so instrumentation can confirm
+        # on HARDWARE that the controller is being served. The starvation fix is
+        # proven in simulation only, and "fixed in simulation" is exactly the
+        # claim this investigation has repeatedly found wanting.
         self.grant = Signal(range(num_ports))
 
     def get_port(self, index):
@@ -855,8 +828,8 @@ class FlashILA(wiring.Component):
     cost of the depth that makes the trace readable.
 
     One DP16KD at 8 bits x 1024. The SoC uses 41 of 56, so this fits without
-    touching anything else -- which is the constraint that matters, since a
-    build that no longer reproduces the fault would waste the run.
+    displacing anything else -- the constraint that matters, since a build that
+    stops reproducing the fault wastes the run.
     """
 
     # The eight signals, in bit order. This list IS the trace format: the host

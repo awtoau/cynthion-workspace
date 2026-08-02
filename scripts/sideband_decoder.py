@@ -8,11 +8,10 @@ The sideband protocol as a library: bytes in one direction, meaning in the other
 
 Apollo relays the sideband without interpreting it -- the microcontroller shifts
 bytes, checks a CRC, and hands the buffer to the host unchanged. So every field
-has to be understood on this end, and until now that understanding lived in
-whichever script happened to need it. A self-test that prints `41ef401602bd` and
-calls it a pass proves the link works and says nothing about the board.
-
-This module is that understanding, in one place, in both directions.
+has to be understood on this end, and this module is the one place that
+understands it. Decode belongs here rather than in whichever script needs it: a
+self-test that prints `41ef401602bd` and calls it a pass proves the link works
+and says nothing about the board.
 
 ## Decode: replies
 

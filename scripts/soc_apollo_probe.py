@@ -131,8 +131,8 @@ REJECTION = b"\r\nunknown command"
 def extract_echo(reply):
     """Pull the shell's echo of the probe line out of everything that arrived.
 
-    Not `reply.split(b"\\r\\n")[0]`, which is what this used to be and which is
-    wrong whenever a trial's reply is late: the next trial then opens with the
+    Not `reply.split(b"\\r\\n")[0]`, which is wrong whenever a trial's reply is
+    late: the next trial then opens with the
     tail of the previous one (`\\r\\n> `), the split returns the empty string
     before it, and the trial is scored as a total loss no matter what the
     transport actually did. That turned a run with four clean echoes out of six

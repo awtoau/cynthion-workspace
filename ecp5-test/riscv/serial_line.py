@@ -4,115 +4,72 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-`amaranth_stdio.serial.AsyncSerial`, wired to a pad the way a pad has to be wired.
+`amaranth_stdio.serial.AsyncSerial` wired to a real pad, with the four things a
+real pad needs.
 
 `uart16550.py` is a byte pipe with no bits on a wire. This is the other half for
-the one port that does have bits on a wire: the Apollo-facing console on R14/T14.
-It converts between the 16550's `amaranth.lib.stream` ports and AsyncSerial's
-older rdy/ack handshake, and it owns the three properties that the pin needs and
-that AsyncSerial alone does not supply.
+the one port that does have them: the Apollo-facing console on R14/T14. It
+converts between the 16550's `amaranth.lib.stream` ports and AsyncSerial's
+rdy/ack handshake.
 
-## Why this module exists: issue #113
+R14/T14 are the same nets as JTAG TDI/TMS, and nothing on the board tells the
+FPGA a JTAG session is running. Each property below exists because of that or
+because AsyncSerial does not supply it (issue #113).
 
-The Apollo console corrupted and truncated characters, worst immediately after
-`apollo configure`, and reliably answered `unknown command` to the first line
-typed after the tty was opened. The interrupt path was the obvious suspect and
-was exonerated by measurement -- `scripts/soc_apollo_probe.py` gave 9/10
-mismatches with the shell POLLING and 10/10 with it interrupt-driven, same
-bitstream. The transport was at fault in both.
+## The four properties
 
-It was at fault in three separate ways, all of them in how the pad was wired
-rather than in AsyncSerial:
+**1. A synchroniser on the receive pin.** Two flops, `init=1` so a design
+leaving reset believes the line is idle rather than mid-break.
 
-**1. The receive pin went into the receiver's FSM unsynchronised.** The SoC
-did `phy.rx.i.eq(pins.rx.i)`, straight from the pad. `AsyncSerialRX` only
-instantiates an `FFSynchronizer` when it is handed a `pins` object; construct it
-with `pins=None`, as every design here does, and `self.i` is used raw
-(`amaranth_stdio/serial.py:186`). R14 is asynchronous to `sync` by definition --
-the SAMD11 has its own oscillator -- so every start-bit edge and every data-bit
-sample was a setup violation waiting to resolve whichever way it liked. The
-symptom of a metastable sample is exactly what was measured: characters that are
-mostly right, occasionally wrong, more often wrong when the line is busy.
-`sideband_debug.py` already synchronises its receive pin and says why; this path
-did not.
+  * `AsyncSerialRX` only instantiates an `FFSynchronizer` when handed a `pins`
+    object; with `pins=None` it uses `self.i` raw
+    (`amaranth_stdio/serial.py:186`). R14 is asynchronous to `sync` -- the
+    SAMD11 has its own oscillator -- so every unsynchronised sample is a setup
+    violation, and metastability presents as characters that are mostly right
+    and wrong more often when the line is busy.
 
-**2. Framing errors were delivered as data.** The SoC pushed every completed
-frame into the FIFO (`rx_buf.sink.valid.eq(phy.rx.rdy)`) and never looked at
-`phy.rx.err.frame`. So a frame whose stop bit was low -- which is what noise on
-the line produces -- arrived at the shell as a character.
+**2. Frames with a bad stop bit are dropped, not delivered.** Noise on the line
+otherwise arrives at the shell as a character.
 
-**3. Nothing waited for the line to be idle before believing it.** R14 and T14
-are the same nets as JTAG TDI and TMS. Nothing tells the FPGA that a JTAG
-session is in progress and there is no signal on the board that could, so during
-`apollo configure` the receiver saw megahertz-rate JTAG edges, framed them into
-whatever ten-bit windows the divisor happened to slice them into, and delivered
-the results. The same mechanism, one character long, is the lost first command:
-the SAMD11 leaves PA14 as `GPIO_PIN_FUNCTION_OFF` while JTAG owns the pins and
-only muxes it back to SERCOM2 when the host opens the CDC interface
-(`repos/apollo/firmware/src/boards/cynthion_d11/uart.c:37`, reached from
-`jtag.c:38`). The moment the pinmux lands, the pad goes from undriven to a
-driven mark, and a receiver that is armed reads the transition as a start bit.
-
-## What this module does about each
-
-**A synchroniser on the receive pin.** Two flops, `init=1` so a design coming
-out of reset believes the line is idle rather than mid-break.
-
-**Frames with a bad stop bit are dropped, not delivered.**
-
-**An idle qualifier.** The receiver is *disarmed* out of reset and after every
-framing error. While disarmed its input is forced to a constant mark, so the
-FSM sits in IDLE and no frame can complete. It arms only after the pad has been
+**3. An idle qualifier.** The receiver is disarmed out of reset and after every
+framing error; while disarmed its input is forced to a constant mark, so the FSM
+sits in IDLE and no frame can complete. It arms after the pad has been
 continuously high for `idle_bits` bit periods.
 
-`idle_bits` defaults to 12, which is longer than the 10-bit frame it is
-protecting -- that is the point, and it is a correctness requirement rather than
-margin. A frame in flight when the qualifier disarms is finished off against the
-forced mark and produces a `rdy` pulse with garbage in it; requiring more than a
-frame's worth of quiet guarantees that pulse has come and gone (and been
-suppressed, since `armed` is low) before the receiver is armed again. Setting
-`idle_bits` below 10 would let that garbage frame through on re-arming, which is
-the failure this exists to prevent, so the constructor refuses.
+  * **`idle_bits` must exceed the 10-bit frame, hence 12, and the constructor
+    refuses less.** A frame in flight when the qualifier disarms finishes
+    against the forced mark and produces a `rdy` pulse of garbage; requiring
+    more than a frame of quiet guarantees that pulse is gone before re-arming.
+  * Against JTAG this is decisive: a programming run never leaves TDI quiet for
+    12 bit periods (104 us at 115200), so the receiver stays disarmed for the
+    session and re-arms once, on the idle mark the SAMD11 restores.
+  * **The trade:** one corrupted character mid-burst costs the rest of the
+    burst, because a back-to-back sender never gives 12 idle bits to re-arm on.
+    That is standard resynchronise-after-framing-error, and a human at a
+    console leaves milliseconds between keystrokes.
 
-Against JTAG the qualifier is decisive: a programming run never leaves TDI
-quiet for 12 bit periods (104 us at 115200), so the receiver stays disarmed for
-the whole session and re-arms once, on the idle mark the SAMD11 restores.
+**4. The transmitter drives its own stop bit.** `oe` is held for the whole
+frame, counted from the cycle the byte is accepted, and released after the stop
+bit.
 
-The cost is a trade and it is worth naming: a single corrupted character in the
-middle of a burst now costs the *rest of the burst*, because the framing error
-disarms the receiver and a back-to-back sender never gives it 12 idle bits to
-re-arm on. That is the standard resynchronise-after-framing-error behaviour and
-it is the right side of the trade here -- a human typing at a console leaves
-milliseconds between keystrokes, and a burst that contains a framing error was
-not going to be delivered intact anyway.
+  * Driving `oe` from `~phy.tx.rdy` (what `luna_soc`'s UARTProvider does) does
+    not work: `rdy` is combinational on the transmitter's IDLE state and the FSM
+    enters IDLE on the cycle it shifts the stop bit out. Measured at divisor 8 --
+    data bits end at cycle 79, `o` and `rdy` both rise at 80, the stop bit
+    occupies 80..87, driven for none of it.
+  * An ECP5 pull-up is tens of kilohms and every ASCII character has bit 7 low,
+    so the line RC-charges from a hard 0 and may not reach a valid mark before
+    the SAMD11 samples mid-bit.
+  * Releasing when idle is still the policy, and still the only arbitration on
+    the FPGA side of these pins -- see `APOLLO_UART_BASE` in
+    `vexii_hello_soc.py`.
 
-**The transmitter drives its own stop bit.** The SoC drove the pad's output
-enable from `~phy.tx.rdy`, which is what `luna_soc`'s UARTProvider does. `rdy`
-is combinational on the transmitter's IDLE state, and the FSM enters IDLE on the
-same cycle it shifts the stop bit out -- so `oe` fell at the *start* of the stop
-bit and the last bit of every character was left to the pad's pull-up. Measured
-directly, divisor 8: data bits end at cycle 79, `o` goes high at 80, `rdy` goes
-high at 80, and the stop bit occupies 80..87. It was driven for none of it.
-
-An ECP5 internal pull-up is tens of kilohms, and every ASCII character has bit 7
-low, so the line was released from a hard 0 and had to RC-charge to a valid mark
-before the SAMD11's oversampler took its sample at the middle of the bit. It has
-enough time on a good day. `oe` is now held for the whole frame instead, counted
-from the cycle the byte is accepted, and released after the stop bit rather than
-before it.
-
-Releasing when idle is still the policy, and it is still the only arbitration
-that exists on the FPGA side of these pins -- see the comment on
-`APOLLO_UART_BASE` in `vexii_hello_soc.py`. Holding the line during a
-transmission is not a change to that policy; it is what the policy meant.
-
-## What this module cannot fix
+## What this cannot fix
 
 Nothing here stops the FPGA transmitting into a live JTAG session, because
-nothing here can know there is one. That remains a firmware policy (never
-transmit unbidden on this port) and, if it is ever to be more than a policy, a
-change on the Apollo side -- the SAMD11 is the only device on the board that
-knows which function owns PA11/PA14.
+nothing here can know there is one. That is firmware policy (never transmit
+unbidden on this port); making it more than policy needs an Apollo-side change,
+since the SAMD11 is the only device that knows which function owns PA11/PA14.
 """
 
 from amaranth               import Module, Signal, C
@@ -247,7 +204,7 @@ class SerialLine(wiring.Component):
         # one cycle whatever `ack` does; `ack` only decides whether the character
         # is captured, and a low `ack` discards it and sets `err.overflow`. So
         # wiring `ack` to downstream readiness does not backpressure -- it drops
-        # silently, which is what the SoC used to do. Holding it high means
+        # silently. Holding it high means
         # `rdy`, `data` and `err.frame` all become valid on the same cycle, which
         # is what the gating below needs.
         m.d.comb += phy.rx.ack.eq(1)
