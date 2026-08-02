@@ -36,7 +36,7 @@
 //!     `src/gpio.rs`). A `u16` access is a different bus transaction from the two
 //!     ordered byte accesses the hardware specifies.
 //!
-//! Hand-transcribed constants versus a generated PAC: `docs/comparisons.md`.
+//! Hand-transcribed constants versus a generated PAC: `docs/decisions.md`.
 
 /// Every 16550 this build can talk on. The first is the primary console: the one
 /// that gets the boot banner, the bootloader's reports and any panic.

@@ -68,19 +68,19 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 
 Each row below is a divergence from upstream. **The technical detail — what upstream does,
 what the measurement showed, what ours does instead — lives in
-[`comparisons.md`](comparisons.md).** This table is the policy view: what we replaced, and
+[`decisions.md`](decisions.md).** This table is the policy view: what we replaced, and
 whether the reason was a defect, a limit, or a standard we preferred to adopt.
 
 | what | ours | why it diverged | detail |
 |---|---|---|---|
-| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. #111 | [3](comparisons.md#3-clock-generation) |
-| SPI crossbar | `FairSPIControlPortCrossbar` (`ecp5-test/riscv/vexii_flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [11](comparisons.md#11-spi-flash-crossbar) |
-| SPI controller | `HoldableSPIController` (same file) | **upstream defect.** The CS field is `csr.action.W` — a one-cycle pulse — used as a latch. Reproducer: ILA capture | [12](comparisons.md#12-spi-flash-chip-select-hold) |
-| UART pad output enable | `SerialLine` (`ecp5-test/riscv/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. #113 | [13](comparisons.md#13-uart-pad-output-enable) |
-| Console peripheral | `Uart16550` (`ecp5-test/riscv/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [4](comparisons.md#4-console-peripheral) |
-| Interrupt controller | `Plic` (`ecp5-test/riscv/vexii_plic.py`) | **nothing usable upstream.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; `amaranth_soc`'s `EventMonitor` does not elaborate; VexiiRiscv's is Tilelink-only | [7](comparisons.md#7-interrupt-controller) |
-| I2C master | `I2CMaster` (`ecp5-test/riscv/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [10](comparisons.md#10-i2c-register-map) |
-| `amaranth_soc` | **upstream**, not luna_soc's vendored copy | **stale vendor.** The vendored tree reported version `unknown` and was four commits behind, including fixes it never had | [14](comparisons.md#14-amaranth-soc-upstream-vs-vendored) |
+| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. #111 | [3](decisions.md#3-clock-generation) |
+| SPI crossbar | `FairSPIControlPortCrossbar` (`ecp5-test/riscv/vexii_flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [11](decisions.md#11-spi-flash-crossbar) |
+| SPI controller | `HoldableSPIController` (same file) | **upstream defect.** The CS field is `csr.action.W` — a one-cycle pulse — used as a latch. Reproducer: ILA capture | [12](decisions.md#12-spi-flash-chip-select-hold) |
+| UART pad output enable | `SerialLine` (`ecp5-test/riscv/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. #113 | [13](decisions.md#13-uart-pad-output-enable) |
+| Console peripheral | `Uart16550` (`ecp5-test/riscv/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [4](decisions.md#4-console-peripheral) |
+| Interrupt controller | `Plic` (`ecp5-test/riscv/vexii_plic.py`) | **nothing usable upstream.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; `amaranth_soc`'s `EventMonitor` does not elaborate; VexiiRiscv's is Tilelink-only | [7](decisions.md#7-interrupt-controller) |
+| I2C master | `I2CMaster` (`ecp5-test/riscv/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [10](decisions.md#10-i2c-register-map) |
+| `amaranth_soc` | **upstream**, not luna_soc's vendored copy | **stale vendor.** The vendored tree reported version `unknown` and was four commits behind, including fixes it never had | [14](decisions.md#14-amaranth-soc-upstream-vs-vendored) |
 | Board platform | vendored at `ecp5-test/cynthion_platform/` | **in progress.** `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to the `awtoau/awto-luna-soc` fork. Target: a self-contained platform depending only on `amaranth`, `amaranth.build` and `amaranth_boards.resources` | — |
 
 **Worth noting rather than using:** luna-soc's `InterruptController` exposes

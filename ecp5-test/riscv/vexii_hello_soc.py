@@ -28,7 +28,7 @@ point of a standard part. `serial_line.py` is the PHY behind index 1.
     (`../../docs/luna_ecp5_fpga/usb-performance.md`).
   * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
     share a 32-bit word with RBR at +0. See `uart16550.py`, and
-    `../../docs/comparisons.md` for what that replaced.
+    `../../docs/decisions.md` for what that replaced.
 
 ## Interrupts
 
@@ -82,6 +82,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
+from jtag_stage import JTAGStager, UserJTAG
 from uart16550 import Uart16550
 from vexii_plic import Plic
 from serial_line import SerialLine
@@ -450,6 +451,22 @@ class HelloSoC(Elaboratable):
         cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=64, regions=regions)
         m.submodules.cpu = cpu
 
+        # The die's one `JTAGG`, and both taps off it.
+        #
+        # ER2 goes to the CPU's debug module, ER1 to the HyperRAM staging sink below.
+        # There is exactly one of this primitive on the part, so it is instantiated
+        # here and handed out rather than claimed by whichever module wants JTAG.
+        m.submodules.user_jtag = user_jtag = UserJTAG()
+        m.d.comb += [
+            cpu.jtag_tck.eq(user_jtag.tck),
+            cpu.jtag_tdi.eq(user_jtag.tdi),
+            cpu.jtag_ce.eq(user_jtag.ce2),
+            cpu.jtag_shift.eq(user_jtag.shift),
+            cpu.jtag_update.eq(user_jtag.update),
+            cpu.jtag_rstn.eq(user_jtag.rstn),
+            user_jtag.tdo2.eq(cpu.jtag_tdo),
+        ]
+
         ram = blockram.Peripheral(size=RAM_SIZE, init=self.firmware)
         m.submodules.ram = ram
 
@@ -734,11 +751,11 @@ class HelloSoC(Elaboratable):
         decoder.add(flash_ila_bridge.wb_bus, addr=FLASH_ILA_BASE,
                     name="flash_ila")
 
-        # HyperRAM, and the JTAG path Apollo stages firmware through.
+        # HyperRAM, and the two paths that stage firmware into it.
         #
         # This is what makes a firmware change cost seconds instead of a ~60 s
-        # resynthesis: the image goes into HyperRAM over JTAG, and a resident
-        # bootloader copies it into block RAM. See ecp5-test/riscv/vexii_bootram.py.
+        # resynthesis: the image goes into HyperRAM and a resident bootloader copies
+        # it into block RAM. See ecp5-test/riscv/vexii_bootram.py.
         from vexii_bootram import BootRAM
 
         m.submodules.bootram = bootram = BootRAM()
@@ -746,10 +763,27 @@ class HelloSoC(Elaboratable):
         m.submodules.bootram_bridge = bootram_bridge
         decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
 
-        # No external reset source: the CPU reboots itself by jumping to `_start`, which
-        # re-runs riscv-rt's init. Held reset only mattered while Apollo staged images
-        # over JTAG, and that path is gone.
-        m.d.comb += cpu.ext_reset.eq(0)
+        # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
+        #
+        # `ext_reset` has no other source. The CPU reboots itself by jumping to
+        # `_start`, so nothing else needs one -- but a JTAG-staged image has to land
+        # while the CPU is not executing, or the shell it is replacing is the thing
+        # writing over its own staging buffer.
+        m.submodules.stager = stager = JTAGStager()
+        m.d.comb += [
+            stager.tck.eq(user_jtag.tck),
+            stager.tdi.eq(user_jtag.tdi),
+            stager.ce.eq(user_jtag.ce1),
+            stager.shift.eq(user_jtag.shift),
+            user_jtag.tdo1.eq(stager.tdo),
+
+            bootram.jtag_req.eq(stager.req),
+            bootram.jtag_addr.eq(stager.addr),
+            bootram.jtag_data.eq(stager.data),
+            stager.ack.eq(bootram.jtag_ack),
+
+            cpu.ext_reset.eq(stager.cpu_reset),
+        ]
 
         # The machine external interrupt, from the PLIC.
         #

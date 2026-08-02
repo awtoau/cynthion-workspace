@@ -17,7 +17,7 @@ luna_soc's (`SPIFlashMemoryMap`, `SPIPHYController`,
   * a chip select that holds across CPU register writes (see `HoldSPIController`)
   * an ILA on the SPI wires, readable over the USB console
 
-`../../docs/comparisons.md` records why each is ours rather than upstream's.
+`../../docs/decisions.md` records why each is ours rather than upstream's.
 
 ## Read modes
 
@@ -281,7 +281,7 @@ class FairSPIControlPortCrossbar(wiring.Component):
     controller command returns zeros, which reads as a broken controller.
     Measured in `scripts/riscv_flash_crossbar_sim.py` -- with the memory map
     holding `cs`, the controller is not granted in 600 cycles; with it idle the
-    grant arrives. See `../../docs/comparisons.md`.
+    grant arrives. See `../../docs/decisions.md`.
     """
 
     def __init__(self, *, data_width=32, num_ports=2, domain="sync"):

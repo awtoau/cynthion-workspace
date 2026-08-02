@@ -1,4 +1,4 @@
-# Alternatives weighed, and why
+# Decisions, and the alternatives they were chosen over
 
 Every technical choice on this project where a real alternative existed, in tables.
 One file, so a decision is looked up rather than rediscovered.

@@ -17,7 +17,7 @@ r1.4 has three physically separate I2C buses, and the split is forced:
 
 **Both FUSB302Bs answer 0x22**, so they cannot share a bus. One `I2CMaster`
 fans out to all three pin-sets under this two-bit select --
-`docs/gateware-architecture-plan.md`, and `../../docs/comparisons.md` for the
+`docs/gateware-architecture-plan.md`, and `../../docs/decisions.md` for the
 alternatives.
 
 Select and interrupt lines are one peripheral because the handler needs both in

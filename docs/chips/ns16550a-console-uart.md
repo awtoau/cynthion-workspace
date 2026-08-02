@@ -37,7 +37,7 @@ to the access, and it is why the standard layout was adopted. IIR at +2 *does*
 share a word with RBR; what keeps them apart is that VexiiRiscv drives a
 single-byte `sel` for a byte access, `amaranth_soc.csr.wishbone` strobes only the
 lanes `sel` names, and the peripheral is in a `main=0` PMA region where no cache
-line fill reaches it. [`../comparisons.md`](../comparisons.md) decision 4 records
+line fill reaches it. [`../decisions.md`](../decisions.md) decision 4 records
 the version that hardened against this instead, and why it was reversed.
 
 ## Registers
@@ -145,4 +145,4 @@ identifying the part. The single gap is interrupt-line discovery.
   * **No 16650/16750 extensions**, no enhanced mode, no receive trigger levels,
     no character timeout, no break detection, no per-character error tagging in
     the FIFO. FIFOs are 16 bytes, fixed, because that is what a driver assumes on
-    seeing a 16550A. [`../comparisons.md`](../comparisons.md) decisions 5 and 21.
+    seeing a 16550A. [`../decisions.md`](../decisions.md) decisions 5 and 21.

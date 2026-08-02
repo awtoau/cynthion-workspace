@@ -498,7 +498,7 @@ after a 68 µs gateware timeout, not zeros.
 
 | topic | doc |
 |---|---|
-| every alternative weighed, and why, in tables | [`comparisons.md`](comparisons.md) |
+| every alternative weighed, and why, in tables | [`decisions.md`](decisions.md) |
 | what we take from upstream and what we replaced | [`upstream-boundary.md`](upstream-boundary.md) |
 | making the test gateware reusable by the CPU | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
 | how fast the soft CPU can be clocked on this part | [`riscv-clock-ceiling.md`](riscv-clock-ceiling.md) |

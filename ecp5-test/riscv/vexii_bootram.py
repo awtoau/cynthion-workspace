@@ -6,19 +6,24 @@
 """
 Loads RISC-V firmware without rebuilding the bitstream.
 
-    host --USB bulk--> CPU --CSR--> HyperRAM --bootloader--> block RAM --> run
+    host --USB bulk--> CPU  --CSR-->  HyperRAM --bootloader--> block RAM --> run
+    host --JTAG ER1--> sink --------^
 
 Firmware is block RAM init, so it normally lives inside the bitstream and
 changing one byte costs a ~60 s resynthesis. Here the image goes into HyperRAM
 (8 MiB, so images are not block-RAM sized) and a small resident bootloader
 copies it into block RAM and jumps to it.
 
-## One master, two phases
+## Two ways in, one way out
 
-The CPU stages the image, then a reset runs the bootloader that reads it back.
-Same master both times, so there is no arbiter and nothing to be fair about --
-a deliberate contrast with `FairSPIControlPortCrossbar`, where two masters do
-compete.
+    path        needs                          reaches HyperRAM through
+    ----------  -----------------------------  ------------------------
+    USB bulk    a running CPU and console      `HyperRAMBoot`, one CSR word at a time
+    JTAG ER1    only a configured FPGA         `jtag_stage.JTAGStager`, a FIFO
+
+The JTAG path exists for the case the USB path cannot serve: a board whose
+console is wedged still has JTAG, and staging over it holds the CPU in reset
+throughout. Both land in the same layout, so `try_boot` runs either unchanged.
 
 ## The CPU port moves one word at a time
 
@@ -32,7 +37,7 @@ Fetch a 16-bit word, auto-increment, raise a flag the firmware polls.
     8 ms for a 32 KiB image at 60 MHz. Bursting is available later.
 
 Placeholder-BRAM (`ecpbram`), JTAG staging and this USB path are compared in
-`../../docs/comparisons.md`.
+`../../docs/decisions.md`.
 """
 
 from amaranth import Elaboratable, Module, Mux, Signal
@@ -181,22 +186,31 @@ class HyperRAMBoot(wiring.Component):
 
 
 class BootRAM(Elaboratable):
-    """HyperRAM with a single CPU-side port.
+    """HyperRAM with two masters, and a rule about which one is running.
 
-    The CPU is the only master: it stages an image over its USB bulk endpoint and,
-    after a reset, the bootloader reads it back. There is deliberately no JTAG port
-    -- `JTAGRegisterInterface` staging measured 34 ms per 16-bit word, USB
-    round-trip bound, which is nine minutes for a 32 KiB image against the ~60 s
-    rebuild it would have replaced (`../../docs/comparisons.md`).
+    The CPU stages an image over its USB bulk endpoint; `jtag_stage.JTAGStager`
+    stages one over JTAG with the CPU held in reset. After a reset the bootloader
+    reads back whichever arrived. The two are never live at once, so the mux below
+    is a safety property rather than a scheduling policy.
+
+    JTAG wins when both ask. It has to: a JTAG shift cannot be stalled, while the
+    CPU port is a register the firmware polls and is free to wait.
 
     Attributes
     ----------
     port : HyperRAMBoot
         The CPU's CSR port; add `port.bus` to the SoC's CSR decoder.
+    jtag_req, jtag_addr, jtag_data, jtag_ack : Signal
+        The second requester, in `sync`. Wire these to a `JTAGStager`.
     """
 
     def __init__(self):
         self.port = HyperRAMBoot()
+
+        self.jtag_req  = Signal()
+        self.jtag_addr = Signal(32)
+        self.jtag_data = Signal(16)
+        self.jtag_ack  = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -218,11 +232,20 @@ class BootRAM(Elaboratable):
         # transfer underneath itself.
         start = Signal()
 
-        with m.FSM():
+        # Which requester the transfer in progress belongs to. Latched at the start
+        # and held, because the JTAG side may drop `req` the cycle it is acknowledged
+        # while the controller is still finishing.
+        serving_jtag = Signal()
+        chosen_jtag  = Signal()
+
+        with m.FSM() as fsm:
             with m.State("IDLE"):
-                with m.If(port.req):
+                with m.If(self.jtag_req | port.req):
                     m.d.comb += start.eq(1)
-                    m.d.sync += writing.eq(port.req_write)
+                    m.d.sync += [
+                        writing.eq(Mux(self.jtag_req, 1, port.req_write)),
+                        serving_jtag.eq(self.jtag_req),
+                    ]
                     m.next = "STARTING"
 
             with m.State("STARTING"):
@@ -238,6 +261,9 @@ class BootRAM(Elaboratable):
                     m.d.sync += writing.eq(0)
                     m.next = "IDLE"
 
+        m.d.comb += chosen_jtag.eq(Mux(fsm.ongoing("IDLE"), self.jtag_req,
+                                       serving_jtag))
+
         m.d.comb += [
             ram_bus.reset.o.eq(0),
             psram.single_page.eq(0),
@@ -250,13 +276,18 @@ class BootRAM(Elaboratable):
             # Single-word transfers, so every word is the final one.
             psram.final_word.eq(1),
 
-            psram.perform_write.eq(writing | (start & port.req_write)),
+            psram.perform_write.eq(
+                writing | (start & Mux(chosen_jtag, 1, port.req_write))),
             psram.start_transfer.eq(start),
-            psram.address.eq(port.req_addr),
-            psram.write_data.eq(port.req_data),
+            psram.address.eq(Mux(chosen_jtag, self.jtag_addr, port.req_addr)),
+            psram.write_data.eq(Mux(chosen_jtag, self.jtag_data, port.req_data)),
 
-            port.granted.eq(1),
+            # The CPU port sees no grant while JTAG holds the controller, so its
+            # `busy` simply stays set and the firmware's poll waits.
+            port.granted.eq(~chosen_jtag),
             port.in_data.eq(psram.read_data),
+
+            self.jtag_ack.eq(chosen_jtag & psram.write_ready),
 
             # A write completes on `write_ready`, a read on `read_ready`. The CPU polls
             # one flag for both, so pick whichever event ends the current request.

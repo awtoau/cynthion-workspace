@@ -17,6 +17,8 @@ A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
     irq_external  In   one wire; drive it from `vexii_plic.py`
     irq_timer     In   needs a CLINT; tie off until there is one
     irq_software  In   likewise
+    ext_reset     In   holds the core in reset; `jtag_stage.py` drives it
+    jtag_*        I/O  the ER2 tap, from `jtag_stage.UserJTAG`
 
 All three buses are 30-bit addressed, 32-bit data, granularity 8, with
 `err`/`cti`/`bte` -- the signature every peripheral and bridge in this tree
@@ -49,7 +51,7 @@ standard PLIC. Tie `irq_timer`/`irq_software` off explicitly so "no source" and
 generated PAC. It is in no SoC here; prefer the PLIC.
 
 The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
-cacheless, PLIC vs a smaller concentrator -- are in `../../docs/comparisons.md`.
+cacheless, PLIC vs a smaller concentrator -- are in `../../docs/decisions.md`.
 """
 
 import subprocess
@@ -175,6 +177,21 @@ class VexiiRiscv(wiring.Component):
         super().__init__({
             "ext_reset":    In(unsigned(1)),
 
+            # The ER2 tap, from `jtag_stage.UserJTAG`.
+            #
+            # Taken as ports rather than instantiated here because `JTAGG` is a
+            # singleton -- one per die -- and `jtag_stage.JTAGStager` needs ER1 off
+            # the same primitive. Left undriven the debug module sees `jtag_rstn` low
+            # and stays in reset, which is the right answer for a SoC that has not
+            # wired it.
+            "jtag_tck":     In(unsigned(1)),
+            "jtag_tdi":     In(unsigned(1)),
+            "jtag_ce":      In(unsigned(1)),
+            "jtag_shift":   In(unsigned(1)),
+            "jtag_update":  In(unsigned(1)),
+            "jtag_rstn":    In(unsigned(1)),
+            "jtag_tdo":     Out(unsigned(1)),
+
             # One wire, not 32. See the module docstring.
             "irq_external": In(unsigned(1)),
             "irq_timer":    In(unsigned(1)),
@@ -224,47 +241,28 @@ class VexiiRiscv(wiring.Component):
         rdtime = Signal(64)
         m.d.sync += rdtime.eq(rdtime + 1)
 
-        # The RISC-V debug module, hung off the ECP5's user JTAG.
+        # The RISC-V debug module, on the ER2 tap.
         #
-        # JTAGG exposes the config TAP's user instructions. ER2 rather than ER1:
-        # Apollo's own debug SPI (ECP5_JTAGDebugSPIConnection) claims ER1 = 0x32, and two
-        # things answering one instruction would corrupt both. ER2 = 0x38 is free now
-        # that the HyperRAM JTAG loader is gone.
+        # ER2 = 0x38 rather than ER1 = 0x32 because ER1 carries the HyperRAM staging
+        # sink (`jtag_stage.py`), and two things answering one instruction would
+        # corrupt both.
         #
-        # JRSTN is active low, and `capture` is the non-shift half of the enable window --
-        # JTAGG gives an enable and a shift phase rather than a discrete capture strobe.
-        jtck = Signal()
-        jtdi = Signal()
-        jtdo = Signal()
-        jshift = Signal()
-        jupdate = Signal()
-        jrstn = Signal()
-        jce2 = Signal()
-
-        m.submodules.jtagg = Instance(
-            "JTAGG",
-            o_JTCK=jtck,
-            o_JTDI=jtdi,
-            o_JSHIFT=jshift,
-            o_JUPDATE=jupdate,
-            o_JRSTN=jrstn,
-            o_JCE2=jce2,
-            i_JTDO2=jtdo,
-        )
-
+        # `jtag_rstn` is active low, and `capture` is the non-shift half of the enable
+        # window -- JTAGG gives an enable and a shift phase rather than a discrete
+        # capture strobe.
         m.submodules.cpu = Instance(
             "VexiiRiscv",
             i_clk=ClockSignal("sync"),
             i_reset=ResetSignal("sync") | self.ext_reset,
 
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_tck=jtck,
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_tdi=jtdi,
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_enable=jce2,
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_capture=jce2 & ~jshift,
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_shift=jshift,
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_update=jupdate,
-            i_EmbeddedRiscvJtag_logic_jtagInstruction_reset=~jrstn,
-            o_EmbeddedRiscvJtag_logic_jtagInstruction_tdo=jtdo,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_tck=self.jtag_tck,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_tdi=self.jtag_tdi,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_enable=self.jtag_ce,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_capture=self.jtag_ce & ~self.jtag_shift,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_shift=self.jtag_shift,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_update=self.jtag_update,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_reset=~self.jtag_rstn,
+            o_EmbeddedRiscvJtag_logic_jtagInstruction_tdo=self.jtag_tdo,
             i_EmbeddedRiscvJtag_logic_debug_reset=ResetSignal("sync"),
 
             i_PrivilegedPlugin_logic_rdtime=rdtime,

@@ -43,7 +43,7 @@
 //! it compiles to ordinary loads and stores with `fence`s.
 //!
 //! Interrupt-driven rather than polled because RTIC cannot be layered on a polled
-//! main loop; see `docs/comparisons.md`.
+//! main loop; see `docs/decisions.md`.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize,
                          Ordering};

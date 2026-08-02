@@ -21,7 +21,7 @@ and the generated PAC keeps its interrupt numbering.
 **For a new SoC, use `vexii_plic.py` instead.** A standard PLIC is what keeps
 the firmware's interrupt path identical on the board and under QEMU's `-M
 virt`, which is where the test gate runs. This peripheral is kept for
-moondancer's existing PAC. See `../../docs/comparisons.md`.
+moondancer's existing PAC. See `../../docs/decisions.md`.
 """
 
 from amaranth             import Module, Signal, Cat

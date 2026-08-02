@@ -32,7 +32,7 @@ accepting, the CPU sees THRE clear and waits. Nothing is lost as long as the
 producer honours `ready`.
 
 Why elastic buffering at the transport rather than a deep FIFO in the UART:
-`../../docs/comparisons.md`.
+`../../docs/decisions.md`.
 """
 
 from amaranth               import Module
