@@ -57,3 +57,15 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * present exactly as it does on the board: a CPU fetching from an address nothing
  * answers, indistinguishable from a dead core. */
 _stext = ORIGIN(REGION_TEXT);
+
+/* Unwind tables, dropped exactly as memory.x drops them.
+ *
+ * `virt` has 64 MiB and does not need the space; this is here so the two images
+ * are laid out by the same rules. A section present in one build and not the
+ * other is a difference between the thing under test and the thing that ships,
+ * which is what `scripts/soc_test.py` depends on there not being. See memory.x
+ * for why nothing can read this table. */
+SECTIONS
+{
+  /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
+}

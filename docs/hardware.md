@@ -409,6 +409,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `log [n]` | push *n* deferred events, as an interrupt handler would | below |
+| `board` | every port as a tree: its rail, its PD controller, its PHY | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
 | `i2c [power\|target\|aux]` | scan one of the three I2C buses and identify what answers | below |
 | `power [floor <port> <mA>]` | the four rails, and the change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
@@ -416,6 +417,60 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `typec [init]` | both FUSB302B controllers, their CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
 | `load <hex>`, `go`, `reset` | stage and run a payload | — |
+
+**`board`** is the whole board on one screen, so the *relationships* are visible:
+a connector, the rail feeding it, the PD controller watching it and its PHY are
+one branch rather than four unrelated lines.
+
+```
+board  cynthion r1.4  three usb ports, four rails, three phys
+power  pac1954 @10 on the power bus, polled every 50 ms  [sampled 61 ms ago]
+|
++- CONTROL   the host port, and apollo's
+|    rail       control   5.042 V  142.031 mA
+|    connector  type-c, NO fusb302b -- vbus and cc are not visible from here
+|    phy        usb3343, APOLLO'S -- no ulpi register window in this soc
+|
++- AUX       the usb console; this text is leaving through it
+|    rail       aux       5.136 V  167.968 mA
+|    connector  type-c, fusb302b on the aux bus
+|    typec      vbus present  nothing on CC              [confirmed 41 s ago]
+|    phy        usb3343, THE CONSOLE'S -- no ulpi register window in this soc
+|
++- TARGET    the port under test; nothing here drives it
+     rail       target_c  5.156 V   12.207 mA
+     rail       target_a    --  V      --  mA   off (12 mV)
+     connector  type-c, fusb302b on the target bus
+     typec      vbus absent   nothing on CC              [confirmed 2 s ago]
+     phy        0424:0009 usb3343    linestate se0      [live]
+```
+
+**It reads no bus.** Every number comes from a cache the 50 ms poller or the
+Type-C interrupt path already filled — a live sweep here would be a dozen I2C
+transactions from the command that touches every device, which is the single most
+likely way to land inside the PAC1954's REFRESH window. The one live read is
+TARGET's ULPI window, marked `[live]`, because "is the PHY there *now*" is what a
+cache cannot answer; it is not the shared bus, it has one user, and the gateware
+bounds it at 68 µs.
+
+**The two ages mean opposite things**, which is why the tree ends by saying so.
+The rails are polled, so an old sample means the *poller* stopped. The
+controllers interrupt on a change, so an old confirmation means the *port* has
+not moved — a value minutes old is still current.
+
+**Absent is never printed as a number.** A rail below vSafe0V (800 mV) reads
+`--` and `off`, with the millivolts it measured in brackets; a current below that
+port's floor reads `--` and `no load`; an unsampled rail reads `NOT SAMPLED`; an
+absent PHY reports the gateware's timeout. An unplugged rail on this board
+measures 0.76–0.92 mA of ADC offset, so a small number is exactly what absence
+looks like — which is why absence has to be a word.
+
+**CONTROL is a row shorter, and says why.** It has a Type-C connector and no
+FUSB302B — the board fits those to AUX and TARGET only — so its VBUS and CC are
+not visible from the CPU, and its PHY is Apollo's. `scripts/soc_test.py` drives
+this command under QEMU, where every leaf reports what it does not have; that
+works only because the command reads no bus, so the rendering under the emulator
+is the rendering on the board with nothing fed into it.
 
 **`power`** reads all four rails on demand and prints, per port, bus volts,
 current in milliamps, and whether that port is above its own floor. Units are
@@ -474,6 +529,21 @@ re-enables it. A `type-c <port>: vbus …, <cc>` line means that port's state
 changed and what it changed to. `fault` is deliberately outside the interrupt and
 polled at 50 ms, because it means something different and is worth telling apart
 without a register read.
+
+**The shell lives in 32 KiB of block RAM, and every new command is measured
+against it.** `memory.x` splits the SoC's 64 KiB in half — the resident shell low,
+the `load` payload slot high — so a command is not free: it is `.text`, its format
+strings are `.rodata`, and what is left over is the *stack*, which the linker sizes
+last and silently. Two things were reclaimed when `board` was added: `.eh_frame`,
+1776 bytes of unwind tables that lld was placing in RAM for a target that cannot
+unwind (`/DISCARD/` in both linker scripts), and `opt-level = "z"` in place of
+`"s"`, another 1612. Check the headroom after any firmware change with:
+
+```bash
+llvm-objdump -h firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/cynthion-soc
+```
+
+`.stack` is the number that matters — it is whatever RAM nothing else claimed.
 
 **`phy`** reports the TARGET PHY's vendor and product IDs, function and OTG
 control, line state, and a walking-bit test across the scratch register. It reads

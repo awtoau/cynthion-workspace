@@ -57,3 +57,20 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * agree: a mismatch gives a CPU that fetches from an address nothing answers, which
  * looks exactly like a dead core. */
 _stext = ORIGIN(REGION_TEXT);
+
+/* Unwind tables, dropped rather than loaded into block RAM.
+ *
+ * `.eh_frame` describes how to unwind a stack. Nothing here can: the target's
+ * panic strategy is abort, there is no unwinder in the binary, and the panic
+ * handler prints and spins. riscv-rt's link.x never mentions the section, so lld
+ * places it as an orphan immediately after .rodata -- inside RAM, counted against
+ * the 32 KiB, and initialised into the bitstream. Measured at 1776 bytes on the
+ * shell as it stands, which is 5% of its half of block RAM spent on a table with
+ * no reader.
+ *
+ * DWARF is unaffected: `.debug_*` is not loaded, and `debug = true` in Cargo.toml
+ * still gives an .elf that addr2line can read. */
+SECTIONS
+{
+  /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
+}
