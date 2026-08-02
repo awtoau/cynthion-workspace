@@ -1,0 +1,32 @@
+# Generated register definitions for the Cynthion r1.4 RISC-V SoC.
+#
+# `src/` below the `base` module is svd2rust output and is regenerated wholesale by
+# `scripts/soc_generate_pac.py`; edit the gateware, not this crate.
+[package]
+name = "cynthion-soc-pac"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Register definitions generated from the Cynthion SoC's memory map"
+
+[dependencies]
+# The only dependency svd2rust's `--target none` output has: a `Cell` that is
+# always accessed volatile, which is what makes a register read a load rather
+# than something the optimiser may fold. The `riscv` crate would come in with
+# `--target riscv`, which also emits a `device.x` interrupt vector table -- and
+# this firmware already has its own trap handler and its own linker script, so
+# that file would fight `memory.x` rather than help it.
+vcell = "0.1.3"
+
+[features]
+# svd2rust guards `Peripherals::take()` on this. Nothing here enables it: taking
+# the singleton needs a critical section, and this firmware's peripherals are
+# reached through `target.rs` addresses rather than through the singleton. The
+# feature is declared so the `cfg` is a known one and the build is warning-clean.
+critical-section = []
+
+[lints.rust]
+# svd2rust generates one module per peripheral and does not use all of them.
+# Warning about that on every build of the firmware would train everyone to
+# ignore warnings from this crate, which is where a real one would appear.
+dead_code = "allow"

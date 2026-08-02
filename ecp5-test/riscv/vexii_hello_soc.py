@@ -499,6 +499,23 @@ class HelloSoC(Elaboratable):
             plic.sources[IRQ_I2C].eq(i2c.irq),
         ]
 
+        # The same three lines, keyed by the decoder window each peripheral lives
+        # in, so `scripts/soc_generate_pac.py` can put an <interrupt> element on
+        # the right peripheral in the SVD.
+        #
+        # Here rather than at the top of the file, and immediately below the
+        # wiring it describes: a source number that is written down somewhere else
+        # is a source number that can disagree with the wire, and a firmware that
+        # enables the wrong PLIC source produces a console that never interrupts
+        # with nothing to see anywhere. The names are the `name=` arguments to
+        # `decoder.add()` and `board_csr.add()`, joined -- see `walk()` in the
+        # generator for why the board's three sub-windows are named that way.
+        self.interrupt_sources = {
+            "console":     IRQ_CONSOLE,
+            "apollo_uart": IRQ_APOLLO,
+            "board_i2c":   IRQ_I2C,
+        }
+
         plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
         m.submodules.plic_bridge = plic_bridge
         decoder.add(plic_bridge.wb_bus, addr=PLIC_BASE, name="plic")

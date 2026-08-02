@@ -192,6 +192,21 @@ def build_checks() -> List[Check]:
                 Step(["flutter", "test"], app, informational=True),
             ],
         ),
+        Check(
+            name="socmap",
+            description="the committed SVD still matches the SoC's memory map",
+            steps=[
+                # The one check that can see drift between the gateware and the
+                # firmware. `--check` regenerates into tmp/ and compares; it also
+                # compares the map against the *_BASE constants in
+                # vexii_hello_soc.py and the literals in target.rs, so a
+                # peripheral that moved without the crate being regenerated fails
+                # here instead of on the board.
+                #
+                # Elaboration only -- no synthesis, no board, a few seconds.
+                Step([PYTHON, "scripts/soc_generate_pac.py", "--check"], ROOT),
+            ],
+        ),
         # Do NOT run this from repos/cynthion: that directory contains a
         # 'cynthion/' subdirectory which Python picks up as a namespace package,
         # shadowing the installed one (cynthion.__file__ becomes None, so

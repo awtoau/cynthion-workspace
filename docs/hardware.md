@@ -37,16 +37,35 @@ replace it.
 **SoC peripheral registers come from the SoC's own memory map, not from prose.**
 
 Run `./scripts/soc_generate_pac.py`. It elaborates the SoC far enough to read its
-memory map — no synthesis, no place-and-route, no board touched — and prints every
-peripheral window with its address range (`tmp/logs/soc_generate_pac.log`).
+memory map — no synthesis, no place-and-route, no board touched — and emits
+`firmware/cynthion-soc-pac/soc.svd` (CMSIS-SVD: 12 peripherals, 55 registers, 96
+fields) and the `cynthion-soc-pac` crate from it, via `svd2rust` and `form`. Add
+`--svd-only` to stop at the SVD, or `--check` to report whether the committed one
+is current without writing anything
+(`tmp/logs/soc_generate_pac.log`).
 
-Per [#117](https://github.com/awtoau/cynthion-workspace/issues/117) that script is
-also to emit an SVD and a generated Rust PAC, so that moving a register becomes a
-compile error rather than a transcription bug. **The SVD emitter does not work
-yet**: `luna_soc.generate.svd` fails with `TypeError: unsupported format string
-passed to NoneType.__format__` because `csr_base` is `None` for our windows, and it
-is excluded by policy regardless — so `firmware/cynthion-soc-pac/soc.svd` is
-presently empty. The memory-map listing works today; the crate does not.
+`firmware/cynthion-soc/src/target.rs` takes every hardware address from
+`cynthion_soc_pac::base`, so moving a peripheral in the gateware moves the
+firmware's constant with it and renaming one is a compile error.
+
+The generator also cross-checks the map it read against the `*_BASE` constants in
+`vexii_hello_soc.py` and against the literals in `target.rs`, and refuses to write
+anything if they disagree. A disagreement is a defect in one of the three, not a
+formatting difference.
+
+**The svd2rust register accessors are not used, and that is on purpose.** Every
+CSR here is behind an `amaranth_soc` multiplexer with a granularity of 8 bits,
+where a multi-byte register latches a shadow from its low byte and commits on its
+high byte; svd2rust emits one natural-width volatile access per register, which is
+a different bus transaction. The drivers keep their own byte-level access. The
+crate supplies addresses, which are what drifts.
+
+What the memory map does **not** carry is prose: `csr.Register` rewrites
+`__doc__` from a template, so every register in the design reports the docstring
+"A CSR register" and the SVD's descriptions are mechanical. Bit-level meaning is
+only present where the gateware declares separate CSR fields — the 16550's
+registers are each one 8-bit field, so `LSR.DR` and `IER.ERBFI` live in
+`ecp5-test/riscv/uart16550.py` and nowhere else.
 
 **Do not go looking for SoC register offsets in the gateware source or in Apollo's
 firmware, and do not restate them in a document.** That is precisely how firmware

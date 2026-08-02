@@ -12,14 +12,35 @@
 //! extent that the two builds share source. Two console drivers meant the gate
 //! tested one of them. One driver means it tests the one that ships.
 //!
-//! Addresses below are read out of the two designs, not assumed:
+//! Addresses below are read out of the two designs, not assumed.
+//!
+//! The hardware ones come from `cynthion_soc_pac::base`, which
+//! `scripts/soc_generate_pac.py` writes out of `HelloSoC.decoder.bus.memory_map`
+//! -- the SoC's own description of itself. Nothing here is transcribed any more.
+//! Move a peripheral in the gateware and the constant follows it; rename one and
+//! this file stops compiling. That is the whole point: every address in this file
+//! used to be a number a human had copied out of `vexii_hello_soc.py`, and three
+//! peripherals were added in one sitting that way.
+//!
+//! The QEMU ones come from the machine's own device tree:
 //!
 //!     qemu-system-riscv32 -M virt -machine dumpdtb=tmp/virt.dtb -display none
 //!     dtc -I dtb -O dts tmp/virt.dtb
 //!
-//! gives `serial@10000000 { compatible = "ns16550a"; }` and `memory@80000000`;
-//! `CONSOLE_BASE`, `APOLLO_UART_BASE` and `FLASH_BASE` are the constants of the
-//! same name in `ecp5-test/riscv/vexii_hello_soc.py`.
+//! gives `serial@10000000 { compatible = "ns16550a"; }` and `memory@80000000`.
+//!
+//! **The PAC supplies addresses and nothing else, and that is deliberate.** It
+//! also contains svd2rust register accessors, which this firmware does not use,
+//! for two independent reasons. The first is this file's reason for existing: a
+//! PAC generated from our map hardcodes our bases, so a driver written against
+//! `pac::console` would be a driver that cannot run under QEMU, and the shared
+//! source that makes `scripts/soc_test.py` evidence about the board would be
+//! gone. The second is that svd2rust emits one natural-width volatile access per
+//! register, while every CSR here sits behind an `amaranth_soc` multiplexer with
+//! a granularity of 8 bits, where a multi-byte register is read by latching a
+//! shadow from its low byte and written by committing on its high byte -- see
+//! `Gpio::set_mode` in `src/gpio.rs`. A `u16` access is a different bus
+//! transaction from the two ordered byte accesses the hardware specifies.
 
 /// Every 16550 this build can talk on. The first is the primary console: the one
 /// that gets the boot banner, the bootloader's reports and any panic.
@@ -30,11 +51,11 @@
 #[cfg(not(feature = "qemu"))]
 pub const UART_BASES: &[usize] = &[
     // The USB CDC-ACM console on the AUX port -- an ordinary /dev/ttyACM node.
-    0xf000_0000,
+    cynthion_soc_pac::base::CONSOLE,
     // The Apollo-facing serial port on the shared JTAG pins (R14/T14). See the
     // comment on APOLLO_UART_BASE in ecp5-test/riscv/vexii_hello_soc.py for why
     // firmware must never speak first on this one.
-    0xf000_0500,
+    cynthion_soc_pac::base::APOLLO_UART,
 ];
 
 /// `virt` has one UART. The multi-console code paths still run -- the loop just
@@ -45,10 +66,9 @@ pub const UART_BASES: &[usize] = &[0x1000_0000];
 /// The interrupt controller.
 ///
 /// A standard RISC-V PLIC on both targets, which is the whole reason
-/// `src/plic.rs` needs no `#[cfg]`. `PLIC_BASE` here is the constant of the same
-/// name in `ecp5-test/riscv/vexii_plic.py`'s instantiation.
+/// `src/plic.rs` needs no `#[cfg]`.
 #[cfg(not(feature = "qemu"))]
-pub const PLIC_BASE: usize = 0xf040_0000;
+pub const PLIC_BASE: usize = cynthion_soc_pac::base::PLIC;
 
 /// `virt`'s PLIC, read out of the device tree rather than assumed:
 ///
@@ -66,10 +86,14 @@ pub const PLIC_BASE: usize = 0x0c00_0000;
 /// order.
 ///
 /// Source 0 is reserved by the specification as "nothing pending", so real
-/// sources start at 1. On the SoC these are `IRQ_CONSOLE` and `IRQ_APOLLO` in
-/// `ecp5-test/riscv/vexii_hello_soc.py`.
+/// sources start at 1. These come from `HelloSoC.interrupt_sources`, which is
+/// declared immediately below the `plic.sources[...]` wiring it describes -- so
+/// the number the firmware enables and the wire that raises it cannot disagree.
 #[cfg(not(feature = "qemu"))]
-pub const UART_IRQS: &[u32] = &[1, 2];
+pub const UART_IRQS: &[u32] = &[
+    cynthion_soc_pac::base::CONSOLE_IRQ,
+    cynthion_soc_pac::base::APOLLO_UART_IRQ,
+];
 
 /// `virt` puts its 16550 on source 10 -- `serial@10000000 { interrupts = <0x0a>; }`
 /// in the device tree above.
@@ -136,9 +160,9 @@ pub struct Board {
 
 #[cfg(not(feature = "qemu"))]
 pub const BOARD: Option<Board> = Some(Board {
-    gpio: 0xf000_0600,
-    i2c: 0xf000_0610,
-    sideband: 0xf000_0618,
+    gpio: cynthion_soc_pac::base::BOARD_GPIO,
+    i2c: cynthion_soc_pac::base::BOARD_I2C,
+    sideband: cynthion_soc_pac::base::BOARD_SIDEBAND,
     i2c_prescale: 149,
 });
 
@@ -152,7 +176,7 @@ pub const BOARD: Option<Board> = None;
 /// this exact address. That collision is why flash is reached through
 /// `flash_word()` rather than by the shell dereferencing a constant.
 #[cfg(not(feature = "qemu"))]
-const FLASH_BASE: usize = 0x1000_0000;
+const FLASH_BASE: usize = cynthion_soc_pac::base::SPIFLASH;
 
 /// One 32-bit word from the memory-mapped configuration flash.
 ///

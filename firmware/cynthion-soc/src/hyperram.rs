@@ -121,8 +121,15 @@ pub use backend::{read_word, write_word};
 mod backend {
     use core::ptr::{read_volatile, write_volatile};
 
-    /// Matches `BOOTRAM_BASE` in `ecp5-test/riscv/vexii_hello_soc.py`.
-    const BASE: usize = 0xf000_0400;
+    /// Read out of the SoC's memory map rather than transcribed from
+    /// `BOOTRAM_BASE` -- see the module comment in `src/target.rs`. This module
+    /// is already `not(feature = "qemu")`, so naming a hardware-only address here
+    /// costs the QEMU build nothing.
+    ///
+    /// The register offsets below stay hand-written on purpose: they are byte
+    /// accesses to a multi-byte CSR whose low byte latches a shadow and whose
+    /// high byte commits, which is not what a generated accessor would emit.
+    const BASE: usize = cynthion_soc_pac::base::BOOTRAM;
 
     const ADDR: *mut u32 = BASE as *mut u32;
     const CTRL: *mut u8 = (BASE + 0x08) as *mut u8;

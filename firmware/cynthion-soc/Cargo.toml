@@ -18,6 +18,17 @@ description = "Firmware for the Cynthion r1.4 VexiiRiscv SoC"
 riscv = "0.16"
 riscv-rt = "0.18"
 
+# Where every hardware peripheral is, generated from the SoC's own memory map by
+# `scripts/soc_generate_pac.py`. Only `src/target.rs` refers to it, and only in
+# its `not(feature = "qemu")` branch -- see the module comment there for why the
+# register accessors it also contains are not used.
+#
+# Not optional and not behind the `qemu` feature. An optional dependency would
+# mean the QEMU build compiled a different `target.rs` than the one that ships,
+# and this crate is types and constants: nothing it defines is referenced in a
+# QEMU build, so nothing it defines reaches the binary.
+cynthion-soc-pac = { path = "../cynthion-soc-pac" }
+
 # Build the same shell against QEMU's `-M virt` instead of the FPGA.
 #
 # Off by default, and it must stay that way: the hardware image is the product, and a
