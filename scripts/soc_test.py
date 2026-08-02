@@ -379,7 +379,7 @@ def main():
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
                        b"selftest", b"ports", b"irq", b"time",
-                       b"log [n]", b"board", b"led", b"i2c", b"power",
+                       b"log [n|tags]", b"board", b"led", b"i2c", b"power",
                        b"phy", b"typec", b"sideband", b"load <hex>",
                        b"reset"]
             command("help", listing, "`help` lists every command")
@@ -706,6 +706,92 @@ def main():
                   "the shell never reported the lost records.\n"
                   "Silently losing log lines is how a fault becomes invisible.\n"
                   f"received: {show(session.snapshot()[-500:])}")
+
+            # The lost records took their timestamps with them, so the column
+            # jumps. The report has to say where the jump starts, or a reader
+            # is left to spot a silence -- which is the failure mode the drop
+            # counter exists to prevent, one level up.
+            check("the loss report dates the gap it left in the column",
+                  re.search(rb"event\(s\) LOST from \d{6}\.\d{3}",
+                            session.snapshot()) is not None,
+                  "the LOST line carried no time for the first record lost.\n"
+                  "Without it the gap in the timestamp column is a silence\n"
+                  "rather than a fact.\n"
+                  f"received: {show(session.snapshot()[-500:])}")
+
+            # --- the payload tags ---------------------------------------------------
+            #
+            # A record is a 32-bit code and a 64-bit value, never a string, and
+            # the code's top byte says how to read the value (#124). The decoder
+            # for that byte is the generic arm of `events::report` -- the one
+            # every code without a hand-written sentence lands on -- so `log
+            # tags` pushes one sample per tag straight at it.
+            #
+            # Waiting on the ASCII sample rather than only on the command's own
+            # reply: it is the LAST of the nine pushed, and the reply is printed
+            # before the main loop drains any of them, so its arrival is what
+            # says all nine were formatted.
+            reply = command("log tags",
+                            [b"log pushed 10 tag samples", b"declared 16 bits"],
+                            "one record per payload tag fits and is drained")
+
+            # Each tag, named individually so a failure says which one. The code
+            # is `TT.SS.NNNN` -- tag, subsystem, number -- with the sample's
+            # number chosen as 0x10 + tag, so every line names its own tag twice
+            # and a decoder that read the wrong byte cannot pass by accident.
+            tags = [
+                ("none, the code standing alone", b"code 00.00.0010 (no payload)"),
+                ("u8", b"code 01.00.0011 u8 a5"),
+                ("u16", b"code 02.00.0012 u16 beef"),
+                ("u32", b"code 03.00.0013 u32 deadbeef"),
+                ("u64", b"code 04.00.0014 u64 0123456789abcdef"),
+                ("f32, as bits", b"code 05.00.0015 f32 bits 3f800000"),
+                ("f64, as bits", b"code 08.00.0018 f64 bits 3ff0000000000000"),
+                ("8 x u8", b"code 10.00.0020 bytes 00 11 22 33 44 55 66 77"),
+                # Eight characters, in order, as characters. The whole reason
+                # tag 17 exists is that a short identifier should not need an
+                # allocator, a length field or a truncation rule -- and it is
+                # worthless if it comes out as hex.
+                ("8 ASCII characters", b'code 11.00.0021 "cynthion"'),
+                # The tag is a promise. A value that does not fit the one it was
+                # given is printed whole and marked, not truncated -- a silently
+                # narrowed payload is a wrong number that looks right, which is
+                # the worst thing a log line can be. This row is the only reason
+                # that guard is known to work.
+                ("a value that does not fit its tag",
+                 b"code 02.00.0030 u16 2345 "
+                 b"!! declared 16 bits, value is 0000000000012345"),
+            ]
+            for what, needle in tags:
+                check(f"payload tag round-trips: {what}", needle in reply,
+                      f"the ring did not carry this tag through push and drain.\n"
+                      f"expected: {needle!r}\n"
+                      f"received: {show(reply) or '(nothing)'}")
+
+            # The float tags are RESERVED, not implemented, and the line has to
+            # say so. This CPU is rv32imac: rendering an f32 pulls
+            # compiler-builtins soft-float into an image that has 32 KiB of block
+            # RAM, which is why `src/power.rs` uses integer rationals. An
+            # unimplemented arm that looks like an oversight is the trap this
+            # asserts against.
+            check("a float payload says why it is bits and not a number",
+                  reply.count(b"(bits only: rv32imac has no F extension)") == 2,
+                  "the f32/f64 lines printed bits with no reason given.\n"
+                  "The next person implements the formatter and the image grows\n"
+                  "by a page, with nothing recording that it was a decision.\n"
+                  f"received: {show(reply) or '(nothing)'}")
+
+            # Same rule as every other event line: stamped when PUSHED. These
+            # ten are pushed in a burst with no waiting between them, so they
+            # share a millisecond or two -- what is asserted is that the column
+            # is there at all, not its spread.
+            stamped = len(re.findall(rb"\d{6}\.\d{3} irq log: code \d\d\.", reply))
+            check("every tag sample is stamped like any other event",
+                  stamped == 10,
+                  f"{stamped} of 10 tag lines carried a timestamp. A deferred\n"
+                  f"line with no stamp cannot be correlated with anything, which\n"
+                  f"is the only reason to defer it rather than drop it.\n"
+                  f"received: {show(reply) or '(nothing)'}")
 
             # --- the console is interrupt-driven ------------------------------------
             # `virt`'s PLIC is at 0x0c000000 and its 16550 is on source 10, both read

@@ -409,7 +409,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
             let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
-            let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
+            let _ = writeln!(uart, "  log [n|tags]  push n deferred events, as a handler would");
             let _ = writeln!(uart, "  board         every port: rail, pd \
                                     controller and phy, as a tree");
             let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
@@ -553,6 +553,18 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
+        // One record per payload tag, so the drain-time decoding of every tag is
+        // exercised on the shipping build. A guard arm rather than a branch
+        // inside the one below, so the two cases do not share an indent: this
+        // file is merged from several branches at once.
+        //
+        // The codes and the sample values live in `src/events.rs`, next to the
+        // renderer they test; this arm only names the command.
+        b"log" if rest == b"tags" => {
+            let pushed = events::push_tag_samples();
+            let _ = writeln!(uart, "log pushed {} tag samples, waiting {} dropped {}",
+                             pushed, events::waiting(), events::dropped());
+        }
         b"log" => {
             // Pushes through the SAME `events::push` an interrupt handler uses,
             // from normal context, which is exactly what makes it a test of the
