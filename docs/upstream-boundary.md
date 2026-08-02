@@ -56,6 +56,7 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 | `IntegratedLogicAnalyzer` | `luna.gateware.debug.ila` | Works, fits in one DP16KD, found the CS bug. |
 | `JTAGRegisterInterface` | `luna.gateware.interface.jtag` | Reliable, and the only debug path that does not depend on USB coming up. |
 | `StreamSerializer` | `luna.gateware.stream` | Small, works. |
+| `ULPIRegisterWindow` | `luna.gateware.interface.ulpi` | Reading a USB3343's registers means driving ULPI register transactions on the same 8-bit bus the link runs on -- it is part of the USB stack, not a generic peripheral, so it falls inside the exception rather than needing a case made for it. We already run `USBSerialDevice` over that layer on `aux_phy`. Writing our own would mean debugging a protocol FSM against a part we cannot probe, to arrive at the same thing. Use it on `target_phy`; `aux_phy`'s bus is owned by the console. |
 | `blockram.Peripheral` | `luna_soc.gateware.core` | Works, and its `writable=True` default is what makes runtime firmware loading possible. |
 | `SPIPHYController`, `ECP5ConfigurationFlashInterface` | `luna_soc.gateware.core.spiflash` | The PHY and the `USRMCLK` handling are correct. The bugs were a layer above. |
 | `SPIFlashMemoryMap` | `luna_soc.gateware.core.spiflash` | Verified byte-exact against `apollo flash-read`. |
