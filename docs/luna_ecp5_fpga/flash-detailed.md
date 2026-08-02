@@ -130,6 +130,11 @@ not assume the space is unused until that is deliberately reclaimed.
 
 ## Reading it over the sideband
 
+**Test bitstream only** (`ecp5-test/sideband/`). The shipping SoC does not
+implement this command and reads the JEDEC ID itself, over the memory-mapped
+flash controller — see the `board` shell command and
+[decision 24](../decisions.md#24-what-the-sideband-link-answers).
+
 `CMD_DEVICES` (`0x2C`) returns the three JEDEC ID bytes and a flags byte
 (bit 0 HyperRAM present, bit 1 flash ID valid):
 

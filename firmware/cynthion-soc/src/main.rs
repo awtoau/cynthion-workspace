@@ -418,7 +418,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                                     volts and milliamps");
             let _ = writeln!(uart, "  phy           the TARGET USB3343's ULPI registers");
             let _ = writeln!(uart, "  typec         the two FUSB302B Type-C controllers");
-            let _ = writeln!(uart, "  sideband [hex]  what the FPGA_ADV link reports");
+            let _ = writeln!(uart, "  sideband [ctrl [tx]]  the FPGA_ADV link");
             let _ = writeln!(uart, "  load <hex>    stage N bytes and boot into them");
             let _ = writeln!(uart, "  reset         back to the bootloader");
         }
@@ -1061,7 +1061,7 @@ fn board_phy(uart: &mut Uart) {
     }
 }
 
-/// `sideband`, or `sideband <hex>` to write the control register.
+/// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.
 fn board_sideband(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
@@ -1069,14 +1069,26 @@ fn board_sideband(uart: &mut Uart, rest: &[u8]) {
     };
     let link = sideband::Sideband::new(board.sideband);
 
-    if !trim(rest).is_empty() {
-        match parse_hex(rest) {
-            Some(value) => link.write(value as u8),
-            None => {
-                let _ = writeln!(uart, "usage: sideband [hex]  (bit 7 takes the \
-                                        link from the fabric)");
-                return;
-            }
+    let rest = trim(rest);
+    if !rest.is_empty() {
+        // Split on the first space: the control register, then optionally the
+        // byte a PING returns. Two arguments rather than two commands because
+        // they are read back together and are usually set together.
+        let split = rest.iter().position(|&byte| byte == b' ');
+        let (first, second) = match split {
+            Some(at) => (&rest[..at], trim(&rest[at + 1..])),
+            None => (rest, &b""[..]),
+        };
+        match (parse_hex(first), second.is_empty()) {
+            (Some(value), true) => link.write(value as u8),
+            (Some(value), false) => match parse_hex(second) {
+                Some(message) => {
+                    link.write(value as u8);
+                    link.set_message(message as u8);
+                }
+                None => return sideband_usage(uart),
+            },
+            (None, _) => return sideband_usage(uart),
         }
     }
 
@@ -1097,6 +1109,21 @@ fn board_sideband(uart: &mut Uart, rest: &[u8]) {
         let _ = writeln!(uart, "  reporting the fabric's own state; these bits \
                                 are stored and unused");
     }
+    // Printed either way: neither the port request nor the byte channel is part
+    // of the payload, so OWN says nothing about them.
+    let _ = writeln!(uart, "  CONTROL port {}",
+                     if value & sideband::ADVERTISE != 0 { "REQUESTED" }
+                     else { "not requested" });
+    let (received, count) = link.received();
+    let _ = writeln!(uart, "  message out {:02x}, in {:02x} after {} byte(s)",
+                     link.message(), received, count);
+}
+
+fn sideband_usage(uart: &mut Uart) {
+    let _ = writeln!(uart, "usage: sideband [ctrl [tx]]");
+    let _ = writeln!(uart, "  ctrl bit 7 takes the link from the fabric, \
+                            bit 5 asks for the CONTROL port");
+    let _ = writeln!(uart, "  tx   the byte a PING returns");
 }
 
 /// Drop leading and trailing spaces. The line editor does not, and an argument

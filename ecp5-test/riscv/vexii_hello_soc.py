@@ -206,7 +206,7 @@ APOLLO_UART_BASE = 0xf0000500
 #
 #   +0x00  gpio      16 bytes  amaranth_soc.gpio.Peripheral, 8 pins
 #   +0x10  i2c        8 bytes  i2c_master.I2CMaster
-#   +0x18  sideband   1 byte   sideband_csr.SidebandControl
+#   +0x18  sideband   4 bytes  sideband_csr.SidebandControl
 #   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
 #   +0x20  i2c_mux    2 bytes  i2c_mux.I2CBusMux
 #   +0x40  gateware  32 bytes  gateware_id.GatewareId
@@ -952,9 +952,9 @@ class HelloSoC(Elaboratable):
         # bulk, being the same two stream endpoints plus descriptors.
         from luna.gateware.usb.devices.acm import USBSerialDevice
 
-        # AUX rather than CONTROL or TARGET: CONTROL is shared with Apollo and needs an
-        # ApolloAdvertiser to claim, TARGET is the port under test, and AUX belongs to the
-        # FPGA outright.
+        # AUX rather than CONTROL or TARGET: CONTROL is shared with Apollo and has to be
+        # claimed (sideband bit 5, `ecp5-test/sideband_advertise.py`), TARGET is the port
+        # under test, and AUX belongs to the FPGA outright.
         bus = platform.request("aux_phy", 0)
 
         # 512 is the high-speed bulk maximum. The default of 64 is the full-speed limit,
@@ -1213,6 +1213,14 @@ class HelloSoC(Elaboratable):
             sideband.events.eq(sideband_ctrl.events),
             sideband.error.eq(sideband_ctrl.error),
             sideband.reconfigured.eq(sideband_ctrl.reconfigured),
+            # A byte each way, so the link carries a message and not only a
+            # heartbeat. See sideband_csr.py for the register discipline.
+            sideband.message.eq(sideband_ctrl.message),
+            sideband_ctrl.received.eq(sideband.received),
+            sideband_ctrl.received_strobe.eq(sideband.received_strobe),
+            # Asking Apollo for the CONTROL port. Off until firmware sets bit 5,
+            # so this AUX-only design keeps behaving exactly as it did.
+            sideband.advertise.eq(sideband_ctrl.advertise),
 
             leds.eq(Cat(ever_errored,          # red    -- error, latched
                         ever_fetched,          # orange -- fetching
