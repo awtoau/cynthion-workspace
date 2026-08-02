@@ -96,6 +96,55 @@ const _: () = assert!(UART_BASES.len() == UART_IRQS.len());
 /// which anyone is also running `apollo jtag-scan`.
 pub const ANNOUNCING: usize = 1;
 
+/// Where the board's own peripherals are, or `None` on a target that has no
+/// board.
+///
+/// One `Option` rather than three, and an `Option` rather than a `#[cfg]`'d
+/// stand-in like `flash_word`'s. The reason is the difference between the two
+/// cases: `flash_word` has a QEMU answer because `check` must exercise the same
+/// comparison and formatting on both targets, and a plausible constant does
+/// that. An LED, an I2C bus and a one-wire link to a microcontroller have no
+/// plausible constant. A model of them under QEMU would only ever confirm that
+/// the model agrees with the driver, which is worth nothing, and it would have
+/// to be maintained forever alongside the gateware it is pretending to be.
+///
+/// So the shell says so instead. `led`, `i2c` and `sideband` all exist in the
+/// QEMU build, all parse their arguments, and all report that the hardware is
+/// absent -- which means `scripts/soc_test.py` still checks that they are
+/// registered, spelled correctly and reachable, and does not pretend to check
+/// anything else. What the drivers themselves do is checked in
+/// `scripts/soc_board_sim.py`, against the gateware, and on the board.
+pub struct Board {
+    /// `amaranth_soc.gpio.Peripheral`: six LEDs, the power monitor's PWRDN, and
+    /// the USER button.
+    pub gpio: usize,
+    /// `i2c_master.I2CMaster` on the power monitor's bus.
+    pub i2c: usize,
+    /// `sideband_csr.SidebandControl`, which decides what the FPGA_ADV link
+    /// reports.
+    pub sideband: usize,
+    /// PRER for the I2C bus. `f_SCL = f_sync / (5 * (PRER + 1))`, so at 60 MHz
+    /// 149 gives 80 kHz -- see the bit-timing section of
+    /// `ecp5-test/riscv/i2c_master.py` for why 80 and not 100.
+    ///
+    /// This is a constant here rather than computed, because the firmware does
+    /// not know what `sync` runs at: `SYNC_MHZ` lives in the gateware. If the
+    /// clock changes, this changes with it, and the symptom of forgetting is a
+    /// bus that violates its own setup times and answers most of the time.
+    pub i2c_prescale: u16,
+}
+
+#[cfg(not(feature = "qemu"))]
+pub const BOARD: Option<Board> = Some(Board {
+    gpio: 0xf000_0600,
+    i2c: 0xf000_0610,
+    sideband: 0xf000_0618,
+    i2c_prescale: 149,
+});
+
+#[cfg(feature = "qemu")]
+pub const BOARD: Option<Board> = None;
+
 /// Memory-mapped configuration flash, `main=1 exe=1` so the D-cache backs it.
 /// Offset 0 holds the bitstream, which is why `615000ff` is a known-good value.
 ///

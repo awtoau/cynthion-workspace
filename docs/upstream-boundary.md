@@ -41,6 +41,8 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 | `SPIPHYController`, `ECP5ConfigurationFlashInterface` | `luna_soc.gateware.core.spiflash` | The PHY and the `USRMCLK` handling are correct. The bugs were a layer above. |
 | `SPIFlashMemoryMap` | `luna_soc.gateware.core.spiflash` | Verified byte-exact against `apollo flash-read`. |
 | `amaranth-soc` | **upstream**, not luna_soc's vendored copy | See below. |
+| `amaranth_soc.gpio.Peripheral` | **upstream** `amaranth-soc` | The board's six LEDs, the power monitor's PWRDN and the USER button. Mode/Input/Output/SetClr, per-pin, with configurable input synchroniser stages -- everything a bespoke LED register would have had to grow, already documented and already tested. Its `INPUT_ONLY` reset mode is also what lets the fabric keep driving the LEDs until firmware asks for one; see the LED comment in `vexii_hello_soc.py`. The alternative was `luna_soc`'s gpio, which the policy reserves. |
+| `AsyncSerial` | `amaranth-stdio` | The bit engine for the Apollo-facing UART. Wrapped, not replaced -- `ecp5-test/riscv/serial_line.py` adds the pad handling it deliberately leaves to the instantiator, and everything below the frame is upstream's. |
 
 ## Diverged, with reasons
 
@@ -128,6 +130,27 @@ covering the interrupt path that ships. RTIC's RISC-V backend expects this map t
 copy the *shape* of — `add(peripheral, name=, number=)` and `interrupts()`, which its SVD
 generator reads to name interrupts in the generated PAC. If a PAC is ever wanted here, that
 is the interface to grow, and `vexii_irq.py` already has it.
+
+### I2C master — ours, written to the OpenCores register map
+
+`ecp5-test/riscv/i2c_master.py`, driving the power monitor's bus (D7/C7).
+
+| candidate | why not |
+|---|---|
+| `amaranth-soc` | Has no I2C peripheral at all. The package is `gpio`, `event`, `memory` and the bus fabric; there is nothing to take. |
+| `amaranth-stdio` | Likewise — it is `serial.py` and nothing else. |
+| `luna_soc` gpio/timer/uart peripherals | Policy: reserved. And there is no I2C among them anyway. |
+
+Written, therefore — but not the register map. That is the OpenCores "I2C-Master Core"
+(Herveille, rev 0.9), chosen for the same reason `uart16550.py` is a 16550: it is public,
+it has a Linux driver (`i2c-ocores`), and **it has no read with a side effect anywhere in
+it**. Status comes from SR, which is pure; the interrupt flag is cleared by *writing* IACK.
+The one place a register map usually violates this project's rule is already correct.
+
+The bit engine is ours and is deliberately a table rather than a derivation: every I2C
+interval is a whole number of slots, so the timing numbers in the docstring can be checked
+by reading, and `scripts/soc_board_sim.py` measures them in cycles against a model slave
+that knows nothing about the controller.
 
 ### `amaranth_soc` — upstream, not the vendored copy
 

@@ -53,9 +53,12 @@ use core::ptr::{read_volatile, write_volatile};
 
 use riscv_rt::entry;
 
+mod gpio;
 mod hyperram;
+mod i2c;
 mod irq;
 mod plic;
+mod sideband;
 mod target;
 mod uart;
 
@@ -265,6 +268,9 @@ fn run(index: usize, uart: &mut Uart, line: &[u8]) {
             let _ = writeln!(uart, "  check         arithmetic and known flash values");
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
+            let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
+            let _ = writeln!(uart, "  i2c           scan the power monitor bus");
+            let _ = writeln!(uart, "  sideband [hex]  what the FPGA_ADV link reports");
             let _ = writeln!(uart, "  load <hex>    receive N bytes into the payload slot");
             let _ = writeln!(uart, "  go            jump to the loaded payload");
             let _ = writeln!(uart, "  reset         restart the firmware");
@@ -311,6 +317,9 @@ fn run(index: usize, uart: &mut Uart, line: &[u8]) {
                                  interrupts, stalls, buffered);
             }
         }
+        b"led" => board_led(uart, rest),
+        b"i2c" => board_i2c(uart),
+        b"sideband" => board_sideband(uart, rest),
         b"read" => match parse_hex(rest) {
             Some(offset) => {
                 // Bounded to the 4 MiB the flash actually holds. Above that the address
@@ -401,6 +410,190 @@ fn run(index: usize, uart: &mut Uart, line: &[u8]) {
             let _ = writeln!(uart, "unknown command; try `help`");
         }
     }
+}
+
+/// What `led`, `i2c` and `sideband` say when there is no board under them.
+///
+/// The QEMU build has `target::BOARD == None`. Reporting that is better than
+/// hiding the commands: `scripts/soc_test.py` then still checks that they are
+/// registered and spelled the same as the help text, and a person who typed one
+/// on the wrong target gets told which target they are on rather than
+/// `unknown command`. See the comment on `target::BOARD`.
+fn board_absent(uart: &mut Uart) {
+    let _ = writeln!(uart, "no board peripherals on this target");
+}
+
+/// `led`, `led <colour>`, `led <colour> on|off|fabric`.
+///
+/// Colours only -- see the module comment in `src/gpio.rs` for why an index is
+/// not accepted here.
+fn board_led(uart: &mut Uart, rest: &[u8]) {
+    let board = match target::BOARD {
+        Some(board) => board,
+        None => return board_absent(uart),
+    };
+    let pins = gpio::Gpio::new(board.gpio);
+
+    // Split the argument into a colour and an optional state.
+    let rest = trim(rest);
+    let (name, state) = match rest.iter().position(|&b| b == b' ') {
+        Some(i) => (&rest[..i], trim(&rest[i + 1..])),
+        None => (rest, &rest[..0]),
+    };
+
+    if !name.is_empty() {
+        let led = match gpio::led_by_name(name) {
+            Some(led) => led,
+            None => {
+                let _ = writeln!(uart, "no LED of that colour; they are red, \
+                                        orange, yellow, green, blue, violet");
+                return;
+            }
+        };
+        match state {
+            b"on" => pins.set_led(led, true),
+            b"off" => pins.set_led(led, false),
+            b"fabric" => pins.release_led(led),
+            b"" => {}
+            _ => {
+                let _ = writeln!(uart, "usage: led <colour> [on|off|fabric]");
+                return;
+            }
+        }
+    }
+
+    // Always list afterwards, so a command that set something shows the result
+    // rather than reporting success and leaving the state to be guessed at.
+    // This is the only way to confirm an LED from a terminal: nobody reading
+    // this output can see the board.
+    for (led, colour) in gpio::LEDS {
+        let owner = match pins.led_owner(led) {
+            gpio::Owner::Cpu => "cpu",
+            gpio::Owner::Fabric => "fabric",
+        };
+        let _ = writeln!(uart, "  {:7} {:3}  driven by {}",
+                         colour,
+                         if pins.led_lit(led) { "on" } else { "off" },
+                         owner);
+    }
+    let _ = writeln!(uart, "  button  {}",
+                     if pins.button() { "pressed" } else { "released" });
+    let _ = writeln!(uart, "  power monitor {}",
+                     if pins.power_monitor_down() { "POWERED DOWN" } else { "running" });
+}
+
+/// Scan the power monitor's I2C bus and identify what is on it.
+///
+/// The scan covers 0x08..0x77 because 0x00..0x07 and 0x78..0x7f are reserved by
+/// the I2C specification for general call, ten-bit addressing and the like --
+/// probing them can put a device into a mode nobody asked for.
+fn board_i2c(uart: &mut Uart) {
+    let board = match target::BOARD {
+        Some(board) => board,
+        None => return board_absent(uart),
+    };
+    let bus = i2c::I2c::new(board.i2c);
+    bus.init(board.i2c_prescale);
+
+    let _ = writeln!(uart, "i2c   @{:08x} prescale {}", board.i2c, board.i2c_prescale);
+
+    let mut found = [0u8; 8];
+    let mut count = 0usize;
+    for address in 0x08u8..=0x77 {
+        match bus.probe(address) {
+            Ok(true) => {
+                let _ = writeln!(uart, "  {:02x} answers", address);
+                if count < found.len() {
+                    found[count] = address;
+                }
+                count += 1;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                // Report and stop. A bus that has gone wrong will report the
+                // same thing 111 more times, and the first report is the one
+                // that says where it happened.
+                let _ = writeln!(uart, "  {:02x} {}", address, error.as_str());
+                return;
+            }
+        }
+    }
+    let _ = writeln!(uart, "  {} device(s)", count);
+
+    // Identify anything that answered. The PAC195x family is what this bus is
+    // for, so ask each address whether it is one -- a part that is not simply
+    // reports whatever those registers mean to it, which is why the
+    // manufacturer id is checked before the product name is trusted.
+    for &address in found.iter().take(count.min(found.len())) {
+        let mut id = [0u8; 1];
+        let manufacturer = match bus.read_registers(
+            address, i2c::pac195x::REG_MANUFACTURER_ID, &mut id) {
+            Ok(()) => id[0],
+            Err(error) => {
+                let _ = writeln!(uart, "  {:02x} id read failed: {}",
+                                 address, error.as_str());
+                continue;
+            }
+        };
+        if manufacturer != i2c::pac195x::MANUFACTURER_MICROCHIP {
+            let _ = writeln!(uart, "  {:02x} manufacturer {:02x}, not a PAC195x",
+                             address, manufacturer);
+            continue;
+        }
+        let mut product = [0u8; 1];
+        let mut revision = [0u8; 1];
+        let _ = bus.read_registers(address, i2c::pac195x::REG_PRODUCT_ID, &mut product);
+        let _ = bus.read_registers(address, i2c::pac195x::REG_REVISION_ID, &mut revision);
+        let _ = writeln!(uart, "  {:02x} {} manufacturer {:02x} revision {:02x}",
+                         address, i2c::pac195x::product_name(product[0]),
+                         manufacturer, revision[0]);
+    }
+}
+
+/// `sideband`, or `sideband <hex>` to write the control register.
+fn board_sideband(uart: &mut Uart, rest: &[u8]) {
+    let board = match target::BOARD {
+        Some(board) => board,
+        None => return board_absent(uart),
+    };
+    let link = sideband::Sideband::new(board.sideband);
+
+    if !trim(rest).is_empty() {
+        match parse_hex(rest) {
+            Some(value) => link.write(value as u8),
+            None => {
+                let _ = writeln!(uart, "usage: sideband [hex]  (bit 7 takes the \
+                                        link from the fabric)");
+                return;
+            }
+        }
+    }
+
+    let value = link.read();
+    let _ = writeln!(uart, "sideband @{:08x} ctrl {:02x}", board.sideband, value);
+    if value & sideband::OWN != 0 {
+        let _ = writeln!(uart, "  reporting state {} events {} error {} \
+                                reconfigured {}",
+                         value & sideband::STATE_MASK,
+                         (value & sideband::EVENTS != 0) as u8,
+                         (value & sideband::ERROR != 0) as u8,
+                         (value & sideband::RECONFIGURED != 0) as u8);
+    } else {
+        // Do NOT decode the payload bits here. With OWN clear they are stored
+        // and ignored, and printing them under a heading that reads like a
+        // report would say the link is announcing something it is not -- which
+        // is the one lie a diagnostic for a debug link must not tell.
+        let _ = writeln!(uart, "  reporting the fabric's own state; these bits \
+                                are stored and unused");
+    }
+}
+
+/// Drop leading and trailing spaces. The line editor does not, and an argument
+/// compared against `b"on"` must not have one on either end.
+fn trim(text: &[u8]) -> &[u8] {
+    let start = text.iter().position(|&b| b != b' ').unwrap_or(text.len());
+    let end = text.iter().rposition(|&b| b != b' ').map_or(start, |i| i + 1);
+    &text[start..end]
 }
 
 /// Does the 16550 at `base` have a working scratch register?

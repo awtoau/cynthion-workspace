@@ -53,7 +53,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from amaranth                       import Elaboratable, Module, Signal, Cat
+from amaranth                       import Elaboratable, Module, Mux, Signal, Cat
 from amaranth.lib                   import wiring
 from amaranth.lib.cdc               import FFSynchronizer
 
@@ -82,13 +82,15 @@ from vexii_cpu import VexiiRiscv
 from uart16550 import Uart16550
 from vexii_plic import Plic
 from serial_line import SerialLine
+from i2c_master import I2CMaster, prescale_for
+from sideband_csr import SidebandControl
 from stream_buffer import StreamBuffer
 from wishbone_pipe import RegisteredResponse
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
 
-from amaranth_soc                   import csr, wishbone
+from amaranth_soc                   import csr, gpio, wishbone
 from amaranth_soc.wishbone          import Decoder
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -145,6 +147,66 @@ CONSOLE_BASE = 0xf0000000
 # not simultaneously running `apollo jtag-scan`. moondancer does not take that
 # precaution; it logs here whenever it feels like it, and contends.
 APOLLO_UART_BASE = 0xf0000500
+
+# The board's own peripherals -- LEDs, the power monitor's I2C bus, and the
+# sideband payload -- behind ONE Wishbone window and one CSR bridge.
+#
+# Three separate windows would have been three more `WishboneCSRBridge`
+# instances and three more comparators on the Wishbone decoder's address path,
+# which is on the critical path this design has just finished recovering margin
+# on (commit 18c1fa5). A `csr.Decoder` costs one comparator on an eight-bit
+# address inside an already-decoded window, which is nothing, and it is what
+# amaranth-soc provides the class for.
+#
+#   +0x00  gpio      16 bytes  amaranth_soc.gpio.Peripheral, 8 pins
+#   +0x10  i2c        8 bytes  i2c_master.I2CMaster
+#   +0x18  sideband   1 byte   sideband_csr.SidebandControl
+#
+# The sub-addresses are the peripherals' natural sizes and each window is
+# aligned to its own size, which is what MemoryMap requires.
+BOARD_BASE     = 0xf0000600
+GPIO_BASE      = BOARD_BASE + 0x00
+I2C_BASE       = BOARD_BASE + 0x10
+SIDEBAND_BASE  = BOARD_BASE + 0x18
+
+# What is on each GPIO pin.
+#
+# THE LEDS ARE NAMED BY COLOUR AND ONLY BY COLOUR. There are six of them in a
+# row and their index is an implementation detail of the platform file; a bug
+# report that says "LED 3" means nothing to the person holding the board, and
+# has already cost time here. The order below is the physical order on the
+# board and matches `LEDResources(pins="E13 C13 B14 A15 D12 C11")` in
+# `cynthion_r1_4.py`.
+#
+# The platform declares them with `invert=True`, so they are active LOW on the
+# pad and Amaranth's `PinsN` does the inversion: a 1 here lights the LED. That
+# is the only place the active-low-ness appears, and neither the peripheral nor
+# the firmware needs to know about it.
+GPIO_RED     = 0
+GPIO_ORANGE  = 1
+GPIO_YELLOW  = 2
+GPIO_GREEN   = 3
+GPIO_BLUE    = 4
+GPIO_VIOLET  = 5
+
+# Pin 6: the power monitor's PWRDN, active low on the pad (`PinsN`), so a 1 here
+# powers the PAC1954 DOWN. It is an output with no input path, and the GPIO
+# peripheral only drives it once its mode says push-pull -- so the reset state
+# is "not powered down" and the chip is available to the I2C bus without the
+# firmware doing anything.
+GPIO_PWRDN   = 6
+
+# Pin 7: the USER button, `PinsN` on M14, so a 1 here means pressed. The only
+# genuine *input* in this peripheral, and the reason the Input register is worth
+# having at all.
+GPIO_BUTTON  = 7
+
+GPIO_PIN_COUNT = 8
+
+# The I2C bus rate. See i2c_master.py for why 80 kHz rather than 100 kHz --
+# briefly, at 100 kHz the repeated-START setup interval lands 0.7 us inside a
+# standard-mode minimum, and a register read needs a repeated START.
+I2C_SCL_HZ = 80_000
 
 # 115200 8N1, which is what the SAMD11 side is configured for
 # (`repos/apollo/firmware/src/boards/cynthion_d11/uart.c`) and what every terminal
@@ -248,6 +310,18 @@ PLIC_BASE = 0xf0400000
 # human is watching should be serviced first.
 IRQ_CONSOLE = 1
 IRQ_APOLLO = 2
+
+# The I2C controller's completion interrupt. Third, so the two consoles keep the
+# numbers -- and the tie-break priority -- they already had.
+#
+# The gateware raises it; the firmware does not enable it. `CTR.IEN` resets to
+# zero, so this line is held low until something asks for it, and the firmware's
+# I2C driver polls SR.TIP instead: a shell command that reads a register is
+# synchronous by construction and has nothing else to do while it waits, so an
+# interrupt would buy it nothing and cost a handler that has to be right. The
+# wire is here so that a future driver -- one feeding the sideband's power
+# payload from a timer, say -- does not need a bitstream change to use it.
+IRQ_I2C = 3
 
 # Capture depth, in samples of the sync clock.
 #
@@ -380,10 +454,37 @@ class HelloSoC(Elaboratable):
         # and the wires they select are the same names in the same file. A Cat()
         # here would encode them positionally and silently renumber everything
         # if a third source were ever inserted in the middle.
-        m.submodules.plic = plic = Plic(sources=2)
+        # The board's peripherals: LEDs and two other pins on a GPIO block, the
+        # power monitor's I2C bus, and the sideband payload. One CSR decoder in
+        # front of all three, one Wishbone window -- see BOARD_BASE.
+        #
+        # The GPIO peripheral is `amaranth_soc.gpio`, upstream and unmodified. A
+        # bespoke LED register would have been fewer gates and would have had to
+        # be documented, tested and explained; this one is already all three.
+        m.submodules.board_gpio = board_gpio = gpio.Peripheral(
+            pin_count=GPIO_PIN_COUNT, addr_width=4, data_width=8)
+
+        m.submodules.i2c = i2c = I2CMaster()
+        m.submodules.sideband_ctrl = sideband_ctrl = SidebandControl()
+
+        board_csr = csr.Decoder(addr_width=5, data_width=8)
+        m.submodules.board_csr = board_csr
+        board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
+                      name="gpio")
+        board_csr.add(i2c.bus,           addr=I2C_BASE      - BOARD_BASE,
+                      name="i2c")
+        board_csr.add(sideband_ctrl.bus, addr=SIDEBAND_BASE - BOARD_BASE,
+                      name="sideband")
+
+        board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
+        m.submodules.board_bridge = board_bridge
+        decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
+
+        m.submodules.plic = plic = Plic(sources=3)
         m.d.comb += [
             plic.sources[IRQ_CONSOLE].eq(console.irq),
             plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
+            plic.sources[IRQ_I2C].eq(i2c.irq),
         ]
 
         plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
@@ -798,7 +899,19 @@ class HelloSoC(Elaboratable):
         # Every one except green is sticky, for the same reason the sideband bits are:
         # these events are brief, and a human glancing at the board samples at an
         # arbitrary moment.
-        leds = Cat(platform.request("led", n).o for n in range(6))
+        #
+        # THESE ARE NOW THE DEFAULT RATHER THAN THE ONLY THING. The GPIO
+        # peripheral above can take any LED, one at a time, by putting that pin
+        # in push-pull mode -- and until it does, the diagnostic below drives it,
+        # exactly as before. `amaranth_soc.gpio` calls that mode INPUT_ONLY and
+        # documents it as "the pin output is disabled", which is precisely the
+        # claim being made: while the CPU is not driving, something else is.
+        #
+        # The reset value of Mode is INPUT_ONLY for every pin, so a bitstream
+        # whose firmware never runs still lights the LEDs with the fabric's own
+        # account of itself. That is the whole reason these six exist.
+        led_pads = [platform.request("led", n).o for n in range(6)]
+        leds = Signal(6)
 
         # ~0.36 s on, ~0.36 s off at 60 MHz. Fast enough to read as deliberate, slow
         # enough to be unmistakably a flash rather than a flicker.
@@ -858,9 +971,19 @@ class HelloSoC(Elaboratable):
                                                     o_domain="sync")
 
         m.d.comb += [
-            sideband.state.eq(Cat(ever_buffered, ever_usb)),
-            sideband.events.eq(ever_console),
-            sideband.error.eq(ever_errored),
+            # The fabric's account, which the CPU may override one register
+            # write at a time -- see sideband_csr.py. `reconfigured` has never
+            # had anything to report from this design, so the fabric side of it
+            # is zero and the firmware side is the only one that can set it.
+            sideband_ctrl.fabric_state.eq(Cat(ever_buffered, ever_usb)),
+            sideband_ctrl.fabric_events.eq(ever_console),
+            sideband_ctrl.fabric_error.eq(ever_errored),
+            sideband_ctrl.fabric_reconfigured.eq(0),
+
+            sideband.state.eq(sideband_ctrl.state),
+            sideband.events.eq(sideband_ctrl.events),
+            sideband.error.eq(sideband_ctrl.error),
+            sideband.reconfigured.eq(sideband_ctrl.reconfigured),
 
             leds.eq(Cat(ever_errored,          # red    -- error, latched
                         ever_fetched,          # orange -- fetching
@@ -868,6 +991,61 @@ class HelloSoC(Elaboratable):
                         heartbeat_on,          # green  -- heartbeat, flashing
                         ever_console,          # blue   -- console data queued
                         serial.connect)),      # violet -- USB up
+        ]
+
+        # ---- the board GPIO pins --------------------------------------------
+        #
+        # Six LEDs, one power-monitor control output, and the USER button.
+        #
+        # The LEDs and PWRDN are `dir="o"` resources: the pad has an `o` and no
+        # `oe`, so the GPIO peripheral's output enable cannot reach the pin and
+        # is used here as an OWNERSHIP bit instead. Push-pull means "the CPU is
+        # driving this one"; anything else leaves it to the fabric. That is the
+        # same meaning the peripheral's own documentation gives the mode, and it
+        # is why the LED handover needed no new register.
+        for index in range(6):
+            m.d.comb += led_pads[index].eq(
+                Mux(board_gpio.pins[index].oe,
+                    board_gpio.pins[index].o,
+                    leds[index]))
+            # Input reads back the value ON THE NET, not the Output register --
+            # so it answers "what is this LED doing" whichever side is driving
+            # it, which is the question worth asking from a shell that cannot
+            # see the board. It is not a measurement: nothing on an ECP5 reads
+            # an output pad back, and the platform's `PinsN` inversion happens
+            # below this point, so what is read is the logical value rather than
+            # the pad voltage.
+            m.d.comb += board_gpio.pins[index].i.eq(led_pads[index])
+
+        power_monitor = platform.request("power_monitor", 0)
+
+        # PWRDN is active low on the pad. The GPIO block drives it only in
+        # push-pull mode, so the reset state is a 0 here, a 1 on the pad, and a
+        # PAC1954 that is running -- which is what the I2C bus below needs.
+        #
+        # `slow` and `gpio` on this resource are left as inputs (o and oe both
+        # default to 0 on a `dir="io"` pin). `slow` selects the chip's
+        # low-bandwidth sampling mode and `gpio` is its general-purpose pin;
+        # neither is needed to read a measurement, and driving a pin whose
+        # purpose has not been established is how a board gets damaged.
+        m.d.comb += power_monitor.pwrdn.o.eq(
+            board_gpio.pins[GPIO_PWRDN].o & board_gpio.pins[GPIO_PWRDN].oe)
+        m.d.comb += board_gpio.pins[GPIO_PWRDN].i.eq(power_monitor.pwrdn.o)
+
+        button = platform.request("button_user", 0)
+        m.d.comb += board_gpio.pins[GPIO_BUTTON].i.eq(button.i)
+
+        # ---- the power monitor's I2C bus ------------------------------------
+        #
+        # One bus, two wires, and whatever is on it. `scl` is `dir="o"` on this
+        # platform, so it is driven push-pull and nothing on the bus may stretch
+        # the clock; `sda` is `dir="io"` and is driven properly open-drain. See
+        # i2c_master.py for what that rules out.
+        m.d.comb += [
+            power_monitor.scl.o.eq(i2c.scl_o),
+            power_monitor.sda.o.eq(i2c.sda_o),
+            power_monitor.sda.oe.eq(i2c.sda_oe),
+            i2c.sda_i.eq(power_monitor.sda.i),
         ]
 
         return m
