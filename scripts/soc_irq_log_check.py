@@ -134,7 +134,11 @@ def main():
         problems = []
         handlers = []
 
-        for path in sorted(SRC.glob("*.rs")):
+        # Recursive. `src/bus/` holds the I2C controller and the mux, and a
+        # subdirectory that this check silently walked past would be a place
+        # where the rule does not apply -- which is exactly the kind of exemption
+        # nobody would notice granting.
+        for path in sorted(SRC.rglob("*.rs")):
             raw = path.read_text()
             code = strip_comments(raw)
             name = path.name
@@ -173,7 +177,7 @@ def main():
             return 1
 
         emit(f"handler module(s): {', '.join(handlers)}")
-        emit(f"{len(list(SRC.glob('*.rs')))} file(s) checked")
+        emit(f"{len(list(SRC.rglob('*.rs')))} file(s) checked")
 
         if problems:
             emit()

@@ -75,3 +75,21 @@ pub fn now() -> Instant {
 pub const fn millis(millis: u32) -> u32 {
     ((target::TIME_HZ as u64 * millis as u64) / 1000) as u32
 }
+
+/// The other direction: how many milliseconds `ticks` is, on this target.
+///
+/// For reporting an interval that was measured rather than chosen -- the age of
+/// the power monitor's cached sample is the one caller. Truncating rather than
+/// rounding, so "0 ms" means "less than a millisecond" and never "about a
+/// millisecond"; an age is a claim about staleness and rounding it upward is the
+/// wrong direction to be wrong in.
+///
+/// `TIME_HZ / 1000` is exact on both targets (60_000 and 10_000 ticks per
+/// millisecond), so there is no accumulating error to think about. A future
+/// clock that is not a whole number of kHz would need this rewritten, and the
+/// symptom would be an age that drifts a few per cent -- which is why the
+/// division is written this way round and not as `ticks * 1000 / TIME_HZ`, whose
+/// symptom would instead be an overflow at 71 ticks.
+pub fn to_millis(ticks: u32) -> u32 {
+    ticks / (target::TIME_HZ / 1000)
+}

@@ -1,9 +1,14 @@
-//! The power monitor's I2C bus.
+//! The I2C controller itself: bytes on wires, and nothing about which bus.
 //!
 //! Drives `ecp5-test/riscv/i2c_master.py`, which is the OpenCores I2C master
 //! register map. Nothing here is specific to what is on the bus except
 //! `pac195x`, at the bottom, which knows how to ask a Microchip PAC195x for its
 //! name.
+//!
+//! Private to [`crate::bus`], which is the one thing allowed to construct an
+//! [`I2c`] and which pairs every transfer here with a mux select. A driver that
+//! reached this module directly could start a transfer without saying which of
+//! the board's three buses it meant -- see the module comment there.
 //!
 //! ## Every wait is bounded
 //!
@@ -112,6 +117,12 @@ impl I2c {
 
     fn reg(&self, offset: usize) -> *mut u8 {
         (self.base + offset) as *mut u8
+    }
+
+    /// Where this register block is. Reported by the `i2c` command; see
+    /// [`crate::bus::Bus::i2c_base`].
+    pub fn base(&self) -> usize {
+        self.base
     }
 
     /// Set the prescale and enable the core. Idempotent.

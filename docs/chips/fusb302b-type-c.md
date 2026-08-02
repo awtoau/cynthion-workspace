@@ -173,7 +173,8 @@ is that a state change can be looked into when it happens instead of polled.
 | bus scanner | `ecp5-test/pins/i2c_scan.py` — applet `0x49324353` "I2CS" |
 | multiplexed master — superseded, and **it was never on silicon** | `ecp5-test/i2c/multiplexed.py`, `test_multiplexed.py` |
 | the mux that *is* on silicon | `ecp5-test/riscv/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
-| firmware | `firmware/cynthion-soc/src/mux.rs`, `fusb302.rs`, `typec.rs` |
+| firmware | `firmware/cynthion-soc/src/bus.rs` (owns the controller and the select), `fusb302.rs`, `typec.rs` |
+| bus and device ownership | `scripts/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
 | `DEVICE_ID` decode helper | `scripts/sideband_decoder.py` |
 
 **There is no host-side script for either applet.** The values above were read ad

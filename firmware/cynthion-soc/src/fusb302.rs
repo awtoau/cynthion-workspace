@@ -57,8 +57,8 @@
 //! The storm cannot happen because the source is off for the whole window in
 //! which the line is still asserted.
 
-use crate::i2c::{self, I2c};
-use crate::mux::{self, Mux};
+use crate::bus::{self, Bus, BUS_AUX_C, BUS_TARGET_C, LINE_AUX_FAULT,
+                 LINE_AUX_INT, LINE_TARGET_FAULT, LINE_TARGET_INT};
 
 /// Both controllers, and nothing else, live here.
 pub const ADDRESS: u8 = 0x22;
@@ -142,23 +142,23 @@ impl Port {
     /// The mux select value that reaches this controller.
     fn bus(&self) -> u8 {
         match self {
-            Port::Target => mux::BUS_TARGET_C,
-            Port::Aux => mux::BUS_AUX_C,
+            Port::Target => BUS_TARGET_C,
+            Port::Aux => BUS_AUX_C,
         }
     }
 
     /// This controller's bit in the mux's LINES register.
     fn int_bit(&self) -> u8 {
         match self {
-            Port::Target => mux::LINE_TARGET_INT,
-            Port::Aux => mux::LINE_AUX_INT,
+            Port::Target => LINE_TARGET_INT,
+            Port::Aux => LINE_AUX_INT,
         }
     }
 
     fn fault_bit(&self) -> u8 {
         match self {
-            Port::Target => mux::LINE_TARGET_FAULT,
-            Port::Aux => mux::LINE_AUX_FAULT,
+            Port::Target => LINE_TARGET_FAULT,
+            Port::Aux => LINE_AUX_FAULT,
         }
     }
 }
@@ -176,28 +176,25 @@ pub struct State {
     pub bc_lvl: u8,
 }
 
-/// Select a bus and read one register from the controller on it.
+/// Read one register from the controller on this port's bus.
 ///
-/// The select is written FIRST, every time, and never assumed. There is one
-/// controller and three buses; a driver that remembered which bus it left
+/// The bus is named on the call and written by [`Bus`] immediately before the
+/// transfer -- there is no way to reach the controller without saying which one,
+/// which is the point of that type. A driver that remembered which bus it left
 /// selected would be right until something else -- the power monitor's 50 ms
-/// poll -- moved it, and the failure is not an error but a plausible answer
-/// from the wrong chip. Both FUSB302Bs answer 0x22 and both report `0x91`, so
-/// reading the wrong one looks exactly like reading the right one.
-fn read(bus: &I2c, mux: &Mux, port: Port, register: u8)
-    -> Result<u8, i2c::Error>
-{
-    mux.select(port.bus());
+/// poll -- moved it, and the failure is not an error but a plausible answer from
+/// the wrong chip. Both FUSB302Bs answer 0x22 and both report `0x91`, so reading
+/// the wrong one looks exactly like reading the right one.
+fn read(bus: &mut Bus, port: Port, register: u8) -> Result<u8, bus::Error> {
     let mut value = [0u8; 1];
-    bus.read_registers(ADDRESS, register, &mut value)?;
+    bus.read_registers(port.bus(), ADDRESS, register, &mut value)?;
     Ok(value[0])
 }
 
-fn write(bus: &I2c, mux: &Mux, port: Port, register: u8, value: u8)
-    -> Result<(), i2c::Error>
+fn write(bus: &mut Bus, port: Port, register: u8, value: u8)
+    -> Result<(), bus::Error>
 {
-    mux.select(port.bus());
-    bus.write_register(ADDRESS, register, value)
+    bus.write_register(port.bus(), ADDRESS, register, value)
 }
 
 /// Put one controller into a state where it interrupts on a change.
@@ -209,20 +206,20 @@ fn write(bus: &I2c, mux: &Mux, port: Port, register: u8, value: u8)
 /// pin assert and there is no reason to have it on while the rest is being set
 /// up -- an interrupt raised half way through this sequence would be serviced
 /// against a half-configured part.
-pub fn configure(bus: &I2c, mux: &Mux, port: Port) -> Result<(), i2c::Error> {
-    write(bus, mux, port, REG_RESET, RESET_SW)?;
-    write(bus, mux, port, REG_POWER, POWER_BLOCKS)?;
-    write(bus, mux, port, REG_SWITCHES0, SWITCHES0_MEASURE_CC1)?;
-    write(bus, mux, port, REG_MASK, MASK_WANTED)?;
-    write(bus, mux, port, REG_MASKA, MASK_ALL)?;
-    write(bus, mux, port, REG_MASKB, MASK_ALL)?;
+pub fn configure(bus: &mut Bus, port: Port) -> Result<(), bus::Error> {
+    write(bus, port, REG_RESET, RESET_SW)?;
+    write(bus, port, REG_POWER, POWER_BLOCKS)?;
+    write(bus, port, REG_SWITCHES0, SWITCHES0_MEASURE_CC1)?;
+    write(bus, port, REG_MASK, MASK_WANTED)?;
+    write(bus, port, REG_MASKA, MASK_ALL)?;
+    write(bus, port, REG_MASKB, MASK_ALL)?;
 
     // Clear anything the reset or the configuration itself latched, BEFORE the
     // pin is allowed to assert. Otherwise the first thing this port does is
     // raise an interrupt about its own setup.
-    clear(bus, mux, port)?;
+    clear(bus, port)?;
 
-    write(bus, mux, port, REG_CONTROL0, CONTROL0_INTERRUPTS_ON)
+    write(bus, port, REG_CONTROL0, CONTROL0_INTERRUPTS_ON)
 }
 
 /// Read and discard all three interrupt registers.
@@ -232,17 +229,29 @@ pub fn configure(bus: &I2c, mux: &Mux, port: Port) -> Result<(), i2c::Error> {
 /// one set leaves the pin asserted. On a shared level-sensitive source that is
 /// the storm the module comment describes, so "read every one, always" is the
 /// rule rather than "read the one you expect".
-pub fn clear(bus: &I2c, mux: &Mux, port: Port) -> Result<(), i2c::Error> {
-    read(bus, mux, port, REG_INTERRUPT)?;
-    read(bus, mux, port, REG_INTERRUPTA)?;
-    read(bus, mux, port, REG_INTERRUPTB)?;
+///
+/// **`typec::Controllers::service` is the only caller, and that is a rule.** The
+/// three registers are read-to-clear, so any second reader takes the event away
+/// from the thing that services it, and the symptom is an interrupt whose cause
+/// nobody can name -- the same shape of fault as reading the PAC1954 out from
+/// under its poller, and harder to see. `state()` below is what a reporter wants,
+/// and it touches nothing that clears.
+pub fn clear(bus: &mut Bus, port: Port) -> Result<(), bus::Error> {
+    read(bus, port, REG_INTERRUPT)?;
+    read(bus, port, REG_INTERRUPTA)?;
+    read(bus, port, REG_INTERRUPTB)?;
     Ok(())
 }
 
 /// What one controller currently says about its port.
-pub fn state(bus: &I2c, mux: &Mux, port: Port) -> Result<State, i2c::Error> {
-    let device_id = read(bus, mux, port, REG_DEVICE_ID)?;
-    let status0 = read(bus, mux, port, REG_STATUS0)?;
+///
+/// Safe for anyone to call: `DEVICE_ID` and `STATUS0` are plain registers with no
+/// read side effect and no window around them, so unlike [`clear`] this does not
+/// need a single owner. A part with an interrupt pending still has it pending
+/// afterwards.
+pub fn state(bus: &mut Bus, port: Port) -> Result<State, bus::Error> {
+    let device_id = read(bus, port, REG_DEVICE_ID)?;
+    let status0 = read(bus, port, REG_STATUS0)?;
     Ok(State {
         device_id,
         vbus: status0 & STATUS0_VBUSOK != 0,

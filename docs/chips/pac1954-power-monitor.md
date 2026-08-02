@@ -167,13 +167,13 @@ rather than vanishes.**
 |---|---|
 | host over JTAG | `ecp5-test/power_monitor/power_monitor_gateware.py` (applet `0x504D4F4E` "PMON") + `scripts/power_probe.py` |
 | free-running poller | `ecp5-test/sideband/sideband_gateware.py` — reads one register on a loop, blinks an LED when it sees `0x54` |
-| RISC-V CPU | `ecp5-test/riscv/i2c_master.py` (OpenCores register map) wired in `ecp5-test/riscv/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/i2c.rs` and `src/power.rs`, shell commands `i2c` and `power` |
+| RISC-V CPU | `ecp5-test/riscv/i2c_master.py` (OpenCores register map) wired in `ecp5-test/riscv/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/bus.rs` (which owns `bus/i2c.rs` and `bus/mux.rs`) and `src/power.rs`, shell commands `i2c` and `power` |
 
 ### From the SoC shell
 
 ```
 > power
-power @10  poll 50 ms  change 100 mA
+power @10  poll 50 ms  change 100 mA  sampled 63 ms ago
   target_a  0.000 V      0.686 mA  disconnected
   target_c  0.006 V      0.762 mA  disconnected
   aux       5.165 V     34.408 mA  connected
@@ -183,16 +183,36 @@ power @10  poll 50 ms  change 100 mA
 > power floor aux 25          # in milliamps; stored as microamps
 ```
 
-`power` reads on demand, ignoring the change threshold — a command that inherited
-it could not answer "what is it right now".
+`power` **prints the background poll's cached sample and touches no bus**
+(awtoau/cynthion-workspace#123). It still reports all four rails regardless of
+the change threshold — the threshold keeps the log readable, and a command that
+inherited it could not answer "what is it now" — but the numbers come from the
+poller rather than from a read of this command's own.
 
-**A read requested while the background poll's REFRESH is still settling gets one
-retry.** The part is unavailable for 1 ms after REFRESH and answers a read inside
-that window by acknowledging its address and then NACKing the register pointer;
-the poll issues one every 50 ms, so a hand-typed `power` has about a 2% chance of
-landing in it. Untreated that is an intermittent "no acknowledge" on a bus that
-is working perfectly. The driver waits 2 ms and tries once more; a second failure
-is a real bus fault and is reported as one.
+That is ownership, not caching for speed. The part is unavailable for 1 ms after
+a REFRESH and answers a read inside that window by acknowledging its address and
+then NACKing the register pointer; the poll issues a REFRESH every 50 ms, so a
+second caller reading on its own account landed in the window about one time in
+fifty and reported "no acknowledge (register pointer)" on a bus that was working
+perfectly. **One owner of the REFRESH cycle makes that impossible rather than
+rare.** The earlier fix — wait 2 ms, try once more — is deleted: it removed the
+symptom and left the structure, and a retry that can never fire is a claim about
+the system that is not true.
+
+**The age on the header line is load-bearing.** Worst-case staleness is 100 ms
+(one interval for the sample to be fetched, plus however long ago the last poll
+ran), which is imperceptible; but a poller that has *stopped* leaves four
+voltages that are individually plausible and jointly a lie, and nothing in them
+says so. The age is measured from the REFRESH that latched the values, not from
+the read that fetched them, so it does not understate itself by an interval.
+Before the first complete cycle it says `NO SAMPLE YET` rather than printing
+rails; past 60 s it says `sampled OVER 60 s ago` rather than a number, because
+the 32-bit `time` CSR wraps at 71.6 s and a wrapped age is small and plausible.
+
+Checked in `scripts/soc_i2c_owner_sim.py`: a read driven into an open REFRESH
+window, two owners interleaving on one device, and a mux select that is
+remembered — each run against the real gateware and a model of this part, and
+each asserting that the old arrangement fails.
 
 The firmware also **polls every 50 ms in the background** and prints only when a
 channel moves by **100 mA or more from the last value it announced**, or crosses

@@ -17,12 +17,10 @@
 
 use core::fmt::Write;
 
+use crate::bus::Bus;
 use crate::clock::{self, Instant};
 use crate::fusb302::{self, Port, State};
-use crate::i2c::I2c;
 use crate::irq;
-use crate::mux::Mux;
-use crate::target;
 use crate::uart::Uart;
 
 /// How often the `fault` lines are looked at.
@@ -71,18 +69,11 @@ impl Controllers {
     /// Called once at boot and again by `typec init`. Reports per port, because
     /// the two are independent devices on independent buses and one being absent
     /// says nothing about the other.
-    pub fn start(&mut self, uart: &mut Uart) {
-        let board = match target::BOARD {
-            Some(board) => board,
-            None => return,
-        };
-        let bus = I2c::new(board.i2c);
-        let mux = Mux::new(board.i2c_mux);
-
+    pub fn start(&mut self, uart: &mut Uart, bus: &mut Bus) {
         let mut all = true;
         for port in Port::ALL {
-            match fusb302::configure(&bus, &mux, port) {
-                Ok(()) => match fusb302::state(&bus, &mux, port) {
+            match fusb302::configure(bus, port) {
+                Ok(()) => match fusb302::state(bus, port) {
                     Ok(state) => {
                         self.state[index(port)] = Some(state);
                         let _ = writeln!(uart,
@@ -113,23 +104,16 @@ impl Controllers {
     /// point of the deferral is that the source is MASKED between the handler
     /// and this, so the latency here is whatever the loop takes to come round,
     /// and nothing is lost while it does.
-    pub fn service(&mut self, uart: &mut Uart) {
+    pub fn service(&mut self, uart: &mut Uart, bus: &mut Bus) {
         if !irq::take_type_c() {
             return;
         }
         self.serviced = self.serviced.wrapping_add(1);
 
-        let board = match target::BOARD {
-            Some(board) => board,
-            None => return,
-        };
-        let bus = I2c::new(board.i2c);
-        let mux = Mux::new(board.i2c_mux);
-
         // Read the lines ONCE and act on that picture. Reading per device would
         // let one assert between the two reads, and acting on a snapshot that
         // never existed is how the second device gets left set.
-        let lines = mux.lines();
+        let lines = bus.lines();
 
         // EVERY asserting device, not the first one. This is the rule the
         // module comment is about: a device left uncleared holds the shared line
@@ -139,7 +123,7 @@ impl Controllers {
             if !fusb302::asserting(lines, port) {
                 continue;
             }
-            if let Err(error) = fusb302::clear(&bus, &mux, port) {
+            if let Err(error) = fusb302::clear(bus, port) {
                 let _ = writeln!(uart, "type-c {}: could not clear: {}",
                                  port.name(), error.as_str());
                 // Carry on to the other port anyway. Giving up here would leave
@@ -147,7 +131,7 @@ impl Controllers {
                 // controller into a dead interrupt source.
                 continue;
             }
-            match fusb302::state(&bus, &mux, port) {
+            match fusb302::state(bus, port) {
                 Ok(state) => self.announce(uart, port, state),
                 Err(error) => {
                     let _ = writeln!(uart, "type-c {}: {}", port.name(),
@@ -168,18 +152,14 @@ impl Controllers {
     ///
     /// Level, not edge: what is announced is a transition, so a fault that stays
     /// asserted produces one line rather than twenty a second.
-    pub fn poll(&mut self, uart: &mut Uart) {
+    pub fn poll(&mut self, uart: &mut Uart, bus: &Bus) {
         let now = clock::now();
         if self.last_poll.elapsed(now) < clock::millis(FAULT_POLL_MS) {
             return;
         }
         self.last_poll = now;
 
-        let board = match target::BOARD {
-            Some(board) => board,
-            None => return,
-        };
-        let lines = Mux::new(board.i2c_mux).lines();
+        let lines = bus.lines();
 
         for port in Port::ALL {
             let faulting = fusb302::faulting(lines, port);
@@ -216,15 +196,11 @@ fn index(port: Port) -> usize {
 }
 
 /// `typec`, or `typec init` to configure both controllers again.
-pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers) {
-    let board = match target::BOARD {
-        Some(board) => board,
-        None => return crate::board_absent(uart),
-    };
-
+pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
+               bus: &mut Bus) {
     let rest = crate::trim(rest);
     if rest == b"init" {
-        controllers.start(uart);
+        controllers.start(uart, bus);
         return;
     }
     if !rest.is_empty() {
@@ -232,12 +208,10 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers) {
         return;
     }
 
-    let bus = I2c::new(board.i2c);
-    let mux = Mux::new(board.i2c_mux);
-    let lines = mux.lines();
+    let lines = bus.lines();
 
     let _ = writeln!(uart, "type-c @{:08x}  lines {:02x}  irq serviced {}  {}",
-                     board.i2c_mux, lines, controllers.serviced,
+                     bus.mux_base(), lines, controllers.serviced,
                      if controllers.configured { "configured" }
                      else { "NOT configured" });
 
@@ -245,7 +219,12 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers) {
         // Read live rather than reporting the cached state. The cache exists to
         // suppress duplicate log lines; a command that asked "what is it now"
         // and answered from a cache would be answering a different question.
-        match fusb302::state(&bus, &mux, port) {
+        //
+        // Safe to read live, unlike the PAC1954 next door: `state` touches
+        // `DEVICE_ID` and `STATUS0`, which have no read side effect and no window
+        // around them. The registers that DO -- the three read-to-clear interrupt
+        // ones -- have exactly one reader, and it is `service` above.
+        match fusb302::state(bus, port) {
             Ok(state) => {
                 let _ = writeln!(uart,
                     "  {:6} device {:02x}  vbus {:7}  {:22}  int {}  fault {}",
@@ -271,7 +250,8 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers) {
         }
     }
     // Which bus the shared controller is left pointing at. It is not left where
-    // this command found it: `power`'s background poll re-selects on every
-    // transaction precisely so that nothing has to be.
-    let _ = writeln!(uart, "  bus select now {}", mux.selected());
+    // this command found it, and nothing depends on where it is left: `Bus`
+    // writes the select as part of every transfer, so the value here is a fact
+    // about the last transfer and not a mode anything relies on.
+    let _ = writeln!(uart, "  bus select now {}", bus.selected());
 }

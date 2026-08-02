@@ -27,6 +27,27 @@
 //! filled with `no acknowledge (register pointer)`. Reading last poll's sample
 //! turns a zero-millisecond margin into a fifty-millisecond one at no cost.
 //!
+//! ## One owner of the REFRESH cycle
+//!
+//! REFRESH-then-read is a protocol that spans two transactions with a window in
+//! the middle, and [`Monitor::poll`] owns it. Nothing else in this firmware may
+//! read the part: the transaction is private to this module and `poll` is its
+//! only caller, so there is no second REFRESH to collide with the first.
+//!
+//! It was not always so, and the failure is worth keeping in view. `power` used
+//! to issue its own read, which landed inside the poll's 1 ms window about 2% of
+//! the time and reported "no acknowledge (register pointer)" on a bus that was
+//! working perfectly. The fix attempted first -- wait 2 ms and try once more --
+//! made the symptom go away and left the structure that caused it, which is why
+//! issue #123 asked for it to be deleted rather than kept. `power` now prints
+//! [`Monitor::latest`], the sample the poller already has, and touches no bus.
+//!
+//! The cost of that is staleness, and staleness is exactly the kind of wrongness
+//! that looks right. So the sample carries the instant of the REFRESH that
+//! latched it -- not the read that fetched it, which is one interval later -- and
+//! `power` prints its age. A poller that has stopped then reads as a number
+//! climbing past 50 ms instead of as four plausible voltages.
+//!
 //! ## What gets printed, and what does not
 //!
 //! A poll every 50 ms is twenty lines a second per channel if every sample is
@@ -45,9 +66,8 @@
 
 use core::fmt::Write;
 
+use crate::bus::{self, Bus, BUS_POWER_MONITOR};
 use crate::clock::{self, Instant};
-use crate::i2c::{self, I2c};
-use crate::mux::{self, Mux};
 use crate::uart::Uart;
 
 /// The address the PAC1954 on r1.4 is strapped to.
@@ -108,11 +128,49 @@ pub const DEFAULT_FLOOR_UA: u32 = 10_000;
 /// it has not produced.
 pub const INTERVAL_MS: u32 = 50;
 
+/// Past this, the sample's age is reported as a bound and not as a number.
+///
+/// `clock::now()` is the low 32 bits of the `time` CSR, which wraps every 71.6
+/// seconds at 60 MHz. An age computed across a wrap is a small number -- a
+/// poller stopped for two minutes would report "12 ms old", which is precisely
+/// the plausible-wrong-answer failure this whole change exists to remove. 60
+/// seconds is comfortably inside one wrap on both targets and three orders of
+/// magnitude past the 50 ms a working poll takes, so nothing healthy reaches it.
+pub const AGE_LIMIT_MS: u32 = 60_000;
+
 /// One channel's reading, in the units the shell prints.
 #[derive(Clone, Copy)]
 pub struct Reading {
     pub bus_mv: u32,
     pub current_ua: u32,
+}
+
+/// Every channel from one instant, and which instant that was.
+#[derive(Clone, Copy)]
+pub struct Sample {
+    pub readings: [Reading; 4],
+    /// The REFRESH that latched these values -- NOT the read that fetched them.
+    ///
+    /// Each poll reads the set the PREVIOUS poll asked for, so the fetch happens
+    /// one interval after the measurement. Timestamping the fetch would
+    /// understate the age by exactly the interval this driver is trying to make
+    /// visible, and would do it silently.
+    pub latched: Instant,
+}
+
+/// How old the cached sample is, as far as it can truthfully be stated.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Age {
+    /// Milliseconds since the REFRESH that latched it. 50-100 ms in steady
+    /// state: one interval for the sample to be fetched, plus however long ago
+    /// the last poll ran.
+    Millis(u32),
+    /// Past [`AGE_LIMIT_MS`], where a number would wrap and start lying.
+    Older,
+    /// Nothing sampled yet. True for the first two polls after reset -- one to
+    /// issue a REFRESH, one to read what it latched -- and true forever if the
+    /// part never answers.
+    Never,
 }
 
 /// VBUS is a 0-32 V full-scale unsigned 16-bit reading.
@@ -162,14 +220,24 @@ pub struct Monitor {
     /// Until then `poll` retries: a board whose I2C comes up late should start
     /// working on its own rather than needing a command typed at it.
     live: bool,
-    /// Cleared until one REFRESH has been issued and its sample read back.
+    /// When the last REFRESH was issued, or `None` before the first one.
     ///
-    /// The first read after reset returns whatever the measurement registers
-    /// held before any REFRESH -- the part only updates them on command
-    /// (DS20006539B 5.2), so before the first one they are not a measurement of
-    /// anything. Announcing that would put a fabricated connect event on the
-    /// console at every boot.
-    primed: bool,
+    /// Two jobs, and they are the same fact. It is the timestamp the NEXT poll's
+    /// readings belong to, since a REFRESH latches what the following read
+    /// fetches. And `None` is what makes the very first read discardable: before
+    /// any REFRESH the measurement registers hold whatever they held at power-up
+    /// (DS20006539B 5.2 -- the part only updates them on command), so that read
+    /// is not a measurement of anything and must neither be announced nor cached.
+    /// Announcing it would put a fabricated connect event on the console at every
+    /// boot; caching it would let `power` print it.
+    refresh_at: Option<Instant>,
+    /// The most recent real sample, which is what `power` prints.
+    ///
+    /// The whole of issue #123: one owner reads the part, everybody else reads
+    /// this. `None` until a REFRESH has been issued AND the sample it latched has
+    /// been fetched, which is two polls -- 100 ms after reset, or never on a
+    /// board whose monitor does not answer.
+    sample: Option<Sample>,
     /// Consecutive failed polls. Printed by `power`, so "the monitor says
     /// nothing" can be told apart from "the monitor cannot reach the part",
     /// which are the same silence from outside.
@@ -194,7 +262,8 @@ impl Monitor {
             state: [None; 4],
             floor: [DEFAULT_FLOOR_UA; 4],
             live: false,
-            primed: false,
+            refresh_at: None,
+            sample: None,
             failures: 0,
             phase: "idle",
         }
@@ -217,49 +286,40 @@ impl Monitor {
         self.state[channel] = None;
     }
 
-    /// Sample now, whatever the interval says. Used by the `power` command.
+    /// The most recent sample, or `None` if there has not been one.
     ///
-    /// Returns the four readings in channel order, or the bus error that stopped
-    /// it. Does not touch the announcement state: reading on demand must not
-    /// swallow the change event that would otherwise have been printed.
-    pub fn read(&mut self, bus: &I2c, mux: &Mux)
-        -> Result<[Reading; 4], i2c::Error>
-    {
-        match self.read_once(bus, mux) {
-            // The one collision this driver can have with itself.
-            //
-            // The part is unavailable for 1 ms after a REFRESH (DS20006539B
-            // 5.2) and answers a read inside that window by acknowledging its
-            // address and then NACKing the register pointer. The background
-            // poll issues a REFRESH every 50 ms, so a read requested from the
-            // shell has about a 2% chance of arriving in it -- an intermittent
-            // "no acknowledge" on a bus that is working perfectly, which is
-            // precisely the class of report that costs a day.
-            //
-            // Waiting it out is the whole fix. 2 ms rather than the datasheet's
-            // 1 because the window opened before this call did and the cost of
-            // being generous is a millisecond in a command a human typed. A
-            // second failure is a real bus fault and is reported as one.
-            Err(i2c::Error::NackRegister) => {
-                let started = clock::now();
-                while started.elapsed(clock::now()) < clock::millis(2) {}
-                self.read_once(bus, mux)
-            }
-            other => other,
+    /// What `power` prints. It reaches no bus, so it cannot collide with the
+    /// REFRESH cycle this type owns, and it costs a copy of 32 bytes.
+    ///
+    /// `None` and [`Age::Never`] are the same condition, always: a sample exists
+    /// exactly when there is an instant to date it from.
+    pub fn latest(&self) -> Option<Sample> {
+        self.sample
+    }
+
+    /// How old [`Monitor::latest`] is, as far as the counter can say truthfully.
+    pub fn age(&self) -> Age {
+        let sample = match self.sample {
+            Some(sample) => sample,
+            None => return Age::Never,
+        };
+        let ticks = sample.latched.elapsed(clock::now());
+        if ticks >= clock::millis(AGE_LIMIT_MS) {
+            Age::Older
+        } else {
+            Age::Millis(clock::to_millis(ticks))
         }
     }
 
-    /// One attempt. See [`Monitor::read`] for why there are two.
-    fn read_once(&mut self, bus: &I2c, mux: &Mux)
-        -> Result<[Reading; 4], i2c::Error>
-    {
-        // Point the one controller at this bus, every time and without
-        // remembering. Two other devices share it -- both FUSB302Bs, both at
-        // 0x22 -- so a stale select does not produce an error, it produces a
-        // plausible answer from the wrong chip. One uncached byte store against
-        // a transfer of milliseconds.
-        mux.select(mux::BUS_POWER_MONITOR);
-
+    /// One REFRESH cycle: fetch what the last one latched, and ask for the next.
+    ///
+    /// PRIVATE, and `poll` is its only caller. That is the fix for issue #123
+    /// stated in the type system rather than in a comment: a second caller cannot
+    /// exist, so there is no second REFRESH to land inside this one's window.
+    ///
+    /// `Ok(None)` is the first pass after reset, whose read predates every
+    /// REFRESH and is therefore not a measurement. See `refresh_at`.
+    fn transfer(&mut self, bus: &mut Bus) -> Result<Option<Sample>, bus::Error> {
         // READ FIRST, THEN REFRESH -- and that order is the whole trick.
         //
         // The datasheet (DS20006539B 5.2) says the readable registers "will be
@@ -277,16 +337,26 @@ impl Monitor {
         //
         // The consequence to know about: the very first read after reset
         // returns whatever the registers hold before any REFRESH has been
-        // issued. `poll` handles that by issuing one and reporting nothing on
-        // its first pass.
+        // issued. That read is discarded below, and the same fact is what makes
+        // the age reported by `power` meaningful.
         self.phase = "read";
         let mut raw = [0u8; MEASUREMENT_BYTES];
-        bus.read_registers(ADDRESS, REG_VBUS1, &mut raw)?;
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, REG_VBUS1, &mut raw)?;
+
+        // WHEN these bytes were measured: the previous REFRESH, read out before
+        // this pass overwrites it. A sample timestamped with the read that
+        // fetched it would claim to be one interval younger than it is, which is
+        // the sort of small consistent lie nothing ever notices.
+        let latched = self.refresh_at;
 
         // Ask for the next set. One transaction, all four channels, so nothing
         // can arrive from two different sample instants.
         self.phase = "refresh";
-        bus.send_byte(ADDRESS, REG_REFRESH)?;
+        bus.send_byte(BUS_POWER_MONITOR, ADDRESS, REG_REFRESH)?;
+        // After the Send Byte returns, not before it: the part latches when it
+        // receives the command, and the transfer is ~0.2 ms of the 50 ms
+        // interval either way.
+        self.refresh_at = Some(clock::now());
 
         let mut readings = [Reading { bus_mv: 0, current_ua: 0 }; 4];
         for channel in 0..4 {
@@ -301,17 +371,25 @@ impl Monitor {
                 current_ua: current_ua(vsense),
             };
         }
-        Ok(readings)
+        Ok(latched.map(|latched| Sample { readings, latched }))
     }
 
     /// Sample if the interval has elapsed, and report anything worth reporting.
+    ///
+    /// **The sole owner of the PAC1954's REFRESH cycle.** Everything else asks
+    /// [`Monitor::latest`], which touches nothing.
     ///
     /// Called from the main loop with the primary console. This is normal
     /// context, not a handler -- it may print, and it may spin on the I2C bus,
     /// because nothing is waiting on it. An interrupt-driven version would have
     /// to defer both, and buys nothing: a 50 ms period is not a latency anyone
     /// can perceive.
-    pub fn poll(&mut self, uart: &mut Uart) {
+    ///
+    /// `bus` is an `Option` rather than this function reaching for
+    /// `target::BOARD` itself, so that a target with no board is a missing
+    /// resource rather than a `#[cfg]` -- and so the clock is still read on every
+    /// target. See below.
+    pub fn poll(&mut self, uart: &mut Uart, bus: Option<&mut Bus>) {
         let now = clock::now();
         if self.last.elapsed(now) < clock::millis(INTERVAL_MS) {
             return;
@@ -324,15 +402,13 @@ impl Monitor {
         // gate rather than only on hardware. A CSR that trapped would be an
         // illegal-instruction exception in the main loop, which the gate would
         // catch in seconds instead of a reconfigure finding it in minutes.
-        let board = match crate::target::BOARD {
-            Some(board) => board,
+        let bus = match bus {
+            Some(bus) => bus,
             None => return,
         };
-        let bus = I2c::new(board.i2c);
-        let mux = Mux::new(board.i2c_mux);
 
-        let readings = match self.read(&bus, &mux) {
-            Ok(readings) => readings,
+        let sample = match self.transfer(bus) {
+            Ok(sample) => sample,
             Err(error) => {
                 self.failures = self.failures.saturating_add(1);
                 // Announced once, on the transition from working to not. A bus
@@ -354,11 +430,19 @@ impl Monitor {
             let _ = writeln!(uart, "power: monitor responding");
         }
 
-        // Discard the first sample. See `primed`.
-        if !self.primed {
-            self.primed = true;
-            return;
-        }
+        // The first pass has read the registers as they were before any REFRESH.
+        // Not a measurement, so it is neither announced nor cached. See
+        // `refresh_at`.
+        let sample = match sample {
+            Some(sample) => sample,
+            None => return,
+        };
+
+        // Publish BEFORE deciding what to announce. The announcement rules are
+        // about what is worth a console line; `power` asks a different question
+        // and must get the answer whether or not this sample was newsworthy.
+        self.sample = Some(sample);
+        let readings = sample.readings;
 
         for channel in 0..4 {
             let current = readings[channel].current_ua;

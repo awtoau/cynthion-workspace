@@ -53,14 +53,13 @@ use core::ptr::{read_volatile, write_volatile};
 
 use riscv_rt::entry;
 
+mod bus;
 mod clock;
 mod events;
 mod gpio;
 mod hyperram;
 mod fusb302;
-mod i2c;
 mod irq;
-mod mux;
 mod plic;
 mod power;
 mod sideband;
@@ -69,6 +68,7 @@ mod typec;
 mod uart;
 mod ulpi;
 
+use bus::Bus;
 use target::flash_word;
 use uart::Uart;
 
@@ -100,6 +100,15 @@ const _: () = assert!(target::UART_BASES.len() <= MAX_CONSOLES);
 /// every field here is state about hardware that is not there, kept anyway so
 /// the commands that report it compile and run on both targets.
 struct Devices {
+    /// The board's one I2C controller and the mux in front of it, or `None` on a
+    /// target that has no board.
+    ///
+    /// ONE of these exists, here, and every driver that talks to a device
+    /// borrows it. That is the arrangement issue #123 asked for: `src/bus.rs`
+    /// is the only module that can construct a controller, so a second one
+    /// cannot be made, and `&mut` proves at compile time that two callers are
+    /// never mid-transfer at once.
+    bus: Option<Bus>,
     power: power::Monitor,
     type_c: typec::Controllers,
 }
@@ -107,6 +116,11 @@ struct Devices {
 impl Devices {
     const fn new() -> Self {
         Devices {
+            bus: match target::BOARD {
+                Some(board) => Some(Bus::new(board.i2c, board.i2c_mux,
+                                             board.i2c_prescale)),
+                None => None,
+            },
             power: power::Monitor::new(),
             type_c: typec::Controllers::new(),
         }
@@ -260,15 +274,15 @@ fn main() -> ! {
     // re-initialising a bus on that cadence would be a needless write to a
     // peripheral three devices now share. The `i2c` scan command still calls it,
     // because a scan is also how a wedged bus gets recovered.
-    if let Some(board) = target::BOARD {
-        i2c::I2c::new(board.i2c).init(board.i2c_prescale);
+    if let Some(bus) = devices.bus.as_mut() {
+        bus.init();
 
         // Both Type-C controllers, configured so they interrupt on a state
         // change rather than needing to be polled. AFTER the controller is set
         // up, obviously, and BEFORE `irq::init()`, so that nothing is asserting
         // when the source is first enabled -- `configure` clears the parts'
         // interrupt registers on the way through for exactly that reason.
-        devices.type_c.start(&mut console);
+        devices.type_c.start(&mut console, bus);
     }
 
     // Interrupts on, and not before now.
@@ -294,7 +308,7 @@ fn main() -> ! {
         // JTAG TMS and this firmware never transmits there unbidden, which is
         // exactly what a background monitor would be doing -- see
         // `target::ANNOUNCING`.
-        devices.power.poll(&mut console);
+        devices.power.poll(&mut console, devices.bus.as_mut());
 
         // Anything an interrupt handler wanted to say. Formatted and
         // transmitted HERE, in normal context, on a console this loop owns --
@@ -306,8 +320,10 @@ fn main() -> ! {
         // on a timer: the source is MASKED between the handler and here, so the
         // only latency is one turn of this loop and nothing is lost while it
         // takes. See `src/typec.rs`.
-        devices.type_c.service(&mut console);
-        devices.type_c.poll(&mut console);
+        if let Some(bus) = devices.bus.as_mut() {
+            devices.type_c.service(&mut console, bus);
+            devices.type_c.poll(&mut console, bus);
+        }
 
         // Round-robin, one byte per console per pass. Fair by construction and with no
         // arbitration to get wrong: a console that is being pasted into cannot starve
@@ -413,10 +429,16 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                              events::waiting(), events::dropped());
         }
         b"led" => board_led(uart, rest),
-        b"i2c" => board_i2c(uart, rest),
+        b"i2c" => board_i2c(uart, rest, devices),
         b"power" => board_power(uart, rest, devices),
         b"phy" => board_phy(uart),
-        b"typec" => typec::command(uart, rest, &mut devices.type_c),
+        // Split here rather than inside the command, because "there is no board"
+        // is a fact about this build and not about the Type-C controllers. The
+        // command then takes a `&mut Bus` it can use unconditionally.
+        b"typec" => match devices.bus.as_mut() {
+            Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
+            None => board_absent(uart),
+        },
         b"log" => {
             // Pushes through the SAME `events::push` an interrupt handler uses,
             // from normal context, which is exactly what makes it a test of the
@@ -604,39 +626,37 @@ fn board_led(uart: &mut Uart, rest: &[u8]) {
 /// The scan covers 0x08..0x77 because 0x00..0x07 and 0x78..0x7f are reserved by
 /// the I2C specification for general call, ten-bit addressing and the like --
 /// probing them can put a device into a mode nobody asked for.
-fn board_i2c(uart: &mut Uart, rest: &[u8]) {
-    let board = match target::BOARD {
-        Some(board) => board,
-        None => return board_absent(uart),
-    };
-
+fn board_i2c(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // Which of the three buses. There is one controller and three pin-sets, and
     // nothing in a reply says which bus it came from -- both FUSB302Bs answer
-    // 0x22 with the same identity byte -- so the select is named explicitly
-    // rather than remembered.
+    // 0x22 with the same identity byte -- so the bus is named on every call
+    // below rather than selected once and remembered.
     let which = trim(rest);
     let (bus_select, label) = match which {
-        b"" | b"power" => (mux::BUS_POWER_MONITOR, "power_monitor"),
-        b"target" => (mux::BUS_TARGET_C, "target_type_c"),
-        b"aux" => (mux::BUS_AUX_C, "aux_type_c"),
+        b"" | b"power" => (bus::BUS_POWER_MONITOR, "power_monitor"),
+        b"target" => (bus::BUS_TARGET_C, "target_type_c"),
+        b"aux" => (bus::BUS_AUX_C, "aux_type_c"),
         _ => {
             let _ = writeln!(uart, "usage: i2c [power|target|aux]");
             return;
         }
     };
 
-    let bus = i2c::I2c::new(board.i2c);
-    let selector = mux::Mux::new(board.i2c_mux);
-    bus.init(board.i2c_prescale);
-    selector.select(bus_select);
+    let bus = match devices.bus.as_mut() {
+        Some(bus) => bus,
+        None => return board_absent(uart),
+    };
+    // A scan is also how a wedged controller gets recovered, which is why this
+    // one command re-initialises. Nothing else does; see `Bus::init`.
+    bus.init();
 
     let _ = writeln!(uart, "i2c   @{:08x} prescale {} bus {} ({})",
-                     board.i2c, board.i2c_prescale, bus_select, label);
+                     bus.i2c_base(), bus.prescale(), bus_select, label);
 
     let mut found = [0u8; 8];
     let mut count = 0usize;
     for address in 0x08u8..=0x77 {
-        match bus.probe(address) {
+        match bus.probe(bus_select, address) {
             Ok(true) => {
                 let _ = writeln!(uart, "  {:02x} answers", address);
                 if count < found.len() {
@@ -663,7 +683,7 @@ fn board_i2c(uart: &mut Uart, rest: &[u8]) {
     for &address in found.iter().take(count.min(found.len())) {
         let mut id = [0u8; 1];
         let manufacturer = match bus.read_registers(
-            address, i2c::pac195x::REG_MANUFACTURER_ID, &mut id) {
+            bus_select, address, bus::pac195x::REG_MANUFACTURER_ID, &mut id) {
             Ok(()) => id[0],
             Err(error) => {
                 let _ = writeln!(uart, "  {:02x} id read failed: {}",
@@ -671,36 +691,43 @@ fn board_i2c(uart: &mut Uart, rest: &[u8]) {
                 continue;
             }
         };
-        if manufacturer != i2c::pac195x::MANUFACTURER_MICROCHIP {
+        if manufacturer != bus::pac195x::MANUFACTURER_MICROCHIP {
             let _ = writeln!(uart, "  {:02x} manufacturer {:02x}, not a PAC195x",
                              address, manufacturer);
             continue;
         }
         let mut product = [0u8; 1];
         let mut revision = [0u8; 1];
-        let _ = bus.read_registers(address, i2c::pac195x::REG_PRODUCT_ID, &mut product);
-        let _ = bus.read_registers(address, i2c::pac195x::REG_REVISION_ID, &mut revision);
+        let _ = bus.read_registers(bus_select, address,
+                                   bus::pac195x::REG_PRODUCT_ID, &mut product);
+        let _ = bus.read_registers(bus_select, address,
+                                   bus::pac195x::REG_REVISION_ID, &mut revision);
         let _ = writeln!(uart, "  {:02x} {} manufacturer {:02x} revision {:02x}",
-                         address, i2c::pac195x::product_name(product[0]),
+                         address, bus::pac195x::product_name(product[0]),
                          manufacturer, revision[0]);
     }
 }
 
 /// `power`, or `power floor <port> <mA>`.
 ///
-/// Reads all four rails on demand, regardless of the change threshold the
-/// background poll applies -- the threshold exists to keep the log readable, and
-/// a command that inherited it could not answer "what is it right now".
+/// **Prints the poller's cached sample and touches no bus.** The 50 ms poll
+/// already reads every channel and keeps the values to compute the 100 mA delta,
+/// so the data is here; issuing a second read would only add a caller that can
+/// land inside the poll's REFRESH window, which is issue #123 and is what the
+/// deleted 2 ms retry was papering over.
+///
+/// All four rails regardless of the change threshold, which is unchanged: the
+/// threshold keeps the background log readable, and a command that inherited it
+/// could not answer "what is it now".
 ///
 /// Ports are named, never numbered, for the same reason the LEDs are: the PAC's
 /// channel order is not the port order anyone would guess (channel 1 is
 /// TARGET_A), and "channel 3" in a bug report means nothing to the person
 /// holding the board.
 fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
-    let board = match target::BOARD {
-        Some(board) => board,
-        None => return board_absent(uart),
-    };
+    if devices.bus.is_none() {
+        return board_absent(uart);
+    }
 
     let rest = trim(rest);
     if rest.starts_with(b"floor") {
@@ -735,26 +762,46 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         return;
     }
 
-    let bus = i2c::I2c::new(board.i2c);
-    let selector = mux::Mux::new(board.i2c_mux);
-    let readings = match devices.power.read(&bus, &selector) {
-        Ok(readings) => readings,
-        Err(error) => {
-            let _ = writeln!(uart, "power monitor at {:02x}: {} during {}",
-                             power::ADDRESS, error.as_str(),
-                             devices.power.phase());
-            return;
+    // The header carries the age, because every number under it is that old.
+    //
+    // Not decoration. A poller that has stopped leaves four voltages that are
+    // individually plausible and jointly a lie, and there is nothing in them to
+    // say so -- which is the same shape of failure as a stale bus select. The
+    // age is the only thing on this screen that can contradict them.
+    let _ = write!(uart, "power @{:02x}  poll {} ms  change {} mA  ",
+                   power::ADDRESS, power::INTERVAL_MS,
+                   power::CHANGE_UA / 1000);
+    match devices.power.age() {
+        power::Age::Millis(ms) => {
+            let _ = writeln!(uart, "sampled {} ms ago", ms);
         }
-    };
-
-    let _ = writeln!(uart, "power @{:02x}  poll {} ms  change {} mA",
-                     power::ADDRESS, power::INTERVAL_MS,
-                     power::CHANGE_UA / 1000);
-    for channel in 0..4 {
-        let floor = devices.power.floor(channel);
-        power::report(uart, channel, &readings[channel],
-                      readings[channel].current_ua >= floor);
+        power::Age::Older => {
+            let _ = writeln!(uart, "sampled OVER {} s ago -- the poll has \
+                                    stopped", power::AGE_LIMIT_MS / 1000);
+        }
+        power::Age::Never => {
+            let _ = writeln!(uart, "NO SAMPLE YET");
+        }
     }
+
+    match devices.power.latest() {
+        Some(sample) => {
+            for channel in 0..4 {
+                let floor = devices.power.floor(channel);
+                power::report(uart, channel, &sample.readings[channel],
+                              sample.readings[channel].current_ua >= floor);
+            }
+        }
+        // No rails printed, rather than zeros or dashes. Two polls after reset
+        // there is genuinely nothing to say -- one to issue a REFRESH and one to
+        // read what it latched -- and inventing a row per channel would put four
+        // measurements on screen that were never measured.
+        None => {
+            let _ = writeln!(uart, "  the 50 ms poll has not completed one yet; \
+                                    last phase {}", devices.power.phase());
+        }
+    }
+
     for channel in 0..4 {
         let _ = writeln!(uart, "  {:8} floor {}.{:03} mA",
                          power::PORTS[channel],

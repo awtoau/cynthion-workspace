@@ -46,13 +46,25 @@ impl Mux {
         (self.base + offset) as *mut u8
     }
 
+    /// Where this register block is. Reported by the `typec` command, so that
+    /// what is printed is the address the driver is actually using rather than a
+    /// second reading of `target::BOARD` that could disagree with it.
+    pub fn base(&self) -> usize {
+        self.base
+    }
+
     /// Point the controller at a bus.
     ///
-    /// Cheap enough to do before every transaction, and that is how it is used:
-    /// one uncached byte store against a bus transfer of milliseconds. Caching
-    /// "which bus is selected" would be an optimisation worth nothing and a
-    /// second copy of the truth -- and the failure it enables is not an error
-    /// but a plausible answer from the wrong chip, since both Type-C
+    /// Reachable only from [`crate::bus::Bus`], which calls it immediately before
+    /// every transfer and never remembers what it wrote. That is the point of
+    /// this module being private: a driver cannot select a bus and then talk to
+    /// it in two separate steps, so the window in which something else moves the
+    /// select does not exist.
+    ///
+    /// Cheap enough to do every time -- one uncached byte store against a bus
+    /// transfer of milliseconds. Caching it would be an optimisation worth
+    /// nothing and a second copy of the truth, and the failure it enables is not
+    /// an error but a plausible answer from the wrong chip, since both Type-C
     /// controllers answer the same address with the same identity byte.
     ///
     /// The gateware holds the change until the controller is idle, so this
