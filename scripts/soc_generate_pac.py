@@ -58,9 +58,23 @@ def build_soc():
     synthesis or place-and-route is involved and no board is touched.
     """
     import vexii_hello_soc
+    from amaranth.hdl import Fragment
 
     firmware = [0] * 16  # contents are irrelevant; only the map is read
-    return vexii_hello_soc.HelloSoC(firmware=firmware)
+    soc = vexii_hello_soc.HelloSoC(firmware=firmware)
+
+    # Elaborate before reading the map. The decoder and every peripheral window are
+    # created INSIDE elaborate(), so a freshly constructed SoC has no memory map at all --
+    # which is why this used to report "could not find a memory map" rather than anything
+    # about elaboration.
+    #
+    # A real platform is needed, not None: elaborate() calls platform.request() for the
+    # ULPI PHY, the flash pins and the LEDs. Requesting resources needs no toolchain and
+    # touches no hardware -- this still builds nothing.
+    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+
+    Fragment.get(soc, CynthionPlatformRev1D4())
+    return soc
 
 
 def main():

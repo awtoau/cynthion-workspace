@@ -51,6 +51,31 @@ But one *controller* is: a single I2C master with a 2-bit bus select driving thr
 pin-sets. That is the multiplexed master #98 already asks for, and it replaces
 three replicated controllers with one plus a mux.
 
+### The interrupt lines can be OR-ed together
+
+Each Type-C bus brings an `int` and a `fault` line, so six signals for two
+devices. They do **not** need six PLIC sources: OR the `int` lines into one.
+
+This is not only a logic saving, it follows from the mux. With a single
+controller only one device can be talked to at a time, so per-device sources buy
+nothing -- the handler has to serialise its register reads over the shared bus
+regardless. And nothing is lost by merging them: the FUSB302B's interrupt
+register has to be read to decode *and clear* the cause, so that read happens
+either way.
+
+**The trap, when this is built:** a shared line is level-sensitive, so the
+handler must read and clear *every* asserted device before it returns, not just
+the first one it finds. Missing one leaves the line asserted, the interrupt
+re-fires immediately, and the result is a storm that presents as a hung CPU --
+which on this project has repeatedly been mistaken for dead gateware.
+
+Keep `fault` distinct from `int`. It means something different, and it is the one
+worth noticing unambiguously rather than after a register read.
+
+Not urgent. PD negotiation is not on the critical path; the value of the
+interrupt is that a state change can be looked into when it happens instead of
+polled.
+
 **On presenting the LEDs as a fake I2C device:** attractive for uniformity and
 wrong here. The LEDs are six wires in the same fabric -- wrapping them in a
 serial protocol adds a state machine, a byte-time of latency and an error path to

@@ -429,6 +429,18 @@ class HelloSoC(Elaboratable):
         decoder = Decoder(addr_width=30, data_width=32, granularity=8,
                           features={"cti", "bte", "err"})
         m.submodules.decoder = decoder
+
+        # Kept on the instance, not just as a local.
+        #
+        # The memory map is the SoC's own description of itself, and two tools want to
+        # read it without building a bitstream: `scripts/soc_generate_pac.py`, which
+        # turns it into an SVD and then into Rust register definitions, and
+        # `scripts/soc_diagram.py`. Both had to work around its being a local -- the PAC
+        # generator simply failed with "could not find a memory map on the SoC", which is
+        # why every peripheral address in the firmware is still hand-transcribed. That is
+        # the class of error that once had firmware sending `0x9f << 24` because a comment
+        # disagreed with the hardware.
+        self.decoder = decoder
         decoder.add(ram.bus, addr=RAM_BASE, name="ram")
 
         from amaranth_soc.csr.wishbone import WishboneCSRBridge
