@@ -15,8 +15,9 @@ A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
     dbus          Out  data, through the L1 D-cache -- `main=1` PMA regions only
     iobus         Out  uncached data -- every `main=0` (I/O) PMA region
     irq_external  In   one wire; drive it from `vexii_plic.py`
-    irq_timer     In   needs a CLINT; tie off until there is one
+    irq_timer     In   drive it from `vexii_clint.py`
     irq_software  In   likewise
+    mtime         Out  the counter behind `rdtime`, for that CLINT to compare
     ext_reset     In   holds the core in reset; `jtag_stage.py` drives it
     jtag_*        I/O  the ER2 tap, from `jtag_stage.UserJTAG`
 
@@ -44,8 +45,11 @@ expects.
 Standard RISC-V: one machine external wire, not VexRiscv's 32-bit
 `irq_external` array with mask/pending in CPU CSRs. Concentrating sources and
 reporting which fired is therefore a peripheral's job -- `vexii_plic.py`, a
-standard PLIC. Tie `irq_timer`/`irq_software` off explicitly so "no source" and
-"nobody wired it" do not look identical.
+standard PLIC.
+
+`irq_timer` and `irq_software` are the CLINT's, and `vexii_clint.py` is one.
+Tie them off explicitly in a design that has none, so "no source" and "nobody
+wired it" do not look identical.
 
 `vexii_irq.py` is a smaller pending/enable concentrator kept for moondancer's
 generated PAC. It is in no SoC here; prefer the PLIC.
@@ -197,6 +201,15 @@ class VexiiRiscv(wiring.Component):
             "irq_timer":    In(unsigned(1)),
             "irq_software": In(unsigned(1)),
 
+            # The counter `rdtime` reads, brought out.
+            #
+            # A CLINT's `mtime` and the `time` CSR are required to be the same
+            # counter, and the cheapest way to guarantee that is to have one.
+            # Exposing it rather than moving it keeps a CPU with no CLINT
+            # working: `rdtime` is still driven here, so an instantiator that
+            # ignores this port loses nothing.
+            "mtime":        Out(unsigned(64)),
+
             "ibus": Out(wishbone.Signature(
                 addr_width=30, data_width=32, granularity=8,
                 features=("err", "cti", "bte"))),
@@ -240,6 +253,7 @@ class VexiiRiscv(wiring.Component):
         # rdtime read, which reads as a firmware bug rather than a wiring one.
         rdtime = Signal(64)
         m.d.sync += rdtime.eq(rdtime + 1)
+        m.d.comb += self.mtime.eq(rdtime)
 
         # The RISC-V debug module, on the ER2 tap.
         #

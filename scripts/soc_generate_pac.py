@@ -462,6 +462,7 @@ def cross_check(peripherals, emit):
         "BOARD_ULPI": soc_module.ULPI_BASE,
         "BOARD_I2C_MUX": soc_module.I2C_MUX_BASE,
         "PLIC": soc_module.PLIC_BASE,
+        "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
         "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
@@ -486,7 +487,8 @@ def cross_check(peripherals, emit):
     target = (src / "target.rs").read_text()
     firmware_ok = True
     for name in ("CONSOLE", "APOLLO_UART", "PLIC", "BOARD_GPIO", "BOARD_I2C",
-                 "BOARD_SIDEBAND", "SPIFLASH", "CONSOLE_IRQ", "APOLLO_UART_IRQ",
+                 "BOARD_SIDEBAND", "SPIFLASH", "CLINT",
+                 "CONSOLE_IRQ", "APOLLO_UART_IRQ",
                  "BOARD_I2C_MUX_TARGET_IRQ", "BOARD_I2C_MUX_AUX_IRQ"):
         if f"cynthion_soc_pac::base::{name}" not in target:
             emit(f"  target.rs no longer refers to base::{name}")

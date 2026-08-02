@@ -78,6 +78,25 @@ pub const PLIC_BASE: usize = cynthion_soc_pac::base::PLIC;
 #[cfg(feature = "qemu")]
 pub const PLIC_BASE: usize = 0x0c00_0000;
 
+/// The core-local interruptor: `mtime` and `mtimecmp`, and so the 1 ms tick.
+///
+/// A standard RISC-V CLINT on both targets, which is the whole reason
+/// `src/timer.rs` needs no `#[cfg]` -- the same reason `src/plic.rs` needs none.
+#[cfg(not(feature = "qemu"))]
+pub const CLINT_BASE: usize = cynthion_soc_pac::base::CLINT;
+
+/// `virt`'s CLINT, read out of the device tree rather than assumed:
+///
+///     qemu-system-riscv32 -M virt -machine dumpdtb=tmp/virt.dtb -display none
+///     dtc -I dtb -O dts tmp/virt.dtb
+///
+/// gives `clint@2000000 { compatible = "sifive,clint0", "riscv,clint0"; }` with
+/// `interrupts-extended = <cpu 3>, <cpu 7>` -- 3 being the machine software
+/// interrupt and 7 the machine timer, which are the two this peripheral drives
+/// on the SoC as well.
+#[cfg(feature = "qemu")]
+pub const CLINT_BASE: usize = 0x0200_0000;
+
 /// The PLIC source number each entry of `UART_BASES` is wired to, in the same
 /// order.
 ///

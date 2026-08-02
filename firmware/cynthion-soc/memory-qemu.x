@@ -57,3 +57,15 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * present exactly as it does on the board: a CPU fetching from an address nothing
  * answers, indistinguishable from a dead core. */
 _stext = ORIGIN(REGION_TEXT);
+
+/* Unwind tables, which nothing on this target unwinds. See memory.x for the full
+ * argument and the measurement.
+ *
+ * This machine has 64 MiB and does not need the space. It is discarded here anyway,
+ * because the value of scripts/soc_test.py rests on the two builds being the same
+ * program -- a section present in one image and absent from the other is a difference
+ * in what is being tested, arrived at for no reason. */
+SECTIONS
+{
+    /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
+}

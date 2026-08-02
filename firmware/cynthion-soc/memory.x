@@ -57,3 +57,28 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * agree: a mismatch gives a CPU that fetches from an address nothing answers, which
  * looks exactly like a dead core. */
 _stext = ORIGIN(REGION_TEXT);
+
+/* Unwind tables, which nothing on this target unwinds. 1892 bytes, measured.
+ *
+ * `.eh_frame` describes how to restore registers while a stack is being unwound by a
+ * panic. riscv32imac-unknown-none-elf has panic_strategy=abort, this crate's
+ * `#[panic_handler]` diverges, and nothing links `_Unwind_*` -- so the table is
+ * described and never read. It arrives anyway, from the precompiled `core` and
+ * `compiler_builtins` rlibs, which is why `-C force-unwind-tables=no` on this crate
+ * does not remove it.
+ *
+ * riscv-rt's link.x places it in REGION_RODATA, so on this design it is 1892 bytes of
+ * the 32 KiB the shell gets -- and it comes out of the stack, because the stack is
+ * whatever is left between .bss and _stack_start. Recovering it took the stack from
+ * 928 bytes back to 2820.
+ *
+ * A debugger loses nothing: `debug = true` in Cargo.toml emits DWARF `.debug_frame`,
+ * which is not loaded and is what gdb uses here anyway.
+ *
+ * Must stay identical in memory-qemu.x. A section discarded on one target and kept on
+ * the other means the two builds no longer have the same layout, and scripts/soc_test.py
+ * is only evidence about the board while they do. */
+SECTIONS
+{
+    /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
+}

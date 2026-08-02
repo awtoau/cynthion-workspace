@@ -189,7 +189,7 @@ pub fn report_errors(uart: &mut Uart) {
     while index < target::UART_BASES.len() {
         let bits = take_errors(index);
         if bits != 0 {
-            let _ = writeln!(uart,
+            crate::log!(uart,
                 "uart {}: LSR {:02x}{}{} -- input lost before the CPU read it \
                  ({} so far)",
                 index, bits,

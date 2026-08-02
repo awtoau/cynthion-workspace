@@ -118,6 +118,15 @@ impl core::fmt::Debug for Plic {
 }
 #[doc = "plic: 9 registers at 0xf0400000"]
 pub mod plic;
+#[doc = "clint: 5 registers at 0xf0800000"]
+pub type Clint = crate::Periph<clint::RegisterBlock, 0xf080_0000>;
+impl core::fmt::Debug for Clint {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("Clint").finish()
+    }
+}
+#[doc = "clint: 5 registers at 0xf0800000"]
+pub mod clint;
 #[no_mangle]
 static mut DEVICE_PERIPHERALS: bool = false;
 #[doc = r" All the peripherals."]
@@ -147,6 +156,8 @@ pub struct Peripherals {
     pub board_i2c_mux: BoardI2cMux,
     #[doc = "PLIC"]
     pub plic: Plic,
+    #[doc = "CLINT"]
+    pub clint: Clint,
 }
 impl Peripherals {
     #[doc = r" Returns all the peripherals *once*."]
@@ -181,6 +192,7 @@ impl Peripherals {
             board_ulpi: BoardUlpi::steal(),
             board_i2c_mux: BoardI2cMux::steal(),
             plic: Plic::steal(),
+            clint: Clint::steal(),
         }
     }
 }
