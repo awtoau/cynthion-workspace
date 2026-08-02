@@ -30,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 
-LOG = ROOT / "tmp" / "qspi_burst.log"
+LOG = ROOT / "tmp" / "logs" / "qspi_burst.log"
 
 REG_ID = 1
 REG_STATUS = 5
@@ -40,6 +40,7 @@ REG_MODE = 8
 REG_BURST_LEN = 10
 REG_BURST_COUNT = 11
 REG_BURST_CYCLES = 12
+REG_BURST_DONE = 13
 
 APPLET_ID = 0x51535049
 
@@ -57,7 +58,13 @@ def emit(handle, text=""):
 
 
 def run_burst(dut, *, mode, size, reads, tag):
-    """Returns cycles for `reads` reads of `size` bytes, or None if it hung."""
+    """Returns cycles for `reads` reads of `size` bytes, or None if it hung.
+
+    The completed-read count is checked as well as the status bits. A gateware
+    fault that stops the run partway leaves `done` set from an earlier read, and
+    a poll that trusted the status word alone would take that run's cycle count
+    for this one -- which is how the wedge in #89 reported plausible numbers.
+    """
     dut.registers.register_write(REG_MODE, mode)
     dut.registers.register_write(REG_BURST_LEN, size)
     dut.registers.register_write(REG_BURST_COUNT, reads)
@@ -66,6 +73,8 @@ def run_burst(dut, *, mode, size, reads, tag):
     for _ in range(POLL_LIMIT):
         status = dut.registers.register_read(REG_STATUS)
         if (status & 1) and not (status >> 1) & 1:
+            if dut.registers.register_read(REG_BURST_DONE) != reads:
+                return None
             return dut.registers.register_read(REG_BURST_CYCLES)
     return None
 
@@ -131,6 +140,11 @@ def main():
                      "proportion to how short the")
         emit(handle, "reads are -- and disappears entirely into a streaming "
                      "transfer.")
+        emit(handle)
+        emit(handle, "BURST_CYCLES includes one arming cycle per read, so a "
+                     "per-reader figure is")
+        emit(handle, f"cycles - {args.reads}. It is below the resolution of "
+                     f"anything measured here.")
         emit(handle, f"log: {LOG}")
 
     return 0

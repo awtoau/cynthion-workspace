@@ -89,6 +89,153 @@ REGISTER_PASS_ERRORS  = 9   # mismatches vs the first pass, and a pass count
 REGISTER_BURST_LEN    = 10  # write: bytes per read in burst mode (0 = off)
 REGISTER_BURST_COUNT  = 11  # write: how many reads to perform
 REGISTER_BURST_CYCLES = 12  # read: total cycles for the whole burst
+REGISTER_BURST_DONE   = 13  # read: reads completed in the last run
+
+# Stride between successive burst addresses. Prime, so the walk visits many
+# distinct pages before repeating; a sequential walk would stay inside one page
+# and measure the flash's sequential path rather than its random-access one.
+BURST_STRIDE = 4099
+
+
+class BurstSequencer(Elaboratable):
+    """ Drives a `QuadFlashReader` for one long read or a run of short ones.
+
+    - One trigger runs `count` reads of `length` bytes at strided addresses,
+      counting sync cycles across the whole run in hardware. The host reads the
+      total once, so its ~35 ms per JTAG register access is paid per run rather
+      than per read, and reads far too short to time from the host become
+      measurable.
+    - `length` and `address` are held in registers that change only while the
+      reader is in IDLE. `QuadFlashReader` counts requests from a copy of
+      `length` latched at `start` but decides it has finished by comparing
+      against the live signal, so a `length` that moves after the strobe makes
+      it request more bytes than it consumes; the surplus stays in the
+      controller's pipeline, backpressures `i_stream` and wedges the next read.
+    - A trigger is latched, not sampled. The write that arrives while a run is
+      in flight starts the next run instead of being dropped.
+    - `pending` starts set, so a freshly configured board performs one
+      `single_length` read without being asked.
+
+    ============  ===  =========================================================
+    Signal        Dir  Meaning
+    ============  ===  =========================================================
+    trigger       in   Strobe; one run. Latched, so it need not be seen.
+    burst_len     in   Bytes per read. 0 selects one read of `single_length`.
+    burst_count   in   Reads per run. 0 is treated as 1.
+    reader_done   in   The reader's level-held completion flag.
+    reader_busy   in   The reader's busy flag; gates the first arm of a run.
+    start         out  Strobe to the reader, one cycle, reader in IDLE.
+    length        out  Bytes for the read being armed. Stable start to done.
+    address       out  Address for that read. Stable start to done.
+    busy          out  A run is in flight. Superset of `reader_busy`.
+    cycles        out  Sync cycles for the whole run, including arming.
+    reads         out  Reads completed in the run.
+    ============  ===  =========================================================
+
+    `cycles` includes one arming cycle per read -- the cycle in which `start` is
+    asserted -- so a per-reader figure is `cycles - reads`. One cycle against
+    the ~350 a 64-byte read takes at divisor 1 is below the measurement's
+    resolution, and an explicit dead cycle is what makes `length` and `address`
+    provably stable across the strobe.
+    """
+
+    def __init__(self, *, single_length, stride=BURST_STRIDE):
+        self.single_length = single_length
+        self.stride        = stride
+
+        self.trigger     = Signal()
+        self.burst_len   = Signal(16)
+        self.burst_count = Signal(16)
+        self.reader_done = Signal()
+        self.reader_busy = Signal()
+
+        self.start    = Signal()
+        self.length   = Signal(16)
+        self.address  = Signal(24)
+        self.busy     = Signal()
+        # 24 bits, not 32. The longest run here -- 256 reads of 64 bytes -- is
+        # about 90k cycles, and the 32-bit version cost enough on the carry
+        # chain to fail the build at 120 MHz.
+        self.cycles   = Signal(24)
+        self.reads    = Signal(16)
+        # High for a run of short reads rather than the single long one, so the
+        # capture buffer and the pass comparator can stand down: a burst is a
+        # timing measurement and its bytes come from scattered addresses.
+        self.bursting = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+
+        pending = Signal(init=1)
+        index   = Signal(16)
+        count   = Signal(16)
+        addr    = Signal(24)
+        size    = Signal(16)
+
+        # `done` is a level, not a strobe, so a run driven off the level
+        # re-triggers continuously and the cycle counter never stops -- it
+        # reported 3.9 billion cycles for 256 four-byte reads, which would be
+        # 32 seconds. Advance on the rising edge instead.
+        done_prev = Signal()
+        done_edge = Signal()
+        m.d.sync += done_prev.eq(self.reader_done)
+        m.d.comb += done_edge.eq(self.reader_done & ~done_prev)
+
+        m.d.comb += [
+            self.length .eq(size),
+            self.address.eq(addr),
+            self.reads  .eq(index),
+        ]
+
+        with m.FSM():
+            with m.State("IDLE"):
+                # Busy covers a latched trigger as well as a run in flight.
+                # Without it there is a cycle between the two in which the host
+                # would read done=1, busy=0 and take the previous run's cycle
+                # count for the answer to the run about to start.
+                m.d.comb += self.busy.eq(pending)
+                with m.If(pending & ~self.reader_busy):
+                    m.d.sync += [
+                        pending .eq(0),
+                        index   .eq(0),
+                        addr    .eq(0),
+                        self.cycles.eq(0),
+                        self.bursting.eq(self.burst_len != 0),
+                        size    .eq(Mux(self.burst_len == 0,
+                                        self.single_length, self.burst_len)),
+                        count   .eq(Mux((self.burst_len == 0)
+                                        | (self.burst_count == 0),
+                                        1, self.burst_count)),
+                    ]
+                    m.next = "ARM"
+
+            with m.State("ARM"):
+                # The reader is in IDLE here: either nothing has run yet, or the
+                # cycle before this one carried the rising edge of `done`, which
+                # the reader asserts as it leaves DESELECT for IDLE.
+                m.d.comb += [self.busy.eq(1), self.start.eq(1)]
+                m.d.sync += self.cycles.eq(self.cycles + 1)
+                m.next = "WAIT"
+
+            with m.State("WAIT"):
+                m.d.comb += self.busy.eq(1)
+                m.d.sync += self.cycles.eq(self.cycles + 1)
+                with m.If(done_edge):
+                    m.d.sync += index.eq(index + 1)
+                    with m.If(index + 1 < count):
+                        m.d.sync += addr.eq(addr + self.stride)
+                        m.next = "ARM"
+                    with m.Else():
+                        m.next = "IDLE"
+
+        # After the FSM, so that a trigger landing on the cycle IDLE consumes
+        # `pending` sets it again rather than being cleared by the same edge.
+        # Later assignments in a domain take priority, which is what makes "a
+        # trigger is never lost" true rather than nearly true.
+        with m.If(self.trigger):
+            m.d.sync += pending.eq(1)
+
+        return m
 
 
 class QSPITest(Elaboratable):
@@ -148,82 +295,28 @@ class QSPITest(Elaboratable):
         # opposite: many small independent reads, each paying full overhead.
         # This measures that, and exercises address decoding at the same time,
         # since a run of reads at one address would not.
-        burst_len   = Signal(16)
-        burst_count = Signal(16)
-        burst_done  = Signal(16)
-        # 24 bits, not 32. The longest burst here -- 256 reads of 64 bytes --
-        # is about 35k cycles, so 24 bits is ample, and the shorter carry chain
-        # matters: the 32-bit version cost enough timing to fail the build at
-        # 120 MHz.
-        burst_cycles = Signal(24)
-        bursting    = Signal()
+        sequencer = BurstSequencer(single_length=READ_BYTES)
+        m.submodules.sequencer = sequencer
 
-        registers.add_register(REGISTER_BURST_LEN, value_signal=burst_len)
-        registers.add_register(REGISTER_BURST_COUNT, value_signal=burst_count)
+        registers.add_register(REGISTER_BURST_LEN,
+                               value_signal=sequencer.burst_len)
+        registers.add_register(REGISTER_BURST_COUNT,
+                               value_signal=sequencer.burst_count)
         registers.add_read_only_register(REGISTER_BURST_CYCLES,
-                                         read=burst_cycles)
+                                         read=sequencer.cycles)
+        registers.add_read_only_register(REGISTER_BURST_DONE,
+                                         read=sequencer.reads)
 
-        # KNOWN BROKEN: the burst sequencer wedges the reader.
-        #
-        # `start` is asserted again on the completion edge, but the reader is
-        # not yet back in IDLE, so the strobe is missed and `busy` stays high
-        # for ever -- observed as read cycles climbing past 2 billion with
-        # done=0.
-        #
-        # It is left in place rather than removed because the register map and
-        # the address plumbing below are correct and reused. The measurement it
-        # was written for should not be done this way regardless: a JTAG
-        # register read takes ~35 ms against ~1 us for a 4-byte flash read, so
-        # the host cannot observe short transfers at all, whatever the gateware
-        # does. That belongs in a soft CPU inside the FPGA -- luna_soc ships
-        # VexRiscv, which is what moondancer already uses.
-        #
-        # Addresses stride by a large odd number so successive reads land in
-        # different pages and rarely repeat, without needing an LFSR: a
-        # sequential walk would stay inside one page and measure the wrong
-        # thing.
-        burst_addr = Signal(24)
+        bursting = sequencer.bursting
+        m.d.comb += [
+            sequencer.trigger    .eq(run),
+            sequencer.reader_done.eq(reader.done),
+            sequencer.reader_busy.eq(reader.busy),
 
-        m.d.comb += reader.length.eq(Mux(bursting, burst_len, READ_BYTES))
-        m.d.comb += reader.address.eq(Mux(bursting, burst_addr, 0))
-
-        # Also run once after configuration, so a board that is never written
-        # to still holds a valid measurement.
-        started = Signal()
-        with m.If(~started):
-            m.d.sync += started.eq(1)
-            m.d.comb += reader.start.eq(1)
-        with m.Elif(run & ~reader.busy):
-            m.d.sync += [
-                bursting.eq(burst_len != 0),
-                burst_done.eq(0),
-                burst_cycles.eq(0),
-                burst_addr.eq(0),
-            ]
-            m.d.comb += reader.start.eq(1)
-
-        # `done` is a level, not a strobe, so a burst driven off the level
-        # re-triggers continuously and the cycle counter never stops -- it
-        # reported 3.9 billion cycles for 256 four-byte reads, which would be
-        # 32 seconds. Advance on the rising edge instead.
-        done_prev = Signal()
-        done_edge = Signal()
-        m.d.sync += done_prev.eq(reader.done)
-        m.d.comb += done_edge.eq(reader.done & ~done_prev)
-
-        with m.If(bursting):
-            m.d.sync += burst_cycles.eq(burst_cycles + 1)
-            with m.If(done_edge & (burst_done < burst_count)):
-                m.d.sync += [
-                    burst_done.eq(burst_done + 1),
-                    # 4099 is prime, so the stride visits many distinct pages
-                    # before repeating rather than cycling through a few.
-                    burst_addr.eq(burst_addr + 4099),
-                ]
-                with m.If(burst_done + 1 < burst_count):
-                    m.d.comb += reader.start.eq(1)
-                with m.Else():
-                    m.d.sync += bursting.eq(0)
+            reader.start  .eq(sequencer.start),
+            reader.length .eq(sequencer.length),
+            reader.address.eq(sequencer.address),
+        ]
 
         #
         # Capture buffer.
@@ -237,10 +330,17 @@ class QSPITest(Elaboratable):
         # Declared here because the write port's enable depends on it: only the
         # first pass fills the buffer, later passes compare against it.
         first_pass = Signal(init=1)
+        # Bursts are excluded throughout this section. Their bytes come from a
+        # different address on every read, so storing them would overwrite the
+        # reference the pass comparator is built on and comparing them would
+        # count every byte as an error -- a mismatch report from a flash that is
+        # working, which is worse than no report.
+        capturing = Signal()
+        m.d.comb += capturing.eq(~bursting)
         m.d.comb += [
             write_port.addr.eq(count),
             write_port.data.eq(reader.data),
-            write_port.en  .eq(reader.data_strobe & first_pass
+            write_port.en  .eq(reader.data_strobe & first_pass & capturing
                               & (count < CAPTURE_DEPTH)),
         ]
 
@@ -289,17 +389,17 @@ class QSPITest(Elaboratable):
         cmp_valid = Signal()
         cmp_data  = Signal(8)
         m.d.sync += [
-            cmp_valid.eq(reader.data_strobe & ~first_pass
+            cmp_valid.eq(reader.data_strobe & ~first_pass & capturing
                          & (count < CAPTURE_DEPTH)),
             cmp_data.eq(reader.data),
         ]
 
-        with m.If(reader.start):
+        with m.If(reader.start & capturing):
             m.d.sync += [pass_errors.eq(0), pass_count.eq(pass_count + 1)]
         with m.If(cmp_valid & (check_port.data != cmp_data)):
             m.d.sync += pass_errors.eq(pass_errors + 1)
 
-        with m.If(reader.done & first_pass):
+        with m.If(reader.done & first_pass & capturing):
             m.d.sync += first_pass.eq(0)
 
         registers.add_read_only_register(
@@ -309,12 +409,33 @@ class QSPITest(Elaboratable):
         registers.add_read_only_register(REGISTER_QUAD_DATA,
                                          read=captured_word)
 
+        # Status, in one read-only word. Every field is a report; nothing here
+        # changes state when read, and no side-effecting register shares the
+        # word.
+        #
+        #   bit    meaning
+        #   0      done   -- the run has finished and its results are settled
+        #   1      busy   -- a run is in flight
+        #   8:24   sync frequency actually built, MHz
+        #   24:32  sample-point offset the bitstream was built with
+        #
+        # The busy bit is the sequencer's, not the reader's. Between two reads
+        # of a burst the reader is momentarily idle with `done` still set from
+        # the previous one, so a poll landing there would read a mid-run cycle
+        # count and call it the total.
+        #
         # The sync frequency is reported rather than assumed: it is snapped to
         # the nearest achievable PLL output, which need not equal SYNC_MHZ, and
         # every rate the host computes depends on it.
+        run_busy = Signal()
+        run_done = Signal()
+        m.d.comb += [
+            run_busy.eq(sequencer.busy | reader.busy),
+            run_done.eq(reader.done & ~run_busy),
+        ]
         registers.add_read_only_register(
             REGISTER_QUAD_STATUS,
-            read=Cat(reader.done, reader.busy, Const(0, 6),
+            read=Cat(run_done, run_busy, Const(0, 6),
                      Const(int(clocking.actual_sync_mhz), 16),
                      Const(QSPI_OFFSET, 8)))
 

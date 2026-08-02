@@ -40,6 +40,7 @@ Numbers are measured unless marked *unverified*.
 | 20 | [Device ownership](#20-multi-transaction-device-protocols) | one owner, cached reads | in progress (#123) |
 | 21 | [16550: written vs vendored](#21-16550-written-from-the-spec-vs-a-vendored-core) | ours, spec-checked against OpenCores | settled (#128) |
 | 22 | [What is resident at 0x0](#22-what-is-resident-at-0x0) | a 492-byte bootloader; the shell is an image | settled (#138) |
+| 23 | [QSPI burst sequencer](#23-qspi-burst-sequencer) | an FSM with an arming cycle | fixed, simulated, unrun on the board (#89) |
 
 ---
 
@@ -342,6 +343,49 @@ first is garbage while the first looks perfect.
 PHY divisor at 80 MHz `sync`: d=0 → 40.0 MHz, d=1 → 20.0, d=2 → 13.3. The ECP5 `MCLK` pin
 is characterised to 62 MHz (FPGA-TN-02039); faster than 40 has been measured to work on
 this board, which is not what a default should assume.
+
+### 23. QSPI burst sequencer
+
+**Our own defect, and the same class as 11 and 12: a signal whose temporal semantics do
+not match how it is used.** The sequencer in `ecp5-test/qspi/qspi_gateware.py` selected the
+read length with `Mux(bursting, burst_len, READ_BYTES)` and set `bursting` with `m.d.sync`
+on the same cycle it strobed `start`, so the first read of a burst was armed while `length`
+still read 32768.
+
+`QuadFlashReader` latches `length` into `bytes_left` at the strobe and requests against it,
+but decides it has finished by comparing its received count against the **live** `length`.
+Latched 32768, live 4 by the next cycle: it requested one byte more than it consumed. The
+surplus stayed in the controller's pipeline, the deframer held `frames.ready` low, the
+IOStreamer's skid buffer filled, and `i_stream.ready` went low and stayed there. The next
+read's HEADER waited on it for ever.
+
+| | committed | **`BurstSequencer`** |
+|---|---|---|
+| `length`, `address` | combinational off `bursting`, which moves one cycle after `start` | registers, written only in IDLE, held across the strobe |
+| arming | `start` combinational off the trigger and off the `done` edge | an ARM state, one cycle, reader provably in IDLE |
+| trigger | `run & ~busy`, a one-cycle sample | latched into `pending` |
+| `busy` | the reader's | the run's, covering a latched trigger |
+| result | 1 of 4 reads, `i_stream.ready` low for ever | 4 of 4 |
+
+**The diagnosis committed with it was wrong.** "`start` is asserted again on the completion
+edge, but the reader is not yet back in IDLE" — the reader sets `done` and moves to IDLE in
+the same clock edge, so on the rising edge of `done` it *is* in IDLE and does take the
+strobe. `scripts/qspi_burst_sim.py` section 1 shows that handshake working while the design
+wedges anyway.
+
+**Pipeline depth is why simulation had not caught it.** Glasgow's `IOStreamer` reads its
+buffer latency off the platform: 2 with no platform, 4 for a `LatticePlatform`. At 2 the
+surplus request is never issued and the burst completes. The simulation therefore runs
+against a platform object that reports itself as Lattice, with `io.Buffer`'s simulation
+model restored for the simulation ports, and section 7 asserts both outcomes so the trap
+stays documented.
+
+**Deleting it was the other option, and the reason given for it does not hold.** #89 argued
+the sequencer should go because a JTAG register read takes ~35 ms against ~1 us for a
+4-byte flash read. That is true of timing one read from the host, and irrelevant here: the
+sequencer counts sync cycles for a whole run in the FPGA and the host reads the total once.
+The 35 ms is paid per run, not per read. It is the in-FPGA measurement #89 asks for, one
+soft CPU cheaper.
 
 ### 13. UART pad output enable
 

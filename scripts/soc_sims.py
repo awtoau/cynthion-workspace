@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Runs the nine simulations under `scripts/` and prints how many checks each made.
+Runs the ten simulations under `scripts/` and prints how many checks each made.
 
     ./scripts/soc_sims.py            # every simulation
     ./scripts/soc_sims.py plic clint # only the ones whose name contains these
@@ -49,7 +49,8 @@ ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "soc_sims.log"
 
 # In the order a reader should meet them: the CPU's own peripherals first, then
-# the board, then the two that drive the firmware rather than the gateware.
+# the board, then the two that drive the firmware rather than the gateware, then
+# the gateware that is not part of the SoC at all.
 SIMS = [
     "soc_bus_sim",
     "uart16550_sim",
@@ -60,6 +61,7 @@ SIMS = [
     "soc_jtag_stage_sim",
     "soc_board_sim",
     "soc_test",
+    "qspi_burst_sim",
 ]
 
 RESET, BOLD, GREEN, RED, CYAN = (

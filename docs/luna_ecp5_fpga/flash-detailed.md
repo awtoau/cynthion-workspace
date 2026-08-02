@@ -360,7 +360,7 @@ None of these need a faster pin.
 
 | issue | what | blocked on |
 |---|---|---|
-| **#89** | SPI/QSPI parked at 48 MHz quad -- the deliberately-unfinished list: broken burst sequencer, dual modes (`0x3B`/`0xBB`) unimplemented, QPI and Continuous Read untried, 80 MHz verified on one board only | nothing -- these are buildable now |
+| **#89** | SPI/QSPI parked at 48 MHz quad -- the deliberately-unfinished list: dual modes (`0x3B`/`0xBB`) unimplemented, QPI and Continuous Read untried, 80 MHz verified on one board only. The burst sequencer is fixed and simulated, unrun on the board | nothing -- these are buildable now |
 | **#93** | Small reads, writes and soak | **a RISC-V core.** A JTAG register read takes ~35 ms against a ~1 us flash read, so the instrument is 35,000x slower than the thing measured. No host-side arrangement fixes that |
 | #100 | Reaching the achievable speed on the loading path | see `../apollo_samd11_mcu/apollo-configure-speed-investigation.md` |
 | #109 | The capacity question above | **answered for the flash** -- clean negative, nothing further unless someone tries vendor-specific commands |
@@ -435,7 +435,7 @@ Datasheet consulted for this section was the DigiKey mirror of the JV revision
 revision J used elsewhere in these notes. Mouser's link for the same part serves
 a 14 KB stub rather than the PDF.
 
-## Two bugs worth remembering
+## Three bugs worth remembering
 
 **CS was inverted twice.** Glasgow's controller inverts chip select internally,
 expecting an active-high port, while the platform declares `cs` with `PinsN`.
@@ -449,15 +449,43 @@ frame was never sent. A *single* read still worked, so this hid behind every
 rebuild-and-reconfigure measurement and only appeared once reads could repeat
 without reconfiguring. Fixing it doubled the apparent ceiling.
 
+**The burst sequencer armed a read with a stale length.** `bursting` selects
+between the 32 KiB streaming length and the burst length and is set by
+`m.d.sync` on the same cycle `start` is strobed, so the first read of a burst was
+armed while `length` still read 32768. `QuadFlashReader` latches that into
+`bytes_left` and requests against it, but decides it has finished by comparing
+its received count against the *live* `length` — 4 by the next cycle. It
+therefore requested one more byte than it consumed. The surplus stayed in the
+controller's pipeline, the deframer held `frames.ready` low, the IOStreamer's
+skid buffer filled, and `i_stream.ready` went low permanently. The next read's
+HEADER waited on it for ever.
+
+The symptom was read cycles climbing past 2 billion with `done=0`, and the
+diagnosis committed alongside it — "`start` asserted on the completion edge while
+the reader has not returned to IDLE" — was wrong. `QuadFlashReader` sets `done`
+and moves to IDLE in the same clock edge, so on the rising edge of `done` the
+reader is in IDLE and does take the strobe. `scripts/qspi_burst_sim.py` section 1
+shows the handshake working.
+
+Pipeline depth is why it did not appear in simulation first. Glasgow's
+`IOStreamer` reads its buffer latency off the platform: 2 with no platform, 4 for
+a `LatticePlatform`. At 2 the surplus request is never issued and the burst
+completes; at 4, which is the ECP5's, it wedges. A simulation without the board's
+latency is a different machine.
+
+`BurstSequencer` fixes it by holding `length` and `address` in registers that
+change only while the reader is in IDLE, with a dedicated arming cycle in
+between, so the value latched at the strobe and the value compared against are
+the same one.
+
 ## What is NOT done
 
-- **The burst sequencer is broken.** It asserts `start` on the completion edge
-  while the reader has not returned to IDLE, so `busy` latches high. Committed
-  deliberately, marked in the source.
-- **Small-read performance is unmeasured.** A JTAG register read takes ~35 ms;
-  a 4-byte flash read takes ~1 µs. The instrument is 35,000× slower than the
-  thing measured, so the host cannot time short transfers however the gateware
-  is arranged. This needs a soft CPU inside the FPGA.
+- **Small-read performance is unmeasured on hardware.** A JTAG register read
+  takes ~35 ms; a 4-byte flash read takes ~1 µs, so the host cannot time a
+  single short transfer however the gateware is arranged. The burst sequencer
+  is the way round this: it counts sync cycles for a whole run in the FPGA and
+  the host reads the total once, paying its 35 ms per run rather than per read.
+  That is now simulated and unrun on the board.
 - **`0xEB`'s benefit is predicted, not measured.** The 42%/19% figures above are
   arithmetic. Confirming them needs the same in-FPGA measurement.
 - **Dual modes (`0x3B`, `0xBB`) are unimplemented**, as are Continuous Read with
@@ -476,6 +504,7 @@ without reconfiguring. Fixing it doubled the apparent ceiling.
 | `repos/apollo/apollo_fpga/gateware/variable_clock.py` | ecppll-driven PLL |
 | `ecp5-test/qspi/qspi_gateware.py` | Test bitstream |
 | `scripts/qspi_ladder.py` | Divisor/offset sweep, verified against apollo |
-| `scripts/qspi_burst.py` | Small-read comparison (blocked, see above) |
+| `scripts/qspi_burst.py` | Small-read comparison, host side |
+| `scripts/qspi_burst_sim.py` | The burst sequencer, old arrangement against new |
 | `scripts/flash_modes.py` | Opcode and clock sweep |
 
