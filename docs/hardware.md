@@ -404,7 +404,8 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `check` | CPU arithmetic and two known flash words | — |
 | `id`, `read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
 | `ports` | which 16550s answer | — |
-| `irq` | PLIC pending/enabled, per-console interrupt counts | — |
+| `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health | — |
+| `log [n]` | push *n* deferred events, as an interrupt handler would | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
 | `i2c` | scan a bus and identify what answers | below |
 | `power [floor <port> <mA>]` | the four rails, and the change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
@@ -427,6 +428,31 @@ firmware never transmits there unbidden.
 
 Ports are named — `target_a`, `target_c`, `aux`, `control` — and never numbered,
 because the PAC's channel order is not the port order anyone would guess.
+
+**`irq`** ends with `log  waiting N dropped M`. That is the deferred log an
+interrupt handler writes to instead of printing — a handler that prints spins on
+a UART FIFO inside an interrupt, which on a level-sensitive shared source is a
+hang that presents as a dead CPU. Handlers record a code and two words; the main
+loop formats and prints them.
+
+**`dropped` is the number that matters.** The ring is bounded and the push is
+wait-free, so a storm degrades to lost lines rather than a stalled handler — and
+a queue that quietly discards under exactly the conditions you most want to see
+is worse than no queue. A nonzero count is not by itself a fault (a burst outran
+the shell once); a count that keeps climbing means events are being lost
+continuously. The shell also prints `irq log: N event(s) LOST` when it notices,
+so a loss does not wait for someone to type `irq`.
+
+`log [n]` pushes *n* test records through the same path, which is how fill, wrap
+and drop counting are exercised — including under QEMU, where
+`scripts/soc_test.py` drives it. The ring holds 15 records, so `log 20` reports
+`pushed 15 of 20`.
+
+Printing from a handler is a **compile error**, not a convention:
+`firmware/cynthion-soc/src/irq.rs` holds a `UartRx`, which has no transmit
+method and no `core::fmt::Write`. `scripts/soc_irq_log_check.py` (the `irqlog`
+check in `scripts/check.py`) covers what the compiler cannot — Rust's privacy
+cannot stop a sibling module naming `Uart`.
 
 **`phy`** reports the TARGET PHY's vendor and product IDs, function and OTG
 control, line state, and a walking-bit test across the scratch register. It reads

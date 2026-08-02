@@ -124,34 +124,6 @@ impl Uart {
         }
     }
 
-    /// Ask for an interrupt whenever a byte is waiting.
-    ///
-    /// Separate from `init()` because ordering matters: every UART must be quiet
-    /// before the PLIC is configured and `mstatus.MIE` is set, and only then may
-    /// any of them start asking. `irq::init()` does both halves in that order.
-    ///
-    /// Writes the whole register rather than or-ing a bit in, because the other
-    /// three IER bits must stay clear -- see `IER_ERBFI` for what setting bit 1
-    /// would do -- and a read-modify-write from outside a critical section could
-    /// resurrect one the handler had just cleared.
-    pub fn enable_rx_interrupt(&mut self) {
-        // SAFETY: a fixed peripheral address; write only.
-        unsafe { write_volatile(self.reg(IER), IER_ERBFI) }
-    }
-
-    /// Stop asking for interrupts on this port.
-    ///
-    /// The receive FIFO keeps whatever is in it and LSR still reports it; only
-    /// the interrupt line drops. That is what makes this usable as flow control:
-    /// when the software ring fills, the handler calls this, returns, and lets
-    /// the consumer run. Without it a level-sensitive source with a full ring
-    /// re-enters the handler forever and the CPU makes no progress at all --
-    /// which looks exactly like a hung board.
-    pub fn disable_rx_interrupt(&mut self) {
-        // SAFETY: as above.
-        unsafe { write_volatile(self.reg(IER), 0) }
-    }
-
     /// Writes one byte, waiting for room in the transmit FIFO.
     ///
     /// Bounded, not an infinite spin.
@@ -186,10 +158,73 @@ impl Uart {
             write_volatile(self.reg(RBR_THR), byte);
         }
     }
+}
+
+/// The receive and interrupt-control half of a 16550, and nothing else.
+///
+/// This exists so that `src/irq.rs` -- the one module an interrupt handler lives
+/// in -- has no way to transmit. It has no `put`, no `core::fmt::Write`, and
+/// therefore no `write!`; a handler that reaches for one gets a compile error
+/// rather than a spin on `LSR.THRE` inside a level-sensitive interrupt, which is
+/// a hang that presents as a dead CPU. `src/events.rs` is what a handler uses
+/// instead, and its module comment has the full argument.
+///
+/// It is a separate type rather than a shared reference because the point is
+/// what is ABSENT: a `Uart` behind any kind of reference still has `put` on it.
+/// Rust's privacy is per-module-tree and cannot hide `Uart` from a sibling
+/// module, so the remaining half of the enforcement is the `irqlog` grep in
+/// `scripts/check.py`.
+///
+/// The receive side is here and NOT on `Uart`, rather than on both: two ways to
+/// pop the same FIFO is two things to keep in step, and the split is only worth
+/// anything if it is the only route.
+#[derive(Clone, Copy)]
+pub struct UartRx {
+    base: usize,
+}
+
+impl UartRx {
+    pub const fn new(base: usize) -> Self {
+        UartRx { base }
+    }
+
+    fn reg(&self, offset: usize) -> *mut u8 {
+        (self.base + offset) as *mut u8
+    }
+
+    /// Ask for an interrupt whenever a byte is waiting.
+    ///
+    /// Separate from `Uart::init()` because ordering matters: every UART must be
+    /// quiet before the PLIC is configured and `mstatus.MIE` is set, and only
+    /// then may any of them start asking. `irq::init()` does both halves in that
+    /// order.
+    ///
+    /// Writes the whole register rather than or-ing a bit in, because the other
+    /// three IER bits must stay clear -- see `IER_ERBFI` for what setting bit 1
+    /// would do -- and a read-modify-write from outside a critical section could
+    /// resurrect one the handler had just cleared.
+    pub fn enable_rx_interrupt(&mut self) {
+        // SAFETY: a fixed peripheral address; write only.
+        unsafe { write_volatile(self.reg(IER), IER_ERBFI) }
+    }
+
+    /// Stop asking for interrupts on this port.
+    ///
+    /// The receive FIFO keeps whatever is in it and LSR still reports it; only
+    /// the interrupt line drops. That is what makes this usable as flow control:
+    /// when the software ring fills, the handler calls this, returns, and lets
+    /// the consumer run. Without it a level-sensitive source with a full ring
+    /// re-enters the handler forever and the CPU makes no progress at all --
+    /// which looks exactly like a hung board.
+    pub fn disable_rx_interrupt(&mut self) {
+        // SAFETY: as above.
+        unsafe { write_volatile(self.reg(IER), 0) }
+    }
 
     /// One byte if any has been received, else `None`. Never blocks.
     pub fn get(&mut self) -> Option<u8> {
-        // SAFETY: as above.
+        // SAFETY: fixed peripheral addresses; volatile because these are devices
+        // whose values change underneath the compiler.
         //
         // DR must be checked first and RBR must not be touched otherwise:
         // reading RBR pops the FIFO whether or not it held anything, and reading

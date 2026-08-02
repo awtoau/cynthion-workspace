@@ -203,50 +203,49 @@ mod backend {
 /// staging round trip needs the board.
 #[cfg(feature = "qemu")]
 mod backend {
+    use core::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+
     /// Header words plus the largest image `MAX_IMAGE` allows, rounded up. Sized from the
     /// same constants the shared code bounds against, so the two cannot drift.
     const WORDS: usize =
         super::IMAGE_WORD as usize + (super::MAX_IMAGE as usize + 1) / 2;
 
-    // Raw `static mut` rather than a `Cell`/`Mutex`: this is a single-hart no_std binary
-    // with no interrupt handlers, so there is no second accessor to synchronise against,
-    // and the alternative pulls `critical-section` in for nothing. Accessed only through
-    // `&raw mut` so no reference to a mutable static is ever created.
-    static mut STORE: [u16; WORDS] = [0; WORDS];
-    static mut CURSOR: usize = 0;
-
-    fn slot(index: usize) -> *mut u16 {
-        unsafe { (&raw mut STORE).cast::<u16>().add(index) }
-    }
+    // `AtomicU16`/`AtomicUsize` rather than `static mut`, and the reason changed
+    // under this code. When it was written this binary had no interrupt
+    // handlers, so a raw mutable static had no second accessor to race with. It
+    // has one now (`src/irq.rs`), and while nothing in that handler touches
+    // HyperRAM today, "nothing does yet" is not a property the type system can
+    // hold on to. Atomics need no `unsafe`, no `critical-section` dependency and
+    // no reasoning about who might arrive later; on this target they compile to
+    // the same loads and stores. `scripts/soc_irq_log_check.py` is what found
+    // this, which is most of the argument for having it.
+    static STORE: [AtomicU16; WORDS] = [const { AtomicU16::new(0) }; WORDS];
+    static CURSOR: AtomicUsize = AtomicUsize::new(0);
 
     pub fn seek(word: u32) {
-        unsafe { *(&raw mut CURSOR) = word as usize };
+        CURSOR.store(word as usize, Ordering::Relaxed);
     }
 
     pub fn write_word(value: u16) {
         // Out-of-range writes are dropped rather than wrapping. Wrapping would corrupt
         // the header from an over-long image and make a bounds bug look like a CRC
         // failure; on the board the gateware simply addresses past the image area.
-        unsafe {
-            let index = *(&raw const CURSOR);
-            if index < WORDS {
-                slot(index).write_volatile(value);
-            }
-            *(&raw mut CURSOR) = index + 1;
+        let index = CURSOR.load(Ordering::Relaxed);
+        if index < WORDS {
+            STORE[index].store(value, Ordering::Relaxed);
         }
+        CURSOR.store(index + 1, Ordering::Relaxed);
     }
 
     pub fn read_word() -> u16 {
         // 0xffff past the end matches what the SoC backend returns when the peripheral
         // never answers, which `staged()` already treats as "no image".
-        unsafe {
-            let index = *(&raw const CURSOR);
-            *(&raw mut CURSOR) = index + 1;
-            if index < WORDS {
-                slot(index).read_volatile()
-            } else {
-                0xffff
-            }
+        let index = CURSOR.load(Ordering::Relaxed);
+        CURSOR.store(index + 1, Ordering::Relaxed);
+        if index < WORDS {
+            STORE[index].load(Ordering::Relaxed)
+        } else {
+            0xffff
         }
     }
 }

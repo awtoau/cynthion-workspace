@@ -338,8 +338,8 @@ def main():
                 return reply
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
-                       b"irq", b"led", b"i2c", b"power", b"phy",
-                       b"sideband", b"load <hex>", b"go", b"reset"]
+                       b"irq", b"log [n]", b"led", b"i2c", b"power",
+                       b"phy", b"sideband", b"load <hex>", b"go", b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
 
@@ -396,11 +396,46 @@ def main():
             command("check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
                     "`check` computes 0x12345678*3 == 0x369d0368")
 
+            # --- the deferred interrupt log ----------------------------------------
+            #
+            # The ring in src/events.rs is what an interrupt handler uses instead
+            # of printing, and it is pure logic with no hardware behind it -- so
+            # this target exercises the code that ships rather than a stand-in.
+            # `log` pushes through the same `events::push` a handler calls.
+            #
+            # Fill and wrap: the ring holds RING-1 = 15 records (head == tail has
+            # to mean empty, so the completely-full state is not representable).
+            # Ten fit, drain, ten more fit -- which only works if the indices wrap
+            # correctly, since the second ten start past the end of the array.
+            command("log 10", [b"log pushed 10 of 10"],
+                    "ten records fit in the deferred log")
+            check("the main loop drains the log and formats it",
+                  b"log test 9" in session.snapshot(),
+                  "the records pushed by `log 10` never appeared on the console.\n"
+                  "A handler that records and is never drained is a handler that\n"
+                  "silently said nothing.\n"
+                  f"received: {show(session.snapshot()[-400:])}")
+
+            command("log 10", [b"log pushed 10 of 10"],
+                    "and ten more fit after the ring has wrapped")
+
+            # Drop counting: 20 at once cannot fit, and the ones that do not must
+            # be COUNTED rather than silently lost. A queue that quietly discards
+            # under exactly the conditions you most want to see is worse than no
+            # queue.
+            command("log 20", [b"log pushed 15 of 20", b"dropped 5"],
+                    "an overfull log drops the excess and counts it")
+            check("the drop is reported on the console, not only on request",
+                  b"event(s) LOST" in session.snapshot(),
+                  "the shell never reported the lost records.\n"
+                  "Silently losing log lines is how a fault becomes invisible.\n"
+                  f"received: {show(session.snapshot()[-500:])}")
+
             # --- the console is interrupt-driven ------------------------------------
             # `virt`'s PLIC is at 0x0c000000 and its 16550 is on source 10, both read
             # out of the device tree (see src/target.rs). Assert the firmware found it
             # there, and that the handler has actually run.
-            reply = command("irq", [b"plic  @0c000000", b"src 10"],
+            reply = command("irq", [b"plic  @0c000000", b"src 10", b"log  waiting"],
                             "`irq` finds the PLIC and names the console's source")
 
             # The count itself. Everything typed so far arrived through the handler, so

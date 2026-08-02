@@ -207,6 +207,21 @@ def build_checks() -> List[Check]:
                 Step([PYTHON, "scripts/soc_generate_pac.py", "--check"], ROOT),
             ],
         ),
+        Check(
+            name="irqlog",
+            description="no interrupt handler can reach a console",
+            steps=[
+                # Printing from a handler spins on a UART FIFO inside an
+                # interrupt; on a level-sensitive shared source that is a hang
+                # that presents as a dead CPU. Ownership stops most of it --
+                # `src/irq.rs` holds a `UartRx`, which has no transmit method, so
+                # a `write!` there does not compile -- but Rust's privacy cannot
+                # stop a sibling module naming `Uart`, so the rest is a grep.
+                #
+                # Source only; no board, no toolchain, well under a second.
+                Step([PYTHON, "scripts/soc_irq_log_check.py"], ROOT),
+            ],
+        ),
         # Do NOT run this from repos/cynthion: that directory contains a
         # 'cynthion/' subdirectory which Python picks up as a namespace package,
         # shadowing the installed one (cynthion.__file__ becomes None, so

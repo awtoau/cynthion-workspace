@@ -54,6 +54,7 @@ use core::ptr::{read_volatile, write_volatile};
 use riscv_rt::entry;
 
 mod clock;
+mod events;
 mod gpio;
 mod hyperram;
 mod i2c;
@@ -280,6 +281,12 @@ fn main() -> ! {
         // `target::ANNOUNCING`.
         devices.power.poll(&mut console);
 
+        // Anything an interrupt handler wanted to say. Formatted and
+        // transmitted HERE, in normal context, on a console this loop owns --
+        // which is the entire arrangement: a handler cannot reach a `Uart`, and
+        // `events::drain` cannot be called without one. See `src/events.rs`.
+        events::drain(&mut console);
+
         // Round-robin, one byte per console per pass. Fair by construction and with no
         // arbitration to get wrong: a console that is being pasted into cannot starve
         // the others, because it still only gets one byte per turn.
@@ -320,6 +327,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  check         arithmetic and known flash values");
             let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
             let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
+            let _ = writeln!(uart, "  log [n]       push n deferred events, as a handler would");
             let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
             let _ = writeln!(uart, "  i2c           scan the power monitor bus");
             let _ = writeln!(uart, "  power [floor <port> <mA>]  the four rails, \
@@ -371,11 +379,39 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                                  console, target::UART_IRQS[console],
                                  interrupts, stalls, buffered);
             }
+            // The deferred log's own health. A handler may not print, so it
+            // records; if the ring fills, records are dropped rather than the
+            // handler stalling, and this is where that shows up. A nonzero
+            // count is not a failure by itself -- it means a burst outran the
+            // shell -- but a count that keeps climbing means events are being
+            // lost continuously, which is the state in which a fault becomes
+            // invisible. See `src/events.rs`.
+            let _ = writeln!(uart, "  log  waiting {} dropped {}",
+                             events::waiting(), events::dropped());
         }
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart),
         b"power" => board_power(uart, rest, devices),
         b"phy" => board_phy(uart),
+        b"log" => {
+            // Pushes through the SAME `events::push` an interrupt handler uses,
+            // from normal context, which is exactly what makes it a test of the
+            // ring rather than of a copy of it: `push` clears `mstatus.MIE` for
+            // the length of the copy precisely so that both contexts may use it.
+            //
+            // Registered on every target, because the ring is pure logic with no
+            // hardware behind it -- so `scripts/soc_test.py` can drive fill, wrap
+            // and drop counting under QEMU against the code that ships.
+            let count = parse_decimal(rest).unwrap_or(1);
+            let mut pushed = 0u32;
+            for index in 0..count {
+                if crate::log_from_irq!(events::TEST, index) {
+                    pushed += 1;
+                }
+            }
+            let _ = writeln!(uart, "log pushed {} of {}, waiting {} dropped {}",
+                             pushed, count, events::waiting(), events::dropped());
+        }
         b"sideband" => board_sideband(uart, rest),
         b"read" => match parse_hex(rest) {
             Some(offset) => {

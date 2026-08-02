@@ -15,6 +15,20 @@
 //! `ecp5-test/riscv/vexii_plic.py` now provide, and this file is the minimum
 //! that proves the path works end to end.
 //!
+//! ## Nothing in this file may print
+//!
+//! This is the module the machine external handler lives in, and a handler that
+//! writes to a console spins on `LSR.THRE` inside an interrupt -- on a
+//! level-sensitive shared source that is a hang, and it presents as a dead CPU.
+//! So the receive path uses [`UartRx`], which is the receive and
+//! interrupt-control half of a 16550 and has no transmit method and no
+//! `core::fmt::Write`: `write!` here does not compile. What a handler says
+//! instead goes through `src/events.rs`, which records a code and two words and
+//! lets the main loop do the formatting.
+//!
+//! `scripts/soc_irq_log_check.py` (the `irqlog` check) enforces the rest by
+//! grep, because Rust's privacy cannot stop a sibling module naming `Uart`.
+//!
 //! ## No `#[cfg]` here either
 //!
 //! Nothing in this file is target-specific. The PLIC is standard on both the SoC
@@ -56,7 +70,7 @@ use riscv::interrupt::Interrupt;
 
 use crate::plic::Plic;
 use crate::target;
-use crate::uart::Uart;
+use crate::uart::UartRx;
 use crate::MAX_CONSOLES;
 
 /// Bytes buffered per console between the handler and the shell.
@@ -166,7 +180,7 @@ fn console_of(source: u32) -> Option<usize> {
 /// Move everything the UART has into the ring, or mask it if there is no room.
 fn service(index: usize) {
     let ring = &RINGS[index];
-    let mut uart = Uart::new(target::UART_BASES[index]);
+    let mut uart = UartRx::new(target::UART_BASES[index]);
 
     ring.interrupts.fetch_add(1, Ordering::Relaxed);
 
@@ -244,7 +258,7 @@ pub fn init() {
 
     // The UARTs start asking only now that there is something to answer them.
     for &base in target::UART_BASES {
-        Uart::new(base).enable_rx_interrupt();
+        UartRx::new(base).enable_rx_interrupt();
     }
 
     // SAFETY: the handler above is installed at link time, the trap vector was
@@ -271,7 +285,7 @@ pub fn init() {
 pub fn shutdown() {
     riscv::interrupt::disable();
     for &base in target::UART_BASES {
-        Uart::new(base).disable_rx_interrupt();
+        UartRx::new(base).disable_rx_interrupt();
     }
 }
 
@@ -292,7 +306,7 @@ pub fn pop(index: usize) -> Option<u8> {
     //
     // The cost is one uncached byte store per byte consumed, which is invisible
     // next to the MMIO read that fetched it.
-    Uart::new(target::UART_BASES[index]).enable_rx_interrupt();
+    UartRx::new(target::UART_BASES[index]).enable_rx_interrupt();
 
     Some(byte)
 }
