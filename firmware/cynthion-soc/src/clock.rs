@@ -1,12 +1,12 @@
 //! The one thing in this firmware that knows how much time has passed.
 //!
-//! Everything periodic here -- the power monitor's 50 ms poll, and anything that
-//! follows it -- needs an answer to "has it been long enough yet", and until now
-//! the only answer available was a loop counter. `Shell::poll` still has one, and
-//! its comment says exactly what is wrong with it: *"~2 s at 60 MHz with one
-//! console, and proportionally longer with more"*. A count of loop turns measures
-//! the loop, not the clock, so it changes whenever the loop does -- adding a
-//! console or a command lengthens every interval built on it, silently.
+//! Everything periodic here -- the power monitor's 50 ms poll, and anything that follows
+//! it -- needs an answer to "has it been long enough yet".
+//!
+//! A loop counter measures the loop, not the clock: adding a console or a command
+//! silently lengthens every interval built on it. `rdtime` does not. `Shell::poll` still
+//! counts turns, and its own comment shows the cost -- *"~2 s at 60 MHz with one console,
+//! and proportionally longer with more"*.
 //!
 //! ## `rdtime`, and why it is available on both targets
 //!

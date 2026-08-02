@@ -27,10 +27,10 @@
 //!     default          -> src/target.rs + memory.x       (RAM at 0x0000_0000)
 //!     --features qemu  -> src/target.rs + memory-qemu.x  (RAM at 0x8000_0000)
 //!
-//! There is no longer a per-target console. The SoC's console peripheral is a standard
-//! NS16550A (`ecp5-test/riscv/uart16550.py`) and QEMU's `-M virt` presents a standard
-//! NS16550A, so both are driven by `src/uart.rs` and the entire difference between the
-//! builds is a list of base addresses, a flash stand-in, and a linker script.
+//! One console driver serves both targets. The SoC's console peripheral
+//! (`ecp5-test/riscv/uart16550.py`) and QEMU's `-M virt` are both a standard NS16550A, so
+//! `src/uart.rs` drives each unchanged and the whole difference is base addresses, a
+//! flash stand-in and a linker script.
 //!
 //! `scripts/soc_test.py` builds the QEMU variant, drives this shell over a pipe and
 //! asserts what it says; `scripts/soc_run.py` will not configure the board until those
@@ -344,10 +344,10 @@ fn main() -> ! {
         // arbitration to get wrong: a console that is being pasted into cannot starve
         // the others, because it still only gets one byte per turn.
         //
-        // The bytes now come from the interrupt handler's rings rather than from LSR, so
-        // this loop no longer has to be back here in time to catch anything. What it still
-        // does is bound how much of one console's input is handled before the other's --
-        // which is a fairness property of the shell and worth keeping.
+        // Bytes come from the interrupt handler's rings, not from LSR, so the byte is
+        // already collected before this loop asks for it -- a console busy printing
+        // cannot miss one. What the loop still decides is how much of one console's input
+        // is handled before the other's, which is a fairness property worth keeping.
         for (index, &base) in target::UART_BASES.iter().enumerate() {
             let mut uart = Uart::new(base);
             shells[index].poll(index, &mut uart, index < target::ANNOUNCING,

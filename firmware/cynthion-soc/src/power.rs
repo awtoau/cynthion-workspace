@@ -34,19 +34,17 @@
 //! read the part: the transaction is private to this module and `poll` is its
 //! only caller, so there is no second REFRESH to collide with the first.
 //!
-//! It was not always so, and the failure is worth keeping in view. `power` used
-//! to issue its own read, which landed inside the poll's 1 ms window about 2% of
-//! the time and reported "no acknowledge (register pointer)" on a bus that was
-//! working perfectly. The fix attempted first -- wait 2 ms and try once more --
-//! made the symptom go away and left the structure that caused it, which is why
-//! issue #123 asked for it to be deleted rather than kept. `power` now prints
-//! [`Monitor::latest`], the sample the poller already has, and touches no bus.
+//! **Nothing else may read this part.** A second reader lands inside the 1 ms REFRESH
+//! window and reports a bus fault on a working bus. Full argument, including the measured
+//! collision rate: `docs/comparisons.md#20-multi-transaction-device-protocols`.
 //!
-//! The cost of that is staleness, and staleness is exactly the kind of wrongness
-//! that looks right. So the sample carries the instant of the REFRESH that
-//! latched it -- not the read that fetched it, which is one interval later -- and
-//! `power` prints its age. A poller that has stopped then reads as a number
-//! climbing past 50 ms instead of as four plausible voltages.
+//! Staleness is the cost, and staleness is the kind of wrongness that looks right. So:
+//!
+//!   * the sample carries the instant of the REFRESH that **latched** it, not the read
+//!     that fetched it -- the read is one interval later, so timestamping it would
+//!     understate age by a full poll
+//!   * `power` prints that age, so a stopped poller reads as a number climbing past
+//!     50 ms rather than as four plausible voltages
 //!
 //! ## What gets printed, and what does not
 //!
