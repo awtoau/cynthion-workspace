@@ -385,6 +385,11 @@ impl Monitor {
         }
         self.last = now;
 
+        // The interval elapsed, so this turn is busy -- and the gap since the
+        // last poll is the jitter figure `stats` reports. Above the bus check
+        // for the same reason the clock read is: it happens on every target.
+        crate::metrics::polled();
+
         // The clock is read on EVERY target, and only the bus access is skipped
         // where there is no bus. That is deliberate: `scripts/soc_test.py` runs
         // this loop under QEMU, so the `time` CSR read above is exercised by the

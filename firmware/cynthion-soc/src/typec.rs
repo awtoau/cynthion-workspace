@@ -148,6 +148,9 @@ impl Controllers {
         if pending == 0 {
             return;
         }
+        // A deferred interrupt is being cleared: a millisecond of I2C, which is
+        // the longest single thing the main loop does short of a `load`.
+        crate::metrics::busy();
 
         for port in Port::ALL {
             let index = index(port);

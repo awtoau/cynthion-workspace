@@ -400,6 +400,12 @@ pub fn shutdown() {
 pub fn pop(index: usize) -> Option<u8> {
     let byte = RINGS[index].pop()?;
 
+    // A byte reached the shell, so this turn of the main loop did something.
+    // Here rather than at the call sites because there are three of them and
+    // this is the one place all of them go through -- including `load`, whose
+    // transfer loop is one very long turn. See `src/metrics.rs`.
+    crate::metrics::busy();
+
     // Re-arm, on every byte, unconditionally.
     //
     // The handler masks this port when the ring fills. Re-enabling here needs no
