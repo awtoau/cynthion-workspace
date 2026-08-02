@@ -56,7 +56,6 @@ from pathlib import Path
 from amaranth                       import Elaboratable, Module, Signal, Cat
 from amaranth.lib                   import wiring
 from amaranth.lib.cdc               import FFSynchronizer
-from amaranth_stdio.serial          import AsyncSerial
 
 # Not LunaECP5DomainGenerator: it clocks `sync` at 60 MHz and offers only 60/120/240
 # elsewhere, so a speed ladder can only step in factors of two. Nothing in the hardware
@@ -82,6 +81,7 @@ import vexii_cpu
 from vexii_cpu import VexiiRiscv
 from uart16550 import Uart16550
 from vexii_plic import Plic
+from serial_line import SerialLine
 from stream_buffer import StreamBuffer
 from wishbone_pipe import RegisteredResponse
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
@@ -715,18 +715,25 @@ class HelloSoC(Elaboratable):
         # supplies no baud rate -- it is a byte pipe by design -- so the bit timing
         # lives here, in the module that chose the wire.
         #
-        # R14/T14 are shared with JTAG TDI/TMS. `dir="oe"` on tx and the policy of
-        # never transmitting unbidden are the whole of the mitigation; see the
-        # comment on APOLLO_UART_BASE.
+        # R14/T14 are shared with JTAG TDI/TMS. `dir="oe"` on tx, the idle
+        # qualifier inside `SerialLine`, and the policy of never transmitting
+        # unbidden are the whole of the mitigation; see the comment on
+        # APOLLO_UART_BASE and the docstring of serial_line.py.
         apollo_pins = platform.request("uart", 0)
 
         # divisor = clock / baud, in whole `sync` cycles. At 60 MHz and 115200 that
         # is 520, an error of 0.03% -- a UART tolerates about 2%, and the error
         # scales with the clock, so a design that raises SYNC_MHZ and leaves this
         # expression alone stays correct by construction. Hardcoding 520 would not.
-        m.submodules.apollo_phy = apollo_phy = AsyncSerial(
-            divisor=int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD),
-            data_bits=8, parity="none")
+        #
+        # SerialLine rather than a bare AsyncSerial. This used to be an
+        # AsyncSerial wired straight to the pads here, and all three of the ways
+        # that was wrong are issue #113: the receive pad reached the FSM with no
+        # synchroniser, framing errors were delivered as characters, and the
+        # output enable came off `~tx.rdy`, which falls at the start of the stop
+        # bit rather than after it. serial_line.py has the full account.
+        m.submodules.apollo_line = apollo_line = SerialLine(
+            divisor=int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD), data_bits=8)
 
         # 115200 is four orders of magnitude slower than the CPU, so this is the
         # path where a deep transmit buffer earns its keep. Same domain both sides,
@@ -739,31 +746,16 @@ class HelloSoC(Elaboratable):
 
         wiring.connect(m, apollo_uart.source, apollo_tx_buf.sink)
         wiring.connect(m, apollo_rx_buf.source, apollo_uart.sink)
+        wiring.connect(m, apollo_tx_buf.source, apollo_line.sink)
+        wiring.connect(m, apollo_line.source, apollo_rx_buf.sink)
 
         m.d.comb += [
-            # AsyncSerial predates amaranth.lib.stream and uses rdy/ack rather than
-            # valid/ready, with the sense of `ack` reversed from what a stream port
-            # means by it: on the TX side `ack` is the PRODUCER saying "take this".
-            apollo_phy.tx.data.eq(apollo_tx_buf.source.payload),
-            apollo_phy.tx.ack.eq(apollo_tx_buf.source.valid),
-            apollo_tx_buf.source.ready.eq(apollo_phy.tx.rdy),
-
-            apollo_rx_buf.sink.payload.eq(apollo_phy.rx.data),
-            apollo_rx_buf.sink.valid.eq(apollo_phy.rx.rdy),
-            apollo_phy.rx.ack.eq(apollo_rx_buf.sink.ready),
-
-            apollo_phy.rx.i.eq(apollo_pins.rx.i),
-            apollo_pins.tx.o.eq(apollo_phy.tx.o),
-
-            # RELEASE THE LINE WHEN IDLE. `tx.rdy` is high exactly when the
-            # transmitter has nothing in flight, so this drives T14 only for the
-            # duration of a character and lets PULLMODE="UP" hold the idle mark the
-            # rest of the time. Without it the FPGA would hold a JTAG signal at
-            # whatever level it last transmitted and fight the SAMD11 for the whole
-            # of every `apollo configure`. This is what luna_soc's UARTProvider
-            # does (`.../luna_soc/gateware/core/uart.py:95`) and it is the only
-            # arbitration that exists on the FPGA side.
-            apollo_pins.tx.oe.eq(~apollo_phy.tx.rdy),
+            # The pad, and nothing else. SerialLine owns the synchroniser, the
+            # idle qualifier and the output enable -- which is the point of it
+            # being a module rather than nine lines of comb here.
+            apollo_line.rx_i.eq(apollo_pins.rx.i),
+            apollo_pins.tx.o.eq(apollo_line.tx_o),
+            apollo_pins.tx.oe.eq(apollo_line.tx_oe),
         ]
 
         # The single-wire debug link to Apollo. Present in every test design

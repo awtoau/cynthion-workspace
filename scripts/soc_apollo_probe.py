@@ -36,18 +36,52 @@ everything else: the shell echoes each printable byte as it arrives, so a
 mismatch is a character that was corrupted or lost between here and the line
 editor, and nothing else in the firmware is involved.
 
-  * **Substituted or inserted characters** (`abcUe+KkW.]]Xdef`) are framing
-    errors -- a bad bit in a start or stop bit resynchronises the receiver in the
-    middle of the next character. This is the signature of contention on the
-    shared pins.
-  * **Truncation** (`abcdefghi`) is the reply not arriving inside the window,
-    which is buffering rather than corruption.
+  * **Substituted or inserted characters** (`abcUe+KkW.]]Xdef`) are a bad bit
+    reaching the receiver -- a metastable sample, or a frame framed out of noise.
+  * **A single character missing** (`abcdefghiklmn`) is a frame lost or rejected.
+  * **A repeated block** (`abcdefghijabcdefghijabc`) is not a line fault at all.
+    A UART cannot invent a replay of bytes it never saw; something with a buffer
+    sent them twice. See the pacing experiment below.
+  * **Truncation** (`abcdefghi`) is the rest of the line not arriving.
   * **A clean run** says the line was quiet, and any misbehaviour seen at the
     same time is genuinely above the transport.
 
-The number to keep is the ratio, not a pass. This port has been measured at 9 or
-10 mismatches out of 10 shortly after an `apollo configure`, and at zero when
-left alone, with the same bitstream and the same firmware.
+The number to keep is the ratio, not a pass.
+
+## `--pace`, and what it separated
+
+`--pace MS` sends the line one character at a time with a gap instead of as a
+back-to-back burst. That is the experiment that tells a bad line from a bad
+buffer: **corruption on a wire does not care how far apart the characters are**,
+while a producer that re-sends part of its buffer only does so when there is a
+buffer's worth in flight.
+
+Measured on r1.4, 20 trials per cell, board left alone, same firmware
+throughout, before and after the gateware fix in `ecp5-test/riscv/serial_line.py`
+(issue #113):
+
+    mismatches / 20     back-to-back        --pace 3
+
+    before the fix      15   garbage,       14   one character missing
+                             substitutions,      per line, nothing else
+                             and replays
+
+    after the fix       11   almost all      2   one spurious leading byte,
+                             block replays        twice
+
+Two separate faults, and the table separates them.
+
+**The per-character loss is the line, and it is fixed.** 14/20 down to 2/20 once
+burst pressure is removed. That is the metastability and the missing framing
+check in `serial_line.py`.
+
+**The block replay is not the line, and it is not fixed.** It is unchanged by
+the gateware, it vanishes when the characters are spaced out, and the FPGA's own
+transmit direction is clean over hundreds of bytes at the same moment (a `help`
+listing comes back perfect). What is left is the host-to-FPGA path above the
+FPGA: the SAMD11's `console_task()` moving CDC bytes into SERCOM2, in
+`repos/apollo/firmware/src/console.c`. That is a submodule and not this
+workspace's to change.
 
 ## An A/B this was written for
 
@@ -89,6 +123,34 @@ PROBE = "abcdefghijklmnopqrstuvwxyz0123456789"
 REPLY_S = 2.0
 
 
+# What the shell answers a line it does not recognise with. The echo is
+# whatever precedes it on the same line.
+REJECTION = b"\r\nunknown command"
+
+
+def extract_echo(reply):
+    """Pull the shell's echo of the probe line out of everything that arrived.
+
+    Not `reply.split(b"\\r\\n")[0]`, which is what this used to be and which is
+    wrong whenever a trial's reply is late: the next trial then opens with the
+    tail of the previous one (`\\r\\n> `), the split returns the empty string
+    before it, and the trial is scored as a total loss no matter what the
+    transport actually did. That turned a run with four clean echoes out of six
+    into a reported 20/20 failure, which is a diagnostic lying in the direction
+    that makes the hardware look worse than it is -- the one direction a
+    diagnostic must never lie in.
+
+    So: find the rejection message, take what is in front of it, and drop any
+    prompt that got in first.
+    """
+    end = reply.find(REJECTION)
+    line = reply if end < 0 else reply[:end]
+    # A prompt may precede the echo, either from this trial or the previous one.
+    if b"> " in line:
+        line = line.rsplit(b"> ", 1)[-1]
+    return line.decode("ascii", "replace")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -97,6 +159,9 @@ def main():
                         help=f"tty node to probe (default {DEFAULT_PORT})")
     parser.add_argument("--trials", type=int, default=10,
                         help="how many lines to send")
+    parser.add_argument("--pace", type=float, default=0.0, metavar="MS",
+                        help="milliseconds between characters instead of a "
+                             "back-to-back burst; see the docstring")
     args = parser.parse_args()
 
     import serial
@@ -124,8 +189,25 @@ def main():
                 # previous trial's late reply arriving now would be counted
                 # against this one.
                 port.reset_input_buffer()
-                port.write(PROBE.encode() + b"\r")
-                port.flush()
+                if args.pace:
+                    # One character at a time, with a gap.
+                    #
+                    # This is the experiment that separates a bad line from a
+                    # bad buffer. Corruption on the wire does not care how far
+                    # apart the characters are; a producer that re-sends part of
+                    # its buffer only does it when there is a buffer's worth in
+                    # flight. `--pace 5` sends slower than any queue can fill.
+                    #
+                    # The duration is not a timeout and nothing is being waited
+                    # for: it is the inter-character gap the measurement is
+                    # varying, and it is the independent variable of the test.
+                    for character in PROBE + "\r":
+                        port.write(character.encode())
+                        port.flush()
+                        time.sleep(args.pace / 1000.0)
+                else:
+                    port.write(PROBE.encode() + b"\r")
+                    port.flush()
 
                 # Read until the shell's rejection of the line appears, which is
                 # how we know the whole echo has been sent.
@@ -134,7 +216,7 @@ def main():
                 while time.monotonic() < deadline and b"help`" not in reply:
                     reply += port.read(port.in_waiting or 1)
 
-                echo = reply.split(b"\r\n")[0].decode("ascii", "replace")
+                echo = extract_echo(reply)
                 if echo != PROBE:
                     mismatches += 1
                     emit(f"  trial {trial}: {echo!r}")
