@@ -1274,11 +1274,11 @@
     </peripheral>
     <peripheral>
       <name>BOARD_SIDEBAND</name>
-      <description>board/sideband: 1 register at 0xf0000618</description>
+      <description>board/sideband: 4 registers at 0xf0000618</description>
       <baseAddress>0xF0000618</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x2</size>
+        <size>0x4</size>
         <usage>registers</usage>
       </addressBlock>
       <registers>
@@ -1297,6 +1297,60 @@
               <bitOffset>0</bitOffset>
               <bitWidth>8</bitWidth>
               <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX</name>
+          <description>BOARD_SIDEBAND.TX, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RX</name>
+          <description>BOARD_SIDEBAND.RX, 8 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RXCNT</name>
+          <description>BOARD_SIDEBAND.RXCNT, 8 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>

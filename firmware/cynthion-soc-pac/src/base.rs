@@ -65,10 +65,10 @@ pub const BOARD_I2C_SIZE: usize = 0x00000008;
 /// PLIC source number wired to BOARD_I2C.
 pub const BOARD_I2C_IRQ: u32 = 3;
 
-/// board/sideband: 1 register at 0xf0000618
+/// board/sideband: 4 registers at 0xf0000618
 pub const BOARD_SIDEBAND: usize = 0xf0000618;
 /// Size of the BOARD_SIDEBAND window, in bytes.
-pub const BOARD_SIDEBAND_SIZE: usize = 0x00000002;
+pub const BOARD_SIDEBAND_SIZE: usize = 0x00000004;
 
 /// board/ulpi: 4 registers at 0xf000061c
 pub const BOARD_ULPI: usize = 0xf000061c;

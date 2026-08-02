@@ -82,14 +82,14 @@ impl core::fmt::Debug for BoardI2c {
 }
 #[doc = "board/i2c: 5 registers at 0xf0000610"]
 pub mod board_i2c;
-#[doc = "board/sideband: 1 register at 0xf0000618"]
+#[doc = "board/sideband: 4 registers at 0xf0000618"]
 pub type BoardSideband = crate::Periph<board_sideband::RegisterBlock, 0xf000_0618>;
 impl core::fmt::Debug for BoardSideband {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardSideband").finish()
     }
 }
-#[doc = "board/sideband: 1 register at 0xf0000618"]
+#[doc = "board/sideband: 4 registers at 0xf0000618"]
 pub mod board_sideband;
 #[doc = "board/ulpi: 4 registers at 0xf000061c"]
 pub type BoardUlpi = crate::Periph<board_ulpi::RegisterBlock, 0xf000_061c>;
