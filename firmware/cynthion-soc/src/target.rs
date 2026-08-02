@@ -153,6 +153,40 @@ pub const GATEWARE: Option<usize> = Some(cynthion_soc_pac::base::BOARD_GATEWARE)
 #[cfg(feature = "qemu")]
 pub const GATEWARE: Option<usize> = None;
 
+/// Where `firmware/cynthion-boot` leaves its one word of boot status, or `None` on a
+/// target that has no bootloader under it.
+///
+/// A block RAM address rather than a peripheral, so it is not in the generated map and
+/// cannot come from `cynthion_soc_pac::base`. It is `ORIGIN(BOOT) + LENGTH(BOOT) - 4`
+/// in `firmware/cynthion-boot/memory.x` and nowhere else; `scripts/soc_generate_pac.py
+/// --check` compares the two.
+///
+/// `None` under QEMU, and that is the truth rather than a stub: `-M virt` jumps straight
+/// to this image's entry point, so nothing has written a status and 0x3fc is not memory.
+/// `info` says so instead of printing a number it made up.
+#[cfg(not(feature = "qemu"))]
+pub const BOOT_STATUS: Option<usize> = Some(0x3fc);
+
+#[cfg(feature = "qemu")]
+pub const BOOT_STATUS: Option<usize> = None;
+
+/// High 24 bits of a real status word: "BOT". `firmware/cynthion-boot` writes it with
+/// every report, so an uninitialised block RAM word is not mistaken for one.
+pub const BOOT_STATUS_MARK: u32 = 0x424f_5400;
+
+/// What each code means, indexed by the low byte of the status word.
+///
+/// The order is `Status` in `firmware/cynthion-boot/src/main.rs`. A table rather than a
+/// match because the shell only ever renders these, and a table cannot acquire a branch.
+pub const BOOT_STATUS_TEXT: &[&str] = &[
+    "staged image verified and copied",
+    "nothing staged",
+    "staged image failed its CRC",
+    "staged header rejected: bad length",
+    "hyperram did not answer",
+    "the bootloader panicked",
+];
+
 /// One PLIC source per FUSB302B `int` line, in `fusb302::Port::ALL` order.
 ///
 /// Not one OR-ed source: a shared level obliges its handler to clear every

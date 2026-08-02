@@ -39,6 +39,7 @@ Numbers are measured unless marked *unverified*.
 | 19 | [RTOS](#19-rtos-bare-loop-vs-rtic-vs-zephyr) | bare loop | **open** (#112/#115) |
 | 20 | [Device ownership](#20-multi-transaction-device-protocols) | one owner, cached reads | in progress (#123) |
 | 21 | [16550: written vs vendored](#21-16550-written-from-the-spec-vs-a-vendored-core) | ours, spec-checked against OpenCores | settled (#128) |
+| 22 | [What is resident at 0x0](#22-what-is-resident-at-0x0) | a 492-byte bootloader; the shell is an image | settled (#138) |
 
 ---
 
@@ -788,6 +789,47 @@ driver is exercised against QEMU's `ns16550a`, a proven implementation, on every
 **Revisit if** a third transport appears that genuinely is an RS-232 line with no shared
 pins, or if character timeout and per-character error tagging turn out to be wanted. Both
 argue for the bit engine we currently have no use for.
+
+### 22. What is resident at 0x0
+
+The shell was resident and the payload slot was not, so the half of block RAM that grew
+was the half pinned at the reset vector. It reached **36,514 bytes against 32,768** and
+stopped linking; three branches in one day spent effort reclaiming bytes from it.
+
+| | shell resident (was) | **bootloader resident** (#138) |
+|---|---|---|
+| at `0x0` | shell + every command, 36,514 B | `firmware/cynthion-boot`, **492 B** |
+| above it | payload slot, 32 KiB, usually empty | the image: shell, commands, drivers, 63 KiB |
+| grows | the resident half | the replaceable half |
+| a new command costs | resident space | image space |
+
+**Cutting the address space is free.** The decoder sees one 64 KiB window at `RAM_BASE`;
+the boundary is a linker fiction, so no DP16KD granularity applies and it can sit at any
+address. 1 KiB is sized from the measurement — 492 bytes of image and 80 of stack at the
+deepest call — not chosen as a round number.
+
+**Both images ship in one bitstream.** Block RAM init covers all 64 KiB, so
+`vexii_hello_soc.py` packs the bootloader at `0x0` and a default image at `IMAGE_ORIGIN`.
+Power-on behaviour is unchanged: nothing is staged, so the bootloader jumps to what the
+bitstream placed.
+
+**One failure path, and no policy.** No magic, a bad CRC, a rejected length, a silent
+HyperRAM — all jump to the image region. The bootloader does not retry, does not branch
+on the reason and does not clear the header; clearing is a policy and lives in
+`scripts/soc_jtag_stage.py --clear`. It carries no UART and no `core::fmt`, and leaves
+two breadcrumbs instead: a status word at `0x3fc` that `info` renders, and a byte on the
+FPGA_ADV sideband that Apollo can read with no CPU running.
+
+**The fallback is the region, not the bitstream.** Block RAM survives a CPU reset, so
+once an image has been copied in it *is* the image region until the FPGA is configured
+again. Something always answers at the image origin — that is what makes the single
+failure path safe — but `--clear` alone does not restore the bitstream's image, and
+reconfiguring (about a second) is what does. Measured, not assumed.
+
+**Revisit if** the bootloader needs protection from a bad image writing over it. That
+means a second decoder window rather than a linker boundary, and the decode path is what
+`18c1fa5` had to register to recover Fmax — so it costs timing, and the linker's
+`ASSERT`s plus a bounds check on the staged length are what stand in for it today.
 
 ## What is not decided
 

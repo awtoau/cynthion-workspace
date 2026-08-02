@@ -380,7 +380,7 @@ def main():
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
                        b"selftest", b"ports", b"irq", b"time",
                        b"log [n]", b"board", b"led", b"i2c", b"power",
-                       b"phy", b"typec", b"sideband", b"load <hex>", b"go",
+                       b"phy", b"typec", b"sideband", b"load <hex>",
                        b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
@@ -473,9 +473,24 @@ def main():
             # is asserted is that each line is there and that the two fields this
             # script can derive independently agree with it.
             reply = command("info",
-                            [b"image ", b"tools ", b"memory ", b"cpu ",
+                            [b"image ", b"tools ", b"memory ", b"boot ", b"cpu ",
                              b"trap ", b"plic ", b"gateware "],
                             "`info` reports every section")
+
+            # The bootloader's breadcrumb, and what this target has to say about
+            # it.
+            #
+            # `-M virt` jumps straight to this image's entry point: there is no
+            # bootloader under it and 0x3fc is not memory. Saying so is the check
+            # -- the failure being guarded against is `info` reading that address
+            # anyway and rendering whatever it found as a boot status, which
+            # would be a confident answer about a thing that never happened.
+            check("`info` says this target has no bootloader under it",
+                  b"no bootloader on this target" in reply,
+                  "target::BOOT_STATUS is None on the QEMU build, and `info`\n"
+                  "must report that rather than decode an address that is not\n"
+                  "memory here.\n"
+                  f"received: {show(reply) or '(nothing)'}")
 
             check("`info` names the target triple it was built for",
                   b"riscv32imac-unknown-none-elf" in reply,

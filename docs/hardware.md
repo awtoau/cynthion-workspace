@@ -419,12 +419,12 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `phy` | the TARGET USB3343's ULPI registers, plus a walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | `typec [init]` | both FUSB302B controllers, their CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
-| `load <hex>`, `go`, `reset` | stage and run a payload | — |
+| `load <hex>`, `reset` | stage an image and boot into it | — |
 
-**`info`** prints seven lines: the image (git hash, branch, dirty flag, build
+**`info`** prints eight lines: the image (git hash, branch, dirty flag, build
 timestamp), the compiler and target triple, the section sizes and what is left of
-the 32 KiB shell half, `misa` decoded, `mstatus`/`mtvec`, the PLIC's threshold and
-enables, and the gateware.
+the 63 KiB image region, the boot status the bootloader left behind, `misa`
+decoded, `mstatus`/`mtvec`, the PLIC's threshold and enables, and the gateware.
 
 The gateware line is the reason the command exists. **Firmware and bitstream are
 built separately and need never have been built together** — `load` replaces the
@@ -466,7 +466,8 @@ CPU that is executing has already answered.
 integer set on operands the compiler cannot fold, `M` (including signed division
 and division by zero), `C` (three compressed instructions, checked to occupy six
 bytes — the same answer from 32-bit encodings would prove nothing), `A` (lr/sc
-and three `amo` forms), a block RAM address and data walk over the payload slot,
+and three `amo` forms), a block RAM address and data walk over the free space
+between `.bss` and the stack,
 that `rdtime` advances, each 16550's scratch register, the gateware magic, the
 flash's known first word, and the TARGET PHY's identity.
 
@@ -480,9 +481,10 @@ and `typec` report what their drivers cached), does not write flash (**the
 bitstream is at offset 0**), does not read the PLIC's claim register (that would
 take an interrupt from the handler and never complete it), and does not walk the
 PHY's scratch register (`phy` does that, and it writes). The one thing it writes
-is the payload slot, which is unused while a prompt is up. Items it cannot answer
-for on a given target report `skip`, and the summary counts them separately from
-the passes.
+is block RAM between this image's `.bss` and its stack, which nothing owns — and
+never the bootloader's kilobyte at `0x0`, which is what recovers a board. Items it
+cannot answer for on a given target report `skip`, and the summary counts them
+separately from the passes.
 **`board`** is the whole board on one screen, so the *relationships* are visible:
 a connector, the rail feeding it, the PD controller watching it and its PHY are
 one branch rather than four unrelated lines.
@@ -603,22 +605,20 @@ that port's state changed and what it changed to. `fault` is deliberately outsid
 the interrupt and polled at 50 ms: it means something different, and nothing here
 can clear it — it drops when the device's fault does.
 
-**The shell lives in 32 KiB of block RAM, and every new command is measured
-against it.** `memory.x` splits the SoC's 64 KiB in half — the resident shell low,
-the payload slot high — so a command is not free: it is `.text`, its format
-strings are `.rodata`, and what is left over is the *stack*, which the linker sizes
-last and silently. Two things were reclaimed while these commands were
-being added: `.eh_frame`, ~1800 bytes of unwind tables that lld was placing in
-RAM for a target that cannot unwind (`/DISCARD/` in both linker scripts), and
-`opt-level = "z"` in place of `"s"`, another 1612.
+**The shell is an image, not the resident half, and that is what its budget
+rests on.** `memory.x` puts it at `0x0400` with 63 KiB, above the 492-byte
+bootloader that owns the reset vector. A command is still not free — it is `.text`,
+its format strings are `.rodata`, and what is left over is the *stack*, which the
+linker sizes last and silently — but it costs space in the half that is meant to
+grow rather than in the half a board is recovered with.
 
-**Neither was enough.** With `board`, `info`, `selftest` and `time` all present the
-board image does not link: `.text` 25,496 + `.rodata` 9,584 + `.bss` 1,412 is
-36,514 bytes against 32,768, **over by 3,748 with no stack at all**. Widening the
-region is not the fix — the shell is the resident image, so what grows is what is
-pinned at `0x0` and the slot that does not grow has the other half. The QEMU build
-still links (`memory-qemu.x` has a megabyte), so `scripts/soc_test.py` and the
-simulations still run against the merged firmware.
+With `board`, `info`, `selftest` and `time` all present it measures `.text` 25,224
++ `.rodata` 9,700 + `.bss` 1,412 = 36,336 bytes, leaving **28,152 free** of 64,512.
+Under the previous 32 KiB split the same firmware was over by 3,748 bytes with no
+stack at all and did not link. Two reclamations from that period stay because they
+were genuine deletions of waste: `.eh_frame`, ~1800 bytes of unwind tables lld was
+placing in RAM for a target that cannot unwind (`/DISCARD/` in both linker
+scripts), and `opt-level = "z"` in place of `"s"`, another 1612.
 
 Check the headroom after any firmware change with:
 

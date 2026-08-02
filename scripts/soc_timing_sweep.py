@@ -57,6 +57,7 @@ LOG = ROOT / "tmp" / "logs" / "soc_timing_sweep.log"
 RESULTS = ROOT / "tmp" / "soc_timing_sweep"
 BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 SOC = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
+BOOTLOADER = ROOT / "tmp" / "rust_boot.bin"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_timing import run_bounded
@@ -147,7 +148,13 @@ def parse_tim(text):
 def build_once(firmware, handle):
     """One full synthesis + place-and-route. Returns the parsed report."""
     env = dict(os.environ, AMARANTH_nextpnr_opts=NEXTPNR_OPTS)
-    command = [sys.executable, str(SOC), "--build", "--firmware", str(firmware)]
+    # The bootloader too, so the bitstream measured is the bitstream that ships.
+    #
+    # It cannot move Fmax -- block RAM init is DP16KD INITVAL and no part of it is
+    # timed -- but a sweep that built a different design from the one under discussion
+    # would be a measurement of something nobody runs.
+    command = [sys.executable, str(SOC), "--build", "--firmware", str(firmware),
+               "--bootloader", str(BOOTLOADER)]
 
     result = run_bounded(command, family="vexii_hello_soc", cwd=ROOT, env=env)
     if result is None:

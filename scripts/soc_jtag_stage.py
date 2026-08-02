@@ -31,8 +31,9 @@ needs a working shell to receive its own replacement.
     read the status   nop            `staged` and `overflow` say what landed
     release the CPU   reset 0        it reboots, finds the header, runs the image
 
-The layout is `firmware/cynthion-soc/src/hyperram.rs`, unchanged, so `try_boot`
-cannot tell a JTAG-staged image from a console-staged one.
+The layout is `firmware/cynthion-soc/src/hyperram.rs`, which is compiled into the
+bootloader as well as into the shell, so `firmware/cynthion-boot` cannot tell a
+JTAG-staged image from a console-staged one.
 
 ## Speed
 
@@ -77,16 +78,29 @@ HDR_LENGTH = 2
 HDR_CRC    = 4
 IMAGE_WORD = 16
 MAGIC      = 0x4359_4e42
-MAX_IMAGE  = 32 * 1024
+MAX_IMAGE  = 63 * 1024
 
-# How many console reads to make while waiting for the bootloader to speak.
+# How many console reads to make while waiting for whichever image comes up to speak.
 #
 # Bounded by reads, not by a clock: each returns as soon as bytes arrive and only
-# blocks for the port's own timeout when there are none. The bootloader prints its
-# verdict within a few milliseconds of the reset being released -- the CRC is a
-# bitwise pass over at most 32 KiB -- so this is generous by orders of magnitude and
-# costs nothing when the board is answering.
+# blocks for the port's own timeout when there are none. The bootloader says nothing --
+# by design, see `firmware/cynthion-boot/src/main.rs` -- so what is being waited for is
+# the image's own first line, after two bitwise CRC passes over at most 63 KiB and a
+# copy, which is tens of milliseconds. Generous by orders of magnitude, and it costs
+# nothing when the board is answering.
 CONSOLE_READS = 40
+
+# How many reads to spend throwing away what the port was already holding. One is
+# usually enough; the bound is here so a console that is talking continuously cannot
+# hold this open.
+DRAIN_READS = 20
+
+# What the bitstream's own image says when it starts. Its presence after a stage means
+# the bootloader fell back: the staged image was rejected, or never seen.
+#
+# From `banner()` in firmware/cynthion-soc/src/main.rs. A marker rather than the whole
+# line, because the line carries a timestamp.
+FALLBACK_BANNER = "Cynthion RISC-V SoC"
 
 # A HyperRAM word address well past anything the bootloader reads, so `--selftest`
 # and `--benchmark` cannot damage a staged image.
@@ -96,7 +110,7 @@ SCRATCH_WORD = 0x10_0000
 # transport is USB-latency bound at tens of milliseconds a word, so ten of them is
 # already a third of a second; the streamed sizes bracket a real firmware image.
 BENCHMARK_WORDS = 10
-BENCHMARK_SIZES = (1024, 16 * 1024, 32 * 1024)
+BENCHMARK_SIZES = (1024, 16 * 1024, MAX_IMAGE)
 
 
 class Sink:
@@ -229,14 +243,31 @@ def benchmark(chain, sink, emit):
              f"= {per_word / (elapsed / (size / 2)):.0f}x the register interface")
 
 
-def read_console(link, emit, want):
-    """Drain the console until one of `want` appears, or the reads run out."""
+def drain(link):
+    """Throw away whatever the port is already holding.
+
+    Bounded by reads rather than by a clock, like `read_console`: each returns as soon
+    as it has something and only waits out the port's own timeout when there is nothing,
+    so an empty buffer costs one read.
+    """
+    for _ in range(DRAIN_READS):
+        if not link.read_available():
+            return
+
+
+def read_console(link, emit, want=()):
+    """Drain the console until one of `want` appears, or the reads run out.
+
+    With no `want`, every read is made. That is the case after a stage: what comes up
+    is the image's own output and this script does not know what it says, so it collects
+    rather than matches.
+    """
     text = ""
     for _ in range(CONSOLE_READS):
         chunk = link.read_available()
         if chunk:
             text += chunk.decode("ascii", "replace")
-            if any(marker in text for marker in want):
+            if want and any(marker in text for marker in want):
                 break
     return text
 
@@ -254,6 +285,9 @@ def main():
                         help="write to a scratch address and report what the sink counts")
     parser.add_argument("--clear", action="store_true",
                         help="zero the staged header so the next reset reaches the shell")
+    parser.add_argument("--corrupt", action="store_true",
+                        help="damage the staged image, leaving its header intact, so "
+                             "the next boot fails its CRC")
     parser.add_argument("--hold", action="store_true",
                         help="hold the CPU in reset and stop")
     parser.add_argument("--release", action="store_true",
@@ -277,13 +311,13 @@ def main():
                 return 1
             image = args.image.read_bytes()
             if not image or len(image) > MAX_IMAGE:
-                emit(f"image is {len(image)} bytes; the slot is 1..{MAX_IMAGE}")
+                emit(f"image is {len(image)} bytes; the region is 1..{MAX_IMAGE}")
                 return 1
             emit(f"{args.image.name}: {len(image)} bytes")
-        elif not (args.status or args.hold or args.release
-                  or args.selftest or args.benchmark or args.clear):
-            emit("nothing to do; pass an image, --status, --clear, --hold "
-                 "or --release")
+        elif not (args.status or args.hold or args.release or args.selftest
+                  or args.benchmark or args.clear or args.corrupt):
+            emit("nothing to do; pass an image, --status, --clear, --corrupt, "
+                 "--hold or --release")
             return 1
 
         from apollo_fpga import ApolloDebugger
@@ -292,7 +326,7 @@ def main():
         # the time anything is listening. Opening it first also means a port held by
         # another reader is reported before the board has been touched.
         link = None
-        if image is not None and not args.no_console:
+        if (image is not None or args.corrupt) and not args.no_console:
             from soc_shell import Link, other_readers
             try:
                 link = Link.open(args.port)
@@ -338,13 +372,15 @@ def main():
             if args.clear:
                 # The way back to a prompt, and the reason it needs one.
                 #
-                # `try_boot` leaves a good header in place after it has run the
-                # image -- deliberately, so a staged payload survives a reset --
-                # and the payload in `firmware/cynthion-payload` ends in a spin
-                # loop. Together that is a board that boots the same payload
-                # forever and never reaches the shell again, with the header the
-                # only thing that could be changed and no shell to change it
-                # from. Only the bootloader clears it, and only on a CRC failure.
+                # The bootloader reads the header and never writes it -- not even
+                # on a CRC failure, because deciding whether to retry or give up
+                # is policy and the bootloader holds none. So a good header
+                # survives every reset, and the payload in
+                # `firmware/cynthion-payload` ends in a spin loop. Together that
+                # is a board that boots the same image forever and never reaches
+                # the shell again, with the header the only thing that could be
+                # changed and no shell to change it from. This is where it gets
+                # changed.
                 #
                 # Zeroing the magic is what `hyperram::invalidate` does, and the
                 # length and CRC are left alone for the same reason it leaves
@@ -359,9 +395,66 @@ def main():
                 sink.set_reset(True)
                 sink.write(HDR_MAGIC, struct.pack("<I", 0))
                 sink.set_reset(False)
-                emit("staged header cleared; the next reset reaches the shell")
+                emit("staged header cleared")
+                emit()
+                # Measured, not assumed: a board that has already copied an image
+                # keeps running it after this.
+                #
+                # Clearing the header stops the bootloader from copying anything
+                # again. It does not put the previous bytes back -- block RAM
+                # survives a CPU reset, so the image region still holds whatever
+                # was last copied into it, and that is what the fallback jumps to.
+                # Only configuring the FPGA rewrites block RAM init.
+                emit("If an image was already copied, it is STILL what runs: this")
+                emit("removes the header, not the bytes. Reconfiguring is what puts")
+                emit("the bitstream's own image back, in about a second:")
+                emit("  python3 repos/apollo/apollo_fpga/commands/cli.py configure \\")
+                emit("      tmp/vexii_hello/build/top.bit")
                 if link:
                     link.close()
+                return 0
+
+            if args.corrupt:
+                # The only way to exercise the bootloader's failure path on real
+                # hardware.
+                #
+                # Every other way a staged image goes wrong -- a truncated transfer, a
+                # HyperRAM word that did not survive -- is a fault this path exists to
+                # make unnecessary, so none of them can be arranged on demand. This
+                # writes one word of the IMAGE and leaves the header alone, which is
+                # exactly the shape of the fault the CRC is there to catch: a header
+                # that describes bytes that are no longer the bytes.
+                #
+                # The expected outcome is the board coming up on the bitstream's own
+                # image, with the header still in place and unmodified. The bootloader
+                # does not clear it; `--clear` above is what does.
+                # Everything the port is already holding, thrown away first.
+                #
+                # A tty buffers what arrived while nothing was reading, so without
+                # this the read below returns the PREVIOUS boot's output and reports
+                # on a boot that has not happened yet. That is exactly the mistake
+                # this check exists to catch, made by the check itself.
+                if link:
+                    drain(link)
+
+                sink.set_reset(True)
+                sink.write(IMAGE_WORD, b"\xa5\x5a")
+                sink.set_reset(False)
+                emit("staged image damaged at word 16, header untouched")
+                emit("the next boot must fall back to whatever the image region holds")
+                emit("-- so run this on a freshly configured board, where that is the")
+                emit("bitstream's own image and the fallback is visible")
+                if link:
+                    text = read_console(link, emit)
+                    link.close()
+                    emit("--- console ---")
+                    emit(text.strip())
+                    emit()
+                    if FALLBACK_BANNER in text:
+                        emit("fell back, as it must")
+                    else:
+                        emit("NO FALLBACK. A damaged image must not run.")
+                        return 1
                 return 0
 
             if args.status:
@@ -402,17 +495,35 @@ def main():
             emit("CPU released")
 
         if link:
-            text = read_console(link, emit, ("crc ok", "crc MISMATCH"))
+            # The bootloader says nothing, so the evidence is which image speaks.
+            #
+            # There is nothing to parse for: a verdict line would be a message about a
+            # distinction the bootloader deliberately does not make. What comes back is
+            # the staged image's own first output, or the bitstream's image falling back
+            # -- and those are the only two outcomes there are.
+            text = read_console(link, emit)
             link.close()
             emit("--- console ---")
             emit(text.strip())
-            if "crc ok" not in text:
-                emit()
-                emit("No `crc ok` from the bootloader. `crc MISMATCH` means the")
-                emit("image reached HyperRAM damaged; silence means the CPU did not")
-                emit("restart, or nothing is reading this port.")
+            emit()
+
+            if not text.strip():
+                emit("Nothing on the console. The CPU did not restart, or nothing is")
+                emit("reading this port -- a stale reader takes every byte and makes a")
+                emit("working board look dead.")
                 emit(f"log: {LOG.relative_to(ROOT)}")
                 return 1
+
+            if FALLBACK_BANNER in text:
+                emit("That is the bitstream's own image, so the bootloader FELL BACK:")
+                emit("the staged image failed its CRC, or its header was not found.")
+                emit("The sink counts above say whether the bytes reached HyperRAM,")
+                emit("and `info` on the shell says which of the two it was.")
+                emit(f"log: {LOG.relative_to(ROOT)}")
+                return 1
+
+            emit("The staged image is running: its CRC matched on the way back out of")
+            emit("HyperRAM. It will keep running on every reset until `--clear`.")
 
         emit()
         emit(f"log: {LOG.relative_to(ROOT)}")

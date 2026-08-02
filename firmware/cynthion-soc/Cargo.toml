@@ -41,7 +41,7 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 qemu = []
 
 [profile.release]
-# "z", not "s": this links into the 32 KiB shell half of block RAM, and measured
+# "z", not "s": this links into the 63 KiB image region of block RAM, and measured
 # on this firmware "z" is 1612 bytes smaller -- 5% of the whole region. Nothing
 # here is throughput-bound: the shell waits on a human, the 50 ms poll waits on
 # an I2C bus at 80 kHz, and `load` waits on USB. Space is the scarce quantity and

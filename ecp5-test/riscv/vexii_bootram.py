@@ -23,7 +23,8 @@ copies it into block RAM and jumps to it.
 
 The JTAG path exists for the case the USB path cannot serve: a board whose
 console is wedged still has JTAG, and staging over it holds the CPU in reset
-throughout. Both land in the same layout, so `try_boot` runs either unchanged.
+throughout. Both land in the same layout, so `firmware/cynthion-boot` runs either
+unchanged -- it reads the header and cannot tell which path filled it.
 
 ## The CPU port moves one word at a time
 

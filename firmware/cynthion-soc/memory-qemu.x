@@ -1,9 +1,9 @@
 /* QEMU `-M virt` memory map -- the counterpart to memory.x.
  *
- * memory.x is the hardware one (RAM at 0x00000000, 32K + a 32K payload slot, matching
- * the block RAM in ecp5-test/riscv/vexii_hello_soc.py). This file exists because virt
- * puts DRAM at 0x80000000 and nothing whatsoever at 0, so the same image cannot be
- * linked for both. Selected by scripts/soc_test.py, which passes
+ * memory.x is the hardware one (this image at 0x00000400, above the 1 KiB bootloader,
+ * matching the block RAM in ecp5-test/riscv/vexii_hello_soc.py). This file exists
+ * because virt puts DRAM at 0x80000000 and nothing whatsoever at 0, so the same image
+ * cannot be linked for both. Selected by scripts/soc_test.py, which passes
  *
  *     CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS=
  *         "-C link-arg=-Tmemory-qemu.x -C link-arg=-Tlink.x"
@@ -19,30 +19,31 @@
  */
 MEMORY
 {
-    RAM     : ORIGIN = 0x80000000, LENGTH = 1M
-    PAYLOAD : ORIGIN = 0x80100000, LENGTH = 32K
+    RAM : ORIGIN = 0x80000000, LENGTH = 1M
 }
 
 /* Roomier than the board on purpose, and only here.
  *
- * The hardware split is 32K+32K because that is how much block RAM exists. Under QEMU
- * the constraint is gone, and the firmware needs the slack: hyperram.rs's QEMU backend
- * stands the staging buffer up in .bss, which is 32 KiB the board keeps in an external
- * part. Sizing this to match the board would fail the link with a region overflow rather
- * than fail a test, so it would never have been a useful check.
+ * The board's image region is 63 KiB because that is what is left of block RAM once the
+ * bootloader has its kilobyte. Under QEMU the constraint is gone, and the firmware needs
+ * the slack: hyperram.rs's QEMU backend stands the staging buffer up in .bss, which is
+ * another 63 KiB the board keeps in an external part. Sizing this to match the board
+ * would fail the link with a region overflow rather than fail a test, so it would never
+ * have been a useful check.
  *
- * The payload slot keeps its 32K so `_payload_size` means the same thing on both, and
- * `go` reports a plausible address.
+ * There is no BOOT region here and no second image. `-M virt` jumps straight to the ELF
+ * entry point, and there is no block RAM at 0 to fall back into, so this machine has
+ * exactly one image and it is this one. What that costs the gate is stated at the end
+ * of this file.
  */
 
-/* Pin the stack to the top of the shell half, as on hardware: a `load` that grew down
- * into the live stack would corrupt it silently.
- */
+/* Pin the stack to the top of the region, as on hardware. */
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
-/* Exported so the shell knows where to write and where to jump. */
-_payload_start = ORIGIN(PAYLOAD);
-_payload_size  = LENGTH(PAYLOAD);
+/* Where `reset` and `load` jump. On the board this is the bootloader at 0x0; here there
+ * is no bootloader and nothing at 0, so it is this image's own entry point. `reset`
+ * restarts the shell, which is what it means on a machine with one image. */
+_reset_vector = ORIGIN(RAM);
 
 /* riscv-rt 0.18 region aliases. */
 REGION_ALIAS("REGION_TEXT",   RAM);
@@ -69,3 +70,22 @@ SECTIONS
 {
     /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
 }
+
+/* WHAT THE GATE STILL COVERS, now that the bootloader is a separate image.
+ *
+ * `scripts/soc_test.py` runs THIS crate, and this crate is where the shell, the
+ * commands and the drivers are -- so the gate covers more of the product than it did,
+ * not less: everything that used to be squeezed out of a board build for space is in
+ * the image it tests.
+ *
+ * The staging code is shared source. `src/hyperram.rs` is compiled into
+ * `firmware/cynthion-boot` as a module rather than copied, so the header ordering, the
+ * magic, the length bound and the CRC polynomial the gate exercises through `load` are
+ * the same lines the bootloader runs.
+ *
+ * What it cannot cover, and could not before: the bootloader itself. There is no
+ * bootloader image on this machine, `virt` has no HyperRAM, and the QEMU backend's
+ * stand-in lives in `.bss` and is zeroed by the reboot at the end of `load` -- so a
+ * staged image never boots here. Verifying the round trip, the fallback and a failed
+ * CRC needs the board.
+ */

@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Sends a firmware image into the SoC's payload slot and runs it, with no FPGA rebuild.
+Stages a firmware image through HyperRAM and boots into it, with no FPGA rebuild.
 
 ## Why this exists
 
@@ -12,14 +12,16 @@ Every firmware change so far has cost a full bitstream rebuild -- about 60 s -- 
 the Rust binary is baked into the gateware as block RAM init. The image *is* part of the
 bitstream, so editing one byte re-runs synthesis and place-and-route.
 
-The shell in `firmware/cynthion-soc` now reserves the upper half of RAM as a payload
-slot and can fill it from the console. That turns the loop into a few seconds of serial
-transfer. Same CPU, same gateware, new code.
+The shell in `firmware/cynthion-soc` stages an image into HyperRAM from the console and
+reboots; the resident bootloader at 0x0 checks it and runs it. That turns the loop into
+a few seconds of serial transfer. Same CPU, same gateware, new code.
 
 ## What it does NOT do
 
-Nothing is written to flash, so a reset returns to the resident shell. That is the point:
-the slot is for iteration, and a bad payload costs a `reset`, not a reflash.
+Nothing is written to flash and nothing touches block RAM init, so the bootloader and
+the bitstream's own image are both untouched. A bad image costs
+`./scripts/soc_jtag_stage.py --clear` and a reset, not a reflash: the bootloader falls
+back to what the bitstream placed the moment the header is gone.
 
 ## Port contention
 
@@ -42,9 +44,11 @@ LOG = ROOT / "tmp" / "logs" / "soc_payload.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 
-# Must match MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs. The firmware
-# range-checks too and answers with its own limit -- this is the earlier, clearer error.
-PAYLOAD_SIZE = 32 * 1024
+# Must match MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs -- the length of the
+# image region, which is all of block RAM but the kilobyte the bootloader keeps. The
+# firmware range-checks too and answers with its own limit; this is the earlier, clearer
+# error. `scripts/soc_generate_pac.py --check` holds the two together.
+PAYLOAD_SIZE = 63 * 1024
 
 # Pacing for the transfer.
 #
@@ -126,7 +130,7 @@ def main():
 
         data = args.image.read_bytes()
         if len(data) > PAYLOAD_SIZE:
-            emit(f"image is {len(data)} bytes; the slot is {PAYLOAD_SIZE}")
+            emit(f"image is {len(data)} bytes; the image region is {PAYLOAD_SIZE}")
             return 1
         emit(f"{args.image.name}: {len(data)} bytes")
 

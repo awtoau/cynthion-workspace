@@ -31,9 +31,11 @@ which that path does not build.
 ## What it does to the board
 
 Configures the FPGA over JTAG. **SRAM only** -- nothing is written to flash, so a power
-cycle restores whatever was there. The RISC-V firmware is baked into the bitstream as
-block RAM init, which is why a firmware change needs the gateware rebuilt: about a
-minute. Removing that is what `--flash` will be for once the write path lands.
+cycle restores whatever was there. Two RISC-V images are baked into the bitstream as
+block RAM init: the resident bootloader at 0x0 and the shell at 0x400. That is why a
+change to either needs the gateware rebuilt, about a minute -- and why a change to the
+shell alone does not have to: `scripts/soc_jtag_stage.py` stages one over the other in
+seconds, and the bootloader runs it on the way back up.
 
 ## Why the console read is at the end
 
@@ -53,6 +55,14 @@ LOG = ROOT / "tmp" / "logs" / "soc_run.log"
 CRATE = ROOT / "firmware" / "cynthion-soc"
 ELF = CRATE / "target" / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
 FIRMWARE_BIN = ROOT / "tmp" / "rust_fw.bin"
+
+# The resident bootloader: 492 bytes at 0x0, and what the reset vector points at.
+# Built alongside the image and packed into the same block RAM init, so one bitstream
+# carries both and a board with nothing staged comes up on the image below.
+BOOT_CRATE = ROOT / "firmware" / "cynthion-boot"
+BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
+            / "cynthion-boot")
+BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
 GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
@@ -145,11 +155,33 @@ def main():
                     return 1
                 emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes")
 
+            # The bootloader, unless this is the C path -- that generator emits an
+            # image linked for 0 and has no bootloader to sit under it.
+            if not args.c_firmware:
+                result = run(["cargo", "build", "--release"], cwd=BOOT_CRATE)
+                if result.returncode != 0:
+                    emit("bootloader build failed:")
+                    emit((result.stderr or result.stdout).strip()[-900:])
+                    return 1
+                result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                              str(BOOT_ELF), str(BOOT_BIN)])
+                if result.returncode != 0:
+                    emit("bootloader objcopy failed:")
+                    emit((result.stderr or result.stdout).strip()[-400:])
+                    return 1
+                emit(f"bootloader: {BOOT_BIN.stat().st_size} bytes")
+            elif BOOT_BIN.exists():
+                # A stale one from a Rust build would be packed at 0x0 under a C image
+                # that is itself linked for 0x0. Two things at the reset vector is one
+                # too many, and the symptom is a dead CPU.
+                BOOT_BIN.unlink()
+
             # The OSS CAD Suite environment has to be sourced, so this one step is a
             # shell command rather than a bare exec.
             build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
                      f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
-                     f'python3.15t {GATEWARE} --build --firmware {firmware}')
+                     f'python3.15t {GATEWARE} --build --firmware {firmware} '
+                     f'--bootloader {BOOT_BIN}')
             result = run(["bash", "-c", build])
             if result.returncode != 0:
                 emit("gateware build failed:")

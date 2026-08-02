@@ -70,7 +70,7 @@ use crate::uart::Uart;
 
 /// Records held between a handler and the main loop.
 ///
-/// Sixteen, which is 192 bytes of the 32 KiB the shell half of block RAM gives
+/// Sixteen, which is 192 bytes of the 63 KiB the image region of block RAM gives
 /// us. The main loop drains on every pass -- microseconds apart -- so this is
 /// not a latency budget: it is how many events may arrive in one burst while
 /// the loop is inside a command that is printing. A shell command can spin for

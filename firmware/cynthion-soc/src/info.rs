@@ -8,6 +8,7 @@
 //!     image      build.rs, through `env!("OUT_DIR")/build_info.rs`
 //!     tools      the compiler cargo used, its target triple and profile
 //!     memory     riscv-rt's linker symbols, so it follows `memory.x`
+//!     boot       the word `firmware/cynthion-boot` left at `target::BOOT_STATUS`
 //!     cpu        the core's own `misa` and identity CSRs
 //!     trap       `mstatus`, `mtvec`, and the PLIC's threshold and enables
 //!     gateware   a CSR in the bitstream (`ecp5-test/riscv/gateware_id.py`)
@@ -141,7 +142,7 @@ pub mod gateware {
         /// no tolerance, so treat this as a reading and not a measurement.
         /// Split rather than signed, because `core::fmt`'s signed `Display` is
         /// several hundred bytes of code this firmware would otherwise never
-        /// instantiate, and the shell half of block RAM does not have them.
+        /// instantiate, and the image region of block RAM does not have them.
         pub fn celsius(&self) -> Option<(&'static str, u32)> {
             if self.die & DIE_PRESENT == 0 || self.die & DIE_VALID == 0 {
                 return None;
@@ -238,6 +239,38 @@ fn at(symbol: &u8) -> u32 {
 }
 
 /// `info` -- everything the running image knows about itself.
+/// What the bootloader left behind on its way past.
+///
+/// The whole reason this image is running rather than a staged one, in a word the
+/// bootloader wrote before it jumped. Reporting it here is what makes a fallback
+/// diagnosable from a console -- the alternative, which this project has already paid
+/// for once, is a board that silently comes up on the wrong image and looks fine.
+///
+/// It is read and rendered, never acted on. Nothing in this firmware behaves
+/// differently because of it.
+fn boot_status(uart: &mut Uart) {
+    let Some(address) = target::BOOT_STATUS else {
+        let _ = writeln!(uart, "boot     no bootloader on this target");
+        return;
+    };
+
+    // SAFETY: a fixed word inside the bootloader's own region, which no image writes.
+    let word = unsafe { core::ptr::read_volatile(address as *const u32) };
+
+    if word & 0xffff_ff00 != target::BOOT_STATUS_MARK {
+        // No mark: the word is whatever block RAM initialised to. Reported as unknown
+        // rather than decoded, because decoding it would invent an answer.
+        let _ = writeln!(uart, "boot     {:08x} at {:x}: no mark, nothing wrote a status",
+                         word, address);
+        return;
+    }
+
+    let code = (word & 0xff) as usize;
+    let text = target::BOOT_STATUS_TEXT.get(code).copied()
+        .unwrap_or("unknown code");
+    let _ = writeln!(uart, "boot     {} ({})", text, code);
+}
+
 pub fn command(uart: &mut Uart) {
     let dirty = if build::GIT_DIRTY { "dirty" } else { "clean" };
     let hash = if build::GIT_HASH.is_empty() { "no-git" } else { build::GIT_HASH };
@@ -264,6 +297,8 @@ pub fn command(uart: &mut Uart) {
     // this half of block RAM keeps forcing.
     let _ = writeln!(uart, "         {} free of {} (stack grows down into it)",
                      free, total);
+
+    boot_status(uart);
 
     let misa = csr!("misa");
     let _ = write!(uart, "cpu      misa {:08x} ", misa);

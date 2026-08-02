@@ -1,6 +1,18 @@
 //! Firmware for the Cynthion r1.4 VexiiRiscv SoC: a `no_std` shell over the board.
 //!
-//! `riscv-rt` provides the reset vector and the trap entry, and there is no HAL crate
+//! ## This is an image, not the resident half
+//!
+//! `firmware/cynthion-boot` owns 0x0 and is what the CPU's reset vector points at: 492
+//! bytes that read a staged image out of HyperRAM, check its CRC, copy it here and
+//! jump. This crate is what it jumps to -- one of the two images the bitstream carries,
+//! and replaceable in seconds by staging another over it.
+//!
+//! What follows from that: this file may grow. It is not the thing that has to survive
+//! a bad load, so a new command costs space in the 63 KiB image region rather than in
+//! the resident one. `load` stages and calls `reboot()`; nothing here copies an image
+//! into place, because this code is executing from where an image lands.
+//!
+//! `riscv-rt` provides the entry and the trap vector, and there is no HAL crate
 //! under that. The drivers here are small enough to read in one sitting, and the addresses
 //! they use are generated from the gateware into `cynthion_soc_pac` and checked by the
 //! `socmap` step of `scripts/check.py` -- so a HAL would sit between this firmware and a
@@ -24,8 +36,8 @@
 //!
 //! This file is compiled unchanged for the FPGA and for QEMU, and so is `src/uart.rs`:
 //!
-//!     default          -> src/target.rs + memory.x       (RAM at 0x0000_0000)
-//!     --features qemu  -> src/target.rs + memory-qemu.x  (RAM at 0x8000_0000)
+//!     default          -> src/target.rs + memory.x       (image at 0x0000_0400)
+//!     --features qemu  -> src/target.rs + memory-qemu.x  (image at 0x8000_0000)
 //!
 //! One console driver serves both targets. The SoC's console peripheral
 //! (`ecp5-test/riscv/uart16550.py`) and QEMU's `-M virt` are both a standard NS16550A, so
@@ -44,8 +56,8 @@
 //! editor's worth of state, and the main loop runs one per UART in `target::UART_BASES`,
 //! taking a byte from each in turn. Two people on two ports get two independent prompts; a
 //! command typed on one replies on that one. The only asymmetry is index 0, which is the
-//! port the boot banner, the bootloader's reports and any panic go to, because those happen
-//! before or outside any prompt.
+//! port the boot banner and any panic go to, because those happen before or outside any
+//! prompt.
 //!
 //! ## Received bytes arrive by interrupt, not by polling
 //!
@@ -95,8 +107,8 @@ use uart::Uart;
 /// The most consoles this build will run shells for.
 ///
 /// Sized rather than allocated: `Shell` is ~80 bytes and there is no allocator. Four is
-/// well past the two the hardware has and costs a third of a kilobyte of the 32 KiB the
-/// shell half of block RAM gives us.
+/// well past the two the hardware has and costs a third of a kilobyte of the 63 KiB the
+/// image region of block RAM gives us.
 ///
 /// `src/irq.rs` allocates one receive ring per slot, so this is now the dominant term in
 /// the firmware's static footprint: four rings of 256 bytes. Raising it costs a quarter of
@@ -269,21 +281,11 @@ fn main() -> ! {
 
     let mut console = primary();
 
-    // Banner BEFORE the HyperRAM probe, deliberately.
-    //
-    // try_boot() touches a peripheral, and if that bus access never completes the CPU
-    // stalls inside the load itself -- no software timeout can escape that. Printing
-    // first means a silent board and a board that hangs on HyperRAM are distinguishable,
-    // which they were not: both looked like a dead CPU.
+    // The banner is the first thing this image says, and reaching it is already the
+    // report on the boot: the bootloader ran, found nothing staged or nothing that
+    // checked out, and handed over to the image the bitstream placed. A staged image
+    // that verified would be printing its own banner here instead.
     banner(&mut console);
-
-    // Run a staged image if one is present and intact.
-    //
-    // This is the bootloader half. `load` stages into HyperRAM and reboots; on the way
-    // back up we land here, verify, copy into the payload slot and jump. A failed check
-    // falls through to the shell rather than halting -- a board that drops to a prompt
-    // can be told what went wrong, one that hangs cannot.
-    try_boot(&mut console);
 
     let mut devices = Devices::new();
 
@@ -307,10 +309,9 @@ fn main() -> ! {
 
     // Interrupts on, and not before now.
     //
-    // After `Uart::init()` on every port, so nothing is asking yet; and after `try_boot`,
-    // because that either jumps to a payload -- which has its own trap vector and knows
-    // nothing about this firmware's handler -- or returns, in which case the shell is what
-    // runs and the shell is what wants the interrupts.
+    // After `Uart::init()` on every port, so nothing is asking yet. The bootloader
+    // leaves them off and takes no traps at all, so this is the first thing in the boot
+    // that enables one.
     irq::init();
 
     // The 1 ms tick, and with it the millisecond count every line below is
@@ -318,9 +319,7 @@ fn main() -> ! {
     //
     // After `irq::init()`, which is what sets `mstatus.MIE`; `timer::start`
     // programs the deadline and sets its own `mie` bit, and neither ordering
-    // between the two is load-bearing. After `try_boot` for the same reason
-    // `irq::init` is: a payload has its own trap vector and must not inherit a
-    // timer that is already due.
+    // between the two is load-bearing.
     //
     // Everything printed before this point is stamped 000000.000, which is
     // true: there was no clock to tell those lines apart. See `src/log.rs`.
@@ -420,9 +419,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  phy           the TARGET USB3343's ULPI registers");
             let _ = writeln!(uart, "  typec         the two FUSB302B Type-C controllers");
             let _ = writeln!(uart, "  sideband [hex]  what the FPGA_ADV link reports");
-            let _ = writeln!(uart, "  load <hex>    receive N bytes into the payload slot");
-            let _ = writeln!(uart, "  go            jump to the loaded payload");
-            let _ = writeln!(uart, "  reset         restart the firmware");
+            let _ = writeln!(uart, "  load <hex>    stage N bytes and boot into them");
+            let _ = writeln!(uart, "  reset         back to the bootloader");
         }
         b"id" => {
             // Reads through the memory map, which is the verified path. The JEDEC id
@@ -666,45 +664,26 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // whole image.
             hyperram::write_header(0, 0);
             match hyperram::staged() {
-                Some(_) => {
+                Ok(_) => {
                     let _ = writeln!(uart,
                         "hyperram round-trip BAD: zero length should be rejected");
                 }
-                None => {
+                // `Length` specifically: the magic was written and read back, which is
+                // the round trip this checks. `NoMagic` or `Silent` would mean the word
+                // did not survive.
+                Err(hyperram::Reject::Length) => {
                     let _ = writeln!(uart, "hyperram write+read ok");
+                }
+                Err(_) => {
+                    let _ = writeln!(uart,
+                        "hyperram round-trip BAD: the magic did not read back");
                 }
             }
             hyperram::invalidate();
         }
-        b"go" => {
-            let _ = writeln!(uart, "jumping to {:08x}", payload_start());
-
-            // Interrupts off before leaving. The payload has its own trap vector -- or
-            // none -- and this firmware's handler would be dispatching into a ring the
-            // payload has since overwritten. The fault would surface somewhere unrelated
-            // with nothing pointing back here.
-            irq::shutdown();
-
-            // Flush before fetching. The payload arrived as DATA through the D-cache,
-            // so without this the I-side may fetch stale lines from before the load --
-            // executing whatever was there, which presents as a hang or a wild fault
-            // rather than as a cache problem. `fence.i` makes stores visible to fetch.
-            unsafe {
-                core::arch::asm!("fence", "fence.i");
-                let entry: extern "C" fn() -> ! =
-                    core::mem::transmute(payload_start() as usize);
-                entry();
-            }
-        }
         b"reset" => {
             let _ = writeln!(uart, "restarting");
-            irq::shutdown();
-            // No reset controller yet, so jump to the reset vector. This re-runs main
-            // without re-initialising .bss or the stack pointer -- enough to restart the
-            // shell, not a true reset. A real one needs a CSR the SoC does not have.
-            unsafe {
-                core::arch::asm!("j _start", options(noreturn));
-            }
+            reboot();
         }
         _ => {
             let _ = writeln!(uart, "unknown command; try `help`");
@@ -1150,23 +1129,37 @@ fn scratch_responds(base: usize) -> bool {
 }
 
 unsafe extern "C" {
-    /// Start and size of the payload slot, from `memory.x` / `memory-qemu.x`. Taking
-    /// these from the linker rather than hardcoding them means the two cannot drift:
-    /// change the split there and this follows.
-    static _payload_start: u8;
-    static _payload_size: u8;
+    /// Where a reboot goes, from `memory.x` / `memory-qemu.x`.
+    ///
+    /// On the board this is `firmware/cynthion-boot` at 0x0, so a reboot re-reads the
+    /// staging header. Under QEMU there is no bootloader and nothing at 0, so it is
+    /// this image's own entry point. Taken from the linker rather than written here
+    /// precisely so this file does not have to know which target it is on.
+    static _reset_vector: u8;
 }
 
-fn payload_start() -> u32 {
-    (&raw const _payload_start) as u32
-}
+/// Restart, through whatever sits at the reset vector.
+///
+/// This is how a staged image gets run: `load` writes the header and comes here, the
+/// bootloader finds it, verifies it and jumps to it. There is no second path -- the
+/// shell never copies an image into place itself, because it is executing from the
+/// region an image lands in.
+fn reboot() -> ! {
+    // Interrupts off first. riscv-rt's `_abs_start` zeroes `mie` and `mip` as its first
+    // instructions, so this is belt and braces on the way into the shell -- but the
+    // bootloader has no trap vector at all, and an interrupt taken between here and
+    // there would dispatch through a handler whose ring is about to be re-zeroed.
+    irq::shutdown();
 
-#[allow(dead_code)]
-fn payload_size() -> u32 {
-    // The linker exports this as an ADDRESS, not a value -- `_payload_size` is defined
-    // as a bare number, so its "address" is the number. Reading it as a u8 would give
-    // whatever byte happens to live at the slot's base.
-    (&raw const _payload_size) as u32
+    unsafe {
+        core::arch::asm!(
+            "fence",
+            "fence.i",
+            "jr {vector}",
+            vector = in(reg) (&raw const _reset_vector) as usize,
+            options(noreturn),
+        )
+    }
 }
 
 /// Receive `len` bytes over the console and stage them in HyperRAM, then reboot.
@@ -1178,7 +1171,7 @@ fn payload_size() -> u32 {
 /// the streaming sink in `ecp5-test/riscv/jtag_stage.py` moves 32 KiB over the same wire
 /// in 85 ms, and unlike this path it needs no running CPU.
 ///
-/// They go to HyperRAM rather than straight into the payload slot because the next step
+/// They go to HyperRAM rather than straight into the image region because the next step
 /// is a reboot, and a reboot is exactly what block RAM does not survive intact: the
 /// shell doing the receiving is executing from it. HyperRAM is external and keeps its
 /// contents across a CPU reset.
@@ -1235,72 +1228,9 @@ fn load(index: usize, uart: &mut Uart, len: u32) {
     hyperram::write_header(len, crc);
     let _ = writeln!(uart, "staged {} bytes, crc {:08x}; rebooting", received, crc);
 
-    // Quiet before the reboot. riscv-rt's `_abs_start` zeroes `mie` and `mip` as its first
-    // instructions, so this is belt and braces -- but `.bss` is re-zeroed on the way back
-    // up, and an interrupt landing in that window would push into a ring being cleared
-    // underneath it.
-    irq::shutdown();
-
-    // Reboot into the bootloader path at the top of main().
-    unsafe {
-        core::arch::asm!("j _start", options(noreturn));
-    }
-}
-
-/// Run a staged image, if one is present and its CRC matches.
-///
-/// Called before the shell starts. Returns normally when there is nothing to boot, or
-/// when the image fails its check -- dropping to a prompt that can explain the failure
-/// beats halting, which looks identical to a hang.
-fn try_boot(uart: &mut Uart) {
-    let (length, expected) = match hyperram::staged() {
-        Some(header) => header,
-        None => return,
-    };
-
-    let _ = writeln!(uart, "\nstaged image: {} bytes, crc {:08x}", length, expected);
-
-    // Copy and checksum in one pass, reading back what was actually STORED rather than
-    // trusting the CRC computed on arrival. That is what makes this cover the HyperRAM
-    // round trip and not merely the USB transfer.
-    let dest = payload_start() as *mut u8;
-    let mut crc = hyperram::Crc32::new();
-    hyperram::seek_image();
-
-    let mut written = 0u32;
-    while written < length {
-        let word = hyperram::read_word();
-        for shift in [0u32, 8] {
-            if written < length {
-                let byte = (word >> shift) as u8;
-                crc.push(byte);
-                // SAFETY: bounds-checked against `length`, which `staged()` has already
-                // limited to the payload slot's size.
-                unsafe { write_volatile(dest.add(written as usize), byte) };
-                written += 1;
-            }
-        }
-    }
-
-    let actual = crc.finish();
-    if actual != expected {
-        // Drop it. Leaving the header in place would retry the same bad image on every
-        // reset, and the board would never reach a usable prompt.
-        hyperram::invalidate();
-        let _ = writeln!(uart, "crc MISMATCH: got {:08x}, want {:08x} -- image \
-                                dropped, send it again", actual, expected);
-        return;
-    }
-
-    let _ = writeln!(uart, "crc ok; starting payload at {:08x}", payload_start());
-
-    // Flush before fetching: the image arrived as DATA through the D-cache, so without
-    // this the I-side may fetch stale lines and execute whatever was there before.
-    unsafe {
-        core::arch::asm!("fence", "fence.i");
-        let entry: extern "C" fn() -> ! = core::mem::transmute(payload_start() as usize);
-        entry();
-    }
+    // The bootloader takes it from here: it re-reads these bytes, checks this CRC
+    // against what HyperRAM actually gives back, and jumps.
+    reboot();
 }
 
 /// Parse an ASCII decimal number. `None` if empty or malformed.

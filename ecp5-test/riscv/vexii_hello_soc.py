@@ -122,9 +122,29 @@ from amaranth_soc.wishbone          import Decoder
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 # 64 KiB at address zero, matching what moondancer allocates. The reset vector
-# is 0x00000000, so the firmware's entry point must be the first instruction.
+# is 0x00000000, so the bootloader's entry point must be the first instruction.
 RAM_BASE = 0x00000000
 RAM_SIZE = 64 * 1024
+
+# Where the bootloader stops and the image begins.
+#
+# The decoder below sees ONE window of RAM_SIZE at RAM_BASE. This split is a
+# linker fiction and costs the fabric nothing: no second peripheral, no second
+# address comparison on the decode path -- which matters, because that path is
+# what commit 18c1fa5 had to register to recover Fmax. Cutting the address space
+# here is free at any boundary, and no DP16KD granularity applies to it.
+#
+# What it buys: `firmware/cynthion-boot` is resident at 0x0 and changes rarely,
+# and everything that grows -- the shell, the commands, the drivers -- lives
+# above it and is replaceable in seconds by staging over it.
+#
+# 1 KiB because the bootloader measures 492 bytes and its deepest call chain
+# holds 80. Must match BOOT/IMAGE in firmware/cynthion-boot/memory.x, RAM in
+# firmware/cynthion-soc/memory.x, PAYLOAD in firmware/cynthion-payload/memory.x,
+# MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs and PAYLOAD_SIZE in
+# scripts/soc_payload.py. `scripts/soc_generate_pac.py --check` reads all of
+# them and fails on a disagreement.
+IMAGE_ORIGIN = 0x00000400
 
 # The console peripheral. Bit 31 must be set, and that is not a style choice.
 #
@@ -1337,7 +1357,12 @@ def main():
                         help="build with this random image as block RAM init, so real "
                              "firmware can be swapped in later without resynthesis")
     parser.add_argument("--firmware", type=Path,
-                        default=ROOT / "tmp" / "riscv_hello" / "hello.bin")
+                        default=ROOT / "tmp" / "riscv_hello" / "hello.bin",
+                        help="the IMAGE, linked for IMAGE_ORIGIN")
+    parser.add_argument("--bootloader", type=Path,
+                        default=ROOT / "tmp" / "rust_boot.bin",
+                        help="the resident bootloader, linked for 0x0; omit for a "
+                             "single-image build that boots --firmware directly")
     args = parser.parse_args()
 
     if not args.firmware.exists():
@@ -1345,18 +1370,49 @@ def main():
         print("build it with ./scripts/riscv_firmware.py")
         return 1
 
-    raw = args.firmware.read_bytes()
-    if len(raw) > RAM_SIZE:
-        print(f"firmware is {len(raw)} bytes, block RAM is {RAM_SIZE}")
+    # Two images in one 64 KiB init, at their two origins.
+    #
+    # This is what makes the split work at all. The bitstream initialises ALL of block
+    # RAM, not just the low half, so one build carries the resident bootloader at 0x0
+    # AND a default image at IMAGE_ORIGIN. A board with nothing staged in HyperRAM
+    # therefore comes up on the image the bitstream placed -- a fallback that exists at
+    # power-on by construction and cannot be missing, which is exactly what lets the
+    # bootloader treat every failure the same way.
+    #
+    # Without --bootloader the image is packed at 0 and runs from the reset vector. That
+    # is the C generator's layout (`scripts/riscv_firmware.py`), which has no bootloader
+    # and is linked for 0.
+    boot = b""
+    if args.bootloader and args.bootloader.exists():
+        boot = args.bootloader.read_bytes()
+        if len(boot) > IMAGE_ORIGIN:
+            print(f"bootloader is {len(boot)} bytes; it must fit under "
+                  f"IMAGE_ORIGIN ({IMAGE_ORIGIN})")
+            return 1
+
+    image = args.firmware.read_bytes()
+    origin = IMAGE_ORIGIN if boot else 0
+    if origin + len(image) > RAM_SIZE:
+        print(f"image is {len(image)} bytes at {origin:#x}, block RAM is {RAM_SIZE}")
         return 1
+
+    if boot:
+        # Zero fill between them. Nothing executes there -- it is the bootloader's
+        # stack, growing down from IMAGE_ORIGIN.
+        raw = boot + b"\x00" * (IMAGE_ORIGIN - len(boot)) + image
+        print(f"bootloader: {len(boot)} bytes at 0x0")
+        print(f"image:      {len(image)} bytes at {IMAGE_ORIGIN:#x}")
+    else:
+        raw = image
+        print(f"image: {len(image)} bytes at 0x0 (no bootloader)")
 
     # --placeholder builds a bitstream whose block RAM holds a known RANDOM image
     # instead of firmware, so `ecpbram` can substitute real firmware into the built
     # bitstream later -- one second, no synthesis.
     #
-    # Kept because it is the only path that replaces the RESIDENT shell without a
-    # rebuild; a payload goes in over JTAG (`scripts/soc_jtag_stage.py`) or the
-    # console (`scripts/soc_payload.py`), and neither touches block RAM init.
+    # Kept because it is the only path that replaces BLOCK RAM INIT without a rebuild --
+    # the bootloader and the default image both -- where a staged image goes in over
+    # JTAG (`scripts/soc_jtag_stage.py`) or the console (`load`) and touches neither.
     #
     # It has to be random rather than the real image. ecpbram locates the old contents
     # BY VALUE, and a real firmware image is ~87% zeroes; those zeroes also fill every
@@ -1376,11 +1432,11 @@ def main():
         print(f"placeholder image: {len(raw)} bytes; substitute firmware with "
               f"`ecpbram -f {{old}}.hex -t {{new}}.hex -i top.config -o out.config`")
 
-    # Block RAM is 32 bits wide, so the image is loaded as words.
+    # Block RAM is 32 bits wide, so the init is loaded as words.
     padded = raw + b"\x00" * (-len(raw) % 4)
     words = [int.from_bytes(padded[i:i + 4], "little")
              for i in range(0, len(padded), 4)]
-    print(f"firmware: {len(raw)} bytes, {len(words)} words")
+    print(f"block RAM init: {len(raw)} bytes, {len(words)} words")
 
     if not (args.build or args.program):
         print("nothing to do; pass --build")

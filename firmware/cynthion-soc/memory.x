@@ -6,60 +6,69 @@
  * Executing from flash while benchmarking flash times instruction fetch contending
  * with the reads, not the flash.
  *
- * Sizes must match ecp5-test/riscv/vexii_hello_soc.py: RAM_BASE and RAM_SIZE.
+ * Sizes must match ecp5-test/riscv/vexii_hello_soc.py: RAM_BASE, RAM_SIZE, IMAGE_ORIGIN.
  *
  * This is the HARDWARE script, named `memory.x` because that is what the `-Tmemory.x` in
  * .cargo/config.toml asks for, so it is what every plain `cargo build` uses. Its
  * counterpart is memory-qemu.x, selected only by scripts/soc_test.py. Keep the exported
- * symbols (_stack_start, _payload_start, _payload_size, _stext) identical in both: the
- * firmware reads them from the linker precisely so it does not have to know which target
- * it is on.
+ * symbols (_stack_start, _reset_vector, _stext) identical in both: the firmware reads
+ * them from the linker precisely so it does not have to know which target it is on.
  */
-/* RAM is split in two so the shell can load and run a second image without a
- * gateware rebuild.
+/* This crate is an IMAGE, not the resident half.
  *
- * The shell lives at the bottom and stays resident. Above it is the payload slot:
- * where `try_boot` COPIES a staged image once it has verified its CRC, and where
- * `go` jumps. That turns a firmware edit from a ~60 s bitstream rebuild into a few
- * seconds of typing.
+ * `firmware/cynthion-boot` is what sits at 0x0 and what the CPU's reset vector points
+ * at. It is 492 bytes: read the staging header out of HyperRAM, checksum the image on
+ * the way out, copy it here, jump here. Everything else -- this shell, every command,
+ * every driver -- lives above it and is replaceable in seconds without a bitstream
+ * rebuild.
  *
- * Nothing writes the slot directly. An image arrives in HyperRAM first -- over the
- * console with `load`, or over JTAG with `scripts/soc_jtag_stage.py` while the CPU
- * is held in reset -- and only the bootloader moves it from there into block RAM.
- * That indirection is the architecture and not an accident of the implementation:
- * block RAM cannot stage its own replacement, because the shell is executing out of
- * it while the bytes arrive, and HyperRAM is an external part that survives the
- * reset in between. `src/hyperram.rs` holds the header layout both ends agree on.
+ * That is the inversion the split needed. Previously this crate was resident, so the
+ * thing that grows was pinned at 0x0 and the thing that does not grow got the other
+ * 32 KiB; the shell reached 36,514 bytes against 32,768 and stopped linking. Now the
+ * growing image gets 63 KiB and the resident one changes rarely.
  *
- * The payload is NOT position-independent, and does not need to be: it is linked
- * for PAYLOAD_ORIGIN, a fixed address we choose. Position-independent code would
- * only buy "load anywhere", and we control both linker scripts.
+ * | region | origin | length | contents                                         |
+ * |--------|--------|--------|--------------------------------------------------|
+ * | BOOT   | 0x0000 | 1 KiB  | firmware/cynthion-boot, and its stack            |
+ * | RAM    | 0x0400 | 63 KiB | this image: .text, .rodata, .data, .bss, stack   |
  *
- * Both halves are 32K, which is where this started and where it remains. The shell
- * has outgrown it -- see the note at the end of this file -- and moving the boundary
- * was considered and rejected: the shell is the resident image, so what grows is what
- * is pinned at 0x0, and dividing the same 64 KiB differently only postpones the
- * question. The answer is a bootloader that does not have to keep the growing image
- * resident, and that is a restructure rather than a linker script.
+ * The bitstream initialises all 64 KiB, so one build carries both: the bootloader at
+ * 0x0 and this shell at 0x400. A board with nothing staged therefore comes up on the
+ * image the bitstream placed, which is a fallback that cannot be missing.
+ *
+ * An image arrives in HyperRAM first -- over the console with `load`, or over JTAG with
+ * `scripts/soc_jtag_stage.py` while the CPU is held in reset -- and only the bootloader
+ * moves it from there into block RAM. That indirection is the architecture and not an
+ * accident of the implementation: block RAM cannot stage its own replacement, because
+ * this shell is executing out of it while the bytes arrive, and HyperRAM is an external
+ * part that survives the reset in between. `src/hyperram.rs` holds the header layout
+ * both ends agree on, and is compiled into the bootloader as well as into this crate.
+ *
+ * Images are NOT position-independent and do not need to be: they are linked for the
+ * image origin, a fixed address we choose. Position-independent code would only buy
+ * "load anywhere", and we control every linker script involved.
  */
 MEMORY
 {
-    RAM     : ORIGIN = 0x00000000, LENGTH = 32K
-    PAYLOAD : ORIGIN = 0x00008000, LENGTH = 32K
+    RAM : ORIGIN = 0x00000400, LENGTH = 63K
 }
 
-/* Pin the stack to the top of the SHELL half.
+/* The stack, at the top of block RAM.
  *
- * riscv-rt defaults _stack_start to the end of REGION_STACK, which before the split
- * was the end of all 64K -- i.e. the top of what is now the payload slot. Loading an
- * image would have grown down into the live stack and corrupted it silently: the
- * bytes land, `go` jumps, and the fault appears somewhere unrelated.
+ * riscv-rt defaults _stack_start to the end of REGION_STACK, which is this. Nothing
+ * lives above it now that the payload slot is gone -- an image IS the upper region --
+ * so the stack gets everything between .bss and 0x10000, currently about 25 KiB.
  */
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
-/* Exported so the shell knows where to write and where to jump. */
-_payload_start = ORIGIN(PAYLOAD);
-_payload_size  = LENGTH(PAYLOAD);
+/* Where `reset` and `load` jump, and the reason it is a symbol rather than a literal.
+ *
+ * On the board this is the bootloader at 0x0, so a reboot re-reads the staging header
+ * and a `load` that has just written one boots into it. Under QEMU there is no
+ * bootloader and nothing at 0, so it is this image's own entry point; `reset` restarts
+ * the shell there, which is what it means on a machine with one image.
+ */
+_reset_vector = 0x00000000;
 
 /* riscv-rt 0.18 region aliases. All in RAM for the reason above. */
 REGION_ALIAS("REGION_TEXT",   RAM);
@@ -69,9 +78,11 @@ REGION_ALIAS("REGION_BSS",    RAM);
 REGION_ALIAS("REGION_HEAP",   RAM);
 REGION_ALIAS("REGION_STACK",  RAM);
 
-/* The CPU's reset vector, set in vexii_cpu.py as reset_addr=RAM_BASE. The two must
- * agree: a mismatch gives a CPU that fetches from an address nothing answers, which
- * looks exactly like a dead core. */
+/* Where the bootloader jumps, which is the base of this region.
+ *
+ * riscv-rt's link.x places `.init` -- and `_start` with it -- at `_stext`, so the first
+ * instruction of this image is the first byte of the region. The bootloader jumps to an
+ * ADDRESS, not to a symbol; it has no symbol table for us. */
 _stext = ORIGIN(REGION_TEXT);
 
 /* Unwind tables, which nothing on this target unwinds. 1892 bytes, measured.
@@ -83,10 +94,9 @@ _stext = ORIGIN(REGION_TEXT);
  * `compiler_builtins` rlibs, which is why `-C force-unwind-tables=no` on this crate
  * does not remove it.
  *
- * riscv-rt's link.x places it in REGION_RODATA, so on this design it is 1892 bytes of
- * the 32 KiB the shell gets -- and it comes out of the stack, because the stack is
- * whatever is left between .bss and _stack_start. Recovering it took the stack from
- * 928 bytes back to 2820.
+ * riscv-rt's link.x places it in REGION_RODATA, so it is 1892 bytes of the region this
+ * image gets -- and it comes out of the stack, because the stack is whatever is left
+ * between .bss and _stack_start.
  *
  * A debugger loses nothing: `debug = true` in Cargo.toml emits DWARF `.debug_frame`,
  * which is not loaded and is what gdb uses here anyway.
@@ -98,32 +108,3 @@ SECTIONS
 {
     /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
 }
-
-/* WHAT THIS DOES NOT CURRENTLY HOLD, measured 2026-08-02.
- *
- * With every command merged -- `board`, `info`, `selftest`, `time` -- the shell does
- * not link against the 32K above. lld reports the sections ending at 0x8ea4:
- *
- *     .text     25,496
- *     .rodata    9,584   (plus 22 bytes of .init.rust)
- *     .data           0
- *     .bss       1,412
- *     ------------------
- *     total     36,514   against 32,768: over by 3,748 bytes, and no stack at all
- *
- * That number is recorded rather than worked around. The two reclamations that are
- * in this tree -- discarding .eh_frame above, and `opt-level = "z"` in Cargo.toml --
- * are genuine deletions of waste and stay whatever happens next; three separate
- * branches each measured the slack they left (1292, 2820, 3592 bytes) and those were
- * three measurements of the same space, not three savings that add.
- *
- * Widening this region is not the fix. The shell is the RESIDENT image, so the thing
- * that grows is the thing pinned at 0x0, and the slot that does not grow got the
- * other half; any division of the same 64 KiB buys one more command. Inverting that
- * -- a bootloader that does not have to keep the growing image resident -- is filed
- * separately.
- *
- * Until then a board image needs a build that leaves something out. `--features qemu`
- * still links, because memory-qemu.x has a megabyte, so scripts/soc_test.py and every
- * simulation continue to run against the merged firmware.
- */

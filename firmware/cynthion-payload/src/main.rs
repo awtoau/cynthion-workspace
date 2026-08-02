@@ -1,20 +1,21 @@
-//! A payload image, loaded into RAM by the resident shell and jumped to.
+//! A payload image: what the bootloader runs instead of the shell.
 //!
-//! This is the fast-iteration path: editing this file and running
-//! `scripts/soc_payload.py` takes seconds, where changing the resident shell needs a
-//! ~60 s bitstream rebuild because that image is baked into the gateware as block RAM
-//! init.
+//! This is the fast-iteration path. Staging this over JTAG or the console takes
+//! seconds, where changing what the bitstream carries needs a ~60 s rebuild because
+//! those images are baked into the gateware as block RAM init.
+//!
+//! It REPLACES the shell. The bootloader at 0x0 copies one image into the image region
+//! and jumps to it, so there is exactly one running at a time and no resident code to
+//! return to.
 //!
 //! ## Rules for anything written here
 //!
-//! - **No `riscv-rt`.** Its `_start` is linked for `0x0` and would collide with the
-//!   shell, which is still resident and still owns the low half of RAM.
+//! - **No `riscv-rt`.** It would bring a runtime `memory.x` already replaces.
 //! - **No zero-initialised statics.** Nothing zeroes `.bss` -- that is normally
 //!   `riscv-rt`'s job. Keep state in locals.
-//! - **Do not write below `0x8000`.** That is the live shell and the live stack.
-//!
-//! Returning from `payload_main` returns to the shell's prompt, because the shell
-//! called us with a normal `jalr` and `ra` still points into it.
+//! - **Do not return.** There is nowhere to return to; the bootloader jumped here.
+//! - **Do not write below `0x400`.** That is the bootloader, and it is what recovers
+//!   the board.
 
 #![no_std]
 #![no_main]
@@ -61,16 +62,25 @@ impl Write for Console {
     }
 }
 
-/// Entry stub, placed at the very base of the payload slot by `memory.x`.
+/// Entry stub, placed at the very base of the image region by `memory.x`.
 ///
-/// The shell jumps to the slot's ADDRESS -- it has no symbol table for this image -- so
-/// whatever sits at `0x8000` is what runs. `.start` is placed first for exactly that
-/// reason, and `naked` guarantees the compiler emits no prologue ahead of the jump.
+/// The bootloader jumps to the region's ADDRESS -- it has no symbol table for this
+/// image -- so whatever sits at `0x400` is what runs. `.start` is placed first for
+/// exactly that reason, and `naked` guarantees the compiler emits no prologue ahead of
+/// the jump.
+///
+/// `sp` first, and nothing before it. The bootloader hands over with `sp` still inside
+/// its own kilobyte at the bottom of block RAM; a prologue running at that point would
+/// push onto the code that had just jumped here.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn _payload_entry() -> ! {
-    core::arch::naked_asm!("j {main}", main = sym payload_main)
+    core::arch::naked_asm!(
+        "la sp, _stack_start",
+        "j {main}",
+        main = sym payload_main,
+    )
 }
 
 /// The actual payload. Edit freely; this is the fast loop.
@@ -87,10 +97,13 @@ pub extern "C" fn payload_main() -> ! {
     let _ = writeln!(console, "flash @0 {:08x} {}", word,
                      if word == 0x6150_00ff { "ok" } else { "BAD" });
 
-    let _ = writeln!(console, "payload done; `reset` for the shell");
+    let _ = writeln!(console, "payload done; \
+                              `./scripts/soc_jtag_stage.py --clear` for the shell");
 
-    // No return: the shell's `go` used a plain jump, so there is no reliable `ra` to
-    // return through. `reset` restarts the shell.
+    // No return: the bootloader jumped here, and there is no shell left underneath to
+    // return to -- this image is where that one was. A reset comes straight back here,
+    // because the header in HyperRAM still names this image; clearing it is what makes
+    // the bootloader fall back to the bitstream's own.
     loop {}
 }
 

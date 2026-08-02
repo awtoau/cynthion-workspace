@@ -65,7 +65,7 @@ use crate::MAX_CONSOLES;
 /// for a keystroke.
 ///
 /// A power of two, so the index wrap is a mask rather than a division; 256 bytes
-/// per console, two consoles, is half a kilobyte of the 32 KiB the shell half of
+/// per console, two consoles, is half a kilobyte of the 63 KiB the image region of
 /// block RAM gives us.
 ///
 /// Overrunning it is not a failure: the handler masks the source and the bytes

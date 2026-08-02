@@ -515,7 +515,85 @@ def cross_check(peripherals, emit):
 
     emit("firmware: every address comes from the generated crate" if firmware_ok
          else "firmware: AN ADDRESS IS TRANSCRIBED OR MISSING -- see above")
-    return ok and firmware_ok
+
+    return ok and firmware_ok and split_check(soc_module, emit)
+
+
+def split_check(soc_module, emit):
+    """The block RAM split, in the six files that each state it separately.
+
+    The decoder sees one 64 KiB window, so nothing in the memory map can catch this:
+    where the bootloader ends and the image begins is agreed by linker scripts, a Rust
+    constant and two Python constants, and none of them derives from another. A
+    disagreement is not a build error -- it is a bootloader that jumps into the middle
+    of an image, or a staged image accepted at a length that will not fit.
+
+    Reported by reading, not by importing. Two of these are linker scripts.
+    """
+    import re
+
+    origin = soc_module.IMAGE_ORIGIN
+    size = soc_module.RAM_SIZE - origin
+
+    def find(path, pattern, what):
+        text = (ROOT / path).read_text()
+        match = re.search(pattern, text)
+        if not match:
+            return None, f"  {path}: could not find {what}"
+        return int(match.group(1), 0), None
+
+    # Each entry: file, pattern, what it should equal, and what it is called there.
+    # `K` suffixes are resolved by the multiplier, so a region length reads as bytes.
+    wanted = [
+        ("firmware/cynthion-boot/memory.x",
+         r"IMAGE\s*:\s*ORIGIN\s*=\s*(0x[0-9a-fA-F]+)", origin, 1, "IMAGE origin"),
+        ("firmware/cynthion-boot/memory.x",
+         r"IMAGE\s*:\s*ORIGIN\s*=\s*0x[0-9a-fA-F]+,\s*LENGTH\s*=\s*(\d+)K",
+         size, 1024, "IMAGE length"),
+        ("firmware/cynthion-boot/memory.x",
+         r"BOOT\s*:\s*ORIGIN\s*=\s*0x[0-9a-fA-F]+,\s*LENGTH\s*=\s*(\d+)K",
+         origin, 1024, "BOOT length"),
+        ("firmware/cynthion-soc/memory.x",
+         r"RAM\s*:\s*ORIGIN\s*=\s*(0x[0-9a-fA-F]+)", origin, 1, "RAM origin"),
+        ("firmware/cynthion-soc/memory.x",
+         r"RAM\s*:\s*ORIGIN\s*=\s*0x[0-9a-fA-F]+,\s*LENGTH\s*=\s*(\d+)K",
+         size, 1024, "RAM length"),
+        ("firmware/cynthion-payload/memory.x",
+         r"PAYLOAD\s*:\s*ORIGIN\s*=\s*(0x[0-9a-fA-F]+)", origin, 1,
+         "PAYLOAD origin"),
+        ("firmware/cynthion-payload/memory.x",
+         r"PAYLOAD\s*:\s*ORIGIN\s*=\s*0x[0-9a-fA-F]+,\s*LENGTH\s*=\s*(\d+)K",
+         size, 1024, "PAYLOAD length"),
+        ("firmware/cynthion-soc/src/hyperram.rs",
+         r"MAX_IMAGE:\s*u32\s*=\s*(\d+)\s*\*\s*1024", size, 1024, "MAX_IMAGE"),
+        ("scripts/soc_payload.py",
+         r"PAYLOAD_SIZE\s*=\s*(\d+)\s*\*\s*1024", size, 1024, "PAYLOAD_SIZE"),
+        ("scripts/soc_jtag_stage.py",
+         r"MAX_IMAGE\s*=\s*(\d+)\s*\*\s*1024", size, 1024, "MAX_IMAGE"),
+        # The boot status word: the last four bytes of BOOT, named twice.
+        # `memory.x` computes it; `target.rs` has to write the number, because it
+        # is block RAM and so is not in the generated memory map.
+        ("firmware/cynthion-soc/src/target.rs",
+         r"BOOT_STATUS:\s*Option<usize>\s*=\s*Some\((0x[0-9a-fA-F]+)\)",
+         origin - 4, 1, "BOOT_STATUS"),
+    ]
+
+    split_ok = True
+    for path, pattern, expected, scale, what in wanted:
+        value, problem = find(path, pattern, what)
+        if problem:
+            emit(problem)
+            split_ok = False
+            continue
+        if value * scale != expected:
+            emit(f"  MISMATCH {path} {what}: {value * scale}, "
+                 f"gateware says {expected}")
+            split_ok = False
+
+    emit(f"block RAM split: bootloader 0x0+{origin}, image "
+         f"{origin:#x}+{size}, {len(wanted)} statements of it "
+         f"{'all agree' if split_ok else 'DISAGREE -- see above'}")
+    return split_ok
 
 
 def write_bases(peripherals, emit):

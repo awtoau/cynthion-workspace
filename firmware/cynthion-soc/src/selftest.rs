@@ -11,7 +11,7 @@
 //!     muldiv    `M` -- mul, mulh, div, rem, and the signed cases
 //!     comp      `C` -- compressed encodings, executed AND two bytes each
 //!     atomic    `A` -- lr/sc and three amo forms
-//!     ram       block RAM address and data lines, over the payload slot
+//!     ram       block RAM address and data lines, over what is free
 //!     clock     the `time` CSR advances, which every interval here rests on
 //!     uart <n>  each 16550 answers on its scratch register
 //!     gateware  the build-id window answers with its magic
@@ -41,10 +41,10 @@
 //!   `info` reports the threshold and enables, which are free of side effects.
 //! * **No ULPI scratch walk.** `phy` does that, and it WRITES a register on a
 //!   PHY; this reads the identity and stops.
-//! * **Nothing that outlives it.** The one thing written is the payload slot,
-//!   which is the half of block RAM `load` fills and `go` jumps to. Reaching a
-//!   prompt means nothing is staged there: `load` reboots, and the boot path
-//!   either jumps to a verified image or drops here having dropped it.
+//! * **Nothing that outlives it.** The one thing written is the block RAM
+//!   between this image's `.bss` and its stack: memory nothing owns, reached
+//!   through the linker's own symbols. It does not touch the bootloader's
+//!   kilobyte at 0x0, which is what recovers a board.
 
 use core::fmt::Write;
 use core::ptr::{read_volatile, write_volatile};
@@ -268,7 +268,7 @@ fn atomics(uart: &mut Uart, report: &mut Report) {
               format_args!("lr/sc amoswap amoadd amoor (A)"));
 }
 
-/// Block RAM address and data lines, walked over the payload slot.
+/// Block RAM address and data lines, walked over what this image is not using.
 ///
 /// Two independent faults, two patterns. A stuck or shorted ADDRESS line makes
 /// two different offsets the same location, which a walk of one-hot offsets
@@ -276,23 +276,50 @@ fn atomics(uart: &mut Uart, report: &mut Report) {
 /// DATA line survives that -- every address still reads back what it wrote --
 /// and needs one bit walked across a single word.
 ///
-/// The payload slot rather than a static buffer: 32 KiB exercises address bits
-/// 2 to 14, and a buffer big enough to do that would have to come out of the
-/// 32 KiB the shell lives in. See the module comment for why nothing is staged
-/// there while a prompt is up.
+/// The free space between `__ebss` and the stack, rather than a static buffer.
+/// A buffer big enough to reach address bit 14 would be 32 KiB permanently
+/// spent out of a 63 KiB region; this costs nothing and covers the same bits,
+/// because the gap is what is left of block RAM once this image is in it --
+/// currently about 25 KiB.
+///
+/// It does NOT walk downwards into the bootloader's kilobyte at 0x0. That is
+/// the code that recovers a board from a bad image, and a self-test that could
+/// damage it would be testing the one thing that must not be under test.
 fn ram(uart: &mut Uart, report: &mut Report) {
-    let base = crate::payload_start() as usize;
-    let size = crate::payload_size() as usize;
+    unsafe extern "C" {
+        /// End of `.bss`, from riscv-rt's link.x. Everything above it up to
+        /// `_stack_start` is stack that this image has not grown into.
+        static __ebss: u8;
+        static _stack_start: u8;
+    }
+
+    // A margin below the live stack.
+    //
+    // 4 KiB, against a shell whose deepest call chain here is a few hundred
+    // bytes: `main -> command -> selftest::run -> ram`, each holding a `Report`
+    // and a handful of locals. The reservation is what makes writing below `sp`
+    // safe to state rather than to hope, and 4 KiB is an order of magnitude
+    // more than the measurement so a future command cannot quietly invalidate
+    // it.
+    const STACK_RESERVE: usize = 4096;
+
+    // Aligned up to 4 KiB so the one-hot offsets land on addresses whose low
+    // bits are the walked bit and nothing else.
+    let base = (((&raw const __ebss) as usize) + 0xfff) & !0xfff;
+    let top = ((&raw const _stack_start) as usize) - STACK_RESERVE;
+    let size = top.saturating_sub(base);
+
     let mut ok = true;
     let mut addresses = 0u32;
 
-    // Offsets 0, 4, 8, 16 ... up to the slot. Each holds a value derived from
+    // Offsets 0, 4, 8, 16 ... up to the gap. Each holds a value derived from
     // its own offset, so an aliased pair disagrees whichever way round it is
     // read.
     let mut offset = 0usize;
     loop {
         let cell = (base + offset) as *mut u32;
-        // SAFETY: inside the payload slot, whose bounds come from the linker.
+        // SAFETY: inside the gap between `.bss` and the stack reservation,
+        // whose bounds come from the linker.
         unsafe { write_volatile(cell, (offset as u32) ^ 0xa5a5_a5a5) };
         addresses += 1;
         offset = if offset == 0 { 4 } else { offset << 1 };
@@ -323,7 +350,7 @@ fn ram(uart: &mut Uart, report: &mut Report) {
     }
 
     report.ok(uart, "ram", ok,
-              format_args!("payload slot {:08x}+{:x}: {} addresses, \
+              format_args!("free {:08x}+{:x}: {} addresses, \
                             32 data lines", base, size, addresses));
 }
 
