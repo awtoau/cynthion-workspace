@@ -13,7 +13,7 @@ Runs the simulations under `scripts/` and prints how many checks each made.
 Exit status is 0 only if every simulation exited 0 and reported no FAIL, so this
 works as a gate the same way `scripts/check.py` does.
 
-## Why a runner rather than nine invocations
+## Why a runner rather than one invocation each
 
 The count is the point, not just the exit status. These simulations are additive
 -- a branch that adds behaviour adds checks -- so the number each one reports is a
@@ -49,7 +49,8 @@ ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "soc_sims.log"
 
 # In the order a reader should meet them: the CPU's own peripherals first, then
-# the board, then the two that drive the firmware rather than the gateware.
+# the board, then the two that drive the firmware rather than the gateware, then
+# the gateware that is not part of the SoC at all.
 SIMS = [
     "soc_bus_sim",
     "uart16550_sim",
@@ -61,6 +62,7 @@ SIMS = [
     "soc_jtag_stage_sim",
     "soc_board_sim",
     "soc_test",
+    "qspi_burst_sim",
 ]
 
 RESET, BOLD, GREEN, RED, CYAN = (
