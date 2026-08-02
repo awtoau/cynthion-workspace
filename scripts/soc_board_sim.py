@@ -177,8 +177,19 @@ class ModelSlave:
         self._out = 0
         self._reading = False
         self._respond_index = 0
+        self._wrote = 0            # bytes written since this START
         self._prev_scl = 1
         self._prev_sda = 1
+
+    def ack_write(self, index, byte):
+        """Acknowledge the byte just received? `index` counts from the START.
+
+        A plain slave always does. A part with a window in which it is
+        unavailable does not, and WHERE it refuses is the whole diagnostic --
+        the PAC1954 acknowledges its address and then NACKs the register
+        pointer, which is index 0 here. See `scripts/soc_i2c_owner_sim.py`.
+        """
+        return True
 
     def step(self, scl, sda):
         """One `sync` cycle. `sda` is the wired-AND already computed."""
@@ -192,6 +203,7 @@ class ModelSlave:
                 self._state = "addr"
                 self._shift = 0
                 self._bits = 0
+                self._wrote = 0
                 self.pull_low = False
             elif not self._prev_sda and sda:
                 self.stops += 1
@@ -227,7 +239,9 @@ class ModelSlave:
                     self._bits = 0
             elif self._state == "write" and self._bits == 8:
                 self.written.append(self._shift)
-                self.pull_low = True               # ACK
+                # ACK, unless this device is refusing right now.
+                self.pull_low = self.ack_write(self._wrote, self._shift)
+                self._wrote += 1
                 self._state = "write_ack"
             elif self._state == "write_ack":
                 self.pull_low = False
