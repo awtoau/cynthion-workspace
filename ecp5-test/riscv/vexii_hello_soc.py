@@ -53,7 +53,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from amaranth                       import Elaboratable, Module, Mux, Signal, Cat
+from amaranth                       import (Elaboratable, Module, Mux, Signal,
+                                            Cat, ClockSignal, ResetSignal)
 from amaranth.lib                   import wiring
 from amaranth.lib.cdc               import FFSynchronizer
 
@@ -84,6 +85,7 @@ from vexii_plic import Plic
 from serial_line import SerialLine
 from i2c_master import I2CMaster, prescale_for
 from sideband_csr import SidebandControl
+from ulpi_window import UlpiRegisters
 from stream_buffer import StreamBuffer
 from wishbone_pipe import RegisteredResponse
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
@@ -161,13 +163,18 @@ APOLLO_UART_BASE = 0xf0000500
 #   +0x00  gpio      16 bytes  amaranth_soc.gpio.Peripheral, 8 pins
 #   +0x10  i2c        8 bytes  i2c_master.I2CMaster
 #   +0x18  sideband   1 byte   sideband_csr.SidebandControl
+#   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
 #
 # The sub-addresses are the peripherals' natural sizes and each window is
-# aligned to its own size, which is what MemoryMap requires.
+# aligned to its own size, which is what MemoryMap requires. The decoder is 64
+# bytes rather than the 32 the first three fit in, because a peripheral added
+# later should not have to move an existing one -- and moving one changes every
+# address in the generated PAC at once.
 BOARD_BASE     = 0xf0000600
 GPIO_BASE      = BOARD_BASE + 0x00
 I2C_BASE       = BOARD_BASE + 0x10
 SIDEBAND_BASE  = BOARD_BASE + 0x18
+ULPI_BASE      = BOARD_BASE + 0x1c
 
 # What is on each GPIO pin.
 #
@@ -479,7 +486,17 @@ class HelloSoC(Elaboratable):
         m.submodules.i2c = i2c = I2CMaster()
         m.submodules.sideband_ctrl = sideband_ctrl = SidebandControl()
 
-        board_csr = csr.Decoder(addr_width=5, data_width=8)
+        # The ULPI register window on TARGET_PHY, and only on TARGET_PHY.
+        #
+        # AUX_PHY is deliberately untouched: the USB console runs over it, and a
+        # second master issuing register commands on that bus would corrupt the
+        # link this design reports through. CONTROL_PHY is shared with Apollo.
+        # TARGET is the port nothing here drives, which is what makes it the one
+        # that can be probed from a running system rather than from a bitstream
+        # that evicted the SoC to make room.
+        m.submodules.target_ulpi = target_ulpi = UlpiRegisters()
+
+        board_csr = csr.Decoder(addr_width=6, data_width=8)
         m.submodules.board_csr = board_csr
         board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
                       name="gpio")
@@ -487,6 +504,8 @@ class HelloSoC(Elaboratable):
                       name="i2c")
         board_csr.add(sideband_ctrl.bus, addr=SIDEBAND_BASE - BOARD_BASE,
                       name="sideband")
+        board_csr.add(target_ulpi.bus,   addr=ULPI_BASE     - BOARD_BASE,
+                      name="ulpi")
 
         board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
         m.submodules.board_bridge = board_bridge
@@ -1063,6 +1082,32 @@ class HelloSoC(Elaboratable):
 
         button = platform.request("button_user", 0)
         m.d.comb += board_gpio.pins[GPIO_BUTTON].i.eq(button.i)
+
+        # ---- the TARGET PHY's ULPI bus --------------------------------------
+        #
+        # The FPGA sources the clock (`clk_dir='o'` in the platform), so the PHY
+        # runs at whatever `usb` runs at -- 60 MHz, which is what a USB3343
+        # requires and is why `usb` is not a free parameter the way `sync` is.
+        #
+        # `rst` is declared `rst_invert=True`, so the pad is active low and a 1
+        # here holds the PHY in reset. Driving it from `ResetSignal("usb")`
+        # means the PHY comes out of reset with the domain and is held only
+        # while the domain is, which is what a PHY expects; tying it to 0 would
+        # leave a PHY that had glitched during configuration with no way back.
+        #
+        # This is a register path only. There is no UTMI translator, no packet
+        # handling and no device stack on this port -- see `ulpi_window.py`.
+        target_phy = platform.request("target_phy", 0)
+        m.d.comb += [
+            target_phy.clk.o.eq(ClockSignal("usb")),
+            target_phy.rst.o.eq(ResetSignal("usb")),
+            target_phy.stp.o.eq(target_ulpi.stp_o),
+            target_phy.data.o.eq(target_ulpi.data_o),
+            target_phy.data.oe.eq(target_ulpi.data_oe),
+            target_ulpi.data_i.eq(target_phy.data.i),
+            target_ulpi.dir_i.eq(target_phy.dir.i),
+            target_ulpi.nxt_i.eq(target_phy.nxt.i),
+        ]
 
         # ---- the power monitor's I2C bus ------------------------------------
         #

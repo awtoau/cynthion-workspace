@@ -1303,6 +1303,97 @@
       </registers>
     </peripheral>
     <peripheral>
+      <name>BOARD_ULPI</name>
+      <description>board/ulpi: 4 registers at 0xf000061c</description>
+      <baseAddress>0xF000061C</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x4</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>ADDRESS</name>
+          <description>BOARD_ULPI.ADDRESS, 6 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3F</resetMask>
+          <fields>
+            <field>
+              <name>ADDRESS</name>
+              <description>address [5:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DATA</name>
+          <description>BOARD_ULPI.DATA, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CONTROL</name>
+          <description>BOARD_ULPI.CONTROL, 2 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>START</name>
+              <description>start [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name>
+          <description>BOARD_ULPI.STATUS, 2 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>BUSY</name>
+              <description>busy [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TIMEOUT</name>
+              <description>timeout [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
       <name>PLIC</name>
       <description>plic: 7 registers at 0xf0400000</description>
       <baseAddress>0xF0400000</baseAddress>

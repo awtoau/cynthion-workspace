@@ -70,6 +70,11 @@ pub const BOARD_SIDEBAND: usize = 0xf0000618;
 /// Size of the BOARD_SIDEBAND window, in bytes.
 pub const BOARD_SIDEBAND_SIZE: usize = 0x00000002;
 
+/// board/ulpi: 4 registers at 0xf000061c
+pub const BOARD_ULPI: usize = 0xf000061c;
+/// Size of the BOARD_ULPI window, in bytes.
+pub const BOARD_ULPI_SIZE: usize = 0x00000004;
+
 /// plic: 7 registers at 0xf0400000
 pub const PLIC: usize = 0xf0400000;
 /// Size of the PLIC window, in bytes.

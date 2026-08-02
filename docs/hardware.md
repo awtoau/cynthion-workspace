@@ -408,6 +408,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
 | `i2c` | scan a bus and identify what answers | below |
 | `power [floor <port> <mA>]` | the four rails, and the change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
+| `phy` | the TARGET USB3343's ULPI registers, plus a walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
 | `load <hex>`, `go`, `reset` | stage and run a payload | — |
 
@@ -426,6 +427,13 @@ firmware never transmits there unbidden.
 
 Ports are named — `target_a`, `target_c`, `aux`, `control` — and never numbered,
 because the PAC's channel order is not the port order anyone would guess.
+
+**`phy`** reports the TARGET PHY's vendor and product IDs, function and OTG
+control, line state, and a walking-bit test across the scratch register. It reads
+**`target_phy` only**: AUX carries the USB console the answer travels over and
+CONTROL is shared with Apollo, so a register master on either would corrupt a
+link something else is using. An absent PHY reports `no answer from the PHY`
+after a 68 µs gateware timeout, not zeros.
 
 ## Also worth knowing
 

@@ -91,6 +91,15 @@ impl core::fmt::Debug for BoardSideband {
 }
 #[doc = "board/sideband: 1 register at 0xf0000618"]
 pub mod board_sideband;
+#[doc = "board/ulpi: 4 registers at 0xf000061c"]
+pub type BoardUlpi = crate::Periph<board_ulpi::RegisterBlock, 0xf000_061c>;
+impl core::fmt::Debug for BoardUlpi {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("BoardUlpi").finish()
+    }
+}
+#[doc = "board/ulpi: 4 registers at 0xf000061c"]
+pub mod board_ulpi;
 #[doc = "plic: 7 registers at 0xf0400000"]
 pub type Plic = crate::Periph<plic::RegisterBlock, 0xf040_0000>;
 impl core::fmt::Debug for Plic {
@@ -123,6 +132,8 @@ pub struct Peripherals {
     pub board_i2c: BoardI2c,
     #[doc = "BOARD_SIDEBAND"]
     pub board_sideband: BoardSideband,
+    #[doc = "BOARD_ULPI"]
+    pub board_ulpi: BoardUlpi,
     #[doc = "PLIC"]
     pub plic: Plic,
 }
@@ -156,6 +167,7 @@ impl Peripherals {
             board_gpio: BoardGpio::steal(),
             board_i2c: BoardI2c::steal(),
             board_sideband: BoardSideband::steal(),
+            board_ulpi: BoardUlpi::steal(),
             plic: Plic::steal(),
         }
     }

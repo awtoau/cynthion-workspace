@@ -164,6 +164,13 @@ pub struct Board {
     /// `sideband_csr.SidebandControl`, which decides what the FPGA_ADV link
     /// reports.
     pub sideband: usize,
+    /// `ulpi_window.UlpiRegisters`, on TARGET_PHY and only on TARGET_PHY.
+    ///
+    /// One window, not three. AUX carries the USB console this firmware answers
+    /// on and CONTROL is shared with Apollo; a register master on either would
+    /// corrupt a link something else is using. See the module comment in
+    /// `src/ulpi.rs`.
+    pub ulpi: usize,
     /// PRER for the I2C bus. `f_SCL = f_sync / (5 * (PRER + 1))`, so at 60 MHz
     /// 149 gives 80 kHz -- see the bit-timing section of
     /// `ecp5-test/riscv/i2c_master.py` for why 80 and not 100.
@@ -180,6 +187,7 @@ pub const BOARD: Option<Board> = Some(Board {
     gpio: cynthion_soc_pac::base::BOARD_GPIO,
     i2c: cynthion_soc_pac::base::BOARD_I2C,
     sideband: cynthion_soc_pac::base::BOARD_SIDEBAND,
+    ulpi: cynthion_soc_pac::base::BOARD_ULPI,
     i2c_prescale: 149,
 });
 

@@ -63,6 +63,7 @@ mod power;
 mod sideband;
 mod target;
 mod uart;
+mod ulpi;
 
 use target::flash_word;
 use uart::Uart;
@@ -323,6 +324,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "  i2c           scan the power monitor bus");
             let _ = writeln!(uart, "  power [floor <port> <mA>]  the four rails, \
                                     volts and milliamps");
+            let _ = writeln!(uart, "  phy           the TARGET USB3343's ULPI registers");
             let _ = writeln!(uart, "  sideband [hex]  what the FPGA_ADV link reports");
             let _ = writeln!(uart, "  load <hex>    receive N bytes into the payload slot");
             let _ = writeln!(uart, "  go            jump to the loaded payload");
@@ -373,6 +375,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart),
         b"power" => board_power(uart, rest, devices),
+        b"phy" => board_phy(uart),
         b"sideband" => board_sideband(uart, rest),
         b"read" => match parse_hex(rest) {
             Some(offset) => {
@@ -681,6 +684,111 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if devices.power.failures > 0 {
         let _ = writeln!(uart, "  {} failed poll(s) since the last good one",
                          devices.power.failures);
+    }
+}
+
+/// `phy` -- identity and state of the USB3343 on TARGET.
+///
+/// **How to tell a live PHY from an absent one:** the identity registers are
+/// necessary and not sufficient. A bus that returns a constant, a PHY held in
+/// reset, or a window whose data lines are stuck can all produce a number that
+/// looks like an answer, and `0x0424`/`0x0009` are only two of the eight bytes
+/// the bus can carry. So this ALSO walks a single bit across the scratch
+/// register: eight writes, eight read-backs, each value seen once. That fails on
+/// a stuck line, on a shorted pair and on a constant, and it is the same test
+/// `scripts/phy_probe.py` and the shipped `cynthion selftest` make.
+///
+/// A PHY that is not there does not read as zeros -- it never releases `dir`,
+/// so the gateware's 68 us timeout fires and this says so, which is a different
+/// message from "answered, wrongly".
+fn board_phy(uart: &mut Uart) {
+    let board = match target::BOARD {
+        Some(board) => board,
+        None => return board_absent(uart),
+    };
+    let phy = ulpi::Ulpi::new(board.ulpi);
+
+    // A named read, so one failure reports which register it was on rather than
+    // leaving the caller to count lines.
+    let read = |uart: &mut Uart, name: &str, address: u8| -> Option<u8> {
+        match phy.read(address) {
+            Ok(value) => {
+                let _ = writeln!(uart, "  {:16} {:02x}  {:02x}", name, address, value);
+                Some(value)
+            }
+            Err(error) => {
+                let _ = writeln!(uart, "  {:16} {:02x}  {}", name, address,
+                                 error.as_str());
+                None
+            }
+        }
+    };
+
+    let _ = writeln!(uart, "ulpi  @{:08x}  target_phy", board.ulpi);
+    let _ = writeln!(uart, "  register         at  value");
+
+    let vendor_low = read(uart, "vendor id low", ulpi::usb3343::REG_VENDOR_ID_LOW);
+    let vendor_high = read(uart, "vendor id high",
+                           ulpi::usb3343::REG_VENDOR_ID_LOW + 1);
+    let product_low = read(uart, "product id low", ulpi::usb3343::REG_PRODUCT_ID_LOW);
+    let product_high = read(uart, "product id high",
+                            ulpi::usb3343::REG_PRODUCT_ID_LOW + 1);
+    read(uart, "function control", ulpi::usb3343::REG_FUNCTION_CONTROL);
+    read(uart, "otg control", ulpi::usb3343::REG_OTG_CONTROL);
+    let debug = read(uart, "debug", ulpi::usb3343::REG_DEBUG);
+
+    match (vendor_low, vendor_high, product_low, product_high) {
+        (Some(vl), Some(vh), Some(pl), Some(ph)) => {
+            let vendor = ((vh as u16) << 8) | vl as u16;
+            let product = ((ph as u16) << 8) | pl as u16;
+            let _ = writeln!(uart, "  vendor {:04x} product {:04x} {}",
+                             vendor, product,
+                             if vendor == ulpi::usb3343::VENDOR_ID
+                                 && product == ulpi::usb3343::PRODUCT_ID {
+                                 "USB3343 ok"
+                             } else {
+                                 "NOT a USB3343"
+                             });
+        }
+        _ => {
+            let _ = writeln!(uart, "  identity incomplete; the PHY did not answer");
+            return;
+        }
+    }
+
+    if let Some(debug) = debug {
+        // LineState is D+ in bit 0 and D- in bit 1, straight from the receiver.
+        // With nothing plugged into TARGET both are low, which is SE0 -- so `00`
+        // here is the expected reading on an idle port and not a fault.
+        let _ = writeln!(uart, "  linestate dp {} dm {}", debug & 1,
+                         (debug >> 1) & 1);
+    }
+
+    // The walking bit. Eight patterns, each with exactly one bit set, so every
+    // data line is driven high on its own and read back on its own.
+    let mut lines_ok = 0u8;
+    let mut failed = false;
+    for bit in 0..8 {
+        let pattern = 1u8 << bit;
+        if phy.write(ulpi::usb3343::REG_SCRATCH, pattern).is_err() {
+            failed = true;
+            break;
+        }
+        match phy.read(ulpi::usb3343::REG_SCRATCH) {
+            Ok(value) if value == pattern => lines_ok |= pattern,
+            Ok(_) => {}
+            Err(_) => {
+                failed = true;
+                break;
+            }
+        }
+    }
+    if failed {
+        let _ = writeln!(uart, "  scratch walk did not complete");
+    } else {
+        let _ = writeln!(uart, "  scratch walk {:02x}  {}", lines_ok,
+                         if lines_ok == 0xff { "all 8 data lines ok" }
+                         else { "A DATA LINE IS STUCK" });
     }
 }
 

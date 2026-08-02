@@ -338,8 +338,8 @@ def main():
                 return reply
 
             listing = [b"help, ?", b"id", b"read <hex>", b"check", b"ports",
-                       b"irq", b"led", b"i2c", b"power", b"sideband",
-                       b"load <hex>", b"go", b"reset"]
+                       b"irq", b"led", b"i2c", b"power", b"phy",
+                       b"sideband", b"load <hex>", b"go", b"reset"]
             command("help", listing, "`help` lists every command")
             command("?", listing, "`?` behaves as `help`")
 
@@ -359,7 +359,7 @@ def main():
             # would only confirm that a model agrees with the driver. What the
             # drivers do is checked in `scripts/soc_board_sim.py` against the
             # gateware, and on the board.
-            for name in ("led", "i2c", "power", "sideband"):
+            for name in ("led", "i2c", "power", "phy", "sideband"):
                 command(name, [b"no board peripherals on this target"],
                         f"`{name}` is registered and reports the target has none")
             command("led green on", [b"no board peripherals on this target"],

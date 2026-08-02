@@ -35,6 +35,14 @@ this design's to get wrong.
 **The sideband control** is checked for the same handover property, from the
 other direction: the fabric's bits reach the responder until the CPU claims the
 link, and the claim is a single bit that resets clear.
+
+**The ULPI register window** is driven against a model PHY written here, for the
+same reason the I2C slave is: a model in Amaranth would share the window's idea
+of the protocol and agree with it whether or not either was right. This one
+reacts to the command byte on the data lines and to `stp`, and knows nothing
+about the FSM driving it. What is being checked is the part that is ours -- the
+register map, the domain crossing and the timeout -- not LUNA's transaction
+encoding, which the USB console already exercises continuously.
 """
 
 import argparse
@@ -52,6 +60,7 @@ from amaranth_soc import gpio
 
 from i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
 from sideband_csr import SidebandControl
+from ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
 
 
 # Small enough that a byte is a few hundred simulated cycles rather than a few
@@ -581,6 +590,267 @@ def run_i2c_timing_checks(checks, verbose):
         "prescale_for produced a divider that overshoots the requested rate.")
 
 
+# ULPI register-window offsets, from ulpi_window.UlpiRegisters.
+ULPI_ADDRESS, ULPI_DATA, ULPI_CONTROL, ULPI_STATUS = 0, 1, 2, 3
+
+ULPI_START_READ  = 1 << 0
+ULPI_START_WRITE = 1 << 1
+
+ULPI_BUSY    = 1 << 0
+ULPI_TIMEOUT = 1 << 1
+
+# What a USB3343 answers with. Confirmed on all three PHYs of this board by
+# scripts/phy_probe.py; deliberately not 0x00 or 0xff, either of which a dead
+# bus can produce.
+PHY_IDENTITY = {0x00: 0x24, 0x01: 0x04, 0x02: 0x09, 0x03: 0x00}
+
+
+class ModelPhy:
+    """A USB3343 as far as a ULPI register transaction can see it.
+
+    Driven only by the command byte on the data lines and by `stp`. It has no
+    idea what a `ULPIRegisterWindow` is, which is the point: a model that shared
+    the window's idea of the protocol would agree with it whether or not either
+    was right.
+
+    `stall` holds `dir` asserted forever, which is what an absent PHY, a PHY
+    held in reset, and a PHY receiving a packet all look like from the link side.
+    That is the case the gateware's timeout exists for.
+    """
+
+    def __init__(self, registers, stall=False):
+        self.registers = dict(registers)
+        self.stall = stall
+        self.dir = 1 if stall else 0
+        self.nxt = 0
+        self.data_i = 0
+        self.reads = 0
+        self.writes = 0
+        self._state = "idle"
+        self._address = 0
+
+    def step(self, data_o):
+        if self.stall:
+            # Never releases the bus. The window waits for `dir` to fall before
+            # it may drive, so nothing else ever happens.
+            return
+
+        if self._state == "idle":
+            self.nxt = 0
+            self.dir = 0
+            # 0b11xxxxxx is a register read, 0b10xxxxxx a register write; the
+            # low six bits are the address. Anything else -- 0x00 is the NOP the
+            # window drives while idle -- is not a command.
+            if data_o & 0xc0 == 0xc0:
+                self._address = data_o & 0x3f
+                self.nxt = 1
+                self._state = "read_turnaround"
+            elif data_o & 0xc0 == 0x80:
+                self._address = data_o & 0x3f
+                self.nxt = 1
+                self._state = "write_data"
+        elif self._state == "read_turnaround":
+            # The link has released the bus; take it and present the byte.
+            self.nxt = 0
+            self.dir = 1
+            self.data_i = self.registers.get(self._address, 0xff)
+            self._state = "read_data"
+        elif self._state == "read_data":
+            # The window latches what is on the bus this cycle.
+            self._state = "read_release"
+        elif self._state == "read_release":
+            self.dir = 0
+            self.reads += 1
+            self._state = "idle"
+        elif self._state == "write_data":
+            # The value is on the bus now, one cycle after the command was
+            # accepted. Take it and acknowledge.
+            self.nxt = 1
+            self.registers[self._address] = data_o
+            self.writes += 1
+            self._state = "write_stop"
+        elif self._state == "write_stop":
+            self.nxt = 0
+            self._state = "idle"
+
+
+def make_ulpi_sim(phy):
+    """A simulator with a UlpiRegisters and a model PHY wired together.
+
+    Two clock domains, and that is the point of the exercise: the CSR bus is in
+    `sync` and the ULPI side is in `usb`. They are given DIFFERENT periods here
+    -- 1 us and 0.7 us -- deliberately. Equal periods would let a crossing that
+    only works when the two clocks happen to agree pass, and the design's whole
+    reason for using a handshake is that `SYNC_MHZ` is a free parameter.
+    """
+    dut = UlpiRegisters()
+
+    async def wires(ctx):
+        while True:
+            phy.step(ctx.get(dut.data_o))
+            ctx.set(dut.dir_i, phy.dir)
+            ctx.set(dut.nxt_i, phy.nxt)
+            ctx.set(dut.data_i, phy.data_i)
+            await ctx.tick("usb")
+
+    def build(testbench):
+        sim = Simulator(Fragment.get(dut, None))
+        sim.add_clock(1e-6)
+        sim.add_clock(0.7e-6, domain="usb")
+        sim.add_testbench(wires, background=True)
+        sim.add_testbench(testbench)
+        return sim
+
+    return dut, build
+
+
+async def ulpi_settle(bus, limit=40000):
+    """Spin on STATUS.busy, then return STATUS. Bounded, like the firmware's."""
+    for _ in range(limit):
+        status = await bus.read(ULPI_STATUS)
+        if not status & ULPI_BUSY:
+            return status
+    return None
+
+
+def run_ulpi_checks(checks, verbose):
+    # --- a register read, and a scratch round trip --------------------------
+    phy = ModelPhy({**PHY_IDENTITY, 0x16: 0x00})
+    dut, build = make_ulpi_sim(phy)
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+
+        await bus.write(ULPI_ADDRESS, 0x00)
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        # Sampled before the wait: `busy` has to be observable, or firmware has
+        # nothing to poll and would read the previous transaction's byte.
+        seen["busy"] = await bus.read(ULPI_STATUS)
+        seen["status"] = await ulpi_settle(bus)
+        seen["vendor_low"] = await bus.read(ULPI_DATA)
+        # Twice. A data register that changed on read is the hazard this whole
+        # project's register discipline exists to eliminate.
+        seen["vendor_low_again"] = await bus.read(ULPI_DATA)
+
+        await bus.write(ULPI_ADDRESS, 0x02)
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        await ulpi_settle(bus)
+        seen["product_low"] = await bus.read(ULPI_DATA)
+
+        # Write then read back, which is the walking-bit test's building block.
+        await bus.write(ULPI_ADDRESS, 0x16)
+        await bus.write(ULPI_DATA, 0x5a)
+        await bus.write(ULPI_CONTROL, ULPI_START_WRITE)
+        await ulpi_settle(bus)
+        seen["written"] = phy.registers.get(0x16)
+
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        await ulpi_settle(bus)
+        seen["scratch"] = await bus.read(ULPI_DATA)
+        seen["reads"] = phy.reads
+        seen["writes"] = phy.writes
+
+    build(testbench).run()
+
+    checks.check(
+        "busy is set while a transaction is in flight",
+        seen.get("busy") is not None and (seen["busy"] & ULPI_BUSY),
+        f"STATUS read {seen.get('busy')!r} immediately after starting a read. "
+        f"Firmware polls this bit; if it is never set there is nothing to wait "
+        f"for and every read returns the previous byte.")
+    checks.check(
+        "a register read returns what the PHY holds, and does not time out",
+        seen.get("vendor_low") == 0x24 and seen.get("status") == 0,
+        f"read {seen.get('vendor_low')!r} from register 0x00 with STATUS "
+        f"{seen.get('status')!r}; expected 0x24 and a clear status.")
+    checks.check(
+        "reading the data register twice gives the same byte",
+        seen.get("vendor_low") == seen.get("vendor_low_again"),
+        f"first read {seen.get('vendor_low')!r}, second "
+        f"{seen.get('vendor_low_again')!r}. A read with a side effect here "
+        f"would make a widened or replayed bus access consume a result.")
+    checks.check(
+        "a second read addresses a different register",
+        seen.get("product_low") == 0x09,
+        f"read {seen.get('product_low')!r} from register 0x02, expected 0x09 -- "
+        f"a window that ignored ADDRESS would return 0x24 again.")
+    checks.check(
+        "a write reaches the PHY and reads back",
+        seen.get("written") == 0x5a and seen.get("scratch") == 0x5a,
+        f"the model PHY holds {seen.get('written')!r} in scratch and the "
+        f"read-back was {seen.get('scratch')!r}; expected 0x5a for both.")
+    checks.check(
+        "each start produced exactly one transaction",
+        (seen.get("reads"), seen.get("writes")) == (3, 1),
+        f"the model PHY saw {seen.get('reads')} read(s) and "
+        f"{seen.get('writes')} write(s); expected 3 and 1.")
+
+    # --- a PHY that never releases the bus -----------------------------------
+    #
+    # Without the timeout this hangs `busy` for the rest of the session, and
+    # every later read reports "busy" instead of "absent" -- so an unplugged or
+    # unpowered PHY would look like a broken peripheral forever.
+    stalled = ModelPhy(PHY_IDENTITY, stall=True)
+    dut, build = make_ulpi_sim(stalled)
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+        await bus.write(ULPI_ADDRESS, 0x00)
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        seen["status"] = await ulpi_settle(bus)
+        # Twice, because a timeout flag that cleared on read would be gone
+        # before the caller that polls STATUS in a loop could act on it.
+        seen["again"] = await bus.read(ULPI_STATUS)
+
+    build(testbench).run()
+
+    checks.check(
+        "a PHY that never releases the bus times out rather than hanging",
+        seen.get("status") == ULPI_TIMEOUT,
+        f"STATUS settled at {seen.get('status')!r}, expected "
+        f"{ULPI_TIMEOUT} (busy clear, timeout set) after "
+        f"{TIMEOUT_CYCLES} usb cycles. None means busy never cleared at all.")
+    checks.check(
+        "and the timeout flag survives being read",
+        seen.get("again") == ULPI_TIMEOUT,
+        f"a second read of STATUS gave {seen.get('again')!r}. Clear-on-read "
+        f"would be a state-changing read sharing a 32-bit word with the "
+        f"command register.")
+
+    # --- a stalled window recovers ------------------------------------------
+    #
+    # The timeout resets the register window, and the point of doing so is that
+    # the NEXT transaction works. A design that reported the timeout and left
+    # the FSM parked would pass the two checks above and be useless.
+    phy = ModelPhy(PHY_IDENTITY, stall=True)
+    dut, build = make_ulpi_sim(phy)
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+        await bus.write(ULPI_ADDRESS, 0x00)
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        await ulpi_settle(bus)
+
+        # The PHY comes back.
+        phy.stall = False
+        phy.dir = 0
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        seen["status"] = await ulpi_settle(bus)
+        seen["data"] = await bus.read(ULPI_DATA)
+
+    build(testbench).run()
+
+    checks.check(
+        "a window that timed out works again once the PHY answers",
+        seen.get("status") == 0 and seen.get("data") == 0x24,
+        f"after a timeout the next read gave STATUS {seen.get('status')!r} and "
+        f"data {seen.get('data')!r}; expected a clear status and 0x24. The "
+        f"timeout flag must also be cleared by the next START, not left set.")
+
+
 def run_gpio_checks(checks, verbose):
     """The handover: fabric drives until the CPU takes a pin."""
     dut = gpio.Peripheral(pin_count=8, addr_width=4, data_width=8)
@@ -739,6 +1009,10 @@ def main():
 
         emit("sideband_csr.SidebandControl")
         run_sideband_checks(checks, args.verbose)
+        emit()
+
+        emit("ulpi_window.UlpiRegisters -- against a model USB3343")
+        run_ulpi_checks(checks, args.verbose)
         emit()
 
         if checks.failures:

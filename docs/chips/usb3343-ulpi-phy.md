@@ -84,6 +84,58 @@ Register access for bring-up and selftest goes through
 `repos/cynthion/.../selftest/gateware.py`, which exposes a ULPI register window per
 PHY at `REGISTER_TARGET_ADDR` / `AUX` / `CONTROL`.
 
+### From the SoC shell — `phy`
+
+The main SoC bitstream carries a ULPI register window on **`target_phy` only**
+(`ecp5-test/riscv/ulpi_window.py`, driver `firmware/cynthion-soc/src/ulpi.rs`).
+It is in the main bitstream deliberately: a standalone probe design evicts the
+SoC, so it cannot answer questions about a running system.
+
+**`aux_phy` is not touched, and must not be.** The USB console this shell answers
+on runs over it, so a second master issuing register commands there would corrupt
+the link the answer travels over. `control_phy` is shared with Apollo. TARGET is
+the port nothing else drives.
+
+```
+> phy
+ulpi  @f000061c  target_phy
+  register         at  value
+  vendor id low    00  24
+  vendor id high   01  04
+  product id low   02  09
+  product id high  03  00
+  function control 04  41
+  otg control      0a  06
+  debug            15  00
+  vendor 0424 product 0009 USB3343 ok
+  linestate dp 0 dm 0
+  scratch walk ff  all 8 data lines ok
+```
+
+**How to tell a live PHY from an absent one.** The identity registers are
+necessary and not sufficient — a stuck bus, a constant, or a PHY held in reset
+can all produce something that looks like an answer, and `0424`/`0009` is only
+four of the eight bytes the bus can carry. So `phy` also walks a single bit
+across the scratch register (`0x16`): eight writes, eight read-backs, each value
+seen once. `scratch walk ff` means all eight data lines drove and returned
+independently. That is the same assertion `scripts/phy_probe.py` and the shipped
+`cynthion selftest` make.
+
+A PHY that is genuinely absent does **not** read as zeros. It never releases
+`dir`, so the gateware's 68 µs timeout fires and the command reports `no answer
+from the PHY` for each register — a different message from "answered, wrongly".
+Without that timeout one read of a missing PHY would leave the window busy for
+the rest of the session and every later read would report "busy" instead of
+"absent"; the recovery is covered in `scripts/soc_board_sim.py`.
+
+`debug` (`0x15`) is read rather than `0x14` (Interrupt Latch), which is
+**clear-on-read**: a diagnostic must not consume the event it reports on.
+`linestate dp 0 dm 0` is SE0 — the expected reading with nothing plugged into
+TARGET, not a fault.
+
+Bringing the TARGET PHY out of reset costs about **22 mA on the AUX rail**,
+measured with `power` before and after (145 mA → 167 mA).
+
 ## Registers
 
 **PHY registers are ULPI registers, not SoC registers.** They are reached through
