@@ -64,7 +64,7 @@ RAM_PINS = {
     **{f"dq{i}": pin for i, pin in enumerate("F2 B1 C2 E1 E3 E2 F3 G4".split())},
 }
 
-DB = Path("/home/dan/opt/oss-cad-suite/share/trellis/database/ECP5")
+DB = Path.home() / "opt/oss-cad-suite/share/trellis/database/ECP5"
 
 
 def load(device=DEVICE, package=PACKAGE, root=DB):
