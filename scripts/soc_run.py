@@ -56,6 +56,10 @@ CRATE = ROOT / "firmware" / "cynthion-soc"
 ELF = CRATE / "target" / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
 FIRMWARE_BIN = ROOT / "tmp" / "rust_fw.bin"
 
+# Where the image sits inside the 64 KiB block RAM initialiser. The bootloader owns
+# the kilobyte below it; see firmware/cynthion-soc/memory.x.
+IMAGE_ORIGIN = 0x400
+
 # The resident bootloader: 492 bytes at 0x0, and what the reset vector points at.
 # Built alongside the image and packed into the same block RAM init, so one bitstream
 # carries both and a board with nothing staged comes up on the image below.
@@ -79,6 +83,44 @@ NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
 def run(cmd, cwd=None, env=None, shell=False):
     return subprocess.run(cmd, cwd=cwd or ROOT, env=env, shell=shell,
                           capture_output=True, text=True)
+
+
+def firmware_digest(path=None):
+    """A short hash of the firmware image, for saying WHICH firmware.
+
+    The provenance already in the build -- a short git hash from `build.rs` into
+    USERCODE -- cannot answer this. A git hash does not move when a file is edited
+    and not committed, which is the common case while working, and is exactly the
+    case where a stale load is hardest to notice.
+
+    So: hash the bytes. `soc_run.py` prints this for what it built and again for
+    what it read back out of the bitstream, and the two must agree.
+    """
+    import hashlib
+    path = path or FIRMWARE_BIN
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+
+def firmware_in_bitstream(build_dir, emit):
+    """The firmware bytes the built bitstream actually carries, or None.
+
+    Reads them back out of `firmware.hex`, which the gateware build writes beside
+    the bitstream as the block RAM initialiser. That is one step removed from the
+    .bit itself -- `scripts/bram_patch.py` goes all the way and unpacks the
+    bitstream -- but it is the file the build hands to the packer, so a mismatch
+    here means the image and the firmware came from different runs.
+    """
+    hex_path = build_dir / "firmware.hex"
+    if not hex_path.exists():
+        emit(f"  no {hex_path.name} beside the bitstream; cannot verify")
+        return None
+    words = []
+    for line in hex_path.read_text().split():
+        try:
+            words.append(int(line, 16))
+        except ValueError:
+            return None
+    return b"".join(word.to_bytes(4, "little") for word in words)
 
 
 def main():
@@ -153,7 +195,8 @@ def main():
                     emit("objcopy failed:")
                     emit((result.stderr or result.stdout).strip()[-400:])
                     return 1
-                emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes")
+                emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes "
+                     f"({firmware_digest()})")
 
             # The bootloader, unless this is the C path -- that generator emits an
             # image linked for 0 and has no bootloader to sit under it.
@@ -197,6 +240,39 @@ def main():
                     emit("      which produces a CPU that runs and reaches nothing")
             else:
                 emit("gateware built")
+
+            # THE CHECK THIS SCRIPT EXISTED WITHOUT, and which cost most of a day.
+            #
+            # Three separate times the board ran firmware that was not the firmware
+            # just built, with every step reporting success: a stale intermediate
+            # patched in, a stale bitstream loaded, and a fresh bitstream that still
+            # lacked a committed command. Nothing compared what was built against
+            # what was about to be configured, so nothing could say so.
+            #
+            # This does. A mismatch stops the run rather than reaching the board,
+            # because a board running unknown firmware invalidates every measurement
+            # taken from it -- and those are believed, written down and acted on.
+            if not args.c_firmware:
+                carried = firmware_in_bitstream(BITSTREAM.parent, emit)
+                if carried is not None:
+                    # The image is linked for IMAGE_ORIGIN, and the bootloader
+                    # occupies the kilobyte below it, so the image starts 0x400 into
+                    # the block RAM initialiser rather than at its start.
+                    built = FIRMWARE_BIN.read_bytes()
+                    image = carried[IMAGE_ORIGIN:IMAGE_ORIGIN + len(built)]
+                    if image != built:
+                        emit("STALE BITSTREAM: it does not carry the firmware just "
+                             "built.")
+                        emit(f"  built:   {firmware_digest()} "
+                             f"({len(built)} bytes)")
+                        seen = hashlib.sha256(image).hexdigest()
+                        emit(f"  carried: {seen[:12]}")
+                        emit("Refusing to configure. The board would run firmware "
+                             "that is not this source, and every measurement taken "
+                             "from it would be wrong in a way nothing reports.")
+                        return 1
+                    emit(f"bitstream carries the firmware just built "
+                         f"({firmware_digest()})")
 
         if not BITSTREAM.exists():
             emit(f"no bitstream at {BITSTREAM.relative_to(ROOT)}")
