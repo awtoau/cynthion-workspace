@@ -147,8 +147,16 @@ and intermediate rates can be read off it.
   the case it exists for.
 - **Continuous Read is a further 5%.** Verified byte-exact with the opcode
   genuinely omitted, not just faster.
-- Against the SoC's current 30 MHz single-lane, 18.1 µs per line, `0xEB`
-  continuous at 144 MHz is **17.6× faster**.
+- **The SoC is not single-lane and no longer at 30 MHz.** That claim was true
+  when this table was written and is not now: `FLASH_MODE = "quad"` and
+  `SYNC_MHZ = 72`, so SCK is 36 MHz and the mmap core issues `0xEB`. Measured on
+  the board: **11.27 MB/s sequential, 5.68 µs per 64-byte line**, against the
+  4.18 µs this table models for `0xEB` at 36 MHz — the right regime, with about a
+  third of the overhead still unaccounted for.
+- So **the mode work is finished and only SCK is left**. Continuous Read is worth
+  a further 5% and is the last thing in the part's gift; everything beyond it is
+  a clock-architecture question, not a flash one. `0xEB` continuous at 144 MHz
+  would be 5.7× the current per-line time.
 
 ### Continuous Read is device state
 
