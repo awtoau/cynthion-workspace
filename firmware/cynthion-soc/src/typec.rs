@@ -106,7 +106,7 @@ impl Controllers {
         let mut all = true;
         for port in Port::ALL {
             match fusb302::configure(bus, port) {
-                Ok(()) => match fusb302::state(bus, port) {
+                Ok(()) => match fusb302::state(bus, port, fusb302::Bands::Read) {
                     Ok(state) => {
                         self.state[index(port)] = Some(state);
                         self.confirmed[index(port)] = Some(clock::now());
@@ -194,7 +194,9 @@ impl Controllers {
                     // drop, which is the bargain every other event takes.
                     events::push(events::TYPE_C_CAUSE, cause.payload(index) as u64);
 
-                    match fusb302::state(bus, port) {
+                    // An interrupt latched, so something moved: this is the one
+                    // place worth paying for a sweep. The poll below does not.
+                    match fusb302::state(bus, port, fusb302::Bands::Read) {
                         Ok(state) => {
                             // Dated on every successful read, including one that
                             // found nothing changed -- `announce` says nothing in
@@ -276,6 +278,30 @@ impl Controllers {
     /// interrupts about something this driver does not decode -- a PD message,
     /// a toggle -- does not produce a line saying nothing changed. An interrupt
     /// with no visible consequence is still visible in `typec`'s serviced count.
+
+    /// Fill in bands a `Bands::Skip` read did not measure, from the last one that
+    /// did.
+    ///
+    /// `Skip` returns `None` for both, meaning "not measured" -- which is the
+    /// truth about that read and the wrong thing to SHOW, because orientation did
+    /// not stop being known just because this particular look did not re-derive
+    /// it. Without this, `typec` and `board` would report `cc none` on every call
+    /// between attaches.
+    ///
+    /// Only fills; never overwrites. A read that DID measure is always preferred,
+    /// so a cable that moved is reported from the sweep that saw it move.
+    fn carry_bands(&self, port: Port, mut state: State) -> State {
+        if let Some(previous) = self.state[index(port)] {
+            if state.cc1.is_none() {
+                state.cc1 = previous.cc1;
+            }
+            if state.cc2.is_none() {
+                state.cc2 = previous.cc2;
+            }
+        }
+        state
+    }
+
     fn announce(&mut self, uart: &mut Uart, port: Port, state: State) {
         if self.state[index(port)] == Some(state) {
             return;
@@ -334,8 +360,14 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus:
         // `DEVICE_ID` and `STATUS0`, which have no read side effect and no window
         // around them. The registers that DO -- the three read-to-clear interrupt
         // ones -- have exactly one reader, and it is `service` above.
-        match fusb302::state(bus, port) {
+        // `Skip`: the command asks "what is it now", and VBUS and BC_LVL are read
+        // live to answer that. But orientation is not a "now" question -- it moved
+        // when the cable moved, and `service` read it then. Sweeping here would
+        // re-answer a settled question at the cost of an interrupt per invocation,
+        // and `board` and the 50 ms poll would each pay it too.
+        match fusb302::state(bus, port, fusb302::Bands::Skip) {
             Ok(state) => {
+                let state = controllers.carry_bands(port, state);
                 // The orientation and the two bands it was derived from, in that
                 // order. The verdict is what a reader wants and the bands are how
                 // they check it -- `cc2` beside `0/2` says which pin and why,

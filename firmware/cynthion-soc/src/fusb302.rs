@@ -535,12 +535,37 @@ impl fmt::Display for Interrupts {
 /// The read-only registers are unchanged in character: `DEVICE_ID`, `STATUS0`,
 /// `STATUS1A` and `CONTROL2` have no read side effect, so unlike [`clear`] this
 /// still takes nothing away from the thing that services an interrupt.
-pub fn state(bus: &mut Bus, port: Port) -> Result<State, bus::Error> {
+/// Whether [`state`] should move the measure select to read the second CC band.
+///
+/// **The sweep is neither free nor invisible to the part.** It writes `SWITCHES0`
+/// three times, and moving the select changes what the comparator sees, which the
+/// FUSB302B reports as `I_BC_LVL` -- an interrupt caused entirely by looking. It
+/// also costs five I2C transactions on a bus shared with the power monitor at
+/// 80 kHz.
+///
+/// Orientation only changes when a cable moves, so it is read on ATTACH and
+/// carried forward rather than re-derived every poll. Doing it per poll produced
+/// roughly 130 self-inflicted interrupts a second on this board.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Bands {
+    /// Read `STATUS0` with whatever select is already set. `cc1`/`cc2` come back
+    /// `None` -- "not measured", which a caller carries forward from its last
+    /// reading rather than treating as a change.
+    Skip,
+    /// Sweep both selects: the first look at a port, and after an interrupt says
+    /// something moved.
+    Read,
+}
+
+pub fn state(bus: &mut Bus, port: Port, bands: Bands) -> Result<State, bus::Error> {
     let device_id = read(bus, port, REG_DEVICE_ID)?;
     let control2 = read(bus, port, REG_CONTROL2)?;
     let switches0 = read(bus, port, REG_SWITCHES0)?;
 
-    let (status0, cc1, cc2) = if control2 & CONTROL2_TOGGLE != 0 {
+    // TOGGLE means the part resolves orientation itself and owns `SWITCHES0`;
+    // `Skip` means the caller already has bands and does not want them re-read.
+    // Either way there is no sweep, and nothing interrupts itself.
+    let (status0, cc1, cc2) = if control2 & CONTROL2_TOGGLE != 0 || bands == Bands::Skip {
         (read(bus, port, REG_STATUS0)?, None, None)
     } else {
         // Everything except the measure select, so each half of the sweep is the
