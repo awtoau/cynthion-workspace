@@ -751,4 +751,4 @@ after a 68 µs gateware timeout, not zeros.
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |
 | workspace CLI | [`cyn.md`](cyn.md) |
 
-- [Handing work to Codex](codex-agent.md) — delegating implementation over MCP, and the git limitation
+- [Handing work to Codex](codex-agent.md) — project-specific clauses and track record; canonical setup and brief rules live in `awto-dan/docs/codex/`

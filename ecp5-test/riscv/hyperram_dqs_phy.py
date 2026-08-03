@@ -137,8 +137,9 @@ class HyperRAMDQSPHY(Elaboratable):
         should be issued before this.
     """
 
-    def __init__(self, *, bus):
+    def __init__(self, *, bus, readclksel=0b010):
         self.bus = bus
+        self.readclksel = readclksel
         self.phy = HyperBusDQSPHY()
         self.dll_locked = Signal()
         self.dll_ready = Signal()
@@ -236,9 +237,9 @@ class HyperRAMDQSPHY(Elaboratable):
                 # Upstream's 0b010, kept: BURSTDET is what tells you whether it
                 # is right, and it is brought out below so a sweep can find out
                 # on hardware rather than here.
-                i_READCLKSEL0=0,
-                i_READCLKSEL1=1,
-                i_READCLKSEL2=0,
+                i_READCLKSEL0=self.readclksel[0] if hasattr(self.readclksel, "shape") else (self.readclksel >> 0) & 1,
+                i_READCLKSEL1=self.readclksel[1] if hasattr(self.readclksel, "shape") else (self.readclksel >> 1) & 1,
+                i_READCLKSEL2=self.readclksel[2] if hasattr(self.readclksel, "shape") else (self.readclksel >> 2) & 1,
 
                 i_RDLOADN=0,
                 i_RDMOVE=0,

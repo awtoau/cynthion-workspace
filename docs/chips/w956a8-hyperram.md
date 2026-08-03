@@ -310,8 +310,8 @@ single-ended.
 
 ## How software reaches it
 
-`HyperRAMInterface` / `HyperRAMPHY` from luna, used as-is and working. **There is
-no Wishbone peripheral, so a CPU cannot reach it at all** (#90).
+`HyperRAMInterface` / `HyperRAMPHY` from luna, with `HyperRAMWishbone` providing an
+8 MiB cached and executable CPU window at `0x20000000` (#90).
 
 The DQS path (#92) is upstream's controller with our PHY under it, which is the
 boundary [`../upstream-boundary.md`](../upstream-boundary.md) settles. **It has

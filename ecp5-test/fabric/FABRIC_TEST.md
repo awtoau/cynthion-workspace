@@ -102,8 +102,9 @@ Verified by trying it: the `0xdeadbeef` build was refused.
 
 **The detector might not fire at all.** A self-checking test that never reports
 a failure is indistinguishable from one that cannot.
-→ `fabric_control.py`, run against a `--golden 0xdeadbeef` build. Every round
-must mismatch, and did: 1575/1575, sticky flag set on all 200 reads.
+→ `fabric_control.py` sets the harness's runtime negative-control bit, which
+complements the same design-generated golden. Every round must mismatch. The
+recorded control reported 1575/1575 with the sticky flag set on all 200 reads.
 
 **A multi-configuration sweep could be one configuration built repeatedly.**
 Handing nextpnr a different `--seed` is an input, not a result; if it converges
@@ -130,11 +131,8 @@ every round mismatch.
 ./scripts/fabric_placement.py                # where the logic actually landed
 ./scripts/fabric_run.py --rounds 20000       # load into SRAM, check
 
-# negative control
-./scripts/fabric_build.py --golden 0xdeadbeef
-./scripts/fabric_run.py --rounds 100         # refuses, as designed
+# negative control, on the same configured design
 ./scripts/fabric_control.py                  # detector must fire
-./scripts/fabric_build.py                    # restore the real bitstream
 ```
 
 For many placements rather than one — build, load, test, aggregate, and run the

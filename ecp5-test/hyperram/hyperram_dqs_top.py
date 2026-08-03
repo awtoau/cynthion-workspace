@@ -279,7 +279,7 @@ class HyperRAMDQSBringup(Elaboratable):
 def main(argv):
     import argparse
 
-    here = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent.parent.parent
     parser = argparse.ArgumentParser(
         description="DQS bring-up for HyperRAM. Never programs the board.")
     parser.add_argument("--build", action="store_true",
@@ -293,7 +293,7 @@ def main(argv):
         return 0
 
     from cynthion_platform import CynthionPlatformRev1D4
-    out = here / f"dqs_build_{args.sync_mhz:g}"
+    out = root / "tmp" / "hyperram-dqs" / f"sync-{args.sync_mhz:g}"
     CynthionPlatformRev1D4().build(
         HyperRAMDQSBringup(sync_mhz=args.sync_mhz),
         build_dir=str(out),

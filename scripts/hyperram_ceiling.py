@@ -59,7 +59,8 @@ sys.path.insert(0, str(ROOT / "ecp5-test"))
 from hyperram.hyperram_ceiling_top import (  # noqa: E402
     APPLET_ID, BURST_WORDS, DIE_PRESENT, REG_BAD_GOT, REG_BAD_INDEX,
     REG_BAD_WANT, REG_CAPTURE_ADDR, REG_CAPTURE_DATA, REG_CLOCK, REG_CONFIG,
-    REG_DIE, REG_ERRORS, REG_ID, REG_READ_CYCLES, REG_STATUS, REG_WORDS,
+    REG_CONTROL, REG_DIE, REG_ERRORS, REG_ID, REG_READCLKSEL,
+    REG_READ_CYCLES, REG_STATUS, REG_WORDS,
     REG_WRITE_CYCLES, solve_pll)
 
 CONFIGURE = [sys.executable,
@@ -201,7 +202,7 @@ def poll(dut, target_words, handle, sync_hz, bytes_per_word):
     }
 
 
-def run_one(ck, dqs, sync, target_words, handle):
+def run_one(ck, dqs, sync, target_words, handle, readclksel=0b010):
     """Configure this rung and measure it. Returns a result dict."""
     tag = tag_of(ck, dqs)
     build_dir = BUILD_ROOT / tag
@@ -246,6 +247,9 @@ def run_one(ck, dqs, sync, target_words, handle):
                      f"{APPLET_ID:#010x} -- refusing to measure")
         return result
 
+    dut.registers.register_write(REG_READCLKSEL, readclksel)
+    result["readclksel"] = readclksel if dqs else None
+
     # The gateware states the clock it was built for. Checked against the host's
     # own idea rather than assumed: a rate computed from a requested frequency
     # that was not achieved is wrong by exactly the rounding error.
@@ -263,6 +267,20 @@ def run_one(ck, dqs, sync, target_words, handle):
     result["bytes_per_word"] = bytes_per_word
     result["burst_words"] = burst
 
+    # The control uses the same generator and comparator as the clean window,
+    # with only the internally-computed golden complemented. Every checked word
+    # must mismatch or a later zero-error result is silence, not evidence.
+    dut.registers.register_write(REG_CONTROL, 0)
+    dut.registers.register_write(REG_CONTROL, 0b11)
+    control = poll(dut, BURST_WORDS, handle, sync * 1e6, bytes_per_word)
+    result["negative_control"] = {
+        "words": control["words"], "errors": control["errors"],
+        "passed": (not control["stalled"] and
+                   control["errors"] == control["words"]),
+    }
+
+    dut.registers.register_write(REG_CONTROL, 0)
+    dut.registers.register_write(REG_CONTROL, 0b01)
     die_before = dut.registers.register_read(REG_DIE)
     window = poll(dut, target_words, handle, sync * 1e6, bytes_per_word)
     die_after = dut.registers.register_read(REG_DIE)
@@ -271,9 +289,9 @@ def run_one(ck, dqs, sync, target_words, handle):
     result.update(window)
     result["die_before"] = die_before & 0x3F if die_before & DIE_PRESENT else None
     result["die_after"] = die_after & 0x3F if die_after & DIE_PRESENT else None
-    result["dll_locked"] = bool(status & 1)
-    result["dll_ready"] = bool(status & 2)
-    result["burstdet"] = bool(status & 4)
+    result["dll_locked"] = bool(status & (1 << 4))
+    result["dll_ready"] = bool(status & (1 << 5))
+    result["burstdet"] = bool(status & (1 << 6))
     result["passes"] = (status >> 16) & 0xFFFF
 
     # Theoretical: eight data lines, DDR, at the part's own clock -- two bytes
@@ -283,7 +301,7 @@ def run_one(ck, dqs, sync, target_words, handle):
     result["read_pct"] = 100.0 * result["read_mbps"] / theoretical
     result["write_pct"] = 100.0 * result["write_mbps"] / theoretical
 
-    if status & 8:      # a mismatch was recorded; keep how it was wrong
+    if status & (1 << 7):  # a mismatch was recorded; keep how it was wrong
         result["first_bad"] = {
             "index": dut.registers.register_read(REG_BAD_INDEX),
             "got": dut.registers.register_read(REG_BAD_GOT),
@@ -295,7 +313,9 @@ def run_one(ck, dqs, sync, target_words, handle):
             capture.append(dut.registers.register_read(REG_CAPTURE_DATA))
         result["capture"] = capture
 
-    if window["stalled"]:
+    if not result["negative_control"]["passed"]:
+        result["verdict"] = "invalid control"
+    elif window["stalled"]:
         result["verdict"] = "stalled"
     elif window["errors"] == 0:
         result["verdict"] = "pass"
@@ -309,9 +329,11 @@ def run_one(ck, dqs, sync, target_words, handle):
 
     emit(handle,
          f"  CK {ck:>5.1f} {'DQS' if dqs else 'SDR':>3} sync {sync:>6.1f}  "
+         f"phase {readclksel if dqs else '-'}  "
          f"read {result['read_mbps']:>6.1f} MB/s ({result['read_pct']:>4.1f}%)  "
          f"write {result['write_mbps']:>6.1f}  "
          f"words {window['words']:>11,}  errors {window['errors']:>11,}  "
+         f"ctrl {'ok' if result['negative_control']['passed'] else 'FAIL'}  "
          f"{'BD' if result['burstdet'] else '--'}  "
          f"die {result['die_before']}->{result['die_after']}  "
          f"{result['verdict']}")
@@ -335,6 +357,9 @@ def main():
                         choices=["sdr", "dqs"])
     parser.add_argument("--words", type=int, default=DEFAULT_WORDS,
                         help="words per rung before a verdict")
+    parser.add_argument("--readclksel", type=int, nargs="+", default=[0b010],
+                        choices=range(8),
+                        help="DQSBUFM read phases to measure (default: 2)")
     parser.add_argument("--jobs", type=int, default=8,
                         help="parallel builds; the board is not involved")
     args = parser.parse_args()
@@ -377,7 +402,10 @@ def main():
             emit(handle, "\nrunning, ascending CK -- each rung is configured "
                          "into SRAM, which a power cycle undoes")
             for ck, dqs, sync in sorted(ladder, key=lambda r: (r[1], r[0])):
-                results.append(run_one(ck, dqs, sync, args.words, handle))
+                phases = args.readclksel if dqs else [0b010]
+                for phase in phases:
+                    results.append(run_one(ck, dqs, sync, args.words, handle,
+                                           readclksel=phase))
 
             RESULTS.write_text(json.dumps(results, indent=2))
             emit(handle, f"\nresults: {RESULTS}")

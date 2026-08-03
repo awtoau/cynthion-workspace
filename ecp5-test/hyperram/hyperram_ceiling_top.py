@@ -69,12 +69,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "riscv"))
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable,
-                      Instance, Module, ResetSignal, Signal)
+                      Instance, Module, Mux, ResetSignal, Signal)
 from amaranth.lib.memory import Memory
 
-from luna.gateware.interface.jtag import JTAGRegisterInterface
 from luna.gateware.interface.psram import (HyperRAMDQSInterface, HyperRAMPHY,
                                            HyperRAMInterface)
+
+from bist import BISTAddresses, BISTHarness
 
 
 APPLET_ID = 0x48524331   # "HRC1"
@@ -93,6 +94,10 @@ REG_CONFIG      = 11   # dqs flag, bytes/word, burst length
 REG_BAD_INDEX   = 12
 REG_BAD_GOT     = 13
 REG_BAD_WANT    = 14
+REG_CONTROL     = 15
+REG_READCLKSEL  = 16
+REG_ACTUAL      = 17
+REG_GOLDEN      = 18
 
 # Words per transaction. Set by tCSM (4 us, CR1[1:0] = 01b), not by preference:
 # CS# may not stay low longer than that or distributed refresh is starved. 128
@@ -270,6 +275,21 @@ class HyperRAMCeiling(Elaboratable):
         m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz,
                                           with_fast=self.dqs)
 
+        harness = BISTHarness(
+            applet_id=APPLET_ID,
+            addresses=BISTAddresses(
+                ident=REG_ID, control=REG_CONTROL, status=REG_STATUS,
+                checks=REG_WORDS, errors=REG_ERRORS,
+                actual=REG_ACTUAL, golden=REG_GOLDEN),
+            width=self.word_bits, negative_control=self.negative_control)
+        m.submodules.harness = harness
+
+        # DQSBUFM has eight phase selections. Keeping this in a JTAG parameter
+        # is what lets one configured design ask whether BURSTDET identifies a
+        # useful phase rather than rebuilding the same experiment eight times.
+        readclksel = Signal(3, init=0b010)
+        harness.add_register(REG_READCLKSEL, value_signal=readclksel)
+
         dll_locked = Signal(reset=1)
         dll_ready = Signal(reset=1)
         burstdet = Signal()
@@ -278,7 +298,8 @@ class HyperRAMCeiling(Elaboratable):
             from hyperram_dqs_phy import HyperRAMDQSPHY
             # `dir="-"`: this PHY drives raw pads. The pin map is the platform's.
             bus = platform.request("ram", 0, dir="-")
-            m.submodules.phy = phy = HyperRAMDQSPHY(bus=bus)
+            m.submodules.phy = phy = HyperRAMDQSPHY(
+                bus=bus, readclksel=readclksel)
             m.submodules.psram = psram = HyperRAMDQSInterface(phy=phy.phy)
             m.d.comb += [dll_locked.eq(phy.dll_locked),
                          dll_ready.eq(phy.dll_ready)]
@@ -292,17 +313,11 @@ class HyperRAMCeiling(Elaboratable):
             # released, which is the behaviour this path has always had.
             reset_assert = Signal()
 
-        registers = JTAGRegisterInterface(default_read_value=0xDEADBEEF)
-        m.submodules.registers = registers
-        registers.add_read_only_register(REG_ID, read=APPLET_ID)
-
         # Device word address. The controller advances internally within a burst,
         # so only the start address is issued; it steps by `burst_words` scaled to
         # the interface width, because one 32-bit DQS word is two device words.
         base = Signal(ADDRESS_BITS)
         index = Signal(range(self.burst_words + 1))
-        errors = Signal(32)
-        words_read = Signal(32)
         write_cycles = Signal(32)
         read_cycles = Signal(32)
         passes = Signal(16)
@@ -333,8 +348,8 @@ class HyperRAMCeiling(Elaboratable):
         # this is the negative control, in which case it is a value the part
         # cannot produce.
         checked_against = Signal(self.word_bits)
-        m.d.comb += checked_against.eq(~expected if self.negative_control
-                                       else expected)
+        m.d.comb += checked_against.eq(
+            Mux(harness.negative, ~expected, expected))
 
         m.d.sync += heartbeat.eq(heartbeat + 1)
         with m.If(burstdet):
@@ -362,13 +377,17 @@ class HyperRAMCeiling(Elaboratable):
         write_port = memory.write_port()
         read_port = memory.read_port(domain="sync")
         capture_addr = Signal(range(CAPTURE_DEPTH))
-        registers.add_register(REG_CAPTURE_ADDR, value_signal=capture_addr)
+        harness.add_register(REG_CAPTURE_ADDR, value_signal=capture_addr)
         m.d.comb += read_port.addr.eq(capture_addr)
 
         bad_index = Signal(32)
         bad_got = Signal(32)
         bad_want = Signal(32)
         bad_seen = Signal()
+
+        with m.If(harness.go):
+            m.d.sync += [bad_index.eq(0), bad_got.eq(0), bad_want.eq(0),
+                         bad_seen.eq(0)]
 
         with m.FSM():
             with m.State("RESET"):
@@ -426,10 +445,8 @@ class HyperRAMCeiling(Elaboratable):
                                      & (index < CAPTURE_DEPTH)),
                 ]
                 with m.If(psram.read_ready):
-                    m.d.sync += [index.eq(index + 1),
-                                 words_read.eq(words_read + 1)]
+                    m.d.sync += index.eq(index + 1)
                     with m.If(psram.read_data != checked_against):
-                        m.d.sync += errors.eq(errors + 1)
                         with m.If(~bad_seen):
                             m.d.sync += [
                                 bad_seen.eq(1),
@@ -463,29 +480,33 @@ class HyperRAMCeiling(Elaboratable):
         with m.If(dtr_bits[7]):
             m.d.sync += die.eq(Cat(*dtr_bits))
 
-        registers.add_read_only_register(REG_WRITE_CYCLES, read=write_cycles)
-        registers.add_read_only_register(REG_READ_CYCLES, read=read_cycles)
-        registers.add_read_only_register(REG_ERRORS, read=errors)
-        registers.add_read_only_register(REG_WORDS, read=words_read)
-        registers.add_read_only_register(REG_CAPTURE_DATA, read=read_port.data)
-        registers.add_read_only_register(REG_BAD_INDEX, read=bad_index)
-        registers.add_read_only_register(REG_BAD_GOT, read=bad_got)
-        registers.add_read_only_register(REG_BAD_WANT, read=bad_want)
-        registers.add_read_only_register(
+        m.d.comb += [
+            harness.busy.eq(1),
+            harness.done.eq(psram.idle & (recovery >= recovery_cycles)
+                            & (index == self.burst_words - 1)),
+            harness.check.eq(psram.read_ready),
+            harness.actual.eq(psram.read_data),
+            harness.golden.eq(expected),
+            harness.status_extra.eq(
+                Cat(dll_locked, dll_ready, burstdet_seen, bad_seen,
+                    Const(int(round(self.ck_mhz)) & 0xFF, 8), passes)),
+        ]
+
+        harness.add_read_only_register(REG_WRITE_CYCLES, read=write_cycles)
+        harness.add_read_only_register(REG_READ_CYCLES, read=read_cycles)
+        harness.add_read_only_register(REG_CAPTURE_DATA, read=read_port.data)
+        harness.add_read_only_register(REG_BAD_INDEX, read=bad_index)
+        harness.add_read_only_register(REG_BAD_GOT, read=bad_got)
+        harness.add_read_only_register(REG_BAD_WANT, read=bad_want)
+        harness.add_read_only_register(
             REG_DIE, read=Cat(die, Const(1, 1), Const(0, 23)))
-        registers.add_read_only_register(
+        harness.add_read_only_register(
             REG_CLOCK, read=Const(int(round(self.sync_mhz * 1000)), 32))
-        registers.add_read_only_register(
+        harness.add_read_only_register(
             REG_CONFIG, read=Cat(Const(1 if self.dqs else 0, 1),
                                  Const(0, 7),
                                  Const(self.bytes_per_word, 8),
                                  Const(self.burst_words, 16)))
-        registers.add_read_only_register(
-            REG_STATUS,
-            read=Cat(dll_locked, dll_ready, burstdet_seen, bad_seen,
-                     Const(0, 4), Const(int(round(self.ck_mhz)) & 0xFF, 8),
-                     passes))
-
         #
         # LEDs. Not the evidence -- the registers are -- but a board that shows
         # nothing is indistinguishable from a board that is not configured.
@@ -496,8 +517,8 @@ class HyperRAMCeiling(Elaboratable):
                 leds[0].o.eq(~dll_locked),                    # red:    no DLL
                 leds[1].o.eq(~burstdet_seen if self.dqs else 0),  # orange: no strobe
                 leds[2].o.eq(passes == 0),                    # yellow: first pass
-                leds[3].o.eq((passes != 0) & (errors == 0)),  # green:  clean
-                leds[4].o.eq(errors != 0),                    # blue:   mismatches
+                leds[3].o.eq((passes != 0) & ~harness.error), # green:  clean
+                leds[4].o.eq(harness.error),                  # blue:   mismatches
                 leds[5].o.eq(heartbeat[23]),                  # violet: alive
             ]
 
@@ -533,18 +554,17 @@ def main(argv):
         print(__doc__)
         return 0
 
-    from build_helpers import ecppack_opts
     from cynthion_platform import CynthionPlatformRev1D4
 
-    here = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent.parent.parent
     tag = "dqs" if args.dqs else "sdr"
-    out = args.build_dir or str(here / f"ceiling_{tag}_{args.sync_mhz:g}")
+    out = args.build_dir or str(
+        root / "tmp" / "hyperram-ceiling" / f"manual-{tag}-{args.sync_mhz:g}")
     design = HyperRAMCeiling(sync_mhz=args.sync_mhz, dqs=args.dqs,
                              negative_control=args.negative_control)
     print(f"sync {args.sync_mhz:g} MHz -> device CK {design.ck_mhz:g} MHz "
           f"({'DQS' if args.dqs else 'non-DQS'})")
-    CynthionPlatformRev1D4().build(design, build_dir=out, do_program=False,
-                                   **ecppack_opts())
+    CynthionPlatformRev1D4().build(design, build_dir=out, do_program=False)
     print(f"built into {out}")
     return 0
 

@@ -65,6 +65,7 @@ SIMS = [
     "sideband_advertise_sim",
     "soc_test",
     "qspi_burst_sim",
+    "bist_sim",
 ]
 
 RESET, BOLD, GREEN, RED, CYAN = (

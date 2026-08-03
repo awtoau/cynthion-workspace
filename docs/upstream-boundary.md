@@ -170,8 +170,10 @@ Two upstream defects are **left in place, deliberately**, both in the controller
   reprogrammed to variable latency — two changes, not one, and worth measuring rather than
   assuming.
 
-**Still open: the Wishbone peripheral (#90).** Nothing here settles it, because a bus
-adapter is ours by construction — there is no upstream one to take.
+**The Wishbone peripheral (#90) is workspace gateware.** `HyperRAMWishbone` wraps the
+upstream controller with a 32-bit memory port: full stores and reads are two-word
+HyperBus bursts, while partial stores read, merge and write because the upstream
+controller exposes no RWDS mask input.
 
 Three bugs were found in *our own* use of that interface, not in it: `final_word` must be
 held rather than pulsed, `perform_write`/`write_data` must be held for the whole transfer,

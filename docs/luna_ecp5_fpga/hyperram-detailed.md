@@ -472,7 +472,7 @@ and the gateware instrumentation that rules out the device are in
 
 | issue | what | blocked on |
 |---|---|---|
-| **#90** | Wishbone peripheral, so a CPU can reach the HyperRAM at all. There is a working low-level driver and no bus adapter, which is why the memory work stalled while the flash work did not | nothing -- design work, survey already done |
+| **#90** | Wishbone peripheral at `0x20000000`, 8 MiB, cached and executable; protocol and arbitration covered in `scripts/soc_hyperram_sim.py` | hardware throughput and post-decode timing |
 | **#92** | Bring up the DQS path. **Blocker removed and the design builds** — PHY, `fast` domain and a self-checking top; what remains is running it on the board and pushing the clock | a board, and time on it |
 | #91 | RISC-V bring-up | the SoC is silent; cause not established |
 | #109 | The capacity question above | **answered: 8 MiB against a declared 4.** What remains is retention over hours rather than milliseconds, and whether other boards behave the same |
