@@ -80,6 +80,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::AtomicU32;
 
 use crate::hyperram;
+use crate::memory;
 use crate::metrics;
 use crate::target;
 use crate::uart::Uart;
@@ -546,7 +547,12 @@ fn flash(uart: &mut Uart) {
 /// unbounded, and a dead port would therefore make the walks below take about a
 /// minute rather than fail -- which reads as a hung shell. See the same bound's
 /// comment in `src/hyperram.rs`, which exists for the same reason.
-fn hyper_present() -> bool {
+///
+/// `pub` for `src/memory.rs`: `hyperram read` needs the same distinction between
+/// "the port is dead" and "these words really are 0xffff", and one probe both
+/// commands share cannot answer that question two ways. It writes, so that module
+/// calls it only when a read came back ambiguous.
+pub fn hyper_present() -> bool {
     hyperram::seek_word(HYPER_BASE);
     hyperram::write_word(PATTERN as u16);
     hyperram::seek_word(HYPER_BASE);
@@ -612,26 +618,34 @@ pub fn command(uart: &mut Uart, rest: &[u8]) {
         "bench    mcycle at {} Hz; D-cache 4 KiB = 64 sets x 1 way x 64 B line",
         target::TIME_HZ
     );
-    match rest {
-        b"bram" => {
+    // No region is every region, so it is tested before the name is parsed.
+    if rest.is_empty() {
+        header(uart);
+        bram(uart);
+        flash(uart);
+        hyper(uart);
+        return;
+    }
+
+    // The name comes from `memory::Region`, which is also what `flash read` and
+    // its two siblings parse. Matching byte strings here as well would be a second
+    // list of the same three memories, free to drift from the first the moment a
+    // region is added or renamed -- and the shell would then accept a spelling for
+    // `bench` that `read` rejected.
+    match memory::Region::parse(rest) {
+        Some(memory::Region::Bram) => {
             header(uart);
             bram(uart);
         }
-        b"flash" => {
+        Some(memory::Region::Flash) => {
             header(uart);
             flash(uart);
         }
-        b"hyperram" => {
+        Some(memory::Region::Hyperram) => {
             header(uart);
             hyper(uart);
         }
-        b"" => {
-            header(uart);
-            bram(uart);
-            flash(uart);
-            hyper(uart);
-        }
-        _ => {
+        None => {
             let _ = writeln!(uart, "usage: bench [bram|flash|hyperram]");
         }
     }

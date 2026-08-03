@@ -285,6 +285,47 @@ pub const BOARD: Option<Board> = Some(Board {
 #[cfg(feature = "qemu")]
 pub const BOARD: Option<Board> = None;
 
+/// Where block RAM starts, and how much of it there is.
+///
+/// The WHOLE window, not this image's slice of it: on the board that is 64 KiB
+/// from 0, so the bootloader's first kilobyte -- and the boot status word at
+/// 0x3fc that `info` reports -- is inside it. `bram read 3fc` is then a way to
+/// see that word raw, next to the sentence `info` makes of it; bounding this to
+/// `_ram_start` would have put it out of reach for no gain.
+#[cfg(not(feature = "qemu"))]
+pub const BRAM_BASE: usize = cynthion_soc_pac::base::RAM;
+
+#[cfg(not(feature = "qemu"))]
+pub const BRAM_SIZE: usize = cynthion_soc_pac::base::RAM_SIZE;
+
+/// `virt`'s DRAM, from the device tree dumped in the comment on `PLIC_BASE`:
+/// `memory@80000000`. The length is `memory-qemu.x`'s RAM region and not the
+/// machine's whole 64 MiB -- the two must agree, because a bound larger than the
+/// linker script's would let a read wander outside the region this image was
+/// built for and call it block RAM.
+#[cfg(feature = "qemu")]
+pub const BRAM_BASE: usize = 0x8000_0000;
+
+#[cfg(feature = "qemu")]
+pub const BRAM_SIZE: usize = 0x0010_0000;
+
+/// How much HyperRAM the part holds: 8 MiB.
+///
+/// A size with no base, because nothing in this firmware reaches HyperRAM through
+/// the memory window at `cynthion_soc_pac::base::HYPERRAM`. Every access goes over
+/// the CSR staging port in `src/hyperram.rs`, whose spins are bounded -- see the
+/// comment on `Region::word` in `src/memory.rs` for why a shell command must take
+/// the bounded path.
+#[cfg(not(feature = "qemu"))]
+pub const HYPERRAM_SIZE: usize = cynthion_soc_pac::base::HYPERRAM_SIZE;
+
+/// The same bound on the target with no HyperRAM, so the code that checks against
+/// it compiles and runs identically. `virt` answers from the `.bss` stand-in in
+/// `src/hyperram.rs` for the first 63 KiB or so and reports "did not answer" above
+/// that, which is a real answer about the guard rather than a stub.
+#[cfg(feature = "qemu")]
+pub const HYPERRAM_SIZE: usize = 0x0080_0000;
+
 /// Memory-mapped configuration flash. Offset 0 holds the bitstream, which is why
 /// `615000ff` is a known-good value.
 ///

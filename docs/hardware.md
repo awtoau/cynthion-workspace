@@ -533,7 +533,8 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `check` | CPU arithmetic and two known flash words | — |
 | `info` | what this image is, what CPU it is on, what bitstream it is inside | below |
 | `selftest` | runs the CPU, the block RAM and each identity register | below |
-| `id`, `read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
+| `flash id`, `flash read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
+| `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories, same verb and same reply | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) |
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `time` | the 1 ms CLINT tick: uptime, `mtime`, and what the handler costs | below |

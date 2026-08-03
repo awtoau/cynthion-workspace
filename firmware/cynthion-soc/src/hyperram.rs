@@ -77,7 +77,11 @@ fn write_u32(word_addr: u32, value: u32) {
     write_word((value >> 16) as u16);
 }
 
-fn read_u32(word_addr: u32) -> u32 {
+/// `pub` for `src/memory.rs`, which reads one word for the shell's `hyperram read`
+/// and must assemble the halves exactly as the header above is assembled -- a
+/// second copy of the lo/hi convention could disagree with the bootloader about
+/// which half is which and nothing would catch it.
+pub fn read_u32(word_addr: u32) -> u32 {
     seek(word_addr);
     let lo = read_word() as u32;
     let hi = read_word() as u32;

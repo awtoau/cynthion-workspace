@@ -614,8 +614,12 @@ def main():
                       f"received in {REPLY_S}s: {show(reply) or '(nothing)'}")
                 return reply
 
-            listing = [b"help, ?", b"id", b"read <hex>", b"check", b"info",
-                       b"selftest", b"ports", b"irq", b"time", b"stats",
+            # Spelled as a user would type them, because that is what the listing
+            # is for: `flash id` and `bram read <hex>` are one command each, not a
+            # region column beside a verb column.
+            listing = [b"help, ?", b"flash id", b"flash read <hex>",
+                       b"bram read <hex>", b"hyperram read <hex>", b"check",
+                       b"info", b"selftest", b"ports", b"irq", b"time", b"stats",
                        b"bench [region]", b"log [n|tags]", b"board", b"led",
                        b"i2c", b"power", b"phy", b"typec", b"sideband",
                        b"load <hex>", b"reset"]
@@ -1540,6 +1544,83 @@ def main():
                         "instead of spinning on it")
             command("bench frobnicate", [b"usage: bench"],
                     "`bench` with an unknown region says how to call it")
+
+            # --- one word out of one memory ---------------------------------------
+            # `flash id`, and `read <hex>` on each of the three regions (#161).
+            #
+            # What this target can say is the SHAPE, and that is most of what the
+            # change was: that the same verb reaches all three regions, that each
+            # answer names the region it came from, that an offset is bounded per
+            # region rather than against one hardcoded 4 MiB, and that the two
+            # memories with nothing to identify say so instead of printing an
+            # empty line.
+            #
+            # It cannot say what the flash holds -- `target::flash_word` is a
+            # two-value stand-in here, the same one `check` uses -- so the two
+            # offsets asserted below are exactly the two that stand-in knows. On
+            # the board they are the bitstream header and a word 0x40 into it, and
+            # the assertion is then about real silicon without changing.
+            command("flash id", [b"flash @0 615000ff", b"4096 KiB"],
+                    "`flash id` reports the first word and the size of the window")
+            command("flash read 40", [b"flash @000040 2a558800"],
+                    "`flash read` names the region and the offset it read")
+            # Aligned DOWN to the containing word rather than refused: 0x42 is
+            # inside the word at 0x40, and the reply says 000040 so which word was
+            # read is never in doubt.
+            command("flash read 42", [b"flash @000040 2a558800"],
+                    "`flash read` aligns an unaligned offset and says so")
+
+            # The bound, per region, and flash is the one that matters: above
+            # 4 MiB the address aliases back onto offset 0, so an unchecked read
+            # past the end returns the bitstream header and looks like a
+            # successful read of somewhere else entirely.
+            command("flash read 400000", [b"past the end"],
+                    "`flash read` refuses an offset past the flash window")
+            command("bram read 100000", [b"past the end"],
+                    "`bram read` bounds against block RAM, not against flash")
+            command("hyperram read 800000", [b"past the end"],
+                    "`hyperram read` bounds against the 8 MiB part")
+
+            # Block RAM answers on every target: under QEMU offset 0 is the first
+            # word of this image's own region. The value is whatever the linker put
+            # there, so only the shape is asserted -- what is being checked is that
+            # a load reached memory and came back, not what it found.
+            command("bram read 0", [b"bram @000000"],
+                    "`bram read` reads block RAM and names the region")
+
+            # `flash id` is the only identify there is. HyperBus has no JEDEC
+            # sequence and fabric has no identity, so those two say why rather than
+            # being registered as commands that print nothing.
+            command("bram id", [b"bram has no id"],
+                    "`bram id` says there is nothing to identify")
+            command("hyperram id", [b"HyperBus carries no JEDEC id"],
+                    "`hyperram id` says HyperBus has no such thing")
+
+            # A region with no verb, and a verb with no number.
+            command("flash", [b"usage: flash read <hex offset>"],
+                    "a bare region name says how to call it")
+            command("bram read zz", [b"usage: bram read <hex offset>"],
+                    "a malformed offset is refused rather than read as zero")
+
+            # The HyperRAM read, and here the two targets genuinely differ.
+            #
+            # Under QEMU the backend is a `.bss` array of about 32k words, so byte
+            # offset 0x20000 -- word 0x10000, the area `bench` walks -- is above it
+            # and the port does not answer. That is the assertion worth having:
+            # every spin in `hyperram::read_word` is bounded, so a dead port
+            # produces a sentence in milliseconds instead of a shell that looks
+            # hung. The reply must also not be a plausible-looking `ffffffff`,
+            # which is why the firmware probes before believing that value.
+            #
+            # ON THE BOARD the port answers, so the same command must come back
+            # with a word rather than a refusal.
+            if board:
+                command("hyperram read 20000", [b"hyperram @020000"],
+                        "`hyperram read` reads the part over the staging port")
+            else:
+                command("hyperram read 20000", [b"hyperram did not answer"],
+                        "`hyperram read` reports a silent port instead of "
+                        "spinning on it")
 
             # --- backspace --------------------------------------------------------
             # Type a command with one wrong character, rub it out, and require the

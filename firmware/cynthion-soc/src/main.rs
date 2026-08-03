@@ -91,6 +91,7 @@ mod hyperram;
 mod info;
 mod irq;
 mod log;
+mod memory;
 mod metrics;
 mod plic;
 mod power;
@@ -420,14 +421,17 @@ fn banner(uart: &mut Uart) {
 const HELP: &[(&str, &str)] = &[
     ("bench [region]", "time bram, flash or hyperram"),
     ("board", "every connector, rail and controller"),
+    ("bram read <hex>", "one word of block RAM"),
     (
         "check",
         "arithmetic the compiler could have folded, at runtime",
     ),
+    ("flash id", "the first flash word, and the size"),
+    ("flash read <hex>", "one word of flash, by offset"),
     ("help, ?", "this list"),
     ("hrtest", "hyperram write/read walk"),
+    ("hyperram read <hex>", "one word over the staging port"),
     ("i2c [bus]", "scan a bus behind the mux"),
-    ("id", "the first flash word"),
     ("info", "image, memory, boot, cpu, gateware"),
     ("irq", "interrupt counts, per source"),
     ("led [n]", "the six LEDs"),
@@ -436,7 +440,6 @@ const HELP: &[(&str, &str)] = &[
     ("phy", "the USB PHYs"),
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
-    ("read <hex>", "one word from address <hex>"),
     ("reset", "jump to the reset vector"),
     ("selftest", "run every self-check"),
     ("sideband", "the sideband link"),
@@ -448,7 +451,7 @@ const HELP: &[(&str, &str)] = &[
 
 /// Width of the first column. One more than the longest entry above, so every
 /// description starts in the same place and none of them touch the name.
-const HELP_WIDTH: usize = 16;
+const HELP_WIDTH: usize = 20;
 
 fn help(uart: &mut Uart) {
     for (name, summary) in HELP {
@@ -478,12 +481,6 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
 
     match cmd {
         b"help" | b"?" => help(uart),
-        b"id" => {
-            // Reads through the memory map, which is the verified path. The JEDEC id
-            // itself needs the SPI controller, which the C firmware drives; this
-            // reports what the memory map can see.
-            let _ = writeln!(uart, "flash @0 {:08x}", flash_word(0));
-        }
         b"ports" => {
             // Answers "is the second UART actually there" without a bitstream rebuild.
             // SCR is eight bits of scratch that do nothing else, so writing a pattern
@@ -712,21 +709,6 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             );
         }
         b"sideband" => board_sideband(uart, rest),
-        b"read" => match parse_hex(rest) {
-            Some(offset) => {
-                // Bounded to the 4 MiB the flash actually holds. Above that the address
-                // aliases back onto offset 0, which would read as real data.
-                if offset >= 0x0040_0000 {
-                    let _ = writeln!(uart, "offset past 4 MiB; it would alias to 0");
-                } else {
-                    let word = flash_word(offset as usize & !3);
-                    let _ = writeln!(uart, "flash @{:06x} {:08x}", offset, word);
-                }
-            }
-            None => {
-                let _ = writeln!(uart, "usage: read <hex offset>");
-            }
-        },
         b"check" => {
             let a: u32 = 0x1234_5678;
             let b: u32 = 0x9abc_def0;
@@ -823,9 +805,17 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "restarting");
             reboot();
         }
-        _ => {
-            let _ = writeln!(uart, "unknown command; try `help`");
-        }
+        // `bram`, `flash` and `hyperram` are dispatched by asking the module that
+        // owns the region names, rather than by three arms here. Naming them in
+        // this match as well would make it a second list of the same memories, and
+        // `src/bench.rs` -- which takes the same three words -- would then have a
+        // third. One `parse` and this arm is the whole vocabulary.
+        _ => match memory::Region::parse(cmd) {
+            Some(region) => memory::command(uart, region, rest),
+            None => {
+                let _ = writeln!(uart, "unknown command; try `help`");
+            }
+        },
     }
 }
 
