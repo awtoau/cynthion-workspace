@@ -8,7 +8,9 @@
 //!     image      build.rs, through `env!("OUT_DIR")/build_info.rs`
 //!     tools      the compiler cargo used, its target triple and profile
 //!     memory     riscv-rt's linker symbols, so it follows `memory.x`
-//!     boot       the word `firmware/cynthion-boot` left at `target::BOOT_STATUS`
+//!     flash      the generated window, and `FLASH_CACHED` from the SoC script
+//!     boot       the linker's reset vector, and the word `cynthion-boot` left
+//!                at `target::BOOT_STATUS`
 //!     cpu        the core's own `misa` and identity CSRs
 //!     trap       `mstatus`, `mtvec`, and the PLIC's threshold and enables
 //!     gateware   a CSR in the bitstream (`ecp5-test/riscv/gateware_id.py`)
@@ -232,10 +234,35 @@ unsafe extern "C" {
     /// everything between it and `__sstack` is what the stack has to grow into.
     static __estack: u8;
     static __sstack: u8;
+    /// Where a reset lands: the bootloader at 0x0 on the board, this image's own
+    /// entry under QEMU. Taken from the linker for the same reason as the rest --
+    /// `memory.x` decides it, so printing a literal here could disagree with it.
+    static _reset_vector: u8;
 }
 
 fn at(symbol: &u8) -> u32 {
     (symbol as *const u8) as u32
+}
+
+/// Name the window `address` lives in, and where in it.
+///
+/// Written by address rather than by section name so that a section moving
+/// between block RAM and flash is reported by the move, not by remembering to
+/// edit a label. `.rodata` made exactly that move and the label was not edited.
+fn write_region(uart: &mut Uart, address: u32) {
+    match target::FLASH_WINDOW {
+        Some((base, size))
+            if (address as usize) >= base && (address as usize) < base + size =>
+        {
+            // The flash OFFSET, because that is the number a person needs: it is
+            // what `apollo flash-program --offset` was given and what a reflash
+            // must be given again. The mapped address alone does not say it.
+            let _ = write!(uart, "flash +{:x}", address as usize - base);
+        }
+        _ => {
+            let _ = write!(uart, "bram");
+        }
+    }
 }
 
 /// `info` -- everything the running image knows about itself.
@@ -249,8 +276,10 @@ fn at(symbol: &u8) -> u32 {
 /// It is read and rendered, never acted on. Nothing in this firmware behaves
 /// differently because of it.
 fn boot_status(uart: &mut Uart) {
+    // A continuation of the `boot` line above, which has already said where the
+    // reset vector and the image are; this line says what happened there.
     let Some(address) = target::BOOT_STATUS else {
-        let _ = writeln!(uart, "boot     no bootloader on this target");
+        let _ = writeln!(uart, "         no bootloader on this target");
         return;
     };
 
@@ -260,7 +289,7 @@ fn boot_status(uart: &mut Uart) {
     if word & 0xffff_ff00 != target::BOOT_STATUS_MARK {
         // No mark: the word is whatever block RAM initialised to. Reported as unknown
         // rather than decoded, because decoding it would invent an answer.
-        let _ = writeln!(uart, "boot     {:08x} at {:x}: no mark, nothing wrote a status",
+        let _ = writeln!(uart, "         {:08x} at {:x}: no mark, nothing wrote a status",
                          word, address);
         return;
     }
@@ -268,7 +297,7 @@ fn boot_status(uart: &mut Uart) {
     let code = (word & 0xff) as usize;
     let text = target::BOOT_STATUS_TEXT.get(code).copied()
         .unwrap_or("unknown code");
-    let _ = writeln!(uart, "boot     {} ({})", text, code);
+    let _ = writeln!(uart, "         {} ({})", text, code);
 }
 
 pub fn command(uart: &mut Uart) {
@@ -279,24 +308,54 @@ pub fn command(uart: &mut Uart) {
     let _ = writeln!(uart, "tools    {}  {} {}", build::RUSTC, build::TARGET,
                      build::PROFILE);
 
+    // One row per section, each carrying the window it is actually in.
+    //
+    // A table rather than a line of prose per section: four rows share one format
+    // string, which is cheaper in `.text` than four, and it makes the columns line
+    // up without any of them being padded by hand.
+    //
     // SAFETY: the linker's own symbols; only their addresses are taken.
-    let (text, rodata, data, bss) = unsafe {
-        (at(&__etext) - at(&__stext),
-         at(&__erodata) - at(&__srodata),
-         at(&__edata) - at(&__sdata),
-         at(&__ebss) - at(&__sbss))
+    let sections = unsafe {
+        [("text",   at(&__stext),   at(&__etext) - at(&__stext)),
+         ("rodata", at(&__srodata), at(&__erodata) - at(&__srodata)),
+         ("data",   at(&__sdata),   at(&__edata) - at(&__sdata)),
+         ("bss",    at(&__sbss),    at(&__ebss) - at(&__sbss))]
     };
+    for (name, start, size) in sections {
+        let _ = write!(uart, "memory   {:6} {:6} at {:08x}  ", name, size, start);
+        write_region(uart, start);
+        let _ = writeln!(uart);
+    }
+
     // SAFETY: as above.
     let (free, total) = unsafe {
         (at(&__sstack) - at(&__estack), at(&__sstack) - at(&__stext))
     };
-    let _ = writeln!(uart, "memory   text {} rodata {} data {} bss {}",
-                     text, rodata, data, bss);
     // "free" is what the stack grows into, so it is not all spare -- but it is
     // the number that says how much more firmware fits, which is the question
-    // this half of block RAM keeps forcing.
-    let _ = writeln!(uart, "         {} free of {} (stack grows down into it)",
+    // this half of block RAM keeps forcing. Both numbers are block RAM only, and
+    // now say so: `.rodata` is counted in neither, which is the whole point of
+    // having moved it and was invisible while the two lines sat together.
+    let _ = writeln!(uart, "         {} free of {} bram (stack grows down into it)",
                      free, total);
+
+    if let Some((base, size)) = target::FLASH_WINDOW {
+        let _ = writeln!(uart, "flash    window {:08x}+{:x}, {}", base, size,
+                         if target::FLASH_CACHED {
+                             "cached"
+                         } else {
+                             // Worth spelling out: uncached is not a small
+                             // constant factor here, and nothing else on screen
+                             // would hint at it.
+                             "uncached (a full SPI transaction per load)"
+                         });
+    }
+
+    // SAFETY: an address-only read of a linker-defined absolute symbol.
+    let _ = write!(uart, "boot     reset vector {:08x}, image at {:08x} in ",
+                   unsafe { at(&_reset_vector) }, unsafe { at(&__stext) });
+    write_region(uart, unsafe { at(&__stext) });
+    let _ = writeln!(uart);
 
     boot_status(uart);
 

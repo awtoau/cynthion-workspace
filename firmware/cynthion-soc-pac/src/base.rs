@@ -108,3 +108,12 @@ pub const PLIC_SIZE: usize = 0x00400000;
 pub const CLINT: usize = 0xf0800000;
 /// Size of the CLINT window, in bytes.
 pub const CLINT_SIZE: usize = 0x00010000;
+
+/// Whether the SPIFLASH window is cached (VexiiRiscv PMA `main`).
+///
+/// From `FLASH_CACHED` in the SoC script, not from the memory map:
+/// cacheability is a property of the CPU's region table, so no window
+/// description carries it. Uncached routes the window to the `iobus`,
+/// where every load is a full SPI command/address/dummy/data
+/// transaction and the I-cache cannot fetch from it at all.
+pub const SPIFLASH_CACHED: bool = false;

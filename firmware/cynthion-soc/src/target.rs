@@ -284,8 +284,12 @@ pub const BOARD: Option<Board> = Some(Board {
 #[cfg(feature = "qemu")]
 pub const BOARD: Option<Board> = None;
 
-/// Memory-mapped configuration flash, `main=1 exe=1` so the D-cache backs it.
-/// Offset 0 holds the bitstream, which is why `615000ff` is a known-good value.
+/// Memory-mapped configuration flash. Offset 0 holds the bitstream, which is why
+/// `615000ff` is a known-good value.
+///
+/// Whether the D-cache backs this window is `FLASH_CACHED` below, generated from
+/// the gateware. It used to be asserted here in prose, and the prose was wrong
+/// within a commit of the window being switched to uncached.
 ///
 /// Note for anyone reading both branches below: QEMU's `virt` puts its 16550 at
 /// this exact address. That collision is why flash is reached through
@@ -305,6 +309,34 @@ pub const FLASH_SIZE: usize = cynthion_soc_pac::base::SPIFLASH_SIZE;
 /// the window is a stand-in; the window is not.
 #[cfg(feature = "qemu")]
 pub const FLASH_SIZE: usize = 0x0040_0000;
+
+/// The flash window as `(base, size)`, for deciding whether an address is in it.
+///
+/// `info` classifies each linker symbol by which window it lands in rather than
+/// labelling sections from a table, so `.rodata` moving between block RAM and
+/// flash changes the report without changing the code that prints it. That
+/// property is the point: the previous report said `rodata 11548` on the same
+/// line as `of 64512` bytes of block RAM, months after `.rodata` had left it.
+///
+/// `None` under QEMU is the answer rather than a stub. `virt` has no flash,
+/// `memory-qemu.x` links `.rodata` into RAM, and 0x1000_0000 there is the 16550 --
+/// so there is no window to classify against and every section is correctly bram.
+#[cfg(not(feature = "qemu"))]
+pub const FLASH_WINDOW: Option<(usize, usize)> = Some((FLASH_BASE, FLASH_SIZE));
+
+#[cfg(feature = "qemu")]
+pub const FLASH_WINDOW: Option<(usize, usize)> = None;
+
+/// Whether the flash window is cached, generated from the SoC's own
+/// `FLASH_CACHED`. See `cynthion_soc_pac::base::SPIFLASH_CACHED`.
+#[cfg(not(feature = "qemu"))]
+pub const FLASH_CACHED: bool = cynthion_soc_pac::base::SPIFLASH_CACHED;
+
+/// Unreachable on this target -- `FLASH_WINDOW` is `None`, so nothing consults
+/// this -- but it must exist for the reporting code to compile once rather than
+/// twice.
+#[cfg(feature = "qemu")]
+pub const FLASH_CACHED: bool = false;
 
 /// One 32-bit word from the memory-mapped configuration flash.
 ///
