@@ -78,8 +78,8 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
              [PY, script("soc_test.py")], True),
 
     # The workspace checks -- rust, apollo, python, freethreading, socmap,
-    # irqlog, paths, gateware. `--parallel` is real here: the default
-    # interpreter is free-threaded.
+    # irqlog, paths. `--parallel` is real here: the default interpreter is
+    # free-threaded, though the whole set now runs in under a second.
     "lint": ("workspace checks: clippy, layout, generated-map drift, paths",
              [PY, script("check.py"), "--parallel"], True),
 

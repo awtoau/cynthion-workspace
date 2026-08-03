@@ -9,7 +9,7 @@ no cloud runners and no GitHub Actions.
     ./scripts/check.py                 # every check
     ./scripts/check.py rust python     # only the named checks
     ./scripts/check.py --list          # what is available
-    ./scripts/check.py --fast          # skip the slow ones (gateware)
+    ./scripts/check.py --fast          # skip any check marked slow (none are)
     ./scripts/check.py --parallel      # run independent checks concurrently
 
 Exit status is 0 only if every selected check passed, so this works
@@ -96,14 +96,6 @@ def _need(tool: str) -> Callable[[], Optional[str]]:
     def probe() -> Optional[str]:
         if shutil.which(tool) is None:
             return f"{tool} not on PATH"
-        return None
-    return probe
-
-
-def _need_dir(path: Path, what: str) -> Callable[[], Optional[str]]:
-    def probe() -> Optional[str]:
-        if not path.exists():
-            return f"{what} missing ({path.relative_to(ROOT)})"
         return None
     return probe
 
@@ -239,26 +231,15 @@ def build_checks() -> List[Check]:
                 Step([PYTHON, "scripts/private_path_check.py"], ROOT),
             ],
         ),
-        # Do NOT run this from repos/cynthion: that directory contains a
-        # 'cynthion/' subdirectory which Python picks up as a namespace package,
-        # shadowing the installed one (cynthion.__file__ becomes None, so
-        # 'cynthion.shared.usb' cannot resolve). The workspace root is safe, as
-        # is repos/cynthion/cynthion/python, which is what install.py uses.
-        Check(
-            name="gateware",
-            description="elaborate analyzer gateware (dry run)",
-            slow=True,
-            skip_reason=_need_dir(
-                Path.home() / "opt" / "oss-cad-suite", "OSS CAD Suite"),
-            steps=[
-                Step(["bash", "-c",
-                      f'source "$HOME/opt/oss-cad-suite/environment" && '
-                      f"LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2"
-                      f":CynthionPlatformRev0D2 "
-                      f"{PYTHON} -m cynthion.gateware.analyzer.top --dry-run"],
-                     ROOT),
-            ],
-        ),
+        # There is no `gateware` check. It elaborated
+        # `cynthion.gateware.analyzer.top` -- the USB analyzer bitstream inside
+        # repos/cynthion, which this repo does not build -- and it did so for
+        # `CynthionPlatformRev0D2`, while 43 references across scripts/ and
+        # ecp5-test/ target r1.4 and the board is r1.4.0. Upstream code, wrong
+        # board revision, and 17-50 s of a 17 s gate: ~98% of the wall time.
+        #
+        # The gateware this repo DOES build is checked by `socmap`, which
+        # elaborates ecp5-test/riscv/vexii_hello_soc.py in 0.7 s. See #169.
     ]
 
 

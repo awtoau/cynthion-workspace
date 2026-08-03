@@ -79,7 +79,7 @@ Do not add workflow files back. If something needs automating, extend
 ```bash
 ./scripts/check.py              # everything
 ./scripts/check.py rust python  # just those
-./scripts/check.py --fast       # skip slow checks (~4 s)
+./scripts/check.py --fast       # skip any check marked slow (none currently are)
 ./scripts/check.py --parallel   # concurrent
 ./scripts/check.py --list       # what is available, and what is unavailable here
 ```
@@ -93,7 +93,12 @@ Do not add workflow files back. If something needs automating, extend
 | `socmap` | the committed SVD still matches the SoC's memory map |
 | `irqlog` | no interrupt handler can reach a console |
 | `paths` | no tracked file names one machine's filesystem — this repo is public |
-| `gateware` | analyzer gateware elaboration (dry run), ~15 s |
+
+The whole set runs in well under a second. There was a `gateware` check that
+elaborated the upstream USB analyzer top out of `repos/cynthion` for
+`CynthionPlatformRev0D2` — upstream code, and a board revision this workspace
+does not target. It was ~98% of the runtime. The gateware this repo does build
+is covered by `socmap`, which elaborates the SoC itself. See #169.
 
 Exit status is 0 only if every selected check passed, so it works as a hook:
 
@@ -105,11 +110,11 @@ Each check writes its full output to `tmp/logs/check-<name>.log`. A check whose
 tooling is absent is reported as skipped, not failed, so the runner stays usable
 on a partially-provisioned machine.
 
-**Gotcha:** do not run gateware elaboration from `repos/cynthion/`. That directory
-contains a `cynthion/` subdirectory which Python treats as a namespace package,
-shadowing the installed one — `cynthion.__file__` becomes `None` and
-`cynthion.shared.usb` fails to resolve. The workspace root works, as does
-`repos/cynthion/cynthion/python`.
+**Gotcha:** do not run anything that imports `cynthion` from `repos/cynthion/`.
+That directory contains a `cynthion/` subdirectory which Python treats as a
+namespace package, shadowing the installed one — `cynthion.__file__` becomes
+`None` and `cynthion.shared.usb` fails to resolve. The workspace root works, as
+does `repos/cynthion/cynthion/python`.
 
 ## Python strategy
 
@@ -117,8 +122,9 @@ shadowing the installed one — `cynthion.__file__` becomes `None` and
 default `python3`. There is no virtualenv.**
 
 Free-threading is not incidental here: the parallel build path in
-`scripts/install.py` uses real threads, and gateware elaboration is the main
-beneficiary. A GIL-enabled interpreter works but serialises that work.
+`scripts/install.py` and `check.py --parallel` use real threads, and the
+firmware builds are the main beneficiary. A GIL-enabled interpreter works but
+serialises that work.
 
 | | |
 |---|---|

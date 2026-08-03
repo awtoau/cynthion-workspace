@@ -132,14 +132,17 @@ REPOS_MANIFEST = {
     "cynthion": {
         "path": _repo_path("cynthion"),
         "required": True,
-        "builds": ["moondancer-firmware", "gateware-analyzer", "gateware-facedancer"],
+        "builds": ["moondancer-firmware"],
     },
     # Only apollo and cynthion remain. facedancer, luna, packetry and saturn-v
     # were removed as submodules (#169): nothing here imported any of them, and
     # `luna` in particular was never the checkout -- `import luna` resolves to
     # site-packages, which is why the entry could sit here as required=False for
-    # as long as it did. "gateware-facedancer" above is unrelated: it is
-    # `cynthion.gateware.facedancer.top`, a target inside repos/cynthion.
+    # as long as it did.
+    #
+    # cynthion's "builds" no longer lists gateware-analyzer or
+    # gateware-facedancer: both elaborated an upstream top for r0.2 and neither
+    # is a bitstream this repo ships.
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,92 +588,19 @@ def build_moondancer_firmware(verbose: bool, dry_run: bool) -> bool:
         return False
 
 
-def build_gateware_analyzer(verbose: bool, dry_run: bool) -> bool:
-    """Build analyzer gateware (Amaranth elaboration)."""
-    section("Analyzer Gateware Build")
-
-    gw_dir = _repo_path("cynthion") / "cynthion" / "python"
-    if not gw_dir.exists():
-        log("Gateware directory not found", "ERROR")
-        return False
-
-    env_file = OSS_CAD_SUITE / "environment"
-    env_setup = f"source {env_file}" if OSS_CAD_SUITE.exists() else ""
-
-    cmd = [
-        "bash",
-        "-c",
-        f"{env_setup} && LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 "
-        f"{PYTHON} -m cynthion.gateware.analyzer.top --dry-run"
-    ]
-
-    log("Elaborating analyzer gateware...", "INFO")
-    result = run_cmd(cmd, cwd=gw_dir, verbose=verbose, dry_run=dry_run)
-
-    if result.success:
-        log("✓ Analyzer gateware elaborated successfully", "OK")
-        return True
-    else:
-        log("Analyzer gateware elaboration failed", "ERROR")
-        if not verbose:
-            print(f"  {result.stderr[-500:]}")
-        return False
+# build_gateware_analyzer and build_gateware_facedancer were here. Both
+# elaborated an upstream top inside repos/cynthion --
+# `cynthion.gateware.{analyzer,facedancer}.top` -- against
+# `CynthionPlatformRev0D2`, while everything this workspace builds targets r1.4
+# and the board is r1.4.0. Neither bitstream is one this repo ships, and the
+# analyzer one was 98% of the check runner's wall time. See #169.
+#
+# The facedancer builder also carried a hardcoded diagnostic for a luna_soc
+# SPIflash `Field` bug -- a known-broken build wired into the default flow,
+# reporting its own failure as expected. The SoC this repo does build goes
+# through soc_run.py, and socmap checks its memory map in 0.7 s.
 
 
-def build_gateware_facedancer(verbose: bool, dry_run: bool) -> bool:
-    """
-    Build facedancer gateware via Amaranth elaboration.
-
-    Args:
-        verbose: Show full command output
-        dry_run: Simulate build without executing
-
-    Returns:
-        True if elaboration successful, False otherwise
-    """
-    section("Facedancer Gateware Build")
-
-    gw_dir = _repo_path("cynthion") / "cynthion" / "python"
-    if not gw_dir.exists():
-        logger.error(f"Gateware directory not found: {gw_dir}")
-        return False
-
-    logger.debug(f"Gateware directory: {gw_dir}")
-
-    env_file = OSS_CAD_SUITE / "environment"
-    env_setup = f"source {env_file}" if OSS_CAD_SUITE.exists() else ""
-
-    if not OSS_CAD_SUITE.exists():
-        logger.error(f"OSS CAD Suite not found at {OSS_CAD_SUITE}")
-        logger.error("Install it with: ./scripts/install.py toolchain-install")
-        return False
-
-    cmd = [
-        "bash",
-        "-c",
-        f"{env_setup} && LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 "
-        f"{PYTHON} -m cynthion.gateware.facedancer.top --dry-run"
-    ]
-
-    logger.info("Elaborating facedancer gateware...")
-    logger.debug(f"Command: {' '.join(cmd)}")
-    result = run_cmd(cmd, cwd=gw_dir, verbose=verbose, dry_run=dry_run)
-
-    if result.success:
-        logger.info("✓ Facedancer gateware elaborated successfully")
-        return True
-    else:
-        logger.error(f"Facedancer gateware elaboration failed with exit code {result.returncode}")
-        # Check for known issues
-        if "Field collection must be a dict, list, or Field, not None" in result.stderr:
-            logger.error("Known issue: luna_soc SPIflash controller has incompatible Field definition")
-            logger.error("Probable cause: Facedancer uses SPIflash but current luna_soc version is broken")
-            logger.error("Workaround: Try analyzer-only build without SPIflash")
-            logger.debug(f"Full error: {result.stderr}")
-        else:
-            if result.stderr:
-                logger.error(f"Elaboration error (last 1000 chars): {result.stderr[-1000:]}")
-        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -719,8 +649,9 @@ def run_builds_parallel(args, max_workers: int = 4) -> bool:
     builds = [
         ("Apollo Firmware", build_apollo_firmware),
         ("moondancer Firmware", build_moondancer_firmware),
-        ("Analyzer Gateware", build_gateware_analyzer),
-        ("Facedancer Gateware", build_gateware_facedancer),
+        # No gateware entries: both elaborated upstream tops inside
+        # repos/cynthion for r0.2, a revision this workspace does not target
+        # (#169). The SoC this repo actually builds goes through soc_run.py.
     ]
 
     results = {}
@@ -782,12 +713,6 @@ def run_builds_sequential(args) -> bool:
         builds_ok = False
 
     if not build_moondancer_firmware(args.verbose, args.dry_run):
-        builds_ok = False
-
-    if not build_gateware_analyzer(args.verbose, args.dry_run):
-        builds_ok = False
-
-    if not build_gateware_facedancer(args.verbose, args.dry_run):
         builds_ok = False
 
     return builds_ok
