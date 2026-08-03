@@ -129,7 +129,7 @@ const _: () = assert!(UART_BASES.len() == UART_IRQS.len());
 /// symptom of forgetting is a "50 ms" poll that runs at 37 ms, which nothing
 /// fails on and nobody notices.
 #[cfg(not(feature = "qemu"))]
-pub const TIME_HZ: u32 = 60_000_000;
+pub const TIME_HZ: u32 = cynthion_soc_pac::base::SYNC_HZ;
 
 /// `virt`'s CLINT runs at 10 MHz -- `timebase-frequency = <0x989680>` in the
 /// device tree dumped in the comment on `PLIC_BASE` above. Read out of the
@@ -279,7 +279,7 @@ pub const BOARD: Option<Board> = Some(Board {
     sideband: cynthion_soc_pac::base::BOARD_SIDEBAND,
     i2c_mux: cynthion_soc_pac::base::BOARD_I2C_MUX,
     ulpi: cynthion_soc_pac::base::BOARD_ULPI,
-    i2c_prescale: 149,
+    i2c_prescale: cynthion_soc_pac::base::I2C_PRESCALE,
 });
 
 #[cfg(feature = "qemu")]

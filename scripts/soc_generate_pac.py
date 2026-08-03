@@ -672,7 +672,35 @@ def write_bases(peripherals, emit):
     # the window was switched to uncached, which is exactly the drift this
     # generator exists to remove.
     import vexii_hello_soc as soc_module
+    from i2c_master import prescale_for
+
+    # CLOCK-DERIVED CONSTANTS, generated for the reason today made expensive.
+    #
+    # `SYNC_MHZ` moved from 60 to 72 and two firmware constants had to move with
+    # it. `TIME_HZ` was caught, because `info` compares it against the gateware's
+    # own report and said "SYNC MISMATCH". The I2C prescale was NOT caught: there
+    # is no check, and its own comment names the symptom of forgetting -- "a bus
+    # that violates its own setup times and answers most of the time", which is
+    # intermittent and would have been blamed on the board.
+    #
+    # Neither is a constant anyone should be maintaining by hand. `prescale_for`
+    # is the gateware's own function, called here with the gateware's own clock,
+    # so the number the firmware uses is the number the hardware was built for.
+    sync_hz = round(soc_module.SYNC_MHZ * 1e6)
     lines += [
+        "/// The `sync` clock, in Hz, from the SoC's own `SYNC_MHZ`.",
+        "///",
+        "/// `rdtime` counts one per `sync` cycle, so this is the timebase for",
+        "/// every interval in the firmware. Hand-maintained it silently stretched",
+        "/// or shrank them all whenever the gateware clock moved.",
+        f"pub const SYNC_HZ: u32 = {sync_hz};",
+        "",
+        "/// I2C prescale for {} kHz SCL at that clock, from the gateware's own"
+        .format(soc_module.I2C_SCL_HZ // 1000),
+        "/// `prescale_for` -- `f_SCL = f_sync / (5 * (PRER + 1))`.",
+        f"pub const I2C_PRESCALE: u16 = "
+        f"{prescale_for(sync_hz, soc_module.I2C_SCL_HZ)};",
+        "",
         "/// Whether the SPIFLASH window is cached (VexiiRiscv PMA `main`).",
         "///",
         "/// From `FLASH_CACHED` in the SoC script, not from the memory map:",
