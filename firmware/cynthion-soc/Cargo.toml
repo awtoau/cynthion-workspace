@@ -41,11 +41,32 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 qemu = []
 
 [profile.release]
-# "z", not "s": this links into the 63 KiB image region of block RAM, and measured
-# on this firmware "z" is 1612 bytes smaller -- 5% of the whole region. Nothing
-# here is throughput-bound: the shell waits on a human, the 50 ms poll waits on
-# an I2C bus at 80 kHz, and `load` waits on USB. Space is the scarce quantity and
-# speed is not, so the size knob is turned all the way.
+# "z", and the reason is now SPEED, which is the opposite of why it was chosen.
+#
+# It used to read: "this links into the 63 KiB image region of block RAM ... space
+# is the scarce quantity and speed is not". Both halves stopped being true when
+# `.text` moved to flash. Block RAM went from 8,532 bytes free to 54,856, so space
+# is not scarce; and the CPU now fetches every instruction over SPI, so speed is.
+#
+# MEASURED ON THE BOARD (`./dev.py optlevel`, #167):
+#
+#     level   .text     ipc   flash seq   flash rnd
+#     z       36160   0.302     9.63 MB/s   0.66
+#     s       43348   0.171    11.11        0.68
+#     3       64576   0.056    11.57        0.65
+#
+# 79% more code costs 5.4x the IPC. The cause is the I-cache, not the link: 4 KiB,
+# direct-mapped, one way, against 36 KB of `.text` -- so code size drives the miss
+# rate almost directly, and every miss is a full quad-SPI transaction.
+#
+# The giveaway is the last two columns. Flash throughput RISES as the code grows,
+# 9.63 to 11.57 MB/s, because bigger code fetches longer runs. The link got
+# faster and the CPU got five times slower, which is only possible if what
+# changed is how often it has to go there.
+#
+# So "z" is right, decisively, for a reason nobody wrote down when it was chosen.
+# Re-measure with `./dev.py optlevel` if the cache geometry ever changes (#110) --
+# a bigger I-cache would move this and could move it a long way.
 opt-level = "z"
 lto = true
 codegen-units = 1

@@ -358,6 +358,12 @@ def cmd_diamond(extra: list[str]) -> int:
     return run_tool([PY, script("diamond.py")], extra)
 
 
+@command("build at each opt-level, flash, and measure IPC on the board (#167)",
+         args="[--levels z s 3] [--no-board]", kind="action")
+def cmd_optlevel(extra: list[str]) -> int:
+    return run_tool([PY, script("opt_level_sweep.py")], extra)
+
+
 @command("read every script in scripts/ and report what still reaches it",
          args="[--markdown] [--only live|cited|orphan]", kind="action")
 def cmd_audit(extra: list[str]) -> int:

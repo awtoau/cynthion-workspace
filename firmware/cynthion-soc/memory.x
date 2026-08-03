@@ -28,11 +28,13 @@
  * | region | origin     | length   | contents                              |
  * |--------|------------|----------|---------------------------------------|
  * | BOOT   | 0x00000000 | 1 KiB    | cynthion-boot, and its stack          |
- * | RAM    | 0x00000400 | 63 KiB   | .text, .data, .bss, stack             |
- * | FLASH  | 0x100b0000 | 3392 KiB | .rodata                               |
+ * | RAM    | 0x00000400 | 63 KiB   | .data, .bss, stack                    |
+ * | FLASH  | 0x100b0000 | 3392 KiB | .text, .rodata                        |
  *
- * The bitstream initialises block RAM only. It can carry the bootloader at 0x0 and the
- * shell's RAM segment at 0x400, but the flash segment must be programmed separately.
+ * The bitstream initialises block RAM only, and since `.text` moved to flash it carries
+ * the bootloader at 0x0 and NOTHING ELSE -- the block RAM artifact is 0 bytes. The whole
+ * image is programmed into flash separately, which is why a firmware change no longer
+ * needs a bitstream rebuild (`./dev.py fw`, ~6 s).
  *
  * HyperRAM staging still replaces only the block-RAM image. Its flat image format has
  * no way to install the flash segment, so `.rodata` must already be present in flash.
