@@ -90,6 +90,28 @@ GENERATE_FLAGS = [
     # LsuPlugin_logic_bus_* wires.
     "--fetch-wishbone", "--lsu-wishbone", "--lsu-l1-wishbone",
 
+    # HARDWARE PERFORMANCE COUNTERS, and they replace a night of inference.
+    #
+    # Four `mhpmcounter`s plus `mcycle` and `minstret`, selected by writing an
+    # event id to the matching `mhpmevent`. VexiiRiscv's own list
+    # (`misc/Service.scala`) includes the two that matter here:
+    #
+    #     0x04  STALLED_CYCLES_FRONTEND   waiting on INSTRUCTION fetch
+    #     0x05  STALLED_CYCLES_BACKEND    waiting on DATA
+    #     0x18  DCACHE_LOAD_ACCESS        loads that reached the D-cache
+    #
+    # `bench` measured HyperRAM at 13.3 MB/s when the bus was doing 63.1, because
+    # the walk's own loop is fetched from flash and the CPU spent 79% of every
+    # cache line stalled on instruction fetch rather than on the memory under
+    # test. `STALLED_CYCLES_FRONTEND` states that in one number instead of
+    # requiring four gateware probes and four wrong theories to corner it.
+    #
+    # Four is `ParamSimple`'s own default for the configurations that enable
+    # them. The plugin keeps 8-bit registers per counter and flushes into the
+    # 64-bit CSR RAM on MSB set, precisely so this is cheap on an FPGA -- and
+    # `zicntr`/`zihpm` are added to the reported ISA, which `info` will show.
+    "--performance-counters", "4",
+
     # RISC-V debug module, reached through the ECP5's EXISTING JTAG chain.
     #
     # --debug-jtag-instruction, not --debug-jtag-tap: the tap variant builds its own TAP

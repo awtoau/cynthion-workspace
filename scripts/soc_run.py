@@ -200,27 +200,58 @@ def split_sections(elf, emit):
     allocated but NOBITS, and asking objcopy for it produces nothing while making
     the artifact look like it should contain something.
     """
-    result = run(["riscv64-linux-gnu-readelf", "-S", "-W", str(elf)])
+    # `objdump -h`, not `readelf -S`, and the difference is the whole point.
+    #
+    # A section has two addresses: the VMA it RUNS at and the LMA it is LOADED
+    # at. `.data` is `> REGION_DATA AT > REGION_RODATA` -- it runs in block RAM
+    # and is loaded from flash, with riscv-rt copying it across at startup. So
+    # its VMA is 0x400 and its LMA is in the flash window.
+    #
+    # `objcopy -O binary` emits at LOAD addresses, so the grouping must use LMA.
+    # Classifying by VMA put `.data` in the block RAM artifact while objcopy
+    # emitted it at its flash LMA, and the resulting binary spanned both memories:
+    # 269,210,876 bytes for 76 bytes of content. Invisible until `.data` stopped
+    # being empty.
+    #
+    # `readelf -S` prints only the VMA, which is why this uses `objdump -h`.
+    result = run(["riscv64-linux-gnu-objdump", "-h", str(elf)])
     if result.returncode != 0:
-        emit("readelf failed; cannot decide which sections go where:")
+        emit("objdump failed; cannot decide which sections go where:")
         emit((result.stderr or result.stdout).strip()[-400:])
         return None, None
 
+    # ALLOC AND LOAD, from the flags line objdump prints under each section.
+    #
+    # Without this the walk picks up `.comment`, `.debug_*`, `.riscv.attributes`
+    # and `.bss` -- none of which are loaded into anything -- and groups them by
+    # an LMA of 0, which lands them in the block RAM image. The first version did
+    # exactly that and produced an artifact listing eleven sections that do not
+    # exist at runtime.
+    lines = result.stdout.splitlines()
     bram, flash = [], []
-    for line in result.stdout.splitlines():
-        # `  [ 2] .text  PROGBITS  100b0000 0000b0 0089a4 00  AX  0 0 4`
-        match = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+"
-                         r"[0-9a-f]+\s+([0-9a-f]+)\s+\S+\s+(\S*)", line)
+    for index, line in enumerate(lines):
+        flags = lines[index + 1] if index + 1 < len(lines) else ""
+        if "ALLOC" not in flags or "LOAD" not in flags:
+            continue
+        # ` 4 .data  00000036  00000400  100bd8fc  0000f400  2**2`
+        #        name    size       VMA       LMA      offset
+        match = re.match(r"\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+"
+                         r"([0-9a-f]+)\s+", line)
         if not match:
             continue
-        name, kind, addr, size, flags = match.groups()
-        if "A" not in flags or kind == "NOBITS" or int(size, 16) == 0:
+        name, size, lma = match.groups()
+        if int(size, 16) == 0:
             continue
-        address = int(addr, 16)
+        # ALLOC and not NOBITS: the flags are on the following line.
+        address = int(lma, 16)
+        if not name.startswith("."):
+            continue
         if FLASH_BASE <= address < FLASH_BASE + FLASH_SIZE:
             flash.append((address, name))
-        else:
+        elif address < 0x0001_0000:
             bram.append((address, name))
+        # Anything else -- debug sections, .comment, unallocated -- belongs to
+        # neither image and is dropped rather than guessed at.
 
     bram = [name for _, name in sorted(bram)]
     flash = [name for _, name in sorted(flash)]

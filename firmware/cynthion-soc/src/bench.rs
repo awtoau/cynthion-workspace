@@ -235,6 +235,7 @@ fn measure<F: FnOnce() -> u32>(accesses: u32, width: u32, body: F) -> (Run, u32)
 ///     set has been covered many times over.
 ///   * sequential: an increment, which walks 16 words per 64-byte line.
 #[inline(always)]
+#[inline(always)]
 fn step(state: &mut u32, mask: usize, random: bool) -> usize {
     if random {
         let mut x = *state;
@@ -405,6 +406,85 @@ mod probe {
     }
 }
 
+
+
+/// The CPU's own performance counters, which the core now carries (#173).
+///
+/// **This is the question a night of gateware probes could not settle**: is a
+/// tight loop stalling on instruction fetch? A five-instruction walk is 20 bytes
+/// against a 4 KiB I-cache, so after the first iteration it should be entirely
+/// hits -- and if it is not, the I-cache is not caching the flash window and that
+/// is a defect, not an artefact.
+///
+/// VexiiRiscv implements `mhpmcounter3..6` with an event selected by writing an
+/// id to the matching `mhpmevent`. The ids are its own
+/// (`vexiiriscv/misc/Service.scala`):
+///
+///     0x04  STALLED_CYCLES_FRONTEND   waiting on instruction fetch
+///     0x05  STALLED_CYCLES_BACKEND    waiting on data
+///     0x11  ICACHE_MISS
+///     0x19  DCACHE_LOAD_MISS
+///
+/// The plugin keeps 8-bit registers and flushes into the 64-bit CSR RAM when the
+/// MSB sets, so these are cheap on an FPGA -- but they cost timing: the design
+/// stopped closing at 72 MHz when they were added, which is why `SYNC_MHZ` is 60.
+mod hpm {
+    /// Event ids, from VexiiRiscv's own table.
+    pub const STALL_FRONTEND: u32 = 0x04;
+    pub const STALL_BACKEND: u32 = 0x05;
+    pub const ICACHE_MISS: u32 = 0x11;
+    pub const DCACHE_LOAD_MISS: u32 = 0x19;
+
+    /// Point the four counters at the events worth watching.
+    ///
+    /// Written once before a walk. `mcountinhibit` is left alone: the counters
+    /// free-run and the caller takes a difference, which is the same discipline
+    /// the gateware probes use.
+    pub fn select() {
+        // SAFETY: machine-mode CSR writes on a core generated
+        // `--performance-counters 4`, so 3..6 are implemented. Writing an
+        // unimplemented one would trap, which is why this does not loop further.
+        unsafe {
+            core::arch::asm!("csrw 0x323, {0}", in(reg) STALL_FRONTEND,
+                             options(nomem, nostack));
+            core::arch::asm!("csrw 0x324, {0}", in(reg) STALL_BACKEND,
+                             options(nomem, nostack));
+            core::arch::asm!("csrw 0x325, {0}", in(reg) ICACHE_MISS,
+                             options(nomem, nostack));
+            core::arch::asm!("csrw 0x326, {0}", in(reg) DCACHE_LOAD_MISS,
+                             options(nomem, nostack));
+        }
+    }
+
+    /// The four counters, low words. A walk is far under 2^32 of anything.
+    pub fn read() -> (u32, u32, u32, u32) {
+        let (a, b, c, d): (u32, u32, u32, u32);
+        // SAFETY: as above; reads of implemented machine CSRs.
+        unsafe {
+            core::arch::asm!("csrr {0}, 0xb03", out(reg) a, options(nomem, nostack));
+            core::arch::asm!("csrr {0}, 0xb04", out(reg) b, options(nomem, nostack));
+            core::arch::asm!("csrr {0}, 0xb05", out(reg) c, options(nomem, nostack));
+            core::arch::asm!("csrr {0}, 0xb06", out(reg) d, options(nomem, nostack));
+        }
+        (a, b, c, d)
+    }
+}
+
+/// **These walks are fetched from flash, and that bounds what they can report.**
+///
+/// `.text` moved to flash in #162 stage two, so a walk's own loop -- about five
+/// instructions per access -- comes from a part doing 11.27 MB/s. Measuring
+/// HyperRAM this way gave 13.3 MB/s while the bus was doing 63.1: the CPU spent
+/// 79% of every cache line stalled on instruction fetch rather than on the memory
+/// under test.
+///
+/// Putting the loop in block RAM via `.data.*` was tried and backed out: it works
+/// -- riscv-rt copies `.data` from flash to RAM at startup and block RAM is
+/// `exe=1` -- but it moves `.init.rust` to a RAM load address with no loader
+/// behind it now that the firmware does not travel in the bitstream.
+///
+/// The counters supersede it. `STALLED_CYCLES_FRONTEND` reports the fetch stall
+/// directly, so the artefact can be subtracted rather than engineered around.
 /// Read `accesses` 32-bit words from the HyperRAM MEMORY WINDOW.
 ///
 /// The other HyperRAM walk below goes through the CSR staging port, one register
@@ -695,9 +775,12 @@ fn hyper(uart: &mut Uart) {
         row(uart, "hyper win", "2 KiB", "read seq", &run);
         sum ^= got;
         probe::clear();
+        hpm::select();
+        let before = hpm::read();
         let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_SEQ_ACCESSES, false)
         });
+        let after = hpm::read();
         let (starts, beats, busy, want, arming, cyc) = probe::read();
         row(uart, "hyper win", "16 KiB", "read seq", &seq);
         sum ^= got;
@@ -727,6 +810,20 @@ fn hyper(uart: &mut Uart) {
                 uart,
                 "hyper win  per line: cyc {}  busy {}  want {}  arming {}  (cycles)",
                 cyc / starts, busy / starts, want / starts, arming / starts);
+
+            // THE CPU'S OWN ACCOUNT, over the same walk. `front` is cycles
+            // stalled on instruction fetch: a five-instruction loop in a 4 KiB
+            // I-cache should show almost none, and anything else means the
+            // I-cache is not holding the flash window.
+            let front = after.0.wrapping_sub(before.0);
+            let back = after.1.wrapping_sub(before.1);
+            let imiss = after.2.wrapping_sub(before.2);
+            let dmiss = after.3.wrapping_sub(before.3);
+            let _ = writeln!(
+                uart,
+                "hyper win  per line: front-stall {}  back-stall {}  \
+                 icache-miss {}  dcache-miss {}",
+                front / starts, back / starts, imiss / starts, dmiss / starts);
         }
         if starts > 0 {
             let per = (beats * 100) / starts;
