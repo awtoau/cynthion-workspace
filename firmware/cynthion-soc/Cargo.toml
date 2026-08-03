@@ -5,19 +5,9 @@ edition = "2021"
 license = "BSD-3-Clause"
 description = "Shell firmware for our VexiiRiscv SoC, on Cynthion r1.4 hardware"
 
-# Current crates, and there is nothing upstream to track.
-#
-# This used to read as a live decision about whether to follow moondancer's pins
-# (riscv-rt 0.11, riscv 0.10) and lunasoc-hal's `embedded-hal =1.0.0-alpha.9`. That
-# question is long settled: this is our SoC, with our memory map, our PAC generated
-# from it, our bootloader and our peripherals. There is no shared dependency surface
-# left to drift from. `docs/upstream-boundary.md` holds the policy -- GSG code is
-# reserved for what is genuinely Cynthion-specific, and three defects traced to
-# luna_soc are why.
-#
-# Kept as a note rather than deleted because the alpha is a real trap for anyone who
-# does go looking: `embedded-hal =1.0.0-alpha.9`'s serial traits were REMOVED before
-# 1.0 shipped, so a crate pinned there cannot be moved forward incrementally.
+# Current versions, because nothing constrains us to older ones. This is our SoC and
+# our memory map, so there is no upstream to stay compatible with.
+# `docs/upstream-boundary.md` has the policy.
 #
 # No HAL crate at all: the console needs core::fmt::Write, which is in core. That is
 # what makes writeln! work, and it is about six lines to implement.
@@ -40,40 +30,32 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 #
 # Off by default, and it must stay that way: the hardware image is the product, and a
 # feature that had to be remembered on every build would eventually be forgotten on one.
-# The feature switches src/target_soc.rs for src/target_qemu.rs and the HyperRAM MMIO
-# primitives for a RAM array -- nothing else. scripts/soc_test.py drives it, and pairs it
-# with memory-qemu.x; building it by hand without that linker script links .text at 0,
-# where virt has no memory, and produces an image that traps on the first fetch.
+#
+# It switches the `#[cfg]` branches in src/target.rs -- addresses, and a flash stand-in
+# -- and the HyperRAM MMIO primitives for a RAM array. Nothing else, deliberately: the
+# QEMU gate is only evidence about the board while the two builds share source.
+#
+# scripts/soc_test.py drives it and pairs it with memory-qemu.x. Building it by hand
+# without that linker script links .text into the flash window, where virt has no
+# memory, and produces an image that traps on the first fetch.
 [features]
 qemu = []
 
 [profile.release]
-# "z", and the reason is now SPEED, which is the opposite of why it was chosen.
-#
-# It used to read: "this links into the 63 KiB image region of block RAM ... space
-# is the scarce quantity and speed is not". Both halves stopped being true when
-# `.text` moved to flash. Block RAM went from 8,532 bytes free to 54,856, so space
-# is not scarce; and the CPU now fetches every instruction over SPI, so speed is.
-#
-# MEASURED ON THE BOARD (`./dev.py optlevel`, #167):
+# "z" for SPEED, not size. Measured on the board (`./dev.py optlevel`, #167):
 #
 #     level   .text     ipc   flash seq   flash rnd
 #     z       36160   0.302     9.63 MB/s   0.66
 #     s       43348   0.171    11.11        0.68
 #     3       64576   0.056    11.57        0.65
 #
-# 79% more code costs 5.4x the IPC. The cause is the I-cache, not the link: 4 KiB,
-# direct-mapped, one way, against 36 KB of `.text` -- so code size drives the miss
-# rate almost directly, and every miss is a full quad-SPI transaction.
+# 79% more code costs 5.4x the IPC. It is the I-cache, not the link: 4 KiB,
+# direct-mapped, one way, against 36 KB of `.text`, and every miss is a full
+# quad-SPI transaction. Note flash throughput RISES as the code grows -- the link
+# got faster while the CPU got five times slower, so what changed is how often it
+# has to go there.
 #
-# The giveaway is the last two columns. Flash throughput RISES as the code grows,
-# 9.63 to 11.57 MB/s, because bigger code fetches longer runs. The link got
-# faster and the CPU got five times slower, which is only possible if what
-# changed is how often it has to go there.
-#
-# So "z" is right, decisively, for a reason nobody wrote down when it was chosen.
-# Re-measure with `./dev.py optlevel` if the cache geometry ever changes (#110) --
-# a bigger I-cache would move this and could move it a long way.
+# Re-measure if the cache geometry changes (#110).
 opt-level = "z"
 lto = true
 codegen-units = 1
