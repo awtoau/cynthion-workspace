@@ -47,10 +47,8 @@ plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
 | `repos/apollo` | awtoau/awto-apollo | greatscottgadgets/apollo | Apollo ARM MCU firmware (C/TinyUSB) |
 | `repos/luna` | awtoau/awto-luna | greatscottgadgets/luna | LUNA USB gateware library |
 | `repos/saturn-v` | awtoau/awto-saturn-v | greatscottgadgets/saturn-v | Apollo DFU bootloader |
-| `repos/facedancer` | awtoau/awto-facedancer | greatscottgadgets/facedancer | Patched Facedancer host library |
 | `repos/packetry` | awtoau/awto-packetry | greatscottgadgets/packetry | USB capture + analysis tool |
 | `repos/cynthion-hardware` | awtoau/awto-cynthion-hardware | greatscottgadgets/cynthion-hardware | KiCad schematics and PCB layout |
-| `app/` | *(in-tree)* | — | Flutter dashboard — topology graph, TTY log, power rails |
 
 ## Local mirrors
 
@@ -95,7 +93,6 @@ Do not add workflow files back. If something needs automating, extend
 | `apollo` | SAMD11 firmware build + size report |
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
-| `flutter` | `analyze` + `test` (reported, non-blocking) |
 | `socmap` | the committed SVD still matches the SoC's memory map |
 | `irqlog` | no interrupt handler can reach a console |
 | `paths` | no tracked file names one machine's filesystem — this repo is public |
@@ -130,7 +127,7 @@ beneficiary. A GIL-enabled interpreter works but serialises that work.
 |---|---|
 | Interpreter | CPython **3.15t** free-threaded |
 | Environment | System / default — no venv to create or activate |
-| Install | `python3 -m pip install -e repos/cynthion/cynthion/python -e repos/facedancer` |
+| Install | `python3 -m pip install -e repos/cynthion/cynthion/python` |
 | Verify | `python3 -c "import sys; print(sys._is_gil_enabled())"` → `False` |
 | Override | `CYN_PYTHON=/path/to/python` |
 

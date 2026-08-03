@@ -139,11 +139,9 @@ REPOS_MANIFEST = {
         "required": False,
         "builds": [],
     },
-    "facedancer": {
-        "path": _repo_path("facedancer"),
-        "required": False,
-        "builds": [],
-    },
+    # No "facedancer" entry: the submodule was removed (#169). Nothing here
+    # imported the package. "gateware-facedancer" above is unrelated -- it is
+    # `cynthion.gateware.facedancer.top`, a target inside repos/cynthion.
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

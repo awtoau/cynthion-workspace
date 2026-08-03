@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "check_doc_links.log"
 
-SKIP_PREFIXES = ("repos/", "debris/", "app/", "tmp/")
+SKIP_PREFIXES = ("repos/", "debris/", "tmp/")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 
