@@ -76,13 +76,21 @@ channel, with 18.7 k ±1% dividers alongside.
 | | Value |
 |---|---|
 | VBUS full scale | 0–32 V, 16-bit → **488.3 µV/LSB** |
-| VSENSE full scale | 0–100 mV, 16-bit → 1.526 µV/LSB |
-| Current per LSB | 1.526 µV ÷ 20 mΩ = **76.3 µA/LSB** |
-| Max current | 100 mV ÷ 20 mΩ = **5 A** |
+| VSENSE full scale | **−100 to +100 mV**, signed 16-bit → 3.052 µV/LSB |
+| Current per LSB | 3.052 µV ÷ 20 mΩ = **152.588 µA/LSB** |
+| Current range | nominally **−5 A to +5 A** |
 
-All four channels read `NEG_PWR_FSR` (`0x1D`) = `0x0000`, i.e. unipolar — the POR
-default. Bipolar mode would halve the effective range, so this is worth re-checking
-if the configuration is ever changed.
+Firmware writes `NEG_PWR_FSR` (`0x1D`) as `0x5500`: every `CFG_VSn=01` selects
+bipolar ±100 mV, while every VBUS field remains unipolar. DS20006539B section
+5.9 and Table 5-2 (pages 25–26) specify two's-complement results with a 2¹⁵
+denominator. Bipolar ±50 mV is the separate FSR/2 mode; that mode would halve
+the range to ±2.5 A, but it is not selected. Register 7-11 (page 52) defines all
+four channel fields.
+
+This configuration is required by the bidirectional passthrough. With a phone
+drawing about 430 mA from TARGET-C on 2026-08-03, CONTROL reported +472.946 mA
+while TARGET-C clamped at 0.000 mA in unipolar mode. The repeatable bipolar check
+is equal magnitudes with opposite signs on those two ports.
 
 ## Register map
 
@@ -118,6 +126,9 @@ are known. In a streaming path a size mismatch would silently produce
 plausible-looking wrong numbers, so the size is explicit in the API.
 
 ## Measured results
+
+The measurements in this section predate bipolar configuration and are retained
+as bring-up evidence.
 
 Board attached via CONTROL and AUX, nothing on the TARGET ports:
 
@@ -222,15 +233,15 @@ would never announce anything however far it travelled.
 
 The floor exists because an unplugged rail measures 0.76–0.92 mA of ADC offset
 here, and without it that noise walks across a threshold and emits change events
-from a port with nothing in it. 10 mA by default — an order of magnitude above the
-offset, a factor of three below the smallest real draw measured (29 mA).
+from a port with nothing in it. It is an **absolute-current magnitude**: both
++20 mA and −20 mA cross a 10 mA floor. Direction never determines whether a
+real load is called connected.
 
 **The conversions are exact integer rationals, not approximations.** VBUS
-millivolts are `raw × 125 / 256` (32 V / 65536 = 488.28125 µV/LSB) and current in
-microamps is `raw × 78125 / 1024` (0.1 V / 65536 / 20 mΩ = 76.2939453125 µA/LSB).
-No floating point is linked into a 64 KiB block RAM, and there is no rounding
-constant to drift. The current multiply is done in `u64` because 65535 × 78125
-overflows 32 bits — at high current, which is exactly when a wrong number matters.
+millivolts are `raw × 125 / 256`. Current decodes the raw word as two's
+complement and scales its magnitude by `78125 / 512` µA per code, directly from
+the datasheet's 5 A full scale and 2¹⁵ denominator. Magnitude-first arithmetic
+makes equal positive and negative codes report equal magnitudes.
 
 Background lines go to the **USB console only**. The Apollo-facing port's TX pin
 is JTAG TMS, and a background monitor transmitting there unbidden is bus

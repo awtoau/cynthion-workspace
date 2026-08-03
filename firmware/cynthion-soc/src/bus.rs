@@ -130,6 +130,13 @@ impl Bus {
         self.i2c.write_register(address, register, value)
     }
 
+    /// Write consecutive bytes to one device register pointer.
+    pub fn write_registers(&mut self, bus: u8, address: u8, register: u8,
+                           values: &[u8]) -> Result<(), Error> {
+        self.mux.select(bus);
+        self.i2c.write_registers(address, register, values)
+    }
+
     /// SMBus Send Byte: one byte with no register pointer in front of it.
     ///
     /// The PAC1954's REFRESH is one of these. See [`i2c::I2c::send_byte`] for why

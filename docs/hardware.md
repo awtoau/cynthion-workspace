@@ -669,7 +669,8 @@ is the rendering on the board with nothing fed into it.
 **`power`** reads all four rails on demand and prints, per port, bus volts,
 current in milliamps, and whether that port is above its own floor. Units are
 volts and milliamps throughout; the floor is set in milliamps and stored in
-microamps.
+microamps. Current is signed on every channel; the floor compares its absolute
+magnitude, so equal source and sink currents have the same connected state.
 
 Separately, the firmware **polls the monitor every 50 ms in the background** and
 prints a line only when a rail moves by **100 mA or more**, or crosses its floor

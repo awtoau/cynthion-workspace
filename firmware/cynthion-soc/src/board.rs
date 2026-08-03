@@ -188,14 +188,16 @@ fn rail(uart: &mut Uart, stem: &str, channel: usize, sample: Option<&Sample>,
     }
     let _ = write!(uart, "{:2}.{:03} V ", reading.bus_mv / 1000,
                    reading.bus_mv % 1000);
-    if reading.current_ua < floor {
+    let magnitude = reading.current_ua.unsigned_abs();
+    if magnitude < floor {
         // An unplugged rail measures 0.76-0.92 mA of ADC offset on this board,
         // so a small number here is noise wearing the shape of a measurement.
         let _ = writeln!(uart, "     --  mA   no load (under {} mA)",
                          floor / 1000);
     } else {
-        let _ = writeln!(uart, "{:4}.{:03} mA", reading.current_ua / 1000,
-                         reading.current_ua % 1000);
+        let _ = writeln!(uart, "{}{}.{:03} mA",
+                         if reading.current_ua < 0 { "-" } else { " " },
+                         magnitude / 1000, magnitude % 1000);
     }
 }
 

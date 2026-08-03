@@ -775,7 +775,8 @@ def run_firmware_checks(checks, root):
         "can never fire is a lie about how the system works.")
 
     # The select: written by every transfer in `Bus`, and by nothing else.
-    for method in ("probe", "read_registers", "write_register", "send_byte"):
+    for method in ("probe", "read_registers", "write_register",
+                   "write_registers", "send_byte"):
         found = re.search(r"pub fn " + method + r"\(.*?\n    \}", bus, re.S)
         body = found.group(0) if found else ""
         checks.check(

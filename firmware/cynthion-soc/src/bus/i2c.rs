@@ -313,14 +313,21 @@ impl I2c {
     pub fn write_register(&self, address: u8, register: u8, value: u8)
         -> Result<(), Error>
     {
-        let result = self.write_register_inner(address, register, value);
+        self.write_registers(address, register, &[value])
+    }
+
+    /// Write consecutive bytes to one register pointer.
+    pub fn write_registers(&self, address: u8, register: u8, values: &[u8])
+        -> Result<(), Error>
+    {
+        let result = self.write_registers_inner(address, register, values);
         if result.is_err() {
             self.release();
         }
         result
     }
 
-    fn write_register_inner(&self, address: u8, register: u8, value: u8)
+    fn write_registers_inner(&self, address: u8, register: u8, values: &[u8])
         -> Result<(), Error>
     {
         self.put(address << 1);
@@ -331,9 +338,13 @@ impl I2c {
         if self.command(CR_WR)? & SR_RXACK != 0 {
             return Err(Error::Nack);
         }
-        self.put(value);
-        if self.command(CR_WR | CR_STO)? & SR_RXACK != 0 {
-            return Err(Error::Nack);
+        let last = values.len() - 1;
+        for (index, &value) in values.iter().enumerate() {
+            self.put(value);
+            let command = CR_WR | if index == last { CR_STO } else { 0 };
+            if self.command(command)? & SR_RXACK != 0 {
+                return Err(Error::Nack);
+            }
         }
         Ok(())
     }

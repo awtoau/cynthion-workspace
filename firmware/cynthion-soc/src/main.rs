@@ -306,6 +306,10 @@ fn main() -> ! {
     if let Some(bus) = devices.bus.as_mut() {
         bus.init();
 
+        // Uniform bipolar VSENSE: any port can source or sink through the
+        // bidirectional switch tree. A failed write is retried by the poller.
+        let _ = devices.power.configure(bus);
+
         // Both Type-C controllers, configured so they interrupt on a state
         // change rather than needing to be polled. AFTER the controller is set
         // up, obviously, and BEFORE `irq::init()`, so that nothing is asserting
@@ -894,15 +898,13 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             }
         };
         match parse_decimal(value) {
-            // Milliamps in, microamps stored. The limit is what a `u32` of
-            // microamps can hold, which is 4294 mA -- below the part's own 5 A
-            // full scale, so a floor above this could never be crossed anyway
-            // and is a typo rather than a request.
-            Some(milliamps) if milliamps <= 4294 =>
+            // A floor is a magnitude. The bipolar full-scale current is 5 A,
+            // so anything higher can never be crossed.
+            Some(milliamps) if milliamps <= 5000 =>
                 devices.power.set_floor(channel, milliamps * 1000),
             _ => {
                 let _ = writeln!(uart, "usage: power floor <port> <mA>  \
-                                        (0..4294)");
+                                        (0..5000)");
                 return;
             }
         }
@@ -940,7 +942,7 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
                 // A space, not a stamp: this is the reply to a typed command.
                 // The indent it produces is the one the rows always had.
                 power::report(uart, &" ", channel, &sample.readings[channel],
-                              sample.readings[channel].current_ua >= floor);
+                              sample.readings[channel].current_ua.unsigned_abs() >= floor);
             }
         }
         // No rails printed, rather than zeros or dashes. Two polls after reset

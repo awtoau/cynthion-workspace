@@ -80,6 +80,11 @@ pub const ADDRESS: u8 = 0x10;
 /// Send Byte: latch VBUS, VSENSE and the accumulators together.
 const REG_REFRESH: u8 = 0x00;
 
+/// VSENSE range for all four channels. `0x55` selects bipolar +/-100 mV for
+/// each two-bit CFG_VSn field; the low byte leaves every VBUS range unipolar.
+const REG_NEG_PWR_FSR: u8 = 0x1d;
+const NEG_PWR_FSR_BIPOLAR: [u8; 2] = [0x55, 0x00];
+
 /// VBUS1. VBUS1-4 are `0x07`-`0x0a` and VSENSE1-4 are `0x0b`-`0x0e`, so one
 /// 16-byte read from here covers every measurement this driver wants. The part
 /// auto-increments its address pointer within a read (DS20006539B), which is the
@@ -140,7 +145,7 @@ pub const AGE_LIMIT_MS: u32 = 60_000;
 #[derive(Clone, Copy)]
 pub struct Reading {
     pub bus_mv: u32,
-    pub current_ua: u32,
+    pub current_ua: i32,
 }
 
 /// Every channel from one instant, and which instant that was.
@@ -179,22 +184,28 @@ pub enum Age {
 /// widest intermediate is 65535 * 125 = 8_191_875, which fits a `u32` with room
 /// to spare.
 ///
-/// Unsigned is correct only while `NEG_PWR_FSR` (`0x1d`) is at its power-on
-/// default of zero, which all four channels were measured to be. Bipolar mode
-/// would halve the range and make these two's complement.
+/// VBUS stays unipolar when VSENSE changes to bipolar; the low byte written to
+/// `NEG_PWR_FSR` is zero.
 fn bus_mv(raw: u16) -> u32 {
     raw as u32 * 125 / 256
 }
 
-/// VSENSE is 0-100 mV full scale across a 20 mOhm shunt.
+/// VSENSE is -100 to +100 mV across a 20 mOhm shunt.
 ///
-/// 0.1 V / 65536 / 0.02 Ohm = 76.2939453125 uA per LSB, and that is `78125 /
-/// 1024` exactly, so microamps are `raw * 78125 / 1024` with no approximation.
-/// The multiply is done in `u64` because 65535 * 78125 = 5_119_921_875, which
-/// overflows a `u32` -- and would do so only at high current, which is precisely
-/// when a wrong number matters. Full scale is 5 A.
-fn current_ua(raw: u16) -> u32 {
-    ((raw as u64 * 78125) >> 10) as u32
+/// DS20006539B section 5.9 and Table 5-2 use a signed 16-bit code and a 2^15
+/// denominator in bipolar +/-FSR mode: 5,000,000 uA / 32768 = 78125/512 uA per
+/// LSB. Magnitude-first arithmetic keeps equal positive and negative codes
+/// symmetric. The nominal full-scale range remains -5 A to +5 A; +/-50 mV
+/// FSR/2 is the separate +/-2.5 A mode and is not selected here.
+fn current_ua(raw: u16) -> i32 {
+    let code = raw as i16 as i32;
+    let magnitude = ((code.unsigned_abs() as u64 * 78125) >> 9) as i32;
+    if code < 0 { -magnitude } else { magnitude }
+}
+
+/// The sole call site for the PAC1954's multi-transaction REFRESH cycle.
+fn refresh(bus: &mut Bus) -> Result<(), bus::Error> {
+    bus.send_byte(BUS_POWER_MONITOR, ADDRESS, REG_REFRESH)
 }
 
 /// What the monitor decided about one channel this poll.
@@ -203,7 +214,7 @@ enum State {
     /// Below the floor. Nothing plugged in, or nothing drawing.
     Disconnected,
     /// Above the floor, last announced at this current in microamps.
-    Connected(u32),
+    Connected(i32),
 }
 
 /// The poller's state: when it last ran, and what it last said about each rail.
@@ -218,6 +229,9 @@ pub struct Monitor {
     /// Until then `poll` retries: a board whose I2C comes up late should start
     /// working on its own rather than needing a command typed at it.
     live: bool,
+    /// Set only after all four VSENSE channels were programmed bipolar and a
+    /// REFRESH activated the new range.
+    configured: bool,
     /// When the last REFRESH was issued, or `None` before the first one.
     ///
     /// Two jobs, and they are the same fact. It is the timestamp the NEXT poll's
@@ -260,6 +274,7 @@ impl Monitor {
             state: [None; 4],
             floor: [DEFAULT_FLOOR_UA; 4],
             live: false,
+            configured: false,
             refresh_at: None,
             sample: None,
             failures: 0,
@@ -300,6 +315,18 @@ impl Monitor {
         age_of(self.sample.map(|sample| sample.latched))
     }
 
+    /// Select signed +/-100 mV VSENSE on every channel and activate it.
+    /// A failed boot-time attempt is retried by [`Monitor::poll`].
+    pub fn configure(&mut self, bus: &mut Bus) -> Result<(), bus::Error> {
+        self.phase = "configure";
+        bus.write_registers(BUS_POWER_MONITOR, ADDRESS, REG_NEG_PWR_FSR,
+                            &NEG_PWR_FSR_BIPOLAR)?;
+        refresh(bus)?;
+        self.configured = true;
+        self.refresh_at = None;
+        Ok(())
+    }
+
     /// One REFRESH cycle: fetch what the last one latched, and ask for the next.
     ///
     /// PRIVATE, and `poll` is its only caller. That is the fix for issue #123
@@ -309,6 +336,13 @@ impl Monitor {
     /// `Ok(None)` is the first pass after reset, whose read predates every
     /// REFRESH and is therefore not a measurement. See `refresh_at`.
     fn transfer(&mut self, bus: &mut Bus) -> Result<Option<Sample>, bus::Error> {
+        if !self.configured {
+            self.configure(bus)?;
+            // The first set after changing range can reflect the prior active
+            // configuration. Discard it; the normal cycle below issues the
+            // second REFRESH whose result is decoded as signed.
+            return Ok(None);
+        }
         // READ FIRST, THEN REFRESH -- and that order is the whole trick.
         //
         // The datasheet (DS20006539B 5.2) says the readable registers "will be
@@ -341,7 +375,7 @@ impl Monitor {
         // Ask for the next set. One transaction, all four channels, so nothing
         // can arrive from two different sample instants.
         self.phase = "refresh";
-        bus.send_byte(BUS_POWER_MONITOR, ADDRESS, REG_REFRESH)?;
+        refresh(bus)?;
         // After the Send Byte returns, not before it: the part latches when it
         // receives the command, and the transfer is ~0.2 ms of the 50 ms
         // interval either way.
@@ -440,7 +474,10 @@ impl Monitor {
 
         for channel in 0..4 {
             let current = readings[channel].current_ua;
-            let state = if current < self.floor[channel] {
+            // A floor suppresses near-zero offset, not one direction of flow.
+            // A real negative current is connected by the same magnitude rule
+            // as an equal positive current.
+            let state = if current.unsigned_abs() < self.floor[channel] {
                 State::Disconnected
             } else {
                 State::Connected(current)
@@ -503,9 +540,11 @@ pub fn age_of(at: Option<Instant>) -> Age {
 /// strings for one table is how they drift apart.
 pub fn report(uart: &mut Uart, lead: &dyn core::fmt::Display, channel: usize,
               reading: &Reading, connected: bool) {
-    let _ = writeln!(uart, "{} {:8} {:2}.{:03} V  {:5}.{:03} mA  {}",
+    let magnitude = reading.current_ua.unsigned_abs();
+    let _ = writeln!(uart, "{} {:8} {:2}.{:03} V  {}{}.{:03} mA  {}",
                      lead, PORTS[channel],
                      reading.bus_mv / 1000, reading.bus_mv % 1000,
-                     reading.current_ua / 1000, reading.current_ua % 1000,
+                     if reading.current_ua < 0 { "-" } else { " " },
+                     magnitude / 1000, magnitude % 1000,
                      if connected { "connected" } else { "disconnected" });
 }
