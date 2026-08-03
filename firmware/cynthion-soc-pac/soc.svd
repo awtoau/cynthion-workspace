@@ -1603,7 +1603,7 @@
           <addressOffset>0x1</addressOffset>
           <size>8</size>
           <access>read-write</access>
-          <resetValue>0x3</resetValue>
+          <resetValue>0x1</resetValue>
           <resetMask>0x3</resetMask>
           <fields>
             <field>

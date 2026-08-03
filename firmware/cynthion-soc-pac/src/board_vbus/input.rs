@@ -45,7 +45,7 @@ impl crate::Readable for InputSpec {}
 impl crate::Writable for InputSpec {
     type Safety = crate::Unsafe;
 }
-#[doc = "`reset()` method sets INPUT to value 0x03"]
+#[doc = "`reset()` method sets INPUT to value 0x01"]
 impl crate::Resettable for InputSpec {
-    const RESET_VALUE: u8 = 0x03;
+    const RESET_VALUE: u8 = 0x01;
 }
