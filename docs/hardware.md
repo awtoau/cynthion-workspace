@@ -317,8 +317,66 @@ From the platform file, which is the authority — never transcribe these, read
 > bidirectional switch. **If any of these switches is enabled, TARGET A is
 > considered an output.**
 
-**Bidirectional** is the word to take seriously. Closing two switches ties two
-supplies together, which is a hardware consequence rather than a bad reading.
+**TARGET A is the common node**, and that is the whole model. Each `*_vbus_en`
+connects its port to that shared rail, so closing two switches routes ONE supply
+to TWO destinations rather than tying two supplies together. mossmann,
+[cynthion#184][c184]:
+
+> The purpose of `aux_vbus_en` when used alone is to pass VBUS power from AUX to
+> TARGET A. If you want to pass power from some other port *to* AUX, you must
+> enable both `aux_vbus_en` and either `target_c_vbus_en` or `control_vbus_en`.
+
+[c184]: https://github.com/greatscottgadgets/cynthion/issues/184
+
+### Input and passthrough are separate, and the board protects itself
+
+This is the r0.6 redesign that r1.4 inherits, and it answers most of what anyone
+asks here. From GSG's [Cynthion Hardware Design Update][cshw]:
+
+> Cynthion now supports power passthrough **up to 20 V**, the highest voltage
+> allowed in PD's Standard Power Range (SPR).
+
+> A 5 V power supply is still required on either CONTROL or AUX to power Cynthion
+> itself. **Overvoltage protection automatically shuts off either input if it
+> exceeds 5.5 V.**
+
+> **Power input and power passthrough are now two separate functions, no longer
+> entangled with one another.** All power output is strictly passthrough, not an
+> output of an internal supply rail. **Overvoltage shutoff of an input does not
+> affect passthrough. There is no longer a diode drop** reducing passthrough
+> voltage.
+
+> All four ports now feature voltage and current monitoring... **can be used to
+> implement flexible overvoltage, overcurrent, or reverse current protection for
+> external hosts or devices, though with a slower response time** than Cynthion's
+> internal overvoltage protection.
+
+[cshw]: https://www.crowdsupply.com/great-scott-gadgets/cynthion/updates/cynthion-hardware-design-update
+
+**The threshold is a zener, and it is in the schematic.** `D17` is a 5.6 V ±2%
+zener — 5.49 to 5.71 V, inside the documented 5.5–6.0 V window — in
+`repos/cynthion-hardware/power_distribution.kicad_sch`. No firmware is involved,
+on either input.
+
+So each of CONTROL and AUX has **two** independent shutoff paths: the automatic
+hardware OVP, and deliberate FPGA control through the active-low `*_vbus_in_en`
+pins. Passthrough keeps working through either.
+
+### What that means for firmware
+
+**The board defends itself; firmware defends the attached device.** Passing 20 V
+through is designed behaviour and does not damage Cynthion. But a USB-A
+peripheral on TARGET A has no way to refuse 20 V, so a guard there is a
+user-protection feature, not a board-protection one — and it is exactly what the
+last quote above describes the PAC1954 being for. Slower than the internal OVP,
+and the only option for the passthrough path.
+
+### PD lives on two ports, not three
+
+Only **TARGET and AUX** have FUSB302Bs; CONTROL has a Type-C connector and none.
+So CONTROL cannot negotiate above 5 V at all — a source sees no PD-capable sink
+and stays at vSafe5V. That makes CONTROL the port to prefer as a passthrough
+source when either would do.
 
 ### Upstream drives all of this; this SoC drives none of it
 
