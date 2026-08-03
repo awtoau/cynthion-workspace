@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "hardware": false,
+  "artifact": {
+    "build": {
+      "command": ["scripts/fpga_job_demo.py", "build"],
+      "flags": [],
+      "sources": ["scripts/fpga_job_demo.py"],
+      "output": "simulation-result.json"
+    }
+  },
+  "driver": {
+    "command": ["scripts/fpga_job_demo.py", "run"]
+  },
+  "expected": {"sum": 42},
+  "negative_control": {"sum": 41},
+  "restore": {"bitstream": null}
+}
