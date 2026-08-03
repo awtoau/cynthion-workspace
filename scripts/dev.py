@@ -352,6 +352,12 @@ def cmd_setup(extra: list[str]) -> int:
     return run_tool([PY, script("machine_setup.py")], extra)
 
 
+@command("drive Lattice Diamond: probe, ladder, flow, compare",
+         args="<probe|ladder|flow|compare> [-- args]", kind="action")
+def cmd_diamond(extra: list[str]) -> int:
+    return run_tool([PY, script("diamond.py")], extra)
+
+
 @command("read every script in scripts/ and report what still reaches it",
          args="[--markdown] [--only live|cited|orphan]", kind="action")
 def cmd_audit(extra: list[str]) -> int:

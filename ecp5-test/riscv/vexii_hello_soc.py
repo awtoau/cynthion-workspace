@@ -113,6 +113,7 @@ from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
 from stream_buffer import StreamBuffer
 from wishbone_pipe import RegisteredResponse
+from flash_cdc import ClockCrossedPHY
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
@@ -529,10 +530,67 @@ FLASH_DIVISOR = 0
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
 #
-# 60 is a constraint here rather than a limit: the design already meets 72-91 MHz by
-# nextpnr's own estimate, and the die is a 25F sharing a speed grade with the 12F it is
-# marked as (#116). See #110.
+# 60, and it is now pinned by the FLASH rather than by the CPU -- the opposite of what
+# the old comment here described.
+#
+# `sync` no longer has to serve the flash: the PHY has its own domain. But both outputs
+# divide ONE VCO, so the ratio is an integer and `fast = 2 x sync`. The flash domain
+# closes at 124.77 MHz in this design (measured -- see FLASH_FAST_RATIO), so `fast`
+# must be <= 120 and `sync` is therefore 60.
+#
+# The CPU could run faster alone: "the design already meets 72-91 MHz by nextpnr's own
+# estimate, and the die is a 25F sharing a speed grade with the 12F it is marked as
+# (#116). See #110." Reaching that WITH a fast flash needs a third PLL output or a
+# non-integer ratio, neither of which this generator offers.
 SYNC_MHZ = 60
+
+# The flash domain is this multiple of `sync`, and the pair is ONE decision.
+#
+# Both outputs divide one VCO, so `sync` and `fast` cannot be picked independently.
+# OFF by default, because at `sync` 60 it buys nothing. See the measurements below.
+#
+# 60 x 2 = 120.000 MHz would give SCK 60 MHz through the PHY's /2 clock generator.
+#
+# 144 WAS TRIED AND DOES NOT CLOSE. nextpnr: "Max frequency for clock
+# '$glbnet$fast_clk': 124.77 MHz (FAIL at 144.01 MHz)". The PHY is the ONLY thing in
+# this domain, so 124.77 MHz is the PHY's own critical path inside a full SoC -- the
+# 149 MHz in the chip doc belongs to a design that contained the flash and nothing
+# else, and that difference is the whole of the gap.
+#
+# So 120 is the fastest rung that closes, and it doubles SCK from 30 to 60 MHz.
+# Reaching the measured 144 MHz SCK needs BOTH an ODDR clock output -- which removes
+# the /2 and would give 120 MHz SCK at this same domain rate -- and timing work on the
+# PHY to lift 124.77 toward 144.
+FLASH_FAST_RATIO = 2
+
+# Whether the flash PHY gets its own domain at all.
+#
+# THE MEASUREMENTS, on this SoC, from nextpnr:
+#
+#     fast 144 MHz -> "Max frequency for '$glbnet$fast_clk': 124.77 MHz (FAIL)"
+#     fast 120 MHz -> "Max frequency for '$glbnet$fast_clk': 111.26 MHz (FAIL)"
+#
+# The PHY is the only thing in that domain, so those are the PHY's own fmax, and the
+# spread between two runs at different targets shows it is placement-dependent around
+# 110-125 MHz. The 149 MHz in `docs/chips/w25q32-config-flash.md` belongs to a design
+# containing the flash and nothing else; that difference is the whole gap.
+#
+# WHY THAT MAKES THE DOMAIN USELESS ON ITS OWN. `fast` must divide the same VCO as
+# `sync` by an integer, so at `sync` 60 the only choices are 60 (SCK 30, no change) and
+# 120 (does not close). Getting SCK above 30 this way means dropping `sync` to 50 for
+# `fast` 100 -- trading 17% of the CPU for 67% more flash, roughly one for one, on a
+# firmware that now executes from flash.
+#
+# WHAT ACTUALLY UNLOCKS IT is the /2 in `SPIClockGenerator`, which toggles SCK as a
+# register in the PHY's domain so SCK can never exceed half of it. Driving SCK through
+# an ODDR instead makes SCK equal the domain rate: at `fast` 100 MHz -- which closes --
+# that is 100 MHz SCK and roughly 50 MB/s, against 14.95 today, for a CPU that drops
+# only 60 to 50 MHz.
+#
+# So the order is ODDR first, then this. The crossing itself is built and works
+# (`flash_cdc.py`); it is switched off because turning it on today would cost CPU clock
+# for no net gain.
+FLASH_PHY_FAST = False
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `gateware_id.py` reports it to the
@@ -550,13 +608,25 @@ class HelloSoC(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        # No `fast` domain: HyperRAMPHY (the non-DQS PHY, which is what BootRAM uses)
-        # drives ODDRX1F/IDDRX1F, single-clock DDR primitives that produce double-rate
-        # output from `sync` alone. Only HyperRAMDQSPHY needs an ECLK at 2x, and we do
-        # not use it. Requesting `fast` anyway cost a PLL output, a global buffer, and
-        # forced CLKOP_DIV to be even -- which needlessly restricts which sync
-        # frequencies are reachable.
-        m.submodules.car = car = VariableClockDomainGenerator(sync_mhz=SYNC_MHZ)
+        # A `fast` domain, for the flash and nothing else.
+        #
+        # This used to say "no `fast` domain", because the only candidate was
+        # HyperRAMDQSPHY and we do not use it -- HyperRAMPHY makes double-rate output
+        # from `sync` alone. The flash is a second candidate and a better one: SCK is
+        # derived from the PHY's domain, so while the PHY sat in `sync` the flash rate
+        # was a function of the CPU clock, and the CPU clock is chosen for the CPU.
+        #
+        # SYNC_MHZ 72 with FLASH_FAST_RATIO 2 solves to exactly 144.000 MHz, which is
+        # the fastest rung on the measured table (71.70 MB/s, `0xEB` continuous) and
+        # the fastest the flash has ever been driven on this board.
+        #
+        # The cost the old comment names is real and is now paid deliberately: a PLL
+        # output, a global buffer, and CLKOP_DIV forced even, which restricts which
+        # sync frequencies are reachable. 72 is reachable and is inside the 72-91 MHz
+        # nextpnr already estimates for this design.
+        m.submodules.car = car = VariableClockDomainGenerator(
+            sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST,
+            fast_ratio=FLASH_FAST_RATIO)
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
         # toolchain freeze against Java 25 does not apply -- that blocks
@@ -794,8 +864,23 @@ class HelloSoC(Elaboratable):
         # in simulation -- same edge count, same completion cycle) but with the
         # internal input-capture strobes brought out so the ILA below can see
         # WHEN a bit is latched, which is the question left after the pin probe.
-        m.submodules.flash_phy  = flash_phy  = ObservablePHY(
-            pads=flash_bus, divisor=FLASH_DIVISOR, domain="sync")
+        # The PHY runs in `fast`, and `ClockCrossedPHY` presents it in `sync`.
+        #
+        # SCK comes from the PHY's domain, so this is the whole of what decouples the
+        # flash rate from the CPU clock. Everything upstream -- the mmap core, the
+        # controller, the crossbar -- is unchanged and still beside the CPU; the wrapper
+        # has the same flipped SPIControlPort, so the crossbar cannot tell.
+        #
+        # `flash_cdc.py` has the argument for FIFOs over a timing constraint, and for
+        # synchronising `cs` rather than queueing it.
+        flash_phy_domain = "fast" if FLASH_PHY_FAST else "sync"
+        flash_phy_inner = ObservablePHY(pads=flash_bus, divisor=FLASH_DIVISOR,
+                                        domain=flash_phy_domain)
+        if FLASH_PHY_FAST:
+            flash_phy = ClockCrossedPHY(flash_phy_inner, phy_domain="fast")
+        else:
+            flash_phy = flash_phy_inner
+        m.submodules.flash_phy = flash_phy
         # `spiflash.Peripheral` builds the mmap core, a CSR-poked controller,
         # and the round-robin crossbar that lets both share one PHY.
         #

@@ -62,8 +62,8 @@ vary, which `VariableClockDomainGenerator` already handles.
 raising it gives a dead debug link rather than a slow one.  `vexii_hello_soc.py`
 derives both from `SYNC_MHZ`, so only that one constant is rewritten.
 
-    ./scripts/diamond_riscv_ladder.py --check-edif
-    ./scripts/diamond_riscv_ladder.py --frequencies 90 100 110
+    ./dev.py diamond ladder -- --check-edif
+    ./dev.py diamond ladder -- --frequencies 90 100 110
 """
 
 import argparse
@@ -73,7 +73,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# scripts/diamond/<name>.py, so the repo root is three levels up. These lived in
+# scripts/ and were moved; a stale `.parent.parent` put every log and artifact
+# under scripts/tmp/ instead of tmp/, which is silent and wrong.
+ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "diamond_riscv_ladder.log"
 RESULTS = ROOT / "tmp" / "diamond_riscv_ladder.json"
 GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
@@ -81,6 +84,7 @@ BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 WORK = ROOT / "tmp" / "diamond"
 
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 
@@ -155,7 +159,7 @@ def diamond_build(behav, mhz):
         ERROR - synthesis: extra0.v(11603): duplicate module name VexiiRiscv.
     """
     outdir = WORK / f"lse{mhz}"
-    result = sh(f'python3 {ROOT}/scripts/diamond_flow.py '
+    result = sh(f'python3 {ROOT}/scripts/diamond/flow.py '
                 f'--verilog {behav} --lpf {BUILD}/top.lpf --mode lse '
                 f'--outdir {outdir} --freq {mhz} --name diamond_lse{mhz}')
     res = outdir / "result.json"
@@ -181,7 +185,7 @@ def check_edif(behav_edif, mhz, emit):
     claim to rest a negative result on, so it is re-run rather than cited.
     """
     outdir = WORK / f"yospar{mhz}"
-    result = sh(f'python3 {ROOT}/scripts/diamond_flow.py '
+    result = sh(f'python3 {ROOT}/scripts/diamond/flow.py '
                 f'--verilog {behav_edif} --lpf {BUILD}/top.lpf --mode yosys '
                 f'--outdir {outdir} --freq {mhz} --name diamond_yospar{mhz}')
     text = result.stdout + result.stderr

@@ -24,7 +24,10 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# scripts/diamond/<name>.py, so the repo root is three levels up. These lived in
+# scripts/ and were moved; a stale `.parent.parent` put every log and artifact
+# under scripts/tmp/ instead of tmp/, which is silent and wrong.
+ROOT = Path(__file__).resolve().parent.parent.parent
 LOGDIR = ROOT / "tmp" / "logs"
 
 NEXTPNR_UTIL = re.compile(r"^Info:\s+(\w+):\s+(\d+)/\s*(\d+)\s+\d+%")

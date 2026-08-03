@@ -12,7 +12,7 @@ Two jobs, both diagnostic rather than part of the measurement:
                keeping them runnable means the claims can be re-checked
                against a newer yosys rather than taken on trust.
 
-Diamond's environment comes from diamond_flow.diamond_env(), an env dict
+Diamond's environment comes from flow.diamond_env(), an env dict
 rather than a sourced shell script. That matters: the oss-cad-suite
 environment the open flow needs sets PYTHONHOME and prepends its own
 libstdc++, and sourcing both in one shell is what breaks Diamond's engines.
@@ -25,9 +25,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from diamond_flow import ARCH, DEVICE, diamond_env  # noqa: E402
+from flow import ARCH, DEVICE, diamond_env  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
+# scripts/diamond/<name>.py, so the repo root is three levels up. These lived in
+# scripts/ and were moved; a stale `.parent.parent` put every log and artifact
+# under scripts/tmp/ instead of tmp/, which is silent and wrong.
+ROOT = Path(__file__).resolve().parent.parent.parent
 LOGDIR = ROOT / "tmp" / "logs"
 TMP = ROOT / "tmp" / "diamond"
 
