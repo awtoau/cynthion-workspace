@@ -98,6 +98,36 @@ def client_writer(conn, state, lock):
             return  # the port was replaced under us; this thread's client will reconnect
 
 
+def keyboard(state, lock):
+    """Relay what YOU type to the device, so this terminal is a console and not a log.
+
+    Without this the terminal is read-only: keystrokes are echoed by the tty layer,
+    so typing LOOKS like it worked, and then nothing answers -- which reads as a dead
+    shell rather than as a missing relay. Socket clients had a write path from the
+    start; the person sitting in front of it did not.
+
+    Line-buffered on purpose. The SoC shell is line-based and has its own editor, so
+    raw mode would only duplicate it -- and putting the terminal in raw mode means
+    Ctrl-C stops reaching this process, which is how you stop it.
+
+    The handle comes from `state` under the lock rather than being captured, because a
+    reconfigure replaces the port object and a thread holding the old one writes to a
+    closed file. The write itself happens outside the lock so a blocking write cannot
+    stall the reader loop's fan-out.
+    """
+    for line in sys.stdin:
+        with lock:
+            device = state.get("port")
+        if device is None:
+            print("[not attached — nothing to send]", flush=True)
+            continue
+        try:
+            device.write(line.rstrip("\n").encode() + b"\r")
+            device.flush()
+        except OSError:
+            print("[write failed — the port went away]", flush=True)
+
+
 def serve(port, clients, lock, state):
     """Fan the stream out to socket clients, so other tools need not open the tty.
 
@@ -142,7 +172,16 @@ def main():
         threading.Thread(target=serve, args=(SERVE_PORT, clients, lock, state),
                          daemon=True).start()
 
+    # Only when a person is actually at a terminal. Under a pipe or a background
+    # job stdin is not a keyboard, and reading it would either consume a script's
+    # input or sit on a closed handle forever.
+    interactive = sys.stdin.isatty()
+    if interactive:
+        threading.Thread(target=keyboard, args=(state, lock), daemon=True).start()
+
     print("watching the Cynthion RISC-V console (Ctrl-C to stop)", flush=True)
+    if interactive:
+        print("type commands here — they go to the board", flush=True)
 
     port = None
     waiting_announced = False
