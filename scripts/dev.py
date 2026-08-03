@@ -271,6 +271,12 @@ def cmd_run(extra: list[str]) -> int:
     return run_tool([PY, script("soc_run.py")], extra)
 
 
+@command("install what a fresh machine needs: packages, Rust, Python, udev",
+         args="[--system] [--dry-run]", kind="action")
+def cmd_setup(extra: list[str]) -> int:
+    return run_tool([PY, script("machine_setup.py")], extra)
+
+
 @command("read every script in scripts/ and report what still reaches it",
          args="[--markdown] [--only live|cited|orphan]", kind="action")
 def cmd_audit(extra: list[str]) -> int:
@@ -412,6 +418,11 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         return usage()
     name, *extra = argv
+    # `./dev.py test -- -v` is the habitual shape for "these flags are the inner
+    # tool's, not yours", and it reached the inner tool as a literal `--` that
+    # argparse then rejected. Both forms work now; the separator is consumed here.
+    if extra and extra[0] == "--":
+        extra = extra[1:]
     meta = COMMANDS.get(name)
     if meta is None:
         print(f"unknown command: {name!r} - try ./dev.py describe", file=sys.stderr)

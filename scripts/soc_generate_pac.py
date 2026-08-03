@@ -657,6 +657,29 @@ def write_bases(peripherals, emit):
             lines.append(f"pub const {irq_name}_IRQ: u32 = {number};")
         lines.append("")
 
+    # Cacheability is NOT in the memory map, and that is why it is emitted here.
+    #
+    # Every other constant above is read out of `decoder.bus.memory_map`, which
+    # describes where a window is and how big it is and nothing else. Whether the
+    # CPU caches that window is a PMA property of VexiiRiscv's region table, set
+    # in the SoC script. So a firmware wanting to report it had only a comment to
+    # go on -- and the comment in `target.rs` was still claiming `main=1` after
+    # the window was switched to uncached, which is exactly the drift this
+    # generator exists to remove.
+    import vexii_hello_soc as soc_module
+    lines += [
+        "/// Whether the SPIFLASH window is cached (VexiiRiscv PMA `main`).",
+        "///",
+        "/// From `FLASH_CACHED` in the SoC script, not from the memory map:",
+        "/// cacheability is a property of the CPU's region table, so no window",
+        "/// description carries it. Uncached routes the window to the `iobus`,",
+        "/// where every load is a full SPI command/address/dummy/data",
+        "/// transaction and the I-cache cannot fetch from it at all.",
+        f"pub const SPIFLASH_CACHED: bool = "
+        f"{'true' if soc_module.FLASH_CACHED else 'false'};",
+        "",
+    ]
+
     path = OUT / "src" / "base.rs"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines))

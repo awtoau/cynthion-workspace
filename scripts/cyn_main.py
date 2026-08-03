@@ -418,7 +418,7 @@ class CynCLI:
             capture_output=True, text=True)
         if probe.returncode != 0:
             print(f"ERROR: workspace packages not importable on {VENV_PYTHON}")
-            print("  Run:  ./scripts/setup-dev.sh")
+            print("  Run:  ./dev.py setup")
             sys.exit(1)
 
     def cmd_ai_brief(self, args):

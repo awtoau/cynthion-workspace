@@ -26,10 +26,14 @@ Deeper investigations, by area:
 ```bash
 git clone --recurse-submodules https://github.com/awtoau/cynthion-workspace
 cd cynthion-workspace
-./scripts/setup-dev.sh          # one-time: packages + toolchain checks
-./scripts/install.py prereqs    # verify the environment
-./scripts/check.py --fast       # run the checks before every commit
+./dev.py setup                  # one-time: submodules, Rust, Python, udev
+./dev.py doctor                 # verify every tool is on PATH
+./dev.py gate                   # run the checks before every commit
 ```
+
+`./dev.py` is the one entry point: `--help` for humans, `describe` for agents.
+Nothing else needs to be memorised, and `./dev.py audit` says what every other
+script in `scripts/` is and whether anything still reaches it.
 
 No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
