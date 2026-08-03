@@ -1,8 +1,9 @@
 # Handing work to Codex — here
 
-How Codex is set up, invoked, what its sandbox refuses, and what a brief must carry:
-`/mnt/2tb/git/awto-dan/docs/codex/codex-agent.md` (canonical), with the rule preamble to
-paste into every brief in `/mnt/2tb/git/awto-dan/docs/codex/brief-template.md`.
+How Codex is set up, invoked, what its sandbox refuses, and what a brief must carry
+lives in a separate private notes repo, as `docs/codex/codex-agent.md` (canonical),
+with the rule preamble to paste into every brief in `docs/codex/brief-template.md`.
+Those paths are relative to that repo's root, not this one.
 
 The short version: Claude owns branching and commits, Codex owns the files — its
 sandbox mounts `.git` read-only, so it cannot commit and should not try.
