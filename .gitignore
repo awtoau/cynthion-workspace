@@ -64,9 +64,3 @@ sources/*.pdf
 # to delete. The firmware artifact that matters is the one `scripts/bram_patch.py` puts
 # into a bitstream, not the tree that produced it.
 firmware/*/target/
-
-# A nested clone, not workspace content: oc-test has its own .git, .gitmodules and
-# LICENCE. Ignored rather than adopted -- `git add` on a directory containing .git
-# records a gitlink to a commit no configured remote provides, which clones as an
-# empty directory. If it should live here permanently it wants `git submodule add`.
-oc-test/
