@@ -17,6 +17,7 @@
 //!     gateware  the build-id window answers with its magic
 //!     flash     the memory-mapped flash reads its known first word
 //!     phy       the TARGET USB3343 gives its vendor and product id
+//!     rail      each powered USB VBUS is inside its named tolerance
 //!
 //! ## Why `A` is worth a test of its own
 //!
@@ -51,6 +52,8 @@ use core::ptr::{read_volatile, write_volatile};
 
 use crate::clock;
 use crate::info;
+use crate::power::{self, Age, Monitor};
+use crate::power_rails::{self, Rail};
 use crate::target;
 use crate::uart::Uart;
 use crate::ulpi;
@@ -104,7 +107,7 @@ fn opaque(value: u32) -> u32 {
     unsafe { read_volatile(&value) }
 }
 
-pub fn command(uart: &mut Uart) {
+pub fn command(uart: &mut Uart, power: &Monitor) {
     let mut report = Report { passed: 0, failed: 0, skipped: 0 };
 
     alu(uart, &mut report);
@@ -117,6 +120,7 @@ pub fn command(uart: &mut Uart) {
     gateware(uart, &mut report);
     flash(uart, &mut report);
     phy(uart, &mut report);
+    rails(uart, &mut report, power);
 
     let total = report.passed + report.failed;
     if report.failed == 0 {
@@ -126,6 +130,56 @@ pub fn command(uart: &mut Uart) {
         let _ = writeln!(uart, "{} of {} FAILED, {} skipped", report.failed,
                          total, report.skipped);
     }
+}
+
+/// Assert on the poller's cache without becoming a second PAC1954 owner.
+fn rails(uart: &mut Uart, report: &mut Report, monitor: &Monitor) {
+    let age = monitor.age();
+    let sample = match (age, monitor.latest()) {
+        (Age::Never, _) | (_, None) => {
+            return report.item(uart, "rail", Outcome::Skip,
+                               format_args!("no PAC1954 sample yet"));
+        }
+        (Age::Older, Some(_)) => {
+            return report.item(uart, "rail", Outcome::Fail,
+                               format_args!("PAC1954 sample is over {} s old",
+                                            power::AGE_LIMIT_MS / 1000));
+        }
+        (Age::Millis(_), Some(sample)) => sample,
+    };
+
+    let age_ms = match age {
+        Age::Millis(ms) => ms,
+        _ => unreachable!(),
+    };
+    for (reading, rail) in sample.readings.iter().zip(power_rails::RAILS) {
+        rail_result(uart, report, rail, reading.bus_mv, age_ms);
+    }
+}
+
+fn rail_result(uart: &mut Uart, report: &mut Report, rail: Rail,
+               measured_mv: u32, age_ms: u32) {
+    // An unpowered USB port is not a bad 5 V supply. vSafe0V's 0.8 V upper
+    // bound separates that state from the sustained sag this check attributes.
+    if measured_mv <= 800 {
+        return report.item(uart, "rail", Outcome::Skip,
+                           format_args!("{} {}.{:03} V unpowered; nominal {}.{:03} V \
+                                        +/-{}.{:03} V when powered, sample {} ms old",
+                                        rail.name, measured_mv / 1000,
+                                        measured_mv % 1000,
+                                        rail.nominal_mv / 1000,
+                                        rail.nominal_mv % 1000,
+                                        rail.tolerance_mv / 1000,
+                                        rail.tolerance_mv % 1000, age_ms));
+    }
+
+    report.ok(uart, "rail", power_rails::within_tolerance(rail, measured_mv),
+              format_args!("{} {}.{:03} V, nominal {}.{:03} V +/-{}.{:03} V, \
+                            sample {} ms old",
+                           rail.name, measured_mv / 1000, measured_mv % 1000,
+                           rail.nominal_mv / 1000, rail.nominal_mv % 1000,
+                           rail.tolerance_mv / 1000, rail.tolerance_mv % 1000,
+                           age_ms));
 }
 
 /// The base integer set, on values the compiler cannot see.
