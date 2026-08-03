@@ -330,34 +330,41 @@ def main():
                 emit("overrides this if the board is what you are debugging.")
                 return 1
 
-        # IS THE GENERATED PERIPHERAL MAP STILL THE GATEWARE'S MAP?
+        # REGENERATE THE PERIPHERAL MAP, every time, rather than checking it.
         #
-        # `soc_generate_pac.py` writes every peripheral address the firmware uses out
-        # of the SoC's own memory map -- but it runs on demand, not per build. So the
-        # PAC can describe a gateware that no longer exists, and nothing in this script
-        # looked.
+        # This used to run `--check` and REFUSE on drift, on the reasoning that
+        # rewriting checked-in source mid-build is a surprise. Measured, that
+        # reasoning does not survive: `--check` is 0.515 s and a full regeneration
+        # is 0.712 s, because `--check` already regenerates into a temporary place
+        # and diffs it. So the refusing version paid nearly the whole cost, threw
+        # the result away, and made someone run it again by hand -- 0.2 s saved
+        # against a 60 s synthesis, in exchange for an ordering trap that cost an
+        # hour tonight.
         #
-        # That is not hypothetical. `FLASH_CACHED` was set true, the board was built
-        # and flashed, and `info` still reported the window as uncached -- because
-        # `SPIFLASH_CACHED` in the PAC was stale. Every step reported success and the
-        # number on screen was wrong.
+        # The map is a DERIVED artifact. Regenerating it is what the repo's own
+        # rule says to do with those, and the diff landing in `git status` is
+        # correct: the gateware changed, so the addresses did.
         #
-        # `--check` regenerates into a temporary place and diffs; it changes nothing.
-        # Deliberately NOT a regenerate: rewriting checked-in source in the middle of a
-        # build is a surprise, and the fix belongs to whoever changed the gateware. It
-        # needs no toolchain and no board -- only elaboration -- so it costs seconds and
-        # runs even under --build-only.
+        # It is still a hard stop if the generator itself fails, because then
+        # nothing knows where the peripherals are.
         if not args.c_firmware:
+            before = None
+            generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
+            if generated.exists():
+                before = generated.read_bytes()
+
             result = run([sys.executable,
-                          str(ROOT / "scripts" / "soc_generate_pac.py"), "--check"])
+                          str(ROOT / "scripts" / "soc_generate_pac.py")])
             if result.returncode != 0:
-                emit("GENERATED PERIPHERAL MAP IS STALE: the PAC does not match the "
-                     "gateware.")
+                emit("PERIPHERAL MAP GENERATION FAILED:")
                 emit((result.stdout or result.stderr).strip()[-700:])
-                emit("Run `./dev.py pac` and rebuild. Continuing would put firmware on "
-                     "the board addressing peripherals that have moved, which reads "
-                     "plausible numbers from the wrong registers and reports them.")
+                emit("Refusing to build: without it nothing knows where the "
+                     "peripherals are.")
                 return 1
+
+            if before is not None and generated.read_bytes() != before:
+                emit("peripheral map REGENERATED -- the gateware moved something. "
+                     "`git diff firmware/*-pac` shows what.")
 
         if not args.no_build:
             if args.c_firmware:
@@ -507,9 +514,59 @@ def main():
                      f'python3.15t {GATEWARE} --build --firmware {firmware} '
                      f'--bootloader {BOOT_BIN}')
             result = run(["bash", "-c", build])
+            output = (result.stdout or "") + (result.stderr or "")
+
+            # THE FREQUENCIES, on success as well as on failure.
+            #
+            # These are the numbers every clock decision here turns on, and until
+            # now no successful build printed one. On failure nextpnr puts them on
+            # stderr; on SUCCESS it writes them only to `--log top.tim`, so a
+            # passing build said nothing about its margin.
+            #
+            # That margin is not academic: the build this was added on passes at
+            # 72.70 MHz against a 72.00 MHz constraint -- 1% -- and an earlier run
+            # in the same log failed at 64.76. It has been swinging either side of
+            # the line with placement, invisibly.
+            #
+            # `top.tim` ACCUMULATES across runs, so only the last block is this
+            # build's. Reading the first would report an older attempt as if it
+            # were current, which is the same class of mistake as a stale
+            # bitstream.
+            timing = ROOT / "tmp" / "vexii_hello" / "build" / "top.tim"
+            frequencies = []
+            if timing.exists():
+                for line in timing.read_text().splitlines():
+                    if "Max frequency for clock" in line:
+                        frequencies.append(line.split("Info:")[-1].strip())
+            else:
+                frequencies = [line.split("Info:")[-1].strip()
+                               for line in output.splitlines()
+                               if "Max frequency for clock" in line]
+            # One entry per domain, last wins.
+            latest = {}
+            for entry in frequencies:
+                latest[entry.split("'")[1] if "'" in entry else entry] = entry
+            for entry in latest.values():
+                emit("  " + entry)
+
             if result.returncode != 0:
                 emit("gateware build failed:")
-                emit((result.stderr or result.stdout).strip()[-900:])
+                # THE TOOL'S ERROR FIRST, then the tail.
+                #
+                # This printed the last 900 characters, which on an Amaranth
+                # build is the end of a Python traceback -- the subprocess
+                # wrapper, never the reason. nextpnr's own `ERROR:` line had
+                # already scrolled past, so every failure tonight cost a SECOND
+                # full synthesis run by hand to read it.
+                # NOT "Max frequency" again -- those are printed above for every
+                # build, and repeating them here made one failure look like two.
+                reasons = [line for line in output.splitlines()
+                           if line.startswith(("ERROR:", "Error:"))
+                           and "Max frequency" not in line]
+                for line in reasons[-8:]:
+                    emit("  " + line.strip())
+                if not reasons:
+                    emit((result.stderr or result.stdout).strip()[-700:])
                 return 1
 
             report = ROOT / "tmp" / "vexii_hello" / "build" / "top.rpt"
