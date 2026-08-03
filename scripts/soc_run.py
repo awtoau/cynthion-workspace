@@ -60,6 +60,12 @@ FIRMWARE_BIN = ROOT / "tmp" / "rust_fw.bin"
 # the kilobyte below it; see firmware/cynthion-soc/memory.x.
 IMAGE_ORIGIN = 0x400
 
+# Sections the linker placed in flash, extracted separately because flash loads by a
+# different path from block RAM. The offset is moondancer's established firmware slot,
+# clear of the FPGA configuration at flash offset zero.
+RODATA_BIN = ROOT / "tmp" / "rust_rodata.bin"
+FLASH_RODATA_OFFSET = 0x000b_0000
+
 # The resident bootloader: 492 bytes at 0x0, and what the reset vector points at.
 # Built alongside the image and packed into the same block RAM init, so one bitstream
 # carries both and a board with nothing staged comes up on the image below.
@@ -189,7 +195,20 @@ def main():
                     return 1
                 # objcopy rather than cargo-binutils: one less thing to install, and the
                 # cross binutils are already here for the C path.
+                #
+                # SPLIT BY DESTINATION, not one flat image. Sections can live in block
+                # RAM or in flash, and those load by completely different paths -- block
+                # RAM as bitstream init, flash by writing the part. A single `-O binary`
+                # over an ELF spanning both pads the address gap between 0x0 and
+                # 0x10000000, which produced a 269 MB "firmware" the first time this was
+                # tried.
+                #
+                # `--only-section` per destination keeps each artifact the size of what
+                # is actually in it. A build with nothing in flash simply produces an
+                # empty second file, so this costs nothing when the layout is all-RAM.
                 result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                              "--only-section=.init", "--only-section=.init.rust",
+                              "--only-section=.text", "--only-section=.data",
                               str(ELF), str(FIRMWARE_BIN)])
                 if result.returncode != 0:
                     emit("objcopy failed:")
@@ -197,6 +216,16 @@ def main():
                     return 1
                 emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes "
                      f"({firmware_digest()})")
+
+                # Whatever the linker put in flash, as its own artifact.
+                result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                              "--only-section=.rodata", str(ELF), str(RODATA_BIN)])
+                rodata = RODATA_BIN.stat().st_size if RODATA_BIN.exists() else 0
+                if rodata:
+                    emit(f"flash image: {rodata} bytes for {FLASH_RODATA_OFFSET:#x} "
+                         f"({firmware_digest(RODATA_BIN)})")
+                    emit("  NOT WRITTEN. Nothing in this path programs flash, so the "
+                         "board will run with stale .rodata until it is.")
 
             # The bootloader, unless this is the C path -- that generator emits an
             # image linked for 0 and has no bootloader to sit under it.

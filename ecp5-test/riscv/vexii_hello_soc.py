@@ -320,6 +320,12 @@ APOLLO_RX_DEPTH = 16
 # fraction of the rate, silently.
 FLASH_BASE = 0x10000000
 
+# Whether the flash window is cached. False routes it to the uncached `iobus`:
+# every load becomes a full command/address/dummy/data transaction with no line
+# reuse, which is slow and simple. See the region list for why the first
+# .rodata-from-flash test wants simple.
+FLASH_CACHED = False
+
 # The HyperRAM memory window: ordinary cached loads, stores, and instruction fetches.
 #
 # The base matches Cynthion's existing facedancer map. Eight MiB is the populated
@@ -538,8 +544,19 @@ class HelloSoC(Elaboratable):
         # main=1 for the flash is the point of this whole exercise. It puts
         # flash accesses on the cached `dbus` and lets the I-cache fetch from
         # it; exe=1 permits instruction fetch, so code can execute in place.
+        # FLASH_CACHED selects between the two, and the first test of running
+        # .rodata from flash deliberately uses main=0.
+        #
+        # Uncached is the simple case: every load is a complete flash transaction
+        # and nothing depends on line fills, burst continuation or cache
+        # coherency. It is much slower and that is the point -- a first test
+        # should remove variables, not preserve performance. If .rodata reads
+        # correctly uncached, the mechanism works; turning the cache back on then
+        # changes speed rather than correctness, and any failure after that is
+        # the cache's.
         regions = list(vexii_cpu.DEFAULT_REGIONS) + [
-            f"base={FLASH_BASE:08x},size={FLASH_SIZE:08x},main=1,exe=1",
+            f"base={FLASH_BASE:08x},size={FLASH_SIZE:08x},"
+            f"main={1 if FLASH_CACHED else 0},exe={1 if FLASH_CACHED else 0}",
             f"base={HYPERRAM_BASE:08x},size={HYPERRAM_SIZE:08x},main=1,exe=1",
         ]
 
