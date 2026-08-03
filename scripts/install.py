@@ -134,13 +134,11 @@ REPOS_MANIFEST = {
         "required": True,
         "builds": ["moondancer-firmware", "gateware-analyzer", "gateware-facedancer"],
     },
-    "luna": {
-        "path": _repo_path("luna"),
-        "required": False,
-        "builds": [],
-    },
-    # No "facedancer" entry: the submodule was removed (#169). Nothing here
-    # imported the package. "gateware-facedancer" above is unrelated -- it is
+    # Only apollo and cynthion remain. facedancer, luna, packetry and saturn-v
+    # were removed as submodules (#169): nothing here imported any of them, and
+    # `luna` in particular was never the checkout -- `import luna` resolves to
+    # site-packages, which is why the entry could sit here as required=False for
+    # as long as it did. "gateware-facedancer" above is unrelated: it is
     # `cynthion.gateware.facedancer.top`, a target inside repos/cynthion.
 }
 

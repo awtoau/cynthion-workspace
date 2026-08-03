@@ -46,7 +46,7 @@ the platform. See [USB mode switching](#usb-mode-switching-the-main-gotcha).
 ## Building and loading
 
 LUNA designs expose a standard CLI via `top_level_cli()`
-([luna/__init__.py:33](../../repos/luna/luna/__init__.py#L33)). Any gateware top
+([luna/__init__.py:33](https://github.com/greatscottgadgets/luna/blob/main/luna/__init__.py#L33)). Any gateware top
 module is invoked the same way:
 
 ```bash
@@ -74,7 +74,7 @@ Useful flags:
 
 Note `--flash` implies neither erase nor upload: flashing self-reconfigures the
 FPGA and implicitly erases, so LUNA clears both flags
-([luna/__init__.py:85-87](../../repos/luna/luna/__init__.py#L85-L87)).
+([luna/__init__.py:85-87](https://github.com/greatscottgadgets/luna/blob/main/luna/__init__.py#L85-L87)).
 
 ### Loading a pre-built bitstream
 

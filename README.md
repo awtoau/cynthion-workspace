@@ -45,9 +45,6 @@ plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
 |------|------|----------|----------|
 | `repos/cynthion` | awtoau/awto-cynthion | greatscottgadgets/cynthion | Firmware (Rust), gateware (Python/Amaranth), Python host library |
 | `repos/apollo` | awtoau/awto-apollo | greatscottgadgets/apollo | Apollo ARM MCU firmware (C/TinyUSB) |
-| `repos/luna` | awtoau/awto-luna | greatscottgadgets/luna | LUNA USB gateware library |
-| `repos/saturn-v` | awtoau/awto-saturn-v | greatscottgadgets/saturn-v | Apollo DFU bootloader |
-| `repos/packetry` | awtoau/awto-packetry | greatscottgadgets/packetry | USB capture + analysis tool |
 | `repos/cynthion-hardware` | awtoau/awto-cynthion-hardware | greatscottgadgets/cynthion-hardware | KiCad schematics and PCB layout |
 
 ## Local mirrors
