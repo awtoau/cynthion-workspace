@@ -146,6 +146,13 @@ const SWITCHES0_SOURCE: u8 = (1 << 7) | (1 << 6);
 /// else. A 1 in this register MASKS, so the value is the complement.
 const MASK_WANTED: u8 = !(0b1000_0001);
 
+/// `MASK.M_BC_LVL`, bit 0. A 1 masks.
+///
+/// Set across the orientation sweep in [`state`], because moving the measure
+/// select changes `BC_LVL` and the part reports that as an interrupt -- one the
+/// poll caused by looking. See the comment there.
+const MASK_BC_LVL: u8 = 1 << 0;
+
 /// `MASKA`/`MASKB`: mask everything. Nothing here acts on a PD or hard-reset
 /// event yet, and an unmasked interrupt with no handler is a storm on a shared
 /// level-sensitive line.
@@ -540,6 +547,23 @@ pub fn state(bus: &mut Bus, port: Port) -> Result<State, bus::Error> {
         // register as found with one field replaced.
         let base = switches0 & !SWITCHES0_MEASURE;
 
+        // MASK `I_BC_LVL` ACROSS THE SWEEP, or the poll interrupts itself.
+        //
+        // Moving the measure select changes which pin the comparator sees, which
+        // changes `BC_LVL`, which the part reports as `I_BC_LVL` -- a real
+        // interrupt caused entirely by us looking. Every `state()` call raised
+        // two, `service` answered each by calling `state()`, and the board
+        // produced roughly 130 interrupts a second with `serviced` climbing
+        // without limit. Measured on hardware; simulation cannot show it, because
+        // the model has no reason to raise an interrupt on a select it was told
+        // to change.
+        //
+        // Masking is not enough on its own: `INTERRUPT` still LATCHES while
+        // masked -- MASK gates the pin, not the register -- so the bit is read
+        // and discarded below before unmasking, and the line stays quiet.
+        let mask = read(bus, port, REG_MASK)?;
+        write(bus, port, REG_MASK, mask | MASK_BC_LVL)?;
+
         write(bus, port, REG_SWITCHES0, base | SWITCHES0_MEASURE_CC1)?;
         let status0 = read(bus, port, REG_STATUS0)?;
         write(bus, port, REG_SWITCHES0, base | SWITCHES0_MEASURE_CC2)?;
@@ -547,6 +571,13 @@ pub fn state(bus: &mut Bus, port: Port) -> Result<State, bus::Error> {
         // Back to what was found, not to `MEAS_CC1`: a caller that had neither
         // select on gets neither back.
         write(bus, port, REG_SWITCHES0, switches0)?;
+
+        // Read-to-clear, discarding: this one is ours. A genuine BC_LVL change
+        // that happened during the sweep is lost, and that is the right trade --
+        // the band is read directly two lines above, so the state is captured
+        // even when the edge announcing it is not.
+        let _ = read(bus, port, REG_INTERRUPT)?;
+        write(bus, port, REG_MASK, mask)?;
 
         (
             status0,
