@@ -74,6 +74,13 @@ class HyperRAMProbe(wiring.Component):
                                          access="r")
         self._max_run = csr.Register({"count": csr.Field(csr.action.R, 16)},
                                      access="r")
+        # The data phase. `words` counts 16-bit words delivered (32 per 64-byte
+        # line); `busy` counts cycles with the controller not idle. busy/words is
+        # the gap between words, and a streaming burst has a gap of 1.
+        self._words = csr.Register({"count": csr.Field(csr.action.R, 16)},
+                                   access="r")
+        self._busy = csr.Register({"count": csr.Field(csr.action.R, 32)},
+                                  access="r")
         self._clear = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
                                    access="w")
 
@@ -82,6 +89,8 @@ class HyperRAMProbe(wiring.Component):
         builder.add("beats", self._beats)
         builder.add("burst_beats", self._burst_beats)
         builder.add("max_run", self._max_run)
+        builder.add("words", self._words)
+        builder.add("busy", self._busy)
         builder.add("clear", self._clear)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
@@ -91,6 +100,8 @@ class HyperRAMProbe(wiring.Component):
             "start_transfer": In(unsigned(1)),
             "beat": In(unsigned(1)),
             "is_burst": In(unsigned(1)),
+            "word": In(unsigned(1)),
+            "busy": In(unsigned(1)),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -104,6 +115,8 @@ class HyperRAMProbe(wiring.Component):
         burst_beats = Signal(16)
         max_run = Signal(16)
         run = Signal(16)
+        words = Signal(16)
+        busy = Signal(32)
 
         # `start_transfer` is a pulse from the owner FSM, but count the EDGE
         # anyway: a level held for two cycles by a stall would otherwise read as
@@ -117,7 +130,7 @@ class HyperRAMProbe(wiring.Component):
 
         with m.If(clear):
             m.d.sync += [starts.eq(0), beats.eq(0), burst_beats.eq(0),
-                         max_run.eq(0), run.eq(0)]
+                         max_run.eq(0), run.eq(0), words.eq(0), busy.eq(0)]
         with m.Else():
             with m.If(start_edge):
                 m.d.sync += starts.eq(starts + 1)
@@ -127,6 +140,10 @@ class HyperRAMProbe(wiring.Component):
                 with m.If(run > max_run):
                     m.d.sync += max_run.eq(run)
                 m.d.sync += run.eq(0)
+            with m.If(self.word):
+                m.d.sync += words.eq(words + 1)
+            with m.If(self.busy):
+                m.d.sync += busy.eq(busy + 1)
             with m.If(self.beat):
                 m.d.sync += [beats.eq(beats + 1), run.eq(run + 1)]
                 with m.If(self.is_burst):
@@ -142,5 +159,7 @@ class HyperRAMProbe(wiring.Component):
             self._beats.f.count.r_data.eq(beats),
             self._burst_beats.f.count.r_data.eq(burst_beats),
             self._max_run.f.count.r_data.eq(max_run),
+            self._words.f.count.r_data.eq(words),
+            self._busy.f.count.r_data.eq(busy),
         ]
         return m

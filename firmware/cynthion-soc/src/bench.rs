@@ -347,7 +347,9 @@ mod probe {
     const BEATS: usize = 0x02;
     const BURST_BEATS: usize = 0x04;
     const MAX_RUN: usize = 0x06;
-    const CLEAR: usize = 0x08;
+    const WORDS: usize = 0x08;
+    const BUSY: usize = 0x0c;
+    const CLEAR: usize = 0x10;
 
     /// Two byte reads, low first.
     ///
@@ -375,9 +377,22 @@ mod probe {
         unsafe { core::ptr::write_volatile((BASE + CLEAR) as *mut u8, 1) };
     }
 
-    /// `(starts, beats, burst_beats, max_run)`.
-    pub fn read() -> (u32, u32, u32, u32) {
-        (read16(STARTS), read16(BEATS), read16(BURST_BEATS), read16(MAX_RUN))
+    /// Four bytes, low first, for the same reason as `read16`.
+    fn read32(offset: usize) -> u32 {
+        // SAFETY: four bytes inside the generated window; read-only counters.
+        unsafe {
+            let reg = (BASE + offset) as *const u8;
+            (core::ptr::read_volatile(reg) as u32)
+                | (core::ptr::read_volatile(reg.add(1)) as u32) << 8
+                | (core::ptr::read_volatile(reg.add(2)) as u32) << 16
+                | (core::ptr::read_volatile(reg.add(3)) as u32) << 24
+        }
+    }
+
+    /// `(starts, beats, burst_beats, max_run, words, busy)`.
+    pub fn read() -> (u32, u32, u32, u32, u32, u32) {
+        (read16(STARTS), read16(BEATS), read16(BURST_BEATS), read16(MAX_RUN),
+         read16(WORDS), read32(BUSY))
     }
 }
 
@@ -674,7 +689,7 @@ fn hyper(uart: &mut Uart) {
         let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_SEQ_ACCESSES, false)
         });
-        let (starts, beats, burst_beats, max_run) = probe::read();
+        let (starts, beats, burst_beats, max_run, words, busy) = probe::read();
         row(uart, "hyper win", "16 KiB", "read seq", &seq);
         sum ^= got;
 
@@ -689,6 +704,19 @@ fn hyper(uart: &mut Uart) {
             uart,
             "hyper win  transactions {}  beats {}  burst {}  longest run {}",
             starts, beats, burst_beats, max_run);
+        // THE DATA PHASE. `busy` is cycles with the controller not idle, `words`
+        // is 16-bit words delivered -- 32 per 64-byte line. `busy / words` is the
+        // gap between words, and a burst that streams has a gap of 1. Anything
+        // larger is the 316 CK this issue is chasing, and says so directly rather
+        // than being inferred from MB/s.
+        if words > 0 {
+            let gap = (busy * 100) / words;
+            let _ = writeln!(
+                uart,
+                "hyper win  words {}  busy {} cycles  {}.{:02} cycles per word \
+                 -- 1.00 is a streaming burst",
+                words, busy, gap / 100, gap % 100);
+        }
         if starts > 0 {
             let per = (beats * 100) / starts;
             let _ = writeln!(

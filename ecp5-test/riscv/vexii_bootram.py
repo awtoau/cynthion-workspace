@@ -382,6 +382,14 @@ class BootRAM(Elaboratable):
         self.probe_start = Signal()   # a HyperBus transaction began
         self.probe_beat  = Signal()   # a Wishbone beat was acknowledged
         self.probe_burst = Signal()   # ... and it arrived marked as a burst
+        # The DATA PHASE, which is where the missing 316 CK are.
+        #
+        # `words` is one 16-bit HyperRAM word delivered; a 64-byte line is 32 of
+        # them. `busy` is a cycle with the controller not idle. Together they give
+        # the gap between words: if busy/line is 348 and words/line is 32, the
+        # data phase is not streaming and the gap is the fault.
+        self.probe_word  = Signal()
+        self.probe_busy  = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -518,6 +526,8 @@ class BootRAM(Elaboratable):
             self.probe_start.eq(start),
             self.probe_beat.eq(mmap.bus.ack),
             self.probe_burst.eq(mmap.bus.ack & mmap.bursting_out),
+            self.probe_word.eq(word_event),
+            self.probe_busy.eq(~psram.idle),
         ]
 
         return m

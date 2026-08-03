@@ -5,6 +5,9 @@ pub struct RegisterBlock {
     beats: Beats,
     burst_beats: BurstBeats,
     max_run: MaxRun,
+    words: Words,
+    _reserved5: [u8; 0x02],
+    busy: Busy,
     clear: Clear,
 }
 impl RegisterBlock {
@@ -28,7 +31,17 @@ impl RegisterBlock {
     pub const fn max_run(&self) -> &MaxRun {
         &self.max_run
     }
-    #[doc = "0x08 - HYPERRAM_PROBE.CLEAR, 1 bits at +0x08"]
+    #[doc = "0x08 - HYPERRAM_PROBE.WORDS, 16 bits at +0x08"]
+    #[inline(always)]
+    pub const fn words(&self) -> &Words {
+        &self.words
+    }
+    #[doc = "0x0c - HYPERRAM_PROBE.BUSY, 32 bits at +0x0c"]
+    #[inline(always)]
+    pub const fn busy(&self) -> &Busy {
+        &self.busy
+    }
+    #[doc = "0x10 - HYPERRAM_PROBE.CLEAR, 1 bits at +0x10"]
     #[inline(always)]
     pub const fn clear(&self) -> &Clear {
         &self.clear
@@ -54,10 +67,20 @@ pub mod burst_beats;
 pub type MaxRun = crate::Reg<max_run::MaxRunSpec>;
 #[doc = "HYPERRAM_PROBE.MAX_RUN, 16 bits at +0x06"]
 pub mod max_run;
-#[doc = "CLEAR (w) register accessor: HYPERRAM_PROBE.CLEAR, 1 bits at +0x08\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@clear`] module"]
+#[doc = "WORDS (r) register accessor: HYPERRAM_PROBE.WORDS, 16 bits at +0x08\n\nYou can [`read`](crate::Reg::read) this register and get [`words::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@words`] module"]
+#[doc(alias = "WORDS")]
+pub type Words = crate::Reg<words::WordsSpec>;
+#[doc = "HYPERRAM_PROBE.WORDS, 16 bits at +0x08"]
+pub mod words;
+#[doc = "BUSY (r) register accessor: HYPERRAM_PROBE.BUSY, 32 bits at +0x0c\n\nYou can [`read`](crate::Reg::read) this register and get [`busy::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@busy`] module"]
+#[doc(alias = "BUSY")]
+pub type Busy = crate::Reg<busy::BusySpec>;
+#[doc = "HYPERRAM_PROBE.BUSY, 32 bits at +0x0c"]
+pub mod busy;
+#[doc = "CLEAR (w) register accessor: HYPERRAM_PROBE.CLEAR, 1 bits at +0x10\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@clear`] module"]
 #[doc(alias = "CLEAR")]
 pub type Clear = crate::Reg<clear::ClearSpec>;
-#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x08"]
+#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x10"]
 pub mod clear;
 
 /// Byte offsets from this peripheral's generated base address.
@@ -66,5 +89,7 @@ pub mod offset {
     pub const BEATS: usize = 0x02;
     pub const BURST_BEATS: usize = 0x04;
     pub const MAX_RUN: usize = 0x06;
-    pub const CLEAR: usize = 0x08;
+    pub const WORDS: usize = 0x08;
+    pub const BUSY: usize = 0x0c;
+    pub const CLEAR: usize = 0x10;
 }
