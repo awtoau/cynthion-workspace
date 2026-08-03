@@ -61,7 +61,7 @@ started. It would NOT be safe on a PHY that inferred transaction boundaries from
 from amaranth import Module
 from amaranth.lib import wiring
 from amaranth.lib.cdc import FFSynchronizer
-from amaranth.lib.fifo import AsyncFIFO
+from amaranth.lib.fifo import AsyncFIFOBuffered
 from amaranth.lib.wiring import In, Out
 
 from luna_soc.gateware.core.spiflash.port import SPIControlPort
@@ -73,6 +73,14 @@ class ClockCrossedPHY(wiring.Component):
     A drop-in for the PHY it wraps: the same flipped `SPIControlPort`, so the
     crossbar connects to it identically and nothing upstream knows the flash is
     on another clock.
+
+    **BUFFERED, and that is a timing fix rather than a preference.** A plain
+    `AsyncFIFO` presents `r_data` straight out of memory, and this module drives
+    the PHY's `source` combinationally from it -- so the FIFO's output mux and the
+    PHY's bit-counter carry chain became ONE combinational path. nextpnr put the
+    flash domain's critical path exactly there: `to_phy.r_data[32]`, the first bit
+    of `len`, into a CCU2C chain in `vexii_flash.py`. `AsyncFIFOBuffered` registers
+    the output and breaks it.
 
     `depth` is 4 rather than 2 because an AsyncFIFO's usable depth is its depth
     minus the synchroniser latency in each direction, and 2 leaves almost no
@@ -121,7 +129,7 @@ class ClockCrossedPHY(wiring.Component):
                       ("width", len(source.width)), ("mask", len(source.mask))]
         out_width = sum(width for _, width in out_layout)
 
-        m.submodules.to_phy = to_phy = AsyncFIFO(
+        m.submodules.to_phy = to_phy = AsyncFIFOBuffered(
             width=out_width, depth=self._depth,
             r_domain=out_domain, w_domain="sync")
 
@@ -145,7 +153,7 @@ class ClockCrossedPHY(wiring.Component):
         ]
 
         # --- PHY -> core ---------------------------------------------------
-        m.submodules.from_phy = from_phy = AsyncFIFO(
+        m.submodules.from_phy = from_phy = AsyncFIFOBuffered(
             width=len(phy.sink.data), depth=self._depth,
             r_domain="sync", w_domain=out_domain)
         m.d.comb += [

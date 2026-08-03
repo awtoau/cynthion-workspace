@@ -141,6 +141,54 @@ def firmware_in_bitstream(build_dir, emit):
     return b"".join(word.to_bytes(4, "little") for word in words)
 
 
+def bitstream_is_stale(emit):
+    """Is the built bitstream older than the gateware that describes it?
+
+    THE CHECK THAT WAS MISSING, and its absence cost an hour tonight.
+
+    `soc_run.py` has always compared the firmware in the bitstream against the
+    firmware just built. That comparison went vacuous when `.text` moved to flash:
+    nothing of the firmware travels in the bitstream any more, so it correctly
+    reports "does not apply" -- and nothing replaced it.
+
+    What happened then: `./dev.py build` FAILED at the gateware step, `./dev.py fw`
+    skipped the build by design, and `configure` loaded a bitstream from two clock
+    settings ago. The board came up, the shell answered, and every number read off
+    it was attributed to a configuration that had never been built. Both halves
+    reported success.
+
+    Modification time rather than a hash, deliberately. The gateware stamps its git
+    hash into USERCODE, but that is a COMMITTED hash: it does not move for an edit
+    that has not been committed, which is the normal state while working and
+    exactly when this bites. An mtime comparison catches the edit itself.
+
+    Errs toward refusing. A bitstream the same age as its source is treated as
+    stale, because the interesting case is a build that just failed and left the
+    previous artifact in place with a plausible timestamp.
+    """
+    if not BITSTREAM.exists():
+        return False                    # a different error, reported elsewhere
+
+    built = BITSTREAM.stat().st_mtime
+    newer = []
+    for source in sorted((ROOT / "ecp5-test" / "riscv").glob("*.py")):
+        if source.stat().st_mtime >= built:
+            newer.append(source.relative_to(ROOT))
+    if not newer:
+        return False
+
+    emit("STALE BITSTREAM: the gateware has changed since it was built.")
+    for source in newer[:6]:
+        emit(f"  newer than the bitstream: {source}")
+    if len(newer) > 6:
+        emit(f"  ... and {len(newer) - 6} more")
+    emit("Refusing to configure. The board would run a gateware that is not this")
+    emit("source -- a different clock, a different memory map, or a peripheral")
+    emit("that moved -- and every measurement taken from it would be attributed")
+    emit("to the wrong configuration. Run `./dev.py build` and fix what fails.")
+    return True
+
+
 def split_sections(elf, emit):
     """Allocated sections of `elf`, grouped by which window they load into.
 
@@ -538,6 +586,11 @@ def configure_and_read(args, emit):
     if True:
         if not BITSTREAM.exists():
             emit(f"no bitstream at {BITSTREAM.relative_to(ROOT)}")
+            return 1
+
+        # Nothing reaches the board past this point without the gateware on it
+        # being the gateware in the tree.
+        if bitstream_is_stale(emit):
             return 1
 
         result = run([sys.executable,
