@@ -58,3 +58,9 @@ ecp5-test/sideband/build/
 # Third-party datasheets: freely fetchable from the vendor, several MB each, and not
 # ours to redistribute. sources/README.md is the manifest with URLs.
 sources/*.pdf
+
+# Cargo build output. Regenerable by `cargo build`, ~49 MB, and it was tracked once by
+# accident -- a merge carried it back in because the branch that removed it never had it
+# to delete. The firmware artifact that matters is the one `scripts/bram_patch.py` puts
+# into a bitstream, not the tree that produced it.
+firmware/*/target/
