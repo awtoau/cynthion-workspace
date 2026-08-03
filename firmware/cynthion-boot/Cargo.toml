@@ -1,0 +1,58 @@
+[package]
+name = "cynthion-boot"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Resident bootloader for the Cynthion r1.4 VexiiRiscv SoC"
+
+# No riscv-rt, and that is a size decision with a correctness argument behind it.
+#
+# riscv-rt brings a trap vector, a `.bss` zeroing loop, a `.data` copy loop and the
+# `_pre_init`/`_setup_interrupts` hooks. This image has no statics, takes no traps and
+# runs before anything has been enabled, so all of it would be code that cannot execute.
+# `_start` here is four instructions: set `sp`, jump.
+[dependencies]
+
+# Where the HyperRAM read port is. `src/hyperram.rs` -- shared with the shell, see
+# src/main.rs -- names `cynthion_soc_pac::base::BOOTRAM` rather than an address, and
+# `scripts/check.py`'s `socmap` check is what holds that to the gateware.
+cynthion-soc-pac = { path = "../cynthion-soc-pac" }
+
+[features]
+# Declared and never enabled. `src/hyperram.rs` is the shell's file, compiled into this
+# crate as a module, and it carries a `qemu` backend for `-M virt`. There is no QEMU
+# bootloader -- virt jumps straight to the ELF entry point and has no block RAM at 0 to
+# fall back into -- so this crate always builds the hardware side. Declaring the feature
+# is what keeps the `cfg` a known one and the build warning-clean.
+qemu = []
+
+# Measured, not assumed. `./scripts/soc_boot_size.py` re-runs the whole table.
+#
+# | setting            | image bytes | vs committed |
+# |--------------------|-------------|--------------|
+# | as committed       | 492         | baseline     |
+# | opt-level = "s"    | 496         | +4           |
+# | opt-level = 3      | 1286        | +794         |
+# | lto = "fat"        | 492         | same         |
+# | lto = false        | 494         | +2           |
+# | codegen-units = 16 | 518         | +26          |
+# | debug = false      | 492         | same         |
+#
+# What that says: `opt-level` is the knob that matters, and only at 3, where the copy
+# loop gets unrolled into two and a half times the code for a pass that is bounded by
+# HyperRAM and not by the CPU. `lto = true` IS fat LTO, so that row is the same build.
+# LTO off costs 2 bytes and many codegen units costs 26 plus a 12-byte `.rodata` -- the
+# status text folds into a table once the whole crate is one unit and does not
+# otherwise. Small numbers, but they are the reason both settings stay.
+#
+# `debug = true` is worth 0 bytes in the image: DWARF is not a loaded section. It adds
+# ~12 KB to the ELF, which is the thing that gets read.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+# Stated rather than relied on: riscv32imac-unknown-none-elf declares
+# `panic-strategy = "abort"`, so this is what the target does regardless -- and rustc
+# rejects `panic = "unwind"` for it, which is why there is no row for it above.
+panic = "abort"
+debug = true

@@ -8,6 +8,10 @@
 Soak tests the sideband link across baud rates and drive styles, attributing
 failures to a direction.
 
+**Targets the test bitstream** (`ecp5-test/sideband/`), because it soaks with
+`POWER` -- 18 bytes, the longest reply in the protocol, which the shipping link
+does not implement. The physical layer it measures is common to both.
+
 This extends `sideband_speed_ladder.py` rather than replacing it. That script
 finds the speed ceiling with a few hundred round trips per rate, which is the
 right shape for "where does it break". It is not sufficient for accepting a

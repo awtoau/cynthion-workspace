@@ -39,7 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOGDIR = ROOT / "tmp" / "logs"
 
-DIAMOND = Path("/home/dan/lscc/diamond/3.14")
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"
 DIAMOND_BIN = DIAMOND / "bin" / "lin64"
 FOUNDRY = DIAMOND / "ispfpga"
 FPGA_BIN = FOUNDRY / "bin" / "lin64"

@@ -25,7 +25,7 @@
 ### Option A: Using LUNA CLI (Recommended)
 
 ```bash
-cd /mnt/2tb/git/cynthion-workspace
+cd ecp5-test          # from the repo root
 
 # Generate Verilog RTL from Amaranth
 python3 led_pattern_gateware_hello_world.py generate -t rtlil -o led_pattern.il

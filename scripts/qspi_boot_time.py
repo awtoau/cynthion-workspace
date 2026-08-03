@@ -59,7 +59,8 @@ LOG_DIR = ROOT / "tmp" / "logs"
 BUILD_ROOT = ROOT / "tmp" / "qspiboot"
 APOLLO = ROOT / "repos" / "apollo"
 
-OSS_CAD = Path("/home/dan/opt/oss-cad-suite")
+OSS_CAD = Path.home() / "opt" / "oss-cad-suite"
+PYTHON = Path.home() / "opt" / "cpython-315t" / "bin" / "python3.15t"
 
 # Apollo vendor request returning FPGA configuration pins:
 #   bit 0 = DONE, bit 1 = INITN   (firmware/src/vendor.c, VENDOR_REQUEST_GET_FPGA_STATUS_PINS)
@@ -152,7 +153,7 @@ def build_variant(label, spimode, freq):
     logging.info("[%s] building with: ecppack %s", label, opts)
     t0 = time.perf_counter()
     r = subprocess.run(
-        ["/home/dan/opt/cpython-315t/bin/python3.15t", str(script)],
+        [str(PYTHON), str(script)],
         capture_output=True, text=True, env=env)
     dt = time.perf_counter() - t0
     if r.returncode != 0:

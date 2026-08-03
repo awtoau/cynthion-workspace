@@ -7,11 +7,19 @@ dev-cycle check scripts, and owns CI configuration.
 
 ## Documentation
 
-- Consolidated documentation snapshot: [docs/full.md](docs/full.md)
-- Hardware-specific docs:
-  - [docs/apollo_samd11_mcu](docs/apollo_samd11_mcu)
-  - [docs/luna_ecp5_fpga](docs/luna_ecp5_fpga)
-  - [docs/moondancer](docs/moondancer)
+**Start at [docs/hardware.md](docs/hardware.md).** It is the board index: what every chip
+on Cynthion r1.4 is, how it is wired, which bus reaches it, and where the registers come
+from. One note per chip under [docs/chips/](docs/chips). Look there before deriving a
+hardware fact from a pin dump — it has been derived already, and getting it wrong is the
+common outcome.
+
+Deeper investigations, by area:
+
+- [docs/apollo_samd11_mcu](docs/apollo_samd11_mcu) — the debug MCU and its firmware
+- [docs/luna_ecp5_fpga](docs/luna_ecp5_fpga) — flash, HyperRAM, USB and BRAM in depth
+- [docs/moondancer](docs/moondancer) — the soft CPU
+- [docs/upstream-boundary.md](docs/upstream-boundary.md) — what we take from upstream and
+  what we have replaced
 
 ## Quick start
 
@@ -84,6 +92,9 @@ Do not add workflow files back. If something needs automating, extend
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
 | `flutter` | `analyze` + `test` (reported, non-blocking) |
+| `socmap` | the committed SVD still matches the SoC's memory map |
+| `irqlog` | no interrupt handler can reach a console |
+| `paths` | no tracked file names one machine's filesystem — this repo is public |
 | `gateware` | analyzer gateware elaboration (dry run), ~15 s |
 
 Exit status is 0 only if every selected check passed, so it works as a hook:

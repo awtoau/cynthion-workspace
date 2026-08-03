@@ -38,7 +38,7 @@ top_level_cli(LEDChase)
 ## Step 2: Build Gateware
 
 ```bash
-cd /mnt/2tb/git/cynthion-workspace
+cd ecp5-test          # from the repo root
 
 # Generate Verilog RTL
 python3 led_patterns_simple.py generate -t rtlil -o led_patterns.il
@@ -238,7 +238,10 @@ Typical gateware size:
 | Strobe | ~40 | Single bit select | Minimal |
 | All 4 | ~80 | Counter + 4-way mux | Still very small |
 
-**ECP5-12F total**: 12,288 LUTs → all patterns use < 1% of resources
+**ECP5 total**: 12,288 LUT4s advertised for an `LFE5U-12F`, but the die on r1.4 is a 25F
+with 24,288 and 20,143 have been placed and verified — see
+[`../docs/chips/lfe5u-12f-ecp5.md`](../docs/chips/lfe5u-12f-ecp5.md). Either way, all
+patterns use well under 1% of it.
 
 ---
 

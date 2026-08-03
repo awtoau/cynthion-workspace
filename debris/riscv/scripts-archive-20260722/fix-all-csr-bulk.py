@@ -12,7 +12,7 @@ files_to_fix = {
     "luna_soc/gateware/core/usb2/ep_out.py": [],
 }
 
-base_path = Path("/home/dan/git/awtoau/awto-luna-soc")
+base_path = Path.home() / "git" / "awtoau" / "awto-luna-soc"
 
 def fix_file(file_path):
     """Fix all annotation-only CSR classes in a file."""

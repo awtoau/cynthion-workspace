@@ -200,15 +200,20 @@ CONSOLE_H = """
 
 #define CONSOLE_BASE  {console_base:#x}u
 
-/* Matches ConsolePeripheral in ecp5-test/riscv/hello_soc.py: write a byte to
-   `data`, poll `ready` for room. Same shape as the luna_soc UART peripheral,
-   so firmware does not care whether the bytes leave over USB or a wire. */
-#define CONSOLE_DATA  (*(volatile unsigned char *)(CONSOLE_BASE + 0))
-#define CONSOLE_READY (*(volatile unsigned char *)(CONSOLE_BASE + 1))
+/* An NS16550A -- Uart16550 in ecp5-test/riscv/uart16550.py, and byte-identical
+   to the one QEMU's -M virt presents. Write THR at +0, poll LSR at +5 for room.
+
+   LSR is at +5 and not next to THR on purpose: it is the register a poll loop
+   reads, and it must not share a 32-bit word with anything whose read has a
+   side effect. A FIFO-popping read one byte from the polled one is what makes
+   firmware that polls go silent while firmware that never reads prints fine. */
+#define CONSOLE_THR   (*(volatile unsigned char *)(CONSOLE_BASE + 0))
+#define CONSOLE_LSR   (*(volatile unsigned char *)(CONSOLE_BASE + 5))
+#define CONSOLE_THRE  0x20u   /* transmit holding register empty */
 
 static inline void putch(char c) {{
-    while (!CONSOLE_READY) {{ }}
-    CONSOLE_DATA = (unsigned char)c;
+    while (!(CONSOLE_LSR & CONSOLE_THRE)) {{ }}
+    CONSOLE_THR = (unsigned char)c;
 }}
 
 static inline void print(const char *s) {{
@@ -378,8 +383,8 @@ static inline unsigned int flash_pop(void) {{
 
    The ILA caught this directly: dq_o0 was high in 0 of the 465 samples in the
    controller's chip-select window, while the memory-mapped control asserted it
-   8 times in the same capture. The comment that used to sit here asserted the
-   opposite of what the PHY does.
+   8 times in the same capture -- so the PHY does left-justify, whatever a
+   comment might assert.
 
    32-bit transfers are unaffected -- (32 - 32) is a shift of zero -- which is
    why the address-bearing commands below already pack the opcode into bits
@@ -493,9 +498,40 @@ static inline unsigned int flash_status1(void) {{
    is worth hanging visibly for -- a timeout here would report a program as
    complete when it was not, and the readback check would then blame the wrong
    thing. */
+/* Wait for BUSY to clear, but NOT forever.
+
+   The bound is what makes this diagnosable. An unbounded `while (BUSY) {{}}` cannot
+   distinguish "the erase is still running" from "the status read is broken and BUSY
+   will never clear", and the second is exactly what happened while the command path
+   was faulty -- the CPU hung with no output and looked dead.
+
+   FLASH_WAIT_LIMIT COUNTS TRANSACTIONS, NOT CYCLES, and that distinction is the whole
+   sizing. Each spin is a full 16-bit status read: 16 SCK at 30 MHz (sync 60 / 2*(1+0))
+   plus four uncached CSR accesses, each a Wishbone round trip -- order 2 us, not one
+   cycle. An earlier value of 0x20000000 was derived as though spins were cycles, which
+   made the bound about eighteen minutes rather than the few seconds intended. A timeout
+   that long is not a bound; nobody waits for it, so the hang it exists to diagnose looks
+   exactly like the hang it was meant to distinguish.
+
+   The slowest operation this firmware issues is a 4 KiB SECTOR erase -- there is no
+   block or chip erase opcode here -- so tSE, 400 ms maximum, is what binds. Ten times
+   that is 4 s, and at ~2 us a spin that is ~2M transactions.
+
+   Too small is worse than too large: it reports a timeout on an erase that was going to
+   finish. 10x the datasheet maximum is the headroom that makes a expiry mean a broken
+   read rather than a slow flash. On expiry this returns with the top bit set so the
+   caller can report a timeout rather than silently believing the operation finished. */
+#define FLASH_WAIT_LIMIT 0x200000u
+#define FLASH_WAIT_TIMEOUT 0x80000000u
+
 static inline unsigned int flash_wait_ready(void) {{
     unsigned int start = flash_cycles();
-    while (flash_status1() & FLASH_SR1_BUSY) {{ }}
+    unsigned int spins = 0;
+    while (flash_status1() & FLASH_SR1_BUSY) {{
+        if (++spins > FLASH_WAIT_LIMIT) {{
+            return FLASH_WAIT_TIMEOUT | (flash_cycles() - start);
+        }}
+    }}
     return flash_cycles() - start;
 }}
 
@@ -1008,7 +1044,11 @@ static void flash_write_test(unsigned int pass) {
     unsigned int after_erase = flash_read32(FLASH_SCRATCH);
 
     print("erase 4K     ");
-    print_hex(erase_cycles);
+    print_hex(erase_cycles & ~FLASH_WAIT_TIMEOUT);
+    if (erase_cycles & FLASH_WAIT_TIMEOUT) {{
+        print(" *** TIMEOUT -- BUSY never cleared, status read is broken\\r\\n");
+        return;
+    }}
     print(" cycles, after ");
     print_hex(after_erase);
     print(after_erase == 0xffffffffu ? "  erased\\r\\n" : "  NOT ERASED\\r\\n");
@@ -1061,7 +1101,10 @@ static void flash_write_test(unsigned int pass) {
     unsigned int via_ctrl = flash_read32_uncached(FLASH_SCRATCH);
 
     print("program 256B ");
-    print_hex(program_cycles);
+    print_hex(program_cycles & ~FLASH_WAIT_TIMEOUT);
+    if (program_cycles & FLASH_WAIT_TIMEOUT) {{
+        print(" *** TIMEOUT");
+    }}
     print(" cycles\\r\\n");
 
     print("verify       ");
@@ -1109,6 +1152,9 @@ int main(void) {
        Every pass reports its own numbers rather than a running summary: a
        summary hides which pass went wrong and what it saw. */
     unsigned int pass = 0;
+    /* Set once the detailed report has nothing left to say; from then on each pass
+       emits one status line instead of the full block. */
+    unsigned int quiet = 0;
     /* Latched once the command path is found dead, so the failure is reported
        once in full and then held rather than re-run every second. */
     int dead = 0;
@@ -1176,12 +1222,41 @@ int main(void) {
             print("tick ");
             print_hex(pass);
             print("\\r\\n");
+
+            /* Full report ONCE, then a status line.
+
+               With the inter-pass delay gone this loop runs flat out, and
+               reprinting eleven lines per pass buries the one thing a reader
+               wants to know. The detail above is printed while there is still
+               something to learn from it -- the write passes -- and after that
+               this collapses to a single line.
+
+               It still reprints rather than going silent, because the firmware
+               starts before the host has enumerated and a reader attaching later
+               would otherwise see nothing at all. */
+            if (WRITE_TESTS && pass + 1 >= WRITE_PASSES) {
+                quiet = 1;
+            } else if (!WRITE_TESTS) {
+                quiet = 1;
+            }
         }
         pass++;
 
-        /* Roughly a second, so the stream is readable rather than a blur. Not
-           calibrated -- it only has to be visibly periodic. */
-        for (volatile unsigned int i = 0; i < 6000000; i++) { }
+        /* No delay between passes.
+
+           There was a ~1 second busy-wait here, from when this loop was the only
+           evidence the CPU was alive. It is not any more: the LEDs carry liveness
+           (green heartbeat) and the console service reattaches after a reconfigure,
+           so a late reader gets the next pass regardless.
+
+           It also has to go before any flash speed work. These are cycle counts and
+           they should be taken back to back; pacing a benchmark against wall clock
+           measures the pacing.
+
+           NOTE for that work: this firmware links ENTIRELY INTO BLOCK RAM -- one
+           MEMORY region, .text included. Keep it that way while benchmarking flash.
+           Executing from flash while timing flash measures instruction fetch
+           contending with the reads under test, not the flash. */
     }
     return 0;
 }

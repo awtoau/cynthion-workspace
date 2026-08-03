@@ -4,15 +4,36 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-The sideband protocol as a library: bytes in one direction, meaning in the other.
+The SHIPPING sideband protocol as a library: bytes one way, meaning the other.
 
 Apollo relays the sideband without interpreting it -- the microcontroller shifts
 bytes, checks a CRC, and hands the buffer to the host unchanged. So every field
-has to be understood on this end, and until now that understanding lived in
-whichever script happened to need it. A self-test that prints `41ef401602bd` and
-calls it a pass proves the link works and says nothing about the board.
+has to be understood on this end, and this module is the one place that
+understands it. Decode belongs here rather than in whichever script needs it: a
+self-test that prints `41ef401602bd` and calls it a pass proves the link works
+and says nothing about the board.
 
-This module is that understanding, in one place, in both directions.
+## Three commands, and that is the whole map
+
+| CMD | Name | Response |
+|---|---|---|
+| `0x01` | `PING` | STATUS + protocol version + the CPU's byte + CRC8 |
+| `0x02` | `STATUS` | STATUS + CRC8 |
+| `0x80`-`0xFF` | write | STATUS + CRC8; the low 7 bits reach the CPU |
+
+Opcodes and payload sizes come from `ecp5-test/sideband_link.py` -- the gateware
+this decodes -- rather than being restated, so they cannot drift.
+
+## What this decoder deliberately does not know
+
+**POWER, DEVICES and LED.** The shipping link does not implement them, so it
+answers them as unknown commands, and a decoder that still knew them could only
+mislead: it would report a query as understood when the design has no such
+capability. They belong to the test bitstream, and their host side lives with it
+in `ecp5-test/sideband/test_protocol.py`.
+
+`PING`'s version byte is how the two are told apart at runtime: v1 is the test
+bitstream's responder, v2 is this link.
 
 ## Decode: replies
 
@@ -22,45 +43,25 @@ its CRC and the check then fails on a working link -- a mistake made twice from
 the command line before this module existed. `reply_length()` exists so it
 cannot be made a third time.
 
-Payload sizes come from the gateware's own `PAYLOAD_SIZE` table rather than being
-restated, so they cannot drift.
+## Not reachable over this link, and not intended to be
 
-## Encode: commands
-
-The LED command is the only thing the host sends beyond a bare opcode, and it was
-being built inline at each call site. `encode_leds()` and `encode_led_release()`
-name the format once. The opcode range `0x40-0x7F` carries the pattern in its low
-six bits, which is why a stray byte in that range used to hijack the display.
-
-## What is NOT reachable over the sideband
-
-Worth stating, because "decode all the chips" is only possible for chips the
-responder can see. Today the responder answers four commands: PING, STATUS,
-POWER and DEVICES. That covers the PAC1954 power monitor, the configuration
-flash JEDEC ID, and a HyperRAM presence bit.
-
-Not reachable, and needing new commands in the gateware first:
-
-  * **FUSB302B USB-PD controllers** (two, I2C 0x22 on separate buses). Read
-    today only by `ecp5-test/pins/fusb302_id.py` over JTAG registers.
-  * **Die temperature.** The ECP5 `DTR` primitive is not instantiated in the
-    sideband gateware. `LSC_READ_TEMP` (0xE8) reads it over JTAG instead, and is
-    not in Apollo's opcode set.
-  * **Board serial / USERCODE.** `USERCODE` is never set on builds, so it reads
-    as zeros and identifies nothing.
-
-Decoders for those are stubbed here with the register layouts already
-established, so adding the gateware command is the only remaining work.
+The SoC reads its own hardware: `power` over I2C, `board` for the memories,
+`typec` for both FUSB302Bs, `info` and `selftest` for the image. Two decode
+helpers survive here because other tooling references them -- the FUSB302B
+`DEVICE_ID` layout and the ECP5 `DTR` code -- and neither has, or is expected to
+get, a sideband command.
 """
 
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 
-from apollo_fpga.gateware import sideband as gw
+# The SHIPPING link, not the responder in `repos/apollo`. That one carries POWER,
+# DEVICES and LED for the test bitstream; this one does not, and importing it
+# here is what keeps the two from being confused.
+import sideband_link as gw
 
 
 # --------------------------------------------------------------------------
@@ -105,42 +106,21 @@ def check(reply, opcode):
 # encode -- host to FPGA
 # --------------------------------------------------------------------------
 
-def encode_leds(pattern):
-    """Opcode for a six-LED pattern.
+def encode_message(value):
+    """Opcode delivering a 7-bit byte to the CPU.
 
-    The whole command is one byte: base 0x40 with the pattern in the low six
-    bits, which keeps the protocol stateless. Bit 0 is the first LED.
+    The whole command is one byte: bit 7 selects, the low seven carry the value,
+    so the link stays stateless -- one byte in, one reply out, nothing held
+    between commands.
 
-    Colours, not indices, are how these are referred to on this board: index
-    0-5 is red, orange, yellow, green, blue, violet.
+    Seven bits rather than eight because the opcode and the payload share one
+    byte. Widening it to eight would need a second byte and a length the FPGA
+    must parse, which is what makes a responder stateful and then makes it need
+    a timeout.
     """
-    if not 0 <= pattern <= gw.CMD_LED_MASK:
-        raise ValueError(f"pattern must be 0..{gw.CMD_LED_MASK}, got {pattern}")
-    return gw.CMD_LED_BASE | pattern
-
-
-LED_COLOURS = ("red", "orange", "yellow", "green", "blue", "violet")
-
-
-def encode_led_colours(*colours):
-    """Opcode lighting the named colours, e.g. encode_led_colours("red", "blue")."""
-    pattern = 0
-    for colour in colours:
-        try:
-            pattern |= 1 << LED_COLOURS.index(colour.lower())
-        except ValueError:
-            raise ValueError(f"unknown LED colour {colour!r}; "
-                             f"expected one of {LED_COLOURS}") from None
-    return encode_leds(pattern)
-
-
-def encode_led_release():
-    """Opcode returning the LEDs to whatever the design drives.
-
-    Without this the override is permanent -- it latches on any opcode in
-    0x40-0x7F and nothing else clears it.
-    """
-    return gw.CMD_LED_RELEASE
+    if not 0 <= value <= gw.CMD_WRITE_MASK:
+        raise ValueError(f"value must be 0..{gw.CMD_WRITE_MASK}, got {value}")
+    return gw.CMD_WRITE_BASE | value
 
 
 # --------------------------------------------------------------------------
@@ -172,96 +152,26 @@ def decode_status(status):
 
 
 def decode_ping(payload):
-    version, reserved = payload
+    """Protocol version, then the byte the CPU put in the `tx` register.
+
+    The version is what makes removing commands safe from this end: v1 was the
+    responder that carried POWER, DEVICES and LED, v2 is the shipping link that
+    does not. A host that pings first knows which map it is talking to instead of
+    inferring it from a command that failed.
+    """
+    version, message = payload
     note = "" if version == gw.PROTOCOL_VERSION else \
-        f" (expected v{gw.PROTOCOL_VERSION})"
-    return f"protocol v{version}{note}, reserved 0x{reserved:02x}"
-
-
-# JEDEC manufacturer IDs, so a self-test reads as a name rather than a byte.
-JEDEC_MANUFACTURERS = {0xEF: "Winbond", 0xC2: "Macronix", 0x20: "Micron",
-                       0x1F: "Adesto/Atmel", 0xBF: "SST", 0x01: "Spansion"}
-
-
-def decode_devices(payload):
-    """Flash JEDEC ID (manufacturer, type, capacity) then a presence-flags byte."""
-    manufacturer, memory_type, capacity, flags = payload
-    vendor = JEDEC_MANUFACTURERS.get(manufacturer,
-                                     f"unknown 0x{manufacturer:02x}")
-    # For these parts JEDEC capacity is log2 of the byte count.
-    size = (f"{(1 << capacity) // (1024 * 1024)} MiB" if 16 <= capacity <= 32
-            else f"code 0x{capacity:02x}")
-    return (f"flash {vendor} type 0x{memory_type:02x} {size}, "
-            f"hyperram {'present' if flags & 1 else 'absent'}")
-
-
-# The fixed pattern `ecp5-test/sideband/sideband_gateware.py` drives into
-# power_data:
-#
-#   power = 0xF001_DDEE_BBCC_99AA_7788_5566_3344_1100 | pmon_value
-#
-# Per-byte distinguishable, so a transposition shows as a wrong value rather
-# than a plausible one -- and the LIVE PAC1954 manufacturer ID is ORed into the
-# low byte, so a POWER reply does prove the I2C read happened.
-#
-# The consequence for decoding: scaling these to volts and amps produces
-# confident nonsense. 0x3344 scales to 6.4 V and 3667 mA on a bus-powered
-# board. Detected structurally rather than by exact equality, because the low
-# byte varies with the live read and an equality check silently stops matching.
-TEST_PATTERN_HIGH_BYTES = (0x11, 0x33, 0x55, 0x77, 0x99, 0xBB, 0xDD, 0xF0)
-
-
-def looks_like_test_pattern(values):
-    """True when the payload is the gateware's fixed pattern.
-
-    Matches on the high byte of each word, which the pattern fixes, ignoring the
-    low byte, which carries the live I2C value. Requiring all eight to match
-    makes a false positive on real data implausible.
-    """
-    if len(values) != 8:
-        return False
-    return all((value >> 8) == expected
-               for value, expected in zip(values, TEST_PATTERN_HIGH_BYTES))
-
-
-def decode_power(payload):
-    """VBUS[0..3] then VSENSE[0..3], little-endian 16 bits each.
-
-    Scaled with the helpers `power_probe.py` uses rather than restating
-    488.3 uV/LSB and the 0.02 ohm sense resistors, so two tools cannot report
-    different volts for one raw count.
-    """
-    values = [int.from_bytes(payload[i:i + 2], "little")
-              for i in range(0, len(payload), 2)]
-    if not any(values):
-        return "all zero -- no power monitor in this bitstream"
-
-    if looks_like_test_pattern(values):
-        live = values[0] & 0xFF
-        note = (f"live PAC1954 manufacturer ID 0x{live:02x}"
-                + (" (Microchip, expected)" if live == 0x54
-                   else " -- expected 0x54"))
-        return (f"TEST PATTERN, not measurements -- the gateware drives a fixed "
-                f"pattern with {note} ORed into the low byte. "
-                f"Scaling these would report volts and amps that do not exist.")
-
-    from power_monitor.registers import (raw_to_volts, raw_to_amps,
-                                         CHANNEL_PORTS)
-    vbus, vsense = values[:4], values[4:]
-    return " | ".join(
-        f"{CHANNEL_PORTS.get(ch, f'ch{ch}')} {raw_to_volts(vbus[ch]):.3f}V "
-        f"{raw_to_amps(vsense[ch]) * 1000:.1f}mA" for ch in range(4))
+        f" (expected v{gw.PROTOCOL_VERSION} -- this may be the test bitstream, " \
+        f"whose extra commands live in ecp5-test/sideband/test_protocol.py)"
+    return f"protocol v{version}{note}, message 0x{message:02x}"
 
 
 DECODERS = {
     gw.CMD_PING: decode_ping,
     gw.CMD_STATUS: lambda payload: "",     # status byte carries everything
-    gw.CMD_DEVICES: decode_devices,
-    gw.CMD_POWER: decode_power,
 }
 
-NAMES = {gw.CMD_PING: "PING", gw.CMD_STATUS: "STATUS",
-         gw.CMD_POWER: "POWER", gw.CMD_DEVICES: "DEVICES"}
+NAMES = {gw.CMD_PING: "PING", gw.CMD_STATUS: "STATUS"}
 
 
 def name(opcode):
@@ -327,9 +237,13 @@ if __name__ == "__main__":
     for label, opcode, size in commands():
         print(f"  {label:<8} 0x{opcode:02x}  payload {size:>2}  "
               f"request {reply_length(opcode)} bytes")
+    print(f"  write    0x{gw.CMD_WRITE_BASE:02x}-0xff  "
+          f"payload  0  request {reply_length(gw.CMD_STATUS)} bytes")
     print()
     print("encode:")
-    print(f"  all LEDs off      0x{encode_leds(0):02x}")
-    print(f"  all LEDs on       0x{encode_leds(gw.CMD_LED_MASK):02x}")
-    print(f"  red + blue        0x{encode_led_colours('red', 'blue'):02x}")
-    print(f"  release           0x{encode_led_release():02x}")
+    print(f"  message 0          0x{encode_message(0):02x}")
+    print(f"  message 0x2a       0x{encode_message(0x2A):02x}")
+    print(f"  message 0x7f       0x{encode_message(gw.CMD_WRITE_MASK):02x}")
+    print()
+    print("POWER, DEVICES and LED are NOT here: the shipping link does not")
+    print("implement them. See ecp5-test/sideband/test_protocol.py.")

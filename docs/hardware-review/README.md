@@ -1,12 +1,12 @@
 # Hardware / misc work rescued from standalone fork clones (for review)
 
-Uncommitted work found in standalone clones under `/mnt/2tb/git/awtoau/` during
+Uncommitted work found in standalone clones under `${REPOS_ROOT:-$HOME/git/awtoau}` during
 a 2026-07-23 drive sweep, preserved here before those clones were deleted. None
 of it existed in the canonical workspace submodules (which were all clean).
 
 ## cynthion-hardware
 
-Source: `/mnt/2tb/git/awtoau/awto-cynthion-hardware` (base `13aa71c`, r1.4.0).
+Source: `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion-hardware` (base `13aa71c`, r1.4.0).
 
 - **`cynthion.kicad_pcb` — NOT captured as a diff.** The change was a whole-file
   rewrite (152,578 → 98,626 lines) from KiCad format `version 20221018` to a
@@ -23,7 +23,7 @@ Source: `/mnt/2tb/git/awtoau/awto-cynthion-hardware` (base `13aa71c`, r1.4.0).
 
 ## moondancer (awto-cynthion)
 
-Source: `/mnt/2tb/git/awtoau/awto-cynthion` (base `ef9addb`, on origin/main).
+Source: `${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion` (base `ef9addb`, on origin/main).
 
 - **`moondancer-logport.diff`** — a 1-line uncommitted change:
   `log::set_port(Port::Both)` → `Port::Uart0` in

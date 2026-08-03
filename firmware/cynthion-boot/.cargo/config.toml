@@ -1,0 +1,7 @@
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+# Only memory.x -- NOT link.x. This crate does not use riscv-rt (see Cargo.toml), so
+# memory.x here is a complete linker script rather than a set of region aliases.
+[target.riscv32imac-unknown-none-elf]
+rustflags = ["-C", "link-arg=-Tmemory.x"]

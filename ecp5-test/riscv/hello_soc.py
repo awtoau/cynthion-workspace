@@ -4,26 +4,29 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Phase 1 of the RISC-V bring-up: a core, memory, and a way to see it run.
-
-The point is a prompt, not a benchmark. Block RAM is single-cycle and needs no
-cache, no bus wrapper and no latency tuning, so the only things that can be
-wrong are the CPU, its reset vector and the peripheral it writes to. HyperRAM
-would mean debugging a CPU and a latency-sensitive memory at once.
-
-Output goes over USB CDC-ACM from the FPGA rather than through the Apollo UART.
-On r1.4 the `uart 0` pins (R14/T14) are shared with JTAG TDI/TMS, so a design
-that drives them competes with the thing loading its own bitstream. The USB path
-has no such conflict, and the CDC gateware is already measured -- 195 Mbps
-loopback -- so it is known to work.
-
-That means the console peripheral is not `luna_soc.gateware.core.uart`: that one
-instantiates AsyncSerialTX and drives pins. This one presents the same
-register shape to software (write a byte, poll a ready bit) but hands the byte
-to a USB endpoint instead of a shift register.
+A VexRiscv core on block RAM, printing over USB CDC-ACM: the first RISC-V
+bring-up on this board.
 
     ./ecp5-test/riscv/hello_soc.py --build
     ./ecp5-test/riscv/hello_soc.py --build --program
+
+The SoC under active development is `vexii_hello_soc.py` (VexiiRiscv, two
+16550s, a PLIC, the board peripherals). This one stays as the smaller reference
+point that several scripts still build against.
+
+Block RAM is single-cycle and needs no cache, bus wrapper or latency tuning, so
+the only things that can be wrong are the CPU, its reset vector and the
+peripheral it writes to.
+
+Output goes over USB CDC-ACM rather than the Apollo UART: on r1.4 the `uart 0`
+pins (R14/T14) are shared with JTAG TDI/TMS, so a design driving them competes
+with the thing loading its own bitstream. The USB path has no such conflict and
+is measured at 195 Mbps loopback.
+
+The console peripheral is therefore not `luna_soc.gateware.core.uart`, which
+instantiates AsyncSerialTX and drives pins. It presents the same register shape
+to software -- write a byte, poll a ready bit -- and hands the byte to a USB
+endpoint.
 """
 
 import sys as _uid_sys

@@ -1,0 +1,7 @@
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+# Only memory.x -- NOT link.x. The payload does not use riscv-rt: its _start is linked
+# for 0x0 and would collide with the resident shell. Our memory.x is a complete script.
+[target.riscv32imac-unknown-none-elf]
+rustflags = ["-C", "link-arg=-Tmemory.x"]

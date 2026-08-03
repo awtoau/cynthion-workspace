@@ -102,8 +102,26 @@ Verified by trying it: the `0xdeadbeef` build was refused.
 
 **The detector might not fire at all.** A self-checking test that never reports
 a failure is indistinguishable from one that cannot.
-→ `fabric_control.py`, run against a `--golden 0xdeadbeef` build. Every round
-must mismatch, and did: 1575/1575, sticky flag set on all 200 reads.
+→ `fabric_control.py` sets the harness's runtime negative-control bit, which
+complements the same design-generated golden. Every round must mismatch. The
+recorded control reported 1575/1575 with the sticky flag set on all 200 reads.
+
+**A multi-configuration sweep could be one configuration built repeatedly.**
+Handing nextpnr a different `--seed` is an input, not a result; if it converges
+on the same placement, the extra builds cost time and buy no coverage while the
+headline says otherwise.
+→ `fabric_placement.py --compare` measures the share of occupied LUT sites two
+builds have in common, **against the floor that density forces** — a design
+filling 84% of the die cannot share less than ~70% of its sites however it is
+placed, so a raw overlap read without that floor is meaningless. And
+`fabric_arcs.py` measures the routing each build switched on against the
+Trellis database, which is the quantity the sweep exists to increase.
+
+**A borrowed golden value looks exactly like a dead fabric.** pluribus's
+generator uses a plain Galois LFSR; this gateware adds a nonlinear mix, so the
+same seed gives a different signature. A golden value taken from there makes
+every round mismatch.
+→ `fabric_build.py` computes its own, and `fabric_sweep.py` never passes one.
 
 ## Procedure
 
@@ -113,11 +131,18 @@ must mismatch, and did: 1575/1575, sticky flag set on all 200 reads.
 ./scripts/fabric_placement.py                # where the logic actually landed
 ./scripts/fabric_run.py --rounds 20000       # load into SRAM, check
 
-# negative control
-./scripts/fabric_build.py --golden 0xdeadbeef
-./scripts/fabric_run.py --rounds 100         # refuses, as designed
+# negative control, on the same configured design
 ./scripts/fabric_control.py                  # detector must fire
-./scripts/fabric_build.py                    # restore the real bitstream
+```
+
+For many placements rather than one — build, load, test, aggregate, and run the
+control as part of the sweep:
+
+```bash
+./scripts/fabric_sweep.py --configs 8        # shake out the loop
+./scripts/fabric_sweep.py --configs 24       # what #116 asks for
+./scripts/fabric_arcs.py tmp/fabric-coverage/seed-*/top.config
+./scripts/fabric_placement.py --compare tmp/fabric-coverage/seed-*/top.config
 ```
 
 **SRAM only. Nothing here writes flash.** Volatile configuration is undone by a
@@ -206,6 +231,118 @@ first build produced. Two different placements occupying ~83% of a die sold as
 The board's ADC read 3206 both before loading and while running, so there was no
 measurable supply sag under the larger design.
 
+## Many configurations, and what breadth actually costs
+
+One placement cannot reach most of the interconnect. A routing arc is a mux
+selection, so per destination wire exactly one source can drive at a time, and
+every other source that wire could have taken is untested by that build no
+matter how much logic it holds. Reaching them means building again with the
+logic somewhere else — `fabric_build.py --seed N`, looped by `fabric_sweep.py`.
+
+### Measuring coverage rather than quoting it
+
+pluribus publishes a table of expected coverage per configuration count (1 →
+6.1%, 8 → 40.3%, 24 → 97.0%). Quoting it here would be wrong: that table was
+computed for a coverage-directed generator whose configurations are constructed
+to differ, while this sweep varies placement by handing nextpnr a different
+placer seed. Those are different mechanisms and there is no reason they should
+cover the same ground.
+
+So `fabric_arcs.py` measures it, from the artefacts the tools emitted:
+
+- **numerator** — the `arc: DEST SOURCE` lines of each `top.config`, which is
+  what ecppack was told to program.
+- **denominator** — the `.mux` sections of each tile type's `bits.db` in the
+  Trellis database, crossed with this device's `tilegrid.json`.
+- `.fixed_conn` entries are excluded from both. A hardwired connection is not a
+  mux and cannot be exercised or missed; counting it would inflate the
+  denominator with arcs no test could fail to cover.
+- every arc found in a config is checked to be one the database knows. If the
+  toolchain and the database had diverged, the share would be a ratio of two
+  incompatible things, so this is verified rather than assumed.
+
+Two denominators, both reported, because either alone overstates something:
+**per instance** is every arc of every tile on the die; **per tile type**
+collapses arcs to `(type, dest, source)`, since every PLC2 shares one mux
+structure. The second is always the larger and more flattering.
+
+### The sweep: 24/24 passed
+
+Cynthion r1.4, same part, 2026-08-03T01:06–01:32+10:00. Apollo firmware
+`v1.1.1-58-g6520707`. 24 configurations, seeds 1–24, 5,000 rounds each.
+
+| | |
+|---|---|
+| configurations passed | **24 of 24** |
+| LUT4s, every build | **20,336 of 24,288 — 83.7%** |
+| timing, worst clock | 79.61 to 89.30 MHz against 60 MHz — **met in all 24** |
+| rounds checked by the gateware | **120,439** |
+| mismatched rounds | **0** |
+| sticky mismatch flag | never set, in any configuration |
+| die temperature code | **31–32 throughout**, per FPGA-TN-02210 Table 4.3 |
+| negative control | **1,573 of 1,573 rounds mismatched**, sticky set on all 200 reads |
+
+The LUT total is identical in every build because packing is seed-independent —
+the seed moves placement and routing, not the netlist. So utilisation is not
+what varies here and is not the interesting number; the arcs are.
+
+The die temperature is new, and it is what turns "one operating point" from a
+caveat into data. It read 31 at the start of a configuration and 32 by the end —
+the part warms measurably under a design occupying 83.7% of it — and stayed in
+that band across all 24. Every result above is therefore at one temperature, and
+now that is a measurement rather than an assumption. If a soak ever shows
+mismatches correlating with this code, that is a marginal part; if it does not,
+that is a hard defect. The test could not previously tell those apart.
+
+### Result: 24 seeds buy 35.8% of the arcs, not 97%
+
+| configurations | per instance | per tile type | new arcs that build added |
+|---:|---:|---:|---:|
+| 1 | 2.74% | 5.55% | 213,663 |
+| 8 | 16.62% | 8.15% | 129,370 |
+| 16 | 27.70% | 9.09% | 90,873 |
+| **24** | **35.77%** | **9.61%** | 68,298 |
+
+Against 7,804,818 configurable arcs per instance on the die and 54,209 distinct
+per tile type. Every build used ~213,000 arcs; the union after 24 is 2,791,841.
+
+**pluribus's table does not transfer, and the gap is the mechanism, not the
+part.** Its 24-configuration figure of 97% is for configurations *constructed*
+to select different sources per destination. A placer seed does not do that. It
+moves which tile instances the logic lands in, so the per-instance share climbs
+steadily — but the design is 185 structurally identical blocks, so every
+configuration needs the same *kinds* of connection and the per-tile-type share
+saturates near 9.6%. The marginal arcs per build fall from 213,663 to 68,298
+across the sweep and are still falling; reaching 97% this way would take
+hundreds of builds, not 24.
+
+So the correct claim for a run of this shape is **35.8% of the die's routing
+arcs**, and reaching pluribus's number requires its generator, not more seeds.
+
+### Checking that the seed did anything
+
+"Different seed" is an input, not a result. `fabric_placement.py --compare`
+measures the share of occupied LUT sites two builds have in common — the exact
+`RxCy` tile and `SLICEn.Kn` position, not a row histogram, since two placements
+can have identical row totals and share no site.
+
+That raw share has to be read against the floor **density forces**: a design
+occupying 83.8% of the die cannot share less than |A|+|B|−N sites with another
+of the same size, however differently it is placed. What is left above the floor
+is what the seed actually bought.
+
+Across the 276 pairs of the 24-configuration sweep:
+
+- occupied LUT sites: **20,358 of 24,288 (83.8%)**, identical in every build —
+  packing is seed-independent, so utilisation is not a differentiator here
+- pairwise overlap **0.747 min, 0.757 mean, 0.772 max**
+- the floor density forces is **0.709**
+- so of the 29% of sites free to move, the seed moved **83%**
+
+The placements are therefore genuinely different, about as different as a design
+this dense can be — which is why the per-instance arc share climbs while the
+per-tile-type share does not. Site occupancy is nearly forced; routing is not.
+
 ## What this establishes, and what it does not
 
 **Establishes**, for this one part at this one moment: a design occupying 20,143
@@ -238,6 +375,18 @@ network and computed correctly.
   the signature is an XOR over block state, so a fault in a bit that the mix
   happens not to propagate before the round ends could in principle be masked.
   The diffusion makes that unlikely, not impossible.
+- **the interconnect comprehensively, even after 24 configurations.** 35.8% of
+  the die's arcs is the measured figure, so **64.2% of the routing was never
+  switched on**. Coverage is also per tile *type* where it is quoted that way,
+  not per instance — every PLC2 shares one mux structure — so a hard defect in
+  one specific tile can still hide behind an arc covered in a different tile.
+
+What the sweep did add over the single run: 24 independently placed and routed
+designs, each occupying 83.7% of a die sold as 12,288 LUTs, all computing the
+same `0x26f028c8`, with 2,791,841 distinct routing arcs switched on between
+them and a detector re-demonstrated on one of those same placements. That is
+24 samples of the placement. It remains **one sample of the part**, and the
+temperature it ran at is now recorded rather than assumed.
 
 The unplanned corroboration is the control build: 20,288 LUT4s, independently
 placed and routed, a physically different arrangement of logic, computing the

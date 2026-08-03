@@ -20,9 +20,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-WORKSPACE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
-EXAMPLES = Path("/home/dan/lscc/diamond/3.14/examples")
-SIMLIB = Path("/home/dan/lscc/diamond/3.14/cae_library/simulation/verilog")
+WORKSPACE = Path(__file__).resolve().parent.parent
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"
+EXAMPLES = DIAMOND / "examples"
+SIMLIB = DIAMOND / "cae_library" / "simulation" / "verilog"
 OUT = WORKSPACE / "tmp" / "diamond-mine"
 LOGDIR = WORKSPACE / "tmp" / "logs"
 

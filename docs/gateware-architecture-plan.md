@@ -34,22 +34,35 @@ mattering.
 
 ## One I2C controller, three bus pin-sets
 
-r1.4 has **three physically separate I2C buses**, which is not obvious and
-changes the design:
+r1.4 has **three physically separate I2C buses**, and the reason is forced rather
+than chosen: **both FUSB302Bs sit at address `0x22`**, so they cannot be
+distinguished on one bus. The bus table, the pins and the addresses are in
+[`hardware.md`](hardware.md#the-buses); the chip notes are
+[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) and
+[`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md).
 
-| resource | pins | device |
-|---|---|---|
-| `target_type_c` | A4 / C4 | FUSB302B @ `0x22` |
-| `aux_type_c` | H12 / G14 | FUSB302B @ `0x22` |
-| `power_monitor` | D7 / C7 | PAC1954 @ `0x10` |
+The consequence for this plan: "just use one bus" is not available in hardware,
+but one *controller* is. A single I2C master with a 2-bit bus select driving three
+pin-sets is the multiplexed master #98 already asks for, and it replaces three
+replicated controllers with one plus a mux.
 
-**The two FUSB302Bs share address `0x22`, which is why they are on separate
-buses** -- they cannot be distinguished on one. So "just use one bus" is not
-available in hardware.
+The interrupt lines get a PLIC source each, and the level-sensitive trap that a
+shared one would have carried is described in
+[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
+negotiation is not on the critical path.
 
-But one *controller* is: a single I2C master with a 2-bit bus select driving three
-pin-sets. That is the multiplexed master #98 already asks for, and it replaces
-three replicated controllers with one plus a mux.
+**Done, and on silicon** (#121). `ecp5-test/riscv/i2c_mux.py` is the select and
+the four Type-C signals; `ecp5-test/riscv/i2c_master.py` gained an `idle` output
+so the select cannot move underneath a transfer. The two `int` lines were OR-ed
+onto one PLIC source here, **and #135 gave each its own** — one controller does
+mean one device at a time on the bus, but that says nothing about which device the
+handler should be told to service, and the PLIC had 27 spare sources. See
+[`decisions.md`](decisions.md) decision 8. The handler still *masks* rather than
+clears: clearing needs a millisecond of I2C on the controller the foreground is
+also using, which is not a thing an interrupt handler may do. Normal context
+clears the device that asserted and re-enables its source.
+Note the earlier `ecp5-test/i2c/multiplexed.py` was never on silicon and is
+superseded.
 
 **On presenting the LEDs as a fake I2C device:** attractive for uniformity and
 wrong here. The LEDs are six wires in the same fabric -- wrapping them in a
@@ -90,6 +103,9 @@ bitstream will configure the ports differently. The point is proving all three
 
 **HyperRAM ID and serial readback.** Small, and closes a real gap: DEVICES
 currently reports `hyperram absent` as a presence bit with no identity behind it.
+The registers themselves are already read and decoded from a standalone bitstream
+— [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) — so what is missing is
+the CPU-side path, not the knowledge.
 
 **FUSB302B and die temperature over the sideband.** Small, because the gateware
 exists -- `ecp5-test/pins/fusb302_id.py` already reads both controllers. What is

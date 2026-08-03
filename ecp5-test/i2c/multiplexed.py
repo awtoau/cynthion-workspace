@@ -7,54 +7,42 @@
 """
 A single I2C controller reaching all three of the board's I2C buses.
 
-r1.4 has **three physically separate I2C buses**, which is not obvious from a
-schematic glance and determines this design:
+**Simulation only.** The design that runs on hardware is
+`ecp5-test/riscv/i2c_mux.py` plus `i2c_master.py`, which has the OpenCores
+register map and a CPU behind it. Keep this for the sim tests in
+`test_multiplexed.py`.
 
-    target_type_c    A4 / C4      FUSB302B @ 0x22
-    aux_type_c       H12 / G14    FUSB302B @ 0x22
-    power_monitor    D7 / C7      PAC1954  @ 0x10
+r1.4 has three physically separate I2C buses, and the split is forced:
 
-**The two FUSB302B controllers share address 0x22**, which is *why* they sit on
-separate buses -- they cannot be distinguished on one. So collapsing to a single
-bus is not available in hardware, however much tidier it would be.
+    select  bus              pins        device
+    0       target_type_c    A4 / C4     FUSB302B @ 0x22
+    1       aux_type_c       H12 / G14   FUSB302B @ 0x22
+    2       power_monitor    D7 / C7     PAC1954  @ 0x10
 
-What *is* available is a single **controller**: one `I2CInitiator` whose clock and
-data lines fan out to three pin-sets under a 2-bit select. That replaces the three
-replicated initiators the existing tests instantiate
-(`ecp5-test/pins/fusb302_id.py` builds one per bus) with one plus a mux, and it is
-the shape the CPU build needs anyway -- a CPU wants one peripheral it addresses,
-not three it has to know apart.
+Both FUSB302Bs answer 0x22, so they cannot share a bus. One `I2CInitiator`
+fans out to all three pin-sets under a 2-bit select.
 
-## Why CSR rather than a JTAG register file
+## CSR, not a JTAG register file
 
-Seventeen of the test designs in this tree are wired directly to
-`JTAGRegisterInterface`, which is a host-driven register file. A peripheral bound
-to it cannot be attached to a CPU bus, so every one of those tests is throwaway
-work the moment a CPU exists.
+A peripheral bound to `JTAGRegisterInterface` cannot attach to a CPU bus. A CSR
+peripheral serves both, with JTAG as a bridge in front of the same registers:
 
-This exposes a CSR interface instead. The JTAG path is not lost -- it becomes a
-*bridge* in front of the same registers, so the identical peripheral serves:
-
-    host over JTAG  ->  JTAG-to-CSR bridge  ->|
-                                              |-> this peripheral
-    CPU over Wishbone                      ->|
-
-which is the pattern `ecp5-test/riscv/hello_soc.py` already uses for its console.
-The Python test code reads the same register map either way.
+    host over JTAG    ->  JTAG-to-CSR bridge  ->|
+                                                |-> this peripheral
+    CPU over Wishbone                        ->|
 
 ## Registers
 
-    0x00  BUS      w   which bus: 0 target-C, 1 aux-C, 2 power monitor
+    0x00  BUS      w   which bus, values above
     0x01  ADDRESS  w   7-bit device address
     0x02  REGISTER w   register within the device
-    0x03  CONTROL  w   write 1 to start a read, 2 to start a write
+    0x03  CONTROL  w   1 starts a read, 2 starts a write
     0x04  DATA     rw  byte read, or byte to write
     0x05  STATUS   r   bit 0 busy, bit 1 last transaction acked
 
-`STATUS.acked` is the part that matters for a self-test: an I2C read of an absent
-device returns 0xff indistinguishably from a device that really holds 0xff, and
-only the ACK tells them apart. Reporting the byte without the ACK is how a missing
-chip reads as a working one.
+**`STATUS.acked` is what makes a self-test mean anything.** A read of an absent
+device returns 0xff indistinguishably from a device holding 0xff; only the ACK
+tells them apart.
 """
 
 from amaranth import Elaboratable, Module, Signal, Cat, Mux

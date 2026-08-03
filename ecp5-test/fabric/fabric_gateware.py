@@ -87,9 +87,12 @@ What the host sees
   REG_SIGNATURE   XOR of all block states, latched at the end of each round
   REG_ROUNDS      completed rounds, 32-bit wrapping
   REG_MISMATCHES  rounds whose signature did not match the golden constant
-  REG_STATUS      bit 0 sticky mismatch, bit 1 at least one round complete,
-                  bits 15:8 the block count, bits 31:16 the sync clock in MHz
+  REG_STATUS      bit 0 busy, bit 1 done, bit 2 sticky mismatch,
+                  bit 3 negative control, bits 15:8 the block count,
+                  bits 31:16 the sync clock in MHz
   REG_GOLDEN      the golden constant the gateware was built with
+  REG_DIE         bits 7:0 the DTR temperature code, bit 8 a DTR is present
+  REG_CONTROL     bit 0 go, bit 1 compare against the complemented golden
 
 The sticky mismatch bit and the mismatch counter are set by the *gateware*, not
 the host. A failure that happens between two JTAG polls is still recorded, and
@@ -97,10 +100,11 @@ the count says how many rounds were bad rather than merely that one was.
 """
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable,
-                      Module, Signal)
+                      Instance, Module, Signal)
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag   import JTAGRegisterInterface
+
+from bist import BISTAddresses, BISTHarness
 
 
 # The clock this runs at. 60 MHz is the rate the board's PLL already produces
@@ -147,8 +151,24 @@ REG_ROUNDS     = 3
 REG_STATUS     = 4
 REG_GOLDEN     = 5
 REG_MISMATCHES = 6
+REG_DIE        = 7
+REG_CONTROL    = 8
 
 MASK = 0xFFFFFFFF
+
+# How often a temperature conversion is started, as a power of two `sync`
+# cycles. This is not a delay and nothing waits on it: it is the width of a
+# free-running counter whose wrap issues STARTPULSE. 2**19 at 60 MHz is 8.7 ms,
+# which is far slower than the block's 8-cycle conversion and far faster than
+# the die's thermal time constant, so the reading is never stale and never
+# retriggered mid-conversion. The same figure `riscv/gateware_id.py` uses.
+DTR_PERIOD_BITS = 19
+
+# In REG_DIE: this build contains a DTR block at all. Without it, "0" from a
+# simulation build and "0" from a conversion that never completed would read
+# the same, and a temperature of 0 would be indistinguishable from no
+# temperature.
+DIE_PRESENT = 1 << 8
 
 
 def rotl(value, amount):
@@ -284,14 +304,18 @@ class FabricTest(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        registers = None
         if not self.simulate:
             m.submodules.clocking = LunaECP5DomainGenerator(
                 clock_frequencies=CLOCK_FREQUENCIES)
 
-            registers = JTAGRegisterInterface(default_read_value=0xDEADBEEF)
-            m.submodules.registers = registers
-            registers.add_read_only_register(REG_ID, read=APPLET_ID)
+        harness = BISTHarness(
+            applet_id=APPLET_ID,
+            addresses=BISTAddresses(
+                ident=REG_ID, control=REG_CONTROL, status=REG_STATUS,
+                checks=REG_ROUNDS, errors=REG_MISMATCHES,
+                actual=REG_SIGNATURE, golden=REG_GOLDEN),
+            negative_control=False, simulate=self.simulate)
+        m.submodules.harness = harness
 
         #
         # Round timing.
@@ -354,41 +378,68 @@ class FabricTest(Elaboratable):
         sample = pipe[-1]
 
         signature = self.signature
-        rounds = self.rounds
-        mismatches = self.mismatches
-        mismatch = self.mismatch
-        started = Signal()
-
         with m.If(sample):
-            m.d.sync += [
-                signature.eq(live),
-                rounds.eq(rounds + 1),
-                started.eq(1),
-            ]
-            if self.golden is not None:
-                # Sticky, and never cleared: an intermittent fault that spoils
-                # one round out of a million stays visible for as long as the
-                # part holds configuration. The counter says how many.
-                with m.If(live != Const(self.golden, 32)):
-                    m.d.sync += [
-                        mismatch.eq(1),
-                        mismatches.eq(mismatches + 1),
-                    ]
+            m.d.sync += signature.eq(live)
+
+        # The recurrence computes both sides of its own measurement. The
+        # harness owns the sticky verdict, counters, control and JTAG view.
+        m.d.comb += [
+            harness.busy.eq(1),
+            harness.done.eq(sample),
+            harness.check.eq(sample & (self.golden is not None)),
+            harness.actual.eq(live),
+            harness.golden.eq(self.golden if self.golden is not None else 0),
+            harness.status_extra.eq(Cat(Const(0, 4), Const(self.blocks, 8),
+                                        Const(SYNC_MHZ, 16))),
+            self.rounds.eq(harness.checks),
+            self.mismatches.eq(harness.errors),
+            self.mismatch.eq(harness.error),
+        ]
 
         #
         # Host window.
         #
-        if registers is not None:
-            registers.add_read_only_register(REG_SIGNATURE, read=signature)
-            registers.add_read_only_register(REG_ROUNDS, read=rounds)
-            registers.add_read_only_register(REG_MISMATCHES, read=mismatches)
-            registers.add_read_only_register(
-                REG_STATUS,
-                read=Cat(mismatch, started, Const(0, 6),
-                         Const(self.blocks, 8), Const(SYNC_MHZ, 16)))
-            registers.add_read_only_register(
-                REG_GOLDEN,
-                read=Const(self.golden if self.golden is not None else 0, 32))
+        #
+        # Die temperature.
+        #
+        # The result of this test is "one part, one operating point, one
+        # moment", and without this the operating point is the part that has to
+        # be taken on trust. Reading the DTR makes it data: a sweep of
+        # configurations then carries the temperature each one ran at, and a
+        # mismatch that correlates with temperature is a marginal part, while a
+        # mismatch that does not is a hard defect. The current test cannot tell
+        # those apart at all.
+        #
+        # It costs a counter, a latch and a hard block that consumes no fabric,
+        # against ~19,900 LUTs -- and it is entirely outside the signature path,
+        # so it cannot change the answer the test is checking.
+        #
+        # FPGA-TN-02210 Table 4.3 maps the 6-bit code to a temperature range.
+        # The code is reported raw; converting it here would present an
+        # uncalibrated lookup as a measurement in degrees.
+        #
+        if platform is not None and not self.simulate:
+            dtr_counter = Signal(DTR_PERIOD_BITS)
+            m.d.sync += dtr_counter.eq(dtr_counter + 1)
+
+            dtr_bits = [Signal(name=f"dtrout{index}") for index in range(8)]
+            m.submodules.dtr = Instance(
+                "DTR",
+                i_STARTPULSE=(dtr_counter == 0),
+                **{f"o_DTROUT{index}": bit
+                   for index, bit in enumerate(dtr_bits)})
+
+            # DTROUT[7] is the valid flag. Sampling without it latches whatever
+            # the outputs hold part-way through a conversion, which is a number
+            # that looks like a temperature and is not one.
+            die = Signal(8)
+            with m.If(dtr_bits[7]):
+                m.d.sync += die.eq(Cat(*dtr_bits))
+
+            harness.add_read_only_register(
+                REG_DIE, read=Cat(die, Const(1, 1), Const(0, 23)))
+        elif not self.simulate:
+            harness.add_read_only_register(REG_DIE, read=Const(0, 32))
 
         #
         # LEDs. Not the evidence -- the JTAG registers are -- but a board that
@@ -430,7 +481,7 @@ class FabricTest(Elaboratable):
             for position in range(6):
                 m.d.comb += walk[position].eq(phase == position)
 
-            with m.If(mismatch):
+            with m.If(harness.error):
                 m.d.comb += leds.eq(0b000001)   # red alone, steady
             with m.Else():
                 m.d.comb += leds.eq(walk)

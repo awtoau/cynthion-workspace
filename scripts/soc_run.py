@@ -13,13 +13,29 @@ already being run; the value is that none of them can now be skipped or mistyped
     ./scripts/soc_run.py                 # build everything, load, read the console
     ./scripts/soc_run.py --no-build      # just load what is already built, and read
     ./scripts/soc_run.py --c-firmware    # the C generator instead of the Rust crate
+    ./scripts/soc_run.py --skip-tests    # configure without the QEMU gate first
+
+## The gate
+
+`scripts/soc_test.py` runs the same shell under QEMU and asserts what it says, and this
+refuses to configure the board if it fails. It goes FIRST, before cargo and before the
+~60 s gateware build, because the whole point is to not spend a minute of synthesis and
+a reconfigure discovering something an emulator could have said in three seconds.
+
+It only covers the Rust shell's logic -- it cannot see the USB console peripheral, the
+HyperRAM, or the flash, all of which are stubbed on that target. A pass means "if the
+board misbehaves, the shell's logic is not why", which is exactly the question that has
+been expensive to answer by hand. `--c-firmware` skips it: the gate tests the Rust crate,
+which that path does not build.
 
 ## What it does to the board
 
 Configures the FPGA over JTAG. **SRAM only** -- nothing is written to flash, so a power
-cycle restores whatever was there. The RISC-V firmware is baked into the bitstream as
-block RAM init, which is why a firmware change needs the gateware rebuilt: about a
-minute. Removing that is what `--flash` will be for once the write path lands.
+cycle restores whatever was there. Two RISC-V images are baked into the bitstream as
+block RAM init: the resident bootloader at 0x0 and the shell at 0x400. That is why a
+change to either needs the gateware rebuilt, about a minute -- and why a change to the
+shell alone does not have to: `scripts/soc_jtag_stage.py` stages one over the other in
+seconds, and the bootloader runs it on the way back up.
 
 ## Why the console read is at the end
 
@@ -39,6 +55,14 @@ LOG = ROOT / "tmp" / "logs" / "soc_run.log"
 CRATE = ROOT / "firmware" / "cynthion-soc"
 ELF = CRATE / "target" / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
 FIRMWARE_BIN = ROOT / "tmp" / "rust_fw.bin"
+
+# The resident bootloader: 492 bytes at 0x0, and what the reset vector points at.
+# Built alongside the image and packed into the same block RAM init, so one bitstream
+# carries both and a board with nothing staged comes up on the image below.
+BOOT_CRATE = ROOT / "firmware" / "cynthion-boot"
+BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
+            / "cynthion-boot")
+BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
 GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
@@ -69,6 +93,8 @@ def main():
                         help="C firmware only: compile in the flash erase/program tests")
     parser.add_argument("--no-read", action="store_true",
                         help="do not read the console afterwards")
+    parser.add_argument("--skip-tests", action="store_true",
+                        help="configure even though the QEMU shell tests have not run")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +104,28 @@ def main():
             handle.write(text + "\n")
 
         firmware = FIRMWARE_BIN
+
+        # The gate. Before everything, including --no-build: a bitstream built earlier
+        # from firmware that fails these assertions is no safer to load than one built
+        # now, and the source it is tested against is the source on disk either way.
+        if args.skip_tests:
+            emit("shell tests SKIPPED (--skip-tests)")
+        elif args.c_firmware:
+            emit("shell tests skipped: they cover the Rust crate, not the C generator")
+        else:
+            # Output is streamed rather than captured. This runs a QEMU boot and a
+            # handful of assertions; watching them tick past is the point, and a
+            # captured block printed afterwards would arrive only once it no longer
+            # mattered.
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "soc_test.py")], cwd=ROOT)
+            if result.returncode != 0:
+                emit("shell tests FAILED -- not configuring the board.")
+                emit("The same shell logic misbehaves under QEMU, so a reconfigure")
+                emit("would only reproduce it an order of magnitude more slowly.")
+                emit("Details above and in tmp/logs/soc_test.log; --skip-tests")
+                emit("overrides this if the board is what you are debugging.")
+                return 1
 
         if not args.no_build:
             if args.c_firmware:
@@ -107,11 +155,33 @@ def main():
                     return 1
                 emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes")
 
+            # The bootloader, unless this is the C path -- that generator emits an
+            # image linked for 0 and has no bootloader to sit under it.
+            if not args.c_firmware:
+                result = run(["cargo", "build", "--release"], cwd=BOOT_CRATE)
+                if result.returncode != 0:
+                    emit("bootloader build failed:")
+                    emit((result.stderr or result.stdout).strip()[-900:])
+                    return 1
+                result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                              str(BOOT_ELF), str(BOOT_BIN)])
+                if result.returncode != 0:
+                    emit("bootloader objcopy failed:")
+                    emit((result.stderr or result.stdout).strip()[-400:])
+                    return 1
+                emit(f"bootloader: {BOOT_BIN.stat().st_size} bytes")
+            elif BOOT_BIN.exists():
+                # A stale one from a Rust build would be packed at 0x0 under a C image
+                # that is itself linked for 0x0. Two things at the reset vector is one
+                # too many, and the symptom is a dead CPU.
+                BOOT_BIN.unlink()
+
             # The OSS CAD Suite environment has to be sourced, so this one step is a
             # shell command rather than a bare exec.
             build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
                      f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
-                     f'python3.15t {GATEWARE} --build --firmware {firmware}')
+                     f'python3.15t {GATEWARE} --build --firmware {firmware} '
+                     f'--bootloader {BOOT_BIN}')
             result = run(["bash", "-c", build])
             if result.returncode != 0:
                 emit("gateware build failed:")
@@ -192,6 +262,25 @@ def main():
             port.close()
             emit("--- console ---")
             emit(data.decode("ascii", "replace").strip()[:500])
+
+            # An empty read here has two causes and they look identical: the firmware
+            # said nothing, or something else read what it said. A tty has one reader,
+            # and a `./tio_user.py` left running in another terminal takes every byte
+            # while this reports a blank console. That has been mistaken for dead
+            # firmware on a board that was working perfectly.
+            if not data.strip():
+                sys.path.insert(0, str(ROOT / "scripts"))
+                from soc_shell import other_readers
+
+                thieves = other_readers(node)
+                if thieves:
+                    emit()
+                    emit("*** ANOTHER PROCESS IS READING THIS PORT ***")
+                    for pid, command in thieves:
+                        emit(f"      pid {pid}: {command}")
+                    emit("The blank console above is contention, not silence. Stop it,")
+                    emit("or restart it as `./tio_user.py --serve` so this reads through")
+                    emit("its socket on port 9000 instead of competing for the tty.")
 
         emit()
         emit(f"log: {LOG}")

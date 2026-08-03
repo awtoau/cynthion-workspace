@@ -45,7 +45,7 @@ REPO = Path(__file__).resolve().parent.parent
 LOG_DIR = REPO / "tmp" / "logs"
 RESULTS = REPO / "tmp" / "ecp5_cmd_sweep"
 PROBE = Path(__file__).resolve().parent / "ecp5_cmd_probe.py"
-PYTHON = "/home/dan/opt/cpython-315t/bin/python3.15t"
+PYTHON = str(Path.home() / "opt" / "cpython-315t" / "bin" / "python3.15t")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ecp5_opcodes import build_table  # noqa: E402

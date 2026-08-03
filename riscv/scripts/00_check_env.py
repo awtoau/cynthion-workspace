@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -23,7 +24,10 @@ TOOLS = [
     "make",
 ]
 
-MIRROR = Path("/mnt/2tb/git_mirror/SpinalHDL/VexiiRiscv.git")
+# The mirror lives outside the workspace and its root differs per machine;
+# set GIT_MIRROR if it is not under $HOME.
+GIT_MIRROR = Path(os.environ.get("GIT_MIRROR", Path.home() / "git_mirror"))
+MIRROR = GIT_MIRROR / "SpinalHDL" / "VexiiRiscv.git"
 
 
 def main() -> int:

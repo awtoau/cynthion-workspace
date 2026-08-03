@@ -31,6 +31,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -39,7 +40,10 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PLAYWRONG = Path("/mnt/2tb/git/awto-playwrong")
+# The browser engine is a separate checkout, outside this workspace; set
+# PLAYWRONG_ROOT if it is not under $HOME/git.
+PLAYWRONG = Path(os.environ.get("PLAYWRONG_ROOT",
+                                Path.home() / "git" / "awto-playwrong"))
 BASE = "http://127.0.0.1:8731"
 UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

@@ -59,12 +59,12 @@ import struct
 import sys
 from pathlib import Path
 
-WORKTREE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
+WORKTREE = Path(__file__).resolve().parent.parent
 OUT_DIR = WORKTREE / "tmp" / "diamond-mine" / "spd"
 LOG_DIR = WORKTREE / "tmp" / "logs"
-DIAMOND = Path("/home/dan/lscc/diamond/3.14/ispfpga")
+DIAMOND = Path.home() / "lscc" / "diamond" / "3.14" / "ispfpga"
 
-# DEVICE TREE MAP -- verified against /home/dan/lscc/diamond/3.14/data/DiamondDevFile.xml
+# DEVICE TREE MAP -- verified against $HOME/lscc/diamond/3.14/data/DiamondDevFile.xml
 # <Family name="..." text="<tree>"> and every <Part ... ach="<tree>">:
 #
 #     ECP5U     -> sa5p00    (LFE5U-12F/25F/45F/85F)   <-- the Cynthion part

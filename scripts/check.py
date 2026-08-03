@@ -2,9 +2,9 @@
 """
 Local check runner for the Cynthion workspace.
 
-Replaces the GitHub Actions workflows: everything runs natively on this
-machine, against the real toolchain and the real free-threaded 3.15t
-interpreter, with no Docker and no cloud runners.
+The only place checks run: natively on this machine, against the real
+toolchain and the real free-threaded 3.15t interpreter, with no Docker,
+no cloud runners and no GitHub Actions.
 
     ./scripts/check.py                 # every check
     ./scripts/check.py rust python     # only the named checks
@@ -192,6 +192,51 @@ def build_checks() -> List[Check]:
                 Step(["flutter", "test"], app, informational=True),
             ],
         ),
+        Check(
+            name="socmap",
+            description="the committed SVD still matches the SoC's memory map",
+            steps=[
+                # The one check that can see drift between the gateware and the
+                # firmware. `--check` regenerates into tmp/ and compares; it also
+                # compares the map against the *_BASE constants in
+                # vexii_hello_soc.py and the literals in target.rs, so a
+                # peripheral that moved without the crate being regenerated fails
+                # here instead of on the board.
+                #
+                # Elaboration only -- no synthesis, no board, a few seconds.
+                Step([PYTHON, "scripts/soc_generate_pac.py", "--check"], ROOT),
+            ],
+        ),
+        Check(
+            name="irqlog",
+            description="no interrupt handler can reach a console",
+            steps=[
+                # Printing from a handler spins on a UART FIFO inside an
+                # interrupt; on a level-sensitive shared source that is a hang
+                # that presents as a dead CPU. Ownership stops most of it --
+                # `src/irq.rs` holds a `UartRx`, which has no transmit method, so
+                # a `write!` there does not compile -- but Rust's privacy cannot
+                # stop a sibling module naming `Uart`, so the rest is a grep.
+                #
+                # Source only; no board, no toolchain, well under a second.
+                Step([PYTHON, "scripts/soc_irq_log_check.py"], ROOT),
+            ],
+        ),
+        Check(
+            name="paths",
+            description="no tracked file names one machine's filesystem",
+            steps=[
+                # This repo is public. A home directory or a local mount point
+                # in a committed file says which account and which disk the
+                # work was done on, and is wrong for everyone who clones it.
+                # It has also already broken once here, when the checkout
+                # moved and every absolute path in the docs went stale.
+                #
+                # Tracked files only, text only; no board, no toolchain,
+                # well under a second.
+                Step([PYTHON, "scripts/private_path_check.py"], ROOT),
+            ],
+        ),
         # Do NOT run this from repos/cynthion: that directory contains a
         # 'cynthion/' subdirectory which Python picks up as a namespace package,
         # shadowing the installed one (cynthion.__file__ becomes None, so
@@ -264,7 +309,7 @@ def main() -> int:
     names = [c.name for c in checks]
 
     parser = argparse.ArgumentParser(
-        description="Run the workspace checks locally (replaces GitHub Actions).",
+        description="Run the workspace checks locally.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("checks", nargs="*", metavar="CHECK",

@@ -56,7 +56,12 @@ def ecppack_opts(extra=""):
     silently change the configuration clock.
     """
     code = usercode()
-    return {"ecppack_opts": f"--compress --freq 38.8 --usercode {code:#010x} "
+    # DECIMAL. ecppack parses --usercode with a plain integer reader and rejects
+    # `0x...` outright ("the argument ... is invalid"), so the hex this used to
+    # emit failed every build that asked for a USERCODE -- the stamp could not
+    # have been reaching any bitstream. Verified against ecppack 1.4-79 for
+    # values above 2**31 too, which is where a dirty tree's top bit puts it.
+    return {"ecppack_opts": f"--compress --freq 38.8 --usercode {code:d} "
                             f"{extra}".strip()}
 
 

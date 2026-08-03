@@ -18,8 +18,35 @@ description = "Firmware for the Cynthion r1.4 VexiiRiscv SoC"
 riscv = "0.16"
 riscv-rt = "0.18"
 
+# Where every hardware peripheral is, generated from the SoC's own memory map by
+# `scripts/soc_generate_pac.py`. Only `src/target.rs` refers to it, and only in
+# its `not(feature = "qemu")` branch -- see the module comment there for why the
+# register accessors it also contains are not used.
+#
+# Not optional and not behind the `qemu` feature. An optional dependency would
+# mean the QEMU build compiled a different `target.rs` than the one that ships,
+# and this crate is types and constants: nothing it defines is referenced in a
+# QEMU build, so nothing it defines reaches the binary.
+cynthion-soc-pac = { path = "../cynthion-soc-pac" }
+
+# Build the same shell against QEMU's `-M virt` instead of the FPGA.
+#
+# Off by default, and it must stay that way: the hardware image is the product, and a
+# feature that had to be remembered on every build would eventually be forgotten on one.
+# The feature switches src/target_soc.rs for src/target_qemu.rs and the HyperRAM MMIO
+# primitives for a RAM array -- nothing else. scripts/soc_test.py drives it, and pairs it
+# with memory-qemu.x; building it by hand without that linker script links .text at 0,
+# where virt has no memory, and produces an image that traps on the first fetch.
+[features]
+qemu = []
+
 [profile.release]
-opt-level = "s"      # size: this links into 64 KiB of block RAM
+# "z", not "s": this links into the 63 KiB image region of block RAM, and measured
+# on this firmware "z" is 1612 bytes smaller -- 5% of the whole region. Nothing
+# here is throughput-bound: the shell waits on a human, the 50 ms poll waits on
+# an I2C bus at 80 kHz, and `load` waits on USB. Space is the scarce quantity and
+# speed is not, so the size knob is turned all the way.
+opt-level = "z"
 lto = true
 codegen-units = 1
 debug = true         # kept -- costs nothing in the binary, and .elf is what gets read

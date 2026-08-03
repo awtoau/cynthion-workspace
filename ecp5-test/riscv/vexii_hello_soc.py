@@ -4,44 +4,77 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-The same block-RAM SoC, running VexiiRiscv instead of VexRiscv: a core, memory, and a way to see it run.
+A VexiiRiscv SoC on block RAM: a core, memory, and a way to see it run.
 
-The point is a prompt, not a benchmark. Block RAM is single-cycle and needs no
-cache, no bus wrapper and no latency tuning, so the only things that can be
-wrong are the CPU, its reset vector and the peripheral it writes to. HyperRAM
-would mean debugging a CPU and a latency-sensitive memory at once.
+    ./ecp5-test/riscv/vexii_hello_soc.py --build
+    ./ecp5-test/riscv/vexii_hello_soc.py --build --program
 
-Output goes over USB CDC-ACM from the FPGA rather than through the Apollo UART, on the
-AUX port, appearing as an ordinary `/dev/ttyACM*` tty.
+Block RAM is single-cycle and needs no cache, bus wrapper or latency tuning, so
+the only things that can be wrong are the CPU, its reset vector and the
+peripheral it writes to.
 
-**This was not true until now.** The design claimed CDC-ACM in three places while
-building a bare vendor-specific interface with one bulk IN endpoint and no CDC
-descriptors, so no tty node ever appeared -- the kernel is right to refuse a serial
-driver for a vendor-specific class. An investigation into the resulting silence spent
-time reading `/dev/ttyACM1`, which is an ST-LINK. It now uses LUNA's `USBSerialDevice`,
-the same gateware measured at 195.4 Mbps loopback in
-`../../docs/luna_ecp5_fpga/usb-performance.md`.
-On r1.4 the `uart 0` pins (R14/T14) are shared with JTAG TDI/TMS, so a design
-that drives them competes with the thing loading its own bitstream. The USB path
-has no such conflict, and the CDC gateware is already measured -- 195 Mbps
-loopback -- so it is known to work.
+## Two consoles, one register map
 
-That means the console peripheral is not `luna_soc.gateware.core.uart`: that one
-instantiates AsyncSerialTX and drives pins. This one presents the same
-register shape to software (write a byte, poll a ready bit) but hands the byte
-to a USB endpoint instead of a shift register.
+    index  peripheral   transport                       appears as
+    0      Uart16550    USB CDC-ACM on the AUX port     /dev/ttyACM*
+    1      Uart16550    async serial on R14/T14         Apollo's CDC
 
-    ./ecp5-test/riscv/hello_soc.py --build
-    ./ecp5-test/riscv/hello_soc.py --build --program
+Same NS16550A register map, same driver, different transport -- which is the
+point of a standard part. `serial_line.py` is the PHY behind index 1.
+
+  * **USB carries the primary console** because R14/T14 are the same wires as
+    JTAG TDI/TMS, so a design driving them competes with the thing loading its
+    own bitstream. The CDC gateware measures 195.4 Mbps loopback
+    (`../../docs/luna_ecp5_fpga/usb-performance.md`).
+  * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
+    share a 32-bit word with RBR at +0. See `uart16550.py`, and
+    `../../docs/decisions.md` for what that replaced.
+
+## Interrupts
+
+Both UARTs' `irq` lines go to a standard RISC-V PLIC (`vexii_plic.py`), whose
+output is the CPU's single machine external interrupt, so the consoles are
+interrupt-driven.
+
+The machine timer and software interrupts come from a standard RISC-V CLINT
+(`vexii_clint.py`), comparing against the same counter `rdtime` reads. A 1 ms
+tick is `mtimecmp += period` in the handler; `firmware/cynthion-soc/src/timer.rs`
+is the driver.
+
+QEMU's `-M virt` has both a PLIC and a CLINT, so `src/plic.rs` and `src/timer.rs`
+compile unchanged for both and `scripts/soc_test.py` exercises the interrupt
+paths that ship.
+
+## Two ways to load firmware
+
+    path                     needs                       script
+    -----------------------  --------------------------  -----------------------
+    JTAG ER1 into HyperRAM   a configured FPGA           `soc_jtag_stage.py`
+    console into HyperRAM    a running shell             `soc_payload.py`
+
+The JTAG sink holds the CPU in reset while it writes, so it works on a board whose
+console is wedged -- which the console path by definition cannot. Both leave the same
+header for the bootloader. See `jtag_stage.py`.
+
+## Board peripherals
+
+GPIO (six LEDs, PWRDN, the USER button), a multiplexed I2C master reaching the
+PAC1954 and both FUSB302Bs, a ULPI register window on the TARGET PHY, the
+sideband link to Apollo, and memory-mapped SPI flash.
+
+Peripheral base addresses are generated from this SoC's own memory map by
+`scripts/soc_generate_pac.py`; `scripts/check.py` fails if firmware writes one
+as a literal.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from amaranth                       import Elaboratable, Module, Signal, Cat
-from amaranth.lib                   import wiring, stream
-from amaranth.lib.fifo              import AsyncFIFOBuffered
+from amaranth                       import (Elaboratable, Module, Mux, Signal,
+                                            Cat, ClockSignal, ResetSignal)
+from amaranth.lib                   import wiring
+from amaranth.lib.cdc               import FFSynchronizer
 
 # Not LunaECP5DomainGenerator: it clocks `sync` at 60 MHz and offers only 60/120/240
 # elsewhere, so a speed ladder can only step in factors of two. Nothing in the hardware
@@ -65,19 +98,53 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vexii_cpu
 from vexii_cpu import VexiiRiscv
+from jtag_stage import JTAGStager, UserJTAG
+from uart16550 import Uart16550
+from vexii_plic import Plic
+from vexii_clint import Clint
+from serial_line import SerialLine
+from i2c_master import I2CMaster, prescale_for
+from sideband_csr import SidebandControl
+from gateware_id import GatewareId
+from ulpi_window import UlpiRegisters
+from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
+                     BUS_AUX_C as I2C_MUX_AUX_C,
+                     BUS_POWER_MONITOR as I2C_MUX_POWER)
+from stream_buffer import StreamBuffer
+from wishbone_pipe import RegisteredResponse
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
 
-from amaranth_soc                   import csr, wishbone
+from amaranth_soc                   import csr, gpio, wishbone
 from amaranth_soc.wishbone          import Decoder
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 # 64 KiB at address zero, matching what moondancer allocates. The reset vector
-# is 0x00000000, so the firmware's entry point must be the first instruction.
+# is 0x00000000, so the bootloader's entry point must be the first instruction.
 RAM_BASE = 0x00000000
 RAM_SIZE = 64 * 1024
+
+# Where the bootloader stops and the image begins.
+#
+# The decoder below sees ONE window of RAM_SIZE at RAM_BASE. This split is a
+# linker fiction and costs the fabric nothing: no second peripheral, no second
+# address comparison on the decode path -- which matters, because that path is
+# what commit 18c1fa5 had to register to recover Fmax. Cutting the address space
+# here is free at any boundary, and no DP16KD granularity applies to it.
+#
+# What it buys: `firmware/cynthion-boot` is resident at 0x0 and changes rarely,
+# and everything that grows -- the shell, the commands, the drivers -- lives
+# above it and is replaceable in seconds by staging over it.
+#
+# 1 KiB because the bootloader measures 492 bytes and its deepest call chain
+# holds 80. Must match BOOT/IMAGE in firmware/cynthion-boot/memory.x, RAM in
+# firmware/cynthion-soc/memory.x, PAYLOAD in firmware/cynthion-payload/memory.x,
+# MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs and PAYLOAD_SIZE in
+# scripts/soc_payload.py. `scripts/soc_generate_pac.py --check` reads all of
+# them and fails on a disagreement.
+IMAGE_ORIGIN = 0x00000400
 
 # The console peripheral. Bit 31 must be set, and that is not a style choice.
 #
@@ -94,7 +161,147 @@ RAM_SIZE = 64 * 1024
 #
 # moondancer puts its CSRs at 0xf0000000 for this reason, and uses 0x10000000
 # for SPI flash, which it *wants* cached.
+#
+# The 16550's eight registers occupy eight bytes here, so LSR at +5 lands in the
+# SECOND 32-bit word and RBR at +0 in the first. That separation is the whole
+# reason for adopting the standard map -- see uart16550.py.
 CONSOLE_BASE = 0xf0000000
+
+# The second 16550, facing Apollo over the shared JTAG pins.
+#
+# It is a plain 115200 8N1 line to the SAMD11's SERCOM2, which the Apollo firmware
+# forwards to the host as its single CDC-ACM interface -- the same path moondancer
+# logs on (`repos/cynthion/.../facedancer/top.py`, `uart0`).
+#
+# THE PINS ARE SHARED WITH JTAG AND THE SHARING IS ONE-SIDED. On r1.4 the `uart`
+# resource is R14/T14, and those nets are JTAG TDI (R11) and TMS (T11); on the
+# SAMD11 they are PA14/PA11, which its firmware moves between SERCOM2 and JTAG in
+# `jtag_platform_init`/`_deinit` (`repos/apollo/firmware/src/boards/cynthion_d11/
+# jtag.c:20,38`, called from `jtag_tap.c:150,183` on vendor requests 0xbf/0xbe).
+#
+# Nothing tells the FPGA that a JTAG session is in progress. There is no such
+# signal on the board and none in the gateware, upstream or here. So the FPGA's
+# only defence is the one the platform resource already provides: `dir="oe"` on
+# tx, driven only while a byte is actually going out, with PULLMODE="UP" holding
+# the idle mark. That is what luna_soc's UARTProvider does and it is what
+# moondancer relies on.
+#
+# Which leaves a policy, and it belongs in the firmware: **never transmit
+# unbidden on this port**. `target::ANNOUNCING` in firmware/cynthion-soc keeps the
+# idle re-banner on the USB console only, so this port is electrically absent
+# unless a human is typing on it -- and a human typing on the Apollo console is
+# not simultaneously running `apollo jtag-scan`. moondancer does not take that
+# precaution; it logs here whenever it feels like it, and contends.
+APOLLO_UART_BASE = 0xf0000500
+
+# The board's own peripherals -- LEDs, the power monitor's I2C bus, and the
+# sideband payload -- behind ONE Wishbone window and one CSR bridge.
+#
+# Three separate windows would have been three more `WishboneCSRBridge`
+# instances and three more comparators on the Wishbone decoder's address path,
+# which is on the critical path this design has just finished recovering margin
+# on (commit 18c1fa5). A `csr.Decoder` costs one comparator on an eight-bit
+# address inside an already-decoded window, which is nothing, and it is what
+# amaranth-soc provides the class for.
+#
+#   +0x00  gpio      16 bytes  amaranth_soc.gpio.Peripheral, 8 pins
+#   +0x10  i2c        8 bytes  i2c_master.I2CMaster
+#   +0x18  sideband   4 bytes  sideband_csr.SidebandControl
+#   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
+#   +0x20  i2c_mux    2 bytes  i2c_mux.I2CBusMux
+#   +0x40  gateware  32 bytes  gateware_id.GatewareId
+#
+# The sub-addresses are the peripherals' natural sizes and each window is
+# aligned to its own size, which is what MemoryMap requires. The decoder is 128
+# bytes rather than the 32 the first three fit in, because a peripheral added
+# later should not have to move an existing one -- and moving one changes every
+# address in the generated PAC at once.
+#
+# `gateware` is not a board peripheral and is here anyway: it is the one window
+# whose whole purpose is to be readable, and a second Wishbone window for it
+# would be another comparator on the address path the paragraph above is about.
+# The decoder it goes in is inside an already-decoded window and costs one more
+# address bit.
+BOARD_BASE     = 0xf0000600
+GPIO_BASE      = BOARD_BASE + 0x00
+I2C_BASE       = BOARD_BASE + 0x10
+SIDEBAND_BASE  = BOARD_BASE + 0x18
+ULPI_BASE      = BOARD_BASE + 0x1c
+I2C_MUX_BASE   = BOARD_BASE + 0x20
+GATEWARE_BASE  = BOARD_BASE + 0x40
+
+# What is on each GPIO pin.
+#
+# THE LEDS ARE NAMED BY COLOUR AND ONLY BY COLOUR. There are six of them in a
+# row and their index is an implementation detail of the platform file; a bug
+# report that says "LED 3" means nothing to the person holding the board, and
+# has already cost time here. The order below is the physical order on the
+# board and matches `LEDResources(pins="E13 C13 B14 A15 D12 C11")` in
+# `cynthion_r1_4.py`.
+#
+# The platform declares them with `invert=True`, so they are active LOW on the
+# pad and Amaranth's `PinsN` does the inversion: a 1 here lights the LED. That
+# is the only place the active-low-ness appears, and neither the peripheral nor
+# the firmware needs to know about it.
+GPIO_RED     = 0
+GPIO_ORANGE  = 1
+GPIO_YELLOW  = 2
+GPIO_GREEN   = 3
+GPIO_BLUE    = 4
+GPIO_VIOLET  = 5
+
+# Pin 6: the power monitor's PWRDN, active low on the pad (`PinsN`), so a 1 here
+# powers the PAC1954 DOWN. It is an output with no input path, and the GPIO
+# peripheral only drives it once its mode says push-pull -- so the reset state
+# is "not powered down" and the chip is available to the I2C bus without the
+# firmware doing anything.
+GPIO_PWRDN   = 6
+
+# Pin 7: the USER button, `PinsN` on M14, so a 1 here means pressed. The only
+# genuine *input* in this peripheral, and the reason the Input register is worth
+# having at all.
+GPIO_BUTTON  = 7
+
+GPIO_PIN_COUNT = 8
+
+# The I2C bus rate. See i2c_master.py for why 80 kHz rather than 100 kHz --
+# briefly, at 100 kHz the repeated-START setup interval lands 0.7 us inside a
+# standard-mode minimum, and a register read needs a repeated START.
+I2C_SCL_HZ = 80_000
+
+# 115200 8N1, which is what the SAMD11 side is configured for
+# (`repos/apollo/firmware/src/boards/cynthion_d11/uart.c`) and what every terminal
+# opens an Apollo tty at.
+APOLLO_UART_BAUD = 115200
+
+# Buffering, per transport, sized where the transport is chosen -- see
+# stream_buffer.py for why this is not inside the 16550.
+#
+# USB CDC console. The endpoint takes one byte per packet (`serial.tx.last.eq(1)`,
+# for latency: a console emits a line and goes quiet, so waiting to fill a 512-byte
+# packet would hold the banner indefinitely). So the stall this covers is one host
+# poll interval, which is a handful of bytes, and the 16550's own 16-byte FIFO
+# already absorbs most of it.
+#
+# Do not size this for USB packets. 16 entries of 8 bits map to distributed LUT
+# RAM (TRELLIS_DPR16X4); 1024 map to a block RAM, of which this design uses 42 of
+# 56. A depth justified as "two 512-byte USB packets" costs a DP16KD and buys
+# packet pipelining on a path that sends one byte per packet.
+CONSOLE_TX_DEPTH = 16
+CONSOLE_RX_DEPTH = 16
+
+# The Apollo serial line. 115200 is ~87 us per byte, which is four orders of
+# magnitude slower than the CPU can produce them, so this is the one path here
+# where deep buffering earns its keep: without it a `help` listing would spend its
+# entire length inside the 16550's bounded write spin, dropping most of itself.
+#
+# 64 bytes is a line of shell output. Beyond that the CPU should wait, because a
+# port nobody is draining is a port nobody is reading.
+APOLLO_TX_DEPTH = 64
+
+# Receive is a human at a keyboard. 16 is already more than anyone types between
+# polls, and the 16550 has 16 of its own behind it.
+APOLLO_RX_DEPTH = 16
 
 # The configuration SPI flash, memory-mapped and read-only.
 #
@@ -109,6 +316,13 @@ CONSOLE_BASE = 0xf0000000
 # burst continuation and no line reuse. Nothing fails; it just runs at a
 # fraction of the rate, silently.
 FLASH_BASE = 0x10000000
+
+# The HyperRAM memory window: ordinary cached loads, stores, and instruction fetches.
+#
+# The base matches Cynthion's existing facedancer map. Eight MiB is the populated
+# W956A8 device; the similarly named 128-Mbit part is not fitted on r1.4.
+HYPERRAM_BASE = 0x20000000
+HYPERRAM_SIZE = 8 * 1024 * 1024
 
 # The SPI controller's own registers -- the arbitrary-command path, used here
 # only to read the JEDEC ID.
@@ -128,6 +342,97 @@ FLASH_PROBE_BASE = 0xf0000200
 
 # The logic analyser's registers, in the same uncached CSR region.
 FLASH_ILA_BASE = 0xf0000300
+
+# The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
+#
+# Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
+# is set by gateware while the CPU spins on it. A cached read would return the same line
+# forever and the poll would never complete, giving a bootloader that hangs on a HyperRAM
+# that is working perfectly.
+BOOTRAM_BASE = 0xf0000400
+
+# The interrupt controller: a standard RISC-V PLIC, in its own 4 MiB window.
+#
+# 4 MiB because that is the smallest window a spec-compliant PLIC fits in -- the
+# claim register is at offset 0x200004 and the map is not negotiable, since the
+# whole point of being standard is that a driver that has never heard of this SoC
+# can find its way around. See ecp5-test/riscv/vexii_plic.py.
+#
+# 0xf0400000 rather than somewhere tidier: it must be 4 MiB aligned (the Wishbone
+# decoder requires a window aligned to its size), it must be inside the `main=0`
+# CSR region declared in vexii_cpu.DEFAULT_REGIONS -- a cached PLIC would return
+# a stale pending word forever -- and it must clear the peripherals above, which
+# all live below 0xf0001000.
+#
+# QEMU's `-M virt` puts its PLIC at 0x0c000000 with the 16550 on source 10. Same
+# register map, different base, and that difference is two constants in
+# firmware/cynthion-soc/src/target.rs -- which is what keeps src/plic.rs the same
+# code on both targets, exactly as src/uart.rs already is.
+PLIC_BASE = 0xf0400000
+
+# The machine timer and software interrupts: a standard RISC-V CLINT, in its own
+# 64 KiB window. Same reasoning as PLIC_BASE above -- the offsets inside are not
+# negotiable (mtime is at 0xbff8), the window must be aligned to its size and
+# inside the `main=0` CSR region, and it must clear the PLIC's 4 MiB below it.
+#
+# QEMU's `-M virt` puts its CLINT at 0x02000000 (`clint@2000000` in the device
+# tree), so again the difference is one constant in
+# firmware/cynthion-soc/src/target.rs and src/timer.rs is the same code on both.
+CLINT_BASE = 0xf0800000
+
+# Interrupt source numbers. 0 is reserved by the spec as "nothing pending", so
+# these start at 1 and the order matches UART_BASES in src/target.rs.
+#
+# The console is the LOWER number deliberately. The PLIC breaks a priority tie by
+# lowest source number, and if both ports are busy at equal priority the one a
+# human is watching should be serviced first.
+IRQ_CONSOLE = 1
+IRQ_APOLLO = 2
+
+# The I2C controller's completion interrupt. Third, so the two consoles keep the
+# numbers -- and the tie-break priority -- they already had.
+#
+# The gateware raises it; the firmware does not enable it. `CTR.IEN` resets to
+# zero, so this line is held low until something asks for it, and the firmware's
+# I2C driver polls SR.TIP instead: a shell command that reads a register is
+# synchronous by construction and has nothing else to do while it waits, so an
+# interrupt would buy it nothing and cost a handler that has to be right. The
+# wire is here so that a future driver -- one feeding the sideband's power
+# payload from a timer, say -- does not need a bitstream change to use it.
+IRQ_I2C = 3
+
+# The two FUSB302Bs' `int` lines, ONE SOURCE EACH.
+#
+# Fourth and fifth, so nothing above them renumbers -- TARGET keeps the number
+# the OR-ed source had. These were one source until #135; the reasoning that put
+# them there was true about the I2C mux and false about the PLIC. With one muxed
+# controller only one device can be addressed at a time, so this buys no
+# concurrency and never will. What it buys is knowing WHICH, and it deletes an
+# obligation rather than documenting one:
+#
+# A SHARED LEVEL MUST BE CLEARED ON EVERY ASSERTING DEVICE before the source is
+# re-enabled, or the line stays high and the interrupt re-fires immediately -- a
+# storm that presents as a hung CPU, which is the trap
+# `docs/chips/fusb302b-type-c.md` warns about and the symptom this project has
+# repeatedly misread. One source per device makes that unmissable by
+# construction: there is only ever one device behind the level being cleared.
+#
+# The PLIC supports 31 sources and this design now uses 5, so the OR conserved
+# nothing scarce. See `docs/decisions.md` decision 8 for the reversal.
+#
+# What does NOT change: the handler still defers. Clearing is ~1 ms of I2C on the
+# controller the foreground also uses, so `src/irq.rs` masks the asserting source
+# and records the event, and normal context clears that one device and re-enables
+# that one source. Per-device masking means a deferred TARGET no longer blinds
+# AUX, which the shared source could not offer.
+#
+# `fault` gets no source at all. It means something different from `int`, and
+# nothing in the firmware can clear it -- it drops when the device's fault does.
+# An interrupt on an uncleanable level would have to stay masked until a poll saw
+# the level go away, so it would add a handler and keep the poll. It stays in
+# LINES, read every 50 ms by `src/typec.rs`.
+IRQ_TYPE_C_TARGET = 4
+IRQ_TYPE_C_AUX = 5
 
 # Capture depth, in samples of the sync clock.
 #
@@ -154,9 +459,20 @@ FLASH_SIZE = 4 * 1024 * 1024
 FLASH_TEST_OFFSET = 0x00300000
 
 # Read mode. "single" is 0x03, one lane, no dummy cycles -- the mode to bring up
-# first, because there is nothing in it to get subtly wrong. "quad" is 0xeb.
+# first, because there is nothing in it to get subtly wrong. "quad" is 0xeb,
+# address and data on four lanes with `dummy_value=0xff0000`.
 # See ecp5-test/riscv/vexii_flash.py.
-FLASH_MODE = "single"
+#
+# Quad needs no register write on this part: QE (SR2 bit 1) is already set, read
+# back as 0x02 (docs/chips/w25q32-config-flash.md). And 0xeb's dummy count is
+# fixed at four clocks in SPI mode -- the configurable one is a QPI command --
+# so there is nothing to tune and nothing that can be left half-configured.
+#
+# Measured on this board, cache-line refill for 64 B: 0x03 3833 ns, 0xeb 1083 ns
+# (#100). What that buys the CPU is in the bench rows, not in the ratio: the
+# flash 16 KiB random walk misses the D-cache on every access and is therefore
+# very nearly pure refill.
+FLASH_MODE = "quad"
 
 # SCK = sync / (2 * (1 + divisor)). At 80 MHz sync, divisor 0 gives 40 MHz,
 # which is inside the ECP5 MCLK pin's 62 MHz specification (FPGA-TN-02039) and
@@ -181,78 +497,11 @@ FLASH_DIVISOR = 0
 # marked as (ecp5-test/fabric/FABRIC_TEST.md). See #110.
 SYNC_MHZ = 60
 
-
-class ConsolePeripheral(wiring.Component):
-    """A byte sink that looks like a UART to software and a stream to USB.
-
-    Software sees two registers: write a byte to `data`, and poll `ready` to
-    find out whether there is room for another. That is the same contract as
-    the luna_soc UART peripheral, so firmware written against one works against
-    the other -- which matters because phase 2 wants to run benchmarks whose
-    output routing should not be their concern.
-
-    Behind it is a FIFO rather than a single byte. A CPU writing a string
-    character by character would otherwise stall on every byte waiting for USB,
-    and USB delivers in packets rather than bytes.
-
-    The depth is two 512-byte USB packets: enough that the CPU can fill one
-    while another is in flight, so a burst of output does not stall on the
-    endpoint. Larger buys nothing here -- the firmware prints a line at a time,
-    not megabytes -- and each 1024 bytes is a block RAM that the CPU's own
-    memory then cannot have.
-
-    `ready` is the FIFO's write-side space, and the endpoint's `valid` is its
-    read side. So an empty FIFO with a live USB device means no store from the
-    CPU is landing, rather than anything being wrong downstream.
-    """
-
-    def __init__(self, *, depth=1024):
-        self.depth = depth
-        self._data = csr.Register({"data": csr.Field(csr.action.W, 8)},
-                                  access="w")
-        self._ready = csr.Register({"ready": csr.Field(csr.action.R, 1)},
-                                   access="r")
-
-        builder = csr.Builder(addr_width=4, data_width=8)
-        builder.add("data", self._data)
-        builder.add("ready", self._ready)
-        self._bridge = csr.Bridge(builder.as_memory_map())
-
-        super().__init__({
-            "bus":    wiring.In(csr.Signature(addr_width=4, data_width=8)),
-            "source": wiring.Out(stream.Signature(8)),
-        })
-        self.bus.memory_map = self._bridge.bus.memory_map
-
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.bridge = self._bridge
-        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-
-        # ASYNC, not Sync. The CPU writes from `sync` and the USB endpoint reads from
-        # `usb`, which are different domains the moment sync is not 60 MHz.
-        #
-        # A SyncFIFOBuffered here worked only because sync and usb were both 60 MHz, so
-        # the crossing was accidentally safe. Raising sync to 80 produced a stream with
-        # correct counter VALUES and dropped CHARACTERS -- `tic 00000`, `tck 000001`,
-        # `ick 0000` -- because bytes were being lost in transit while the CPU-side
-        # arithmetic was untouched. That is the signature of an unsynchronised crossing:
-        # its pointers are not gray-coded and its ready flags are sampled in the wrong
-        # domain.
-        fifo = AsyncFIFOBuffered(width=8, depth=self.depth,
-                                 w_domain="sync", r_domain="usb")
-        m.submodules.fifo = fifo
-
-        m.d.comb += [
-            fifo.w_data.eq(self._data.f.data.w_data),
-            fifo.w_en.eq(self._data.f.data.w_stb),
-            self._ready.f.ready.r_data.eq(fifo.w_rdy),
-
-            self.source.payload.eq(fifo.r_data),
-            self.source.valid.eq(fifo.r_rdy),
-            fifo.r_en.eq(self.source.ready),
-        ]
-        return m
+# Sets in each of the two L1 caches, one way each. A constant rather than a
+# literal at the instantiation because `gateware_id.py` reports it to the
+# firmware, and a geometry reported from a different number than the one the
+# core was generated with would be worse than not reporting it.
+CACHE_SETS = 64
 
 
 class HelloSoC(Elaboratable):
@@ -264,6 +513,12 @@ class HelloSoC(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
+        # No `fast` domain: HyperRAMPHY (the non-DQS PHY, which is what BootRAM uses)
+        # drives ODDRX1F/IDDRX1F, single-clock DDR primitives that produce double-rate
+        # output from `sync` alone. Only HyperRAMDQSPHY needs an ECLK at 2x, and we do
+        # not use it. Requesting `fast` anyway cost a PLL output, a global buffer, and
+        # forced CLKOP_DIV to be even -- which needlessly restricts which sync
+        # frequencies are reachable.
         m.submodules.car = car = VariableClockDomainGenerator(sync_mhz=SYNC_MHZ)
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
@@ -282,28 +537,182 @@ class HelloSoC(Elaboratable):
         # it; exe=1 permits instruction fetch, so code can execute in place.
         regions = list(vexii_cpu.DEFAULT_REGIONS) + [
             f"base={FLASH_BASE:08x},size={FLASH_SIZE:08x},main=1,exe=1",
+            f"base={HYPERRAM_BASE:08x},size={HYPERRAM_SIZE:08x},main=1,exe=1",
         ]
 
         cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=64, regions=regions)
         m.submodules.cpu = cpu
 
+        # The die's one `JTAGG`, and both taps off it.
+        #
+        # ER2 goes to the CPU's debug module, ER1 to the HyperRAM staging sink below.
+        # There is exactly one of this primitive on the part, so it is instantiated
+        # here and handed out rather than claimed by whichever module wants JTAG.
+        m.submodules.user_jtag = user_jtag = UserJTAG()
+        m.d.comb += [
+            cpu.jtag_tck.eq(user_jtag.tck),
+            cpu.jtag_tdi.eq(user_jtag.tdi),
+            cpu.jtag_ce.eq(user_jtag.ce2),
+            cpu.jtag_shift.eq(user_jtag.shift),
+            cpu.jtag_update.eq(user_jtag.update),
+            cpu.jtag_rstn.eq(user_jtag.rstn),
+            user_jtag.tdo2.eq(cpu.jtag_tdo),
+        ]
+
         ram = blockram.Peripheral(size=RAM_SIZE, init=self.firmware)
         m.submodules.ram = ram
 
-        console = ConsolePeripheral()
-        m.submodules.console = console
+        # Two 16550s, identical apart from where the decoder puts them and what
+        # their streams are attached to. `Uart16550` holds no module-level state
+        # and knows nothing about its own address, so a third would be three more
+        # lines.
+        m.submodules.console = console = Uart16550()
+        m.submodules.apollo_uart = apollo_uart = Uart16550()
 
-        # Wishbone: RAM only. The console is a CSR peripheral behind its own
-        # bridge, added to the same decoder through a wishbone-to-CSR bridge.
+        # Wishbone: RAM only. The consoles are CSR peripherals behind their own
+        # bridges, added to the same decoder through wishbone-to-CSR bridges.
         decoder = Decoder(addr_width=30, data_width=32, granularity=8,
                           features={"cti", "bte", "err"})
         m.submodules.decoder = decoder
+
+        # Kept on the instance, not just as a local.
+        #
+        # The memory map is the SoC's own description of itself, and two tools want to
+        # read it without building a bitstream: `scripts/soc_generate_pac.py`, which
+        # turns it into an SVD and then into Rust register definitions, and
+        # `scripts/soc_diagram.py`. Both had to work around its being a local -- the PAC
+        # generator simply failed with "could not find a memory map on the SoC", which is
+        # why every peripheral address in the firmware is still hand-transcribed. That is
+        # the class of error that once had firmware sending `0x9f << 24` because a comment
+        # disagreed with the hardware.
+        self.decoder = decoder
         decoder.add(ram.bus, addr=RAM_BASE, name="ram")
 
         from amaranth_soc.csr.wishbone import WishboneCSRBridge
         csr_bridge = WishboneCSRBridge(console.bus, data_width=32)
         m.submodules.csr_bridge = csr_bridge
         decoder.add(csr_bridge.wb_bus, addr=CONSOLE_BASE, name="console")
+
+        apollo_csr_bridge = WishboneCSRBridge(apollo_uart.bus, data_width=32)
+        m.submodules.apollo_csr_bridge = apollo_csr_bridge
+        decoder.add(apollo_csr_bridge.wb_bus, addr=APOLLO_UART_BASE,
+                    name="apollo_uart")
+
+        # The interrupt controller, and the two UART lines into it.
+        #
+        # Both 16550s already have an `irq` output; before this it went nowhere
+        # and both consoles were polled round-robin by the firmware. The lines
+        # are LEVELS, held for as long as the condition holds, which is what the
+        # PLIC's gateway expects -- see the docstrings in vexii_plic.py and
+        # uart16550.py for why an edge here would lose everything after the
+        # first burst.
+        # Indexed by the IRQ_* constants rather than concatenated in order, so
+        # the source numbers the firmware writes into the PLIC's enable register
+        # and the wires they select are the same names in the same file. A Cat()
+        # here would encode them positionally and silently renumber everything
+        # if a third source were ever inserted in the middle.
+        # The board's peripherals: LEDs and two other pins on a GPIO block, the
+        # power monitor's I2C bus, and the sideband payload. One CSR decoder in
+        # front of all three, one Wishbone window -- see BOARD_BASE.
+        #
+        # The GPIO peripheral is `amaranth_soc.gpio`, upstream and unmodified. A
+        # bespoke LED register would have been fewer gates and would have had to
+        # be documented, tested and explained; this one is already all three.
+        m.submodules.board_gpio = board_gpio = gpio.Peripheral(
+            pin_count=GPIO_PIN_COUNT, addr_width=4, data_width=8)
+
+        m.submodules.i2c = i2c = I2CMaster()
+        m.submodules.sideband_ctrl = sideband_ctrl = SidebandControl()
+
+        # The ULPI register window on TARGET_PHY, and only on TARGET_PHY.
+        #
+        # AUX_PHY is deliberately untouched: the USB console runs over it, and a
+        # second master issuing register commands on that bus would corrupt the
+        # link this design reports through. CONTROL_PHY is shared with Apollo.
+        # TARGET is the port nothing here drives, which is what makes it the one
+        # that can be probed from a running system rather than from a bitstream
+        # that evicted the SoC to make room.
+        m.submodules.target_ulpi = target_ulpi = UlpiRegisters()
+
+        # The bus select for the one I2C controller, and the four Type-C signals
+        # that come with it. See i2c_mux.py: both FUSB302Bs answer to 0x22, so
+        # they are on separate pin-sets and a mux is forced rather than chosen.
+        m.submodules.i2c_mux = i2c_mux = I2CBusMux()
+
+        # What this bitstream is, so the firmware can say whether it was built
+        # against this one. The frequencies are what the PLL solver landed on
+        # rather than what was asked for -- see gateware_id.py.
+        m.submodules.gateware_id = gateware_id = GatewareId(
+            sync_hz=round(car.actual_sync_mhz * 1e6),
+            usb_hz=round(car.actual_usb_mhz * 1e6),
+            cache_sets=CACHE_SETS)
+
+        board_csr = csr.Decoder(addr_width=7, data_width=8)
+        m.submodules.board_csr = board_csr
+        board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
+                      name="gpio")
+        board_csr.add(i2c.bus,           addr=I2C_BASE      - BOARD_BASE,
+                      name="i2c")
+        board_csr.add(sideband_ctrl.bus, addr=SIDEBAND_BASE - BOARD_BASE,
+                      name="sideband")
+        board_csr.add(target_ulpi.bus,   addr=ULPI_BASE     - BOARD_BASE,
+                      name="ulpi")
+        board_csr.add(i2c_mux.bus,       addr=I2C_MUX_BASE  - BOARD_BASE,
+                      name="i2c_mux")
+        board_csr.add(gateware_id.bus,   addr=GATEWARE_BASE - BOARD_BASE,
+                      name="gateware")
+
+        board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
+        m.submodules.board_bridge = board_bridge
+        decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
+
+        m.submodules.plic = plic = Plic(sources=5)
+        m.d.comb += [
+            plic.sources[IRQ_CONSOLE].eq(console.irq),
+            plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
+            plic.sources[IRQ_I2C].eq(i2c.irq),
+            plic.sources[IRQ_TYPE_C_TARGET].eq(i2c_mux.target_irq),
+            plic.sources[IRQ_TYPE_C_AUX].eq(i2c_mux.aux_irq),
+        ]
+
+        # The same five lines, keyed by the decoder window each peripheral lives
+        # in, so `scripts/soc_generate_pac.py` can put an <interrupt> element on
+        # the right peripheral in the SVD.
+        #
+        # Here rather than at the top of the file, and immediately below the
+        # wiring it describes: a source number that is written down somewhere else
+        # is a source number that can disagree with the wire, and a firmware that
+        # enables the wrong PLIC source produces a console that never interrupts
+        # with nothing to see anywhere. The names are the `name=` arguments to
+        # `decoder.add()` and `board_csr.add()`, joined -- see `walk()` in the
+        # generator for why the board's three sub-windows are named that way.
+        #
+        # A dict value rather than a number where ONE window raises more than one
+        # source, which the mux does: each entry becomes its own <interrupt> and
+        # its own `<WINDOW>_<SUFFIX>_IRQ` constant. SVD allows several per
+        # peripheral and svd2rust wants their names distinct, which is also what
+        # firmware wants -- the two numbers are not interchangeable.
+        self.interrupt_sources = {
+            "console":       IRQ_CONSOLE,
+            "apollo_uart":   IRQ_APOLLO,
+            "board_i2c":     IRQ_I2C,
+            "board_i2c_mux": {"TARGET": IRQ_TYPE_C_TARGET,
+                              "AUX":    IRQ_TYPE_C_AUX},
+        }
+
+        plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
+        m.submodules.plic_bridge = plic_bridge
+        decoder.add(plic_bridge.wb_bus, addr=PLIC_BASE, name="plic")
+
+        # The CLINT, comparing against the CPU's own `rdtime` counter rather
+        # than one of its own. Two counters could disagree; one cannot, and
+        # `csrr time` and a load from mtime have to return the same number.
+        m.submodules.clint = clint = Clint()
+        m.d.comb += clint.mtime.eq(cpu.mtime)
+
+        clint_bridge = WishboneCSRBridge(clint.bus, data_width=32)
+        m.submodules.clint_bridge = clint_bridge
+        decoder.add(clint_bridge.wb_bus, addr=CLINT_BASE, name="clint")
 
         # The configuration SPI flash, memory-mapped read-only.
         #
@@ -462,6 +871,62 @@ class HelloSoC(Elaboratable):
         decoder.add(flash_ila_bridge.wb_bus, addr=FLASH_ILA_BASE,
                     name="flash_ila")
 
+        # HyperRAM, and the two paths that stage firmware into it.
+        #
+        # This is what makes a firmware change cost seconds instead of a ~60 s
+        # resynthesis: the image goes into HyperRAM and a resident bootloader copies
+        # it into block RAM. See ecp5-test/riscv/vexii_bootram.py.
+        from vexii_bootram import BootRAM
+
+        m.submodules.bootram = bootram = BootRAM()
+        bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
+        m.submodules.bootram_bridge = bootram_bridge
+        decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
+
+        # This extra decoder window is the timing risk in #90: its address compare is
+        # on the path that needed RegisteredResponse to recover Fmax. Simulation can
+        # establish protocol and data integrity; only a build can measure the margin.
+        decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
+
+        # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
+        #
+        # `ext_reset` has no other source. The CPU reboots itself by jumping to
+        # `_start`, so nothing else needs one -- but a JTAG-staged image has to land
+        # while the CPU is not executing, or the shell it is replacing is the thing
+        # writing over its own staging buffer.
+        m.submodules.stager = stager = JTAGStager()
+        m.d.comb += [
+            stager.tck.eq(user_jtag.tck),
+            stager.tdi.eq(user_jtag.tdi),
+            stager.ce.eq(user_jtag.ce1),
+            stager.shift.eq(user_jtag.shift),
+            user_jtag.tdo1.eq(stager.tdo),
+
+            bootram.jtag_req.eq(stager.req),
+            bootram.jtag_addr.eq(stager.addr),
+            bootram.jtag_data.eq(stager.data),
+            stager.ack.eq(bootram.jtag_ack),
+
+            cpu.ext_reset.eq(stager.cpu_reset),
+        ]
+
+        # The machine external interrupt, from the PLIC.
+        #
+        # This input existed and was connected to nothing -- an undriven `In`
+        # port of a Component reads as zero, so the SoC had an interrupt path
+        # that could never fire and nothing said so. That is why the firmware
+        # polled.
+        #
+        # The other two come from the CLINT above, and nothing here is tied off
+        # any more. `irq_timer` is `mtime >= mtimecmp` and is what the firmware's
+        # 1 ms tick rides on; `irq_software` is msip, which nothing raises yet
+        # but which a driver can now reach rather than write into a hole.
+        m.d.comb += [
+            cpu.irq_external.eq(plic.irq_out),
+            cpu.irq_timer.eq(clint.irq_timer),
+            cpu.irq_software.eq(clint.irq_software),
+        ]
+
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.
         #
@@ -479,31 +944,48 @@ class HelloSoC(Elaboratable):
         arbiter.add(cpu.ibus)
         arbiter.add(cpu.dbus)
         arbiter.add(cpu.iobus)
-        wiring.connect(m, arbiter.bus, decoder.bus)
+
+        # A flip-flop between the arbiter and the decoder, on the return path.
+        #
+        # Without it one clock edge has to carry the grant register through the
+        # address mux, the decoder's window compare, every subordinate's
+        # acknowledge, the gather back, and then VexiiRiscv's PMA check and
+        # commit -- 16.45 ns measured, of which 13.64 ns was wire. That is 60.8
+        # MHz against a 60 MHz constraint: it passes, and a placement run that
+        # went slightly differently would not.
+        #
+        # The cost is one cycle per bus beat and it is paid only by traffic that
+        # reaches the bus at all; a cache hit never does. See wishbone_pipe.py
+        # for the duplicate-strobe hazard this handles, which is the reason it
+        # is not simply a register on `ack`, and scripts/soc_bus_sim.py for the
+        # measurement of both.
+        m.submodules.bus_pipe = bus_pipe = RegisteredResponse(
+            addr_width=30, data_width=32, granularity=8,
+            features={"cti", "bte", "err"})
+        wiring.connect(m, arbiter.bus, bus_pipe.intr_bus)
+        wiring.connect(m, bus_pipe.sub_bus, decoder.bus)
 
         # USB CDC-ACM, on the AUX port.
         #
-        # This was previously a bare USBDevice with one bulk IN endpoint and no CDC
-        # descriptors -- despite the comment claiming CDC-ACM. That is why no ttyACM node
-        # ever appeared: the kernel correctly declines to bind a serial driver to a
-        # vendor-specific interface, and an investigation chasing the silence ended up
-        # reading /dev/ttyACM1, which is an ST-LINK.
+        # CDC descriptors are what make a /dev/ttyACM node appear at all -- the kernel
+        # declines to bind a serial driver to a vendor-specific interface, and a bulk
+        # endpoint without them is silent with nothing to say why.
         #
-        # USBSerialDevice is the same gateware measured at 195.4 Mbps CDC-ACM loopback in
-        # docs/luna_ecp5_fpga/usb-performance.md -- CDC costs essentially nothing over raw
-        # bulk, since it is the same two stream endpoints plus descriptors.
+        # USBSerialDevice measures 195.4 Mbps CDC-ACM loopback in
+        # docs/luna_ecp5_fpga/usb-performance.md; CDC costs essentially nothing over raw
+        # bulk, being the same two stream endpoints plus descriptors.
         from luna.gateware.usb.devices.acm import USBSerialDevice
 
-        # AUX rather than CONTROL: CONTROL is shared with Apollo and needs an
-        # ApolloAdvertiser to claim, while AUX belongs to the FPGA outright. The previous
-        # code used `target_phy`, which is the port under test rather than a debug port.
+        # AUX rather than CONTROL or TARGET: CONTROL is shared with Apollo and has to be
+        # claimed (sideband bit 5, `ecp5-test/sideband_advertise.py`), TARGET is the port
+        # under test, and AUX belongs to the FPGA outright.
         bus = platform.request("aux_phy", 0)
 
         # 512 is the high-speed bulk maximum. The default of 64 is the full-speed limit,
         # which enumerates at high speed and then runs at an eighth of the achievable rate.
-        # ID from the central allocation, never a locally chosen number. 0x615c -- what
-        # this used to claim -- is Apollo's own debugger and bootloader ID, so this
-        # bitstream was impersonating the debugger. See ecp5-test/usb_ids.py.
+        # ID from the central allocation in ecp5-test/usb_ids.py, never a locally chosen
+        # number: 0x615c is Apollo's own debugger and bootloader ID, and a bitstream
+        # claiming it impersonates the debugger on the host's device list.
         serial = USBSerialDevice(bus=bus,
                                  idVendor=usb_ids.VENDOR_ID,
                                  idProduct=usb_ids.product_id("riscv_console"),
@@ -516,11 +998,29 @@ class HelloSoC(Elaboratable):
         # only appears after a host poke is harder to diagnose than one simply present.
         m.d.comb += serial.connect.eq(1)
 
-        # Console FIFO -> host. The receive direction is tied off: phase 1 only needs
-        # output, and leaving rx.ready low would stall the endpoint rather than discard.
+        # The elastic buffers between the 16550 and the USB endpoint.
+        #
+        # ASYNC, and that is not optional: the CPU and its 16550 run in `sync`, the
+        # endpoint runs in `usb`, and those are different clocks the moment SYNC_MHZ
+        # is not 60. A synchronous FIFO here worked only because both happened to be
+        # 60 MHz; raising sync to 80 produced a stream with correct counter VALUES
+        # and dropped CHARACTERS -- `tic 00000`, `tck 000001` -- because bytes were
+        # lost in transit while the arithmetic that produced them was untouched.
+        #
+        # The 16550 keeps its own 16-byte FIFOs and knows nothing about any of this.
+        # See stream_buffer.py.
+        m.submodules.console_tx_buf = console_tx_buf = StreamBuffer(
+            depth=CONSOLE_TX_DEPTH, i_domain="sync", o_domain="usb")
+        m.submodules.console_rx_buf = console_rx_buf = StreamBuffer(
+            depth=CONSOLE_RX_DEPTH, i_domain="usb", o_domain="sync")
+
+        wiring.connect(m, console.source, console_tx_buf.sink)
+        wiring.connect(m, console_rx_buf.source, console.sink)
+
+        # Console -> host.
         m.d.comb += [
-            serial.tx.payload.eq(console.source.payload),
-            serial.tx.valid.eq(console.source.valid),
+            serial.tx.payload.eq(console_tx_buf.source.payload),
+            serial.tx.valid.eq(console_tx_buf.source.valid),
             serial.tx.first.eq(0),
 
             # `last` marks the final beat OF A PACKET, and the endpoint only observes it
@@ -539,8 +1039,77 @@ class HelloSoC(Elaboratable):
             # correctness here matters more than throughput.
             serial.tx.last.eq(1),
 
-            console.source.ready.eq(serial.tx.ready),
-            serial.rx.ready.eq(1),
+            console_tx_buf.source.ready.eq(serial.tx.ready),
+
+            # Host -> CPU. `serial.rx.ready` must come from the buffer, not be tied
+            # high: tied high accepts every byte and discards it, and typing at the
+            # console then does nothing at all.
+            console_rx_buf.sink.payload.eq(serial.rx.payload),
+            console_rx_buf.sink.valid.eq(serial.rx.valid),
+            serial.rx.ready.eq(console_rx_buf.sink.ready),
+        ]
+
+        # ---- the Apollo-facing serial port ---------------------------------
+        #
+        # The same peripheral, on a transport that genuinely is a UART. The 16550
+        # supplies no baud rate -- it is a byte pipe by design -- so the bit timing
+        # lives here, in the module that chose the wire.
+        #
+        # R14/T14 are shared with JTAG TDI/TMS. `dir="oe"` on tx, the idle
+        # qualifier inside `SerialLine`, and the policy of never transmitting
+        # unbidden are the whole of the mitigation; see the comment on
+        # APOLLO_UART_BASE and the docstring of serial_line.py.
+        apollo_pins = platform.request("uart", 0)
+
+        # divisor = clock / baud, in whole `sync` cycles. At 60 MHz and 115200 that
+        # is 520, an error of 0.03% -- a UART tolerates about 2%, and the error
+        # scales with the clock, so a design that raises SYNC_MHZ and leaves this
+        # expression alone stays correct by construction. Hardcoding 520 would not.
+        #
+        # SerialLine, not a bare AsyncSerial wired to the pads. AsyncSerial alone
+        # leaves the receive pad unsynchronised, delivers framing errors as
+        # characters, and gives no output enable that survives the stop bit --
+        # issue #113, and serial_line.py has the full account.
+        m.submodules.apollo_line = apollo_line = SerialLine(
+            divisor=int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD), data_bits=8)
+
+        # 115200 is four orders of magnitude slower than the CPU, so this is the
+        # path where a deep transmit buffer earns its keep. Same domain both sides,
+        # so this is a plain synchronous FIFO -- the crossing is a property of the
+        # USB transport, not of buffering.
+        m.submodules.apollo_tx_buf = apollo_tx_buf = StreamBuffer(
+            depth=APOLLO_TX_DEPTH)
+        m.submodules.apollo_rx_buf = apollo_rx_buf = StreamBuffer(
+            depth=APOLLO_RX_DEPTH)
+
+        wiring.connect(m, apollo_uart.source, apollo_tx_buf.sink)
+        wiring.connect(m, apollo_rx_buf.source, apollo_uart.sink)
+        wiring.connect(m, apollo_tx_buf.source, apollo_line.sink)
+        wiring.connect(m, apollo_line.source, apollo_rx_buf.sink)
+
+        m.d.comb += [
+            # What the line loses, on into LSR.
+            #
+            # This is the port where a byte can actually be destroyed: an async
+            # serial line has no flow control, `SerialLine.source.valid` is one
+            # cycle whatever the buffer says, and a frame with a bad stop bit is
+            # dropped rather than delivered. The 16550 cannot see either -- its
+            # own `sink` backpressures, so a full FIFO there is a stall and not a
+            # loss -- so the transport reports both and the peripheral latches
+            # them as LSR.OE and LSR.FE.
+            #
+            # The USB console has no equivalent and drives neither input: the CDC
+            # endpoint NAKs while its buffer is full and the host retries, so
+            # that path loses nothing to report.
+            apollo_uart.overrun.eq(apollo_line.overrun),
+            apollo_uart.frame_error.eq(apollo_line.frame_error),
+
+            # The pad, and nothing else. SerialLine owns the synchroniser, the
+            # idle qualifier and the output enable -- which is the point of it
+            # being a module rather than nine lines of comb here.
+            apollo_line.rx_i.eq(apollo_pins.rx.i),
+            apollo_pins.tx.o.eq(apollo_line.tx_o),
+            apollo_pins.tx.oe.eq(apollo_line.tx_oe),
         ]
 
         # The single-wire debug link to Apollo. Present in every test design
@@ -583,7 +1152,19 @@ class HelloSoC(Elaboratable):
         # Every one except green is sticky, for the same reason the sideband bits are:
         # these events are brief, and a human glancing at the board samples at an
         # arbitrary moment.
-        leds = Cat(platform.request("led", n).o for n in range(6))
+        #
+        # THE DIAGNOSTIC IS THE DEFAULT, NOT THE ONLY DRIVER. The GPIO peripheral
+        # above can take any LED, one at a time, by putting that pin in push-pull
+        # mode; while it does not, the diagnostic below drives it.
+        # `amaranth_soc.gpio` calls the other mode INPUT_ONLY and documents it as
+        # "the pin output is disabled", which is exactly the claim being made:
+        # while the CPU is not driving, something else is.
+        #
+        # The reset value of Mode is INPUT_ONLY for every pin, so a bitstream
+        # whose firmware never runs still lights the LEDs with the fabric's own
+        # account of itself. That is the whole reason these six exist.
+        led_pads = [platform.request("led", n).o for n in range(6)]
+        leds = Signal(6)
 
         # ~0.36 s on, ~0.36 s off at 60 MHz. Fast enough to read as deliberate, slow
         # enough to be unmistakably a flash rather than a flicker.
@@ -613,10 +1194,57 @@ class HelloSoC(Elaboratable):
         with m.If(console.source.valid):
             m.d.sync += ever_console.eq(1)
 
+        # Where a byte gets to, as two sticky HANDSHAKE flags.
+        #
+        # `ever_console` above is only `valid`, which a byte sitting in a FIFO that
+        # nothing drains asserts forever -- so it says "the CPU wrote one", not "it
+        # went anywhere". These two say where it went, and between them they split
+        # the path at the only two places it can stop:
+        #
+        #   state[0]  the 16550 handed a byte to the elastic buffer (sync side)
+        #   state[1]  the elastic buffer handed a byte to the USB endpoint (usb side)
+        #
+        # Both zero with `events` set means the transmit chain is stalled at its
+        # first stage; [0] set and [1] clear means the domain crossing or the
+        # endpoint is the problem; both set means the bytes left the FPGA and the
+        # fault is on the host side of the wire. That is three distinct diagnoses
+        # from a link that works when USB does not, which is the entire reason the
+        # sideband is in this design.
+        ever_buffered = Signal()
+        with m.If(console.source.valid & console.source.ready):
+            m.d.sync += ever_buffered.eq(1)
+
+        # Set in `usb`, read in `sync`. Sticky and one-directional, so the only
+        # hazard is sampling the 0->1 edge, which FFSynchronizer covers.
+        usb_took = Signal()
+        with m.If(serial.tx.valid & serial.tx.ready):
+            m.d.usb += usb_took.eq(1)
+        ever_usb = Signal()
+        m.submodules.usb_took_sync = FFSynchronizer(usb_took, ever_usb,
+                                                    o_domain="sync")
+
         m.d.comb += [
-            sideband.state.eq(Cat(ever_fetched, ever_io)),
-            sideband.events.eq(ever_console),
-            sideband.error.eq(ever_errored),
+            # The fabric's account, which the CPU may override one register
+            # write at a time -- see sideband_csr.py. `reconfigured` has never
+            # had anything to report from this design, so the fabric side of it
+            # is zero and the firmware side is the only one that can set it.
+            sideband_ctrl.fabric_state.eq(Cat(ever_buffered, ever_usb)),
+            sideband_ctrl.fabric_events.eq(ever_console),
+            sideband_ctrl.fabric_error.eq(ever_errored),
+            sideband_ctrl.fabric_reconfigured.eq(0),
+
+            sideband.state.eq(sideband_ctrl.state),
+            sideband.events.eq(sideband_ctrl.events),
+            sideband.error.eq(sideband_ctrl.error),
+            sideband.reconfigured.eq(sideband_ctrl.reconfigured),
+            # A byte each way, so the link carries a message and not only a
+            # heartbeat. See sideband_csr.py for the register discipline.
+            sideband.message.eq(sideband_ctrl.message),
+            sideband_ctrl.received.eq(sideband.received),
+            sideband_ctrl.received_strobe.eq(sideband.received_strobe),
+            # Asking Apollo for the CONTROL port. Off until firmware sets bit 5,
+            # so this AUX-only design keeps behaving exactly as it did.
+            sideband.advertise.eq(sideband_ctrl.advertise),
 
             leds.eq(Cat(ever_errored,          # red    -- error, latched
                         ever_fetched,          # orange -- fetching
@@ -625,6 +1253,128 @@ class HelloSoC(Elaboratable):
                         ever_console,          # blue   -- console data queued
                         serial.connect)),      # violet -- USB up
         ]
+
+        # ---- the board GPIO pins --------------------------------------------
+        #
+        # Six LEDs, one power-monitor control output, and the USER button.
+        #
+        # The LEDs and PWRDN are `dir="o"` resources: the pad has an `o` and no
+        # `oe`, so the GPIO peripheral's output enable cannot reach the pin and
+        # is used here as an OWNERSHIP bit instead. Push-pull means "the CPU is
+        # driving this one"; anything else leaves it to the fabric. That is the
+        # same meaning the peripheral's own documentation gives the mode, and it
+        # is why the LED handover needed no new register.
+        for index in range(6):
+            m.d.comb += led_pads[index].eq(
+                Mux(board_gpio.pins[index].oe,
+                    board_gpio.pins[index].o,
+                    leds[index]))
+            # Input reads back the value ON THE NET, not the Output register --
+            # so it answers "what is this LED doing" whichever side is driving
+            # it, which is the question worth asking from a shell that cannot
+            # see the board. It is not a measurement: nothing on an ECP5 reads
+            # an output pad back, and the platform's `PinsN` inversion happens
+            # below this point, so what is read is the logical value rather than
+            # the pad voltage.
+            m.d.comb += board_gpio.pins[index].i.eq(led_pads[index])
+
+        power_monitor = platform.request("power_monitor", 0)
+
+        # The two Type-C controllers' buses and their `int` / `fault` lines. All
+        # four signals are declared `PinsN` in the platform, so Amaranth has
+        # already undone the active-low sense and a 1 on `.i` means the device is
+        # asserting.
+        type_c_target = platform.request("target_type_c", 0)
+        type_c_aux = platform.request("aux_type_c", 0)
+
+        # PWRDN is active low on the pad. The GPIO block drives it only in
+        # push-pull mode, so the reset state is a 0 here, a 1 on the pad, and a
+        # PAC1954 that is running -- which is what the I2C bus below needs.
+        #
+        # `slow` and `gpio` on this resource are left as inputs (o and oe both
+        # default to 0 on a `dir="io"` pin). `slow` selects the chip's
+        # low-bandwidth sampling mode and `gpio` is its general-purpose pin;
+        # neither is needed to read a measurement, and driving a pin whose
+        # purpose has not been established is how a board gets damaged.
+        m.d.comb += power_monitor.pwrdn.o.eq(
+            board_gpio.pins[GPIO_PWRDN].o & board_gpio.pins[GPIO_PWRDN].oe)
+        m.d.comb += board_gpio.pins[GPIO_PWRDN].i.eq(power_monitor.pwrdn.o)
+
+        button = platform.request("button_user", 0)
+        m.d.comb += board_gpio.pins[GPIO_BUTTON].i.eq(button.i)
+
+        # ---- the TARGET PHY's ULPI bus --------------------------------------
+        #
+        # The FPGA sources the clock (`clk_dir='o'` in the platform), so the PHY
+        # runs at whatever `usb` runs at -- 60 MHz, which is what a USB3343
+        # requires and is why `usb` is not a free parameter the way `sync` is.
+        #
+        # `rst` is declared `rst_invert=True`, so the pad is active low and a 1
+        # here holds the PHY in reset. Driving it from `ResetSignal("usb")`
+        # means the PHY comes out of reset with the domain and is held only
+        # while the domain is, which is what a PHY expects; tying it to 0 would
+        # leave a PHY that had glitched during configuration with no way back.
+        #
+        # This is a register path only. There is no UTMI translator, no packet
+        # handling and no device stack on this port -- see `ulpi_window.py`.
+        target_phy = platform.request("target_phy", 0)
+        m.d.comb += [
+            target_phy.clk.o.eq(ClockSignal("usb")),
+            target_phy.rst.o.eq(ResetSignal("usb")),
+            target_phy.stp.o.eq(target_ulpi.stp_o),
+            target_phy.data.o.eq(target_ulpi.data_o),
+            target_phy.data.oe.eq(target_ulpi.data_oe),
+            target_ulpi.data_i.eq(target_phy.data.i),
+            target_ulpi.dir_i.eq(target_phy.dir.i),
+            target_ulpi.nxt_i.eq(target_phy.nxt.i),
+        ]
+
+        # ---- the three I2C buses, from one controller -----------------------
+        #
+        # `scl` is `dir="o"` on all three, so it is driven push-pull and nothing
+        # on any of them may stretch the clock; `sda` is `dir="io"` and is driven
+        # properly open-drain. See i2c_master.py for what that rules out.
+        #
+        # `power_monitor` was requested above for its PWRDN pin, so it is passed
+        # in rather than requested again -- a resource may only be requested
+        # once, and the second request is an error rather than a second copy.
+        m.d.comb += [
+            i2c_mux.idle.eq(i2c.idle),
+            i2c_mux.target_int.eq(type_c_target.int.i),
+            i2c_mux.aux_int.eq(type_c_aux.int.i),
+            i2c_mux.target_fault.eq(type_c_target.fault.i),
+            i2c_mux.aux_fault.eq(type_c_aux.fault.i),
+        ]
+
+        for select_value, port in ((I2C_MUX_TARGET_C, type_c_target),
+                                   (I2C_MUX_AUX_C, type_c_aux),
+                                   (I2C_MUX_POWER, power_monitor)):
+            chosen = i2c_mux.select == select_value
+            m.d.comb += [
+                # Unselected buses are driven IDLE -- SCL high, SDA released --
+                # rather than left undriven. These pins carry PULLMODE="NONE", so
+                # an undriven line floats rather than idling high, and a floating
+                # SDA is a transient that a device listening on that bus reads as
+                # a START.
+                port.scl.o.eq(Mux(chosen, i2c.scl_o, 1)),
+                # Open drain: a one is sent by releasing the line, so the output
+                # value is always zero and only the enable moves.
+                port.sda.o.eq(i2c.sda_o),
+                port.sda.oe.eq(chosen & i2c.sda_oe),
+            ]
+
+        # Idle high by default, so a select value with no bus behind it -- 3,
+        # which two bits can hold and nothing assigns -- reads as an idle bus
+        # rather than as SDA held low. An undriven `sda_i` reads 0, which this
+        # controller correctly reports as arbitration lost, and chasing
+        # "something is holding SDA down" when the answer is "you selected bus 3"
+        # is a bad afternoon.
+        m.d.comb += i2c.sda_i.eq(1)
+        for select_value, port in ((I2C_MUX_TARGET_C, type_c_target),
+                                   (I2C_MUX_AUX_C, type_c_aux),
+                                   (I2C_MUX_POWER, power_monitor)):
+            with m.If(i2c_mux.select == select_value):
+                m.d.comb += i2c.sda_i.eq(port.sda.i)
 
         return m
 
@@ -635,8 +1385,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--program", action="store_true")
+    parser.add_argument("--placeholder", type=Path,
+                        help="build with this random image as block RAM init, so real "
+                             "firmware can be swapped in later without resynthesis")
     parser.add_argument("--firmware", type=Path,
-                        default=ROOT / "tmp" / "riscv_hello" / "hello.bin")
+                        default=ROOT / "tmp" / "riscv_hello" / "hello.bin",
+                        help="the IMAGE, linked for IMAGE_ORIGIN")
+    parser.add_argument("--bootloader", type=Path,
+                        default=ROOT / "tmp" / "rust_boot.bin",
+                        help="the resident bootloader, linked for 0x0; omit for a "
+                             "single-image build that boots --firmware directly")
     args = parser.parse_args()
 
     if not args.firmware.exists():
@@ -644,16 +1402,73 @@ def main():
         print("build it with ./scripts/riscv_firmware.py")
         return 1
 
-    raw = args.firmware.read_bytes()
-    if len(raw) > RAM_SIZE:
-        print(f"firmware is {len(raw)} bytes, block RAM is {RAM_SIZE}")
+    # Two images in one 64 KiB init, at their two origins.
+    #
+    # This is what makes the split work at all. The bitstream initialises ALL of block
+    # RAM, not just the low half, so one build carries the resident bootloader at 0x0
+    # AND a default image at IMAGE_ORIGIN. A board with nothing staged in HyperRAM
+    # therefore comes up on the image the bitstream placed -- a fallback that exists at
+    # power-on by construction and cannot be missing, which is exactly what lets the
+    # bootloader treat every failure the same way.
+    #
+    # Without --bootloader the image is packed at 0 and runs from the reset vector. That
+    # is the C generator's layout (`scripts/riscv_firmware.py`), which has no bootloader
+    # and is linked for 0.
+    boot = b""
+    if args.bootloader and args.bootloader.exists():
+        boot = args.bootloader.read_bytes()
+        if len(boot) > IMAGE_ORIGIN:
+            print(f"bootloader is {len(boot)} bytes; it must fit under "
+                  f"IMAGE_ORIGIN ({IMAGE_ORIGIN})")
+            return 1
+
+    image = args.firmware.read_bytes()
+    origin = IMAGE_ORIGIN if boot else 0
+    if origin + len(image) > RAM_SIZE:
+        print(f"image is {len(image)} bytes at {origin:#x}, block RAM is {RAM_SIZE}")
         return 1
 
-    # Block RAM is 32 bits wide, so the image is loaded as words.
+    if boot:
+        # Zero fill between them. Nothing executes there -- it is the bootloader's
+        # stack, growing down from IMAGE_ORIGIN.
+        raw = boot + b"\x00" * (IMAGE_ORIGIN - len(boot)) + image
+        print(f"bootloader: {len(boot)} bytes at 0x0")
+        print(f"image:      {len(image)} bytes at {IMAGE_ORIGIN:#x}")
+    else:
+        raw = image
+        print(f"image: {len(image)} bytes at 0x0 (no bootloader)")
+
+    # --placeholder builds a bitstream whose block RAM holds a known RANDOM image
+    # instead of firmware, so `ecpbram` can substitute real firmware into the built
+    # bitstream later -- one second, no synthesis.
+    #
+    # Kept because it is the only path that replaces BLOCK RAM INIT without a rebuild --
+    # the bootloader and the default image both -- where a staged image goes in over
+    # JTAG (`scripts/soc_jtag_stage.py`) or the console (`load`) and touches neither.
+    #
+    # It has to be random rather than the real image. ecpbram locates the old contents
+    # BY VALUE, and a real firmware image is ~87% zeroes; those zeroes also fill every
+    # unused BRAM tile on the die, so the pattern is not unique and ecpbram refuses with
+    # "Conflicting from pattern". A random image appears exactly once.
+    if args.placeholder:
+        if not args.placeholder.exists():
+            print(f"no placeholder at {args.placeholder}")
+            print("generate one with:")
+            print(f"  ecpbram -g {args.placeholder} -w 32 -d {RAM_SIZE // 4} -s 1")
+            return 1
+        raw = bytes.fromhex("".join(
+            # The hex file is one big-endian word per line; block RAM init is a list of
+            # integers, so parse rather than concatenate.
+            f"{int(line, 16):08x}"
+            for line in args.placeholder.read_text().split()))
+        print(f"placeholder image: {len(raw)} bytes; substitute firmware with "
+              f"`ecpbram -f {{old}}.hex -t {{new}}.hex -i top.config -o out.config`")
+
+    # Block RAM is 32 bits wide, so the init is loaded as words.
     padded = raw + b"\x00" * (-len(raw) % 4)
     words = [int.from_bytes(padded[i:i + 4], "little")
              for i in range(0, len(padded), 4)]
-    print(f"firmware: {len(raw)} bytes, {len(words)} words")
+    print(f"block RAM init: {len(raw)} bytes, {len(words)} words")
 
     if not (args.build or args.program):
         print("nothing to do; pass --build")
@@ -664,10 +1479,38 @@ def main():
     # packaged platform has no such dependency.
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
+    build_dir = ROOT / "tmp" / "vexii_hello" / "build"
+
+    # No `**ecppack_opts()` here, and it was tried: `CynthionPlatformRev1D4`
+    # passes its own `ecppack_opts` in `toolchain_prepare`
+    # (`repos/cynthion/.../platform/core.py:59-64`) before **kwargs, so supplying
+    # one is a duplicate keyword and the build fails outright. Stamping this
+    # bitstream's USERCODE therefore means patching the vendored platform.
+    #
+    # Until then the identity lives in a register instead -- `gateware_id.py`,
+    # same encoding, read by the CPU rather than by JTAG. USERCODE is not
+    # fabric-readable on this part in any case: it is a command in the
+    # bitstream's command stream rather than a bit in a tile, so there is
+    # nothing for a primitive to read.
     CynthionPlatformRev1D4().build(
         HelloSoC(firmware=words),
         do_program=args.program,
-        build_dir=str(ROOT / "tmp" / "vexii_hello" / "build"))
+        build_dir=str(build_dir))
+
+    # Record the exact BRAM contents alongside the bitstream.
+    #
+    # This is what `ecpbram` matches against: it finds the old contents BY VALUE and
+    # substitutes new ones, replacing firmware in a built bitstream in about a second
+    # instead of a ~60 s resynthesis. It can only do that if it is handed exactly what
+    # was synthesised, so this is written here rather than reconstructed later -- a
+    # reconstruction differing by one word would simply fail to match.
+    #
+    # Padded to the full RAM, because that is the geometry that ends up in the BRAM:
+    # `words` covers only the image, while the initialiser covers every location.
+    hex_words = words + [0] * (RAM_SIZE // 4 - len(words))
+    (build_dir / "firmware.hex").write_text(
+        "".join(f"{word:08x}\n" for word in hex_words))
+
     return 0
 
 

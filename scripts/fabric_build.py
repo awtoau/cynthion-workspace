@@ -31,6 +31,13 @@ source a shell script, the paths are added directly.
 
     ./scripts/fabric_build.py
     ./scripts/fabric_build.py --blocks 120 --min-luts 20000
+    ./scripts/fabric_build.py --seed 7 --build-dir tmp/fabric-coverage/seed-007
+
+`--seed` is what makes more than one configuration possible. The same source
+placed differently routes differently, and routing is the only way to reach
+interconnect a single build cannot: an arc is a mux selection, so one
+configuration drives each destination wire from exactly one source and leaves
+every other source for that wire untested. `fabric_sweep.py` loops it.
 
 This script does not program anything. Loading is a separate, deliberate step:
 see `fabric_run.py`.
@@ -65,7 +72,7 @@ from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
 design = FabricTest(blocks={blocks}, round_bits={round_bits}, golden={golden})
 CynthionPlatformRev1D4().build(design, do_program=False,
-                               build_dir="ecp5-test/fabric/build")
+                               build_dir={build_dir!r})
 print("BUILD OK")
 """
 
@@ -131,6 +138,19 @@ def main():
     parser.add_argument("--golden", default=None,
                         help="hex golden value, if already computed; otherwise "
                              "it is computed here")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="nextpnr placer seed. The same source with a "
+                             "different seed places and routes differently, "
+                             "which is the only way to reach interconnect a "
+                             "single configuration cannot: an arc is a mux "
+                             "selection, so one build can drive each "
+                             "destination wire from exactly one source")
+    parser.add_argument("--build-dir", type=Path, default=BUILD_DIR,
+                        help="where the tools write; a sweep needs one "
+                             "directory per configuration or each build "
+                             "destroys the evidence from the last")
+    parser.add_argument("--log", type=Path, default=LOG,
+                        help="where this script's transcript goes")
     args = parser.parse_args()
 
     sys.path.insert(0, str(ROOT / "ecp5-test"))
@@ -146,17 +166,27 @@ def main():
         print(f"no oss-cad-suite at {OSS_CAD}")
         return 1
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
+    args.log.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}:{env['PATH']}"
 
-    with LOG.open("w") as handle:
+    # Amaranth reads its tool overrides from AMARANTH_<name> before it looks at
+    # the build kwargs, and this platform's `toolchain_prepare` already passes
+    # `ecppack_opts` that way -- so the environment is the one route that adds
+    # to nextpnr's command line without overriding the platform.
+    if args.seed is not None:
+        env["AMARANTH_nextpnr_opts"] = f"--seed {args.seed}"
+
+    with args.log.open("w") as handle:
         def emit(text=""):
             print(text, flush=True)
             handle.write(text + "\n")
             handle.flush()
 
         emit(f"fabric test: {blocks} blocks, round 2**{round_bits} cycles")
+        if args.seed is not None:
+            emit(f"nextpnr placer seed: {args.seed}")
+        emit(f"build directory: {args.build_dir}")
 
         if args.golden:
             golden = int(args.golden, 16)
@@ -171,7 +201,8 @@ def main():
             emit(f"golden signature: {golden:#010x}")
 
         script = BUILD_SCRIPT.format(blocks=blocks, round_bits=round_bits,
-                                     golden=hex(golden))
+                                     golden=hex(golden),
+                                     build_dir=str(args.build_dir))
         emit("running yosys, nextpnr-ecp5 and ecppack")
         result = subprocess.run([sys.executable, "-c", script], cwd=ROOT,
                                 env=env, capture_output=True, text=True)
@@ -186,7 +217,7 @@ def main():
             emit("BUILD FAILED")
             return 1
 
-        timing_log = BUILD_DIR / "top.tim"
+        timing_log = args.build_dir / "top.tim"
         if not timing_log.exists():
             emit(f"no nextpnr log at {timing_log} -- cannot report utilisation")
             return 1
@@ -226,10 +257,10 @@ def main():
         emit(f"  {luts - ADVERTISED_LUTS} LUT4s beyond what the part "
              f"advertises")
 
-        bitstream = BUILD_DIR / "top.bit"
+        bitstream = args.build_dir / "top.bit"
         size = bitstream.stat().st_size if bitstream.exists() else 0
         emit(f"built {bitstream}, {size} bytes")
-        emit(f"log: {LOG}")
+        emit(f"log: {args.log}")
 
     return 0
 

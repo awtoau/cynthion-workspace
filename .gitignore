@@ -5,7 +5,10 @@ __pycache__/
 .Python
 build/
 # Amaranth/nextpnr output dirs for the ecp5-test applets; regenerable in ~5s.
+# Both spellings: two of these were tracked for months, and every path inside
+# the .il/.json/.rpt files named the machine that ran the build.
 *_build/
+build_*/
 develop-eggs/
 dist/
 downloads/

@@ -33,6 +33,12 @@ is meant to make impossible to repeat.
     ./scripts/sideband_read.py
     ./scripts/sideband_read.py --soak 5000
     ./scripts/sideband_read.py --command POWER
+
+**Aimed at the test bitstream** (`ecp5-test/sideband/`), which is the design that
+answers POWER, DEVICES and LED. The shipping SoC implements PING and STATUS only
+and answers the rest as unknown commands, so `--command POWER` against it reports
+an unknown command rather than a measurement -- which is the intended outcome, not
+a fault. `PING` distinguishes them: v1 is this bitstream, v2 is the shipping link.
 """
 
 import argparse
@@ -44,11 +50,17 @@ LOG = ROOT / "tmp" / "logs" / "sideband_read.log"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "ecp5-test" / "sideband"))
 
-# Framing, decoding and command encoding all live in sideband_decoder so this
-# script and any other consumer cannot disagree about them.
-from sideband_decoder import (
-    crc8, check, decode, decode_status, commands, reply_length,
+# THIS TOOL TARGETS THE TEST BITSTREAM. POWER, DEVICES and LED exist only in
+# `ecp5-test/sideband/`, so the map comes from that bitstream's own protocol
+# module. The shipping SoC answers PING and STATUS and treats the rest as unknown
+# commands -- its host side is `sideband_decoder` and its PING reports v2.
+#
+# Framing is shared, so the two cannot disagree about the envelope.
+from sideband_decoder import crc8, decode_status
+from test_protocol import (
+    check, decode, commands, reply_length,
     encode_leds, encode_led_colours, encode_led_release, LED_COLOURS,
 )
 

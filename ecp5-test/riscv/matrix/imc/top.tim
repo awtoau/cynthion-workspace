@@ -1,0 +1,363 @@
+Info: constraining clock net 'clk_60MHz_0__io' to 60.00 MHz
+
+Info: Logic utilisation before packing:
+Info:     Total LUT4s:      3795/24288    15%
+Info:         logic LUTs:   3089/24288    12%
+Info:         carry LUTs:    514/24288     2%
+Info:           RAM LUTs:    128/ 3036     4%
+Info:          RAMW LUTs:     64/ 6072     1%
+
+Info:      Total DFFs:      1452/24288     5%
+
+Info: Packing IOs..
+Info: pseudo_vccio_0__io[30] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf30, removing $nextpnr_obuf pseudo_vccio_0__io[30].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf30' constrained to Bel 'X4/Y50/PIOB'.
+Info: pseudo_vccio_0__io[29] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf29, removing $nextpnr_obuf pseudo_vccio_0__io[29].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf29' constrained to Bel 'X0/Y23/PIOB'.
+Info: pseudo_vccio_0__io[28] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf28, removing $nextpnr_obuf pseudo_vccio_0__io[28].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf28' constrained to Bel 'X0/Y23/PIOA'.
+Info: pseudo_vccio_0__io[27] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf27, removing $nextpnr_obuf pseudo_vccio_0__io[27].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf27' constrained to Bel 'X0/Y20/PIOC'.
+Info: pseudo_vccio_0__io[26] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf26, removing $nextpnr_obuf pseudo_vccio_0__io[26].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf26' constrained to Bel 'X0/Y17/PIOD'.
+Info: pseudo_vccio_0__io[25] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf25, removing $nextpnr_obuf pseudo_vccio_0__io[25].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf25' constrained to Bel 'X0/Y17/PIOC'.
+Info: pseudo_vccio_0__io[24] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf24, removing $nextpnr_obuf pseudo_vccio_0__io[24].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf24' constrained to Bel 'X0/Y17/PIOB'.
+Info: pseudo_vccio_0__io[23] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf23, removing $nextpnr_obuf pseudo_vccio_0__io[23].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf23' constrained to Bel 'X0/Y17/PIOA'.
+Info: pseudo_vccio_0__io[22] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf22, removing $nextpnr_obuf pseudo_vccio_0__io[22].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf22' constrained to Bel 'X0/Y11/PIOA'.
+Info: pseudo_vccio_0__io[21] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf21, removing $nextpnr_obuf pseudo_vccio_0__io[21].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf21' constrained to Bel 'X0/Y8/PIOD'.
+Info: pseudo_vccio_0__io[20] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf20, removing $nextpnr_obuf pseudo_vccio_0__io[20].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf20' constrained to Bel 'X0/Y47/PIOA'.
+Info: pseudo_vccio_0__io[19] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf19, removing $nextpnr_obuf pseudo_vccio_0__io[19].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf19' constrained to Bel 'X0/Y41/PIOA'.
+Info: pseudo_vccio_0__io[18] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf18, removing $nextpnr_obuf pseudo_vccio_0__io[18].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf18' constrained to Bel 'X0/Y44/PIOD'.
+Info: pseudo_vccio_0__io[17] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf17, removing $nextpnr_obuf pseudo_vccio_0__io[17].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf17' constrained to Bel 'X0/Y44/PIOC'.
+Info: pseudo_vccio_0__io[16] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf16, removing $nextpnr_obuf pseudo_vccio_0__io[16].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf16' constrained to Bel 'X0/Y44/PIOA'.
+Info: pseudo_vccio_0__io[15] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf15, removing $nextpnr_obuf pseudo_vccio_0__io[15].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf15' constrained to Bel 'X0/Y35/PIOC'.
+Info: pseudo_vccio_0__io[14] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf14, removing $nextpnr_obuf pseudo_vccio_0__io[14].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf14' constrained to Bel 'X0/Y29/PIOC'.
+Info: pseudo_vccio_0__io[13] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf13, removing $nextpnr_obuf pseudo_vccio_0__io[13].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf13' constrained to Bel 'X72/Y47/PIOD'.
+Info: pseudo_vccio_0__io[12] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf12, removing $nextpnr_obuf pseudo_vccio_0__io[12].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf12' constrained to Bel 'X72/Y47/PIOC'.
+Info: pseudo_vccio_0__io[11] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf11, removing $nextpnr_obuf pseudo_vccio_0__io[11].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf11' constrained to Bel 'X72/Y47/PIOA'.
+Info: pseudo_vccio_0__io[10] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf10, removing $nextpnr_obuf pseudo_vccio_0__io[10].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf10' constrained to Bel 'X72/Y41/PIOA'.
+Info: pseudo_vccio_0__io[9] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf9, removing $nextpnr_obuf pseudo_vccio_0__io[9].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf9' constrained to Bel 'X72/Y38/PIOA'.
+Info: pseudo_vccio_0__io[8] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf8, removing $nextpnr_obuf pseudo_vccio_0__io[8].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf8' constrained to Bel 'X72/Y29/PIOD'.
+Info: pseudo_vccio_0__io[7] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf7, removing $nextpnr_obuf pseudo_vccio_0__io[7].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf7' constrained to Bel 'X72/Y29/PIOB'.
+Info: pseudo_vccio_0__io[6] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf6, removing $nextpnr_obuf pseudo_vccio_0__io[6].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf6' constrained to Bel 'X72/Y17/PIOD'.
+Info: pseudo_vccio_0__io[5] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf5, removing $nextpnr_obuf pseudo_vccio_0__io[5].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf5' constrained to Bel 'X72/Y8/PIOD'.
+Info: pseudo_vccio_0__io[4] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf4, removing $nextpnr_obuf pseudo_vccio_0__io[4].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf4' constrained to Bel 'X51/Y0/PIOB'.
+Info: pseudo_vccio_0__io[3] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf3, removing $nextpnr_obuf pseudo_vccio_0__io[3].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf3' constrained to Bel 'X47/Y0/PIOB'.
+Info: pseudo_vccio_0__io[2] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf2, removing $nextpnr_obuf pseudo_vccio_0__io[2].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf2' constrained to Bel 'X47/Y0/PIOA'.
+Info: pseudo_vccio_0__io[1] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf1, removing $nextpnr_obuf pseudo_vccio_0__io[1].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf1' constrained to Bel 'X24/Y0/PIOA'.
+Info: pseudo_vccio_0__io[0] feeds TRELLIS_IO pin_pseudo_vccio_0.buf.buf.buf0, removing $nextpnr_obuf pseudo_vccio_0__io[0].
+Info: pin 'pin_pseudo_vccio_0.buf.buf.buf0' constrained to Bel 'X20/Y0/PIOA'.
+Info: pseudo_gnd_0__io[19] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf19, removing $nextpnr_obuf pseudo_gnd_0__io[19].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf19' constrained to Bel 'X0/Y20/PIOB'.
+Info: pseudo_gnd_0__io[18] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf18, removing $nextpnr_obuf pseudo_gnd_0__io[18].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf18' constrained to Bel 'X0/Y14/PIOD'.
+Info: pseudo_gnd_0__io[17] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf17, removing $nextpnr_obuf pseudo_gnd_0__io[17].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf17' constrained to Bel 'X0/Y14/PIOC'.
+Info: pseudo_gnd_0__io[16] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf16, removing $nextpnr_obuf pseudo_gnd_0__io[16].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf16' constrained to Bel 'X0/Y14/PIOB'.
+Info: pseudo_gnd_0__io[15] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf15, removing $nextpnr_obuf pseudo_gnd_0__io[15].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf15' constrained to Bel 'X0/Y8/PIOC'.
+Info: pseudo_gnd_0__io[14] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf14, removing $nextpnr_obuf pseudo_gnd_0__io[14].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf14' constrained to Bel 'X0/Y47/PIOC'.
+Info: pseudo_gnd_0__io[13] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf13, removing $nextpnr_obuf pseudo_gnd_0__io[13].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf13' constrained to Bel 'X0/Y47/PIOD'.
+Info: pseudo_gnd_0__io[12] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf12, removing $nextpnr_obuf pseudo_gnd_0__io[12].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf12' constrained to Bel 'X0/Y47/PIOB'.
+Info: pseudo_gnd_0__io[11] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf11, removing $nextpnr_obuf pseudo_gnd_0__io[11].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf11' constrained to Bel 'X0/Y32/PIOD'.
+Info: pseudo_gnd_0__io[10] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf10, removing $nextpnr_obuf pseudo_gnd_0__io[10].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf10' constrained to Bel 'X0/Y32/PIOC'.
+Info: pseudo_gnd_0__io[9] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf9, removing $nextpnr_obuf pseudo_gnd_0__io[9].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf9' constrained to Bel 'X0/Y29/PIOD'.
+Info: pseudo_gnd_0__io[8] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf8, removing $nextpnr_obuf pseudo_gnd_0__io[8].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf8' constrained to Bel 'X72/Y47/PIOB'.
+Info: pseudo_gnd_0__io[7] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf7, removing $nextpnr_obuf pseudo_gnd_0__io[7].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf7' constrained to Bel 'X72/Y44/PIOD'.
+Info: pseudo_gnd_0__io[6] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf6, removing $nextpnr_obuf pseudo_gnd_0__io[6].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf6' constrained to Bel 'X72/Y44/PIOC'.
+Info: pseudo_gnd_0__io[5] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf5, removing $nextpnr_obuf pseudo_gnd_0__io[5].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf5' constrained to Bel 'X72/Y35/PIOC'.
+Info: pseudo_gnd_0__io[4] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf4, removing $nextpnr_obuf pseudo_gnd_0__io[4].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf4' constrained to Bel 'X72/Y8/PIOC'.
+Info: pseudo_gnd_0__io[3] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf3, removing $nextpnr_obuf pseudo_gnd_0__io[3].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf3' constrained to Bel 'X58/Y0/PIOB'.
+Info: pseudo_gnd_0__io[2] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf2, removing $nextpnr_obuf pseudo_gnd_0__io[2].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf2' constrained to Bel 'X40/Y0/PIOB'.
+Info: pseudo_gnd_0__io[1] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf1, removing $nextpnr_obuf pseudo_gnd_0__io[1].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf1' constrained to Bel 'X33/Y0/PIOA'.
+Info: pseudo_gnd_0__io[0] feeds TRELLIS_IO pin_pseudo_gnd_0.buf.buf.buf0, removing $nextpnr_obuf pseudo_gnd_0__io[0].
+Info: pin 'pin_pseudo_gnd_0.buf.buf.buf0' constrained to Bel 'X13/Y0/PIOA'.
+Info: clk_60MHz_0__io feeds TRELLIS_IO pin_clk_60MHz_0.buf.buf.buf0, removing $nextpnr_ibuf clk_60MHz_0__io.
+Info: pin 'pin_clk_60MHz_0.buf.buf.buf0' constrained to Bel 'X29/Y0/PIOB'.
+Info: Packing constants..
+Info: Packing carries...
+Info: Packing LUTs...
+Info: Packing LUT5-7s...
+Info: Packing FFs...
+Info:     711 FFs paired with LUTs.
+Info: Generating derived timing constraints...
+Info:     Input frequency of PLL 'clocking.pll' is constrained to 60.0 MHz
+Info:     Derived frequency constraint of 240.0 MHz for net clocking.pll_CLKOP
+Info:     Derived frequency constraint of 120.0 MHz for net clocking.pll_CLKOS
+Info:     Derived frequency constraint of 60.0 MHz for net clk
+Info: Promoting globals...
+Info:     promoting clock net clk to global network
+Info: Checksum: 0xd62f4fff
+
+Info: Device utilisation:
+Info: 	          TRELLIS_IO:      52/    197    26%
+Info: 	                DCCA:       1/     56     1%
+Info: 	              DP16KD:       3/     56     5%
+Info: 	          MULT18X18D:       4/     28    14%
+Info: 	              ALU54B:       0/     14     0%
+Info: 	             EHXPLLL:       1/      2    50%
+Info: 	             EXTREFB:       0/      1     0%
+Info: 	                DCUA:       0/      1     0%
+Info: 	           PCSCLKDIV:       0/      2     0%
+Info: 	             IOLOGIC:       0/    128     0%
+Info: 	            SIOLOGIC:       0/     69     0%
+Info: 	                 GSR:       0/      1     0%
+Info: 	               JTAGG:       0/      1     0%
+Info: 	                OSCG:       0/      1     0%
+Info: 	               SEDGA:       0/      1     0%
+Info: 	                 DTR:       0/      1     0%
+Info: 	             USRMCLK:       0/      1     0%
+Info: 	             CLKDIVF:       0/      4     0%
+Info: 	           ECLKSYNCB:       0/     10     0%
+Info: 	             DLLDELD:       0/      8     0%
+Info: 	              DDRDLL:       0/      4     0%
+Info: 	             DQSBUFM:       0/      8     0%
+Info: 	     TRELLIS_ECLKBUF:       0/      8     0%
+Info: 	        ECLKBRIDGECS:       0/      2     0%
+Info: 	                DCSC:       0/      2     0%
+Info: 	          TRELLIS_FF:    1452/  24288     5%
+Info: 	        TRELLIS_COMB:    3857/  24288    15%
+Info: 	        TRELLIS_RAMW:      32/   3036     1%
+
+Info: Placed 53 cells based on constraints.
+Info: Creating initial analytic placement for 3174 cells, random placement wirelen = 209504.
+Info:     at initial placer iter 0, wirelen = 2212
+Info:     at initial placer iter 1, wirelen = 2221
+Info:     at initial placer iter 2, wirelen = 2216
+Info:     at initial placer iter 3, wirelen = 2192
+Info: Running main analytical placer, max placement attempts per cell = 3647700.
+Info:     at iteration #1, type ALL: wirelen solved = 2209, spread = 42470, legal = 42752; time = 0.06s
+Info:     at iteration #2, type ALL: wirelen solved = 2926, spread = 40758, legal = 45422; time = 0.06s
+Info:     at iteration #3, type ALL: wirelen solved = 4317, spread = 38356, legal = 39687; time = 0.06s
+Info:     at iteration #4, type ALL: wirelen solved = 6948, spread = 31492, legal = 33849; time = 0.06s
+Info:     at iteration #5, type ALL: wirelen solved = 9192, spread = 28432, legal = 29997; time = 0.06s
+Info:     at iteration #6, type ALL: wirelen solved = 11244, spread = 25263, legal = 27029; time = 0.06s
+Info:     at iteration #7, type ALL: wirelen solved = 12856, spread = 24649, legal = 26577; time = 0.06s
+Info:     at iteration #8, type ALL: wirelen solved = 13563, spread = 24264, legal = 25413; time = 0.05s
+Info:     at iteration #9, type ALL: wirelen solved = 14426, spread = 23828, legal = 25575; time = 0.06s
+Info:     at iteration #10, type ALL: wirelen solved = 15212, spread = 23264, legal = 25164; time = 0.05s
+Info:     at iteration #11, type ALL: wirelen solved = 15391, spread = 23126, legal = 24585; time = 0.05s
+Info:     at iteration #12, type ALL: wirelen solved = 15879, spread = 22877, legal = 24097; time = 0.06s
+Info:     at iteration #13, type ALL: wirelen solved = 16127, spread = 23505, legal = 24880; time = 0.07s
+Info:     at iteration #14, type ALL: wirelen solved = 16853, spread = 23227, legal = 24289; time = 0.05s
+Info:     at iteration #15, type ALL: wirelen solved = 17224, spread = 22809, legal = 23894; time = 0.05s
+Info:     at iteration #16, type ALL: wirelen solved = 17500, spread = 23639, legal = 24763; time = 0.05s
+Info:     at iteration #17, type ALL: wirelen solved = 18534, spread = 23381, legal = 24689; time = 0.06s
+Info:     at iteration #18, type ALL: wirelen solved = 18567, spread = 24951, legal = 26367; time = 0.05s
+Info:     at iteration #19, type ALL: wirelen solved = 19513, spread = 24002, legal = 26552; time = 0.05s
+Info:     at iteration #20, type ALL: wirelen solved = 19362, spread = 23827, legal = 26097; time = 0.06s
+Info: HeAP Placer Time: 1.70s
+Info:   of which solving equations: 1.01s
+Info:   of which spreading cells: 0.18s
+Info:   of which strict legalisation: 0.06s
+
+Info: Running simulated annealing placer for refinement.
+Info:   at iteration #1: temp = 0.000000, timing cost = 1348, wirelen = 23894
+Info:   at iteration #5: temp = 0.000000, timing cost = 854, wirelen = 21807
+Info:   at iteration #10: temp = 0.000000, timing cost = 868, wirelen = 21380
+Info:   at iteration #15: temp = 0.000000, timing cost = 850, wirelen = 21244
+Info:   at iteration #20: temp = 0.000000, timing cost = 851, wirelen = 21170
+Info:   at iteration #25: temp = 0.000000, timing cost = 847, wirelen = 21135
+Info:   at iteration #26: temp = 0.000000, timing cost = 846, wirelen = 21136 
+Info: SA placement time 6.26s
+
+Info: Max frequency for clock '$glbnet$clk': 56.84 MHz (FAIL at 60.00 MHz)
+
+Info: Slack histogram:
+Info:  legend: * represents 8 endpoint(s)
+Info:          + represents [1,8) endpoint(s)
+Info: [  -927,    -76) |*****+
+Info: [   -76,    775) |*+
+Info: [   775,   1626) |***+
+Info: [  1626,   2477) |**************+
+Info: [  2477,   3328) |*************************+
+Info: [  3328,   4179) |**************+
+Info: [  4179,   5030) |*************+
+Info: [  5030,   5881) |***************+
+Info: [  5881,   6732) |***********+
+Info: [  6732,   7583) |*************+
+Info: [  7583,   8434) |**************************************+
+Info: [  8434,   9285) |*******************+
+Info: [  9285,  10136) |******************+
+Info: [ 10136,  10987) |*********************************+
+Info: [ 10987,  11838) |************************************************************ 
+Info: [ 11838,  12689) |*************************+
+Info: [ 12689,  13540) |******+
+Info: [ 13540,  14391) |********+
+Info: [ 14391,  15242) |*************+
+Info: [ 15242,  16093) |********************************+
+Info: Checksum: 0x1c0d9419
+Info: Routing globals...
+Info:     routing clock net $glbnet$clk using global 0
+
+Info: Routing..
+Info: Setting up routing queue.
+Info: Routing 16117 arcs.
+Info:            |   (re-)routed arcs  |   delta    | remaining|       time spent     |
+Info:    IterCnt |  w/ripup   wo/ripup |  w/r  wo/r |      arcs| batch(sec) total(sec)|
+Info:       1000 |       75        924 |   75   924 |     15235|       0.19       0.19|
+Info:       2000 |      213       1786 |  138   862 |     14386|       0.09       0.28|
+Info:       3000 |      419       2580 |  206   794 |     13668|       0.12       0.40|
+Info:       4000 |      627       3372 |  208   792 |     12989|       0.12       0.52|
+Info:       5000 |      859       4140 |  232   768 |     12267|       0.15       0.67|
+Info:       6000 |     1150       4849 |  291   709 |     11616|       0.14       0.81|
+Info:       7000 |     1351       5648 |  201   799 |     10878|       0.15       0.96|
+Info:       8000 |     1704       6295 |  353   647 |     10296|       0.14       1.09|
+Info:       9000 |     1975       7024 |  271   729 |      9739|       0.17       1.26|
+Info:      10000 |     2201       7798 |  226   774 |      9048|       0.14       1.40|
+Info:      11000 |     2462       8512 |  261   714 |      8428|       0.11       1.52|
+Info:      12000 |     2772       9153 |  310   641 |      7770|       0.15       1.66|
+Info:      13000 |     2966       9934 |  194   781 |      6988|       0.12       1.78|
+Info:      14000 |     3194      10670 |  228   736 |      6260|       0.14       1.93|
+Info:      15000 |     3396      11395 |  202   725 |      5490|       0.15       2.07|
+Info:      16000 |     3563      12052 |  167   657 |      4682|       0.15       2.22|
+Info:      17000 |     3737      12705 |  174   653 |      3866|       0.12       2.34|
+Info:      18000 |     3876      13486 |  139   781 |      3026|       0.13       2.47|
+Info:      19000 |     3992      14266 |  116   780 |      2161|       0.10       2.57|
+Info:      20000 |     4142      15004 |  150   738 |      1347|       0.17       2.75|
+Info:      21000 |     4305      15827 |  163   823 |       544|       0.22       2.96|
+Info:      21557 |     4317      16318 |   12   491 |         0|       0.15       3.11|
+Info: Routing complete.
+Info: Router1 time 3.11s
+Info: Checksum: 0xfc856e99
+
+Info: Critical path report for clock '$glbnet$clk' (posedge -> posedge):
+Info:       type curr  total name
+Info:   clk-to-q  4.26  4.26 Source cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0.DOB3
+Info:    routing  0.77  5.03 Net cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOB3[1] (4,25) -> (6,24)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOB3_LUT4_C.B
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  5.22 Source cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOB3_LUT4_C.F
+Info:    routing  0.32  5.54 Net cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA6_LUT4_C_Z_LUT4_Z_D[2] (6,24) -> (6,24)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA6_LUT4_C_Z_LUT4_Z.C
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  5.72 Source cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA6_LUT4_C_Z_LUT4_Z.F
+Info:    routing  0.34  6.06 Net cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA6_LUT4_C_Z[3] (6,24) -> (5,24)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA15_LUT4_C_Z_LUT4_C_Z_LUT4_Z.D
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  6.24 Source cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA15_LUT4_C_Z_LUT4_C_Z_LUT4_Z.F
+Info:    routing  0.47  6.71 Net cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA15_LUT4_C_Z_LUT4_C_Z[3] (5,24) -> (5,24)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA1_LUT4_B_Z_LUT4_Z_1.B
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  6.89 Source cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA1_LUT4_B_Z_LUT4_Z_1.F
+Info:    routing  1.00  7.88 Net cpu.vexriscv.IBusCachedPlugin_cache.ways_0_tags.0.0_DOA1_LUT4_B_Z[4] (5,24) -> (7,17)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB1_LUT4_C_Z_PFUMX_Z_BLUT_LUT4_Z.M
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.19  8.08 Source cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB1_LUT4_C_Z_PFUMX_Z_BLUT_LUT4_Z.OFX
+Info:    routing  0.34  8.42 Net cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB0_LUT4_C_Z[6] (7,17) -> (9,17)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB0_LUT4_C_Z_PFUMX_C0_1_ALUT_LUT4_Z.M
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.19  8.61 Source cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB0_LUT4_C_Z_PFUMX_C0_1_ALUT_LUT4_Z.OFX
+Info:    routing  0.64  9.25 Net cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB0_LUT4_C_Z_LUT4_C_Z[2] (9,17) -> (9,12)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB5_LUT4_C_Z_LUT4_B_Z_PFUMX_BLUT_Z_LUT4_Z_C_LUT4_Z.D
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  9.43 Source cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB5_LUT4_C_Z_LUT4_B_Z_PFUMX_BLUT_Z_LUT4_Z_C_LUT4_Z.F
+Info:    routing  0.68  10.11 Net cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB14_LUT4_C_Z_LUT4_D_Z_PFUMX_BLUT_Z_L6MUX21_D0_Z_L6MUX21_D0_Z[4] (9,12) -> (8,12)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB7_LUT4_C_Z_LUT4_D_Z_PFUMX_BLUT_Z_L6MUX21_D0_Z_L6MUX21_D0_Z_LUT4_Z.D
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  10.29 Source cpu.vexriscv.IBusCachedPlugin_cache.banks_0.0.0_DOB7_LUT4_C_Z_LUT4_D_Z_PFUMX_BLUT_Z_L6MUX21_D0_Z_L6MUX21_D0_Z_LUT4_Z.F
+Info:    routing  0.52  10.82 Net cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_4_C_PFUMX_Z_ALUT_LUT4_Z_D[4] (8,12) -> (9,12)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_7_D_PFUMX_Z_C0_LUT4_B_C_PFUMX_Z_BLUT_LUT4_Z.M
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.19  11.01 Source cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_7_D_PFUMX_Z_C0_LUT4_B_C_PFUMX_Z_BLUT_LUT4_Z.OFX
+Info:    routing  0.47  11.48 Net cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_7_D_PFUMX_Z_C0_LUT4_B_C[2] (9,12) -> (10,12)
+Info:                          Sink cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_7_D_PFUMX_Z_C0_LUT4_B_C_LUT4_B.B
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  11.66 Source cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_7_D_PFUMX_Z_C0_LUT4_B_C_LUT4_B.F
+Info:    routing  1.19  12.85 Net cpu.vexriscv.IBusCachedPlugin_decompressor_output_payload_rsp_inst_LUT4_Z_7_D_PFUMX_Z_C0_LUT4_B_C_LUT4_B_Z[2] (10,12) -> (19,14)
+Info:                          Sink cpu.vexriscv.decode_INSTRUCTION_ANTICIPATED_PFUMX_Z_1_BLUT_LUT4_Z.C
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.31  13.16 Source cpu.vexriscv.decode_INSTRUCTION_ANTICIPATED_PFUMX_Z_1_BLUT_LUT4_Z.OFX
+Info:    routing  0.88  14.04 Net cpu.vexriscv.decode_INSTRUCTION_ANTICIPATED[23] (19,14) -> (16,14)
+Info:                          Sink cpu.vexriscv.RegFilePlugin_regFile.1.8$DPRAM_COMB2.A
+Info:                          Defined in:
+Info:                               vexriscv_imc.v:854.23-854.63
+Info:      logic  0.18  14.22 Source cpu.vexriscv.RegFilePlugin_regFile.1.8$DPRAM_COMB2.F
+Info:    routing  0.88  15.10 Net cpu.vexriscv.RegFilePlugin_regFile.1.0_DO_1[0] (16,14) -> (16,11)
+Info:                          Sink cpu.vexriscv.RegFilePlugin_regFile.1.3_DO_LUT4_C_Z_LUT4_Z_5.B
+Info:                          Defined in:
+Info:                               /home/dan/opt/oss-cad-suite/lib/../share/yosys/lattice/cells_map_trellis.v:108.23-108.24
+Info:      logic  0.18  15.28 Source cpu.vexriscv.RegFilePlugin_regFile.1.3_DO_LUT4_C_Z_LUT4_Z_5.F
+Info:    routing  0.12  15.39 Net cpu.vexriscv.RegFilePlugin_regFile.1.3_DO_LUT4_C_Z[2] (16,11) -> (16,11)
+Info:                          Sink cpu.vexriscv._zz_RegFilePlugin_regFile_port1_TRELLIS_FF_Q_1.DI
+Info:      setup  0.00  15.39 Source cpu.vexriscv._zz_RegFilePlugin_regFile_port1_TRELLIS_FF_Q_1.DI
+Info: 6.77 ns logic, 8.63 ns routing
+
+Info: Max frequency for clock '$glbnet$clk': 64.96 MHz (PASS at 60.00 MHz)
+
+Info: Slack histogram:
+Info:  legend: * represents 7 endpoint(s)
+Info:          + represents [1,7) endpoint(s)
+Info: [  1272,   2007) |********+
+Info: [  2007,   2742) |+
+Info: [  2742,   3477) |*+
+Info: [  3477,   4212) |***+
+Info: [  4212,   4947) |*************+
+Info: [  4947,   5682) |***********************+
+Info: [  5682,   6417) |************************+
+Info: [  6417,   7152) |********+
+Info: [  7152,   7887) |**********************+
+Info: [  7887,   8622) |*******************+
+Info: [  8622,   9357) |*********+
+Info: [  9357,  10092) |***********************+
+Info: [ 10092,  10827) |*********************+
+Info: [ 10827,  11562) |*********************************************+
+Info: [ 11562,  12297) |**********************************************+
+Info: [ 12297,  13032) |************************************************************ 
+Info: [ 13032,  13767) |*******************************+
+Info: [ 13767,  14502) |*****+
+Info: [ 14502,  15237) |*******************+
+Info: [ 15237,  15972) |**********************************+
+
+Info: Program finished normally.

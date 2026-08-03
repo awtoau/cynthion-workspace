@@ -4,6 +4,13 @@ The ECP5 work split into two kinds, and they belong in different repositories.
 
 The test: **would this be useful to someone with a different ECP5 board?**
 
+**Per-part facts are not here.** What a chip *is*, how it is wired on r1.4, what has been
+read out of it and which script did the reading all live in
+[`../chips/`](../chips/), indexed from [`../hardware.md`](../hardware.md). This directory
+holds the deep investigations — throughput characterisation, boot selection, speed
+ladders — that those notes link out to. The two files that were per-part notes
+(`fusb302b-reference.md`, `pac1954-power-monitor.md`) have moved to `../chips/`.
+
 ## In pluribus (`docs/ecp5/`)
 
 Toolchain findings — true of the ECP5 and its tools regardless of hardware:

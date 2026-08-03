@@ -2,7 +2,7 @@
 
 ## Overview
 
-This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific `/home/dan/...` paths.
+This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific absolute paths naming a particular user or mount point; `scripts/check.py paths` enforces it.
 
 ## Documentation Ownership
 

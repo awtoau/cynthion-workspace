@@ -58,7 +58,7 @@ It declares **104 opcodes** (98 distinct codes; several names alias one code). A
 need.
 
 Also consulted, as a second independent implementation: OpenOCD `src/pld/` (`ecp5.c`,
-`certus.c`, `lattice_cmd.h`), mirrored at `/mnt/2tb/git_mirror/openocd`.
+`certus.c`, `lattice_cmd.h`), mirrored at `${GIT_MIRROR:-$HOME/git_mirror}/openocd`.
 
 ### Vendor file declares but never uses
 

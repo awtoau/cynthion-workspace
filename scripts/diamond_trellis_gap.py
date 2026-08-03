@@ -24,10 +24,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-WORKSPACE = Path("/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-a2366741da283904f")
-TILEDATA = Path("/home/dan/opt/oss-cad-suite/share/trellis/database/ECP5/tiledata")
-YOSYS_BB = Path("/home/dan/opt/oss-cad-suite/share/yosys/ecp5/cells_bb.v")
-NEXTPNR_BIN = Path("/home/dan/opt/oss-cad-suite/libexec/nextpnr-ecp5")
+WORKSPACE = Path(__file__).resolve().parent.parent
+TILEDATA = Path.home() / "opt/oss-cad-suite/share/trellis/database/ECP5/tiledata"
+YOSYS_BB = Path.home() / "opt/oss-cad-suite/share/yosys/ecp5/cells_bb.v"
+NEXTPNR_BIN = Path.home() / "opt/oss-cad-suite/libexec/nextpnr-ecp5"
 DIFF_JSON = WORKSPACE / "tmp" / "diamond-mine" / "primitive_diff.json"
 OUT = WORKSPACE / "tmp" / "diamond-mine"
 LOGDIR = WORKSPACE / "tmp" / "logs"

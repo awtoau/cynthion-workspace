@@ -1,0 +1,1952 @@
+<?xml version='1.0' encoding='utf-8'?>
+<device schemaVersion="1.1" xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:noNamespaceSchemaLocation="CMSIS-SVD.xsd">
+  <vendor>awtoau</vendor>
+  <name>CYNTHION_SOC</name>
+  <version>1.0</version>
+  <description>Cynthion r1.4 VexiiRiscv SoC, generated from its Amaranth memory map</description>
+  <addressUnitBits>8</addressUnitBits>
+  <width>32</width>
+  <size>32</size>
+  <access>read-write</access>
+  <resetValue>0x00000000</resetValue>
+  <resetMask>0x00000000</resetMask>
+  <peripherals>
+    <peripheral>
+      <name>RAM</name>
+      <description>ram: 65536 bytes of memory at 0x00000000</description>
+      <baseAddress>0x00000000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x10000</size>
+        <usage>buffer</usage>
+      </addressBlock>
+    </peripheral>
+    <peripheral>
+      <name>SPIFLASH</name>
+      <description>spiflash: 4194304 bytes of memory at 0x10000000</description>
+      <baseAddress>0x10000000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x400000</size>
+        <usage>buffer</usage>
+      </addressBlock>
+    </peripheral>
+    <peripheral>
+      <name>HYPERRAM</name>
+      <description>hyperram: 8388608 bytes of memory at 0x20000000</description>
+      <baseAddress>0x20000000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x800000</size>
+        <usage>buffer</usage>
+      </addressBlock>
+    </peripheral>
+    <peripheral>
+      <name>CONSOLE</name>
+      <description>console: 8 registers at 0xf0000000</description>
+      <baseAddress>0xF0000000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x8</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <interrupt>
+        <name>CONSOLE</name>
+        <value>1</value>
+      </interrupt>
+      <registers>
+        <register>
+          <name>RBR_THR</name>
+          <description>CONSOLE.RBR_THR, 8 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IER</name>
+          <description>CONSOLE.IER, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IIR_FCR</name>
+          <description>CONSOLE.IIR_FCR, 8 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LCR</name>
+          <description>CONSOLE.LCR, 8 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MCR</name>
+          <description>CONSOLE.MCR, 8 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LSR</name>
+          <description>CONSOLE.LSR, 8 bits at +0x05</description>
+          <addressOffset>0x5</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MSR</name>
+          <description>CONSOLE.MSR, 8 bits at +0x06</description>
+          <addressOffset>0x6</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SCR</name>
+          <description>CONSOLE.SCR, 8 bits at +0x07</description>
+          <addressOffset>0x7</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>SPI0</name>
+      <description>spi0: 5 registers at 0xf0000100</description>
+      <baseAddress>0xF0000100</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x40</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>PHY</name>
+          <description>SPI0.PHY, 18 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3FFFF</resetMask>
+          <fields>
+            <field>
+              <name>LENGTH</name>
+              <description>length [5:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>WIDTH</name>
+              <description>width [9:6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>MASK</name>
+              <description>mask [17:10]</description>
+              <bitOffset>10</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CS</name>
+          <description>SPI0.CS, 1 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>SELECT</name>
+              <description>select [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name>
+          <description>SPI0.STATUS, 2 bits at +0x05</description>
+          <addressOffset>0x5</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>RX_READY</name>
+              <description>rx_ready [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TX_READY</name>
+              <description>tx_ready [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DATA</name>
+          <description>SPI0.DATA, 64 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>64</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>RX</name>
+              <description>rx [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TX</name>
+              <description>tx [63:32]</description>
+              <bitOffset>32</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>HOLD</name>
+          <description>SPI0.HOLD, 1 bits at +0x20</description>
+          <addressOffset>0x20</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x1</resetMask>
+          <fields>
+            <field>
+              <name>SELECT</name>
+              <description>select [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>FLASH_PROBE</name>
+      <description>flash_probe: 6 registers at 0xf0000200</description>
+      <baseAddress>0xF0000200</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>CS_FELL</name>
+          <description>FLASH_PROBE.CS_FELL, 1 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>SEEN</name>
+              <description>seen [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SCK_EDGES</name>
+          <description>FLASH_PROBE.SCK_EDGES, 16 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DQ_DRIVEN</name>
+          <description>FLASH_PROBE.DQ_DRIVEN, 1 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>SEEN</name>
+              <description>seen [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GRANTS</name>
+          <description>FLASH_PROBE.GRANTS, 16 bits at +0x06</description>
+          <addressOffset>0x6</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>OE_EDGES</name>
+          <description>FLASH_PROBE.OE_EDGES, 16 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CLEAR</name>
+          <description>FLASH_PROBE.CLEAR, 1 bits at +0x0a</description>
+          <addressOffset>0xA</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>STROBE</name>
+              <description>strobe [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>FLASH_ILA</name>
+      <description>flash_ila: 4 registers at 0xf0000300</description>
+      <baseAddress>0xF0000300</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>STATUS</name>
+          <description>FLASH_ILA.STATUS, 2 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COMPLETE</name>
+              <description>complete [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>SAMPLING</name>
+              <description>sampling [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ARM</name>
+          <description>FLASH_ILA.ARM, 1 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>STROBE</name>
+              <description>strobe [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>INDEX</name>
+          <description>FLASH_ILA.INDEX, 16 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFFFF</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SAMPLE</name>
+          <description>FLASH_ILA.SAMPLE, 8 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>BITS</name>
+              <description>bits [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOOTRAM</name>
+      <description>bootram: 7 registers at 0xf0000400</description>
+      <baseAddress>0xF0000400</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>ADDR</name>
+          <description>BOOTRAM.ADDR, 32 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>32</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>ADDR</name>
+              <description>addr [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ADDR_RD</name>
+          <description>BOOTRAM.ADDR_RD, 32 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>ADDR</name>
+              <description>addr [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTRL</name>
+          <description>BOOTRAM.CTRL, 1 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>FETCH</name>
+              <description>fetch [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name>
+          <description>BOOTRAM.STATUS, 1 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALID</name>
+              <description>valid [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DATA_LO</name>
+          <description>BOOTRAM.DATA_LO, 8 bits at +0x0d</description>
+          <addressOffset>0xD</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DATA_HI</name>
+          <description>BOOTRAM.DATA_HI, 8 bits at +0x0e</description>
+          <addressOffset>0xE</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>WDATA</name>
+          <description>BOOTRAM.WDATA, 16 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>16</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>APOLLO_UART</name>
+      <description>apollo_uart: 8 registers at 0xf0000500</description>
+      <baseAddress>0xF0000500</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x8</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <interrupt>
+        <name>APOLLO_UART</name>
+        <value>2</value>
+      </interrupt>
+      <registers>
+        <register>
+          <name>RBR_THR</name>
+          <description>APOLLO_UART.RBR_THR, 8 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IER</name>
+          <description>APOLLO_UART.IER, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IIR_FCR</name>
+          <description>APOLLO_UART.IIR_FCR, 8 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LCR</name>
+          <description>APOLLO_UART.LCR, 8 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MCR</name>
+          <description>APOLLO_UART.MCR, 8 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LSR</name>
+          <description>APOLLO_UART.LSR, 8 bits at +0x05</description>
+          <addressOffset>0x5</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MSR</name>
+          <description>APOLLO_UART.MSR, 8 bits at +0x06</description>
+          <addressOffset>0x6</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SCR</name>
+          <description>APOLLO_UART.SCR, 8 bits at +0x07</description>
+          <addressOffset>0x7</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOARD_GPIO</name>
+      <description>board/gpio: 4 registers at 0xf0000600</description>
+      <baseAddress>0xF0000600</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x10</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>MODE</name>
+          <description>BOARD_GPIO.MODE, 16 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFFFF</resetMask>
+          <fields>
+            <field>
+              <name>PIN_0</name>
+              <description>pin_0 [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_1</name>
+              <description>pin_1 [3:2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_2</name>
+              <description>pin_2 [5:4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_3</name>
+              <description>pin_3 [7:6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_4</name>
+              <description>pin_4 [9:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_5</name>
+              <description>pin_5 [11:10]</description>
+              <bitOffset>10</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_6</name>
+              <description>pin_6 [13:12]</description>
+              <bitOffset>12</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_7</name>
+              <description>pin_7 [15:14]</description>
+              <bitOffset>14</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>INPUT</name>
+          <description>BOARD_GPIO.INPUT, 8 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>PIN_0</name>
+              <description>pin_0 [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_1</name>
+              <description>pin_1 [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_2</name>
+              <description>pin_2 [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_3</name>
+              <description>pin_3 [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_4</name>
+              <description>pin_4 [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_5</name>
+              <description>pin_5 [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_6</name>
+              <description>pin_6 [6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>PIN_7</name>
+              <description>pin_7 [7]</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>OUTPUT</name>
+          <description>BOARD_GPIO.OUTPUT, 8 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>PIN_0</name>
+              <description>pin_0 [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_1</name>
+              <description>pin_1 [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_2</name>
+              <description>pin_2 [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_3</name>
+              <description>pin_3 [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_4</name>
+              <description>pin_4 [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_5</name>
+              <description>pin_5 [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_6</name>
+              <description>pin_6 [6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>PIN_7</name>
+              <description>pin_7 [7]</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SETCLR</name>
+          <description>BOARD_GPIO.SETCLR, 16 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>16</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>PIN_0_SET</name>
+              <description>pin_0_set [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_0_CLR</name>
+              <description>pin_0_clr [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_1_SET</name>
+              <description>pin_1_set [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_1_CLR</name>
+              <description>pin_1_clr [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_2_SET</name>
+              <description>pin_2_set [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_2_CLR</name>
+              <description>pin_2_clr [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_3_SET</name>
+              <description>pin_3_set [6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_3_CLR</name>
+              <description>pin_3_clr [7]</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_4_SET</name>
+              <description>pin_4_set [8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_4_CLR</name>
+              <description>pin_4_clr [9]</description>
+              <bitOffset>9</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_5_SET</name>
+              <description>pin_5_set [10]</description>
+              <bitOffset>10</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_5_CLR</name>
+              <description>pin_5_clr [11]</description>
+              <bitOffset>11</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_6_SET</name>
+              <description>pin_6_set [12]</description>
+              <bitOffset>12</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_6_CLR</name>
+              <description>pin_6_clr [13]</description>
+              <bitOffset>13</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_7_SET</name>
+              <description>pin_7_set [14]</description>
+              <bitOffset>14</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>PIN_7_CLR</name>
+              <description>pin_7_clr [15]</description>
+              <bitOffset>15</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOARD_I2C</name>
+      <description>board/i2c: 5 registers at 0xf0000610</description>
+      <baseAddress>0xF0000610</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x8</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <interrupt>
+        <name>BOARD_I2C</name>
+        <value>3</value>
+      </interrupt>
+      <registers>
+        <register>
+          <name>PRER_LO</name>
+          <description>BOARD_I2C.PRER_LO, 8 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PRER_HI</name>
+          <description>BOARD_I2C.PRER_HI, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTR</name>
+          <description>BOARD_I2C.CTR, 8 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TXR_RXR</name>
+          <description>BOARD_I2C.TXR_RXR, 8 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CR_SR</name>
+          <description>BOARD_I2C.CR_SR, 8 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOARD_SIDEBAND</name>
+      <description>board/sideband: 4 registers at 0xf0000618</description>
+      <baseAddress>0xF0000618</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x4</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>CTRL</name>
+          <description>BOARD_SIDEBAND.CTRL, 8 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX</name>
+          <description>BOARD_SIDEBAND.TX, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RX</name>
+          <description>BOARD_SIDEBAND.RX, 8 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RXCNT</name>
+          <description>BOARD_SIDEBAND.RXCNT, 8 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOARD_ULPI</name>
+      <description>board/ulpi: 4 registers at 0xf000061c</description>
+      <baseAddress>0xF000061C</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x4</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>ADDRESS</name>
+          <description>BOARD_ULPI.ADDRESS, 6 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3F</resetMask>
+          <fields>
+            <field>
+              <name>ADDRESS</name>
+              <description>address [5:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DATA</name>
+          <description>BOARD_ULPI.DATA, 8 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DATA</name>
+              <description>data [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CONTROL</name>
+          <description>BOARD_ULPI.CONTROL, 2 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>START</name>
+              <description>start [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name>
+          <description>BOARD_ULPI.STATUS, 2 bits at +0x03</description>
+          <addressOffset>0x3</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>BUSY</name>
+              <description>busy [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TIMEOUT</name>
+              <description>timeout [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOARD_I2C_MUX</name>
+      <description>board/i2c_mux: 2 registers at 0xf0000620</description>
+      <baseAddress>0xF0000620</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x2</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <interrupt>
+        <name>BOARD_I2C_MUX_TARGET</name>
+        <value>4</value>
+      </interrupt>
+      <interrupt>
+        <name>BOARD_I2C_MUX_AUX</name>
+        <value>5</value>
+      </interrupt>
+      <registers>
+        <register>
+          <name>SELECT</name>
+          <description>BOARD_I2C_MUX.SELECT, 2 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x2</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>SELECT</name>
+              <description>select [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LINES</name>
+          <description>BOARD_I2C_MUX.LINES, 4 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>TARGET_INT</name>
+              <description>target_int [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>AUX_INT</name>
+              <description>aux_int [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TARGET_FAULT</name>
+              <description>target_fault [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>AUX_FAULT</name>
+              <description>aux_fault [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>BOARD_GATEWARE</name>
+      <description>board/gateware: 7 registers at 0xf0000640</description>
+      <baseAddress>0xF0000640</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>MAGIC</name>
+          <description>BOARD_GATEWARE.MAGIC, 32 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GIT</name>
+          <description>BOARD_GATEWARE.GIT, 32 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BUILT</name>
+          <description>BOARD_GATEWARE.BUILT, 32 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SYNC_HZ</name>
+          <description>BOARD_GATEWARE.SYNC_HZ, 32 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CPU</name>
+          <description>BOARD_GATEWARE.CPU, 32 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>USB_HZ</name>
+          <description>BOARD_GATEWARE.USB_HZ, 32 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DIE</name>
+          <description>BOARD_GATEWARE.DIE, 9 bits at +0x18</description>
+          <addressOffset>0x18</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [8:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>9</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>PLIC</name>
+      <description>plic: 9 registers at 0xf0400000</description>
+      <baseAddress>0xF0400000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x400000</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>PRIORITY1</name>
+          <description>PLIC.PRIORITY1, 3 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PRIORITY2</name>
+          <description>PLIC.PRIORITY2, 3 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PRIORITY3</name>
+          <description>PLIC.PRIORITY3, 3 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PRIORITY4</name>
+          <description>PLIC.PRIORITY4, 3 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PRIORITY5</name>
+          <description>PLIC.PRIORITY5, 3 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PENDING</name>
+          <description>PLIC.PENDING, 6 bits at +0x1000</description>
+          <addressOffset>0x1000</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>BITS</name>
+              <description>bits [5:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ENABLE</name>
+          <description>PLIC.ENABLE, 6 bits at +0x2000</description>
+          <addressOffset>0x2000</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3F</resetMask>
+          <fields>
+            <field>
+              <name>BITS</name>
+              <description>bits [5:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>THRESHOLD</name>
+          <description>PLIC.THRESHOLD, 3 bits at +0x200000</description>
+          <addressOffset>0x200000</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CLAIM</name>
+          <description>PLIC.CLAIM, 8 bits at +0x200004</description>
+          <addressOffset>0x200004</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>SOURCE</name>
+              <description>source [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>CLINT</name>
+      <description>clint: 5 registers at 0xf0800000</description>
+      <baseAddress>0xF0800000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x10000</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>MSIP</name>
+          <description>CLINT.MSIP, 1 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x1</resetMask>
+          <fields>
+            <field>
+              <name>PENDING</name>
+              <description>pending [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIMECMP_LO</name>
+          <description>CLINT.MTIMECMP_LO, 32 bits at +0x4000</description>
+          <addressOffset>0x4000</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0xFFFFFFFF</resetValue>
+          <resetMask>0xFFFFFFFF</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIMECMP_HI</name>
+          <description>CLINT.MTIMECMP_HI, 32 bits at +0x4004</description>
+          <addressOffset>0x4004</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0xFFFFFFFF</resetValue>
+          <resetMask>0xFFFFFFFF</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIME_LO</name>
+          <description>CLINT.MTIME_LO, 32 bits at +0xbff8</description>
+          <addressOffset>0xBFF8</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MTIME_HI</name>
+          <description>CLINT.MTIME_HI, 32 bits at +0xbffc</description>
+          <addressOffset>0xBFFC</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>VALUE</name>
+              <description>value [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

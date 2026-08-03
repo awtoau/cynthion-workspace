@@ -5,8 +5,8 @@ otherwise loose working-tree state (not committed, stashed, or pushed anywhere).
 
 ## Provenance
 
-- **Source:** `/mnt/2tb/git/apollo` (a standalone clone of
-  `greatscottgadgets/apollo`, since deleted).
+- **Source:** a standalone clone of `greatscottgadgets/apollo` outside this
+  workspace, since deleted.
 - **Base commit:** `04507df` (`greatscottgadgets/apollo` main, v1.1.1-2) — the
   same commit `repos/apollo` (the awtoau-fork submodule) is pinned to.
 - **Captured:** 2026-07-23.

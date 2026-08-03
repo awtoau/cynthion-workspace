@@ -1,36 +1,61 @@
 #!/usr/bin/env python3
 #
-# VexiiRiscv as a drop-in replacement for luna_soc's VexRiscv component.
+# An RV32IMAC VexiiRiscv core with caches, on Wishbone.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Wraps a Wishbone-configured VexiiRiscv in the shape luna_soc's VexRiscv has.
-
-The moondancer SoC attaches its CPU by two Wishbone masters, `ibus` and `dbus`,
-each 30-bit addressed with 32-bit data and the `err`/`cti`/`bte` features. If a
-replacement presents the same signature, the rest of the SoC does not have to
-change: the arbiter, the decoder, the CSR bridge and every peripheral see a
-Wishbone master and do not care what generates it.
-
-VexiiRiscv's *default* configuration would be a poor fit -- 41 top-level ports
-across three native SpinalHDL stream buses. But it ships Wishbone bridges
-upstream, and with them the core presents exactly two Wishbone masters.
-
-**Caches are not optional here.** The cacheless Wishbone bridge asserts
-`!up.p.withAmo` (`LsuCachelessBridge.scala:203`), so it cannot be built with
-atomics. Moondancer's firmware targets `riscv32imac`, and the A is atomics. The
-L1 bridge carries no such assertion, so the cached configuration is the only one
-that can run the existing firmware.
-
-Three interrupt lines replace VexRiscv's 32-bit `irq_external` array. VexRiscv
-used a non-standard `ExternalInterruptArrayPlugin` with mask and pending
-registers inside the CPU at custom CSRs 0xBC0/0xFC0; VexiiRiscv implements only
-standard RISC-V, where the external interrupt is a single wire. Concentrating
-many sources onto it, and letting software find out which fired, needs a
-separate peripheral -- see `vexii_irq.py`.
+A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
 
     from vexii_cpu import VexiiRiscv
     cpu = VexiiRiscv(reset_addr=0x100b0000)
+
+## Ports
+
+    ibus          Out  instruction fetch, through the L1 I-cache
+    dbus          Out  data, through the L1 D-cache -- `main=1` PMA regions only
+    iobus         Out  uncached data -- every `main=0` (I/O) PMA region
+    irq_external  In   one wire; drive it from `vexii_plic.py`
+    irq_timer     In   drive it from `vexii_clint.py`
+    irq_software  In   likewise
+    mtime         Out  the counter behind `rdtime`, for that CLINT to compare
+    ext_reset     In   holds the core in reset; `jtag_stage.py` drives it
+    jtag_*        I/O  the ER2 tap, from `jtag_stage.UserJTAG`
+
+All three buses are 30-bit addressed, 32-bit data, granularity 8, with
+`err`/`cti`/`bte` -- the signature every peripheral and bridge in this tree
+expects.
+
+## Constraints, each of which fails silently if ignored
+
+  * **Caches are mandatory.** The cacheless Wishbone bridge asserts
+    `!up.p.withAmo` (`LsuCachelessBridge.scala:203`), so it cannot carry
+    atomics, and the firmware target is `riscv32imac`. The L1 bridge has no
+    such assertion.
+  * **`--lsu-l1-wishbone` is a separate flag from `--lsu-wishbone`**, and both
+    are needed with caches on. See `GENERATE_FLAGS`.
+  * **Every memory region must be declared.** VexiiRiscv's `defaultPma` covers
+    only 0x80000000 and 0x10000000; anything else traps on every access,
+    including stack pushes, and presents as a dead CPU. See `generate`.
+  * **`iobus` must be connected.** Leaving it dangling synthesises, meets
+    timing and enumerates -- and every peripheral store waits forever for an
+    ACK with no driver.
+
+## Interrupts
+
+Standard RISC-V: one machine external wire, not VexRiscv's 32-bit
+`irq_external` array with mask/pending in CPU CSRs. Concentrating sources and
+reporting which fired is therefore a peripheral's job -- `vexii_plic.py`, a
+standard PLIC.
+
+`irq_timer` and `irq_software` are the CLINT's, and `vexii_clint.py` is one.
+Tie them off explicitly in a design that has none, so "no source" and "nobody
+wired it" do not look identical.
+
+`vexii_irq.py` is a smaller pending/enable concentrator kept for moondancer's
+generated PAC. It is in no SoC here; prefer the PLIC.
+
+The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
+cacheless, PLIC vs a smaller concentrator -- are in `../../docs/decisions.md`.
 """
 
 import subprocess
@@ -64,6 +89,46 @@ GENERATE_FLAGS = [
     # native and unconnected, and the only symptom is undriven
     # LsuPlugin_logic_bus_* wires.
     "--fetch-wishbone", "--lsu-wishbone", "--lsu-l1-wishbone",
+
+    # RISC-V debug module, reached through the ECP5's EXISTING JTAG chain.
+    #
+    # --debug-jtag-instruction, not --debug-jtag-tap: the tap variant builds its own TAP
+    # needing four dedicated pins, and on this board JTAG belongs to Apollo, which uses
+    # it to configure the FPGA. The instruction variant hangs the debug module off a user
+    # instruction (ER1/ER2) in the chain that is already there -- the same mechanism
+    # LUNA's JTAGRegisterInterface uses -- so openocd and Apollo share one TAP.
+    #
+    # This buys halt, step, register and memory inspection. Without it a CPU that stops
+    # printing is indistinguishable from a CPU that stopped running, which is exactly the
+    # ambiguity that has cost the most time on this project.
+    "--debug-jtag-instruction",
+
+    # Branch prediction: a branch target buffer.
+    #
+    # Without one the core still has BranchPlugin and LearnPlugin, which resolve
+    # and record branches -- but nothing acts on the record, so every taken
+    # branch redirects the three-stage fetch and the pipeline refills. Measured
+    # at seven instructions in 28.77 cycles with every one hitting the I-cache
+    # (#140): four cycles an instruction with no memory in the way at all.
+    #
+    # --with-btb is BtbPlugin at Param.scala's defaults: 512 sets, one chunk
+    # (single issue), 16-bit hash, dual-port RAM.
+    #
+    # --relaxed-btb is NOT optional here, and it is not a precaution. At the
+    # default jumpAt = 1 the BTB's block RAM read, its 16-bit hash compare, the
+    # hit decision and the fetch redirect are all one cycle, and nextpnr closes
+    # at 57.55 MHz -- a hard FAIL against the 60 MHz constraint, with the
+    # critical path starting at `BtbPlugin_logic_mem.0.0.DOA8`, 4.10 ns of
+    # clk-to-q before a single LUT. Relaxed moves the redirect to jumpAt = 2, so
+    # the compare gets a cycle of its own.
+    #
+    # What that costs is one cycle on a correctly predicted branch instead of
+    # zero -- still far cheaper than the full refetch it replaces, which is what
+    # the bench numbers show.
+    #
+    # rasDepth follows --with-ras and is 0 without it, so these flags alone are
+    # the BTB and nothing else.
+    "--with-btb", "--relaxed-btb", "--relaxed-branch",
 ]
 
 
@@ -96,8 +161,7 @@ def generate(reset_addr, cache_sets=64, output=None, regions=None):
     # a dead CPU.
     #
     # main=1 means normal cacheable memory; main=0 marks I/O, which is what
-    # keeps peripheral accesses out of the data cache. That replaces
-    # VexRiscv's hardcoded "uncached iff address bit 31".
+    # keeps peripheral accesses out of the data cache and routes it to `iobus`.
     for region in regions:
         flags += ["--region", region]
 
@@ -123,11 +187,11 @@ def generate(reset_addr, cache_sets=64, output=None, regions=None):
 
 
 class VexiiRiscv(wiring.Component):
-    """VexiiRiscv presenting luna_soc's VexRiscv interface.
+    """A VexiiRiscv core as an Amaranth component.
 
-    `irq_external` is a single line rather than VexRiscv's 32-bit array,
-    because that is what standard RISC-V defines. Everything else matches, so
-    this substitutes into `facedancer/top.py` without touching the bus fabric.
+    The bus signature -- 30-bit address, 32-bit data, granularity 8, with
+    `err`/`cti`/`bte` -- is what every arbiter, decoder and CSR bridge in this
+    tree connects to.
     """
 
     name       = "vexiiriscv"
@@ -144,10 +208,34 @@ class VexiiRiscv(wiring.Component):
         super().__init__({
             "ext_reset":    In(unsigned(1)),
 
+            # The ER2 tap, from `jtag_stage.UserJTAG`.
+            #
+            # Taken as ports rather than instantiated here because `JTAGG` is a
+            # singleton -- one per die -- and `jtag_stage.JTAGStager` needs ER1 off
+            # the same primitive. Left undriven the debug module sees `jtag_rstn` low
+            # and stays in reset, which is the right answer for a SoC that has not
+            # wired it.
+            "jtag_tck":     In(unsigned(1)),
+            "jtag_tdi":     In(unsigned(1)),
+            "jtag_ce":      In(unsigned(1)),
+            "jtag_shift":   In(unsigned(1)),
+            "jtag_update":  In(unsigned(1)),
+            "jtag_rstn":    In(unsigned(1)),
+            "jtag_tdo":     Out(unsigned(1)),
+
             # One wire, not 32. See the module docstring.
             "irq_external": In(unsigned(1)),
             "irq_timer":    In(unsigned(1)),
             "irq_software": In(unsigned(1)),
+
+            # The counter `rdtime` reads, brought out.
+            #
+            # A CLINT's `mtime` and the `time` CSR are required to be the same
+            # counter, and the cheapest way to guarantee that is to have one.
+            # Exposing it rather than moving it keeps a CPU with no CLINT
+            # working: `rdtime` is still driven here, so an instantiator that
+            # ignores this port loses nothing.
+            "mtime":        Out(unsigned(64)),
 
             "ibus": Out(wishbone.Signature(
                 addr_width=30, data_width=32, granularity=8,
@@ -192,11 +280,31 @@ class VexiiRiscv(wiring.Component):
         # rdtime read, which reads as a firmware bug rather than a wiring one.
         rdtime = Signal(64)
         m.d.sync += rdtime.eq(rdtime + 1)
+        m.d.comb += self.mtime.eq(rdtime)
 
+        # The RISC-V debug module, on the ER2 tap.
+        #
+        # ER2 = 0x38 rather than ER1 = 0x32 because ER1 carries the HyperRAM staging
+        # sink (`jtag_stage.py`), and two things answering one instruction would
+        # corrupt both.
+        #
+        # `jtag_rstn` is active low, and `capture` is the non-shift half of the enable
+        # window -- JTAGG gives an enable and a shift phase rather than a discrete
+        # capture strobe.
         m.submodules.cpu = Instance(
             "VexiiRiscv",
             i_clk=ClockSignal("sync"),
             i_reset=ResetSignal("sync") | self.ext_reset,
+
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_tck=self.jtag_tck,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_tdi=self.jtag_tdi,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_enable=self.jtag_ce,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_capture=self.jtag_ce & ~self.jtag_shift,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_shift=self.jtag_shift,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_update=self.jtag_update,
+            i_EmbeddedRiscvJtag_logic_jtagInstruction_reset=~self.jtag_rstn,
+            o_EmbeddedRiscvJtag_logic_jtagInstruction_tdo=self.jtag_tdo,
+            i_EmbeddedRiscvJtag_logic_debug_reset=ResetSignal("sync"),
 
             i_PrivilegedPlugin_logic_rdtime=rdtime,
             i_PrivilegedPlugin_logic_harts_0_int_m_external=self.irq_external,

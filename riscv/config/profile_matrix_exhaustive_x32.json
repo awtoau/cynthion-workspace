@@ -669,9 +669,9 @@
         "--keep-files"
       ],
       "output_prefix": "legacy_facedancer_x32_base",
-      "legacy_workdir": "/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python",
+      "legacy_workdir": "$REPOS_ROOT/awto-cynthion/cynthion/python",
       "legacy_luna_platform": "cynthion.gateware.platform:CynthionPlatformRev1D4",
-      "legacy_tim_path": "/mnt/2tb/git/awtoau/awto-cynthion/cynthion/python/build/top.tim",
+      "legacy_tim_path": "$REPOS_ROOT/awto-cynthion/cynthion/python/build/top.tim",
       "tag": "soc_x32_legacy_vexriscv_usb_facedancer",
       "notes": "legacy facedancer/moondancer fabric build (rv32 vexriscv + usb fabric)"
     }

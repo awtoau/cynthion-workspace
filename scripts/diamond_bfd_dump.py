@@ -34,7 +34,7 @@ DIAMOND = Path.home() / "lscc/diamond/3.14"
 BINDIR = DIAMOND / "bin/lin64"
 FPGADIR = DIAMOND / "ispfpga"
 FPGABIN = FPGADIR / "bin/lin64"
-TRELLIS_TILEDATA = Path("/home/dan/opt/oss-cad-suite/share/trellis/database/ECP5/tiledata")
+TRELLIS_TILEDATA = Path.home() / "opt/oss-cad-suite/share/trellis/database/ECP5/tiledata"
 
 ROOT = Path(__file__).resolve().parent.parent
 MINE = ROOT / "tmp/diamond-mine"
