@@ -168,7 +168,20 @@ def main():
                 waiting_announced = False
 
             try:
-                data = port.read(256)
+                # Take what has arrived, not a fixed count. `read(256)` blocks until
+                # 256 bytes OR the port timeout, so a short reply -- a prompt, a one
+                # line event -- sat here for up to three seconds before being echoed
+                # or fanned out. That is invisible when tailing a chatty boot and
+                # fatal for anything interactive: a client that sends a command and
+                # reads for two seconds gets nothing, because the answer is still
+                # inside this call waiting for bytes that will never come.
+                #
+                # `in_waiting` is what has already landed. When nothing has, fall back
+                # to a blocking read of ONE byte so the loop parks in the kernel
+                # instead of spinning -- the port timeout then bounds how long we sit
+                # there with no data to deliver.
+                waiting = port.in_waiting
+                data = port.read(waiting) if waiting else port.read(1)
             except (serial.SerialException, OSError):
                 # Almost always a reconfigure. Reattach rather than exit; that is the
                 # reason this exists rather than `cat`.
