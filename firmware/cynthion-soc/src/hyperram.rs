@@ -179,10 +179,10 @@ mod backend {
 
     const ADDR: *mut u32 = BASE as *mut u32;
     const CTRL: *mut u8 = (BASE + 0x08) as *mut u8;
-    const STATUS: *const u8 = (BASE + 0x09) as *const u8;
-    const DATA_LO: *const u8 = (BASE + 0x0a) as *const u8;
-    const DATA_HI: *const u8 = (BASE + 0x0b) as *const u8;
-    const WDATA: *mut u16 = (BASE + 0x0c) as *mut u16;
+    const STATUS: *const u8 = (BASE + 0x0c) as *const u8;
+    const DATA_LO: *const u8 = (BASE + 0x0d) as *const u8;
+    const DATA_HI: *const u8 = (BASE + 0x0e) as *const u8;
+    const WDATA: *mut u16 = (BASE + 0x10) as *mut u16;
 
     /// How long to wait for a transfer before giving up.
     ///

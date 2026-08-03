@@ -465,6 +465,7 @@ def cross_check(peripherals, emit):
         "PLIC": soc_module.PLIC_BASE,
         "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
+        "HYPERRAM": soc_module.HYPERRAM_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
         "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
         "FLASH_ILA": soc_module.FLASH_ILA_BASE,
