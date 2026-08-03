@@ -46,6 +46,7 @@ worse than one that says it did.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,12 @@ IMAGE_ORIGIN = 0x400
 # clear of the FPGA configuration at flash offset zero.
 RODATA_BIN = ROOT / "tmp" / "rust_rodata.bin"
 FLASH_RODATA_OFFSET = 0x000b_0000
+
+# The memory-mapped flash window, for deciding which sections load by
+# programming the part rather than by bitstream init. Must match FLASH_BASE
+# and FLASH_SIZE in ecp5-test/riscv/vexii_hello_soc.py.
+FLASH_BASE = 0x1000_0000
+FLASH_SIZE = 0x0040_0000
 
 # The resident bootloader: 492 bytes at 0x0, and what the reset vector points at.
 # Built alongside the image and packed into the same block RAM init, so one bitstream
@@ -134,6 +141,47 @@ def firmware_in_bitstream(build_dir, emit):
     return b"".join(word.to_bytes(4, "little") for word in words)
 
 
+def split_sections(elf, emit):
+    """Allocated sections of `elf`, grouped by which window they load into.
+
+    Returns `(bram, flash)` as lists of section names in address order, or
+    `(None, None)` if the ELF could not be read.
+
+    The grouping is by ADDRESS, so `memory.x` is the only place the layout is
+    decided. Sections with no content in the file are skipped: `.bss` is
+    allocated but NOBITS, and asking objcopy for it produces nothing while making
+    the artifact look like it should contain something.
+    """
+    result = run(["riscv64-linux-gnu-readelf", "-S", "-W", str(elf)])
+    if result.returncode != 0:
+        emit("readelf failed; cannot decide which sections go where:")
+        emit((result.stderr or result.stdout).strip()[-400:])
+        return None, None
+
+    bram, flash = [], []
+    for line in result.stdout.splitlines():
+        # `  [ 2] .text  PROGBITS  100b0000 0000b0 0089a4 00  AX  0 0 4`
+        match = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+"
+                         r"[0-9a-f]+\s+([0-9a-f]+)\s+\S+\s+(\S*)", line)
+        if not match:
+            continue
+        name, kind, addr, size, flags = match.groups()
+        if "A" not in flags or kind == "NOBITS" or int(size, 16) == 0:
+            continue
+        address = int(addr, 16)
+        if FLASH_BASE <= address < FLASH_BASE + FLASH_SIZE:
+            flash.append((address, name))
+        else:
+            bram.append((address, name))
+
+    bram = [name for _, name in sorted(bram)]
+    flash = [name for _, name in sorted(flash)]
+    if not bram and not flash:
+        emit("no allocated sections found in the ELF; refusing to guess")
+        return None, None
+    return bram, flash
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -153,6 +201,11 @@ def main():
     parser.add_argument("--build-only", action="store_true",
                         help="build firmware, bootloader and gateware, then stop; "
                              "touches no hardware, so it needs no board attached")
+    parser.add_argument("--firmware-only", action="store_true",
+                        help="skip the ~60 s gateware build: rebuild the firmware, "
+                             "write it to flash, and reconfigure the existing "
+                             "bitstream. Only valid when the bitstream carries no "
+                             "firmware, which it does not once .text is in flash")
     parser.add_argument("--skip-tests", action="store_true",
                         help="configure even though the QEMU shell tests have not run")
     args = parser.parse_args()
@@ -218,20 +271,48 @@ def main():
                 # `--only-section` per destination keeps each artifact the size of what
                 # is actually in it. A build with nothing in flash simply produces an
                 # empty second file, so this costs nothing when the layout is all-RAM.
+                # WHICH sections go where is read from the ELF, not listed here.
+                #
+                # This used to name them: `.init .text .data` to block RAM,
+                # `.rodata` to flash. That is a copy of memory.x's REGION_ALIAS
+                # lines maintained in a different file and a different language,
+                # and it is wrong the moment a section moves -- which is exactly
+                # what moving `.text` to flash does. A named list would have put
+                # `.text` in the block RAM artifact and flash would have been
+                # programmed with rodata alone, leaving the CPU fetching from an
+                # address nothing had written.
+                #
+                # So the linker decides and this follows: group the allocated
+                # sections by whether their address lands in the flash window.
+                bram_sections, flash_sections = split_sections(ELF, emit)
+                if bram_sections is None:
+                    return 1
+
+                # An EMPTY section list means "copy everything" to objcopy, not
+                # "copy nothing", and that is a trap worth naming: with `.text` in
+                # flash there is nothing left for block RAM, and the empty list
+                # produced a 48 KiB `rust_fw.bin` containing the entire image. It
+                # then matched the flash artifact byte for byte, and the
+                # stale-bitstream check compared that against itself and passed.
+                #
+                # So an empty group is written as an empty file, explicitly.
                 result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
-                              "--only-section=.init", "--only-section=.init.rust",
-                              "--only-section=.text", "--only-section=.data",
+                              *(f"--only-section={s}" for s in bram_sections
+                                or [".no-such-section"]),
                               str(ELF), str(FIRMWARE_BIN)])
                 if result.returncode != 0:
                     emit("objcopy failed:")
                     emit((result.stderr or result.stdout).strip()[-400:])
                     return 1
                 emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes "
-                     f"({firmware_digest()})")
+                     f"({firmware_digest()})  "
+                     f"[{' '.join(bram_sections) if bram_sections else 'nothing in block RAM'}]")
 
                 # Whatever the linker put in flash, as its own artifact.
                 result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
-                              "--only-section=.rodata", str(ELF), str(RODATA_BIN)])
+                              *(f"--only-section={s}" for s in flash_sections
+                                or [".no-such-section"]),
+                              str(ELF), str(RODATA_BIN)])
                 rodata = RODATA_BIN.stat().st_size if RODATA_BIN.exists() else 0
                 if rodata:
                     emit(f"flash image: {rodata} bytes for {FLASH_RODATA_OFFSET:#x} "
@@ -286,6 +367,40 @@ def main():
                 # too many, and the symptom is a dead CPU.
                 BOOT_BIN.unlink()
 
+            # THE FAST PATH, and the reason `.text` in flash is worth having.
+            #
+            # Synthesis is ~60 s of the ~90 s loop, and once no part of the
+            # firmware is packed into the block RAM initialiser it buys nothing
+            # for a firmware change: the bitstream that is already on the board is
+            # byte-identical to the one this would produce. Write flash,
+            # reconfigure to reset the CPU, done in seconds.
+            #
+            # THE GUARD IS THE POINT. If anything is still destined for block RAM,
+            # that content reaches the CPU only through the bitstream, and skipping
+            # the build would configure a bitstream carrying the PREVIOUS firmware
+            # while flash carries the new one -- a half-updated image, reported as
+            # success. That is the exact failure this script was written to stop,
+            # so it refuses rather than warning.
+            if args.firmware_only:
+                if bram_sections:
+                    emit("--firmware-only REFUSED: these sections still load via "
+                         "the bitstream:")
+                    emit(f"  {' '.join(bram_sections)}")
+                    emit("Skipping the gateware build would leave them at their "
+                         "previous contents while flash carried the new ones. "
+                         "Run without --firmware-only.")
+                    return 1
+                if not BITSTREAM.exists():
+                    emit(f"--firmware-only needs an existing bitstream at "
+                         f"{BITSTREAM.relative_to(ROOT)}; there is none. "
+                         f"Run once without it.")
+                    return 1
+                emit("gateware build SKIPPED (--firmware-only); nothing of this "
+                     "firmware travels in the bitstream")
+                emit(f"  reconfiguring {BITSTREAM.relative_to(ROOT)} to reset the "
+                     f"CPU onto the flash just written")
+                return configure_and_read(args, emit)
+
             # The OSS CAD Suite environment has to be sourced, so this one step is a
             # shell command rather than a bare exec.
             build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
@@ -319,7 +434,15 @@ def main():
             # This does. A mismatch stops the run rather than reaching the board,
             # because a board running unknown firmware invalidates every measurement
             # taken from it -- and those are believed, written down and acted on.
-            if not args.c_firmware:
+            if not args.c_firmware and not bram_sections:
+                # NOT a pass. There is nothing to compare: every byte of this
+                # firmware reaches the CPU through flash, so the bitstream is not
+                # evidence about it either way. Saying "carries the firmware just
+                # built" here would be a check reporting success on an empty
+                # comparison, which is worse than no check.
+                emit("bitstream carries no firmware (all of it is in flash); "
+                     "the stale-image check does not apply")
+            elif not args.c_firmware:
                 carried = firmware_in_bitstream(BITSTREAM.parent, emit)
                 if carried is not None:
                     # The image is linked for IMAGE_ORIGIN, and the bootloader
@@ -351,6 +474,17 @@ def main():
             emit("build complete (--build-only): nothing configured, nothing written")
             return 0
 
+        return configure_and_read(args, emit)
+
+
+def configure_and_read(args, emit):
+    """Configure the FPGA, then report what the console says.
+
+    Split out so `--firmware-only` can reach it without going through the gateware
+    build. Everything above it in `main` produces artifacts; this is the whole of
+    what touches the board.
+    """
+    if True:
         if not BITSTREAM.exists():
             emit(f"no bitstream at {BITSTREAM.relative_to(ROOT)}")
             return 1

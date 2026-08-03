@@ -238,6 +238,9 @@ unsafe extern "C" {
     /// entry under QEMU. Taken from the linker for the same reason as the rest --
     /// `memory.x` decides it, so printing a literal here could disagree with it.
     static _reset_vector: u8;
+    /// The base of the writable region, so the budget below is measured against
+    /// the REGION rather than against whatever section happens to be lowest.
+    static _ram_start: u8;
 }
 
 fn at(symbol: &u8) -> u32 {
@@ -332,8 +335,14 @@ pub fn command(uart: &mut Uart) {
     }
 
     // SAFETY: as above.
+    // Measured from `_ram_start`, NOT from `__stext`.
+    //
+    // `__stext` was the lowest thing in RAM only while `.text` was in RAM. Once it
+    // moved to flash the subtraction spanned two address spaces and this reported
+    // "54856 free of 4025876480" -- a number with no meaning, printed with the
+    // same confidence as the correct one.
     let (free, total) = unsafe {
-        (at(&__sstack) - at(&__estack), at(&__sstack) - at(&__stext))
+        (at(&__sstack) - at(&__estack), at(&__sstack) - at(&_ram_start))
     };
     // "free" is what the stack grows into, so it is not all spare -- but it is
     // the number that says how much more firmware fits, which is the question

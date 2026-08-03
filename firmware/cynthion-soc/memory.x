@@ -55,6 +55,14 @@ MEMORY
  */
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
+/* The base of writable memory, for `info` to size the block RAM budget against.
+ *
+ * It used to measure the budget as `_stack_start - __stext`, which was right only while
+ * `.text` was the lowest thing in RAM. With `.text` in flash that subtraction spans two
+ * address spaces and reported "54856 free of 4025876480". A region has an origin; take
+ * it from the linker rather than inferring it from whatever happens to be lowest. */
+_ram_start = ORIGIN(RAM);
+
 /* Where `reset` and `load` jump, and the reason it is a symbol rather than a literal.
  *
  * On the board this is the bootloader at 0x0, so a reboot re-reads the staging header
@@ -64,8 +72,16 @@ _stack_start = ORIGIN(RAM) + LENGTH(RAM);
  */
 _reset_vector = 0x00000000;
 
-/* Stage one moves only immutable data; every other runtime section stays in RAM. */
-REGION_ALIAS("REGION_TEXT",   RAM);
+/* Stage two: code joins immutable data in flash.
+ *
+ * `.text` here is what the whole split was for. Block RAM keeps only what must be
+ * WRITABLE -- .data, .bss and the stack -- so the 63 KiB stops being a budget the
+ * shell competes with itself for, and the image can grow into 3392 KiB of flash.
+ *
+ * This requires FLASH_CACHED in ecp5-test/riscv/vexii_hello_soc.py. `exe=0` forbids
+ * instruction fetch from the window, so the uncached configuration cannot run code from
+ * here at all; the two settings are one decision. */
+REGION_ALIAS("REGION_TEXT",   FLASH);
 REGION_ALIAS("REGION_RODATA", FLASH);
 REGION_ALIAS("REGION_DATA",   RAM);
 REGION_ALIAS("REGION_BSS",    RAM);

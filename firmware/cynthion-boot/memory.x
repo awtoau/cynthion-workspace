@@ -95,5 +95,18 @@ _boot_stack_top = _boot_status;
 ASSERT(_boot_stack_top - _boot_end >= 256,
        "cynthion-boot leaves under 256 bytes of stack; shrink it or widen BOOT")
 
-/* Where the bootloader hands over, and the only jump target in the image. */
-_image_start = ORIGIN(IMAGE);
+/* Where the bootloader hands over, and the only jump target in the image.
+ *
+ * NOW IN FLASH, because that is where `.text` is. Must match ORIGIN(FLASH) in
+ * firmware/cynthion-soc/memory.x -- the bootloader jumps to an ADDRESS and has no symbol
+ * table for the image, so the two are held together by this comment and by
+ * scripts/soc_generate_pac.py --check.
+ *
+ * CONSEQUENCE, and it is not small: HyperRAM staging can no longer install the shell.
+ * `load` writes an image into HyperRAM and this copies it into the IMAGE region of block
+ * RAM, which is where `.text` used to be and is now .data/.bss. Copying there is harmless
+ * -- riscv-rt zeroes .bss and reloads .data from flash on the way up, so the copy is
+ * overwritten before anything reads it -- but it installs nothing. The fast path it
+ * existed for is now `soc_run.py` writing flash directly, which is seconds and needs no
+ * synthesis either. See the staging guard in src/main.rs. */
+_image_start = 0x100B0000;

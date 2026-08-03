@@ -312,6 +312,19 @@ def cmd_audit(extra: list[str]) -> int:
     return run_tool([PY, script("audit_scripts.py")], extra)
 
 
+@command("firmware change only: rebuild, write flash, reconfigure (no synthesis)",
+         args="[soc_run.py flags]", kind="action")
+def cmd_fw(extra: list[str]) -> int:
+    """The fast loop. Seconds rather than the ~90 s `run` costs.
+
+    Only correct because `.text` lives in flash: nothing of the firmware travels
+    in the bitstream any more, so the ~60 s of synthesis `run` spends would
+    produce a byte-identical bitstream to the one already on the board.
+    `soc_run.py` refuses this if any section still loads via the bitstream.
+    """
+    return run_tool([PY, script("soc_run.py"), "--firmware-only"], extra)
+
+
 @command("open the RISC-V console on the board", args="[flags]", kind="action")
 def cmd_console(extra: list[str]) -> int:
     return run_tool([PY, script("riscv_console.py")], extra)

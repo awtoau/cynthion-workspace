@@ -324,7 +324,23 @@ FLASH_BASE = 0x10000000
 # every load becomes a full command/address/dummy/data transaction with no line
 # reuse, which is slow and simple. See the region list for why the first
 # .rodata-from-flash test wants simple.
-FLASH_CACHED = False
+#
+# True once `.text` lives here, for two reasons worth keeping separate.
+#
+# The HARD requirement is `exe=1`, which permits instruction fetch from the
+# window. `main` and `exe` are independent flags in VexiiRiscv's region syntax --
+# `main=0,exe=1` is expressible -- but the line below writes both from this one
+# flag, so today they move together. That coupling is this file's, not the CPU's.
+#
+# The PRACTICAL reason is that uncached instruction fetch would make every single
+# instruction a complete SPI command/address/dummy/data transaction with no line
+# reuse. For data that was merely slow, which is why stage one ran `.rodata`
+# uncached on purpose: a first test should remove variables, not preserve
+# performance. For code it is not a trade-off anyone would take.
+#
+# Whether `main=0,exe=1` would fetch at all on this core is untested here, and is
+# not worth testing: there is no configuration in which it is the one we want.
+FLASH_CACHED = True
 
 # The HyperRAM memory window: ordinary cached loads, stores, and instruction fetches.
 #

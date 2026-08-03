@@ -140,6 +140,30 @@ enum Status {
     Silent = 4,
     /// This image panicked, which nothing in it can currently do.
     Panicked = 5,
+    /// A staged image was found and verified, and was NOT installed, because the
+    /// image this bootloader hands to lives in flash.
+    ///
+    /// Staging writes to `_image_start`, and `_image_start` is now a memory-mapped
+    /// SPI window. A store there does not install anything -- flash is not written
+    /// by storing to its read window -- so the copy would have been a silent no-op
+    /// at best, and the CPU would then have jumped to whatever flash already held.
+    /// That is precisely the "runs firmware that is not the firmware you loaded"
+    /// failure this project has paid for three times, so it is reported rather
+    /// than attempted.
+    ///
+    /// Not an error. It means: your staged image was fine, and it is not what is
+    /// running. Program flash instead -- `./dev.py run` does, in seconds.
+    FlashResident = 6,
+}
+
+/// Whether the image region is the memory-mapped flash window rather than block RAM.
+///
+/// Derived from the linker's `_image_start`, so it follows `memory.x` rather than
+/// restating it. Const-evaluable in principle but written as a function because
+/// `_image_start` is an extern symbol and its address is not a constant.
+fn image_is_flash() -> bool {
+    let start = (&raw const _image_start) as usize;
+    (0x1000_0000..0x1040_0000).contains(&start)
 }
 
 /// High 24 bits of the status word: "BOT", so an uninitialised or stale block RAM word
@@ -224,11 +248,17 @@ fn boot() -> ! {
         Err(hyperram::Reject::Length) => Status::Length,
         Err(hyperram::Reject::Silent) => Status::Silent,
         Ok((length, expected)) => {
-            if pass(length, None) == expected {
+            if pass(length, None) != expected {
+                Status::Crc
+            } else if image_is_flash() {
+                // Verified, and deliberately not installed. See `FlashResident`:
+                // the destination is a read-only SPI window, so the copy cannot
+                // do what its name says and jumping afterwards would run whatever
+                // flash already held while reporting a successful install.
+                Status::FlashResident
+            } else {
                 pass(length, Some((&raw const _image_start) as *mut u8));
                 Status::Ran
-            } else {
-                Status::Crc
             }
         }
     };

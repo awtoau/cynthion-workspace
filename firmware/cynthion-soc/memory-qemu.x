@@ -40,6 +40,11 @@ MEMORY
 /* Pin the stack to the top of the region, as on hardware. */
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
+/* Must exist on both targets: `info` reads it to size the writable-memory budget, and
+ * the firmware reads linker symbols precisely so it need not know which target it is on.
+ * See the counterpart in memory.x. */
+_ram_start = ORIGIN(RAM);
+
 /* Where `reset` and `load` jump. On the board this is the bootloader at 0x0; here there
  * is no bootloader and nothing at 0, so it is this image's own entry point. `reset`
  * restarts the shell, which is what it means on a machine with one image. */

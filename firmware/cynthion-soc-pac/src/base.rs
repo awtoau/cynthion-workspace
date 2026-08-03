@@ -116,4 +116,4 @@ pub const CLINT_SIZE: usize = 0x00010000;
 /// description carries it. Uncached routes the window to the `iobus`,
 /// where every load is a full SPI command/address/dummy/data
 /// transaction and the I-cache cannot fetch from it at all.
-pub const SPIFLASH_CACHED: bool = false;
+pub const SPIFLASH_CACHED: bool = true;
