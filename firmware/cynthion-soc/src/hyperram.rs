@@ -166,23 +166,24 @@ pub use backend::{read_word, write_word};
 #[cfg(not(feature = "qemu"))]
 mod backend {
     use core::ptr::{read_volatile, write_volatile};
+    use cynthion_soc_pac::bootram::offset;
 
     /// Read out of the SoC's memory map rather than transcribed from
     /// `BOOTRAM_BASE` -- see the module comment in `src/target.rs`. This module
     /// is already `not(feature = "qemu")`, so naming a hardware-only address here
     /// costs the QEMU build nothing.
     ///
-    /// The register offsets below stay hand-written on purpose: they are byte
-    /// accesses to a multi-byte CSR whose low byte latches a shadow and whose
-    /// high byte commits, which is not what a generated accessor would emit.
+    /// The accesses below stay hand-rolled: they are byte accesses to a multi-byte
+    /// CSR whose low byte latches a shadow and whose high byte commits, which is
+    /// not what a generated accessor would emit. Their addresses are generated.
     const BASE: usize = cynthion_soc_pac::base::BOOTRAM;
 
-    const ADDR: *mut u32 = BASE as *mut u32;
-    const CTRL: *mut u8 = (BASE + 0x08) as *mut u8;
-    const STATUS: *const u8 = (BASE + 0x0c) as *const u8;
-    const DATA_LO: *const u8 = (BASE + 0x0d) as *const u8;
-    const DATA_HI: *const u8 = (BASE + 0x0e) as *const u8;
-    const WDATA: *mut u16 = (BASE + 0x10) as *mut u16;
+    const ADDR: *mut u32 = (BASE + offset::ADDR) as *mut u32;
+    const CTRL: *mut u8 = (BASE + offset::CTRL) as *mut u8;
+    const STATUS: *const u8 = (BASE + offset::STATUS) as *const u8;
+    const DATA_LO: *const u8 = (BASE + offset::DATA_LO) as *const u8;
+    const DATA_HI: *const u8 = (BASE + offset::DATA_HI) as *const u8;
+    const WDATA: *mut u16 = (BASE + offset::WDATA) as *mut u16;
 
     /// How long to wait for a transfer before giving up.
     ///
