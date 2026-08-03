@@ -434,6 +434,11 @@ mod hpm {
     pub const STALL_BACKEND: u32 = 0x05;
     pub const ICACHE_MISS: u32 = 0x11;
     pub const DCACHE_LOAD_MISS: u32 = 0x19;
+    /// Cycles the D-cache spent WAITING, as opposed to working. This is the one
+    /// that splits the 224 unaccounted cycles: a miss costs 296 CPU cycles while
+    /// the HyperRAM bus is busy for 72, and `DCACHE_WAITING` says whether the
+    /// remainder is the cache waiting on something or the CPU held up elsewhere.
+    pub const DCACHE_WAITING: u32 = 0x1A;
 
     /// Point the four counters at the events worth watching.
     ///
@@ -449,7 +454,7 @@ mod hpm {
                              options(nomem, nostack));
             core::arch::asm!("csrw 0x324, {0}", in(reg) STALL_BACKEND,
                              options(nomem, nostack));
-            core::arch::asm!("csrw 0x325, {0}", in(reg) ICACHE_MISS,
+            core::arch::asm!("csrw 0x325, {0}", in(reg) DCACHE_WAITING,
                              options(nomem, nostack));
             core::arch::asm!("csrw 0x326, {0}", in(reg) DCACHE_LOAD_MISS,
                              options(nomem, nostack));
@@ -817,13 +822,13 @@ fn hyper(uart: &mut Uart) {
             // I-cache is not holding the flash window.
             let front = after.0.wrapping_sub(before.0);
             let back = after.1.wrapping_sub(before.1);
-            let imiss = after.2.wrapping_sub(before.2);
+            let waiting = after.2.wrapping_sub(before.2);
             let dmiss = after.3.wrapping_sub(before.3);
             let _ = writeln!(
                 uart,
                 "hyper win  per line: front-stall {}  back-stall {}  \
-                 icache-miss {}  dcache-miss {}",
-                front / starts, back / starts, imiss / starts, dmiss / starts);
+                 dcache-waiting {}  dcache-miss {}",
+                front / starts, back / starts, waiting / starts, dmiss / starts);
         }
         if starts > 0 {
             let per = (beats * 100) / starts;

@@ -36,7 +36,7 @@ measurements have to be findable.
 
 | core | what it is | note |
 |---|---|---|
-| **VexiiRiscv** | the SoC's RV32IMAC CPU, generated at elaboration | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
+| **VexiiRiscv** | the SoC's RV32IMAC CPU, generated at elaboration | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md), and [`riscv-core-build.md`](riscv-core-build.md) for regenerating it |
 | **NS16550A ×2** | the console UARTs | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 
 The pin map itself is **`ecp5-test/cynthion_platform/cynthion_r1_4.py`** — 206
