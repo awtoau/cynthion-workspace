@@ -157,8 +157,16 @@ def build_checks() -> List[Check]:
             steps=[
                 Step([PYTHON, "-c",
                       "import cynthion, apollo_fpga, facedancer"], ROOT),
+                # `tests/` is OURS and was not collected here until now. Both
+                # files in it passed and neither had ever run in the gate, so
+                # when 37a6095 retired `hyperram_readclksel_sweep.py` to
+                # debris/ its test kept importing a module that was no longer
+                # there -- a collection error nothing was positioned to see.
+                # An uncollected test directory is worse than no tests: it
+                # reads as coverage and asserts nothing.
                 Step([PYTHON, "-m", "pytest",
                       "repos/cynthion/cynthion/python/tests/",
+                      "tests/",
                       "-q", "--tb=short"], ROOT),
             ],
         ),

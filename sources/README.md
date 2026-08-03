@@ -148,6 +148,38 @@ Working method: clear the challenge with **awto-playwrong**, pull the cookies fr
 `/cookies` endpoint, then `curl` with that jar. The cookies expire quickly enough that a
 second download may need them refreshed.
 
+### The 256 Mbit contrast case
+
+| file | part | source |
+|---|---|---|
+| `Winbond-W958D8NBYA-256Mbit-HyperRAM.pdf` | W958D8NBYA, 256 Mbit single die | mirror; see the fetching method above |
+| `Winbond-HyperRAM-Product-Brief-2023Q2.pdf` | family overview, one page | `https://www.winbond.com/.../productResource-files/Winbond_DRAM_HyperRAM_Product_Brief_2023Q2.pdf` |
+
+This is the part the ID0 comparison above uses as its control: single die, `[15:14]`
+zeroed to Reserved, and the row field widened to `01110b` (15 row bits). It is the
+evidence that density scales by die count in the 128 Mbit part rather than by widening
+the address-bit fields.
+
+## Configuration flash
+
+The board's flash is a **Winbond W25Q32JV**, JEDEC `EF 40 16`.
+
+| file | part | source |
+|---|---|---|
+| `Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` | W25Q32**JV**, 3V 32 Mbit, dual/quad SPI & QPI — the part fitted | `https://www.winbond.com/resource-files/w25q32jv%20revi%2005182022%20plus.pdf` |
+| `Winbond-W25Q32FV-32Mbit-SPI-Flash.pdf` | W25Q32**FV**, the previous generation | vendor mirror |
+
+Both generations are kept because they differ in the timing maximums that
+`../docs/luna_ecp5_fpga/flash-detailed.md` transcribes, and reading the wrong one is an
+easy way to attribute a JV limit to an FV part.
+
+## FPGA
+
+| file | part | source |
+|---|---|---|
+| `Lattice-ECP5-Family-DataSheet-FPGA-DS-02012.pdf` | ECP5 / ECP5-5G family, FPGA-DS-02012 v1.9, March 2018 | `https://www.latticesemi.com/view_document?document_id=50461` |
+| `Lattice-ECP5-sysCONFIG-FPGA-TN-02039.pdf` | sysCONFIG user guide, FPGA-TN-02039-2.3, March 2024 — configuration modes, timing, and the SPI boot path | `https://www.latticesemi.com/view_document?document_id=50462` |
+
 ## Other parts
 
 | file | what |
@@ -159,8 +191,12 @@ second download may need them refreshed.
 | `334x.pdf` | USB3343 PHY |
 | `S9c76cb8ac7dc4b77b5edfe7984049618q.pdf` | unidentified — rename when someone works out what it is |
 
-## Not here
+## A failed download looks exactly like a datasheet
 
-The **configuration flash** (Winbond W25Q32, JEDEC `EF 40 16`) has no datasheet in this
-directory; its behaviour is recorded in `../docs/luna_ecp5_fpga/flash-detailed.md`, where
-the vendor maximums table is transcribed from the W25Q32JV datasheet.
+Six files arrived here named `*.pdf` and were **HTML bot-check or error pages**: an
+8-byte `fusb.pdf`, two 3 KB Winbond pages, and three identical 14 KB ones. They sat in
+`tmp/` for a week looking like fetched datasheets.
+
+`file <name>.pdf` is the check — "HTML document" rather than "PDF document" catches every
+one of them, and it costs nothing to run after a fetch. Both notes above about Mouser and
+ISSI describe the same failure; this is the general form of it.

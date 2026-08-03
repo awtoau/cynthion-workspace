@@ -57,7 +57,13 @@ ecp5-test/sideband/build/
 
 # Third-party datasheets: freely fetchable from the vendor, several MB each, and not
 # ours to redistribute. sources/README.md is the manifest with URLs.
-sources/*.pdf
+#
+# `sources/*.pdf` matched one level only, so a `sources/datasheets/` subdirectory slipped
+# 13 MB of vendor PDFs past it and into a public repo (1cf7d67). Recursive now, and text
+# extractions are covered too -- a pdftotext dump redistributes the whole document just as
+# effectively as the PDF, and is derived anyway.
+sources/**/*.pdf
+sources/**/*.txt
 
 # Cargo build output. Regenerable by `cargo build`, ~49 MB, and it was tracked once by
 # accident -- a merge carried it back in because the branch that removed it never had it
