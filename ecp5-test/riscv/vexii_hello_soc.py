@@ -499,19 +499,31 @@ FLASH_TEST_OFFSET = 0x00300000
 # very nearly pure refill.
 FLASH_MODE = "quad"
 
-# SCK = sync / (2 * (1 + divisor)). At 80 MHz sync, divisor 0 gives 40 MHz,
-# which is inside the ECP5 MCLK pin's 62 MHz specification (FPGA-TN-02039) and
-# inside the flash's own 50 MHz rating for the single-lane 0x03 opcode.
+# SCK = sync / (2 * (1 + divisor)), so at SYNC_MHZ = 60 and divisor 0 this design
+# clocks the flash at 30 MHz. That is the SLOWEST rung on the measured table and
+# the reason is below.
 #
-# Divisor 1 (20 MHz at 60 MHz sync) was tried against the JEDEC failure and
-# changed nothing -- the ID still read zeros while the benchmark slowed from
-# 0x4873 to 0x80f3 cycles, confirming the divisor genuinely took effect. So the
-# PHY's divisor-0 special case in XFER-END, where the last bit is captured a
-# state later, is not the cause.
+# TWO CLAIMS THAT USED TO BE HERE ARE WRONG, and they are why this sat at 30 MHz.
+# `docs/chips/w25q32-config-flash.md` supersedes both:
 #
-# Faster than this has been measured to work on this board and is not what the
-# default should be: MCLK is a configuration pin reached through USRMCLK, and
-# above 62 MHz Lattice publishes nothing to reason about margin from.
+#   * "inside the ECP5 MCLK pin's 62 MHz specification". THERE IS NO SUCH
+#     SPECIFICATION. The 62 MHz is `fCCLK` in the sysCONFIG port timing table --
+#     the configuration engine's oscillator ceiling, which has nothing to do with
+#     user mode. `USRMCLK` does not appear in the ECP5 datasheet at all, and
+#     prjtrellis has no timing entry for the path in any speed grade.
+#   * "divisor 0 produces no clock; SCK capped at sync/2". Divisor 0 reads
+#     byte-exact at every rung, at exactly half the cycle count of divisor 1.
+#
+# WHAT THE PART ACTUALLY DOES: 60 points -- five modes x four divisors x three
+# sync rates -- all PASS, up to 144 MHz SCK and 71.70 MB/s on `0xEB` continuous.
+# Nothing failed. `0x03` runs at 144 MHz against a 50 MHz datasheet rating. The
+# limit reached was the TEST DESIGN'S OWN FMAX (it closes at 149 MHz), not the
+# flash and not the pin.
+#
+# So the ceiling here is not the divisor: it is that SCK is derived from `sync`,
+# and `sync` is the CPU's clock. Raising it is a CPU change. Reaching the
+# measured speeds without touching the CPU needs the flash PHY in its own clock
+# domain -- see #100.
 FLASH_DIVISOR = 0
 
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
