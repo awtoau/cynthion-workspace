@@ -522,6 +522,48 @@ fn hyper_window_read(mask: usize, accesses: u32, random: bool) -> u32 {
     sum
 }
 
+/// The same sequential walk with FOUR INDEPENDENT accumulators.
+///
+/// **Separates latency from bandwidth, which the walk above cannot.** There,
+/// every iteration adds into one `sum`, so each load's result is needed before
+/// the next add can retire -- a serial chain on an in-order core. The counters
+/// say the CPU is stalled 294 cycles per cache line on data while the D-cache
+/// waits only 79 and the HyperRAM bus is busy 72; the ~215 cycles left over look
+/// like that chain rather than like the memory path.
+///
+/// Four accumulators and four strides let four loads be in flight before any
+/// result is consumed. If cycles-per-access falls sharply, the original walk was
+/// latency-bound and this SoC's bandwidth is what the gateware probe already
+/// measures. If it does not move, the stall is real and lives in the LSU.
+///
+/// Sequential only. A random walk is latency by definition and unrolling it would
+/// measure nothing.
+#[inline(always)]
+fn hyper_window_read_wide(mask: usize, accesses: u32) -> u32 {
+    let base = cynthion_soc_pac::base::HYPERRAM;
+    let (mut a, mut b, mut c, mut d) = (0u32, 0u32, 0u32, 0u32);
+    let mut index = 0usize;
+    let quads = accesses / 4;
+    for _ in 0..quads {
+        // Four addresses computed up front, so no load waits on an address.
+        let i0 = index & mask;
+        let i1 = (index + 1) & mask;
+        let i2 = (index + 2) & mask;
+        let i3 = (index + 3) & mask;
+        // SAFETY: as above. Still volatile -- these must be real loads -- but
+        // each lands in its own accumulator, so nothing consumes a result until
+        // all four have issued.
+        unsafe {
+            a = a.wrapping_add(core::ptr::read_volatile((base + i0 * 4) as *const u32));
+            b = b.wrapping_add(core::ptr::read_volatile((base + i1 * 4) as *const u32));
+            c = c.wrapping_add(core::ptr::read_volatile((base + i2 * 4) as *const u32));
+            d = d.wrapping_add(core::ptr::read_volatile((base + i3 * 4) as *const u32));
+        }
+        index += 4;
+    }
+    a.wrapping_add(b).wrapping_add(c).wrapping_add(d)
+}
+
 /// Read `accesses` 16-bit words from the HyperRAM staging port.
 ///
 /// Sequential rides the port's address auto-increment, so it is one `ctrl` write
@@ -842,6 +884,13 @@ fn hyper(uart: &mut Uart) {
             hyper_window_read(large_words, FLASH_RND_ACCESSES, true)
         });
         row(uart, "hyper win", "16 KiB", "read rnd", &rnd);
+        sum ^= got;
+
+        // The same set, four loads deep. See `hyper_window_read_wide`.
+        let (wide, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+            hyper_window_read_wide(large_words, FLASH_SEQ_ACCESSES)
+        });
+        row(uart, "hyper x4", "16 KiB", "read seq", &wide);
         sum ^= got;
         ratio(uart, "hyper win", &seq, &rnd);
         let _ = sum;
