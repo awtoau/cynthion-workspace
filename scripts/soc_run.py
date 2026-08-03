@@ -182,6 +182,48 @@ def split_sections(elf, emit):
     return bram, flash
 
 
+def derive_bram_bin(emit):
+    """Rewrite `FIRMWARE_BIN` from the ELF. Returns `(bram, flash)` section lists.
+
+    A function rather than four inline lines because `bram_patch.py` needs the
+    SAME derivation and must not carry a second copy of it. Its whole purpose is
+    the fast path -- edit firmware, patch, load -- and on that path
+    `tmp/rust_fw.bin` is stale by construction unless something regenerates it.
+
+    Checking the file's age would be the weaker fix. An intermediate that CAN be
+    stale eventually is, and #155 is what that costs: the patcher reported
+    `0 of them changed`, verified its own round trip, and loaded firmware several
+    edits behind, with every layer reporting success.
+
+    Returns `(None, None)` if the ELF could not be read or objcopy failed; the
+    caller decides whether that is fatal.
+    """
+    bram_sections, flash_sections = split_sections(ELF, emit)
+    if bram_sections is None:
+        return None, None
+
+    # An EMPTY section list means "copy everything" to objcopy, not "copy
+    # nothing", and that is a trap worth naming: with `.text` in flash there is
+    # nothing left for block RAM, and the empty list produced a 48 KiB
+    # `rust_fw.bin` containing the entire image. It then matched the flash
+    # artifact byte for byte, and the stale-bitstream check compared that
+    # against itself and passed.
+    #
+    # So an empty group is written as an empty file, explicitly.
+    result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                  *(f"--only-section={s}" for s in bram_sections
+                    or [".no-such-section"]),
+                  str(ELF), str(FIRMWARE_BIN)])
+    if result.returncode != 0:
+        emit("objcopy failed:")
+        emit((result.stderr or result.stdout).strip()[-400:])
+        return None, None
+    emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes "
+         f"({firmware_digest()})  "
+         f"[{' '.join(bram_sections) if bram_sections else 'nothing in block RAM'}]")
+    return bram_sections, flash_sections
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -284,29 +326,9 @@ def main():
                 #
                 # So the linker decides and this follows: group the allocated
                 # sections by whether their address lands in the flash window.
-                bram_sections, flash_sections = split_sections(ELF, emit)
+                bram_sections, flash_sections = derive_bram_bin(emit)
                 if bram_sections is None:
                     return 1
-
-                # An EMPTY section list means "copy everything" to objcopy, not
-                # "copy nothing", and that is a trap worth naming: with `.text` in
-                # flash there is nothing left for block RAM, and the empty list
-                # produced a 48 KiB `rust_fw.bin` containing the entire image. It
-                # then matched the flash artifact byte for byte, and the
-                # stale-bitstream check compared that against itself and passed.
-                #
-                # So an empty group is written as an empty file, explicitly.
-                result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
-                              *(f"--only-section={s}" for s in bram_sections
-                                or [".no-such-section"]),
-                              str(ELF), str(FIRMWARE_BIN)])
-                if result.returncode != 0:
-                    emit("objcopy failed:")
-                    emit((result.stderr or result.stdout).strip()[-400:])
-                    return 1
-                emit(f"Rust firmware: {FIRMWARE_BIN.stat().st_size} bytes "
-                     f"({firmware_digest()})  "
-                     f"[{' '.join(bram_sections) if bram_sections else 'nothing in block RAM'}]")
 
                 # Whatever the linker put in flash, as its own artifact.
                 result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",

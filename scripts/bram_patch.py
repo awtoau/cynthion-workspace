@@ -35,8 +35,12 @@ must match exactly one block, with all 32 forming a bijection onto tiles configu
 
 ## What makes a wrong result loud
 
-Three checks, all of which refuse rather than warn:
+Four checks, all of which refuse rather than warn:
 
+- **Freshness.** The firmware image is rewritten from the ELF before anything is read,
+  so the fast path cannot patch a stale intermediate. `--no-derive` skips it and says
+  so loudly. This one is newest and was the missing one: see #155, where its absence
+  produced a bitstream several edits behind while every layer reported success.
 - **Layout.** All 32 slices derived from `firmware.hex` must match distinct blocks. If
   `firmware.hex` is not what was synthesised, they do not match and it stops.
 - **Source.** The design is re-elaborated from the tree and its RTLIL compared with the
@@ -79,6 +83,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +92,12 @@ BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+# The default is the same intermediate `soc_run.py` writes, and knowing that it is
+# the default is what lets this tool regenerate it. An explicitly-given `--firmware`
+# is the caller's own file and is left alone. See #155.
+DEFAULT_FIRMWARE = ROOT / "tmp" / "rust_fw.bin"
 
 # The block RAM is 32 bits wide and yosys splits it one bit per DP16KD, so slice k
 # holds bit k of every word. Each DP16KD stores its 16384 bits as 2048 init words of
@@ -108,6 +119,19 @@ def emit(text, handle):
     print(text, flush=True)
     handle.write(text + "\n")
     handle.flush()
+
+
+def rel(path):
+    """`path` relative to the repo when it is inside it, absolute when it is not.
+
+    `--firmware` and `--output` may name a file anywhere, and bare
+    `Path.relative_to` raises for anything outside the tree -- so the reporting
+    path would crash on exactly the unusual invocation it was meant to describe.
+    """
+    try:
+        return path.relative_to(ROOT)
+    except ValueError:
+        return path
 
 
 # --------------------------------------------------------------------------- config
@@ -325,8 +349,13 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--firmware", type=Path, default=ROOT / "tmp" / "rust_fw.bin",
+    parser.add_argument("--firmware", type=Path, default=DEFAULT_FIRMWARE,
                         help="the image, linked for IMAGE_ORIGIN")
+    parser.add_argument("--no-derive", action="store_true",
+                        help="do not regenerate the firmware image from the ELF "
+                             "first. UNSAFE: this tool's whole purpose is the fast "
+                             "path, and on that path the image is stale by "
+                             "construction unless something rewrites it")
     parser.add_argument("--bootloader", type=Path, default=ROOT / "tmp" / "rust_boot.bin",
                         help="the resident bootloader, linked for 0x0")
     parser.add_argument("--build-dir", type=Path, default=BUILD)
@@ -351,8 +380,63 @@ def main():
             return 1
 
 
+def refresh_firmware(args, handle):
+    """Rewrite the firmware image from the ELF, then say exactly what will be patched.
+
+    #155. This tool patched from `tmp/rust_fw.bin` and never checked whether that
+    file was current. It is only written as part of a full `soc_run.py`, which is
+    precisely the case where patching is not needed -- so on the fast path this
+    tool exists to serve, its input was stale by construction. The patch then
+    "succeeded", reported `0 of them changed`, verified its own round trip, and
+    loaded firmware several edits behind the source tree. Every layer reported
+    success.
+
+    Deriving beats checking. A staleness check would still leave a window between
+    the check and the read, and would have to be right about which of the ELF, the
+    crate sources and the linker script counts as newer. Rewriting the file from
+    the ELF makes the question not arise.
+
+    The neighbouring gateware check is the model: it REFUSES, says the design
+    elaborates differently than the build directory holds, and names the fix. The
+    firmware side had no equivalent; this is it.
+    """
+    if args.firmware != DEFAULT_FIRMWARE:
+        emit(f"firmware: {rel(args.firmware)} (given explicitly, "
+             f"not derived)", handle)
+    elif args.no_derive:
+        emit("", handle)
+        emit("*** --no-derive: the firmware image was NOT rebuilt from the ELF.", handle)
+        emit("*** If the crate has been rebuilt since this file was written, the", handle)
+        emit("*** bitstream this produces carries the OLD firmware, and a report", handle)
+        emit("*** of `0 of them changed` below will be indistinguishable from", handle)
+        emit("*** success. See #155.", handle)
+        emit("", handle)
+    else:
+        import soc_run
+        if not soc_run.ELF.exists():
+            raise Refuse(
+                f"no {rel(soc_run.ELF)}; there is no compiled firmware "
+                "to derive an image from. Build it with scripts/soc_run.py.")
+        sections, _flash = soc_run.derive_bram_bin(lambda line: emit(line, handle))
+        if sections is None:
+            raise Refuse("could not derive the firmware image from the ELF; the "
+                         "objcopy output above says why. Nothing was patched.")
+
+    if not args.firmware.exists():
+        raise Refuse(f"no {rel(args.firmware)} to patch from")
+
+    # Say WHICH bytes are about to be compared, so a later `0 of them changed` is
+    # qualified by an identity rather than standing on its own.
+    raw = args.firmware.read_bytes()
+    stamp = datetime.fromtimestamp(args.firmware.stat().st_mtime).isoformat(
+        timespec="seconds")
+    emit(f"patching from {rel(args.firmware)}: {len(raw)} bytes, "
+         f"{hashlib.sha256(raw).hexdigest()[:12]}, written {stamp}", handle)
+
+
 def patch(args, handle):
     start = time.monotonic()
+    refresh_firmware(args, handle)
     build_dir = args.build_dir
     config_path = build_dir / "top.config"
     hex_path = build_dir / "firmware.hex"
@@ -421,7 +505,21 @@ def patch(args, handle):
     patched = rewrite(text, mapping, new_slices)
     changed = sum(1 for index in range(SLICES)
                   if inits[mapping[index]] != new_slices[index])
+    # `0 of them changed` was the reassuring reading of a failure: indistinguishable
+    # from "your firmware was already in there", which is normal and welcome. It is
+    # now trustworthy, because the image above was derived from the ELF moments ago
+    # rather than found lying in tmp/ -- but it still says which of the two cases it
+    # is, since the whole lesson of #155 is that a number with one reading is worth
+    # less than a sentence with one meaning.
     emit(f"rewrote {SLICES} blocks, {changed} of them changed", handle)
+    if changed == 0:
+        if args.no_derive or args.firmware != DEFAULT_FIRMWARE:
+            emit("  the bitstream already held these bytes -- but this image was "
+                 "NOT derived from the ELF, so that may instead mean it is stale",
+                 handle)
+        else:
+            emit("  the bitstream already held this exact firmware; the image was "
+                 "derived from the ELF above, so this is a genuine no-op", handle)
 
     out_config = build_dir / "top.patched.config"
     out_config.write_text(patched)
