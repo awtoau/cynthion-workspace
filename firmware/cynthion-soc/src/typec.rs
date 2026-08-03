@@ -25,6 +25,7 @@ use core::fmt::Write;
 
 use crate::bus::Bus;
 use crate::clock::{self, Instant};
+use crate::events;
 use crate::fusb302::{self, Port, State};
 use crate::irq;
 use crate::uart::Uart;
@@ -111,11 +112,12 @@ impl Controllers {
                         self.confirmed[index(port)] = Some(clock::now());
                         crate::log!(
                             uart,
-                            "type-c {}: device {:02x}, vbus {}, {}",
+                            "type-c {}: device {:02x}, vbus {}, {}, cc {}",
                             port.name(),
                             state.device_id,
                             if state.vbus { "present" } else { "absent" },
-                            state.cc()
+                            state.cc(),
+                            state.orientation().name()
                         );
                     }
                     Err(error) => {
@@ -165,29 +167,46 @@ impl Controllers {
             }
             self.serviced[index] = self.serviced[index].wrapping_add(1);
 
-            if let Err(error) = fusb302::clear(bus, port) {
-                // Stamped, like every line nobody asked for: this is the
-                // deferred service path, reached from the main loop rather
-                // than from a typed command.
-                crate::log!(
-                    uart,
-                    "type-c {}: could not clear: {}",
-                    port.name(),
-                    error.as_str()
-                );
-            } else {
-                match fusb302::state(bus, port) {
-                    Ok(state) => {
-                        // Dated on every successful read, including one that
-                        // found nothing changed -- `announce` says nothing in
-                        // that case, and a timestamp that moved only on a
-                        // change would date the reading to the last event
-                        // rather than to the last look. `board` prints it.
-                        self.confirmed[index] = Some(clock::now());
-                        self.announce(uart, port, state);
-                    }
-                    Err(error) => {
-                        crate::log!(uart, "type-c {}: {}", port.name(), error.as_str());
+            match fusb302::clear(bus, port) {
+                Err(error) => {
+                    // Stamped, like every line nobody asked for: this is the
+                    // deferred service path, reached from the main loop rather
+                    // than from a typed command.
+                    crate::log!(
+                        uart,
+                        "type-c {}: could not clear: {}",
+                        port.name(),
+                        error.as_str()
+                    );
+                }
+                Ok(cause) => {
+                    // Why the line asserted, said once, on the pass that cleared
+                    // it. The three registers are read-to-clear, so this is the
+                    // only moment the reason exists anywhere.
+                    //
+                    // Through the event ring rather than `log!`, even though this
+                    // is normal context and a `Uart` is in hand: the record
+                    // explains the `TYPE_C_INT` the handler pushed, and two lines
+                    // about one interrupt belong in one column and in that order.
+                    // The ring also keeps every event's formatting in
+                    // `events::report`, beside every other decode instead of in
+                    // the middle of this loop. A full ring drops it and counts the
+                    // drop, which is the bargain every other event takes.
+                    events::push(events::TYPE_C_CAUSE, cause.payload(index) as u64);
+
+                    match fusb302::state(bus, port) {
+                        Ok(state) => {
+                            // Dated on every successful read, including one that
+                            // found nothing changed -- `announce` says nothing in
+                            // that case, and a timestamp that moved only on a
+                            // change would date the reading to the last event
+                            // rather than to the last look. `board` prints it.
+                            self.confirmed[index] = Some(clock::now());
+                            self.announce(uart, port, state);
+                        }
+                        Err(error) => {
+                            crate::log!(uart, "type-c {}: {}", port.name(), error.as_str());
+                        }
                     }
                 }
             }
@@ -264,10 +283,11 @@ impl Controllers {
         self.state[index(port)] = Some(state);
         crate::log!(
             uart,
-            "type-c {}: vbus {}, {}",
+            "type-c {}: vbus {}, {}, cc {}",
             port.name(),
             if state.vbus { "present" } else { "absent" },
-            state.cc()
+            state.cc(),
+            state.orientation().name()
         );
     }
 }
@@ -316,14 +336,23 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus:
         // ones -- have exactly one reader, and it is `service` above.
         match fusb302::state(bus, port) {
             Ok(state) => {
+                // The orientation and the two bands it was derived from, in that
+                // order. The verdict is what a reader wants and the bands are how
+                // they check it -- `cc2` beside `0/2` says which pin and why,
+                // where `cc2` alone has to be taken on trust. It is UNVALIDATED
+                // ON HARDWARE either way: see `fusb302::Orientation`.
+                let (cc1, cc2) = state.bands();
                 let _ = writeln!(
                     uart,
-                    "  {:6} device {:02x}  vbus {:7}  {:22}  int {}  fault {}  \
-                     serviced {}",
+                    "  {:6} device {:02x}  vbus {:7}  {:22}  cc {:4} {}/{}  int {}  \
+                     fault {}  serviced {}",
                     port.name(),
                     state.device_id,
                     if state.vbus { "present" } else { "absent" },
                     state.cc(),
+                    state.orientation().name(),
+                    cc1,
+                    cc2,
                     fusb302::asserting(lines, port) as u8,
                     fusb302::faulting(lines, port) as u8,
                     controllers.serviced[index(port)]

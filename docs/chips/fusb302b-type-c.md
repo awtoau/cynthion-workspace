@@ -181,6 +181,8 @@ is that a state change can be looked into when it happens instead of polled.
 | the mux that *is* on silicon | `ecp5-test/riscv/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
 | firmware | `firmware/cynthion-soc/src/bus.rs` (owns the controller and the select), `fusb302.rs`, `typec.rs` |
 | bus and device ownership | `scripts/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
+| orientation and interrupt decode | `scripts/soc_typec_sim.py` — both bands from one comparator, and the read-to-clear registers |
+| the cable-reversal experiment | `scripts/typec_watch.py` — the only thing that can validate orientation |
 | `DEVICE_ID` decode helper | `scripts/sideband_decoder.py` |
 
 **There is no host-side script for either applet.** The values above were read ad
@@ -219,6 +221,11 @@ type-c @f0000620  lines 00  irq serviced 0  configured
 `device 91` is version 9 revision 1 — FUSB302B revision B — on both, matching
 what `fusb302_id.py` read over JTAG. `typec init` re-runs the configuration.
 
+That capture is kept as it was read. The line has since gained a `cc` column —
+the orientation and the two bands behind it — so a current reading of the same
+port has `cc none 0/0` or `cc cc2 0/1` after the status text. TARGET's
+`nothing on CC` above is the reading that motivated it.
+
 **The select is written before every transaction and never remembered.** Nothing
 in a reply says which bus it came from: both controllers answer `0x22` and both
 report `0x91`, so a stale select does not produce an error, it produces a
@@ -239,6 +246,7 @@ presents to whatever is plugged into it:
 | `RESET` | `SW_RES` | start from documented values, not from what a previous bitstream left |
 | `POWER` | bandgap+wake, measure, receiver | not the internal oscillator — that is only needed to *send* PD messages |
 | `SWITCHES0` | `MEAS_CC1` | routes CC1 to the comparator; **drives nothing** |
+| `SWITCHES0`, per reading | `MEAS_CC1`, then `MEAS_CC2`, then back | one comparator, two pins — see *Orientation* below |
 | `MASK` | `I_BC_LVL` and `I_VBUSOK` unmasked | CC level and VBUS: the two state changes worth an interrupt |
 | `MASKA`, `MASKB` | all masked | PD and hard-reset events, which nothing acts on yet — an unmasked interrupt with no handler is a storm on a shared level line |
 | `CONTROL0` | `INT_MASK` cleared | the switch that lets the `INT` pin assert at all. Its reset value is *masked*, which is why these parts never interrupted before |
@@ -252,6 +260,35 @@ board whose CC lines nothing in this tree has ever driven. `MEAS_CC1` still give
 `BC_LVL` (the voltage a source's Rp puts on CC) and `VBUSOK`, which is a state
 change on both ports obtained without asserting anything onto a connector.
 Enabling them is a one-line change with a known consequence.
+
+### Orientation — read, and NOT yet validated
+
+There is one comparator and two CC pins, and `SWITCHES0` decides which pin it
+sees. The driver used to write `MEAS_CC1` once and never move it, so **a cable
+whose CC landed on CC2 was indistinguishable from an empty port** — which is
+exactly what TARGET reported above: `vbus present  nothing on CC`, with something
+plugged in.
+
+`fusb302::state` now reads both. It reads `SWITCHES0`, points the comparator at
+CC1, reads `STATUS0`, points it at CC2, reads `STATUS0` again, and writes the
+original value back byte for byte. Only the measure-select field moves, so the
+pull enables — including the `PU_EN1`/`PU_EN2` a source role sets — survive a
+reading, and `PDWN1`/`PDWN2` stay clear throughout. The comparator needs no
+explicit settling delay: each write and the read after it are separate I2C
+transactions, several hundred microseconds apart at 80 kHz.
+
+While `CONTROL2.TOGGLE` is set the part's own polling owns `SWITCHES0`, so the
+sweep is skipped entirely and orientation comes from `STATUS1A.TOGSS` instead. A
+pin that was not measured reports as absent rather than as zero: `board` and
+`typec` show `cc ?` with bands `-/-`, which is a different statement from `none`.
+
+**None of this has been validated on hardware.** It is checked by
+`scripts/soc_typec_sim.py` against a model whose `STATUS0` really does answer
+about whichever pin the select reaches, and it is checked structurally against the
+Rust — but the only test that can distinguish a correct reading from a plausible
+one is a cable inserted one way and then the other. `scripts/typec_watch.py` is
+the tool for that experiment and its `cc` column is what to watch. Until it has
+been run, treat `cc1`/`cc2` as "the comparator saw a band on that pin".
 
 ### TARGET-C as a source
 
@@ -294,6 +331,22 @@ The handler **records rather than prints**: printing from a handler spins on a
 UART FIFO inside an interrupt. See `firmware/cynthion-soc/src/events.rs` and
 `docs/hardware.md`. The record now carries the port, which the shared source could
 not supply without a register read.
+
+**The three registers say why, and that survives the read.** They are read-to-clear,
+so the values the clear returns are the only record of the cause that will ever
+exist — reading them again gives zero. `fusb302::clear` hands them back,
+`typec::service` pushes them through the same deferred ring the handler's record
+went into, and `events::report` prints the set bits by name with the raw bytes
+beside them:
+
+```
+000012.481  type-c: int asserted, port 01
+000012.483  type-c target: int I_BC_LVL I_VBUSOK (81 00 00)
+```
+
+The hex is not redundant: a reserved bit has no name, and the raw registers are
+what a datasheet page can be checked against. `nothing latched` is a real answer —
+a masked event still latches without raising the pin.
 
 `fault` is kept out of the interrupt entirely. It means something different from
 `int` and is meant to be distinguishable without a register read, and **nothing

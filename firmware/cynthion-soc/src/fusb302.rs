@@ -19,7 +19,10 @@
 //!     events, and nothing here acts on one yet; unmasking them would produce
 //!     interrupts with no handler, which on a shared level-sensitive line is a
 //!     storm rather than a curiosity.
-//!   * `SWITCHES0` -- `MEAS_CC1` only.
+//!   * `SWITCHES0` -- `MEAS_CC1` only. [`state`] toggles the measure select to
+//!     `MEAS_CC2` and back to read the other band; that select routes a pin to
+//!     an internal comparator and drives nothing, so the port is unchanged
+//!     electrically either way.
 //!   * `CONTROL0` -- clear `INT_MASK`, which is what lets the `INT` pin assert
 //!     at all.
 //!
@@ -64,6 +67,9 @@
 //! called from the main loop -- clears every asserting device and re-enables it.
 //! The storm cannot happen because the source is off for the whole window in
 //! which the line is still asserted.
+
+use core::fmt;
+use core::fmt::Write as _;
 
 use crate::bus::{
     self, Bus, BUS_AUX_C, BUS_TARGET_C, LINE_AUX_FAULT, LINE_AUX_INT, LINE_TARGET_FAULT,
@@ -116,6 +122,21 @@ const POWER_BLOCKS: u8 = 0b0000_0111;
 /// see the module comment.
 const SWITCHES0_MEASURE_CC1: u8 = 1 << 2;
 
+/// `SWITCHES0`: route CC2 to the measure block instead. `MEAS_CC2` is bit 3.
+///
+/// The other half of orientation. There is one comparator, so the two pins are
+/// read one after the other rather than together, and [`state`] is the only
+/// thing that moves this bit.
+const SWITCHES0_MEASURE_CC2: u8 = 1 << 3;
+
+/// Both measure selects, so a sweep can clear them before setting one and put
+/// back exactly what it found.
+///
+/// The datasheet permits both at once and the result is then the OR of the two
+/// pins, which is a reading that cannot be attributed to either. One at a time
+/// is the only way to get two numbers out of one comparator.
+const SWITCHES0_MEASURE: u8 = SWITCHES0_MEASURE_CC1 | SWITCHES0_MEASURE_CC2;
+
 /// Present Rp on both receptacle pins while autonomous source polling resolves
 /// orientation. The sink pull-down bits are clear: TARGET-C is deliberately
 /// changing to the opposite role, while AUX remains measure-only and untouched.
@@ -142,6 +163,17 @@ const CONTROL0_INTERRUPTS_ON: u8 = 0b0000_0000;
 /// `CONTROL2.MODE=SRC`, `TOGGLE=1`: poll both CC pins and settle on the one
 /// carrying Rd, rather than assuming cable orientation.
 const CONTROL2_SOURCE_TOGGLE: u8 = 0x07;
+
+/// `CONTROL2.TOGGLE`, bit 0: the autonomous polling state machine is running.
+///
+/// Read by [`state`], and the reason it is read: while this is set the part's
+/// own logic owns `SWITCHES0` -- it is what is flipping the pull-ups and the
+/// measure select between CC1 and CC2 to find the cable. A sweep that wrote that
+/// register underneath it would be a second writer, and the damage is not a bad
+/// reading but a disturbed search. So when this bit is set the sweep is skipped
+/// and orientation comes from `STATUS1A.TOGSS`, which is the answer the part
+/// worked out itself.
+const CONTROL2_TOGGLE: u8 = 1 << 0;
 
 /// `STATUS0` bit 7: VBUS is above the vSafe5V threshold.
 const STATUS0_VBUSOK: u8 = 1 << 7;
@@ -198,6 +230,43 @@ impl Port {
     }
 }
 
+/// Which CC pin the cable landed on, as far as this driver can tell.
+///
+/// **Unvalidated on hardware.** Deriving this needs no board, but confirming it
+/// needs one cable inserted both ways round -- the reading is a claim about a
+/// physical connector and nothing simulated can check it. Until that has been
+/// done, treat a `Cc1`/`Cc2` here as "the comparator saw a band on that pin",
+/// which is what it literally is, and not as a proven orientation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Orientation {
+    /// Neither pin was measured. The controller's own toggle machine owns
+    /// `SWITCHES0` and has not settled, so this driver has nothing to go on --
+    /// distinct from having looked and found nothing.
+    Unknown,
+    /// Both pins measured, neither shows a band. Nothing attached, or attached
+    /// with no source presenting Rp.
+    Unattached,
+    Cc1,
+    Cc2,
+    /// A band on both pins. Not a contradiction: a debug or audio accessory
+    /// presents on both, and so does a source whose Rp reaches both pins through
+    /// a fault. Reported as itself rather than resolved to a guess.
+    Both,
+}
+
+impl Orientation {
+    /// The word the shell and the board tree print.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Orientation::Unknown => "?",
+            Orientation::Unattached => "none",
+            Orientation::Cc1 => "cc1",
+            Orientation::Cc2 => "cc2",
+            Orientation::Both => "both",
+        }
+    }
+}
+
 /// What one controller reports about its port.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct State {
@@ -205,11 +274,18 @@ pub struct State {
     pub device_id: u8,
     /// VBUS is present on this port.
     pub vbus: bool,
-    /// The CC voltage band the comparator reports: 0 nothing, 1 vRd-USB, 2
-    /// vRd-1.5, 3 vRd-3.0. Meaningful only with the measure block routed to a
-    /// CC pin, which [`configure`] does.
-    pub bc_lvl: u8,
-    /// `STATUS1A.TOGSS`: 1/2 mean source polling settled on CC1/CC2.
+    /// The CC voltage band on CC1: 0 nothing, 1 vRd-USB, 2 vRd-1.5, 3 vRd-3.0.
+    ///
+    /// `None` when the sweep was skipped because the part's toggle machine owns
+    /// `SWITCHES0` -- see [`CONTROL2_TOGGLE`]. A band of 0 and an absent reading
+    /// are different facts and a driver that conflated them would report "nothing
+    /// on CC" for a port it never looked at.
+    pub cc1: Option<u8>,
+    /// The same band on CC2, read by moving the measure select. Without this,
+    /// a cable whose CC landed on CC2 is indistinguishable from no cable.
+    pub cc2: Option<u8>,
+    /// `STATUS1A.TOGSS`: 1/2 mean source polling settled on CC1/CC2, 3/4 the
+    /// same as a sink.
     pub source_cc: u8,
 }
 
@@ -274,54 +350,298 @@ pub fn source_target(bus: &mut Bus, current: HostCurrent) -> Result<(), bus::Err
     write(bus, port, REG_CONTROL2, CONTROL2_SOURCE_TOGGLE)
 }
 
-/// Read and discard all three interrupt registers.
+/// Read all three interrupt registers, and RETURN what they said.
 ///
 /// **This is what drops the `INT` line**, and all three have to be read: they
 /// are read-to-clear, the line is the OR of them inside the part, and leaving
-/// one set leaves the pin asserted. On a shared level-sensitive source that is
-/// the storm the module comment describes, so "read every one, always" is the
-/// rule rather than "read the one you expect".
+/// one set leaves the pin asserted. On a level-sensitive source that is the storm
+/// the module comment describes, so "read every one, always" is the rule rather
+/// than "read the one you expect".
+///
+/// The bits used to be dropped on the floor here. Reading them is compulsory and
+/// they are the only record of WHY the line asserted -- the registers cannot be
+/// read a second time to find out, because the first read is what cleared them.
+/// So the values come back as [`Interrupts`], which knows their names, and
+/// `typec::Controllers::service` logs one line naming the cause. An interrupt
+/// count that moves with no cause beside it is a number; a count with `I_BC_LVL`
+/// beside it is evidence.
 ///
 /// **`typec::Controllers::service` is the only caller, and that is a rule.** The
-/// three registers are read-to-clear, so any second reader takes the event away
-/// from the thing that services it, and the symptom is an interrupt whose cause
-/// nobody can name -- the same shape of fault as reading the PAC1954 out from
-/// under its poller, and harder to see. `state()` below is what a reporter wants,
-/// and it touches nothing that clears.
-pub fn clear(bus: &mut Bus, port: Port) -> Result<(), bus::Error> {
-    read(bus, port, REG_INTERRUPT)?;
-    read(bus, port, REG_INTERRUPTA)?;
-    read(bus, port, REG_INTERRUPTB)?;
-    Ok(())
+/// registers are read-to-clear, so any second reader takes the event away from
+/// the thing that services it, and the symptom is an interrupt whose cause nobody
+/// can name -- the same shape of fault as reading the PAC1954 out from under its
+/// poller, and harder to see. `state()` below is what a reporter wants, and it
+/// touches nothing that clears.
+pub fn clear(bus: &mut Bus, port: Port) -> Result<Interrupts, bus::Error> {
+    Ok(Interrupts {
+        interrupt: read(bus, port, REG_INTERRUPT)?,
+        interrupta: read(bus, port, REG_INTERRUPTA)?,
+        interruptb: read(bus, port, REG_INTERRUPTB)?,
+    })
 }
 
-/// What one controller currently says about its port.
+/// `INTERRUPT` bit names, bit 0 first. FUSB302B datasheet page 25.
+const INTERRUPT_NAMES: [&str; 8] = [
+    "I_BC_LVL",
+    "I_COLLISION",
+    "I_WAKE",
+    "I_ALERT",
+    "I_CRC_CHK",
+    "I_COMP_CHNG",
+    "I_ACTIVITY",
+    "I_VBUSOK",
+];
+
+/// `INTERRUPTA` bit names, bit 0 first.
+const INTERRUPTA_NAMES: [&str; 8] = [
+    "I_HARDRST",
+    "I_SOFTRST",
+    "I_TXSENT",
+    "I_HARDSENT",
+    "I_RETRYFAIL",
+    "I_SOFTFAIL",
+    "I_TOGDONE",
+    "I_OCP_TEMP",
+];
+
+/// `INTERRUPTB` bit names. Only bit 0 is defined; bits 1-7 are reserved and are
+/// printed as `3f.N` if one ever appears, because a reserved bit that is set is
+/// worth seeing rather than dropping.
+const INTERRUPTB_NAMES: [&str; 1] = ["I_GCRCSENT"];
+
+/// The three read-to-clear interrupt registers, as one read of a part found them.
 ///
-/// Safe for anyone to call: `DEVICE_ID` and `STATUS0` are plain registers with no
-/// read side effect and no window around them, so unlike [`clear`] this does not
-/// need a single owner. A part with an interrupt pending still has it pending
-/// afterwards.
+/// Every bit here has a name in the datasheet, and the whole value of the type is
+/// that the name survives as far as the log line. It is [`Copy`] and 24 bits of
+/// payload so it can travel through the deferred event ring as one `u32` -- see
+/// [`Interrupts::payload`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Interrupts {
+    pub interrupt: u8,
+    pub interrupta: u8,
+    pub interruptb: u8,
+}
+
+impl Interrupts {
+    /// Pack a port index and the three registers into one event payload.
+    ///
+    /// One `u32`, so the record stays the fixed-size code-and-value pair
+    /// `src/events.rs` insists on. The port goes in the top byte because the
+    /// line has to say which connector it is about, and the alternative -- a
+    /// record per port code -- would double the codes to carry one bit.
+    pub const fn payload(&self, port: usize) -> u32 {
+        ((port as u32 & 0xff) << 24)
+            | ((self.interrupt as u32) << 16)
+            | ((self.interrupta as u32) << 8)
+            | self.interruptb as u32
+    }
+
+    /// The inverse, for `events::report` to render at drain time.
+    pub const fn from_payload(value: u32) -> Interrupts {
+        Interrupts {
+            interrupt: (value >> 16) as u8,
+            interrupta: (value >> 8) as u8,
+            interruptb: value as u8,
+        }
+    }
+
+    /// Which port a payload was about.
+    pub const fn port_of(value: u32) -> usize {
+        (value >> 24) as usize
+    }
+}
+
+impl fmt::Display for Interrupts {
+    /// The set bits by name, then all three values in hex.
+    ///
+    /// The hex is not redundant with the names. A reserved bit has no name, a
+    /// name table can be wrong, and the raw registers are what a datasheet page
+    /// can be checked against -- so the decode is offered alongside the evidence
+    /// for it rather than in place of it. Three bytes is a cheap price for a log
+    /// line that cannot mislead about what was actually read.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut named = false;
+        for (value, names, register) in [
+            (self.interrupt, &INTERRUPT_NAMES[..], REG_INTERRUPT),
+            (self.interrupta, &INTERRUPTA_NAMES[..], REG_INTERRUPTA),
+            (self.interruptb, &INTERRUPTB_NAMES[..], REG_INTERRUPTB),
+        ] {
+            for bit in 0..8 {
+                if value & (1 << bit) == 0 {
+                    continue;
+                }
+                if named {
+                    f.write_char(' ')?;
+                }
+                named = true;
+                match names.get(bit) {
+                    Some(name) => f.write_str(name)?,
+                    None => write!(f, "{:02x}.{}", register, bit)?,
+                }
+            }
+        }
+        if !named {
+            // Not an error and not impossible: a masked event still latches in
+            // these registers without ever raising the pin, and the part can
+            // clear its own condition between asserting and being read. Said out
+            // loud, because a blank where a cause should be reads as a bug in
+            // this decoder.
+            f.write_str("nothing latched")?;
+        }
+        write!(
+            f,
+            " ({:02x} {:02x} {:02x})",
+            self.interrupt, self.interrupta, self.interruptb
+        )
+    }
+}
+
+/// What one controller currently says about its port, both CC pins included.
+///
+/// **The orientation this produces is unvalidated on hardware.** The sweep below
+/// is written, reviewed and simulated (`scripts/soc_typec_sim.py`); what it has
+/// never had is a cable inserted one way and then the other on a board. That is
+/// the only test that can distinguish a correct reading from a plausible one, and
+/// until it has been run `State::orientation` is a claim rather than a fact.
+///
+/// Still safe for anyone to call, but for a narrower reason than before. It now
+/// WRITES `SWITCHES0`, because one comparator cannot see two pins at once:
+///
+///   * The measure select is the only field touched. The register is read first
+///     and put back byte for byte, so `PDWN1`/`PDWN2` and the `PU_EN` bits the
+///     source role sets are carried through untouched -- this cannot change what
+///     the port presents to a connector, which is the one property the module
+///     comment refuses to give up.
+///   * A bus error part way through leaves the select on CC2. That is a routing
+///     bit into a comparator and drives nothing, so the port is still electrically
+///     as it was; the next successful call restores it.
+///   * When `CONTROL2.TOGGLE` is set the part's own logic is driving this
+///     register, so the sweep is skipped entirely and both bands come back
+///     `None`. Orientation then comes from `TOGSS`, which is that logic's answer.
+///
+/// The measure block is given no explicit settling delay and does not need one:
+/// each write and the read after it are separate I2C transactions, three bytes
+/// and four bytes at 80 kHz, so several hundred microseconds pass between the
+/// select moving and `STATUS0` being sampled. A delay here would be a number with
+/// no reason behind it sitting on top of one the bus already provides.
+///
+/// The read-only registers are unchanged in character: `DEVICE_ID`, `STATUS0`,
+/// `STATUS1A` and `CONTROL2` have no read side effect, so unlike [`clear`] this
+/// still takes nothing away from the thing that services an interrupt.
 pub fn state(bus: &mut Bus, port: Port) -> Result<State, bus::Error> {
     let device_id = read(bus, port, REG_DEVICE_ID)?;
-    let status0 = read(bus, port, REG_STATUS0)?;
+    let control2 = read(bus, port, REG_CONTROL2)?;
+    let switches0 = read(bus, port, REG_SWITCHES0)?;
+
+    let (status0, cc1, cc2) = if control2 & CONTROL2_TOGGLE != 0 {
+        (read(bus, port, REG_STATUS0)?, None, None)
+    } else {
+        // Everything except the measure select, so each half of the sweep is the
+        // register as found with one field replaced.
+        let base = switches0 & !SWITCHES0_MEASURE;
+
+        write(bus, port, REG_SWITCHES0, base | SWITCHES0_MEASURE_CC1)?;
+        let status0 = read(bus, port, REG_STATUS0)?;
+        write(bus, port, REG_SWITCHES0, base | SWITCHES0_MEASURE_CC2)?;
+        let status0_cc2 = read(bus, port, REG_STATUS0)?;
+        // Back to what was found, not to `MEAS_CC1`: a caller that had neither
+        // select on gets neither back.
+        write(bus, port, REG_SWITCHES0, switches0)?;
+
+        (
+            status0,
+            Some(status0 & STATUS0_BC_LVL),
+            Some(status0_cc2 & STATUS0_BC_LVL),
+        )
+    };
+
     let status1a = read(bus, port, REG_STATUS1A)?;
     Ok(State {
         device_id,
+        // From the CC1 half, arbitrarily: `VBUSOK` is a comparator on VBUS and
+        // has nothing to do with where the measure select points.
         vbus: status0 & STATUS0_VBUSOK != 0,
-        bc_lvl: status0 & STATUS0_BC_LVL,
+        cc1,
+        cc2,
         source_cc: (status1a >> 3) & 0b111,
     })
 }
 
 impl State {
+    /// Which CC pin the cable is on, as far as a measure-only driver can tell.
+    ///
+    /// **Unvalidated on hardware** -- see [`Orientation`] and [`state`]. The
+    /// derivation is the whole of what is known:
+    ///
+    ///   * `TOGSS` wins when it has settled. The part resolved orientation with
+    ///     its own state machine and that is a better answer than two bands.
+    ///   * Otherwise, exactly one pin showing a band is that pin. This is the
+    ///     case the driver was blind to: with only CC1 ever routed, a cable on
+    ///     CC2 read as `nothing on CC` and matched the TARGET hardware log
+    ///     exactly.
+    ///   * Both pins, or neither, are reported as themselves.
+    pub fn orientation(&self) -> Orientation {
+        // TOGSS: 1 source on CC1, 2 source on CC2, 3 sink on CC1, 4 sink on CC2.
+        match self.source_cc {
+            1 | 3 => return Orientation::Cc1,
+            2 | 4 => return Orientation::Cc2,
+            _ => {}
+        }
+        match (self.cc1, self.cc2) {
+            (Some(0), Some(0)) => Orientation::Unattached,
+            (Some(_), Some(0)) => Orientation::Cc1,
+            (Some(0), Some(_)) => Orientation::Cc2,
+            (Some(_), Some(_)) => Orientation::Both,
+            // Nothing measured and no toggle result: not "nothing attached".
+            _ => Orientation::Unknown,
+        }
+    }
+
+    /// The band on whichever pin the orientation picked.
+    ///
+    /// CC1 for anything that is not specifically CC2, including `Both` -- with a
+    /// band on each pin the two are the same reading twice over, and picking the
+    /// lower-numbered one keeps the answer stable rather than making it depend on
+    /// which comparison ran first.
+    fn band(&self) -> u8 {
+        let pin = match self.orientation() {
+            Orientation::Cc2 => self.cc2,
+            _ => self.cc1,
+        };
+        pin.unwrap_or(0)
+    }
+
+    /// The two bands as characters, CC1 then CC2, `-` for a pin the sweep
+    /// skipped.
+    ///
+    /// The evidence behind [`State::orientation`], for the command that has room
+    /// to print both. A verdict of `cc2` next to `0/2` is checkable; the verdict
+    /// on its own has to be trusted.
+    pub fn bands(&self) -> (char, char) {
+        fn digit(band: Option<u8>) -> char {
+            match band {
+                // 0..=3, so one digit, and no `core::fmt` integer path for it.
+                Some(band) => (b'0' + (band & 0b11)) as char,
+                None => '-',
+            }
+        }
+        (digit(self.cc1), digit(self.cc2))
+    }
+
     /// One line's worth of description, for the shell and the change log.
+    ///
+    /// `nothing on CC` is now a statement about BOTH pins. It used to be a
+    /// statement about CC1 that read as one about the port, which is the fault
+    /// this change is here to remove; a port whose bands were never sampled says
+    /// so instead.
     pub fn cc(&self) -> &'static str {
-        match (self.source_cc, self.bc_lvl) {
-            (1, _) => "source on CC1",
-            (2, _) => "source on CC2",
-            (_, 0) => "nothing on CC",
-            (_, 1) => "vRd-USB (default current)",
-            (_, 2) => "vRd-1.5A",
+        match (self.source_cc, self.orientation(), self.band()) {
+            (1, _, _) => "source on CC1",
+            (2, _, _) => "source on CC2",
+            (_, Orientation::Unknown, _) => "CC not measured",
+            (_, _, 0) => "nothing on CC",
+            (_, _, 1) => "vRd-USB (default current)",
+            (_, _, 2) => "vRd-1.5A",
             _ => "vRd-3.0A",
         }
     }

@@ -149,6 +149,7 @@ use core::fmt;
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
+use crate::fusb302::{Interrupts, Port};
 use crate::log;
 use crate::uart::Uart;
 
@@ -258,6 +259,17 @@ pub const TYPE_C_INT: u32 = code(TAG_U8, SUB_TYPE_C, 1);
 /// Distinct from [`TYPE_C_INT`] because it means something different, and it is
 /// the one worth noticing without having to read a register first.
 pub const TYPE_C_FAULT: u32 = code(TAG_U8, SUB_TYPE_C, 2);
+
+/// Why a Type-C `int` line asserted: the port and the three read-to-clear
+/// interrupt registers, packed by `fusb302::Interrupts::payload`.
+///
+/// Pushed by `typec::Controllers::service` -- normal context, not a handler --
+/// and it belongs here anyway. The registers are read-to-clear, so their contents
+/// exist exactly once and only in the reader's hand; putting them in this ring
+/// keeps them in the same stamped column as the [`TYPE_C_INT`] record they
+/// explain, and keeps the decoding beside every other decoding rather than in the
+/// middle of the service loop.
+pub const TYPE_C_CAUSE: u32 = code(TAG_U32, SUB_TYPE_C, 3);
 
 /// A test record, pushed by the `log` shell command. The payload is the
 /// sequence number the command gave it.
@@ -644,6 +656,22 @@ fn report(uart: &mut Uart, at: log::Stamp, code: u32, value: u64) {
                 at,
                 "type-c: FAULT asserted, controllers {:02x}",
                 value as u8
+            );
+        }
+        TYPE_C_CAUSE => {
+            let value = value as u32;
+            crate::log_at!(
+                uart,
+                at,
+                "type-c {}: int {}",
+                match Port::ALL.get(Interrupts::port_of(value)) {
+                    Some(port) => port.name(),
+                    // A payload built by something other than `Interrupts::payload`.
+                    // Printed rather than indexed into, on the same principle as the
+                    // broken-promise arm of `Payload`.
+                    None => "?",
+                },
+                Interrupts::from_payload(value)
             );
         }
         TEST => {

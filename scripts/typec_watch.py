@@ -30,6 +30,16 @@ attach detection the current configuration actually buys. Record it either way.
 AUX reads `vRd-3.0A` because it is the port carrying this console. Do not unplug
 it to generate an event: it is the wire these readings arrive on.
 
+## The orientation columns are UNVALIDATED
+
+`cc` and `bands` come from the driver reading both CC pins by moving the measure
+select (#151). That code compiles and simulates; **it has never had a cable in a
+connector.** The experiment it needs is exactly the one this tool is for: plug
+TARGET-C one way, record `cc`, flip the plug, record it again. If `cc` swaps
+between `cc1` and `cc2` while `bands` swaps with it, the derivation is right. If
+it does not move, the derivation is wrong or the port is not being measured, and
+the two are told apart by `bands` -- `-/-` means the sweep was skipped.
+
 ## Usage
 
     ./scripts/typec_watch.py                 # until interrupted
@@ -55,21 +65,36 @@ sys.path.insert(0, str(ROOT / "scripts"))
 # The fields worth reporting a change in. `serviced` is the one this exists for:
 # it is the count of interrupts the firmware actually handled, and it has never
 # been anything but zero.
+#
+# `cc` and `bands` are the orientation columns: which pin the driver thinks the
+# cable is on, and the two BC_LVL readings it derived that from. They are here
+# because reversing a cable is the ONE experiment that can validate the
+# derivation, and this is the tool that would be running while someone does it --
+# a `cc` that moves cc1 -> cc2 when the plug is flipped is the evidence; a `cc`
+# that does not move is equally a result.
 PORT_RE = re.compile(
-    r"^\s*(target|aux)\s+device\s+(\w+)\s+(.*?)\s+int\s+(\d+)\s+fault\s+(\d+)\s+"
-    r"serviced\s+(\d+)", re.M)
+    r"^\s*(target|aux)\s+device\s+(\w+)\s+(.*?)\s+cc\s+(\S+)\s+(\S)/(\S)\s+"
+    r"int\s+(\d+)\s+fault\s+(\d+)\s+serviced\s+(\d+)", re.M)
 IRQ_RE = re.compile(r"type-c (target|aux)\s+src (\d+) irqs (\d+)")
 
 
-def sample(shell):
+def sample(shell, emit=None):
     """One reading of both controllers, as {port: dict}."""
     text = shell("typec") + "\n" + shell("irq")
     state = {}
-    for port, dev, status, intr, fault, serviced in PORT_RE.findall(text):
+    for port, dev, status, cc, cc1, cc2, intr, fault, serviced in \
+            PORT_RE.findall(text):
         state[port] = {"device": dev, "status": status.strip(),
+                       "cc": cc, "bands": f"{cc1}/{cc2}",
                        "int": intr, "fault": fault, "serviced": serviced}
     for port, _src, irqs in IRQ_RE.findall(text):
         state.setdefault(port, {})["irqs"] = irqs
+    # A parser that stops matching reports "nothing changed" forever, which is
+    # indistinguishable from the result this tool exists to record. So it says so
+    # instead: the reply had a port line in it and this could not read it.
+    if emit is not None and not state and "device" in text:
+        emit("  the `typec` reply did not parse -- the shell's format has moved "
+             "ahead of PORT_RE")
     return state
 
 
@@ -129,7 +154,7 @@ def main():
         emit("PDWN1/2 are off, so no change is a RESULT, not a failure")
         emit()
 
-        previous = sample(shell)
+        previous = sample(shell, emit)
         for port, fields in sorted(previous.items()):
             emit(f"  {port:7} {fields}")
         emit()
@@ -138,6 +163,9 @@ def main():
         try:
             while args.polls == 0 or polls < args.polls:
                 polls += 1
+                # No `emit` here: the first sample above has already said if the
+                # format moved, and repeating it once per poll would bury the
+                # changes this prints.
                 current = sample(shell)
                 for port, field, was, now in differences(previous, current):
                     emit(f"  CHANGED  {port:7} {field:9} {was} -> {now}")

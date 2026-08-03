@@ -228,11 +228,16 @@ fn controller(uart: &mut Uart, stem: &str, type_c: &Controllers, port: Port) {
     let _ = write!(uart, "{}typec      ", stem);
     match type_c.cached(port) {
         Some((state, at)) => {
+            // Which CC pin the cable is on, between the band and the date. One
+            // word rather than the two bands `typec` prints: this is the tree,
+            // and the tree's job is the verdict. **The verdict is unvalidated on
+            // hardware** -- see `fusb302::Orientation`.
             let _ = write!(
                 uart,
-                "vbus {:7}  {:25}  [{}]",
+                "vbus {:7}  {:25}  cc {:4}  [{}]",
                 if state.vbus { "present" } else { "absent" },
                 state.cc(),
+                state.orientation().name(),
                 Since("confirmed", power::age_of(Some(at)))
             );
             // The identity only when it is wrong. `0x91` is version 9 revision 1

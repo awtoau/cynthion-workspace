@@ -694,6 +694,12 @@ power  pac1954 @10 on the power bus, polled every 50 ms  [sampled 61 ms ago]
      phy        0424:0009 usb3343    linestate se0      [live]
 ```
 
+That capture is kept as it was read. The `typec` rows have since gained a `cc`
+column between the status and the date — `cc none`, `cc cc1`, `cc cc2`, `cc both`
+or `cc ?` for a port whose CC pins were not measured. **The orientation behind it
+is unvalidated on hardware**; see
+[the FUSB302B note](chips/fusb302b-type-c.md#orientation--read-and-not-yet-validated).
+
 **It reads no bus.** Every number comes from a cache the 50 ms poller or the
 Type-C interrupt path already filled — a live sweep here would be a dozen I2C
 transactions from the command that touches every device, which is the single most
