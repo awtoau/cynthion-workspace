@@ -78,12 +78,17 @@ BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 
-# Measured on this design: 64 s -> 59 s, with no change to utilisation.
+# Imported rather than restated. `fast_build_env.py` held a byte-identical copy of this
+# string and the reasoning behind it, and `./dev.py audit` found it by reporting it as
+# unreachable -- two definitions of the same build flags, one of which nothing called.
+# The next person to tune one would have tuned the wrong one.
 #
-# --threads alone does nothing, which is the trap: nextpnr's SA refinement is 16 of its
-# 24 seconds and is serial unless --parallel-refine is passed. --router router2 recovers
-# the Fmax that --parallel-refine on its own gives up.
-NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
+# Measured on this design: 64 s -> 59 s, with no change to utilisation. --threads alone
+# does nothing, which is the trap: nextpnr's SA refinement is 16 of its 24 seconds and is
+# serial unless --parallel-refine is passed. --router router2 recovers the Fmax that
+# --parallel-refine on its own gives up. Full workings in fast_build_env.py.
+sys.path.insert(0, str(ROOT / "scripts"))
+from fast_build_env import NEXTPNR_OPTS  # noqa: E402
 
 
 def run(cmd, cwd=None, env=None, shell=False):

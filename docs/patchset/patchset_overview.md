@@ -1,8 +1,11 @@
 ## Apollo Modification History
 
-The canonical patch artifact for the current set is:
-
-- [patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff](../../patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff)
+The canonical patch artifact for the current set was
+`patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff`. That directory no
+longer exists: the patch was applied to the `repos/apollo` submodule, so the
+change itself is the record and a loose diff beside it would only be a second,
+divergent copy. Recover the text with `git log` in the submodule if the
+before-and-after is needed.
 
 For the evidence/issue workflow that goes with these changes, see [apollo_change_process.md](../apollo_samd11_mcu/apollo_change_process.md).
 
@@ -16,8 +19,8 @@ The build-system work that introduced logging, fail-fast checks, and parallel ex
 
 ### 2026-07-22 - Apollo console/UART race hardening
 
-Patch set:
-- [0000-wip-issue22-apollo-fixes-20260722.diff](../../patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff)
+Patch set: `0000-wip-issue22-apollo-fixes-20260722.diff`, applied to the
+`repos/apollo` submodule (see above).
 
 Files touched:
 - `firmware/src/console.c`

@@ -132,6 +132,18 @@ def references_from(path, names):
             continue
         if name in text:
             found.add(name)
+            continue
+        # A script named WITHOUT its suffix, as a quoted module name.
+        #
+        # `soc_sims.py` holds `SIMS = ["soc_bus_sim", "soc_clint_sim", ...]` and
+        # imports each one, so a search for "soc_clint_sim.py" finds nothing and
+        # three simulations that run on every `./dev.py sim` were reported as
+        # orphans. Quoted-exact rather than bare, because stems like `check` and
+        # `install` are ordinary words and an unquoted match would make almost
+        # everything look reachable.
+        stem = name[:-3] if name.endswith(".py") else name
+        if f'"{stem}"' in text or f"'{stem}'" in text:
+            found.add(name)
 
     if path.suffix == ".py":
         try:

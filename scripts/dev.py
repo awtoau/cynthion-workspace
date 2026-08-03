@@ -96,6 +96,13 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
 
     "sim": ("run the gateware simulations",
             [PY, script("soc_sims.py")], True),
+
+    # A working link checker that nothing invoked. `./dev.py audit` reported it
+    # as an orphan alongside genuinely dead probes, which is the argument for
+    # wiring it in rather than archiving it: the tool was fine, the reachability
+    # was not.
+    "docs": ("check every relative link in the tracked Markdown resolves",
+             [PY, script("check_doc_links.py")], True),
 }
 
 # Hardware steps are NOT in STEPS: they are commands below, so that `gate` and
@@ -108,7 +115,7 @@ GATE = ["fmt-check", "test", "lint", "build"]
 # ci = run-all-collect-all -> one GO/NO-GO. Every leg runs even after a failure:
 # a gateware build is about a minute, and finding the second problem on the next
 # run rather than this one is what makes a red tree take an afternoon.
-CI = ["fmt-check", "test", "lint", "build", "sim"]
+CI = ["fmt-check", "test", "lint", "build", "sim", "docs"]
 
 # ---------------------------------------------------------------------------
 # Logging -- Tier A: local time, stderr + ./tmp/logs/dev.log, colour on a TTY
@@ -292,6 +299,22 @@ def cmd_console(extra: list[str]) -> int:
          args="[flags]", kind="action")
 def cmd_stage(extra: list[str]) -> int:
     return run_tool([PY, script("soc_jtag_stage.py")], extra)
+
+
+@command("watch the Type-C controllers across a cable attach or detach",
+         args="[flags]", kind="action")
+def cmd_typec(extra: list[str]) -> int:
+    return run_tool([PY, script("typec_watch.py")], extra)
+
+
+@command("read and verify the board's SPI flash", args="[flags]", kind="action")
+def cmd_flash(extra: list[str]) -> int:
+    return run_tool([PY, script("riscv_flash_check.py")], extra)
+
+
+@command("capture the board's console to a file", args="[flags]", kind="action")
+def cmd_capture(extra: list[str]) -> int:
+    return run_tool([PY, script("riscv_console_capture.py")], extra)
 
 
 @command("fail-fast pre-commit gate: " + " + ".join(GATE), kind="aggregate")
