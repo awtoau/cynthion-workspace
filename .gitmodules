@@ -15,11 +15,6 @@
 	path = repos/saturn-v
 	url = https://github.com/awtoau/awto-saturn-v.git
 
-[submodule "repos/facedancer"]
-	path = repos/facedancer
-	url = https://github.com/awtoau/awto-facedancer.git
-	branch = main
-
 [submodule "repos/packetry"]
 	path = repos/packetry
 	url = https://github.com/awtoau/awto-packetry.git

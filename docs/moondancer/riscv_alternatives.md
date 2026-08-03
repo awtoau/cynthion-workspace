@@ -81,7 +81,8 @@ Important clarification for 64-bit review:
 
 Cynthion uses a Lattice ECP5 `LFE5U-12F` FPGA.
 
-- FPGA part reference in this workspace: `app/assets/hardware/cynthion.json`
+- FPGA part reference in this workspace: `docs/linux-on-cynthion.md` (24288
+  TRELLIS_COMB, 56 DP16KD, 8 MiB HyperRAM, 4 MiB SPI flash)
 - Platform definitions in the archived upstream tree also target `LFE5U-12F`
 - This is a small FPGA for a Linux-capable or MMU-bearing RV64 soft core, especially because Cynthion is not hosting a CPU in isolation: it already needs the surrounding USB gateware, memory fabric, debug path, and SoC integration used by moondancer/facedancer.
 

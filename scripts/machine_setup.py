@@ -70,10 +70,15 @@ PACKAGES = {
 }
 
 # Editable installs from the submodules, so an edit under repos/ is live without
-# a reinstall. These are the two that firmware tooling imports by name.
+# a reinstall. Only what this repo actually imports by name belongs here.
+#
+# `repos/facedancer` was in this list and nothing imported it -- see #169. It is
+# at tag 3.1.3 with no local patch, and `cynthion` does not depend on it, so it
+# was installed to satisfy an assertion in check.py and nothing else. Anything
+# under riscv/ naming "facedancer" means `cynthion.gateware.facedancer.top`, a
+# gateware target inside repos/cynthion, not this package.
 EDITABLE = [
     "repos/cynthion/cynthion/python",
-    "repos/facedancer",
 ]
 
 # Everything else, from the index.

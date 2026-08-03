@@ -113,7 +113,6 @@ def build_checks() -> List[Check]:
     cyn_fw = REPOS / "cynthion" / "firmware"
     apollo_fw = REPOS / "apollo" / "firmware"
     tinyusb = REPOS / "apollo" / "lib" / "tinyusb"
-    app = ROOT / "app"
 
     return [
         Check(
@@ -155,8 +154,10 @@ def build_checks() -> List[Check]:
             name="python",
             description=f"import check + pytest on {PYTHON}",
             steps=[
-                Step([PYTHON, "-c",
-                      "import cynthion, apollo_fpga, facedancer"], ROOT),
+                # `facedancer` was asserted here and imported by nothing in this
+                # repo -- the assertion was the whole reason the submodule was
+                # installed. See #169.
+                Step([PYTHON, "-c", "import cynthion, apollo_fpga"], ROOT),
                 # `tests/` is OURS and was not collected here until now. Both
                 # files in it passed and neither had ever run in the gate, so
                 # when 37a6095 retired `hyperram_readclksel_sweep.py` to
@@ -178,7 +179,7 @@ def build_checks() -> List[Check]:
                 # the GIL back on, the parallel build path silently serialises.
                 Step([PYTHON, "-c",
                       "import sys; "
-                      "import cynthion, apollo_fpga, facedancer; "
+                      "import cynthion, apollo_fpga; "
                       "assert not sys._is_gil_enabled(), "
                       "'GIL is enabled - not a free-threaded build, or an "
                       "import re-enabled it'; "
@@ -186,20 +187,13 @@ def build_checks() -> List[Check]:
                      ROOT),
             ],
         ),
-        Check(
-            name="flutter",
-            description="flutter analyze + test (dashboard app)",
-            skip_reason=_need("flutter"),
-            steps=[
-                Step(["flutter", "pub", "get"], app),
-                # analyze exits non-zero on warnings alone. The app currently
-                # carries 6 (unused imports/fields) and a failing smoke test,
-                # both pre-existing and unrelated to firmware/gateware work.
-                # Reported, not blocking, so they cannot gate a firmware commit.
-                Step(["flutter", "analyze"], app, informational=True),
-                Step(["flutter", "test"], app, informational=True),
-            ],
-        ),
+        # There is no `flutter` check. The dashboard was retired to
+        # debris/code/app-flutter-dashboard/ because the check could not fail:
+        # `analyze` and `test` were both informational, so the only step that
+        # could go red was `pub get`. It reported green for months over 6
+        # analyzer warnings and a failing smoke test -- the same
+        # `continue-on-error` failure the hosted workflows had, carried into the
+        # local runner. See docs/github_actions.md.
         Check(
             name="socmap",
             description="the committed SVD still matches the SoC's memory map",

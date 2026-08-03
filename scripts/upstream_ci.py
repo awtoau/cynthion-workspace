@@ -115,11 +115,8 @@ REPOS = {
             },
         },
     },
-    "facedancer": {
-        "url": "https://github.com/greatscottgadgets/facedancer.git",
-        "jobs": {},
-        "note": "No CI at all upstream: no .github/workflows. A PR gets no automated signal.",
-    },
+    # No "facedancer": this workspace no longer carries that submodule (#169),
+    # so there is no repos/facedancer to cherry-pick from.
     "luna-soc": {
         "url": "https://github.com/greatscottgadgets/luna-soc.git",
         "jobs": {},

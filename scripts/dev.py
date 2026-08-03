@@ -77,8 +77,8 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
     "test": ("boot the firmware under QEMU and assert what its shell says",
              [PY, script("soc_test.py")], True),
 
-    # The workspace checks -- rust, apollo, python, freethreading, flutter,
-    # socmap, irqlog, paths, gateware. `--parallel` is real here: the default
+    # The workspace checks -- rust, apollo, python, freethreading, socmap,
+    # irqlog, paths, gateware. `--parallel` is real here: the default
     # interpreter is free-threaded.
     "lint": ("workspace checks: clippy, layout, generated-map drift, paths",
              [PY, script("check.py"), "--parallel"], True),
