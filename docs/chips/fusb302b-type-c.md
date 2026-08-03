@@ -253,6 +253,22 @@ board whose CC lines nothing in this tree has ever driven. `MEAS_CC1` still give
 change on both ports obtained without asserting anything onto a connector.
 Enabling them is a one-line change with a known consequence.
 
+### TARGET-C as a source
+
+`vbus charge` changes **TARGET-C only** to the opposite role and leaves AUX
+measure-only. It writes:
+
+| register | value | effect |
+|---|---:|---|
+| `SWITCHES0` `0x02` | `0xc0` | `PU_EN1`/`PU_EN2`; `PDWN1`/`PDWN2` clear |
+| `CONTROL0` `0x06` | `0x04` / `0x08` / `0x0c` | Default / 1.5 A / 3 A advertisement |
+| `CONTROL2` `0x08` | `0x07` | source-only autonomous CC1/CC2 polling |
+
+The register definitions are on FUSB302B datasheet pages 21, 23 and 24.
+`STATUS1A.TOGSS` on page 28 reports source on CC1 (`001`) or CC2 (`010`), so
+cable orientation is detected rather than assumed. Bare `vbus charge` uses
+Default current; the higher levels require explicit arguments.
+
 ### The interrupt, and where the level-sensitive trap is actually handled
 
 Each `int` line has its own PLIC source. Clearing a controller means reading three

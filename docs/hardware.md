@@ -378,25 +378,26 @@ So CONTROL cannot negotiate above 5 V at all — a source sees no PD-capable sin
 and stays at vSafe5V. That makes CONTROL the port to prefer as a passthrough
 source when either would do.
 
-### Upstream drives all of this; this SoC drives none of it
+### The SoC drives the switches
 
 `repos/cynthion/.../gateware/analyzer/top.py` connects all four switches, each
 gated by `POWER_CONTROL_ENABLE`, and `repos/packetry/src/backend/cynthion.rs`
 carries the command word (bits 3–7). Reset defaults are deliberate:
 `target_c_vbus_en` **closed**, everything else **open**.
 
-Our SoC requests none of these pins — grep the gateware and firmware for
-`vbus_en` and it returns nothing. `power` reads the PAC1954; it measures rails
-and switches nothing. Tracked as #152.
+The SoC exposes the switches through `vbus_csr.py`; firmware gates every close
+against a fresh PAC1954 reading. `vbus control` powers TARGET-A from CONTROL.
+`vbus charge` additionally routes that supply to TARGET-C and presents Rp there.
 
 ### Charging a device: TARGET-A needs only the switches
 
 USB-A has no CC line and no negotiation, so a source presents 5 V and the device
 draws what it can. Closing `control_vbus_en` or `aux_vbus_en` is sufficient.
 
-**TARGET-C as a source additionally needs Rp** on CC, which does not exist yet:
-`fusb302.rs` writes `SWITCHES0` as measure-only and its comment says "drive
-nothing". See #151 for orientation, which Rp depends on.
+**TARGET-C as a source additionally needs Rp.** `vbus charge` writes both Rp
+enables, clears both Rd enables, and starts the FUSB302B's source-only toggle so
+the controller resolves CC1/CC2 orientation. Default current is the default;
+`vbus charge 1.5` and `vbus charge 3` are explicit higher advertisements.
 
 ### Verify with current, not with a bit that reads back
 

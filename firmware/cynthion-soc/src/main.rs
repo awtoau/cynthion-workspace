@@ -412,30 +412,9 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
 
     match cmd {
         b"help" | b"?" => {
-            let _ = writeln!(uart, "  help, ?       this");
-            let _ = writeln!(uart, "  id            flash JEDEC id and capacity");
-            let _ = writeln!(uart, "  read <hex>    read a word from flash");
-            let _ = writeln!(uart, "  check         arithmetic and known flash values");
-            let _ = writeln!(uart, "  info          this image, this CPU, this gateware");
-            let _ = writeln!(uart, "  selftest      run each of them and report");
-            let _ = writeln!(uart, "  ports         the consoles this firmware answers on");
-            let _ = writeln!(uart, "  irq           interrupt controller and receive rings");
-            let _ = writeln!(uart, "  time          the 1 ms tick: uptime, and what it costs");
-            let _ = writeln!(uart, "  stats         where the cycles go: busy, ipc, poll jitter");
-            let _ = writeln!(uart, "  bench [region]  memory speed and the cache: \
-                                    bram, flash, hyperram");
-            let _ = writeln!(uart, "  log [n|tags]  push n deferred events, as a handler would");
-            let _ = writeln!(uart, "  board         every port: rail, pd \
-                                    controller and phy, as a tree");
-            let _ = writeln!(uart, "  led [colour on|off|fabric]  the six board LEDs");
-            let _ = writeln!(uart, "  i2c [bus]     scan a bus: power, target, aux");
-            let _ = writeln!(uart, "  power [floor <port> <mA>]  the four rails, \
-                                    volts and milliamps");
-            let _ = writeln!(uart, "  phy           the TARGET USB3343's ULPI registers");
-            let _ = writeln!(uart, "  typec         the two FUSB302B Type-C controllers");
-            let _ = writeln!(uart, "  sideband [ctrl [tx]]  the FPGA_ADV link");
-            let _ = writeln!(uart, "  load <hex>    stage N bytes and boot into them");
-            let _ = writeln!(uart, "  reset         back to the bootloader");
+            let _ = uart.write_str("help id read check info selftest ports irq time stats \
+                                    bench log board led i2c power phy typec vbus sideband \
+                                    load reset\n");
         }
         b"id" => {
             // Reads through the memory map, which is the verified path. The JEDEC id
@@ -570,7 +549,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
-        b"vbus" => vbus_command(uart, rest, &devices.power),
+        b"vbus" => vbus_command(uart, rest, devices),
         // One record per payload tag, so the drain-time decoding of every tag is
         // exercised on the shipping build. A guard arm rather than a branch
         // inside the one below, so the two cases do not share an indent: this
@@ -1360,7 +1339,7 @@ fn panic(info: &PanicInfo) -> ! {
 /// stack is whatever is left above `.bss`, and a chatty command in this firmware
 /// is paid for in stack depth -- see the ASSERT in `memory.x`, which exists
 /// because this exact command overran it.
-fn vbus_command(uart: &mut Uart, rest: &[u8], monitor: &power::Monitor) {
+fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let argument = core::str::from_utf8(rest).unwrap_or("").trim();
 
     if argument.is_empty() {
@@ -1375,12 +1354,39 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], monitor: &power::Monitor) {
     }
     if argument == "off" {
         vbus::open_all();
+        if let Some(bus) = devices.bus.as_mut() {
+            let _ = fusb302::configure(bus, fusb302::Port::Target);
+        }
         let _ = writeln!(uart, "open");
+        return;
+    }
+    let charge = match argument {
+        "charge" => Some(fusb302::HostCurrent::Default),
+        "charge 1.5" => Some(fusb302::HostCurrent::A1_5),
+        "charge 3" => Some(fusb302::HostCurrent::A3),
+        _ => None,
+    };
+    if let Some(current) = charge {
+        let bus = match devices.bus.as_mut() {
+            Some(bus) => bus,
+            None => return board_absent(uart),
+        };
+        if fusb302::source_target(bus, current).is_err() {
+            let _ = writeln!(uart, "?");
+            return;
+        }
+        match vbus::charge_target_c(&devices.power) {
+            Ok(mv) => { let _ = writeln!(uart, "on {} mV", mv); }
+            Err(error) => {
+                let _ = fusb302::configure(bus, fusb302::Port::Target);
+                vbus_refusal(uart, error);
+            }
+        }
         return;
     }
     if let Some(which) = argument.strip_prefix("input").map(str::trim) {
         let ok = match which {
-            "control" => vbus::prefer_control(monitor),
+            "control" => vbus::prefer_control(&devices.power),
             "both" => { vbus::allow_all_inputs(); true }
             _ => false,
         };
@@ -1389,11 +1395,17 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], monitor: &power::Monitor) {
     }
     match vbus::Source::parse(argument) {
         None => { let _ = writeln!(uart, "?"); }
-        Some(source) => match vbus::close(source, monitor) {
+        Some(source) => match vbus::close(source, &devices.power) {
             Ok(mv) => { let _ = writeln!(uart, "on {} mV", mv); }
-            Err(vbus::Refusal::TooHigh(mv)) => { let _ = writeln!(uart, "no: {} mV high", mv); }
-            Err(vbus::Refusal::TooLow(mv)) => { let _ = writeln!(uart, "no: {} mV low", mv); }
-            Err(vbus::Refusal::Stale(_)) => { let _ = writeln!(uart, "no: stale"); }
+            Err(error) => vbus_refusal(uart, error),
         },
+    }
+}
+
+fn vbus_refusal(uart: &mut Uart, refusal: vbus::Refusal) {
+    match refusal {
+        vbus::Refusal::TooHigh(mv) => { let _ = writeln!(uart, "no: {} mV high", mv); }
+        vbus::Refusal::TooLow(mv) => { let _ = writeln!(uart, "no: {} mV low", mv); }
+        vbus::Refusal::Stale => { let _ = writeln!(uart, "no: stale"); }
     }
 }

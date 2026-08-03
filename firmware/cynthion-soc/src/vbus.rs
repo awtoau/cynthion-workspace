@@ -181,7 +181,7 @@ pub fn allow_all_inputs() {
 /// Why a close was refused.
 pub enum Refusal {
     /// No sample, or one too old to act on.
-    Stale(u32),
+    Stale,
     /// Measured volts, then the limit.
     TooHigh(u32),
     /// Measured volts.
@@ -196,6 +196,26 @@ fn read() -> u8 {
 fn write(value: u8) {
     // SAFETY: as above.
     unsafe { core::ptr::write_volatile(cynthion_soc_pac::base::BOARD_VBUS as *mut u8, value) };
+}
+
+fn fresh_sample(monitor: &power::Monitor) -> Result<power::Sample, Refusal> {
+    match monitor.age() {
+        power::Age::Millis(ms) if ms <= MAX_AGE_MS => {}
+        power::Age::Millis(_) => return Err(Refusal::Stale),
+        _ => return Err(Refusal::Stale),
+    }
+    monitor.latest().ok_or(Refusal::Stale)
+}
+
+fn source_mv(source: Source, monitor: &power::Monitor) -> Result<u32, Refusal> {
+    let millivolts = fresh_sample(monitor)?.readings[source.channel()].bus_mv;
+    if millivolts > LIMIT_MV {
+        return Err(Refusal::TooHigh(millivolts));
+    }
+    if millivolts < FLOOR_MV {
+        return Err(Refusal::TooLow(millivolts));
+    }
+    Ok(millivolts)
 }
 
 /// Open every switch, unconditionally.
@@ -223,22 +243,7 @@ pub fn close(source: Source, monitor: &power::Monitor) -> Result<u32, Refusal> {
     // A sample too old to trust is a refusal, not a warning. The check is only
     // as good as the reading behind it, and `Older`/`Never` mean the monitor has
     // stopped rather than merely jittered.
-    match monitor.age() {
-        power::Age::Millis(ms) if ms <= MAX_AGE_MS => {}
-        power::Age::Millis(ms) => return Err(Refusal::Stale(ms)),
-        _ => return Err(Refusal::Stale(u32::MAX)),
-    }
-    let sample = match monitor.latest() {
-        Some(sample) => sample,
-        None => return Err(Refusal::Stale(u32::MAX)),
-    };
-    let millivolts = sample.readings[source.channel()].bus_mv;
-    if millivolts > LIMIT_MV {
-        return Err(Refusal::TooHigh(millivolts));
-    }
-    if millivolts < FLOOR_MV {
-        return Err(Refusal::TooLow(millivolts));
-    }
+    let millivolts = source_mv(source, monitor)?;
 
     // ONE SOURCE AT A TIME, and this write is what enforces it.
     //
@@ -261,6 +266,23 @@ pub fn close(source: Source, monitor: &power::Monitor) -> Result<u32, Refusal> {
     // Setting the gate in the same write also means there is no window in which
     // `enable` is on over a stale set of switch bits.
     write((1 << BIT_ENABLE) | (1 << source.bit()));
+    Ok(millivolts)
+}
+
+/// Route CONTROL through the shared rail to TARGET-C.
+///
+/// TARGET-C must not already be powered by another source. Repeating this while
+/// our exact path is active is allowed so the Rp level can be changed in place.
+pub fn charge_target_c(monitor: &power::Monitor) -> Result<u32, Refusal> {
+    let millivolts = source_mv(Source::Control, monitor)?;
+    let wanted = (1 << BIT_ENABLE) | (1 << BIT_CONTROL) | (1 << BIT_TARGET_C);
+    if read() != wanted {
+        let target_mv = fresh_sample(monitor)?.readings[Source::TargetC.channel()].bus_mv;
+        if target_mv >= FLOOR_MV {
+            return Err(Refusal::TooHigh(target_mv));
+        }
+    }
+    write(wanted);
     Ok(millivolts)
 }
 

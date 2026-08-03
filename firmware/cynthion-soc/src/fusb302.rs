@@ -70,6 +70,8 @@ const REG_DEVICE_ID: u8 = 0x01;
 const REG_SWITCHES0: u8 = 0x02;
 /// Interrupt masking, transmit, toggle, retries. Only CONTROL0 is written here.
 const REG_CONTROL0: u8 = 0x06;
+/// Autonomous CC role and orientation polling.
+const REG_CONTROL2: u8 = 0x08;
 /// The interrupt mask for the `INTERRUPT` register.
 const REG_MASK: u8 = 0x0a;
 /// Per-block power enables.
@@ -82,6 +84,8 @@ const REG_MASKB: u8 = 0x0f;
 /// Read-to-clear. Reading these is what drops the `INT` line.
 const REG_INTERRUPTA: u8 = 0x3e;
 const REG_INTERRUPTB: u8 = 0x3f;
+/// Autonomous toggle state, including the detected source-side CC pin.
+const REG_STATUS1A: u8 = 0x3d;
 const REG_INTERRUPT: u8 = 0x42;
 /// Comparator result, BC_LVL, VBUSOK.
 const REG_STATUS0: u8 = 0x40;
@@ -102,6 +106,11 @@ const POWER_BLOCKS: u8 = 0b0000_0111;
 /// see the module comment.
 const SWITCHES0_MEASURE_CC1: u8 = 1 << 2;
 
+/// Present Rp on both receptacle pins while autonomous source polling resolves
+/// orientation. The sink pull-down bits are clear: TARGET-C is deliberately
+/// changing to the opposite role, while AUX remains measure-only and untouched.
+const SWITCHES0_SOURCE: u8 = (1 << 7) | (1 << 6);
+
 /// `MASK`: unmask `I_BC_LVL` (bit 0) and `I_VBUSOK` (bit 7), mask everything
 /// else. A 1 in this register MASKS, so the value is the complement.
 const MASK_WANTED: u8 = !(0b1000_0001);
@@ -110,12 +119,19 @@ const MASK_WANTED: u8 = !(0b1000_0001);
 /// event yet, and an unmasked interrupt with no handler is a storm on a shared
 /// level-sensitive line.
 const MASK_ALL: u8 = 0xff;
+/// Source polling needs its completion interrupt; every unrelated event stays
+/// masked so the level-sensitive line cannot storm on work we do not service.
+const MASK_SOURCE: u8 = MASK_ALL & !(1 << 6);
 
 /// `CONTROL0`: everything at its reset value except `INT_MASK` (bit 5), which
 /// is CLEARED so the `INT` pin may assert. Its reset value is 1 -- masked -- so
 /// a part that has never been configured never interrupts, which is exactly
 /// what was observed on this board before now.
 const CONTROL0_INTERRUPTS_ON: u8 = 0b0000_0000;
+
+/// `CONTROL2.MODE=SRC`, `TOGGLE=1`: poll both CC pins and settle on the one
+/// carrying Rd, rather than assuming cable orientation.
+const CONTROL2_SOURCE_TOGGLE: u8 = 0x07;
 
 /// `STATUS0` bit 7: VBUS is above the vSafe5V threshold.
 const STATUS0_VBUSOK: u8 = 1 << 7;
@@ -127,6 +143,15 @@ const STATUS0_BC_LVL: u8 = 0b11;
 pub enum Port {
     Target,
     Aux,
+}
+
+/// Current advertised by Rp. These are the `CONTROL0.HOST_CUR` field values,
+/// not amperes the passthrough has measured or guaranteed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HostCurrent {
+    Default = 1,
+    A1_5 = 2,
+    A3 = 3,
 }
 
 impl Port {
@@ -174,6 +199,8 @@ pub struct State {
     /// vRd-1.5, 3 vRd-3.0. Meaningful only with the measure block routed to a
     /// CC pin, which [`configure`] does.
     pub bc_lvl: u8,
+    /// `STATUS1A.TOGSS`: 1/2 mean source polling settled on CC1/CC2.
+    pub source_cc: u8,
 }
 
 /// Read one register from the controller on this port's bus.
@@ -222,6 +249,23 @@ pub fn configure(bus: &mut Bus, port: Port) -> Result<(), bus::Error> {
     write(bus, port, REG_CONTROL0, CONTROL0_INTERRUPTS_ON)
 }
 
+/// Present Rp on TARGET-C and let the controller resolve cable orientation.
+///
+/// There is intentionally no `Port` argument: AUX powers the board and carries
+/// the console, so a caller cannot accidentally change its electrical role.
+pub fn source_target(bus: &mut Bus, current: HostCurrent) -> Result<(), bus::Error> {
+    let port = Port::Target;
+    write(bus, port, REG_RESET, RESET_SW)?;
+    write(bus, port, REG_POWER, POWER_BLOCKS)?;
+    write(bus, port, REG_SWITCHES0, SWITCHES0_SOURCE)?;
+    write(bus, port, REG_MASK, MASK_WANTED)?;
+    write(bus, port, REG_MASKA, MASK_SOURCE)?;
+    write(bus, port, REG_MASKB, MASK_ALL)?;
+    clear(bus, port)?;
+    write(bus, port, REG_CONTROL0, (current as u8) << 2)?;
+    write(bus, port, REG_CONTROL2, CONTROL2_SOURCE_TOGGLE)
+}
+
 /// Read and discard all three interrupt registers.
 ///
 /// **This is what drops the `INT` line**, and all three have to be read: they
@@ -252,20 +296,24 @@ pub fn clear(bus: &mut Bus, port: Port) -> Result<(), bus::Error> {
 pub fn state(bus: &mut Bus, port: Port) -> Result<State, bus::Error> {
     let device_id = read(bus, port, REG_DEVICE_ID)?;
     let status0 = read(bus, port, REG_STATUS0)?;
+    let status1a = read(bus, port, REG_STATUS1A)?;
     Ok(State {
         device_id,
         vbus: status0 & STATUS0_VBUSOK != 0,
         bc_lvl: status0 & STATUS0_BC_LVL,
+        source_cc: (status1a >> 3) & 0b111,
     })
 }
 
 impl State {
     /// One line's worth of description, for the shell and the change log.
     pub fn cc(&self) -> &'static str {
-        match self.bc_lvl {
-            0 => "nothing on CC",
-            1 => "vRd-USB (default current)",
-            2 => "vRd-1.5A",
+        match (self.source_cc, self.bc_lvl) {
+            (1, _) => "source on CC1",
+            (2, _) => "source on CC2",
+            (_, 0) => "nothing on CC",
+            (_, 1) => "vRd-USB (default current)",
+            (_, 2) => "vRd-1.5A",
             _ => "vRd-3.0A",
         }
     }

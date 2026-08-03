@@ -109,14 +109,14 @@ impl core::fmt::Debug for BoardI2cMux {
 }
 #[doc = "board/i2c_mux: 2 registers at 0xf0000620"]
 pub mod board_i2c_mux;
-#[doc = "board/vbus: 1 register at 0xf0000624"]
+#[doc = "board/vbus: 2 registers at 0xf0000624"]
 pub type BoardVbus = crate::Periph<board_vbus::RegisterBlock, 0xf000_0624>;
 impl core::fmt::Debug for BoardVbus {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardVbus").finish()
     }
 }
-#[doc = "board/vbus: 1 register at 0xf0000624"]
+#[doc = "board/vbus: 2 registers at 0xf0000624"]
 pub mod board_vbus;
 #[doc = "board/gateware: 7 registers at 0xf0000640"]
 pub type BoardGateware = crate::Periph<board_gateware::RegisterBlock, 0xf000_0640>;
