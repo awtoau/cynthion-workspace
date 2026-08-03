@@ -790,6 +790,14 @@ but still needs testing"* and never followed up.
 HyperRAM core has never been tuned on this part; its ECP5 lineage is the separate
 `litex-hub/litehyperbus`, Greg Davill's `HyperRAMX2`.
 
+That absence is the load-bearing fact in
+[`linux-on-cynthion.md`](linux-on-cynthion.md): `linux-on-litex-vexriscv` runs
+Linux on ECP5 today, but nobody has run it out of HyperRAM. What that document
+needs from this one is not the burst figure but the **per-transaction 19 CK
+overhead**, because a 64-byte cache line refilled one 32-bit word at a time pays
+it sixteen times — 36.6 MB/s by arithmetic, against 241 if the Wishbone window
+coalesced the CTI burst. Unmeasured.
+
 ### Tiliqua has already implemented LUNA's TODO, and it is a drop-in
 
 `apfaudio/tiliqua` vendors LUNA's `psram.py` split across three files and changed

@@ -150,6 +150,12 @@ with margin; what this table does not measure is main memory. 64 KiB of block RA
 boot Linux, so the memory would have to be HyperRAM, and that is a bandwidth and latency
 question about the L1s in front of it rather than an area one.
 
+The whole chain — what Linux needs, what a build stripped of the Cynthion SoC costs in
+block RAM, what HyperRAM delivers as cache-line refills, and whether it is worth doing —
+is in [`linux-on-cynthion.md`](linux-on-cynthion.md). One correction it makes to the
+reading above: the block RAM wall is a wall of *this* SoC, not of the die. A Linux-only
+build lands at 14 of 56, so 8 KiB two-way L1s cost 24 of 56 rather than the whole part.
+
 **The earlier report these figures replace** is
 [`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md).
 Its headline comparison — 12646 LUT4 for VexRiscv against 6876 — **is not a like-for-like

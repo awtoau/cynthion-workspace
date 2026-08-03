@@ -1,16 +1,330 @@
-# A full-speed USB host on Cynthion — the short path
+# Linux on Cynthion — what it would take, and whether it is worth it
 
-**Date:** 2026-08-03T12:00:00+10:00
+**Date:** 2026-08-03T14:00:00+10:00
 **Baseline:** `uart16550-console` at `bf819e3`
-**Question:** not "can it host at 480" (`docs/usb-host-proposal.md` answered that) but
-"what is the shortest path to a host that enumerates a device and that Linux can
-reach, if full speed is acceptable".
+**Target:** LFE5U-12F — 24288 TRELLIS_COMB, 56 DP16KD, 8 MiB HyperRAM, 4 MiB SPI flash
+**Question:** can this board boot a custom Linux with Rust drivers, and what is the
+smallest thing that proves it.
 
-**No board was touched. Every number here is from datasheets, from the KiCad
-netlist, from source already checked out in this tree, or from a synthesis run
-performed on a standalone netlist.**
+**The goal is a demonstration, not a product.** A buildroot image, soft-float
+`rv64imac`, built for this board and nothing else. The Linux build **does not carry
+the Cynthion SoC** — it exists to prove a RISC-V core with the HyperRAM and flash
+drivers, a console, and possibly a USB host for a disk. Everything else in
+`vexii_hello_soc.py` comes out. Judge every number below against that.
+
+**No board was touched.** Every figure is from synthesis, place-and-route, a
+datasheet, source checked out in this tree, or a measurement already recorded
+elsewhere in it. Where arithmetic is arithmetic rather than measurement it says so.
+
+Depth lives elsewhere and is linked, not repeated:
+
+| for | see |
+|---|---|
+| the CPU area and timing matrix, rv64 and MMU rows | [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost) |
+| HyperRAM and flash speed ceilings, and every remaining lever | [`memory-speed-options.md`](memory-speed-options.md) |
+| the 480 Mbps host engine, its integration design and register map | [`usb-host-proposal.md`](usb-host-proposal.md) |
+| the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
 ---
+
+# Part I — Linux
+
+## The chain, and where each link stands
+
+| # | link | verdict | basis |
+|---|---|---|---|
+| 1 | Linux needs rv64 | forced — **Rust for Linux has no rv32 target** | requirement |
+| 2 | supervisor mode, and with it the MMU | `--with-supervisor`, sv39 at xlen 64 | source |
+| 3 | the 64-bit MMU core fits and closes 60 MHz | **12109 COMB, 12 BRAM, 69.9 MHz** | measured |
+| 4 | a Linux-only build frees most of the block RAM | **14 of 56, against 44 today** | derived from measurements |
+| 5 | so the L1s can grow past 4 KiB direct-mapped | 8 KiB two-way at 24 of 56 | measured (one way = 10 BRAM) |
+| 6 | main memory is the 8 MiB HyperRAM; the window exists | `d66e940`, **never run on hardware** | code |
+| 7 | what HyperRAM delivers as cache-line refills | **nothing has measured it** | open — decides everything |
+| 8 | storage is optional for the demonstration | initramfs from flash needs no block device | reasoning |
+| 9 | the method is published; the memory is not | LiteX/Konfekt supply the plumbing | survey |
+
+**The answer: worth doing, and the smallest proof does not contain a USB host.**
+The recommendation is at the end of Part I. The one number that could sink it is
+link 7.
+
+---
+
+## What Linux needs
+
+- **rv64.** The requirement is kernel-side Rust, and **Rust for Linux has no rv32
+  target**. That is the whole reason; nothing else about the ISA width matters here.
+- **Supervisor mode**, and on VexiiRiscv the MMU comes with it. There is no
+  `--with-mmu`: `--with-supervisor` is `addISA("s","u")` and
+  `withMmu = checkISA("s") && !disableMmu` (`Param.scala:584,724`). `xlen` picks the
+  scheme — sv39 at 64. Supervisor is separable from the MMU; the MMU is not
+  separable from supervisor. [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost).
+- **Soft float, by choice.** `rv64imac`, no `--with-rvfd`. The FPU row survives in
+  the area table below as a measured data point.
+- **Main memory that is not block RAM.** 64 KiB does not boot a kernel.
+- **A console, a timer, an interrupt controller.** All three exist and are in use:
+  NS16550A (`uart16550.py`, and QEMU `-M virt` presents the same part), CLINT
+  (`vexii_clint.py`), PLIC (`vexii_plic.py`).
+- **Storage** only if the demonstration wants a root filesystem on a disk. An
+  initramfs does not.
+
+## The CPU, measured
+
+From [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost) —
+`scripts/cpu_matrix.py`, core plus its own block RAM, in a four-pin timing harness
+validated against the whole-SoC build (72.7 MHz harness vs **72.40 MHz** on the
+board's own bitstream, i.e. the harness finds the same critical path).
+
+| variant | COMB | BRAM | Fmax | closes 60 |
+|---|---|---|---|---|
+| `soc-cpu` — this SoC's flags today, rv32 | 5999 | 8 | 72.7 MHz | yes |
+| `soc-cpu` +64 | 10020 | 12 | 75.8 MHz | yes |
+| **`soc-cpu` +64 +MMU** | **12109** | **12** | **69.9 MHz** | **yes** |
+| rv64 +MMU +rva, **2-way** caches | 11758 | **20** | 72.7 MHz | yes |
+| rv64 +MMU +rva **+rvfd** | 20927 | 10 | 41.9 MHz | no |
+
+- The swap is **+6110 COMB and +4 block RAM**. The MMU itself is nearly free in
+  block RAM — its TLB is asynchronously read and lands in LUT RAM, +152 `DPR16X4`
+  cells and 0 BRAM. The four block RAMs are the *width*: a 64-bit L1 is twice as wide.
+- **One extra cache way costs ten block RAMs** (10 → 20 at rv64). That is the number
+  that governs everything in the next section.
+- The FPU row is measured and declined. Nothing in this plan needs it.
+
+Not measured: **in situ**. Every row is a harness figure. `18c1fa5` established that
+this design's critical path is routing-dominated, and `scripts/soc_timing_sweep.py`
+exists because a ±9 MHz placement spread has been observed — so 69.9 MHz is evidence,
+not a guarantee.
+
+## The fit — two budgets, and only one of them matters
+
+The current SoC is the wrong baseline. It carries a LUNA USB device stack, two
+16550s, a PLIC, GPIO and board CSRs, a muxed I2C master, a ULPI register window, a
+SPI-flash probe and ILA, the sideband link, and a 64 KiB block RAM holding firmware.
+A Linux build needs none of it.
+
+### Logic area is settled by the pessimistic bound
+
+Current whole-SoC build, `tmp/vexii_hello/build/top.tim` (2026-08-03, LFE5U-12F,
+CABGA256, speed 8): **12903 COMB (53%), 6942 FF (28%), 44 DP16KD (79%), 159 RAMW
+(5%), `sync` 72.40 MHz.**
+
+Take the *worst* case — that whole SoC, unchanged, with its rv32 core swapped for
+the 64-bit MMU one: **19013 COMB, 78%**, and it still closes. A Linux-only build is
+strictly smaller than that, so no per-peripheral accounting is needed to answer the
+logic question. **COMB is not the binding resource.** Block RAM is.
+
+### Block RAM, both ways
+
+| current SoC | DP16KD |
+|---|---|
+| 64 KiB block RAM at `0x0`, holding firmware | 32 |
+| `soc-cpu` rv32 L1s + BTB | 8 |
+| everything else — UART FIFOs, USB device stack, flash paths | 4 |
+| **total, measured** | **44 of 56** |
+
+The 32 and the 8 are exact (64 KiB ÷ 2 KiB per DP16KD; the `soc-cpu` row above). The
+residue of 4 is the remainder, not a per-module report.
+
+| Linux-only build | DP16KD |
+|---|---|
+| `soc-cpu +64 +MMU` L1s + BTB, 4 KiB direct-mapped | 12 |
+| boot ROM — the resident bootloader is 492 bytes ([`decisions.md` §22](decisions.md)) | 1 |
+| one NS16550A's FIFOs | 1 |
+| HyperRAM DQS PHY and its 8 MiB Wishbone window | 0 |
+| SPI flash XIP window | 0 |
+| **subtotal** | **14 of 56** |
+| *optional:* GUH high-speed SIE, 512-byte FIFOs — they land in **LUT RAM** | +0 |
+| *optional:* SpinalHDL `UsbOhciWishbone`, one port | +1 |
+
+**Forty-two block RAMs free.** That is the finding that changes the memory verdict,
+and it is a consequence of the scope, not of any new work: the 64 KiB firmware RAM
+disappears because the kernel lives in HyperRAM, and every peripheral that came with
+Cynthion's own jobs goes with it.
+
+### So the cache wall is a wall of the current SoC, not of the die
+
+| L1 configuration | BRAM total | fits | timing |
+|---|---|---|---|
+| 4 KiB direct-mapped (today's shape) | 14 | yes | 69.9 MHz measured |
+| **8 KiB two-way** | **24** | yes | 72.7 MHz measured on the `+caches` lineage |
+| 16 KiB four-way | 44 | yes | **never built** |
+
+In the current SoC, 8 KiB two-way L1s would have put the design at 44 − 8 + 20 = **56
+of 56** — the entire die — before any of the RAM Linux needs. Stripped, the same
+change lands at 24 of 56 with room to spare. Growing *sets* rather than ways is the
+other axis and has not been measured.
+
+This matters because the L1 is the only thing standing between the CPU and HyperRAM,
+and refill cost is the open question below. Doubling the cache halves the refills.
+
+## Memory — the number nothing has measured
+
+**The part is fast. The window in front of it is not, and nobody has run it.**
+
+| | figure | provenance |
+|---|---|---|
+| HyperRAM peak, CK 192 MHz, 2 bytes/CK DDR | 384 MB/s | arithmetic |
+| **measured read, 128-word bursts** | **334.4 MB/s** (87.1%) | measured — [`memory-speed-options.md`](memory-speed-options.md) |
+| measured write | 351.1 MB/s | measured |
+| fixed overhead per HyperBus transaction | **19 CK** | derived: 147 CK for 128 words |
+| the CSR staging port this replaced | **0.77 MB/s** | measured, `bench hyperram` |
+| SPI flash, quad `0xEB` continuous, bulk | 71.7 MB/s | measured |
+
+The Wishbone window landed at `d66e940`: **8 MiB at `0x20000000`, `main=1 exe=1`**,
+so it is cacheable and executable, with JTAG keeping arbitration priority. It has
+**never run on hardware** — it is asserted against in simulation only.
+
+### The arithmetic that has to be checked on the board
+
+`HyperRAMWishbone` does **one two-word HyperBus transaction per 32-bit access**
+(`vexii_bootram.py:61-75, 317`). It declares `cti`/`bte` but does not coalesce an
+incrementing burst into one long HyperBus burst. So, per 64-byte cache line:
+
+| | CK at 192 MHz | time | effective rate |
+|---|---|---|---|
+| as built — 16 accesses × (19 + 2) CK | 336 | 1.75 µs | **36.6 MB/s** |
+| if the window honoured CTI — one 32-word burst, 19 + 32 CK | 51 | 266 ns | **241 MB/s** |
+| the part's own measured burst figure, for scale | — | — | 334.4 MB/s |
+
+**This is arithmetic from a measured overhead, not a measurement.** 1.75 µs is ~105
+cycles of CPU stall per line fill at 60 MHz, before Wishbone and clock-crossing
+overhead — and the factor between the two rows is 6.6×.
+
+Two consequences, in order:
+
+1. **Measure it.** A `bench hyperram` run against the Wishbone window, cached, is the
+   single highest-value measurement in this document. The instrument already exists —
+   the same command measured block RAM, flash and the staging port at `791c293`.
+2. **Then make the window burst.** Coalescing a CTI incrementing burst into one
+   HyperBus burst is bounded, local gateware work with a known payoff, and it is the
+   highest-value *change* for Linux. Nothing else on the memory path comes close.
+
+### Is 8 MiB enough
+
+Open, and judged plausible **under the demonstration framing**. There is no second
+memory on this board and no swap; 8 MiB is all of it, less whatever the DTB and
+initramfs occupy. A buildroot kernel plus a minimal initramfs is a single-digit-MiB
+artifact and the 4 MiB SPI flash can hold it — `main=1 exe=1` and cached, and
+measured at block-RAM speed for a working set that fits the L1 (`791c293`: flash
+random read 63.44 cycles vs block RAM 62.77 at a 2 KiB set). **Nobody has built the
+image, so nobody knows the number.** It is the second thing to measure and the second
+thing that could sink this.
+
+## Storage — and why the first demonstration does not need it
+
+For Linux the choice is made by driver availability, not by area or speed.
+
+| route | area | Linux driver | verdict |
+|---|---|---|---|
+| **SpinalHDL `UsbOhci`**, FS/LS 12 Mbps | 3736 COMB, 1 BRAM (§2 below) | **already exists** — `compatible = "generic-ohci"`, `ohci-platform` | the route Linux binds with nothing written |
+| **GUH SIE**, HS 480 Mbps | 2080 COMB, **0 BRAM** ([`usb-host-proposal.md` §12](usb-host-proposal.md)) | **none** — a bespoke register interface means writing an HCD | right answer to a different question |
+
+That fork is stark and worth stating plainly: **480 Mbps costs a Linux host
+controller driver that nobody has written; 12 Mbps costs nothing.** There is no open
+EHCI RTL anywhere (§4 below), so there is no third option.
+
+And for a first demonstration, neither is needed. **An initramfs needs no block
+device**: the kernel and rootfs come from the 4 MiB flash or are staged over JTAG the
+way firmware already is. USB host is the *second* demonstration.
+
+Part II of this document is the full-speed route in detail — where it attaches, what
+the USB3343's 6-pin serial mode gives for free, and the M0–M5 ladder to first light.
+
+## The precedent, and what is actually novel
+
+**Taken, and rightly so:**
+
+| piece | from |
+|---|---|
+| kernel, buildroot, musl toolchain, boot flow | upstream |
+| SoC plumbing, devicetree generation, memory-controller integration | LiteX / `linux-on-litex-vexriscv` |
+| the CPU | VexiiRiscv — flags, not code |
+| OHCI RTL and its Linux driver | SpinalHDL (MIT) + mainline |
+
+`linux-on-litex-vexriscv` runs Linux on ECP5 today with rv32, musl and buildroot,
+and with USB host via LiteX's `usb_ohci.py`. It is the right precedent for **method**
+even though this needs rv64 for Rust. Machdyne's **Konfekt is an LFE5U-12F** — the
+same harvested-25F die, the same 24288 COMB / 56 DP16KD budget — shipping Linux plus
+an OHCI host, with `konfekt.dts` carrying `compatible = "generic-ohci"` and buildroot
+carrying `litex_vexriscv_usbhost_defconfig`. That is the strongest single data point
+in this document: this core, at this size, on this die, running Linux, is a shipped
+product.
+
+**Not taken, because it does not exist:**
+
+| novel | why nobody has it |
+|---|---|
+| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`memory-speed-options.md`](memory-speed-options.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
+| …at 334.4 MB/s | nothing faster on an ECP5 appears in the open record — the next published figure is Tiliqua's 200 MB/s |
+| **rv64 VexiiRiscv Linux on a 12F** | `linux-on-litex-vexriscv` is rv32 VexRiscv |
+| **Rust kernel drivers on this SoC** | the stated point of the exercise |
+| high-speed USB host under Linux on an open FPGA | there is no open EHCI RTL at all (§4) |
+
+**Taking LiteX's Linux plumbing is not a lesser result. Writing it again would be the
+mistake.** The novelty is the memory, the ISA width and the Rust drivers — not the
+boot.
+
+## What is answered, and by what
+
+| question | answered by | standing |
+|---|---|---|
+| does the rv64 + MMU core fit | nextpnr, `cpu_matrix.py` | **yes** — 12109 COMB, 12 BRAM |
+| does it close 60 MHz | nextpnr, in a validated harness | **69.9 MHz** — in situ unmeasured |
+| what does a Linux-only build cost in block RAM | derived from measured pieces | **14 of 56** |
+| can the L1s grow | measured (one way = 10 BRAM) | **yes** — 8 KiB two-way at 24 of 56 |
+| is there main memory | code | 8 MiB window exists (`d66e940`), **never run** |
+| what does the HyperRAM part deliver | measured, 128-word bursts | 334.4 MB/s read, 351.1 write |
+| **what does it deliver as 64-byte line refills through this window** | **nothing** | **open — 36.6 vs 241 MB/s is arithmetic** |
+| is 8 MiB enough for the image | nothing | **open** — no image has been built |
+| does Linux bind the storage controller | source, and a shipped product | yes — `generic-ohci`, Konfekt |
+| does the OHCI close timing here | nothing | open, one build away (§1) |
+| USB3343 serial-mode AC timing | **absent from the datasheet** | open, hardware-only (§7) |
+
+## Recommendation
+
+**Worth doing. The smallest system that proves the point contains no USB host, no
+Cynthion peripherals, and one measurement that has to come first.**
+
+The smallest proof:
+
+1. **A stripped SoC** — VexiiRiscv `rv64imac` + supervisor + MMU (sv39), soft float.
+   Flags only; the fit and the timing are already measured.
+2. **The 8 MiB HyperRAM window at `0x20000000`**, run on hardware for the first time.
+3. **The 4 MiB SPI flash**, `main=1 exe=1`, holding kernel and initramfs.
+4. **One NS16550A** as the console. CLINT and PLIC as they are.
+5. **A buildroot image** and a DTB, following `linux-on-litex-vexriscv`'s method.
+6. **One Rust kernel driver** against a peripheral this SoC has. That is the point of
+   the exercise, and it is the last step rather than the first.
+
+No block device, no OHCI, no root filesystem on storage, no Cynthion SoC. Milestone:
+a shell prompt on the 16550.
+
+**Do this before anything else:** `bench hyperram` against the Wishbone window,
+cached. It is one firmware command against an instrument that already exists, and it
+converts the one open number that decides the design.
+
+**Which number would have to change for the answer to become no:**
+
+- **Line-refill cost.** If a 64-byte refill really costs the ~105 cycles the
+  arithmetic implies, and the CTI-coalescing fix does not land, this is a machine
+  that boots in minutes and stalls on every miss. One order of magnitude below the
+  burst figure is expected and survivable. Two is not.
+- **8 MiB.** If kernel plus initramfs will not fit under roughly 6 MiB, there is no
+  second memory and no swap, and the answer is no.
+- **In-situ timing.** 69.9 MHz is a harness figure on a routing-dominated design. If
+  `sync` will not close at 60, drop to 50 — Machdyne run this class of SoC at 40.
+
+None of the three is an area question, and none of them has been measured.
+
+---
+---
+
+# Part II — the full-speed USB host in detail
+
+Sections 1–8 below keep their original numbering and their internal cross-references.
+They answer "what is the shortest path to a host that enumerates a device and that
+Linux can reach, if full speed is acceptable" — the storage link of Part I's chain,
+and the one Linux binds without a driver being written. `docs/usb-host-proposal.md`
+answers the 480 Mbps question separately and is not superseded by this.
 
 ## 0. The answer in one paragraph
 
@@ -278,7 +592,7 @@ Three things, all small, all bounded:
    miss until synthesis silently gives you a bus-wide tristate.
 3. **STP held low** for the duration, and `RESETB` not pulsed.
 
-### 3.6 The honest alternative, and why it is second
+### 3.6 The real alternative, and why it is second
 
 A **ULPI back end for `UsbOhci`** — replacing `UsbLsFsPhy` with something that
 speaks ULPI bytes — is *architecturally* very reachable, more so than the earlier
@@ -429,13 +743,12 @@ proposal's §15.3, **line rate is reachable here**.
 |---|---|---|
 | **5a. Re-export as a USB mass-storage *device*** on `aux_phy`/`control_phy`. The SoC already runs LUNA's device stack there for the CDC-ACM console; add a Bulk-Only Transport interface and forward SCSI commands to the target stick. | one more bulk endpoint pair of gateware; firmware SCSI forwarding | **Least new gateware of the three.** Linux sees an ordinary USB stick, mounts it with zero custom anything. Recommended. |
 | **5b. USB/IP.** Firmware relays URBs over the existing link; a userspace shim on the PC serves the USB/IP protocol on localhost:3240; `usbip attach` binds the **in-tree `vhci-hcd`**. | no gateware; substantial firmware; a PC-side userspace bridge | No kernel code, no DRAM, and it generalises to *any* device class rather than just storage. More firmware than 5a. |
-| **5c. Linux on the SoC**, binding `ohci-platform` via `compatible = "generic-ohci"` — the literal reading of the goal. | `--with-mmu` + supervisor on VexiiRiscv (**not currently enabled** — `vexii_cpu.py` generates machine-mode only); the 8 MiB HyperRAM behind a Wishbone adapter (**#90 open, #92 DQS unfinished**); a Linux port; a DTB | Reachable — Konfekt proves it on this die. But **the USB controller is one device-tree node; the blocker is 8 MiB of DRAM that has no bus adapter yet.** |
+| **5c. Linux on the SoC**, binding `ohci-platform` via `compatible = "generic-ohci"` — the literal reading of the goal. | supervisor + MMU on VexiiRiscv (**not currently enabled** — `vexii_cpu.py` generates machine-mode only); the 8 MiB HyperRAM window (`d66e940`, never run); a kernel build and a DTB | **Part I is this route, costed.** It fits and it closes; the open number is what HyperRAM delivers as line refills. |
 
 **So: is the OHCI-to-Linux route reachable on this hardware, or blocked by the
-ULPI PHYs? Reachable, and the PHYs are not the blocker.** In order, the real
-obstacles are (1) closing timing at 60 MHz, (2) if and only if you insist on
-Linux running *on* the ECP5, a HyperRAM Wishbone controller that does not exist.
-Routes 5a and 5b get a Linux machine mounting the stick without either.
+ULPI PHYs? Reachable, and the PHYs are not the blocker.** The remaining obstacle
+on the USB side is closing timing at 60 MHz. Routes 5a and 5b get a Linux machine
+mounting the stick with no Linux on the SoC at all; 5c is Part I.
 
 ---
 
@@ -518,9 +831,9 @@ each cycle is still compliant — it just runs slower. At FS's 1.22 MB/s against
    read through a standard OHCI by a bare-metal driver.**
 4. Keep the PMOD adapter (§3.7: a socket, two 15 kΩ resistors, and 5 V) as the
    fallback. Do not build it until M1 has failed.
-5. For "Linux mounts a stick", plan on **5a** — re-export as a USB MSC device on
-   a port we already drive — and treat Linux-on-the-SoC as the separate, larger
-   programme it is, gated on HyperRAM (#90/#92) rather than on anything USB.
+5. For "Linux mounts a stick" with no Linux on the SoC, plan on **5a** — re-export
+   as a USB MSC device on a port we already drive. Linux *on* the SoC is Part I,
+   and it is gated on the HyperRAM refill measurement rather than on anything USB.
 
 This does not displace `docs/usb-host-proposal.md`. That document's
 recommendation — vendor GUH's SIE for 480 Mbps with a bespoke register interface

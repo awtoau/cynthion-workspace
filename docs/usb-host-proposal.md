@@ -10,6 +10,13 @@ anything exist to build on. **Section 11 onwards is the integration design** —
 what it takes to attach a host engine to *this* SoC, and it corrects five things
 sections 0-10 got wrong. Read section 11.1 before trusting anything above it.
 
+**If the question is Linux, this is not the document.** A 480 Mbps host with a
+bespoke register interface has no Linux driver, so taking it means writing an HCD.
+[`linux-on-cynthion.md`](linux-on-cynthion.md) carries that chain end to end and
+picks the full-speed OHCI route for exactly that reason; its Part II is the
+full-speed investigation in detail. This document remains the answer to #105's
+question, which was 480 Mbps.
+
 ---
 
 ## 0. Executive summary
