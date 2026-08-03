@@ -157,15 +157,47 @@ Whether quad SPI speeds up configuration:
   clocks after the 2-clock mode byte. The configurable count (`0xC0` Set Read
   Parameters) is a QPI-mode command, and this design does not use QPI.
 
-## What would need to change in the SoC (NEW, 2026-08-03)
+## What the SoC took, and what it bought (NEW, 2026-08-03)
 
-The SoC reads at `FLASH_MODE = "single"`, `FLASH_DIVISOR = 0`, 60 MHz sync —
-30 MHz SCK, 3.75 MB/s, 18.1 µs per cache line. Three things stand between that
-and the numbers above, in order of value:
+`FLASH_MODE = "quad"` is **adopted**. One row per commit, measured with
+`scripts/soc_shell.py bench` on the board; Fmax from three
+`scripts/soc_timing_sweep.py` runs each, because a single place-and-route on
+this design spreads 8 MHz on thread scheduling alone.
+
+| commit | change | metric | before | after | factor |
+|---|---|---|---|---|---|
+| `quad` | `FLASH_MODE` `single` → `quad` (`0x03` → `0xEB`) | flash 16 KiB read rnd, cycles/access | 958.71 | 355.57 | **2.70×** |
+| `quad` | — same commit | flash 16 KiB read seq, cycles/access | 93.67 | 50.11 | **1.87×** |
+| `quad` | — same commit | flash 2 KiB read seq, cycles/access | 35.10 | 29.89 | 1.17× |
+| `quad` | — same commit | flash 2 KiB read rnd, cycles/access | 62.08 | 63.43 | 0.98× (D-cache resident; no refill to speed up) |
+
+Cost, over the same three-run sweeps:
+
+| | LUT | FF | BRAM | Fmax min / median / max |
+|---|---|---|---|---|
+| single | 12769 | 6553 | 42 | 74.54 / 75.24 / 78.75 MHz |
+| quad | 12508 | 6554 | 42 | 69.82 / 75.02 / 77.27 MHz |
+| delta | **−261** | +1 | **0** | median −0.22 MHz |
+
+**Quad is cheaper in LUTs, not dearer.** The FSM shifts four bits per clock
+instead of one, so its bit counters are two bits narrower and the address
+shift register is shorter. Nothing was spent to get 2.7×.
+
+**The refill number predicted the bench number.** 3833 → 1083 ns is 3.54× on a
+line; the 16 KiB random walk, which misses on essentially every access, moved
+2.70×. The gap is the part of those 956 cycles that was never flash: ~14
+instructions of xorshift and loop per access, and a fetch path with no branch
+predictor (#140) charging four cycles an instruction. Flash stopped being the
+whole cost, so it could not deliver the whole ratio.
+
+**2 KiB random is the control.** It fits the 4 KiB D-cache, so it never refills
+and it did not move — 62.08 → 63.43, inside run-to-run noise. A change that had
+sped that row up would have been measuring something other than the flash.
+
+Two things still stand between this and the ceiling in the table above:
 
 | change | gets | cost |
 |---|---|---|
-| `FLASH_MODE = "quad"` | 4× | none. `ModalSPIFlashMemoryMap` already implements `0xEB` with `dummy_value=0xff0000`, and QE is set |
 | raise `SYNC_MHZ` | 2× at 120 MHz | the CPU clock moves with it; `usb` must stay exactly 60 MHz |
 | replace luna_soc's PHY | 2× again | `SPIPHYController` toggles a flip-flop, so **SCK is structurally capped at sync/2**. Glasgow's controller reaches sync/1, which is how 144 MHz was measured |
 

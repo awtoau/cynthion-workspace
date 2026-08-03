@@ -452,9 +452,20 @@ FLASH_SIZE = 4 * 1024 * 1024
 FLASH_TEST_OFFSET = 0x00300000
 
 # Read mode. "single" is 0x03, one lane, no dummy cycles -- the mode to bring up
-# first, because there is nothing in it to get subtly wrong. "quad" is 0xeb.
+# first, because there is nothing in it to get subtly wrong. "quad" is 0xeb,
+# address and data on four lanes with `dummy_value=0xff0000`.
 # See ecp5-test/riscv/vexii_flash.py.
-FLASH_MODE = "single"
+#
+# Quad needs no register write on this part: QE (SR2 bit 1) is already set, read
+# back as 0x02 (docs/chips/w25q32-config-flash.md). And 0xeb's dummy count is
+# fixed at four clocks in SPI mode -- the configurable one is a QPI command --
+# so there is nothing to tune and nothing that can be left half-configured.
+#
+# Measured on this board, cache-line refill for 64 B: 0x03 3833 ns, 0xeb 1083 ns
+# (#100). What that buys the CPU is in the bench rows, not in the ratio: the
+# flash 16 KiB random walk misses the D-cache on every access and is therefore
+# very nearly pure refill.
+FLASH_MODE = "quad"
 
 # SCK = sync / (2 * (1 + divisor)). At 80 MHz sync, divisor 0 gives 40 MHz,
 # which is inside the ECP5 MCLK pin's 62 MHz specification (FPGA-TN-02039) and
