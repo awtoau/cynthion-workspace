@@ -66,12 +66,26 @@ ENTRY = "dev.py"
 
 # Directories whose contents are not evidence of anything: build output, vendored
 # upstream trees, scratch, and the archive itself.
+#
+# `worktrees` is the one that mattered. `.claude/worktrees/` held eleven agent
+# worktrees, each a full copy of the tree, so every script was "cited by" its own
+# copies and 88 files looked referenced when almost none were. A citation from a
+# copy of the repo is not a citation. `.claude` itself stays searchable, because
+# commands and skills there do name scripts for real.
 IGNORE_DIRS = {"tmp", "build", "repos", "target", ".git", "__pycache__",
-               "debris", "node_modules", ".pytest_cache"}
+               "debris", "node_modules", ".pytest_cache", "worktrees"}
 
 # Files worth searching for a mention. Source, docs and config -- not binaries.
 TEXT_SUFFIXES = {".py", ".md", ".rs", ".toml", ".json", ".sh", ".yml", ".yaml",
                  ".x", ".txt", ".cfg"}
+
+# A mention from one of these is a caller: something could execute this script
+# without a human reading prose first. A mention from anything else -- which in
+# practice means a `.md` -- records that the script once RAN, not that anything
+# runs it. That is the distinction between `called` and `documented`, and it is
+# the one that matters: a one-off measurement is cited forever by the doc holding
+# its result, so counting doc mentions as references keeps dead tools alive.
+CODE_SUFFIXES = {".py", ".rs", ".sh", ".toml", ".json", ".yml", ".yaml", ".cfg"}
 
 
 def summary_of(path):
@@ -188,7 +202,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--markdown", action="store_true",
                         help="emit a markdown table, for pasting into an issue")
-    parser.add_argument("--only", choices=["live", "cited", "orphan"],
+    parser.add_argument("--only",
+                        choices=["live", "called", "documented", "orphan"],
                         help="report one classification")
     args = parser.parse_args()
 
@@ -239,8 +254,10 @@ def main():
         name = path.name
         if name in live:
             kind = "live"
+        elif any(Path(w).suffix in CODE_SUFFIXES for w in named_by[name]):
+            kind = "called"
         elif named_by[name]:
-            kind = "cited"
+            kind = "documented"
         else:
             kind = "orphan"
         rows.append({
@@ -256,7 +273,7 @@ def main():
         rows = [r for r in rows if r["kind"] == args.only]
 
     lines = []
-    counts = {"live": 0, "cited": 0, "orphan": 0}
+    counts = {"live": 0, "called": 0, "documented": 0, "orphan": 0}
     for row in rows:
         counts[row["kind"]] += 1
 
@@ -272,15 +289,18 @@ def main():
                          f"{row['name']}")
             if row["summary"]:
                 lines.append(f"                                    {row['summary']}")
-            if row["kind"] == "cited":
+            if row["kind"] in ("called", "documented"):
                 lines.append(f"                                    cited by: "
                              f"{', '.join(row['cited_by'][:4])}")
 
     lines.append("")
     lines.append(f"{len(rows)} scripts: {counts['live']} live, "
-                 f"{counts['cited']} cited, {counts['orphan']} orphan")
-    lines.append(f"live = reachable from ./{ENTRY}; cited = named by a doc or "
-                 f"another file; orphan = nothing mentions it")
+                 f"{counts['called']} called, {counts['documented']} documented, "
+                 f"{counts['orphan']} orphan")
+    lines.append(f"live = reachable from ./{ENTRY}; called = named by other code; "
+                 f"documented = named only by prose; orphan = nothing mentions it")
+    lines.append("documented and orphan are the retirement candidates: nothing "
+                 "can run them without a human reading a doc first.")
 
     text = "\n".join(lines)
     print(text)

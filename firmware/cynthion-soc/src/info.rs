@@ -321,9 +321,13 @@ pub fn command(uart: &mut Uart) {
          ("data",   at(&__sdata),   at(&__edata) - at(&__sdata)),
          ("bss",    at(&__sbss),    at(&__ebss) - at(&__sbss))]
     };
-    for (name, start, size) in sections {
-        let _ = write!(uart, "memory   {:6} {:6} at {:08x}  ", name, size, start);
-        write_region(uart, start);
+    for (index, (name, start, size)) in sections.iter().enumerate() {
+        // The label on the first row only; the rest are continuations of it.
+        // Every other block here reads that way, and repeating "memory" four
+        // times makes four facts look like four unrelated lines.
+        let _ = uart.write_str(if index == 0 { "memory   " } else { "         " });
+        let _ = write!(uart, "{:6} {:6} at {:08x}  ", name, size, start);
+        write_region(uart, *start);
         let _ = writeln!(uart);
     }
 
