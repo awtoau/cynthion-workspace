@@ -51,7 +51,8 @@ one command, so it cannot express "run this label but not that pass". Getting it
 custom build script rather than an override, and the cost is unreadable net names in the
 timing report -- which matters precisely when reading a critical path.
 
-`scripts/fpga_flow_bench.py` measures it if that trade becomes worthwhile.
+`fpga_flow_bench.py` measured it, and was retired once it had; recover it from git if
+that trade becomes worthwhile again.
 
     ./scripts/fast_build_env.py            # print the shell exports
     python3 -c "import fast_build_env"     # or set them in-process
