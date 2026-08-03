@@ -14,7 +14,25 @@ marking says.
 | **SFDP density** | **4 MiB** | the die's own declaration, independent of the ID byte | `scripts/flash_capacity_probe.py` |
 | unique ID | `355027cba3ac60de` | per-part | `apollo flash-info` |
 | status register 2 | `0x02`, **QE set** | quad needs no register write | `scripts/flash_ceiling.py --status` |
-| status register 3 | `0x60`, ADS clear, **DRV 25%** | no 4-byte addressing; weakest output drive | `scripts/flash_ceiling.py --status` |
+| status register 3 | `0x60`, **DRV 25%**, WPS 0 | weakest output drive; BP-style protection, not block locks | `scripts/flash_ceiling.py --status` |
+
+**The variant is `W25Q32JVSSIQ`** — named in
+`repos/cynthion-hardware/bank8_configuration.kicad_sch:8011`, datasheet
+**W25Q32JV Revision G, 27 March 2018**. Three measurements agree: `EF 40 16`
+rules out JV-IM/JM (`70 16`) and both JW parts; SR2 QE=1 out of the box is the
+`IQ`/`JQ` factory-fixed default (§7.1) and the *opposite* of the IM/JM default;
+and SR3 existing at all rules out the W25Q32BV, which also reads `40 16` but has
+no Status Register-3.
+
+**This matters because the JV split the feature set.** The `-IM`/`-JM` part gets
+QPI and DTR in a separate datasheet; the `-IQ` fitted here has **neither**, nor
+`0xC0` Set Read Parameters. See
+[`../memory-speed-options.md`](../memory-speed-options.md).
+
+**Correction: there is no ADS bit on this part.** This table previously read
+SR3 `0x60` as "ADS clear". ADS/ADP are 4-byte-addressing bits and exist only on
+≥256 Mbit parts; SR3 bit S23 here is Reserved. `0x60` is DRV=25% and WPS=0, and
+nothing else. (S23 *is* `HOLD/RST` on the W25Q32FV — the JV dropped it.)
 
 **Capacity confirmed three ways** — SFDP, the ID byte, and aliasing. Reads at 4, 8
 and 12 MiB all return offset 0 exactly; reads past 16 MiB get no response.
@@ -43,9 +61,19 @@ lines are wired, so quad mode is a gateware question, not rework.
 ## No read ceiling has been found (NEW, 2026-08-03)
 
 **Nothing fails.** Every mode reads byte-exact at every rate reachable, up to
-**144 MHz SCK** — 38% past the part's 104 MHz rating and 132% past the 62 MHz
-Lattice specifies for `MCLK`. Stating that once: the top of this table is past
-both ratings and there is no margin figure to reason from.
+**144 MHz SCK** — **8% past this part's rating**, which is 133 MHz for everything
+except `0x03` at VCC 3.0–3.6 V, and 2.9× past `0x03`'s own 50 MHz.
+
+**Correction: there is no Lattice `MCLK` figure to be past.** This section
+previously read *"132% past the 62 MHz Lattice specifies for `MCLK`"*. The 62 MHz
+is `fCCLK` in the sysCONFIG port timing table — the **configuration engine's**
+oscillator ceiling, which has nothing to do with user mode. The string `USRMCLK`
+does not appear in the ECP5 datasheet at all; FPGA-TN-02039 §6.1.2, the only
+`USRMCLK` documentation, gives no fmax, no setup/hold and no jitter; and
+prjtrellis has **no timing entry for this path in any speed grade**, so a clean
+nextpnr report says nothing about it. The honest statement is stronger than the
+one it replaces: **user-mode `USRMCLK` is unmodelled by the vendor and by the
+open toolchain**, and measurement is the only authority.
 
 The limit reached is **the test design's own fmax**, not the flash and not the
 pin. SCK is `sync / (divisor + 1)`, so the sync clock a bitstream is built at is
@@ -80,9 +108,18 @@ is not a wall on this board.
 | 120 MHz FAIL, 160 MHz FAIL | both were divisor-0 points, disbelieved for the reason above. 120 MHz passes |
 | 80 MHz is the fastest verified | 144 MHz, five modes |
 
-**No DDR.** The datasheet contains no DTR opcodes; DDR reads belong to the W25Q-DTR
-family, which this is not. Its "equivalent 208/416 MHz" claim is lane parallelism,
-not double-edge clocking. Genuine DDR on this board is the HyperRAM.
+**No DDR, and fitting the part that has it would be slower.** The datasheet
+contains no DTR opcodes; DDR reads belong to the `W25Q32JV-DTR` (`-IM`/`-JM`,
+JEDEC `70 16`), which this is not. Its "equivalent 208/416 MHz" claim is lane
+parallelism, not double-edge clocking.
+
+Worth settling permanently, because "DDR would double it" is the obvious next
+thought: **DTR on the `-IM` part is rated 66 MHz SCK** at VCC 3.0–3.6 V, against
+133 MHz for its SDR instructions. Four lanes at double rate at 66 MHz is
+4 × 2 × 66e6 / 8 = **66 MB/s** — below the **71.7 MB/s** this board already
+measures. Per cache line `0xED` costs 8 + 3 + 8 + 64 = 83 clocks at 66 MHz =
+**1258 ns**, against 1028 ns today. **Double rate at half the clock is a
+downgrade.** Genuine DDR on this board is the HyperRAM.
 
 Full speed table, read modes, clock domains and the bugs found getting there:
 [`../luna_ecp5_fpga/flash-detailed.md`](../luna_ecp5_fpga/flash-detailed.md).
@@ -145,17 +182,30 @@ Whether quad SPI speeds up configuration:
 
 ## Registers that affect read speed (NEW, 2026-08-03)
 
-- **QE (SR2 bit 1) is already set.** Quad needs no write to this part, and
-  setting it would have cost hardware write protection by repurposing /WP and
-  /HOLD as IO2 and IO3.
+- **QE (SR2 bit 1) is already set, and cannot be cleared.** §7.1 calls it the
+  *"factory **fixed** default"* for `IQ`/`JQ` ordering options. So IO2 and IO3 are
+  unconditionally data pins: there is no /WP, no /HOLD and **no /RESET** on this
+  part, which is why Winbond supplies the `66h`/`99h` software reset instead
+  (§8.2.35). Quad costs nothing here because the protection was never available.
 - **Output drive is 25%, the default, and it does not need raising.** 100% is
   available and writable *volatile*, but nothing fails at 25% up to 144 MHz, so
   there is no failure for a stronger driver to fix. A volatile write attempted
   through Apollo's background SPI (`0x50` then `0x11`) **did not take** — SR3
   read back unchanged at `0x60`. The part was not modified.
-- **No dummy-cycle register applies.** `0xEB` in SPI mode is fixed at 4 dummy
-  clocks after the 2-clock mode byte. The configurable count (`0xC0` Set Read
-  Parameters) is a QPI-mode command, and this design does not use QPI.
+- **No dummy-cycle register exists on this part.** `0xEB` in SPI mode is fixed at
+  4 dummy clocks after the 2-clock mode byte. `0xC0` Set Read Parameters is a
+  QPI-only command and **this part has no QPI mode** — the whole instruction set
+  is 34 standard plus 8 dual/quad opcodes, and `38h`, `FFh` and `C0h` are in
+  none of them. The DTR datasheet says it directly: *"In Standard SPI mode, the
+  'Set Read Parameters (C0h)' instruction is not accepted. The dummy clocks …
+  in Standard/Dual/Quad SPI mode are fixed."*
+- **`0x77` Set Burst with Wrap is present**, and it is the only one of QPI /
+  DTR / `0xC0` / `0x77` that this part has. It gives critical-word-first within
+  an 8/16/32/64-byte section, persists across transactions, applies to `0xEB`
+  only, and **does not remove the address phase**. Default `W4` = 1, disabled.
+
+Every remaining speed option on this part, with the arithmetic:
+[`../memory-speed-options.md`](../memory-speed-options.md).
 
 ## What the SoC took, and what it bought (NEW, 2026-08-03)
 
@@ -214,9 +264,18 @@ those two are already plain constants a register could hold.
 **Anything above 144 MHz SCK.** The instrument runs out before the flash does.
 Reaching further means either lifting the test design's fmax past 149 MHz — the
 critical path is inside Glasgow's `IOStreamer` — or generating SCK in a 2× clock
-domain so the fabric need not run at SCK. An `ODDRX1F` cannot do it: nextpnr
+domain so the fabric need not run at SCK.
+
+**`ODDRX1F` cannot do it, and the reason is the silicon, not the tool.** nextpnr
 refuses one whose `Q` drives anything but a top-level output, and `USRMCLK` is
-not one.
+not one — but underneath that, the CCLK site has **no `DATAMUX_ODDR`/`IOLDO` mux**
+in the Trellis routing database, unlike every real PIO, and `JA4`'s mux sources
+carry **no global-clock spine source**, so a global clock cannot reach `USRMCLKI`
+without passing through a LUT or FF. There is no software fix. The two published
+workarounds are hand-placed fabric DDR flip-flops next to the CCLK site
+(`dan-rodrigues/icestation-32`), which reaches the fabric rate and does not
+exceed it, and driving `USRMCLKI` from a phase-shifted PLL output (NanoMig, at
+84 MHz). **This board is already past both.**
 
 ## Scripts
 

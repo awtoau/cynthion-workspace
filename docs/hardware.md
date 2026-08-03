@@ -18,8 +18,12 @@ not been checked. Every assertion is traceable to source in `repos/`,
 | part | what it is | how software reaches it | note |
 |---|---|---|---|
 | **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die** | JTAG (Apollo), config from flash | [`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md) |
-| **Winbond W25Q32** | 4 MiB SPI config flash, holds the bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
+| **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, holds the bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
 | **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** (#90) | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) |
+
+**Making either memory faster** — every remaining option with its arithmetic, the
+published ECP5 scoreboard, and what is ruled out on these exact parts:
+[`memory-speed-options.md`](memory-speed-options.md).
 | **PAC1954-1** | 4-channel power monitor | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |

@@ -27,8 +27,34 @@ ISSI files kept alongside are equivalents for comparison).
 |---|---|---|---|
 | `0x0000` | ID0 | `0x0c86` | see below |
 | `0x0001` | ID1 | `0x0001` | die revision |
-| `0x0800` | CR0 | `0x8f2f` | normal operation, latency 2, fixed latency, wrapped burst |
-| `0x0801` | CR1 | `0xffc1` | distributed refresh controls |
+| `0x0800` | CR0 | `0x8f2f` | see the field table below |
+| `0x0801` | CR1 | `0xffc1` | see the field table below |
+
+**CR0 `0x8f2f` and CR1 `0xffc1`, field by field** (tables 10 and 13). Every
+field is at its power-on default — nothing has ever been written to either
+register:
+
+| bits | field | raw | meaning |
+|---|---|---|---|
+| CR0[15] | deep power down | `1` | normal operation |
+| CR0[14:12] | drive strength | `000` | **34 Ω**, fourth of seven (19–115 Ω available) |
+| CR0[7:4] | initial latency | `0010` | **7 clocks, rated to 200 MHz** |
+| CR0[3] | fixed latency | `1` | **fixed** — always 2 × initial = 14 clocks |
+| CR0[2] | hybrid burst | `1` | legacy wrap, not hybrid |
+| CR0[1:0] | wrapped burst length | `11` | 32 bytes |
+| CR1[6] | master clock type | `1` | **single ended — CK# is not used** |
+| CR1[4:2] | partial array refresh | `000` | full array |
+| CR1[1:0] | distributed refresh | `01` | 4 µs tCSM — **read only, and the only defined value** |
+
+**Correction: this table previously read CR0 `0x8f2f` as "latency 2".** `0010b`
+is the *code*; table 10 reads it as **7 clocks**, which is why fixed latency
+costs 14. There is no 2-clock setting on this part — the range is 3 to 7.
+
+**And the FPGA has been driving CK# into a part that ignores it.** `CR1[6] = 1`
+selects single-ended clocking, where *"CK# is not used"*, while
+`cynthion_r1_4.py:206` declares `DiffPairs("C3", "D3")` with `LVCMOS33D`. One
+CR1 write switches the part to clocking on the CK/CK# crossing. Untried; see
+[`../memory-speed-options.md`](../memory-speed-options.md).
 
 **ID0 `0x0c86` decoded:**
 
@@ -91,6 +117,7 @@ section is measured on this board unless marked inherited.
 | | |
 |---|---|
 | **highest clean clock** | **CK 192 MHz — 15.7% above the part's 166 MHz rating** |
+| speed bin fitted | **`6I`, 166 MHz.** `ram.kicad_sch:2347` lists **`W956A8MBYA5I`** — the **200 MHz** grade of the same die, same datasheet, same package — as an approved substitution |
 | **throughput there** | **334.4 MB/s read, 351.1 MB/s write, 87.1% of theoretical** |
 | **first failing clock** | CK 200 MHz, and it fails in bulk, not intermittently |
 | error rate when clean | 0 in 200 M words per rung, every rung to CK 192 |
@@ -221,6 +248,26 @@ count that merely happened to land right, which would drift gradually.
 
 `READCLKSEL` is upstream's `0b010` and has never been swept. That is the obvious
 next experiment and it was not run here.
+
+**But it does not do what "read clock select" suggests, and sweeping it alone may
+find nothing.** Lattice FPGA-TN-02035-1.3 §6.2.4: it shifts the **READ gating
+pulse** by 1/4T per step, covering **2T in total** — the 90° shift comes from
+`DDRDLL`/`DQSR90` and the fine delay from `RDMOVE`, three separate mechanisms.
+If the round-trip delay lands outside that 2T window, `READ1`/`READ0` must move
+to the next cycle **together**, an outer loop no harness here has. The same
+section requires **`PAUSE` asserted 4T before and 4T after** any change, requires
+a **minimum burst of 8** for training, and says to sample `BURSTDET` *one cycle
+after `DATAVALID`* — none of which this design does. LiteX hit the `PAUSE`
+requirement the hard way in litedram#103.
+
+**`apfaudio/tiliqua` has already built this**, on the same `psram.py` lineage: a
+runtime `READCLKSEL` register with the `PAUSE` sequence and a training FSM that
+requires 128 consecutive bursts with `BURSTDET` high. It is a drop-in, and it
+proves `BURSTDET` does assert on a HyperBus part — though only at CK 120.
+
+Every remaining speed option on this part, the published ECP5 scoreboard, and
+what `ALIGNWD` has to do with the CK 200 failure:
+[`../memory-speed-options.md`](../memory-speed-options.md).
 
 ## tCSM caps the burst, and the 220.2 MB/s figure exceeded it
 
