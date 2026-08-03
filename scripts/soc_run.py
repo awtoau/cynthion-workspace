@@ -145,6 +145,9 @@ def main():
                              "nothing in .rodata changed")
     parser.add_argument("--no-read", action="store_true",
                         help="do not read the console afterwards")
+    parser.add_argument("--build-only", action="store_true",
+                        help="build firmware, bootloader and gateware, then stop; "
+                             "touches no hardware, so it needs no board attached")
     parser.add_argument("--skip-tests", action="store_true",
                         help="configure even though the QEMU shell tests have not run")
     args = parser.parse_args()
@@ -228,7 +231,9 @@ def main():
                 if rodata:
                     emit(f"flash image: {rodata} bytes for {FLASH_RODATA_OFFSET:#x} "
                          f"({firmware_digest(RODATA_BIN)})")
-                    if args.no_flash:
+                    if args.build_only:
+                        emit("  NOT WRITTEN (--build-only touches no hardware).")
+                    elif args.no_flash:
                         emit("  NOT WRITTEN (--no-flash). The board will run with "
                              "whatever .rodata flash already holds.")
                     else:
@@ -330,6 +335,16 @@ def main():
                         return 1
                     emit(f"bitstream carries the firmware just built "
                          f"({firmware_digest()})")
+
+        # Stop here, deliberately AFTER the stale-bitstream comparison.
+        #
+        # A build-only run is what `./dev.py build` and the pre-commit gate use, so it
+        # runs on a machine with no board attached. Placing the return after the
+        # comparison means the check that has caught three stale-image incidents also
+        # runs there -- it reads two files and touches nothing.
+        if args.build_only:
+            emit("build complete (--build-only): nothing configured, nothing written")
+            return 0
 
         if not BITSTREAM.exists():
             emit(f"no bitstream at {BITSTREAM.relative_to(ROOT)}")
