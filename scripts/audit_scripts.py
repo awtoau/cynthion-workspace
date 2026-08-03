@@ -269,6 +269,26 @@ def main():
             "summary": summary_of(path),
         })
 
+    # DANGLING DEPENDENCIES: live code importing something already archived.
+    #
+    # The check above cannot see these. `names` is built from what is IN scripts/,
+    # so once a file moves to debris/ it stops being a name anything is searched
+    # for -- and a live script that imports it looks perfectly reachable while
+    # being broken. That is not hypothetical: this sweep archived eight scripts
+    # that live code still needed, and each one surfaced as a crash at the moment
+    # someone ran the tool that needed it, not when it was moved.
+    archived = {q.stem: q.name for q in (ROOT / "debris" / "scripts").glob("*.py")}
+    dangling = {}
+    for path in scripts:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for stem, name in archived.items():
+            if (f"import {stem}" in text or f"from {stem} import" in text
+                    or name in text):
+                dangling.setdefault(name, []).append(path.name)
+
     if args.only:
         rows = [r for r in rows if r["kind"] == args.only]
 
@@ -292,6 +312,13 @@ def main():
             if row["kind"] in ("called", "documented"):
                 lines.append(f"                                    cited by: "
                              f"{', '.join(row['cited_by'][:4])}")
+
+    if dangling:
+        lines.append("")
+        lines.append("DANGLING: live scripts referencing archived ones --")
+        for name, users in sorted(dangling.items()):
+            lines.append(f"  debris/scripts/{name} <- {', '.join(sorted(users))}")
+        lines.append("  recover these, or the tools above them are broken.")
 
     lines.append("")
     lines.append(f"{len(rows)} scripts: {counts['live']} live, "
