@@ -19,7 +19,7 @@ copies it into block RAM and jumps to it.
 
     path        needs                          reaches HyperRAM through
     ----------  -----------------------------  -------------------------------------
-    CPU memory  a running CPU                  `HyperRAMWishbone`, two-word bursts
+    CPU memory  a running CPU                  `HyperRAMWishbone`, cache-line bursts
     USB bulk    a running CPU and console      `HyperRAMBoot`, one word at a time
     JTAG ER1    only a configured FPGA         `jtag_stage.JTAGStager`, one word at a time
 
@@ -57,6 +57,11 @@ from luna.gateware.interface.psram import HyperRAMPHY, HyperRAMInterface
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
+# CR1 sets tCSM to 4 us. Leave an even-word margin below 768 CK at 192 MHz so
+# a missing Wishbone terminator cannot hold CS# low through a refresh deadline.
+HYPERRAM_MAX_BURST_WORDS = 748
+HYPERRAM_MAX_BURST_BEATS = HYPERRAM_MAX_BURST_WORDS // 2
+
 
 class HyperRAMWishbone(wiring.Component):
     """A 32-bit Wishbone window backed by two 16-bit HyperRAM words.
@@ -65,7 +70,8 @@ class HyperRAMWishbone(wiring.Component):
 
       * Reads only capture data and acknowledge the request.
       * Partial stores read, merge, and write because this controller has no mask port.
-      * One request stays asserted until both 16-bit words complete.
+      * Linear incrementing cycles keep one HyperBus transaction open.
+      * Classic, wrapped, and partial-write cycles end after one Wishbone beat.
 
     | signal | direction | meaning |
     |--------|-----------|---------|
@@ -90,6 +96,7 @@ class HyperRAMWishbone(wiring.Component):
                 features={"cti", "bte", "err"})),
             "req":       wiring.Out(1),
             "req_write": wiring.Out(1),
+            "req_final": wiring.Out(1),
             "req_addr":  wiring.Out(32),
             "req_data":  wiring.Out(32),
             "granted":   wiring.In(1),
@@ -102,7 +109,6 @@ class HyperRAMWishbone(wiring.Component):
         m = Module()
 
         pending = Signal()
-        answered = Signal()
         is_write = Signal()
         address = Signal(len(self.bus.adr))
         write_data = Signal(32)
@@ -110,21 +116,31 @@ class HyperRAMWishbone(wiring.Component):
         read_low = Signal(16)
         second_word = Signal()
         rmw_read = Signal()
+        final_beat = Signal()
+        bursting = Signal()
+        burst_beats = Signal(range(HYPERRAM_MAX_BURST_BEATS))
 
-        request = self.bus.cyc & self.bus.stb & ~pending & ~answered
+        request = self.bus.cyc & self.bus.stb & ~pending
+        word_event = self.granted & self.in_valid
+        complete = pending & word_event & second_word & ~rmw_read
+        burst_candidate = (
+            (self.bus.cti == wishbone.CycleType.INCR_BURST)
+            & (self.bus.bte == wishbone.BurstTypeExt.LINEAR)
+            & (~self.bus.we | (self.bus.sel == 0b1111))
+        )
 
         m.d.comb += [
-            self.bus.ack.eq(answered),
+            self.bus.ack.eq(complete),
             self.bus.err.eq(0),
-            self.req.eq(pending),
-            self.req_write.eq(is_write & ~rmw_read),
+            self.bus.dat_r.eq(Cat(read_low, self.in_data)),
+            # Between burst beats the next Wishbone request keeps ownership while
+            # its fields replace the beat acknowledged on the preceding edge.
+            self.req.eq(pending | (bursting & self.bus.cyc & self.bus.stb)),
+            self.req_write.eq(Mux(pending, is_write & ~rmw_read, self.bus.we)),
+            self.req_final.eq(final_beat),
             self.req_addr.eq(address << 1),
-            self.req_data.eq(write_data),
+            self.req_data.eq(Mux(pending, write_data, self.bus.dat_w)),
         ]
-
-        # `answered` separates consecutive transfers while the initiator releases STB.
-        # This keeps the peripheral safe without relying on the SoC's response stage.
-        m.d.sync += answered.eq(0)
 
         with m.If(request):
             m.d.sync += [
@@ -135,9 +151,23 @@ class HyperRAMWishbone(wiring.Component):
                 select.eq(self.bus.sel),
                 second_word.eq(0),
                 rmw_read.eq(self.bus.we & (self.bus.sel != 0b1111)),
+                final_beat.eq(
+                    ~burst_candidate
+                    | (self.bus.cti == wishbone.CycleType.END_OF_BURST)
+                    | (bursting & (burst_beats == HYPERRAM_MAX_BURST_BEATS - 1))
+                ),
             ]
+            with m.If(~bursting):
+                m.d.sync += [
+                    bursting.eq(burst_candidate),
+                    burst_beats.eq(1),
+                ]
+            with m.Elif(burst_beats == HYPERRAM_MAX_BURST_BEATS - 1):
+                m.d.sync += [bursting.eq(0), burst_beats.eq(0)]
+            with m.Else():
+                m.d.sync += burst_beats.eq(burst_beats + 1)
 
-        with m.If(pending & self.granted & self.in_valid):
+        with m.If((pending | (bursting & self.bus.cyc & self.bus.stb)) & word_event):
             with m.If(~second_word):
                 with m.If(~is_write | rmw_read):
                     m.d.sync += read_low.eq(self.in_data)
@@ -154,14 +184,13 @@ class HyperRAMWishbone(wiring.Component):
                         rmw_read.eq(0),
                         second_word.eq(0),
                     ]
-                with m.Elif(~is_write):
-                    m.d.sync += self.bus.dat_r.eq(Cat(read_low, self.in_data))
                 with m.If(~rmw_read):
                     m.d.sync += [
                         pending.eq(0),
-                        answered.eq(1),
                         second_word.eq(0),
                     ]
+                    with m.If(final_beat):
+                        m.d.sync += [bursting.eq(0), burst_beats.eq(0)]
 
         return m
 
@@ -314,7 +343,7 @@ class BootRAM(Elaboratable):
     |----------|--------|----------------|
     | 1 | JTAG staging sink | 16 bits |
     | 2 | CPU staging CSR | 16 bits |
-    | 3 | CPU Wishbone window | 32 bits in one two-word burst |
+    | 3 | CPU Wishbone window | 32-bit beats in one bounded linear burst |
 
     Attributes
     ----------
@@ -425,10 +454,15 @@ class BootRAM(Elaboratable):
         active = ~fsm.ongoing("IDLE")
         word_event = Mux(writing, psram.write_ready, psram.read_ready)
 
-        # The first ready advances a 32-bit request to its upper half. `final_word`
-        # then stays high through recovery; pulsing it leaves the controller bursting.
-        with m.If(active & wide & ~second_word & word_event):
-            m.d.sync += second_word.eq(1)
+        current_final = Signal()
+        m.d.comb += current_final.eq(
+            ~wide | (second_word & Mux(owner == OWNER_WISHBONE,
+                                       mmap.req_final, 1)))
+
+        # Do not advance past the closing half. This holds both `final_word` and the
+        # last write data through recovery, as required by the upstream controller.
+        with m.If(active & wide & word_event & ~current_final):
+            m.d.sync += second_word.eq(~second_word)
 
         m.d.comb += [
             psram.single_page.eq(0),
@@ -440,10 +474,14 @@ class BootRAM(Elaboratable):
             # pulsed drivers returned plausible wrong data rather than failing.
             psram.perform_write.eq(Mux(start, selected_write, writing)),
             psram.final_word.eq(Mux(start, ~selected_wide,
-                                    ~wide | second_word)),
+                                    current_final)),
             psram.write_data.eq(Mux(
                 start, selected_data[:16],
-                Mux(second_word, write_data[16:], write_data[:16]))),
+                Mux(second_word,
+                    Mux(owner == OWNER_WISHBONE, mmap.req_data[16:],
+                        write_data[16:]),
+                    Mux(owner == OWNER_WISHBONE, mmap.req_data[:16],
+                        write_data[:16])))),
             port.granted.eq(active & (owner == OWNER_CSR)),
             port.in_data.eq(psram.read_data),
             port.in_valid.eq(active & (owner == OWNER_CSR) & word_event),

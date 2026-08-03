@@ -73,6 +73,10 @@ shows the fix passing is a check that would have passed before the fix.
   7. **Shared engine.** The real three-master state machine drives a controllable
      interface for a two-word read and write. The checks sample the controls on
      every data beat and through recovery.
+
+  8. **Cache-line burst.** The real Wishbone window and non-DQS protocol engine
+     read sixteen 32-bit beats. Incrementing CTI produces one CS# assertion;
+     classic CTI is the pre-change negative control and produces sixteen.
 """
 
 import argparse
@@ -89,11 +93,15 @@ sys.path.insert(0, str(ROOT / "ecp5-test" / "hyperram"))
 from amaranth import Elaboratable, Module, Signal
 from amaranth.hdl import Fragment
 from amaranth.sim import Simulator
+from amaranth_soc import wishbone
 
-from luna.gateware.interface.psram import HyperBusDQSPHY, HyperRAMDQSInterface
+from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
+                                            HyperRAMDQSInterface,
+                                            HyperRAMInterface)
 
 from soc_board_sim import Checks
-from vexii_bootram import BootRAM, HyperRAMWishbone
+from vexii_bootram import (BootRAM, HYPERRAM_MAX_BURST_WORDS,
+                           HyperRAMWishbone)
 
 
 # `sync`. Only the ratio to the device matters here, since nothing in this file
@@ -576,16 +584,23 @@ def section_wishbone(checks, emit):
         ctx.set(dut.granted, 1)
         ctx.set(dut.in_data, value)
         ctx.set(dut.in_valid, 1)
+        ack = ctx.get(dut.bus.ack)
+        data = ctx.get(dut.bus.dat_r)
         await ctx.tick()
         ctx.set(dut.in_valid, 0)
+        return ack, data
 
-    async def begin(ctx, *, adr, write=False, data=0, select=0b1111):
+    async def begin(ctx, *, adr, write=False, data=0, select=0b1111,
+                    cti=wishbone.CycleType.CLASSIC,
+                    bte=wishbone.BurstTypeExt.LINEAR):
         ctx.set(dut.bus.cyc, 1)
         ctx.set(dut.bus.stb, 1)
         ctx.set(dut.bus.adr, adr)
         ctx.set(dut.bus.we, write)
         ctx.set(dut.bus.dat_w, data)
         ctx.set(dut.bus.sel, select)
+        ctx.set(dut.bus.cti, cti)
+        ctx.set(dut.bus.bte, bte)
         await ctx.tick()
 
     async def end(ctx):
@@ -611,17 +626,15 @@ def section_wishbone(checks, emit):
         observed["read_addr"] = ctx.get(dut.req_addr)
         observed["read_write"] = ctx.get(dut.req_write)
         await pulse_word(ctx, 0x2211)
-        await pulse_word(ctx, 0x4433)
-        observed["read_ack"] = ctx.get(dut.bus.ack)
-        observed["read_data"] = ctx.get(dut.bus.dat_r)
+        observed["read_ack"], observed["read_data"] = \
+            await pulse_word(ctx, 0x4433)
         await end(ctx)
 
         await begin(ctx, adr=7, write=True, data=0xa1b2c3d4)
         observed["full_write"] = (ctx.get(dut.req_write),
                                    ctx.get(dut.req_data))
         await pulse_word(ctx, 0)
-        await pulse_word(ctx, 0)
-        observed["full_ack"] = ctx.get(dut.bus.ack)
+        observed["full_ack"], _ = await pulse_word(ctx, 0)
         await end(ctx)
 
         # Byte lanes 0 and 2 change. The inactive lanes must come from the read,
@@ -636,8 +649,17 @@ def section_wishbone(checks, emit):
         observed["partial_merged"] = ctx.get(dut.req_data)
         observed["partial_early_ack"] = ctx.get(dut.bus.ack)
         await pulse_word(ctx, 0)
-        await pulse_word(ctx, 0)
-        observed["partial_ack"] = ctx.get(dut.bus.ack)
+        observed["partial_ack"], _ = await pulse_word(ctx, 0)
+        await end(ctx)
+
+        cap_final = []
+        for beat_index in range(HYPERRAM_MAX_BURST_WORDS // 2):
+            await begin(ctx, adr=0x200 + beat_index,
+                        cti=wishbone.CycleType.INCR_BURST)
+            await pulse_word(ctx, beat_index)
+            cap_final.append(ctx.get(dut.req_final))
+            await pulse_word(ctx, beat_index)
+        observed["cap_final"] = cap_final
         await end(ctx)
 
     sim = Simulator(Fragment.get(dut, None))
@@ -674,6 +696,10 @@ def section_wishbone(checks, emit):
                  observed["partial_early_ack"] == 0)
     checks.check("the write half of a partial store completes the request",
                  observed["partial_ack"] == 1)
+    checks.check("a missing EOB is forced closed at the tCSM-safe cap",
+                 observed["cap_final"] ==
+                 [0] * (HYPERRAM_MAX_BURST_WORDS // 2 - 1) + [1],
+                 f"final beats {sum(observed['cap_final'])}")
 
 
 class ControlledInterface:
@@ -740,11 +766,11 @@ def section_shared_engine(checks, emit):
         await ctx.tick()
         ctx.set(interface.read_data, 0x7856)
         observed["read_second_final"] = ctx.get(interface.final_word)
+        observed["read_ack"] = ctx.get(dut.mmap.bus.ack)
+        observed["read_data"] = ctx.get(dut.mmap.bus.dat_r)
         await ctx.tick()
         ctx.set(interface.read_ready, 0)
         observed["read_recovery_final"] = ctx.get(interface.final_word)
-        observed["read_ack"] = ctx.get(dut.mmap.bus.ack)
-        observed["read_data"] = ctx.get(dut.mmap.bus.dat_r)
         await end(ctx)
 
         observed["write_started"] = await begin(ctx, write=True,
@@ -762,12 +788,12 @@ def section_shared_engine(checks, emit):
         observed["write_second"] = (
             ctx.get(interface.perform_write), ctx.get(interface.write_data),
             ctx.get(interface.final_word))
+        observed["write_ack"] = ctx.get(dut.mmap.bus.ack)
         await ctx.tick()
         ctx.set(interface.write_ready, 0)
         observed["write_recovery"] = (
             ctx.get(interface.perform_write), ctx.get(interface.write_data),
             ctx.get(interface.final_word))
-        observed["write_ack"] = ctx.get(dut.mmap.bus.ack)
         await end(ctx)
 
     sim = Simulator(Fragment.get(dut, None))
@@ -807,6 +833,179 @@ def section_shared_engine(checks, emit):
                  observed["write_ack"] == 1)
 
 
+class NonDQSHarness(Elaboratable):
+    """The memory window connected to the protocol engine used by the SoC."""
+
+    def __init__(self):
+        self.phy = HyperBusPHY()
+        self.interface = HyperRAMInterface(phy=self.phy)
+        self.bootram = BootRAM(interface=self.interface)
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.interface = self.interface
+        m.submodules.bootram = self.bootram
+        return m
+
+
+class ModelHyperRAM16:
+    """A 16-bit fixed-latency read model, observed only through HyperBus."""
+
+    def __init__(self):
+        self.commands = []
+        self.transaction_cycles = []
+        self._state = "idle"
+        self._ca = []
+        self._latency = 0
+        self._address = 0
+        self._active_cycles = 0
+        self._previous_cs = 0
+
+    def step(self, *, cs, clk_en, dq_o, dq_e):
+        dq_i, rwds_i = 0, 0
+
+        if cs and not self._previous_cs:
+            self._state = "command"
+            self._ca = []
+            self._active_cycles = 0
+        if cs and clk_en:
+            self._active_cycles += 1
+        if not cs and self._previous_cs:
+            self.transaction_cycles.append(self._active_cycles)
+            self._state = "idle"
+        self._previous_cs = cs
+
+        if not cs:
+            return dq_i, rwds_i
+
+        if self._state == "command" and clk_en and dq_e:
+            self._ca.extend(((dq_o >> 8) & 0xff, dq_o & 0xff))
+            if len(self._ca) >= 6:
+                ca = 0
+                for byte in self._ca[:6]:
+                    ca = (ca << 8) | byte
+                self._address = ((((ca >> 16) & ((1 << 29) - 1)) << 3)
+                                 | (ca & 0b111))
+                self.commands.append(self._address)
+                # The fixed-latency part presents data one CK after the protocol
+                # FSM reaches READ_DATA; that turnaround completes the 19-CK cost.
+                self._latency = HyperRAMInterface.HIGH_LATENCY_CLOCKS
+                self._state = "latency"
+        elif self._state == "latency":
+            if self._latency:
+                self._latency -= 1
+            else:
+                self._state = "data"
+        elif self._state == "data":
+            dq_i = (0x4000 + self._address) & 0xffff
+            rwds_i = 0b10
+            self._address += 1
+
+        return dq_i, rwds_i
+
+
+def simulate_line_refill(*, incrementing):
+    """Read one 64-byte line and return device-observed transactions/cycles."""
+    dut = NonDQSHarness()
+    model = ModelHyperRAM16()
+    observed = {"data": [], "cycles": 0}
+
+    async def testbench(ctx):
+        beat_index = 0
+        request_active = False
+
+        for _ in range(CYCLE_LIMIT):
+            if not request_active and beat_index < 16:
+                ctx.set(dut.bootram.mmap.bus.cyc, 1)
+                ctx.set(dut.bootram.mmap.bus.stb, 1)
+                ctx.set(dut.bootram.mmap.bus.adr, 0x100 + beat_index)
+                if incrementing:
+                    cti = (wishbone.CycleType.END_OF_BURST if beat_index == 15
+                           else wishbone.CycleType.INCR_BURST)
+                else:
+                    cti = wishbone.CycleType.CLASSIC
+                ctx.set(dut.bootram.mmap.bus.cti, cti)
+                ctx.set(dut.bootram.mmap.bus.bte,
+                        wishbone.BurstTypeExt.LINEAR)
+                ctx.set(dut.bootram.mmap.bus.sel, 0b1111)
+                request_active = True
+
+            dq_i, rwds_i = model.step(
+                cs=ctx.get(dut.phy.cs),
+                clk_en=ctx.get(dut.phy.clk_en),
+                dq_o=ctx.get(dut.phy.dq.o),
+                dq_e=ctx.get(dut.phy.dq.e),
+            )
+            ctx.set(dut.phy.dq.i, dq_i)
+            ctx.set(dut.phy.rwds.i, rwds_i)
+
+            acknowledged = ctx.get(dut.bootram.mmap.bus.ack)
+            if acknowledged:
+                observed["data"].append(ctx.get(dut.bootram.mmap.bus.dat_r))
+
+            await ctx.tick()
+            observed["cycles"] += 1
+
+            if acknowledged:
+                beat_index += 1
+                request_active = False
+                if incrementing and beat_index < 16:
+                    # A pipelined burst keeps CYC/STB asserted and replaces the
+                    # acknowledged beat on the same Wishbone clock edge.
+                    ctx.set(dut.bootram.mmap.bus.adr, 0x100 + beat_index)
+                    ctx.set(dut.bootram.mmap.bus.cti,
+                            wishbone.CycleType.END_OF_BURST if beat_index == 15
+                            else wishbone.CycleType.INCR_BURST)
+                    request_active = True
+                else:
+                    ctx.set(dut.bootram.mmap.bus.cyc, 0)
+                    ctx.set(dut.bootram.mmap.bus.stb, 0)
+
+            if (beat_index == 16 and not ctx.get(dut.phy.cs)
+                    and len(model.transaction_cycles) == len(model.commands)):
+                break
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+    return model, observed
+
+
+def section_line_refill(checks, emit):
+    """8. CTI coalescing, including the sixteen-transaction negative control."""
+    emit("\n8. 64-byte Wishbone line refill through the HyperBus engine\n")
+
+    burst_model, burst = simulate_line_refill(incrementing=True)
+    classic_model, classic = simulate_line_refill(incrementing=False)
+
+    checks.check("a 16-beat incrementing burst issues ONE HyperBus transaction",
+                 len(burst_model.commands) == 1,
+                 f"{len(burst_model.commands)} transactions")
+    checks.check("the pre-change classic arrangement issues SIXTEEN transactions",
+                 len(classic_model.commands) == 16,
+                 f"{len(classic_model.commands)} transactions")
+    checks.check("the coalesced refill returns all sixteen Wishbone beats",
+                 len(burst["data"]) == 16, f"{len(burst['data'])} beats")
+    checks.check("the classic negative control returns the same sixteen beats",
+                 classic["data"] == burst["data"],
+                 f"classic {len(classic['data'])}, burst {len(burst['data'])}")
+
+    burst_cycles = sum(burst_model.transaction_cycles)
+    classic_cycles = sum(classic_model.transaction_cycles)
+    checks.check("one line occupies 51 CK with command and fixed latency",
+                 burst_cycles == 51, f"measured {burst_cycles} CK")
+    checks.check("sixteen classic transfers occupy 336 CK",
+                 classic_cycles == 336, f"measured {classic_cycles} CK")
+    checks.check("the coalescing cap stays below the 4-us tCSM limit",
+                 HYPERRAM_MAX_BURST_WORDS + 19 < 4e-6 * 192e6,
+                 f"{HYPERRAM_MAX_BURST_WORDS + 19} CK")
+    emit(f"        incrementing: {len(burst_model.commands)} transaction, "
+         f"{burst_cycles} CK")
+    emit(f"        classic:      {len(classic_model.commands)} transactions, "
+         f"{classic_cycles} CK")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="The HyperBus protocol layer, against a model of the part.")
@@ -827,7 +1026,7 @@ def main():
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
                     section_recovery, section_structural, section_wishbone,
-                    section_shared_engine):
+                    section_shared_engine, section_line_refill):
         section(checks, emit)
 
     emit()
