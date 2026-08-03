@@ -139,6 +139,10 @@ def main():
                         help="use scripts/riscv_firmware.py instead of the Rust crate")
     parser.add_argument("--write-tests", action="store_true",
                         help="C firmware only: compile in the flash erase/program tests")
+    parser.add_argument("--no-flash", action="store_true",
+                        help="do not program .rodata into flash; the board keeps "
+                             "whatever it already holds, which is only correct if "
+                             "nothing in .rodata changed")
     parser.add_argument("--no-read", action="store_true",
                         help="do not read the console afterwards")
     parser.add_argument("--skip-tests", action="store_true",
@@ -224,8 +228,32 @@ def main():
                 if rodata:
                     emit(f"flash image: {rodata} bytes for {FLASH_RODATA_OFFSET:#x} "
                          f"({firmware_digest(RODATA_BIN)})")
-                    emit("  NOT WRITTEN. Nothing in this path programs flash, so the "
-                         "board will run with stale .rodata until it is.")
+                    if args.no_flash:
+                        emit("  NOT WRITTEN (--no-flash). The board will run with "
+                             "whatever .rodata flash already holds.")
+                    else:
+                        # Writing the flash the board BOOTS from, so this states the
+                        # offset every time rather than assuming anyone remembers it.
+                        # 0xb0000 is moondancer's firmware slot and is clear of the
+                        # FPGA configuration at offset zero -- but "clear of" is a
+                        # fact about this layout, not a property of the tool, and the
+                        # tool will write wherever it is told.
+                        emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
+                             f"(bitstream at 0x0 is not touched)")
+                        result = run([sys.executable,
+                                      str(ROOT / "repos" / "apollo" / "apollo_fpga"
+                                          / "commands" / "cli.py"),
+                                      "flash-program",
+                                      "--offset", str(FLASH_RODATA_OFFSET),
+                                      str(RODATA_BIN)])
+                        if result.returncode != 0:
+                            emit("  flash write FAILED:")
+                            emit((result.stderr or result.stdout).strip()[-500:])
+                            emit("Refusing to configure: the board would run against "
+                                 ".rodata that is not this build, and every constant "
+                                 "it reads would be silently wrong.")
+                            return 1
+                        emit("  flash written")
 
             # The bootloader, unless this is the C path -- that generator emits an
             # image linked for 0 and has no bootloader to sit under it.
