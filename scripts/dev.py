@@ -312,6 +312,17 @@ def cmd_audit(extra: list[str]) -> int:
     return run_tool([PY, script("audit_scripts.py")], extra)
 
 
+@command("run the shell suite against the BOARD instead of QEMU",
+         args="[-v]", kind="action")
+def cmd_test_board(extra: list[str]) -> int:
+    """The same assertions, on real silicon.
+
+    Not in `gate` or `ci`: it needs a board, already configured and already
+    running this firmware. `./dev.py fw` puts it there.
+    """
+    return run_tool([PY, script("soc_test.py"), "--board"], extra)
+
+
 @command("firmware change only: rebuild, write flash, reconfigure (no synthesis)",
          args="[soc_run.py flags]", kind="action")
 def cmd_fw(extra: list[str]) -> int:

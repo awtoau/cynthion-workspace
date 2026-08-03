@@ -86,6 +86,7 @@ already, which is exactly what an assertion is for.
 import argparse
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -158,6 +159,122 @@ IDLE_S = 8.0
 # assertion is noticed. 20 ms costs at most 20 ms per assertion and a few dozen wakeups a
 # second; polling faster just burns CPU racing a pipe that is already being drained.
 POLL_S = 0.02
+
+
+class BoardSession:
+    """The same shell, on real silicon, over the console.
+
+    Same three methods as `Session`, so every assertion below runs unchanged
+    against the board. That is the whole point: a suite that only ever ran under
+    emulation proves the shell's LOGIC and nothing about the SoC -- the console
+    peripheral, the flash the code now executes from, the HyperRAM and every I2C
+    device are stubbed or absent there.
+
+    ## Two transports, and why the socket is preferred
+
+    If `tio_user.py --serve` is running it owns the tty, and a second reader
+    interleaves the stream: each process takes bytes the other never sees, which
+    produces output like "ivlive0alive" and looks exactly like a firmware fault.
+    So this connects to the service when there is one and only opens the port
+    directly when there is not.
+
+    ## The port is found by id, never by number
+
+    `/dev/ttyACM<n>` is assigned in enumeration order and moves when anything else
+    is plugged in, so a test naming one tests whichever device happens to have
+    that number. `/dev/serial/by-id/` is stable.
+
+    ## What this CANNOT do, and why the QEMU path stays
+
+    It needs a board, and a board running firmware that is already talking. It
+    cannot be the pre-commit gate on a machine with nothing attached, and it
+    cannot bisect a shell that does not reach its prompt. The two are
+    complementary rather than one replacing the other.
+    """
+
+    SERVICE_PORT = 9000
+
+    def __init__(self, emit):
+        self.proc = None            # nothing to poll; `expect` handles this
+        self.buf = bytearray()
+        self.lock = threading.Lock()
+        self.errors = bytearray()
+        self.socket = None
+        self.serial = None
+
+        try:
+            self.socket = socket.create_connection(
+                ("127.0.0.1", self.SERVICE_PORT), timeout=2)
+            self.socket.settimeout(0.2)
+            emit(f"console: through the service on {self.SERVICE_PORT}")
+        except OSError:
+            port = self._find_port()
+            if port is None:
+                raise RuntimeError(
+                    "no console: no service on "
+                    f"{self.SERVICE_PORT} and nothing under /dev/serial/by-id/ "
+                    "matching the SoC console")
+            import serial                       # only needed on this path
+            self.serial = serial.Serial(port, 115200, timeout=0.2)
+            emit(f"console: {port}")
+
+        self.reader = threading.Thread(target=self._drain, daemon=True)
+        self.reader.start()
+
+    @staticmethod
+    def _find_port():
+        """The SoC console, by id. Never by ttyACM number -- see the docstring."""
+        by_id = Path("/dev/serial/by-id")
+        if not by_id.is_dir():
+            return None
+        # The SoC's own CDC, not Apollo's. Both are 1d50 devices on this board.
+        for entry in sorted(by_id.iterdir()):
+            name = entry.name.lower()
+            if "cynthion" in name or "1d50" in name or "vexii" in name:
+                return str(entry)
+        return None
+
+    def _drain(self):
+        while True:
+            try:
+                if self.socket is not None:
+                    chunk = self.socket.recv(4096)
+                    if not chunk:
+                        return
+                else:
+                    chunk = self.serial.read(256)
+            except (TimeoutError, OSError):
+                continue
+            if chunk:
+                with self.lock:
+                    self.buf.extend(chunk)
+
+    def snapshot(self):
+        with self.lock:
+            return bytes(self.buf)
+
+    def send(self, data):
+        if self.socket is not None:
+            self.socket.sendall(data)
+        else:
+            self.serial.write(data)
+            self.serial.flush()
+
+    def expect(self, needle, budget, since=0):
+        deadline = time.monotonic() + budget
+        while True:
+            found = self.snapshot().find(needle, since)
+            if found >= 0:
+                return found
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.01)
+
+    def close(self):
+        if self.socket is not None:
+            self.socket.close()
+        if self.serial is not None:
+            self.serial.close()
 
 
 class Session:
@@ -304,6 +421,10 @@ def main():
                         help="test the existing tmp/qemu-build image")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print the whole session transcript")
+    parser.add_argument("--board", action="store_true",
+                        help="run against the BOARD over its console instead of "
+                             "QEMU. Needs a configured board already running this "
+                             "firmware; builds nothing and loads nothing")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +443,14 @@ def main():
                 for line in detail.splitlines():
                     emit(f"        {line}")
 
-        if not args.no_build:
+        if args.board:
+            # Nothing is built and nothing is loaded: this drives whatever the
+            # board is already running. Use `./dev.py fw` to put firmware there
+            # first -- keeping the two separate is what makes a failure here mean
+            # "this firmware misbehaves on real hardware" rather than "something
+            # in a combined build-and-test step went wrong".
+            emit("target: the board, over its console")
+        elif not args.no_build:
             failed = build_firmware()
             if failed is not None:
                 emit("cargo build (qemu) failed:")
@@ -330,19 +458,57 @@ def main():
                 return 1
             emit(f"built {ELF.relative_to(ROOT)}: {ELF.stat().st_size} bytes")
 
-        if not ELF.exists():
+        if not args.board and not ELF.exists():
             emit(f"no QEMU image at {ELF.relative_to(ROOT)}; drop --no-build")
             return 1
 
-        emit(f"qemu: {QEMU} {' '.join(QEMU_ARGS)}")
+        if not args.board:
+            emit(f"qemu: {QEMU} {' '.join(QEMU_ARGS)}")
         emit()
 
-        session = Session(ELF)
+        # Which target's answers are correct differs for a handful of checks:
+        # `target::BOARD` is None under QEMU, so the shell reports "this target
+        # has no ..." for every device. On the board the same commands reach real
+        # silicon and the expectations invert. Everything else -- the line editor,
+        # the log ring, the arithmetic, the formatting -- is identical, which is
+        # why one suite can serve both.
+        board = args.board
+
+        if board:
+            try:
+                session = BoardSession(emit)
+            except RuntimeError as error:
+                emit(f"cannot reach the board: {error}")
+                return 1
+        else:
+            session = Session(ELF)
         try:
-            # --- the firmware speaks at all -------------------------------------
             banner = b"Cynthion RISC-V SoC - Rust firmware"
-            at = session.expect(banner, BOOT_S)
-            check("banner appears at boot", at is not None,
+
+            # --- the firmware speaks at all -------------------------------------
+            #
+            # On the board there is no boot to wait for: it has been running since
+            # `configure`, and the banner is long past. Worse, the shell latches
+            # `spoken` on the first keypress and never re-announces, so a console
+            # anyone has typed at will never show one again -- waiting for it would
+            # hang for BOOT_S and then report a dead firmware that is fine.
+            #
+            # So the board syncs on the PROMPT instead: send Enter, expect `>`.
+            # That proves the same thing the banner proves under QEMU -- the shell
+            # is reading its input and writing its output -- without assuming a
+            # boot happened just now.
+            if board:
+                session.send(b"\r")
+                at = session.expect(b">", BOOT_S)
+                check("the board's shell answers at the prompt", at is not None,
+                      "sent Enter and no prompt came back.\n"
+                      "Either nothing is configured, the console is being read by\n"
+                      "another process, or the firmware is not running.\n"
+                      f"received in {BOOT_S}s: "
+                      f"{show(session.snapshot()) or '(nothing)'}")
+            else:
+                at = session.expect(banner, BOOT_S)
+                check("banner appears at boot", at is not None,
                   f"expected: {banner!r}\n"
                   f"received in {BOOT_S}s: {show(session.snapshot()) or '(nothing)'}\n"
                   f"qemu stderr: {bytes(session.errors).decode('ascii', 'replace')}")
@@ -353,23 +519,31 @@ def main():
                 emit("firmware never reached the console; later checks skipped")
                 return 1
 
-            check("banner names the help commands",
-                  session.expect(b"type `help` or `?` for commands",
-                                 REPLY_S, at) is not None,
-                  "the second banner line did not follow the first")
+            # Both banner assertions need a boot that just happened, and the
+            # second needs a console nobody has typed at. Neither holds for a board
+            # that has been up since `configure`; asserting them there would be
+            # testing how recently someone pressed a key.
+            if not board:
+                check("banner names the help commands",
+                      session.expect(b"type `help` or `?` for commands",
+                                     REPLY_S, at) is not None,
+                      "the second banner line did not follow the first")
 
-            # --- the idle re-banner ---------------------------------------------
-            # Must come before anything is sent: the first keypress latches `spoken` and
-            # the shell never re-announces again. This is the board's reported symptom
-            # -- one banner at boot and then silence forever -- so it is worth an
-            # assertion even though it costs a couple of seconds.
-            again = session.expect(banner, IDLE_S, at + len(banner))
-            check("the shell re-announces itself while idle", again is not None,
-                  f"no second banner within {IDLE_S}s of the first.\n"
-                  "The poll loop stopped turning, or `spoken` latched with nothing\n"
-                  "typed. An idle shell that never speaks cannot be told apart from a\n"
-                  "dead one.\n"
-                  f"received: {show(session.snapshot()[at:]) or '(nothing)'}")
+                # --- the idle re-banner --------------------------------------
+                # Must come before anything is sent: the first keypress latches
+                # `spoken` and the shell never re-announces again. This is the
+                # board's reported symptom -- one banner at boot and then silence
+                # forever -- so it is worth an assertion even though it costs a
+                # couple of seconds.
+                again = session.expect(banner, IDLE_S, at + len(banner))
+                check("the shell re-announces itself while idle", again is not None,
+                      f"no second banner within {IDLE_S}s of the first.\n"
+                      "The poll loop stopped turning, or `spoken` latched with "
+                      "nothing\n"
+                      "typed. An idle shell that never speaks cannot be told apart "
+                      "from a\n"
+                      "dead one.\n"
+                      f"received: {show(session.snapshot()[at:]) or '(nothing)'}")
 
             # --- Enter produces a prompt ----------------------------------------
             mark = len(session.snapshot())
@@ -417,15 +591,38 @@ def main():
             # would only confirm that a model agrees with the driver. What the
             # drivers do is checked in `scripts/soc_board_sim.py` against the
             # gateware, and on the board.
+            #
+            # ON THE BOARD every one of these reaches real silicon, so the
+            # expectation inverts: the answer must NOT be "no board peripherals",
+            # and must not be an I2C error either. That is a weaker assertion than
+            # naming the expected voltages -- deliberately, because this suite runs
+            # against whatever is plugged in and a target with no cable attached is
+            # a legitimate state. What it catches is the case worth catching: a
+            # command that reaches for a device and gets nothing back.
+            absent = b"no board peripherals on this target"
             for name in ("led", "i2c", "power", "phy", "typec", "sideband"):
-                command(name, [b"no board peripherals on this target"],
-                        f"`{name}` is registered and reports the target has none")
-            command("led green on", [b"no board peripherals on this target"],
-                    "`led` with arguments reaches the same handler")
-            command("power floor aux 25", [b"no board peripherals on this target"],
-                    "`power floor` parses its arguments on a boardless target")
-            command("i2c target", [b"no board peripherals on this target"],
-                    "`i2c` takes a bus name on a boardless target too")
+                if board:
+                    mark = len(session.snapshot())
+                    session.send(name.encode() + b"\r")
+                    session.expect(b"> ", REPLY_S, mark)
+                    reply = session.snapshot()[mark:]
+                    check(f"`{name}` reaches a real device",
+                          absent not in reply and b"no acknowledge" not in reply
+                          and len(reply.strip()) > 0,
+                          f"`{name}` either reported no peripherals on a board that\n"
+                          f"has them, or got no acknowledge from the bus.\n"
+                          f"received: {show(reply) or '(nothing)'}")
+                else:
+                    command(name, [absent],
+                            f"`{name}` is registered and reports the target has none")
+
+            if not board:
+                command("led green on", [absent],
+                        "`led` with arguments reaches the same handler")
+                command("power floor aux 25", [absent],
+                        "`power floor` parses its arguments on a boardless target")
+                command("i2c target", [absent],
+                        "`i2c` takes a bus name on a boardless target too")
 
             # The monotonic clock, and the background poll built on it.
             #
@@ -442,11 +639,16 @@ def main():
             # the bus on a target that has none would have said so many times
             # over. Silence is the evidence that the board check comes before the
             # bus access and not after it.
-            noise = session.snapshot()
-            check("the background poll says nothing on a target with no board",
-                  b"power:" not in noise,
-                  f"the shell printed a power-monitor line under QEMU:\n"
-                  f"{show(noise)}")
+            # The assertion is that the board check comes BEFORE the bus access,
+            # so on a target with no board the poll stays silent. On the board it
+            # correctly has something to say -- that is the same code reaching the
+            # opposite, correct conclusion, not a different behaviour to assert.
+            if not board:
+                noise = session.snapshot()
+                check("the background poll says nothing on a target with no board",
+                      b"power:" not in noise,
+                      f"the shell printed a power-monitor line under QEMU:\n"
+                      f"{show(noise)}")
 
             # --- check ------------------------------------------------------------
             # The arithmetic lines only. `check` also reports two flash words, and on
@@ -501,8 +703,11 @@ def main():
             # -- the failure being guarded against is `info` reading that address
             # anyway and rendering whatever it found as a boot status, which
             # would be a confident answer about a thing that never happened.
-            check("`info` says this target has no bootloader under it",
-                  b"no bootloader on this target" in reply,
+            check("`info` reports the bootloader's verdict" if board
+                  else "`info` says this target has no bootloader under it",
+                  (b"nothing staged" in reply or b"staged image" in reply
+                   or b"no mark" in reply) if board
+                  else b"no bootloader on this target" in reply,
                   "target::BOOT_STATUS is None on the QEMU build, and `info`\n"
                   "must report that rather than decode an address that is not\n"
                   "memory here.\n"
@@ -542,10 +747,14 @@ def main():
             # and `target::GATEWARE` is None. Saying so is the assertion: an
             # `info` that invented an identity here would be reporting a
             # peripheral that does not exist.
-            check("`info` says this target carries no gateware id",
-                  b"gateware none" in reply,
-                  "under QEMU the gateware line must report that this target is\n"
-                  "not a bitstream, not a hash read from an unmapped address.\n"
+            check("`info` reports the gateware's identity" if board
+                  else "`info` says this target carries no gateware id",
+                  (b"gateware " in reply and b"gateware none" not in reply)
+                  if board else b"gateware none" in reply,
+                  "on the board the gateware line must carry a real identity read\n"
+                  "from the bitstream's own CSR; under QEMU it must report that\n"
+                  "this target is not a bitstream, rather than a hash read from an\n"
+                  "unmapped address.\n"
                   f"received: {show(reply) or '(nothing)'}")
 
             # --- selftest -----------------------------------------------------------
@@ -577,8 +786,10 @@ def main():
             # Skipped, not passed. A target with no board cannot answer for the
             # PHY, and counting that as a pass would make the summary claim more
             # than it knows.
-            check("`selftest` skips what this target has not got",
-                  b"skip" in reply and b"skipped" in reply,
+            check("`selftest` runs the items this target HAS" if board
+                  else "`selftest` skips what this target has not got",
+                  (b"fail" not in reply and b"gateware" in reply) if board
+                  else b"skip" in reply and b"skipped" in reply,
                   "the gateware and phy items must report `skip` under QEMU, and\n"
                   "the summary must count them separately from the passes.\n"
                   f"received: {show(reply) or '(nothing)'}")
@@ -607,8 +818,10 @@ def main():
             # every rail must say so -- four rows of `0.000 V  0.000 mA` would be
             # four measurements that were never made, and they would be
             # indistinguishable from a board with every port unplugged.
-            check("an unsampled rail renders as absent, not as zero",
-                  b"NOT SAMPLED" in reply and b"0.000 V" not in reply
+            check("every rail carries a real measurement" if board
+                  else "an unsampled rail renders as absent, not as zero",
+                  (b"NOT SAMPLED" not in reply and b" V" in reply) if board
+                  else b"NOT SAMPLED" in reply and b"0.000 V" not in reply
                   and b"0.000 mA" not in reply,
                   "a rail printed a fabricated zero, or failed to say it had no\n"
                   "sample. An unplugged rail on this board measures 0.76-0.92 mA\n"
@@ -620,7 +833,9 @@ def main():
             # produces; on the board the same field carries milliseconds. Either
             # way it is present, which is the point: a tree of plausible numbers
             # from a stopped poller is worse than an obviously empty one.
-            check("every branch is dated", b"[NEVER sampled]" in reply,
+            check("every branch is dated",
+                  (b"[NEVER sampled]" not in reply and b"sampled" in reply)
+                  if board else b"[NEVER sampled]" in reply,
                   "the power header carried no age. A sample with no age cannot\n"
                   "be told apart from a poller that stopped an hour ago.\n"
                   f"received: {show(reply) or '(nothing)'}")
@@ -639,8 +854,12 @@ def main():
             # The other two absences, each with its own reason rather than a
             # shared shrug: no I2C bus for the controllers, no ULPI window for
             # the PHY.
-            check("an absent controller and an absent PHY each say why",
-                  b"ABSENT: no i2c bus on this target" in reply
+            check("the controllers and the PHYs are present" if board
+                  else "an absent controller and an absent PHY each say why",
+                  (b"ABSENT: no i2c bus on this target" not in reply
+                   and b"ABSENT: no ulpi window on this target" not in reply)
+                  if board
+                  else b"ABSENT: no i2c bus on this target" in reply
                   and b"ABSENT: no ulpi window on this target" in reply,
                   "a missing part reported nothing, or reported it without a\n"
                   "reason. `--` with no cause is the same screen as a part that\n"
@@ -742,8 +961,47 @@ def main():
             # the lost records") when the shell reported them perfectly, a
             # millisecond later.
             mark = len(session.snapshot())
-            command("log 20", [b"log pushed 15 of 20", b"dropped 5"],
-                    "an overfull log drops the excess and counts it")
+            if board:
+                # EXACT COUNTS ARE AN EMULATOR PROPERTY HERE, not a firmware one.
+                #
+                # Under QEMU nothing drains while `log 20` runs, so exactly 15 fit
+                # and exactly 5 are dropped. On the board the main loop is really
+                # concurrent with the pushes and drains some of the ring on the
+                # way, so the split moves between runs -- it was 15/5 on one run
+                # and passed, then failed on the next with a different, equally
+                # correct split.
+                #
+                # So assert the INVARIANT, which is what the drop counter is for:
+                # every record is either pushed or counted as lost, and none
+                # silently vanishes.
+                session.send(b"log 20\r")
+                session.expect(b"> ", REPLY_S, mark)
+                reply = session.snapshot()[mark:]
+                pushed = re.search(rb"log pushed (\d+) of (\d+)", reply)
+                dropped = re.search(rb"dropped (\d+)", reply)
+                # `dropped` is a CUMULATIVE counter, not this command's share.
+                #
+                # The QEMU test asserts `dropped 5` and is right to: a fresh boot
+                # has dropped nothing before, so the running total IS this
+                # command's. On a board that has been up for a while it read 80,
+                # and an assertion that added it to `pushed` and expected 20 was
+                # arithmetic on two different quantities.
+                #
+                # What IS deterministic on both is the ring's capacity: 15 records
+                # fit, because head == tail has to mean empty so the completely
+                # full state is not representable. And the excess must be counted
+                # rather than silently lost, which is what the counter existing and
+                # being non-zero says.
+                check("an overfull log drops the excess and counts it",
+                      pushed is not None and pushed.group(1) == b"15"
+                      and pushed.group(2) == b"20"
+                      and dropped is not None and int(dropped.group(1)) > 0,
+                      "the ring holds 15, so `log 20` must report 15 pushed and a\n"
+                      "non-zero cumulative drop count.\n"
+                      f"received: {show(reply) or '(nothing)'}")
+            else:
+                command("log 20", [b"log pushed 15 of 20", b"dropped 5"],
+                        "an overfull log drops the excess and counts it")
             check("the drop is reported on the console, not only on request",
                   session.expect(b"event(s) LOST", REPLY_S, mark) is not None,
                   "the shell never reported the lost records.\n"
@@ -843,19 +1101,33 @@ def main():
             # `virt`'s PLIC is at 0x0c000000 and its 16550 is on source 10, both read
             # out of the device tree (see src/target.rs). Assert the firmware found it
             # there, and that the handler has actually run.
-            reply = command("irq", [b"plic  @0c000000", b"src 10", b"log  waiting"],
+            # The addresses are the TARGET's, so only the shape is common: on
+            # `virt` the PLIC is at 0x0c000000 with the 16550 on source 10, both
+            # from the device tree; the SoC puts its own at 0xf0400000. Asserting
+            # QEMU's numbers against the board would be asserting that the board is
+            # QEMU.
+            reply = command("irq",
+                            [b"plic  @f0400000", b"log  waiting"] if board
+                            else [b"plic  @0c000000", b"src 10", b"log  waiting"],
                             "`irq` finds the PLIC and names the console's source")
 
             # The count itself. Everything typed so far arrived through the handler, so
             # this cannot be small -- but the assertion that matters is `> 0`, because
             # zero means the shell is answering from somewhere other than the interrupt
             # path, which would make every check above it evidence about the wrong code.
+            # The BUSIEST console, not the last one.
+            #
+            # This took the last `irqs N` it found. Under QEMU there is one console
+            # so the two are the same; the board has two, the second has seen
+            # nothing, and the assertion read 0 on a target that had served 128 --
+            # reported as "bytes are reaching the shell without the handler", which
+            # would have been alarming and was entirely the harness.
             served = 0
             for chunk in reply.split(b"irqs ")[1:]:
                 digits = bytes(byte for byte in chunk.split(b" ")[0]
                                if 0x30 <= byte <= 0x39)
                 if digits:
-                    served = int(digits)
+                    served = max(served, int(digits))
             check("the machine external handler has actually run", served > 0,
                   f"`irq` reported {served} interrupts on console 0.\n"
                   "Zero means bytes are reaching the shell without the handler, so\n"
@@ -901,7 +1173,12 @@ def main():
                 two numbers and lets a language with free 64-bit arithmetic do
                 the rest.
                 """
-                reply = command("time", [b"uptime", b"clint   @02000000"], name)
+                # The CLINT address is the TARGET's: `virt` puts it at 0x02000000
+                # per its device tree, the SoC at 0xf0800000. Asserting one against
+                # the other asserts that the board is QEMU.
+                reply = command("time",
+                                [b"uptime", b"clint   @f0800000"] if board
+                                else [b"uptime", b"clint   @02000000"], name)
                 uptime = re.search(rb"uptime\s+(\d{6})\.(\d{3})", reply)
                 mtime = re.search(rb"mtime ([0-9a-f]{8}):([0-9a-f]{8}) at (\d+) Hz",
                                   reply)
@@ -1191,9 +1468,16 @@ def main():
             # instead of failing -- which reads as a hung shell. The probe is
             # what turns that into a sentence, and this is the check that it
             # short-circuits rather than grinding.
-            command("bench hyperram", [b"hyperram did not answer"],
-                    "`bench hyperram` refuses a port that does not answer "
-                    "instead of spinning on it")
+            # ON THE BOARD THE PORT ANSWERS, so this inverts into the assertion
+            # worth having on real silicon: the walk completes and the pattern
+            # survives it. Measured 0.79-1.03 MB/s with 0 words wrong over 8 KiB.
+            if board:
+                command("bench hyperram", [b"words wrong"],
+                        "`bench hyperram` walks the part and checks the pattern")
+            else:
+                command("bench hyperram", [b"hyperram did not answer"],
+                        "`bench hyperram` refuses a port that does not answer "
+                        "instead of spinning on it")
             command("bench frobnicate", [b"usage: bench"],
                     "`bench` with an unknown region says how to call it")
 
