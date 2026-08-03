@@ -40,12 +40,20 @@
 //!
 //! ## The interrupt, and why the handler does not touch this file
 //!
-//! Both `int` lines are OR-ed into one PLIC source (`ecp5-test/riscv/i2c_mux.py`).
-//! The line is a LEVEL and it is shared, so the trap in
-//! `docs/chips/fusb302b-type-c.md` applies: whatever services it must clear
-//! *every* asserting device before the source is live again, or the line stays
-//! high, the interrupt re-fires immediately, and the CPU makes no progress --
-//! which presents as a hang.
+//! **One PLIC source per `int` line**, not an OR of the two -- see
+//! `ecp5-test/riscv/i2c_mux.py`, which says so where the sources are wired, and
+//! `docs/decisions.md` decision 8 for why. This comment used to claim the
+//! opposite, while citing the file that contradicts it.
+//!
+//! The distinction is not cosmetic. A SHARED level obliges whatever services it
+//! to clear *every* asserting device before the source is live again, or the line
+//! stays high, the interrupt re-fires immediately, and the CPU makes no progress
+//! -- a hang. One source per device removes that obligation rather than
+//! documenting it, and the PLIC had 27 spare sources, so sharing would have
+//! bought nothing.
+//!
+//! Each line is still a LEVEL, so the trap in `docs/chips/fusb302b-type-c.md`
+//! applies per port: a source whose device has not been read stays asserted.
 //!
 //! Clearing means reading the device's `INTERRUPT` registers, which is an I2C
 //! transaction of about a millisecond at 80 kHz over the same controller the

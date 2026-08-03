@@ -3,14 +3,21 @@ name = "cynthion-soc"
 version = "0.1.0"
 edition = "2021"
 license = "BSD-3-Clause"
-description = "Firmware for the Cynthion r1.4 VexiiRiscv SoC"
+description = "Shell firmware for our VexiiRiscv SoC, on Cynthion r1.4 hardware"
 
-# Current crates, deliberately.
+# Current crates, and there is nothing upstream to track.
 #
-# Cynthion's own moondancer pins riscv-rt 0.11 and riscv 0.10, and lunasoc-hal pins
-# embedded-hal to =1.0.0-alpha.9 -- a pre-1.0 alpha whose serial traits were REMOVED
-# before 1.0 shipped. Following those pins would inherit seven major versions of drift
-# and a HAL interface that no longer exists upstream.
+# This used to read as a live decision about whether to follow moondancer's pins
+# (riscv-rt 0.11, riscv 0.10) and lunasoc-hal's `embedded-hal =1.0.0-alpha.9`. That
+# question is long settled: this is our SoC, with our memory map, our PAC generated
+# from it, our bootloader and our peripherals. There is no shared dependency surface
+# left to drift from. `docs/upstream-boundary.md` holds the policy -- GSG code is
+# reserved for what is genuinely Cynthion-specific, and three defects traced to
+# luna_soc are why.
+#
+# Kept as a note rather than deleted because the alpha is a real trap for anyone who
+# does go looking: `embedded-hal =1.0.0-alpha.9`'s serial traits were REMOVED before
+# 1.0 shipped, so a crate pinned there cannot be moved forward incrementally.
 #
 # No HAL crate at all: the console needs core::fmt::Write, which is in core. That is
 # what makes writeln! work, and it is about six lines to implement.
