@@ -221,3 +221,4 @@ impl Peripherals {
     }
 }
 pub mod base;
+pub mod hardware;
