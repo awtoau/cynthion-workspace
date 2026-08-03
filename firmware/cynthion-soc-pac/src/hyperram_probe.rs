@@ -8,6 +8,9 @@ pub struct RegisterBlock {
     words: Words,
     _reserved5: [u8; 0x02],
     busy: Busy,
+    want: Want,
+    arming: Arming,
+    cyc: Cyc,
     clear: Clear,
 }
 impl RegisterBlock {
@@ -41,7 +44,22 @@ impl RegisterBlock {
     pub const fn busy(&self) -> &Busy {
         &self.busy
     }
-    #[doc = "0x10 - HYPERRAM_PROBE.CLEAR, 1 bits at +0x10"]
+    #[doc = "0x10 - HYPERRAM_PROBE.WANT, 32 bits at +0x10"]
+    #[inline(always)]
+    pub const fn want(&self) -> &Want {
+        &self.want
+    }
+    #[doc = "0x14 - HYPERRAM_PROBE.ARMING, 32 bits at +0x14"]
+    #[inline(always)]
+    pub const fn arming(&self) -> &Arming {
+        &self.arming
+    }
+    #[doc = "0x18 - HYPERRAM_PROBE.CYC, 32 bits at +0x18"]
+    #[inline(always)]
+    pub const fn cyc(&self) -> &Cyc {
+        &self.cyc
+    }
+    #[doc = "0x1c - HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c"]
     #[inline(always)]
     pub const fn clear(&self) -> &Clear {
         &self.clear
@@ -77,10 +95,25 @@ pub mod words;
 pub type Busy = crate::Reg<busy::BusySpec>;
 #[doc = "HYPERRAM_PROBE.BUSY, 32 bits at +0x0c"]
 pub mod busy;
-#[doc = "CLEAR (w) register accessor: HYPERRAM_PROBE.CLEAR, 1 bits at +0x10\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@clear`] module"]
+#[doc = "WANT (r) register accessor: HYPERRAM_PROBE.WANT, 32 bits at +0x10\n\nYou can [`read`](crate::Reg::read) this register and get [`want::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@want`] module"]
+#[doc(alias = "WANT")]
+pub type Want = crate::Reg<want::WantSpec>;
+#[doc = "HYPERRAM_PROBE.WANT, 32 bits at +0x10"]
+pub mod want;
+#[doc = "ARMING (r) register accessor: HYPERRAM_PROBE.ARMING, 32 bits at +0x14\n\nYou can [`read`](crate::Reg::read) this register and get [`arming::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@arming`] module"]
+#[doc(alias = "ARMING")]
+pub type Arming = crate::Reg<arming::ArmingSpec>;
+#[doc = "HYPERRAM_PROBE.ARMING, 32 bits at +0x14"]
+pub mod arming;
+#[doc = "CYC (r) register accessor: HYPERRAM_PROBE.CYC, 32 bits at +0x18\n\nYou can [`read`](crate::Reg::read) this register and get [`cyc::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@cyc`] module"]
+#[doc(alias = "CYC")]
+pub type Cyc = crate::Reg<cyc::CycSpec>;
+#[doc = "HYPERRAM_PROBE.CYC, 32 bits at +0x18"]
+pub mod cyc;
+#[doc = "CLEAR (w) register accessor: HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@clear`] module"]
 #[doc(alias = "CLEAR")]
 pub type Clear = crate::Reg<clear::ClearSpec>;
-#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x10"]
+#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c"]
 pub mod clear;
 
 /// Byte offsets from this peripheral's generated base address.
@@ -91,5 +124,8 @@ pub mod offset {
     pub const MAX_RUN: usize = 0x06;
     pub const WORDS: usize = 0x08;
     pub const BUSY: usize = 0x0c;
-    pub const CLEAR: usize = 0x10;
+    pub const WANT: usize = 0x10;
+    pub const ARMING: usize = 0x14;
+    pub const CYC: usize = 0x18;
+    pub const CLEAR: usize = 0x1c;
 }

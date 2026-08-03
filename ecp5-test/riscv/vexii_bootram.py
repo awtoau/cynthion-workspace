@@ -390,6 +390,25 @@ class BootRAM(Elaboratable):
         # data phase is not streaming and the gap is the fault.
         self.probe_word  = Signal()
         self.probe_busy  = Signal()
+        # WHERE THE IDLE CYCLES GO. The controller is busy 72 CK of every 348 CK
+        # line, so 276 CK are spent somewhere in this module and the window. These
+        # split that time by state so it is attributed rather than guessed at:
+        #
+        #   want    the window is asking and the FSM has not started a transaction
+        #   arming  the FSM has issued `start` and the controller has not left idle
+        #
+        # `want` is the cost of the round trip back through IDLE per transaction;
+        # `arming` is the fixed handshake before the bus moves.
+        self.probe_want   = Signal()
+        self.probe_arming = Signal()
+        # How long the CPU holds the window's Wishbone cycle open per line.
+        #
+        # `busy + want + arming` accounts for only 74 CK of a 348 CK line, so 274
+        # are upstream of this module. If `cyc` is ~348 the CPU is waiting on this
+        # bus for the whole line and the stall is between the window and the
+        # controller; if it is ~74 the CPU is slow to ask, and the stall is in the
+        # cache or the arbiter. One counter separates them.
+        self.probe_cyc = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -528,6 +547,9 @@ class BootRAM(Elaboratable):
             self.probe_burst.eq(mmap.bus.ack & mmap.bursting_out),
             self.probe_word.eq(word_event),
             self.probe_busy.eq(~psram.idle),
+            self.probe_want.eq(mmap.req & fsm.ongoing("IDLE")),
+            self.probe_arming.eq(fsm.ongoing("STARTING")),
+            self.probe_cyc.eq(mmap.bus.cyc),
         ]
 
         return m

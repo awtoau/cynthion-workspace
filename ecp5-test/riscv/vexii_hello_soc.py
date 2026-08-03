@@ -1041,6 +1041,9 @@ class HelloSoC(Elaboratable):
             hyper_probe.is_burst.eq(bootram.probe_burst),
             hyper_probe.word.eq(bootram.probe_word),
             hyper_probe.busy.eq(bootram.probe_busy),
+            hyper_probe.want.eq(bootram.probe_want),
+            hyper_probe.arming.eq(bootram.probe_arming),
+            hyper_probe.cyc.eq(bootram.probe_cyc),
         ]
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge

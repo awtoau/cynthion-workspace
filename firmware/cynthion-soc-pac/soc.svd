@@ -453,7 +453,7 @@
     </peripheral>
     <peripheral>
       <name>HYPERRAM_PROBE</name>
-      <description>hyperram_probe: 7 registers at 0xf0000280</description>
+      <description>hyperram_probe: 10 registers at 0xf0000280</description>
       <baseAddress>0xF0000280</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -570,9 +570,63 @@
           </fields>
         </register>
         <register>
-          <name>CLEAR</name>
-          <description>HYPERRAM_PROBE.CLEAR, 1 bits at +0x10</description>
+          <name>WANT</name>
+          <description>HYPERRAM_PROBE.WANT, 32 bits at +0x10</description>
           <addressOffset>0x10</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ARMING</name>
+          <description>HYPERRAM_PROBE.ARMING, 32 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CYC</name>
+          <description>HYPERRAM_PROBE.CYC, 32 bits at +0x18</description>
+          <addressOffset>0x18</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CLEAR</name>
+          <description>HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c</description>
+          <addressOffset>0x1C</addressOffset>
           <size>8</size>
           <access>write-only</access>
           <resetValue>0x0</resetValue>

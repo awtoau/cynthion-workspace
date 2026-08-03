@@ -349,7 +349,10 @@ mod probe {
     const MAX_RUN: usize = 0x06;
     const WORDS: usize = 0x08;
     const BUSY: usize = 0x0c;
-    const CLEAR: usize = 0x10;
+    const WANT: usize = 0x10;
+    const ARMING: usize = 0x14;
+    const CYC: usize = 0x18;
+    const CLEAR: usize = 0x1c;
 
     /// Two byte reads, low first.
     ///
@@ -389,10 +392,16 @@ mod probe {
         }
     }
 
-    /// `(starts, beats, burst_beats, max_run, words, busy)`.
+    /// `(starts, beats, busy, want, arming)`.
+    ///
+    /// `words` and `burst_beats` are dropped from the readout: `read_ready` is a
+    /// LEVEL held across a whole transaction rather than a per-word pulse, so
+    /// counting it -- by level or by edge -- measures the transaction, which
+    /// `starts` already reports. An instrument that cannot be interpreted is
+    /// worse than one that is absent.
     pub fn read() -> (u32, u32, u32, u32, u32, u32) {
-        (read16(STARTS), read16(BEATS), read16(BURST_BEATS), read16(MAX_RUN),
-         read16(WORDS), read32(BUSY))
+        (read16(STARTS), read16(BEATS), read32(BUSY), read32(WANT),
+         read32(ARMING), read32(CYC))
     }
 }
 
@@ -689,7 +698,7 @@ fn hyper(uart: &mut Uart) {
         let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_SEQ_ACCESSES, false)
         });
-        let (starts, beats, burst_beats, max_run, words, busy) = probe::read();
+        let (starts, beats, busy, want, arming, cyc) = probe::read();
         row(uart, "hyper win", "16 KiB", "read seq", &seq);
         sum ^= got;
 
@@ -702,20 +711,22 @@ fn hyper(uart: &mut Uart) {
         // assumed from the timing alone.
         let _ = writeln!(
             uart,
-            "hyper win  transactions {}  beats {}  burst {}  longest run {}",
-            starts, beats, burst_beats, max_run);
-        // THE DATA PHASE. `busy` is cycles with the controller not idle, `words`
-        // is 16-bit words delivered -- 32 per 64-byte line. `busy / words` is the
-        // gap between words, and a burst that streams has a gap of 1. Anything
-        // larger is the 316 CK this issue is chasing, and says so directly rather
-        // than being inferred from MB/s.
-        if words > 0 {
-            let gap = (busy * 100) / words;
+            "hyper win  transactions {}  beats {}  ({} beats per transaction, \
+             16 is one per cache line)",
+            starts, beats, if starts > 0 { beats / starts } else { 0 });
+        // WHERE THE TIME GOES, per 64-byte cache line.
+        //
+        // The controller is busy for a fraction of a line and idle for the rest;
+        // `want` and `arming` attribute that idle time to this SoC's own
+        // plumbing rather than leaving it inferred. `want` is the window asking
+        // while the owner FSM sits in IDLE -- the round trip it takes per
+        // transaction. `arming` is the fixed handshake after `start` before the
+        // bus moves.
+        if starts > 0 {
             let _ = writeln!(
                 uart,
-                "hyper win  words {}  busy {} cycles  {}.{:02} cycles per word \
-                 -- 1.00 is a streaming burst",
-                words, busy, gap / 100, gap % 100);
+                "hyper win  per line: cyc {}  busy {}  want {}  arming {}  (cycles)",
+                cyc / starts, busy / starts, want / starts, arming / starts);
         }
         if starts > 0 {
             let per = (beats * 100) / starts;

@@ -81,6 +81,14 @@ class HyperRAMProbe(wiring.Component):
                                    access="r")
         self._busy = csr.Register({"count": csr.Field(csr.action.R, 32)},
                                   access="r")
+        # The two stall buckets. 32-bit because a 16 KiB walk spends thousands of
+        # cycles in them -- that is the point.
+        self._want = csr.Register({"count": csr.Field(csr.action.R, 32)},
+                                  access="r")
+        self._arming = csr.Register({"count": csr.Field(csr.action.R, 32)},
+                                    access="r")
+        self._cyc = csr.Register({"count": csr.Field(csr.action.R, 32)},
+                                 access="r")
         self._clear = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
                                    access="w")
 
@@ -91,6 +99,9 @@ class HyperRAMProbe(wiring.Component):
         builder.add("max_run", self._max_run)
         builder.add("words", self._words)
         builder.add("busy", self._busy)
+        builder.add("want", self._want)
+        builder.add("arming", self._arming)
+        builder.add("cyc", self._cyc)
         builder.add("clear", self._clear)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
@@ -102,6 +113,9 @@ class HyperRAMProbe(wiring.Component):
             "is_burst": In(unsigned(1)),
             "word": In(unsigned(1)),
             "busy": In(unsigned(1)),
+            "want": In(unsigned(1)),
+            "arming": In(unsigned(1)),
+            "cyc": In(unsigned(1)),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -117,6 +131,9 @@ class HyperRAMProbe(wiring.Component):
         run = Signal(16)
         words = Signal(16)
         busy = Signal(32)
+        want = Signal(32)
+        arming = Signal(32)
+        cyc = Signal(32)
 
         # `start_transfer` is a pulse from the owner FSM, but count the EDGE
         # anyway: a level held for two cycles by a stall would otherwise read as
@@ -125,12 +142,17 @@ class HyperRAMProbe(wiring.Component):
         m.d.sync += start_last.eq(self.start_transfer)
         start_edge = self.start_transfer & ~start_last
 
+        word_last = Signal()
+        m.d.sync += word_last.eq(self.word)
+        word_edge = self.word & ~word_last
+
         clear = Signal()
         m.d.comb += clear.eq(self._clear.f.strobe.w_stb)
 
         with m.If(clear):
             m.d.sync += [starts.eq(0), beats.eq(0), burst_beats.eq(0),
-                         max_run.eq(0), run.eq(0), words.eq(0), busy.eq(0)]
+                         max_run.eq(0), run.eq(0), words.eq(0), busy.eq(0),
+                         want.eq(0), arming.eq(0), cyc.eq(0)]
         with m.Else():
             with m.If(start_edge):
                 m.d.sync += starts.eq(starts + 1)
@@ -140,10 +162,22 @@ class HyperRAMProbe(wiring.Component):
                 with m.If(run > max_run):
                     m.d.sync += max_run.eq(run)
                 m.d.sync += run.eq(0)
-            with m.If(self.word):
+            # EDGE, not level. `read_ready` in luna's controller is asserted in
+            # a state rather than pulsed, so counting the level counts cycles
+            # spent ready and not words delivered. The first version did exactly
+            # that and reported 3.00 words per 32-bit beat where two 16-bit words
+            # must give 2.00 -- a number that was visibly impossible and would
+            # have been quoted if the arithmetic it fed had come out plausible.
+            with m.If(word_edge):
                 m.d.sync += words.eq(words + 1)
             with m.If(self.busy):
                 m.d.sync += busy.eq(busy + 1)
+            with m.If(self.want):
+                m.d.sync += want.eq(want + 1)
+            with m.If(self.arming):
+                m.d.sync += arming.eq(arming + 1)
+            with m.If(self.cyc):
+                m.d.sync += cyc.eq(cyc + 1)
             with m.If(self.beat):
                 m.d.sync += [beats.eq(beats + 1), run.eq(run + 1)]
                 with m.If(self.is_burst):
@@ -161,5 +195,8 @@ class HyperRAMProbe(wiring.Component):
             self._max_run.f.count.r_data.eq(max_run),
             self._words.f.count.r_data.eq(words),
             self._busy.f.count.r_data.eq(busy),
+            self._want.f.count.r_data.eq(want),
+            self._arming.f.count.r_data.eq(arming),
+            self._cyc.f.count.r_data.eq(cyc),
         ]
         return m
