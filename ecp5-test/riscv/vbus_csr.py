@@ -114,12 +114,28 @@ class VbusControl(wiring.Component):
             "enable":     csr.Field(csr.action.RW, 1),
         }, access="rw")
 
-        # The power inputs. `init=1` on both: the board must come up powered, and
-        # a register that reset to 0 here would cut this SoC's own supply the
-        # instant the FPGA configured.
+        # The power inputs, and the reset state is a policy decision.
+        #
+        # **CONTROL powers the instrument; every other port is a device under
+        # test.** Drawing our own supply from AUX means the thing being measured
+        # is also the thing keeping the measurer alive, and it silently splits the
+        # load so neither port's current means what it appears to -- observed
+        # before this default existed: 167 mA on AUX against 37 mA on CONTROL,
+        # sharing a ~205 mA draw nobody had chosen to split.
+        #
+        # So `control_in` resets asserted and `aux_in` resets open.
+        #
+        # THE CONSEQUENCE, stated because it is not obvious: a board powered from
+        # AUX ALONE will boot-loop. The FPGA configures, opens the AUX input, cuts
+        # its own supply, unconfigures, releases the pin, the board's pulldown
+        # re-asserts it (active low), power returns, and it configures again.
+        # Recoverable by connecting CONTROL -- not a brick -- but it will look
+        # like a dead board to anyone who does not know this.
+        #
+        # `vbus input both` restores the permissive state at runtime.
         self._input = csr.Register({
             "control_in": csr.Field(csr.action.RW, 1, init=1),
-            "aux_in":     csr.Field(csr.action.RW, 1, init=1),
+            "aux_in":     csr.Field(csr.action.RW, 1, init=0),
             "reserved":   csr.Field(csr.action.R, 6),
         }, access="rw")
 
@@ -141,7 +157,7 @@ class VbusControl(wiring.Component):
             # already undone the active-low sense: a 1 here drives the pad low and
             # the input is ON. Reset is 1 for the reason in the module docstring.
             "control_vbus_in_en": Out(1, init=1),
-            "aux_vbus_in_en":     Out(1, init=1),
+            "aux_vbus_in_en":     Out(1, init=0),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
