@@ -33,11 +33,12 @@ source a shell script, the paths are added directly.
     ./scripts/fabric_build.py --blocks 120 --min-luts 20000
     ./scripts/fabric_build.py --seed 7 --build-dir tmp/fabric-coverage/seed-007
 
-`--seed` is what makes more than one configuration possible. The same source
-placed differently routes differently, and routing is the only way to reach
-interconnect a single build cannot: an arc is a mux selection, so one
+`--seed` changes placement. `--topology-seed` and `--tree-fanin` also change the
+registered signature network, giving the router materially different legal
+choices while preserving the recurrence and self-check. Routing is the only way
+to reach interconnect a single build cannot: an arc is a mux selection, so one
 configuration drives each destination wire from exactly one source and leaves
-every other source for that wire untested. `fabric_sweep.py` loops it.
+every other source for that wire untested. `fabric_sweep.py` loops these knobs.
 
 This script does not program anything. Loading is a separate, deliberate step:
 see `fabric_run.py`.
@@ -70,7 +71,8 @@ sys.path.insert(0, "repos/apollo")
 from fabric.fabric_gateware import FabricTest
 from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
-design = FabricTest(blocks={blocks}, round_bits={round_bits}, golden={golden})
+design = FabricTest(blocks={blocks}, round_bits={round_bits}, golden={golden},
+                    topology_seed={topology_seed}, tree_fanin={tree_fanin})
 CynthionPlatformRev1D4().build(design, do_program=False,
                                build_dir={build_dir!r})
 print("BUILD OK")
@@ -145,6 +147,14 @@ def main():
                              "single configuration cannot: an arc is a mux "
                              "selection, so one build can drive each "
                              "destination wire from exactly one source")
+    parser.add_argument("--topology-seed", type=lambda value: int(value, 0),
+                        default=0,
+                        help="deterministically permute and rotate the "
+                             "registered signature network; zero preserves "
+                             "the original topology")
+    parser.add_argument("--tree-fanin", type=int, choices=(2, 3, 4), default=4,
+                        help="registered signature-tree fan-in; varying this "
+                             "changes the routed netlist without weakening it")
     parser.add_argument("--build-dir", type=Path, default=BUILD_DIR,
                         help="where the tools write; a sweep needs one "
                              "directory per configuration or each build "
@@ -184,6 +194,8 @@ def main():
             handle.flush()
 
         emit(f"fabric test: {blocks} blocks, round 2**{round_bits} cycles")
+        emit(f"signature topology: seed {args.topology_seed:#010x}, "
+             f"tree fan-in {args.tree_fanin}")
         if args.seed is not None:
             emit(f"nextpnr placer seed: {args.seed}")
         emit(f"build directory: {args.build_dir}")
@@ -197,11 +209,14 @@ def main():
             checked = verify_vector_model(blocks, 300)
             emit(f"golden model cross-checked against the scalar "
                  f"specification over {checked} cycles")
-            golden = compute_golden(blocks, 1 << round_bits)
+            golden = compute_golden(blocks, 1 << round_bits,
+                                    args.topology_seed)
             emit(f"golden signature: {golden:#010x}")
 
         script = BUILD_SCRIPT.format(blocks=blocks, round_bits=round_bits,
                                      golden=hex(golden),
+                                     topology_seed=args.topology_seed,
+                                     tree_fanin=args.tree_fanin,
                                      build_dir=str(args.build_dir))
         emit("running yosys, nextpnr-ecp5 and ecppack")
         result = subprocess.run([sys.executable, "-c", script], cwd=ROOT,

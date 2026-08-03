@@ -45,7 +45,7 @@ from fabric.fabric_gateware import FabricTest, REG_SIGNATURE
 from fabric_golden import golden
 
 
-def run(blocks, round_bits, rounds, expected):
+def run(blocks, round_bits, rounds, expected, topology_seed=0, tree_fanin=4):
     """Returns the list of signatures the simulated design produced.
 
     `platform is None` suppresses the LED block; the JTAG register interface
@@ -55,7 +55,8 @@ def run(blocks, round_bits, rounds, expected):
     shifting -- far less machinery for the same observation.
     """
     dut = FabricTest(blocks=blocks, round_bits=round_bits, golden=expected,
-                     simulate=True)
+                     simulate=True, topology_seed=topology_seed,
+                     tree_fanin=tree_fanin)
     module = dut.elaborate(None)
     # Amaranth warns when an Elaboratable is constructed and never handed to a
     # Fragment. Here `elaborate` was called directly so the signals could be
@@ -100,6 +101,9 @@ def main():
                              "timing, which does not depend on the count")
     parser.add_argument("--round-bits", type=int, default=7)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--topology-seed", type=lambda value: int(value, 0),
+                        default=0)
+    parser.add_argument("--tree-fanin", type=int, choices=(2, 3, 4), default=4)
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -113,10 +117,11 @@ def main():
         emit(f"simulating {args.blocks} blocks, round 2**{args.round_bits} "
              f"= {cycles} cycles, {args.rounds} rounds")
 
-        expected = golden(args.blocks, cycles)
+        expected = golden(args.blocks, cycles, args.topology_seed)
         emit(f"golden model: {expected:#010x}")
 
-        seen = run(args.blocks, args.round_bits, args.rounds, expected)
+        seen = run(args.blocks, args.round_bits, args.rounds, expected,
+                   args.topology_seed, args.tree_fanin)
         emit(f"simulated signatures: "
              f"{', '.join(f'{v:#010x}' for v in seen) or 'none'}")
 

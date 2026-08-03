@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Builds the fabric test N times with different nextpnr placer seeds, loads each
-into SRAM, tests it, and reports what the set of them covered.
+Builds the fabric test N times with different placement and logic-topology
+variants, loads each into SRAM, tests it, and reports what the set covered.
 
 Why more than one configuration
 -------------------------------
@@ -17,9 +17,9 @@ per destination wire exactly one source can be driving at a time. Everything
 else that wire could have been driven from is untested by that build and can
 only be reached by building again with the logic somewhere else.
 
-So this loops. Each configuration is the same source, the same golden constant
-and the same self-check, placed differently -- and the aggregate is the union of
-what they exercised.
+So this loops. Each configuration keeps the same recurrence and self-check, but
+changes placement, signature-tree grouping, and state-bit rotations. The
+aggregate is the union of what those quick go/no-go designs exercised.
 
 What it does not do
 -------------------
@@ -66,8 +66,10 @@ LOG = ROOT / "tmp" / "logs" / "fabric_sweep.log"
 WORK = ROOT / "tmp" / "fabric-coverage"
 
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(ROOT / "ecp5-test"))
 
 from fabric_build import parse_utilisation, parse_timing          # noqa: E402
+from fabric.fabric_gateware import BLOCKS as DEFAULT_BLOCKS       # noqa: E402
 import fabric_arcs                                                # noqa: E402
 import fabric_placement                                           # noqa: E402
 
@@ -77,7 +79,21 @@ import fabric_placement                                           # noqa: E402
 WRONG_GOLDEN = "0xdeadbeef"
 
 
-def build(seed, directory, blocks, round_bits, min_luts, golden=None):
+def variant(seed, placement_only=False):
+    """Deterministic placement and topology knobs for one candidate."""
+    if placement_only:
+        return {"placement_seed": seed, "topology_seed": 0, "tree_fanin": 4}
+    topology_seed = (seed * 0x9E3779B9) & 0xFFFFFFFF
+    return {"placement_seed": seed,
+            "topology_seed": topology_seed or 1,
+            # Fan-in two is useful for smaller designs but adds enough
+            # registered tree nodes to make the default 185-block design fail
+            # placement. Three and four both pass full-density builds.
+            "tree_fanin": (3, 4)[(seed - 1) % 2]}
+
+
+def build(seed, directory, blocks, round_bits, min_luts, topology_seed=0,
+          tree_fanin=4, golden=None):
     """One configuration. Returns (ok, seconds, log path)."""
     directory.mkdir(parents=True, exist_ok=True)
     log = directory / "build.log"
@@ -86,7 +102,9 @@ def build(seed, directory, blocks, round_bits, min_luts, golden=None):
                "--build-dir", str(directory),
                "--log", str(log),
                "--round-bits", str(round_bits),
-               "--min-luts", str(min_luts)]
+               "--min-luts", str(min_luts),
+               "--topology-seed", hex(topology_seed),
+               "--tree-fanin", str(tree_fanin)]
     if blocks is not None:
         command += ["--blocks", str(blocks)]
     if golden is not None:
@@ -117,12 +135,15 @@ def measure(directory):
     return entry
 
 
-def test(directory, rounds, emit):
+def test(directory, rounds, emit, blocks, round_bits, topology_seed):
     """Load and run one configuration. Returns the result dict."""
     result_path = directory / "result.json"
     command = [sys.executable, str(SCRIPTS / "fabric_run.py"),
                "--bitstream", str(directory / "top.bit"),
                "--rounds", str(rounds),
+               "--blocks", str(blocks),
+               "--round-bits", str(round_bits),
+               "--topology-seed", hex(topology_seed),
                "--result-json", str(result_path),
                "--log", str(directory / "run.log")]
     outcome = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
@@ -148,18 +169,14 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--configs", type=int, default=8,
-                        help="how many placements; 8 shakes out the loop, 24 "
-                             "is the figure #116 asks for")
+                        help="how many candidates; hundreds or thousands are "
+                             "valid because each hardware check is short")
     parser.add_argument("--first-seed", type=int, default=1,
                         help="seeds are this and up, so a rerun with the same "
                              "value rebuilds the same placements")
-    parser.add_argument("--rounds", type=int, default=5000,
-                        help="rounds each configuration must complete. A "
-                             "count, not a duration: at 2**18 cycles and 60 "
-                             "MHz the gateware finishes about 229 a second, so "
-                             "5000 is roughly 22 seconds of checking per "
-                             "placement. Depth per placement is the soak's "
-                             "job; this sweep's axis is breadth")
+    parser.add_argument("--rounds", type=int, default=32,
+                        help="quick go/no-go rounds per bitstream (default 32); "
+                             "this sweep maximises breadth, not soak time")
     parser.add_argument("--jobs", type=int, default=6,
                         help="parallel builds. Placement is single-threaded "
                              "per build, so the wall time is otherwise N times "
@@ -170,17 +187,25 @@ def main():
     parser.add_argument("--work", type=Path, default=WORK)
     parser.add_argument("--skip-build", action="store_true",
                         help="test bitstreams already in the work directory")
+    parser.add_argument("--placement-only", action="store_true",
+                        help="legacy comparison: vary only nextpnr placement, "
+                             "not signature-tree topology")
     parser.add_argument("--no-control", action="store_true",
                         help="skip the negative control. The clean runs are "
                              "then not evidence, so this exists for a rerun "
                              "of the hardware half, not for a real result")
     args = parser.parse_args()
+    if args.configs < 1:
+        parser.error("--configs must be at least 1")
+    if args.rounds < 1:
+        parser.error("--rounds must be at least 1")
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
     args.work.mkdir(parents=True, exist_ok=True)
 
     seeds = list(range(args.first_seed, args.first_seed + args.configs))
     directories = {seed: args.work / f"seed-{seed:03d}" for seed in seeds}
+    variants = {seed: variant(seed, args.placement_only) for seed in seeds}
 
     with LOG.open("a") as handle:
         def emit(text=""):
@@ -211,7 +236,9 @@ def main():
             with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
                 futures = {
                     pool.submit(build, seed, directories[seed], args.blocks,
-                                args.round_bits, args.min_luts): seed
+                                args.round_bits, args.min_luts,
+                                variants[seed]["topology_seed"],
+                                variants[seed]["tree_fanin"]): seed
                     for seed in seeds}
                 for future in concurrent.futures.as_completed(futures):
                     seed = futures[future]
@@ -229,6 +256,27 @@ def main():
             emit("no configuration built -- nothing to test")
             return 1
 
+        # Measure every built candidate before touching the board. Greedy set
+        # cover makes every prefix useful if a run is interrupted, while still
+        # retaining all candidates for maximum eventual coverage.
+        configs = [directories[seed] / "top.config" for seed in good
+                   if (directories[seed] / "top.config").exists()]
+        known_types = fabric_arcs.tile_type_arcs()
+        ordered_configs, selection = fabric_arcs.greedy_order(configs, known_types)
+        if not ordered_configs:
+            emit("no routed top.config exists -- coverage cannot be measured "
+                 "and nothing will be loaded")
+            return 1
+        seed_for_config = {directories[seed] / "top.config": seed for seed in good}
+        good = [seed_for_config[path] for path in ordered_configs]
+        emit("coverage-directed hardware order (new type arcs, then physical):")
+        for index, step in enumerate(selection[:10], 1):
+            emit(f"  {index:>3}: {Path(step['config']).parent.name}  "
+                 f"+{step['type_new']:,} type, +{step['instance_new']:,} physical")
+        if len(selection) > 10:
+            emit(f"  ... {len(selection) - 10} more candidates")
+        emit()
+
         #
         # Test. Serial: there is one board, and a configuration under test owns
         # it completely.
@@ -239,12 +287,17 @@ def main():
         for index, seed in enumerate(good, 1):
             directory = directories[seed]
             stats = measure(directory)
+            knobs = variants[seed]
             emit(f"[{index}/{len(good)}] seed {seed}: "
+                 f"topology 0x{knobs['topology_seed']:08x}/fan-in "
+                 f"{knobs['tree_fanin']}, "
                  f"{stats.get('luts', 0):,} LUT4s "
                  f"({100 * stats.get('lut_share', 0):.1f}%), "
                  f"{stats.get('mhz', 0):.2f} MHz "
                  f"{'MET' if stats.get('timing_met') else 'NOT MET'}")
-            outcome = test(directory, args.rounds, emit)
+            outcome = test(directory, args.rounds, emit,
+                           args.blocks or DEFAULT_BLOCKS, args.round_bits,
+                           knobs["topology_seed"])
             outcome.update(stats)
             outcome["seed"] = seed
             results[seed] = outcome
@@ -267,6 +320,8 @@ def main():
                  f"{WRONG_GOLDEN}, which the design cannot produce")
             ok, seconds, log = build(seed, directory, args.blocks,
                                      args.round_bits, args.min_luts,
+                                     variants[seed]["topology_seed"],
+                                     variants[seed]["tree_fanin"],
                                      golden=WRONG_GOLDEN)
             if not ok:
                 emit(f"  control build failed in {seconds:.0f}s -- see {log}")
@@ -274,7 +329,9 @@ def main():
                 # fabric_run.py loads it and then refuses to score it, because
                 # its constant disagrees with the host model. That refusal is
                 # the correct behaviour and is itself part of the control.
-                loaded = test(directory, args.rounds, emit)
+                loaded = test(directory, args.rounds, emit,
+                              args.blocks or DEFAULT_BLOCKS, args.round_bits,
+                              variants[seed]["topology_seed"])
                 emit(f"  loaded; fabric_run.py's verdict: {loaded['verdict']}")
                 outcome = subprocess.run(
                     [sys.executable, str(SCRIPTS / "fabric_control.py")],
@@ -287,8 +344,7 @@ def main():
         #
         # What the set of them covered.
         #
-        configs = [directories[seed] / "top.config" for seed in good
-                   if (directories[seed] / "top.config").exists()]
+        configs = [directories[seed] / "top.config" for seed in good]
         emit("=== placement: did the seed actually move the logic? ===")
         placement = fabric_placement.compare(configs, emit)
         emit()
@@ -301,14 +357,13 @@ def main():
         #
         # The verdict.
         #
-        passed = [s for s in good if results[s].get("verdict") == "pass"]
-        # The headline quotes the per-instance share. "Routing arcs" plainly
-        # means the arcs on this die, and that is the smaller, harder number;
-        # the per-tile-type share is always larger and is stated immediately
-        # below rather than in the headline, so neither can be read alone.
+        passed = [s for s in good if results[s].get("verdict") == "pass"
+                  and results[s].get("timing_met") is True]
+        # Tile-type coverage is the comparable metric used by the theoretical
+        # planner. Physical-instance coverage remains visible separately.
         emit(f"=== {len(passed)}/{args.configs} passed "
-             f"-- {100 * arcs['instance_share']:.1f}% of routing arcs "
-             f"exercised ===")
+             f"-- {100 * arcs['type_share']:.1f}% configurable routing-arc "
+             f"coverage per tile type ===")
         emit(f"  per instance:  {arcs['covered_instance_arcs']:,} of "
              f"{arcs['total_instance_arcs']:,} arcs on the die")
         emit(f"  per tile type: {arcs['covered_type_arcs']:,} of "
@@ -343,6 +398,7 @@ def main():
         summary = {
             "configs": args.configs,
             "seeds": seeds,
+            "variants": {str(seed): variants[seed] for seed in seeds},
             "passed": passed,
             "rounds": rounds,
             "mismatches": mismatches,
@@ -350,6 +406,7 @@ def main():
             "placement": placement,
             "arcs": {k: v for k, v in arcs.items() if k != "steps"},
             "arc_steps": arcs["steps"],
+            "greedy_selection": selection,
             "results": {str(s): results[s] for s in good},
         }
         (args.work / "sweep.json").write_text(json.dumps(summary, indent=2))

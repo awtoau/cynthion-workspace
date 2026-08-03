@@ -52,8 +52,9 @@ Two denominators, and they mean different things
   per tile type -- arcs collapsed to (type, dest, source). Every PLC2 shares one
     mux structure, so covering an arc in one PLC2 exercises that structure but
     not the other 1,000 instances of it. This is the number that says how much
-    of the *design* of the interconnect was exercised, and it is always the
-    larger and more flattering of the two.
+    of the *design* of the interconnect was exercised. Neither denominator is
+    inherently larger: one collapses repeated tile instances, while the other
+    rewards reaching different physical copies of the same mux.
 
 Both are reported, because quoting either alone overstates something.
 
@@ -63,6 +64,8 @@ Both are reported, because quoting either alone overstates something.
 
 import argparse
 import collections
+import hashlib
+import heapq
 import json
 import re
 import sys
@@ -140,6 +143,82 @@ def config_arcs(path):
     return used
 
 
+def coverage_keys(path, known_types=None):
+    """Return the physical and tile-type coverage keys selected by *path*.
+
+    If ``known_types`` is supplied, arcs absent from that database are omitted
+    from both sets. They are diagnostics, not evidence that may inflate a
+    coverage numerator whose denominator came from another database.
+    """
+    instance = set()
+    tile_type = set()
+    for tile, kind, dest, source in config_arcs(path):
+        if known_types is not None and (dest, source) not in known_types.get(kind, ()):
+            continue
+        instance.add((tile, dest, source))
+        tile_type.add((kind, dest, source))
+    return instance, tile_type
+
+
+def greedy_order(configs, known_types=None):
+    """Order candidates by new type arcs, breaking ties by physical arcs.
+
+    The lazy heap avoids rescoring every remaining candidate after every pick,
+    so candidate pools in the thousands remain practical. All candidates are
+    returned; this is an anytime order, not a lossy filter.
+    """
+    candidates = []
+    heap = []
+    for index, path in enumerate(configs):
+        instance, tile_type = coverage_keys(path, known_types)
+        candidates.append((path, instance, tile_type))
+        heapq.heappush(heap, (-len(tile_type), -len(instance), index, 0))
+
+    selected = []
+    steps = []
+    seen_instance = set()
+    seen_type = set()
+    generation = 0
+    remaining = set(range(len(candidates)))
+    while remaining:
+        neg_type, neg_instance, index, scored_at = heapq.heappop(heap)
+        if index not in remaining:
+            continue
+        path, instance, tile_type = candidates[index]
+        new_type = len(tile_type - seen_type)
+        new_instance = len(instance - seen_instance)
+        if scored_at != generation:
+            heapq.heappush(heap, (-new_type, -new_instance, index, generation))
+            continue
+        remaining.remove(index)
+        selected.append(path)
+        seen_type.update(tile_type)
+        seen_instance.update(instance)
+        steps.append({
+            "config": str(path),
+            "type_new": new_type,
+            "type_total": len(seen_type),
+            "instance_new": new_instance,
+            "instance_total": len(seen_instance),
+        })
+        generation += 1
+    return selected, steps
+
+
+def database_digest(device, family="ECP5"):
+    """SHA-256 of the Trellis files that define this coverage denominator."""
+    paths = [TRELLIS / "devices.json",
+             TRELLIS / family / device / "tilegrid.json"]
+    paths.extend(sorted((TRELLIS / family / "tiledata").glob("*/bits.db")))
+    digest = hashlib.sha256()
+    for path in paths:
+        relative = str(path.relative_to(TRELLIS)).encode()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def coverage(configs, device):
     """Cumulative coverage after each config, and the totals it is against.
 
@@ -171,6 +250,7 @@ def coverage(configs, device):
             # and would mean the toolchain and the database have diverged.
             if (dest, source) not in types.get(tile_type, ()):
                 unknown.add((tile_type, dest, source))
+                continue
             seen_instance.add((tile, dest, source))
             seen_type.add((tile_type, dest, source))
         steps.append({
@@ -184,6 +264,8 @@ def coverage(configs, device):
 
     return {
         "device": device,
+        "trellis_database": str(TRELLIS),
+        "trellis_coverage_digest": database_digest(device),
         "tiles": len(tiles),
         "tile_types": len(set(tiles.values())),
         "types_without_database": missing,
@@ -201,6 +283,8 @@ def coverage(configs, device):
 def report(result, emit):
     emit(f"device {result['device']}: {result['tiles']} tiles of "
          f"{result['tile_types']} types")
+    emit(f"Trellis coverage database digest: "
+         f"{result['trellis_coverage_digest']}")
     if result["types_without_database"]:
         emit(f"  no bits.db for: {', '.join(result['types_without_database'])} "
              f"-- their arcs are in neither total")
@@ -209,8 +293,8 @@ def report(result, emit):
          f"{result['total_type_arcs']:,} distinct per tile type")
     if result["arcs_not_in_database"]:
         emit(f"  WARNING: {result['arcs_not_in_database']} arcs used are not in "
-             f"the database, so the share below divides two things that do not "
-             f"match -- the toolchain and the Trellis database have diverged")
+             f"the database. They were excluded from coverage; the toolchain "
+             f"and the Trellis database may have diverged")
     else:
         emit("  every arc used is one the database knows, so the share below "
              "is a ratio of like for like")
@@ -242,6 +326,9 @@ def main():
     parser.add_argument("--device", default="LFE5U-12F")
     parser.add_argument("--json", type=Path, default=None,
                         help="also write the full result here")
+    parser.add_argument("--greedy", action="store_true",
+                        help="order candidates by new per-tile-type arcs, then "
+                             "new physical arcs")
     args = parser.parse_args()
 
     for path in args.configs:
@@ -256,7 +343,10 @@ def main():
             handle.write(text + "\n")
             handle.flush()
 
-        result = coverage(args.configs, args.device)
+        configs = args.configs
+        if args.greedy:
+            configs, _ = greedy_order(configs, tile_type_arcs())
+        result = coverage(configs, args.device)
         report(result, emit)
         if args.json:
             args.json.parent.mkdir(parents=True, exist_ok=True)

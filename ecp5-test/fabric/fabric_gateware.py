@@ -179,6 +179,42 @@ def rotl(value, amount):
     return ((value << amount) | (value >> (32 - amount))) & MASK
 
 
+def signature_layout(blocks, topology_seed=0):
+    """Return ``(block order, per-block rotations)`` for one topology.
+
+    Zero deliberately preserves the original design. Non-zero seeds use a
+    tiny, specified 32-bit generator rather than Python's ``random`` module so
+    a manifest remains reproducible across Python releases and machines.
+
+    Reordering changes which block states meet at each registered XOR node;
+    rotating changes which physical state bit reaches each bit of that tree.
+    Both operations are wiring, not new test logic, so they diversify routing
+    without reducing the 185 independent nonlinear blocks or making a quick
+    go/no-go result weaker.
+    """
+    if blocks < 1:
+        raise ValueError("blocks must be positive")
+    if topology_seed == 0:
+        return list(range(blocks)), [0] * blocks
+
+    state = topology_seed & MASK
+
+    def next_u32():
+        nonlocal state
+        # Numerical Recipes LCG. The constants and 32-bit truncation are part
+        # of the file format: do not replace this with an implementation whose
+        # sequence can vary between runtimes.
+        state = (1664525 * state + 1013904223) & MASK
+        return state
+
+    rotations = [next_u32() & 31 for _ in range(blocks)]
+    order = list(range(blocks))
+    for index in range(blocks - 1, 0, -1):
+        other = next_u32() % (index + 1)
+        order[index], order[other] = order[other], order[index]
+    return order, rotations
+
+
 # Maximal-length Galois tap sets for 32-bit LFSRs. Any of these gives period
 # 2**32-1; using several means no two blocks share a recurrence.
 POLYNOMIALS = [
@@ -278,9 +314,13 @@ class FabricTest(Elaboratable):
     """The whole design: BLOCKS blocks, a signature, and a JTAG window."""
 
     def __init__(self, blocks=BLOCKS, round_bits=ROUND_BITS, golden=None,
-                 simulate=False):
+                 simulate=False, topology_seed=0, tree_fanin=4):
         self.blocks = blocks
         self.round_bits = round_bits
+        if tree_fanin not in (2, 3, 4):
+            raise ValueError("tree_fanin must be 2, 3 or 4")
+        self.topology_seed = topology_seed & MASK
+        self.tree_fanin = tree_fanin
         # `simulate` omits the PLL and the JTAG primitive, which are ECP5
         # hard blocks that need a platform. Everything under test -- the
         # blocks, the signature tree, the round timing and the self-check --
@@ -350,13 +390,20 @@ class FabricTest(Elaboratable):
         # path otherwise, and a design that fails timing would then be telling
         # us about the tree rather than about the fabric under test.
         #
-        layer = states
+        order, rotations = signature_layout(self.blocks, self.topology_seed)
+        layer = []
+        for index in order:
+            amount = rotations[index]
+            state = states[index]
+            if amount:
+                state = Cat(state[32 - amount:], state[:32 - amount])
+            layer.append(state)
         depth = 0
         while len(layer) > 1:
             nxt = []
-            for i in range(0, len(layer), 4):
-                group = layer[i:i + 4]
-                node = Signal(32, name=f"xor_s{depth}_{i // 4}")
+            for i in range(0, len(layer), self.tree_fanin):
+                group = layer[i:i + self.tree_fanin]
+                node = Signal(32, name=f"xor_s{depth}_{i // self.tree_fanin}")
                 acc = group[0]
                 for extra in group[1:]:
                     acc = acc ^ extra

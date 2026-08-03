@@ -110,7 +110,10 @@ def forced_overlap(first, second, total_sites):
     fill the die is the fabric question, so the density is not negotiable.
     """
     least = max(0, len(first) + len(second) - total_sites)
-    union = min(total_sites, len(first | second))
+    # Minimum Jaccard overlap uses the smallest forced intersection and the
+    # largest possible union. The observed union belongs to the actual overlap,
+    # not its theoretical floor.
+    union = min(total_sites, len(first) + len(second))
     return least / union if union else 1.0
 
 

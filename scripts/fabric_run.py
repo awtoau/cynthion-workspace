@@ -77,7 +77,7 @@ sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fabric.fabric_gateware import (APPLET_ID, BLOCKS, DIE_PRESENT, ROUND_BITS,
-                                    ROUND_CYCLES, REG_DIE, REG_ID,
+                                    REG_DIE, REG_ID,
                                     REG_SIGNATURE, REG_ROUNDS, REG_STATUS,
                                     REG_GOLDEN, REG_MISMATCHES, SYNC_MHZ)
 
@@ -127,6 +127,13 @@ def main():
                         help="do not reconfigure; watch what is already running")
     parser.add_argument("--rounds", type=int, default=100_000,
                         help="stop once the design reports this many rounds")
+    parser.add_argument("--blocks", type=int, default=BLOCKS,
+                        help="block count used to build this bitstream")
+    parser.add_argument("--round-bits", type=int, default=ROUND_BITS,
+                        help="round size used to build this bitstream")
+    parser.add_argument("--topology-seed", type=lambda value: int(value, 0),
+                        default=0,
+                        help="signature topology used to build this bitstream")
     parser.add_argument("--polls", type=int, default=2_000_000,
                         help="hard cap on JTAG polls, so the loop cannot run "
                              "forever if the round counter is stuck")
@@ -142,8 +149,12 @@ def main():
     parser.add_argument("--log", type=Path, default=LOG,
                         help="where this run's transcript is appended")
     args = parser.parse_args()
+    round_cycles = 1 << args.round_bits
 
-    result = {"bitstream": str(args.bitstream), "verdict": "incomplete"}
+    result = {"bitstream": str(args.bitstream), "verdict": "incomplete",
+              "requested_blocks": args.blocks,
+              "round_bits": args.round_bits,
+              "topology_seed": args.topology_seed}
 
     def finish(code):
         if args.result_json:
@@ -166,10 +177,11 @@ def main():
         # reading it out of the build log. A gateware built against a wrong
         # constant would report clean forever; this is the check that catches it.
         from fabric_golden import golden as compute_golden, verify_vector_model
-        checked = verify_vector_model(BLOCKS, 300)
+        checked = verify_vector_model(args.blocks, 300)
         emit(f"golden model cross-checked against the scalar specification "
-             f"over {checked} cycles, {BLOCKS} blocks")
-        expected = compute_golden(BLOCKS, ROUND_CYCLES)
+             f"over {checked} cycles, {args.blocks} blocks")
+        expected = compute_golden(args.blocks, round_cycles,
+                                  args.topology_seed)
         emit(f"golden signature, computed on the host: {expected:#010x}")
 
         result["expected_golden"] = f"{expected:#010x}"
@@ -218,13 +230,13 @@ def main():
             result["verdict"] = "golden mismatch between gateware and host"
             return finish(1)
         emit("the gateware's constant and the host's model agree")
-        if blocks != BLOCKS:
+        if blocks != args.blocks:
             emit(f"note: gateware built for {blocks} blocks, this script's "
-                 f"module says {BLOCKS}")
+                 f"argument says {args.blocks}")
 
         emit()
-        emit(f"round = 2**{ROUND_BITS} = {ROUND_CYCLES} cycles of all {blocks} "
-             f"blocks; {ROUND_CYCLES * blocks * 32:,} state bits advanced per "
+        emit(f"round = 2**{args.round_bits} = {round_cycles} cycles of all {blocks} "
+             f"blocks; {round_cycles * blocks * 32:,} state bits advanced per "
              f"round")
         emit("polling; nothing here waits on a duration -- the loop stops on "
              f"{args.rounds} rounds or {args.polls} polls, whichever comes "
@@ -279,9 +291,9 @@ def main():
              + (f", from {die_note(die_before)} at the start"
                 if die_after != die_before else " (unchanged)"))
         emit(f"rounds completed by the gateware: {done:,}")
-        emit(f"  each round is {ROUND_CYCLES} cycles of {blocks} blocks, so "
-             f"{done * ROUND_CYCLES:,} block-cycles, "
-             f"{done * ROUND_CYCLES * blocks * 32:,} state-bit updates")
+        emit(f"  each round is {round_cycles} cycles of {blocks} blocks, so "
+             f"{done * round_cycles:,} block-cycles, "
+             f"{done * round_cycles * blocks * 32:,} state-bit updates")
         emit(f"gateware-checked rounds that mismatched: {worst_mismatches}")
         emit(f"sticky mismatch flag: {'SET' if ever_mismatch else 'never set'}")
         emit(f"host signature reads: {signature_reads}, "

@@ -42,7 +42,8 @@ LOG = ROOT / "tmp" / "logs" / "fabric_golden.log"
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 
 from fabric.fabric_gateware import (BLOCKS, ROUND_BITS, ROUND_CYCLES,
-                                    block_params, block_step)
+                                    block_params, block_step, rotl,
+                                    signature_layout)
 
 U32 = np.uint32
 
@@ -102,7 +103,7 @@ def verify_vector_model(blocks, cycles):
     return cycles
 
 
-def golden(blocks=BLOCKS, cycles=ROUND_CYCLES):
+def golden(blocks=BLOCKS, cycles=ROUND_CYCLES, topology_seed=0):
     """The XOR of all block states after one round.
 
     The gateware advances every block from its seed and reloads the seed on the
@@ -114,10 +115,11 @@ def golden(blocks=BLOCKS, cycles=ROUND_CYCLES):
     states = seeds.copy()
     for _ in range(cycles - 1):
         states = _vector_step(states, polys, mixes)
-    signature = U32(0)
-    for state in states:
-        signature ^= state
-    return int(signature)
+    order, rotations = signature_layout(blocks, topology_seed)
+    signature = 0
+    for index in order:
+        signature ^= rotl(int(states[index]), rotations[index])
+    return signature & 0xFFFFFFFF
 
 
 def main():
@@ -126,6 +128,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--blocks", type=int, default=BLOCKS)
     parser.add_argument("--round-bits", type=int, default=ROUND_BITS)
+    parser.add_argument("--topology-seed", type=lambda value: int(value, 0),
+                        default=0,
+                        help="signature-network topology seed; zero is the "
+                             "original layout")
     parser.add_argument("--check-cycles", type=int, default=300,
                         help="cycles to cross-check vector against scalar")
     parser.add_argument("--quiet", action="store_true",
@@ -149,7 +155,7 @@ def main():
              f"{checked} cycles, all {args.blocks} blocks")
 
         start = time.perf_counter()
-        value = golden(args.blocks, cycles)
+        value = golden(args.blocks, cycles, args.topology_seed)
         elapsed = time.perf_counter() - start
         emit(f"golden signature: {value:#010x}  "
              f"({elapsed:.1f}s for {cycles - 1} advances)")
