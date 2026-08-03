@@ -48,3 +48,11 @@ pub mod control;
 pub type Status = crate::Reg<status::StatusSpec>;
 #[doc = "BOARD_ULPI.STATUS, 2 bits at +0x03"]
 pub mod status;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const ADDRESS: usize = 0x00;
+    pub const DATA: usize = 0x01;
+    pub const CONTROL: usize = 0x02;
+    pub const STATUS: usize = 0x03;
+}

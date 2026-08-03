@@ -112,3 +112,16 @@ pub mod threshold;
 pub type Claim = crate::Reg<claim::ClaimSpec>;
 #[doc = "PLIC.CLAIM, 8 bits at +0x200004"]
 pub mod claim;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const PRIORITY1: usize = 0x04;
+    pub const PRIORITY2: usize = 0x08;
+    pub const PRIORITY3: usize = 0x0c;
+    pub const PRIORITY4: usize = 0x10;
+    pub const PRIORITY5: usize = 0x14;
+    pub const PENDING: usize = 0x1000;
+    pub const ENABLE: usize = 0x2000;
+    pub const THRESHOLD: usize = 0x200000;
+    pub const CLAIM: usize = 0x200004;
+}

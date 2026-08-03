@@ -48,3 +48,11 @@ pub mod rx;
 pub type Rxcnt = crate::Reg<rxcnt::RxcntSpec>;
 #[doc = "BOARD_SIDEBAND.RXCNT, 8 bits at +0x03"]
 pub mod rxcnt;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const CTRL: usize = 0x00;
+    pub const TX: usize = 0x01;
+    pub const RX: usize = 0x02;
+    pub const RXCNT: usize = 0x03;
+}

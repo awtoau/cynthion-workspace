@@ -101,6 +101,16 @@ def build_soc():
     Imports rather than builds: the memory map is decided during elaboration, so no
     synthesis or place-and-route is involved and no board is touched.
     """
+    import vexii_cpu
+
+    # The CPU is a black box for this walk; generating its implementation cannot
+    # affect the decoder map. Reuse the checked-in matching profile so this
+    # metadata-only command does not require sbt or a generator server.
+    cached_cpu = ROOT / "ecp5-test" / "riscv" / "matrix" / "soc-cpu" / "VexiiRiscv.v"
+    if not cached_cpu.exists():
+        raise FileNotFoundError(f"memory-map elaboration needs {cached_cpu}")
+    vexii_cpu.generate = lambda *args, **kwargs: cached_cpu
+
     import vexii_hello_soc
     from amaranth.hdl import Fragment, UnusedElaboratable
 
@@ -440,7 +450,7 @@ def verify_svd(path, peripherals, emit):
 
 
 def cross_check(peripherals, emit):
-    """Compare the generated bases against the constants written by hand.
+    """Compare generated addresses against the remaining independent copies.
 
     The point of the whole exercise. `vexii_hello_soc.py` names the addresses it
     passes to `decoder.add()`, and `target.rs` names the addresses the firmware
@@ -512,6 +522,22 @@ def cross_check(peripherals, emit):
             if value in csr_bases:
                 emit(f"  {path.name} has 0x{value:08x} written out; that is "
                      f"base::{csr_bases[value]} and it should be named, not copied")
+                firmware_ok = False
+
+    # Byte-granular accesses still need hand-rolled volatile operations, but their
+    # addresses must come from the register walk. Checking the references as well
+    # as the generated file makes a reintroduced literal fail immediately.
+    hyperram = (src / "hyperram.rs").read_text()
+    for name in ("ADDR", "CTRL", "STATUS", "DATA_LO", "DATA_HI", "WDATA"):
+        if f"offset::{name}" not in hyperram:
+            emit(f"  hyperram.rs no longer refers to bootram::offset::{name}")
+            firmware_ok = False
+
+    for crate_src in sorted((ROOT / "firmware").glob("*/src")):
+        for path in sorted(crate_src.glob("*.rs")):
+            for match in re.finditer(r"BASE\s*\+\s*0x[0-9a-fA-F_]+", path.read_text()):
+                emit(f"  {path.relative_to(ROOT)} has a register offset written "
+                     f"out: {match.group(0)}")
                 firmware_ok = False
 
     emit("firmware: every address comes from the generated crate" if firmware_ok
@@ -635,6 +661,49 @@ def write_bases(peripherals, emit):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines))
     emit(f"wrote {path.relative_to(ROOT)}")
+
+
+def render_offsets(peripheral):
+    """A generated Rust module for one peripheral's register offsets."""
+    lines = [
+        "/// Byte offsets from this peripheral's generated base address.",
+        "pub mod offset {",
+    ]
+    for name, offset, _, _ in peripheral.registers:
+        lines.append(f"    pub const {name.upper()}: usize = 0x{offset:02x};")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def check_offsets(peripherals, emit):
+    """Confirm the checked-in PAC exposes the offsets from this memory-map walk."""
+    ok = True
+    checked = 0
+    for peripheral in peripherals:
+        if peripheral.kind != "registers":
+            continue
+        path = OUT / "src" / f"{peripheral.name.lower()}.rs"
+        expected = render_offsets(peripheral)
+        if not path.exists() or not path.read_text().rstrip().endswith(expected):
+            emit(f"  {path.relative_to(ROOT)} offsets are STALE -- regenerate the PAC")
+            ok = False
+        checked += len(peripheral.registers)
+    emit(f"committed register offsets: {checked} checked, "
+         f"{'all current' if ok else 'STALE -- see above'}")
+    return ok
+
+
+def write_offsets(peripherals, emit):
+    """Append plain integer offsets after `form` creates each register module."""
+    count = 0
+    for peripheral in peripherals:
+        if peripheral.kind != "registers":
+            continue
+        path = OUT / "src" / f"{peripheral.name.lower()}.rs"
+        path.write_text(path.read_text().rstrip() + "\n\n" +
+                        render_offsets(peripheral) + "\n")
+        count += len(peripheral.registers)
+    emit(f"wrote {count} register offsets")
 
 
 CARGO_TOML = """# Generated register definitions for the Cynthion r1.4 RISC-V SoC.
@@ -783,7 +852,8 @@ def run(args, emit):
         current = committed.read_bytes() == svd_path.read_bytes()
         emit("committed soc.svd is current" if current
              else "committed soc.svd is STALE -- run without --check")
-        return 0 if current else 1
+        offsets_current = check_offsets(peripherals, emit)
+        return 0 if current and offsets_current else 1
 
     if args.svd_only:
         emit("stopping after the SVD, as asked")
@@ -826,6 +896,7 @@ def run(args, emit):
     emit("form ok")
 
     write_bases(peripherals, emit)
+    write_offsets(peripherals, emit)
     # `form` writes src/lib.rs itself, so the module declaration has to go on
     # afterwards or the next run silently drops it.
     lib = OUT / "src" / "lib.rs"

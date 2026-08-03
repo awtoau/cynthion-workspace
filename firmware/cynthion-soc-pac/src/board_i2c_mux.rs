@@ -26,3 +26,9 @@ pub mod select;
 pub type Lines = crate::Reg<lines::LinesSpec>;
 #[doc = "BOARD_I2C_MUX.LINES, 4 bits at +0x01"]
 pub mod lines;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const SELECT: usize = 0x00;
+    pub const LINES: usize = 0x01;
+}

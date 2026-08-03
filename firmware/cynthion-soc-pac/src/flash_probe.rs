@@ -72,3 +72,13 @@ pub mod oe_edges;
 pub type Clear = crate::Reg<clear::ClearSpec>;
 #[doc = "FLASH_PROBE.CLEAR, 1 bits at +0x0a"]
 pub mod clear;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const CS_FELL: usize = 0x00;
+    pub const SCK_EDGES: usize = 0x02;
+    pub const DQ_DRIVEN: usize = 0x04;
+    pub const GRANTS: usize = 0x06;
+    pub const OE_EDGES: usize = 0x08;
+    pub const CLEAR: usize = 0x0a;
+}

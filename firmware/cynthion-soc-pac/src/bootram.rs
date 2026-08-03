@@ -83,3 +83,14 @@ pub mod data_hi;
 pub type Wdata = crate::Reg<wdata::WdataSpec>;
 #[doc = "BOOTRAM.WDATA, 16 bits at +0x10"]
 pub mod wdata;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const ADDR: usize = 0x00;
+    pub const ADDR_RD: usize = 0x04;
+    pub const CTRL: usize = 0x08;
+    pub const STATUS: usize = 0x0c;
+    pub const DATA_LO: usize = 0x0d;
+    pub const DATA_HI: usize = 0x0e;
+    pub const WDATA: usize = 0x10;
+}

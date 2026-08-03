@@ -92,3 +92,15 @@ pub mod msr;
 pub type Scr = crate::Reg<scr::ScrSpec>;
 #[doc = "CONSOLE.SCR, 8 bits at +0x07"]
 pub mod scr;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const RBR_THR: usize = 0x00;
+    pub const IER: usize = 0x01;
+    pub const IIR_FCR: usize = 0x02;
+    pub const LCR: usize = 0x03;
+    pub const MCR: usize = 0x04;
+    pub const LSR: usize = 0x05;
+    pub const MSR: usize = 0x06;
+    pub const SCR: usize = 0x07;
+}

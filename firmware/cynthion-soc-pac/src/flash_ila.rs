@@ -48,3 +48,11 @@ pub mod index;
 pub type Sample = crate::Reg<sample::SampleSpec>;
 #[doc = "FLASH_ILA.SAMPLE, 8 bits at +0x04"]
 pub mod sample;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const STATUS: usize = 0x00;
+    pub const ARM: usize = 0x01;
+    pub const INDEX: usize = 0x02;
+    pub const SAMPLE: usize = 0x04;
+}

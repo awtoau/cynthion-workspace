@@ -81,3 +81,14 @@ pub mod usb_hz;
 pub type Die = crate::Reg<die::DieSpec>;
 #[doc = "BOARD_GATEWARE.DIE, 9 bits at +0x18"]
 pub mod die;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const MAGIC: usize = 0x00;
+    pub const GIT: usize = 0x04;
+    pub const BUILT: usize = 0x08;
+    pub const SYNC_HZ: usize = 0x0c;
+    pub const CPU: usize = 0x10;
+    pub const USB_HZ: usize = 0x14;
+    pub const DIE: usize = 0x18;
+}

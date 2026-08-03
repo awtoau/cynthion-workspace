@@ -61,3 +61,12 @@ pub mod data;
 pub type Hold = crate::Reg<hold::HoldSpec>;
 #[doc = "SPI0.HOLD, 1 bits at +0x20"]
 pub mod hold;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const PHY: usize = 0x00;
+    pub const CS: usize = 0x04;
+    pub const STATUS: usize = 0x05;
+    pub const DATA: usize = 0x08;
+    pub const HOLD: usize = 0x20;
+}

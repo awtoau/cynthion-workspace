@@ -48,3 +48,11 @@ pub mod output;
 pub type Setclr = crate::Reg<setclr::SetclrSpec>;
 #[doc = "BOARD_GPIO.SETCLR, 16 bits at +0x04"]
 pub mod setclr;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const MODE: usize = 0x00;
+    pub const INPUT: usize = 0x02;
+    pub const OUTPUT: usize = 0x03;
+    pub const SETCLR: usize = 0x04;
+}

@@ -61,3 +61,12 @@ pub mod mtime_lo;
 pub type MtimeHi = crate::Reg<mtime_hi::MtimeHiSpec>;
 #[doc = "CLINT.MTIME_HI, 32 bits at +0xbffc"]
 pub mod mtime_hi;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const MSIP: usize = 0x00;
+    pub const MTIMECMP_LO: usize = 0x4000;
+    pub const MTIMECMP_HI: usize = 0x4004;
+    pub const MTIME_LO: usize = 0xbff8;
+    pub const MTIME_HI: usize = 0xbffc;
+}

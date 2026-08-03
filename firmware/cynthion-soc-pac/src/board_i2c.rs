@@ -59,3 +59,12 @@ pub mod txr_rxr;
 pub type CrSr = crate::Reg<cr_sr::CrSrSpec>;
 #[doc = "BOARD_I2C.CR_SR, 8 bits at +0x04"]
 pub mod cr_sr;
+
+/// Byte offsets from this peripheral's generated base address.
+pub mod offset {
+    pub const PRER_LO: usize = 0x00;
+    pub const PRER_HI: usize = 0x01;
+    pub const CTR: usize = 0x02;
+    pub const TXR_RXR: usize = 0x03;
+    pub const CR_SR: usize = 0x04;
+}
