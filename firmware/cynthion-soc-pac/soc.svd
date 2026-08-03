@@ -32,6 +32,16 @@
       </addressBlock>
     </peripheral>
     <peripheral>
+      <name>HYPERRAM</name>
+      <description>hyperram: 8388608 bytes of memory at 0x20000000</description>
+      <baseAddress>0x20000000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x800000</size>
+        <usage>buffer</usage>
+      </addressBlock>
+    </peripheral>
+    <peripheral>
       <name>CONSOLE</name>
       <description>console: 8 registers at 0xf0000000</description>
       <baseAddress>0xF0000000</baseAddress>
@@ -538,7 +548,7 @@
       <baseAddress>0xF0000400</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x10</size>
+        <size>0x20</size>
         <usage>registers</usage>
       </addressBlock>
       <registers>
@@ -598,8 +608,8 @@
         </register>
         <register>
           <name>STATUS</name>
-          <description>BOOTRAM.STATUS, 1 bits at +0x09</description>
-          <addressOffset>0x9</addressOffset>
+          <description>BOOTRAM.STATUS, 1 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
           <size>8</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
@@ -616,8 +626,8 @@
         </register>
         <register>
           <name>DATA_LO</name>
-          <description>BOOTRAM.DATA_LO, 8 bits at +0x0a</description>
-          <addressOffset>0xA</addressOffset>
+          <description>BOOTRAM.DATA_LO, 8 bits at +0x0d</description>
+          <addressOffset>0xD</addressOffset>
           <size>8</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
@@ -634,8 +644,8 @@
         </register>
         <register>
           <name>DATA_HI</name>
-          <description>BOOTRAM.DATA_HI, 8 bits at +0x0b</description>
-          <addressOffset>0xB</addressOffset>
+          <description>BOOTRAM.DATA_HI, 8 bits at +0x0e</description>
+          <addressOffset>0xE</addressOffset>
           <size>8</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
@@ -652,8 +662,8 @@
         </register>
         <register>
           <name>WDATA</name>
-          <description>BOOTRAM.WDATA, 16 bits at +0x0c</description>
-          <addressOffset>0xC</addressOffset>
+          <description>BOOTRAM.WDATA, 16 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
           <size>16</size>
           <access>write-only</access>
           <resetValue>0x0</resetValue>

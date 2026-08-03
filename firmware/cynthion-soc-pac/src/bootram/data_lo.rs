@@ -9,7 +9,7 @@ impl R {
         DataR::new(self.bits)
     }
 }
-#[doc = "BOOTRAM.DATA_LO, 8 bits at +0x0a\n\nYou can [`read`](crate::Reg::read) this register and get [`data_lo::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOOTRAM.DATA_LO, 8 bits at +0x0d\n\nYou can [`read`](crate::Reg::read) this register and get [`data_lo::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct DataLoSpec;
 impl crate::RegisterSpec for DataLoSpec {
     type Ux = u8;

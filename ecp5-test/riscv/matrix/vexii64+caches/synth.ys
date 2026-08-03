@@ -1,0 +1,4 @@
+read_verilog /mnt/2tb/git/cynthion-workspace/ecp5-test/riscv/matrix/vexii64+caches/VexiiRiscv.v
+hierarchy -top VexiiRiscv
+synth_ecp5 -top VexiiRiscv -json /mnt/2tb/git/cynthion-workspace/ecp5-test/riscv/matrix/vexii64+caches/vexii.json
+stat

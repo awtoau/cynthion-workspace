@@ -9,7 +9,7 @@ impl R {
         DataR::new(self.bits)
     }
 }
-#[doc = "BOOTRAM.DATA_HI, 8 bits at +0x0b\n\nYou can [`read`](crate::Reg::read) this register and get [`data_hi::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOOTRAM.DATA_HI, 8 bits at +0x0e\n\nYou can [`read`](crate::Reg::read) this register and get [`data_hi::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct DataHiSpec;
 impl crate::RegisterSpec for DataHiSpec {
     type Ux = u8;

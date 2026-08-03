@@ -317,6 +317,13 @@ APOLLO_RX_DEPTH = 16
 # fraction of the rate, silently.
 FLASH_BASE = 0x10000000
 
+# The HyperRAM memory window: ordinary cached loads, stores, and instruction fetches.
+#
+# The base matches Cynthion's existing facedancer map. Eight MiB is the populated
+# W956A8 device; the similarly named 128-Mbit part is not fitted on r1.4.
+HYPERRAM_BASE = 0x20000000
+HYPERRAM_SIZE = 8 * 1024 * 1024
+
 # The SPI controller's own registers -- the arbitrary-command path, used here
 # only to read the JEDEC ID.
 #
@@ -530,6 +537,7 @@ class HelloSoC(Elaboratable):
         # it; exe=1 permits instruction fetch, so code can execute in place.
         regions = list(vexii_cpu.DEFAULT_REGIONS) + [
             f"base={FLASH_BASE:08x},size={FLASH_SIZE:08x},main=1,exe=1",
+            f"base={HYPERRAM_BASE:08x},size={HYPERRAM_SIZE:08x},main=1,exe=1",
         ]
 
         cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=64, regions=regions)
@@ -874,6 +882,11 @@ class HelloSoC(Elaboratable):
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
         decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
+
+        # This extra decoder window is the timing risk in #90: its address compare is
+        # on the path that needed RegisteredResponse to recover Fmax. Simulation can
+        # establish protocol and data integrity; only a build can measure the margin.
+        decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #

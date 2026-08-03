@@ -9,7 +9,7 @@ impl W {
         DataW::new(self, 0)
     }
 }
-#[doc = "BOOTRAM.WDATA, 16 bits at +0x0c\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`wdata::W`](W). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOOTRAM.WDATA, 16 bits at +0x10\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`wdata::W`](W). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct WdataSpec;
 impl crate::RegisterSpec for WdataSpec {
     type Ux = u16;

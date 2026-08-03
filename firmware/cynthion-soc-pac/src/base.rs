@@ -19,6 +19,11 @@ pub const SPIFLASH: usize = 0x10000000;
 /// Size of the SPIFLASH window, in bytes.
 pub const SPIFLASH_SIZE: usize = 0x00400000;
 
+/// hyperram: 8388608 bytes of memory at 0x20000000
+pub const HYPERRAM: usize = 0x20000000;
+/// Size of the HYPERRAM window, in bytes.
+pub const HYPERRAM_SIZE: usize = 0x00800000;
+
 /// console: 8 registers at 0xf0000000
 pub const CONSOLE: usize = 0xf0000000;
 /// Size of the CONSOLE window, in bytes.
@@ -44,7 +49,7 @@ pub const FLASH_ILA_SIZE: usize = 0x00000020;
 /// bootram: 7 registers at 0xf0000400
 pub const BOOTRAM: usize = 0xf0000400;
 /// Size of the BOOTRAM window, in bytes.
-pub const BOOTRAM_SIZE: usize = 0x00000010;
+pub const BOOTRAM_SIZE: usize = 0x00000020;
 
 /// apollo_uart: 8 registers at 0xf0000500
 pub const APOLLO_UART: usize = 0xf0000500;

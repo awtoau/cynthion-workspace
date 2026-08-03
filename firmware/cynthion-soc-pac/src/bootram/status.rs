@@ -9,7 +9,7 @@ impl R {
         ValidR::new((self.bits & 1) != 0)
     }
 }
-#[doc = "BOOTRAM.STATUS, 1 bits at +0x09\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOOTRAM.STATUS, 1 bits at +0x0c\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct StatusSpec;
 impl crate::RegisterSpec for StatusSpec {
     type Ux = u8;

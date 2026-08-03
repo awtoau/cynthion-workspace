@@ -64,6 +64,15 @@ shows the fix passing is a check that would have passed before the fix.
   5. **Structural, against the PHY source.** The three reasons upstream's PHY
      cannot be instantiated on r1.4, asserted rather than described, so that a
      later edit which reintroduces one is caught here.
+
+  6. **Wishbone memory window.** The real port is delayed before grant, then
+     exercised with reads, full writes, and partial writes. A pulsed request is
+     run against the same delayed grant and asserted to fail, so the held-request
+     check is known to discriminate.
+
+  7. **Shared engine.** The real three-master state machine drives a controllable
+     interface for a two-word read and write. The checks sample the controls on
+     every data beat and through recovery.
 """
 
 import argparse
@@ -84,6 +93,7 @@ from amaranth.sim import Simulator
 from luna.gateware.interface.psram import HyperBusDQSPHY, HyperRAMDQSInterface
 
 from soc_board_sim import Checks
+from vexii_bootram import BootRAM, HyperRAMWishbone
 
 
 # `sync`. Only the ratio to the device matters here, since nothing in this file
@@ -555,6 +565,248 @@ def section_structural(checks, emit):
                  and "class HyperRAMDQSInterface" not in ours)
 
 
+def section_wishbone(checks, emit):
+    """6. The 32-bit memory port, including the delayed-grant trap."""
+    emit("\n6. Wishbone memory window, against a delayed shared controller\n")
+
+    dut = HyperRAMWishbone()
+    observed = {}
+
+    async def pulse_word(ctx, value):
+        ctx.set(dut.granted, 1)
+        ctx.set(dut.in_data, value)
+        ctx.set(dut.in_valid, 1)
+        await ctx.tick()
+        ctx.set(dut.in_valid, 0)
+
+    async def begin(ctx, *, adr, write=False, data=0, select=0b1111):
+        ctx.set(dut.bus.cyc, 1)
+        ctx.set(dut.bus.stb, 1)
+        ctx.set(dut.bus.adr, adr)
+        ctx.set(dut.bus.we, write)
+        ctx.set(dut.bus.dat_w, data)
+        ctx.set(dut.bus.sel, select)
+        await ctx.tick()
+
+    async def end(ctx):
+        ctx.set(dut.bus.cyc, 0)
+        ctx.set(dut.bus.stb, 0)
+        ctx.set(dut.granted, 0)
+        await ctx.tick()
+
+    async def testbench(ctx):
+        # The wrong arrangement: a one-cycle request and a grant three cycles later.
+        # There is no overlap, so no controller can accept it.
+        old_request = [1, 0, 0, 0]
+        delayed_grant = [0, 0, 0, 1]
+        observed["old_completions"] = sum(
+            req & grant for req, grant in zip(old_request, delayed_grant))
+
+        await begin(ctx, adr=0x12345)
+        held = []
+        for _ in range(3):
+            held.append(ctx.get(dut.req))
+            await ctx.tick()
+        observed["held"] = held
+        observed["read_addr"] = ctx.get(dut.req_addr)
+        observed["read_write"] = ctx.get(dut.req_write)
+        await pulse_word(ctx, 0x2211)
+        await pulse_word(ctx, 0x4433)
+        observed["read_ack"] = ctx.get(dut.bus.ack)
+        observed["read_data"] = ctx.get(dut.bus.dat_r)
+        await end(ctx)
+
+        await begin(ctx, adr=7, write=True, data=0xa1b2c3d4)
+        observed["full_write"] = (ctx.get(dut.req_write),
+                                   ctx.get(dut.req_data))
+        await pulse_word(ctx, 0)
+        await pulse_word(ctx, 0)
+        observed["full_ack"] = ctx.get(dut.bus.ack)
+        await end(ctx)
+
+        # Byte lanes 0 and 2 change. The inactive lanes must come from the read,
+        # because this controller has no RWDS mask input.
+        await begin(ctx, adr=9, write=True, data=0xaabbccdd, select=0b0101)
+        observed["partial_starts_read"] = ctx.get(dut.req_write)
+        await pulse_word(ctx, 0x6655)
+        await pulse_word(ctx, 0x8877)
+        ctx.set(dut.granted, 0)
+        await ctx.tick()
+        observed["partial_then_writes"] = ctx.get(dut.req_write)
+        observed["partial_merged"] = ctx.get(dut.req_data)
+        observed["partial_early_ack"] = ctx.get(dut.bus.ack)
+        await pulse_word(ctx, 0)
+        await pulse_word(ctx, 0)
+        observed["partial_ack"] = ctx.get(dut.bus.ack)
+        await end(ctx)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+
+    checks.check("pulsing a request before a delayed grant completes NOTHING",
+                 observed["old_completions"] == 0,
+                 "the wrong arrangement unexpectedly overlapped the grant")
+    checks.check("the real port holds its request until the delayed grant",
+                 observed["held"] == [1, 1, 1], str(observed["held"]))
+    checks.check("Wishbone word addresses become 16-bit HyperRAM addresses",
+                 observed["read_addr"] == 0x12345 * 2,
+                 hex(observed["read_addr"]))
+    checks.check("a Wishbone read reaches the controller as a read",
+                 observed["read_write"] == 0)
+    checks.check("two 16-bit words return one little-endian 32-bit word",
+                 observed["read_ack"] and observed["read_data"] == 0x44332211,
+                 hex(observed["read_data"]))
+    checks.check("a full store stays a write and holds all 32 data bits",
+                 observed["full_write"] == (1, 0xa1b2c3d4),
+                 str(observed["full_write"]))
+    checks.check("a full store acknowledges after its second word",
+                 observed["full_ack"] == 1)
+    checks.check("a partial store starts with a read",
+                 observed["partial_starts_read"] == 0)
+    checks.check("a partial store changes to a write after the merge",
+                 observed["partial_then_writes"] == 1)
+    checks.check("inactive byte lanes survive the partial-store merge",
+                 observed["partial_merged"] == 0x88bb66dd,
+                 hex(observed["partial_merged"]))
+    checks.check("the read half of a partial store does not acknowledge early",
+                 observed["partial_early_ack"] == 0)
+    checks.check("the write half of a partial store completes the request",
+                 observed["partial_ack"] == 1)
+
+
+class ControlledInterface:
+    """The HyperRAMInterface signal surface, driven by section 7."""
+
+    def __init__(self):
+        self.address = Signal(32)
+        self.register_space = Signal()
+        self.perform_write = Signal()
+        self.single_page = Signal()
+        self.start_transfer = Signal()
+        self.final_word = Signal()
+        self.idle = Signal()
+        self.read_ready = Signal()
+        self.write_ready = Signal()
+        self.read_data = Signal(16)
+        self.write_data = Signal(16)
+
+
+def section_shared_engine(checks, emit):
+    """7. The shared engine holds the three controller trap signals."""
+    emit("\n7. Shared engine, controls sampled across complete transfers\n")
+
+    interface = ControlledInterface()
+    dut = BootRAM(interface=interface)
+    observed = {}
+
+    async def wait_for(ctx, signal, value=1):
+        for _ in range(20):
+            if ctx.get(signal) == value:
+                return True
+            await ctx.tick()
+        return False
+
+    async def begin(ctx, *, write=False, data=0):
+        ctx.set(dut.mmap.bus.cyc, 1)
+        ctx.set(dut.mmap.bus.stb, 1)
+        ctx.set(dut.mmap.bus.adr, 5)
+        ctx.set(dut.mmap.bus.we, write)
+        ctx.set(dut.mmap.bus.dat_w, data)
+        ctx.set(dut.mmap.bus.sel, 0b1111)
+        return await wait_for(ctx, interface.start_transfer)
+
+    async def end(ctx):
+        ctx.set(dut.mmap.bus.cyc, 0)
+        ctx.set(dut.mmap.bus.stb, 0)
+        ctx.set(interface.idle, 1)
+        await ctx.tick()
+        await ctx.tick()
+
+    async def testbench(ctx):
+        ctx.set(interface.idle, 1)
+        await ctx.tick()
+
+        observed["read_started"] = await begin(ctx)
+        observed["read_start"] = (
+            ctx.get(interface.address), ctx.get(interface.perform_write),
+            ctx.get(interface.final_word))
+        ctx.set(interface.idle, 0)
+        await ctx.tick()
+        ctx.set(interface.read_data, 0x3412)
+        ctx.set(interface.read_ready, 1)
+        observed["read_first_final"] = ctx.get(interface.final_word)
+        await ctx.tick()
+        ctx.set(interface.read_data, 0x7856)
+        observed["read_second_final"] = ctx.get(interface.final_word)
+        await ctx.tick()
+        ctx.set(interface.read_ready, 0)
+        observed["read_recovery_final"] = ctx.get(interface.final_word)
+        observed["read_ack"] = ctx.get(dut.mmap.bus.ack)
+        observed["read_data"] = ctx.get(dut.mmap.bus.dat_r)
+        await end(ctx)
+
+        observed["write_started"] = await begin(ctx, write=True,
+                                                 data=0xa1b2c3d4)
+        observed["write_start"] = (
+            ctx.get(interface.perform_write), ctx.get(interface.write_data),
+            ctx.get(interface.final_word))
+        ctx.set(interface.idle, 0)
+        await ctx.tick()
+        ctx.set(interface.write_ready, 1)
+        observed["write_first"] = (
+            ctx.get(interface.perform_write), ctx.get(interface.write_data),
+            ctx.get(interface.final_word))
+        await ctx.tick()
+        observed["write_second"] = (
+            ctx.get(interface.perform_write), ctx.get(interface.write_data),
+            ctx.get(interface.final_word))
+        await ctx.tick()
+        ctx.set(interface.write_ready, 0)
+        observed["write_recovery"] = (
+            ctx.get(interface.perform_write), ctx.get(interface.write_data),
+            ctx.get(interface.final_word))
+        observed["write_ack"] = ctx.get(dut.mmap.bus.ack)
+        await end(ctx)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6, domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+
+    checks.check("the shared engine starts a Wishbone read",
+                 observed["read_started"])
+    checks.check("a read starts at the doubled address with final_word low",
+                 observed["read_start"] == (10, 0, 0),
+                 str(observed["read_start"]))
+    checks.check("final_word is low for the first read word",
+                 observed["read_first_final"] == 0)
+    checks.check("final_word rises for the second read word",
+                 observed["read_second_final"] == 1)
+    checks.check("final_word stays high through read recovery",
+                 observed["read_recovery_final"] == 1)
+    checks.check("the shared engine returns both read words",
+                 observed["read_ack"] and observed["read_data"] == 0x78563412,
+                 hex(observed["read_data"]))
+    checks.check("the shared engine starts a Wishbone write",
+                 observed["write_started"])
+    checks.check("write controls begin held on the low half",
+                 observed["write_start"] == (1, 0xc3d4, 0),
+                 str(observed["write_start"]))
+    checks.check("write controls remain held for the first word",
+                 observed["write_first"] == (1, 0xc3d4, 0),
+                 str(observed["write_first"]))
+    checks.check("the second word carries the upper half and final_word",
+                 observed["write_second"] == (1, 0xa1b2, 1),
+                 str(observed["write_second"]))
+    checks.check("write controls stay held through recovery",
+                 observed["write_recovery"] == (1, 0xa1b2, 1),
+                 str(observed["write_recovery"]))
+    checks.check("the write acknowledges after both words",
+                 observed["write_ack"] == 1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="The HyperBus protocol layer, against a model of the part.")
@@ -574,7 +826,8 @@ def main():
 
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
-                    section_recovery, section_structural):
+                    section_recovery, section_structural, section_wishbone,
+                    section_shared_engine):
         section(checks, emit)
 
     emit()

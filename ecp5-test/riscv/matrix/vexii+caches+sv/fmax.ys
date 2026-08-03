@@ -1,0 +1,2 @@
+read_verilog /mnt/2tb/git/cynthion-workspace/ecp5-test/riscv/matrix/vexii+caches+sv/VexiiRiscv.v /mnt/2tb/git/cynthion-workspace/ecp5-test/riscv/matrix/vexii+caches+sv/fmax_top.v
+synth_ecp5 -top fmax_top -json /mnt/2tb/git/cynthion-workspace/ecp5-test/riscv/matrix/vexii+caches+sv/fmax.json
