@@ -251,6 +251,23 @@ fn machine_external() {
 /// handler that printed would hang this board. The record now carries the port
 /// bitmap, which the shared source could not supply without a register read.
 fn defer_type_c(plic: &Plic, source: u32, port: usize) {
+    // Complete BEFORE masking, and never the other way round.
+    //
+    // The PLIC ignores a completion for a source the context is not enabled for
+    // -- the spec's rule, implemented in `ecp5-test/riscv/vexii_plic.py` and
+    // warned about in that file's own comment. Disabling first therefore threw
+    // the completion away, left `claimed` set for good, and since
+    // `pending[i] = sources[i] & ~claimed[i]`, gated the source off permanently.
+    //
+    // The symptom was one interrupt per port per boot. The device kept asserting
+    // -- `typec` showed `int 1` and the gateware `lines 01` -- while the PLIC
+    // read `pending 00000000` and no handler ever ran again. Measured on the
+    // board: an attach was serviced, the matching detach was not.
+    //
+    // The caller completes again after this returns, which is harmless: the bit
+    // is already clear, and the second write lands while the source is disabled
+    // and so is ignored anyway.
+    plic.complete(source);
     plic.disable(source);
     TYPE_C_INTERRUPTS[port].fetch_add(1, Ordering::Relaxed);
     // Release: the mask must be visible before the bit that publishes it.
