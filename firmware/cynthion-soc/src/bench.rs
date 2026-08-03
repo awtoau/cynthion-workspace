@@ -325,6 +325,62 @@ fn flash_read(mask: usize, accesses: u32, random: bool) -> u32 {
 }
 
 
+
+/// The HyperRAM transaction counters (#173), read around one walk.
+///
+/// **This is the measurement that five readings of the source could not make.**
+/// Every readable thing says a cache-line refill should reach the part as one
+/// burst -- the CPU emits `CTI=INCR_BURST`/`BTE=LINEAR`, the window tests for
+/// exactly that, the decoder and arbiter carry the features, the burst cap is 374
+/// beats against the 16 a line needs, and the simulation passes 56 checks
+/// including "one CS# assertion per line". The board disagrees, at 336 CK where a
+/// coalesced burst is 51.
+///
+/// So count it instead of reading it again. `beats / starts` is the whole answer:
+/// 16 means every beat is its own HyperBus transaction, 1 means the line is one
+/// burst and the time is going somewhere else entirely.
+mod probe {
+    use cynthion_soc_pac::base::HYPERRAM_PROBE as BASE;
+
+    /// Byte offsets, from the generated map.
+    const STARTS: usize = 0x00;
+    const BEATS: usize = 0x02;
+    const BURST_BEATS: usize = 0x04;
+    const MAX_RUN: usize = 0x06;
+    const CLEAR: usize = 0x08;
+
+    /// Two byte reads, low first.
+    ///
+    /// These sit behind an `amaranth_soc` multiplexer with granularity 8, where
+    /// reading the LOWEST address latches a shadow of the whole register and the
+    /// rest come from that shadow. A 16-bit access would be a different bus
+    /// transaction from the two ordered byte accesses the hardware specifies --
+    /// the same reason `gpio.rs` writes Mode's low byte then its high byte.
+    fn read16(offset: usize) -> u32 {
+        // SAFETY: two bytes inside the generated HYPERRAM_PROBE window, an
+        // uncached `main=0` region. Read-only counters; volatile because it is a
+        // device.
+        unsafe {
+            let reg = (BASE + offset) as *const u8;
+            (core::ptr::read_volatile(reg) as u32)
+                | (core::ptr::read_volatile(reg.add(1)) as u32) << 8
+        }
+    }
+
+    /// Zero every counter, so what follows is measured over one walk rather than
+    /// since reset. A total cannot separate "this walk did nothing" from "this
+    /// walk did nothing but an earlier one did".
+    pub fn clear() {
+        // SAFETY: as above; a write-only strobe field.
+        unsafe { core::ptr::write_volatile((BASE + CLEAR) as *mut u8, 1) };
+    }
+
+    /// `(starts, beats, burst_beats, max_run)`.
+    pub fn read() -> (u32, u32, u32, u32) {
+        (read16(STARTS), read16(BEATS), read16(BURST_BEATS), read16(MAX_RUN))
+    }
+}
+
 /// Read `accesses` 32-bit words from the HyperRAM MEMORY WINDOW.
 ///
 /// The other HyperRAM walk below goes through the CSR staging port, one register
@@ -614,11 +670,33 @@ fn hyper(uart: &mut Uart) {
         });
         row(uart, "hyper win", "2 KiB", "read seq", &run);
         sum ^= got;
+        probe::clear();
         let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_SEQ_ACCESSES, false)
         });
+        let (starts, beats, burst_beats, max_run) = probe::read();
         row(uart, "hyper win", "16 KiB", "read seq", &seq);
         sum ^= got;
+
+        // The counters, over exactly the walk above.
+        //
+        // `beats / starts` is the coalescing: a 64-byte line is 16 32-bit beats,
+        // so 16.00 means ONE HyperBus transaction per line and 1.00 would mean one
+        // per beat. Measured 16.00, with every beat flagged `burst` and a longest
+        // run of 16 -- the coalescing works, which is the opposite of what #173
+        // assumed from the timing alone.
+        let _ = writeln!(
+            uart,
+            "hyper win  transactions {}  beats {}  burst {}  longest run {}",
+            starts, beats, burst_beats, max_run);
+        if starts > 0 {
+            let per = (beats * 100) / starts;
+            let _ = writeln!(
+                uart,
+                "hyper win  {}.{:02} beats per transaction -- 16.00 is one \
+                 transaction per 64-byte cache line, 1.00 is one per beat",
+                per / 100, per % 100);
+        }
         let (rnd, got) = measure(FLASH_RND_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_RND_ACCESSES, true)
         });

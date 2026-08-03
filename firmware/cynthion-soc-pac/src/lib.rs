@@ -37,6 +37,15 @@ impl core::fmt::Debug for FlashProbe {
 }
 #[doc = "flash_probe: 6 registers at 0xf0000200"]
 pub mod flash_probe;
+#[doc = "hyperram_probe: 5 registers at 0xf0000280"]
+pub type HyperramProbe = crate::Periph<hyperram_probe::RegisterBlock, 0xf000_0280>;
+impl core::fmt::Debug for HyperramProbe {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("HyperramProbe").finish()
+    }
+}
+#[doc = "hyperram_probe: 5 registers at 0xf0000280"]
+pub mod hyperram_probe;
 #[doc = "flash_ila: 4 registers at 0xf0000300"]
 pub type FlashIla = crate::Periph<flash_ila::RegisterBlock, 0xf000_0300>;
 impl core::fmt::Debug for FlashIla {
@@ -156,6 +165,8 @@ pub struct Peripherals {
     pub spi0: Spi0,
     #[doc = "FLASH_PROBE"]
     pub flash_probe: FlashProbe,
+    #[doc = "HYPERRAM_PROBE"]
+    pub hyperram_probe: HyperramProbe,
     #[doc = "FLASH_ILA"]
     pub flash_ila: FlashIla,
     #[doc = "BOOTRAM"]
@@ -205,6 +216,7 @@ impl Peripherals {
             console: Console::steal(),
             spi0: Spi0::steal(),
             flash_probe: FlashProbe::steal(),
+            hyperram_probe: HyperramProbe::steal(),
             flash_ila: FlashIla::steal(),
             bootram: Bootram::steal(),
             apollo_uart: ApolloUart::steal(),

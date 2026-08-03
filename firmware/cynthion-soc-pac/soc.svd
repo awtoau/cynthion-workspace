@@ -452,6 +452,108 @@
       </registers>
     </peripheral>
     <peripheral>
+      <name>HYPERRAM_PROBE</name>
+      <description>hyperram_probe: 5 registers at 0xf0000280</description>
+      <baseAddress>0xF0000280</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>STARTS</name>
+          <description>HYPERRAM_PROBE.STARTS, 16 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BEATS</name>
+          <description>HYPERRAM_PROBE.BEATS, 16 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BURST_BEATS</name>
+          <description>HYPERRAM_PROBE.BURST_BEATS, 16 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MAX_RUN</name>
+          <description>HYPERRAM_PROBE.MAX_RUN, 16 bits at +0x06</description>
+          <addressOffset>0x6</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CLEAR</name>
+          <description>HYPERRAM_PROBE.CLEAR, 1 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>STROBE</name>
+              <description>strobe [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
       <name>FLASH_ILA</name>
       <description>flash_ila: 4 registers at 0xf0000300</description>
       <baseAddress>0xF0000300</baseAddress>

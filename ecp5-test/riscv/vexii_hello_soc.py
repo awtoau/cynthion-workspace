@@ -114,6 +114,7 @@ from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
 from stream_buffer import StreamBuffer
 from wishbone_pipe import RegisteredResponse
 from flash_cdc import ClockCrossedPHY
+from hyperram_probe import HyperRAMProbe
 from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
@@ -365,6 +366,12 @@ FLASH_CSR_BASE = 0xf0000100
 # these are counters that change underneath the CPU, so a cached read would
 # return a stale line and report no activity on a busy bus.
 FLASH_PROBE_BASE = 0xf0000200
+
+# Transaction counters on the HyperRAM window (#173). Answers whether a 64-byte
+# cache-line refill reaches the part as one burst or as sixteen transactions --
+# a question five separate readings of the source could not settle, because every
+# one of them said it should burst and the board says it costs 336 CK.
+HYPERRAM_PROBE_BASE = 0xf0000280
 
 # The logic analyser's registers, in the same uncached CSR region.
 FLASH_ILA_BASE = 0xf0000300
@@ -1023,6 +1030,20 @@ class HelloSoC(Elaboratable):
         # on the path that needed RegisteredResponse to recover Fmax. Simulation can
         # establish protocol and data integrity; only a build can measure the margin.
         decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
+
+        # The HyperRAM transaction counters (#173). Inputs only, taken from
+        # signals `BootRAM` already computes, so this cannot alter the timing of
+        # the thing it measures.
+        m.submodules.hyper_probe = hyper_probe = HyperRAMProbe()
+        m.d.comb += [
+            hyper_probe.start_transfer.eq(bootram.probe_start),
+            hyper_probe.beat.eq(bootram.probe_beat),
+            hyper_probe.is_burst.eq(bootram.probe_burst),
+        ]
+        hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
+        m.submodules.hyper_probe_bridge = hyper_probe_bridge
+        decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
+                    name="hyperram_probe")
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #

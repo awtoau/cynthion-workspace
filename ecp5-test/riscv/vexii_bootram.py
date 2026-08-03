@@ -90,6 +90,11 @@ class HyperRAMWishbone(wiring.Component):
         memory_map = MemoryMap(addr_width=log2_int(size), data_width=8)
         memory_map.add_resource(self, name=("memory", "hyperram"), size=size)
 
+        # For #173: whether the window currently believes it is inside a burst.
+        # An output for instrumentation only -- nothing reads it to decide
+        # anything, so it cannot change behaviour.
+        self.bursting_out = Signal()
+
         super().__init__({
             "bus": wiring.In(wishbone.Signature(
                 addr_width=wb_addr_width, data_width=32, granularity=8,
@@ -128,6 +133,8 @@ class HyperRAMWishbone(wiring.Component):
             & (self.bus.bte == wishbone.BurstTypeExt.LINEAR)
             & (~self.bus.we | (self.bus.sel == 0b1111))
         )
+
+        m.d.comb += self.bursting_out.eq(bursting)
 
         m.d.comb += [
             self.bus.ack.eq(complete),
@@ -365,6 +372,17 @@ class BootRAM(Elaboratable):
         self.jtag_data = Signal(16)
         self.jtag_ack  = Signal()
 
+        # Instrumentation, for #173. These are the three facts that separate
+        # "one burst per cache line" from "sixteen transactions", and none of
+        # them was observable from outside this module.
+        #
+        # Outputs only, driven from signals that already exist below. Nothing
+        # here changes what the bus does -- a probe that perturbed the timing it
+        # measures would be worse than no probe.
+        self.probe_start = Signal()   # a HyperBus transaction began
+        self.probe_beat  = Signal()   # a Wishbone beat was acknowledged
+        self.probe_burst = Signal()   # ... and it arrived marked as a burst
+
     def elaborate(self, platform):
         m = Module()
 
@@ -491,6 +509,15 @@ class BootRAM(Elaboratable):
             mmap.in_valid.eq(active & (owner == OWNER_WISHBONE) & word_event),
 
             self.jtag_ack.eq(active & (owner == OWNER_JTAG) & psram.write_ready),
+
+            # #173. `start` is the transaction begin the FSM already computes;
+            # `mmap.bus.ack` is one Wishbone beat completing; `bursting` is the
+            # window's own record that the beat came in with CTI=INCR_BURST and
+            # BTE=LINEAR. Counting them outside this module answers whether a
+            # 64-byte line is one transaction or sixteen.
+            self.probe_start.eq(start),
+            self.probe_beat.eq(mmap.bus.ack),
+            self.probe_burst.eq(mmap.bus.ack & mmap.bursting_out),
         ]
 
         return m
