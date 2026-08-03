@@ -292,6 +292,60 @@ Detection window **200 ms**, threshold **>2 edges**. The read/clear of
 `edge_counter` is wrapped in `NVIC_DisableIRQ`/`EnableIRQ` so an edge landing
 between the two statements is not dropped (`fpga_adv.c:94-97`).
 
+## The VBUS power tree — who can source, and to where
+
+**The board can power a target.** There is a switch per port, and this is the fact
+that answers "can Cynthion charge a device", "can it act as a USB host", and
+"what happens to TARGET A when I close two switches at once".
+
+It is a **passthrough, not a regulator**. TARGET A is powered from whichever
+upstream port is feeding the board; nothing here generates 5 V.
+
+| resource | pin | direction | role |
+|---|---|---|---|
+| `control_vbus_in_en` | K13 | active low | power **input** shutoff, CONTROL |
+| `aux_vbus_in_en` | L13 | active low | power **input** shutoff, AUX |
+| `control_vbus_en` | L1 | | pass CONTROL's VBUS → TARGET A |
+| `aux_vbus_en` | L2 | | pass AUX's VBUS → TARGET A |
+| `target_c_vbus_en` | K5 | | pass TARGET-C's VBUS → TARGET A |
+| `target_a_discharge` | K4 | | actively discharge TARGET A |
+
+From the platform file, which is the authority — never transcribe these, read
+`repos/cynthion/.../platform/cynthion_r1_4.py`:
+
+> VBUS on each of the Type-C ports can be connected to TARGET A through a
+> bidirectional switch. **If any of these switches is enabled, TARGET A is
+> considered an output.**
+
+**Bidirectional** is the word to take seriously. Closing two switches ties two
+supplies together, which is a hardware consequence rather than a bad reading.
+
+### Upstream drives all of this; this SoC drives none of it
+
+`repos/cynthion/.../gateware/analyzer/top.py` connects all four switches, each
+gated by `POWER_CONTROL_ENABLE`, and `repos/packetry/src/backend/cynthion.rs`
+carries the command word (bits 3–7). Reset defaults are deliberate:
+`target_c_vbus_en` **closed**, everything else **open**.
+
+Our SoC requests none of these pins — grep the gateware and firmware for
+`vbus_en` and it returns nothing. `power` reads the PAC1954; it measures rails
+and switches nothing. Tracked as #152.
+
+### Charging a device: TARGET-A needs only the switches
+
+USB-A has no CC line and no negotiation, so a source presents 5 V and the device
+draws what it can. Closing `control_vbus_en` or `aux_vbus_en` is sufficient.
+
+**TARGET-C as a source additionally needs Rp** on CC, which does not exist yet:
+`fusb302.rs` writes `SWITCHES0` as measure-only and its comment says "drive
+nothing". See #151 for orientation, which Rp depends on.
+
+### Verify with current, not with a bit that reads back
+
+The PAC1954 measures all four ports (`docs/chips/pac1954-power-monitor.md`), so
+closing a switch should show current where expected. A register that reads back
+is not evidence that power flowed.
+
 ## Datapaths
 
 ### Control plane — host → Apollo MCU
