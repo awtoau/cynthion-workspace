@@ -371,6 +371,60 @@ user-protection feature, not a board-protection one — and it is exactly what t
 last quote above describes the PAC1954 being for. Slower than the internal OVP,
 and the only option for the passthrough path.
 
+### The pass elements, and the question that is still open
+
+From `repos/cynthion-hardware/power_distribution.kicad_sch`, which is the authority
+— read it, do not trust this table to stay current:
+
+| what | count | designators |
+|---|---|---|
+| pass MOSFET, `SIA483ADJ-T1-GE3`, P-channel | **6** | Q1, Q2, Q4, Q5, Q6, Q7 |
+| `BC847BS` dual NPN, gate drive | 6 | |
+| `PAC195X-1-VQFN` monitor | 1 | on the same sheet |
+
+**Six devices for six switch functions** — the three passthroughs, the two input
+shutoffs and the discharge. That is one device per function, not back-to-back
+pairs.
+
+**Which makes one question load-bearing, and it is not yet answered.** A single
+P-channel MOSFET has a body diode that conducts whatever the gate is doing. If
+these are singles, **"switch open" is not isolation** — it is no path in one
+direction only, and VBUS can appear on the other side through the diode. Every
+safety claim about an open switch rests on this.
+
+Two things in the schematic point in opposite directions and neither settles it:
+
+* the KiCad symbol is `Transistor_FET:SiA449DJ` and carries **three pins — D, G,
+  S** — which models a single device;
+* the part number is `SIA483ADJ-T1-GE3`, a different part from the symbol's name,
+  and Vishay's `DJ` suffix is used on dual devices in this package.
+
+**A symbol is not a datasheet**, and a symbol whose name disagrees with the part
+number fitted is weaker evidence still. The Vishay datasheet for `SIA483ADJ` is
+not in `sources/` and settles it either way.
+
+**Until it is settled, treat an open switch as "not driven" rather than
+"isolated"**, and do not write firmware or a self-test whose safety argument
+depends on an open switch blocking current. Recording the unknown is worth more
+than an unverified "probably fine" on a power path.
+
+### What is safe to command, today
+
+The rows are situations rather than bit patterns, because the hazard depends on
+what is plugged in — a switch bit alone cannot tell you.
+
+| situation | closing one passthrough | closing two |
+|---|---|---|
+| one port sourcing, others idle | **safe** — one supply, one or two destinations | **safe**, and it is what the second switch is *for* |
+| two ports both sourcing | safe, if it is the sourcing one | **NOT ESTABLISHED** — ties two supplies through the shared rail |
+| source above 5.5 V (PD) | board is fine; **an attached USB-A device is not** | as left |
+| any, with `target_a_discharge` closed | **NOT ESTABLISHED** — discharging a live rail | as left |
+
+The second and fourth rows are the ones nobody has shown safe from documents.
+`firmware/cynthion-soc/src/vbus.rs` therefore replaces the whole register on every
+close, so exactly one source is ever connected — a policy chosen because the
+alternative could not be justified, not because the hardware demands it.
+
 ### PD lives on two ports, not three
 
 Only **TARGET and AUX** have FUSB302Bs; CONTROL has a Type-C connector and none.
