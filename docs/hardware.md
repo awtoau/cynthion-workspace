@@ -538,7 +538,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `time` | the 1 ms CLINT tick: uptime, `mtime`, and what the handler costs | below |
-| `stats` | where the cycles go: busy against idle, IPC, turn length, poll jitter | below |
+| `cpu stats` | where the cycles go: busy against idle, IPC, turn length, poll jitter | below |
 | `log [n]` | push *n* deferred events, as an interrupt handler would | below |
 | `board` | every port as a tree: its rail, its PD controller, its PHY | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
@@ -715,12 +715,15 @@ method and no `core::fmt::Write`. `scripts/soc_irq_log_check.py` (the `irqlog`
 check in `scripts/check.py`) covers what the compiler cannot — Rust's privacy
 cannot stop a sibling module naming `Uart`.
 
-**`stats`** is what the machine is *doing*, where `info` is what it *is*. Three
+**`cpu stats`** is what the machine is *doing*, where `info` is what it *is*. Three
 lines, from the CPU's own counters and one `rdtime` read:
 
 ```bash
-python3 scripts/soc_shell.py stats                      # the USB console
-python3 scripts/soc_shell.py --port /dev/ttyACM0 stats   # the Apollo console
+python3 scripts/soc_shell.py "cpu stats"                 # the USB console
+# The Apollo console, by id. NEVER by ttyACM number: those are assigned in
+# enumeration order and move when anything else is plugged in, so a command
+# naming one addresses whichever device happens to hold that number today.
+python3 scripts/soc_shell.py --port /dev/serial/by-id/<apollo> "cpu stats"
 ```
 
 The shape of it — **numbers illustrative, none of them measured on the board**:

@@ -619,7 +619,7 @@ def main():
             # region column beside a verb column.
             listing = [b"help, ?", b"flash id", b"flash read <hex>",
                        b"bram read <hex>", b"hyperram read <hex>", b"check",
-                       b"info", b"selftest", b"ports", b"irq", b"time", b"stats",
+                       b"info", b"selftest", b"ports", b"irq", b"time", b"cpu stats",
                        b"bench [region]", b"log [n|tags]", b"board", b"led",
                        b"i2c", b"power", b"phy", b"typec", b"sideband",
                        b"load <hex>", b"reset"]
@@ -1352,7 +1352,7 @@ def main():
             def stats_state(name):
                 """`stats`, parsed: (window, busy basis points, ipc per 1000,
                 turns, mean, worst, polls, worst gap ms)."""
-                reply = command("stats", [b"cycles   window", b"loop     turns",
+                reply = command("cpu stats", [b"cycles   window", b"loop     turns",
                                           b"poll     every"], name)
                 cycles = re.search(rb"window (\d+)\s+busy (\d+)\.(\d\d)%"
                                    rb"\s+ipc (\d+)\.(\d\d\d)", reply)
@@ -1483,7 +1483,7 @@ def main():
             # returned nothing and reported "a freshly booted shell reported no
             # busy figure" -- a board-mode assertion failing on a QEMU timeout.
             fresh = None if board else ask_fresh_qemu(
-                "stats", b"poll     every", 3.0,
+                "cpu stats", b"poll     every", 3.0,
                 settle=b"Cynthion RISC-V SoC", settle_s=IDLE_S)
             resting = re.search(rb"busy (\d+)\.(\d\d)%", fresh or b"")
             resting = (int(resting.group(1)) * 100 + int(resting.group(2))

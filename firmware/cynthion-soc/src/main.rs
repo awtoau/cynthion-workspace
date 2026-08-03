@@ -426,6 +426,7 @@ const HELP: &[(&str, &str)] = &[
         "check",
         "arithmetic the compiler could have folded, at runtime",
     ),
+    ("cpu stats", "cycles, instructions, busy fraction"),
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
     ("help, ?", "this list"),
@@ -443,7 +444,6 @@ const HELP: &[(&str, &str)] = &[
     ("reset", "jump to the reset vector"),
     ("selftest", "run every self-check"),
     ("sideband", "the sideband link"),
-    ("stats", "cycles, instructions, busy fraction"),
     ("time", "uptime, from mtime"),
     ("typec [port]", "the FUSB302B controllers"),
     ("vbus <cmd>", "the VBUS distribution switches"),
@@ -628,7 +628,19 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                 cost, late
             );
         }
-        b"stats" => metrics::command(uart),
+        // `cpu stats` rather than a bare `stats`, matching what every other
+        // command family here now does: the thing being asked about is named
+        // first, so `flash read`, `hyperram read` and `cpu stats` all read the
+        // same way. A bare `stats` did not say what it was counting.
+        b"cpu" => match trim(rest) {
+            b"stats" => metrics::command(uart),
+            b"" => {
+                let _ = uart.write_str("usage: cpu stats\n");
+            }
+            _ => {
+                let _ = uart.write_str("unknown: try `cpu stats`\n");
+            }
+        },
         b"bench" => bench::command(uart, trim(rest)),
         b"info" => info::command(uart),
         b"selftest" => selftest::command(uart, &devices.power),

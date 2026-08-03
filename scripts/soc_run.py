@@ -282,6 +282,35 @@ def main():
                 emit("overrides this if the board is what you are debugging.")
                 return 1
 
+        # IS THE GENERATED PERIPHERAL MAP STILL THE GATEWARE'S MAP?
+        #
+        # `soc_generate_pac.py` writes every peripheral address the firmware uses out
+        # of the SoC's own memory map -- but it runs on demand, not per build. So the
+        # PAC can describe a gateware that no longer exists, and nothing in this script
+        # looked.
+        #
+        # That is not hypothetical. `FLASH_CACHED` was set true, the board was built
+        # and flashed, and `info` still reported the window as uncached -- because
+        # `SPIFLASH_CACHED` in the PAC was stale. Every step reported success and the
+        # number on screen was wrong.
+        #
+        # `--check` regenerates into a temporary place and diffs; it changes nothing.
+        # Deliberately NOT a regenerate: rewriting checked-in source in the middle of a
+        # build is a surprise, and the fix belongs to whoever changed the gateware. It
+        # needs no toolchain and no board -- only elaboration -- so it costs seconds and
+        # runs even under --build-only.
+        if not args.c_firmware:
+            result = run([sys.executable,
+                          str(ROOT / "scripts" / "soc_generate_pac.py"), "--check"])
+            if result.returncode != 0:
+                emit("GENERATED PERIPHERAL MAP IS STALE: the PAC does not match the "
+                     "gateware.")
+                emit((result.stdout or result.stderr).strip()[-700:])
+                emit("Run `./dev.py pac` and rebuild. Continuing would put firmware on "
+                     "the board addressing peripherals that have moved, which reads "
+                     "plausible numbers from the wrong registers and reports them.")
+                return 1
+
         if not args.no_build:
             if args.c_firmware:
                 cmd = [sys.executable, str(ROOT / "scripts" / "riscv_firmware.py")]
