@@ -94,6 +94,7 @@ mod log;
 mod metrics;
 mod plic;
 mod power;
+mod power_rails;
 mod selftest;
 mod sideband;
 mod target;
@@ -551,7 +552,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
         b"stats" => metrics::command(uart),
         b"bench" => bench::command(uart, trim(rest)),
         b"info" => info::command(uart),
-        b"selftest" => selftest::command(uart),
+        b"selftest" => selftest::command(uart, &devices.power),
         // Registered on every target, unlike its neighbours below: it reads no
         // bus at all, so a boardless build renders the same tree with every leaf
         // reporting what it does not have -- which is what `scripts/soc_test.py`
