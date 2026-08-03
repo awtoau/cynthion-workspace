@@ -200,7 +200,11 @@ fn bus_mv(raw: u16) -> u32 {
 fn current_ua(raw: u16) -> i32 {
     let code = raw as i16 as i32;
     let magnitude = ((code.unsigned_abs() as u64 * 78125) >> 9) as i32;
-    if code < 0 { -magnitude } else { magnitude }
+    if code < 0 {
+        -magnitude
+    } else {
+        magnitude
+    }
 }
 
 /// The sole call site for the PAC1954's multi-transaction REFRESH cycle.
@@ -319,8 +323,12 @@ impl Monitor {
     /// A failed boot-time attempt is retried by [`Monitor::poll`].
     pub fn configure(&mut self, bus: &mut Bus) -> Result<(), bus::Error> {
         self.phase = "configure";
-        bus.write_registers(BUS_POWER_MONITOR, ADDRESS, REG_NEG_PWR_FSR,
-                            &NEG_PWR_FSR_BIPOLAR)?;
+        bus.write_registers(
+            BUS_POWER_MONITOR,
+            ADDRESS,
+            REG_NEG_PWR_FSR,
+            &NEG_PWR_FSR_BIPOLAR,
+        )?;
         refresh(bus)?;
         self.configured = true;
         self.refresh_at = None;
@@ -381,14 +389,16 @@ impl Monitor {
         // interval either way.
         self.refresh_at = Some(clock::now());
 
-        let mut readings = [Reading { bus_mv: 0, current_ua: 0 }; 4];
+        let mut readings = [Reading {
+            bus_mv: 0,
+            current_ua: 0,
+        }; 4];
         for channel in 0..4 {
             // Big-endian, high byte first, as every 16-bit register on this part
             // is. Getting this backwards produces values that look like noise on
             // a small reading and like a fault on a large one.
             let vbus = u16::from_be_bytes([raw[channel * 2], raw[channel * 2 + 1]]);
-            let vsense = u16::from_be_bytes([raw[8 + channel * 2],
-                                             raw[8 + channel * 2 + 1]]);
+            let vsense = u16::from_be_bytes([raw[8 + channel * 2], raw[8 + channel * 2 + 1]]);
             readings[channel] = Reading {
                 bus_mv: bus_mv(vbus),
                 current_ua: current_ua(vsense),
@@ -445,8 +455,12 @@ impl Monitor {
                 // the change threshold, applied to failure.
                 if self.live {
                     self.live = false;
-                    crate::log!(uart, "power: monitor unreachable: {} during {}",
-                                error.as_str(), self.phase);
+                    crate::log!(
+                        uart,
+                        "power: monitor unreachable: {} during {}",
+                        error.as_str(),
+                        self.phase
+                    );
                 }
                 return;
             }
@@ -493,8 +507,9 @@ impl Monitor {
                 (Some(State::Disconnected), State::Connected(_)) => true,
                 (Some(State::Connected(_)), State::Disconnected) => true,
                 // Both connected: the threshold decides.
-                (Some(State::Connected(announced)), State::Connected(current)) =>
-                    current.abs_diff(announced) >= CHANGE_UA,
+                (Some(State::Connected(announced)), State::Connected(current)) => {
+                    current.abs_diff(announced) >= CHANGE_UA
+                }
                 (Some(State::Disconnected), State::Disconnected) => false,
             };
 
@@ -502,8 +517,13 @@ impl Monitor {
                 // A change nobody asked to see, so it is a log line and carries
                 // the time. The `power` command's rows do not -- see the table
                 // in `src/log.rs`.
-                report(uart, &crate::log::now(), channel, &readings[channel],
-                       state != State::Disconnected);
+                report(
+                    uart,
+                    &crate::log::now(),
+                    channel,
+                    &readings[channel],
+                    state != State::Disconnected,
+                );
                 self.state[channel] = Some(state);
             }
         }
@@ -538,13 +558,28 @@ pub fn age_of(at: Option<Instant>) -> Age {
 /// on its own, and a space when the reader asked. One parameter rather than two
 /// functions, because the columns after it must stay identical -- two format
 /// strings for one table is how they drift apart.
-pub fn report(uart: &mut Uart, lead: &dyn core::fmt::Display, channel: usize,
-              reading: &Reading, connected: bool) {
+pub fn report(
+    uart: &mut Uart,
+    lead: &dyn core::fmt::Display,
+    channel: usize,
+    reading: &Reading,
+    connected: bool,
+) {
     let magnitude = reading.current_ua.unsigned_abs();
-    let _ = writeln!(uart, "{} {:8} {:2}.{:03} V  {}{}.{:03} mA  {}",
-                     lead, PORTS[channel],
-                     reading.bus_mv / 1000, reading.bus_mv % 1000,
-                     if reading.current_ua < 0 { "-" } else { " " },
-                     magnitude / 1000, magnitude % 1000,
-                     if connected { "connected" } else { "disconnected" });
+    let _ = writeln!(
+        uart,
+        "{} {:8} {:2}.{:03} V  {}{}.{:03} mA  {}",
+        lead,
+        PORTS[channel],
+        reading.bus_mv / 1000,
+        reading.bus_mv % 1000,
+        if reading.current_ua < 0 { "-" } else { " " },
+        magnitude / 1000,
+        magnitude % 1000,
+        if connected {
+            "connected"
+        } else {
+            "disconnected"
+        }
+    );
 }

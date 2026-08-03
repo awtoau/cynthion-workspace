@@ -63,7 +63,6 @@ const CR_ACK: u8 = 0x08;
 /// of START, STOP, READ or WRITE set does only this.
 const CR_IACK: u8 = 0x01;
 
-
 const SR_TIP: u8 = 0x02;
 const SR_AL: u8 = 0x20;
 /// The acknowledge the slave sent. Zero means it acknowledged.
@@ -228,9 +227,7 @@ impl I2c {
     /// then START again with the read bit set. A STOP in between would let the
     /// device forget the pointer, and the read would return register 0 -- which
     /// on most parts is a plausible-looking value.
-    pub fn read_registers(&self, address: u8, register: u8, out: &mut [u8])
-        -> Result<(), Error>
-    {
+    pub fn read_registers(&self, address: u8, register: u8, out: &mut [u8]) -> Result<(), Error> {
         if out.is_empty() {
             return Ok(());
         }
@@ -242,9 +239,7 @@ impl I2c {
         result
     }
 
-    fn read_registers_inner(&self, address: u8, register: u8, out: &mut [u8])
-        -> Result<(), Error>
-    {
+    fn read_registers_inner(&self, address: u8, register: u8, out: &mut [u8]) -> Result<(), Error> {
         self.put(address << 1);
         if self.command(CR_STA | CR_WR)? & SR_RXACK != 0 {
             return Err(Error::Nack);
@@ -310,16 +305,12 @@ impl I2c {
     /// than only after the address: a part that runs out of write buffer NACKs
     /// mid-transfer, and a driver that only looked at the address would report
     /// a configuration write as successful when the value never landed.
-    pub fn write_register(&self, address: u8, register: u8, value: u8)
-        -> Result<(), Error>
-    {
+    pub fn write_register(&self, address: u8, register: u8, value: u8) -> Result<(), Error> {
         self.write_registers(address, register, &[value])
     }
 
     /// Write consecutive bytes to one register pointer.
-    pub fn write_registers(&self, address: u8, register: u8, values: &[u8])
-        -> Result<(), Error>
-    {
+    pub fn write_registers(&self, address: u8, register: u8, values: &[u8]) -> Result<(), Error> {
         let result = self.write_registers_inner(address, register, values);
         if result.is_err() {
             self.release();
@@ -327,9 +318,7 @@ impl I2c {
         result
     }
 
-    fn write_registers_inner(&self, address: u8, register: u8, values: &[u8])
-        -> Result<(), Error>
-    {
+    fn write_registers_inner(&self, address: u8, register: u8, values: &[u8]) -> Result<(), Error> {
         self.put(address << 1);
         if self.command(CR_STA | CR_WR)? & SR_RXACK != 0 {
             return Err(Error::Nack);

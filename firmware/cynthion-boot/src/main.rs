@@ -292,12 +292,14 @@ fn enter_image(status: Status) -> ! {
         // is the code truncated to what fits; `error` says whether falling back was a
         // fault (a bad CRC, a corrupt header, a silent part) or the ordinary case of
         // nothing being staged.
-        let fault = matches!(status, Status::Crc | Status::Length
-                                     | Status::Silent | Status::Panicked);
-        write_volatile(SIDEBAND,
-                       SIDEBAND_OWN
-                           | (code as u8 & 0b11)
-                           | if fault { SIDEBAND_ERROR } else { 0 });
+        let fault = matches!(
+            status,
+            Status::Crc | Status::Length | Status::Silent | Status::Panicked
+        );
+        write_volatile(
+            SIDEBAND,
+            SIDEBAND_OWN | (code as u8 & 0b11) | if fault { SIDEBAND_ERROR } else { 0 },
+        );
     }
 
     unsafe {

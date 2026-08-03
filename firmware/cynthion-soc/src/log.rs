@@ -97,8 +97,12 @@ impl fmt::Display for Stamp {
     /// seconds field six digits after 11.57 days rather than pushing the column
     /// sideways.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:06}.{:03}",
-               (self.0 / 1000) % SECONDS_SPAN, self.0 % 1000)
+        write!(
+            f,
+            "{:06}.{:03}",
+            (self.0 / 1000) % SECONDS_SPAN,
+            self.0 % 1000
+        )
     }
 }
 

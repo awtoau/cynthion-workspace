@@ -108,22 +108,30 @@ pub fn tree(uart: &mut Uart, power: &power::Monitor, type_c: &Controllers) {
     // newlines inside these blocks are translated to CRLF by `Uart`'s
     // `write_str`, exactly as `writeln!`'s would be.
     let _ = uart.write_str(match target::BOARD {
-        Some(_) => "board  cynthion r1.4  three usb ports, four rails, \
-                    three phys\n",
+        Some(_) => {
+            "board  cynthion r1.4  three usb ports, four rails, \
+                    three phys\n"
+        }
         // The whole tree still prints, with every leaf saying what it does not
         // have. That is what makes `scripts/soc_test.py` evidence about this
         // command: the rendering under QEMU is the rendering on the board, fed
         // nothing instead of fed a sample.
-        None => "board  NONE on this target -- the tree below is what a \
-                 boardless build can see\n",
+        None => {
+            "board  NONE on this target -- the tree below is what a \
+                 boardless build can see\n"
+        }
     });
     // The age is on the header, because every rail below it is that old. A
     // poller that has stopped leaves four individually plausible voltages and
     // nothing else on this screen can contradict them.
-    let _ = writeln!(uart, "power  pac1954 @{:02x} on the power bus, polled every \
+    let _ = writeln!(
+        uart,
+        "power  pac1954 @{:02x} on the power bus, polled every \
                             {} ms  [{}]",
-                     power::ADDRESS, power::INTERVAL_MS,
-                     Since("sampled", power.age()));
+        power::ADDRESS,
+        power::INTERVAL_MS,
+        Since("sampled", power.age())
+    );
 
     // CONTROL: a connector, a rail, and a PHY that is not ours.
     let _ = uart.write_str("|\n+- CONTROL   the host port, and apollo's\n");
@@ -138,7 +146,8 @@ pub fn tree(uart: &mut Uart, power: &power::Monitor, type_c: &Controllers) {
          |    phy        usb3343, APOLLO'S -- no ulpi register window in this \
          soc\n\
          |\n\
-         +- AUX       the usb console; this text is leaving through it\n");
+         +- AUX       the usb console; this text is leaving through it\n",
+    );
     rail(uart, STEM, AUX, sample, power.floor(AUX));
     let _ = uart.write_str("|    connector  type-c, fusb302b on the aux bus\n");
     controller(uart, STEM, type_c, Port::Aux);
@@ -149,7 +158,8 @@ pub fn tree(uart: &mut Uart, power: &power::Monitor, type_c: &Controllers) {
         "|    phy        usb3343, THE CONSOLE'S -- no ulpi register window in \
          this soc\n\
          |\n\
-         +- TARGET    the port under test; nothing here drives it\n");
+         +- TARGET    the port under test; nothing here drives it\n",
+    );
     rail(uart, LAST, TARGET_C, sample, power.floor(TARGET_C));
     rail(uart, LAST, TARGET_A, sample, power.floor(TARGET_A));
     let _ = uart.write_str("     connector  type-c, fusb302b on the target bus\n");
@@ -160,12 +170,12 @@ pub fn tree(uart: &mut Uart, power: &power::Monitor, type_c: &Controllers) {
     // one of them is.
     let _ = uart.write_str(
         "ages   rails are POLLED, so an old sample means the poller stopped;\n\
-         \x20      controllers INTERRUPT, so an old one means nothing changed.\n");
+         \x20      controllers INTERRUPT, so an old one means nothing changed.\n",
+    );
 }
 
 /// One rail: volts, milliamps, and what it means when either is missing.
-fn rail(uart: &mut Uart, stem: &str, channel: usize, sample: Option<&Sample>,
-        floor: u32) {
+fn rail(uart: &mut Uart, stem: &str, channel: usize, sample: Option<&Sample>, floor: u32) {
     let _ = write!(uart, "{}rail       {:8} ", stem, power::PORTS[channel]);
 
     let reading = match sample {
@@ -182,22 +192,28 @@ fn rail(uart: &mut Uart, stem: &str, channel: usize, sample: Option<&Sample>,
     if reading.bus_mv < VSAFE0_MV {
         // The millivolts are still shown, in brackets, because "off" is a
         // judgement and the reading behind it is the evidence.
-        let _ = writeln!(uart, "   --  V      --  mA   off ({} mV)",
-                         reading.bus_mv);
+        let _ = writeln!(uart, "   --  V      --  mA   off ({} mV)", reading.bus_mv);
         return;
     }
-    let _ = write!(uart, "{:2}.{:03} V ", reading.bus_mv / 1000,
-                   reading.bus_mv % 1000);
+    let _ = write!(
+        uart,
+        "{:2}.{:03} V ",
+        reading.bus_mv / 1000,
+        reading.bus_mv % 1000
+    );
     let magnitude = reading.current_ua.unsigned_abs();
     if magnitude < floor {
         // An unplugged rail measures 0.76-0.92 mA of ADC offset on this board,
         // so a small number here is noise wearing the shape of a measurement.
-        let _ = writeln!(uart, "     --  mA   no load (under {} mA)",
-                         floor / 1000);
+        let _ = writeln!(uart, "     --  mA   no load (under {} mA)", floor / 1000);
     } else {
-        let _ = writeln!(uart, "{}{}.{:03} mA",
-                         if reading.current_ua < 0 { "-" } else { " " },
-                         magnitude / 1000, magnitude % 1000);
+        let _ = writeln!(
+            uart,
+            "{}{}.{:03} mA",
+            if reading.current_ua < 0 { "-" } else { " " },
+            magnitude / 1000,
+            magnitude % 1000
+        );
     }
 }
 
@@ -212,17 +228,19 @@ fn controller(uart: &mut Uart, stem: &str, type_c: &Controllers, port: Port) {
     let _ = write!(uart, "{}typec      ", stem);
     match type_c.cached(port) {
         Some((state, at)) => {
-            let _ = write!(uart, "vbus {:7}  {:25}  [{}]",
-                           if state.vbus { "present" } else { "absent" },
-                           state.cc(),
-                           Since("confirmed", power::age_of(Some(at))));
+            let _ = write!(
+                uart,
+                "vbus {:7}  {:25}  [{}]",
+                if state.vbus { "present" } else { "absent" },
+                state.cc(),
+                Since("confirmed", power::age_of(Some(at)))
+            );
             // The identity only when it is wrong. `0x91` is version 9 revision 1
             // -- FUSB302B revision B, what both parts on this board read -- and
             // anything else means the select reached a different chip. `typec`
             // prints it either way; a tree prints the exception.
             if state.device_id != 0x91 {
-                let _ = write!(uart, "  device {:02x}, NOT a fusb302b",
-                               state.device_id);
+                let _ = write!(uart, "  device {:02x}, NOT a fusb302b", state.device_id);
             }
             let _ = writeln!(uart);
         }
@@ -230,8 +248,11 @@ fn controller(uart: &mut Uart, stem: &str, type_c: &Controllers, port: Port) {
             let _ = writeln!(uart, "--  ABSENT: no i2c bus on this target");
         }
         None => {
-            let _ = writeln!(uart, "--  NO READING: the controller has not \
-                                    answered; `typec init` retries");
+            let _ = writeln!(
+                uart,
+                "--  NO READING: the controller has not \
+                                    answered; `typec init` retries"
+            );
         }
     }
 }
@@ -257,22 +278,24 @@ fn phy(uart: &mut Uart, stem: &str) {
 
     match (vendor, product, debug) {
         (Ok(vendor), Ok(product), Ok(debug)) => {
-            let _ = writeln!(uart, "{:04x}:{:04x} {:9}  linestate {:8} [live]",
-                             vendor, product,
-                             if vendor == ulpi::usb3343::VENDOR_ID
-                                 && product == ulpi::usb3343::PRODUCT_ID {
-                                 "usb3343"
-                             } else {
-                                 "UNKNOWN"
-                             },
-                             line_state(debug));
+            let _ = writeln!(
+                uart,
+                "{:04x}:{:04x} {:9}  linestate {:8} [live]",
+                vendor,
+                product,
+                if vendor == ulpi::usb3343::VENDOR_ID && product == ulpi::usb3343::PRODUCT_ID {
+                    "usb3343"
+                } else {
+                    "UNKNOWN"
+                },
+                line_state(debug)
+            );
         }
         // An absent PHY never releases `dir` and the gateware's 68 us timeout
         // fires, which is a different report from "answered, wrongly" and must
         // stay that way.
         (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
-            let _ = writeln!(uart, "--  ABSENT or silent: {}  [live]",
-                             error.as_str());
+            let _ = writeln!(uart, "--  ABSENT or silent: {}  [live]", error.as_str());
         }
     }
 }
@@ -309,8 +332,7 @@ impl core::fmt::Display for Since {
         match self.1 {
             Age::Millis(ms) if ms < 10_000 => write!(f, "{} {} ms ago", self.0, ms),
             Age::Millis(ms) => write!(f, "{} {} s ago", self.0, ms / 1000),
-            Age::Older => write!(f, "{} OVER {} s ago", self.0,
-                                 power::AGE_LIMIT_MS / 1000),
+            Age::Older => write!(f, "{} OVER {} s ago", self.0, power::AGE_LIMIT_MS / 1000),
             Age::Never => write!(f, "NEVER {}", self.0),
         }
     }

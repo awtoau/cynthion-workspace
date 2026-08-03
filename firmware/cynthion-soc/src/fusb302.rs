@@ -57,8 +57,10 @@
 //! The storm cannot happen because the source is off for the whole window in
 //! which the line is still asserted.
 
-use crate::bus::{self, Bus, BUS_AUX_C, BUS_TARGET_C, LINE_AUX_FAULT,
-                 LINE_AUX_INT, LINE_TARGET_FAULT, LINE_TARGET_INT};
+use crate::bus::{
+    self, Bus, BUS_AUX_C, BUS_TARGET_C, LINE_AUX_FAULT, LINE_AUX_INT, LINE_TARGET_FAULT,
+    LINE_TARGET_INT,
+};
 
 /// Both controllers, and nothing else, live here.
 pub const ADDRESS: u8 = 0x22;
@@ -218,9 +220,7 @@ fn read(bus: &mut Bus, port: Port, register: u8) -> Result<u8, bus::Error> {
     Ok(value[0])
 }
 
-fn write(bus: &mut Bus, port: Port, register: u8, value: u8)
-    -> Result<(), bus::Error>
-{
+fn write(bus: &mut Bus, port: Port, register: u8, value: u8) -> Result<(), bus::Error> {
     bus.write_register(port.bus(), ADDRESS, register, value)
 }
 

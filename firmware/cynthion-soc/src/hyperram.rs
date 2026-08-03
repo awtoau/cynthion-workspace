@@ -146,7 +146,11 @@ pub enum Reject {
 pub fn staged() -> Result<(u32, u32), Reject> {
     let magic = read_u32(HDR_MAGIC);
     if magic != MAGIC {
-        return Err(if magic == 0xffff_ffff { Reject::Silent } else { Reject::NoMagic });
+        return Err(if magic == 0xffff_ffff {
+            Reject::Silent
+        } else {
+            Reject::NoMagic
+        });
     }
     let length = read_u32(HDR_LENGTH);
     // A length past the region is a corrupt header, not a big image. Copying it would
@@ -255,8 +259,7 @@ mod backend {
 
     /// Header words plus the largest image `MAX_IMAGE` allows, rounded up. Sized from the
     /// same constants the shared code bounds against, so the two cannot drift.
-    const WORDS: usize =
-        super::IMAGE_WORD as usize + (super::MAX_IMAGE as usize + 1) / 2;
+    const WORDS: usize = super::IMAGE_WORD as usize + (super::MAX_IMAGE as usize + 1) / 2;
 
     // `AtomicU16`/`AtomicUsize` rather than `static mut`, and the reason changed
     // under this code. When it was written this binary had no interrupt

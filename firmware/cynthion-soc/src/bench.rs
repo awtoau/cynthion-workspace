@@ -165,8 +165,7 @@ impl Run {
         if self.accesses == 0 {
             return 0;
         }
-        (self.cycles / self.accesses) * 100
-            + (self.cycles % self.accesses) * 100 / self.accesses
+        (self.cycles / self.accesses) * 100 + (self.cycles % self.accesses) * 100 / self.accesses
     }
 
     /// Instructions per access, in hundredths.
@@ -174,8 +173,7 @@ impl Run {
         if self.accesses == 0 {
             return 0;
         }
-        (self.instret / self.accesses) * 100
-            + (self.instret % self.accesses) * 100 / self.accesses
+        (self.instret / self.accesses) * 100 + (self.instret % self.accesses) * 100 / self.accesses
     }
 
     /// Megabytes per second, in hundredths.
@@ -394,11 +392,17 @@ fn row(uart: &mut Uart, region: &str, set: &str, pattern: &str, run: &Run) {
     let _ = writeln!(
         uart,
         "{:<9}{:>7} {:<10}{:>8}.{:02}{:>8}.{:02}{:>7}.{:02}{:>5}.{:03}",
-        region, set, pattern,
-        cycles / 100, cycles % 100,
-        rate / 100, rate % 100,
-        instr / 100, instr % 100,
-        ipc / 1000, ipc % 1000,
+        region,
+        set,
+        pattern,
+        cycles / 100,
+        cycles % 100,
+        rate / 100,
+        rate % 100,
+        instr / 100,
+        instr % 100,
+        ipc / 1000,
+        ipc % 1000,
     );
 }
 
@@ -415,16 +419,23 @@ fn ratio(uart: &mut Uart, region: &str, seq: &Run, rnd: &Run) {
         return;
     }
     let times = random * 100 / sequential;
-    let _ = writeln!(uart, "{:<9}random / sequential, large set: {}.{:02}x",
-                     region, times / 100, times % 100);
+    let _ = writeln!(
+        uart,
+        "{:<9}random / sequential, large set: {}.{:02}x",
+        region,
+        times / 100,
+        times % 100
+    );
 }
 
 /// The column widths are the ones `row` uses, written the same way so the two
 /// cannot drift.
 fn header(uart: &mut Uart) {
-    let _ = writeln!(uart, "{:<9}{:>7} {:<10}{:>11}{:>11}{:>10}{:>9}",
-                     "region", "set", "pattern", "cycles/acc", "MB/s",
-                     "instr/acc", "ipc");
+    let _ = writeln!(
+        uart,
+        "{:<9}{:>7} {:<10}{:>11}{:>11}{:>10}{:>9}",
+        "region", "set", "pattern", "cycles/acc", "MB/s", "instr/acc", "ipc"
+    );
 }
 
 /// `bench bram` -- the baseline everything else is measured against.
@@ -473,8 +484,13 @@ fn bram(uart: &mut Uart) {
     // `lw zero, 0(a1)` before this line existed.
     let bad = bad + ram_verify();
     ratio(uart, "bram", &seq, &rnd);
-    let _ = writeln!(uart, "bram     {} KiB pattern, {} words wrong, sum {:08x}",
-                     RAM_WORDS / 256, bad, sum);
+    let _ = writeln!(
+        uart,
+        "bram     {} KiB pattern, {} words wrong, sum {:08x}",
+        RAM_WORDS / 256,
+        bad,
+        sum
+    );
 }
 
 /// `bench flash` -- memory-mapped, read only, and the region where the cache
@@ -487,20 +503,24 @@ fn flash(uart: &mut Uart) {
     // timed access is not the first flash transaction since reset.
     let mut sum = flash_read(large, 64, false);
 
-    let (run, got) = measure(FLASH_SEQ_ACCESSES, 4,
-                             || flash_read(small, FLASH_SEQ_ACCESSES, false));
+    let (run, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+        flash_read(small, FLASH_SEQ_ACCESSES, false)
+    });
     row(uart, "flash", "2 KiB", "read seq", &run);
     sum ^= got;
-    let (run, got) = measure(FLASH_RND_ACCESSES, 4,
-                             || flash_read(small, FLASH_RND_ACCESSES, true));
+    let (run, got) = measure(FLASH_RND_ACCESSES, 4, || {
+        flash_read(small, FLASH_RND_ACCESSES, true)
+    });
     row(uart, "flash", "2 KiB", "read rnd", &run);
     sum ^= got;
-    let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4,
-                             || flash_read(large, FLASH_SEQ_ACCESSES, false));
+    let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+        flash_read(large, FLASH_SEQ_ACCESSES, false)
+    });
     row(uart, "flash", "16 KiB", "read seq", &seq);
     sum ^= got;
-    let (rnd, got) = measure(FLASH_RND_ACCESSES, 4,
-                             || flash_read(large, FLASH_RND_ACCESSES, true));
+    let (rnd, got) = measure(FLASH_RND_ACCESSES, 4, || {
+        flash_read(large, FLASH_RND_ACCESSES, true)
+    });
     row(uart, "flash", "16 KiB", "read rnd", &rnd);
     sum ^= got;
     ratio(uart, "flash", &seq, &rnd);
@@ -508,11 +528,15 @@ fn flash(uart: &mut Uart) {
     // Content, not absence of error. The two constants are the ones `check`
     // uses; the checksum is over every walk above, and a window that is dead
     // rather than slow returns 00000000 or ffffffff for all of it.
-    let known = target::flash_word(0) == 0x6150_00ff
-        && target::flash_word(0x40) == 0x2a55_8800;
-    let _ = writeln!(uart, "flash    @0 {:08x} @40 {:08x} {}  sum {:08x}",
-                     target::flash_word(0), target::flash_word(0x40),
-                     if known { "ok" } else { "BAD" }, sum);
+    let known = target::flash_word(0) == 0x6150_00ff && target::flash_word(0x40) == 0x2a55_8800;
+    let _ = writeln!(
+        uart,
+        "flash    @0 {:08x} @40 {:08x} {}  sum {:08x}",
+        target::flash_word(0),
+        target::flash_word(0x40),
+        if known { "ok" } else { "BAD" },
+        sum
+    );
 }
 
 /// Does the staging port answer at all?
@@ -544,34 +568,50 @@ fn hyper(uart: &mut Uart) {
     // waking up, and that is not what the rows below are for.
     let mut sum = hyper_read(large, 16, false);
 
-    let (run, got) = measure(HYPER_ACCESSES, 2, || hyper_read(small, HYPER_ACCESSES, false));
+    let (run, got) = measure(HYPER_ACCESSES, 2, || {
+        hyper_read(small, HYPER_ACCESSES, false)
+    });
     row(uart, "hyperram", "1 KiB", "read seq", &run);
     sum ^= got;
-    let (rnd, got) = measure(HYPER_ACCESSES, 2, || hyper_read(large, HYPER_ACCESSES, true));
+    let (rnd, got) = measure(HYPER_ACCESSES, 2, || {
+        hyper_read(large, HYPER_ACCESSES, true)
+    });
     row(uart, "hyperram", "4 KiB", "read rnd", &rnd);
     sum ^= got;
-    let (seq, got) = measure(HYPER_ACCESSES, 2, || hyper_read(large, HYPER_ACCESSES, false));
+    let (seq, got) = measure(HYPER_ACCESSES, 2, || {
+        hyper_read(large, HYPER_ACCESSES, false)
+    });
     row(uart, "hyperram", "4 KiB", "read seq", &seq);
     sum ^= got;
-    let (run, _) = measure(HYPER_ACCESSES, 2, || hyper_write(small, HYPER_ACCESSES, false));
+    let (run, _) = measure(HYPER_ACCESSES, 2, || {
+        hyper_write(small, HYPER_ACCESSES, false)
+    });
     row(uart, "hyperram", "1 KiB", "write seq", &run);
-    let (run, _) = measure(HYPER_ACCESSES, 2, || hyper_write(large, HYPER_ACCESSES, false));
+    let (run, _) = measure(HYPER_ACCESSES, 2, || {
+        hyper_write(large, HYPER_ACCESSES, false)
+    });
     row(uart, "hyperram", "4 KiB", "write seq", &run);
-    let (run, _) = measure(HYPER_ACCESSES, 2, || hyper_write(large, HYPER_ACCESSES, true));
+    let (run, _) = measure(HYPER_ACCESSES, 2, || {
+        hyper_write(large, HYPER_ACCESSES, true)
+    });
     row(uart, "hyperram", "4 KiB", "write rnd", &run);
 
     let bad = hyper_verify();
     ratio(uart, "hyperram", &seq, &rnd);
-    let _ = writeln!(uart,
-                     "hyperram word {:x}.. 8 KiB pattern, {} words wrong, sum {:08x}",
-                     HYPER_BASE, bad, sum);
+    let _ = writeln!(
+        uart,
+        "hyperram word {:x}.. 8 KiB pattern, {} words wrong, sum {:08x}",
+        HYPER_BASE, bad, sum
+    );
 }
 
 /// `bench`, `bench bram`, `bench flash`, `bench hyperram`.
 pub fn command(uart: &mut Uart, rest: &[u8]) {
-    let _ = writeln!(uart,
+    let _ = writeln!(
+        uart,
         "bench    mcycle at {} Hz; D-cache 4 KiB = 64 sets x 1 way x 64 B line",
-        target::TIME_HZ);
+        target::TIME_HZ
+    );
     match rest {
         b"bram" => {
             header(uart);

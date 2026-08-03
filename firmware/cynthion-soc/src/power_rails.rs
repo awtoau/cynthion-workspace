@@ -15,10 +15,26 @@ pub struct Rail {
 
 /// PAC channel order; it is deliberately not connector order.
 pub const RAILS: [Rail; 4] = [
-    Rail { name: "target_a_vbus", nominal_mv: 5_000, tolerance_mv: 250 },
-    Rail { name: "target_c_vbus", nominal_mv: 5_000, tolerance_mv: 250 },
-    Rail { name: "aux_vbus", nominal_mv: 5_000, tolerance_mv: 250 },
-    Rail { name: "control_vbus", nominal_mv: 5_000, tolerance_mv: 250 },
+    Rail {
+        name: "target_a_vbus",
+        nominal_mv: 5_000,
+        tolerance_mv: 250,
+    },
+    Rail {
+        name: "target_c_vbus",
+        nominal_mv: 5_000,
+        tolerance_mv: 250,
+    },
+    Rail {
+        name: "aux_vbus",
+        nominal_mv: 5_000,
+        tolerance_mv: 250,
+    },
+    Rail {
+        name: "control_vbus",
+        nominal_mv: 5_000,
+        tolerance_mv: 250,
+    },
 ];
 
 /// Inclusive limits keep exact USB boundary values valid.
@@ -37,9 +53,11 @@ mod tests {
         let rail = RAILS[3];
         let in_tolerance = within_tolerance(rail, 5_000);
         let out_of_tolerance = within_tolerance(rail, 4_749);
-        println!("5000 mV: {}; 4749 mV: {}",
-                 if in_tolerance { "PASS" } else { "FAIL" },
-                 if out_of_tolerance { "PASS" } else { "FAIL" });
+        println!(
+            "5000 mV: {}; 4749 mV: {}",
+            if in_tolerance { "PASS" } else { "FAIL" },
+            if out_of_tolerance { "PASS" } else { "FAIL" }
+        );
         assert!(in_tolerance);
         assert!(!out_of_tolerance);
     }

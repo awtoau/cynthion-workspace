@@ -190,20 +190,16 @@ pub fn turn() {
     }
 
     if WINDOW_CYCLES.load(RELAXED) >= HALVE_AT {
-        for counter in [&WINDOW_CYCLES, &WINDOW_BUSY, &WINDOW_INSTR,
-                        &WINDOW_TURNS] {
+        for counter in [&WINDOW_CYCLES, &WINDOW_BUSY, &WINDOW_INSTR, &WINDOW_TURNS] {
             counter.store(counter.load(RELAXED) >> 1, RELAXED);
         }
     }
 
-    WINDOW_CYCLES.store(WINDOW_CYCLES.load(RELAXED).saturating_add(elapsed),
-                        RELAXED);
-    WINDOW_INSTR.store(WINDOW_INSTR.load(RELAXED).saturating_add(retired),
-                       RELAXED);
+    WINDOW_CYCLES.store(WINDOW_CYCLES.load(RELAXED).saturating_add(elapsed), RELAXED);
+    WINDOW_INSTR.store(WINDOW_INSTR.load(RELAXED).saturating_add(retired), RELAXED);
     WINDOW_TURNS.store(WINDOW_TURNS.load(RELAXED).saturating_add(1), RELAXED);
     if WORKED.swap(0, RELAXED) != 0 {
-        WINDOW_BUSY.store(WINDOW_BUSY.load(RELAXED).saturating_add(elapsed),
-                          RELAXED);
+        WINDOW_BUSY.store(WINDOW_BUSY.load(RELAXED).saturating_add(elapsed), RELAXED);
     }
     WORST_TURN.fetch_max(elapsed, RELAXED);
 }
@@ -317,7 +313,11 @@ pub fn command(uart: &mut Uart) {
     // polls, against the interval they are supposed to be at. A poller that has
     // stopped shows up in `power`'s age line; this is what shows one degrading
     // before it does.
-    let _ = writeln!(uart, "poll     every {} ms  polls {}  worst gap {} ms",
-                     power::INTERVAL_MS, POLLS.load(RELAXED),
-                     clock::to_millis(WORST_GAP.load(RELAXED)));
+    let _ = writeln!(
+        uart,
+        "poll     every {} ms  polls {}  worst gap {} ms",
+        power::INTERVAL_MS,
+        POLLS.load(RELAXED),
+        clock::to_millis(WORST_GAP.load(RELAXED))
+    );
 }

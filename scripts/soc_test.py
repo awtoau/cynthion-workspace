@@ -142,6 +142,23 @@ BOOT_S = 5.0
 # script is chasing -- so it is reported with what was expected and everything received.
 REPLY_S = 3.0
 
+# The same budget on the board, where a reply is three orders of magnitude faster.
+#
+# 3.0 s is right for QEMU, where a reply is dominated by the host's scheduler. On
+# the board every command measured answers well inside 50 ms -- the slowest is
+# `bench hyperram` at 47 ms, walking 8 KiB -- so 3 s is ~64x the worst case and
+# every FAILING assertion sits out that full budget. The board suite spent 12.5 s
+# with six failures and 4.4 s with none; the timeouts were most of the difference.
+#
+# 0.25 s is ~5x the slowest command. It is a fixed number rather than a measured
+# one on purpose: a calibration probe was tried and removed. It could not measure
+# the round trip reliably -- a raw `select` probe on the same port gives 0.33 ms
+# while the same traffic through the session class gives ~43 ms, a discrepancy
+# TCP_NODELAY did not explain and which is still open -- and worse, sending three
+# probes at startup made "an untouched shell is mostly idle" fail on every run.
+# An instrument that loads its subject reports the load.
+BOARD_REPLY_S = 0.25
+
 # How long to allow for the idle re-banner.
 #
 # The firmware re-announces after 12,000,000 turns of its poll loop, sized for ~2 s at
@@ -205,7 +222,20 @@ class BoardSession:
         try:
             self.socket = socket.create_connection(
                 ("127.0.0.1", self.SERVICE_PORT), timeout=2)
-            self.socket.settimeout(0.2)
+            # TCP_NODELAY: correct for this traffic shape, and NOT the fix for
+            # the latency below.
+            #
+            # One-byte commands and short replies are exactly what Nagle holds
+            # back, so disabling it is right on its own terms. It was also my
+            # hypothesis for the ~43 ms this session measures against 0.33 ms from
+            # a raw probe on the same port -- 40 ms being the delayed-ACK
+            # signature. Setting it changed nothing, so that hypothesis is wrong
+            # and the cause is still unidentified. Kept because it is correct,
+            # not because it helped.
+            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # 20 ms, not 200: this bounds how long a byte can sit unread when
+            # recv is between calls, and it was a fifth of a second.
+            self.socket.settimeout(0.02)
             emit(f"console: through the service on {self.SERVICE_PORT}")
         except OSError:
             port = self._find_port()
@@ -261,6 +291,18 @@ class BoardSession:
             self.serial.flush()
 
     def expect(self, needle, budget, since=0):
+        # 5 ms. NOT 1 ms, and the reason is a regression this caused.
+        #
+        # A 1 ms poll made "an untouched shell is mostly idle" fail on every run:
+        # the harness was busy enough that the thing it was measuring stopped
+        # being untouched. A measuring instrument that loads its subject reports
+        # the load.
+        #
+        # NOT 10 ms either, which is what it was. At 10 ms the poll is a floor on
+        # anything this can report, and calibration read a rock-steady "50.4 ms"
+        # across three runs -- so stable, and so close to the firmware's 50 ms
+        # power poll, that it read as a real mechanism and very nearly justified
+        # halving that poll to fix a latency the firmware does not have.
         deadline = time.monotonic() + budget
         while True:
             found = self.snapshot().find(needle, since)
@@ -268,7 +310,7 @@ class BoardSession:
                 return found
             if time.monotonic() >= deadline:
                 return None
-            time.sleep(0.01)
+            time.sleep(0.005)
 
     def close(self):
         if self.socket is not None:
@@ -500,6 +542,11 @@ def main():
             if board:
                 session.send(b"\r")
                 at = session.expect(b">", BOOT_S)
+                # A shorter budget for the board, and `global` because every check
+                # below reads REPLY_S at call time.
+                if at is not None:
+                    global REPLY_S
+                    REPLY_S = BOARD_REPLY_S
                 check("the board's shell answers at the prompt", at is not None,
                       "sent Enter and no prompt came back.\n"
                       "Either nothing is configured, the console is being read by\n"
@@ -1419,21 +1466,34 @@ def main():
             # window averaged over is a couple of seconds of doing nothing
             # rather than the 40 ms between boot and the question -- over which
             # the command itself would be most of the answer.
-            fresh = ask_fresh_qemu("stats", b"poll     every", REPLY_S,
-                                   settle=b"Cynthion RISC-V SoC",
-                                   settle_s=IDLE_S)
+            # QEMU ONLY, for a reason in the name: it needs a shell nobody has
+            # typed at, and it gets one by booting a second emulator. The board
+            # under test has been up since `configure` and has been answering
+            # commands for the whole suite, so there is no untouched shell to ask
+            # -- reconfiguring to manufacture one would make this the only check
+            # that resets the target it is measuring.
+            #
+            # `3.0` is passed explicitly rather than `REPLY_S`, which is rebound to
+            # the board's 0.25 s in board mode. That rebinding reached this nested
+            # QEMU session and gave it a quarter second to boot an emulator, so it
+            # returned nothing and reported "a freshly booted shell reported no
+            # busy figure" -- a board-mode assertion failing on a QEMU timeout.
+            fresh = None if board else ask_fresh_qemu(
+                "stats", b"poll     every", 3.0,
+                settle=b"Cynthion RISC-V SoC", settle_s=IDLE_S)
             resting = re.search(rb"busy (\d+)\.(\d\d)%", fresh or b"")
             resting = (int(resting.group(1)) * 100 + int(resting.group(2))
                        if resting else None)
-            check("an untouched shell is mostly idle",
-                  resting is not None and resting < 5_000,
-                  "a freshly booted shell that nobody has typed at reported "
-                  f"{'no busy figure' if resting is None else f'{resting / 100:.2f}% busy'}.\n"
-                  "Over half the machine spent on a loop that is only asking "
-                  "means the split\n"
-                  "is charging idle turns to busy, and the figure cannot be "
-                  "used to size an RTOS.\n"
-                  f"received: {show(fresh or b'') or '(nothing)'}")
+            if not board:
+                check("an untouched shell is mostly idle",
+                      resting is not None and resting < 5_000,
+                      "a freshly booted shell that nobody has typed at reported "
+                      f"{'no busy figure' if resting is None else f'{resting / 100:.2f}% busy'}.\n"
+                      "Over half the machine spent on a loop that is only asking "
+                      "means the split\n"
+                      "is charging idle turns to busy, and the figure cannot be "
+                      "used to size an RTOS.\n"
+                      f"received: {show(fresh or b'') or '(nothing)'}")
             if resting is not None:
                 emit(f"        untouched shell: busy {resting / 100:.2f}%")
 

@@ -122,8 +122,7 @@ const INPUT_AUX: u8 = 1 << 1;
 fn read_input() -> u8 {
     // SAFETY: fixed peripheral address, `main=0` region.
     unsafe {
-        core::ptr::read_volatile(
-            (cynthion_soc_pac::base::BOARD_VBUS + INPUT_OFFSET) as *const u8)
+        core::ptr::read_volatile((cynthion_soc_pac::base::BOARD_VBUS + INPUT_OFFSET) as *const u8)
     }
 }
 
@@ -131,7 +130,9 @@ fn write_input(value: u8) {
     // SAFETY: as above.
     unsafe {
         core::ptr::write_volatile(
-            (cynthion_soc_pac::base::BOARD_VBUS + INPUT_OFFSET) as *mut u8, value)
+            (cynthion_soc_pac::base::BOARD_VBUS + INPUT_OFFSET) as *mut u8,
+            value,
+        )
     };
 }
 

@@ -85,9 +85,9 @@ mod board;
 mod bus;
 mod clock;
 mod events;
+mod fusb302;
 mod gpio;
 mod hyperram;
-mod fusb302;
 mod info;
 mod irq;
 mod log;
@@ -100,9 +100,9 @@ mod sideband;
 mod target;
 mod timer;
 mod typec;
-mod vbus;
 mod uart;
 mod ulpi;
+mod vbus;
 
 use bus::Bus;
 use target::flash_word;
@@ -153,8 +153,7 @@ impl Devices {
     const fn new() -> Self {
         Devices {
             bus: match target::BOARD {
-                Some(board) => Some(Bus::new(board.i2c, board.i2c_mux,
-                                             board.i2c_prescale)),
+                Some(board) => Some(Bus::new(board.i2c, board.i2c_mux, board.i2c_prescale)),
                 None => None,
             },
             power: power::Monitor::new(),
@@ -199,8 +198,7 @@ impl Shell {
     /// `index` selects this console's receive ring in `src/irq.rs`, and is also what
     /// `load` needs to know which port a transfer is arriving on. It is the index into
     /// `target::UART_BASES`, so it is the same number everywhere.
-    fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool,
-            devices: &mut Devices) {
+    fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool, devices: &mut Devices) {
         // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
         // for everything this function ECHOES; only the receive direction moved.
         let byte = match irq::pop(index) {
@@ -391,8 +389,7 @@ fn main() -> ! {
         // is handled before the other's, which is a fairness property worth keeping.
         for (index, &base) in target::UART_BASES.iter().enumerate() {
             let mut uart = Uart::new(base);
-            shells[index].poll(index, &mut uart, index < target::ANNOUNCING,
-                               &mut devices);
+            shells[index].poll(index, &mut uart, index < target::ANNOUNCING, &mut devices);
         }
     }
 }
@@ -421,29 +418,32 @@ fn banner(uart: &mut Uart) {
 /// site; the padding is done by hand below for the same reason the rest of this
 /// firmware avoids it.
 const HELP: &[(&str, &str)] = &[
-    ("bench [region]",  "time bram, flash or hyperram"),
-    ("board",           "every connector, rail and controller"),
-    ("check",           "arithmetic the compiler could have folded, at runtime"),
-    ("help, ?",         "this list"),
-    ("hrtest",          "hyperram write/read walk"),
-    ("i2c [bus]",       "scan a bus behind the mux"),
-    ("id",              "the first flash word"),
-    ("info",            "image, memory, boot, cpu, gateware"),
-    ("irq",             "interrupt counts, per source"),
-    ("led [n]",         "the six LEDs"),
-    ("load <hex>",      "stage <hex> bytes of firmware, then boot it"),
-    ("log [n|tags]",    "the deferred event log"),
-    ("phy",             "the USB PHYs"),
-    ("ports",           "which UARTs answer"),
-    ("power [floor]",   "the four PAC1954 channels"),
-    ("read <hex>",      "one word from address <hex>"),
-    ("reset",           "jump to the reset vector"),
-    ("selftest",        "run every self-check"),
-    ("sideband",        "the sideband link"),
-    ("stats",           "cycles, instructions, busy fraction"),
-    ("time",            "uptime, from mtime"),
-    ("typec [port]",    "the FUSB302B controllers"),
-    ("vbus <cmd>",      "the VBUS distribution switches"),
+    ("bench [region]", "time bram, flash or hyperram"),
+    ("board", "every connector, rail and controller"),
+    (
+        "check",
+        "arithmetic the compiler could have folded, at runtime",
+    ),
+    ("help, ?", "this list"),
+    ("hrtest", "hyperram write/read walk"),
+    ("i2c [bus]", "scan a bus behind the mux"),
+    ("id", "the first flash word"),
+    ("info", "image, memory, boot, cpu, gateware"),
+    ("irq", "interrupt counts, per source"),
+    ("led [n]", "the six LEDs"),
+    ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
+    ("log [n|tags]", "the deferred event log"),
+    ("phy", "the USB PHYs"),
+    ("ports", "which UARTs answer"),
+    ("power [floor]", "the four PAC1954 channels"),
+    ("read <hex>", "one word from address <hex>"),
+    ("reset", "jump to the reset vector"),
+    ("selftest", "run every self-check"),
+    ("sideband", "the sideband link"),
+    ("stats", "cycles, instructions, busy fraction"),
+    ("time", "uptime, from mtime"),
+    ("typec [port]", "the FUSB302B controllers"),
+    ("vbus <cmd>", "the VBUS distribution switches"),
 ];
 
 /// Width of the first column. One more than the longest entry above, so every
@@ -492,8 +492,13 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // faulting, and so is otherwise invisible.
             for (index, &base) in target::UART_BASES.iter().enumerate() {
                 let present = scratch_responds(base);
-                let _ = writeln!(uart, "  {} {:08x} {}", index, base,
-                                 if present { "ok" } else { "NO RESPONSE" });
+                let _ = writeln!(
+                    uart,
+                    "  {} {:08x} {}",
+                    index,
+                    base,
+                    if present { "ok" } else { "NO RESPONSE" }
+                );
             }
         }
         b"irq" => {
@@ -511,19 +516,29 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // and never complete it, killing the console from a diagnostic command. See
             // `Plic::claim`.
             let plic = plic::Plic::new(target::PLIC_BASE);
-            let _ = writeln!(uart, "plic  @{:08x} pending {:08x} enabled {:08x}",
-                             target::PLIC_BASE, plic.pending(), plic.enabled());
+            let _ = writeln!(
+                uart,
+                "plic  @{:08x} pending {:08x} enabled {:08x}",
+                target::PLIC_BASE,
+                plic.pending(),
+                plic.enabled()
+            );
             for console in 0..target::UART_BASES.len() {
                 let (interrupts, stalls, buffered) = irq::stats(console);
                 // `lost` counts LSR reads that found an error bit set -- an
                 // overrun or a framing error, both of which mean input that
                 // never reached the shell. Zero is the only good value; a
                 // number that climbs while nothing is typed is a noisy line.
-                let _ = writeln!(uart,
-                                 "  {} src {} irqs {} stalls {} buffered {} lost {}",
-                                 console, target::UART_IRQS[console],
-                                 interrupts, stalls, buffered,
-                                 uart::error_reads(console));
+                let _ = writeln!(
+                    uart,
+                    "  {} src {} irqs {} stalls {} buffered {} lost {}",
+                    console,
+                    target::UART_IRQS[console],
+                    interrupts,
+                    stalls,
+                    buffered,
+                    uart::error_reads(console)
+                );
             }
             // The Type-C sources, one per FUSB302B rather than one for both.
             //
@@ -534,9 +549,13 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // the other half -- a port whose bit is clear there is one the
             // handler has masked and `typec` has not finished servicing.
             for (port, &source) in target::TYPE_C_IRQS.iter().enumerate() {
-                let _ = writeln!(uart, "  type-c {:6} src {} irqs {}",
-                                 fusb302::Port::ALL[port].name(), source,
-                                 irq::type_c_interrupts(port));
+                let _ = writeln!(
+                    uart,
+                    "  type-c {:6} src {} irqs {}",
+                    fusb302::Port::ALL[port].name(),
+                    source,
+                    irq::type_c_interrupts(port)
+                );
             }
             // The deferred log's own health. A handler may not print, so it
             // records; if the ring fills, records are dropped rather than the
@@ -545,8 +564,12 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // shell -- but a count that keeps climbing means events are being
             // lost continuously, which is the state in which a fault becomes
             // invisible. See `src/events.rs`.
-            let _ = writeln!(uart, "  log  waiting {} dropped {}",
-                             events::waiting(), events::dropped());
+            let _ = writeln!(
+                uart,
+                "  log  waiting {} dropped {}",
+                events::waiting(),
+                events::dropped()
+            );
         }
         b"time" => {
             // The tick, and the evidence that it is a tick rather than a
@@ -582,14 +605,31 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // wrapped every 71.6 s at 60 MHz (see `src/clock.rs`), which is
             // shorter than the intervals this line exists to be compared over.
             let mtime = timer::mtime();
-            let _ = writeln!(uart, "  uptime  {}  ticks {}  period {} ms  {}",
-                             log::now(), ticks, timer::PERIOD_MS,
-                             if timer::running() { "running" } else { "STOPPED" });
-            let _ = writeln!(uart, "  clint   @{:08x}  mtime {:08x}:{:08x} at {} Hz",
-                             target::CLINT_BASE, (mtime >> 32) as u32,
-                             mtime as u32, target::TIME_HZ);
-            let _ = writeln!(uart, "  cost    worst {} ticks  late worst {} ticks",
-                             cost, late);
+            let _ = writeln!(
+                uart,
+                "  uptime  {}  ticks {}  period {} ms  {}",
+                log::now(),
+                ticks,
+                timer::PERIOD_MS,
+                if timer::running() {
+                    "running"
+                } else {
+                    "STOPPED"
+                }
+            );
+            let _ = writeln!(
+                uart,
+                "  clint   @{:08x}  mtime {:08x}:{:08x} at {} Hz",
+                target::CLINT_BASE,
+                (mtime >> 32) as u32,
+                mtime as u32,
+                target::TIME_HZ
+            );
+            let _ = writeln!(
+                uart,
+                "  cost    worst {} ticks  late worst {} ticks",
+                cost, late
+            );
         }
         b"stats" => metrics::command(uart),
         b"bench" => bench::command(uart, trim(rest)),
@@ -621,8 +661,13 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
         // renderer they test; this arm only names the command.
         b"log" if rest == b"tags" => {
             let pushed = events::push_tag_samples();
-            let _ = writeln!(uart, "log pushed {} tag samples, waiting {} dropped {}",
-                             pushed, events::waiting(), events::dropped());
+            let _ = writeln!(
+                uart,
+                "log pushed {} tag samples, waiting {} dropped {}",
+                pushed,
+                events::waiting(),
+                events::dropped()
+            );
         }
         b"log" => {
             // Pushes through the SAME `events::push` an interrupt handler uses,
@@ -657,8 +702,14 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                     pushed += 1;
                 }
             }
-            let _ = writeln!(uart, "log pushed {} of {}, waiting {} dropped {}",
-                             pushed, count, events::waiting(), events::dropped());
+            let _ = writeln!(
+                uart,
+                "log pushed {} of {}, waiting {} dropped {}",
+                pushed,
+                count,
+                events::waiting(),
+                events::dropped()
+            );
         }
         b"sideband" => board_sideband(uart, rest),
         b"read" => match parse_hex(rest) {
@@ -687,14 +738,30 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             let f0 = flash_word(0);
             let f40 = flash_word(0x40);
 
-            let _ = writeln!(uart, "sum   {:08x} {}", sum,
-                             if sum == 0xacf1_3568 { "ok" } else { "BAD" });
-            let _ = writeln!(uart, "prod  {:08x} {}", prod,
-                             if prod == 0x369d_0368 { "ok" } else { "BAD" });
-            let _ = writeln!(uart, "@0    {:08x} {}", f0,
-                             if f0 == 0x6150_00ff { "ok" } else { "BAD" });
-            let _ = writeln!(uart, "@40   {:08x} {}", f40,
-                             if f40 == 0x2a55_8800 { "ok" } else { "BAD" });
+            let _ = writeln!(
+                uart,
+                "sum   {:08x} {}",
+                sum,
+                if sum == 0xacf1_3568 { "ok" } else { "BAD" }
+            );
+            let _ = writeln!(
+                uart,
+                "prod  {:08x} {}",
+                prod,
+                if prod == 0x369d_0368 { "ok" } else { "BAD" }
+            );
+            let _ = writeln!(
+                uart,
+                "@0    {:08x} {}",
+                f0,
+                if f0 == 0x6150_00ff { "ok" } else { "BAD" }
+            );
+            let _ = writeln!(
+                uart,
+                "@40   {:08x} {}",
+                f40,
+                if f40 == 0x2a55_8800 { "ok" } else { "BAD" }
+            );
 
             // The timestamp format, at the values where it can go wrong.
             //
@@ -718,8 +785,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // the shell. What the firmware must supply is the bytes its own
             // formatter produces, and that is exactly what this is.
             let _ = write!(uart, "stamp");
-            for millis in [0u32, 1, 999, 1_000, 61_000,
-                           999_999_999, 1_000_000_000] {
+            for millis in [0u32, 1, 999, 1_000, 61_000, 999_999_999, 1_000_000_000] {
                 let _ = write!(uart, " {}", log::Stamp::at(millis));
             }
             let _ = writeln!(uart);
@@ -736,8 +802,10 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             hyperram::write_header(0, 0);
             match hyperram::staged() {
                 Ok(_) => {
-                    let _ = writeln!(uart,
-                        "hyperram round-trip BAD: zero length should be rejected");
+                    let _ = writeln!(
+                        uart,
+                        "hyperram round-trip BAD: zero length should be rejected"
+                    );
                 }
                 // `Length` specifically: the magic was written and read back, which is
                 // the round trip this checks. `NoMagic` or `Silent` would mean the word
@@ -746,8 +814,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                     let _ = writeln!(uart, "hyperram write+read ok");
                 }
                 Err(_) => {
-                    let _ = writeln!(uart,
-                        "hyperram round-trip BAD: the magic did not read back");
+                    let _ = writeln!(uart, "hyperram round-trip BAD: the magic did not read back");
                 }
             }
             hyperram::invalidate();
@@ -795,8 +862,11 @@ fn board_led(uart: &mut Uart, rest: &[u8]) {
         let led = match gpio::led_by_name(name) {
             Some(led) => led,
             None => {
-                let _ = writeln!(uart, "no LED of that colour; they are red, \
-                                        orange, yellow, green, blue, violet");
+                let _ = writeln!(
+                    uart,
+                    "no LED of that colour; they are red, \
+                                        orange, yellow, green, blue, violet"
+                );
                 return;
             }
         };
@@ -821,15 +891,28 @@ fn board_led(uart: &mut Uart, rest: &[u8]) {
             gpio::Owner::Cpu => "cpu",
             gpio::Owner::Fabric => "fabric",
         };
-        let _ = writeln!(uart, "  {:7} {:3}  driven by {}",
-                         colour,
-                         if pins.led_lit(led) { "on" } else { "off" },
-                         owner);
+        let _ = writeln!(
+            uart,
+            "  {:7} {:3}  driven by {}",
+            colour,
+            if pins.led_lit(led) { "on" } else { "off" },
+            owner
+        );
     }
-    let _ = writeln!(uart, "  button  {}",
-                     if pins.button() { "pressed" } else { "released" });
-    let _ = writeln!(uart, "  power monitor {}",
-                     if pins.power_monitor_down() { "POWERED DOWN" } else { "running" });
+    let _ = writeln!(
+        uart,
+        "  button  {}",
+        if pins.button() { "pressed" } else { "released" }
+    );
+    let _ = writeln!(
+        uart,
+        "  power monitor {}",
+        if pins.power_monitor_down() {
+            "POWERED DOWN"
+        } else {
+            "running"
+        }
+    );
 }
 
 /// Scan the power monitor's I2C bus and identify what is on it.
@@ -861,8 +944,14 @@ fn board_i2c(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // one command re-initialises. Nothing else does; see `Bus::init`.
     bus.init();
 
-    let _ = writeln!(uart, "i2c   @{:08x} prescale {} bus {} ({})",
-                     bus.i2c_base(), bus.prescale(), bus_select, label);
+    let _ = writeln!(
+        uart,
+        "i2c   @{:08x} prescale {} bus {} ({})",
+        bus.i2c_base(),
+        bus.prescale(),
+        bus_select,
+        label
+    );
 
     let mut found = [0u8; 8];
     let mut count = 0usize;
@@ -894,28 +983,47 @@ fn board_i2c(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     for &address in found.iter().take(count.min(found.len())) {
         let mut id = [0u8; 1];
         let manufacturer = match bus.read_registers(
-            bus_select, address, bus::pac195x::REG_MANUFACTURER_ID, &mut id) {
+            bus_select,
+            address,
+            bus::pac195x::REG_MANUFACTURER_ID,
+            &mut id,
+        ) {
             Ok(()) => id[0],
             Err(error) => {
-                let _ = writeln!(uart, "  {:02x} id read failed: {}",
-                                 address, error.as_str());
+                let _ = writeln!(uart, "  {:02x} id read failed: {}", address, error.as_str());
                 continue;
             }
         };
         if manufacturer != bus::pac195x::MANUFACTURER_MICROCHIP {
-            let _ = writeln!(uart, "  {:02x} manufacturer {:02x}, not a PAC195x",
-                             address, manufacturer);
+            let _ = writeln!(
+                uart,
+                "  {:02x} manufacturer {:02x}, not a PAC195x",
+                address, manufacturer
+            );
             continue;
         }
         let mut product = [0u8; 1];
         let mut revision = [0u8; 1];
-        let _ = bus.read_registers(bus_select, address,
-                                   bus::pac195x::REG_PRODUCT_ID, &mut product);
-        let _ = bus.read_registers(bus_select, address,
-                                   bus::pac195x::REG_REVISION_ID, &mut revision);
-        let _ = writeln!(uart, "  {:02x} {} manufacturer {:02x} revision {:02x}",
-                         address, bus::pac195x::product_name(product[0]),
-                         manufacturer, revision[0]);
+        let _ = bus.read_registers(
+            bus_select,
+            address,
+            bus::pac195x::REG_PRODUCT_ID,
+            &mut product,
+        );
+        let _ = bus.read_registers(
+            bus_select,
+            address,
+            bus::pac195x::REG_REVISION_ID,
+            &mut revision,
+        );
+        let _ = writeln!(
+            uart,
+            "  {:02x} {} manufacturer {:02x} revision {:02x}",
+            address,
+            bus::pac195x::product_name(product[0]),
+            manufacturer,
+            revision[0]
+        );
     }
 }
 
@@ -950,19 +1058,26 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         let channel = match power::PORTS.iter().position(|&p| p.as_bytes() == name) {
             Some(channel) => channel,
             None => {
-                let _ = writeln!(uart, "no port of that name; they are \
-                                        target_a, target_c, aux, control");
+                let _ = writeln!(
+                    uart,
+                    "no port of that name; they are \
+                                        target_a, target_c, aux, control"
+                );
                 return;
             }
         };
         match parse_decimal(value) {
             // A floor is a magnitude. The bipolar full-scale current is 5 A,
             // so anything higher can never be crossed.
-            Some(milliamps) if milliamps <= 5000 =>
-                devices.power.set_floor(channel, milliamps * 1000),
+            Some(milliamps) if milliamps <= 5000 => {
+                devices.power.set_floor(channel, milliamps * 1000)
+            }
             _ => {
-                let _ = writeln!(uart, "usage: power floor <port> <mA>  \
-                                        (0..5000)");
+                let _ = writeln!(
+                    uart,
+                    "usage: power floor <port> <mA>  \
+                                        (0..5000)"
+                );
                 return;
             }
         }
@@ -977,16 +1092,24 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // individually plausible and jointly a lie, and there is nothing in them to
     // say so -- which is the same shape of failure as a stale bus select. The
     // age is the only thing on this screen that can contradict them.
-    let _ = write!(uart, "power @{:02x}  poll {} ms  change {} mA  ",
-                   power::ADDRESS, power::INTERVAL_MS,
-                   power::CHANGE_UA / 1000);
+    let _ = write!(
+        uart,
+        "power @{:02x}  poll {} ms  change {} mA  ",
+        power::ADDRESS,
+        power::INTERVAL_MS,
+        power::CHANGE_UA / 1000
+    );
     match devices.power.age() {
         power::Age::Millis(ms) => {
             let _ = writeln!(uart, "sampled {} ms ago", ms);
         }
         power::Age::Older => {
-            let _ = writeln!(uart, "sampled OVER {} s ago -- the poll has \
-                                    stopped", power::AGE_LIMIT_MS / 1000);
+            let _ = writeln!(
+                uart,
+                "sampled OVER {} s ago -- the poll has \
+                                    stopped",
+                power::AGE_LIMIT_MS / 1000
+            );
         }
         power::Age::Never => {
             let _ = writeln!(uart, "NO SAMPLE YET");
@@ -999,8 +1122,13 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
                 let floor = devices.power.floor(channel);
                 // A space, not a stamp: this is the reply to a typed command.
                 // The indent it produces is the one the rows always had.
-                power::report(uart, &" ", channel, &sample.readings[channel],
-                              sample.readings[channel].current_ua.unsigned_abs() >= floor);
+                power::report(
+                    uart,
+                    &" ",
+                    channel,
+                    &sample.readings[channel],
+                    sample.readings[channel].current_ua.unsigned_abs() >= floor,
+                );
             }
         }
         // No rails printed, rather than zeros or dashes. Two polls after reset
@@ -1008,20 +1136,30 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         // read what it latched -- and inventing a row per channel would put four
         // measurements on screen that were never measured.
         None => {
-            let _ = writeln!(uart, "  the 50 ms poll has not completed one yet; \
-                                    last phase {}", devices.power.phase());
+            let _ = writeln!(
+                uart,
+                "  the 50 ms poll has not completed one yet; \
+                                    last phase {}",
+                devices.power.phase()
+            );
         }
     }
 
     for channel in 0..4 {
-        let _ = writeln!(uart, "  {:8} floor {}.{:03} mA",
-                         power::PORTS[channel],
-                         devices.power.floor(channel) / 1000,
-                         devices.power.floor(channel) % 1000);
+        let _ = writeln!(
+            uart,
+            "  {:8} floor {}.{:03} mA",
+            power::PORTS[channel],
+            devices.power.floor(channel) / 1000,
+            devices.power.floor(channel) % 1000
+        );
     }
     if devices.power.failures > 0 {
-        let _ = writeln!(uart, "  {} failed poll(s) since the last good one",
-                         devices.power.failures);
+        let _ = writeln!(
+            uart,
+            "  {} failed poll(s) since the last good one",
+            devices.power.failures
+        );
     }
 }
 
@@ -1055,8 +1193,7 @@ fn board_phy(uart: &mut Uart) {
                 Some(value)
             }
             Err(error) => {
-                let _ = writeln!(uart, "  {:16} {:02x}  {}", name, address,
-                                 error.as_str());
+                let _ = writeln!(uart, "  {:16} {:02x}  {}", name, address, error.as_str());
                 None
             }
         }
@@ -1066,12 +1203,18 @@ fn board_phy(uart: &mut Uart) {
     let _ = writeln!(uart, "  register         at  value");
 
     let vendor_low = read(uart, "vendor id low", ulpi::usb3343::REG_VENDOR_ID_LOW);
-    let vendor_high = read(uart, "vendor id high",
-                           ulpi::usb3343::REG_VENDOR_ID_LOW + 1);
+    let vendor_high = read(uart, "vendor id high", ulpi::usb3343::REG_VENDOR_ID_LOW + 1);
     let product_low = read(uart, "product id low", ulpi::usb3343::REG_PRODUCT_ID_LOW);
-    let product_high = read(uart, "product id high",
-                            ulpi::usb3343::REG_PRODUCT_ID_LOW + 1);
-    read(uart, "function control", ulpi::usb3343::REG_FUNCTION_CONTROL);
+    let product_high = read(
+        uart,
+        "product id high",
+        ulpi::usb3343::REG_PRODUCT_ID_LOW + 1,
+    );
+    read(
+        uart,
+        "function control",
+        ulpi::usb3343::REG_FUNCTION_CONTROL,
+    );
     read(uart, "otg control", ulpi::usb3343::REG_OTG_CONTROL);
     let debug = read(uart, "debug", ulpi::usb3343::REG_DEBUG);
 
@@ -1079,14 +1222,17 @@ fn board_phy(uart: &mut Uart) {
         (Some(vl), Some(vh), Some(pl), Some(ph)) => {
             let vendor = ((vh as u16) << 8) | vl as u16;
             let product = ((ph as u16) << 8) | pl as u16;
-            let _ = writeln!(uart, "  vendor {:04x} product {:04x} {}",
-                             vendor, product,
-                             if vendor == ulpi::usb3343::VENDOR_ID
-                                 && product == ulpi::usb3343::PRODUCT_ID {
-                                 "USB3343 ok"
-                             } else {
-                                 "NOT a USB3343"
-                             });
+            let _ = writeln!(
+                uart,
+                "  vendor {:04x} product {:04x} {}",
+                vendor,
+                product,
+                if vendor == ulpi::usb3343::VENDOR_ID && product == ulpi::usb3343::PRODUCT_ID {
+                    "USB3343 ok"
+                } else {
+                    "NOT a USB3343"
+                }
+            );
         }
         _ => {
             let _ = writeln!(uart, "  identity incomplete; the PHY did not answer");
@@ -1098,8 +1244,7 @@ fn board_phy(uart: &mut Uart) {
         // LineState is D+ in bit 0 and D- in bit 1, straight from the receiver.
         // With nothing plugged into TARGET both are low, which is SE0 -- so `00`
         // here is the expected reading on an idle port and not a fault.
-        let _ = writeln!(uart, "  linestate dp {} dm {}", debug & 1,
-                         (debug >> 1) & 1);
+        let _ = writeln!(uart, "  linestate dp {} dm {}", debug & 1, (debug >> 1) & 1);
     }
 
     // The walking bit. Eight patterns, each with exactly one bit set, so every
@@ -1124,9 +1269,16 @@ fn board_phy(uart: &mut Uart) {
     if failed {
         let _ = writeln!(uart, "  scratch walk did not complete");
     } else {
-        let _ = writeln!(uart, "  scratch walk {:02x}  {}", lines_ok,
-                         if lines_ok == 0xff { "all 8 data lines ok" }
-                         else { "A DATA LINE IS STUCK" });
+        let _ = writeln!(
+            uart,
+            "  scratch walk {:02x}  {}",
+            lines_ok,
+            if lines_ok == 0xff {
+                "all 8 data lines ok"
+            } else {
+                "A DATA LINE IS STUCK"
+            }
+        );
     }
 }
 
@@ -1164,34 +1316,54 @@ fn board_sideband(uart: &mut Uart, rest: &[u8]) {
     let value = link.read();
     let _ = writeln!(uart, "sideband @{:08x} ctrl {:02x}", board.sideband, value);
     if value & sideband::OWN != 0 {
-        let _ = writeln!(uart, "  reporting state {} events {} error {} \
+        let _ = writeln!(
+            uart,
+            "  reporting state {} events {} error {} \
                                 reconfigured {}",
-                         value & sideband::STATE_MASK,
-                         (value & sideband::EVENTS != 0) as u8,
-                         (value & sideband::ERROR != 0) as u8,
-                         (value & sideband::RECONFIGURED != 0) as u8);
+            value & sideband::STATE_MASK,
+            (value & sideband::EVENTS != 0) as u8,
+            (value & sideband::ERROR != 0) as u8,
+            (value & sideband::RECONFIGURED != 0) as u8
+        );
     } else {
         // Do NOT decode the payload bits here. With OWN clear they are stored
         // and ignored, and printing them under a heading that reads like a
         // report would say the link is announcing something it is not -- which
         // is the one lie a diagnostic for a debug link must not tell.
-        let _ = writeln!(uart, "  reporting the fabric's own state; these bits \
-                                are stored and unused");
+        let _ = writeln!(
+            uart,
+            "  reporting the fabric's own state; these bits \
+                                are stored and unused"
+        );
     }
     // Printed either way: neither the port request nor the byte channel is part
     // of the payload, so OWN says nothing about them.
-    let _ = writeln!(uart, "  CONTROL port {}",
-                     if value & sideband::ADVERTISE != 0 { "REQUESTED" }
-                     else { "not requested" });
+    let _ = writeln!(
+        uart,
+        "  CONTROL port {}",
+        if value & sideband::ADVERTISE != 0 {
+            "REQUESTED"
+        } else {
+            "not requested"
+        }
+    );
     let (received, count) = link.received();
-    let _ = writeln!(uart, "  message out {:02x}, in {:02x} after {} byte(s)",
-                     link.message(), received, count);
+    let _ = writeln!(
+        uart,
+        "  message out {:02x}, in {:02x} after {} byte(s)",
+        link.message(),
+        received,
+        count
+    );
 }
 
 fn sideband_usage(uart: &mut Uart) {
     let _ = writeln!(uart, "usage: sideband [ctrl [tx]]");
-    let _ = writeln!(uart, "  ctrl bit 7 takes the link from the fabric, \
-                            bit 5 asks for the CONTROL port");
+    let _ = writeln!(
+        uart,
+        "  ctrl bit 7 takes the link from the fabric, \
+                            bit 5 asks for the CONTROL port"
+    );
     let _ = writeln!(uart, "  tx   the byte a PING returns");
 }
 
@@ -1199,7 +1371,10 @@ fn sideband_usage(uart: &mut Uart) {
 /// compared against `b"on"` must not have one on either end.
 fn trim(text: &[u8]) -> &[u8] {
     let start = text.iter().position(|&b| b != b' ').unwrap_or(text.len());
-    let end = text.iter().rposition(|&b| b != b' ').map_or(start, |i| i + 1);
+    let end = text
+        .iter()
+        .rposition(|&b| b != b' ')
+        .map_or(start, |i| i + 1);
     &text[start..end]
 }
 
@@ -1322,7 +1497,11 @@ fn load(index: usize, uart: &mut Uart, len: u32) {
 
     let crc = crc.finish();
     hyperram::write_header(len, crc);
-    let _ = writeln!(uart, "staged {} bytes, crc {:08x}; rebooting", received, crc);
+    let _ = writeln!(
+        uart,
+        "staged {} bytes, crc {:08x}; rebooting",
+        received, crc
+    );
 
     // The bootloader takes it from here: it re-reads these bytes, checks this CRC
     // against what HyperRAM actually gives back, and jumps.
@@ -1372,7 +1551,11 @@ fn parse_hex(text: &[u8]) -> Option<u32> {
         value = value.checked_mul(16)?.checked_add(digit as u32)?;
         digits += 1;
     }
-    if digits == 0 { None } else { Some(value) }
+    if digits == 0 {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// There is nowhere to report a panic except the console, and no way to recover.
@@ -1404,12 +1587,16 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 
     if argument.is_empty() {
         let (control_in, aux_in) = vbus::inputs();
-        let _ = writeln!(uart, "vbus {:02x}  c{} a{} t{}  in c{} a{}",
-                         vbus::state(),
-                         vbus::is_closed(vbus::Source::Control) as u8,
-                         vbus::is_closed(vbus::Source::Aux) as u8,
-                         vbus::is_closed(vbus::Source::TargetC) as u8,
-                         control_in as u8, aux_in as u8);
+        let _ = writeln!(
+            uart,
+            "vbus {:02x}  c{} a{} t{}  in c{} a{}",
+            vbus::state(),
+            vbus::is_closed(vbus::Source::Control) as u8,
+            vbus::is_closed(vbus::Source::Aux) as u8,
+            vbus::is_closed(vbus::Source::TargetC) as u8,
+            control_in as u8,
+            aux_in as u8
+        );
         return;
     }
     if argument == "off" {
@@ -1436,7 +1623,9 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             return;
         }
         match vbus::charge_target_c(&devices.power) {
-            Ok(mv) => { let _ = writeln!(uart, "on {} mV", mv); }
+            Ok(mv) => {
+                let _ = writeln!(uart, "on {} mV", mv);
+            }
             Err(error) => {
                 let _ = fusb302::configure(bus, fusb302::Port::Target);
                 vbus_refusal(uart, error);
@@ -1447,16 +1636,23 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if let Some(which) = argument.strip_prefix("input").map(str::trim) {
         let ok = match which {
             "control" => vbus::prefer_control(&devices.power),
-            "both" => { vbus::allow_all_inputs(); true }
+            "both" => {
+                vbus::allow_all_inputs();
+                true
+            }
             _ => false,
         };
         let _ = writeln!(uart, "input {}", if ok { "set" } else { "no" });
         return;
     }
     match vbus::Source::parse(argument) {
-        None => { let _ = writeln!(uart, "?"); }
+        None => {
+            let _ = writeln!(uart, "?");
+        }
         Some(source) => match vbus::close(source, &devices.power) {
-            Ok(mv) => { let _ = writeln!(uart, "on {} mV", mv); }
+            Ok(mv) => {
+                let _ = writeln!(uart, "on {} mV", mv);
+            }
             Err(error) => vbus_refusal(uart, error),
         },
     }
@@ -1464,8 +1660,14 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 
 fn vbus_refusal(uart: &mut Uart, refusal: vbus::Refusal) {
     match refusal {
-        vbus::Refusal::TooHigh(mv) => { let _ = writeln!(uart, "no: {} mV high", mv); }
-        vbus::Refusal::TooLow(mv) => { let _ = writeln!(uart, "no: {} mV low", mv); }
-        vbus::Refusal::Stale => { let _ = writeln!(uart, "no: stale"); }
+        vbus::Refusal::TooHigh(mv) => {
+            let _ = writeln!(uart, "no: {} mV high", mv);
+        }
+        vbus::Refusal::TooLow(mv) => {
+            let _ = writeln!(uart, "no: {} mV low", mv);
+        }
+        vbus::Refusal::Stale => {
+            let _ = writeln!(uart, "no: stale");
+        }
     }
 }

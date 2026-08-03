@@ -45,7 +45,7 @@
 //! Interrupt-driven rather than polled because RTIC cannot be layered on a polled
 //! main loop; see `docs/decisions.md`.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 use riscv::interrupt::Interrupt;
 
@@ -296,8 +296,7 @@ static PENDING_TYPE_C: AtomicU32 = AtomicU32::new(0);
 /// Interrupts deferred per port, for the `irq` command. Separately visible is
 /// the diagnostic half of the per-device sources: a TARGET count that climbs
 /// while AUX stays at zero is a fact about the board, not about the firmware.
-static TYPE_C_INTERRUPTS: [AtomicU32; MAX_TYPE_C] =
-    [const { AtomicU32::new(0) }; MAX_TYPE_C];
+static TYPE_C_INTERRUPTS: [AtomicU32; MAX_TYPE_C] = [const { AtomicU32::new(0) }; MAX_TYPE_C];
 
 /// Which Type-C ports have fired and not yet been serviced, as a bitmap.
 ///

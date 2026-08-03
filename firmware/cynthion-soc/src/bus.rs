@@ -71,8 +71,10 @@ mod i2c;
 mod mux;
 
 pub use i2c::{pac195x, Error};
-pub use mux::{BUS_AUX_C, BUS_POWER_MONITOR, BUS_TARGET_C, LINE_AUX_FAULT,
-              LINE_AUX_INT, LINE_TARGET_FAULT, LINE_TARGET_INT};
+pub use mux::{
+    BUS_AUX_C, BUS_POWER_MONITOR, BUS_TARGET_C, LINE_AUX_FAULT, LINE_AUX_INT, LINE_TARGET_FAULT,
+    LINE_TARGET_INT,
+};
 
 use i2c::I2c;
 use mux::Mux;
@@ -117,22 +119,37 @@ impl Bus {
     }
 
     /// Read `out.len()` bytes from a device's registers, starting at `register`.
-    pub fn read_registers(&mut self, bus: u8, address: u8, register: u8,
-                          out: &mut [u8]) -> Result<(), Error> {
+    pub fn read_registers(
+        &mut self,
+        bus: u8,
+        address: u8,
+        register: u8,
+        out: &mut [u8],
+    ) -> Result<(), Error> {
         self.mux.select(bus);
         self.i2c.read_registers(address, register, out)
     }
 
     /// Write one byte to a device register.
-    pub fn write_register(&mut self, bus: u8, address: u8, register: u8,
-                          value: u8) -> Result<(), Error> {
+    pub fn write_register(
+        &mut self,
+        bus: u8,
+        address: u8,
+        register: u8,
+        value: u8,
+    ) -> Result<(), Error> {
         self.mux.select(bus);
         self.i2c.write_register(address, register, value)
     }
 
     /// Write consecutive bytes to one device register pointer.
-    pub fn write_registers(&mut self, bus: u8, address: u8, register: u8,
-                           values: &[u8]) -> Result<(), Error> {
+    pub fn write_registers(
+        &mut self,
+        bus: u8,
+        address: u8,
+        register: u8,
+        values: &[u8],
+    ) -> Result<(), Error> {
         self.mux.select(bus);
         self.i2c.write_registers(address, register, values)
     }
@@ -141,9 +158,7 @@ impl Bus {
     ///
     /// The PAC1954's REFRESH is one of these. See [`i2c::I2c::send_byte`] for why
     /// it cannot be written as a register write with a dummy payload.
-    pub fn send_byte(&mut self, bus: u8, address: u8, byte: u8)
-        -> Result<(), Error>
-    {
+    pub fn send_byte(&mut self, bus: u8, address: u8, byte: u8) -> Result<(), Error> {
         self.mux.select(bus);
         self.i2c.send_byte(address, byte)
     }

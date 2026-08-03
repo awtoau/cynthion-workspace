@@ -207,9 +207,7 @@ pub const SUB_TYPE_C: u32 = 0x01;
 /// (`push_tag_samples`), and this firmware counts bytes. An out-of-range
 /// argument then corrupts only its own field instead of the tag above it.
 pub const fn code(tag: u32, subsystem: u32, number: u32) -> u32 {
-    ((tag & 0xff) << TAG_SHIFT)
-        | ((subsystem & 0xff) << SUBSYSTEM_SHIFT)
-        | (number & 0xffff)
+    ((tag & 0xff) << TAG_SHIFT) | ((subsystem & 0xff) << SUBSYSTEM_SHIFT) | (number & 0xffff)
 }
 
 /// The payload tag a code declares.
@@ -290,12 +288,23 @@ const TAG_SAMPLES: [(u32, u64); 10] = [
     (code(TAG_U8, SUB_RING, TAG_SAMPLE + TAG_U8), 0xa5),
     (code(TAG_U16, SUB_RING, TAG_SAMPLE + TAG_U16), 0xbeef),
     (code(TAG_U32, SUB_RING, TAG_SAMPLE + TAG_U32), 0xdead_beef),
-    (code(TAG_U64, SUB_RING, TAG_SAMPLE + TAG_U64), 0x0123_4567_89ab_cdef),
+    (
+        code(TAG_U64, SUB_RING, TAG_SAMPLE + TAG_U64),
+        0x0123_4567_89ab_cdef,
+    ),
     (code(TAG_F32, SUB_RING, TAG_SAMPLE + TAG_F32), 0x3f80_0000),
-    (code(TAG_F64, SUB_RING, TAG_SAMPLE + TAG_F64), 0x3ff0_0000_0000_0000),
-    (code(TAG_BYTES8, SUB_RING, TAG_SAMPLE + TAG_BYTES8),
-     bytes8(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77])),
-    (code(TAG_ASCII8, SUB_RING, TAG_SAMPLE + TAG_ASCII8), ascii8(b"cynthion")),
+    (
+        code(TAG_F64, SUB_RING, TAG_SAMPLE + TAG_F64),
+        0x3ff0_0000_0000_0000,
+    ),
+    (
+        code(TAG_BYTES8, SUB_RING, TAG_SAMPLE + TAG_BYTES8),
+        bytes8(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]),
+    ),
+    (
+        code(TAG_ASCII8, SUB_RING, TAG_SAMPLE + TAG_ASCII8),
+        ascii8(b"cynthion"),
+    ),
     // A code that lies: `u16` over a value needing seventeen bits. The tag is a
     // promise, and the point of this row is that a broken one is printed rather
     // than truncated into a wrong number that looks right. An unexercised guard
@@ -393,7 +402,9 @@ pub fn push(code: u32, value: u64) -> bool {
         }
         SLOTS[head].code.store(code, Ordering::Relaxed);
         SLOTS[head].lo.store(value as u32, Ordering::Relaxed);
-        SLOTS[head].hi.store((value >> 32) as u32, Ordering::Relaxed);
+        SLOTS[head]
+            .hi
+            .store((value >> 32) as u32, Ordering::Relaxed);
         // HERE, not in `drain`. One atomic load of a counter the tick handler
         // maintains -- no MMIO, no division, nothing that could make a push
         // expensive enough to think about.
@@ -417,8 +428,12 @@ pub fn push(code: u32, value: u64) -> bool {
 /// to have decided what tag the code declares.
 #[macro_export]
 macro_rules! log_from_irq {
-    ($code:expr) => { $crate::events::push($code, 0) };
-    ($code:expr, $value:expr) => { $crate::events::push($code, $value as u64) };
+    ($code:expr) => {
+        $crate::events::push($code, 0)
+    };
+    ($code:expr, $value:expr) => {
+        $crate::events::push($code, $value as u64)
+    };
 }
 
 /// How many records have been dropped since boot.
@@ -492,10 +507,13 @@ pub fn drain(uart: &mut Uart) {
         // describes is the moment the loss was noticed; `from` is when the
         // first lost record would have been stamped, which is where the gap in
         // the column begins.
-        crate::log!(uart, "irq log: {} event(s) LOST from {} -- the ring filled \
+        crate::log!(
+            uart,
+            "irq log: {} event(s) LOST from {} -- the ring filled \
                            faster than the shell drained it",
-                    dropped - reported,
-                    log::Stamp::at(LOST_FROM.load(Ordering::Relaxed)));
+            dropped - reported,
+            log::Stamp::at(LOST_FROM.load(Ordering::Relaxed))
+        );
     }
 }
 
@@ -520,7 +538,10 @@ struct Payload {
 
 impl Payload {
     const fn of(code: u32, value: u64) -> Payload {
-        Payload { tag: tag_of(code), value }
+        Payload {
+            tag: tag_of(code),
+            value,
+        }
     }
 
     /// How many bits the tag promises. 64 for anything wider or unknown.
@@ -538,7 +559,11 @@ impl Payload {
 impl fmt::Display for Payload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bits = self.bits();
-        let kept = if bits >= 64 { self.value } else { self.value & ((1u64 << bits) - 1) };
+        let kept = if bits >= 64 {
+            self.value
+        } else {
+            self.value & ((1u64 << bits) - 1)
+        };
 
         // One hex digit per four bits, so `u8 a5` and `u64 0123456789abcdef`
         // come out of the same `write!`. A runtime width rather than four
@@ -583,7 +608,11 @@ impl fmt::Display for Payload {
         // silently truncated payload is a wrong number that looks right, which
         // is the worst thing a log line can be.
         if kept != self.value {
-            write!(f, " !! declared {} bits, value is {:016x}", bits, self.value)?;
+            write!(
+                f,
+                " !! declared {} bits, value is {:016x}",
+                bits, self.value
+            )?;
         }
         Ok(())
     }
@@ -607,20 +636,29 @@ impl fmt::Display for Payload {
 fn report(uart: &mut Uart, at: log::Stamp, code: u32, value: u64) {
     match code {
         TYPE_C_INT => {
-            crate::log_at!(uart, at, "type-c: int asserted, port {:02x}",
-                           value as u8);
+            crate::log_at!(uart, at, "type-c: int asserted, port {:02x}", value as u8);
         }
         TYPE_C_FAULT => {
-            crate::log_at!(uart, at, "type-c: FAULT asserted, controllers {:02x}",
-                           value as u8);
+            crate::log_at!(
+                uart,
+                at,
+                "type-c: FAULT asserted, controllers {:02x}",
+                value as u8
+            );
         }
         TEST => {
             crate::log_at!(uart, at, "log test {}", value as u32);
         }
         _ => {
-            crate::log_at!(uart, at, "irq log: code {:02x}.{:02x}.{:04x} {}",
-                           tag_of(code), subsystem_of(code), number_of(code),
-                           Payload::of(code, value));
+            crate::log_at!(
+                uart,
+                at,
+                "irq log: code {:02x}.{:02x}.{:04x} {}",
+                tag_of(code),
+                subsystem_of(code),
+                number_of(code),
+                Payload::of(code, value)
+            );
         }
     }
 }

@@ -88,17 +88,27 @@ pub unsafe extern "C" fn _payload_entry() -> ! {
 pub extern "C" fn payload_main() -> ! {
     let mut console = Console;
 
-    let _ = writeln!(console, "\r\npayload running at {:08x}",
-                     _payload_entry as *const () as usize);
+    let _ = writeln!(
+        console,
+        "\r\npayload running at {:08x}",
+        _payload_entry as *const () as usize
+    );
 
     // Prove this is genuinely executing loaded code rather than something stale: read
     // flash, which only works if the memory map and caches are live.
     let word = unsafe { read_volatile(FLASH_BASE as *const u32) };
-    let _ = writeln!(console, "flash @0 {:08x} {}", word,
-                     if word == 0x6150_00ff { "ok" } else { "BAD" });
+    let _ = writeln!(
+        console,
+        "flash @0 {:08x} {}",
+        word,
+        if word == 0x6150_00ff { "ok" } else { "BAD" }
+    );
 
-    let _ = writeln!(console, "payload done; \
-                              `./scripts/soc_jtag_stage.py --clear` for the shell");
+    let _ = writeln!(
+        console,
+        "payload done; \
+                              `./scripts/soc_jtag_stage.py --clear` for the shell"
+    );
 
     // No return: the bootloader jumped here, and there is no shell left underneath to
     // return to -- this image is where that one was. A reset comes straight back here,

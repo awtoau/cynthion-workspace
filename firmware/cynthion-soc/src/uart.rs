@@ -37,7 +37,7 @@
 //! cleared by draining the FIFO. See `src/irq.rs`.
 
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 use crate::target;
 use crate::MAX_CONSOLES;
@@ -129,8 +129,7 @@ static ERRORS: [AtomicU8; MAX_CONSOLES] = [const { AtomicU8::new(0) }; MAX_CONSO
 /// How many LSR reads have seen an error bit, per console, since boot. Never
 /// reset, and printed by the `irq` shell command: a count that keeps climbing is
 /// a line that keeps losing bytes, which a coalesced bitmask alone would hide.
-static ERROR_READS: [AtomicU32; MAX_CONSOLES] =
-    [const { AtomicU32::new(0) }; MAX_CONSOLES];
+static ERROR_READS: [AtomicU32; MAX_CONSOLES] = [const { AtomicU32::new(0) }; MAX_CONSOLES];
 
 /// Read LSR once, keeping the error bits the read destroyed.
 ///
@@ -190,13 +189,16 @@ pub fn report_errors(uart: &mut Uart) {
         let bits = take_errors(index);
         if bits != 0 {
             crate::metrics::busy();
-            crate::log!(uart,
+            crate::log!(
+                uart,
                 "uart {}: LSR {:02x}{}{} -- input lost before the CPU read it \
                  ({} so far)",
-                index, bits,
+                index,
+                bits,
                 if bits & LSR_OE != 0 { " overrun" } else { "" },
                 if bits & LSR_FE != 0 { " framing" } else { "" },
-                error_reads(index));
+                error_reads(index)
+            );
         }
         index += 1;
     }

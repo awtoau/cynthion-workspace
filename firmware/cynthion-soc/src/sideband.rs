@@ -77,8 +77,10 @@ impl Sideband {
     pub fn received(&self) -> (u8, u8) {
         // SAFETY: two reads of read-only CSRs in the uncached peripheral region.
         unsafe {
-            (read_volatile((self.base + RX) as *const u8),
-             read_volatile((self.base + RXCNT) as *const u8))
+            (
+                read_volatile((self.base + RX) as *const u8),
+                read_volatile((self.base + RXCNT) as *const u8),
+            )
         }
     }
 }

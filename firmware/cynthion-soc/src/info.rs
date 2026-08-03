@@ -187,11 +187,10 @@ pub mod gateware {
     /// FPGA-TN-02210 Table 4.3, code to junction temperature, biased by 58 so
     /// the whole table fits in bytes: -58 C is 0 and 132 C is 190.
     static DEGREES: [u8; 64] = [
-        0, 2, 4, 6, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 38,
-        48, 54, 58, 62, 68, 79, 80, 81, 82, 83, 84, 85, 86, 87, 98, 108,
-        118, 128, 134, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 153,
-        154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 174,
-        178, 182, 186, 190,
+        0, 2, 4, 6, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 28, 38, 48, 54, 58, 62, 68, 79, 80, 81,
+        82, 83, 84, 85, 86, 87, 98, 108, 118, 128, 134, 138, 139, 140, 141, 142, 143, 144, 145,
+        146, 147, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 174, 178,
+        182, 186, 190,
     ];
 
     /// The one in this build, or `None` on a target that is not a bitstream.
@@ -254,9 +253,7 @@ fn at(symbol: &u8) -> u32 {
 /// edit a label. `.rodata` made exactly that move and the label was not edited.
 fn write_region(uart: &mut Uart, address: u32) {
     match target::FLASH_WINDOW {
-        Some((base, size))
-            if (address as usize) >= base && (address as usize) < base + size =>
-        {
+        Some((base, size)) if (address as usize) >= base && (address as usize) < base + size => {
             // The flash OFFSET, because that is the number a person needs: it is
             // what `apollo flash-program --offset` was given and what a reflash
             // must be given again. The mapped address alone does not say it.
@@ -292,24 +289,44 @@ fn boot_status(uart: &mut Uart) {
     if word & 0xffff_ff00 != target::BOOT_STATUS_MARK {
         // No mark: the word is whatever block RAM initialised to. Reported as unknown
         // rather than decoded, because decoding it would invent an answer.
-        let _ = writeln!(uart, "         {:08x} at {:x}: no mark, nothing wrote a status",
-                         word, address);
+        let _ = writeln!(
+            uart,
+            "         {:08x} at {:x}: no mark, nothing wrote a status",
+            word, address
+        );
         return;
     }
 
     let code = (word & 0xff) as usize;
-    let text = target::BOOT_STATUS_TEXT.get(code).copied()
+    let text = target::BOOT_STATUS_TEXT
+        .get(code)
+        .copied()
         .unwrap_or("unknown code");
     let _ = writeln!(uart, "         {} ({})", text, code);
 }
 
 pub fn command(uart: &mut Uart) {
     let dirty = if build::GIT_DIRTY { "dirty" } else { "clean" };
-    let hash = if build::GIT_HASH.is_empty() { "no-git" } else { build::GIT_HASH };
-    let _ = writeln!(uart, "image    {} {}  {}  {}", hash, dirty,
-                     build::GIT_BRANCH, build::BUILT);
-    let _ = writeln!(uart, "tools    {}  {} {}", build::RUSTC, build::TARGET,
-                     build::PROFILE);
+    let hash = if build::GIT_HASH.is_empty() {
+        "no-git"
+    } else {
+        build::GIT_HASH
+    };
+    let _ = writeln!(
+        uart,
+        "image    {} {}  {}  {}",
+        hash,
+        dirty,
+        build::GIT_BRANCH,
+        build::BUILT
+    );
+    let _ = writeln!(
+        uart,
+        "tools    {}  {} {}",
+        build::RUSTC,
+        build::TARGET,
+        build::PROFILE
+    );
 
     // One row per section, each carrying the window it is actually in.
     //
@@ -319,10 +336,12 @@ pub fn command(uart: &mut Uart) {
     //
     // SAFETY: the linker's own symbols; only their addresses are taken.
     let sections = unsafe {
-        [("text",   at(&__stext),   at(&__etext) - at(&__stext)),
-         ("rodata", at(&__srodata), at(&__erodata) - at(&__srodata)),
-         ("data",   at(&__sdata),   at(&__edata) - at(&__sdata)),
-         ("bss",    at(&__sbss),    at(&__ebss) - at(&__sbss))]
+        [
+            ("text", at(&__stext), at(&__etext) - at(&__stext)),
+            ("rodata", at(&__srodata), at(&__erodata) - at(&__srodata)),
+            ("data", at(&__sdata), at(&__edata) - at(&__sdata)),
+            ("bss", at(&__sbss), at(&__ebss) - at(&__sbss)),
+        ]
     };
     for (index, (name, start, size)) in sections.iter().enumerate() {
         // The label on the first row only; the rest are continuations of it.
@@ -342,31 +361,46 @@ pub fn command(uart: &mut Uart) {
     // "54856 free of 4025876480" -- a number with no meaning, printed with the
     // same confidence as the correct one.
     let (free, total) = unsafe {
-        (at(&__sstack) - at(&__estack), at(&__sstack) - at(&_ram_start))
+        (
+            at(&__sstack) - at(&__estack),
+            at(&__sstack) - at(&_ram_start),
+        )
     };
     // "free" is what the stack grows into, so it is not all spare -- but it is
     // the number that says how much more firmware fits, which is the question
     // this half of block RAM keeps forcing. Both numbers are block RAM only, and
     // now say so: `.rodata` is counted in neither, which is the whole point of
     // having moved it and was invisible while the two lines sat together.
-    let _ = writeln!(uart, "         {} free of {} bram (stack grows down into it)",
-                     free, total);
+    let _ = writeln!(
+        uart,
+        "         {} free of {} bram (stack grows down into it)",
+        free, total
+    );
 
     if let Some((base, size)) = target::FLASH_WINDOW {
-        let _ = writeln!(uart, "flash    window {:08x}+{:x}, {}", base, size,
-                         if target::FLASH_CACHED {
-                             "cached"
-                         } else {
-                             // Worth spelling out: uncached is not a small
-                             // constant factor here, and nothing else on screen
-                             // would hint at it.
-                             "uncached (a full SPI transaction per load)"
-                         });
+        let _ = writeln!(
+            uart,
+            "flash    window {:08x}+{:x}, {}",
+            base,
+            size,
+            if target::FLASH_CACHED {
+                "cached"
+            } else {
+                // Worth spelling out: uncached is not a small
+                // constant factor here, and nothing else on screen
+                // would hint at it.
+                "uncached (a full SPI transaction per load)"
+            }
+        );
     }
 
     // SAFETY: an address-only read of a linker-defined absolute symbol.
-    let _ = write!(uart, "boot     reset vector {:08x}, image at {:08x} in ",
-                   unsafe { at(&_reset_vector) }, unsafe { at(&__stext) });
+    let _ = write!(
+        uart,
+        "boot     reset vector {:08x}, image at {:08x} in ",
+        unsafe { at(&_reset_vector) },
+        unsafe { at(&__stext) }
+    );
     write_region(uart, unsafe { at(&__stext) });
     let _ = writeln!(uart);
 
@@ -375,38 +409,68 @@ pub fn command(uart: &mut Uart) {
     let misa = csr!("misa");
     let _ = write!(uart, "cpu      misa {:08x} ", misa);
     write_isa(uart, misa);
-    let _ = writeln!(uart, "  vendor {:x} arch {:x} impl {:x} hart {}",
-                     csr!("mvendorid"), csr!("marchid"), csr!("mimpid"),
-                     csr!("mhartid"));
+    let _ = writeln!(
+        uart,
+        "  vendor {:x} arch {:x} impl {:x} hart {}",
+        csr!("mvendorid"),
+        csr!("marchid"),
+        csr!("mimpid"),
+        csr!("mhartid")
+    );
 
     let plic = plic::Plic::new(target::PLIC_BASE);
-    let _ = writeln!(uart, "trap     mstatus {:08x} mtvec {:08x}",
-                     csr!("mstatus"), csr!("mtvec"));
+    let _ = writeln!(
+        uart,
+        "trap     mstatus {:08x} mtvec {:08x}",
+        csr!("mstatus"),
+        csr!("mtvec")
+    );
     // Threshold and enables only. NOT the claim register -- reading that takes
     // an interrupt away from the handler and never completes it, which would
     // kill the console from a diagnostic. See `Plic::claim`.
-    let _ = writeln!(uart, "plic     @{:08x} threshold {} enabled {:08x}",
-                     target::PLIC_BASE, plic.threshold(), plic.enabled());
+    let _ = writeln!(
+        uart,
+        "plic     @{:08x} threshold {} enabled {:08x}",
+        target::PLIC_BASE,
+        plic.threshold(),
+        plic.enabled()
+    );
 
     match gateware::id() {
         None => {
-            let _ = writeln!(uart, "gateware none -- this target is not a \
-                                    bitstream");
+            let _ = writeln!(
+                uart,
+                "gateware none -- this target is not a \
+                                    bitstream"
+            );
         }
         Some(id) if !id.present() => {
             // Zeros here mean the window decoded to nothing, which is what a
             // bitstream built before this peripheral existed looks like.
-            let _ = writeln!(uart, "gateware magic {:08x}, want {:08x} -- this \
-                                    bitstream carries no id", id.magic,
-                             gateware::MAGIC);
+            let _ = writeln!(
+                uart,
+                "gateware magic {:08x}, want {:08x} -- this \
+                                    bitstream carries no id",
+                id.magic,
+                gateware::MAGIC
+            );
         }
         Some(id) => {
-            let _ = write!(uart, "gateware {:07x} {}  ", id.hash(),
-                           if id.dirty() { "dirty" } else { "clean" });
+            let _ = write!(
+                uart,
+                "gateware {:07x} {}  ",
+                id.hash(),
+                if id.dirty() { "dirty" } else { "clean" }
+            );
             write_built(uart, id.built);
-            let _ = writeln!(uart, "  sync {} usb {} Hz  cache {}x{}",
-                             id.sync_hz, id.usb_hz, id.cache_sets(),
-                             id.cache_ways());
+            let _ = writeln!(
+                uart,
+                "  sync {} usb {} Hz  cache {}x{}",
+                id.sync_hz,
+                id.usb_hz,
+                id.cache_sets(),
+                id.cache_ways()
+            );
 
             // The one thing the die itself will say. Not the chip's identity:
             // USERCODE, IDCODE and the TraceID are all reachable over JTAG and
@@ -414,30 +478,49 @@ pub fn command(uart: &mut Uart) {
             // is running on -- see the header of gateware_id.py.
             match id.celsius() {
                 Some((sign, degrees)) => {
-                    let _ = writeln!(uart, "         die {}{} C (dtr code {}, \
-                                            uncalibrated)", sign, degrees,
-                                     id.die & 0x3f);
+                    let _ = writeln!(
+                        uart,
+                        "         die {}{} C (dtr code {}, \
+                                            uncalibrated)",
+                        sign,
+                        degrees,
+                        id.die & 0x3f
+                    );
                 }
                 None if id.die & gateware::DIE_PRESENT == 0 => {
-                    let _ = writeln!(uart, "         die no readout in this \
-                                            bitstream");
+                    let _ = writeln!(
+                        uart,
+                        "         die no readout in this \
+                                            bitstream"
+                    );
                 }
                 None => {
-                    let _ = writeln!(uart, "         die conversion has not \
-                                            completed");
+                    let _ = writeln!(
+                        uart,
+                        "         die conversion has not \
+                                            completed"
+                    );
                 }
             }
 
             if id.git != build::GIT_WORD {
-                let _ = writeln!(uart, "         MISMATCH: this firmware was \
-                                        built from {} {}", hash, dirty);
+                let _ = writeln!(
+                    uart,
+                    "         MISMATCH: this firmware was \
+                                        built from {} {}",
+                    hash, dirty
+                );
             }
             if id.sync_hz != target::TIME_HZ {
                 // Every interval in this firmware is derived from TIME_HZ. A
                 // disagreement here means every one of them is wrong by the
                 // ratio, silently.
-                let _ = writeln!(uart, "         SYNC MISMATCH: firmware \
-                                        assumes {} Hz", target::TIME_HZ);
+                let _ = writeln!(
+                    uart,
+                    "         SYNC MISMATCH: firmware \
+                                        assumes {} Hz",
+                    target::TIME_HZ
+                );
             }
             if id.cpu & gateware::CPU_RDTIME == 0 {
                 // `src/clock.rs` is the only thing here that knows how much
@@ -448,8 +531,11 @@ pub fn command(uart: &mut Uart) {
                 // `zicntr`, and `zicntr` is what instantiates the plugin that
                 // decodes `mcycle` and `minstret` -- one flag, both CSRs, so
                 // one warning. See `src/metrics.rs`.
-                let _ = writeln!(uart, "         NO RDTIME: this core was not \
-                                        generated with the time counter");
+                let _ = writeln!(
+                    uart,
+                    "         NO RDTIME: this core was not \
+                                        generated with the time counter"
+                );
             }
             let generated = isa_from(id.cpu);
             if generated & !misa != 0 {
@@ -493,11 +579,15 @@ fn isa_from(cpu: u32) -> u32 {
 /// rather than alphabetically, because `rv32imac` is a string people recognise
 /// and `rv32acim` is not.
 fn write_isa(uart: &mut Uart, misa: u32) {
-    let _ = write!(uart, "rv{}", match misa >> 30 {
-        1 => "32",
-        2 => "64",
-        _ => "??",
-    });
+    let _ = write!(
+        uart,
+        "rv{}",
+        match misa >> 30 {
+            1 => "32",
+            2 => "64",
+            _ => "??",
+        }
+    );
     for letter in b"imafdqlcbjtpvnsuh" {
         if misa & (1 << (letter - b'a')) != 0 {
             uart.put(*letter);
@@ -514,11 +604,14 @@ fn write_isa(uart: &mut Uart, misa: u32) {
 /// built on one machine and read on another. The firmware's own timestamp
 /// beside it carries the builder's offset, which is why the two look different.
 fn write_built(uart: &mut Uart, built: u32) {
-    let _ = write!(uart, "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-                   2000 + (built >> 26),
-                   (built >> 22) & 0xf,
-                   (built >> 17) & 0x1f,
-                   (built >> 12) & 0x1f,
-                   (built >> 6) & 0x3f,
-                   built & 0x3f);
+    let _ = write!(
+        uart,
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        2000 + (built >> 26),
+        (built >> 22) & 0xf,
+        (built >> 17) & 0x1f,
+        (built >> 12) & 0x1f,
+        (built >> 6) & 0x3f,
+        built & 0x3f
+    );
 }

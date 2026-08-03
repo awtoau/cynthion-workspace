@@ -86,10 +86,7 @@ impl Plic {
         // PMA region on the SoC and a device on `virt`. Volatile because it is a
         // device.
         unsafe {
-            write_volatile(
-                self.reg(PRIORITY_BASE + 4 * source as usize),
-                priority,
-            );
+            write_volatile(self.reg(PRIORITY_BASE + 4 * source as usize), priority);
         }
     }
 

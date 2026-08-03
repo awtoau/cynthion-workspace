@@ -75,8 +75,13 @@ struct Report {
 }
 
 impl Report {
-    fn item(&mut self, uart: &mut Uart, name: &str, outcome: Outcome,
-            detail: core::fmt::Arguments) {
+    fn item(
+        &mut self,
+        uart: &mut Uart,
+        name: &str,
+        outcome: Outcome,
+        detail: core::fmt::Arguments,
+    ) {
         let label = match outcome {
             Outcome::Pass => {
                 self.passed += 1;
@@ -94,10 +99,13 @@ impl Report {
         let _ = writeln!(uart, "{:8} {}  {}", name, label, detail);
     }
 
-    fn ok(&mut self, uart: &mut Uart, name: &str, passed: bool,
-          detail: core::fmt::Arguments) {
-        self.item(uart, name,
-                  if passed { Outcome::Pass } else { Outcome::Fail }, detail);
+    fn ok(&mut self, uart: &mut Uart, name: &str, passed: bool, detail: core::fmt::Arguments) {
+        self.item(
+            uart,
+            name,
+            if passed { Outcome::Pass } else { Outcome::Fail },
+            detail,
+        );
     }
 }
 
@@ -108,7 +116,11 @@ fn opaque(value: u32) -> u32 {
 }
 
 pub fn command(uart: &mut Uart, power: &Monitor) {
-    let mut report = Report { passed: 0, failed: 0, skipped: 0 };
+    let mut report = Report {
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+    };
 
     alu(uart, &mut report);
     muldiv(uart, &mut report);
@@ -124,11 +136,17 @@ pub fn command(uart: &mut Uart, power: &Monitor) {
 
     let total = report.passed + report.failed;
     if report.failed == 0 {
-        let _ = writeln!(uart, "{} of {} ok, {} skipped", report.passed, total,
-                         report.skipped);
+        let _ = writeln!(
+            uart,
+            "{} of {} ok, {} skipped",
+            report.passed, total, report.skipped
+        );
     } else {
-        let _ = writeln!(uart, "{} of {} FAILED, {} skipped", report.failed,
-                         total, report.skipped);
+        let _ = writeln!(
+            uart,
+            "{} of {} FAILED, {} skipped",
+            report.failed, total, report.skipped
+        );
     }
 }
 
@@ -137,13 +155,23 @@ fn rails(uart: &mut Uart, report: &mut Report, monitor: &Monitor) {
     let age = monitor.age();
     let sample = match (age, monitor.latest()) {
         (Age::Never, _) | (_, None) => {
-            return report.item(uart, "rail", Outcome::Skip,
-                               format_args!("no PAC1954 sample yet"));
+            return report.item(
+                uart,
+                "rail",
+                Outcome::Skip,
+                format_args!("no PAC1954 sample yet"),
+            );
         }
         (Age::Older, Some(_)) => {
-            return report.item(uart, "rail", Outcome::Fail,
-                               format_args!("PAC1954 sample is over {} s old",
-                                            power::AGE_LIMIT_MS / 1000));
+            return report.item(
+                uart,
+                "rail",
+                Outcome::Fail,
+                format_args!(
+                    "PAC1954 sample is over {} s old",
+                    power::AGE_LIMIT_MS / 1000
+                ),
+            );
         }
         (Age::Millis(_), Some(sample)) => sample,
     };
@@ -157,29 +185,46 @@ fn rails(uart: &mut Uart, report: &mut Report, monitor: &Monitor) {
     }
 }
 
-fn rail_result(uart: &mut Uart, report: &mut Report, rail: Rail,
-               measured_mv: u32, age_ms: u32) {
+fn rail_result(uart: &mut Uart, report: &mut Report, rail: Rail, measured_mv: u32, age_ms: u32) {
     // An unpowered USB port is not a bad 5 V supply. vSafe0V's 0.8 V upper
     // bound separates that state from the sustained sag this check attributes.
     if measured_mv <= 800 {
-        return report.item(uart, "rail", Outcome::Skip,
-                           format_args!("{} {}.{:03} V unpowered; nominal {}.{:03} V \
+        return report.item(
+            uart,
+            "rail",
+            Outcome::Skip,
+            format_args!(
+                "{} {}.{:03} V unpowered; nominal {}.{:03} V \
                                         +/-{}.{:03} V when powered, sample {} ms old",
-                                        rail.name, measured_mv / 1000,
-                                        measured_mv % 1000,
-                                        rail.nominal_mv / 1000,
-                                        rail.nominal_mv % 1000,
-                                        rail.tolerance_mv / 1000,
-                                        rail.tolerance_mv % 1000, age_ms));
+                rail.name,
+                measured_mv / 1000,
+                measured_mv % 1000,
+                rail.nominal_mv / 1000,
+                rail.nominal_mv % 1000,
+                rail.tolerance_mv / 1000,
+                rail.tolerance_mv % 1000,
+                age_ms
+            ),
+        );
     }
 
-    report.ok(uart, "rail", power_rails::within_tolerance(rail, measured_mv),
-              format_args!("{} {}.{:03} V, nominal {}.{:03} V +/-{}.{:03} V, \
+    report.ok(
+        uart,
+        "rail",
+        power_rails::within_tolerance(rail, measured_mv),
+        format_args!(
+            "{} {}.{:03} V, nominal {}.{:03} V +/-{}.{:03} V, \
                             sample {} ms old",
-                           rail.name, measured_mv / 1000, measured_mv % 1000,
-                           rail.nominal_mv / 1000, rail.nominal_mv % 1000,
-                           rail.tolerance_mv / 1000, rail.tolerance_mv % 1000,
-                           age_ms));
+            rail.name,
+            measured_mv / 1000,
+            measured_mv % 1000,
+            rail.nominal_mv / 1000,
+            rail.nominal_mv % 1000,
+            rail.tolerance_mv / 1000,
+            rail.tolerance_mv % 1000,
+            age_ms
+        ),
+    );
 }
 
 /// The base integer set, on values the compiler cannot see.
@@ -198,8 +243,12 @@ fn alu(uart: &mut Uart, report: &mut Report) {
     ok &= ((b as i32) >> 4) == -0x6543_211;
     ok &= (b >> 4) == 0x09ab_cdef;
     ok &= (a < b) && ((a as i32) > (b as i32));
-    report.ok(uart, "alu", ok,
-              format_args!("add sub and or xor shift compare, signed and not"));
+    report.ok(
+        uart,
+        "alu",
+        ok,
+        format_args!("add sub and or xor shift compare, signed and not"),
+    );
 }
 
 /// `M`: the multiply and divide unit, including the signed corners.
@@ -229,8 +278,12 @@ fn muldiv(uart: &mut Uart, report: &mut Report) {
                          options(nomem, nostack));
     }
     ok &= quotient == 0xffff_ffff && remainder == a;
-    report.ok(uart, "muldiv", ok,
-              format_args!("mul mulh div rem, signed and by zero (M)"));
+    report.ok(
+        uart,
+        "muldiv",
+        ok,
+        format_args!("mul mulh div rem, signed and by zero (M)"),
+    );
 }
 
 /// `C`: three compressed instructions, and the six bytes they occupy.
@@ -261,8 +314,12 @@ fn compressed(uart: &mut Uart, report: &mut Report) {
             options(nomem, nostack));
     }
     let ok = value == 128 && length == 6;
-    report.ok(uart, "comp", ok,
-              format_args!("(5+3)<<4 = {} in {} bytes (C)", value, length));
+    report.ok(
+        uart,
+        "comp",
+        ok,
+        format_args!("(5+3)<<4 = {} in {} bytes (C)", value, length),
+    );
 }
 
 /// `A`: a reservation pair and three read-modify-write forms.
@@ -318,8 +375,12 @@ fn atomics(uart: &mut Uart, report: &mut Report) {
     ok &= swapped == 0x5a5a_5a5a && added == 0x0000_00f0 && ored == 0x0000_00ff;
     ok &= cell == 0x0000_ffff;
 
-    report.ok(uart, "atomic", ok,
-              format_args!("lr/sc amoswap amoadd amoor (A)"));
+    report.ok(
+        uart,
+        "atomic",
+        ok,
+        format_args!("lr/sc amoswap amoadd amoor (A)"),
+    );
 }
 
 /// Block RAM address and data lines, walked over what this image is not using.
@@ -403,9 +464,16 @@ fn ram(uart: &mut Uart, report: &mut Report) {
         }
     }
 
-    report.ok(uart, "ram", ok,
-              format_args!("free {:08x}+{:x}: {} addresses, \
-                            32 data lines", base, size, addresses));
+    report.ok(
+        uart,
+        "ram",
+        ok,
+        format_args!(
+            "free {:08x}+{:x}: {} addresses, \
+                            32 data lines",
+            base, size, addresses
+        ),
+    );
 }
 
 /// The `time` CSR advances, and by a plausible amount.
@@ -424,9 +492,12 @@ fn clock_advances(uart: &mut Uart, report: &mut Report) {
             break;
         }
     }
-    report.ok(uart, "clock", ticks > 0,
-              format_args!("time advanced {} ticks at {} Hz", ticks,
-                           target::TIME_HZ));
+    report.ok(
+        uart,
+        "clock",
+        ticks > 0,
+        format_args!("time advanced {} ticks at {} Hz", ticks, target::TIME_HZ),
+    );
 }
 
 /// Every 16550 answers on its scratch register.
@@ -441,20 +512,30 @@ fn consoles(uart: &mut Uart, report: &mut Report) {
         let present = crate::scratch_responds(base);
         // The name is built without an allocator, so the index goes in the
         // detail rather than the label.
-        report.ok(uart, "uart", present,
-                  format_args!("console {} at {:08x} answers on scratch",
-                               index, base));
+        report.ok(
+            uart,
+            "uart",
+            present,
+            format_args!("console {} at {:08x} answers on scratch", index, base),
+        );
     }
 }
 
 /// The build-id window answers with its magic.
 fn gateware(uart: &mut Uart, report: &mut Report) {
     match info::gateware::id() {
-        None => report.item(uart, "gateware", Outcome::Skip,
-                            format_args!("this target is not a bitstream")),
-        Some(id) => report.ok(uart, "gateware", id.present(),
-                              format_args!("magic {:08x}, want {:08x}",
-                                           id.magic, info::gateware::MAGIC)),
+        None => report.item(
+            uart,
+            "gateware",
+            Outcome::Skip,
+            format_args!("this target is not a bitstream"),
+        ),
+        Some(id) => report.ok(
+            uart,
+            "gateware",
+            id.present(),
+            format_args!("magic {:08x}, want {:08x}", id.magic, info::gateware::MAGIC),
+        ),
     }
 }
 
@@ -465,35 +546,47 @@ fn gateware(uart: &mut Uart, report: &mut Report) {
 /// writing anything here a way to lose the board.
 fn flash(uart: &mut Uart, report: &mut Report) {
     let word = target::flash_word(0);
-    report.ok(uart, "flash", word == 0x6150_00ff,
-              format_args!("@0 {:08x}, the bitstream header", word));
+    report.ok(
+        uart,
+        "flash",
+        word == 0x6150_00ff,
+        format_args!("@0 {:08x}, the bitstream header", word),
+    );
 }
 
 /// The TARGET PHY names itself.
 fn phy(uart: &mut Uart, report: &mut Report) {
     let board = match target::BOARD {
         Some(board) => board,
-        None => return report.item(uart, "phy", Outcome::Skip,
-                                   format_args!("no board on this target")),
+        None => {
+            return report.item(
+                uart,
+                "phy",
+                Outcome::Skip,
+                format_args!("no board on this target"),
+            )
+        }
     };
     let phy = ulpi::Ulpi::new(board.ulpi);
     let read = |address: u8| phy.read(address).ok();
-    match (read(ulpi::usb3343::REG_VENDOR_ID_LOW),
-           read(ulpi::usb3343::REG_VENDOR_ID_LOW + 1),
-           read(ulpi::usb3343::REG_PRODUCT_ID_LOW),
-           read(ulpi::usb3343::REG_PRODUCT_ID_LOW + 1)) {
+    match (
+        read(ulpi::usb3343::REG_VENDOR_ID_LOW),
+        read(ulpi::usb3343::REG_VENDOR_ID_LOW + 1),
+        read(ulpi::usb3343::REG_PRODUCT_ID_LOW),
+        read(ulpi::usb3343::REG_PRODUCT_ID_LOW + 1),
+    ) {
         (Some(vl), Some(vh), Some(pl), Some(ph)) => {
             let vendor = ((vh as u16) << 8) | vl as u16;
             let product = ((ph as u16) << 8) | pl as u16;
-            report.ok(uart, "phy",
-                      vendor == ulpi::usb3343::VENDOR_ID
-                          && product == ulpi::usb3343::PRODUCT_ID,
-                      format_args!("vendor {:04x} product {:04x}", vendor,
-                                   product));
+            report.ok(
+                uart,
+                "phy",
+                vendor == ulpi::usb3343::VENDOR_ID && product == ulpi::usb3343::PRODUCT_ID,
+                format_args!("vendor {:04x} product {:04x}", vendor, product),
+            );
         }
         // Not "answered wrongly": a PHY that is not there never releases `dir`
         // and the gateware's timeout fires instead.
-        _ => report.ok(uart, "phy", false,
-                       format_args!("the PHY did not answer")),
+        _ => report.ok(uart, "phy", false, format_args!("the PHY did not answer")),
     }
 }

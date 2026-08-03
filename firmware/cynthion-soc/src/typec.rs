@@ -109,22 +109,28 @@ impl Controllers {
                     Ok(state) => {
                         self.state[index(port)] = Some(state);
                         self.confirmed[index(port)] = Some(clock::now());
-                        crate::log!(uart,
+                        crate::log!(
+                            uart,
                             "type-c {}: device {:02x}, vbus {}, {}",
-                            port.name(), state.device_id,
+                            port.name(),
+                            state.device_id,
                             if state.vbus { "present" } else { "absent" },
-                            state.cc());
+                            state.cc()
+                        );
                     }
                     Err(error) => {
                         all = false;
-                        crate::log!(uart, "type-c {}: {}", port.name(),
-                                    error.as_str());
+                        crate::log!(uart, "type-c {}: {}", port.name(), error.as_str());
                     }
                 },
                 Err(error) => {
                     all = false;
-                    crate::log!(uart, "type-c {}: configure failed: {}",
-                                port.name(), error.as_str());
+                    crate::log!(
+                        uart,
+                        "type-c {}: configure failed: {}",
+                        port.name(),
+                        error.as_str()
+                    );
                 }
             }
         }
@@ -163,8 +169,12 @@ impl Controllers {
                 // Stamped, like every line nobody asked for: this is the
                 // deferred service path, reached from the main loop rather
                 // than from a typed command.
-                crate::log!(uart, "type-c {}: could not clear: {}",
-                            port.name(), error.as_str());
+                crate::log!(
+                    uart,
+                    "type-c {}: could not clear: {}",
+                    port.name(),
+                    error.as_str()
+                );
             } else {
                 match fusb302::state(bus, port) {
                     Ok(state) => {
@@ -177,8 +187,7 @@ impl Controllers {
                         self.announce(uart, port, state);
                     }
                     Err(error) => {
-                        crate::log!(uart, "type-c {}: {}", port.name(),
-                                    error.as_str());
+                        crate::log!(uart, "type-c {}: {}", port.name(), error.as_str());
                     }
                 }
             }
@@ -214,8 +223,12 @@ impl Controllers {
             let faulting = fusb302::faulting(lines, port);
             if faulting != self.fault[index(port)] {
                 self.fault[index(port)] = faulting;
-                crate::log!(uart, "type-c {}: fault {}", port.name(),
-                            if faulting { "ASSERTED" } else { "cleared" });
+                crate::log!(
+                    uart,
+                    "type-c {}: fault {}",
+                    port.name(),
+                    if faulting { "ASSERTED" } else { "cleared" }
+                );
             }
         }
     }
@@ -249,9 +262,13 @@ impl Controllers {
             return;
         }
         self.state[index(port)] = Some(state);
-        crate::log!(uart, "type-c {}: vbus {}, {}", port.name(),
-                    if state.vbus { "present" } else { "absent" },
-                    state.cc());
+        crate::log!(
+            uart,
+            "type-c {}: vbus {}, {}",
+            port.name(),
+            if state.vbus { "present" } else { "absent" },
+            state.cc()
+        );
     }
 }
 
@@ -263,8 +280,7 @@ fn index(port: Port) -> usize {
 }
 
 /// `typec`, or `typec init` to configure both controllers again.
-pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
-               bus: &mut Bus) {
+pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus: &mut Bus) {
     let rest = crate::trim(rest);
     if rest == b"init" {
         controllers.start(uart, bus);
@@ -277,10 +293,17 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
 
     let lines = bus.lines();
 
-    let _ = writeln!(uart, "type-c @{:08x}  lines {:02x}  {}",
-                     bus.mux_base(), lines,
-                     if controllers.configured { "configured" }
-                     else { "NOT configured" });
+    let _ = writeln!(
+        uart,
+        "type-c @{:08x}  lines {:02x}  {}",
+        bus.mux_base(),
+        lines,
+        if controllers.configured {
+            "configured"
+        } else {
+            "NOT configured"
+        }
+    );
 
     for port in Port::ALL {
         // Read live rather than reporting the cached state. The cache exists to
@@ -293,15 +316,18 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
         // ones -- have exactly one reader, and it is `service` above.
         match fusb302::state(bus, port) {
             Ok(state) => {
-                let _ = writeln!(uart,
+                let _ = writeln!(
+                    uart,
                     "  {:6} device {:02x}  vbus {:7}  {:22}  int {}  fault {}  \
                      serviced {}",
-                    port.name(), state.device_id,
+                    port.name(),
+                    state.device_id,
                     if state.vbus { "present" } else { "absent" },
                     state.cc(),
                     fusb302::asserting(lines, port) as u8,
                     fusb302::faulting(lines, port) as u8,
-                    controllers.serviced[index(port)]);
+                    controllers.serviced[index(port)]
+                );
                 if state.device_id != 0x91 {
                     // 0x91 is version 9 revision 1, FUSB302B revision B, which
                     // is what both parts on this board read. Anything else means
@@ -309,8 +335,7 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers,
                     // controller, or nothing at all -- and an absent device NACKs
                     // rather than returning a wrong id, so this is the narrower
                     // failure of the two.
-                    let _ = writeln!(uart, "  {:6} device id is not 0x91",
-                                     port.name());
+                    let _ = writeln!(uart, "  {:6} device id is not 0x91", port.name());
                 }
             }
             Err(error) => {
