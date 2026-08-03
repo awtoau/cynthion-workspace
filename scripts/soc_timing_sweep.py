@@ -75,6 +75,23 @@ SYNC_CLOCK = "$glbnet$clk"
 # timing-driven router; the default router1 is faster and worse.
 NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
 
+# What `--allow-fail` adds.
+#
+# nextpnr exits 1 when the routed design misses its constraint, which is the
+# right default for a build: a bitstream that closes at 56 MHz has no business
+# being loaded onto a board clocked at 60. But it makes the one measurement that
+# matters most impossible to take -- a configuration that fails timing produces
+# no number at all, so "it failed once" cannot be told apart from "it fails, and
+# by this much, every time".
+#
+# With this, the run completes, the frequency is recorded, and the summary says
+# how many runs were under the constraint. The resulting bitstream is not to be
+# loaded; the number is what is wanted.
+ALLOW_FAIL_OPT = "--timing-allow-fail"
+
+# The constraint the SoC is built against, for reporting which runs met it.
+TARGET_MHZ = 60.0
+
 # Which cell types are worth reporting. The rest of nextpnr's utilisation table
 # is either fixed by the board (IO, PLL, JTAGG) or unused here.
 UTIL_CELLS = ("TRELLIS_COMB", "TRELLIS_FF", "TRELLIS_RAMW", "DP16KD",
@@ -145,9 +162,10 @@ def parse_tim(text):
     return {"fmax": fmax, "util": util, "path": path}
 
 
-def build_once(firmware, handle):
+def build_once(firmware, handle, allow_fail=False):
     """One full synthesis + place-and-route. Returns the parsed report."""
-    env = dict(os.environ, AMARANTH_nextpnr_opts=NEXTPNR_OPTS)
+    opts = NEXTPNR_OPTS + (f" {ALLOW_FAIL_OPT}" if allow_fail else "")
+    env = dict(os.environ, AMARANTH_nextpnr_opts=opts)
     # The bootloader too, so the bitstream measured is the bitstream that ships.
     #
     # It cannot move Fmax -- block RAM init is DP16KD INITVAL and no part of it is
@@ -171,7 +189,7 @@ def build_once(firmware, handle):
     return parse_tim((BUILD / "top.tim").read_text())
 
 
-def sweep(label, runs, firmware):
+def sweep(label, runs, firmware, allow_fail=False):
     RESULTS.mkdir(parents=True, exist_ok=True)
     LOG.parent.mkdir(parents=True, exist_ok=True)
     store = RESULTS / f"{label}.json"
@@ -183,7 +201,7 @@ def sweep(label, runs, firmware):
 
         for index in range(runs):
             log(f"run {index + 1}/{runs}", handle)
-            report = build_once(firmware, handle)
+            report = build_once(firmware, handle, allow_fail)
             if report is None:
                 return 1
 
@@ -219,11 +237,19 @@ def summarise(labels, handle):
         if not values:
             continue
 
-        margin = (statistics.median(values) - 60.0) / 60.0 * 100
+        margin = (statistics.median(values) - TARGET_MHZ) / TARGET_MHZ * 100
         log(f"\n{label}: {len(values)} runs, sync clock", handle)
         log(f"  min {values[0]:.2f}  median {statistics.median(values):.2f}  "
-            f"max {values[-1]:.2f} MHz   (median margin over 60 MHz: {margin:+.1f}%)",
-            handle)
+            f"max {values[-1]:.2f} MHz   (median margin over {TARGET_MHZ:.0f} MHz: "
+            f"{margin:+.1f}%)", handle)
+
+        # Said out loud rather than left to the reader: a median above the
+        # constraint with runs below it is a configuration that builds only
+        # sometimes, which is not the same as one that builds.
+        met = sum(1 for value in values if value >= TARGET_MHZ)
+        if met < len(values):
+            log(f"  *** {len(values) - met} of {len(values)} runs MISSED "
+                f"{TARGET_MHZ:.0f} MHz -- those bitstreams must not be loaded", handle)
 
         last = history[-1]
         util = ", ".join(f"{cell} {last['util'].get(cell, 0)}"
@@ -248,6 +274,9 @@ def main():
     parser.add_argument("--firmware", type=Path, default=ROOT / "tmp" / "rust_fw.bin")
     parser.add_argument("--compare", nargs="+", metavar="LABEL",
                         help="report labels already recorded, build nothing")
+    parser.add_argument("--allow-fail", action="store_true",
+                        help="record the frequency even when it misses the "
+                             "constraint; the bitstream is NOT loadable")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -274,7 +303,7 @@ def main():
         print(f"no firmware at {args.firmware}; build it with ./scripts/riscv_firmware.py")
         return 1
 
-    return sweep(args.label, args.runs, args.firmware)
+    return sweep(args.label, args.runs, args.firmware, args.allow_fail)
 
 
 if __name__ == "__main__":
