@@ -177,7 +177,7 @@ The capacity question is answered and boring. What the work leaves behind that i
 ## The measurement itself
 
 Asked because the ECP5 on this board carries more usable fabric than its marking implies
-(`ecp5-test/fabric/FABRIC_TEST.md`, pluribus#98). See #109.
+(#116, pluribus#98). See #109.
 
 The boundary was **bracketed on hardware**, not assumed:
 

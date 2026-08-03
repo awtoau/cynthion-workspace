@@ -10,7 +10,7 @@ Builds, flashes and verifies the SoC at a series of clock frequencies.
 The SoC is constrained to 60 MHz and already meets 76.71 MHz, so 60 is a constraint rather
 than a limit. The die is also a 25F rather than the 12F it is marked as -- 20,143 LUT4s
 placed and computed correctly at 86.43 MHz, and the two parts share a speed grade
-(`ecp5-test/fabric/FABRIC_TEST.md`, pluribus#98). Both say there is headroom; neither says
+(#116, pluribus#98). Both say there is headroom; neither says
 how much, which is what this measures.
 
 ## What counts as passing

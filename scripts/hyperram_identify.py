@@ -14,7 +14,7 @@ from the chip rather than from a datasheet search.
 
 The second question is #109's: whether the die behind the marking is larger than the
 marking implies, as the ECP5 on this board turned out to be
-(`ecp5-test/fabric/FABRIC_TEST.md`).
+(#116).
 
 ## What it does to the board
 

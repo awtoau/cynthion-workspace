@@ -13,7 +13,7 @@ CABGA256, speed grade 8.
 | part reported | `LFE5U-12F` | same |
 | LUT4s advertised for a 12F | 12,288 | datasheet |
 | LUT4s on the die | 24,288 | a 25F; what `nextpnr-ecp5 --12k` reports |
-| **LUT4s placed, routed and verified** | **20,143** (82.9%) | [`../../ecp5-test/fabric/FABRIC_TEST.md`](../../ecp5-test/fabric/FABRIC_TEST.md) |
+| **LUT4s placed, routed and verified** | **20,143** (82.9%) | [#116](https://github.com/awtoau/cynthion-workspace/issues/116) |
 | beyond the marking | **7,855 LUT4s** | same |
 | timing | 86.43 MHz achieved against a 60 MHz constraint | nextpnr |
 | correctness | **22,026 rounds, zero mismatches** (2,002 + 20,024 across two runs) | fabric test |

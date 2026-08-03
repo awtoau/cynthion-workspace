@@ -8,7 +8,7 @@
 Probes the W25Q32 for storage above its marked 4 MiB capacity.
 
 The ECP5 on this board places and routes 20,143 of 24,288 LUT4s on a part marked 12F
-(`ecp5-test/fabric/FABRIC_TEST.md`), so the marking is not the whole story there. SPI
+(#116), so the marking is not the whole story there. SPI
 NOR is a family where the same question is cheap to ask: **capacity is a single byte of
 the JEDEC ID**. `EF 40 16` decodes as Winbond / type 0x40 / 2^22 bytes, and whether the
 die behind that byte stops at 4 MiB is a separate question from what the byte says.

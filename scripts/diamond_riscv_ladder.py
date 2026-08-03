@@ -24,7 +24,7 @@ a tighter constraint and 92 MHz is where nextpnr stopped improving rather than a
 wall in the silicon.  Diamond's timing-driven placer is generally stronger on
 marginal designs, and the part has headroom -- the 12F-marked die is a 25F, and
 20,143 LUT4s computed correctly at 86.43 MHz on it
-(`ecp5-test/fabric/FABRIC_TEST.md`, pluribus#98) while this SoC uses 7,249.
+(#116, pluribus#98) while this SoC uses 7,249.
 
 ## Which comparison is actually available
 

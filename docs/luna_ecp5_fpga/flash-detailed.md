@@ -6,7 +6,7 @@ what it supports, and how much of it there actually is.
 ## Capacity: exactly 4 MiB, verified three ways
 
 Asked because the ECP5 on this board carries more usable silicon than its marking
-suggests (`ecp5-test/fabric/FABRIC_TEST.md`, pluribus#98), and SPI NOR capacity is
+suggests (#116, pluribus#98), and SPI NOR capacity is
 literally one byte of the JEDEC ID -- so the question was cheap. See #109.
 
 **The flash is what it says it is.** `scripts/flash_capacity_probe.py`, entirely

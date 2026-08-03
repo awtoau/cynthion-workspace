@@ -494,7 +494,7 @@ FLASH_DIVISOR = 0
 #
 # 60 is a constraint here rather than a limit: the design already meets 72-91 MHz by
 # nextpnr's own estimate, and the die is a 25F sharing a speed grade with the 12F it is
-# marked as (ecp5-test/fabric/FABRIC_TEST.md). See #110.
+# marked as (#116). See #110.
 SYNC_MHZ = 60
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a

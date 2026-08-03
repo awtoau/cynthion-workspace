@@ -13,7 +13,7 @@ HyperRAM part actually is.** `docs/luna_ecp5_fpga/hyperram-speed.md` characteris
 a density. ID0 answers that directly -- it encodes manufacturer, die generation and row
 address bit count, from which capacity follows.
 
-The second question follows the ECP5 result (`ecp5-test/fabric/FABRIC_TEST.md`), where a
+The second question follows the ECP5 result (cynthion-workspace#116), where a
 part marked 12F placed 20,143 of 24,288 LUT4s. HyperRAM is a family where the same
 question is worth asking: densities share a package and a pinout, so a smaller die in a
 larger address map is a real possibility rather than a fanciful one.
