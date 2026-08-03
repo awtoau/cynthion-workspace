@@ -100,6 +100,7 @@ mod sideband;
 mod target;
 mod timer;
 mod typec;
+mod vbus;
 mod uart;
 mod ulpi;
 
@@ -569,6 +570,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
+        b"vbus" => vbus_command(uart, rest, &devices.power),
         // One record per payload tag, so the drain-time decoding of every tag is
         // exercised on the shipping build. A guard arm rather than a branch
         // inside the one below, so the two cases do not share an indent: this
@@ -1350,4 +1352,48 @@ fn panic(info: &PanicInfo) -> ! {
     let mut uart = primary();
     let _ = writeln!(uart, "\n*** PANIC: {}", info);
     loop {}
+}
+
+/// `vbus` -- pass host power through to a target, or report the switches.
+///
+/// Terse on purpose. Every string here is `.rodata` in a 63 KiB image whose
+/// stack is whatever is left above `.bss`, and a chatty command in this firmware
+/// is paid for in stack depth -- see the ASSERT in `memory.x`, which exists
+/// because this exact command overran it.
+fn vbus_command(uart: &mut Uart, rest: &[u8], monitor: &power::Monitor) {
+    let argument = core::str::from_utf8(rest).unwrap_or("").trim();
+
+    if argument.is_empty() {
+        let (control_in, aux_in) = vbus::inputs();
+        let _ = writeln!(uart, "vbus {:02x}  c{} a{} t{}  in c{} a{}",
+                         vbus::state(),
+                         vbus::is_closed(vbus::Source::Control) as u8,
+                         vbus::is_closed(vbus::Source::Aux) as u8,
+                         vbus::is_closed(vbus::Source::TargetC) as u8,
+                         control_in as u8, aux_in as u8);
+        return;
+    }
+    if argument == "off" {
+        vbus::open_all();
+        let _ = writeln!(uart, "open");
+        return;
+    }
+    if let Some(which) = argument.strip_prefix("input").map(str::trim) {
+        let ok = match which {
+            "control" => vbus::prefer_control(monitor),
+            "both" => { vbus::allow_all_inputs(); true }
+            _ => false,
+        };
+        let _ = writeln!(uart, "input {}", if ok { "set" } else { "no" });
+        return;
+    }
+    match vbus::Source::parse(argument) {
+        None => { let _ = writeln!(uart, "?"); }
+        Some(source) => match vbus::close(source, monitor) {
+            Ok(mv) => { let _ = writeln!(uart, "on {} mV", mv); }
+            Err(vbus::Refusal::TooHigh(mv)) => { let _ = writeln!(uart, "no: {} mV high", mv); }
+            Err(vbus::Refusal::TooLow(mv)) => { let _ = writeln!(uart, "no: {} mV low", mv); }
+            Err(vbus::Refusal::Stale(_)) => { let _ = writeln!(uart, "no: stale"); }
+        },
+    }
 }

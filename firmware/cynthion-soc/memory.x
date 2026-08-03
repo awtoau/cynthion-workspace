@@ -108,3 +108,29 @@ SECTIONS
 {
     /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) }
 }
+
+/* The stack must actually fit, and nothing checked that until it did not.
+ *
+ * The stack starts at the top of this region and grows DOWN into whatever is
+ * left above .bss. That is not a reserved area -- it is a remainder -- so every
+ * byte of .text, .rodata or .bss takes one from it, silently, until the two
+ * meet.
+ *
+ * When they met, the symptom was not a link error. It was `RINGS` in .bss being
+ * overwritten by stack frames, so the receive ring's head and tail came back as
+ * stack ADDRESSES and the firmware panicked with `index out of bounds: the len
+ * is 256 but the index is 64016`. Measured at the time: 396 bytes of stack.
+ *
+ * 8 KiB is a floor, not a measurement of what this firmware needs -- riscv-rt
+ * gives no stack-usage figure and nothing here computes one. It is chosen to be
+ * comfortably more than the deepest call chain the shell has (formatting into a
+ * UART inside a command inside the main loop) and to fail long before the ring
+ * corruption does. Raise it if a real measurement ever says so; do not lower it
+ * to make a build fit.
+ */
+_min_stack = 8K;
+ASSERT(_stack_start - _min_stack > __ebss,
+       "IMAGE TOO BIG: .bss reaches within _min_stack of the stack top. The
+        stack grows down into .bss and will corrupt it at runtime rather than
+        failing here. Shrink .text/.rodata/.bss, or move something out of this
+        image.")

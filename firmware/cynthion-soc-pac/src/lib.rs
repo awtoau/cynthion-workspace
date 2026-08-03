@@ -109,6 +109,15 @@ impl core::fmt::Debug for BoardI2cMux {
 }
 #[doc = "board/i2c_mux: 2 registers at 0xf0000620"]
 pub mod board_i2c_mux;
+#[doc = "board/vbus: 1 register at 0xf0000624"]
+pub type BoardVbus = crate::Periph<board_vbus::RegisterBlock, 0xf000_0624>;
+impl core::fmt::Debug for BoardVbus {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("BoardVbus").finish()
+    }
+}
+#[doc = "board/vbus: 1 register at 0xf0000624"]
+pub mod board_vbus;
 #[doc = "board/gateware: 7 registers at 0xf0000640"]
 pub type BoardGateware = crate::Periph<board_gateware::RegisterBlock, 0xf000_0640>;
 impl core::fmt::Debug for BoardGateware {
@@ -163,6 +172,8 @@ pub struct Peripherals {
     pub board_ulpi: BoardUlpi,
     #[doc = "BOARD_I2C_MUX"]
     pub board_i2c_mux: BoardI2cMux,
+    #[doc = "BOARD_VBUS"]
+    pub board_vbus: BoardVbus,
     #[doc = "BOARD_GATEWARE"]
     pub board_gateware: BoardGateware,
     #[doc = "PLIC"]
@@ -202,6 +213,7 @@ impl Peripherals {
             board_sideband: BoardSideband::steal(),
             board_ulpi: BoardUlpi::steal(),
             board_i2c_mux: BoardI2cMux::steal(),
+            board_vbus: BoardVbus::steal(),
             board_gateware: BoardGateware::steal(),
             plic: Plic::steal(),
             clint: Clint::steal(),

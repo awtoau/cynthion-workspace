@@ -1535,6 +1535,71 @@
       </registers>
     </peripheral>
     <peripheral>
+      <name>BOARD_VBUS</name>
+      <description>board/vbus: 1 register at 0xf0000624</description>
+      <baseAddress>0xF0000624</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x2</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>CTRL</name>
+          <description>BOARD_VBUS.CTRL, 8 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xF8</resetMask>
+          <fields>
+            <field>
+              <name>RESERVED</name>
+              <description>reserved [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TARGET_C</name>
+              <description>target_c [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>CONTROL</name>
+              <description>control [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>AUX</name>
+              <description>aux [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>DISCHARGE</name>
+              <description>discharge [6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>ENABLE</name>
+              <description>enable [7]</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
       <name>BOARD_GATEWARE</name>
       <description>board/gateware: 7 registers at 0xf0000640</description>
       <baseAddress>0xF0000640</baseAddress>

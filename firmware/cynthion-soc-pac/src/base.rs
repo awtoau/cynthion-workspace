@@ -89,6 +89,11 @@ pub const BOARD_I2C_MUX_TARGET_IRQ: u32 = 4;
 /// PLIC source number wired to BOARD_I2C_MUX_AUX.
 pub const BOARD_I2C_MUX_AUX_IRQ: u32 = 5;
 
+/// board/vbus: 1 register at 0xf0000624
+pub const BOARD_VBUS: usize = 0xf0000624;
+/// Size of the BOARD_VBUS window, in bytes.
+pub const BOARD_VBUS_SIZE: usize = 0x00000002;
+
 /// board/gateware: 7 registers at 0xf0000640
 pub const BOARD_GATEWARE: usize = 0xf0000640;
 /// Size of the BOARD_GATEWARE window, in bytes.

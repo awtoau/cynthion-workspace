@@ -105,6 +105,7 @@ from vexii_clint import Clint
 from serial_line import SerialLine
 from i2c_master import I2CMaster, prescale_for
 from sideband_csr import SidebandControl
+from vbus_csr import VbusControl
 from gateware_id import GatewareId
 from ulpi_window import UlpiRegisters
 from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
@@ -209,6 +210,7 @@ APOLLO_UART_BASE = 0xf0000500
 #   +0x18  sideband   4 bytes  sideband_csr.SidebandControl
 #   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
 #   +0x20  i2c_mux    2 bytes  i2c_mux.I2CBusMux
+#   +0x24  vbus       1 byte   vbus_csr.VbusControl
 #   +0x40  gateware  32 bytes  gateware_id.GatewareId
 #
 # The sub-addresses are the peripherals' natural sizes and each window is
@@ -228,6 +230,7 @@ I2C_BASE       = BOARD_BASE + 0x10
 SIDEBAND_BASE  = BOARD_BASE + 0x18
 ULPI_BASE      = BOARD_BASE + 0x1c
 I2C_MUX_BASE   = BOARD_BASE + 0x20
+VBUS_BASE      = BOARD_BASE + 0x24
 GATEWARE_BASE  = BOARD_BASE + 0x40
 
 # What is on each GPIO pin.
@@ -623,6 +626,7 @@ class HelloSoC(Elaboratable):
 
         m.submodules.i2c = i2c = I2CMaster()
         m.submodules.sideband_ctrl = sideband_ctrl = SidebandControl()
+        m.submodules.vbus_ctrl = vbus_ctrl = VbusControl()
 
         # The ULPI register window on TARGET_PHY, and only on TARGET_PHY.
         #
@@ -659,6 +663,8 @@ class HelloSoC(Elaboratable):
                       name="ulpi")
         board_csr.add(i2c_mux.bus,       addr=I2C_MUX_BASE  - BOARD_BASE,
                       name="i2c_mux")
+        board_csr.add(vbus_ctrl.bus,     addr=VBUS_BASE     - BOARD_BASE,
+                      name="vbus")
         board_csr.add(gateware_id.bus,   addr=GATEWARE_BASE - BOARD_BASE,
                       name="gateware")
 
@@ -1286,6 +1292,26 @@ class HelloSoC(Elaboratable):
         # asserting.
         type_c_target = platform.request("target_type_c", 0)
         type_c_aux = platform.request("aux_type_c", 0)
+
+        # The VBUS distribution switches. Active high, and open out of reset
+        # because `VbusControl.enable` clears -- see vbus_csr.py for why the gate
+        # is combinational rather than a latched copy.
+        #
+        # `control_vbus_in_en` and `aux_vbus_in_en` are deliberately NOT
+        # requested. They are the board's own input shutoff on the two ports that
+        # power it, backed by hardware overvoltage protection above 5.5 V (D17, a
+        # 5.6 V zener). Nothing in this SoC has a reason to command a power input
+        # closed, and an undriven output is one this design cannot get wrong.
+        m.d.comb += [
+            platform.request("target_c_vbus_en", 0).o
+                .eq(vbus_ctrl.target_c_vbus_en),
+            platform.request("control_vbus_en", 0).o
+                .eq(vbus_ctrl.control_vbus_en),
+            platform.request("aux_vbus_en", 0).o
+                .eq(vbus_ctrl.aux_vbus_en),
+            platform.request("target_a_discharge", 0).o
+                .eq(vbus_ctrl.target_a_discharge),
+        ]
 
         # PWRDN is active low on the pad. The GPIO block drives it only in
         # push-pull mode, so the reset state is a 0 here, a 1 on the pad, and a
