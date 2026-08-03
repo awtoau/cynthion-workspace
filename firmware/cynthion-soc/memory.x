@@ -1,10 +1,8 @@
 /* Cynthion r1.4 VexiiRiscv SoC memory map.
  *
- * Block RAM only, deliberately. The SoC does have flash memory-mapped at 0x10000000
- * with exe=1 so the I-cache can fetch from it, and moondancer's own linker script puts
- * .text there -- but code under test must not execute from the thing it is measuring.
- * Executing from flash while benchmarking flash times instruction fetch contending
- * with the reads, not the flash.
+ * Stage one keeps executable and writable sections in block RAM, but reads .rodata
+ * from flash. Flash offset 0 holds the FPGA configuration; 0xb0000 is the established
+ * Moondancer firmware offset and leaves that image intact.
  *
  * Sizes must match ecp5-test/riscv/vexii_hello_soc.py: RAM_BASE, RAM_SIZE, IMAGE_ORIGIN.
  *
@@ -27,22 +25,17 @@
  * 32 KiB; the shell reached 36,514 bytes against 32,768 and stopped linking. Now the
  * growing image gets 63 KiB and the resident one changes rarely.
  *
- * | region | origin | length | contents                                         |
- * |--------|--------|--------|--------------------------------------------------|
- * | BOOT   | 0x0000 | 1 KiB  | firmware/cynthion-boot, and its stack            |
- * | RAM    | 0x0400 | 63 KiB | this image: .text, .rodata, .data, .bss, stack   |
+ * | region | origin     | length   | contents                              |
+ * |--------|------------|----------|---------------------------------------|
+ * | BOOT   | 0x00000000 | 1 KiB    | cynthion-boot, and its stack          |
+ * | RAM    | 0x00000400 | 63 KiB   | .text, .data, .bss, stack             |
+ * | FLASH  | 0x100b0000 | 3392 KiB | .rodata                               |
  *
- * The bitstream initialises all 64 KiB, so one build carries both: the bootloader at
- * 0x0 and this shell at 0x400. A board with nothing staged therefore comes up on the
- * image the bitstream placed, which is a fallback that cannot be missing.
+ * The bitstream initialises block RAM only. It can carry the bootloader at 0x0 and the
+ * shell's RAM segment at 0x400, but the flash segment must be programmed separately.
  *
- * An image arrives in HyperRAM first -- over the console with `load`, or over JTAG with
- * `scripts/soc_jtag_stage.py` while the CPU is held in reset -- and only the bootloader
- * moves it from there into block RAM. That indirection is the architecture and not an
- * accident of the implementation: block RAM cannot stage its own replacement, because
- * this shell is executing out of it while the bytes arrive, and HyperRAM is an external
- * part that survives the reset in between. `src/hyperram.rs` holds the header layout
- * both ends agree on, and is compiled into the bootloader as well as into this crate.
+ * HyperRAM staging still replaces only the block-RAM image. Its flat image format has
+ * no way to install the flash segment, so `.rodata` must already be present in flash.
  *
  * Images are NOT position-independent and do not need to be: they are linked for the
  * image origin, a fixed address we choose. Position-independent code would only buy
@@ -50,14 +43,15 @@
  */
 MEMORY
 {
-    RAM : ORIGIN = 0x00000400, LENGTH = 63K
+    RAM   : ORIGIN = 0x00000400, LENGTH = 63K
+    FLASH : ORIGIN = 0x100B0000, LENGTH = 0x350000
 }
 
 /* The stack, at the top of block RAM.
  *
  * riscv-rt defaults _stack_start to the end of REGION_STACK, which is this. Nothing
  * lives above it now that the payload slot is gone -- an image IS the upper region --
- * so the stack gets everything between .bss and 0x10000, currently about 25 KiB.
+ * so the stack gets everything between .bss and 0x10000.
  */
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
@@ -70,9 +64,9 @@ _stack_start = ORIGIN(RAM) + LENGTH(RAM);
  */
 _reset_vector = 0x00000000;
 
-/* riscv-rt 0.18 region aliases. All in RAM for the reason above. */
+/* Stage one moves only immutable data; every other runtime section stays in RAM. */
 REGION_ALIAS("REGION_TEXT",   RAM);
-REGION_ALIAS("REGION_RODATA", RAM);
+REGION_ALIAS("REGION_RODATA", FLASH);
 REGION_ALIAS("REGION_DATA",   RAM);
 REGION_ALIAS("REGION_BSS",    RAM);
 REGION_ALIAS("REGION_HEAP",   RAM);
@@ -94,9 +88,7 @@ _stext = ORIGIN(REGION_TEXT);
  * `compiler_builtins` rlibs, which is why `-C force-unwind-tables=no` on this crate
  * does not remove it.
  *
- * riscv-rt's link.x places it in REGION_RODATA, so it is 1892 bytes of the region this
- * image gets -- and it comes out of the stack, because the stack is whatever is left
- * between .bss and _stack_start.
+ * riscv-rt's link.x places it in REGION_RODATA, so it follows `.rodata` to flash.
  *
  * A debugger loses nothing: `debug = true` in Cargo.toml emits DWARF `.debug_frame`,
  * which is not loaded and is what gdb uses here anyway.
@@ -113,8 +105,7 @@ SECTIONS
  *
  * The stack starts at the top of this region and grows DOWN into whatever is
  * left above .bss. That is not a reserved area -- it is a remainder -- so every
- * byte of .text, .rodata or .bss takes one from it, silently, until the two
- * meet.
+ * byte of .text or .bss takes one from it, silently, until the two meet.
  *
  * When they met, the symptom was not a link error. It was `RINGS` in .bss being
  * overwritten by stack frames, so the receive ring's head and tail came back as
@@ -129,8 +120,8 @@ SECTIONS
  * to make a build fit.
  */
 _min_stack = 8K;
-ASSERT(_stack_start - _min_stack > __ebss,
+ASSERT(__ebss < ORIGIN(RAM) + LENGTH(RAM) - _min_stack,
        "IMAGE TOO BIG: .bss reaches within _min_stack of the stack top. The
         stack grows down into .bss and will corrupt it at runtime rather than
-        failing here. Shrink .text/.rodata/.bss, or move something out of this
+        failing here. Shrink .text/.bss, or move something out of this
         image.")
