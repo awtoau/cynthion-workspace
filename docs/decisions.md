@@ -62,22 +62,93 @@ Chosen for the standard privileged interface, the region-declared uncached path,
 the debug module. The interrupt consequence is decision 7.
 
 **Area and timing, like for like** — `scripts/cpu_matrix.py`, log in `tmp/logs/cpu_matrix.log`
-(2026-07-29), core plus block RAM only:
+(2026-08-03), core plus block RAM only:
 
-| variant | LUT4 | FF | BRAM | Fmax | closes 60 MHz |
-|---|---|---|---|---|---|
-| VexRiscv `cynthion` | 4739 | 1683 | 5 | 64.9 MHz | yes |
-| VexRiscv `cynthion+jtag` | 5410 | 1832 | 5 | 58.4 MHz | no |
-| VexRiscv `imac+dcache` | 4476 | 1712 | 7 | 55.9 MHz | no |
-| VexRiscv `imc` | 3934 | 1452 | 3 | 47.4 MHz | no |
-| VexiiRiscv base | 3497 | 1548 | 0 | synth only | |
-| VexiiRiscv +rva | 3490 | 1557 | 0 | synth only | |
-| VexiiRiscv +caches | 3870 | 2171 | 6 | synth only | |
-| VexiiRiscv moondancer-like | 4126 | 2256 | 6 | synth only | |
+| variant | LUT4 | LUTRAM | COMB | FF | BRAM | Fmax | closes 60 MHz |
+|---|---|---|---|---|---|---|---|
+| VexRiscv `cynthion` | 4736 | 64 | 4736 | 1683 | 5 | 62.0 MHz | yes |
+| VexRiscv `cynthion+jtag` | 5410 | 64 | 5410 | 1832 | 5 | 58.7 MHz | no |
+| VexRiscv `imac+dcache` | 4564 | 40 | 4564 | 1712 | 7 | 53.7 MHz | no |
+| VexRiscv `imc` | 3857 | 32 | 3857 | 1452 | 3 | 56.8 MHz | no |
+| VexiiRiscv base | 3497 | 49 | 4182 | 1705 | 0 | 84.0 MHz | yes |
+| VexiiRiscv +supervisor | 3825 | 49 | 4217 | 1757 | 0 | 87.8 MHz | yes |
+| VexiiRiscv +rva | 3490 | 49 | 4208 | 1715 | 0 | 86.8 MHz | yes |
+| VexiiRiscv +caches | 3870 | 100 | 4900 | 2374 | 6 | 91.5 MHz | yes |
+| VexiiRiscv moondancer-like | 4126 | 100 | 5294 | 2460 | 6 | 84.4 MHz | yes |
+
+Three columns rather than one, because one is misleading. **LUT4** is yosys' cell count
+and is what the earlier version of this table reported. **LUTRAM** is `TRELLIS_DPR16X4`,
+which is *not* in the LUT4 figure and is where a TLB lands — an MMU read on LUT4 alone
+understates itself by half. **COMB** is nextpnr's packed-slice count for the same design,
+which includes both, and is the only column in the same unit as a whole-SoC utilisation
+report. The die has 24288 slices and 56 block RAMs.
+
+Fmax for the VexiiRiscv rows is new: the core is placed inside a four-pin timing harness
+(a shift chain into every input, registers and a two-stage XOR tree out of every output),
+because a bare core has ~535 port bits against the package's 197 pins and could not be
+placed at all — which is why these rows read "synth only" before. The harness is
+validated by `soc-cpu` below: 72.7 MHz in the harness against **72.40 MHz** for the whole
+SoC on the board's own build, i.e. the core is the SoC's critical path and the harness
+finds the same one. FF counts are higher than the version of this table published on
+2026-07-29 because they are now taken from yosys' whole-design total rather than from the
+top module's own section, which excluded submodules; LUT4 is unchanged.
 
 Caveats stated in the log itself: BRAM counts are low because a CPU with no firmware
 never drives its bus and synthesis prunes the attached memory; CoreMark is not in this
 matrix.
+
+#### 1a. 64-bit and an MMU: what Linux would cost
+
+Linux with Rust drivers forces rv64 with an MMU — stock distributions are rv64gc, glibc
+has no upstream rv32 port, and Rust for Linux has no rv32 target — so the only question is
+resources. One variable per row, from the `+caches` row above:
+
+| variant | LUT4 | LUTRAM | COMB | FF | BRAM | Fmax | closes 60 MHz |
+|---|---|---|---|---|---|---|---|
+| rv32 +caches (above) | 3870 | 100 | 4900 | 2374 | 6 | 91.5 MHz | yes |
+| rv32 +caches +supervisor, no MMU | 4123 | 100 | 5073 | 2426 | 6 | 90.0 MHz | yes |
+| rv32 +caches +supervisor +MMU (sv32) | 4979 | 220 | 6626 | 2761 | 6 | 71.4 MHz | yes |
+| rv64 +caches | 6182 | 148 | 7760 | 3835 | 10 | 81.2 MHz | yes |
+| rv64 +caches +supervisor, no MMU | 6257 | 148 | 8135 | 3887 | 10 | 70.0 MHz | yes |
+| rv64 +caches +supervisor +MMU (sv39) | 7529 | 300 | 10437 | 4390 | 10 | 76.8 MHz | yes |
+| rv64 +MMU +rva | 8110 | 300 | 10948 | 4540 | 10 | 68.4 MHz | yes |
+| rv64 +MMU +rva, 2-way caches | 9031 | 352 | 11758 | 4813 | **20** | 72.7 MHz | yes |
+| rv64 +MMU +rva +rvfd | 17474 | 396 | **20927** | 8344 | 10 | **41.9 MHz** | **no** |
+| `soc-cpu` — this SoC's own flags, rv32 | 5313 | 108 | 5999 | 3511 | 8 | 72.7 MHz | yes |
+| `soc-cpu` +64 | 8613 | 164 | 10020 | 5105 | 12 | 75.8 MHz | yes |
+| `soc-cpu` +64 +MMU | 9374 | 316 | 12109 | 5721 | 12 | 69.9 MHz | yes |
+
+**The flags.** There is no `--with-mmu`. `--with-supervisor` is `addISA("s","u")`, and
+`withMmu = checkISA("s") && !disableMmu` (`Param.scala:584,724`), so the MMU arrives as a
+side effect of supervisor mode and the only way to name it separately is to ask for
+supervisor and then take it away with `--without-mmu`. Two consequences: supervisor **is**
+separable from the MMU (S-mode with `--without-mmu` — 253 LUT4 at rv32, 75 at rv64), the
+MMU is **not** separable from supervisor, and `--without-mmu` on a core that never asked
+for supervisor is a **no-op** — it is present on the base rows above and does nothing
+there. `xlen` picks the scheme on its own: sv32 at 32, sv39 at 64 (`Param.scala:855`).
+Because a flag that silently did nothing would read as a free MMU, `cpu_matrix.py` now
+reads xlen, S-mode, MMU and FPU back out of the generated Verilog and prints what it
+found rather than what was asked for.
+
+**What binds.** Swapping this SoC's core for its 64-bit MMU equivalent is +6110 COMB and
+**+4 block RAM** (`soc-cpu` → `soc-cpu+64+mmu`). Against the current whole-SoC build
+(12903 COMB, 53%; 44 of 56 BRAM, 79%; 72.40 MHz) that is **19013 COMB, 78%** and **48 of
+56 BRAM, 86%**. Both fit. The MMU itself is nearly free in block RAM — its TLB is
+asynchronously read and lands in LUT RAM, +152 `DPR16X4` cells and 0 BRAM — and the four
+block RAMs are the *width*, not the translation: a 64-bit L1 is twice as wide.
+
+Block RAM binds first, and not on the core: **one more cache way costs ten block RAMs**
+(10 → 20 at rv64). 4 KiB direct-mapped L1s are small for a kernel, and 8 KiB two-way ones
+put the SoC at 44 − 8 + 20 = **56 of 56**, the entire die, before any of the RAM Linux
+actually needs. Hardware floating point is the other wall: `+rvfd` alone is 20927 COMB,
+86% of the die for the CPU by itself, and it misses 60 MHz at 41.9 MHz — so a stock
+rv64gc userspace is out of reach, while a soft-float rv64imac kernel with Rust drivers is
+not.
+
+**Plausible, with the memory question unanswered here.** The core fits and closes timing
+with margin; what this table does not measure is main memory. 64 KiB of block RAM does not
+boot Linux, so the memory would have to be HyperRAM, and that is a bandwidth and latency
+question about the L1s in front of it rather than an area one.
 
 **The earlier report these figures replace** is
 [`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md).
@@ -1001,7 +1072,7 @@ means a second decoder window rather than a linker boundary, and the decode path
 | | state |
 |---|---|
 | RTOS (decision 19) | open — #112, #115 |
-| HyperRAM Wishbone adapter | unavoidable; whether it wraps upstream's controller or replaces it is open (#90). DQS path unfinished (#92). Upstream's `HyperRAMInterface`/`HyperRAMPHY` measure 220.2 MB/s, 92.8% of theoretical |
+| HyperRAM Wishbone adapter | `HyperRAMWishbone` wraps upstream's controller at `0x20000000`, 8 MiB, `main=1 exe=1` (#90). DQS path unfinished (#92). Upstream's `HyperRAMInterface`/`HyperRAMPHY` measure 220.2 MB/s, 92.8% of theoretical |
 | `luna-soc` fork pin | see decision 14 |
 | Board platform vendoring | in progress: `CynthionPlatformRev1D4` is 206 lines of pins plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins the luna-soc fork. Target is a platform depending only on `amaranth`, `amaranth.build`, `amaranth_boards.resources` |
 
