@@ -324,6 +324,39 @@ fn flash_read(mask: usize, accesses: u32, random: bool) -> u32 {
     sum
 }
 
+
+/// Read `accesses` 32-bit words from the HyperRAM MEMORY WINDOW.
+///
+/// The other HyperRAM walk below goes through the CSR staging port, one register
+/// write and one poll per 16-bit word, uncached. This one is an ordinary load
+/// from `0x20000000` -- a `main=1 exe=1` PMA region backed by
+/// `bootram.mmap.bus`, so the D-cache serves hits and a miss is one burst.
+///
+/// **The two together are the measurement.** The gateware has mapped this window
+/// for some time and no firmware used it (#90), so nothing had ever compared the
+/// two paths on this board. The ratio says what the staging port costs and
+/// whether the burst coalescing in the controller reaches the CPU.
+///
+/// Volatile, so the compiler cannot hoist or elide the walk; the pattern that
+/// decides cache behaviour is `step`, exactly as for flash.
+#[inline(always)]
+fn hyper_window_read(mask: usize, accesses: u32, random: bool) -> u32 {
+    let mut state = 1u32;
+    let mut sum = 0u32;
+    for _ in 0..accesses {
+        let index = step(&mut state, mask, random);
+        // SAFETY: inside the 8 MiB window the SoC decodes at HYPERRAM, which is
+        // `main=1` memory rather than a device. Volatile anyway, because the
+        // point is to measure the access rather than to let it be optimised away.
+        let word = unsafe {
+            core::ptr::read_volatile(
+                (cynthion_soc_pac::base::HYPERRAM + index * 4) as *const u32)
+        };
+        sum = sum.wrapping_add(word);
+    }
+    sum
+}
+
 /// Read `accesses` 16-bit words from the HyperRAM staging port.
 ///
 /// Sequential rides the port's address auto-increment, so it is one `ctrl` write
@@ -568,6 +601,32 @@ fn hyper(uart: &mut Uart) {
 
     let small = HYPER_SMALL_WORDS - 1;
     let large = HYPER_LARGE_WORDS - 1;
+
+    // THE MEMORY WINDOW FIRST, because it is the path that matters and the one
+    // nothing had ever exercised. 2 KiB and 16 KiB match the flash rows so the
+    // three regions are read off the same axes.
+    {
+        let small_words = (FLASH_SMALL_WORDS - 1) as usize;
+        let large_words = (FLASH_LARGE_WORDS - 1) as usize;
+        let mut sum = hyper_window_read(large_words, 64, false);
+        let (run, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+            hyper_window_read(small_words, FLASH_SEQ_ACCESSES, false)
+        });
+        row(uart, "hyper win", "2 KiB", "read seq", &run);
+        sum ^= got;
+        let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+            hyper_window_read(large_words, FLASH_SEQ_ACCESSES, false)
+        });
+        row(uart, "hyper win", "16 KiB", "read seq", &seq);
+        sum ^= got;
+        let (rnd, got) = measure(FLASH_RND_ACCESSES, 4, || {
+            hyper_window_read(large_words, FLASH_RND_ACCESSES, true)
+        });
+        row(uart, "hyper win", "16 KiB", "read rnd", &rnd);
+        sum ^= got;
+        ratio(uart, "hyper win", &seq, &rnd);
+        let _ = sum;
+    }
 
     // Warm-up, not timed. Nothing to warm -- the port is uncached -- but the
     // first transaction after a seek is the one that pays for the controller
