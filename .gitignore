@@ -14,8 +14,16 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored, unlike the rest of this block, and deliberately. Unanchored `lib/`
+# matches a directory of that name at ANY depth, and the only thing in this
+# repo that ships a lib/ is a Flutter app -- where lib/ is not a build output,
+# it is the entire source tree. It silently untracked all of
+# debris/code/cynthion-{workspace,app}-prototype/app/lib/ (34 files) and two
+# files of the retired dashboard, in an archive whose whole purpose is that the
+# history survives. The Python-packaging sense of "lib" is a top-level build
+# directory, so say that.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
