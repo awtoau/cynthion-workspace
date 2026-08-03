@@ -403,6 +403,68 @@ fn banner(uart: &mut Uart) {
     crate::log!(uart, "type `help` or `?` for commands");
 }
 
+/// Every command, with its argument syntax and what it does.
+///
+/// A table rather than one long string, for three reasons that the string version
+/// demonstrated by failing at all of them. It could not show a command's
+/// ARGUMENTS, so `read`, `bench`, `log` and `load` all appeared to take none and
+/// there was nowhere to learn otherwise. It could not be sorted, so the order was
+/// whatever the match arms happened to be in. And it drifted: `vbus` and `hrtest`
+/// were dispatchable and unlisted, while the listing is the only place anyone
+/// looks.
+///
+/// **Kept in alphabetical order**, which is the order it prints -- sorting at
+/// runtime would cost code to save nothing, since the table is a constant.
+///
+/// Two columns, and the first is padded to `HELP_WIDTH` so no name runs into its
+/// description. `{:w$}` would pull in `core::fmt`'s width machinery for one call
+/// site; the padding is done by hand below for the same reason the rest of this
+/// firmware avoids it.
+const HELP: &[(&str, &str)] = &[
+    ("bench [region]",  "time bram, flash or hyperram"),
+    ("board",           "every connector, rail and controller"),
+    ("check",           "arithmetic the compiler could have folded, at runtime"),
+    ("help, ?",         "this list"),
+    ("hrtest",          "hyperram write/read walk"),
+    ("i2c [bus]",       "scan a bus behind the mux"),
+    ("id",              "the first flash word"),
+    ("info",            "image, memory, boot, cpu, gateware"),
+    ("irq",             "interrupt counts, per source"),
+    ("led [n]",         "the six LEDs"),
+    ("load <hex>",      "stage <hex> bytes of firmware, then boot it"),
+    ("log [n|tags]",    "the deferred event log"),
+    ("phy",             "the USB PHYs"),
+    ("ports",           "which UARTs answer"),
+    ("power [floor]",   "the four PAC1954 channels"),
+    ("read <hex>",      "one word from address <hex>"),
+    ("reset",           "jump to the reset vector"),
+    ("selftest",        "run every self-check"),
+    ("sideband",        "the sideband link"),
+    ("stats",           "cycles, instructions, busy fraction"),
+    ("time",            "uptime, from mtime"),
+    ("typec [port]",    "the FUSB302B controllers"),
+    ("vbus <cmd>",      "the VBUS distribution switches"),
+];
+
+/// Width of the first column. One more than the longest entry above, so every
+/// description starts in the same place and none of them touch the name.
+const HELP_WIDTH: usize = 16;
+
+fn help(uart: &mut Uart) {
+    for (name, summary) in HELP {
+        let _ = uart.write_str("  ");
+        let _ = uart.write_str(name);
+        // Pad by hand. `write!("{:w$}")` instantiates core::fmt's fill-and-align
+        // path, which is several hundred bytes of code for one call site in an
+        // image that has spent this session fighting for block RAM.
+        for _ in name.len()..HELP_WIDTH {
+            let _ = uart.write_str(" ");
+        }
+        let _ = uart.write_str(summary);
+        let _ = uart.write_str("\n");
+    }
+}
+
 /// Dispatch one command line.
 ///
 /// `index` is which console this arrived on, needed by `load` so a transfer reads from the
@@ -415,11 +477,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
     };
 
     match cmd {
-        b"help" | b"?" => {
-            let _ = uart.write_str("help id read check info selftest ports irq time stats \
-                                    bench log board led i2c power phy typec vbus sideband \
-                                    load reset\n");
-        }
+        b"help" | b"?" => help(uart),
         b"id" => {
             // Reads through the memory map, which is the verified path. The JEDEC id
             // itself needs the SPI controller, which the C firmware drives; this

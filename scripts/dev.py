@@ -158,6 +158,28 @@ def log(msg: str, level: str = "INFO") -> None:
 SKIPPED = 125           # distinct from any real tool's exit code
 
 
+def shorten(cmd: list[str]) -> str:
+    """A command line worth reading.
+
+    The literal argv is two absolute paths -- an interpreter under the user's
+    home and a script under the repo root -- which is 90 characters of noise
+    around the one word that identifies what is running. Both are constants for
+    the whole session, so printing them every time says nothing.
+
+    It also means the log does not carry the machine's directory layout, which on
+    a public repo is worth not writing down in the first place.
+    """
+    parts = []
+    for item in cmd:
+        if item == PY:
+            parts.append("python3")
+        elif item.startswith(str(REPO) + "/"):
+            parts.append(item[len(str(REPO)) + 1:])
+        else:
+            parts.append(item)
+    return " ".join(parts)
+
+
 def run_step(name: str, extra: list[str] | None = None) -> int:
     """Run one STEPS entry. Returns its exit code, or SKIPPED."""
     _summary, argv, takes_extra = STEPS[name]
@@ -168,7 +190,7 @@ def run_step(name: str, extra: list[str] | None = None) -> int:
         log(f"{name}: {argv[0]} not on PATH - skipped", "WARN")
         return SKIPPED
     cmd = argv + (list(extra) if (extra and takes_extra) else [])
-    log("run: " + " ".join(cmd))
+    log("run: " + shorten(cmd))
     rc = subprocess.call(cmd, cwd=REPO)
     log(f"rc={rc}: {name}", "INFO" if rc == 0 else "ERROR")
     return rc
@@ -177,7 +199,7 @@ def run_step(name: str, extra: list[str] | None = None) -> int:
 def run_tool(argv: list[str], extra: list[str] | None = None) -> int:
     """Run a one-off tool that is not a STEPS entry."""
     cmd = argv + list(extra or [])
-    log("run: " + " ".join(cmd))
+    log("run: " + shorten(cmd))
     rc = subprocess.call(cmd, cwd=REPO)
     log(f"rc={rc}", "INFO" if rc == 0 else "ERROR")
     return rc
