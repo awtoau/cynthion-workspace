@@ -30,6 +30,15 @@ published ECP5 scoreboard, and what is ruled out on these exact parts:
 | **ATSAMD11D14A** | the Apollo debug MCU | USB vendor requests on CONTROL | [`chips/samd11-apollo.md`](chips/samd11-apollo.md) |
 | TC7USB42MU | USB 2.0 DPDT mux (U16), CONTROL only | Apollo PA06 | [below](#the-control-port-mux) |
 
+**Soft cores get notes here too**, for the same reason the silicon does: what
+they do on this board differs from what their parameters say, and the
+measurements have to be findable.
+
+| core | what it is | note |
+|---|---|---|
+| **VexiiRiscv** | the SoC's RV32IMAC CPU, generated at elaboration | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
+| **NS16550A ×2** | the console UARTs | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
+
 The pin map itself is **`ecp5-test/cynthion_platform/cynthion_r1_4.py`** — 206
 lines of pin declarations, vendored so that reaching it does not drag in
 `LUNAApolloPlatform`, `LUNAPlatform` and a `luna-soc` fork pin. That file is the

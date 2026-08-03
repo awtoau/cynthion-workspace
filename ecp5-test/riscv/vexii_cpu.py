@@ -102,6 +102,33 @@ GENERATE_FLAGS = [
     # printing is indistinguishable from a CPU that stopped running, which is exactly the
     # ambiguity that has cost the most time on this project.
     "--debug-jtag-instruction",
+
+    # Branch prediction: a branch target buffer.
+    #
+    # Without one the core still has BranchPlugin and LearnPlugin, which resolve
+    # and record branches -- but nothing acts on the record, so every taken
+    # branch redirects the three-stage fetch and the pipeline refills. Measured
+    # at seven instructions in 28.77 cycles with every one hitting the I-cache
+    # (#140): four cycles an instruction with no memory in the way at all.
+    #
+    # --with-btb is BtbPlugin at Param.scala's defaults: 512 sets, one chunk
+    # (single issue), 16-bit hash, dual-port RAM.
+    #
+    # --relaxed-btb is NOT optional here, and it is not a precaution. At the
+    # default jumpAt = 1 the BTB's block RAM read, its 16-bit hash compare, the
+    # hit decision and the fetch redirect are all one cycle, and nextpnr closes
+    # at 57.55 MHz -- a hard FAIL against the 60 MHz constraint, with the
+    # critical path starting at `BtbPlugin_logic_mem.0.0.DOA8`, 4.10 ns of
+    # clk-to-q before a single LUT. Relaxed moves the redirect to jumpAt = 2, so
+    # the compare gets a cycle of its own.
+    #
+    # What that costs is one cycle on a correctly predicted branch instead of
+    # zero -- still far cheaper than the full refetch it replaces, which is what
+    # the bench numbers show.
+    #
+    # rasDepth follows --with-ras and is 0 without it, so these flags alone are
+    # the BTB and nothing else.
+    "--with-btb", "--relaxed-btb", "--relaxed-branch",
 ]
 
 
