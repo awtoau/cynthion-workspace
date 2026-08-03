@@ -52,7 +52,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "fabric_build.log"
-BUILD_DIR = ROOT / "ecp5-test" / "fabric" / "build"
+BUILD_DIR = ROOT / "tmp" / "fabric" / "build"
 
 # The toolchain this project pins. Amaranth resolves yosys/nextpnr/ecppack from
 # PATH, so prepending is enough -- no environment script to source.

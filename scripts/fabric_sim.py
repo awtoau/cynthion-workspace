@@ -45,7 +45,7 @@ from fabric.fabric_gateware import FabricTest, REG_SIGNATURE
 from fabric_golden import golden
 
 
-def run(blocks, round_bits, rounds):
+def run(blocks, round_bits, rounds, expected):
     """Returns the list of signatures the simulated design produced.
 
     `platform is None` suppresses the LED block; the JTAG register interface
@@ -54,7 +54,7 @@ def run(blocks, round_bits, rounds):
     which is reachable through the register map rather than through JTAG
     shifting -- far less machinery for the same observation.
     """
-    dut = FabricTest(blocks=blocks, round_bits=round_bits, golden=None,
+    dut = FabricTest(blocks=blocks, round_bits=round_bits, golden=expected,
                      simulate=True)
     module = dut.elaborate(None)
     # Amaranth warns when an Elaboratable is constructed and never handed to a
@@ -116,7 +116,7 @@ def main():
         expected = golden(args.blocks, cycles)
         emit(f"golden model: {expected:#010x}")
 
-        seen = run(args.blocks, args.round_bits, args.rounds)
+        seen = run(args.blocks, args.round_bits, args.rounds, expected)
         emit(f"simulated signatures: "
              f"{', '.join(f'{v:#010x}' for v in seen) or 'none'}")
 

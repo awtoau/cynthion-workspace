@@ -70,7 +70,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "fabric_run.log"
-BITSTREAM = ROOT / "ecp5-test" / "fabric" / "build" / "top.bit"
+BITSTREAM = ROOT / "tmp" / "fabric" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "ecp5-test"))
@@ -255,14 +255,14 @@ def main():
 
             if mismatches > worst_mismatches:
                 worst_mismatches = mismatches
-            if status & 1:
+            if status & (1 << 2):
                 ever_mismatch = True
 
             if polls % args.report_every == 0:
                 elapsed = time.perf_counter() - start
                 done = rounds - first_rounds
                 emit(f"  {elapsed:8.1f}s  polls {polls:>7}  rounds "
-                     f"{done:>10}  sticky {'SET' if status & 1 else 'clear'}  "
+                     f"{done:>10}  sticky {'SET' if status & (1 << 2) else 'clear'}  "
                      f"mismatched rounds {mismatches}")
 
             if rounds - first_rounds >= args.rounds:

@@ -5,8 +5,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Reads the fabric test's registers on a bitstream built with a *wrong* golden
-constant, and requires the mismatch machinery to have fired.
+Arms the fabric test's runtime negative control and requires every round to
+mismatch.
 
 A self-checking test that never reports a failure is indistinguishable from a
 test that cannot report one. The passing run in `fabric_run.py` is only evidence
@@ -14,10 +14,9 @@ about the silicon if the sticky flag, the mismatch counter and the signature
 comparison would all have lit up had the fabric got the answer wrong -- and
 nothing in a passing run demonstrates that.
 
-So this is the control. `fabric_build.py --golden 0xdeadbeef` produces the same
-20k-LUT design with a constant that is not the right answer, and the gateware
-then compares a correct signature against a wrong reference. Every round must
-mismatch. If they do:
+The harness complements the design's golden value at runtime, so the clean run
+and the control use one configured 20k-LUT design. Every round must mismatch.
+If they do:
 
   * the sticky flag latches and stays latched, so an intermittent fault would
     be recorded rather than missed between polls
@@ -27,13 +26,10 @@ mismatch. If they do:
 which is exactly the machinery the real run depends on, exercised on the same
 silicon through the same JTAG path.
 
-This deliberately does not reconfigure. It reads whatever is loaded, and refuses
-to conclude anything if that is not a wrong-constant build -- so it cannot be
-run by accident against the real bitstream and reported as a clean control.
+This deliberately does not reconfigure. It verifies the loaded design has a
+clean baseline before arming the control.
 
-    ./scripts/fabric_build.py --golden 0xdeadbeef
-    ./scripts/fabric_run.py --rounds 100      # loads it; refuses to score it
-    ./scripts/fabric_control.py               # then this
+    ./scripts/fabric_control.py
 """
 
 import argparse
@@ -50,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fabric.fabric_gateware import (APPLET_ID, REG_ID, REG_SIGNATURE,
                                     REG_ROUNDS, REG_STATUS, REG_GOLDEN,
-                                    REG_MISMATCHES)
+                                    REG_MISMATCHES, REG_CONTROL)
 
 
 def main():
@@ -84,14 +80,18 @@ def main():
         emit(f"gateware's golden constant: {built_golden:#010x}")
         emit(f"gateware's computed signature: {signature:#010x}")
 
-        if built_golden == signature:
-            emit("REFUSING: the loaded bitstream's constant matches what the "
-                 "fabric computed, so this is the real test and not a "
-                 "control. Build with --golden 0xdeadbeef first.")
+        if built_golden != signature:
+            emit("REFUSING: the loaded bitstream is already reporting a wrong "
+                 "answer; a negative control needs a clean baseline.")
             return 1
 
-        emit("the loaded bitstream compares a correct signature against a "
-             "wrong reference, so every round must mismatch")
+        # GO clears the old verdict while NEGATIVE complements the design's
+        # own golden. The same configured design therefore supplies its clean
+        # run and its control; a stale or different bitstream cannot impersonate
+        # the pair.
+        dut.registers.register_write(REG_CONTROL, 0)
+        dut.registers.register_write(REG_CONTROL, 0b11)
+        emit("negative control armed; every round must mismatch")
         emit()
 
         first_rounds = dut.registers.register_read(REG_ROUNDS)
@@ -100,7 +100,7 @@ def main():
 
         for _ in range(args.polls):
             status = dut.registers.register_read(REG_STATUS)
-            if not status & 1:
+            if not status & (1 << 2):
                 sticky_always = False
 
         rounds = dut.registers.register_read(REG_ROUNDS) - first_rounds
