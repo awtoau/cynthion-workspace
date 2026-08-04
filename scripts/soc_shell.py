@@ -68,9 +68,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_shell.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # How many times to retry opening the tty.
 #
@@ -211,72 +213,72 @@ def main():
                              "/dev/ttyACM0 is the Apollo-facing one")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    try:
+        link = Link.open(args.port)
+    except RuntimeError as error:
+        emit(f"could not reach the console: {error}")
+        return 1
+    emit(f"console: {link.how}")
 
-        try:
-            link = Link.open(args.port)
-        except RuntimeError as error:
-            emit(f"could not reach the console: {error}")
-            return 1
-        emit(f"console: {link.how}")
+    got_anything = False
 
-        got_anything = False
-
-        if args.listen:
-            emit("--- listening ---")
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                chunk = link.read_available()
-                if chunk:
-                    got_anything = True
-                    sys.stdout.write(chunk.decode("ascii", "replace"))
-                    sys.stdout.flush()
-                    handle.write(chunk.decode("ascii", "replace"))
-            link.close()
-            return 0 if got_anything else 1
-
-        # A bare Enter first: it lands at a clean prompt whatever was half-typed, and its
-        # reply proves the shell is alive before any real command is judged.
-        for command in ["", *args.commands]:
-            link.write(command.encode() + b"\r")
-            time.sleep(REPLY_S)
-            reply = b""
-            while True:
-                chunk = link.read_available()
-                if not chunk:
-                    break
-                reply += chunk
-            text = reply.decode("ascii", "replace")
-            if text.strip():
+    if args.listen:
+        emit("--- listening ---")
+        deadline = time.monotonic() + 10
+        # Reassembled into lines before emitting: the console arrives in
+        # whatever chunks the tty hands over, and a log line that is half a
+        # word is not searchable.
+        pending = ""
+        while time.monotonic() < deadline:
+            chunk = link.read_available()
+            if chunk:
                 got_anything = True
-            emit(f"--- {command or '<enter>'} ---")
-            emit(text.strip() or "(nothing)")
-
+                pending += chunk.decode("ascii", "replace")
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    emit(line)
+        if pending:
+            emit(pending)
         link.close()
-
-        # Silence is only evidence about the board if nothing else was eating the bytes.
-        # Checked here rather than before the commands, because a reader that attaches
-        # while this runs is just as fatal and the list is only interesting when the
-        # result was empty anyway.
-        if not got_anything and link.node:
-            thieves = other_readers(link.node)
-            if thieves:
-                emit()
-                emit("*** ANOTHER PROCESS IS READING THIS PORT ***")
-                for pid, command in thieves:
-                    emit(f"      pid {pid}: {command}")
-                emit("The shell above said nothing because that process took every")
-                emit("byte, not because the firmware is silent. A tty has exactly one")
-                emit("reader. Stop it, or restart it as `./tio_user.py --serve` so this")
-                emit("script reads through its socket on port 9000 instead of competing.")
-
-        emit()
-        emit(f"log: {LOG}")
         return 0 if got_anything else 1
+
+    # A bare Enter first: it lands at a clean prompt whatever was half-typed, and its
+    # reply proves the shell is alive before any real command is judged.
+    for command in ["", *args.commands]:
+        link.write(command.encode() + b"\r")
+        time.sleep(REPLY_S)
+        reply = b""
+        while True:
+            chunk = link.read_available()
+            if not chunk:
+                break
+            reply += chunk
+        text = reply.decode("ascii", "replace")
+        if text.strip():
+            got_anything = True
+        emit(f"--- {command or '<enter>'} ---")
+        emit(text.strip() or "(nothing)")
+
+    link.close()
+
+    # Silence is only evidence about the board if nothing else was eating the bytes.
+    # Checked here rather than before the commands, because a reader that attaches
+    # while this runs is just as fatal and the list is only interesting when the
+    # result was empty anyway.
+    if not got_anything and link.node:
+        thieves = other_readers(link.node)
+        if thieves:
+            emit()
+            emit("*** ANOTHER PROCESS IS READING THIS PORT ***")
+            for pid, command in thieves:
+                emit(f"      pid {pid}: {command}")
+            emit("The shell above said nothing because that process took every")
+            emit("byte, not because the firmware is silent. A tty has exactly one")
+            emit("reader. Stop it, or restart it as `./tio_user.py --serve` so this")
+            emit("script reads through its socket on port 9000 instead of competing.")
+
+    emit()
+    return 0 if got_anything else 1
 
 
 if __name__ == "__main__":

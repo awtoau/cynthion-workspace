@@ -10,7 +10,7 @@ Checks the three peripherals added at `BOARD_BASE` in `vexii_hello_soc.py`.
     python3 scripts/soc_board_sim.py -v      # print every CSR access and bus edge
 
 Exit status 0 if every check passes. Output goes to the terminal and to
-`tmp/logs/soc_board_sim.log`.
+`tmp/logs/dev.log`.
 
 ## What is checked, and why each check is here
 
@@ -61,9 +61,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_board_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment
 from amaranth.sim import Simulator
@@ -1345,49 +1347,41 @@ def main():
                         help="print every CSR access and every bus edge")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
 
-        checks = Checks(emit)
+    emit("i2c_master.I2CMaster -- transfers")
+    run_i2c_checks(checks, args.verbose)
+    emit()
 
-        emit("i2c_master.I2CMaster -- transfers")
-        run_i2c_checks(checks, args.verbose)
-        emit()
+    emit("i2c_master.I2CMaster -- bit timing")
+    run_i2c_timing_checks(checks, args.verbose)
+    emit()
 
-        emit("i2c_master.I2CMaster -- bit timing")
-        run_i2c_timing_checks(checks, args.verbose)
-        emit()
+    emit("amaranth_soc.gpio.Peripheral -- as this design wires it")
+    run_gpio_checks(checks, args.verbose)
+    emit()
 
-        emit("amaranth_soc.gpio.Peripheral -- as this design wires it")
-        run_gpio_checks(checks, args.verbose)
-        emit()
+    emit("sideband_csr.SidebandControl")
+    run_sideband_checks(checks, args.verbose)
+    emit()
 
-        emit("sideband_csr.SidebandControl")
-        run_sideband_checks(checks, args.verbose)
-        emit()
+    emit("i2c_mux.I2CBusMux -- bus select and a Type-C interrupt per device")
+    run_i2c_mux_checks(checks, args.verbose)
+    emit()
 
-        emit("i2c_mux.I2CBusMux -- bus select and a Type-C interrupt per device")
-        run_i2c_mux_checks(checks, args.verbose)
-        emit()
+    emit("ulpi_window.UlpiRegisters -- against a model USB3343")
+    run_ulpi_checks(checks, args.verbose)
+    emit()
 
-        emit("ulpi_window.UlpiRegisters -- against a model USB3343")
-        run_ulpi_checks(checks, args.verbose)
-        emit()
+    emit("gateware_id.GatewareId -- what the bitstream says it is")
+    run_gateware_id_checks(checks, args.verbose)
+    emit()
 
-        emit("gateware_id.GatewareId -- what the bitstream says it is")
-        run_gateware_id_checks(checks, args.verbose)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

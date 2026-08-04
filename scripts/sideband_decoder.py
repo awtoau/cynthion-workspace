@@ -57,6 +57,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The SHIPPING link, not the responder in `repos/apollo`. That one carries POWER,
 # DEVICES and LED for the test bitstream; this one does not, and importing it
@@ -231,19 +234,19 @@ def decode_ecp5_temperature(code):
 
 if __name__ == "__main__":
     # Self-check: framing arithmetic and the encode side, no hardware needed.
-    print("sideband protocol, host side")
-    print()
-    print("readable commands:")
+    emit("sideband protocol, host side")
+    emit()
+    emit("readable commands:")
     for label, opcode, size in commands():
-        print(f"  {label:<8} 0x{opcode:02x}  payload {size:>2}  "
+        emit(f"  {label:<8} 0x{opcode:02x}  payload {size:>2}  "
               f"request {reply_length(opcode)} bytes")
-    print(f"  write    0x{gw.CMD_WRITE_BASE:02x}-0xff  "
+    emit(f"  write    0x{gw.CMD_WRITE_BASE:02x}-0xff  "
           f"payload  0  request {reply_length(gw.CMD_STATUS)} bytes")
-    print()
-    print("encode:")
-    print(f"  message 0          0x{encode_message(0):02x}")
-    print(f"  message 0x2a       0x{encode_message(0x2A):02x}")
-    print(f"  message 0x7f       0x{encode_message(gw.CMD_WRITE_MASK):02x}")
-    print()
-    print("POWER, DEVICES and LED are NOT here: the shipping link does not")
-    print("implement them. See ecp5-test/sideband/test_protocol.py.")
+    emit()
+    emit("encode:")
+    emit(f"  message 0          0x{encode_message(0):02x}")
+    emit(f"  message 0x2a       0x{encode_message(0x2A):02x}")
+    emit(f"  message 0x7f       0x{encode_message(gw.CMD_WRITE_MASK):02x}")
+    emit()
+    emit("POWER, DEVICES and LED are NOT here: the shipping link does not")
+    emit("implement them. See ecp5-test/sideband/test_protocol.py.")

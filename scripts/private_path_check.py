@@ -10,7 +10,7 @@ Fails if a tracked file contains an absolute path that names one machine.
     python3 scripts/private_path_check.py -v      # list every file inspected
 
 Exit status 0 if every tracked file is clean. Output goes to the terminal and
-to `tmp/logs/private_path_check.log`. Run as the `paths` check in
+to `tmp/logs/dev.log`. Run as the `paths` check in
 `scripts/check.py`.
 
 ## Why
@@ -48,7 +48,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "private_path_check.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # Directory trees whose contents differ per machine and per account.
 ROOTS = ["home", "Users", "mnt", "media"]
@@ -100,69 +102,61 @@ def main() -> int:
                         help="list every file inspected")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    problems = []
+    inspected = 0
 
-        problems = []
-        inspected = 0
+    for relative in tracked_files():
+        name = relative.as_posix()
+        if name.startswith(SKIP_PREFIXES) or name in EXEMPT:
+            continue
 
-        for relative in tracked_files():
-            name = relative.as_posix()
-            if name.startswith(SKIP_PREFIXES) or name in EXEMPT:
-                continue
+        path = ROOT / relative
+        # A submodule is a gitlink, and a file can be listed but absent in
+        # a partial checkout. Neither is this check's business.
+        if not path.is_file():
+            continue
 
-            path = ROOT / relative
-            # A submodule is a gitlink, and a file can be listed but absent in
-            # a partial checkout. Neither is this check's business.
-            if not path.is_file():
-                continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue  # binary, or unreadable: nothing textual to check
 
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError):
-                continue  # binary, or unreadable: nothing textual to check
+        inspected += 1
+        if args.verbose:
+            emit(f"  {name}")
 
-            inspected += 1
-            if args.verbose:
-                emit(f"  {name}")
+        for number, line in enumerate(text.splitlines(), 1):
+            for match in PRIVATE.finditer(line):
+                problems.append(
+                    f"{name}:{number}: {match.group(0)}\n"
+                    f"      {line.strip()[:120]}")
 
-            for number, line in enumerate(text.splitlines(), 1):
-                for match in PRIVATE.finditer(line):
-                    problems.append(
-                        f"{name}:{number}: {match.group(0)}\n"
-                        f"      {line.strip()[:120]}")
+    # A check that inspected nothing would pass forever. Assert the
+    # discovery, not just the result.
+    if inspected == 0:
+        emit("no tracked text files found -- this check inspected nothing.")
+        emit("Either git ls-files failed or the checkout is empty; fix "
+             "that rather than leaving a guard that looks nowhere.")
+        return 1
 
-        # A check that inspected nothing would pass forever. Assert the
-        # discovery, not just the result.
-        if inspected == 0:
-            emit("no tracked text files found -- this check inspected nothing.")
-            emit("Either git ls-files failed or the checkout is empty; fix "
-                 "that rather than leaving a guard that looks nowhere.")
-            return 1
+    emit(f"{inspected} tracked text file(s) checked")
 
-        emit(f"{inspected} tracked text file(s) checked")
+    if problems:
+        emit()
+        emit("This repository is public. An absolute path under "
+             f"{', '.join('/' + r for r in ROOTS)} names one machine and "
+             "one account.")
+        emit("Use $HOME, ${REPOS_ROOT:-$HOME/git/awtoau}, a repo-relative "
+             "path, or a <placeholder> instead.")
+        emit()
+        for problem in problems:
+            emit(f"  {problem}")
+        emit()
+        emit(f"{len(problems)} private path(s)")
+        return 1
 
-        if problems:
-            emit()
-            emit("This repository is public. An absolute path under "
-                 f"{', '.join('/' + r for r in ROOTS)} names one machine and "
-                 "one account.")
-            emit("Use $HOME, ${REPOS_ROOT:-$HOME/git/awtoau}, a repo-relative "
-                 "path, or a <placeholder> instead.")
-            emit()
-            for problem in problems:
-                emit(f"  {problem}")
-            emit()
-            emit(f"{len(problems)} private path(s)")
-            emit(f"log: {LOG.relative_to(ROOT)}")
-            return 1
-
-        emit("no private paths in tracked files")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 0
+    emit("no private paths in tracked files")
+    return 0
 
 
 if __name__ == "__main__":

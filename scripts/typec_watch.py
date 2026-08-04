@@ -58,9 +58,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "typec_watch.log"
 
 sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The fields worth reporting a change in. `serviced` is the one this exists for:
 # it is the count of interrupts the firmware actually handled, and it has never
@@ -118,64 +119,56 @@ def main():
 
     import soc_shell
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    try:
+        link = soc_shell.Link.open(args.port)
+    except RuntimeError as error:
+        emit(f"no console: {error}")
+        return 1
+    emit(f"console: {link.how}")
 
-        try:
-            link = soc_shell.Link.open(args.port)
-        except RuntimeError as error:
-            emit(f"no console: {error}")
-            return 1
-        emit(f"console: {link.how}")
-
-        def shell(command):
-            """Issue one command and return its reply.
+    def shell(command):
+        """Issue one command and return its reply.
 
             The settle is soc_shell's REPLY_S, reused rather than reinvented: it is
             the round trip this shell takes to answer, established there. Draining
             until empty rather than reading a fixed count, because `typec` and `irq`
             differ in length and a short read would truncate mid-table.
             """
-            link.write(command.encode() + b"\r")
-            time.sleep(soc_shell.REPLY_S)
-            reply = b""
-            while True:
-                chunk = link.read_available()
-                if not chunk:
-                    break
-                reply += chunk
-            return reply.decode("ascii", "replace")
+        link.write(command.encode() + b"\r")
+        time.sleep(soc_shell.REPLY_S)
+        reply = b""
+        while True:
+            chunk = link.read_available()
+            if not chunk:
+                break
+            reply += chunk
+        return reply.decode("ascii", "replace")
 
-        emit("watching the Type-C controllers -- move a cable on TARGET-C")
-        emit("PDWN1/2 are off, so no change is a RESULT, not a failure")
-        emit()
+    emit("watching the Type-C controllers -- move a cable on TARGET-C")
+    emit("PDWN1/2 are off, so no change is a RESULT, not a failure")
+    emit()
 
-        previous = sample(shell, emit)
-        for port, fields in sorted(previous.items()):
-            emit(f"  {port:7} {fields}")
-        emit()
+    previous = sample(shell, emit)
+    for port, fields in sorted(previous.items()):
+        emit(f"  {port:7} {fields}")
+    emit()
 
-        polls = 0
-        try:
-            while args.polls == 0 or polls < args.polls:
-                polls += 1
-                # No `emit` here: the first sample above has already said if the
-                # format moved, and repeating it once per poll would bury the
-                # changes this prints.
-                current = sample(shell)
-                for port, field, was, now in differences(previous, current):
-                    emit(f"  CHANGED  {port:7} {field:9} {was} -> {now}")
-                previous = current
-        except KeyboardInterrupt:
-            emit("\nstopped")
+    polls = 0
+    try:
+        while args.polls == 0 or polls < args.polls:
+            polls += 1
+            # No `emit` here: the first sample above has already said if the
+            # format moved, and repeating it once per poll would bury the
+            # changes this prints.
+            current = sample(shell)
+            for port, field, was, now in differences(previous, current):
+                emit(f"  CHANGED  {port:7} {field:9} {was} -> {now}")
+            previous = current
+    except KeyboardInterrupt:
+        emit("\nstopped")
 
-        emit()
-        emit(f"{polls} samples")
-        emit(f"log: {LOG}")
+    emit()
+    emit(f"{polls} samples")
     return 0
 
 

@@ -29,8 +29,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
-LOG = ROOT / "tmp" / "logs" / "qspi_burst.log"
+from devlog import emit  # noqa: E402
+
 
 REG_ID = 1
 REG_STATUS = 5
@@ -49,12 +51,6 @@ APPLET_ID = 0x51535049
 # than any burst here, and small enough that a hang is reported rather than
 # spinning forever.
 POLL_LIMIT = 400
-
-
-def emit(handle, text=""):
-    print(text, flush=True)
-    handle.write(text + "\n")
-    handle.flush()
 
 
 def run_burst(dut, *, mode, size, reads, tag):
@@ -91,7 +87,6 @@ def main():
 
     from apollo_fpga import ApolloDebugger
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     dut = ApolloDebugger()
 
     applet = dut.registers.register_read(REG_ID)
@@ -104,48 +99,46 @@ def main():
     sck = sync / (args.divisor + 1)
     dut.registers.register_write(REG_DIVISOR, args.divisor)
 
-    with LOG.open("w") as handle:
-        emit(handle, f"quad read modes for small scattered reads")
-        emit(handle, f"sync {sync} MHz, SCK {sck:.1f} MHz, "
-                     f"{args.reads} reads per point")
-        emit(handle)
-        emit(handle, f"  {'bytes':>6} {'0x6B':>10} {'0xEB':>10} {'gain':>7}  "
-                     f"{'MB/s 0x6B':>10} {'MB/s 0xEB':>10}")
+    emit(f"quad read modes for small scattered reads")
+    emit(f"sync {sync} MHz, SCK {sck:.1f} MHz, "
+         f"{args.reads} reads per point")
+    emit()
+    emit(f"  {'bytes':>6} {'0x6B':>10} {'0xEB':>10} {'gain':>7}  "
+         f"{'MB/s 0x6B':>10} {'MB/s 0xEB':>10}")
 
-        tag = 1
-        for size in args.sizes:
-            results = {}
-            for mode in (0, 1):
-                tag += 1
-                results[mode] = run_burst(dut, mode=mode, size=size,
-                                          reads=args.reads, tag=tag)
+    tag = 1
+    for size in args.sizes:
+        results = {}
+        for mode in (0, 1):
+            tag += 1
+            results[mode] = run_burst(dut, mode=mode, size=size,
+                                      reads=args.reads, tag=tag)
 
-            if results[0] is None or results[1] is None:
-                emit(handle, f"  {size:>6} did not complete")
-                continue
+        if results[0] is None or results[1] is None:
+            emit(f"  {size:>6} did not complete")
+            continue
 
-            quad_out, quad_io = results[0], results[1]
-            gain = 100 * (quad_out - quad_io) / quad_out if quad_out else 0
-            total = size * args.reads
-            rate_out = total / (quad_out / (sync * 1e6)) / 1e6
-            rate_io = total / (quad_io / (sync * 1e6)) / 1e6
+        quad_out, quad_io = results[0], results[1]
+        gain = 100 * (quad_out - quad_io) / quad_out if quad_out else 0
+        total = size * args.reads
+        rate_out = total / (quad_out / (sync * 1e6)) / 1e6
+        rate_io = total / (quad_io / (sync * 1e6)) / 1e6
 
-            emit(handle, f"  {size:>6} {quad_out:>10} {quad_io:>10} "
-                         f"{gain:>6.1f}% {rate_out:>10.2f} {rate_io:>10.2f}")
+        emit(f"  {size:>6} {quad_out:>10} {quad_io:>10} "
+             f"{gain:>6.1f}% {rate_out:>10.2f} {rate_io:>10.2f}")
 
-        emit(handle)
-        emit(handle, "0xEB sends the address on four lanes as well as the "
-                     "data, saving 20 clocks per")
-        emit(handle, "transaction. That is a fixed saving, so it matters in "
-                     "proportion to how short the")
-        emit(handle, "reads are -- and disappears entirely into a streaming "
-                     "transfer.")
-        emit(handle)
-        emit(handle, "BURST_CYCLES includes one arming cycle per read, so a "
-                     "per-reader figure is")
-        emit(handle, f"cycles - {args.reads}. It is below the resolution of "
-                     f"anything measured here.")
-        emit(handle, f"log: {LOG}")
+    emit()
+    emit("0xEB sends the address on four lanes as well as the "
+         "data, saving 20 clocks per")
+    emit("transaction. That is a fixed saving, so it matters in "
+         "proportion to how short the")
+    emit("reads are -- and disappears entirely into a streaming "
+         "transfer.")
+    emit()
+    emit("BURST_CYCLES includes one arming cycle per read, so a "
+         "per-reader figure is")
+    emit(f"cycles - {args.reads}. It is below the resolution of "
+         f"anything measured here.")
 
     return 0
 

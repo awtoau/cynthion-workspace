@@ -41,10 +41,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "hyperram_identify.log"
 BITSTREAM = ROOT / "ecp5-test" / "hyperram" / "identify_build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 REGISTER_ID        = 1
 REGISTER_ID0       = 2
@@ -116,121 +118,114 @@ def main():
                         help="assume the bitstream is already loaded")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    emit("HyperRAM identification and aliasing probe")
+    emit()
 
-        emit("HyperRAM identification and aliasing probe")
-        emit()
+    if not BITSTREAM.exists():
+        emit(f"bitstream missing: {BITSTREAM}")
+        emit("build it first -- see ecp5-test/hyperram/hyperram_identify.py")
+        return 1
 
-        if not BITSTREAM.exists():
-            emit(f"bitstream missing: {BITSTREAM}")
-            emit("build it first -- see ecp5-test/hyperram/hyperram_identify.py")
+    if not args.skip_configure:
+        ok, detail = configure()
+        if not ok:
+            emit(f"configure failed: {detail}")
             return 1
+        emit(f"configured {BITSTREAM.name}")
 
-        if not args.skip_configure:
-            ok, detail = configure()
-            if not ok:
-                emit(f"configure failed: {detail}")
-                return 1
-            emit(f"configured {BITSTREAM.name}")
+    from apollo_fpga import ApolloDebugger
+    debugger = ApolloDebugger()
 
-        from apollo_fpga import ApolloDebugger
-        debugger = ApolloDebugger()
-
-        # debugger.registers is set up in ApolloDebugger.__init__ via create_jtag_spi;
-        # there is no separate factory for it.
-        regs = debugger.registers
-        if True:
-            applet = regs.register_read(REGISTER_ID)
-            if applet != APPLET_ID:
-                emit(f"applet ID 0x{applet:08x}, expected 0x{APPLET_ID:08x}")
-                emit("the identification gateware is not running")
-                return 1
-            emit("applet responding")
-            emit()
-
-            state = regs.register_read(REGISTER_STATE) & 0xFF
-            id0 = regs.register_read(REGISTER_ID0) & 0xFFFF
-            id1 = regs.register_read(REGISTER_ID1) & 0xFFFF
-            cr0 = regs.register_read(REGISTER_CR0) & 0xFFFF
-            cr1 = regs.register_read(REGISTER_CR1) & 0xFFFF
-            alias = regs.register_read(REGISTER_ALIAS) & 0xF
-            bank0 = regs.register_read(REGISTER_BANK_DATA) & 0xFFFF
-            bank1 = regs.register_read(REGISTER_BANK1) & 0xFFFF
-            bank2 = regs.register_read(REGISTER_BANK2) & 0xFFFF
-            bank3 = regs.register_read(REGISTER_BANK3) & 0xFFFF
-
-        emit(f"FSM state: 0x{state:02x}"
-             + ("  (complete)" if state == 0xD0 else "  *** DID NOT COMPLETE"))
+    # debugger.registers is set up in ApolloDebugger.__init__ via create_jtag_spi;
+    # there is no separate factory for it.
+    regs = debugger.registers
+    if True:
+        applet = regs.register_read(REGISTER_ID)
+        if applet != APPLET_ID:
+            emit(f"applet ID 0x{applet:08x}, expected 0x{APPLET_ID:08x}")
+            emit("the identification gateware is not running")
+            return 1
+        emit("applet responding")
         emit()
 
-        emit("1. Identification")
-        described, capacity = decode_id0(id0)
-        emit(f"   ID0 {described}")
-        emit(f"   ID1 0x{id1:04x} (die revision)")
-        emit(f"   CR0 0x{cr0:04x}   CR1 0x{cr1:04x}")
-        if capacity:
-            emit(f"   -> capacity {capacity} bytes "
-                 f"({capacity >> 20} MiB / {capacity * 8 >> 20} Mbit)")
-        emit()
+        state = regs.register_read(REGISTER_STATE) & 0xFF
+        id0 = regs.register_read(REGISTER_ID0) & 0xFFFF
+        id1 = regs.register_read(REGISTER_ID1) & 0xFFFF
+        cr0 = regs.register_read(REGISTER_CR0) & 0xFFFF
+        cr1 = regs.register_read(REGISTER_CR1) & 0xFFFF
+        alias = regs.register_read(REGISTER_ALIAS) & 0xF
+        bank0 = regs.register_read(REGISTER_BANK_DATA) & 0xFFFF
+        bank1 = regs.register_read(REGISTER_BANK1) & 0xFFFF
+        bank2 = regs.register_read(REGISTER_BANK2) & 0xFFFF
+        bank3 = regs.register_read(REGISTER_BANK3) & 0xFFFF
 
-        emit("2. Address aliasing")
-        emit(f"   bank 0 holds 0x{bank0:04x} after all {BANKS} banks were written")
-        banks = [bank0, bank1, bank2, bank3]
-        emit()
-        emit("   Every bank must hold its OWN marker. If any two addresses are the same")
-        emit("   storage, the later write clobbered the earlier and one will be wrong --")
-        emit("   which is how mirroring is excluded rather than assumed away.")
-        for n, value in enumerate(banks):
-            want = 0xB000 | n
-            emit(f"     bank {n} @ word 0x{n * BANK_WORDS:07x}: "
-                 f"0x{value:04x}  want 0x{want:04x}  "
-                 f"{'ok' if value == want else '*** WRONG'}")
-        all_own = all(v == (0xB000 | n) for n, v in enumerate(banks))
-        if state != 0xD0:
-            emit("   inconclusive -- the FSM did not finish")
-        elif alias == 0:
-            emit(f"   no bank aliases bank 0: the {BANKS} banks are distinct storage")
-        else:
-            for bank in range(1, BANKS):
-                if alias & (1 << bank):
-                    emit(f"   bank {bank} (word 0x{bank * BANK_WORDS:x}) ALIASES bank 0")
-        emit()
+    emit(f"FSM state: 0x{state:02x}"
+         + ("  (complete)" if state == 0xD0 else "  *** DID NOT COMPLETE"))
+    emit()
 
-        emit("=" * 62)
-        expected_written = 0xB000 | (BANKS - 1)
-        if state == 0xD0 and all_own:
-            emit("RESULT: all four banks hold their own markers, after a retention wait.")
-            emit("Not mirrored -- mirroring would make a later write clobber an earlier")
-            emit("bank, and every bank kept its own value. Not unbacked -- an address")
-            emit("with no storage returns 0x0000/0xFFFF, not the exact byte written.")
-            emit()
-            emit(f"ID0 declares {4} MiB. Storage responds independently to at least")
-            emit(f"{BANKS * BANK_WORDS * 2 >> 20} MiB. Those disagree, and the disagreement")
-            emit("is the #109 result for this part.")
-            emit()
-            emit("NOT yet established: retention. These reads happen moments after the")
-            emit("writes, so this shows the address decodes and stores, not that it")
-            emit("holds over time or temperature. A refresh-interval test is the next")
-            emit("step before anything relies on it.")
-        elif state == 0xD0 and bank0 == expected_written:
-            emit("RESULT: bank 0 holds the LAST bank's value -- the address space")
-            emit("wraps, so the die is smaller than the probed range.")
-            emit(f"That is the small-die signature, and it bounds capacity below "
-                 f"{BANKS * BANK_WORDS * 2 >> 20} MiB.")
-        else:
-            emit("RESULT: inconclusive. Compare ID0's declared capacity against the")
-            emit("aliasing result before drawing anything from this.")
+    emit("1. Identification")
+    described, capacity = decode_id0(id0)
+    emit(f"   ID0 {described}")
+    emit(f"   ID1 0x{id1:04x} (die revision)")
+    emit(f"   CR0 0x{cr0:04x}   CR1 0x{cr1:04x}")
+    if capacity:
+        emit(f"   -> capacity {capacity} bytes "
+             f"({capacity >> 20} MiB / {capacity * 8 >> 20} Mbit)")
+    emit()
+
+    emit("2. Address aliasing")
+    emit(f"   bank 0 holds 0x{bank0:04x} after all {BANKS} banks were written")
+    banks = [bank0, bank1, bank2, bank3]
+    emit()
+    emit("   Every bank must hold its OWN marker. If any two addresses are the same")
+    emit("   storage, the later write clobbered the earlier and one will be wrong --")
+    emit("   which is how mirroring is excluded rather than assumed away.")
+    for n, value in enumerate(banks):
+        want = 0xB000 | n
+        emit(f"     bank {n} @ word 0x{n * BANK_WORDS:07x}: "
+             f"0x{value:04x}  want 0x{want:04x}  "
+             f"{'ok' if value == want else '*** WRONG'}")
+    all_own = all(v == (0xB000 | n) for n, v in enumerate(banks))
+    if state != 0xD0:
+        emit("   inconclusive -- the FSM did not finish")
+    elif alias == 0:
+        emit(f"   no bank aliases bank 0: the {BANKS} banks are distinct storage")
+    else:
+        for bank in range(1, BANKS):
+            if alias & (1 << bank):
+                emit(f"   bank {bank} (word 0x{bank * BANK_WORDS:x}) ALIASES bank 0")
+    emit()
+
+    emit("=" * 62)
+    expected_written = 0xB000 | (BANKS - 1)
+    if state == 0xD0 and all_own:
+        emit("RESULT: all four banks hold their own markers, after a retention wait.")
+        emit("Not mirrored -- mirroring would make a later write clobber an earlier")
+        emit("bank, and every bank kept its own value. Not unbacked -- an address")
+        emit("with no storage returns 0x0000/0xFFFF, not the exact byte written.")
         emit()
-        emit("Establishes this for this part at this moment. Unmarked capacity is")
-        emit("untested capacity -- see #109.")
+        emit(f"ID0 declares {4} MiB. Storage responds independently to at least")
+        emit(f"{BANKS * BANK_WORDS * 2 >> 20} MiB. Those disagree, and the disagreement")
+        emit("is the #109 result for this part.")
         emit()
-        emit("The FPGA is running the identification bitstream; reconfigure or")
-        emit("power-cycle to restore whatever was there before.")
-        emit(f"log: {LOG}")
+        emit("NOT yet established: retention. These reads happen moments after the")
+        emit("writes, so this shows the address decodes and stores, not that it")
+        emit("holds over time or temperature. A refresh-interval test is the next")
+        emit("step before anything relies on it.")
+    elif state == 0xD0 and bank0 == expected_written:
+        emit("RESULT: bank 0 holds the LAST bank's value -- the address space")
+        emit("wraps, so the die is smaller than the probed range.")
+        emit(f"That is the small-die signature, and it bounds capacity below "
+             f"{BANKS * BANK_WORDS * 2 >> 20} MiB.")
+    else:
+        emit("RESULT: inconclusive. Compare ID0's declared capacity against the")
+        emit("aliasing result before drawing anything from this.")
+    emit()
+    emit("Establishes this for this part at this moment. Unmarked capacity is")
+    emit("untested capacity -- see #109.")
+    emit()
+    emit("The FPGA is running the identification bitstream; reconfigure or")
+    emit("power-cycle to restore whatever was there before.")
 
     return 0
 

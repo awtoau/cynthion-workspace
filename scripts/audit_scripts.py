@@ -58,7 +58,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-LOG = ROOT / "tmp" / "logs" / "audit_scripts.log"
+
+sys.path.insert(0, str(SCRIPTS))
+
+from devlog import emit  # noqa: E402
 
 # The root of reachability. Everything live is live because this names it, or
 # because something this names does.
@@ -329,11 +332,8 @@ def main():
     lines.append("documented and orphan are the retirement candidates: nothing "
                  "can run them without a human reading a doc first.")
 
-    text = "\n".join(lines)
-    print(text)
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    LOG.write_text(text + "\n")
-    print(f"\nlog: {LOG.relative_to(ROOT)}", file=sys.stderr)
+    for line in lines:
+        emit(line)
     return 0
 
 

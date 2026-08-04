@@ -46,12 +46,15 @@ before spending a build on it.
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HERE = ROOT / "scripts" / "diamond"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import spawn  # noqa: E402
 
 # Where Diamond is, stated once. `flow.py` carries the same path because it is
 # the one that builds the environment; this is here so `probe` can say something
@@ -97,7 +100,7 @@ def main():
 
     _summary, script = COMMANDS[args.command]
     rest = args.rest[1:] if args.rest[:1] == ["--"] else args.rest
-    return subprocess.call([sys.executable, str(HERE / script), *rest], cwd=ROOT)
+    return spawn([sys.executable, str(HERE / script), *rest], cwd=ROOT)
 
 
 if __name__ == "__main__":

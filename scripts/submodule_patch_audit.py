@@ -13,7 +13,7 @@ Fails if any submodule holds a commit, a stash or an edit that is not on a remot
 
 Exit status 0 only if every submodule could be deleted today without losing
 anything. Output goes to the terminal and to
-`tmp/logs/submodule_patch_audit.log`.
+`tmp/logs/dev.log`.
 
 ## Why this exists
 
@@ -56,7 +56,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "submodule_patch_audit.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 
 def git(args, cwd, check=False):
@@ -154,59 +156,52 @@ def main():
                         help="list every branch, including the pushed ones")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    entries = list(submodules())
 
-        entries = list(submodules())
+    # A check that inspects nothing must say so rather than pass. Once the
+    # submodules are gone this is the expected state, but it has to be
+    # visible, not a silent green.
+    if not entries:
+        emit("no submodules -- nothing to audit.")
+        emit("If that is a surprise, .gitmodules is empty or this is not "
+             "the superproject.")
+        return 0
 
-        # A check that inspects nothing must say so rather than pass. Once the
-        # submodules are gone this is the expected state, but it has to be
-        # visible, not a silent green.
-        if not entries:
-            emit("no submodules -- nothing to audit.")
-            emit("If that is a surprise, .gitmodules is empty or this is not "
-                 "the superproject.")
-            return 0
-
-        if args.fetch:
-            emit(f"fetching {len(entries)} submodule remote(s)...")
-            for _, _, path in entries:
-                out = git(["fetch", "--all", "--quiet"], ROOT / path)
-                if out:
-                    emit(f"  {path}: {out}")
-            emit()
-
-        emit(f"{len(entries)} submodule(s), against every remote-tracking ref")
+    if args.fetch:
+        emit(f"fetching {len(entries)} submodule remote(s)...")
+        for _, _, path in entries:
+            out = git(["fetch", "--all", "--quiet"], ROOT / path)
+            if out:
+                emit(f"  {path}: {out}")
         emit()
 
-        unsafe = {}
-        for prefix, gitlink, path in entries:
-            findings = audit(path, prefix, gitlink, args.verbose, emit)
-            if findings:
-                unsafe[path] = findings
+    emit(f"{len(entries)} submodule(s), against every remote-tracking ref")
+    emit()
 
+    unsafe = {}
+    for prefix, gitlink, path in entries:
+        findings = audit(path, prefix, gitlink, args.verbose, emit)
+        if findings:
+            unsafe[path] = findings
+
+    emit()
+    if unsafe:
+        total = sum(len(f) for f in unsafe.values())
+        emit(f"{len(unsafe)} submodule(s) hold {total} piece(s) of work "
+             f"that exist only here.")
+        emit("Push the branch, apply or drop the stash, commit or discard "
+             "the edit -- then remove the submodule.")
+    else:
+        emit("Every submodule is reproducible from its remotes. "
+             "Safe to remove.")
+
+    if not args.fetch:
         emit()
-        if unsafe:
-            total = sum(len(f) for f in unsafe.values())
-            emit(f"{len(unsafe)} submodule(s) hold {total} piece(s) of work "
-                 f"that exist only here.")
-            emit("Push the branch, apply or drop the stash, commit or discard "
-                 "the edit -- then remove the submodule.")
-        else:
-            emit("Every submodule is reproducible from its remotes. "
-                 "Safe to remove.")
+        emit("Remote-tracking refs were not refreshed; re-run with --fetch "
+             "to rule out a stale ref.")
 
-        if not args.fetch:
-            emit()
-            emit("Remote-tracking refs were not refreshed; re-run with --fetch "
-                 "to rule out a stale ref.")
-
-        emit()
-        emit(f"log: {LOG}")
-        return 1 if unsafe else 0
+    emit()
+    return 1 if unsafe else 0
 
 
 if __name__ == "__main__":

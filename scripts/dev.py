@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,7 @@ PROJECT = "cynthion-workspace"
 REPO = Path(__file__).resolve().parent.parent
 TMP = REPO / "tmp"
 LOGS = TMP / "logs"
+# The single log every script in this repo writes to. See `devlog`.
 LOG = LOGS / "dev.log"
 
 PY = sys.executable
@@ -62,7 +64,8 @@ def script(name: str) -> str:
 #
 # name -> (summary, argv, accepts_extra_args)
 #
-# Each argv is a script that already owns its own logic and its own log file.
+# Each argv is a script that already owns its own logic. They all log through
+# `devlog` into the one file, so a step's output is here rather than beside it.
 # Nothing here reimplements a build; where a step needed a narrower mode than
 # the script offered, the mode was added to that script.
 # ---------------------------------------------------------------------------
@@ -125,39 +128,9 @@ CI = ["test", "lint", "build", "sim", "docs"]
 # Logging -- Tier A: local time, stderr + ./tmp/logs/dev.log, colour on a TTY
 # only, the file copy always plain so a later grep is not full of escapes.
 # ---------------------------------------------------------------------------
-_COLOR = {
-    "FATAL": "\033[1;91m", "ERROR": "\033[31m", "WARN": "\033[33m",
-    "INFO": "\033[97m", "DEBUG": "\033[94m", "ALERT": "\033[92m",
-}
-_RESET = "\033[0m"
-_USE_COLOR = (
-    sys.stderr.isatty()
-    and not os.environ.get("NO_COLOR")
-    and os.environ.get("CLICOLOR") != "0"
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-
-def _stamp() -> str:
-    # Local zone including DST. Never a hardcoded +10:00 -- Selwyn observes DST,
-    # so a fixed offset is an hour wrong every summer -- and never UTC, because a
-    # human reads these live.
-    return datetime.now().astimezone().strftime("%H:%M:%S.%f%z")
-
-
-def log(msg: str, level: str = "INFO") -> None:
-    line = f"{_stamp()}  {level:<5} [dev.py] {msg}"
-    if _USE_COLOR:
-        sys.stderr.write(f"{_COLOR.get(level, '')}{line}{_RESET}\n")
-    else:
-        sys.stderr.write(line + "\n")
-    sys.stderr.flush()
-    try:
-        LOGS.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except OSError:
-        pass            # never let logging kill the run
-
+from devlog import log, spawn  # noqa: E402
 
 SKIPPED = 125           # distinct from any real tool's exit code
 
@@ -209,8 +182,7 @@ def cargo_fmt(check: bool) -> int:
         cmd = ["cargo", "fmt", "--manifest-path", str(crate / "Cargo.toml")]
         if check:
             cmd.append("--check")
-        log("run: " + shorten(cmd))
-        rc = subprocess.call(cmd, cwd=REPO)
+        rc = spawn(cmd)
         if rc != 0:
             log(f"rc={rc}: {crate.name}", "ERROR")
             worst = rc
@@ -236,18 +208,16 @@ def run_step(name: str, extra: list[str] | None = None) -> int:
         log(f"{name}: {argv[0]} not on PATH - skipped", "WARN")
         return SKIPPED
     cmd = argv + (list(extra) if (extra and takes_extra) else [])
-    log("run: " + shorten(cmd))
-    rc = subprocess.call(cmd, cwd=REPO)
-    log(f"rc={rc}: {name}", "INFO" if rc == 0 else "ERROR")
+    rc = spawn(cmd)
+    if rc not in (0,):
+        log(f"{name} failed", "ERROR")
     return rc
 
 
 def run_tool(argv: list[str], extra: list[str] | None = None) -> int:
     """Run a one-off tool that is not a STEPS entry."""
     cmd = argv + list(extra or [])
-    log("run: " + shorten(cmd))
-    rc = subprocess.call(cmd, cwd=REPO)
-    log(f"rc={rc}", "INFO" if rc == 0 else "ERROR")
+    rc = spawn(cmd)
     return rc
 
 

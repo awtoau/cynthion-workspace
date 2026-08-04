@@ -32,7 +32,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "hyperram_readclksel_sweep.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 RESULTS = ROOT / "tmp" / "hyperram-readclksel"
 SETTINGS = tuple(range(8))
 DEFAULT_CK_MHZ = 160.0
@@ -170,12 +172,6 @@ def analysis_lines(analysis):
     return lines
 
 
-def emit(handle, text=""):
-    print(text, flush=True)
-    handle.write(text + "\n")
-    handle.flush()
-
-
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -204,63 +200,59 @@ def main():
     if solve_pll(sync_mhz, fast_ratio=2) is None:
         parser.error(f"device CK {args.ck:g} MHz is not reachable by the DQS clocks")
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().astimezone()
     result_path = RESULTS / f"{stamp.strftime('%Y%m%d-%H%M%S')}.json"
 
-    with LOG.open("a") as handle:
-        emit(handle, f"\n=== HyperRAM READCLKSEL sweep, "
-                     f"{stamp.isoformat(timespec='seconds')} ===")
-        emit(handle, f"fixed device CK {args.ck:g} MHz; DQS sync {sync_mhz:g} MHz; "
-                     f"settings 0..7; {args.words:,} checked words per setting")
+    emit(f"\n=== HyperRAM READCLKSEL sweep, "
+         f"{stamp.isoformat(timespec='seconds')} ===")
+    emit(f"fixed device CK {args.ck:g} MHz; DQS sync {sync_mhz:g} MHz; "
+         f"settings 0..7; {args.words:,} checked words per setting")
 
-        if do_build:
-            emit(handle, "\nbuilding one runtime-selectable DQS bitstream; "
-                         "the board is not involved")
-            ok, build_dir, _ = build_one(args.ck, True, sync_mhz, handle)
-            timing = timing_of(build_dir)
-            note = ""
-            if timing:
-                note = (f"; timing {'MET' if timing[0] else 'FAILED'} "
-                        f"{timing[1]:.1f}/{timing[2]:.1f} MHz on {timing[3]}")
-            emit(handle, f"  {'built' if ok else 'BUILD FAILED'}{note}")
-            if not ok:
-                return 1
+    if do_build:
+        emit("\nbuilding one runtime-selectable DQS bitstream; "
+             "the board is not involved")
+        ok, build_dir, _ = build_one(args.ck, True, sync_mhz)
+        timing = timing_of(build_dir)
+        note = ""
+        if timing:
+            note = (f"; timing {'MET' if timing[0] else 'FAILED'} "
+                    f"{timing[1]:.1f}/{timing[2]:.1f} MHz on {timing[3]}")
+        emit(f"  {'built' if ok else 'BUILD FAILED'}{note}")
+        if not ok:
+            return 1
 
-        if not do_run:
-            emit(handle, f"log: {LOG.relative_to(ROOT)}")
-            return 0
+    if not do_run:
+        return 0
 
-        emit(handle, "\nrunning all READCLKSEL settings; each verdict comes from "
-                     "the shared BIST and its negative control")
-        results = []
-        for setting in SETTINGS:
-            measured = run_one(args.ck, True, sync_mhz, args.words, handle,
-                               readclksel=setting)
-            passed = measured.get("verdict") == "pass"
-            results.append({"setting": setting, "passed": passed,
-                            "measurement": measured})
+    emit("\nrunning all READCLKSEL settings; each verdict comes from "
+         "the shared BIST and its negative control")
+    results = []
+    for setting in SETTINGS:
+        measured = run_one(args.ck, True, sync_mhz, args.words,
+                           readclksel=setting)
+        passed = measured.get("verdict") == "pass"
+        results.append({"setting": setting, "passed": passed,
+                        "measurement": measured})
 
-        analysis = analyse_window(
-            (row["setting"], row["passed"]) for row in results)
-        emit(handle, "\npass/fail table")
-        for row in results:
-            emit(handle, f"  READCLKSEL {row['setting']}: "
-                         f"{'PASS' if row['passed'] else 'FAIL'}")
-        emit(handle, "\nwindow analysis")
-        for line in analysis_lines(analysis):
-            emit(handle, "  " + line)
+    analysis = analyse_window(
+        (row["setting"], row["passed"]) for row in results)
+    emit("\npass/fail table")
+    for row in results:
+        emit(f"  READCLKSEL {row['setting']}: "
+             f"{'PASS' if row['passed'] else 'FAIL'}")
+    emit("\nwindow analysis")
+    for line in analysis_lines(analysis):
+        emit("  " + line)
 
-        payload = {
-            "timestamp": stamp.isoformat(timespec="seconds"),
-            "ck_mhz": args.ck, "sync_mhz": sync_mhz,
-            "words_per_setting": args.words, "results": results,
-            "analysis": asdict(analysis),
-        }
-        result_path.write_text(json.dumps(payload, indent=2) + "\n")
-        emit(handle, f"results: {result_path.relative_to(ROOT)}")
-        emit(handle, f"log: {LOG.relative_to(ROOT)}")
+    payload = {
+        "timestamp": stamp.isoformat(timespec="seconds"),
+        "ck_mhz": args.ck, "sync_mhz": sync_mhz,
+        "words_per_setting": args.words, "results": results,
+        "analysis": asdict(analysis),
+    }
+    result_path.write_text(json.dumps(payload, indent=2) + "\n")
+    emit(f"results: {result_path.relative_to(ROOT)}")
     return 0
 
 

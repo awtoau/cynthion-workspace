@@ -42,11 +42,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "install_udev.log"
 GENERATED = ROOT / "scripts" / "udev" / "55-cynthion-test.rules"
 INSTALLED = Path("/etc/udev/rules.d/55-cynthion-test.rules")
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 HEADER = """# Test bitstreams built in this workspace: one product ID each.
 #
@@ -95,44 +97,37 @@ def main():
                         help="generate and compare, without installing")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    content = generate()
+    GENERATED.parent.mkdir(parents=True, exist_ok=True)
+    GENERATED.write_text(content)
+    emit(f"generated {GENERATED.relative_to(ROOT)}")
 
-        content = generate()
-        GENERATED.parent.mkdir(parents=True, exist_ok=True)
-        GENERATED.write_text(content)
-        emit(f"generated {GENERATED.relative_to(ROOT)}")
+    current = INSTALLED.read_text() if INSTALLED.exists() else None
+    if current == content:
+        emit(f"{INSTALLED} is already up to date")
+        return 0
 
-        current = INSTALLED.read_text() if INSTALLED.exists() else None
-        if current == content:
-            emit(f"{INSTALLED} is already up to date")
-            return 0
+    if args.check:
+        emit(f"{INSTALLED} differs" if current else f"{INSTALLED} is not installed")
+        emit("run with sudo to install")
+        return 1
 
-        if args.check:
-            emit(f"{INSTALLED} differs" if current else f"{INSTALLED} is not installed")
-            emit("run with sudo to install")
-            return 1
+    try:
+        INSTALLED.write_text(content)
+    except PermissionError:
+        emit(f"cannot write {INSTALLED} -- re-run with sudo")
+        return 1
+    emit(f"installed {INSTALLED}")
 
-        try:
-            INSTALLED.write_text(content)
-        except PermissionError:
-            emit(f"cannot write {INSTALLED} -- re-run with sudo")
-            return 1
-        emit(f"installed {INSTALLED}")
+    # Reload and re-trigger, so an already-plugged device picks the rules up without
+    # a replug. Without the trigger the rules apply only to the next enumeration,
+    # which reads as the change not having worked.
+    for cmd in (["udevadm", "control", "--reload-rules"],
+                ["udevadm", "trigger", "--subsystem-match=usb",
+                 "--subsystem-match=tty"]):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        emit(f"{' '.join(cmd)} -> rc={result.returncode}")
 
-        # Reload and re-trigger, so an already-plugged device picks the rules up without
-        # a replug. Without the trigger the rules apply only to the next enumeration,
-        # which reads as the change not having worked.
-        for cmd in (["udevadm", "control", "--reload-rules"],
-                    ["udevadm", "trigger", "--subsystem-match=usb",
-                     "--subsystem-match=tty"]):
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            emit(f"{' '.join(cmd)} -> rc={result.returncode}")
-
-        emit(f"log: {LOG}")
     return 0
 
 

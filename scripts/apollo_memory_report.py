@@ -43,8 +43,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
+
 APOLLO = ROOT / "repos" / "apollo"
-LOG = ROOT / "tmp" / "logs" / "apollo_memory_report.log"
 
 # From the d11 linker script. Flash is 16 KB total with the first 2 KB reserved
 # for the saturn-v bootloader, leaving 14 KB for the application.
@@ -142,73 +145,66 @@ def main():
                 return 1
             elf = candidates[0]
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    emit(f"Apollo memory report: {elf.relative_to(ROOT) if ROOT in elf.parents else elf}")
+    emit()
 
-        emit(f"Apollo memory report: {elf.relative_to(ROOT) if ROOT in elf.parents else elf}")
+    found = sections(elf)
+    text = found.get(".text", 0)
+    data = found.get(".data", 0)
+    bss = found.get(".bss", 0)
+    stack = found.get(".stack", 0)
+
+    rom_used = text + data
+    ram_used = data + bss + stack
+
+    emit(f"  flash  {bar(rom_used, ROM_BYTES)} {rom_used:>6} / {ROM_BYTES} "
+         f"= {100 * rom_used / ROM_BYTES:.2f}%")
+    emit(f"         .text {text}  .data {data}")
+    emit()
+    emit(f"  RAM    {bar(ram_used, RAM_BYTES)} {ram_used:>6} / {RAM_BYTES} "
+         f"= {100 * ram_used / RAM_BYTES:.2f}%")
+    emit(f"         .data {data}  .bss {bss}  .stack {stack} (reservation)")
+    emit()
+
+    free = RAM_BYTES - ram_used
+    emit(f"  {free} bytes unallocated, against a {stack}-byte stack "
+         f"reservation that is UNMEASURED (#74).")
+    emit("  That is headroom over a guess, not spare capacity -- and this "
+         "part has no MPU,")
+    emit("  so an overflow corrupts .bss silently instead of faulting.")
+    emit()
+
+    objects = symbols(elf)
+
+    for region, label in ((".bss", "RAM (.bss)"), (".data", "RAM (.data)"),
+                          (".text", "flash (.text)")):
+        chosen = [o for o in objects if o[3] == region]
+        chosen.sort(key=lambda o: -o[1])
+        if not chosen:
+            continue
+        emit(f"  largest in {label}:")
+        for name, size, kind, _ in chosen[:args.top]:
+            linkage = "global" if kind.isupper() else "local"
+            flag = "  <-- notable" if (region != ".text"
+                                       and size >= NOTABLE_BYTES) else ""
+            emit(f"    {size:>6}  {linkage:<6} {name[:44]}{flag}")
         emit()
 
-        found = sections(elf)
-        text = found.get(".text", 0)
-        data = found.get(".data", 0)
-        bss = found.get(".bss", 0)
-        stack = found.get(".stack", 0)
-
-        rom_used = text + data
-        ram_used = data + bss + stack
-
-        emit(f"  flash  {bar(rom_used, ROM_BYTES)} {rom_used:>6} / {ROM_BYTES} "
-             f"= {100 * rom_used / ROM_BYTES:.2f}%")
-        emit(f"         .text {text}  .data {data}")
-        emit()
-        emit(f"  RAM    {bar(ram_used, RAM_BYTES)} {ram_used:>6} / {RAM_BYTES} "
-             f"= {100 * ram_used / RAM_BYTES:.2f}%")
-        emit(f"         .data {data}  .bss {bss}  .stack {stack} (reservation)")
+    # Optimisation candidates, stated as questions rather than conclusions:
+    # whether two buffers can share depends on exclusivity, which a symbol
+    # table cannot show.
+    big = [(n, s) for n, s, _, r in objects
+           if r == ".bss" and s >= NOTABLE_BYTES]
+    if big:
+        total = sum(s for _, s in big)
+        emit(f"  {len(big)} .bss objects of {NOTABLE_BYTES}+ bytes account "
+             f"for {total} of {bss} ({100 * total / bss:.0f}%).")
+        emit("  Worth asking of each: is it live at the same time as the "
+             "others? Two buffers")
+        emit("  that are provably exclusive can share one allocation. See "
+             "#103 and #63.")
         emit()
 
-        free = RAM_BYTES - ram_used
-        emit(f"  {free} bytes unallocated, against a {stack}-byte stack "
-             f"reservation that is UNMEASURED (#74).")
-        emit("  That is headroom over a guess, not spare capacity -- and this "
-             "part has no MPU,")
-        emit("  so an overflow corrupts .bss silently instead of faulting.")
-        emit()
-
-        objects = symbols(elf)
-
-        for region, label in ((".bss", "RAM (.bss)"), (".data", "RAM (.data)"),
-                              (".text", "flash (.text)")):
-            chosen = [o for o in objects if o[3] == region]
-            chosen.sort(key=lambda o: -o[1])
-            if not chosen:
-                continue
-            emit(f"  largest in {label}:")
-            for name, size, kind, _ in chosen[:args.top]:
-                linkage = "global" if kind.isupper() else "local"
-                flag = "  <-- notable" if (region != ".text"
-                                           and size >= NOTABLE_BYTES) else ""
-                emit(f"    {size:>6}  {linkage:<6} {name[:44]}{flag}")
-            emit()
-
-        # Optimisation candidates, stated as questions rather than conclusions:
-        # whether two buffers can share depends on exclusivity, which a symbol
-        # table cannot show.
-        big = [(n, s) for n, s, _, r in objects
-               if r == ".bss" and s >= NOTABLE_BYTES]
-        if big:
-            total = sum(s for _, s in big)
-            emit(f"  {len(big)} .bss objects of {NOTABLE_BYTES}+ bytes account "
-                 f"for {total} of {bss} ({100 * total / bss:.0f}%).")
-            emit("  Worth asking of each: is it live at the same time as the "
-                 "others? Two buffers")
-            emit("  that are provably exclusive can share one allocation. See "
-                 "#103 and #63.")
-            emit()
-
-        emit(f"log: {LOG}")
 
     return 0
 

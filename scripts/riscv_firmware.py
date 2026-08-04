@@ -35,8 +35,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit, spawn  # noqa: E402
 OUT = ROOT / "tmp" / "riscv_hello"
-LOG = ROOT / "tmp" / "logs" / "riscv_firmware.log"
 
 # CoreMark is vendored in the VexiiRiscv submodule rather than fetched.
 COREMARK = ROOT / "repos" / "vexiiriscv" / "ext" / "NaxSoftware" / "baremetal" / "coremark"
@@ -1263,12 +1265,6 @@ int main(void) {
 """
 
 
-def emit(handle, text=""):
-    print(text, flush=True)
-    handle.write(text + "\n")
-    handle.flush()
-
-
 def write_common(work):
     """Write the files every target shares."""
     (work / "link.ld").write_text(
@@ -1286,7 +1282,7 @@ def write_common(work):
                        ila_depth=ILA_DEPTH))
 
 
-def build(target, work, handle, write_tests=False):
+def build(target, work, write_tests=False):
     """Compile, link, and emit a raw binary."""
     write_common(work)
 
@@ -1307,9 +1303,9 @@ def build(target, work, handle, write_tests=False):
         extra_flags = [f"-I{work}"]
     elif target == "coremark":
         if not COREMARK.exists():
-            emit(handle, f"CoreMark sources not found at {COREMARK}")
-            emit(handle, "  They are vendored in the VexiiRiscv submodule; run")
-            emit(handle, "  git submodule update --init --recursive")
+            emit(f"CoreMark sources not found at {COREMARK}")
+            emit("  They are vendored in the VexiiRiscv submodule; run")
+            emit("  git submodule update --init --recursive")
             return None
         sources = [str(work / "start.S"),
                    str(PORT / "core_portme.c")]
@@ -1325,10 +1321,10 @@ def build(target, work, handle, write_tests=False):
                        "-DMAIN_HAS_NOARGC=1", '-DCOMPILER_FLAGS="-O2"',
                        "-DSEED_METHOD=SEED_VOLATILE"]
     else:
-        emit(handle, f"{target}: not vendored.")
-        emit(handle, "  Dhrystone needs its sources fetched. CoreMark is "
-                     "available as")
-        emit(handle, "  --target coremark.")
+        emit(f"{target}: not vendored.")
+        emit("  Dhrystone needs its sources fetched. CoreMark is "
+             "available as")
+        emit("  --target coremark.")
         return None
 
     elf = work / f"{target}.elf"
@@ -1351,16 +1347,19 @@ def build(target, work, handle, write_tests=False):
 
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
-        emit(handle, "compile failed:")
+        emit("compile failed:")
         for line in (result.stderr or "").strip().splitlines()[:15]:
-            emit(handle, f"    {line}")
+            emit(f"    {line}")
         return None
     for line in (result.stderr or "").strip().splitlines():
-        emit(handle, f"    warning: {line}")
+        emit(f"    warning: {line}")
 
     binary = work / f"{target}.bin"
-    subprocess.run([OBJCOPY, "-O", "binary", str(elf), str(binary)],
-                   check=True)
+    # Spawned rather than `check=True`: objcopy is silent on success, and on
+    # failure the complaint reaches the log instead of only the terminal.
+    rc = spawn([OBJCOPY, "-O", "binary", str(elf), str(binary)])
+    if rc != 0:
+        raise subprocess.CalledProcessError(rc, OBJCOPY)
 
     listing = work / f"{target}.lst"
     disassembly = subprocess.run([OBJDUMP, "-d", str(elf)],
@@ -1388,43 +1387,40 @@ def main():
             return 1
 
     OUT.mkdir(parents=True, exist_ok=True)
-    LOG.parent.mkdir(parents=True, exist_ok=True)
 
-    with LOG.open("w") as handle:
-        emit(handle, f"building {args.target} for rv32im/ilp32")
-        emit(handle)
+    emit(f"building {args.target} for rv32im/ilp32")
+    emit()
 
-        if args.write_tests:
-            emit(handle, "  WRITE TESTS ENABLED -- this image erases and "
-                         f"programs the sector at {FLASH_SCRATCH:#x}")
-            emit(handle)
-        built = build(args.target, OUT, handle, write_tests=args.write_tests)
-        if built is None:
-            return 1
-        binary, elf = built
+    if args.write_tests:
+        emit("  WRITE TESTS ENABLED -- this image erases and "
+             f"programs the sector at {FLASH_SCRATCH:#x}")
+        emit()
+    built = build(args.target, OUT, write_tests=args.write_tests)
+    if built is None:
+        return 1
+    binary, elf = built
 
-        size = binary.stat().st_size
-        emit(handle, f"  {binary.name}: {size} bytes "
-                     f"({100 * size / RAM_SIZE:.1f}% of {RAM_SIZE // 1024} KiB "
-                     f"block RAM)")
+    size = binary.stat().st_size
+    emit(f"  {binary.name}: {size} bytes "
+         f"({100 * size / RAM_SIZE:.1f}% of {RAM_SIZE // 1024} KiB "
+         f"block RAM)")
 
-        # The reset vector is the base of RAM, so whatever is at offset 0 runs
-        # first. Checking it is _start catches a linker script that reordered
-        # sections -- which fails silently and looks like a dead CPU.
-        entry = subprocess.run([OBJDUMP, "-d", "--start-address=0",
-                                "--stop-address=8", str(elf)],
-                               capture_output=True, text=True).stdout
-        emit(handle)
-        emit(handle, "  first instructions at the reset vector:")
-        for line in entry.splitlines():
-            if ":\t" in line:
-                emit(handle, f"    {line.strip()}")
+    # The reset vector is the base of RAM, so whatever is at offset 0 runs
+    # first. Checking it is _start catches a linker script that reordered
+    # sections -- which fails silently and looks like a dead CPU.
+    entry = subprocess.run([OBJDUMP, "-d", "--start-address=0",
+                            "--stop-address=8", str(elf)],
+                           capture_output=True, text=True).stdout
+    emit()
+    emit("  first instructions at the reset vector:")
+    for line in entry.splitlines():
+        if ":\t" in line:
+            emit(f"    {line.strip()}")
 
-        emit(handle)
-        emit(handle, f"  disassembly: {elf.with_suffix('.lst')}")
-        emit(handle, f"  log: {LOG}")
-        emit(handle)
-        emit(handle, "next: ./ecp5-test/riscv/hello_soc.py --build --program")
+    emit()
+    emit(f"  disassembly: {elf.with_suffix('.lst')}")
+    emit()
+    emit("next: ./ecp5-test/riscv/hello_soc.py --build --program")
 
     return 0
 

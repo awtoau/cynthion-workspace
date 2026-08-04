@@ -61,8 +61,11 @@ ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "firmware" / "cynthion-soc"
 CARGO = CRATE / "Cargo.toml"
 ELF = CRATE / "target" / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
-LOG = ROOT / "tmp" / "logs" / "opt_level_sweep.log"
 RESULTS = ROOT / "tmp" / "opt_level_sweep.json"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 CONSOLE_PORT = 9000
 
@@ -159,14 +162,6 @@ def main():
                         help="build and size only; do not flash or measure")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    handle = LOG.open("w", encoding="utf-8")
-
-    def emit(text=""):
-        print(text, flush=True)
-        handle.write(text + "\n")
-        handle.flush()
-
     original = CARGO.read_text()
     results = {}
     try:
@@ -228,7 +223,6 @@ def main():
 
     RESULTS.write_text(json.dumps(results, indent=2))
     emit(f"\nresults {RESULTS.relative_to(ROOT)}")
-    emit(f"log {LOG.relative_to(ROOT)}")
     return 0
 
 

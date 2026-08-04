@@ -42,10 +42,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
+
 APOLLO = ROOT / "repos" / "apollo"
 FIRMWARE = APOLLO / "firmware"
 ELF = FIRMWARE / "_build" / "cynthion_d11" / "firmware.elf"
-LOG = ROOT / "tmp" / "logs" / "apollo_budget_check.log"
 
 ROM_BYTES = 14 * 1024
 RAM_BYTES = 4 * 1024
@@ -101,67 +104,59 @@ def main():
         print(f"no ELF at {args.elf} -- build first")
         return 1
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    found = sections(args.elf)
+    text = found.get(".text", 0)
+    data = found.get(".data", 0)
+    bss = found.get(".bss", 0)
+    stack = found.get(".stack", 0)
 
-        found = sections(args.elf)
-        text = found.get(".text", 0)
-        data = found.get(".data", 0)
-        bss = found.get(".bss", 0)
-        stack = found.get(".stack", 0)
+    rom = text + data
+    ram = data + bss + stack
+    rom_pct = 100 * rom / ROM_BYTES
+    ram_pct = 100 * ram / RAM_BYTES
 
-        rom = text + data
-        ram = data + bss + stack
-        rom_pct = 100 * rom / ROM_BYTES
-        ram_pct = 100 * ram / RAM_BYTES
+    failures = []
 
-        failures = []
+    verdict = "ok"
+    if rom_pct > ROM_CEILING * 100:
+        verdict = f"OVER {ROM_CEILING * 100:.0f}% CEILING"
+        failures.append(f"flash at {rom_pct:.2f}%")
+    emit(f"  flash  {rom:>6} / {ROM_BYTES}  {rom_pct:>6.2f}%  "
+         f"(ceiling {ROM_CEILING * 100:.0f}%)  {verdict}")
 
-        verdict = "ok"
-        if rom_pct > ROM_CEILING * 100:
-            verdict = f"OVER {ROM_CEILING * 100:.0f}% CEILING"
-            failures.append(f"flash at {rom_pct:.2f}%")
-        emit(f"  flash  {rom:>6} / {ROM_BYTES}  {rom_pct:>6.2f}%  "
-             f"(ceiling {ROM_CEILING * 100:.0f}%)  {verdict}")
+    verdict = "ok"
+    if ram_pct > RAM_CEILING * 100:
+        verdict = f"OVER {RAM_CEILING * 100:.0f}% CEILING"
+        failures.append(f"RAM at {ram_pct:.2f}%")
+    emit(f"  RAM    {ram:>6} / {RAM_BYTES}  {ram_pct:>6.2f}%  "
+         f"(ceiling {RAM_CEILING * 100:.0f}%)  {verdict}")
+    emit(f"         .text {text}  .data {data}  .bss {bss}  "
+         f".stack {stack}")
 
-        verdict = "ok"
-        if ram_pct > RAM_CEILING * 100:
-            verdict = f"OVER {RAM_CEILING * 100:.0f}% CEILING"
-            failures.append(f"RAM at {ram_pct:.2f}%")
-        emit(f"  RAM    {ram:>6} / {RAM_BYTES}  {ram_pct:>6.2f}%  "
-             f"(ceiling {RAM_CEILING * 100:.0f}%)  {verdict}")
-        emit(f"         .text {text}  .data {data}  .bss {bss}  "
-             f".stack {stack}")
+    if args.stack_measured is not None:
+        if args.stack_measured >= stack:
+            emit(f"  stack  MEASURED {args.stack_measured} >= reservation "
+                 f"{stack} -- OVERFLOW")
+            failures.append(f"stack high-water {args.stack_measured} "
+                            f"reaches the {stack}-byte reservation")
+        else:
+            headroom = stack - args.stack_measured
+            emit(f"  stack  measured {args.stack_measured} of {stack}, "
+                 f"{headroom} unused "
+                 f"({stack / args.stack_measured:.1f}x margin)")
 
-        if args.stack_measured is not None:
-            if args.stack_measured >= stack:
-                emit(f"  stack  MEASURED {args.stack_measured} >= reservation "
-                     f"{stack} -- OVERFLOW")
-                failures.append(f"stack high-water {args.stack_measured} "
-                                f"reaches the {stack}-byte reservation")
-            else:
-                headroom = stack - args.stack_measured
-                emit(f"  stack  measured {args.stack_measured} of {stack}, "
-                     f"{headroom} unused "
-                     f"({stack / args.stack_measured:.1f}x margin)")
-
+    emit()
+    if failures:
+        emit("BUDGET REGRESSION:")
+        for failure in failures:
+            emit(f"  - {failure}")
         emit()
-        if failures:
-            emit("BUDGET REGRESSION:")
-            for failure in failures:
-                emit(f"  - {failure}")
-            emit()
-            emit("A step change rather than drift is what this catches: a new")
-            emit("buffer, a disabled optimisation, or a newly linked library.")
-            emit("Raising the ceiling is the wrong first response -- check what")
-            emit("grew, with scripts/apollo_memory_report.py.")
-            emit(f"log: {LOG}")
-            return 1
+        emit("A step change rather than drift is what this catches: a new")
+        emit("buffer, a disabled optimisation, or a newly linked library.")
+        emit("Raising the ceiling is the wrong first response -- check what")
+        emit("grew, with scripts/apollo_memory_report.py.")
+        return 1
 
-        emit(f"log: {LOG}")
     return 0
 
 

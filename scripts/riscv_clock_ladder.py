@@ -53,13 +53,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "riscv_clock_ladder.log"
 RESULTS = ROOT / "tmp" / "riscv_clock_ladder.json"
 GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # 0x12345678 * 3, which the firmware prints. Checking the value rather than merely
 # checking that something arrived is what separates "faster" from "faster and wrong".
@@ -159,54 +161,47 @@ def main():
     original = re.search(r"SYNC_MHZ = (\d+)", GATEWARE.read_text())
     original = int(original.group(1)) if original else 60
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    emit("RISC-V SoC clock ladder")
+    emit(f"restoring SYNC_MHZ = {original} when done")
+    emit()
+    emit("passing means the printed product is correct AND the counter advances;")
+    emit("a marginal CPU computes wrong answers rather than stopping.")
+    emit()
 
-        emit("RISC-V SoC clock ladder")
-        emit(f"restoring SYNC_MHZ = {original} when done")
+    results = {}
+    try:
+        for mhz in args.frequencies:
+            set_clock(mhz)
+            ok, achieved, detail = build()
+            if not ok:
+                emit(f"  {mhz:3d} MHz  build failed: {detail}")
+                results[mhz] = {"built": False, "detail": detail}
+                continue
+
+            margin = f"nextpnr {achieved:.1f} MHz" if achieved else "timing unknown"
+            if not configure():
+                emit(f"  {mhz:3d} MHz  {margin}  configure failed")
+                results[mhz] = {"built": True, "configured": False}
+                continue
+
+            good, detail = verify()
+            emit(f"  {mhz:3d} MHz  {margin}  "
+                 f"{'PASS' if good else '*** FAIL'}  {detail}")
+            results[mhz] = {"built": True, "configured": True,
+                            "achieved_mhz": achieved, "pass": good,
+                            "detail": detail}
+    finally:
+        set_clock(original)
         emit()
-        emit("passing means the printed product is correct AND the counter advances;")
-        emit("a marginal CPU computes wrong answers rather than stopping.")
-        emit()
+        emit(f"restored SYNC_MHZ = {original}; rebuild to put it back on the board")
 
-        results = {}
-        try:
-            for mhz in args.frequencies:
-                set_clock(mhz)
-                ok, achieved, detail = build()
-                if not ok:
-                    emit(f"  {mhz:3d} MHz  build failed: {detail}")
-                    results[mhz] = {"built": False, "detail": detail}
-                    continue
-
-                margin = f"nextpnr {achieved:.1f} MHz" if achieved else "timing unknown"
-                if not configure():
-                    emit(f"  {mhz:3d} MHz  {margin}  configure failed")
-                    results[mhz] = {"built": True, "configured": False}
-                    continue
-
-                good, detail = verify()
-                emit(f"  {mhz:3d} MHz  {margin}  "
-                     f"{'PASS' if good else '*** FAIL'}  {detail}")
-                results[mhz] = {"built": True, "configured": True,
-                                "achieved_mhz": achieved, "pass": good,
-                                "detail": detail}
-        finally:
-            set_clock(original)
-            emit()
-            emit(f"restored SYNC_MHZ = {original}; rebuild to put it back on the board")
-
-        RESULTS.write_text(json.dumps(results, indent=2) + "\n")
-        passed = [m for m, r in results.items() if r.get("pass")]
-        emit()
-        if passed:
-            emit(f"highest verified: {max(passed)} MHz")
-        else:
-            emit("nothing verified")
-        emit(f"log: {LOG}")
+    RESULTS.write_text(json.dumps(results, indent=2) + "\n")
+    passed = [m for m, r in results.items() if r.get("pass")]
+    emit()
+    if passed:
+        emit(f"highest verified: {max(passed)} MHz")
+    else:
+        emit("nothing verified")
 
     return 0
 

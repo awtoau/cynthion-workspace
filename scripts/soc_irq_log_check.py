@@ -11,7 +11,7 @@ Fails if any module containing an interrupt handler can reach a console.
     python3 scripts/soc_irq_log_check.py -v      # list every file inspected
 
 Exit status 0 if every rule holds. Output goes to the terminal and to
-`tmp/logs/soc_irq_log_check.log`. Run as the `irqlog` check in
+`tmp/logs/dev.log`. Run as the `irqlog` check in
 `scripts/check.py`.
 
 ## Why a grep rather than the compiler
@@ -54,7 +54,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_irq_log_check.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
+
 SRC = ROOT / "firmware" / "cynthion-soc" / "src"
 
 # What makes a file a handler module.
@@ -121,80 +124,72 @@ def main():
                         help="list every file inspected")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    if not SRC.is_dir():
+        emit(f"no firmware source at {SRC.relative_to(ROOT)}")
+        return 1
 
-        if not SRC.is_dir():
-            emit(f"no firmware source at {SRC.relative_to(ROOT)}")
-            return 1
+    problems = []
+    handlers = []
 
-        problems = []
-        handlers = []
+    # Recursive. `src/bus/` holds the I2C controller and the mux, and a
+    # subdirectory that this check silently walked past would be a place
+    # where the rule does not apply -- which is exactly the kind of exemption
+    # nobody would notice granting.
+    for path in sorted(SRC.rglob("*.rs")):
+        raw = path.read_text()
+        code = strip_comments(raw)
+        name = path.name
 
-        # Recursive. `src/bus/` holds the I2C controller and the mux, and a
-        # subdirectory that this check silently walked past would be a place
-        # where the rule does not apply -- which is exactly the kind of exemption
-        # nobody would notice granting.
-        for path in sorted(SRC.rglob("*.rs")):
-            raw = path.read_text()
-            code = strip_comments(raw)
-            name = path.name
+        is_handler = any(attribute in code
+                         for attribute in HANDLER_ATTRIBUTES)
+        if is_handler:
+            handlers.append(name)
 
-            is_handler = any(attribute in code
-                             for attribute in HANDLER_ATTRIBUTES)
-            if is_handler:
-                handlers.append(name)
+        rules = list(CRATE_FORBIDDEN)
+        if is_handler:
+            rules += FORBIDDEN
 
-            rules = list(CRATE_FORBIDDEN)
-            if is_handler:
-                rules += FORBIDDEN
+        for pattern, why in rules:
+            if name in EXEMPT and pattern in EXEMPT[name]:
+                continue
+            for number, line in enumerate(code.splitlines(), 1):
+                if re.search(pattern, line):
+                    problems.append(
+                        f"{path.relative_to(ROOT)}:{number}: "
+                        f"{pattern} -- {why}\n"
+                        f"      {raw.splitlines()[number - 1].strip()}")
 
-            for pattern, why in rules:
-                if name in EXEMPT and pattern in EXEMPT[name]:
-                    continue
-                for number, line in enumerate(code.splitlines(), 1):
-                    if re.search(pattern, line):
-                        problems.append(
-                            f"{path.relative_to(ROOT)}:{number}: "
-                            f"{pattern} -- {why}\n"
-                            f"      {raw.splitlines()[number - 1].strip()}")
+        if args.verbose:
+            emit(f"  {name:<12} {'handler' if is_handler else ''}")
 
-            if args.verbose:
-                emit(f"  {name:<12} {'handler' if is_handler else ''}")
+    # A check that finds nothing because it looked at nothing is worse than
+    # no check: it reports success forever after a rename. So the discovery
+    # itself is asserted.
+    if not handlers:
+        emit("no interrupt handler found in "
+             f"{SRC.relative_to(ROOT)} -- this check inspected nothing.")
+        emit("Either the handler attribute changed name, or the handler "
+             "moved out of this crate. Fix HANDLER_ATTRIBUTES; do not "
+             "leave a guard that passes because it is looking nowhere.")
+        return 1
 
-        # A check that finds nothing because it looked at nothing is worse than
-        # no check: it reports success forever after a rename. So the discovery
-        # itself is asserted.
-        if not handlers:
-            emit("no interrupt handler found in "
-                 f"{SRC.relative_to(ROOT)} -- this check inspected nothing.")
-            emit("Either the handler attribute changed name, or the handler "
-                 "moved out of this crate. Fix HANDLER_ATTRIBUTES; do not "
-                 "leave a guard that passes because it is looking nowhere.")
-            return 1
+    emit(f"handler module(s): {', '.join(handlers)}")
+    emit(f"{len(list(SRC.rglob('*.rs')))} file(s) checked")
 
-        emit(f"handler module(s): {', '.join(handlers)}")
-        emit(f"{len(list(SRC.rglob('*.rs')))} file(s) checked")
+    if problems:
+        emit()
+        emit("A handler that prints spins on a UART FIFO inside an "
+             "interrupt. Use `log_from_irq!` and let the main loop format "
+             "it -- see firmware/cynthion-soc/src/events.rs.")
+        emit()
+        for problem in problems:
+            emit(f"  {problem}")
+        emit()
+        emit(f"{len(problems)} violation(s)")
+        return 1
 
-        if problems:
-            emit()
-            emit("A handler that prints spins on a UART FIFO inside an "
-                 "interrupt. Use `log_from_irq!` and let the main loop format "
-                 "it -- see firmware/cynthion-soc/src/events.rs.")
-            emit()
-            for problem in problems:
-                emit(f"  {problem}")
-            emit()
-            emit(f"{len(problems)} violation(s)")
-            emit(f"log: {LOG.relative_to(ROOT)}")
-            return 1
-
-        emit("no interrupt handler can reach a console")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 0
+    emit("no interrupt handler can reach a console")
+    return 0
 
 
 if __name__ == "__main__":

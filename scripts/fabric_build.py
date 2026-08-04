@@ -51,8 +51,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "fabric_build.log"
 BUILD_DIR = ROOT / "tmp" / "fabric" / "build"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The toolchain this project pins. Amaranth resolves yosys/nextpnr/ecppack from
 # PATH, so prepending is enough -- no environment script to source.
@@ -149,8 +152,11 @@ def main():
                         help="where the tools write; a sweep needs one "
                              "directory per configuration or each build "
                              "destroys the evidence from the last")
-    parser.add_argument("--log", type=Path, default=LOG,
-                        help="where this script's transcript goes")
+    # An EXTRA copy, off by default: everything already goes to
+    # tmp/logs/dev.log. The sweep asks for one per configuration so each
+    # build's transcript sits beside the bitstream it produced.
+    parser.add_argument("--log", type=Path, default=None,
+                        help="also write this build's transcript here")
     args = parser.parse_args()
 
     sys.path.insert(0, str(ROOT / "ecp5-test"))
@@ -166,7 +172,6 @@ def main():
         print(f"no oss-cad-suite at {OSS_CAD}")
         return 1
 
-    args.log.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}:{env['PATH']}"
 
@@ -177,91 +182,91 @@ def main():
     if args.seed is not None:
         env["AMARANTH_nextpnr_opts"] = f"--seed {args.seed}"
 
-    with args.log.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    transcript = None
+    if args.log:
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        transcript = args.log.open("w")
 
-        emit(f"fabric test: {blocks} blocks, round 2**{round_bits} cycles")
-        if args.seed is not None:
-            emit(f"nextpnr placer seed: {args.seed}")
-        emit(f"build directory: {args.build_dir}")
+    emit(f"fabric test: {blocks} blocks, round 2**{round_bits} cycles")
+    if args.seed is not None:
+        emit(f"nextpnr placer seed: {args.seed}")
+    emit(f"build directory: {args.build_dir}")
 
-        if args.golden:
-            golden = int(args.golden, 16)
-            emit(f"golden signature (given): {golden:#010x}")
-        else:
-            from fabric_golden import golden as compute_golden, \
-                verify_vector_model
-            checked = verify_vector_model(blocks, 300)
-            emit(f"golden model cross-checked against the scalar "
-                 f"specification over {checked} cycles")
-            golden = compute_golden(blocks, 1 << round_bits)
-            emit(f"golden signature: {golden:#010x}")
+    if args.golden:
+        golden = int(args.golden, 16)
+        emit(f"golden signature (given): {golden:#010x}")
+    else:
+        from fabric_golden import golden as compute_golden, \
+            verify_vector_model
+        checked = verify_vector_model(blocks, 300)
+        emit(f"golden model cross-checked against the scalar "
+             f"specification over {checked} cycles")
+        golden = compute_golden(blocks, 1 << round_bits)
+        emit(f"golden signature: {golden:#010x}")
 
-        script = BUILD_SCRIPT.format(blocks=blocks, round_bits=round_bits,
-                                     golden=hex(golden),
-                                     build_dir=str(args.build_dir))
-        emit("running yosys, nextpnr-ecp5 and ecppack")
-        result = subprocess.run([sys.executable, "-c", script], cwd=ROOT,
-                                env=env, capture_output=True, text=True)
-        combined = (result.stdout or "") + (result.stderr or "")
-        handle.write(combined)
-        handle.flush()
+    script = BUILD_SCRIPT.format(blocks=blocks, round_bits=round_bits,
+                                 golden=hex(golden),
+                                 build_dir=str(args.build_dir))
+    emit("running yosys, nextpnr-ecp5 and ecppack")
+    result = subprocess.run([sys.executable, "-c", script], cwd=ROOT,
+                            env=env, capture_output=True, text=True)
+    combined = (result.stdout or "") + (result.stderr or "")
+    # Captured rather than streamed: the "BUILD OK" test and the failure
+    # tail below both read it.
+    if transcript:
+        transcript.write(combined)
+        transcript.flush()
 
-        if result.returncode != 0 or "BUILD OK" not in (result.stdout or ""):
-            tail = combined.strip().splitlines()
-            for line in tail[-15:]:
-                emit(f"  {line}")
-            emit("BUILD FAILED")
-            return 1
+    if result.returncode != 0 or "BUILD OK" not in (result.stdout or ""):
+        tail = combined.strip().splitlines()
+        for line in tail[-15:]:
+            emit(f"  {line}")
+        emit("BUILD FAILED")
+        return 1
 
-        timing_log = args.build_dir / "top.tim"
-        if not timing_log.exists():
-            emit(f"no nextpnr log at {timing_log} -- cannot report utilisation")
-            return 1
-        tim = timing_log.read_text()
+    timing_log = args.build_dir / "top.tim"
+    if not timing_log.exists():
+        emit(f"no nextpnr log at {timing_log} -- cannot report utilisation")
+        return 1
+    tim = timing_log.read_text()
 
-        utilisation = parse_utilisation(tim)
-        emit()
-        emit("utilisation, as reported by nextpnr:")
-        for name in ("Total LUT4s", "logic LUTs", "carry LUTs", "TRELLIS_FF",
-                     "TRELLIS_COMB", "TRELLIS_IO"):
-            if name in utilisation:
-                used, avail = utilisation[name]
-                emit(f"  {name:<14} {used:>6}/{avail:<6} "
-                     f"{100.0 * used / avail:5.1f}%")
+    utilisation = parse_utilisation(tim)
+    emit()
+    emit("utilisation, as reported by nextpnr:")
+    for name in ("Total LUT4s", "logic LUTs", "carry LUTs", "TRELLIS_FF",
+                 "TRELLIS_COMB", "TRELLIS_IO"):
+        if name in utilisation:
+            used, avail = utilisation[name]
+            emit(f"  {name:<14} {used:>6}/{avail:<6} "
+                 f"{100.0 * used / avail:5.1f}%")
 
-        if "Total LUT4s" not in utilisation:
-            emit("nextpnr did not report a LUT4 total -- refusing to claim "
-                 "anything about utilisation")
-            return 1
-        luts, available = utilisation["Total LUT4s"]
+    if "Total LUT4s" not in utilisation:
+        emit("nextpnr did not report a LUT4 total -- refusing to claim "
+             "anything about utilisation")
+        return 1
+    luts, available = utilisation["Total LUT4s"]
 
-        emit()
-        for clock, achieved, constraint, met in parse_timing(tim):
-            emit(f"timing: {clock} {achieved:.2f} MHz achieved against a "
-                 f"{constraint:.2f} MHz constraint -- "
-                 f"{'MET' if met else 'NOT MET'}")
+    emit()
+    for clock, achieved, constraint, met in parse_timing(tim):
+        emit(f"timing: {clock} {achieved:.2f} MHz achieved against a "
+             f"{constraint:.2f} MHz constraint -- "
+             f"{'MET' if met else 'NOT MET'}")
 
-        emit()
-        emit(f"LUT4s {luts} of {available} on the die; an LFE5U-12F "
-             f"advertises {ADVERTISED_LUTS}")
-        if luts <= min_luts:
-            emit(f"REFUSING: {luts} LUT4s is not above the {min_luts} floor.")
-            emit("  A design inside the advertised region cannot distinguish "
-                 "whole-die from salvage, so this bitstream would prove "
-                 "nothing. Raise --blocks.")
-            return 1
-        emit(f"  {luts - ADVERTISED_LUTS} LUT4s beyond what the part "
-             f"advertises")
+    emit()
+    emit(f"LUT4s {luts} of {available} on the die; an LFE5U-12F "
+         f"advertises {ADVERTISED_LUTS}")
+    if luts <= min_luts:
+        emit(f"REFUSING: {luts} LUT4s is not above the {min_luts} floor.")
+        emit("  A design inside the advertised region cannot distinguish "
+             "whole-die from salvage, so this bitstream would prove "
+             "nothing. Raise --blocks.")
+        return 1
+    emit(f"  {luts - ADVERTISED_LUTS} LUT4s beyond what the part "
+         f"advertises")
 
-        bitstream = args.build_dir / "top.bit"
-        size = bitstream.stat().st_size if bitstream.exists() else 0
-        emit(f"built {bitstream}, {size} bytes")
-        emit(f"log: {args.log}")
-
+    bitstream = args.build_dir / "top.bit"
+    size = bitstream.stat().st_size if bitstream.exists() else 0
+    emit(f"built {bitstream}, {size} bytes")
     return 0
 
 

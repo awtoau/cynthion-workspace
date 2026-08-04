@@ -78,7 +78,6 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_diagram.log"
 MMD = ROOT / "tmp" / "soc_diagram.mmd"
 MD = ROOT / "tmp" / "soc_diagram.md"
 HTML = ROOT / "tmp" / "soc_diagram.html"
@@ -87,6 +86,9 @@ SOC_SOURCE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 
 # --------------------------------------------------------------------------------------
@@ -1020,71 +1022,64 @@ def main():
                         help="print the mermaid source as well as writing it")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     MMD.parent.mkdir(parents=True, exist_ok=True)
 
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    emit("Deriving the SoC diagram from the gateware itself")
+    emit(f"source: {SOC_SOURCE.relative_to(ROOT)}")
+    emit()
 
-        emit("Deriving the SoC diagram from the gateware itself")
-        emit(f"source: {SOC_SOURCE.relative_to(ROOT)}")
+    model = analyse(emit)
+
+    emit(f"{len(model['nodes'])} top-level modules "
+         f"({model['fragment_count']} fragments in total)")
+    emit(f"clock domains: {', '.join(model['domains'])}"
+         f"  (source: {', '.join(sorted(model['clock_sources']))})")
+    emit(f"CPU masters: "
+         f"{', '.join(f'{o}.{b}' for o, b in model['masters'])}")
+    emit()
+    emit("address map, from the decoder's own memory map:")
+    for window in model["windows"]:
+        emit(f"  {window['name']:<14} 0x{window['start']:08x}..0x{window['end'] - 1:08x}"
+             f"  {window['owner']}  ({window['registers']} registers)")
+    emit()
+    emit("board resources requested:")
+    for entry in model["externals"].values():
+        emit(f"  {entry['resource']:<14} x{entry['count']}  "
+             f"{'/'.join(sorted(entry['dirs']))}  <- {', '.join(sorted(entry['owners']))}")
+    emit("hard macros reaching pads:")
+    for pad in model["macro_pads"]:
+        emit(f"  {pad['macro']:<14} in {pad['owner']}")
+    if model["disabled"]:
+        emit("compiled out by a false guard:")
+        for entry in model["disabled"]:
+            addr = f"0x{entry['addr']:08x}" if entry["addr"] is not None else "?"
+            emit(f"  {entry['name']:<14} {addr} ({entry['addr_name']})")
+    emit()
+
+    diagram = mermaid(model)
+    complaints = validate(diagram)
+    for complaint in complaints:
+        emit(f"  *** malformed mermaid: {complaint}")
+    if not complaints:
+        emit("mermaid structure checks out (subgraphs balanced, every edge lands "
+             "on a declared node)")
+
+    MMD.write_text(diagram)
+    MD.write_text(markdown(model, diagram))
+    HTML.write_text(html(model, diagram))
+
+    emit(f"{len(diagram.splitlines())} lines of mermaid, "
+         f"{sum(1 for l in diagram.splitlines() if '[' in l and 'subgraph' not in l)} "
+         f"nodes, {len(model['edges'])} module edges")
+    emit(f"wrote {MMD.relative_to(ROOT)}")
+    emit(f"wrote {MD.relative_to(ROOT)}")
+    emit(f"wrote {HTML.relative_to(ROOT)}")
+    emit()
+    emit(f"view it with:  code-insiders {HTML}")
+
+    if args.stdout:
         emit()
-
-        model = analyse(emit)
-
-        emit(f"{len(model['nodes'])} top-level modules "
-             f"({model['fragment_count']} fragments in total)")
-        emit(f"clock domains: {', '.join(model['domains'])}"
-             f"  (source: {', '.join(sorted(model['clock_sources']))})")
-        emit(f"CPU masters: "
-             f"{', '.join(f'{o}.{b}' for o, b in model['masters'])}")
-        emit()
-        emit("address map, from the decoder's own memory map:")
-        for window in model["windows"]:
-            emit(f"  {window['name']:<14} 0x{window['start']:08x}..0x{window['end'] - 1:08x}"
-                 f"  {window['owner']}  ({window['registers']} registers)")
-        emit()
-        emit("board resources requested:")
-        for entry in model["externals"].values():
-            emit(f"  {entry['resource']:<14} x{entry['count']}  "
-                 f"{'/'.join(sorted(entry['dirs']))}  <- {', '.join(sorted(entry['owners']))}")
-        emit("hard macros reaching pads:")
-        for pad in model["macro_pads"]:
-            emit(f"  {pad['macro']:<14} in {pad['owner']}")
-        if model["disabled"]:
-            emit("compiled out by a false guard:")
-            for entry in model["disabled"]:
-                addr = f"0x{entry['addr']:08x}" if entry["addr"] is not None else "?"
-                emit(f"  {entry['name']:<14} {addr} ({entry['addr_name']})")
-        emit()
-
-        diagram = mermaid(model)
-        complaints = validate(diagram)
-        for complaint in complaints:
-            emit(f"  *** malformed mermaid: {complaint}")
-        if not complaints:
-            emit("mermaid structure checks out (subgraphs balanced, every edge lands "
-                 "on a declared node)")
-
-        MMD.write_text(diagram)
-        MD.write_text(markdown(model, diagram))
-        HTML.write_text(html(model, diagram))
-
-        emit(f"{len(diagram.splitlines())} lines of mermaid, "
-             f"{sum(1 for l in diagram.splitlines() if '[' in l and 'subgraph' not in l)} "
-             f"nodes, {len(model['edges'])} module edges")
-        emit(f"wrote {MMD.relative_to(ROOT)}")
-        emit(f"wrote {MD.relative_to(ROOT)}")
-        emit(f"wrote {HTML.relative_to(ROOT)}")
-        emit(f"log:   {LOG.relative_to(ROOT)}")
-        emit()
-        emit(f"view it with:  code-insiders {HTML}")
-
-        if args.stdout:
-            emit()
-            emit(diagram)
+        emit(diagram)
 
     return 0
 

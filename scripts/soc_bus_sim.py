@@ -10,7 +10,7 @@ Proves `wishbone_pipe.RegisteredResponse` is transparent, and prices it.
     ./scripts/soc_bus_sim.py -v        # and print every bus cycle
 
 Exit status 0 if every assertion held. Output goes to the terminal and to
-`tmp/logs/soc_bus_sim.log`.
+`tmp/logs/dev.log`.
 
 ## Why this is worth a file
 
@@ -47,9 +47,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_bus_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth              import Module, Signal            # noqa: E402
 from amaranth.hdl          import Fragment                  # noqa: E402
@@ -375,24 +377,16 @@ def main():
                         help="print every bus cycle")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
+    emit("wishbone_pipe.RegisteredResponse")
+    run_checks(checks, args.verbose)
+    emit()
 
-        checks = Checks(emit)
-        emit("wishbone_pipe.RegisteredResponse")
-        run_checks(checks, args.verbose)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

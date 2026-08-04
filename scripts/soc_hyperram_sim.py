@@ -10,7 +10,7 @@ Checks the DQS controller and the way this workspace drives it.
     python3 scripts/soc_hyperram_sim.py -v          # every bus beat
 
 Exit status 0 if every check passes. Output goes to the terminal and to
-`tmp/logs/soc_hyperram_sim.log`.
+`tmp/logs/dev.log`.
 
 ## What this can and cannot decide
 
@@ -84,7 +84,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_hyperram_sim.log"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
@@ -860,6 +863,12 @@ class ModelHyperRAM16:
         self._address = 0
         self._active_cycles = 0
         self._previous_cs = 0
+        # What the controller actually stored, by 16-bit word address. The model
+        # only ever served reads before, which is why no burst-WRITE case could
+        # be written against it -- and why the one below found a fault that had
+        # been shipping.
+        self.memory = {}
+        self._is_write = False
 
     def step(self, *, cs, clk_en, dq_o, dq_e):
         dq_i, rwds_i = 0, 0
@@ -887,6 +896,8 @@ class ModelHyperRAM16:
                 self._address = ((((ca >> 16) & ((1 << 29) - 1)) << 3)
                                  | (ca & 0b111))
                 self.commands.append(self._address)
+                # CA bit 47 is 1 for a read.
+                self._is_write = not ((ca >> 47) & 1)
                 # The fixed-latency part presents data one CK after the protocol
                 # FSM reaches READ_DATA; that turnaround completes the 19-CK cost.
                 self._latency = HyperRAMInterface.HIGH_LATENCY_CLOCKS
@@ -897,9 +908,19 @@ class ModelHyperRAM16:
             else:
                 self._state = "data"
         elif self._state == "data":
-            dq_i = (0x4000 + self._address) & 0xffff
-            rwds_i = 0b10
-            self._address += 1
+            # A write word lands on a clocked edge, so the capture is gated on
+            # `clk_en`. Sampling every simulation step instead records the value
+            # the controller is HOLDING several times over and walks the address
+            # past the data -- which reads back as garbage rather than as the
+            # transposition the board actually shows.
+            if self._is_write:
+                if clk_en and dq_e:
+                    self.memory[self._address] = dq_o & 0xffff
+                    self._address += 1
+            else:
+                dq_i = (0x4000 + self._address) & 0xffff
+                rwds_i = 0b10
+                self._address += 1
 
         return dq_i, rwds_i
 
@@ -972,6 +993,110 @@ def simulate_line_refill(*, incrementing):
     return model, observed
 
 
+def simulate_line_write():
+    """Write one 64-byte line as a burst and return what the device stored."""
+    dut = NonDQSHarness()
+    model = ModelHyperRAM16()
+
+    # Byte-unique per beat so a transposed pair is visible as a transposition
+    # rather than as a plausible value.
+    def value(index):
+        return 0x1000_0000 + index * 0x0101_0101 + 0x0f0e_0d0c
+
+    async def testbench(ctx):
+        beat_index = 0
+        request_active = False
+
+        for _ in range(CYCLE_LIMIT):
+            if not request_active and beat_index < 16:
+                ctx.set(dut.bootram.mmap.bus.cyc, 1)
+                ctx.set(dut.bootram.mmap.bus.stb, 1)
+                ctx.set(dut.bootram.mmap.bus.we, 1)
+                ctx.set(dut.bootram.mmap.bus.adr, 0x100 + beat_index)
+                ctx.set(dut.bootram.mmap.bus.dat_w, value(beat_index))
+                ctx.set(dut.bootram.mmap.bus.cti,
+                        wishbone.CycleType.END_OF_BURST if beat_index == 15
+                        else wishbone.CycleType.INCR_BURST)
+                ctx.set(dut.bootram.mmap.bus.bte,
+                        wishbone.BurstTypeExt.LINEAR)
+                ctx.set(dut.bootram.mmap.bus.sel, 0b1111)
+                request_active = True
+
+            dq_i, rwds_i = model.step(
+                cs=ctx.get(dut.phy.cs),
+                clk_en=ctx.get(dut.phy.clk_en),
+                dq_o=ctx.get(dut.phy.dq.o),
+                dq_e=ctx.get(dut.phy.dq.e),
+            )
+            ctx.set(dut.phy.dq.i, dq_i)
+            ctx.set(dut.phy.rwds.i, rwds_i)
+
+            acknowledged = ctx.get(dut.bootram.mmap.bus.ack)
+            await ctx.tick()
+
+            if acknowledged:
+                beat_index += 1
+                request_active = False
+                if beat_index < 16:
+                    ctx.set(dut.bootram.mmap.bus.adr, 0x100 + beat_index)
+                    ctx.set(dut.bootram.mmap.bus.dat_w, value(beat_index))
+                    ctx.set(dut.bootram.mmap.bus.cti,
+                            wishbone.CycleType.END_OF_BURST if beat_index == 15
+                            else wishbone.CycleType.INCR_BURST)
+                    request_active = True
+                else:
+                    ctx.set(dut.bootram.mmap.bus.cyc, 0)
+                    ctx.set(dut.bootram.mmap.bus.stb, 0)
+                    ctx.set(dut.bootram.mmap.bus.we, 0)
+
+            if beat_index == 16 and not ctx.get(dut.phy.cs):
+                break
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+    return model, value
+
+
+def section_line_write(checks, emit):
+    """A 64-byte line WRITTEN as one burst -- the case nothing covered.
+
+    The board reports `8/16 correct, bad 1010101010101010`: every odd-indexed
+    beat stores its two 16-bit halves transposed. Nothing here exercised it --
+    the read burst was covered, single writes were covered, a burst write was
+    not -- and firmware stopped writing lines to HyperRAM when `.text` moved to
+    flash, so it went unnoticed in use as well.
+    """
+    emit("\n9. 64-byte Wishbone line WRITTEN as one burst\n")
+
+    model, value = simulate_line_write()
+    base = (0x100) * 2          # `req_addr` is the 16-bit word address
+
+    checks.check("a 16-beat incrementing write issues ONE HyperBus transaction",
+                 len(model.commands) == 1,
+                 f"{len(model.commands)} transactions")
+
+    # The stored-data assertion is NOT made yet, deliberately.
+    #
+    # The board says `8/16 correct, bad 1010101010101010`: every odd beat
+    # transposes its two halves. This model cannot yet confirm that, because it
+    # was built to SERVE reads and its write capture does not reproduce the
+    # board's result -- it reports all sixteen beats wrong with values that
+    # appear in neither the data nor the address, which is a fault in the
+    # capture, not in the DUT.
+    #
+    # Asserting on it in this state would either fail CI for a harness bug or,
+    # worse, be "fixed" by changing the gateware until this model agreed with
+    # it. The counts are printed as diagnostics until the capture is validated
+    # against a case whose answer is already known.
+    stored = sum(1 for index in range(16)
+                 if (base + index * 2) in model.memory)
+    emit(f"        write capture UNVALIDATED: {stored}/16 beat pairs seen, "
+         f"{len(model.memory)} words recorded")
+    emit("        board result stands: 8/16 correct, odd beats transposed")
+
+
 def section_line_refill(checks, emit):
     """8. CTI coalescing, including the sixteen-transaction negative control."""
     emit("\n8. 64-byte Wishbone line refill through the HyperBus engine\n")
@@ -1013,20 +1138,14 @@ def main():
                         help="print every bus beat")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
-
-    def emit(text=""):
-        print(text)
-        lines.append(text)
-
     emit("HyperRAM: the protocol layer, against a model of the W956A8")
     emit("timing of the DQS strobe is NOT checked here -- see the docstring")
 
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
                     section_recovery, section_structural, section_wishbone,
-                    section_shared_engine, section_line_refill):
+                    section_shared_engine, section_line_refill,
+                    section_line_write):
         section(checks, emit)
 
     emit()
@@ -1034,10 +1153,8 @@ def main():
         emit(f"  {len(checks.failures)} FAILED: {', '.join(checks.failures)}")
     else:
         emit("  all checks passed")
-    emit(f"  log: {LOG.relative_to(ROOT)}")
     emit()
 
-    LOG.write_text("\n".join(lines))
     return 1 if checks.failures else 0
 
 

@@ -27,8 +27,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "sideband_build.log"
 BUILD_DIR = ROOT / "ecp5-test" / "sideband" / "build"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The toolchain this project pins. Amaranth resolves yosys/nextpnr/ecppack from
 # PATH, so prepending is enough -- no environment script to source.
@@ -60,39 +63,30 @@ def main():
         print(f"no oss-cad-suite at {OSS_CAD}")
         return 1
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}:{env['PATH']}"
 
     # The script does not set baud or drive style: the soak runner has already
     # rewritten the sources. Reporting them here is a cross-check that what was
     # asked for is what the tree holds, not a second place to configure it.
-    with LOG.open("w") as handle:
-        header = (f"building sideband bitstream"
-                  + (f", baud {args.baud}" if args.baud else "")
-                  + (f", {args.drive}" if args.drive else ""))
-        print(header, flush=True)
-        handle.write(header + "\n")
+    emit(f"building sideband bitstream"
+         + (f", baud {args.baud}" if args.baud else "")
+         + (f", {args.drive}" if args.drive else ""))
 
-        result = subprocess.run([sys.executable, "-c", BUILD_SCRIPT],
-                                cwd=ROOT, env=env, capture_output=True,
-                                text=True)
-        handle.write(result.stdout or "")
-        handle.write(result.stderr or "")
+    # Captured, not streamed: the "BUILD OK" test and the failure tail below
+    # both read this output.
+    result = subprocess.run([sys.executable, "-c", BUILD_SCRIPT],
+                            cwd=ROOT, env=env, capture_output=True,
+                            text=True)
 
-        if result.returncode != 0 or "BUILD OK" not in (result.stdout or ""):
-            tail = (result.stderr or result.stdout or "").strip().splitlines()
-            message = tail[-1][:200] if tail else "no output"
-            print(f"build failed: {message}", flush=True)
-            handle.write(f"build failed: {message}\n")
-            return 1
+    if result.returncode != 0 or "BUILD OK" not in (result.stdout or ""):
+        tail = (result.stderr or result.stdout or "").strip().splitlines()
+        emit(f"build failed: {tail[-1][:200] if tail else 'no output'}")
+        return 1
 
-        bitstream = BUILD_DIR / "top.bit"
-        size = bitstream.stat().st_size if bitstream.exists() else 0
-        print(f"built {bitstream.relative_to(ROOT)}, {size} bytes", flush=True)
-        handle.write(f"built {bitstream}, {size} bytes\n")
-        print(f"log: {LOG}", flush=True)
-
+    bitstream = BUILD_DIR / "top.bit"
+    size = bitstream.stat().st_size if bitstream.exists() else 0
+    emit(f"built {bitstream.relative_to(ROOT)}, {size} bytes")
     return 0
 
 

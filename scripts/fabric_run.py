@@ -69,12 +69,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "fabric_run.log"
 BITSTREAM = ROOT / "tmp" / "fabric" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from devlog import emit  # noqa: E402
 
 from fabric.fabric_gateware import (APPLET_ID, BLOCKS, DIE_PRESENT, ROUND_BITS,
                                     ROUND_CYCLES, REG_DIE, REG_ID,
@@ -139,8 +140,8 @@ def main():
                         help="write the verdict here as well, so a driver "
                              "reads numbers rather than re-parsing this "
                              "transcript")
-    parser.add_argument("--log", type=Path, default=LOG,
-                        help="where this run's transcript is appended")
+    parser.add_argument("--log", type=Path, default=None,
+                        help="also append this run's transcript here")
     args = parser.parse_args()
 
     result = {"bitstream": str(args.bitstream), "verdict": "incomplete"}
@@ -151,182 +152,188 @@ def main():
             args.result_json.write_text(json.dumps(result, indent=2))
         return code
 
-    args.log.parent.mkdir(parents=True, exist_ok=True)
-    with args.log.open("a") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    # `--log` is an EXTRA copy, off by default -- everything already goes
+    # to tmp/logs/dev.log. The sweep asks for one per configuration so a
+    # run's transcript sits beside the bitstream it exercised.
+    transcript = None
+    if args.log:
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        transcript = args.log.open("a")
 
-        started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        emit(f"=== fabric test run, {started_at} ===")
-        result["started"] = started_at
+    def note(text=""):
+        emit(text)
+        if transcript:
+            transcript.write(text + "\n")
+            transcript.flush()
 
-        # Recompute the golden value here, from the specification, rather than
-        # reading it out of the build log. A gateware built against a wrong
-        # constant would report clean forever; this is the check that catches it.
-        from fabric_golden import golden as compute_golden, verify_vector_model
-        checked = verify_vector_model(BLOCKS, 300)
-        emit(f"golden model cross-checked against the scalar specification "
-             f"over {checked} cycles, {BLOCKS} blocks")
-        expected = compute_golden(BLOCKS, ROUND_CYCLES)
-        emit(f"golden signature, computed on the host: {expected:#010x}")
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    note(f"=== fabric test run, {started_at} ===")
+    result["started"] = started_at
 
-        result["expected_golden"] = f"{expected:#010x}"
+    # Recompute the golden value here, from the specification, rather than
+    # reading it out of the build log. A gateware built against a wrong
+    # constant would report clean forever; this is the check that catches it.
+    from fabric_golden import golden as compute_golden, verify_vector_model
+    checked = verify_vector_model(BLOCKS, 300)
+    note(f"golden model cross-checked against the scalar specification "
+         f"over {checked} cycles, {BLOCKS} blocks")
+    expected = compute_golden(BLOCKS, ROUND_CYCLES)
+    note(f"golden signature, computed on the host: {expected:#010x}")
 
-        if not args.no_load:
-            if not load(args.bitstream, emit):
-                result["verdict"] = "load failed"
-                return finish(1)
+    result["expected_golden"] = f"{expected:#010x}"
 
-        from apollo_fpga import ApolloDebugger
-        dut = ApolloDebugger()
-        emit(f"apollo firmware: {dut.get_firmware_version()}")
-
-        applet = dut.registers.register_read(REG_ID)
-        if applet != APPLET_ID:
-            emit(f"wrong bitstream: REG_ID {applet:#010x}, expected "
-                 f"{APPLET_ID:#010x} -- refusing to report a result for "
-                 f"gateware that is not this test")
-            result["verdict"] = "wrong bitstream"
+    if not args.no_load:
+        if not load(args.bitstream, note):
+            result["verdict"] = "load failed"
             return finish(1)
-        emit(f"REG_ID {applet:#010x} -- the fabric test is running")
 
+    from apollo_fpga import ApolloDebugger
+    dut = ApolloDebugger()
+    note(f"apollo firmware: {dut.get_firmware_version()}")
+
+    applet = dut.registers.register_read(REG_ID)
+    if applet != APPLET_ID:
+        note(f"wrong bitstream: REG_ID {applet:#010x}, expected "
+             f"{APPLET_ID:#010x} -- refusing to report a result for "
+             f"gateware that is not this test")
+        result["verdict"] = "wrong bitstream"
+        return finish(1)
+    note(f"REG_ID {applet:#010x} -- the fabric test is running")
+
+    status = dut.registers.register_read(REG_STATUS)
+    blocks = (status >> 8) & 0xFF
+    clock = (status >> 16) & 0xFFFF
+    built_golden = dut.registers.register_read(REG_GOLDEN)
+    note(f"gateware reports {blocks} blocks at {clock} MHz")
+    note(f"gateware's own golden constant: {built_golden:#010x}")
+
+    # Read before the polling loop and again after it, so the pair says
+    # whether the part warmed up while the design ran rather than only what
+    # it read at one instant.
+    die_before = dut.registers.register_read(REG_DIE)
+    note(f"die temperature at start: {die_note(die_before)}")
+    result.update(blocks=blocks, sync_mhz=clock,
+                  built_golden=f"{built_golden:#010x}",
+                  die_before=die_before)
+
+    if built_golden != expected:
+        note(f"REFUSING: the gateware checks itself against "
+             f"{built_golden:#010x} but the host computes "
+             f"{expected:#010x}.")
+        note("  A clean result from this bitstream would be meaningless, "
+             "because the constant it compares against is not the right "
+             "answer. Rebuild.")
+        result["verdict"] = "golden mismatch between gateware and host"
+        return finish(1)
+    note("the gateware's constant and the host's model agree")
+    if blocks != BLOCKS:
+        note(f"note: gateware built for {blocks} blocks, this script's "
+             f"module says {BLOCKS}")
+
+    note()
+    note(f"round = 2**{ROUND_BITS} = {ROUND_CYCLES} cycles of all {blocks} "
+         f"blocks; {ROUND_CYCLES * blocks * 32:,} state bits advanced per "
+         f"round")
+    note("polling; nothing here waits on a duration -- the loop stops on "
+         f"{args.rounds} rounds or {args.polls} polls, whichever comes "
+         "first")
+    note()
+
+    start = time.perf_counter()
+    first_rounds = dut.registers.register_read(REG_ROUNDS)
+    polls = 0
+    signature_reads = 0
+    signature_bad = 0
+    worst_mismatches = 0
+    ever_mismatch = False
+    rounds = first_rounds
+
+    while polls < args.polls:
+        polls += 1
+        rounds = dut.registers.register_read(REG_ROUNDS)
+        mismatches = dut.registers.register_read(REG_MISMATCHES)
         status = dut.registers.register_read(REG_STATUS)
-        blocks = (status >> 8) & 0xFF
-        clock = (status >> 16) & 0xFFFF
-        built_golden = dut.registers.register_read(REG_GOLDEN)
-        emit(f"gateware reports {blocks} blocks at {clock} MHz")
-        emit(f"gateware's own golden constant: {built_golden:#010x}")
+        signature = dut.registers.register_read(REG_SIGNATURE)
 
-        # Read before the polling loop and again after it, so the pair says
-        # whether the part warmed up while the design ran rather than only what
-        # it read at one instant.
-        die_before = dut.registers.register_read(REG_DIE)
-        emit(f"die temperature at start: {die_note(die_before)}")
-        result.update(blocks=blocks, sync_mhz=clock,
-                      built_golden=f"{built_golden:#010x}",
-                      die_before=die_before)
+        signature_reads += 1
+        if signature != expected:
+            signature_bad += 1
+            note(f"  poll {polls}: signature {signature:#010x} != "
+                 f"{expected:#010x} at round {rounds}")
 
-        if built_golden != expected:
-            emit(f"REFUSING: the gateware checks itself against "
-                 f"{built_golden:#010x} but the host computes "
-                 f"{expected:#010x}.")
-            emit("  A clean result from this bitstream would be meaningless, "
-                 "because the constant it compares against is not the right "
-                 "answer. Rebuild.")
-            result["verdict"] = "golden mismatch between gateware and host"
-            return finish(1)
-        emit("the gateware's constant and the host's model agree")
-        if blocks != BLOCKS:
-            emit(f"note: gateware built for {blocks} blocks, this script's "
-                 f"module says {BLOCKS}")
+        if mismatches > worst_mismatches:
+            worst_mismatches = mismatches
+        if status & (1 << 2):
+            ever_mismatch = True
 
-        emit()
-        emit(f"round = 2**{ROUND_BITS} = {ROUND_CYCLES} cycles of all {blocks} "
-             f"blocks; {ROUND_CYCLES * blocks * 32:,} state bits advanced per "
-             f"round")
-        emit("polling; nothing here waits on a duration -- the loop stops on "
-             f"{args.rounds} rounds or {args.polls} polls, whichever comes "
-             "first")
-        emit()
+        if polls % args.report_every == 0:
+            elapsed = time.perf_counter() - start
+            done = rounds - first_rounds
+            note(f"  {elapsed:8.1f}s  polls {polls:>7}  rounds "
+                 f"{done:>10}  sticky {'SET' if status & (1 << 2) else 'clear'}  "
+                 f"mismatched rounds {mismatches}")
 
-        start = time.perf_counter()
-        first_rounds = dut.registers.register_read(REG_ROUNDS)
-        polls = 0
-        signature_reads = 0
-        signature_bad = 0
-        worst_mismatches = 0
-        ever_mismatch = False
-        rounds = first_rounds
+        if rounds - first_rounds >= args.rounds:
+            break
 
-        while polls < args.polls:
-            polls += 1
-            rounds = dut.registers.register_read(REG_ROUNDS)
-            mismatches = dut.registers.register_read(REG_MISMATCHES)
-            status = dut.registers.register_read(REG_STATUS)
-            signature = dut.registers.register_read(REG_SIGNATURE)
+    elapsed = time.perf_counter() - start
+    done = rounds - first_rounds
+    die_after = dut.registers.register_read(REG_DIE)
 
-            signature_reads += 1
-            if signature != expected:
-                signature_bad += 1
-                emit(f"  poll {polls}: signature {signature:#010x} != "
-                     f"{expected:#010x} at round {rounds}")
+    note()
+    note(f"=== result, {time.strftime('%Y-%m-%dT%H:%M:%S%z')} ===")
+    note(f"ran {elapsed:.1f}s, {polls} JTAG polls")
+    note(f"die temperature at end: {die_note(die_after)}"
+         + (f", from {die_note(die_before)} at the start"
+            if die_after != die_before else " (unchanged)"))
+    note(f"rounds completed by the gateware: {done:,}")
+    note(f"  each round is {ROUND_CYCLES} cycles of {blocks} blocks, so "
+         f"{done * ROUND_CYCLES:,} block-cycles, "
+         f"{done * ROUND_CYCLES * blocks * 32:,} state-bit updates")
+    note(f"gateware-checked rounds that mismatched: {worst_mismatches}")
+    note(f"sticky mismatch flag: {'SET' if ever_mismatch else 'never set'}")
+    note(f"host signature reads: {signature_reads}, "
+         f"disagreeing with the model: {signature_bad}")
 
-            if mismatches > worst_mismatches:
-                worst_mismatches = mismatches
-            if status & (1 << 2):
-                ever_mismatch = True
+    result.update(seconds=round(elapsed, 1), polls=polls, rounds=done,
+                  mismatches=worst_mismatches, sticky=ever_mismatch,
+                  signature_reads=signature_reads,
+                  signature_bad=signature_bad, die_after=die_after)
 
-            if polls % args.report_every == 0:
-                elapsed = time.perf_counter() - start
-                done = rounds - first_rounds
-                emit(f"  {elapsed:8.1f}s  polls {polls:>7}  rounds "
-                     f"{done:>10}  sticky {'SET' if status & (1 << 2) else 'clear'}  "
-                     f"mismatched rounds {mismatches}")
+    if done == 0:
+        note()
+        note("INCONCLUSIVE -- the round counter never advanced. The design "
+             "is loaded but not running, so nothing was exercised.")
+        result["verdict"] = "inconclusive"
+        return finish(1)
 
-            if rounds - first_rounds >= args.rounds:
-                break
+    if ever_mismatch or worst_mismatches or signature_bad:
+        note()
+        note("MISMATCH OBSERVED -- this part computed a wrong signature "
+             "while running a design that occupies fabric beyond the "
+             "12,288 LUTs it advertises.")
+        note("  That is consistent with the salvage explanation, but it is "
+             "not proof of it: a timing marginality or a supply problem "
+             "would look the same. Rerun, and rerun a build that fits "
+             "inside 12,288 LUTs for comparison.")
+        result["verdict"] = "mismatch"
+        return finish(1)
 
-        elapsed = time.perf_counter() - start
-        done = rounds - first_rounds
-        die_after = dut.registers.register_read(REG_DIE)
-
-        emit()
-        emit(f"=== result, {time.strftime('%Y-%m-%dT%H:%M:%S%z')} ===")
-        emit(f"ran {elapsed:.1f}s, {polls} JTAG polls")
-        emit(f"die temperature at end: {die_note(die_after)}"
-             + (f", from {die_note(die_before)} at the start"
-                if die_after != die_before else " (unchanged)"))
-        emit(f"rounds completed by the gateware: {done:,}")
-        emit(f"  each round is {ROUND_CYCLES} cycles of {blocks} blocks, so "
-             f"{done * ROUND_CYCLES:,} block-cycles, "
-             f"{done * ROUND_CYCLES * blocks * 32:,} state-bit updates")
-        emit(f"gateware-checked rounds that mismatched: {worst_mismatches}")
-        emit(f"sticky mismatch flag: {'SET' if ever_mismatch else 'never set'}")
-        emit(f"host signature reads: {signature_reads}, "
-             f"disagreeing with the model: {signature_bad}")
-
-        result.update(seconds=round(elapsed, 1), polls=polls, rounds=done,
-                      mismatches=worst_mismatches, sticky=ever_mismatch,
-                      signature_reads=signature_reads,
-                      signature_bad=signature_bad, die_after=die_after)
-
-        if done == 0:
-            emit()
-            emit("INCONCLUSIVE -- the round counter never advanced. The design "
-                 "is loaded but not running, so nothing was exercised.")
-            result["verdict"] = "inconclusive"
-            return finish(1)
-
-        if ever_mismatch or worst_mismatches or signature_bad:
-            emit()
-            emit("MISMATCH OBSERVED -- this part computed a wrong signature "
-                 "while running a design that occupies fabric beyond the "
-                 "12,288 LUTs it advertises.")
-            emit("  That is consistent with the salvage explanation, but it is "
-                 "not proof of it: a timing marginality or a supply problem "
-                 "would look the same. Rerun, and rerun a build that fits "
-                 "inside 12,288 LUTs for comparison.")
-            result["verdict"] = "mismatch"
-            return finish(1)
-
-        emit()
-        emit(f"PASS for this part at this moment: {done:,} rounds, every one "
-             f"checked by the gateware against {expected:#010x}, no mismatch "
-             f"latched.")
-        emit("  Establishes: a design occupying fabric well beyond the 12,288 "
-             "LUTs this part advertises placed, closed timing and computed the "
-             "correct signature. The extra fabric is not plainly dead and not "
-             "plainly unclocked here.")
-        emit("  Does NOT establish: that intermittent per-part defects are "
-             "absent. The salvage explanation predicts occasional wrongness, "
-             "and a run of this length cannot measure a rate -- so it remains "
-             "compatible with what was just observed.")
-        emit("  Nor anything about other parts, boards, temperatures or "
-             "supplies. One sample, one moment.")
-        emit(f"log: {args.log}")
-        result["verdict"] = "pass"
+    note()
+    note(f"PASS for this part at this moment: {done:,} rounds, every one "
+         f"checked by the gateware against {expected:#010x}, no mismatch "
+         f"latched.")
+    note("  Establishes: a design occupying fabric well beyond the 12,288 "
+         "LUTs this part advertises placed, closed timing and computed the "
+         "correct signature. The extra fabric is not plainly dead and not "
+         "plainly unclocked here.")
+    note("  Does NOT establish: that intermittent per-part defects are "
+         "absent. The salvage explanation predicts occasional wrongness, "
+         "and a run of this length cannot measure a rate -- so it remains "
+         "compatible with what was just observed.")
+    note("  Nor anything about other parts, boards, temperatures or "
+         "supplies. One sample, one moment.")
+    result["verdict"] = "pass"
 
     return finish(0)
 

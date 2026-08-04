@@ -27,17 +27,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOGDIR = ROOT / "tmp" / "logs"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 UTIL_RE = re.compile(r"^Info:\s+(\w+):\s+(\d+)/\s*(\d+)\s+\d+%")
 FMAX_RE = re.compile(r"^Info: Max frequency for clock\s+'([^']+)':\s+([\d.]+) MHz")
-
-
-def log(msg, handle):
-    """Write to terminal and to the run log, so a long sweep is inspectable."""
-    print(msg, flush=True)
-    handle.write(msg + "\n")
-    handle.flush()
 
 
 def parse_report(text):
@@ -56,7 +52,7 @@ def parse_report(text):
     return util, fmax
 
 
-def run_once(nextpnr, json_path, lpf, outdir, seed, freq, handle):
+def run_once(nextpnr, json_path, lpf, outdir, seed, freq):
     """One nextpnr invocation. Returns (util, fmax, seconds) or None on failure."""
     outdir.mkdir(parents=True, exist_ok=True)
     tim = outdir / "top.tim"
@@ -81,8 +77,8 @@ def run_once(nextpnr, json_path, lpf, outdir, seed, freq, handle):
     text = tim.read_text() if tim.exists() else (proc.stdout + proc.stderr)
     util, fmax = parse_report(text)
     if not util:
-        log(f"  seed {seed}: no utilisation parsed (rc={proc.returncode})", handle)
-        log(proc.stderr[-2000:], handle)
+        emit(f"  seed {seed}: no utilisation parsed (rc={proc.returncode})")
+        emit(proc.stderr[-2000:])
         return None
     return util, fmax, elapsed
 
@@ -97,50 +93,48 @@ def main():
                     help="target frequency; nextpnr optimises toward it")
     ap.add_argument("--outdir", type=Path, default=ROOT / "tmp" / "noise")
     ap.add_argument("--nextpnr", default="nextpnr-ecp5")
-    ap.add_argument("--name", default="pnr_noise")
+    ap.add_argument("--name", default="pnr_noise",
+                    help="label for this run in the shared log")
     args = ap.parse_args()
 
-    LOGDIR.mkdir(parents=True, exist_ok=True)
-    logpath = LOGDIR / f"{args.name}.log"
     results = []
-    with open(logpath, "w") as handle:
-        log(f"netlist: {args.json}", handle)
-        log(f"runs: {args.runs}  target freq: {args.freq}", handle)
-        for seed in range(1, args.runs + 1):
-            log(f"run seed={seed} ...", handle)
-            got = run_once(args.nextpnr, args.json, args.lpf,
-                           args.outdir / f"seed{seed}", seed, args.freq, handle)
-            if got is None:
-                continue
-            util, fmax, elapsed = got
-            results.append({"seed": seed, "util": util, "fmax": fmax,
-                            "seconds": round(elapsed, 1)})
-            log(f"  LUT={util.get('TRELLIS_COMB')} FF={util.get('TRELLIS_FF')} "
-                f"BRAM={util.get('DP16KD')} DSP={util.get('MULT18X18D')} "
-                f"fmax={fmax} {elapsed:.1f}s", handle)
+    emit(f"{args.name}: netlist {args.json}")
+    emit(f"runs: {args.runs}  target freq: {args.freq}")
+    for seed in range(1, args.runs + 1):
+        emit(f"run seed={seed} ...")
+        got = run_once(args.nextpnr, args.json, args.lpf,
+                       args.outdir / f"seed{seed}", seed, args.freq)
+        if got is None:
+            continue
+        util, fmax, elapsed = got
+        results.append({"seed": seed, "util": util, "fmax": fmax,
+                        "seconds": round(elapsed, 1)})
+        emit(f"  LUT={util.get('TRELLIS_COMB')} FF={util.get('TRELLIS_FF')} "
+            f"BRAM={util.get('DP16KD')} DSP={util.get('MULT18X18D')} "
+            f"fmax={fmax} {elapsed:.1f}s")
 
-        # The summary is the point: spread, not individual runs.
-        log("\n=== spread across runs ===", handle)
-        for key in ("TRELLIS_COMB", "TRELLIS_FF", "DP16KD", "MULT18X18D"):
-            vals = [r["util"].get(key) for r in results if key in r["util"]]
-            if vals:
-                log(f"{key:14s} min={min(vals)} max={max(vals)} "
-                    f"spread={max(vals) - min(vals)}", handle)
-        clocks = {c for r in results for c in r["fmax"]}
-        for clock in sorted(clocks):
-            vals = [r["fmax"][clock] for r in results if clock in r["fmax"]]
-            if vals:
-                spread = max(vals) - min(vals)
-                pct = 100.0 * spread / min(vals) if min(vals) else 0.0
-                log(f"fmax {clock:28s} min={min(vals):.2f} max={max(vals):.2f} "
-                    f"spread={spread:.2f} MHz ({pct:.1f}%)", handle)
-        times = [r["seconds"] for r in results]
-        if times:
-            log(f"runtime  min={min(times):.1f}s max={max(times):.1f}s", handle)
+    # The summary is the point: spread, not individual runs.
+    emit("\n=== spread across runs ===")
+    for key in ("TRELLIS_COMB", "TRELLIS_FF", "DP16KD", "MULT18X18D"):
+        vals = [r["util"].get(key) for r in results if key in r["util"]]
+        if vals:
+            emit(f"{key:14s} min={min(vals)} max={max(vals)} "
+                f"spread={max(vals) - min(vals)}")
+    clocks = {c for r in results for c in r["fmax"]}
+    for clock in sorted(clocks):
+        vals = [r["fmax"][clock] for r in results if clock in r["fmax"]]
+        if vals:
+            spread = max(vals) - min(vals)
+            pct = 100.0 * spread / min(vals) if min(vals) else 0.0
+            emit(f"fmax {clock:28s} min={min(vals):.2f} max={max(vals):.2f} "
+                f"spread={spread:.2f} MHz ({pct:.1f}%)")
+    times = [r["seconds"] for r in results]
+    if times:
+        emit(f"runtime  min={min(times):.1f}s max={max(times):.1f}s")
 
-        out = args.outdir / f"{args.name}.json"
-        out.write_text(json.dumps(results, indent=2))
-        log(f"\nwrote {out}\nlog {logpath}", handle)
+    out = args.outdir / f"{args.name}.json"
+    out.write_text(json.dumps(results, indent=2))
+    emit(f"\nwrote {out}")
     return 0
 
 

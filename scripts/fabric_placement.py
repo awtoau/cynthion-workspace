@@ -44,7 +44,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "fabric_placement.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
+
 CONFIG = ROOT / "ecp5-test" / "fabric" / "build" / "top.config"
 
 TILE = re.compile(r"^\.tile\s+R(\d+)C(\d+)")
@@ -202,75 +205,60 @@ def main():
             if not path.exists():
                 print(f"no config at {path}")
                 return 1
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("w") as handle:
-            def emit(text=""):
-                print(text, flush=True)
-                handle.write(text + "\n")
-                handle.flush()
-            compare(args.compare, emit)
-            emit(f"log: {LOG}")
+        compare(args.compare, emit)
         return 0
 
     if not args.config.exists():
         print(f"no config at {args.config} -- run scripts/fabric_build.py")
         return 1
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    rows, columns, total = survey(args.config)
+    if not rows:
+        emit("no LUT INIT entries found -- refusing to describe a "
+             "placement that was not parsed")
+        return 1
 
-        rows, columns, total = survey(args.config)
-        if not rows:
-            emit("no LUT INIT entries found -- refusing to describe a "
-                 "placement that was not parsed")
-            return 1
+    span = range(min(rows), max(rows) + 1)
+    populated = [r for r in span if rows[r]]
+    empty = [r for r in span if not rows[r]]
+    counts = [rows[r] for r in populated]
 
-        span = range(min(rows), max(rows) + 1)
-        populated = [r for r in span if rows[r]]
-        empty = [r for r in span if not rows[r]]
-        counts = [rows[r] for r in populated]
+    emit(f"{args.config.name}: {total} LUT INIT entries")
+    emit(f"tile rows spanned: R{min(rows)} to R{max(rows)}")
+    emit(f"rows carrying logic: {len(populated)} of {len(span)}")
+    emit(f"per-row entries: min {min(counts)}, max {max(counts)}, "
+         f"mean {sum(counts) / len(counts):.0f}")
+    emit()
 
-        emit(f"{args.config.name}: {total} LUT INIT entries")
-        emit(f"tile rows spanned: R{min(rows)} to R{max(rows)}")
-        emit(f"rows carrying logic: {len(populated)} of {len(span)}")
-        emit(f"per-row entries: min {min(counts)}, max {max(counts)}, "
-             f"mean {sum(counts) / len(counts):.0f}")
-        emit()
-
-        widest = max(counts)
-        for row in span:
-            count = rows[row]
-            if count:
-                bar = "#" * max(1, round(40 * count / widest))
-                emit(f"  R{row:>3} {count:>6}  {bar}")
-            else:
-                emit(f"  R{row:>3} {'-':>6}  (no logic; EBR/DSP row)")
-
-        emit()
-        emit(f"columns carrying logic: {len(columns)}, "
-             f"C{min(columns)} to C{max(columns)}")
-        emit()
-
-        # The point of the histogram: a flat one means the placement is spread
-        # over the whole die, so the design cannot have avoided whichever region
-        # a salvage part would have failed in. A peaked one would mean the
-        # utilisation figure is real but concentrated, and the experiment would
-        # be weaker than its headline number suggests.
-        spread = min(counts) / max(counts)
-        emit(f"flatness (min/max row occupancy): {spread:.2f}")
-        if spread < 0.5:
-            emit("  Uneven. The utilisation total is real but the logic is "
-                 "concentrated, so it is not safe to say the whole die was "
-                 "exercised.")
+    widest = max(counts)
+    for row in span:
+        count = rows[row]
+        if count:
+            bar = "#" * max(1, round(40 * count / widest))
+            emit(f"  R{row:>3} {count:>6}  {bar}")
         else:
-            emit("  Even. Logic is distributed across every logic row of the "
-                 "die, so the design could not have confined itself to a "
-                 "12k-sized subset.")
-        emit(f"log: {LOG}")
+            emit(f"  R{row:>3} {'-':>6}  (no logic; EBR/DSP row)")
+
+    emit()
+    emit(f"columns carrying logic: {len(columns)}, "
+         f"C{min(columns)} to C{max(columns)}")
+    emit()
+
+    # The point of the histogram: a flat one means the placement is spread
+    # over the whole die, so the design cannot have avoided whichever region
+    # a salvage part would have failed in. A peaked one would mean the
+    # utilisation figure is real but concentrated, and the experiment would
+    # be weaker than its headline number suggests.
+    spread = min(counts) / max(counts)
+    emit(f"flatness (min/max row occupancy): {spread:.2f}")
+    if spread < 0.5:
+        emit("  Uneven. The utilisation total is real but the logic is "
+             "concentrated, so it is not safe to say the whole die was "
+             "exercised.")
+    else:
+        emit("  Even. Logic is distributed across every logic row of the "
+             "die, so the design could not have confined itself to a "
+             "12k-sized subset.")
     return 0
 
 

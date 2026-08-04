@@ -69,7 +69,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "fabric_arcs.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The Trellis database that ships with the oss-cad-suite this project pins. The
 # same database nextpnr-ecp5 and ecppack were built against, so the arc names in
@@ -249,20 +251,12 @@ def main():
             print(f"no config at {path}")
             return 1
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
-
-        result = coverage(args.configs, args.device)
-        report(result, emit)
-        if args.json:
-            args.json.parent.mkdir(parents=True, exist_ok=True)
-            args.json.write_text(json.dumps(result, indent=2))
-            emit(f"json: {args.json}")
-        emit(f"log: {LOG}")
+    result = coverage(args.configs, args.device)
+    report(result, emit)
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps(result, indent=2))
+        emit(f"json: {args.json}")
     return 0
 
 

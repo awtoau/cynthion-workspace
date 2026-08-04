@@ -10,7 +10,7 @@ Answers one question about #92 from the device database, with no board attached.
     python3 scripts/hyperram_dqs_pins.py -v      # every pin's PIO location and function
 
 Exit status 0 if the DQS path is physically reachable, 1 if it is not. Output
-goes to the terminal and to `tmp/logs/hyperram_dqs_pins.log`.
+goes to the terminal and to `tmp/logs/dev.log`.
 
 ## Why this is a question at all
 
@@ -44,7 +44,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "hyperram_dqs_pins.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The part and package on r1.4, from `ecp5-test/cynthion_platform/cynthion_r1_4.py`.
 # `BG256` is Amaranth's name for what prjtrellis calls `CABGA256`.
@@ -107,13 +109,6 @@ def main():
                         help="prjtrellis ECP5 database directory")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
-
-    def emit(text=""):
-        print(text)
-        lines.append(text)
-
     pins = load(root=args.database)
 
     emit(f"\nHyperRAM DQS feasibility -- {DEVICE} {PACKAGE}\n")
@@ -121,7 +116,6 @@ def main():
     missing = [p for p in RAM_PINS.values() if p not in pins]
     if missing:
         emit(f"  FAIL pins not in the package: {missing}")
-        LOG.write_text("\n".join(lines))
         return 1
 
     if args.verbose:
@@ -179,10 +173,7 @@ def main():
     if not ok:
         emit("  the blocker is the board, not the gateware -- #92 cannot be "
              "closed by changing the PHY")
-    emit(f"  log: {LOG.relative_to(ROOT)}")
     emit()
-
-    LOG.write_text("\n".join(lines))
     return 0 if ok else 1
 
 

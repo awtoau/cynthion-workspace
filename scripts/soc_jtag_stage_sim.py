@@ -11,7 +11,7 @@ looks.
     ./scripts/soc_jtag_stage_sim.py -v        # and print every frame
 
 Exit status 0 if every assertion held. Output goes to the terminal and to
-`tmp/logs/soc_jtag_stage_sim.log`.
+`tmp/logs/dev.log`.
 
 ## Why this is worth a file
 
@@ -51,9 +51,11 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_jtag_stage_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth       import ClockDomain, Module          # noqa: E402
 from amaranth.hdl   import Fragment                     # noqa: E402
@@ -524,24 +526,16 @@ def main():
                         help="print every frame")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
+    emit("jtag_stage.JTAGStager")
+    run_checks(checks, args.verbose)
+    emit()
 
-        checks = Checks(emit)
-        emit("jtag_stage.JTAGStager")
-        run_checks(checks, args.verbose)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

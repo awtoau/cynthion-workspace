@@ -34,10 +34,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "fabric_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from devlog import emit  # noqa: E402
 
 from amaranth.sim import Simulator
 
@@ -102,47 +103,39 @@ def main():
     parser.add_argument("--rounds", type=int, default=3)
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    cycles = 1 << args.round_bits
+    emit(f"simulating {args.blocks} blocks, round 2**{args.round_bits} "
+         f"= {cycles} cycles, {args.rounds} rounds")
 
-        cycles = 1 << args.round_bits
-        emit(f"simulating {args.blocks} blocks, round 2**{args.round_bits} "
-             f"= {cycles} cycles, {args.rounds} rounds")
+    expected = golden(args.blocks, cycles)
+    emit(f"golden model: {expected:#010x}")
 
-        expected = golden(args.blocks, cycles)
-        emit(f"golden model: {expected:#010x}")
+    seen = run(args.blocks, args.round_bits, args.rounds, expected)
+    emit(f"simulated signatures: "
+         f"{', '.join(f'{v:#010x}' for v in seen) or 'none'}")
 
-        seen = run(args.blocks, args.round_bits, args.rounds, expected)
-        emit(f"simulated signatures: "
-             f"{', '.join(f'{v:#010x}' for v in seen) or 'none'}")
+    if len(seen) < args.rounds:
+        emit(f"FAIL -- only {len(seen)} rounds completed, wanted "
+             f"{args.rounds}; the round counter is not advancing")
+        return 1
 
-        if len(seen) < args.rounds:
-            emit(f"FAIL -- only {len(seen)} rounds completed, wanted "
-                 f"{args.rounds}; the round counter is not advancing")
-            return 1
+    # Every round must give the same value, because each round restarts
+    # from the seeds. A drifting value means the reload is not working and
+    # the hardware self-check would compare against a constant that only
+    # ever matched once.
+    if len(set(seen)) != 1:
+        emit(f"FAIL -- signatures differ between rounds: "
+             f"{len(set(seen))} distinct values, so the seed reload is "
+             f"not restoring state")
+        return 1
 
-        # Every round must give the same value, because each round restarts
-        # from the seeds. A drifting value means the reload is not working and
-        # the hardware self-check would compare against a constant that only
-        # ever matched once.
-        if len(set(seen)) != 1:
-            emit(f"FAIL -- signatures differ between rounds: "
-                 f"{len(set(seen))} distinct values, so the seed reload is "
-                 f"not restoring state")
-            return 1
+    if seen[0] != expected:
+        emit(f"FAIL -- hardware {seen[0]:#010x} != model {expected:#010x}")
+        emit("  the round timing and the model disagree; a hardware run "
+             "would report broken silicon that is not broken")
+        return 1
 
-        if seen[0] != expected:
-            emit(f"FAIL -- hardware {seen[0]:#010x} != model {expected:#010x}")
-            emit("  the round timing and the model disagree; a hardware run "
-                 "would report broken silicon that is not broken")
-            return 1
-
-        emit(f"PASS -- {len(seen)} rounds, all {expected:#010x}")
-        emit(f"log: {LOG}")
+    emit(f"PASS -- {len(seen)} rounds, all {expected:#010x}")
     return 0
 
 

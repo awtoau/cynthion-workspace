@@ -10,7 +10,7 @@ Proves `vexii_clint.Clint` behaves, and that a tick built on it does not drift.
     ./scripts/soc_clint_sim.py -v      # and print each bus access
 
 Exit status 0 if every assertion held. Output goes to the terminal and to
-`tmp/logs/soc_clint_sim.log`.
+`tmp/logs/dev.log`.
 
 ## Why this is worth a file
 
@@ -43,9 +43,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_clint_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment            # noqa: E402
 from amaranth.sim import Simulator           # noqa: E402
@@ -509,35 +511,27 @@ def main():
                         help="print every CSR bus access")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
 
-        checks = Checks(emit)
+    emit("vexii_clint.Clint: registers and reset state")
+    run_register_checks(checks, args.verbose)
+    emit()
+    emit("vexii_clint.Clint: the interrupt is a level")
+    run_level_checks(checks, args.verbose)
+    emit()
+    emit("vexii_clint.Clint: writing a 64-bit deadline from a 32-bit machine")
+    run_write_sequence_checks(checks, args.verbose)
+    emit()
+    emit("the tick: add the period, never reload from now")
+    run_drift_checks(checks, args.verbose)
+    emit()
 
-        emit("vexii_clint.Clint: registers and reset state")
-        run_register_checks(checks, args.verbose)
-        emit()
-        emit("vexii_clint.Clint: the interrupt is a level")
-        run_level_checks(checks, args.verbose)
-        emit()
-        emit("vexii_clint.Clint: writing a 64-bit deadline from a 32-bit machine")
-        run_write_sequence_checks(checks, args.verbose)
-        emit()
-        emit("the tick: add the period, never reload from now")
-        run_drift_checks(checks, args.verbose)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: "
-                 f"{', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: "
+             f"{', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

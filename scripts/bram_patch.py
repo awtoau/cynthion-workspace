@@ -87,12 +87,14 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "bram_patch.log"
 BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # The default is the same intermediate `soc_run.py` writes, and knowing that it is
 # the default is what lets this tool regenerate it. An explicitly-given `--firmware`
@@ -113,12 +115,6 @@ RAM_TILE_WIDTHS = (1, 18)
 
 class Refuse(Exception):
     """A check failed. Nothing is written."""
-
-
-def emit(text, handle):
-    print(text, flush=True)
-    handle.write(text + "\n")
-    handle.flush()
 
 
 def rel(path):
@@ -370,17 +366,15 @@ def main():
                         help="skip unpacking the result and comparing it")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        try:
-            return patch(args, handle)
-        except Refuse as failure:
-            emit("REFUSED: " + str(failure), handle)
-            emit("Nothing was written. Rebuild with scripts/soc_run.py.", handle)
-            return 1
+    try:
+        return patch(args)
+    except Refuse as failure:
+        emit("REFUSED: " + str(failure))
+        emit("Nothing was written. Rebuild with scripts/soc_run.py.")
+        return 1
 
 
-def refresh_firmware(args, handle):
+def refresh_firmware(args):
     """Rewrite the firmware image from the ELF, then say exactly what will be patched.
 
     #155. This tool patched from `tmp/rust_fw.bin` and never checked whether that
@@ -402,22 +396,22 @@ def refresh_firmware(args, handle):
     """
     if args.firmware != DEFAULT_FIRMWARE:
         emit(f"firmware: {rel(args.firmware)} (given explicitly, "
-             f"not derived)", handle)
+             f"not derived)")
     elif args.no_derive:
-        emit("", handle)
-        emit("*** --no-derive: the firmware image was NOT rebuilt from the ELF.", handle)
-        emit("*** If the crate has been rebuilt since this file was written, the", handle)
-        emit("*** bitstream this produces carries the OLD firmware, and a report", handle)
-        emit("*** of `0 of them changed` below will be indistinguishable from", handle)
-        emit("*** success. See #155.", handle)
-        emit("", handle)
+        emit("")
+        emit("*** --no-derive: the firmware image was NOT rebuilt from the ELF.")
+        emit("*** If the crate has been rebuilt since this file was written, the")
+        emit("*** bitstream this produces carries the OLD firmware, and a report")
+        emit("*** of `0 of them changed` below will be indistinguishable from")
+        emit("*** success. See #155.")
+        emit("")
     else:
         import soc_run
         if not soc_run.ELF.exists():
             raise Refuse(
                 f"no {rel(soc_run.ELF)}; there is no compiled firmware "
                 "to derive an image from. Build it with scripts/soc_run.py.")
-        sections, _flash = soc_run.derive_bram_bin(lambda line: emit(line, handle))
+        sections, _flash = soc_run.derive_bram_bin(lambda line: emit(line))
         if sections is None:
             raise Refuse("could not derive the firmware image from the ELF; the "
                          "objcopy output above says why. Nothing was patched.")
@@ -431,12 +425,12 @@ def refresh_firmware(args, handle):
     stamp = datetime.fromtimestamp(args.firmware.stat().st_mtime).isoformat(
         timespec="seconds")
     emit(f"patching from {rel(args.firmware)}: {len(raw)} bytes, "
-         f"{hashlib.sha256(raw).hexdigest()[:12]}, written {stamp}", handle)
+         f"{hashlib.sha256(raw).hexdigest()[:12]}, written {stamp}")
 
 
-def patch(args, handle):
+def patch(args):
     start = time.monotonic()
-    refresh_firmware(args, handle)
+    refresh_firmware(args)
     build_dir = args.build_dir
     config_path = build_dir / "top.config"
     hex_path = build_dir / "firmware.hex"
@@ -454,24 +448,24 @@ def patch(args, handle):
 
     text = config_path.read_text()
     inits, tiles = parse_config(text)
-    emit(f"{len(inits)} block RAMs in {config_path.relative_to(ROOT)}", handle)
+    emit(f"{len(inits)} block RAMs in {config_path.relative_to(ROOT)}")
 
     mapping = locate(inits, tiles, old_words)
-    emit(f"located all {SLICES} slices of the firmware memory:", handle)
+    emit(f"located all {SLICES} slices of the firmware memory:")
     for index in sorted(mapping)[:4]:
         emit(f"  slice {index:2d} -> WID {mapping[index]:3d} "
-             f"{tiles[mapping[index]]['tile']}", handle)
-    emit(f"  ... and {SLICES - 4} more", handle)
+             f"{tiles[mapping[index]]['tile']}")
+    emit(f"  ... and {SLICES - 4} more")
 
     # The source check. Elaborating with the OLD firmware must reproduce the build's
     # own RTLIL byte for byte: that ties the build directory to the tree as it stands
     # and to firmware.hex at the same time.
     if args.no_verify_source:
-        emit("", handle)
-        emit("*** --no-verify-source: the design was NOT re-elaborated.", handle)
-        emit("*** If any gateware source changed since this build, the bitstream", handle)
-        emit("*** this writes carries the OLD logic with the NEW firmware.", handle)
-        emit("", handle)
+        emit("")
+        emit("*** --no-verify-source: the design was NOT re-elaborated.")
+        emit("*** If any gateware source changed since this build, the bitstream")
+        emit("*** this writes carries the OLD logic with the NEW firmware.")
+        emit("")
     else:
         il_path = build_dir / "top.il"
         if not il_path.exists():
@@ -499,7 +493,7 @@ def patch(args, handle):
                 "  Gateware, a package or a VexiiRiscv flag has changed since the "
                 "build. Patching would give this bitstream's OLD logic. Rebuild.")
         emit(f"source verified: RTLIL reproduces top.il exactly "
-             f"({time.monotonic() - mark:.1f} s)", handle)
+             f"({time.monotonic() - mark:.1f} s)")
 
     new_slices = slices_of(new_words)
     patched = rewrite(text, mapping, new_slices)
@@ -511,15 +505,15 @@ def patch(args, handle):
     # rather than found lying in tmp/ -- but it still says which of the two cases it
     # is, since the whole lesson of #155 is that a number with one reading is worth
     # less than a sentence with one meaning.
-    emit(f"rewrote {SLICES} blocks, {changed} of them changed", handle)
+    emit(f"rewrote {SLICES} blocks, {changed} of them changed")
     if changed == 0:
         if args.no_derive or args.firmware != DEFAULT_FIRMWARE:
             emit("  the bitstream already held these bytes -- but this image was "
                  "NOT derived from the ELF, so that may instead mean it is stale",
-                 handle)
+                 )
         else:
             emit("  the bitstream already held this exact firmware; the image was "
-                 "derived from the ELF above, so this is a genuine no-op", handle)
+                 "derived from the ELF above, so this is a genuine no-op")
 
     out_config = build_dir / "top.patched.config"
     out_config.write_text(patched)
@@ -535,7 +529,7 @@ def patch(args, handle):
     result = run_trellis(ecppack_command(build_dir, out_config, bit), build_dir)
     if result.returncode != 0:
         raise Refuse("ecppack failed:\n" + (result.stderr or result.stdout)[-600:])
-    emit(f"packed {bit.relative_to(ROOT)} ({time.monotonic() - mark:.1f} s)", handle)
+    emit(f"packed {bit.relative_to(ROOT)} ({time.monotonic() - mark:.1f} s)")
 
     if not args.no_round_trip:
         mark = time.monotonic()
@@ -548,7 +542,7 @@ def patch(args, handle):
             if back.get(mapping[index]) != new_slices[index]:
                 raise Refuse(f"slice {index} does not read back from the bitstream")
         emit(f"round trip verified: all {SLICES} slices read back from the .bit "
-             f"({time.monotonic() - mark:.1f} s)", handle)
+             f"({time.monotonic() - mark:.1f} s)")
         unpacked.unlink()
 
     # Only now, with the bitstream proven, does the recorded init become the new one.
@@ -556,7 +550,7 @@ def patch(args, handle):
     config_path.write_text(patched)
     out_config.unlink()
 
-    emit(f"done in {time.monotonic() - start:.1f} s", handle)
+    emit(f"done in {time.monotonic() - start:.1f} s")
     return 0
 
 

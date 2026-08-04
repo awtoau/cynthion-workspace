@@ -10,7 +10,7 @@ Checks `ecp5-test/riscv/serial_line.py` against issue #113.
     python3 scripts/soc_serial_sim.py -v      # print every byte and edge
 
 Exit status 0 if every check passes. Output goes to the terminal and to
-`tmp/logs/soc_serial_sim.log`.
+`tmp/logs/dev.log`.
 
 ## What this is evidence for
 
@@ -54,9 +54,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_serial_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment
 from amaranth.sim import Simulator
@@ -515,39 +517,31 @@ def main():
                         help="print every simulated byte and pad edge")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
 
-        checks = Checks(emit)
+    emit("serial_line.SerialLine -- transmit")
+    run_tx_checks(checks, args.verbose)
+    run_tx_burst_check(checks, args.verbose)
+    emit()
 
-        emit("serial_line.SerialLine -- transmit")
-        run_tx_checks(checks, args.verbose)
-        run_tx_burst_check(checks, args.verbose)
-        emit()
+    emit("serial_line.SerialLine -- receive")
+    run_rx_checks(checks, args.verbose)
+    run_jtag_noise_check(checks, args.verbose)
+    emit()
 
-        emit("serial_line.SerialLine -- receive")
-        run_rx_checks(checks, args.verbose)
-        run_jtag_noise_check(checks, args.verbose)
-        emit()
+    emit("serial_line.SerialLine -- what it reports losing")
+    run_error_report_checks(checks, args.verbose)
+    emit()
 
-        emit("serial_line.SerialLine -- what it reports losing")
-        run_error_report_checks(checks, args.verbose)
-        emit()
+    emit("serial_line.SerialLine -- structure")
+    run_structural_checks(checks, args.verbose)
+    emit()
 
-        emit("serial_line.SerialLine -- structure")
-        run_structural_checks(checks, args.verbose)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

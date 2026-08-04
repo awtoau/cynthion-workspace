@@ -62,10 +62,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = Path(__file__).resolve().parent
-LOG = ROOT / "tmp" / "logs" / "fabric_sweep.log"
 WORK = ROOT / "tmp" / "fabric-coverage"
 
 sys.path.insert(0, str(SCRIPTS))
+
+from devlog import emit  # noqa: E402
 
 from fabric_build import parse_utilisation, parse_timing          # noqa: E402
 import fabric_arcs                                                # noqa: E402
@@ -176,188 +177,180 @@ def main():
                              "of the hardware half, not for a real result")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     args.work.mkdir(parents=True, exist_ok=True)
 
     seeds = list(range(args.first_seed, args.first_seed + args.configs))
     directories = {seed: args.work / f"seed-{seed:03d}" for seed in seeds}
 
-    with LOG.open("a") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    emit(f"=== fabric sweep, {time.strftime('%Y-%m-%dT%H:%M:%S%z')} ===")
+    emit(f"{args.configs} configurations, seeds {seeds[0]}..{seeds[-1]}, "
+         f"{args.rounds} rounds each")
+    emit(f"work: {args.work}")
+    emit()
 
-        emit(f"=== fabric sweep, {time.strftime('%Y-%m-%dT%H:%M:%S%z')} ===")
-        emit(f"{args.configs} configurations, seeds {seeds[0]}..{seeds[-1]}, "
-             f"{args.rounds} rounds each")
-        emit(f"work: {args.work}")
-        emit()
+    #
+    # Build. In parallel, because each nextpnr is single-threaded and the
+    # board is not involved yet -- the hardware half below is strictly
+    # serial and cannot overlap with itself.
+    #
+    builds = {}
+    if args.skip_build:
+        emit("--skip-build: using the bitstreams already present")
+        for seed, directory in directories.items():
+            builds[seed] = (directory / "top.bit").exists()
+    else:
+        emit(f"building {args.configs} configurations, {args.jobs} at a "
+             f"time")
+        start = time.perf_counter()
+        with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+            futures = {
+                pool.submit(build, seed, directories[seed], args.blocks,
+                            args.round_bits, args.min_luts): seed
+                for seed in seeds}
+            for future in concurrent.futures.as_completed(futures):
+                seed = futures[future]
+                ok, seconds, log = future.result()
+                builds[seed] = ok
+                emit(f"  seed {seed:>3}: "
+                     f"{'built' if ok else 'BUILD FAILED'} in "
+                     f"{seconds:.0f}s"
+                     + ("" if ok else f" -- see {log}"))
+        emit(f"builds finished in {time.perf_counter() - start:.0f}s")
+    emit()
 
-        #
-        # Build. In parallel, because each nextpnr is single-threaded and the
-        # board is not involved yet -- the hardware half below is strictly
-        # serial and cannot overlap with itself.
-        #
-        builds = {}
-        if args.skip_build:
-            emit("--skip-build: using the bitstreams already present")
-            for seed, directory in directories.items():
-                builds[seed] = (directory / "top.bit").exists()
+    good = [seed for seed in seeds if builds.get(seed)]
+    if not good:
+        emit("no configuration built -- nothing to test")
+        return 1
+
+    #
+    # Test. Serial: there is one board, and a configuration under test owns
+    # it completely.
+    #
+    emit(f"testing {len(good)} configurations on the board, in order")
+    emit()
+    results = {}
+    for index, seed in enumerate(good, 1):
+        directory = directories[seed]
+        stats = measure(directory)
+        emit(f"[{index}/{len(good)}] seed {seed}: "
+             f"{stats.get('luts', 0):,} LUT4s "
+             f"({100 * stats.get('lut_share', 0):.1f}%), "
+             f"{stats.get('mhz', 0):.2f} MHz "
+             f"{'MET' if stats.get('timing_met') else 'NOT MET'}")
+        outcome = test(directory, args.rounds, emit)
+        outcome.update(stats)
+        outcome["seed"] = seed
+        results[seed] = outcome
+        temperature = die(outcome)
+        emit(f"          {outcome.get('rounds', 0):,} rounds, "
+             f"{outcome.get('mismatches', 0)} mismatched, sticky "
+             f"{'SET' if outcome.get('sticky') else 'clear'}, "
+             f"die {temperature if temperature is not None else 'n/a'} "
+             f"-- {outcome['verdict'].upper()}")
+    emit()
+
+    #
+    # The negative control, rebuilt for this sweep rather than inherited.
+    #
+    control = None
+    if not args.no_control:
+        seed = good[0]
+        directory = args.work / f"control-seed-{seed:03d}"
+        emit(f"negative control: seed {seed} rebuilt against "
+             f"{WRONG_GOLDEN}, which the design cannot produce")
+        ok, seconds, log = build(seed, directory, args.blocks,
+                                 args.round_bits, args.min_luts,
+                                 golden=WRONG_GOLDEN)
+        if not ok:
+            emit(f"  control build failed in {seconds:.0f}s -- see {log}")
         else:
-            emit(f"building {args.configs} configurations, {args.jobs} at a "
-                 f"time")
-            start = time.perf_counter()
-            with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
-                futures = {
-                    pool.submit(build, seed, directories[seed], args.blocks,
-                                args.round_bits, args.min_luts): seed
-                    for seed in seeds}
-                for future in concurrent.futures.as_completed(futures):
-                    seed = futures[future]
-                    ok, seconds, log = future.result()
-                    builds[seed] = ok
-                    emit(f"  seed {seed:>3}: "
-                         f"{'built' if ok else 'BUILD FAILED'} in "
-                         f"{seconds:.0f}s"
-                         + ("" if ok else f" -- see {log}"))
-            emit(f"builds finished in {time.perf_counter() - start:.0f}s")
+            # fabric_run.py loads it and then refuses to score it, because
+            # its constant disagrees with the host model. That refusal is
+            # the correct behaviour and is itself part of the control.
+            loaded = test(directory, args.rounds, emit)
+            emit(f"  loaded; fabric_run.py's verdict: {loaded['verdict']}")
+            outcome = subprocess.run(
+                [sys.executable, str(SCRIPTS / "fabric_control.py")],
+                cwd=ROOT, capture_output=True, text=True)
+            for line in (outcome.stdout or "").splitlines():
+                emit(f"  {line}")
+            control = outcome.returncode == 0
         emit()
 
-        good = [seed for seed in seeds if builds.get(seed)]
-        if not good:
-            emit("no configuration built -- nothing to test")
-            return 1
+    #
+    # What the set of them covered.
+    #
+    configs = [directories[seed] / "top.config" for seed in good
+               if (directories[seed] / "top.config").exists()]
+    emit("=== placement: did the seed actually move the logic? ===")
+    placement = fabric_placement.compare(configs, emit)
+    emit()
+    emit("=== routing arcs exercised, measured against the Trellis "
+         "database ===")
+    arcs = fabric_arcs.coverage(configs, "LFE5U-12F")
+    fabric_arcs.report(arcs, emit)
+    emit()
 
-        #
-        # Test. Serial: there is one board, and a configuration under test owns
-        # it completely.
-        #
-        emit(f"testing {len(good)} configurations on the board, in order")
-        emit()
-        results = {}
-        for index, seed in enumerate(good, 1):
-            directory = directories[seed]
-            stats = measure(directory)
-            emit(f"[{index}/{len(good)}] seed {seed}: "
-                 f"{stats.get('luts', 0):,} LUT4s "
-                 f"({100 * stats.get('lut_share', 0):.1f}%), "
-                 f"{stats.get('mhz', 0):.2f} MHz "
-                 f"{'MET' if stats.get('timing_met') else 'NOT MET'}")
-            outcome = test(directory, args.rounds, emit)
-            outcome.update(stats)
-            outcome["seed"] = seed
-            results[seed] = outcome
-            temperature = die(outcome)
-            emit(f"          {outcome.get('rounds', 0):,} rounds, "
-                 f"{outcome.get('mismatches', 0)} mismatched, sticky "
-                 f"{'SET' if outcome.get('sticky') else 'clear'}, "
-                 f"die {temperature if temperature is not None else 'n/a'} "
-                 f"-- {outcome['verdict'].upper()}")
-        emit()
+    #
+    # The verdict.
+    #
+    passed = [s for s in good if results[s].get("verdict") == "pass"]
+    # The headline quotes the per-instance share. "Routing arcs" plainly
+    # means the arcs on this die, and that is the smaller, harder number;
+    # the per-tile-type share is always larger and is stated immediately
+    # below rather than in the headline, so neither can be read alone.
+    emit(f"=== {len(passed)}/{args.configs} passed "
+         f"-- {100 * arcs['instance_share']:.1f}% of routing arcs "
+         f"exercised ===")
+    emit(f"  per instance:  {arcs['covered_instance_arcs']:,} of "
+         f"{arcs['total_instance_arcs']:,} arcs on the die")
+    emit(f"  per tile type: {arcs['covered_type_arcs']:,} of "
+         f"{arcs['total_type_arcs']:,} distinct arcs "
+         f"-- {100 * arcs['type_share']:.1f}%")
+    rounds = sum(results[s].get("rounds", 0) for s in good)
+    mismatches = sum(results[s].get("mismatches", 0) for s in good)
+    emit(f"  {rounds:,} gateware-checked rounds across all "
+         f"configurations, {mismatches} mismatched")
+    temperatures = [t for t in (die(results[s]) for s in good)
+                    if t is not None]
+    if temperatures:
+        emit(f"  die temperature code {min(temperatures)}..."
+             f"{max(temperatures)} across the sweep -- the operating point "
+             f"is now recorded per configuration rather than assumed "
+             f"constant")
+    else:
+        emit("  no die temperature: the bitstreams carry no DTR, so the "
+             "operating point remains an untested assumption")
+    if control is None:
+        emit("  NO NEGATIVE CONTROL was run, so these clean results are "
+             "not evidence that the detector can report a wrong answer")
+    elif control:
+        emit("  negative control passed on one of these placements: the "
+             "detector fires on a wrong answer, so a clean run is a "
+             "measurement")
+    else:
+        emit("  NEGATIVE CONTROL FAILED -- the detector did not reliably "
+             "report a wrong answer, so nothing above is evidence about "
+             "the silicon")
 
-        #
-        # The negative control, rebuilt for this sweep rather than inherited.
-        #
-        control = None
-        if not args.no_control:
-            seed = good[0]
-            directory = args.work / f"control-seed-{seed:03d}"
-            emit(f"negative control: seed {seed} rebuilt against "
-                 f"{WRONG_GOLDEN}, which the design cannot produce")
-            ok, seconds, log = build(seed, directory, args.blocks,
-                                     args.round_bits, args.min_luts,
-                                     golden=WRONG_GOLDEN)
-            if not ok:
-                emit(f"  control build failed in {seconds:.0f}s -- see {log}")
-            else:
-                # fabric_run.py loads it and then refuses to score it, because
-                # its constant disagrees with the host model. That refusal is
-                # the correct behaviour and is itself part of the control.
-                loaded = test(directory, args.rounds, emit)
-                emit(f"  loaded; fabric_run.py's verdict: {loaded['verdict']}")
-                outcome = subprocess.run(
-                    [sys.executable, str(SCRIPTS / "fabric_control.py")],
-                    cwd=ROOT, capture_output=True, text=True)
-                for line in (outcome.stdout or "").splitlines():
-                    emit(f"  {line}")
-                control = outcome.returncode == 0
-            emit()
+    summary = {
+        "configs": args.configs,
+        "seeds": seeds,
+        "passed": passed,
+        "rounds": rounds,
+        "mismatches": mismatches,
+        "control": control,
+        "placement": placement,
+        "arcs": {k: v for k, v in arcs.items() if k != "steps"},
+        "arc_steps": arcs["steps"],
+        "results": {str(s): results[s] for s in good},
+    }
+    (args.work / "sweep.json").write_text(json.dumps(summary, indent=2))
+    emit(f"summary: {args.work / 'sweep.json'}")
 
-        #
-        # What the set of them covered.
-        #
-        configs = [directories[seed] / "top.config" for seed in good
-                   if (directories[seed] / "top.config").exists()]
-        emit("=== placement: did the seed actually move the logic? ===")
-        placement = fabric_placement.compare(configs, emit)
-        emit()
-        emit("=== routing arcs exercised, measured against the Trellis "
-             "database ===")
-        arcs = fabric_arcs.coverage(configs, "LFE5U-12F")
-        fabric_arcs.report(arcs, emit)
-        emit()
-
-        #
-        # The verdict.
-        #
-        passed = [s for s in good if results[s].get("verdict") == "pass"]
-        # The headline quotes the per-instance share. "Routing arcs" plainly
-        # means the arcs on this die, and that is the smaller, harder number;
-        # the per-tile-type share is always larger and is stated immediately
-        # below rather than in the headline, so neither can be read alone.
-        emit(f"=== {len(passed)}/{args.configs} passed "
-             f"-- {100 * arcs['instance_share']:.1f}% of routing arcs "
-             f"exercised ===")
-        emit(f"  per instance:  {arcs['covered_instance_arcs']:,} of "
-             f"{arcs['total_instance_arcs']:,} arcs on the die")
-        emit(f"  per tile type: {arcs['covered_type_arcs']:,} of "
-             f"{arcs['total_type_arcs']:,} distinct arcs "
-             f"-- {100 * arcs['type_share']:.1f}%")
-        rounds = sum(results[s].get("rounds", 0) for s in good)
-        mismatches = sum(results[s].get("mismatches", 0) for s in good)
-        emit(f"  {rounds:,} gateware-checked rounds across all "
-             f"configurations, {mismatches} mismatched")
-        temperatures = [t for t in (die(results[s]) for s in good)
-                        if t is not None]
-        if temperatures:
-            emit(f"  die temperature code {min(temperatures)}..."
-                 f"{max(temperatures)} across the sweep -- the operating point "
-                 f"is now recorded per configuration rather than assumed "
-                 f"constant")
-        else:
-            emit("  no die temperature: the bitstreams carry no DTR, so the "
-                 "operating point remains an untested assumption")
-        if control is None:
-            emit("  NO NEGATIVE CONTROL was run, so these clean results are "
-                 "not evidence that the detector can report a wrong answer")
-        elif control:
-            emit("  negative control passed on one of these placements: the "
-                 "detector fires on a wrong answer, so a clean run is a "
-                 "measurement")
-        else:
-            emit("  NEGATIVE CONTROL FAILED -- the detector did not reliably "
-                 "report a wrong answer, so nothing above is evidence about "
-                 "the silicon")
-
-        summary = {
-            "configs": args.configs,
-            "seeds": seeds,
-            "passed": passed,
-            "rounds": rounds,
-            "mismatches": mismatches,
-            "control": control,
-            "placement": placement,
-            "arcs": {k: v for k, v in arcs.items() if k != "steps"},
-            "arc_steps": arcs["steps"],
-            "results": {str(s): results[s] for s in good},
-        }
-        (args.work / "sweep.json").write_text(json.dumps(summary, indent=2))
-        emit(f"summary: {args.work / 'sweep.json'}")
-        emit(f"log: {LOG}")
-
-        if len(passed) != args.configs or control is not True:
-            return 1
+    if len(passed) != args.configs or control is not True:
+        return 1
     return 0
 
 

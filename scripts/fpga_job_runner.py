@@ -16,9 +16,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_QUEUE = ROOT / "fpga-jobs"
-LOG_PATH = ROOT / "tmp" / "logs" / "fpga_job_runner.log"
 LOCK_PATH = ROOT / "tmp" / "fpga-job-runner.lock"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 
 class JobError(RuntimeError):
@@ -26,9 +29,9 @@ class JobError(RuntimeError):
 
 
 class Output:
-    def __init__(self, path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = path.open("a", encoding="utf-8")
+    """The shared log, plus a per-job copy while a job is running."""
+
+    def __init__(self):
         self.job_handle = None
 
     def attach_job(self, path):
@@ -39,17 +42,14 @@ class Output:
             self.job_handle.close()
             self.job_handle = None
 
-    def emit(self, line=""):
-        print(line, flush=True)
-        self.handle.write(line + "\n")
-        self.handle.flush()
+    def say(self, line=""):
+        emit(line)
         if self.job_handle:
             self.job_handle.write(line + "\n")
             self.job_handle.flush()
 
     def close(self):
         self.detach_job()
-        self.handle.close()
 
 
 def inside(path, parent):
@@ -172,12 +172,12 @@ def load_job(job_dir):
 
 
 def run_command(argv, output, env=None):
-    output.emit(f"$ {' '.join(display_path(part) for part in argv)}")
+    output.say(f"$ {' '.join(display_path(part) for part in argv)}")
     process = subprocess.Popen(
         argv, cwd=ROOT, env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1)
     for line in process.stdout:
-        output.emit(line.rstrip("\n"))
+        output.say(line.rstrip("\n"))
     return process.wait()
 
 
@@ -268,7 +268,7 @@ def claim_runner(output, check_board):
             lock.close()
             detail = "; ".join(f"pid {pid}: {command}" for pid, command in holders)
             raise JobError(f"board is already held by {detail}")
-    output.emit(f"runner lock: {LOCK_PATH.relative_to(ROOT)} (pid {os.getpid()})")
+    output.say(f"runner lock: {LOCK_PATH.relative_to(ROOT)} (pid {os.getpid()})")
     return lock
 
 
@@ -291,12 +291,12 @@ def configure(bitstream, output):
 def run_job(job_dir, completed, output):
     destination = completed / job_dir.name
     if destination.exists():
-        output.emit(f"FAILED: completed destination exists: {destination}")
+        output.say(f"FAILED: completed destination exists: {destination}")
         return False
     started = datetime.now(timezone.utc)
     result = {"schema": 1, "job": job_dir.name, "started": started.isoformat()}
-    output.emit()
-    output.emit(f"=== {job_dir.name} ===")
+    output.say()
+    output.say(f"=== {job_dir.name} ===")
     output.attach_job(job_dir / "result.log")
     restore_bitstream = None
     hardware = False
@@ -306,14 +306,14 @@ def run_job(job_dir, completed, output):
         result["hardware"] = hardware
         result["expected"] = manifest["expected"]
         result["negative_control"] = manifest["negative_control"]
-        output.emit(f"expected: {json.dumps(manifest['expected'])}")
-        output.emit(f"negative control (must fail): "
+        output.say(f"expected: {json.dumps(manifest['expected'])}")
+        output.say(f"negative control (must fail): "
                     f"{json.dumps(manifest['negative_control'])}")
         restored = display_path(str(restore_bitstream)) if restore_bitstream else None
-        output.emit(f"restore: {restored or 'not applicable'}")
+        output.say(f"restore: {restored or 'not applicable'}")
 
         if build:
-            output.emit("--- build ---")
+            output.say("--- build ---")
             build_env = os.environ.copy()
             build_env.update({
                 "FPGA_JOB_DIR": str(job_dir),
@@ -329,7 +329,7 @@ def run_job(job_dir, completed, output):
         controls = []
         for control, expectation in (("positive", manifest["expected"]),
                                      ("negative", manifest["negative_control"])):
-            output.emit(f"--- {control} control ---")
+            output.say(f"--- {control} control ---")
             env = expectation_env(os.environ, job_dir, bitstream,
                                   control, expectation)
             returncode = run_command(driver, output, env)
@@ -346,21 +346,21 @@ def run_job(job_dir, completed, output):
     except (JobError, OSError, KeyboardInterrupt) as error:
         result["status"] = "failed"
         result["error"] = str(error)
-        output.emit(f"FAILED: {error}")
+        output.say(f"FAILED: {error}")
     finally:
         if hardware and restore_bitstream:
-            output.emit("--- restore ---")
+            output.say("--- restore ---")
             restore_rc = configure(restore_bitstream, output)
             result["restore_returncode"] = restore_rc
             if restore_rc != 0:
                 result["status"] = "failed"
                 result["error"] = f"restore exited {restore_rc}"
-                output.emit(f"FAILED: restore exited {restore_rc}")
+                output.say(f"FAILED: restore exited {restore_rc}")
 
     result["finished"] = datetime.now(timezone.utc).isoformat()
     (job_dir / "result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    output.emit(f"result: {result['status']}")
+    output.say(f"result: {result['status']}")
     output.detach_job()
 
     shutil.move(str(job_dir), str(destination))
@@ -382,10 +382,10 @@ def main():
     completed = queue / "completed"
     queued.mkdir(parents=True, exist_ok=True)
     completed.mkdir(parents=True, exist_ok=True)
-    output = Output(LOG_PATH)
+    output = Output()
     lock = None
     try:
-        output.emit(f"FPGA job runner: {datetime.now(timezone.utc).isoformat()}")
+        output.say(f"FPGA job runner: {datetime.now(timezone.utc).isoformat()}")
         lock = claim_runner(output, check_board=not args.hardware_free_only)
 
         jobs = sorted(path for path in queued.iterdir()
@@ -396,26 +396,25 @@ def main():
                 try:
                     manifest = json.loads((job / "job.json").read_text())
                 except (OSError, json.JSONDecodeError) as error:
-                    output.emit(f"skipping unreadable job {job.name}: {error}")
+                    output.say(f"skipping unreadable job {job.name}: {error}")
                     continue
                 if manifest.get("hardware") is not False:
-                    output.emit(f"skipping hardware job: {job.name}")
+                    output.say(f"skipping hardware job: {job.name}")
                     continue
             selected.append(job)
 
         if not selected:
-            output.emit("queue is empty")
+            output.say("queue is empty")
             return 0
         passed = [run_job(job, completed, output) for job in selected]
         return 0 if all(passed) else 1
     except JobError as error:
-        output.emit(f"REFUSED: {error}")
+        output.say(f"REFUSED: {error}")
         return 2
     finally:
         if lock:
             fcntl.flock(lock, fcntl.LOCK_UN)
             lock.close()
-        output.emit(f"log: {LOG_PATH.relative_to(ROOT)}")
         output.close()
 
 

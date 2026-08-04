@@ -10,7 +10,7 @@ Checks the burst sequencer in `ecp5-test/qspi/qspi_gateware.py`.
     python3 scripts/qspi_burst_sim.py -v     # every stream beat
 
 Exit status 0 if every check passes. Output goes to the terminal and to
-`tmp/logs/qspi_burst_sim.log`.
+`tmp/logs/dev.log`.
 
 ## The fault this is about
 
@@ -95,9 +95,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "qspi_burst_sim.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test" / "qspi"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth import Elaboratable, Module, Mux, Signal
 from amaranth.hdl import Fragment
@@ -607,13 +609,6 @@ def main():
                         help="print every stream beat")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
-
-    def emit(text=""):
-        print(text, flush=True)
-        lines.append(text)
-
     check = Checks(emit)
     emit("\nQSPI burst sequencer\n")
 
@@ -637,10 +632,8 @@ def main():
         emit(f"{len(check.failures)} FAILED: {', '.join(check.failures)}")
     else:
         emit(f"{check.passed} checks passed")
-    emit(f"log: {LOG.relative_to(ROOT)}")
     emit()
 
-    LOG.write_text("\n".join(lines))
     return 1 if check.failures else 0
 
 

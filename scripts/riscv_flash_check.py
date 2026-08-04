@@ -37,7 +37,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "riscv_flash_check.log"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 # Where Apollo's reference reads are dropped. `flash-read` writes to a file
@@ -46,6 +45,9 @@ MIRROR = ROOT / "tmp" / "flash_reference"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # What the firmware prints. Anchored and exact: a pattern loose enough to match
 # `tic 00000` would defeat the point of checking for dropped characters.
@@ -135,12 +137,6 @@ TTY_ROUNDS = 60
 BENCH_OFFSET = 0x00000040
 
 
-def emit(handle, text=""):
-    print(text, flush=True)
-    handle.write(text + "\n")
-    handle.flush()
-
-
 def expected_words():
     """What the flash holds at the checked offsets, read by an independent path.
 
@@ -190,25 +186,25 @@ def expected_words():
     return words
 
 
-def configure(handle):
+def configure():
     """Load the bitstream over JTAG via Apollo."""
     if not BITSTREAM.exists():
-        emit(handle, f"no bitstream at {BITSTREAM}")
+        emit(f"no bitstream at {BITSTREAM}")
         return False
 
-    emit(handle, f"configuring {BITSTREAM}")
+    emit(f"configuring {BITSTREAM}")
     result = subprocess.run(
         [sys.executable, str(APOLLO_CLI), "configure", str(BITSTREAM)],
         capture_output=True, text=True, cwd=str(ROOT))
     for line in (result.stdout + result.stderr).strip().splitlines():
-        emit(handle, f"    {line}")
+        emit(f"    {line}")
     if result.returncode != 0:
-        emit(handle, "configure failed")
+        emit("configure failed")
         return False
     return True
 
 
-def wait_for_console(handle):
+def wait_for_console():
     """Block until the RISC-V console tty appears and opens, or give up.
 
     `usb_ids.wait_for_tty` is the right helper and is used here to do the actual
@@ -258,7 +254,7 @@ def wait_for_console(handle):
                 break
             node = usb_ids.wait_for_tty("riscv_console", settles=1)
             if node:
-                emit(handle, "  console appeared after a tty event")
+                emit("  console appeared after a tty event")
                 return node
     finally:
         monitor.terminate()
@@ -266,37 +262,37 @@ def wait_for_console(handle):
     return None
 
 
-def collect(handle):
+def collect():
     """Open the console by USB identity and return the lines it printed."""
     import serial
 
     import usb_ids
 
-    node = wait_for_console(handle)
+    node = wait_for_console()
     if node is None:
-        emit(handle, "no riscv_console tty appeared")
-        emit(handle, "  the SoC did not enumerate, or USB is not up")
+        emit("no riscv_console tty appeared")
+        emit("  the SoC did not enumerate, or USB is not up")
         return None
 
-    emit(handle, f"console: {node}")
+    emit(f"console: {node}")
     lines = []
     with serial.Serial(node, 115200, timeout=LINE_TIMEOUT_S) as port:
         while len(lines) < LINES_WANTED:
             raw = port.readline()
             if not raw:
-                emit(handle, "  read timed out; reporting what arrived")
+                emit("  read timed out; reporting what arrived")
                 break
             lines.append(raw.decode("ascii", "replace").rstrip("\r\n"))
     return lines
 
 
-def check(handle, lines, expected):
+def check(lines, expected):
     """Match every line against the expected shapes and report."""
-    emit(handle)
-    emit(handle, "console transcript:")
+    emit()
+    emit("console transcript:")
     for line in lines:
-        emit(handle, f"    {line!r}")
-    emit(handle)
+        emit(f"    {line!r}")
+    emit()
 
     seen = {}
     malformed = []
@@ -321,12 +317,12 @@ def check(handle, lines, expected):
     if seen.get("prod", [("",)])[0][0] != EXPECT_PROD:
         failures.append(f"prod: got {seen.get('prod')}, want {EXPECT_PROD}")
     else:
-        emit(handle, f"  prod         {EXPECT_PROD}  as before")
+        emit(f"  prod         {EXPECT_PROD}  as before")
 
     if seen.get("sum", [("",)])[0][0] != EXPECT_SUM:
         failures.append(f"sum: got {seen.get('sum')}, want {EXPECT_SUM}")
     else:
-        emit(handle, f"  sum          {EXPECT_SUM}  as before")
+        emit(f"  sum          {EXPECT_SUM}  as before")
 
     ticks = [int(g[0], 16) for g in seen.get("tick", [])]
     if len(ticks) < 2:
@@ -334,7 +330,7 @@ def check(handle, lines, expected):
     elif ticks != list(range(ticks[0], ticks[0] + len(ticks))):
         failures.append(f"ticks: not consecutive: {ticks}")
     else:
-        emit(handle, f"  ticks        {ticks}  consecutive")
+        emit(f"  ticks        {ticks}  consecutive")
 
     # 2. The controller's command path answers.
     #
@@ -348,7 +344,7 @@ def check(handle, lines, expected):
         if jedec in JEDEC_NO_RESPONSE:
             failures.append(f"jedec {jedec}: nothing answered on the command "
                             f"path ({detail})")
-            emit(handle, f"  jedec        {jedec}  {detail}")
+            emit(f"  jedec        {jedec}  {detail}")
         else:
             capacity = 1 << (int(jedec, 16) & 0xff)
             note = ""
@@ -361,8 +357,8 @@ def check(handle, lines, expected):
             elif jedec != JEDEC_THIS_BOARD:
                 # A different but plausible part. Not a failure.
                 note = f"  (this board previously read {JEDEC_THIS_BOARD})"
-            emit(handle, f"  jedec        {jedec}  command path works, "
-                         f"{capacity // (1024 * 1024)} MiB{note}")
+            emit(f"  jedec        {jedec}  command path works, "
+                 f"{capacity // (1024 * 1024)} MiB{note}")
 
     # 3. Reads through the memory map, checked against Apollo's own read of the
     #    same offsets.
@@ -375,12 +371,12 @@ def check(handle, lines, expected):
         got = seen["at0"][0][0]
         want = expected.get(0)
         if want is None:
-            emit(handle, f"  flash @0     {got}  (no bitstream to compare)")
+            emit(f"  flash @0     {got}  (no bitstream to compare)")
         elif got != want:
             failures.append(f"flash @0: read {got}, bitstream has {want}")
-            emit(handle, f"  flash @0     {got}  WRONG (bitstream: {want})")
+            emit(f"  flash @0     {got}  WRONG (bitstream: {want})")
         else:
-            emit(handle, f"  flash @0     {got}  matches the bitstream file")
+            emit(f"  flash @0     {got}  matches the bitstream file")
 
     if "atbench" in seen:
         first, second, verdict = seen["atbench"][0]
@@ -402,7 +398,7 @@ def check(handle, lines, expected):
                 note = f"  WRONG (bitstream: {want})"
             else:
                 note = "  matches the bitstream file"
-        emit(handle, f"  read @test  {first} {second}  {verdict}{note}")
+        emit(f"  read @test  {first} {second}  {verdict}{note}")
     else:
         failures.append("no `read @test` line")
 
@@ -413,9 +409,9 @@ def check(handle, lines, expected):
         if cyc:
             bytes_read = words * 4
             seconds = cyc / (SYNC_MHZ * 1e6)
-            emit(handle, f"  bench        {cyc} cycles for {bytes_read} bytes"
-                         f" = {bytes_read / seconds / 1e6:.2f} MB/s"
-                         f" ({cyc / words:.1f} cycles/word)")
+            emit(f"  bench        {cyc} cycles for {bytes_read} bytes"
+                 f" = {bytes_read / seconds / 1e6:.2f} MB/s"
+                 f" ({cyc / words:.1f} cycles/word)")
         if total == 0:
             failures.append("bench sum is zero -- every word read as zero")
 
@@ -423,8 +419,8 @@ def check(handle, lines, expected):
     if "erase" in seen:
         cyc, after, verdict = seen["erase"][0]
         seconds = int(cyc, 16) / (SYNC_MHZ * 1e6)
-        emit(handle, f"  erase 4K     {int(cyc, 16)} cycles = "
-                     f"{seconds * 1e3:.1f} ms, reads back {after} ({verdict})")
+        emit(f"  erase 4K     {int(cyc, 16)} cycles = "
+             f"{seconds * 1e3:.1f} ms, reads back {after} ({verdict})")
         if verdict != "erased":
             failures.append(f"sector did not erase: reads {after}, want "
                             f"ffffffff")
@@ -432,7 +428,7 @@ def check(handle, lines, expected):
     if "program" in seen:
         cyc = int(seen["program"][0][0], 16)
         seconds = cyc / (SYNC_MHZ * 1e6)
-        emit(handle, f"  program 256B {cyc} cycles = {seconds * 1e3:.2f} ms")
+        emit(f"  program 256B {cyc} cycles = {seconds * 1e3:.2f} ms")
 
     if "verify" in seen:
         for groups in seen["verify"]:
@@ -442,32 +438,32 @@ def check(handle, lines, expected):
                 failures.append(
                     f"verify: {bad} of {total} words differ, first at word "
                     f"{int(index, 16)}: wrote {want}, read {got}")
-                emit(handle, f"  verify       {bad}/{total} differ, first "
-                             f"@{int(index, 16)} want {want} got {got}")
+                emit(f"  verify       {bad}/{total} differ, first "
+                     f"@{int(index, 16)} want {want} got {got}")
             else:
-                emit(handle, f"  verify       {total}/{total} words match")
+                emit(f"  verify       {total}/{total} words match")
 
     if "cached" in seen:
         for got, want, verdict in seen["cached"]:
             # Reported, never failed on. A stale cached read after a write is a
             # real property of a cacheable mapping with no invalidate
             # instruction built into this CPU -- see flash_read32_uncached.
-            emit(handle, f"  cached word  {got} (wrote {want}) -- {verdict}")
+            emit(f"  cached word  {got} (wrote {want}) -- {verdict}")
 
     # 6. Dropped characters.
     if malformed:
         for line in malformed:
             failures.append(f"malformed line {line!r} -- dropped characters?")
     else:
-        emit(handle, "  characters   no malformed lines")
+        emit("  characters   no malformed lines")
 
-    emit(handle)
+    emit()
     if failures:
-        emit(handle, "FAIL")
+        emit("FAIL")
         for failure in failures:
-            emit(handle, f"    {failure}")
+            emit(f"    {failure}")
         return False
-    emit(handle, "PASS")
+    emit("PASS")
     return True
 
 
@@ -479,36 +475,33 @@ def main():
                         help="skip programming; read a board already running")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        # The reference read comes FIRST, and the order is not incidental.
-        # `apollo flash-read` needs the flash bus to itself, so it forces the
-        # FPGA offline to take it -- doing this after configuring would kill the
-        # SoC that is about to be measured. Configuring afterwards puts the
-        # board back in the state the rest of this script expects.
-        expected = {}
-        if not args.no_configure:
-            emit(handle, "reading reference bytes over JTAG (forces the FPGA "
-                         "offline)")
-            expected = expected_words()
-            if expected:
-                for offset, word in sorted(expected.items()):
-                    emit(handle, f"    apollo @{offset:#x}: {word}")
-            else:
-                emit(handle, "    unavailable; values will be reported "
-                             "without comparison")
+    # The reference read comes FIRST, and the order is not incidental.
+    # `apollo flash-read` needs the flash bus to itself, so it forces the
+    # FPGA offline to take it -- doing this after configuring would kill the
+    # SoC that is about to be measured. Configuring afterwards puts the
+    # board back in the state the rest of this script expects.
+    expected = {}
+    if not args.no_configure:
+        emit("reading reference bytes over JTAG (forces the FPGA "
+             "offline)")
+        expected = expected_words()
+        if expected:
+            for offset, word in sorted(expected.items()):
+                emit(f"    apollo @{offset:#x}: {word}")
+        else:
+            emit("    unavailable; values will be reported "
+                 "without comparison")
 
-            if not configure(handle):
-                return 1
-
-        lines = collect(handle)
-        if lines is None:
+        if not configure():
             return 1
 
-        ok = check(handle, lines, expected)
-        emit(handle)
-        emit(handle, f"log: {LOG}")
-        return 0 if ok else 1
+    lines = collect()
+    if lines is None:
+        return 1
+
+    ok = check(lines, expected)
+    emit()
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

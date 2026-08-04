@@ -8,7 +8,7 @@ and then does nothing: the LTO plugin can resolve a weak alias before the
 linker script's KEEP() applies, silently binding a slot to Dummy_Handler.
 Checking the linked image is the only way to know it did not happen.
 
-Writes to ./tmp/verify_vectors.log as well as stdout.
+Writes to ./tmp/logs/dev.log as well as stdout.
 """
 import re
 import struct
@@ -18,7 +18,10 @@ from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 ELF = WORKSPACE / "repos/apollo/firmware/_build/cynthion_d11/firmware.elf"
-LOG = WORKSPACE / "tmp/verify_vectors.log"
+
+sys.path.insert(0, str(WORKSPACE / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # Vector table layout for the SAMD11, in slot order from the base of .text.
 # Index is the word offset from the start of exception_table.
@@ -70,12 +73,6 @@ def sh(*args):
 
 
 def main():
-    out = []
-
-    def emit(line=""):
-        print(line)
-        out.append(line)
-
     if not ELF.exists():
         emit(f"FAIL: {ELF} does not exist - build first")
         return 1
@@ -155,9 +152,6 @@ def main():
         emit(f"RESULT: PASS - all {len(REQUIRED)} required handlers wired to real code")
         rc = 0
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    LOG.write_text("\n".join(out) + "\n")
-    print(f"\n(log written to {LOG})")
     return rc
 
 

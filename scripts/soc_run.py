@@ -52,7 +52,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_run.log"
 CRATE = ROOT / "firmware" / "cynthion-soc"
 ELF = CRATE / "target" / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
 FIRMWARE_BIN = ROOT / "tmp" / "rust_fw.bin"
@@ -95,6 +94,8 @@ sys.path.insert(0, str(ROOT / "ecp5-test"))
 # serial unless --parallel-refine is passed. --router router2 recovers the Fmax that
 # --parallel-refine on its own gives up. Full workings in fast_build_env.py.
 sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit, spawn  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS  # noqa: E402
 
 
@@ -331,75 +332,76 @@ def main():
                         help="configure even though the QEMU shell tests have not run")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    firmware = FIRMWARE_BIN
 
-        firmware = FIRMWARE_BIN
+    # The gate. Before everything, including --no-build: a bitstream built earlier
+    # from firmware that fails these assertions is no safer to load than one built
+    # now, and the source it is tested against is the source on disk either way.
+    if args.skip_tests:
+        emit("shell tests SKIPPED (--skip-tests)")
+    elif args.c_firmware:
+        emit("shell tests skipped: they cover the Rust crate, not the C generator")
+    else:
+        # Output is streamed rather than captured. This runs a QEMU boot and a
+        # handful of assertions; watching them tick past is the point, and a
+        # captured block printed afterwards would arrive only once it no longer
+        # mattered.
+        rc = spawn([sys.executable, str(ROOT / "scripts" / "soc_test.py")],
+                   cwd=ROOT)
+        if rc != 0:
+            emit("shell tests FAILED -- not configuring the board.")
+            emit("The same shell logic misbehaves under QEMU, so a reconfigure")
+            emit("would only reproduce it an order of magnitude more slowly.")
+            emit("Details above and in tmp/logs/dev.log; --skip-tests")
+            emit("overrides this if the board is what you are debugging.")
+            return 1
 
-        # The gate. Before everything, including --no-build: a bitstream built earlier
-        # from firmware that fails these assertions is no safer to load than one built
-        # now, and the source it is tested against is the source on disk either way.
-        if args.skip_tests:
-            emit("shell tests SKIPPED (--skip-tests)")
-        elif args.c_firmware:
-            emit("shell tests skipped: they cover the Rust crate, not the C generator")
-        else:
-            # Output is streamed rather than captured. This runs a QEMU boot and a
-            # handful of assertions; watching them tick past is the point, and a
-            # captured block printed afterwards would arrive only once it no longer
-            # mattered.
-            result = subprocess.run(
-                [sys.executable, str(ROOT / "scripts" / "soc_test.py")], cwd=ROOT)
-            if result.returncode != 0:
-                emit("shell tests FAILED -- not configuring the board.")
-                emit("The same shell logic misbehaves under QEMU, so a reconfigure")
-                emit("would only reproduce it an order of magnitude more slowly.")
-                emit("Details above and in tmp/logs/soc_test.log; --skip-tests")
-                emit("overrides this if the board is what you are debugging.")
-                return 1
+    # REGENERATE THE PERIPHERAL MAP, every time, rather than checking it.
+    #
+    # This used to run `--check` and REFUSE on drift, on the reasoning that
+    # rewriting checked-in source mid-build is a surprise. Measured, that
+    # reasoning does not survive: `--check` is 0.515 s and a full regeneration
+    # is 0.712 s, because `--check` already regenerates into a temporary place
+    # and diffs it. So the refusing version paid nearly the whole cost, threw
+    # the result away, and made someone run it again by hand -- 0.2 s saved
+    # against a 60 s synthesis, in exchange for an ordering trap that cost an
+    # hour tonight.
+    #
+    # The map is a DERIVED artifact. Regenerating it is what the repo's own
+    # rule says to do with those, and the diff landing in `git status` is
+    # correct: the gateware changed, so the addresses did.
+    #
+    # It is still a hard stop if the generator itself fails, because then
+    # nothing knows where the peripherals are.
+    if not args.c_firmware:
+        before = None
+        generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
+        if generated.exists():
+            before = generated.read_bytes()
 
-        # REGENERATE THE PERIPHERAL MAP, every time, rather than checking it.
-        #
-        # This used to run `--check` and REFUSE on drift, on the reasoning that
-        # rewriting checked-in source mid-build is a surprise. Measured, that
-        # reasoning does not survive: `--check` is 0.515 s and a full regeneration
-        # is 0.712 s, because `--check` already regenerates into a temporary place
-        # and diffs it. So the refusing version paid nearly the whole cost, threw
-        # the result away, and made someone run it again by hand -- 0.2 s saved
-        # against a 60 s synthesis, in exchange for an ordering trap that cost an
-        # hour tonight.
-        #
-        # The map is a DERIVED artifact. Regenerating it is what the repo's own
-        # rule says to do with those, and the diff landing in `git status` is
-        # correct: the gateware changed, so the addresses did.
-        #
-        # It is still a hard stop if the generator itself fails, because then
-        # nothing knows where the peripherals are.
-        if not args.c_firmware:
-            before = None
-            generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
-            if generated.exists():
-                before = generated.read_bytes()
+        result = run([sys.executable,
+                      str(ROOT / "scripts" / "soc_generate_pac.py")])
+        if result.returncode != 0:
+            emit("PERIPHERAL MAP GENERATION FAILED:")
+            emit((result.stdout or result.stderr).strip()[-700:])
+            emit("Refusing to build: without it nothing knows where the "
+                 "peripherals are.")
+            return 1
 
-            result = run([sys.executable,
-                          str(ROOT / "scripts" / "soc_generate_pac.py")])
-            if result.returncode != 0:
-                emit("PERIPHERAL MAP GENERATION FAILED:")
-                emit((result.stdout or result.stderr).strip()[-700:])
-                emit("Refusing to build: without it nothing knows where the "
-                     "peripherals are.")
-                return 1
+        if before is not None and generated.read_bytes() != before:
+            emit("peripheral map REGENERATED -- the gateware moved something. "
+                 "`git diff firmware/*-pac` shows what.")
 
-            if before is not None and generated.read_bytes() != before:
-                emit("peripheral map REGENERATED -- the gateware moved something. "
-                     "`git diff firmware/*-pac` shows what.")
-
-        if not args.no_build:
-            if args.c_firmware:
-                cmd = [sys.executable, str(ROOT / "scripts" / "riscv_firmware.py")]
+    # `--no-build` skips COMPILING. It must NOT skip deriving the artifacts
+    # from the ELF or writing them: `run --no-build` used to configure the
+    # FPGA and leave stale firmware in flash, so the board ran code that was
+    # not the tree's while reporting success. That reads as a firmware bug
+    # and cost three confused measurements before it was spotted.
+    if True:
+        if args.c_firmware:
+            if not args.no_build:
+                cmd = [sys.executable,
+                       str(ROOT / "scripts" / "riscv_firmware.py")]
                 if args.write_tests:
                     cmd.append("--write-tests")
                 result = run(cmd)
@@ -407,261 +409,262 @@ def main():
                     emit("C firmware build failed:")
                     emit((result.stderr or result.stdout).strip()[-600:])
                     return 1
-                firmware = ROOT / "tmp" / "riscv_hello" / "hello.bin"
-                emit(f"C firmware: {firmware.stat().st_size} bytes")
-            else:
+            firmware = ROOT / "tmp" / "riscv_hello" / "hello.bin"
+            emit(f"C firmware: {firmware.stat().st_size} bytes")
+        else:
+            if not args.no_build:
                 result = run(["cargo", "build", "--release"], cwd=CRATE)
                 if result.returncode != 0:
                     emit("cargo build failed:")
                     emit((result.stderr or result.stdout).strip()[-900:])
                     return 1
-                # objcopy rather than cargo-binutils: one less thing to install, and the
-                # cross binutils are already here for the C path.
-                #
-                # SPLIT BY DESTINATION, not one flat image. Sections can live in block
-                # RAM or in flash, and those load by completely different paths -- block
-                # RAM as bitstream init, flash by writing the part. A single `-O binary`
-                # over an ELF spanning both pads the address gap between 0x0 and
-                # 0x10000000, which produced a 269 MB "firmware" the first time this was
-                # tried.
-                #
-                # `--only-section` per destination keeps each artifact the size of what
-                # is actually in it. A build with nothing in flash simply produces an
-                # empty second file, so this costs nothing when the layout is all-RAM.
-                # WHICH sections go where is read from the ELF, not listed here.
-                #
-                # This used to name them: `.init .text .data` to block RAM,
-                # `.rodata` to flash. That is a copy of memory.x's REGION_ALIAS
-                # lines maintained in a different file and a different language,
-                # and it is wrong the moment a section moves -- which is exactly
-                # what moving `.text` to flash does. A named list would have put
-                # `.text` in the block RAM artifact and flash would have been
-                # programmed with rodata alone, leaving the CPU fetching from an
-                # address nothing had written.
-                #
-                # So the linker decides and this follows: group the allocated
-                # sections by whether their address lands in the flash window.
-                bram_sections, flash_sections = derive_bram_bin(emit)
-                if bram_sections is None:
-                    return 1
-
-                # Whatever the linker put in flash, as its own artifact.
-                result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
-                              *(f"--only-section={s}" for s in flash_sections
-                                or [".no-such-section"]),
-                              str(ELF), str(RODATA_BIN)])
-                rodata = RODATA_BIN.stat().st_size if RODATA_BIN.exists() else 0
-                if rodata:
-                    emit(f"flash image: {rodata} bytes for {FLASH_RODATA_OFFSET:#x} "
-                         f"({firmware_digest(RODATA_BIN)})")
-                    if args.build_only:
-                        emit("  NOT WRITTEN (--build-only touches no hardware).")
-                    elif args.no_flash:
-                        emit("  NOT WRITTEN (--no-flash). The board will run with "
-                             "whatever .rodata flash already holds.")
-                    else:
-                        # Writing the flash the board BOOTS from, so this states the
-                        # offset every time rather than assuming anyone remembers it.
-                        # 0xb0000 is moondancer's firmware slot and is clear of the
-                        # FPGA configuration at offset zero -- but "clear of" is a
-                        # fact about this layout, not a property of the tool, and the
-                        # tool will write wherever it is told.
-                        emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
-                             f"(bitstream at 0x0 is not touched)")
-                        result = run([sys.executable,
-                                      str(ROOT / "repos" / "apollo" / "apollo_fpga"
-                                          / "commands" / "cli.py"),
-                                      "flash-program",
-                                      "--offset", str(FLASH_RODATA_OFFSET),
-                                      str(RODATA_BIN)])
-                        if result.returncode != 0:
-                            emit("  flash write FAILED:")
-                            emit((result.stderr or result.stdout).strip()[-500:])
-                            emit("Refusing to configure: the board would run against "
-                                 ".rodata that is not this build, and every constant "
-                                 "it reads would be silently wrong.")
-                            return 1
-                        emit("  flash written")
-
-            # The bootloader, unless this is the C path -- that generator emits an
-            # image linked for 0 and has no bootloader to sit under it.
-            if not args.c_firmware:
-                result = run(["cargo", "build", "--release"], cwd=BOOT_CRATE)
-                if result.returncode != 0:
-                    emit("bootloader build failed:")
-                    emit((result.stderr or result.stdout).strip()[-900:])
-                    return 1
-                result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
-                              str(BOOT_ELF), str(BOOT_BIN)])
-                if result.returncode != 0:
-                    emit("bootloader objcopy failed:")
-                    emit((result.stderr or result.stdout).strip()[-400:])
-                    return 1
-                emit(f"bootloader: {BOOT_BIN.stat().st_size} bytes")
-            elif BOOT_BIN.exists():
-                # A stale one from a Rust build would be packed at 0x0 under a C image
-                # that is itself linked for 0x0. Two things at the reset vector is one
-                # too many, and the symptom is a dead CPU.
-                BOOT_BIN.unlink()
-
-            # THE FAST PATH, and the reason `.text` in flash is worth having.
+            # objcopy rather than cargo-binutils: one less thing to install, and the
+            # cross binutils are already here for the C path.
             #
-            # Synthesis is ~60 s of the ~90 s loop, and once no part of the
-            # firmware is packed into the block RAM initialiser it buys nothing
-            # for a firmware change: the bitstream that is already on the board is
-            # byte-identical to the one this would produce. Write flash,
-            # reconfigure to reset the CPU, done in seconds.
+            # SPLIT BY DESTINATION, not one flat image. Sections can live in block
+            # RAM or in flash, and those load by completely different paths -- block
+            # RAM as bitstream init, flash by writing the part. A single `-O binary`
+            # over an ELF spanning both pads the address gap between 0x0 and
+            # 0x10000000, which produced a 269 MB "firmware" the first time this was
+            # tried.
             #
-            # THE GUARD IS THE POINT. If anything is still destined for block RAM,
-            # that content reaches the CPU only through the bitstream, and skipping
-            # the build would configure a bitstream carrying the PREVIOUS firmware
-            # while flash carries the new one -- a half-updated image, reported as
-            # success. That is the exact failure this script was written to stop,
-            # so it refuses rather than warning.
-            if args.firmware_only:
-                if bram_sections:
-                    emit("--firmware-only REFUSED: these sections still load via "
-                         "the bitstream:")
-                    emit(f"  {' '.join(bram_sections)}")
-                    emit("Skipping the gateware build would leave them at their "
-                         "previous contents while flash carried the new ones. "
-                         "Run without --firmware-only.")
-                    return 1
-                if not BITSTREAM.exists():
-                    emit(f"--firmware-only needs an existing bitstream at "
-                         f"{BITSTREAM.relative_to(ROOT)}; there is none. "
-                         f"Run once without it.")
-                    return 1
-                emit("gateware build SKIPPED (--firmware-only); nothing of this "
-                     "firmware travels in the bitstream")
-                emit(f"  reconfiguring {BITSTREAM.relative_to(ROOT)} to reset the "
-                     f"CPU onto the flash just written")
-                return configure_and_read(args, emit)
-
-            # The OSS CAD Suite environment has to be sourced, so this one step is a
-            # shell command rather than a bare exec.
-            build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
-                     f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
-                     f'python3.15t {GATEWARE} --build --firmware {firmware} '
-                     f'--bootloader {BOOT_BIN}')
-            result = run(["bash", "-c", build])
-            output = (result.stdout or "") + (result.stderr or "")
-
-            # THE FREQUENCIES, on success as well as on failure.
+            # `--only-section` per destination keeps each artifact the size of what
+            # is actually in it. A build with nothing in flash simply produces an
+            # empty second file, so this costs nothing when the layout is all-RAM.
+            # WHICH sections go where is read from the ELF, not listed here.
             #
-            # These are the numbers every clock decision here turns on, and until
-            # now no successful build printed one. On failure nextpnr puts them on
-            # stderr; on SUCCESS it writes them only to `--log top.tim`, so a
-            # passing build said nothing about its margin.
+            # This used to name them: `.init .text .data` to block RAM,
+            # `.rodata` to flash. That is a copy of memory.x's REGION_ALIAS
+            # lines maintained in a different file and a different language,
+            # and it is wrong the moment a section moves -- which is exactly
+            # what moving `.text` to flash does. A named list would have put
+            # `.text` in the block RAM artifact and flash would have been
+            # programmed with rodata alone, leaving the CPU fetching from an
+            # address nothing had written.
             #
-            # That margin is not academic: the build this was added on passes at
-            # 72.70 MHz against a 72.00 MHz constraint -- 1% -- and an earlier run
-            # in the same log failed at 64.76. It has been swinging either side of
-            # the line with placement, invisibly.
-            #
-            # `top.tim` ACCUMULATES across runs, so only the last block is this
-            # build's. Reading the first would report an older attempt as if it
-            # were current, which is the same class of mistake as a stale
-            # bitstream.
-            timing = ROOT / "tmp" / "vexii_hello" / "build" / "top.tim"
-            frequencies = []
-            if timing.exists():
-                for line in timing.read_text().splitlines():
-                    if "Max frequency for clock" in line:
-                        frequencies.append(line.split("Info:")[-1].strip())
-            else:
-                frequencies = [line.split("Info:")[-1].strip()
-                               for line in output.splitlines()
-                               if "Max frequency for clock" in line]
-            # One entry per domain, last wins.
-            latest = {}
-            for entry in frequencies:
-                latest[entry.split("'")[1] if "'" in entry else entry] = entry
-            for entry in latest.values():
-                emit("  " + entry)
-
-            if result.returncode != 0:
-                emit("gateware build failed:")
-                # THE TOOL'S ERROR FIRST, then the tail.
-                #
-                # This printed the last 900 characters, which on an Amaranth
-                # build is the end of a Python traceback -- the subprocess
-                # wrapper, never the reason. nextpnr's own `ERROR:` line had
-                # already scrolled past, so every failure tonight cost a SECOND
-                # full synthesis run by hand to read it.
-                # NOT "Max frequency" again -- those are printed above for every
-                # build, and repeating them here made one failure look like two.
-                reasons = [line for line in output.splitlines()
-                           if line.startswith(("ERROR:", "Error:"))
-                           and "Max frequency" not in line]
-                for line in reasons[-8:]:
-                    emit("  " + line.strip())
-                if not reasons:
-                    emit((result.stderr or result.stdout).strip()[-700:])
+            # So the linker decides and this follows: group the allocated
+            # sections by whether their address lands in the flash window.
+            bram_sections, flash_sections = derive_bram_bin(emit)
+            if bram_sections is None:
                 return 1
 
-            report = ROOT / "tmp" / "vexii_hello" / "build" / "top.rpt"
-            if report.exists():
-                undriven = report.read_text().count("has no driver")
-                emit(f"gateware built. undriven wires: {undriven}")
-                if undriven:
-                    emit("  *** undriven wires present -- a peripheral is unconnected,")
-                    emit("      which produces a CPU that runs and reaches nothing")
-            else:
-                emit("gateware built")
-
-            # THE CHECK THIS SCRIPT EXISTED WITHOUT, and which cost most of a day.
-            #
-            # Three separate times the board ran firmware that was not the firmware
-            # just built, with every step reporting success: a stale intermediate
-            # patched in, a stale bitstream loaded, and a fresh bitstream that still
-            # lacked a committed command. Nothing compared what was built against
-            # what was about to be configured, so nothing could say so.
-            #
-            # This does. A mismatch stops the run rather than reaching the board,
-            # because a board running unknown firmware invalidates every measurement
-            # taken from it -- and those are believed, written down and acted on.
-            if not args.c_firmware and not bram_sections:
-                # NOT a pass. There is nothing to compare: every byte of this
-                # firmware reaches the CPU through flash, so the bitstream is not
-                # evidence about it either way. Saying "carries the firmware just
-                # built" here would be a check reporting success on an empty
-                # comparison, which is worse than no check.
-                emit("bitstream carries no firmware (all of it is in flash); "
-                     "the stale-image check does not apply")
-            elif not args.c_firmware:
-                carried = firmware_in_bitstream(BITSTREAM.parent, emit)
-                if carried is not None:
-                    # The image is linked for IMAGE_ORIGIN, and the bootloader
-                    # occupies the kilobyte below it, so the image starts 0x400 into
-                    # the block RAM initialiser rather than at its start.
-                    built = FIRMWARE_BIN.read_bytes()
-                    image = carried[IMAGE_ORIGIN:IMAGE_ORIGIN + len(built)]
-                    if image != built:
-                        emit("STALE BITSTREAM: it does not carry the firmware just "
-                             "built.")
-                        emit(f"  built:   {firmware_digest()} "
-                             f"({len(built)} bytes)")
-                        seen = hashlib.sha256(image).hexdigest()
-                        emit(f"  carried: {seen[:12]}")
-                        emit("Refusing to configure. The board would run firmware "
-                             "that is not this source, and every measurement taken "
-                             "from it would be wrong in a way nothing reports.")
+            # Whatever the linker put in flash, as its own artifact.
+            result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                          *(f"--only-section={s}" for s in flash_sections
+                            or [".no-such-section"]),
+                          str(ELF), str(RODATA_BIN)])
+            rodata = RODATA_BIN.stat().st_size if RODATA_BIN.exists() else 0
+            if rodata:
+                emit(f"flash image: {rodata} bytes for {FLASH_RODATA_OFFSET:#x} "
+                     f"({firmware_digest(RODATA_BIN)})")
+                if args.build_only:
+                    emit("  NOT WRITTEN (--build-only touches no hardware).")
+                elif args.no_flash:
+                    emit("  NOT WRITTEN (--no-flash). The board will run with "
+                         "whatever .rodata flash already holds.")
+                else:
+                    # Writing the flash the board BOOTS from, so this states the
+                    # offset every time rather than assuming anyone remembers it.
+                    # 0xb0000 is moondancer's firmware slot and is clear of the
+                    # FPGA configuration at offset zero -- but "clear of" is a
+                    # fact about this layout, not a property of the tool, and the
+                    # tool will write wherever it is told.
+                    emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
+                         f"(bitstream at 0x0 is not touched)")
+                    result = run([sys.executable,
+                                  str(ROOT / "repos" / "apollo" / "apollo_fpga"
+                                      / "commands" / "cli.py"),
+                                  "flash-program",
+                                  "--offset", str(FLASH_RODATA_OFFSET),
+                                  str(RODATA_BIN)])
+                    if result.returncode != 0:
+                        emit("  flash write FAILED:")
+                        emit((result.stderr or result.stdout).strip()[-500:])
+                        emit("Refusing to configure: the board would run against "
+                             ".rodata that is not this build, and every constant "
+                             "it reads would be silently wrong.")
                         return 1
-                    emit(f"bitstream carries the firmware just built "
-                         f"({firmware_digest()})")
+                    emit("  flash written")
 
-        # Stop here, deliberately AFTER the stale-bitstream comparison.
+        # The bootloader, unless this is the C path -- that generator emits an
+        # image linked for 0 and has no bootloader to sit under it.
+        if not args.c_firmware:
+            result = run(["cargo", "build", "--release"], cwd=BOOT_CRATE)
+            if result.returncode != 0:
+                emit("bootloader build failed:")
+                emit((result.stderr or result.stdout).strip()[-900:])
+                return 1
+            result = run(["riscv64-linux-gnu-objcopy", "-O", "binary",
+                          str(BOOT_ELF), str(BOOT_BIN)])
+            if result.returncode != 0:
+                emit("bootloader objcopy failed:")
+                emit((result.stderr or result.stdout).strip()[-400:])
+                return 1
+            emit(f"bootloader: {BOOT_BIN.stat().st_size} bytes")
+        elif BOOT_BIN.exists():
+            # A stale one from a Rust build would be packed at 0x0 under a C image
+            # that is itself linked for 0x0. Two things at the reset vector is one
+            # too many, and the symptom is a dead CPU.
+            BOOT_BIN.unlink()
+
+        # THE FAST PATH, and the reason `.text` in flash is worth having.
         #
-        # A build-only run is what `./dev.py build` and the pre-commit gate use, so it
-        # runs on a machine with no board attached. Placing the return after the
-        # comparison means the check that has caught three stale-image incidents also
-        # runs there -- it reads two files and touches nothing.
-        if args.build_only:
-            emit("build complete (--build-only): nothing configured, nothing written")
-            return 0
+        # Synthesis is ~60 s of the ~90 s loop, and once no part of the
+        # firmware is packed into the block RAM initialiser it buys nothing
+        # for a firmware change: the bitstream that is already on the board is
+        # byte-identical to the one this would produce. Write flash,
+        # reconfigure to reset the CPU, done in seconds.
+        #
+        # THE GUARD IS THE POINT. If anything is still destined for block RAM,
+        # that content reaches the CPU only through the bitstream, and skipping
+        # the build would configure a bitstream carrying the PREVIOUS firmware
+        # while flash carries the new one -- a half-updated image, reported as
+        # success. That is the exact failure this script was written to stop,
+        # so it refuses rather than warning.
+        if args.firmware_only:
+            if bram_sections:
+                emit("--firmware-only REFUSED: these sections still load via "
+                     "the bitstream:")
+                emit(f"  {' '.join(bram_sections)}")
+                emit("Skipping the gateware build would leave them at their "
+                     "previous contents while flash carried the new ones. "
+                     "Run without --firmware-only.")
+                return 1
+            if not BITSTREAM.exists():
+                emit(f"--firmware-only needs an existing bitstream at "
+                     f"{BITSTREAM.relative_to(ROOT)}; there is none. "
+                     f"Run once without it.")
+                return 1
+            emit("gateware build SKIPPED (--firmware-only); nothing of this "
+                 "firmware travels in the bitstream")
+            emit(f"  reconfiguring {BITSTREAM.relative_to(ROOT)} to reset the "
+                 f"CPU onto the flash just written")
+            return configure_and_read(args, emit)
 
-        return configure_and_read(args, emit)
+        # The OSS CAD Suite environment has to be sourced, so this one step is a
+        # shell command rather than a bare exec.
+        build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
+                 f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
+                 f'python3.15t {GATEWARE} --build --firmware {firmware} '
+                 f'--bootloader {BOOT_BIN}')
+        result = run(["bash", "-c", build])
+        output = (result.stdout or "") + (result.stderr or "")
+
+        # THE FREQUENCIES, on success as well as on failure.
+        #
+        # These are the numbers every clock decision here turns on, and until
+        # now no successful build printed one. On failure nextpnr puts them on
+        # stderr; on SUCCESS it writes them only to `--log top.tim`, so a
+        # passing build said nothing about its margin.
+        #
+        # That margin is not academic: the build this was added on passes at
+        # 72.70 MHz against a 72.00 MHz constraint -- 1% -- and an earlier run
+        # in the same log failed at 64.76. It has been swinging either side of
+        # the line with placement, invisibly.
+        #
+        # `top.tim` ACCUMULATES across runs, so only the last block is this
+        # build's. Reading the first would report an older attempt as if it
+        # were current, which is the same class of mistake as a stale
+        # bitstream.
+        timing = ROOT / "tmp" / "vexii_hello" / "build" / "top.tim"
+        frequencies = []
+        if timing.exists():
+            for line in timing.read_text().splitlines():
+                if "Max frequency for clock" in line:
+                    frequencies.append(line.split("Info:")[-1].strip())
+        else:
+            frequencies = [line.split("Info:")[-1].strip()
+                           for line in output.splitlines()
+                           if "Max frequency for clock" in line]
+        # One entry per domain, last wins.
+        latest = {}
+        for entry in frequencies:
+            latest[entry.split("'")[1] if "'" in entry else entry] = entry
+        for entry in latest.values():
+            emit("  " + entry)
+
+        if result.returncode != 0:
+            emit("gateware build failed:")
+            # THE TOOL'S ERROR FIRST, then the tail.
+            #
+            # This printed the last 900 characters, which on an Amaranth
+            # build is the end of a Python traceback -- the subprocess
+            # wrapper, never the reason. nextpnr's own `ERROR:` line had
+            # already scrolled past, so every failure tonight cost a SECOND
+            # full synthesis run by hand to read it.
+            # NOT "Max frequency" again -- those are printed above for every
+            # build, and repeating them here made one failure look like two.
+            reasons = [line for line in output.splitlines()
+                       if line.startswith(("ERROR:", "Error:"))
+                       and "Max frequency" not in line]
+            for line in reasons[-8:]:
+                emit("  " + line.strip())
+            if not reasons:
+                emit((result.stderr or result.stdout).strip()[-700:])
+            return 1
+
+        report = ROOT / "tmp" / "vexii_hello" / "build" / "top.rpt"
+        if report.exists():
+            undriven = report.read_text().count("has no driver")
+            emit(f"gateware built. undriven wires: {undriven}")
+            if undriven:
+                emit("  *** undriven wires present -- a peripheral is unconnected,")
+                emit("      which produces a CPU that runs and reaches nothing")
+        else:
+            emit("gateware built")
+
+        # THE CHECK THIS SCRIPT EXISTED WITHOUT, and which cost most of a day.
+        #
+        # Three separate times the board ran firmware that was not the firmware
+        # just built, with every step reporting success: a stale intermediate
+        # patched in, a stale bitstream loaded, and a fresh bitstream that still
+        # lacked a committed command. Nothing compared what was built against
+        # what was about to be configured, so nothing could say so.
+        #
+        # This does. A mismatch stops the run rather than reaching the board,
+        # because a board running unknown firmware invalidates every measurement
+        # taken from it -- and those are believed, written down and acted on.
+        if not args.c_firmware and not bram_sections:
+            # NOT a pass. There is nothing to compare: every byte of this
+            # firmware reaches the CPU through flash, so the bitstream is not
+            # evidence about it either way. Saying "carries the firmware just
+            # built" here would be a check reporting success on an empty
+            # comparison, which is worse than no check.
+            emit("bitstream carries no firmware (all of it is in flash); "
+                 "the stale-image check does not apply")
+        elif not args.c_firmware:
+            carried = firmware_in_bitstream(BITSTREAM.parent, emit)
+            if carried is not None:
+                # The image is linked for IMAGE_ORIGIN, and the bootloader
+                # occupies the kilobyte below it, so the image starts 0x400 into
+                # the block RAM initialiser rather than at its start.
+                built = FIRMWARE_BIN.read_bytes()
+                image = carried[IMAGE_ORIGIN:IMAGE_ORIGIN + len(built)]
+                if image != built:
+                    emit("STALE BITSTREAM: it does not carry the firmware just "
+                         "built.")
+                    emit(f"  built:   {firmware_digest()} "
+                         f"({len(built)} bytes)")
+                    seen = hashlib.sha256(image).hexdigest()
+                    emit(f"  carried: {seen[:12]}")
+                    emit("Refusing to configure. The board would run firmware "
+                         "that is not this source, and every measurement taken "
+                         "from it would be wrong in a way nothing reports.")
+                    return 1
+                emit(f"bitstream carries the firmware just built "
+                     f"({firmware_digest()})")
+
+    # Stop here, deliberately AFTER the stale-bitstream comparison.
+    #
+    # A build-only run is what `./dev.py build` and the pre-commit gate use, so it
+    # runs on a machine with no board attached. Placing the return after the
+    # comparison means the check that has caught three stale-image incidents also
+    # runs there -- it reads two files and touches nothing.
+    if args.build_only:
+        emit("build complete (--build-only): nothing configured, nothing written")
+        return 0
+
+    return configure_and_read(args, emit)
 
 
 def configure_and_read(args, emit):
@@ -748,7 +751,6 @@ def configure_and_read(args, emit):
             # while this reports a blank console. That has been mistaken for dead
             # firmware on a board that was working perfectly.
             if not data.strip():
-                sys.path.insert(0, str(ROOT / "scripts"))
                 from soc_shell import other_readers
 
                 thieves = other_readers(node)
@@ -762,7 +764,6 @@ def configure_and_read(args, emit):
                     emit("its socket on port 9000 instead of competing for the tty.")
 
         emit()
-        emit(f"log: {LOG}")
 
     return 0
 

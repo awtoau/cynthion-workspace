@@ -11,7 +11,7 @@ Checks the orientation sweep and the interrupt decode in `src/fusb302.rs`.
     python3 scripts/soc_typec_sim.py --firmware DIR
 
 Exit status 0 if every check passes. Output goes to the terminal and to
-`tmp/logs/soc_typec_sim.log`.
+`tmp/logs/dev.log`.
 
 ## The two faults this is about
 
@@ -82,11 +82,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_typec_sim.log"
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+
+from devlog import emit  # noqa: E402
 
 from i2c_mux import BUS_AUX_C, BUS_TARGET_C
 
@@ -786,38 +787,30 @@ def main():
                              "(default: firmware/cynthion-soc/src)")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
 
-        checks = Checks(emit)
+    emit("1. both bands, from one comparator")
+    run_orientation_checks(checks, args.verbose)
+    run_blindness_check(checks, args.verbose)
+    emit()
 
-        emit("1. both bands, from one comparator")
-        run_orientation_checks(checks, args.verbose)
-        run_blindness_check(checks, args.verbose)
-        emit()
+    emit("2. the sweep changes nothing electrically")
+    run_electrical_checks(checks, args.verbose)
+    emit()
 
-        emit("2. the sweep changes nothing electrically")
-        run_electrical_checks(checks, args.verbose)
-        emit()
+    emit("3. the interrupt registers, read once and carried out")
+    run_interrupt_checks(checks, args.verbose)
+    emit()
 
-        emit("3. the interrupt registers, read once and carried out")
-        run_interrupt_checks(checks, args.verbose)
-        emit()
+    emit(f"4. the firmware structure ({args.firmware})")
+    run_firmware_checks(checks, args.firmware)
+    emit()
 
-        emit(f"4. the firmware structure ({args.firmware})")
-        run_firmware_checks(checks, args.firmware)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

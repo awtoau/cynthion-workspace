@@ -11,7 +11,7 @@ Checks the ownership rules in `firmware/cynthion-soc/src/bus.rs` and `power.rs`.
     python3 scripts/soc_i2c_owner_sim.py --firmware DIR
 
 Exit status 0 if every check passes. Output goes to the terminal and to
-`tmp/logs/soc_i2c_owner_sim.log`.
+`tmp/logs/dev.log`.
 
 ## The fault this is about
 
@@ -80,11 +80,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_i2c_owner_sim.log"
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+
+from devlog import emit  # noqa: E402
 
 from amaranth import Elaboratable, Module, Mux, Signal
 from amaranth.hdl import Fragment
@@ -818,37 +819,29 @@ def main():
                              "(default: firmware/cynthion-soc/src)")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    checks = Checks(emit)
 
-        checks = Checks(emit)
+    emit("1. a read driven into an open REFRESH window")
+    run_window_checks(checks, args.verbose)
+    emit()
 
-        emit("1. a read driven into an open REFRESH window")
-        run_window_checks(checks, args.verbose)
-        emit()
+    emit("2. two owners interleaving on the same device")
+    run_two_owner_checks(checks, args.verbose)
+    emit()
 
-        emit("2. two owners interleaving on the same device")
-        run_two_owner_checks(checks, args.verbose)
-        emit()
+    emit("3. the mux select, not remembered across transactions")
+    run_select_checks(checks, args.verbose)
+    emit()
 
-        emit("3. the mux select, not remembered across transactions")
-        run_select_checks(checks, args.verbose)
-        emit()
+    emit(f"4. the firmware structure ({args.firmware})")
+    run_firmware_checks(checks, args.firmware)
+    emit()
 
-        emit(f"4. the firmware structure ({args.firmware})")
-        run_firmware_checks(checks, args.firmware)
-        emit()
-
-        if checks.failures:
-            emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-        else:
-            emit("all checks passed")
-        emit(f"log: {LOG.relative_to(ROOT)}")
-        return 1 if checks.failures else 0
+    if checks.failures:
+        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
+    else:
+        emit("all checks passed")
+    return 1 if checks.failures else 0
 
 
 if __name__ == "__main__":

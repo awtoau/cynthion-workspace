@@ -23,7 +23,7 @@ What is checked:
   * the reply waits out the turnaround, and the link does not frame its own reply
   * open-drain, and the bit period derived from the clock
 
-Output goes to the console and to tmp/logs/sideband_link_sim.log.
+Output goes to the console and to tmp/logs/dev.log.
 """
 
 import sys
@@ -35,13 +35,15 @@ from amaranth.sim import Simulator
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from sideband_link import (CMD_PING, CMD_STATUS, CMD_WRITE_BASE,  # noqa: E402
                            PROTOCOL_VERSION, SidebandLink)
 
 warnings.filterwarnings("ignore", category=UnusedElaboratable)
 
-LOG = ROOT / "tmp" / "logs" / "sideband_link_sim.log"
 
 # Fast enough to be realistic in shape, slow enough to simulate whole frames.
 CLK_HZ = 2_304_000
@@ -56,16 +58,14 @@ REMOVED = {0x2B: "POWER", 0x2C: "DEVICES", 0x40: "LED", 0x03: "LED_RELEASE"}
 
 
 class Checks:
-    def __init__(self, log):
+    def __init__(self):
         self.passed = self.failed = 0
-        self.log = log
 
     def check(self, what, ok, detail=""):
         line = f"  {'PASS' if ok else 'FAIL'} {what}"
         if not ok and detail:
             line += f"\n       {detail}"
-        print(line)
-        self.log.write(line + "\n")
+        emit(line)
         if ok:
             self.passed += 1
         else:
@@ -363,16 +363,11 @@ def two_commands(dut_factory, divisor, quiet):
 
 
 def main():
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as log:
-        print("FPGA_ADV shipping link")
-        log.write("FPGA_ADV shipping link\n")
-        checks = Checks(log)
-        run(checks)
-        summary = (f"\n{checks.passed} passed, {checks.failed} failed\n"
-                   f"log: {LOG.relative_to(ROOT)}")
-        print(summary)
-        log.write(summary + "\n")
+    emit("FPGA_ADV shipping link")
+    checks = Checks()
+    run(checks)
+    emit()
+    emit(f"{checks.passed} passed, {checks.failed} failed")
     return 1 if checks.failed else 0
 
 

@@ -40,9 +40,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_payload.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # Must match MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs -- the length of the
 # image region, which is all of block RAM but the kilobyte the bootloader keeps. The
@@ -118,60 +120,53 @@ def main():
                              "into a staged image once its CRC checks out")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    if not args.image.exists():
+        emit(f"no such image: {args.image}")
+        return 1
 
-        if not args.image.exists():
-            emit(f"no such image: {args.image}")
-            return 1
+    data = args.image.read_bytes()
+    if len(data) > PAYLOAD_SIZE:
+        emit(f"image is {len(data)} bytes; the image region is {PAYLOAD_SIZE}")
+        return 1
+    emit(f"{args.image.name}: {len(data)} bytes")
 
-        data = args.image.read_bytes()
-        if len(data) > PAYLOAD_SIZE:
-            emit(f"image is {len(data)} bytes; the image region is {PAYLOAD_SIZE}")
-            return 1
-        emit(f"{args.image.name}: {len(data)} bytes")
+    link, how = Link.open()
+    if link is None:
+        emit(how)
+        return 1
+    emit(f"console: {how}")
 
-        link, how = Link.open()
-        if link is None:
-            emit(how)
-            return 1
-        emit(f"console: {how}")
+    # A bare newline first, to land at a clean prompt whatever was half-typed.
+    link.write(b"\r")
+    link.read(200)
 
-        # A bare newline first, to land at a clean prompt whatever was half-typed.
-        link.write(b"\r")
-        link.read(200)
-
-        link.write(f"load {len(data):x}\r".encode())
-        reply = link.read(200).decode("ascii", "replace")
-        if "send" not in reply:
-            emit("the shell did not acknowledge `load`; got:")
-            emit(f"  {reply.strip()!r}")
-            emit("Is the resident shell running? `reset` returns to it.")
-            link.close()
-            return 1
-
-        for offset in range(0, len(data), CHUNK):
-            link.write(data[offset:offset + CHUNK])
-            time.sleep(CHUNK_PAUSE_S)  # pace to the one-packet-per-byte console
-
-        # The firmware stages, CRCs, writes its header and reboots itself, so there is
-        # no separate `go` step: the bootloader runs the image on the way back up.
-        reply = link.read(600).decode("ascii", "replace")
-        emit(reply.strip())
-        if "staged" not in reply:
-            emit("no staging confirmation -- the shell may not have accepted `load`")
-            link.close()
-            return 1
-
-        emit("--- after reboot ---")
-        emit(link.read(600).decode("ascii", "replace").strip())
-
+    link.write(f"load {len(data):x}\r".encode())
+    reply = link.read(200).decode("ascii", "replace")
+    if "send" not in reply:
+        emit("the shell did not acknowledge `load`; got:")
+        emit(f"  {reply.strip()!r}")
+        emit("Is the resident shell running? `reset` returns to it.")
         link.close()
-        emit()
-        emit(f"log: {LOG}")
+        return 1
+
+    for offset in range(0, len(data), CHUNK):
+        link.write(data[offset:offset + CHUNK])
+        time.sleep(CHUNK_PAUSE_S)  # pace to the one-packet-per-byte console
+
+    # The firmware stages, CRCs, writes its header and reboots itself, so there is
+    # no separate `go` step: the bootloader runs the image on the way back up.
+    reply = link.read(600).decode("ascii", "replace")
+    emit(reply.strip())
+    if "staged" not in reply:
+        emit("no staging confirmation -- the shell may not have accepted `load`")
+        link.close()
+        return 1
+
+    emit("--- after reboot ---")
+    emit(link.read(600).decode("ascii", "replace").strip())
+
+    link.close()
+    emit()
 
     return 0
 

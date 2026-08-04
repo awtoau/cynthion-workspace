@@ -37,11 +37,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "riscv_console_capture.log"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # How many tty events to wait through for the console to appear.
 #
@@ -63,24 +65,17 @@ TTY_ROUNDS = 60
 LINE_TIMEOUT_S = 5.0
 
 
-def emit(handle, text=""):
-    print(text, flush=True)
-    if handle:
-        handle.write(text + "\n")
-        handle.flush()
-
-
-def configure(handle):
+def configure():
     """Load the bitstream over JTAG. Also serves as the CPU reset."""
     result = subprocess.run(
         [sys.executable, str(APOLLO_CLI), "configure", str(BITSTREAM)],
         capture_output=True, text=True, cwd=str(ROOT))
     for line in (result.stdout + result.stderr).strip().splitlines():
-        emit(handle, f"    {line}")
+        emit(f"    {line}")
     return result.returncode == 0
 
 
-def wait_for_console(handle):
+def wait_for_console():
     """Block on kernel tty events until the console appears, or give up.
 
     Identification is `usb_ids.wait_for_tty`, by VID:PID from sysfs -- never by
@@ -113,33 +108,33 @@ def wait_for_console(handle):
     return None
 
 
-def capture(handle, lines_wanted):
+def capture(lines_wanted):
     """Reconfigure with a reader attached and return the console lines."""
     import serial
 
-    emit(handle, f"configuring {BITSTREAM}")
-    if not configure(handle):
-        emit(handle, "configure failed")
+    emit(f"configuring {BITSTREAM}")
+    if not configure():
+        emit("configure failed")
         return None
 
-    node = wait_for_console(handle)
+    node = wait_for_console()
     if node is None:
-        emit(handle, "no riscv_console tty appeared")
+        emit("no riscv_console tty appeared")
         return None
-    emit(handle, f"console: {node}")
+    emit(f"console: {node}")
 
     # The second configure restarts the CPU so the banner is printed again.
     # The device re-enumerates, so the node has to be re-resolved afterwards --
     # it usually comes back as the same path, but that is not guaranteed and
     # assuming it is how the wrong device gets read.
-    emit(handle, "reconfiguring to restart the CPU with a reader attached")
-    if not configure(handle):
-        emit(handle, "second configure failed")
+    emit("reconfiguring to restart the CPU with a reader attached")
+    if not configure():
+        emit("second configure failed")
         return None
 
-    node = wait_for_console(handle)
+    node = wait_for_console()
     if node is None:
-        emit(handle, "console did not come back after the reset")
+        emit("console did not come back after the reset")
         return None
 
     lines = []
@@ -147,7 +142,7 @@ def capture(handle, lines_wanted):
         while len(lines) < lines_wanted:
             raw = port.readline()
             if not raw:
-                emit(handle, "  read timed out; reporting what arrived")
+                emit("  read timed out; reporting what arrived")
                 break
             lines.append(raw.decode("ascii", "replace").rstrip("\r\n"))
     return lines
@@ -160,17 +155,14 @@ def main():
     parser.add_argument("--lines", type=int, default=14)
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        lines = capture(handle, args.lines)
-        if lines is None:
-            return 1
-        emit(handle)
-        emit(handle, "transcript:")
-        for line in lines:
-            emit(handle, f"    {line!r}")
-        emit(handle)
-        emit(handle, f"log: {LOG}")
+    lines = capture(args.lines)
+    if lines is None:
+        return 1
+    emit()
+    emit("transcript:")
+    for line in lines:
+        emit(f"    {line!r}")
+    emit()
     return 0
 
 

@@ -34,16 +34,12 @@ from usb.core import USBError
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
-LOG = ROOT / "tmp" / "logs" / "flash_backup.log"
+from devlog import emit  # noqa: E402
+
 
 FLASH_SIZE = 4 * 1024 * 1024
-
-
-def emit(handle, text=""):
-    print(text, flush=True)
-    handle.write(text + "\n")
-    handle.flush()
 
 
 def wait_for_usb(vid=0x1d50, pid=0x615c, attempts=6000):
@@ -146,55 +142,52 @@ def main():
     parser.add_argument("--retries", type=int, default=3)
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     out = bytearray()
     dut = open_device()
-    with LOG.open("w") as handle:
-        emit(handle, f"reading {args.size} bytes in {args.chunk}-byte chunks")
+    emit(f"reading {args.size} bytes in {args.chunk}-byte chunks")
 
-        for offset in range(0, args.size, args.chunk):
-            length = min(args.chunk, args.size - offset)
+    for offset in range(0, args.size, args.chunk):
+        length = min(args.chunk, args.size - offset)
 
-            for attempt in range(1, args.retries + 1):
-                try:
-                    first = read_chunk(dut, offset, length)
-                    if looks_echoed(first, offset):
-                        emit(handle, f"  0x{offset:06x} attempt {attempt}: "
-                                     f"opcode echo, retrying")
-                        continue
-                    second = read_chunk(dut, offset, length)
-                except (USBError, IOError) as error:
-                    # Two failure modes, both transient and both cured by
-                    # reopening: the USB link drops after roughly 1.5-1.9 MB of
-                    # sustained background SPI ([Errno 32] Pipe error), and the
-                    # flash intermittently reads back all-0xff so read_flash
-                    # decides it is "not correctly connected". The board is
-                    # healthy in both cases -- flash-info still reports
-                    # W25Q32DV. Rebuild the debugger and retry this offset
-                    # rather than losing the whole run.
-                    emit(handle, f"  0x{offset:06x} attempt {attempt}: "
-                                 f"{error}, reopening device")
-                    dut = open_device()
+        for attempt in range(1, args.retries + 1):
+            try:
+                first = read_chunk(dut, offset, length)
+                if looks_echoed(first, offset):
+                    emit(f"  0x{offset:06x} attempt {attempt}: "
+                         f"opcode echo, retrying")
                     continue
-                if first != second:
-                    emit(handle, f"  0x{offset:06x} attempt {attempt}: "
-                                 f"reads disagree, retrying")
-                    continue
-                used = length - first.count(0xFF)
-                emit(handle, f"  0x{offset:06x} +{length} verified, "
-                             f"{used} non-0xff")
-                out.extend(first)
-                break
-            else:
-                emit(handle, f"  0x{offset:06x} FAILED after {args.retries}")
-                return 1
+                second = read_chunk(dut, offset, length)
+            except (USBError, IOError) as error:
+                # Two failure modes, both transient and both cured by
+                # reopening: the USB link drops after roughly 1.5-1.9 MB of
+                # sustained background SPI ([Errno 32] Pipe error), and the
+                # flash intermittently reads back all-0xff so read_flash
+                # decides it is "not correctly connected". The board is
+                # healthy in both cases -- flash-info still reports
+                # W25Q32DV. Rebuild the debugger and retry this offset
+                # rather than losing the whole run.
+                emit(f"  0x{offset:06x} attempt {attempt}: "
+                     f"{error}, reopening device")
+                dut = open_device()
+                continue
+            if first != second:
+                emit(f"  0x{offset:06x} attempt {attempt}: "
+                     f"reads disagree, retrying")
+                continue
+            used = length - first.count(0xFF)
+            emit(f"  0x{offset:06x} +{length} verified, "
+                 f"{used} non-0xff")
+            out.extend(first)
+            break
+        else:
+            emit(f"  0x{offset:06x} FAILED after {args.retries}")
+            return 1
 
-        args.output.write_bytes(out)
-        emit(handle)
-        emit(handle, f"wrote {len(out)} bytes to {args.output}")
-        emit(handle, f"log: {LOG}")
+    args.output.write_bytes(out)
+    emit()
+    emit(f"wrote {len(out)} bytes to {args.output}")
 
     return 0
 

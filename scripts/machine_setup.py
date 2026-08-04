@@ -47,7 +47,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "machine_setup.log"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit, spawn  # noqa: E402
 
 RUST_TARGET = "riscv32imac-unknown-none-elf"
 
@@ -91,21 +94,18 @@ class Runner:
     def __init__(self, dry_run):
         self.dry_run = dry_run
         self.failures = []
-        LOG.parent.mkdir(parents=True, exist_ok=True)
-        self.log = LOG.open("w", encoding="utf-8")
 
     def say(self, text):
-        print(text, flush=True)
-        self.log.write(text + "\n")
+        emit(text)
 
     def run(self, argv, what):
         if self.dry_run:
             self.say(f"  would run: {' '.join(argv)}")
             return True
         self.say(f"  {' '.join(argv)}")
-        result = subprocess.run(argv, cwd=ROOT)
-        if result.returncode != 0:
-            self.say(f"  FAILED ({what}), rc={result.returncode}")
+        rc = spawn(argv, cwd=ROOT)
+        if rc != 0:
+            self.say(f"  FAILED ({what}), rc={rc}")
             self.failures.append(what)
             return False
         return True
@@ -228,7 +228,6 @@ def main():
     if runner.failures:
         runner.say(f"INCOMPLETE: {len(runner.failures)} stage(s) failed: "
                    f"{', '.join(runner.failures)}")
-        runner.say(f"log: {LOG.relative_to(ROOT)}")
         return 1
 
     runner.say("Setup complete. There is no venv to activate -- plain `python3`")
@@ -236,7 +235,6 @@ def main():
     runner.say("")
     runner.say("  ./dev.py doctor     confirm every tool is on PATH")
     runner.say("  ./dev.py ci         run every check")
-    runner.say(f"log: {LOG.relative_to(ROOT)}")
     return 0
 
 

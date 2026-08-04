@@ -5,7 +5,7 @@
 
 """Checks the sticky verdict and negative control used by standalone tests.
 
-The log is written to ``tmp/logs/bist_sim.log`` as well as stdout.
+Output goes to stdout and to ``tmp/logs/dev.log``.
 """
 
 import sys
@@ -14,23 +14,21 @@ from pathlib import Path
 from amaranth.sim import Simulator
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "bist_sim.log"
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from bist import BISTAddresses, BISTHarness  # noqa: E402
 
 
 def main():
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
     failed = 0
 
     def check(condition, what):
         nonlocal failed
         mark = "PASS" if condition else "FAIL"
-        line = f"  {mark} {what}"
-        print(line)
-        lines.append(line)
+        emit(f"  {mark} {what}")
         failed += not condition
 
     dut = BISTHarness(
@@ -92,10 +90,7 @@ def main():
     sim.add_testbench(bench)
     sim.run()
 
-    summary = f"summary: {9 - failed}/9 checks, {'failed' if failed else 'clean'}"
-    print(summary)
-    lines.append(summary)
-    LOG.write_text("\n".join(lines) + "\n")
+    emit(f"summary: {9 - failed}/9 checks, {'failed' if failed else 'clean'}")
     return 1 if failed else 0
 
 

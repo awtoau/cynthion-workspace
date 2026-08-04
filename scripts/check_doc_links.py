@@ -25,7 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "check_doc_links.log"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 SKIP_PREFIXES = ("repos/", "debris/", "tmp/")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -46,37 +48,30 @@ def tracked_markdown(subtree):
 def main():
     subtree = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else None
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     broken = []
     checked = 0
 
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
+    for rel in tracked_markdown(subtree):
+        path = ROOT / rel
+        for target in LINK.findall(path.read_text(encoding="utf-8")):
+            # External links and in-page anchors are not ours to check.
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            # Strip the anchor: the file must exist, the heading is not verified.
+            target = target.split("#", 1)[0]
+            if not target:
+                continue
+            checked += 1
+            if not (path.parent / target).exists():
+                broken.append((rel, target))
 
-        for rel in tracked_markdown(subtree):
-            path = ROOT / rel
-            for target in LINK.findall(path.read_text(encoding="utf-8")):
-                # External links and in-page anchors are not ours to check.
-                if target.startswith(("http://", "https://", "mailto:", "#")):
-                    continue
-                # Strip the anchor: the file must exist, the heading is not verified.
-                target = target.split("#", 1)[0]
-                if not target:
-                    continue
-                checked += 1
-                if not (path.parent / target).exists():
-                    broken.append((rel, target))
-
-        emit(f"checked {checked} relative links")
-        if broken:
-            emit(f"{len(broken)} broken:")
-            for source, target in broken:
-                emit(f"  {source} -> {target}")
-            return 1
-        emit("all resolve")
-        emit(f"log: {LOG.relative_to(ROOT)}")
+    emit(f"checked {checked} relative links")
+    if broken:
+        emit(f"{len(broken)} broken:")
+        for source, target in broken:
+            emit(f"  {source} -> {target}")
+        return 1
+    emit("all resolve")
     return 0
 
 

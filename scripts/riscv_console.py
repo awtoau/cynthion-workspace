@@ -50,9 +50,11 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "riscv_console.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # One burst read. Big enough to catch the banner plus several ticks, small enough that a
 # quiet console still returns promptly.
@@ -110,69 +112,71 @@ def main():
 
     print(f"console: {node}  ({usb_ids.product_string('riscv_console')})", flush=True)
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
+    # The console arrives in whatever chunks the tty hands over, so it is
+    # reassembled into lines before being emitted: a log line that is half
+    # a word is not searchable, and the cost is that a prompt with no
+    # newline waits for the next one.
+    pending = ""
     try:
-        with LOG.open("a") as handle:
-            port = serial.Serial(node, 115200, timeout=3)
-            while True:
-                # Reconfiguring the FPGA tears the tty down, and that is ROUTINE here --
-                # every build-and-test cycle does it. pyserial raises SerialException
-                # ("device reports readiness to read but returned no data"), which is not
-                # an error worth exiting on: the device is coming back in a moment.
-                #
-                # So reattach instead of dying. wait_for_tty settles and confirms the port
-                # opens, so this waits for the NEW node rather than racing the old one.
+        port = serial.Serial(node, 115200, timeout=3)
+        while True:
+            # Reconfiguring the FPGA tears the tty down, and that is ROUTINE here --
+            # every build-and-test cycle does it. pyserial raises SerialException
+            # ("device reports readiness to read but returned no data"), which is not
+            # an error worth exiting on: the device is coming back in a moment.
+            #
+            # So reattach instead of dying. wait_for_tty settles and confirms the port
+            # opens, so this waits for the NEW node rather than racing the old one.
+            try:
+                data = port.read(BURST_BYTES)
+            except (serial.SerialException, OSError):
+                # Distinguish "the board went away" from "another process stole the
+                # port". If the USB device is still on the bus, this is contention,
+                # not a reconfigure -- reattaching in that case produces a stream of
+                # went-away/reattached messages while the CPU never restarts, which
+                # is what happened when soc_run.py also opened the tty.
+                still_present = usb_ids.find_usb("riscv_console") is not None
+                if still_present:
+                    print("\n[port taken by another reader -- reclaiming]",
+                          flush=True)
+                else:
+                    print("\n[device went away -- reattaching]", flush=True)
                 try:
-                    data = port.read(BURST_BYTES)
-                except (serial.SerialException, OSError):
-                    # Distinguish "the board went away" from "another process stole the
-                    # port". If the USB device is still on the bus, this is contention,
-                    # not a reconfigure -- reattaching in that case produces a stream of
-                    # went-away/reattached messages while the CPU never restarts, which
-                    # is what happened when soc_run.py also opened the tty.
-                    still_present = usb_ids.find_usb("riscv_console") is not None
-                    if still_present:
-                        print("\n[port taken by another reader -- reclaiming]",
+                    port.close()
+                except Exception:
+                    pass
+                # Keep waiting rather than exiting. Between an agent tearing down one
+                # bitstream and configuring the next, the SoC is legitimately absent
+                # from the bus for the length of a build -- about a minute. Giving up
+                # after one timeout means the watcher dies during ordinary
+                # development and has to be restarted by hand.
+                node = None
+                waited = 0
+                while not node:
+                    node = usb_ids.wait_for_tty("riscv_console")
+                    if not node:
+                        waited += 1
+                        print(f"[no device -- still waiting, attempt {waited}]",
                               flush=True)
-                    else:
-                        print("\n[device went away -- reattaching]", flush=True)
-                    try:
-                        port.close()
-                    except Exception:
-                        pass
-                    # Keep waiting rather than exiting. Between an agent tearing down one
-                    # bitstream and configuring the next, the SoC is legitimately absent
-                    # from the bus for the length of a build -- about a minute. Giving up
-                    # after one timeout means the watcher dies during ordinary
-                    # development and has to be restarted by hand.
-                    node = None
-                    waited = 0
-                    while not node:
-                        node = usb_ids.wait_for_tty("riscv_console")
-                        if not node:
-                            waited += 1
-                            print(f"[no device -- still waiting, attempt {waited}]",
-                                  flush=True)
-                    print(f"[reattached: {node}]", flush=True)
-                    port = serial.Serial(node, 115200, timeout=3)
-                    continue
-                if data:
-                    text = data.decode("ascii", "replace")
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
-                    handle.write(text)
-                    handle.flush()
+                print(f"[reattached: {node}]", flush=True)
+                port = serial.Serial(node, 115200, timeout=3)
+                continue
+            if data:
+                pending += data.decode("ascii", "replace")
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    emit(line)
 
-                    # Fan out to any socket clients, dropping those that have gone.
-                    with lock:
-                        for conn in list(clients):
-                            try:
-                                conn.sendall(data)
-                            except OSError:
-                                clients.remove(conn)
-                                conn.close()
-                if args.once:
-                    break
+                # Fan out to any socket clients, dropping those that have gone.
+                with lock:
+                    for conn in list(clients):
+                        try:
+                            conn.sendall(data)
+                        except OSError:
+                            clients.remove(conn)
+                            conn.close()
+            if args.once:
+                break
     except KeyboardInterrupt:
         print("\n(stopped)", flush=True)
     finally:

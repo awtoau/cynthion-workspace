@@ -23,7 +23,7 @@ What is checked:
   * the bit period tracks `clk_freq_hz`, so a faster domain does not kill the link
   * open-drain: `pad_o` is never 1, which is what lets this share the pad
 
-Output goes to the console and to tmp/logs/sideband_advertise_sim.log.
+Output goes to the console and to tmp/logs/dev.log.
 """
 
 import sys
@@ -40,11 +40,13 @@ warnings.filterwarnings("ignore", category=UnusedElaboratable)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from sideband_advertise import (APOLLO_TIMEOUT_MS, PATTERN,  # noqa: E402
                                 SidebandAdvertiser)
 
-LOG = ROOT / "tmp" / "logs" / "sideband_advertise_sim.log"
 
 # Small enough to simulate whole frames in seconds, large enough that the divisor is
 # realistic. 1.152 MHz / 230400 = a divisor of 5 would fail the responder's own
@@ -57,16 +59,14 @@ INTERVAL_MS = 1
 
 
 class Checks:
-    def __init__(self, log):
+    def __init__(self):
         self.passed = self.failed = 0
-        self.log = log
 
     def check(self, what, ok, detail=""):
         line = f"  {'PASS' if ok else 'FAIL'} {what}"
         if not ok and detail:
             line += f"\n       {detail}"
-        print(line)
-        self.log.write(line + "\n")
+        emit(line)
         if ok:
             self.passed += 1
         else:
@@ -284,16 +284,11 @@ def run(checks):
 
 
 def main():
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as log:
-        print("FPGA_ADV advertisement")
-        log.write("FPGA_ADV advertisement\n")
-        checks = Checks(log)
-        run(checks)
-        summary = (f"\n{checks.passed} passed, {checks.failed} failed\n"
-                   f"log: {LOG.relative_to(ROOT)}")
-        print(summary)
-        log.write(summary + "\n")
+    emit("FPGA_ADV advertisement")
+    checks = Checks()
+    run(checks)
+    emit()
+    emit(f"{checks.passed} passed, {checks.failed} failed")
     return 1 if checks.failed else 0
 
 

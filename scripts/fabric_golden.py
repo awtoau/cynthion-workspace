@@ -37,9 +37,11 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "fabric_golden.log"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 from fabric.fabric_gateware import (BLOCKS, ROUND_BITS, ROUND_CYCLES,
                                     block_params, block_step)
@@ -134,26 +136,17 @@ def main():
 
     cycles = 1 << args.round_bits
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            if not args.quiet:
-                print(text, flush=True)
-            handle.write(text + "\n")
-            handle.flush()
+    emit(f"blocks {args.blocks}, round 2**{args.round_bits} = {cycles} cycles")
 
-        emit(f"blocks {args.blocks}, round 2**{args.round_bits} = {cycles} cycles")
+    checked = verify_vector_model(args.blocks, args.check_cycles)
+    emit(f"vector model agrees with the scalar specification over "
+         f"{checked} cycles, all {args.blocks} blocks")
 
-        checked = verify_vector_model(args.blocks, args.check_cycles)
-        emit(f"vector model agrees with the scalar specification over "
-             f"{checked} cycles, all {args.blocks} blocks")
-
-        start = time.perf_counter()
-        value = golden(args.blocks, cycles)
-        elapsed = time.perf_counter() - start
-        emit(f"golden signature: {value:#010x}  "
-             f"({elapsed:.1f}s for {cycles - 1} advances)")
-        emit(f"log: {LOG}")
+    start = time.perf_counter()
+    value = golden(args.blocks, cycles)
+    elapsed = time.perf_counter() - start
+    emit(f"golden signature: {value:#010x}  "
+         f"({elapsed:.1f}s for {cycles - 1} advances)")
 
     if args.quiet:
         print(f"{value:#010x}")

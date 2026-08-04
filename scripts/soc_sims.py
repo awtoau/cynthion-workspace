@@ -33,8 +33,9 @@ count is those lines. A simulation that printed a summary and no per-check lines
 would report zero here, which is why the count is checked against the exit status
 rather than trusted on its own.
 
-Output goes to the console and to tmp/logs/soc_sims.log; each simulation's own
-full output lands in tmp/logs/<name>.log, written by the simulation itself.
+Output goes to the console and to tmp/logs/dev.log. Each simulation's own full
+output lands in the same file, tagged with the module and function that wrote
+it -- this reports only the tail of a failing one.
 """
 
 import argparse
@@ -46,7 +47,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_sims.log"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # In the order a reader should meet them: the CPU's own peripherals first, then
 # the board, then the two that drive the firmware rather than the gateware, then
@@ -115,13 +119,6 @@ def main():
         print(f"nothing matches {args.only}", file=sys.stderr)
         return 2
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
-
-    def emit(text=""):
-        print(text)
-        lines.append(text)
-
     emit(f"\n{BOLD}SoC simulations{RESET}  ({len(chosen)} of {len(SIMS)})\n")
 
     started = time.monotonic()
@@ -149,10 +146,8 @@ def main():
          f"in {time.monotonic() - started:.1f}s")
     if bad:
         emit(f"  {RED}failed: {', '.join(bad)}{RESET}")
-    emit(f"  log: {LOG.relative_to(ROOT)}")
     emit()
 
-    LOG.write_text("\n".join(re.sub(r"\033\[[0-9;]*m", "", l) for l in lines))
     return 1 if bad else 0
 
 

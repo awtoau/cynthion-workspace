@@ -31,16 +31,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOGDIR = ROOT / "tmp" / "logs"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 
-def log(msg, handle):
-    print(msg, flush=True)
-    handle.write(msg + "\n")
-    handle.flush()
-
-
-def emit_from_rtlil(il_path, outdir, handle, yosys="yosys", extra_v=()):
+def emit_from_rtlil(il_path, outdir, yosys="yosys", extra_v=()):
     """Produce both Verilog forms from an existing Amaranth .il file.
 
     Reusing the .il that the open-flow build already wrote guarantees the two
@@ -87,13 +84,12 @@ def emit_from_rtlil(il_path, outdir, handle, yosys="yosys", extra_v=()):
         "opt_clean\n"
         "memory_collect\n"
         f"write_verilog -noattr {behav}\n")
-    log(f"yosys -> {behav}", handle)
+    emit(f"yosys -> {behav}")
     p = subprocess.run([yosys, "-q", "-s", str(ys1)],
                        capture_output=True, text=True)
-    handle.write(p.stdout + p.stderr + "\n")
     if p.returncode != 0:
-        log("behavioural emit failed", handle)
-        log((p.stdout + p.stderr)[-3000:], handle)
+        emit("behavioural emit failed")
+        emit((p.stdout + p.stderr)[-3000:])
         behav = None
 
     # Structural: full ECP5 synthesis, then the mapped netlist in two forms.
@@ -149,13 +145,12 @@ def emit_from_rtlil(il_path, outdir, handle, yosys="yosys", extra_v=()):
         # The properties are for human readability, not connectivity, so
         # dropping them costs nothing here.
         f"write_edif {edif}\n")
-    log(f"yosys synth_ecp5 -> {struct}, {edif}", handle)
+    emit(f"yosys synth_ecp5 -> {struct}, {edif}")
     p = subprocess.run([yosys, "-q", "-s", str(ys2)],
                        capture_output=True, text=True)
-    handle.write(p.stdout + p.stderr + "\n")
     if p.returncode != 0:
-        log("structural emit failed", handle)
-        log((p.stdout + p.stderr)[-3000:], handle)
+        emit("structural emit failed")
+        emit((p.stdout + p.stderr)[-3000:])
         struct = None
         edif = None
 
@@ -168,26 +163,27 @@ def main():
     ap.add_argument("--il", required=True, type=Path,
                     help="Amaranth-emitted top.il from an open-flow build")
     ap.add_argument("--outdir", required=True, type=Path)
-    ap.add_argument("--name", default="emit_verilog")
+    ap.add_argument("--name", default="emit_verilog",
+                    help="label for this run; the sweep gives each "
+                         "frequency its own so the shared log can be "
+                         "read back per configuration")
     ap.add_argument("--yosys", default="yosys")
     ap.add_argument("--extra-verilog", type=Path, nargs="*", default=[],
                     help="Verilog read before the RTLIL, eg a pre-generated "
                          "CPU core the design instantiates")
     args = ap.parse_args()
 
-    LOGDIR.mkdir(parents=True, exist_ok=True)
-    with open(LOGDIR / f"{args.name}.log", "w") as handle:
-        log(f"rtlil {args.il}", handle)
-        behav, struct, edif = emit_from_rtlil(args.il, args.outdir, handle,
-                                              args.yosys, args.extra_verilog)
-        for label, path in (("behavioural", behav), ("structural", struct),
-                            ("edif", edif)):
-            if path and path.exists():
-                size = path.stat().st_size
-                lines = sum(1 for _ in path.open(errors="replace"))
-                log(f"{label}: {path} ({size} bytes, {lines} lines)", handle)
-            else:
-                log(f"{label}: FAILED", handle)
+    emit(f"{args.name}: rtlil {args.il}")
+    behav, struct, edif = emit_from_rtlil(args.il, args.outdir,
+                                          args.yosys, args.extra_verilog)
+    for label, path in (("behavioural", behav), ("structural", struct),
+                        ("edif", edif)):
+        if path and path.exists():
+            size = path.stat().st_size
+            lines = sum(1 for _ in path.open(errors="replace"))
+            emit(f"{label}: {path} ({size} bytes, {lines} lines)")
+        else:
+            emit(f"{label}: FAILED")
     return 0
 
 

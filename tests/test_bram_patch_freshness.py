@@ -21,6 +21,7 @@ import sys
 import types
 import unittest
 from argparse import Namespace
+from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -37,7 +38,11 @@ FRESH = b"\xca\xfe\xba\xbe" * 8
 class FreshnessTests(unittest.TestCase):
 
     def setUp(self):
+        # `refresh_firmware` reports through devlog's `emit`, which prints
+        # to stdout; capture it so the assertions still read what it said.
         self.handle = io.StringIO()
+        self._capture = redirect_stdout(self.handle)
+        self._capture.__enter__()
         self._real_soc_run = sys.modules.get("soc_run")
 
         # Point the default at a temporary file. These tests write a deliberately
@@ -51,6 +56,7 @@ class FreshnessTests(unittest.TestCase):
         bram_patch.DEFAULT_FIRMWARE = Path(self._tmp.name) / "rust_fw.bin"
 
     def tearDown(self):
+        self._capture.__exit__(None, None, None)
         bram_patch.DEFAULT_FIRMWARE = self._real_default
         self._tmp.cleanup()
         if self._real_soc_run is None:
@@ -101,7 +107,7 @@ class FreshnessTests(unittest.TestCase):
         self._stale_default()
         self._fake_soc_run(writes=FRESH)
 
-        bram_patch.refresh_firmware(self._args(), self.handle)
+        bram_patch.refresh_firmware(self._args())
 
         self.assertEqual(bram_patch.DEFAULT_FIRMWARE.read_bytes(), FRESH,
                          "the stale image survived the freshness check")
@@ -111,7 +117,7 @@ class FreshnessTests(unittest.TestCase):
         self._stale_default()
         self._fake_soc_run(writes=FRESH)
 
-        bram_patch.refresh_firmware(self._args(), self.handle)
+        bram_patch.refresh_firmware(self._args())
 
         log = self.handle.getvalue()
         self.assertIn(hashlib.sha256(FRESH).hexdigest()[:12], log)
@@ -123,7 +129,7 @@ class FreshnessTests(unittest.TestCase):
         self._fake_soc_run(elf_exists=False)
 
         with self.assertRaises(bram_patch.Refuse) as caught:
-            bram_patch.refresh_firmware(self._args(), self.handle)
+            bram_patch.refresh_firmware(self._args())
 
         self.assertIn("no compiled firmware", str(caught.exception))
         self.assertEqual(bram_patch.DEFAULT_FIRMWARE.read_bytes(), STALE,
@@ -135,7 +141,7 @@ class FreshnessTests(unittest.TestCase):
         self._fake_soc_run(fails=True)
 
         with self.assertRaises(bram_patch.Refuse) as caught:
-            bram_patch.refresh_firmware(self._args(), self.handle)
+            bram_patch.refresh_firmware(self._args())
 
         self.assertIn("could not derive", str(caught.exception))
 
@@ -145,7 +151,7 @@ class FreshnessTests(unittest.TestCase):
         self._stale_default()
         self._fake_soc_run(writes=FRESH)
 
-        bram_patch.refresh_firmware(self._args(no_derive=True), self.handle)
+        bram_patch.refresh_firmware(self._args(no_derive=True))
 
         self.assertEqual(bram_patch.DEFAULT_FIRMWARE.read_bytes(), STALE)
         log = self.handle.getvalue()
@@ -158,7 +164,7 @@ class FreshnessTests(unittest.TestCase):
         mine = bram_patch.DEFAULT_FIRMWARE.parent / "test-explicit-image.bin"
         mine.write_bytes(STALE)
         try:
-            bram_patch.refresh_firmware(self._args(firmware=mine), self.handle)
+            bram_patch.refresh_firmware(self._args(firmware=mine))
             self.assertEqual(mine.read_bytes(), STALE)
             self.assertIn("given explicitly", self.handle.getvalue())
         finally:
@@ -170,7 +176,7 @@ class FreshnessTests(unittest.TestCase):
         self.assertFalse(missing.exists())
 
         with self.assertRaises(bram_patch.Refuse):
-            bram_patch.refresh_firmware(self._args(firmware=missing), self.handle)
+            bram_patch.refresh_firmware(self._args(firmware=missing))
 
 
 class RelTests(unittest.TestCase):

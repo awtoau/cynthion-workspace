@@ -80,11 +80,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "tmp" / "logs" / "soc_generate_pac.log"
 OUT = ROOT / "firmware" / "cynthion-soc-pac"
 
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from devlog import emit  # noqa: E402
 
 # Register footprints this emitter is willing to describe, in bytes.
 #
@@ -908,18 +910,11 @@ def main():
                              "committed SVD is current; change nothing")
     args = parser.parse_args()
 
-    LOG.parent.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
 
-    with LOG.open("w") as handle:
-        def emit(text=""):
-            print(text, flush=True)
-            handle.write(text + "\n")
-
-        status = run(args, emit)
-        emit()
-        emit(f"log: {LOG}")
-        return status
+    status = run(args, emit)
+    emit()
+    return status
 
 
 def run(args, emit):
