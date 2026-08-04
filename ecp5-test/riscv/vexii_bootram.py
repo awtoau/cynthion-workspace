@@ -40,14 +40,16 @@ Fetch a 16-bit word, auto-increment, raise a flag the firmware polls.
     by the shell's `bench hyperram` at sync 60 MHz: 156 cycles per 16-bit word
     read and 113 per word written, which is 0.77 MB/s and 1.06 MB/s -- so a
     32 KiB image is 43 ms to read back and 31 ms to write. The 8 ms this said
-    before was an estimate and was five times optimistic. Bursting is available
-    through the Wishbone window, whose `main=1` region lets the D-cache line-fill.
+    before was an estimate and was five times optimistic. The Wishbone window is
+    faster -- its `main=1` region lets the D-cache line-fill -- but it is one
+    HyperBus transaction per 32-bit beat on this SoC, not one per line: see
+    `HyperRAMWishbone`'s `sustained` for why the master decides that.
 
 Placeholder-BRAM (`ecpbram`), JTAG staging and this USB path are compared in
 `../../docs/decisions.md`.
 """
 
-from amaranth import Cat, Elaboratable, Module, Mux, Signal
+from amaranth import C, Cat, Elaboratable, Module, Mux, Signal
 from amaranth.lib import wiring
 from amaranth.utils import log2_int
 from amaranth_soc import csr, wishbone
@@ -88,8 +90,30 @@ class HyperRAMWishbone(wiring.Component):
 
       * Reads only capture data and acknowledge the request.
       * Partial stores read, merge, and write because this controller has no mask port.
-      * Linear incrementing cycles keep one HyperBus transaction open.
+      * Linear incrementing cycles keep one HyperBus transaction open, but only
+        when `sustained` says the master can feed one (see below).
       * Classic, wrapped, and partial-write cycles end after one Wishbone beat.
+
+    ## `sustained`: coalescing needs a master that never bubbles
+
+    A HyperBus data phase cannot be stalled. Once CS# is low and the latency has
+    run, the device clocks one word in or out on every CK and this controller
+    exposes no backpressure -- `write_ready`/`read_ready` are asserted on every
+    cycle of `WRITE_DATA`/`READ_DATA` regardless of whether anyone is listening.
+    So a transaction held open across Wishbone beats is a promise to supply a
+    word every single cycle until it closes.
+
+    A beat is two words at `word_width=16` and one at 32, so keeping that promise
+    means a beat every two cycles, or every one. Anything slower and the device
+    eats whatever happens to be on `dq` in the gap: a junk word at a real
+    address, and -- because the engine's half-of-the-beat tracker advances with
+    the device while this module's resets per beat -- every following beat
+    emitted high-half-first.
+
+    This SoC cannot keep it either way. `RegisteredResponse` withholds STB for
+    one cycle after each acknowledgement, so the CPU delivers a beat every THREE
+    cycles. No amount of buffering fixes a sustained rate deficit, so coalescing
+    is off by default and a caller that has a zero-wait master opts in.
 
     `word_width` is the controller's data width, not the bus's -- the bus is
     always 32 bits. `HyperRAMInterface` hands over 16 bits at a time, so a beat
@@ -105,7 +129,7 @@ class HyperRAMWishbone(wiring.Component):
     | `in_valid` | in | one returned or accepted controller word |
     """
 
-    def __init__(self, *, size=HYPERRAM_SIZE, word_width=16):
+    def __init__(self, *, size=HYPERRAM_SIZE, word_width=16, sustained=False):
         if size <= 0 or size & (size - 1):
             raise ValueError("HyperRAM window size must be a power of two")
         if size % 4:
@@ -113,6 +137,7 @@ class HyperRAMWishbone(wiring.Component):
         if word_width not in (16, 32):
             raise ValueError("HyperRAM controller word width must be 16 or 32")
         self._word_width = word_width
+        self._sustained = sustained
 
         wb_addr_width = log2_int(size // 4)
         memory_map = MemoryMap(addr_width=log2_int(size), data_width=8)
@@ -162,11 +187,14 @@ class HyperRAMWishbone(wiring.Component):
         word_event = self.granted & self.in_valid
         m.d.comb += beat_done.eq(1 if self._word_width == 32 else second_word)
         complete = pending & word_event & beat_done & ~rmw_read
+        # Decided in Python, not on the bus: with `sustained` false this is a
+        # constant and the whole burst path is pruned rather than left as logic
+        # that can never assert.
         burst_candidate = (
-            (self.bus.cti == wishbone.CycleType.INCR_BURST)
-            & (self.bus.bte == wishbone.BurstTypeExt.LINEAR)
-            & (~self.bus.we | (self.bus.sel == 0b1111))
-        )
+            ((self.bus.cti == wishbone.CycleType.INCR_BURST)
+             & (self.bus.bte == wishbone.BurstTypeExt.LINEAR)
+             & (~self.bus.we | (self.bus.sel == 0b1111)))
+            if self._sustained else C(0))
 
         m.d.comb += self.bursting_out.eq(bursting)
 
@@ -389,7 +417,12 @@ class BootRAM(Elaboratable):
     |----------|--------|----------------|
     | 1 | JTAG staging sink | 16 bits |
     | 2 | CPU staging CSR | 16 bits |
-    | 3 | CPU Wishbone window | 32-bit beats in one bounded linear burst |
+    | 3 | CPU Wishbone window | one 32-bit beat, or a bounded linear burst |
+
+    `sustained` is forwarded to `HyperRAMWishbone` and is what decides between
+    those last two. It belongs to the MASTER, not to this module or the part:
+    see that class for why a bubbling master and a held-open transaction corrupt
+    each other.
 
     Attributes
     ----------
@@ -401,12 +434,13 @@ class BootRAM(Elaboratable):
         The second requester, in `sync`. Wire these to a `JTAGStager`.
     """
 
-    def __init__(self, *, interface=None, dqs=False):
+    def __init__(self, *, interface=None, dqs=False, sustained=False):
         # DQS changes the data width -- 32 bits per beat against 16 -- so it is
         # recorded here and read where the word assembly is decided.
         self._dqs = dqs
         self.port = HyperRAMBoot()
-        self.mmap = HyperRAMWishbone(word_width=32 if dqs else 16)
+        self.mmap = HyperRAMWishbone(word_width=32 if dqs else 16,
+                                     sustained=sustained)
         self._interface = interface
 
         self.jtag_req  = Signal()

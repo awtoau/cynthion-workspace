@@ -18,17 +18,30 @@ It is not a missing peripheral, and it does not need one added.
 - Burst coalescing: `cti == INCR_BURST && bte == LINEAR` holds one HyperBus
   transaction open across beats — `vexii_bootram.py:126-130`, `:145-168`. Capped
   at `HYPERRAM_MAX_BURST_WORDS = 748` (`:60-63`) to stay inside the part's
-  768-CK tCSM refresh deadline.
+  768-CK tCSM refresh deadline. **Off on this SoC** (`sustained=False`): a
+  HyperBus data phase cannot be stalled, and `RegisteredResponse` makes the CPU
+  a beat slower per beat than one consumes words. Holding a transaction open
+  under that deficit corrupted reads and writes alike — see below.
 
 The whole SoC is amaranth-soc Wishbone: one flat 30-bit decoder at
 `vexii_hello_soc.py:574-576`, with VexiiRiscv emitting three native Wishbone
 masters (`ibus`/`dbus`/`iobus`, `vexii_cpu.py:240-265`) arbitrated at `:940-946`.
 There is no second bus standard in the design.
 
-`scripts/soc_hyperram_sim.py` measures the result: a 64-byte cache-line refill is
-**1 HyperBus transaction / 51 CK**, against the pre-change arrangement's
-**16 transactions / 336 CK**. Both are asserted, the classic path kept as a
-negative control.
+`scripts/soc_hyperram_sim.py` measures the result against a master that supplies
+a beat every two cycles: a 64-byte cache-line refill is **1 HyperBus transaction
+/ 49 CK**, against the classic arrangement's **16 transactions / 304 CK**. Both
+are asserted, the classic path kept as a negative control. (These read 51 and 336
+until the model's data phase was corrected — it entered two cycles late, which
+reads tolerated because RWDS gates the controller's sampling. 17 CK of overhead
+per transaction is what the controller's states actually count: 3 command words
++ 13 latency + 1 recovery.)
+
+**No master in this SoC supplies a beat every two cycles**, which is why that
+figure is a property of the coalescing logic and not of the board. `hr cross`
+found the consequence: `8/16 correct, bad 1010101010101010`, every odd beat's
+halves transposed, reproduced exactly in section 9 once `RegisteredResponse` was
+put in the sim's path.
 
 ## The gap
 

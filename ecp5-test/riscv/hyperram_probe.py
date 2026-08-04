@@ -33,6 +33,20 @@ That is the point to stop reading and start counting.
 the burst is being broken; 1 means the line is one burst and the 336 CK is coming
 from somewhere else entirely.
 
+## `words` per beat: 3.0, and what it turned out to mean
+
+The 3.0 words per 32-bit beat this measured -- against the 2.0 two 16-bit words
+would give -- was recorded as not understood. It is the fault.
+
+`RegisteredResponse` withholds STB for one cycle after each acknowledgement, so
+the CPU supplies a beat every three cycles; a held-open HyperBus transaction
+consumes one word per CK and cannot be stalled. The third cycle wrote a
+duplicate word at a real address and left the engine's half-of-the-beat tracker
+one ahead of the window's, so every following beat went out high-half-first.
+48 words for a 32-word line, in BOTH directions. `sustained` in
+`vexii_bootram.py` is the fix; sections 9 and 10 of `scripts/soc_hyperram_sim.py`
+reproduce and then close it. So this counter should now read 2.0.
+
 `max_run` distinguishes "never bursts" from "bursts but gets cut short" -- a cap,
 an arbitration steal, or a refresh landing mid-line would each show as a run
 shorter than 16 rather than as a run of 1.
