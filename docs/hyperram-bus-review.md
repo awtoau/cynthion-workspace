@@ -10,8 +10,15 @@ nothing does.
 **Active Clock Stop**, the W956A8 supports it by name, and luna's PHY already has
 the gate wired. That makes §5 the recommendation and most of §1–§4 moot.
 
+**It is now built and it simulates clean**: 16/16 beats both directions, 32
+device words, one transaction per line, against the 8/16 and 48 words the board
+measures without it. `ClockStopPHY` in `ecp5-test/riscv/vexii_bootram.py`,
+checked by §11 of `scripts/soc_hyperram_sim.py`, and **off by default** — see
+"The smallest experiment, run" below for what is settled and what the model
+cannot settle, which is the read path's round-trip latency.
+
 **Index:** [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) ·
-[`hyperram-next-step.md`](hyperram-next-step.md) ·
+[`hyperram-bursts.md`](hyperram-bursts.md) ·
 [`upstream-boundary.md`](upstream-boundary.md) ·
 [`riscv-core-build.md`](riscv-core-build.md)
 
@@ -417,7 +424,8 @@ change of any option here.
 ## Ranked
 
 1. **CK gating (§5).** Legal, cited, device-supported, gate already present, two
-   small edits, no buffer, no bus change. Do this first.
+   small edits, no buffer, no bus change. Done, and simulation-proven; the
+   remaining work is a board run and the read round-trip measurement above.
 2. **Line buffer (§4).** Do this if §5 fails on the board. Not "and then this for
    more speed" — it is not faster end-to-end, and on writes it is slower. What it
    buys is CS#-low time (49 CK against ~66) and therefore tCSM headroom, plus a
@@ -433,52 +441,96 @@ change of any option here.
 `sustained=False` should stay the default until §5 or §4 is on the board. It is
 correct, and correctness at 5.43 MB/s beats corruption at 20.70.
 
-## The smallest experiment that would settle it
+## The smallest experiment, run — and it passes
 
-Extend `scripts/soc_hyperram_sim.py` with an eleventh section, reusing §9 and
-§10's existing harness and assertions with `sustained=True`:
+**Measured**, `scripts/soc_hyperram_sim.py` §11, 2026-08-05. Coalescing on, CK
+gated, the SoC's real bus path including `RegisteredResponse`:
 
-1. `ModelHyperRAM16.step` currently drives `rwds_i = 0b10` unconditionally in its
-   data state. Gate it on `clk_en`. **One line, and it is a model bug regardless
-   of this review** — a real device holds RWDS static when CK stops.
-2. Wrap `NonDQSHarness` so the interface and the model see different
-   `HyperBusPHY` records, with `clk_en_dev = clk_en_ctrl & ~stall`.
-3. Drive `stall` from the window having no word to offer —
-   `active & (owner == OWNER_WISHBONE) & ~mmap.req` — and `& ~stall` the
-   `word_event` Mux at `vexii_bootram.py:606`.
+| | write | read |
+|---|---|---|
+| beats correct | **16/16** | **16/16** |
+| device words for a 64-byte line | **32** | — |
+| HyperBus transactions | **1** | **1** |
+| CK inside CS# | 48 | 48 |
+| cycles with CK withheld | 15 | 16 |
 
-Step 3 needs no extra qualification and that is not luck. `HyperRAMWishbone`
-drives `self.req.eq(pending | (bursting & bus.cyc & bus.stb))` (`:208`), and
-`pending` is set at the start of a beat and cleared only when it completes — so
-`req` stays high right through `HANDLE_LATENCY`. **The "never pause inside the
-latency window" rule is satisfied by construction**, and the stall can only
-assert in the gap between beats, which is a word boundary. Nothing new has to
-track the controller's state.
+against §9's negative control, which is kept and still asserts the board's
+`8/16 correct, bad 1010101010101010`, `want 200f0e0d got 0e0d200f`, 48 words.
+**The 48 CK is the same figure an ungated coalesced burst costs**, because the
+model counts CK and not `sync` cycles: the stall spends CS#-low time and no
+clock. The read is one CK *below* §8's ungated 49 — upstream leaves `clk_en`
+high for the first `RECOVERY` cycle, which a write needs and a read does not, and
+the gate suppresses the word the ungated engine clocks out of the device and
+throws away.
 
-**Pass:** `simulate_cross(sustained=True)` returns 16/16 both ways, 32 device
-words, and **one** transaction — against §9's currently-asserted 8/16, bad
-`1010101010101010`, 48 words. That single run distinguishes the top
-recommendation from every alternative, needs no hardware, and reuses a harness
-that already reproduces the board's exact failure line character for character.
+Three things changed against the sketch above, and the third is the one that
+mattered.
 
-Only then a board run of `hr cross` and `bench`.
+1. **`ModelHyperRAM16`'s RWDS and its address advance are gated on `clk_en`**,
+   and so is its latency countdown. The last of those is what makes the harness
+   able to *fail*: the device counts latency in CK and `HANDLE_LATENCY` counts
+   `sync` cycles, so a pause inside the window would shift the whole data phase
+   and every beat would be wrong.
+2. **The record split is `ClockStopPHY` in `ecp5-test/riscv/vexii_bootram.py`**,
+   not a harness wrapper — the simulation drives the same gateware a build would.
+   `BootRAM` gains `clock_stop`, default **off**.
+3. **`clk_en_dev = clk_en & ~stall` is one register short on writes.** `dq.o` is
+   registered inside `HyperRAMInterface`, so the word on the wire in cycle *T* is
+   the one `write_ready` accepted in *T−1*; gating *T* with the same term that
+   gates `word_event` discards it. A read's data and its RWDS transition arrive
+   in the cycle `read_ready` fires, so reads want no register. The gate is
+   `Mux(writing, stall_q, stall)`. §5's fifth named risk was exactly this, and
+   the arrangement without the register is worse than no gate at all — 0/16 and
+   31 addresses touched, which §11 now asserts as a second negative control.
 
-## Two defects found on the way, neither caused by any of the above
+**The latency-window claim is measured, not argued.** §11 records the device's
+own state on every cycle the gate withholds a clock and asserts they are all in
+the data phase. They are: 31 stalled cycles, all `data`, one per Wishbone beat.
+The structural reason stands — `req` is `pending | (bursting & cyc & stb)`,
+`pending` clears only on a `word_event`, and a `word_event` exists only in
+`WRITE_DATA`/`READ_DATA`, so `req` is high across `SHIFT_COMMAND` and
+`HANDLE_LATENCY` whatever the master does.
 
-**`HYPERRAM_MAX_BURST_WORDS` is 3.1x too permissive at the clock this SoC runs.**
-`vexii_bootram.py:80-83` sets 748 words with the comment "below 768 CK at
-192 MHz" — 4 µs, correct for CK 192. `SYNC_MHZ` is 60 and `HYPERRAM_DQS` is
-False, so CK is 60 MHz and 748 words is **12.5 µs, over three times tCSM**.
-Unreachable today because a Wishbone burst never exceeds 32 words, and dead
-entirely while `sustained=False` — but it is a word count guarding a time limit,
-and §5 makes CS#-low time stop tracking word count at all. It should be derived
-from `SYNC_MHZ` and the configured tCSM. **Read from source, arithmetic checked.**
+**What the simulation cannot settle, and it is the read side.** This model serves
+read data in the same cycle the CK that asked for it, a round trip of zero. Real
+silicon has one: `HyperRAMPHY` samples DQ and RWDS through `IDDRX1F`, and the
+part's own tACC comes before that. Stopping CK at cycle *T* on hardware stops
+data arriving at *T+N*, and for *N* cycles after the stall the controller will
+keep asserting `read_ready` at a window that is no longer listening. If *N* = 1
+the read side wants the *registered* gate — the same one the write side needs —
+and the alignment this file measures as correct is correct only for *N* = 0.
+**Writes are unaffected: they are entirely master-timed and the model's write
+path is the hardware's.** So the write half is ready for a board; the read half
+needs `N` measured first, and the cheap way to measure it is a gated read of a
+known pattern with the gate's alignment as the variable.
 
-**`ModelHyperRAM16` drives RWDS ungated.** As above: `rwds_i = 0b10` in the data
-state regardless of `clk_en`, so the model asserts a read strobe on a clock edge
-that never happened. It has not mattered because `clk_en` is high throughout
-every data phase simulated so far. It would matter the moment anything gates CK.
-**Read from source.**
+Then a board run of `hr cross` and `bench`.
+
+## Two defects found on the way, neither caused by any of the above — both fixed
+
+**`HYPERRAM_MAX_BURST_WORDS` was 3.1x too permissive at the clock this SoC runs.**
+`vexii_bootram.py` set 748 words with the comment "below 768 CK at 192 MHz" —
+4 µs, correct for CK 192. `SYNC_MHZ` is 60 and `HYPERRAM_DQS` is False, so CK is
+60 MHz and 748 words was **12.5 µs, over three times tCSM**. Unreachable because
+a Wishbone burst never exceeds 32 words, and dead entirely while
+`sustained=False` — but it was a word count guarding a time limit, and §5 makes
+CS#-low time stop tracking word count at all.
+
+Now `hyperram_max_burst_words(ck_mhz, clock_stop=)`, from tCSM with a tenth of
+the budget held back for the PLL's actual solved frequency and for `RECOVERY`
+being a TODO upstream. `vexii_hello_soc.py` passes its own `SYNC_MHZ` in rather
+than a second copy of the number being kept here, because
+`riscv_clock_ladder.py` rewrites that constant. **198 words at CK 60, 132 with
+clock stop, 674 at CK 192** — and §8 checks all four against tCSM as well as
+checking that the literal 748 would have failed at this clock, so the derivation
+is discriminating.
+
+**`ModelHyperRAM16` drove RWDS ungated.** `rwds_i = 0b10` in the data state
+regardless of `clk_en`, so the model asserted a read strobe on a clock edge that
+never happened. It had not mattered because `clk_en` was high throughout every
+data phase simulated. Now gated, along with the read address advance and the
+latency countdown — see the experiment above, where the last of those is what
+lets the harness catch a pause in the wrong place.
 
 ## What could not be determined
 
@@ -488,4 +540,8 @@ every data phase simulated so far. It would matter the moment anything gates CK.
 - The LUT cost of any option here without a build. Every area figure above marked
   *inferred* is an estimate and is labelled as one.
 - Whether resuming from Active Clock Stop works on this board. The datasheet
-  specifies it; nothing here has exercised it.
+  specifies it; simulation now assumes it; nothing has exercised it on silicon.
+- **The read path's round trip**, N cycles from a CK to the data it fetches
+  arriving at `phy.dq.i`. The model's N is zero and the gate's read alignment is
+  correct only for that. **Not determinable from source** — it is a measurement,
+  and it is the one thing between the write half of this and a board run.

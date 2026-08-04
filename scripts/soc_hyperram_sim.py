@@ -91,6 +91,14 @@ shows the fix passing is a check that would have passed before the fix.
  10. **The same fault on reads.** `hr cross` writes and reads through one path,
      so the two skews cancel and a total read fault showed as a half write
      fault. Checked separately against pre-filled memory.
+
+ 11. **Active Clock Stop, and coalescing turned back on.** The same harness and
+     the same assertions as 9 and 10, with the PHY record split so the
+     controller and the device see different `clk_en` and the device waits out
+     the master's bubble. Section 9 stays exactly where it is as the negative
+     control, and this section runs two more: the gate removed, and the gate
+     present but level-aligned rather than write-aligned, which is worse than
+     no gate at all. See `docs/hyperram-bus-review.md` 5 for the datasheet.
 """
 
 import argparse
@@ -118,8 +126,10 @@ from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMInterface)
 
 from checks import Checks
-from vexii_bootram import (BootRAM, HYPERRAM_MAX_BURST_WORDS,
-                           HyperRAMWishbone)
+from vexii_bootram import (BootRAM, ClockStopPHY, HYPERRAM_CK_MHZ,
+                           HYPERRAM_MAX_BURST_WORDS, HYPERRAM_TCSM_NS,
+                           HyperRAMWishbone, hyperram_max_burst_words,
+                           hyperram_max_stall_cycles)
 from wishbone_pipe import RegisteredResponse
 
 
@@ -675,7 +685,7 @@ def section_wishbone(checks, emit):
         await end(ctx)
 
         cap_final = []
-        for beat_index in range(HYPERRAM_MAX_BURST_WORDS // 2):
+        for beat_index in range(dut.max_burst_beats):
             await begin(ctx, adr=0x200 + beat_index,
                         cti=wishbone.CycleType.INCR_BURST)
             await pulse_word(ctx, beat_index)
@@ -720,7 +730,7 @@ def section_wishbone(checks, emit):
                  observed["partial_ack"] == 1)
     checks.check("a missing EOB is forced closed at the tCSM-safe cap",
                  observed["cap_final"] ==
-                 [0] * (HYPERRAM_MAX_BURST_WORDS // 2 - 1) + [1],
+                 [0] * (dut.max_burst_beats - 1) + [1],
                  f"final beats {sum(observed['cap_final'])}")
 
 
@@ -862,12 +872,27 @@ class NonDQSHarness(Elaboratable):
     window, which is what the real design has and what section 9 needs: without
     it the harness drives a master that supplies a beat every two cycles, and no
     master in this SoC does. `sustained` is the window's coalescing flag.
+
+    `clock_stop` splits the PHY record in two with `ClockStopPHY`, so the
+    controller and the model see different `clk_en`. `self.phy` stays the DEVICE
+    side either way -- it is what every testbench here steps the model off, and
+    what a real part would see.
+
+    `ck_align` false is the wrong arrangement for that split: it gates CK with
+    the word-boundary stall directly instead of with `BootRAM`'s write-aligned
+    copy of it. That is the design as first written down, and section 11 runs it
+    to show the register is load-bearing rather than decorative.
     """
 
-    def __init__(self, *, pipe=False, sustained=True):
+    def __init__(self, *, pipe=False, sustained=True, clock_stop=False,
+                 ck_align=True):
         self.phy = HyperBusPHY()
-        self.interface = HyperRAMInterface(phy=self.phy)
-        self.bootram = BootRAM(interface=self.interface, sustained=sustained)
+        self._ck_align = ck_align
+        self.gate = ClockStopPHY(dev=self.phy) if clock_stop else None
+        self.interface = HyperRAMInterface(
+            phy=self.gate.ctrl if clock_stop else self.phy)
+        self.bootram = BootRAM(interface=self.interface, sustained=sustained,
+                               clock_stop=clock_stop)
         self._pipe = pipe
         self.pipe = RegisteredResponse(
             addr_width=len(self.bootram.mmap.bus.adr), data_width=32,
@@ -882,6 +907,10 @@ class NonDQSHarness(Elaboratable):
         m = Module()
         m.submodules.interface = self.interface
         m.submodules.bootram = self.bootram
+        if self.gate is not None:
+            m.submodules.gate = self.gate
+            m.d.comb += self.gate.stall.eq(self.bootram.clk_stop if self._ck_align
+                                           else self.bootram.probe_stall)
         if self._pipe:
             m.submodules.pipe = self.pipe
             wiring.connect(m, self.pipe.sub_bus, self.bootram.mmap.bus)
@@ -950,10 +979,16 @@ class ModelHyperRAM16:
                 self._latency = HyperRAMInterface.HIGH_LATENCY_CLOCKS - 2
                 self._state = "latency"
         elif self._state == "latency":
-            if self._latency:
-                self._latency -= 1
-            else:
-                self._state = "data"
+            # Counted in CK, not in `sync` cycles, which only differ once
+            # something gates the clock. Gating here is what makes a stall inside
+            # the latency window VISIBLE: the controller's `HANDLE_LATENCY`
+            # counts down every cycle regardless, so a paused device would enter
+            # its data phase late and every word of the burst would be wrong.
+            if clk_en:
+                if self._latency:
+                    self._latency -= 1
+                else:
+                    self._state = "data"
         elif self._state == "data":
             # A write word lands on a clocked edge, so the capture is gated on
             # `clk_en`. Sampling every simulation step instead records the value
@@ -969,7 +1004,7 @@ class ModelHyperRAM16:
                 if clk_en and dq_e:
                     self.memory[self._address] = dq_o & 0xffff
                     self._address += 1
-            else:
+            elif clk_en:
                 # Serve back whatever was stored, so a write and a read of the
                 # same line can be compared. An address never written keeps the
                 # old synthetic pattern, which is what section 8 reads.
@@ -977,6 +1012,13 @@ class ModelHyperRAM16:
                                        (0x4000 + self._address) & 0xffff)
                 rwds_i = 0b10
                 self._address += 1
+            # CK stopped, so no read strobe and no address advance. RWDS holds a
+            # level instead of transitioning, which is the only thing `READ_DATA`
+            # looks at -- 10.1 gives RWDS as `X` in the Active Clock Stop row, so
+            # the level itself means nothing and this returns a static 0b00.
+            # Driving 0b10 here regardless of `clk_en` was a model defect on its
+            # own account: it asserted a read strobe on a clock edge that never
+            # happened, and it only went unnoticed because nothing gated CK.
 
         return dq_i, rwds_i
 
@@ -1056,7 +1098,8 @@ def line_value(index):
     return 0x1000_0000 + index * 0x0101_0101 + 0x0f0e_0d0c
 
 
-async def drive_line(ctx, dut, model, *, write, base=0x100, beats=16, out=None):
+async def drive_line(ctx, dut, model, *, write, base=0x100, beats=16, out=None,
+                     stalls=None):
     """One cache line as a registered-feedback burst, driven the way a CPU does.
 
     Classic Wishbone: CYC and STB are held, the next beat replaces the
@@ -1075,6 +1118,15 @@ async def drive_line(ctx, dut, model, *, write, base=0x100, beats=16, out=None):
             else wishbone.CycleType.END_OF_BURST)
 
     for _ in range(CYCLE_LIMIT):
+        # WHERE the CK stopped, as the device understands it: a cycle the
+        # controller asked for a clock and the gate withheld one. Recording the
+        # model's own state makes "never pause inside the latency window" a
+        # measurement rather than an argument about `mmap.req`.
+        if (stalls is not None and ctx.get(dut.phy.cs)
+                and ctx.get(dut.gate.ctrl.clk_en)
+                and not ctx.get(dut.phy.clk_en)):
+            stalls.append(model._state)
+
         dq_i, rwds_i = model.step(
             cs=ctx.get(dut.phy.cs), clk_en=ctx.get(dut.phy.clk_en),
             dq_o=ctx.get(dut.phy.dq.o), dq_e=ctx.get(dut.phy.dq.e))
@@ -1099,7 +1151,12 @@ async def drive_line(ctx, dut, model, *, write, base=0x100, beats=16, out=None):
                 ctx.set(bus.stb, 0)
                 ctx.set(bus.we, 0)
 
-        if index == beats and not ctx.get(dut.phy.cs):
+        # Wait for the model to have SEEN CS# rise, not just for it to have
+        # risen. The model is stepped before the tick, so returning on `cs` alone
+        # leaves the last transaction's CK count unrecorded -- which is the same
+        # condition `simulate_line_refill` already waits on.
+        if (index == beats and not ctx.get(dut.phy.cs)
+                and len(model.transaction_cycles) == len(model.commands)):
             return
 
 
@@ -1118,23 +1175,28 @@ def simulate_single_write(*, adr=0x100):
     return model
 
 
-def simulate_cross(*, sustained, beats=16, base=0x100):
+def simulate_cross(*, sustained, beats=16, base=0x100, clock_stop=False,
+                   ck_align=True):
     """`hr cross`: write a line through the window, then read it back."""
-    dut = NonDQSHarness(pipe=True, sustained=sustained)
+    dut = NonDQSHarness(pipe=True, sustained=sustained, clock_stop=clock_stop,
+                        ck_align=ck_align)
     model = ModelHyperRAM16()
     read_back = []
+    stalls = [] if clock_stop else None
 
     async def testbench(ctx):
-        await drive_line(ctx, dut, model, write=True, base=base, beats=beats)
+        await drive_line(ctx, dut, model, write=True, base=base, beats=beats,
+                         stalls=stalls)
         for _ in range(8):        # the D-cache evict between the two halves
             await ctx.tick()
         await drive_line(ctx, dut, model, write=False, base=base, beats=beats,
-                         out=read_back)
+                         out=read_back, stalls=stalls)
 
     sim = Simulator(Fragment.get(dut, None))
     sim.add_clock(1 / 192e6, domain="sync")
     sim.add_testbench(testbench)
     sim.run()
+    model.stalls = stalls
     return model, read_back
 
 
@@ -1209,28 +1271,35 @@ def section_line_write(checks, emit):
          f"bad {bitmap}, {len(fixed.memory)} device words")
 
 
+def read_line(*, sustained, clock_stop=False, base=0x300, beats=16):
+    """One cache line READ back through the pipe, against pre-filled memory.
+
+    Returns `(correct_beats, model)`. Pre-filling matters: `hr cross` writes and
+    reads through the same path, so its two skews cancel and a total read fault
+    presents as a half write fault.
+    """
+    dut = NonDQSHarness(pipe=True, sustained=sustained, clock_stop=clock_stop)
+    model = ModelHyperRAM16()
+    for word in range(beats * 2):
+        model.memory[base * 2 + word] = 0xa000 + word
+    out = []
+
+    async def testbench(ctx):
+        await drive_line(ctx, dut, model, write=False, base=base,
+                         beats=beats, out=out)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+    want = [((0xa000 + 2 * i + 1) << 16) | (0xa000 + 2 * i)
+            for i in range(beats)]
+    return sum(a == b for a, b in zip(out, want)), model
+
+
 def section_line_read_bubble(checks, emit):
     """10. The same fault on the READ side, which `hr cross` was hiding."""
     emit("\n10. Reads through the same path, which nothing had checked\n")
-
-    def read_line(*, sustained, base=0x300, beats=16):
-        dut = NonDQSHarness(pipe=True, sustained=sustained)
-        model = ModelHyperRAM16()
-        for word in range(beats * 2):
-            model.memory[base * 2 + word] = 0xa000 + word
-        out = []
-
-        async def testbench(ctx):
-            await drive_line(ctx, dut, model, write=False, base=base,
-                             beats=beats, out=out)
-
-        sim = Simulator(Fragment.get(dut, None))
-        sim.add_clock(1 / 192e6, domain="sync")
-        sim.add_testbench(testbench)
-        sim.run()
-        want = [((0xa000 + 2 * i + 1) << 16) | (0xa000 + 2 * i)
-                for i in range(beats)]
-        return sum(a == b for a, b in zip(out, want)), out
 
     broken, _ = read_line(sustained=True)
     fixed, _ = read_line(sustained=False)
@@ -1281,13 +1350,150 @@ def section_line_refill(checks, emit):
                  burst_cycles == 49, f"measured {burst_cycles} CK")
     checks.check("sixteen classic transfers occupy 304 CK",
                  classic_cycles == 304, f"measured {classic_cycles} CK")
-    checks.check("the coalescing cap stays below the 4-us tCSM limit",
-                 HYPERRAM_MAX_BURST_WORDS + 19 < 4e-6 * 192e6,
-                 f"{HYPERRAM_MAX_BURST_WORDS + 19} CK")
+    # The cap guards tCSM, which is a TIME, so it has to be checked at the clock
+    # the design runs -- not at the 192 MHz the old literal 748 was written for.
+    # That number was 12.5 us at CK 60, over three times the limit it exists to
+    # enforce, and unreachable only because a Wishbone burst never exceeds 32
+    # words. The negative control below is the literal it replaced.
+    for ck in (HYPERRAM_CK_MHZ, 192.0):
+        for stop in (False, True):
+            words = hyperram_max_burst_words(ck, clock_stop=stop)
+            held_ns = (words * (1.5 if stop else 1.0) + 19) / ck * 1e3
+            checks.check(f"the cap at CK {ck:g}"
+                         f"{' with clock stop' if stop else ''} fits in tCSM",
+                         held_ns < HYPERRAM_TCSM_NS,
+                         f"{words} words holds CS# low {held_ns:.0f} ns")
+    checks.check("the old fixed 748-word cap would NOT have fitted at this CK",
+                 (748 + 19) / HYPERRAM_CK_MHZ * 1e3 > HYPERRAM_TCSM_NS,
+                 "748 words fits, so deriving the cap from CK changed nothing")
+    checks.check("a 64-byte line is well inside the cap",
+                 hyperram_max_burst_words(HYPERRAM_CK_MHZ, clock_stop=True) > 32,
+                 f"{hyperram_max_burst_words(HYPERRAM_CK_MHZ, clock_stop=True)} words")
+    emit(f"        tCSM cap at CK {HYPERRAM_CK_MHZ:g}: "
+         f"{HYPERRAM_MAX_BURST_WORDS} words, "
+         f"{hyperram_max_burst_words(HYPERRAM_CK_MHZ, clock_stop=True)} with "
+         f"clock stop; was a fixed 748")
     emit(f"        incrementing: {len(burst_model.commands)} transaction, "
          f"{burst_cycles} CK")
     emit(f"        classic:      {len(classic_model.commands)} transactions, "
          f"{classic_cycles} CK")
+
+
+def section_clock_stop(checks, emit):
+    """11. Active Clock Stop: coalescing under the master that broke it.
+
+    Same harness, same model, same assertions as sections 9 and 10 -- the ONE
+    thing changed is that the controller and the device see different `clk_en`.
+    Section 9's arrangement stays exactly where it is as the negative control, so
+    this section's numbers are read against the board's own failure line rather
+    than against nothing.
+    """
+    emit("\n11. Active Clock Stop, with coalescing turned back on\n")
+
+    gated, gated_read = simulate_cross(sustained=True, clock_stop=True)
+    correct, bitmap = cross_result(gated_read)
+
+    checks.check("a coalesced line write is correct once CK can stop",
+                 (correct, bitmap) == (16, "0000000000000000"),
+                 f"{correct}/16, bad {bitmap}")
+    checks.check("...in 32 device words, not the ungated 48",
+                 len(gated.memory) == 32, f"{len(gated.memory)} words")
+    checks.check("...at the address each beat asked for",
+                 all(gated.memory.get(0x200 + 2 * i) == line_value(i) & 0xffff
+                     and gated.memory.get(0x201 + 2 * i) == line_value(i) >> 16
+                     for i in range(16)))
+    # `simulate_cross` runs a write line and then a read line, so two commands is
+    # one HyperBus transaction per direction -- against 32 for `sustained=False`
+    # and the whole point of the exercise.
+    checks.check("the line is ONE transaction per direction, not sixteen",
+                 len(gated.commands) == 2, f"{len(gated.commands)} transactions")
+
+    # Overhead plus 32 words, and the stalled cycles are NOT counted -- the model
+    # advances its CK count only when `clk_en` is high. So the pause costs the
+    # device no clock at all; what it spends is CS#-low time, which is why the
+    # burst cap had to stop being a word count.
+    #
+    # 48 against section 8's ungated 49, and the missing CK is the one `RECOVERY`
+    # used to emit. Upstream leaves `clk_en` high for the first `RECOVERY` cycle.
+    # A write needs it -- `dq.o` is registered and that cycle is where the last
+    # word reaches the wire -- and a read does not, so the ungated engine clocks
+    # one word out of the device and throws it away. The gate suppresses that,
+    # because `mmap.req` has already dropped.
+    checks.check("the gated line costs no extra CK, and a read saves one",
+                 gated.transaction_cycles == [48, 48],
+                 f"{gated.transaction_cycles} CK against 49 ungated")
+
+    gated_reads, read_model = read_line(sustained=True, clock_stop=True)
+    checks.check("a coalesced line read returns all sixteen beats",
+                 gated_reads == 16, f"{gated_reads}/16 beats correct")
+    checks.check("...in one transaction",
+                 len(read_model.commands) == 1,
+                 f"{len(read_model.commands)} transactions")
+
+    # THE LATENCY-WINDOW CLAIM, MEASURED. The review argues `~mmap.req` cannot
+    # pause inside the latency window by construction -- `req` is
+    # `pending | (bursting & cyc & stb)`, `pending` is set at the start of a beat
+    # and clears only on a `word_event`, and a `word_event` exists only in
+    # WRITE_DATA/READ_DATA -- so `req` is high across SHIFT_COMMAND and
+    # HANDLE_LATENCY whatever the master does. This checks it instead of
+    # believing it: every withheld clock is recorded against the state the DEVICE
+    # was in, and none may fall outside its data phase, where DQ is High-Z.
+    checks.check("every withheld clock fell inside the device's data phase",
+                 gated.stalls and set(gated.stalls) == {"data"},
+                 f"stalled in {sorted(set(gated.stalls or ['nowhere']))}")
+    # One per Wishbone beat and no more: a bubble the master takes is a clock the
+    # device does not get, one for one. 31 rather than 32 across the two lines
+    # because the write's last bubble arrives after `final_word` has already sent
+    # the controller to RECOVERY, while the read's lands on the RECOVERY cycle
+    # upstream still clocks -- which is the CK the read saves above.
+    checks.check("one withheld clock per beat, 15 writing and 16 reading",
+                 len(gated.stalls) == 31, f"{len(gated.stalls)} stalled cycles")
+
+    # The gate must be able to make things WORSE as well as better, or it is not
+    # doing anything. Coalescing without it is section 9's board reproduction.
+    broken, broken_read = simulate_cross(sustained=True)
+    broken_correct, _ = cross_result(broken_read)
+    checks.check("the same run without the gate still reproduces the board",
+                 (broken_correct, len(broken.memory)) == (8, 48),
+                 f"{broken_correct}/16, {len(broken.memory)} words")
+
+    # THE WRONG ARRANGEMENT FOR THE SPLIT ITSELF, which is where this experiment
+    # differed from the design as written down. `clk_en_dev = clk_en & ~stall`,
+    # with the SAME `stall` that gates `word_event`, is one register short: the
+    # word the controller accepted in cycle T-1 is on the wire in T, so gating T
+    # discards it. Every beat then loses its second half and the burst walks: the
+    # 32 words land across 31 addresses and not one beat survives. Reads are
+    # untouched by the difference -- their data and RWDS arrive in the same cycle
+    # `read_ready` fires -- so this is a write-only fault, and it is WORSE than
+    # not gating at all, which is what makes it worth asserting.
+    naive, naive_read = simulate_cross(sustained=True, clock_stop=True,
+                                       ck_align=False)
+    naive_correct, naive_bitmap = cross_result(naive_read)
+    checks.check("gating CK level with the word stall corrupts EVERY beat",
+                 naive_correct == 0, f"{naive_correct}/16, bad {naive_bitmap}")
+    checks.check("...and does not even touch 32 device words",
+                 len(naive.memory) != 32, f"{len(naive.memory)} device words")
+    emit(f"        level-gated (one register short): {naive_correct}/16, "
+         f"{len(naive.memory)} device words")
+
+    stall_cycles = hyperram_max_stall_cycles(HYPERRAM_CK_MHZ)
+    checks.check("the stall bound is inside rev A01-006's 100 ns tCK maximum",
+                 stall_cycles / HYPERRAM_CK_MHZ * 1e3 <= 100.0,
+                 f"{stall_cycles} cycles is "
+                 f"{stall_cycles / HYPERRAM_CK_MHZ * 1e3:.0f} ns")
+    checks.check("...and the bubble it has to cover is one cycle, well inside it",
+                 stall_cycles > 1, f"bound is {stall_cycles} cycles")
+
+    emit(f"        gated, coalesced: {correct}/16, bad {bitmap}, "
+         f"{len(gated.memory)} device words, "
+         f"{len(gated.commands)} transactions, {gated.transaction_cycles} CK")
+    emit(f"        ungated (sect 9): {broken_correct}/16, "
+         f"{len(broken.memory)} device words")
+    emit(f"        reads:            {gated_reads}/16 gated, "
+         f"{len(gated.stalls)} cycles with CK withheld across both lines")
+    emit(f"        stall bound {stall_cycles} cycles = "
+         f"{stall_cycles / HYPERRAM_CK_MHZ * 1e3:.0f} ns at CK "
+         f"{HYPERRAM_CK_MHZ:g}, against a 33 ns worst case")
 
 
 def main():
@@ -1304,7 +1510,8 @@ def main():
     for section in (section_command, section_latency, section_held,
                     section_recovery, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
-                    section_line_write, section_line_read_bubble):
+                    section_line_write, section_line_read_bubble,
+                    section_clock_stop):
         section(checks, emit)
 
     emit()

@@ -1,7 +1,7 @@
 # HyperRAM bursts: the data phase cannot be stalled
 
-**Index:** [`README.md`](README.md) · window and ports:
-[`hyperram-next-step.md`](hyperram-next-step.md) · rates and options:
+**Index:** [`README.md`](README.md) · the bus question this answers half of:
+[`hyperram-bus-review.md`](hyperram-bus-review.md) · rates and options:
 [`memory-speed-options.md`](memory-speed-options.md) · decisions:
 [`decisions.md`](decisions.md)
 
@@ -108,6 +108,31 @@ mid-burst.
 
 `sustained` is a statement about the **master**, which is why it is a parameter
 of the window rather than of the controller.
+
+## CK may legally be gated mid-burst, and it is now built
+
+**The constraint at the top of this page is real and it is escapable.** The
+W956A8 supports *Active Clock Stop* by name — rev A01-006 §10.2.2 and Figure 13
+draw CS# held Low across a stopped CK between two words of a data phase — and
+`HyperRAMPHY` already parks CK Low when `clk_en` drops. So the device can be made
+to wait, and the promise this page is about never has to be made.
+
+`ClockStopPHY` in `ecp5-test/riscv/vexii_bootram.py` splits the PHY record so the
+controller and the part see different `clk_en`, and `BootRAM`'s `clock_stop`
+drives it from the window having no word to offer. **Simulated at 16/16 beats
+both directions, 32 device words, one transaction per line** — the numbers this
+page records as 8/16 and 48 words. `scripts/soc_hyperram_sim.py` §11; the failing
+arrangement above stays in §9 as the negative control.
+
+`HyperRAMInterface` is untouched, as
+[`upstream-boundary.md`](upstream-boundary.md) requires.
+
+**Both flags are still off.** `sustained` and `clock_stop` stay false until a
+board run, and one thing has to be measured first: the model serves read data in
+the same cycle as the CK that asked for it, and silicon does not. See
+[`hyperram-bus-review.md`](hyperram-bus-review.md) §5 and the experiment section
+below it for what that changes on the read path and what it does not change on
+the write path.
 
 ## Transaction overhead, in CK
 
