@@ -51,6 +51,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth              import Module, Signal            # noqa: E402
@@ -199,25 +200,6 @@ class Initiator:
         return cycles, words
 
 
-class Checks:
-    """Assertions, counted, with the failure printed rather than raised.
-
-    Raising on the first failure hides the rest, and a bus stage that is wrong
-    is usually wrong for reads and writes and bursts at once.
-    """
-
-    def __init__(self, emit):
-        self.emit = emit
-        self.failures = []
-
-    def check(self, name, ok, detail=""):
-        self.emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
-        if not ok:
-            self.failures.append(name)
-            for line in str(detail).splitlines():
-                self.emit(f"        {line}")
-
-
 def run(dut, testbench):
     sim = Simulator(Fragment.get(dut, None))
     # 1 us is arbitrary and irrelevant: nothing here is a timing simulation,
@@ -298,9 +280,9 @@ def run_checks(checks, verbose):
         piped_beat == plain_beat + 1,
         f"{plain_beat} -> {piped_beat} cycles per beat")
 
-    checks.emit(f"        single transfer {plain['single'][0]} -> "
+    checks.note(f"single transfer {plain['single'][0]} -> "
                 f"{piped['single'][0]} cycles")
-    checks.emit(f"        burst, per beat {plain_beat} -> {piped_beat} cycles "
+    checks.note(f"burst, per beat {plain_beat} -> {piped_beat} cycles "
                 f"(all beats: {plain_cycles} -> {piped_cycles})")
 
     # --- the hazard the stage exists to avoid ---------------------------
@@ -380,13 +362,7 @@ def main():
     checks = Checks(emit)
     emit("wishbone_pipe.RegisteredResponse")
     run_checks(checks, args.verbose)
-    emit()
-
-    if checks.failures:
-        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-    else:
-        emit("all checks passed")
-    return 1 if checks.failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ Runs the simulations under `scripts/` and prints how many checks each made.
 
     ./scripts/soc_sims.py            # every simulation
     ./scripts/soc_sims.py plic clint # only the ones whose name contains these
+    ./scripts/soc_sims.py --tier fast # the sub-second set, for a pre-commit gate
     ./scripts/soc_sims.py --list     # what is available
 
 Exit status is 0 only if every simulation exited 0 and reported no FAIL, so this
@@ -39,6 +40,7 @@ it -- this reports only the tail of a failing one.
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -73,6 +75,24 @@ SIMS = [
     "bist_sim",
 ]
 
+# The fast tier: every simulation that costs about a second or less, which is
+# 1.1 s of work together and cheap enough to sit in `dev.py gate`. The six left
+# out are the ones with a real cost -- qspi_burst_sim alone is 7 s -- and they
+# stay in `ci`. See #175.
+FAST = [
+    "soc_bus_sim",
+    "uart16550_sim",
+    "soc_serial_sim",
+    "soc_plic_sim",
+    "soc_clint_sim",
+    "soc_hyperram_sim",
+    "soc_board_sim",
+    "sideband_advertise_sim",
+    "bist_sim",
+]
+
+TIERS = {"fast": FAST, "all": SIMS}
+
 RESET, BOLD, GREEN, RED, CYAN = (
     "\033[0m", "\033[1m", "\033[92m", "\033[91m", "\033[96m",
 )
@@ -102,18 +122,21 @@ def main():
     parser.add_argument("only", nargs="*", metavar="NAME",
                         help="substrings; run only simulations matching one")
     parser.add_argument("--list", action="store_true", help="list and exit")
-    parser.add_argument("--jobs", type=int, default=4,
+    parser.add_argument("--tier", choices=sorted(TIERS), default="all",
+                        help="`fast` is the sub-second set that gates a commit")
+    # Two cores back, so a full-tilt run leaves the machine usable.
+    parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() - 2),
                         help="how many to run at once (they are independent)")
     parser.add_argument("--python", default=sys.executable,
                         help="interpreter to run them with")
     args = parser.parse_args()
 
     if args.list:
-        for name in SIMS:
+        for name in TIERS[args.tier]:
             print(f"  {name}")
         return 0
 
-    chosen = [n for n in SIMS
+    chosen = [n for n in TIERS[args.tier]
               if not args.only or any(word in n for word in args.only)]
     if not chosen:
         print(f"nothing matches {args.only}", file=sys.stderr)

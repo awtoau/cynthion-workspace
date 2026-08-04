@@ -65,6 +65,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment
@@ -145,19 +146,6 @@ class Bus:
         await ctx.tick()
         if self.verbose:
             print(f"      write {addr:#04x} <- {value:#04x}")
-
-
-class Checks:
-    def __init__(self, emit):
-        self.emit = emit
-        self.failures = []
-
-    def check(self, name, ok, detail=""):
-        self.emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
-        if not ok:
-            self.failures.append(name)
-            for line in str(detail).splitlines():
-                self.emit(f"        {line}")
 
 
 class ModelSlave:
@@ -1375,13 +1363,7 @@ def main():
 
     emit("gateware_id.GatewareId -- what the bitstream says it is")
     run_gateware_id_checks(checks, args.verbose)
-    emit()
-
-    if checks.failures:
-        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-    else:
-        emit("all checks passed")
-    return 1 if checks.failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

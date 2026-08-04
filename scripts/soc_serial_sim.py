@@ -58,6 +58,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment
@@ -82,21 +83,6 @@ def run(dut, testbench):
     sim.add_clock(1e-6)
     sim.add_testbench(testbench)
     sim.run()
-
-
-class Checks:
-    """The same shape as soc_bus_sim.py and soc_plic_sim.py."""
-
-    def __init__(self, emit):
-        self.emit = emit
-        self.failures = []
-
-    def check(self, name, ok, detail=""):
-        self.emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
-        if not ok:
-            self.failures.append(name)
-            for line in str(detail).splitlines():
-                self.emit(f"        {line}")
 
 
 async def drive_frame(ctx, pin, bits, divisor=DIVISOR):
@@ -185,7 +171,7 @@ def run_tx_checks(checks, verbose):
 
     if verbose:
         for cycle, (o, oe) in enumerate(trace):
-            checks.emit(f"        tx cycle {cycle:4d}  o={o} oe={oe}")
+            checks.note(f"tx cycle {cycle:4d}  o={o} oe={oe}")
 
     driven = [i for i, (_, oe) in enumerate(trace) if oe]
     last_driven = driven[-1] if driven else -1
@@ -298,7 +284,7 @@ def run_rx_checks(checks, verbose):
     # The ordinary case first: if this fails nothing else here means anything.
     got, seen = receive(20, [frame_bits(b) for b in b"hi"])
     if verbose:
-        checks.emit(f"        clean line received {got!r}")
+        checks.note(f"clean line received {got!r}")
     checks.check(
         "a quiet line delivers the characters sent on it",
         got == list(b"hi"),
@@ -535,13 +521,7 @@ def main():
 
     emit("serial_line.SerialLine -- structure")
     run_structural_checks(checks, args.verbose)
-    emit()
-
-    if checks.failures:
-        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-    else:
-        emit("all checks passed")
-    return 1 if checks.failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

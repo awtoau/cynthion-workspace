@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from sideband_advertise import (APOLLO_TIMEOUT_MS, PATTERN,  # noqa: E402
@@ -56,21 +57,6 @@ BAUD = 230400
 # 1 ms here stands in for the 100 ms on the board: the same three-frames-per-timeout
 # relationship, at a length a simulation can run.
 INTERVAL_MS = 1
-
-
-class Checks:
-    def __init__(self):
-        self.passed = self.failed = 0
-
-    def check(self, what, ok, detail=""):
-        line = f"  {'PASS' if ok else 'FAIL'} {what}"
-        if not ok and detail:
-            line += f"\n       {detail}"
-        emit(line)
-        if ok:
-            self.passed += 1
-        else:
-            self.failed += 1
 
 
 def capture(dut, cycles, *, enable=1, hold_until=0, rx_low_until=0):
@@ -285,11 +271,9 @@ def run(checks):
 
 def main():
     emit("FPGA_ADV advertisement")
-    checks = Checks()
+    checks = Checks(emit)
     run(checks)
-    emit()
-    emit(f"{checks.passed} passed, {checks.failed} failed")
-    return 1 if checks.failed else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

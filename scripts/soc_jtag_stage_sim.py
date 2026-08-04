@@ -55,6 +55,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth       import ClockDomain, Module          # noqa: E402
@@ -262,21 +263,6 @@ class Run:
     def memory(self):
         """The HyperRAM contents the writes produced, as {word address: value}."""
         return dict(self.writes)
-
-
-class Checks:
-    """Assertions, counted, with the failure printed rather than raised."""
-
-    def __init__(self, emit):
-        self.emit = emit
-        self.failures = []
-
-    def check(self, name, ok, detail=""):
-        self.emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
-        if not ok:
-            self.failures.append(name)
-            for line in str(detail).splitlines():
-                self.emit(f"        {line}")
 
 
 async def drain(ctx, cycles=400):
@@ -514,7 +500,7 @@ def run_checks(checks, verbose):
         order.index(HDR_MAGIC) > order.index(HDR_LENGTH) > order.index(IMAGE_WORD),
         f"write order was {order[:4]}...{order[-4:]}")
 
-    checks.emit(f"        {len(image)} bytes staged in "
+    checks.note(f"{len(image)} bytes staged in "
                 f"{len(run.writes)} HyperRAM words")
 
 
@@ -529,13 +515,7 @@ def main():
     checks = Checks(emit)
     emit("jtag_stage.JTAGStager")
     run_checks(checks, args.verbose)
-    emit()
-
-    if checks.failures:
-        emit(f"{len(checks.failures)} FAILED: {', '.join(checks.failures)}")
-    else:
-        emit("all checks passed")
-    return 1 if checks.failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

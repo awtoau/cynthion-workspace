@@ -96,6 +96,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 CRATE = ROOT / "firmware" / "cynthion-soc"
@@ -472,14 +473,8 @@ def main():
                              "firmware; builds nothing and loads nothing")
     args = parser.parse_args()
 
-    failures = []
-
-    def check(name, ok, detail=""):
-        emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
-        if not ok:
-            failures.append(name)
-            for line in detail.splitlines():
-                emit(f"        {line}")
+    checks = Checks(emit)
+    check = checks.check
 
     if args.board:
         # Nothing is built and nothing is loaded: this drives whatever the
@@ -1720,11 +1715,7 @@ def main():
         emit("--- end ---")
         emit()
 
-    if failures:
-        emit(f"{len(failures)} FAILED: {', '.join(failures)}")
-    else:
-        emit("all checks passed")
-    return 1 if failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

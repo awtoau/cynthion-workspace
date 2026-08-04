@@ -102,7 +102,7 @@ from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMDQSInterface,
                                             HyperRAMInterface)
 
-from soc_board_sim import Checks
+from checks import Checks
 from vexii_bootram import (BootRAM, HYPERRAM_MAX_BURST_WORDS,
                            HyperRAMWishbone)
 

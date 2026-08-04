@@ -99,6 +99,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "qspi"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth import Elaboratable, Module, Mux, Signal
@@ -402,53 +403,33 @@ def new(**kwargs):
     return simulate(BurstSequencer(single_length=SINGLE_LENGTH), **kwargs)
 
 
-class Checks:
-    """PASS/FAIL reporting, one line per assertion."""
+def section_completes(checks, old_run, new_run):
+    emit("\n1. the run completes\n")
 
-    def __init__(self, emit):
-        self.emit = emit
-        self.passed = 0
-        self.failures = []
-
-    def __call__(self, ok, what, detail=""):
-        if ok:
-            self.passed += 1
-            self.emit(f"  PASS {what}")
-        else:
-            self.failures.append(what)
-            self.emit(f"  FAIL {what}")
-        if detail:
-            self.emit(f"       {detail}")
-        return bool(ok)
-
-
-def section_completes(check, old_run, new_run):
-    check.emit("\n1. the run completes\n")
-
-    check(old_run.wedged,
-          "the committed sequencer wedges",
-          f"{old_run.reads} of 4 reads done, reader.cycles "
+    checks.check("the committed sequencer wedges",
+          old_run.wedged,
+          measurement=f"{old_run.reads} of 4 reads done, reader.cycles "
           f"{old_run.reader_cycles} still climbing at the {CYCLE_BUDGET}-cycle "
           f"budget")
-    check(old_run.ready_low,
-          "wedged with i_stream.ready low",
-          "the controller is refusing the next read's first header beat")
-    check(old_run.o_pending,
-          "wedged with a byte undrained on o_stream",
-          "which is what is holding i_stream.ready low")
+    checks.check("wedged with i_stream.ready low",
+          old_run.ready_low,
+          measurement="the controller is refusing the next read's first header beat")
+    checks.check("wedged with a byte undrained on o_stream",
+          old_run.o_pending,
+          measurement="which is what is holding i_stream.ready low")
 
-    check(not new_run.wedged,
-          "the new sequencer completes")
-    check(new_run.reads == 4,
-          "all four reads complete",
-          f"reads={new_run.reads}")
-    check(not new_run.o_pending,
-          "nothing is left on o_stream",
-          f"{new_run.octets} bytes accepted for 4 reads of 4")
+    checks.check("the new sequencer completes",
+          not new_run.wedged)
+    checks.check("all four reads complete",
+          new_run.reads == 4,
+          measurement=f"reads={new_run.reads}")
+    checks.check("nothing is left on o_stream",
+          not new_run.o_pending,
+          measurement=f"{new_run.octets} bytes accepted for 4 reads of 4")
 
 
-def section_balance(check, old_run, new_run):
-    check.emit("\n2. requests balance returns\n")
+def section_balance(checks, old_run, new_run):
+    emit("\n2. requests balance returns\n")
 
     def data_beats(run):
         first = run.commands()[0] if run.commands() else []
@@ -458,47 +439,47 @@ def section_balance(check, old_run, new_run):
     old_first = data_beats(old_run)
     new_first = data_beats(new_run)
 
-    check(old_first > 4,
-          "the committed first read over-requests",
-          f"{old_first} data beats accepted for a 4-byte read; the surplus "
+    checks.check("the committed first read over-requests",
+          old_first > 4,
+          measurement=f"{old_first} data beats accepted for a 4-byte read; the surplus "
           f"never leaves the pipeline")
-    check(new_first == 4,
-          "the new first read requests exactly what it reads",
-          f"{new_first} data beats for 4 bytes")
-    check(new_run.octets == 16,
-          "every requested byte is consumed",
-          f"{new_run.octets} bytes off o_stream for 4 reads of 4")
+    checks.check("the new first read requests exactly what it reads",
+          new_first == 4,
+          measurement=f"{new_first} data beats for 4 bytes")
+    checks.check("every requested byte is consumed",
+          new_run.octets == 16,
+          measurement=f"{new_run.octets} bytes off o_stream for 4 reads of 4")
 
 
-def section_stability(check, old_run, new_run):
-    check.emit("\n3. length holds still across the strobe\n")
+def section_stability(checks, old_run, new_run):
+    emit("\n3. length holds still across the strobe\n")
 
     old_seen = sorted(set(old_run.lengths))
     new_seen = sorted(set(new_run.lengths))
 
-    check(len(old_seen) > 1,
-          "the committed length moves after start",
-          f"reader.length took {old_seen} across one read -- {SINGLE_LENGTH} "
+    checks.check("the committed length moves after start",
+          len(old_seen) > 1,
+          measurement=f"reader.length took {old_seen} across one read -- {SINGLE_LENGTH} "
           f"is what gets latched into bytes_left, 4 is what the exit condition "
           f"compares against")
-    check(new_seen == [4],
-          "the new length is constant for the whole read",
-          f"reader.length took {new_seen}")
+    checks.check("the new length is constant for the whole read",
+          new_seen == [4],
+          measurement=f"reader.length took {new_seen}")
 
 
-def section_commands(check, run, *, count, size, opcode, stride):
-    check.emit(f"\n4. the command stream, {count} reads of {size} bytes\n")
+def section_commands(checks, run, *, count, size, opcode, stride):
+    emit(f"\n4. the command stream, {count} reads of {size} bytes\n")
 
     reads = run.commands()
-    if not check(len(reads) == count,
-                 "one deselected transaction per read",
-                 f"{len(reads)} transactions"):
+    if not checks.check("one deselected transaction per read",
+                        len(reads) == count,
+                        measurement=f"{len(reads)} transactions"):
         return
 
     opcodes = [read[0][1] for read in reads if read]
-    check(all(value == opcode for value in opcodes),
-          f"every read opens with {opcode:#04x}",
-          f"opcodes {[hex(v) for v in opcodes]}")
+    checks.check(f"every read opens with {opcode:#04x}",
+          all(value == opcode for value in opcodes),
+          measurement=f"opcodes {[hex(v) for v in opcodes]}")
 
     # Address bytes are most-significant first, immediately after the opcode.
     addresses = []
@@ -506,27 +487,27 @@ def section_commands(check, run, *, count, size, opcode, stride):
         hi, md, lo = read[1][1], read[2][1], read[3][1]
         addresses.append((hi << 16) | (md << 8) | lo)
     expected = [index * stride for index in range(count)]
-    check(addresses == expected,
-          "addresses stride by the prime, most-significant byte first",
+    checks.check("addresses stride by the prime, most-significant byte first",
+          addresses == expected,
           f"{addresses} against {expected}")
 
-    check(len(set(addresses)) == count,
-          "no read repeats another's address",
-          "a burst at one address would measure the sequential path")
+    checks.check("no read repeats another's address",
+          len(set(addresses)) == count,
+          measurement="a burst at one address would measure the sequential path")
 
     data = [sum(1 for oper, _ in read if oper is Operation.GetX4)
             for read in reads]
-    check(all(value == size for value in data),
-          f"every read asks for exactly {size} bytes",
-          f"data beats {data}")
+    checks.check(f"every read asks for exactly {size} bytes",
+          all(value == size for value in data),
+          measurement=f"data beats {data}")
 
-    check(run.octets == count * size,
-          "and receives them",
-          f"{run.octets} bytes for {count} * {size}")
+    checks.check("and receives them",
+          run.octets == count * size,
+          measurement=f"{run.octets} bytes for {count} * {size}")
 
 
-def section_trigger(check):
-    check.emit("\n5. a trigger arriving mid-run\n")
+def section_trigger(checks):
+    emit("\n5. a trigger arriving mid-run\n")
 
     old_run = old(burst_len=4, burst_count=2, trigger_during_run=True)
     new_run = new(burst_len=4, burst_count=2, trigger_during_run=True)
@@ -539,64 +520,64 @@ def section_trigger(check):
     old_single = old(burst_len=0, burst_count=1, trigger_during_run=True)
     new_single = new(burst_len=0, burst_count=1, trigger_during_run=True)
 
-    check(old_single.reads == 1,
-          "the committed sequencer drops a trigger raised while busy",
-          f"{old_single.reads} read for two triggers; the host then polls, sees "
+    checks.check("the committed sequencer drops a trigger raised while busy",
+          old_single.reads == 1,
+          measurement=f"{old_single.reads} read for two triggers; the host then polls, sees "
           f"the previous run's done, and reads a stale cycle count")
-    check(new_single.reads == 2,
-          "the new sequencer latches it and runs it after",
-          f"{new_single.reads} reads for two triggers")
+    checks.check("the new sequencer latches it and runs it after",
+          new_single.reads == 2,
+          measurement=f"{new_single.reads} reads for two triggers")
 
-    check(old_run.wedged and not new_run.wedged,
-          "and neither changes what section 1 showed")
+    checks.check("and neither changes what section 1 showed",
+          old_run.wedged and not new_run.wedged)
 
 
-def section_measurement(check):
-    check.emit("\n6. the cycle count is a measurement\n")
+def section_measurement(checks):
+    emit("\n6. the cycle count is a measurement\n")
 
     small = new(burst_len=4, burst_count=4)
     large = new(burst_len=64, burst_count=4)
     single = new(burst_len=0, burst_count=1)
 
-    check(small.cycles > 0 and large.cycles > 0,
-          "a run reports a nonzero cycle count",
-          f"{small.cycles} for 4x4, {large.cycles} for 4x64")
-    check(large.cycles > small.cycles,
-          "and it grows with the bytes asked for",
-          f"{large.cycles} against {small.cycles} for 16x the payload")
+    checks.check("a run reports a nonzero cycle count",
+          small.cycles > 0 and large.cycles > 0,
+          measurement=f"{small.cycles} for 4x4, {large.cycles} for 4x64")
+    checks.check("and it grows with the bytes asked for",
+          large.cycles > small.cycles,
+          measurement=f"{large.cycles} against {small.cycles} for 16x the payload")
 
     # 4x(64-4) = 240 extra bytes, each 2*(divisor+1) sync cycles on four lanes.
     expected = 4 * (64 - 4) * 2 * (DIVISOR + 1)
     measured = large.cycles - small.cycles
-    check(abs(measured - expected) <= 8,
-          "by the number of clocks those bytes cost",
-          f"{measured} cycles against {expected} predicted from "
+    checks.check("by the number of clocks those bytes cost",
+          abs(measured - expected) <= 8,
+          measurement=f"{measured} cycles against {expected} predicted from "
           f"2*(divisor+1) per byte on four lanes")
 
-    check(small.cycles < single.cycles,
-          "a burst is not the streaming read wearing a different length",
-          f"{small.cycles} for 4x4 against {single.cycles} for one "
+    checks.check("a burst is not the streaming read wearing a different length",
+          small.cycles < single.cycles,
+          measurement=f"{small.cycles} for 4x4 against {single.cycles} for one "
           f"{SINGLE_LENGTH}-byte read")
 
     per_read = (small.cycles - small.reads) / small.reads
-    check(20 <= per_read <= 200,
-          "per-read cost is in the range the header accounts for",
-          f"{per_read:.0f} sync cycles per read, arming excluded; a 5-byte "
+    checks.check("per-read cost is in the range the header accounts for",
+          20 <= per_read <= 200,
+          measurement=f"{per_read:.0f} sync cycles per read, arming excluded; a 5-byte "
           f"single-lane header alone is 8*(divisor+1)*5 = "
           f"{8 * (DIVISOR + 1) * 5}")
 
 
-def section_latency(check):
-    check.emit("\n7. why a first simulation missed it\n")
+def section_latency(checks):
+    emit("\n7. why a first simulation missed it\n")
 
     shallow = old(burst_len=4, burst_count=4, latency_platform=False)
     deep    = old(burst_len=4, burst_count=4, latency_platform=True)
 
-    check(not shallow.wedged and shallow.reads == 4,
-          "at the simulator's default buffer latency of 2, the old one passes",
+    checks.check("at the simulator's default buffer latency of 2, the old one passes",
+          not shallow.wedged and shallow.reads == 4,
           f"{shallow.reads} of 4 reads, no wedge -- and the bug is still there")
-    check(deep.wedged,
-          "at the ECP5's latency of 4, the same design wedges",
+    checks.check("at the ECP5's latency of 4, the same design wedges",
+          deep.wedged,
           f"{deep.reads} of 4 reads; IOStreamer reads the number off the "
           f"platform, and a simulation without one is a different machine")
 
@@ -609,32 +590,25 @@ def main():
                         help="print every stream beat")
     args = parser.parse_args()
 
-    check = Checks(emit)
+    checks = Checks(emit)
     emit("\nQSPI burst sequencer\n")
 
     old_run = old(burst_len=4, burst_count=4, verbose=args.verbose)
     new_run = new(burst_len=4, burst_count=4, verbose=args.verbose)
 
-    section_completes(check, old_run, new_run)
-    section_balance(check, old_run, new_run)
-    section_stability(check, old_run, new_run)
-    section_commands(check, new_run, count=4, size=4,
+    section_completes(checks, old_run, new_run)
+    section_balance(checks, old_run, new_run)
+    section_stability(checks, old_run, new_run)
+    section_commands(checks, new_run, count=4, size=4,
                      opcode=OPCODE_QUAD_READ, stride=BURST_STRIDE)
-    section_commands(check, new(burst_len=16, burst_count=3, quad_io=True),
+    section_commands(checks, new(burst_len=16, burst_count=3, quad_io=True),
                      count=3, size=16, opcode=OPCODE_QUAD_IO_READ,
                      stride=BURST_STRIDE)
-    section_trigger(check)
-    section_measurement(check)
-    section_latency(check)
+    section_trigger(checks)
+    section_measurement(checks)
+    section_latency(checks)
 
-    emit()
-    if check.failures:
-        emit(f"{len(check.failures)} FAILED: {', '.join(check.failures)}")
-    else:
-        emit(f"{check.passed} checks passed")
-    emit()
-
-    return 1 if check.failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

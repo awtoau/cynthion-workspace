@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from sideband_link import (CMD_PING, CMD_STATUS, CMD_WRITE_BASE,  # noqa: E402
@@ -55,21 +56,6 @@ TURNAROUND_US = 40
 
 # The opcodes this link does NOT implement, and the reason the check exists.
 REMOVED = {0x2B: "POWER", 0x2C: "DEVICES", 0x40: "LED", 0x03: "LED_RELEASE"}
-
-
-class Checks:
-    def __init__(self):
-        self.passed = self.failed = 0
-
-    def check(self, what, ok, detail=""):
-        line = f"  {'PASS' if ok else 'FAIL'} {what}"
-        if not ok and detail:
-            line += f"\n       {detail}"
-        emit(line)
-        if ok:
-            self.passed += 1
-        else:
-            self.failed += 1
 
 
 def crc8(data):
@@ -364,11 +350,9 @@ def two_commands(dut_factory, divisor, quiet):
 
 def main():
     emit("FPGA_ADV shipping link")
-    checks = Checks()
+    checks = Checks(emit)
     run(checks)
-    emit()
-    emit(f"{checks.passed} passed, {checks.failed} failed")
-    return 1 if checks.failed else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":

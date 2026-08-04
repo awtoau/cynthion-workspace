@@ -98,6 +98,11 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
     "sim": ("run the gateware simulations",
             [PY, script("soc_sims.py")], True),
 
+    # The nine sub-second simulations, so `gate` gets gateware coverage without
+    # waiting on the six that cost real time. `ci` still runs `sim`.
+    "sim-fast": ("run the sub-second gateware simulations",
+                 [PY, script("soc_sims.py"), "--tier", "fast"], True),
+
     # A working link checker that nothing invoked. `./dev.py audit` reported it
     # as an orphan alongside genuinely dead probes, which is the argument for
     # wiring it in rather than archiving it: the tool was fine, the reachability
@@ -117,7 +122,7 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
 # so including it makes the gate red on every tree state, which is the failure
 # mode this file has already fixed twice today. Reformatting is its own commit
 # and its own review; `./dev.py fmt-check` runs on demand until then. See #165.
-GATE = ["test", "lint", "build"]
+GATE = ["test", "lint", "sim-fast", "build"]
 
 # ci = run-all-collect-all -> one GO/NO-GO. Every leg runs even after a failure:
 # a gateware build is about a minute, and finding the second problem on the next

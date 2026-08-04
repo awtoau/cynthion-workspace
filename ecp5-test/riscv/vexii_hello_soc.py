@@ -1311,7 +1311,14 @@ class HelloSoC(Elaboratable):
         # design that raises `sync` and leaves this at its default gets a DEAD link rather
         # than a slow one -- a UART tolerates about +/-2% and the error scales with the
         # clock. Passing SYNC_MHZ keeps the two in step by construction.
-        m.submodules.sideband = sideband = SidebandDebug(clk_freq_hz=SYNC_MHZ * 1e6)
+        # The ACTUAL solved frequency, not `SYNC_MHZ`. The PLL does not always
+        # land on the request -- `GatewareId` above already reports
+        # `car.actual_sync_mhz` for exactly that reason -- and the baud divisor
+        # is computed from this at elaboration with nothing checking it after.
+        # Requesting 61 MHz builds 60.0, which is 227273 baud against 230769:
+        # -1.5%, inside a UART's ~2% tolerance with the margin gone, silently.
+        m.submodules.sideband = sideband = SidebandDebug(
+            clk_freq_hz=car.actual_sync_mhz * 1e6)
 
         # Report whether the CPU's buses are moving at all. If USB is silent
         # and this shows zero activity, the fault is the CPU rather than

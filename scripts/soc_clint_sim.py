@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from checks import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment            # noqa: E402
@@ -120,25 +121,6 @@ class Bus:
         """Four byte writes, low first. The register commits on the LAST one."""
         for offset in range(4):
             await self.write(addr + offset, (value >> (8 * offset)) & 0xff)
-
-
-class Checks:
-    """Assertions, counted, with the failure printed rather than raised.
-
-    Raising on the first failure hides every later one, and a timer that is wrong
-    is usually wrong in more than one way at once.
-    """
-
-    def __init__(self, emit):
-        self.emit = emit
-        self.failures = []
-
-    def check(self, name, ok, detail=""):
-        self.emit(f"  {'PASS' if ok else 'FAIL'}  {name}")
-        if not ok:
-            self.failures.append(name)
-            for line in str(detail).splitlines():
-                self.emit(f"        {line}")
 
 
 class Counter:
@@ -524,14 +506,7 @@ def main():
     emit()
     emit("the tick: add the period, never reload from now")
     run_drift_checks(checks, args.verbose)
-    emit()
-
-    if checks.failures:
-        emit(f"{len(checks.failures)} FAILED: "
-             f"{', '.join(checks.failures)}")
-    else:
-        emit("all checks passed")
-    return 1 if checks.failures else 0
+    return checks.summary()
 
 
 if __name__ == "__main__":
