@@ -187,6 +187,22 @@ def build_checks() -> List[Check]:
         # `continue-on-error` failure the hosted workflows had, carried into the
         # local runner. See docs/github_actions.md.
         Check(
+            name="amaranthsoc",
+            description="amaranth_soc is the real package, not luna_soc's vendored copy",
+            steps=[
+                # The dependency nothing declared. luna_soc appends its own
+                # vendored amaranth_soc/amaranth_stdio to sys.path when the real
+                # ones are missing -- no error, no version string, different
+                # gateware out of a tree last re-synced 2025-01-07. Declaring
+                # them in machine_setup.py fixed it; this is what notices if the
+                # declaration is ever dropped, since a declaration is invisible
+                # and a red check is not. See #190.
+                #
+                # Imports only; no board, no toolchain, well under a second.
+                Step([PYTHON, "scripts/amaranth_soc_check.py"], ROOT),
+            ],
+        ),
+        Check(
             name="socmap",
             description="the committed SVD still matches the SoC's memory map",
             steps=[

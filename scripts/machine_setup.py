@@ -41,6 +41,7 @@ a different version. `./dev.py doctor` reports whether it is on PATH.
 """
 
 import argparse
+import shlex
 import shutil
 import subprocess
 import sys
@@ -84,8 +85,27 @@ EDITABLE = [
     "repos/cynthion/cynthion/python",
 ]
 
+# Declared because NOTHING declared them and a clean install still worked -- the
+# worst shape a dependency can have. `luna_soc/__init__.py` appends its own
+# vendored copies to `sys.path` when the real packages are missing, with no error
+# and no version string, so the build does not fail, it produces different
+# gateware from a tree last re-synced 2025-01-07. Our own designs import both
+# names directly (`ecp5-test/riscv/serial_line.py`, every `csr`/`wishbone` user).
+# See #190; `scripts/amaranth_soc_check.py` is what stops it regressing.
+#
+# Git, not the index: both PyPI names are placeholders at version `0` with no
+# modules, so `pip install amaranth-soc` installs something that cannot be
+# imported. Pinned to the commits already installed here, so declaring them
+# changes what is reproducible and not what runs.
+AMARANTH_GIT = [
+    "amaranth-soc @ git+https://github.com/amaranth-lang/amaranth-soc.git"
+    "@3e3d8b7241c1c7e80e0cd12937d288d0ad4a6cba",
+    "amaranth-stdio @ git+https://github.com/amaranth-lang/amaranth-stdio.git"
+    "@d296ba4616d0bf71423e3d1e5de7d00f8a8a2397",
+]
+
 # Everything else, from the index.
-PACKAGES_PIP = ["pytest", "pyserial", "prompt_toolkit"]
+PACKAGES_PIP = ["pytest", "pyserial", "prompt_toolkit", *AMARANTH_GIT]
 
 
 class Runner:
@@ -99,10 +119,14 @@ class Runner:
         emit(text)
 
     def run(self, argv, what):
+        # shlex.join, not " ".join: a PEP 508 requirement contains spaces, so an
+        # unquoted `amaranth-soc @ git+...` reads as three arguments and the
+        # dry-run stops being a copyable command.
+        printable = shlex.join(argv)
         if self.dry_run:
-            self.say(f"  would run: {' '.join(argv)}")
+            self.say(f"  would run: {printable}")
             return True
-        self.say(f"  {' '.join(argv)}")
+        self.say(f"  {printable}")
         rc = spawn(argv, cwd=ROOT)
         if rc != 0:
             self.say(f"  FAILED ({what}), rc={rc}")

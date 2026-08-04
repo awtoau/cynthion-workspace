@@ -36,7 +36,6 @@ library pulled in -- not to police normal drift.
 """
 
 import argparse
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +43,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import armtools  # noqa: E402
 from devlog import emit  # noqa: E402
 
 APOLLO = ROOT / "repos" / "apollo"
@@ -65,16 +65,8 @@ ROM_CEILING = 0.95
 RAM_CEILING = 0.85
 
 
-def tool(name):
-    for prefix in ("arm-none-eabi-", ""):
-        found = shutil.which(prefix + name)
-        if found:
-            return found
-    return None
-
-
 def sections(elf):
-    output = subprocess.run([tool("size"), "-A", str(elf)],
+    output = subprocess.run([armtools.tool("size"), "-A", str(elf)],
                             capture_output=True, text=True).stdout
     found = {}
     for line in output.splitlines():
@@ -97,12 +89,16 @@ def main():
                              "reservation")
     args = parser.parse_args()
 
-    if not tool("size"):
-        print("no arm-none-eabi-size on PATH -- skipping")
+    if not armtools.tool("size"):
+        print("no arm-none-eabi-size anywhere -- skipping")
         return 0
     if not args.elf.exists():
         print(f"no ELF at {args.elf} -- build first")
         return 1
+
+    # Which `size` produced these numbers, and whether PATH would have lied.
+    armtools.report(emit, "size")
+    emit()
 
     found = sections(args.elf)
     text = found.get(".text", 0)
