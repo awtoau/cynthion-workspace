@@ -353,7 +353,17 @@ mod probe {
     const WANT: usize = 0x10;
     const ARMING: usize = 0x14;
     const CYC: usize = 0x18;
-    const CLEAR: usize = 0x1c;
+    /// 3 bits: dll_locked, dll_ready, burstdet-since-clear. DQS builds only;
+    /// reads 0 on the non-DQS one, where none of the three exist.
+    const STATUS: usize = 0x1c;
+    const BURSTS: usize = 0x1e;
+    // MOVED when STATUS and BURSTS were added above it. It is a byte offset into
+    // a generated map, and the generator is the authority -- see
+    // `firmware/cynthion-soc-pac/src/hyperram_probe.rs`, which records +0x20.
+    const CLEAR: usize = 0x20;
+    /// Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase.
+    /// Writable so sixteen combinations need one bitstream, not sixteen builds.
+    const SEL: usize = 0x21;
 
     /// Two byte reads, low first.
     ///
@@ -370,6 +380,36 @@ mod probe {
             let reg = (BASE + offset) as *const u8;
             (core::ptr::read_volatile(reg) as u32)
                 | (core::ptr::read_volatile(reg.add(1)) as u32) << 8
+        }
+    }
+
+    /// What the DQS read path says about itself.
+    ///
+    /// Returns `(dll_locked, dll_ready, burstdet_seen, bursts)`. The three flags
+    /// separate faults that otherwise look identical from outside -- every one
+    /// of them presents as "the data read back wrong":
+    ///
+    ///   * `dll_locked` clear: DDRDLLA never locked, so the `fast` domain or
+    ///     ECLK is wrong and every delay code in the read path is meaningless.
+    ///   * locked but not `dll_ready`: the settle sequence is stuck.
+    ///   * ready, but `bursts` zero: DQSBUFM never saw a strobe inside its
+    ///     window -- READCLKSEL is on the wrong tap. This is #148.
+    ///   * bursts counted but data wrong: the strobe is fine and the fault is
+    ///     byte or half order, or the write mask.
+    pub fn dqs_status() -> (bool, bool, bool, u32) {
+        // SAFETY: one byte inside the generated HYPERRAM_PROBE window.
+        let status = unsafe {
+            core::ptr::read_volatile((BASE + STATUS) as *const u8)
+        };
+        (status & 1 != 0, status & 2 != 0, status & 4 != 0, read16(BURSTS))
+    }
+
+    /// Choose which tap captures returning read data.
+    pub fn set_readclksel(tap: u8) {
+        // SAFETY: one byte inside the generated HYPERRAM_PROBE window; a
+        // write-only field.
+        unsafe {
+            core::ptr::write_volatile((BASE + SEL) as *mut u8, tap & 0xf);
         }
     }
 
@@ -976,4 +1016,169 @@ pub fn command(uart: &mut Uart, rest: &[u8]) {
             let _ = writeln!(uart, "usage: bench [bram|flash|hyperram]");
         }
     }
+}
+
+/// Do the memory window and the staging port agree about what is in HyperRAM?
+///
+/// Every other HyperRAM check stays inside ONE port: `hrtest` and `hyperram read`
+/// both go through the staging CSR, `bench hyperram` only through the Wishbone
+/// window. A disagreement between the two is invisible to all of them -- each is
+/// self-consistent and each reports success while the other reads the same bytes
+/// differently.
+///
+/// ## Two phases, because one cannot say which side is wrong
+///
+/// The first version wrote through the staging port and read through both. When
+/// both reads returned the same wrong value that established only that the two
+/// READ paths agree -- the fault could have been the write, either read, or a
+/// shared swap that cancels. So each phase writes through ONE port and reads
+/// through BOTH:
+///
+///   A. window write  -> window read, staging read
+///   B. staging write -> staging read, window read
+///
+/// The window write carries a full 32-bit beat and needs no mask; the staging
+/// write is 16 bits and does. If A round-trips and B does not, the fault is the
+/// write mask alone, and nothing else is implicated.
+///
+/// ## The patterns are asymmetric and different from each other
+///
+/// A palindrome passes under any permutation, and one shared pattern cannot tell
+/// "phase B never wrote" from "phase B wrote correctly" when A already put the
+/// same bytes there. Every byte of both differs.
+///
+/// ## Why it walks 4 KiB between writing and reading
+///
+/// The window is cached -- `main=1` -- so a read can be answered from the cache
+/// and a *write* can still be sitting in it. The D-cache is 64 sets x 1 way x
+/// 64 B = 4 KiB, so touching 4 KiB elsewhere evicts every line: it forces the
+/// window write out to the part and forces the following read to come back from
+/// it. There is no cache-maintenance instruction available here to do it
+/// directly.
+pub struct CrossResult {
+    pub window_written: (u32, u32, u32),
+    pub staged_written: (u32, u32, u32),
+}
+
+impl CrossResult {
+    pub fn ok(&self) -> bool {
+        let (w, a, b) = self.window_written;
+        let (x, c, d) = self.staged_written;
+        w == a && w == b && x == c && x == d
+    }
+}
+
+pub fn hyper_cross_check() -> CrossResult {
+    // Well above the staged image area, and far enough apart that the eviction
+    // walk cannot alias one phase's line onto the other's.
+    const WORD_A: u32 = 0x0020_0000;
+    const WORD_B: u32 = 0x0020_1000;
+    const PATTERN_A: u32 = 0x5a3c_8765;
+    const PATTERN_B: u32 = 0xa5c3_1234;
+
+    // --- A: written through the window, which needs no mask ------------------
+    // SAFETY: `WORD_A * 2` is a 4-byte-aligned byte offset inside the 8 MiB
+    // window the SoC decodes at HYPERRAM.
+    unsafe {
+        core::ptr::write_volatile(
+            (cynthion_soc_pac::base::HYPERRAM + (WORD_A as usize) * 2) as *mut u32,
+            PATTERN_A);
+    }
+    evict();
+    let a_window = read_window(WORD_A);
+    let a_staged = crate::hyperram::read_u32(WORD_A);
+
+    // --- B: written through the staging port, 16 bits at a time --------------
+    crate::hyperram::seek_word(WORD_B);
+    crate::hyperram::write_word_pub(PATTERN_B as u16);
+    crate::hyperram::write_word_pub((PATTERN_B >> 16) as u16);
+    let b_staged = crate::hyperram::read_u32(WORD_B);
+    evict();
+    let b_window = read_window(WORD_B);
+
+    CrossResult {
+        window_written: (PATTERN_A, a_window, a_staged),
+        staged_written: (PATTERN_B, b_window, b_staged),
+    }
+}
+
+/// Write a whole cache line through the window, then check every word of it.
+///
+/// A single `write_volatile` of one `u32` is the WORST case for a controller
+/// that truncates its data phase: the only beat is also the final beat, so a
+/// fault that damages just the last beat damages everything and looks total.
+/// Sixteen consecutive words are one 64-byte line, which the D-cache writes back
+/// as ONE burst where only the last beat carries `final_word`.
+///
+/// That separates the two remaining explanations for "half of each beat is
+/// missing":
+///
+///   * 15 of 16 correct, the last wrong -> the data phase is being cut short at
+///     the end of the transaction, which is upstream's unimplemented `RECOVERY`.
+///   * all 16 wrong the same way -> every beat loses the same half, and the
+///     fault is the byte lane mapping or the write mask, not the ending.
+///
+/// Returns `(good, failure_bitmap, expected, got)` for the first bad word.
+///
+/// The bitmap is the point: "8/16 wrong" does not say WHICH eight, and
+/// alternating beats, the back half, and a random scatter are three different
+/// faults that the count alone cannot separate.
+pub fn hyper_line_write_check() -> (u32, u32, u32, u32) {
+    const WORD: u32 = 0x0020_2000;
+    const WORDS: usize = 16;
+
+    let base = cynthion_soc_pac::base::HYPERRAM + (WORD as usize) * 2;
+    // Byte-unique per word so a permutation is readable, and distinct per index
+    // so a stale neighbour cannot masquerade as a hit.
+    let value = |i: usize| 0x1000_0000u32 + (i as u32) * 0x0101_0101 + 0x0f0e_0d0c;
+
+    for i in 0..WORDS {
+        // SAFETY: 4-byte aligned, inside the decoded 8 MiB window.
+        unsafe { core::ptr::write_volatile((base + i * 4) as *mut u32, value(i)) };
+    }
+    evict();
+
+    let mut good = 0;
+    let mut bitmap = 0u32;
+    let (mut want, mut got) = (0u32, 0u32);
+    for i in 0..WORDS {
+        // SAFETY: as above.
+        let read = unsafe { core::ptr::read_volatile((base + i * 4) as *const u32) };
+        if read == value(i) {
+            good += 1;
+        } else {
+            bitmap |= 1 << i;
+            if want == 0 {
+                want = value(i);
+                got = read;
+            }
+        }
+    }
+    (good, bitmap, want, got)
+}
+
+/// One 32-bit read through the cached memory window.
+fn read_window(word_addr: u32) -> u32 {
+    // SAFETY: as above; 4-byte aligned, inside the decoded window.
+    unsafe {
+        core::ptr::read_volatile(
+            (cynthion_soc_pac::base::HYPERRAM + (word_addr as usize) * 2) as *const u32)
+    }
+}
+
+/// Touch a whole D-cache worth of other HyperRAM so no line of interest survives.
+fn evict() {
+    let _ = hyper_window_read(0x3ff, 1024, false);
+}
+
+/// The DQS read path's self-report, for the shell. `probe` is private because
+/// nothing outside this file should be reading raw counter offsets; this is the
+/// one fact the shell needs from it.
+pub fn dqs_status() -> (bool, bool, bool, u32) {
+    probe::dqs_status()
+}
+
+/// Set the DQS read clock tap. See `hr sel` and `hr sweep`.
+pub fn set_readclksel(tap: u8) {
+    probe::set_readclksel(tap);
 }

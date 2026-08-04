@@ -430,7 +430,7 @@ const HELP: &[(&str, &str)] = &[
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
     ("help, ?", "this list"),
-    ("hrtest", "hyperram write/read walk"),
+    ("hr <cmd>", "hyperram: see `hr`"),
     ("hyperram read <hex>", "one word over the staging port"),
     ("i2c [bus]", "scan a bus behind the mux"),
     ("info", "image, memory, boot, cpu, gateware"),
@@ -450,6 +450,132 @@ const HELP: &[(&str, &str)] = &[
     ("typec [port]", "the FUSB302B controllers"),
     ("vbus <cmd>", "the VBUS distribution switches"),
 ];
+
+/// Everything HyperRAM-specific, under one verb.
+///
+///     hr status   the DQS read path's self-report
+///     hr read <hex>  one word over the staging port
+///     hr sel <n>  bits 2:0 READCLKSEL, bit 3 read-window phase
+///     hr sweep    try every READCLKSEL and say which ones read correctly
+///     hr test     round-trip one word through the staging port
+///     hr cross    do the window and the staging port agree?
+///     hr bench    the same walk as `bench hyperram`
+///     hr id       HyperBus has no identify
+fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
+    match rest {
+        b"status" => {
+            let (locked, ready, seen, bursts) = bench::dqs_status();
+            let _ = writeln!(
+                uart,
+                "dqs: dll {} {}, burstdet {} ({} bursts)",
+                if locked { "locked" } else { "UNLOCKED" },
+                if ready { "ready" } else { "NOT-READY" },
+                if seen { "seen" } else { "NEVER" },
+                bursts
+            );
+        }
+        b"test" => {
+            // Round-trip one word so the HyperRAM path can be checked without
+            // staging a whole image.
+            hyperram::write_header(0, 0);
+            match hyperram::staged() {
+                Ok(_) => {
+                    let _ = writeln!(
+                        uart,
+                        "hyperram round-trip BAD: zero length should be rejected"
+                    );
+                }
+                // `Length` specifically: the magic was written and read back,
+                // which is the round trip this checks. `NoMagic` or `Silent`
+                // would mean the word did not survive.
+                Err(hyperram::Reject::Length) => {
+                    let _ = writeln!(uart, "hyperram write+read ok");
+                }
+                Err(_) => {
+                    let _ = writeln!(
+                        uart,
+                        "hyperram round-trip BAD: the magic did not read back"
+                    );
+                }
+            }
+            hyperram::invalidate();
+        }
+        b"cross" => {
+            let result = bench::hyper_cross_check();
+            // Printed either way. On a pass it is the evidence that a DQS read
+            // used its strobe rather than a latency count that landed right by
+            // luck; on a failure it says which layer to look at.
+            let (locked, ready, seen, bursts) = bench::dqs_status();
+            let _ = writeln!(
+                uart,
+                "dqs: dll {} {}, burstdet {} ({} bursts)",
+                if locked { "locked" } else { "UNLOCKED" },
+                if ready { "ready" } else { "NOT-READY" },
+                if seen { "seen" } else { "NEVER" },
+                bursts
+            );
+            let (wrote_w, win_w, stg_w) = result.window_written;
+            let (wrote_s, win_s, stg_s) = result.staged_written;
+            let _ = writeln!(
+                uart,
+                "  window wrote {:08x}: window {:08x} staging {:08x}",
+                wrote_w, win_w, stg_w
+            );
+            let _ = writeln!(
+                uart,
+                "  staging wrote {:08x}: window {:08x} staging {:08x}",
+                wrote_s, win_s, stg_s
+            );
+            let (good, bitmap, want, got) = bench::hyper_line_write_check();
+            let _ = writeln!(
+                uart,
+                "  line write: {}/16 correct, bad {:016b} want {:08x} got {:08x}",
+                good, bitmap, want, got
+            );
+            if result.ok() {
+                let _ = writeln!(uart, "hyperram ports agree");
+            } else {
+                let _ = writeln!(uart, "hyperram ports DISAGREE");
+            }
+        }
+        b"bench" => bench::command(uart, b"hyperram"),
+        b"id" => memory::command(uart, memory::Region::Hyperram, b"id"),
+        _ if rest.starts_with(b"read") => {
+            memory::command(uart, memory::Region::Hyperram, rest)
+        }
+        _ if rest.starts_with(b"sel") => {
+            match parse_hex(trim(&rest[3..])) {
+                Some(n) if n < 16 => {
+                    bench::set_readclksel(n as u8);
+                    let _ = writeln!(uart, "readclksel {}", n);
+                }
+                _ => {
+                    let _ = writeln!(uart, "usage: hr sel <0-f>  (bits 2:0 tap, bit 3 phase)");
+                }
+            }
+        }
+        b"sweep" => {
+            // One bitstream, eight settings. The tap that captures returning
+            // data is a property of the board and CK, and the built-in default
+            // is upstream's untested guess.
+            for setting in 0..16u8 {
+                bench::set_readclksel(setting);
+                let (good, bitmap, want, got) = bench::hyper_line_write_check();
+                let (_, _, seen, bursts) = bench::dqs_status();
+                let _ = writeln!(
+                    uart,
+                    "  tap {} phase {}: {:2}/16, bad {:016b}, burstdet {} ({}), want {:08x} got {:08x}",
+                    setting & 7, setting >> 3, good, bitmap,
+                    if seen { "y" } else { "n" }, bursts, want, got
+                );
+            }
+        }
+        _ => {
+            let _ = writeln!(
+                uart, "usage: hr status|read <hex>|sel <n>|sweep|test|cross|bench|id");
+        }
+    }
+}
 
 /// Width of the first column. One more than the longest entry above, so every
 /// description starts in the same place and none of them touch the name.
@@ -843,29 +969,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                 let _ = writeln!(uart, "usage: load <hex byte count>");
             }
         },
-        b"hrtest" => {
-            // Round-trip one word so the HyperRAM path can be checked without staging a
-            // whole image.
-            hyperram::write_header(0, 0);
-            match hyperram::staged() {
-                Ok(_) => {
-                    let _ = writeln!(
-                        uart,
-                        "hyperram round-trip BAD: zero length should be rejected"
-                    );
-                }
-                // `Length` specifically: the magic was written and read back, which is
-                // the round trip this checks. `NoMagic` or `Silent` would mean the word
-                // did not survive.
-                Err(hyperram::Reject::Length) => {
-                    let _ = writeln!(uart, "hyperram write+read ok");
-                }
-                Err(_) => {
-                    let _ = writeln!(uart, "hyperram round-trip BAD: the magic did not read back");
-                }
-            }
-            hyperram::invalidate();
-        }
+        b"hr" => hyperram_command(uart, trim(rest)),
         b"reset" => {
             let _ = writeln!(uart, "restarting");
             reboot();

@@ -11,7 +11,11 @@ pub struct RegisterBlock {
     want: Want,
     arming: Arming,
     cyc: Cyc,
+    status: Status,
+    _reserved10: [u8; 0x01],
+    bursts: Bursts,
     clear: Clear,
+    sel: Sel,
 }
 impl RegisterBlock {
     #[doc = "0x00 - HYPERRAM_PROBE.STARTS, 16 bits at +0x00"]
@@ -59,10 +63,25 @@ impl RegisterBlock {
     pub const fn cyc(&self) -> &Cyc {
         &self.cyc
     }
-    #[doc = "0x1c - HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c"]
+    #[doc = "0x1c - HYPERRAM_PROBE.STATUS, 3 bits at +0x1c"]
+    #[inline(always)]
+    pub const fn status(&self) -> &Status {
+        &self.status
+    }
+    #[doc = "0x1e - HYPERRAM_PROBE.BURSTS, 16 bits at +0x1e"]
+    #[inline(always)]
+    pub const fn bursts(&self) -> &Bursts {
+        &self.bursts
+    }
+    #[doc = "0x20 - HYPERRAM_PROBE.CLEAR, 1 bits at +0x20"]
     #[inline(always)]
     pub const fn clear(&self) -> &Clear {
         &self.clear
+    }
+    #[doc = "0x21 - HYPERRAM_PROBE.SEL, 4 bits at +0x21"]
+    #[inline(always)]
+    pub const fn sel(&self) -> &Sel {
+        &self.sel
     }
 }
 #[doc = "STARTS (r) register accessor: HYPERRAM_PROBE.STARTS, 16 bits at +0x00\n\nYou can [`read`](crate::Reg::read) this register and get [`starts::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@starts`] module"]
@@ -110,11 +129,26 @@ pub mod arming;
 pub type Cyc = crate::Reg<cyc::CycSpec>;
 #[doc = "HYPERRAM_PROBE.CYC, 32 bits at +0x18"]
 pub mod cyc;
-#[doc = "CLEAR (w) register accessor: HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@clear`] module"]
+#[doc = "STATUS (r) register accessor: HYPERRAM_PROBE.STATUS, 3 bits at +0x1c\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@status`] module"]
+#[doc(alias = "STATUS")]
+pub type Status = crate::Reg<status::StatusSpec>;
+#[doc = "HYPERRAM_PROBE.STATUS, 3 bits at +0x1c"]
+pub mod status;
+#[doc = "BURSTS (r) register accessor: HYPERRAM_PROBE.BURSTS, 16 bits at +0x1e\n\nYou can [`read`](crate::Reg::read) this register and get [`bursts::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@bursts`] module"]
+#[doc(alias = "BURSTS")]
+pub type Bursts = crate::Reg<bursts::BurstsSpec>;
+#[doc = "HYPERRAM_PROBE.BURSTS, 16 bits at +0x1e"]
+pub mod bursts;
+#[doc = "CLEAR (w) register accessor: HYPERRAM_PROBE.CLEAR, 1 bits at +0x20\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@clear`] module"]
 #[doc(alias = "CLEAR")]
 pub type Clear = crate::Reg<clear::ClearSpec>;
-#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c"]
+#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x20"]
 pub mod clear;
+#[doc = "SEL (w) register accessor: HYPERRAM_PROBE.SEL, 4 bits at +0x21\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`sel::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@sel`] module"]
+#[doc(alias = "SEL")]
+pub type Sel = crate::Reg<sel::SelSpec>;
+#[doc = "HYPERRAM_PROBE.SEL, 4 bits at +0x21"]
+pub mod sel;
 
 /// Byte offsets from this peripheral's generated base address.
 pub mod offset {
@@ -127,5 +161,8 @@ pub mod offset {
     pub const WANT: usize = 0x10;
     pub const ARMING: usize = 0x14;
     pub const CYC: usize = 0x18;
-    pub const CLEAR: usize = 0x1c;
+    pub const STATUS: usize = 0x1c;
+    pub const BURSTS: usize = 0x1e;
+    pub const CLEAR: usize = 0x20;
+    pub const SEL: usize = 0x21;
 }

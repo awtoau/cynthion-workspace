@@ -453,11 +453,11 @@
     </peripheral>
     <peripheral>
       <name>HYPERRAM_PROBE</name>
-      <description>hyperram_probe: 10 registers at 0xf0000280</description>
+      <description>hyperram_probe: 13 registers at 0xf0000280</description>
       <baseAddress>0xF0000280</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x20</size>
+        <size>0x40</size>
         <usage>registers</usage>
       </addressBlock>
       <registers>
@@ -624,9 +624,59 @@
           </fields>
         </register>
         <register>
-          <name>CLEAR</name>
-          <description>HYPERRAM_PROBE.CLEAR, 1 bits at +0x1c</description>
+          <name>STATUS</name>
+          <description>HYPERRAM_PROBE.STATUS, 3 bits at +0x1c</description>
           <addressOffset>0x1C</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>DLL_LOCKED</name>
+              <description>dll_locked [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>DLL_READY</name>
+              <description>dll_ready [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>BURSTDET</name>
+              <description>burstdet [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BURSTS</name>
+          <description>HYPERRAM_PROBE.BURSTS, 16 bits at +0x1e</description>
+          <addressOffset>0x1E</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>COUNT</name>
+              <description>count [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CLEAR</name>
+          <description>HYPERRAM_PROBE.CLEAR, 1 bits at +0x20</description>
+          <addressOffset>0x20</addressOffset>
           <size>8</size>
           <access>write-only</access>
           <resetValue>0x0</resetValue>
@@ -637,6 +687,24 @@
               <description>strobe [0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SEL</name>
+          <description>HYPERRAM_PROBE.SEL, 4 bits at +0x21</description>
+          <addressOffset>0x21</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>TAP</name>
+              <description>tap [3:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>4</bitWidth>
               <access>write-only</access>
             </field>
           </fields>

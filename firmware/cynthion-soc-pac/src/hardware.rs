@@ -54,8 +54,8 @@ pub static PERIPHERALS: &[Peripheral] = &[
     Peripheral {
         name: "hyperram_probe",
         base: 0xf0000280,
-        size: 0x00000020,
-        registers: 10,
+        size: 0x00000040,
+        registers: 13,
     },
     Peripheral {
         name: "flash_ila",

@@ -599,6 +599,27 @@ FLASH_FAST_RATIO = 2
 # for no net gain.
 FLASH_PHY_FAST = False
 
+# Use the DQS HyperRAM PHY rather than the non-DQS one. See #92.
+#
+# THE ONLY ROUTE PAST ~52 MB/s. `HyperRAMPHY` makes double-rate output from `sync`
+# alone, so CK is `SYNC_MHZ` and the bus tops out with it. `HyperRAMDQSPHY` uses
+# the ECP5's gearing primitives with an ECLK at 2x, which is what lets CK rise
+# toward the 192 the 334 MB/s figure in `docs/memory-speed-options.md` was taken
+# at.
+#
+# Two consequences, both real work rather than a flag flip:
+#
+#   * it REQUIRES a `fast` domain -- `HyperRAMDQSPHY` reads `ClockSignal("fast")`
+#     for every ECLK -- so `with_fast` is forced on below;
+#   * its data path is 32 BITS per beat where the non-DQS one is 16, so the
+#     `wide`/`second_word` assembly in `vexii_bootram.py` -- which exists only to
+#     build a 32-bit Wishbone beat out of two 16-bit words -- has nothing to do
+#     and must be bypassed rather than left to halve the rate.
+#
+# It also needs READCLKSEL calibrated (#148); the sweep harness exists and has
+# never been run on silicon.
+HYPERRAM_DQS = False
+
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `gateware_id.py` reports it to the
 # firmware, and a geometry reported from a different number than the one the
@@ -631,8 +652,11 @@ class HelloSoC(Elaboratable):
         # output, a global buffer, and CLKOP_DIV forced even, which restricts which
         # sync frequencies are reachable. 72 is reachable and is inside the 72-91 MHz
         # nextpnr already estimates for this design.
+        # `fast` is needed if EITHER the flash PHY is decoupled or the HyperRAM
+        # uses its DQS PHY -- the latter reads `ClockSignal("fast")` for every
+        # ECLK, so it cannot elaborate without one.
         m.submodules.car = car = VariableClockDomainGenerator(
-            sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST,
+            sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST or HYPERRAM_DQS,
             fast_ratio=FLASH_FAST_RATIO)
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
@@ -1021,7 +1045,7 @@ class HelloSoC(Elaboratable):
         # it into block RAM. See ecp5-test/riscv/vexii_bootram.py.
         from vexii_bootram import BootRAM
 
-        m.submodules.bootram = bootram = BootRAM()
+        m.submodules.bootram = bootram = BootRAM(dqs=HYPERRAM_DQS)
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
         decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
@@ -1044,6 +1068,10 @@ class HelloSoC(Elaboratable):
             hyper_probe.want.eq(bootram.probe_want),
             hyper_probe.arming.eq(bootram.probe_arming),
             hyper_probe.cyc.eq(bootram.probe_cyc),
+            hyper_probe.dll_locked.eq(bootram.probe_dll_locked),
+            hyper_probe.dll_ready.eq(bootram.probe_dll_ready),
+            hyper_probe.burstdet.eq(bootram.probe_burstdet),
+            bootram.readclksel.eq(hyper_probe.sel),
         ]
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge

@@ -71,6 +71,13 @@ pub fn seek_word(word: u32) {
     seek(word);
 }
 
+/// `pub` for `src/bench.rs`'s cross-port check, which must write through THIS
+/// port and read through the memory window. Same reason `read_u32` is public:
+/// a second copy of the lo/hi convention could disagree with this one.
+pub fn write_word_pub(value: u16) {
+    write_word(value);
+}
+
 fn write_u32(word_addr: u32, value: u32) {
     seek(word_addr);
     write_word(value as u16);

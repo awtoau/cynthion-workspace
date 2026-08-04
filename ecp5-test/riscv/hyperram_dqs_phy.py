@@ -70,7 +70,8 @@ change to make deliberately and measure. `hyperram_dqs_top.py` holds the
 recovery gap outside the controller instead, where it can be counted.
 """
 
-from amaranth import ClockSignal, Elaboratable, Instance, Module, ResetSignal, Signal
+from amaranth import (Cat, ClockSignal, Elaboratable, Instance, Module, Mux,
+                      ResetSignal, Signal)
 
 from luna.gateware.interface.psram import HyperBusDQSPHY
 
@@ -137,9 +138,24 @@ class HyperRAMDQSPHY(Elaboratable):
         should be issued before this.
     """
 
-    def __init__(self, *, bus, readclksel=0b010):
+    def __init__(self, *, bus, readclksel=0b010, read_phase=0):
         self.bus = bus
         self.readclksel = readclksel
+        # Shifts the DQSBUFM read window HALF a `sync` cycle later, which is one
+        # 16-bit word on the wire.
+        #
+        # The device's fixed latency is an odd number of CK. The controller
+        # counts whole `sync` cycles and one of those is 2 CK at 4:1 gearing, so
+        # the leftover CK is not expressible up there and the 32-bit group comes
+        # back straddling the boundary -- reading address A returns
+        # [A+1, A+2]. Every one of the eight READCLKSEL taps showed the same
+        # skew, which is what says it is a phase and not a capture point.
+        #
+        # Correcting it by asking for an earlier address does not work: an odd
+        # start address hangs the read path outright, and an even one two words
+        # back needs the data re-assembled across beats. Moving the window is
+        # the direct fix.
+        self.read_phase = read_phase
         self.phy = HyperBusDQSPHY()
         self.dll_locked = Signal()
         self.dll_ready = Signal()
@@ -198,6 +214,16 @@ class HyperRAMDQSPHY(Elaboratable):
         readptr = Signal(3)
         writeptr = Signal(3)
 
+        # READ0/READ1 are the two half-cycles of the read window. Delaying it by
+        # one half-cycle is `READ0 = the previous cycle's second half`.
+        read_delayed = Signal(2)
+        read_window = Signal(2)
+        m.d.sync += read_delayed.eq(self.phy.read)
+        m.d.comb += read_window.eq(
+            Mux(self.read_phase,
+                Cat(read_delayed[1], self.phy.read[0]),
+                self.phy.read))
+
         m.submodules += [
             Instance("DDRDLLA",
                 i_CLK=ClockSignal("fast"),
@@ -230,8 +256,8 @@ class HyperRAMDQSPHY(Elaboratable):
                 i_DQSI=rwds_in,
                 i_DDRDEL=ddrdel,
                 i_PAUSE=pause,
-                i_READ0=self.phy.read[0],
-                i_READ1=self.phy.read[1],
+                i_READ0=read_window[0],
+                i_READ1=read_window[1],
 
                 # Which of the read clock's phases samples the incoming burst.
                 # Upstream's 0b010, kept: BURSTDET is what tells you whether it
