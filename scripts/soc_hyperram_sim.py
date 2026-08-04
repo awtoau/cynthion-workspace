@@ -76,7 +76,21 @@ shows the fix passing is a check that would have passed before the fix.
 
   8. **Cache-line burst.** The real Wishbone window and non-DQS protocol engine
      read sixteen 32-bit beats. Incrementing CTI produces one CS# assertion;
-     classic CTI is the pre-change negative control and produces sixteen.
+     classic CTI is the pre-change negative control and produces sixteen. The
+     master here supplies a beat every two cycles, which is what coalescing
+     requires and what no master in this SoC does -- so this measures the
+     coalescing logic, not the board.
+
+  9. **Cache-line WRITE, through the SoC's real bus path.** `RegisteredResponse`
+     in front of the window, which is the arrangement the board has and the one
+     sections 6-8 leave out. Coalescing under that master is asserted to
+     reproduce `hr cross`'s exact line -- `8/16 correct, bad 1010101010101010`,
+     `want 200f0e0d got 0e0d200f` -- and the shipping window to write all
+     sixteen beats into exactly 32 device words.
+
+ 10. **The same fault on reads.** `hr cross` writes and reads through one path,
+     so the two skews cancel and a total read fault showed as a half write
+     fault. Checked separately against pre-filled memory.
 """
 
 import argparse
@@ -95,6 +109,7 @@ sys.path.insert(0, str(ROOT / "ecp5-test" / "hyperram"))
 
 from amaranth import Elaboratable, Module, Signal
 from amaranth.hdl import Fragment
+from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from amaranth_soc import wishbone
 
@@ -105,6 +120,7 @@ from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
 from soc_board_sim import Checks
 from vexii_bootram import (BootRAM, HYPERRAM_MAX_BURST_WORDS,
                            HyperRAMWishbone)
+from wishbone_pipe import RegisteredResponse
 
 
 # `sync`. Only the ratio to the device matters here, since nothing in this file
@@ -580,7 +596,10 @@ def section_wishbone(checks, emit):
     """6. The 32-bit memory port, including the delayed-grant trap."""
     emit("\n6. Wishbone memory window, against a delayed shared controller\n")
 
-    dut = HyperRAMWishbone()
+    # `sustained`, because this section drives a master that replaces a beat on
+    # the acknowledging edge. Section 9 covers the SoC's real master, which
+    # cannot, and the window it gets as a result.
+    dut = HyperRAMWishbone(sustained=True)
     observed = {}
 
     async def pulse_word(ctx, value):
@@ -837,17 +856,35 @@ def section_shared_engine(checks, emit):
 
 
 class NonDQSHarness(Elaboratable):
-    """The memory window connected to the protocol engine used by the SoC."""
+    """The memory window connected to the protocol engine used by the SoC.
 
-    def __init__(self):
+    `pipe` inserts the SoC's `RegisteredResponse` between the master and the
+    window, which is what the real design has and what section 9 needs: without
+    it the harness drives a master that supplies a beat every two cycles, and no
+    master in this SoC does. `sustained` is the window's coalescing flag.
+    """
+
+    def __init__(self, *, pipe=False, sustained=True):
         self.phy = HyperBusPHY()
         self.interface = HyperRAMInterface(phy=self.phy)
-        self.bootram = BootRAM(interface=self.interface)
+        self.bootram = BootRAM(interface=self.interface, sustained=sustained)
+        self._pipe = pipe
+        self.pipe = RegisteredResponse(
+            addr_width=len(self.bootram.mmap.bus.adr), data_width=32,
+            granularity=8, features={"cti", "bte", "err"}) if pipe else None
+
+    @property
+    def bus(self):
+        """What a master drives: the pipe's input, or the window directly."""
+        return self.pipe.intr_bus if self._pipe else self.bootram.mmap.bus
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.interface = self.interface
         m.submodules.bootram = self.bootram
+        if self._pipe:
+            m.submodules.pipe = self.pipe
+            wiring.connect(m, self.pipe.sub_bus, self.bootram.mmap.bus)
         return m
 
 
@@ -898,9 +935,19 @@ class ModelHyperRAM16:
                 self.commands.append(self._address)
                 # CA bit 47 is 1 for a read.
                 self._is_write = not ((ca >> 47) & 1)
-                # The fixed-latency part presents data one CK after the protocol
-                # FSM reaches READ_DATA; that turnaround completes the 19-CK cost.
-                self._latency = HyperRAMInterface.HIGH_LATENCY_CLOCKS
+                # The device's data phase begins one CK after the protocol FSM
+                # leaves HANDLE_LATENCY, which is where the controller's own
+                # registered `dq.o` first carries write data. Count from the same
+                # value the controller loads, so the two agree by construction.
+                #
+                # THIS IS THE NUMBER THE BOARD PINS DOWN. A device whose data
+                # phase started anywhere else would shift the whole burst and
+                # every beat would be wrong; the board's even beats are correct,
+                # so the alignment is exact. Counting `HIGH_LATENCY_CLOCKS` here
+                # instead put the model two cycles late -- reads survived it,
+                # because RWDS gates the controller's sampling and it simply
+                # waited, but writes are not strobed and the model missed them.
+                self._latency = HyperRAMInterface.HIGH_LATENCY_CLOCKS - 2
                 self._state = "latency"
         elif self._state == "latency":
             if self._latency:
@@ -911,14 +958,23 @@ class ModelHyperRAM16:
             # A write word lands on a clocked edge, so the capture is gated on
             # `clk_en`. Sampling every simulation step instead records the value
             # the controller is HOLDING several times over and walks the address
-            # past the data -- which reads back as garbage rather than as the
-            # transposition the board actually shows.
+            # past the data.
+            #
+            # VALIDATED against a case whose answer was already known: one 32-bit
+            # Wishbone write stores exactly two words, at `adr*2` and `adr*2+1`,
+            # low half first. That is what `section_wishbone` and the board both
+            # say happens, and it is what settled the latency count above -- the
+            # capture recorded NOTHING at all until that was right.
             if self._is_write:
                 if clk_en and dq_e:
                     self.memory[self._address] = dq_o & 0xffff
                     self._address += 1
             else:
-                dq_i = (0x4000 + self._address) & 0xffff
+                # Serve back whatever was stored, so a write and a read of the
+                # same line can be compared. An address never written keeps the
+                # old synthetic pattern, which is what section 8 reads.
+                dq_i = self.memory.get(self._address,
+                                       (0x4000 + self._address) & 0xffff)
                 rwds_i = 0b10
                 self._address += 1
 
@@ -993,108 +1049,201 @@ def simulate_line_refill(*, incrementing):
     return model, observed
 
 
-def simulate_line_write():
-    """Write one 64-byte line as a burst and return what the device stored."""
-    dut = NonDQSHarness()
+
+def line_value(index):
+    """Beat `index` of the test line. The same values `bench::hyper_line_write_check`
+    writes, so a sim result and a board result are comparable literally."""
+    return 0x1000_0000 + index * 0x0101_0101 + 0x0f0e_0d0c
+
+
+async def drive_line(ctx, dut, model, *, write, base=0x100, beats=16, out=None):
+    """One cache line as a registered-feedback burst, driven the way a CPU does.
+
+    Classic Wishbone: CYC and STB are held, the next beat replaces the
+    acknowledged one on the following edge, and the master cannot run ahead.
+    """
+    bus = dut.bus
+    index = 0
+    ctx.set(bus.cyc, 1)
+    ctx.set(bus.stb, 1)
+    ctx.set(bus.we, write)
+    ctx.set(bus.sel, 0b1111)
+    ctx.set(bus.bte, wishbone.BurstTypeExt.LINEAR)
+    ctx.set(bus.adr, base)
+    ctx.set(bus.dat_w, line_value(0) if write else 0)
+    ctx.set(bus.cti, wishbone.CycleType.INCR_BURST if beats > 1
+            else wishbone.CycleType.END_OF_BURST)
+
+    for _ in range(CYCLE_LIMIT):
+        dq_i, rwds_i = model.step(
+            cs=ctx.get(dut.phy.cs), clk_en=ctx.get(dut.phy.clk_en),
+            dq_o=ctx.get(dut.phy.dq.o), dq_e=ctx.get(dut.phy.dq.e))
+        ctx.set(dut.phy.dq.i, dq_i)
+        ctx.set(dut.phy.rwds.i, rwds_i)
+
+        acknowledged = ctx.get(bus.ack)
+        captured = ctx.get(bus.dat_r)
+        await ctx.tick()
+
+        if acknowledged:
+            if out is not None:
+                out.append(captured)
+            index += 1
+            if index < beats:
+                ctx.set(bus.adr, base + index)
+                ctx.set(bus.dat_w, line_value(index))
+                ctx.set(bus.cti, wishbone.CycleType.END_OF_BURST
+                        if index == beats - 1 else wishbone.CycleType.INCR_BURST)
+            else:
+                ctx.set(bus.cyc, 0)
+                ctx.set(bus.stb, 0)
+                ctx.set(bus.we, 0)
+
+        if index == beats and not ctx.get(dut.phy.cs):
+            return
+
+
+def simulate_single_write(*, adr=0x100):
+    """One 32-bit write, whose answer is already known from the board."""
+    dut = NonDQSHarness(pipe=True, sustained=False)
     model = ModelHyperRAM16()
 
-    # Byte-unique per beat so a transposed pair is visible as a transposition
-    # rather than as a plausible value.
-    def value(index):
-        return 0x1000_0000 + index * 0x0101_0101 + 0x0f0e_0d0c
-
     async def testbench(ctx):
-        beat_index = 0
-        request_active = False
-
-        for _ in range(CYCLE_LIMIT):
-            if not request_active and beat_index < 16:
-                ctx.set(dut.bootram.mmap.bus.cyc, 1)
-                ctx.set(dut.bootram.mmap.bus.stb, 1)
-                ctx.set(dut.bootram.mmap.bus.we, 1)
-                ctx.set(dut.bootram.mmap.bus.adr, 0x100 + beat_index)
-                ctx.set(dut.bootram.mmap.bus.dat_w, value(beat_index))
-                ctx.set(dut.bootram.mmap.bus.cti,
-                        wishbone.CycleType.END_OF_BURST if beat_index == 15
-                        else wishbone.CycleType.INCR_BURST)
-                ctx.set(dut.bootram.mmap.bus.bte,
-                        wishbone.BurstTypeExt.LINEAR)
-                ctx.set(dut.bootram.mmap.bus.sel, 0b1111)
-                request_active = True
-
-            dq_i, rwds_i = model.step(
-                cs=ctx.get(dut.phy.cs),
-                clk_en=ctx.get(dut.phy.clk_en),
-                dq_o=ctx.get(dut.phy.dq.o),
-                dq_e=ctx.get(dut.phy.dq.e),
-            )
-            ctx.set(dut.phy.dq.i, dq_i)
-            ctx.set(dut.phy.rwds.i, rwds_i)
-
-            acknowledged = ctx.get(dut.bootram.mmap.bus.ack)
-            await ctx.tick()
-
-            if acknowledged:
-                beat_index += 1
-                request_active = False
-                if beat_index < 16:
-                    ctx.set(dut.bootram.mmap.bus.adr, 0x100 + beat_index)
-                    ctx.set(dut.bootram.mmap.bus.dat_w, value(beat_index))
-                    ctx.set(dut.bootram.mmap.bus.cti,
-                            wishbone.CycleType.END_OF_BURST if beat_index == 15
-                            else wishbone.CycleType.INCR_BURST)
-                    request_active = True
-                else:
-                    ctx.set(dut.bootram.mmap.bus.cyc, 0)
-                    ctx.set(dut.bootram.mmap.bus.stb, 0)
-                    ctx.set(dut.bootram.mmap.bus.we, 0)
-
-            if beat_index == 16 and not ctx.get(dut.phy.cs):
-                break
+        await drive_line(ctx, dut, model, write=True, base=adr, beats=1)
 
     sim = Simulator(Fragment.get(dut, None))
     sim.add_clock(1 / 192e6, domain="sync")
     sim.add_testbench(testbench)
     sim.run()
-    return model, value
+    return model
+
+
+def simulate_cross(*, sustained, beats=16, base=0x100):
+    """`hr cross`: write a line through the window, then read it back."""
+    dut = NonDQSHarness(pipe=True, sustained=sustained)
+    model = ModelHyperRAM16()
+    read_back = []
+
+    async def testbench(ctx):
+        await drive_line(ctx, dut, model, write=True, base=base, beats=beats)
+        for _ in range(8):        # the D-cache evict between the two halves
+            await ctx.tick()
+        await drive_line(ctx, dut, model, write=False, base=base, beats=beats,
+                         out=read_back)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+    return model, read_back
+
+
+def cross_result(read_back, beats=16):
+    """`(correct, bitmap)` in the shell's own format: bit per beat, LSB word 0."""
+    correct, bitmap = 0, ""
+    for index in range(beats):
+        ok = index < len(read_back) and read_back[index] == line_value(index)
+        correct += ok
+        bitmap = ("0" if ok else "1") + bitmap
+    return correct, bitmap
 
 
 def section_line_write(checks, emit):
-    """A 64-byte line WRITTEN as one burst -- the case nothing covered.
+    """9. A 64-byte line WRITTEN as one burst, through the SoC's real bus path.
 
     The board reports `8/16 correct, bad 1010101010101010`: every odd-indexed
-    beat stores its two 16-bit halves transposed. Nothing here exercised it --
-    the read burst was covered, single writes were covered, a burst write was
-    not -- and firmware stopped writing lines to HyperRAM when `.text` moved to
-    flash, so it went unnoticed in use as well.
+    beat stores its two 16-bit halves transposed. Reproducing it needed one
+    thing the earlier harness left out -- `RegisteredResponse`, which withholds
+    STB for a cycle after every acknowledgement. Driving the window directly
+    models a master that supplies a beat every two cycles, and this SoC has
+    none; with the real pipe in the path the sim prints the board's line
+    character for character.
     """
-    emit("\n9. 64-byte Wishbone line WRITTEN as one burst\n")
+    emit("\n9. 64-byte line written through the window, then read back\n")
 
-    model, value = simulate_line_write()
-    base = (0x100) * 2          # `req_addr` is the 16-bit word address
+    # STEP ONE, before any burst result is believed: a single 32-bit write,
+    # whose answer is known independently. Two words, at `adr*2` and `adr*2+1`,
+    # low half first. A capture that cannot get this right cannot be used to
+    # judge the gateware, and this one could not until its latency was fixed.
+    single = simulate_single_write(adr=0x100)
+    checks.check("a single 32-bit write stores exactly two device words",
+                 len(single.memory) == 2, f"{len(single.memory)} words")
+    checks.check("...at the doubled address, low half first",
+                 single.memory.get(0x200) == 0x0d0c
+                 and single.memory.get(0x201) == 0x1f0e,
+                 str({hex(a): hex(v) for a, v in sorted(single.memory.items())}))
 
-    checks.check("a 16-beat incrementing write issues ONE HyperBus transaction",
-                 len(model.commands) == 1,
-                 f"{len(model.commands)} transactions")
+    # THE NEGATIVE CONTROL, and the reason this file can claim a reproduction:
+    # the shipping arrangement, coalescing across beats against a master that
+    # bubbles. Asserted to give the board's exact numbers.
+    broken, broken_read = simulate_cross(sustained=True)
+    broken_correct, broken_bitmap = cross_result(broken_read)
+    checks.check("coalescing across a bubbling master reproduces the BOARD",
+                 (broken_correct, broken_bitmap) == (8, "1010101010101010"),
+                 f"{broken_correct}/16, bad {broken_bitmap}")
+    checks.check("...with the board's first bad beat, halves transposed",
+                 broken_read[1] == 0x0e0d_200f,
+                 f"want {line_value(1):08x}, got {broken_read[1]:08x}")
+    checks.check("...and 48 device words written for a 32-word line",
+                 len(broken.memory) == 48, f"{len(broken.memory)} words")
 
-    # The stored-data assertion is NOT made yet, deliberately.
-    #
-    # The board says `8/16 correct, bad 1010101010101010`: every odd beat
-    # transposes its two halves. This model cannot yet confirm that, because it
-    # was built to SERVE reads and its write capture does not reproduce the
-    # board's result -- it reports all sixteen beats wrong with values that
-    # appear in neither the data nor the address, which is a fault in the
-    # capture, not in the DUT.
-    #
-    # Asserting on it in this state would either fail CI for a harness bug or,
-    # worse, be "fixed" by changing the gateware until this model agreed with
-    # it. The counts are printed as diagnostics until the capture is validated
-    # against a case whose answer is already known.
-    stored = sum(1 for index in range(16)
-                 if (base + index * 2) in model.memory)
-    emit(f"        write capture UNVALIDATED: {stored}/16 beat pairs seen, "
-         f"{len(model.memory)} words recorded")
-    emit("        board result stands: 8/16 correct, odd beats transposed")
+    fixed, fixed_read = simulate_cross(sustained=False)
+    correct, bitmap = cross_result(fixed_read)
+    checks.check("the shipping window writes all sixteen beats correctly",
+                 (correct, bitmap) == (16, "0000000000000000"),
+                 f"{correct}/16, bad {bitmap}")
+    checks.check("a 64-byte line touches 32 device words and not one more",
+                 len(fixed.memory) == 32, f"{len(fixed.memory)} words")
+    checks.check("every word lands at the address the beat asked for",
+                 all(fixed.memory.get(0x200 + 2 * i) == line_value(i) & 0xffff
+                     and fixed.memory.get(0x201 + 2 * i) == line_value(i) >> 16
+                     for i in range(16)))
+    checks.check("one HyperBus transaction per beat, since none may be held open",
+                 len(fixed.commands) == 32, f"{len(fixed.commands)} transactions")
+
+    emit(f"        coalescing, bubbling master: {broken_correct}/16, "
+         f"bad {broken_bitmap}, {len(broken.memory)} device words")
+    emit(f"        board:                       8/16, "
+         f"bad 1010101010101010, want 200f0e0d got 0e0d200f")
+    emit(f"        fixed:                       {correct}/16, "
+         f"bad {bitmap}, {len(fixed.memory)} device words")
+
+
+def section_line_read_bubble(checks, emit):
+    """10. The same fault on the READ side, which `hr cross` was hiding."""
+    emit("\n10. Reads through the same path, which nothing had checked\n")
+
+    def read_line(*, sustained, base=0x300, beats=16):
+        dut = NonDQSHarness(pipe=True, sustained=sustained)
+        model = ModelHyperRAM16()
+        for word in range(beats * 2):
+            model.memory[base * 2 + word] = 0xa000 + word
+        out = []
+
+        async def testbench(ctx):
+            await drive_line(ctx, dut, model, write=False, base=base,
+                             beats=beats, out=out)
+
+        sim = Simulator(Fragment.get(dut, None))
+        sim.add_clock(1 / 192e6, domain="sync")
+        sim.add_testbench(testbench)
+        sim.run()
+        want = [((0xa000 + 2 * i + 1) << 16) | (0xa000 + 2 * i)
+                for i in range(beats)]
+        return sum(a == b for a, b in zip(out, want)), out
+
+    broken, _ = read_line(sustained=True)
+    fixed, _ = read_line(sustained=False)
+
+    # `hr cross` writes and reads through the same path, so both are skewed the
+    # same way and the two errors largely cancel -- which is why a read fault
+    # this total showed up as a write fault half that size.
+    checks.check("coalescing across a bubbling master also corrupts READS",
+                 broken <= 1, f"{broken}/16 beats correct")
+    checks.check("the shipping window returns all sixteen beats",
+                 fixed == 16, f"{fixed}/16 beats correct")
+    emit(f"        coalescing: {broken}/16 beats   fixed: {fixed}/16 beats")
+
 
 
 def section_line_refill(checks, emit):
@@ -1116,12 +1265,22 @@ def section_line_refill(checks, emit):
                  classic["data"] == burst["data"],
                  f"classic {len(classic['data'])}, burst {len(burst['data'])}")
 
+    # 17 CK of overhead per transaction, and it is counted off the controller's
+    # states rather than fitted: 3 command words + 13 `HANDLE_LATENCY` +
+    # 1 `RECOVERY`, with `LATCH_RWDS` before CK starts. So a transaction is
+    # 17 + words -- 49 for a 32-word line, 19 each for sixteen 2-word transfers.
+    #
+    # These read 51 and 336 until the model's data phase was corrected: it
+    # entered two cycles late, reads tolerated it because RWDS gates the
+    # controller's sampling, and the extra two showed up in every total. NOT the
+    # same quantity as the 19 CK in `docs/memory-speed-options.md`, which is a
+    # board measurement of the DQS engine at 4:1 gearing.
     burst_cycles = sum(burst_model.transaction_cycles)
     classic_cycles = sum(classic_model.transaction_cycles)
-    checks.check("one line occupies 51 CK with command and fixed latency",
-                 burst_cycles == 51, f"measured {burst_cycles} CK")
-    checks.check("sixteen classic transfers occupy 336 CK",
-                 classic_cycles == 336, f"measured {classic_cycles} CK")
+    checks.check("one line occupies 49 CK with command and fixed latency",
+                 burst_cycles == 49, f"measured {burst_cycles} CK")
+    checks.check("sixteen classic transfers occupy 304 CK",
+                 classic_cycles == 304, f"measured {classic_cycles} CK")
     checks.check("the coalescing cap stays below the 4-us tCSM limit",
                  HYPERRAM_MAX_BURST_WORDS + 19 < 4e-6 * 192e6,
                  f"{HYPERRAM_MAX_BURST_WORDS + 19} CK")
@@ -1145,7 +1304,7 @@ def main():
     for section in (section_command, section_latency, section_held,
                     section_recovery, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
-                    section_line_write):
+                    section_line_write, section_line_read_bubble):
         section(checks, emit)
 
     emit()

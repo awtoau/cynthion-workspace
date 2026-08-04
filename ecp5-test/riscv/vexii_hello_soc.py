@@ -1045,6 +1045,14 @@ class HelloSoC(Elaboratable):
         # it into block RAM. See ecp5-test/riscv/vexii_bootram.py.
         from vexii_bootram import BootRAM
 
+        # `sustained` is left at its default of False, and that is a decision
+        # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
+        # after every acknowledgement, so the CPU delivers a 32-bit beat every
+        # three cycles where a held-open HyperBus transaction consumes two words
+        # -- one per CK, with no way to stall it. Coalescing under that deficit
+        # wrote 48 words for a 32-word line and transposed every odd beat, which
+        # is the fault `hr cross` reports and section 9 of
+        # `scripts/soc_hyperram_sim.py` reproduces.
         m.submodules.bootram = bootram = BootRAM(dqs=HYPERRAM_DQS)
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
