@@ -269,10 +269,22 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     dut.registers.register_write(REG_CONTROL, 0)
     dut.registers.register_write(REG_CONTROL, 0b11)
     control = poll(dut, BURST_WORDS, sync * 1e6, bytes_per_word)
+    # Demanding errors == words exactly is too strict by one burst. The control
+    # is armed while the engine is already running, so the words in flight at
+    # that moment are compared against the un-complemented golden and correctly
+    # match. Measured on the first run of this harness: 78 of 6,871,936 words
+    # matched, against a 128-word burst -- a boundary, not a broken control.
+    #
+    # One burst of slack, and no more: the point of the control is that a later
+    # zero-error result is evidence rather than silence, and a control that
+    # tolerated a percentage would stop proving the comparator runs at all.
+    control_slack = burst
     result["negative_control"] = {
         "words": control["words"], "errors": control["errors"],
+        "matched": control["words"] - control["errors"],
+        "slack": control_slack,
         "passed": (not control["stalled"] and
-                   control["errors"] == control["words"]),
+                   control["words"] - control["errors"] <= control_slack),
     }
 
     dut.registers.register_write(REG_CONTROL, 0)
