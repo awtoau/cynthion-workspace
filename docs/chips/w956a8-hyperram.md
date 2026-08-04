@@ -315,12 +315,22 @@ single-ended.
 CPU's PMA list is what makes it cached and executable rather than routed to `iobus`
 one transaction at a time.
 
-**The window coalesces bursts.** `cti == INCR_BURST && bte == LINEAR` holds one
-HyperBus transaction open across beats (`ecp5-test/riscv/vexii_bootram.py:126-168`),
-capped at `HYPERRAM_MAX_BURST_WORDS = 748` to stay inside the part's 768-CK tCSM
-deadline. `scripts/soc_hyperram_sim.py` asserts the result — a 64-byte cache-line
-refill is **1 HyperBus transaction / 51 CK**, against the pre-change arrangement's
-**16 transactions / 336 CK** — and keeps the uncoalesced path as a negative control.
+**The window can coalesce bursts, and currently does not.** `cti == INCR_BURST
+&& bte == LINEAR` holds one HyperBus transaction open across beats
+(`ecp5-test/riscv/vexii_bootram.py`), capped at `HYPERRAM_MAX_BURST_WORDS = 748`
+for tCSM. `sustained` gates it and is **False**.
+
+The reason is not a preference. A HyperBus data phase cannot be stalled, this
+master bubbles a cycle after every acknowledgement, and coalescing therefore
+wrote 48 device words for a 32-word line and corrupted alternate beats — on the
+shipping path, from the day it was added.
+[`../hyperram-bursts.md`](../hyperram-bursts.md) has the mechanism and the cycle
+trace; recovering the burst is #185.
+
+Simulated cost per 64-byte line, counted off the controller's states: **1
+transaction / 49 CK** coalesced against **16 / 304 CK** as it runs today. (Those
+were 51 and 336 before a two-cycle error in the simulation model was corrected;
+the older pair appears in documents written before that.)
 
 **The CSR staging port is not redundant and is kept deliberately.** It is how
 firmware stages an image into HyperRAM before rebooting into it, and it works before
