@@ -96,6 +96,20 @@ HDR_MAGIC  = 0
 HDR_LENGTH = 2
 HDR_CRC    = 4
 IMAGE_WORD = 16
+
+# How many bytes the layout check stages.
+#
+# The mechanism is "a multi-word frame shifts in, the words reach the FIFO, the
+# address advances, and the header lands in the order the bootloader reads it".
+# EIGHT BYTES PROVES ALL OF THAT. 512 proved it 64 times over: an image is one
+# frame per word, so its size is a repetition count wearing a payload's clothes,
+# and it dominated this file -- a 512-byte image is 4,096 TCK bits, each one two
+# `ctx.delay` half-periods.
+#
+# The larger size belongs in a soak run, where shifting thousands of bits is the
+# point rather than an accident. `--soak` restores it.
+IMAGE_BYTES = 8
+SOAK_IMAGE_BYTES = 512
 MAGIC = 0x4359_4e42
 
 
@@ -492,7 +506,7 @@ def run_checks(checks, verbose):
         f"{stalled['reused']} -- `staged` must have restarted at this frame")
 
     # --- the layout the bootloader reads --------------------------------
-    image = bytes((n * 7 + 3) & 0xff for n in range(512))
+    image = bytes((n * 7 + 3) & 0xff for n in range(IMAGE_BYTES))
     crc = zlib.crc32(image) & 0xffff_ffff
     run = Run(verbose=verbose)
 
@@ -547,15 +561,25 @@ def run_checks(checks, verbose):
 
 
 def main():
+    # Rebound rather than threaded through three call levels; the size is a
+    # property of the run, not of any one check.
+    global IMAGE_BYTES
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="stage the full %d-byte image instead of %d. The "
+                             "layout is identical either way; this shifts 64x "
+                             "the bits." % (SOAK_IMAGE_BYTES, IMAGE_BYTES))
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print every frame")
     args = parser.parse_args()
 
+    if args.soak:
+        IMAGE_BYTES = SOAK_IMAGE_BYTES
+
     checks = Checks(emit)
-    emit("jtag_stage.JTAGStager")
+    emit(f"jtag_stage.JTAGStager -- staging {IMAGE_BYTES} bytes")
     run_checks(checks, args.verbose)
     return checks.summary()
 
