@@ -97,6 +97,18 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * ADDRESS, not to a symbol; it has no symbol table for us. */
 _stext = ORIGIN(REGION_TEXT);
 
+/* An alias riscv-rt does not export and RTIC 2.3.0 asks for.
+ *
+ * RTIC's RISC-V backend emits a stack-overflow check against `_ebss`. riscv-rt has
+ * called it `__ebss` since 0.12; nothing in 0.18's link.x provides the single-underscore
+ * spelling, so `--features rtic` fails at LINK, after a clean compile, with `undefined
+ * symbol: _ebss` and a `did you mean: __ebss` hint. An upstream mismatch, not a choice
+ * either project made.
+ *
+ * PROVIDE, so this defines the symbol only when something references it: the shipping
+ * image does not, and does not change. Delete it when RTIC catches up. */
+PROVIDE(_ebss = __ebss);
+
 /* Unwind tables, which nothing on this target unwinds. 1892 bytes, measured.
  *
  * `.eh_frame` describes how to restore registers while a stack is being unwound by a
