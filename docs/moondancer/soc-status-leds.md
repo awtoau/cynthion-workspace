@@ -53,5 +53,6 @@ investigation, and it is the one that would have pointed at the console immediat
 
 The heartbeat divider must be derived from the clock, not hardcoded — a design that raises
 `sync` and leaves the count alone gets a heartbeat at the wrong rate, which is harmless,
-but the same mistake in `SidebandDebug` gives a **dead** debug link rather than a slow one.
+but the same mistake in `SidebandDebug` gives a **dead** debug link rather than a slow one
+([`../sideband.md`](../sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
 `vexii_hello_soc.py` derives both from `SYNC_MHZ` so they cannot drift. See #111.

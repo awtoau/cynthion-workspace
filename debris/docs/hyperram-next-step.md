@@ -1,5 +1,9 @@
 # HyperRAM: the window is built, and nothing on the CPU uses it
 
+**Retired 2026-08-05.** The durable half is in
+[`docs/chips/w956a8-hyperram.md`](../../docs/chips/w956a8-hyperram.md); the remaining
+work is #90.
+
 State as of 2026-08-03T13:50+10:00. Written because the work is finished in
 gateware and proven in simulation, and a reader looking at the benchmark numbers
 would reasonably conclude the opposite.

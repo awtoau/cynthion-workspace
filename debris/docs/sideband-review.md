@@ -5,9 +5,13 @@ it can go**; **a bare attention pulse is implementable and buys nothing the fram
 advertisement does not already give**; **a console fits the bandwidth and fits neither
 the flash nor the port-ownership mechanism**.
 
-**Index:** [`chips/samd11-apollo.md`](chips/samd11-apollo.md) ·
-protocol: [`apollo_samd11_mcu/fpga-adv-sideband.md`](apollo_samd11_mcu/fpga-adv-sideband.md) ·
-soak: [`apollo_samd11_mcu/sideband-soak-results.md`](apollo_samd11_mcu/sideband-soak-results.md)
+**Retired 2026-08-05.** Superseded by
+[`docs/sideband.md`](../../docs/sideband.md), which is the canonical reference; this
+file is kept for the flash-budget arithmetic and the per-option evaluation behind #95
+and #182. The two documents it indexed are retired alongside it:
+[`fpga-adv-sideband.md`](fpga-adv-sideband.md),
+[`sideband-soak-results.md`](sideband-soak-results.md). Chip notes remain at
+[`docs/chips/samd11-apollo.md`](../../docs/chips/samd11-apollo.md).
 
 Issues: #95 (retire EIC), #88 (drive mode, closed), #176 (verb channel, rescoped),
 #87 / #86 / #84 (payloads), #64 / #68 (origin), #73 (flash).

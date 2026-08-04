@@ -531,10 +531,11 @@ answers them.
 
 **Apollo needs no change.** Its firmware never knew these opcodes — the host supplies the
 command byte and the expected length through vendor request `0xC3`, and
-`fpga_adv_transceive()` shifts whatever it is given
-(`repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c:437`). The only opcode-derived
+`fpga_adv_command()` shifts whatever it is given
+(`repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c:418`). The only opcode-derived
 constant is `ADV_RESPONSE_MAX 18` at line 143, sized for `POWER`; the shipping link's
-longest reply is 4 bytes, so it is now larger than needed and still correct.
+longest reply is 4 bytes, so it is now larger than needed and still correct. Both maps
+in full: [`sideband.md`](sideband.md#4-commands).
 
 **Measured, `scripts/sideband_cost.py`:**
 
@@ -556,7 +557,7 @@ Issue #137.
 ### 25. FPGA_ADV: advertisement and sideband on one wire
 
 **The pin's primary purpose upstream is port takeover, and we were not using it for
-that.** `ApolloAdvertiser` drives FPGA_ADV as a 25 Hz square wave; Apollo keeps the CONTROL
+that.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz square wave; Apollo keeps the CONTROL
 port switched to the FPGA only while that continues. Every bitstream here is AUX-only, so
 the pin was free to carry the sideband instead — and the SoC consequently had **no way to
 ask for CONTROL at all**.
@@ -576,12 +577,12 @@ the sideband landed, and which **no gateware ever emitted**. `ecp5-test/sideband
 emits it. The decision was to find the mechanism rather than invent one.
 
 **What it costs.** The link's rule was "the FPGA never transmits unasked", which made it
-collision-free by construction. An advertisement breaks that rule, at a bounded price: a
-frame occupies 174 µs of every 100 ms (**0.17% duty**), both ends are open-drain so an
-overlap is two pull-downs rather than a short, an overlapped command or reply fails
-Apollo's CRC and is retried, and an overlapped advertisement is one of three inside the
-300 ms `HEARTBEAT_TIMEOUT_MS`. A 20-bit-period idle guard removes the larger risk — a
-frame starting *inside* the 40 µs turnaround the FPGA already knows about.
+collision-free by construction. An advertisement breaks that rule, at a bounded price:
+0.17% duty, open-drain overlap, CRC-and-retry, three frames per timeout, and a
+20-bit-period idle guard. The mechanism and its numbers are in
+[`sideband.md`](sideband.md#8-the-second-job-the-control-port-request); what the price
+does *not* cover is a saturated poll, which starves the guard and loses the port —
+[`sideband.md` §9](sideband.md#9-how-the-two-jobs-interfere) and #184.
 
 Measured cost: **+124 logic cells and +82 flip-flops**, against a shipping sideband of 350
 logic and 178 FF — 2.9% of an LFE5U-12F. The port request is the larger part of this

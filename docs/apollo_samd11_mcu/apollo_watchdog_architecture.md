@@ -27,7 +27,7 @@ Apollo becomes the watchdog for moondancer:
 
 See [../../debris/docs/apollo_moondancer_uart_watchdog_design.md](../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
 (retired) for the original proposal. The shipping link is the FPGA_ADV sideband:
-[fpga-adv-sideband.md](fpga-adv-sideband.md).
+[`../sideband.md`](../sideband.md).
 
 ---
 

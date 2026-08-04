@@ -46,6 +46,14 @@ alternative existed, in tables. A decision does not get its own file unless the
 [`upstream-boundary.md`](upstream-boundary.md) holds the policy on Great Scott
 Gadgets code, separately, because that is policy rather than measurement.
 
+### Subjects with one canonical file
+
+Where a subject has proved able to sprawl across several files, one file owns it and
+the others link. **[`sideband.md`](sideband.md)** owns the FPGA_ADV wire — the
+electrical rules, the protocol, the port request, and the list of things already
+settled. Do not restate any of it elsewhere; a second account is how the contradictions
+in its §13 got there in the first place.
+
 ## Index
 
 ### Top level
@@ -58,13 +66,12 @@ Gadgets code, separately, because that is policy rather than measurement.
 * [`git.md`](git.md) — Git & Submodules Reference
 * [`github_actions.md`](github_actions.md) — (no title)
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
-* [`hyperram-next-step.md`](hyperram-next-step.md) — HyperRAM: the window is built, and nothing on the CPU uses it
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
 * [`memory-speed-options.md`](memory-speed-options.md) — Every remaining way to make the HyperRAM and the config flash faster
 * [`riscv-clock-ceiling.md`](riscv-clock-ceiling.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
-* [`serial_communication_redesign_decisions.md`](serial_communication_redesign_decisions.md) — Architectural Decisions - Cynthion Serial Communication Redesign
+* [`sideband.md`](sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
 * [`toolchain-simplification.md`](toolchain-simplification.md) — Can we drop `luna_soc`?
 * [`toolchain-versions.md`](toolchain-versions.md) — Python toolchain: what is pinned, what is stale, what is a trap
 * [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream, and what we have replaced
@@ -131,8 +138,7 @@ Gadgets code, separately, because that is policy rather than measurement.
 * [`apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md`](apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md) — /etc/udev/rules.d/54-cynthion.rules
 * [`apollo_samd11_mcu/apollo_watchdog_architecture.md`](apollo_samd11_mcu/apollo_watchdog_architecture.md) — (no title)
 * [`apollo_samd11_mcu/cynthion_architecture_scan_2026_05_22.md`](apollo_samd11_mcu/cynthion_architecture_scan_2026_05_22.md) — Cynthion Architecture Scan Report
-* [`apollo_samd11_mcu/fpga-adv-sideband.md`](apollo_samd11_mcu/fpga-adv-sideband.md) — FPGA_ADV sideband link
-* [`apollo_samd11_mcu/sideband-soak-results.md`](apollo_samd11_mcu/sideband-soak-results.md) — Sideband soak: the RC hypothesis is wrong, and slower is worse
+The FPGA_ADV wire is documented at [`sideband.md`](sideband.md), not here.
 
 ### Patch sets
 

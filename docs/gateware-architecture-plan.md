@@ -27,10 +27,11 @@ peripheral, with an interrupt line. The host still reaches it -- Apollo still
 talks FPGA_ADV -- but writes now go through the CPU, which is the only thing that
 knows whether a peripheral is mid-transaction.
 
-**That also makes the sideband the EIC replacement** (#95). Today FPGA_ADV
-carries edge counts in EIC mode and commands in UART mode. As a CPU peripheral
-with an interrupt it carries both, plus user data, and the mode distinction stops
-mattering.
+**That also makes the sideband the EIC replacement** (#95): as a CPU peripheral with
+an interrupt it carries the port request, the commands and user data, and the
+EIC/UART mode distinction stops mattering. The two modes, and why the port request
+and the command traffic contend for the wire, are in
+[`sideband.md`](sideband.md#8-the-second-job-the-control-port-request).
 
 ## One I2C controller, three bus pin-sets
 
@@ -109,8 +110,9 @@ the CPU-side path, not the knowledge.
 
 **FUSB302B and die temperature over the sideband.** Small, because the gateware
 exists -- `ecp5-test/pins/fusb302_id.py` already reads both controllers. What is
-missing is sideband *commands*, not blocks. Temperature needs the `DTR` primitive
-instantiated, which it currently is not anywhere.
+missing is sideband *commands*, not blocks; the opcode map and what adding to it
+costs are in [`sideband.md`](sideband.md#4-commands). Temperature needs the `DTR`
+primitive instantiated, which it currently is not anywhere.
 
 **Flash and HyperRAM benchmarking driven by the CPU.** The measurements that
 motivated the RISC-V work. **Blocked** on the silent-SoC problem: both CPUs

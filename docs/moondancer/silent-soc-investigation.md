@@ -153,11 +153,10 @@ with `console.source.valid` routed to it. It did not answer, and the reasons are
 worth recording because none of them is "the link is broken".
 
 **The vendor ABI is not what a reader would guess.** Request `0xc3` overloads
-`wValue`: `0xFFFF` reads the mode, `0xFFFE` issues a command (command in the
-`wIndex` low byte, expected reply length in the high byte), `0xFFFD` toggles a
-diagnostic square wave, `0xFFFC` reads link health. Any *other* `wValue` **sets
-the mode**. So an initial query with `wValue=0` did not read anything — it
-selected EIC mode, the opposite of what was wanted.
+`wValue`, and any value it does not recognise **sets the mode** rather than reading
+anything — so an initial query with `wValue=0` selected EIC mode, the opposite of what
+was wanted. The full table is
+[`../sideband.md`](../sideband.md#10-the-host-interface).
 
 **UART mode must be selected explicitly.** EIC is the power-on default, so a
 host that never chooses behaves like older firmware. With `wValue=1` the mode
@@ -170,11 +169,12 @@ the FPGA is not answering.
 firmware.** The board runs `v1.1.1-17-ga7b8283`; `0xFFFC` arrived in `b48d4bf`,
 one commit later, so it stalls with a pipe error. Expected, not a fault.
 
-Baud was checked and ruled out: the gateware responder and
-`ecp5-test/sideband_debug.py` both default to 115200, matching the flashed
-firmware. `b48d4bf` raises it to 230400, which *would* break the link if the
+Baud was checked and ruled out **for this firmware**: the gateware responder and
+`ecp5-test/sideband_debug.py` both defaulted to 115200, matching the flashed
+`a7b8283`. `b48d4bf` raises both to 230400, which *would* break the link if the
 gateware were rebuilt against it while the MCU stayed on `a7b8283` — worth
-knowing before flashing that commit.
+knowing before flashing that commit. 230400 is the settled rate and 115200 is the
+worse one; see [`../sideband.md`](../sideband.md#2-rate-230400-and-faster-is-better).
 
 So the sideband is a sound instrument that currently cannot be read. Making it
 diagnostic means flashing `b48d4bf` or later, which is a firmware change and

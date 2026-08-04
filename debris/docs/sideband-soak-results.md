@@ -1,7 +1,12 @@
 # Sideband soak: the RC hypothesis is wrong, and slower is worse
 
+**Retired 2026-08-05.** The result is folded into
+[`docs/sideband.md` §2](../../docs/sideband.md#2-rate-230400-and-faster-is-better);
+this file keeps the reasoning behind it. The script moved to
+`debris/scripts/sideband_soak.py`.
+
 Soak across baud and drive style, each direction scored separately
-(`scripts/sideband_soak.py`). Run after the drive style changed to open-drain at
+(`debris/scripts/sideband_soak.py`). Run after the drive style changed to open-drain at
 both ends to remove a measured 30.4 us driver-to-driver short.
 
 The question was whether open-drain still closes: it replaces an actively driven

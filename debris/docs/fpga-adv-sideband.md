@@ -1,5 +1,10 @@
 # FPGA_ADV sideband link
 
+**Retired 2026-08-05.** Superseded by [`docs/sideband.md`](../../docs/sideband.md).
+**§1 and §11 argue for push-pull and against open drain; that was overturned by #88
+and by the soak** — do not take the electrical guidance here. §12 and §13 are a test
+plan and acceptance criteria, which belong in an issue.
+
 Half-duplex request/response between Apollo (ATSAMD11) and the ECP5 over the
 single existing FPGA_ADV wire. No PCB change; native JTAG stays enabled.
 
@@ -164,7 +169,7 @@ makes the responder stateful and then makes it need a timeout (§7).
 unknown commands. Answering them with a well-formed frame of zeros was
 considered and rejected: it reads as a working query returning nothing, and
 every reader then has to know which fields are real in which bitstream. See
-[decision 24](../decisions.md#24-what-the-sideband-link-answers).
+[decision 24](../../docs/decisions.md#24-what-the-sideband-link-answers).
 
 ### 3.2 Test bitstream — `apollo_fpga.gateware.sideband`, protocol v1
 

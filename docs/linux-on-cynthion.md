@@ -175,14 +175,17 @@ so it is cacheable and executable, with JTAG keeping arbitration priority. It ha
 
 ### The arithmetic that has to be checked on the board
 
-`HyperRAMWishbone` does **one two-word HyperBus transaction per 32-bit access**
-(`vexii_bootram.py:61-75, 317`). It declares `cti`/`bte` but does not coalesce an
-incrementing burst into one long HyperBus burst. So, per 64-byte cache line:
+`HyperRAMWishbone` now coalesces an incrementing linear burst into one HyperBus
+transaction (`vexii_bootram.py:126-168`, capped at 748 words for tCSM — see
+[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md#how-software-reaches-it)). The
+table below is the arithmetic that motivated that change; the second row is what the
+window does today, asserted in simulation and **not yet measured on the board**. Per
+64-byte cache line:
 
 | | CK at 192 MHz | time | effective rate |
 |---|---|---|---|
-| as built — 16 accesses × (19 + 2) CK | 336 | 1.75 µs | **36.6 MB/s** |
-| if the window honoured CTI — one 32-word burst, 19 + 32 CK | 51 | 266 ns | **241 MB/s** |
+| uncoalesced — 16 accesses × (19 + 2) CK | 336 | 1.75 µs | **36.6 MB/s** |
+| honouring CTI — one 32-word burst, 19 + 32 CK | 51 | 266 ns | **241 MB/s** |
 | the part's own measured burst figure, for scale | — | — | 334.4 MB/s |
 
 **This is arithmetic from a measured overhead, not a measurement.** 1.75 µs is ~105
