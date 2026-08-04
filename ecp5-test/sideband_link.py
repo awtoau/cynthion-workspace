@@ -39,6 +39,29 @@ is the test bitstream, it uses `apollo_fpga.gateware.sideband.SidebandResponder`
 and it is where a board that will not boot far enough to have a console is asked
 about its hardware.
 
+## 230400 is DETERMINED, not chosen
+
+**Any other rate is wrong until proven otherwise on hardware.** The `baud`
+argument exists because the receiver has to agree and both ends are built
+separately, not because the rate is open.
+
+The ceiling is hardware, not margin. Apollo's SERCOM **cannot transmit** on
+PA09: `TXPO` selects PAD0 or PAD2 and PA09 is PAD3, so Apollo's transmit is
+bit-banged. Measured with `ecp5-test/adv_speed/`, which streams a counting
+sequence so a drop and a corruption are distinguishable:
+
+    230400   100/100 frames
+    460800     1/100 frames, with CRC corruption
+
+Raising it also buys little. The 40 us turnaround is an ABSOLUTE time -- it is
+the master's pin-handover cost in fixed CPU cycles -- so it does not shrink with
+baud, and it already caps a one-byte exchange near 3900/s. Payload size
+amortises it; baud does not.
+
+Proving a different rate means a fresh `adv_speed` run on hardware at that rate,
+both directions, with the frame counts recorded. Not a build that appears to
+work.
+
 ## The clock
 
 `divisor = clk_freq_hz // baud`, computed during elaboration, and **nothing

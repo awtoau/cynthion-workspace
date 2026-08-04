@@ -49,6 +49,10 @@ APPLET_ID = 0x53504545  # "SPEE"
 class AdvSpeedTest(Elaboratable):
     """ Transmits a counting byte stream on FPGA_ADV at a fixed baud. """
 
+    # 115200 is the lowest rung of the sweep, NOT the operating rate. The link
+    # runs at 230400 and that is determined -- see `ecp5-test/sideband_link.py`.
+    # This module exists to challenge that with evidence, which is why it takes
+    # a baud at all.
     def __init__(self, baud=115200, open_drain=False, clk_freq_hz=None):
         self.baud        = baud
         self.open_drain  = open_drain
