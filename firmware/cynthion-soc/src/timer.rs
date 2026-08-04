@@ -3,9 +3,9 @@
 //! A CLINT raises the machine timer interrupt while `mtime >= mtimecmp`. The
 //! handler adds one period to `mtimecmp` and returns; that is the whole tick.
 //!
-//! Standard rather than bespoke, for the same reason `src/plic.rs` is: FreeRTOS,
-//! RTIC and Zephyr all drive a RISC-V tick this way and none of them will drive
-//! a custom timer without a port being written. QEMU's `-M virt` has a real
+//! Standard rather than bespoke, for the same reason `src/plic.rs` is: RTIC and
+//! Zephyr both drive a RISC-V tick this way and neither will drive a custom
+//! timer without a port being written. QEMU's `-M virt` has a real
 //! CLINT, so this file is compiled unchanged for both targets and
 //! `scripts/soc_test.py` exercises the tick that ships. Only `CLINT_BASE` and
 //! `TIME_HZ` differ, and both live in `src/target.rs`.
@@ -88,8 +88,8 @@ use riscv::interrupt::Interrupt;
 use crate::clock;
 use crate::target;
 
-/// How often the tick fires. The FreeRTOS idiom, and the resolution every
-/// timestamp in `src/log.rs` is printed at.
+/// How often the tick fires, and the resolution every timestamp in
+/// `src/log.rs` is printed at.
 ///
 /// Adjustable: nothing here assumes 1, and `millis()` counts periods rather
 /// than interrupts, so a different value changes the interrupt rate and not the

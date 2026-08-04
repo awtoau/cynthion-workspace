@@ -21,7 +21,7 @@
 //!
 //! A task is a state machine in a `static` sized by the compiler from its own
 //! locals, so N tasks cost N futures rather than N stacks. That is the
-//! difference from a FreeRTOS-style model, and on 46 KiB of block RAM it is the
+//! difference from any model with per-task stacks, and on 46 KiB of block RAM it is the
 //! difference that matters.
 
 #![no_std]

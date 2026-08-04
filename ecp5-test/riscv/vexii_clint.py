@@ -7,7 +7,7 @@
 A RISC-V CLINT: the machine timer and software interrupts for one hart.
 
 Standard, not bespoke, so that `firmware/cynthion-soc/src/timer.rs` and the
-RISC-V ports of FreeRTOS, RTIC and Zephyr all work unchanged -- none of them
+RISC-V ports of RTIC and Zephyr both work unchanged -- neither of them
 will drive a custom timer peripheral without a port being written first. QEMU's
 `-M virt` has a CLINT too (`clint@2000000`), which is what makes
 `scripts/soc_test.py` evidence about the tick that ships. The alternatives

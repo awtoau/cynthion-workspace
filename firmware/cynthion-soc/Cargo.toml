@@ -52,6 +52,13 @@ rtic = { version = "2.3", features = ["riscv-clint-backend"], optional = true }
 [features]
 qemu = []
 
+# The concurrency-model skeletons that produced the table in
+# `docs/soc-concurrency-models.md`. They are measurement artefacts, not code the
+# shell uses, and they are kept because a size comparison nobody can rebuild is
+# an assertion rather than a measurement. `scripts/soc_model_probe.py` builds
+# them.
+models = []
+
 # The RTIC spike (`docs/rtic-adoption.md`, #115). Off, and the shell does not
 # know it exists: everything it adds is in `src/bin/rtic.rs`, which cargo does
 # not build without the feature, so `src/main.rs` is untouched and the shipping
@@ -95,3 +102,31 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 debug = true         # kept -- costs nothing in the binary, and .elf is what gets read
+
+# Declared explicitly, because cargo auto-discovers `src/bin/*.rs` and builds
+# them all otherwise -- which put `model_embassy.rs` into the default build with
+# no `embassy_executor` to link against.
+[[bin]]
+name = "model-bare"
+path = "src/bin/model_bare.rs"
+required-features = ["models"]
+
+[[bin]]
+name = "model-coop"
+path = "src/bin/model_coop.rs"
+required-features = ["models"]
+
+[[bin]]
+name = "model-coop-swqueue"
+path = "src/bin/model_coop_swqueue.rs"
+required-features = ["models"]
+
+[[bin]]
+name = "model-coop-hwtimer"
+path = "src/bin/model_coop_hwtimer.rs"
+required-features = ["models"]
+
+[[bin]]
+name = "model-embassy"
+path = "src/bin/model_embassy.rs"
+required-features = ["embassy"]

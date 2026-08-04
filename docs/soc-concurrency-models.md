@@ -1,7 +1,6 @@
 # Concurrency models on this SoC, measured
 
 Issue #115 asked whether RTIC is the right shape for this machine, or whether a
-FreeRTOS-style 1 ms tick master, or hardware timers, would fit better.
 `docs/rtic-adoption.md` answers the RTIC half. This is the comparison: five
 models built as skeletons, one table, and the constraint that decides between
 them.
@@ -22,8 +21,6 @@ runtime and nothing else.
 
 * `scripts/soc_model_probe.py` builds the Rust skeletons in
   `firmware/cynthion-soc/src/bin/model_*.rs` and `src/bin/rtic.rs`.
-* `scripts/soc_freertos_probe.py` builds the C ones in
-  `scripts/freertos-model/`, against FreeRTOS-Kernel V11.2.0.
 
 Each language needs its own floor, because riscv-rt's trap dispatch and gcc's
 are not the same code. `runtime` below is always a difference from the floor in
@@ -41,42 +38,27 @@ graph and a kernel tarball, and a gate that needs the network fails on a flight.
 | **Embassy 0.10**, `platform-riscv32` | 1,808 | **1,048** | 26% | 120 |
 | **RTIC 2.3**, `riscv-clint-backend` | 2,312 | **1,552** | 38% | 24 |
 | bare C (the C floor) | 186 | — | — | 4 |
-| **FreeRTOS 11.2**, RISC-V port | 4,068 | **3,882** | 95% | 2,224 |
 
 For scale, the shell itself is 41,400 bytes of `.text`, 17,056 of `.rodata` and
 9,656 of `.bss`.
 
-FreeRTOS is measured at its smallest: static allocation only (no heap),
 `configUSE_TIMERS` off, `croutine`/`event_groups`/`stream_buffer` not linked,
-and `--gc-sections`. The config is `scripts/freertos-model/FreeRTOSConfig.h` and
 every option in it is off unless this firmware would use it.
 
-### The RAM column is only interesting for one of them
+### None of them gives a task a stack
 
-Three of the four runtimes cost tens of bytes of `.bss` and no stack at all,
-because none of them gives a task a stack: RTIC's tasks and the cooperative
-jobs run to completion on the one stack, and an Embassy task is a compiler-sized
-state machine in a `static`.
+That is why the `.bss` column is tens of bytes rather than kilobytes. RTIC's
+tasks and the cooperative jobs run to completion on the one stack, and an
+Embassy task is a compiler-sized state machine in a `static`.
 
-FreeRTOS is the exception, and it is the whole difference:
-
-| | bytes |
-|---|---|
-| TCB (`StaticTask_t`) | 76 |
-| `configMINIMAL_STACK_SIZE`, at 128 words | 512 |
-| `StaticSemaphore_t` | 72 |
-| the port's separate interrupt stack | one more, and not optional |
-
-Against ~46 KiB free, eight tasks with 512-byte stacks is 4.6 KiB and eight with
-4 KiB stacks is 32.6 KiB. The number that decides it is not the kernel's — it is
-how deep the shell's own call chain is. `memory.x` reserves an 8 KiB floor for
-one stack today and calls it "a floor, not a measurement of what this firmware
-needs", because riscv-rt gives no stack-usage figure and nothing here computes
-one. **Under FreeRTOS that unmeasured number has to be sized N times, and the
-failure mode when it is sized too small is the one `memory.x` already
-records**: `.bss` overwritten by stack frames, the receive ring's indices coming
-back as stack addresses, and a panic about an index of 64016 in a 256-byte
-array.
+A model that gave each task its own stack would be decided by a different
+number entirely -- not the runtime's size but how deep the shell's own call
+chain is. `memory.x` reserves an 8 KiB floor and calls it "a floor, not a
+measurement of what this firmware needs", because riscv-rt gives no stack-usage
+figure and nothing here computes one. The failure mode when such a floor is too
+small is the one `memory.x` already records: `.bss` overwritten by stack frames,
+the receive ring's indices coming back as stack addresses, and a panic about an
+index of 64016 in a 256-byte array.
 
 ## 3. What each model needs, and what it fixes
 
@@ -171,29 +153,6 @@ Not covered by `docs/rtic-adoption.md`, and the direct competitor.
 * 1,048 bytes, 26% of the I-cache. 120 bytes of `.bss` for two tasks, which
   grows per task rather than being fixed.
 
-### A FreeRTOS-style 1 ms tick master
-
-* **From the gateware it needs exactly what exists.** The RISC-V port drives its
-  tick from `mtimecmp` against `mtime` — the one comparator `vexii_clint.py`
-  has, at the addresses `src/target.rs` already gives. That is why the port
-  compiles against this SoC with no port written:
-  `chip_specific_extensions/RISCV_MTIME_CLINT_no_extensions` is this machine.
-* **It does not use the PLIC either.** The port's trap handler calls
-  `freertos_risc_v_application_interrupt_handler` for anything that is not the
-  timer or the software interrupt, and that function is the same claim loop.
-  Three of the four models leave `src/irq.rs` in place.
-* **It is the only model that fixes the unbounded turn outright.** Preemption is
-  the point: a 1 ms tick preempts a task at a priority boundary whatever the
-  task is doing, so a `load` cannot stop the power poll and a long command
-  cannot stretch a 50 ms period. Nothing else in this table does that.
-* **It costs 3,882 bytes — 95% of the I-cache — plus a stack per task.** That is
-  the trade, stated plainly: the only model that preempts is the only model that
-  does not fit in the cache alongside the code it is scheduling.
-* The 1 ms tick itself is not the cost. `timer.rs` already runs one, its handler
-  is bounded and short, and `time` reports its worst duration. Adding preemption
-  to it is what costs — a context switch is 30 registers each way, and the port
-  needs a separate interrupt stack for them.
-
 ### A cooperative run-to-completion scheduler
 
 `src/bin/model_coop.rs`. A `READY` bitmap, a table of `fn()`, and a dispatch
@@ -264,7 +223,6 @@ Scala, so that experiment needs an sbt server running.
 | cooperative | as above, plus a deadline array | 148 bytes smaller, and the set-in-the-past case disappears |
 | RTIC | needs an `rtic_time::Monotonic` written from scratch | **weakens the case for RTIC**: `Monotonic` wants one `set_compare`, so N comparators means N monotonics or not using RTIC's scheduling for the periodic jobs — and scheduling is much of what RTIC is adopted for |
 | Embassy | needs an `embassy-time` driver written from scratch, same shape | same weakening, same reason |
-| FreeRTOS | the tick is already `mtimecmp`; periodic work is `xTaskDelayUntil` | the tick still wants `mtimecmp`, and the extra comparators serve jobs the scheduler then does not see |
 
 Hardware timers help the two models that have no timer abstraction and take
 something away from the two that do.
@@ -279,7 +237,6 @@ something away from the two that do.
 * **Interrupt latency, for any model.** `timer.rs` reports worst lateness and
   `metrics.rs` reports worst turn, so the instrument exists; no model but the
   current one has been run.
-* **Stack depth, for any task.** Section 2. This is the number FreeRTOS needs
   N of and nothing in this tree computes even one.
 * **Anything on the board.** Every figure here is a build result or a QEMU
   measurement. No skeleton has been programmed.
@@ -292,7 +249,6 @@ something away from the two that do.
 | cooperative | 224 | no | no | no | a dispatcher |
 | Embassy | 1,048 | no | no | no | an `embassy-time` driver, for periodic work |
 | RTIC | 1,552 | yes, by priority | **yes, at compile time** | no | an `rtic_time::Monotonic` |
-| FreeRTOS | 3,882 | **yes, on the tick** | at runtime | no | a stack size per task |
 
 Every model leaves `src/irq.rs`'s PLIC claim loop in place. None of the four
 runtimes has a PLIC backend, and that is not a gap in any of them — it is what a
