@@ -40,6 +40,17 @@ checked by construction instead -- that `SerialLine` puts an `FFSynchronizer`
 between `rx_i` and everything else, and that no design hands a raw pad to
 `AsyncSerialRX`.
 
+## Why a check here costs milliseconds, and why that is not a poll
+
+#175 read this harness's ~5 ms per check off `dev.log` and grouped it with
+`soc_test`'s 20 ms as an interval to remove. It is not one: nothing here waits on
+wall time at all. Every check is preceded by its own elaboration and simulation,
+and a profile counts 10,276 `pysim` deltas across the eleven runs below with the
+whole cost inside `Simulator.advance`. Milliseconds per check IS the simulator's
+rate, and the only way to lower it is fewer simulated cycles -- which would mean
+testing less. Recorded here so the next person reading a flat per-check figure
+does not go looking for a `sleep` that was never there.
+
 ## What the line reports losing
 
 A separate group, and not about #113. `source.valid` is one cycle and does not
