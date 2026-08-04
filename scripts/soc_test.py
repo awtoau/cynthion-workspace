@@ -174,12 +174,78 @@ BOARD_REPLY_S = 0.25
 # precisely the symptom the board shows.
 IDLE_S = 8.0
 
-# How often the expect loop rechecks the buffer while waiting.
+# Nothing polls. `expect` blocks on the reader thread's condition variable and is
+# woken by the arrival of bytes, so the only waits left are the budgets above.
 #
-# The reader thread appends as bytes arrive, so this only sets how promptly a satisfied
-# assertion is noticed. 20 ms costs at most 20 ms per assertion and a few dozen wakeups a
-# second; polling faster just burns CPU racing a pipe that is already being drained.
-POLL_S = 0.02
+# It used to recheck the buffer every 20 ms, which put a 20 ms floor under every
+# assertion whatever it asked: 98 checks with a median cost of 20.1 ms, to the tenth
+# of a millisecond, for a harness whose checks are string comparisons. Two of the
+# 5.5 s were spent asleep. Event-driven, the median is 0.2 ms and the run is 3.5 s;
+# what remains is the handful of assertions that genuinely wait for the firmware --
+# the two ~1.7 s idle re-banners, and `log 20`'s millisecond between pushes. See #175.
+#
+# Blocking is also strictly LESS load than any poll, which matters here: the suite
+# asserts that an untouched shell is mostly idle, and a 1 ms poll once made that fail
+# by turning the instrument into the load it was measuring.
+
+# What says a reply is COMPLETE, as opposed to started.
+#
+# `expect` returns the instant its needle lands, and a needle is usually in the
+# first line of a reply that a check then PARSES. The 20 ms poll hid that: the
+# rest of the reply had almost always arrived by the time the poll noticed, and
+# three places in this file already carry comments about the runs where it had
+# not. Removing the poll turned "almost always" into "rarely", so the wait for
+# the reply is now stated rather than assumed.
+#
+# The shell writes "> " after the handler returns. The CRLF in front of it is
+# load-bearing: `help` prints `bram read <hex>     one word of block RAM`, and a
+# bare "> " matches inside that line.
+PROMPT = b"\r\n> "
+
+
+def wait_for_bytes(session, needle, budget, since):
+    """Block until `needle` appears at or after `since`. Its index, or None.
+
+    Shared by both sessions: the transports differ, the wait does not. The
+    session supplies `cond` (notified whenever its reader appends), `buf`, and
+    `closed` (its source has ended and cannot produce anything further).
+
+    The wait is "more bytes, or the deadline" -- there is no interval to tune.
+    `Condition.wait` returns on the notify, so a satisfied assertion is noticed
+    as soon as the byte that satisfies it lands, and a thread that is not woken
+    costs nothing at all.
+    """
+    deadline = time.monotonic() + budget
+    with session.cond:
+        while True:
+            found = session.buf.find(needle, since)
+            if found >= 0:
+                return found
+            # After the scan, not before: the last bytes a dying process wrote
+            # are in the buffer and may be the ones being waited for.
+            if session.closed:
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            session.cond.wait(remaining)
+
+
+def expect_line(session, needle, budget, since=0):
+    """Wait for `needle`, and for the end of the line carrying it.
+
+    `expect` returns on the byte that completes the needle, so a check that
+    parses AROUND its needle -- a value after it, a timestamp after it -- can be
+    reading a line that is still arriving. Waiting for the CRLF that terminates
+    it is the event that says the line is whole. Returns None if either wait
+    expires, so a caller testing for None reads the same as it did.
+    """
+    deadline = time.monotonic() + budget
+    at = session.expect(needle, budget, since)
+    if at is None:
+        return None
+    return session.expect(b"\r\n", max(0.0, deadline - time.monotonic()),
+                          at + len(needle))
 
 
 class BoardSession:
@@ -218,7 +284,10 @@ class BoardSession:
     def __init__(self, emit):
         self.proc = None            # nothing to poll; `expect` handles this
         self.buf = bytearray()
-        self.lock = threading.Lock()
+        # A condition, not a plain lock: `expect` sleeps on it and the reader
+        # thread wakes it as bytes land. See `wait_for_bytes`.
+        self.cond = threading.Condition()
+        self.closed = False
         self.errors = bytearray()
         self.socket = None
         self.serial = None
@@ -274,17 +343,24 @@ class BoardSession:
                 if self.socket is not None:
                     chunk = self.socket.recv(4096)
                     if not chunk:
-                        return
+                        break
                 else:
-                    chunk = self.serial.read(256)
+                    # Block for one byte, then take everything already waiting.
+                    # `read(256)` sits out the port's whole 0.2 s timeout for a
+                    # short reply, which is the same fixed cost in another place.
+                    chunk = self.serial.read(max(1, self.serial.in_waiting))
             except (TimeoutError, OSError):
                 continue
             if chunk:
-                with self.lock:
+                with self.cond:
                     self.buf.extend(chunk)
+                    self.cond.notify_all()
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
 
     def snapshot(self):
-        with self.lock:
+        with self.cond:
             return bytes(self.buf)
 
     def send(self, data):
@@ -295,26 +371,23 @@ class BoardSession:
             self.serial.flush()
 
     def expect(self, needle, budget, since=0):
-        # 5 ms. NOT 1 ms, and the reason is a regression this caused.
+        # No interval at all now, and the history is worth keeping because it is
+        # what a poll costs an instrument.
         #
-        # A 1 ms poll made "an untouched shell is mostly idle" fail on every run:
-        # the harness was busy enough that the thing it was measuring stopped
-        # being untouched. A measuring instrument that loads its subject reports
-        # the load.
+        # It was 10 ms, which put a floor under everything this can report:
+        # calibration read a rock-steady "50.4 ms" across three runs -- so stable,
+        # and so close to the firmware's own 50 ms power poll, that it read as a
+        # real mechanism and very nearly justified halving that poll to fix a
+        # latency the firmware does not have.
         #
-        # NOT 10 ms either, which is what it was. At 10 ms the poll is a floor on
-        # anything this can report, and calibration read a rock-steady "50.4 ms"
-        # across three runs -- so stable, and so close to the firmware's 50 ms
-        # power poll, that it read as a real mechanism and very nearly justified
-        # halving that poll to fix a latency the firmware does not have.
-        deadline = time.monotonic() + budget
-        while True:
-            found = self.snapshot().find(needle, since)
-            if found >= 0:
-                return found
-            if time.monotonic() >= deadline:
-                return None
-            time.sleep(0.005)
+        # Dropping it to 1 ms then made "an untouched shell is mostly idle" fail
+        # on every run: the harness became busy enough that the thing it measured
+        # stopped being untouched. An instrument that loads its subject reports
+        # the load. 5 ms was the compromise between those two.
+        #
+        # Waiting on the reader thread instead has neither problem: the latency
+        # is the byte's arrival, and a blocked thread is less load than any poll.
+        return wait_for_bytes(self, needle, budget, since)
 
     def close(self):
         if self.socket is not None:
@@ -339,7 +412,8 @@ class Session:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, bufsize=0)
         self.buf = bytearray()
-        self.lock = threading.Lock()
+        self.cond = threading.Condition()
+        self.closed = False
         self.errors = bytearray()
         self.reader = threading.Thread(target=self._drain, daemon=True)
         self.reader.start()
@@ -347,12 +421,23 @@ class Session:
         self.errs.start()
 
     def _drain(self):
+        fd = self.proc.stdout.fileno()
         while True:
-            chunk = self.proc.stdout.read(1)
+            try:
+                # One read syscall, returning as soon as the pipe has anything.
+                # Byte at a time was a lock, an append and a wakeup per character
+                # for no benefit -- everything read is buffered either way.
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
             if not chunk:
-                return
-            with self.lock:
+                break
+            with self.cond:
                 self.buf.extend(chunk)
+                self.cond.notify_all()
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
 
     def _drain_err(self):
         # QEMU's own complaints (bad machine, missing accelerator) land here and are the
@@ -364,7 +449,7 @@ class Session:
             self.errors.extend(chunk)
 
     def snapshot(self):
-        with self.lock:
+        with self.cond:
             return bytes(self.buf)
 
     def send(self, data):
@@ -372,18 +457,14 @@ class Session:
         self.proc.stdin.flush()
 
     def expect(self, needle, budget, since=0):
-        """Wait for `needle` to appear at or after offset `since`. Index, or None."""
-        deadline = time.monotonic() + budget
-        while True:
-            found = self.snapshot().find(needle, since)
-            if found >= 0:
-                return found
-            if time.monotonic() >= deadline:
-                return None
-            if self.proc.poll() is not None:
-                # A dead QEMU will never produce it; do not sit out the budget.
-                return None
-            time.sleep(POLL_S)
+        """Wait for `needle` to appear at or after offset `since`. Index, or None.
+
+        A dead QEMU does not sit out the budget: its stdout reaches EOF, which
+        sets `closed`. That is a better test than `proc.poll()` was -- the pipe
+        closing means everything the process wrote has been read, where an exit
+        status can be observed while its last bytes are still in flight.
+        """
+        return wait_for_bytes(self, needle, budget, since)
 
     def close(self):
         # Terminate rather than wait: this firmware is an infinite loop by design and
@@ -454,6 +535,8 @@ def ask_fresh_qemu(text, needle, seconds, settle=None, settle_s=0):
         mark = len(session.snapshot())
         session.send(text.encode() + b"\r")
         session.expect(needle, seconds, mark)
+        # Both callers parse what comes back, so wait for the prompt as well.
+        session.expect(PROMPT, seconds, mark)
         return session.snapshot()[mark:]
     finally:
         session.close()
@@ -596,8 +679,13 @@ def main():
             """Send a line, require every needle in what comes back."""
             mark = len(session.snapshot())
             session.send(text.encode() + b"\r")
+            # Each needle's whole LINE, so a check that parses past its needle
+            # is not reading one still on the wire.
             missing = [n for n in needles
-                       if session.expect(n, REPLY_S, mark) is None]
+                       if expect_line(session, n, REPLY_S, mark) is None]
+            # And then the prompt: the needles say the reply STARTED, this says
+            # the handler has finished and `reply` is all of it.
+            session.expect(PROMPT, REPLY_S, mark)
             reply = session.snapshot()[mark:]
             check(name, not missing,
                   f"sent: {text!r}\n"
@@ -945,7 +1033,7 @@ def main():
         mark = len(session.snapshot())
         command("log 10", [b"log pushed 10 of 10"],
                 "ten records fit in the deferred log")
-        drained = session.expect(b"log test 9", REPLY_S, mark)
+        drained = expect_line(session, b"log test 9", REPLY_S, mark)
         check("the main loop drains the log and formats it",
               drained is not None,
               "the records pushed by `log 10` never appeared on the console.\n"
@@ -1057,7 +1145,8 @@ def main():
         # Same race, same fix: wait for the dated form before matching it.
         # The check above only established that a LOST line exists.
         check("the loss report dates the gap it left in the column",
-              session.expect(b"event(s) LOST from ", REPLY_S, mark) is not None
+              expect_line(session, b"event(s) LOST from ", REPLY_S, mark)
+              is not None
               and re.search(rb"event\(s\) LOST from \d{6}\.\d{3}",
                             session.snapshot()) is not None,
               "the LOST line carried no time for the first record lost.\n"

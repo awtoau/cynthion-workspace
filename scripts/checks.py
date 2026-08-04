@@ -23,6 +23,12 @@ So each check carries its own elapsed time, and the summary names the slowest.
 The number to watch is not the total, it is whether a harness's per-check cost
 is FLAT: a flat cost is a timeout, a varying one is work.
 
+That distinction paid immediately. Of the three, only `soc_test` was actually
+asleep -- 20.1 ms of poll, now 0.2 ms of event-driven wait. The other two were
+doing the work they looked like they were doing, in Amaranth's simulator, and
+the one fixed interval among them was a 400-cycle FIFO drain worth 12%. Guessing
+from wall clock would have got all three wrong; see #175 and their docstrings.
+
 ## Nine copies became one
 
 `class Checks` was defined nine times across `scripts/`, plus a tenth private
@@ -127,9 +133,11 @@ class Checks:
 
         # The flat-cost test: if the median and the spread agree closely, the
         # harness is waiting on a fixed interval rather than doing varying work.
-        # It does NOT fire for `soc_test`, whose 20.1 ms poll is real but whose
-        # tail (a 1.7 s idle-timeout check) widens the spread past the gate --
-        # which is why the median above is printed unconditionally.
+        # It never fired for `soc_test`, whose 20.1 ms poll was real but whose
+        # tail (two 1.7 s idle waits) widened the spread past the gate -- which
+        # is why the median above is printed unconditionally, and why the poll
+        # was found by reading that median rather than by this warning. The
+        # three intervals are gone as of #175; the gate stays for the next one.
         ordered = ordered_ms
         median = ordered[len(ordered) // 2]
         if median >= SUSPICIOUS_FLAT_MS:
