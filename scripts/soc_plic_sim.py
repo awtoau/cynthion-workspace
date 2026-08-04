@@ -179,8 +179,8 @@ def run_plic_checks(checks, verbose):
             ctx.get(dut.irq_out) == 0,
             "the rule is strictly greater-than: priority 1 must not pass a "
             "threshold of 1. An off-by-one here silently changes which "
-            "sources a critical section blocks, which is what RTIC will use "
-            "the threshold for.")
+            "sources a masked window blocks -- and the shell reports this "
+            "register in `info`, so a wrong one is also a wrong diagnosis.")
         await bus.write(THRESHOLD, 0)
 
         # --- reading pending changes nothing ----------------------------------

@@ -618,10 +618,15 @@ has never been put into `FPGA_ADV_MODE_UART` from the host — see
 **Why the full spec PLIC rather than the 30-line pair.** QEMU's `-M virt` has a PLIC, at
 0x0c000000, with the 16550 on source 10. A bespoke controller would mean a different one
 in the QEMU build, and the test gate would stop covering the interrupt path that ships —
-the same property that made the console a standard 16550. Second reason: RTIC's RISC-V
-backend and every generic Rust PLIC driver (`riscv-peripheral`) expect this register map,
-so a non-standard controller means writing an RTIC backend before RTIC can be used
-(decision 19).
+the same property that made the console a standard 16550. Second reason: every generic
+Rust PLIC driver (`riscv-peripheral`) expects this register map.
+
+**The second reason used to name RTIC as well, and that was wrong.** It said a
+non-standard controller "means writing an RTIC backend before RTIC can be used". RTIC has
+no PLIC backend in any released version and never reads a claim register: its generic
+RISC-V backends dispatch out of `riscv-slic`, a *software* controller, from the machine
+software interrupt. Compiled and measured in `docs/rtic-adoption.md`. The QEMU argument
+above is unaffected and is the one that carried the decision anyway.
 
 It also satisfies the register discipline without adjustment: the only side-effecting read
 is the claim at 0x200004, alone in its 32-bit word, and `pending` — the register a poll
@@ -900,20 +905,29 @@ pulls in compiler-builtins float code — reserve the tags, do not implement the
 
 ### 19. RTOS: bare loop vs RTIC vs Zephyr
 
-**Open.** Both #112 and #115 are open and no decision has been made.
+**Open.** Both #112 and #115 are open and no decision has been made. What changed is that
+RTIC has now been compiled for this machine rather than argued about:
+`firmware/cynthion-soc/src/bin/rtic.rs`, behind `--features rtic`, measured by
+`scripts/rtic_probe.py`. The full write-up is [`rtic-adoption.md`](rtic-adoption.md).
 
 | | **bare loop today** | RTIC (#115) | Zephyr (#112) |
 |---|---|---|---|
-| Needs | — | a PLIC — **now present** | the same peripherals, plus a board port, a devicetree and drivers |
-| Blocked by | — | nothing known | moondancer's linker script puts `.text`/`.rodata` in SPI flash (#93) |
+| Needs | — | a CLINT `msip` — **present and, until now, unused** | the same peripherals, plus a board port, a devicetree and drivers |
+| Blocked by | — | nothing; it builds for the board and for QEMU | moondancer's linker script puts `.text`/`.rodata` in SPI flash (#93) |
 | ISA | `riscv32imac` | matches | matches |
-| Prior art | — | `riscv-peripheral` expects our PLIC map | VexiiRiscv is a supported Zephyr target; Zephyr's `memc_mcux_flexspi_w956a8mbya.c` is where this board's HyperBus command encoding was confirmed |
-| Argument against | — | — | **it does not reduce the work, it adds to it**; moondancer is ~1,400 lines of Rust on `riscv-rt` with a generated PAC, a HAL, real handlers and `critical-section` — the structure an RTOS provides, minus a scheduler it does not need |
+| Prior art | — | `riscv-slic`'s CLINT backend, plus five shims and a linker alias | VexiiRiscv is a supported Zephyr target; Zephyr's `memc_mcux_flexspi_w956a8mbya.c` is where this board's HyperBus command encoding was confirmed |
+| Costs | — | 1,750 bytes of `.text` on a **4 KiB** I-cache, `Cargo.lock` 14 packages → 32, `mstatus.MIE` cleared on every pend and every lock | as below |
+| Argument against | — | 0.15% busy (`hardware.md`) says there is nothing to schedule — answered in `rtic-adoption.md` §5 | **it does not reduce the work, it adds to it**; moondancer is ~1,400 lines of Rust on `riscv-rt` with a generated PAC, a HAL, real handlers and `critical-section` — the structure an RTOS provides, minus a scheduler it does not need |
 
 The current firmware is built to be RTIC-ready rather than committed to it: the standard
-PLIC (decision 7), `Plic::set_threshold` for critical sections, and a monotonic time source
-in `src/clock.rs`. The reason the console was moved off polling at all is that **RTIC
-cannot be layered on a polled main loop.**
+PLIC (decision 7), and a monotonic time source in `src/clock.rs`. The reason the console
+was moved off polling at all is that **RTIC cannot be layered on a polled main loop.**
+
+**Two of those preparations turn out not to be what RTIC wants.** `Plic::set_threshold`
+was kept "for RTIC critical sections"; RTIC locks against the SLIC's own threshold, in
+`.bss`, and leaves the PLIC's at 0. And a hardware task's `binds =` names a *software*
+source, so `src/irq.rs`'s claim loop survives adoption — it shrinks to claim, `pend`,
+complete, and the PLIC keeps deciding which source while the SLIC decides when.
 
 ### 20. Multi-transaction device protocols
 
