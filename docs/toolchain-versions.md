@@ -1,189 +1,286 @@
-# Python toolchain: what is pinned, what is stale, what is a trap
+# Toolchain versions and the constraints on them
 
-Audited 2026-07-30 while the CSR work kept failing in ways that looked like
-version skew. Most of it turned out not to be, and the parts that are wrong are
-specific rather than general.
+What every layer of this project's toolchain is, and the rules that govern which
+versions are usable. Versions verified 2026-08-05 by running the tools, reading
+the lockfiles, and comparing against upstream.
 
-## Installed against latest available
+**This file records versions and constraints, not plans.** Whether something
+*should* be upgraded belongs in an issue, not here.
 
-| package | installed | latest | verdict |
+`./dev.py doctor` checks that every tool named below is on PATH.
+
+## FPGA toolchain
+
+One OSS CAD Suite build supplies all three. There is no separate installation.
+
+| tool | in use | upstream | note |
 |---|---|---|---|
-| `amaranth` | **0.5.9** | 0.5.9 | current, nothing to do |
-| `amaranth-stdio` | `0.1.dev37+gd296ba4` | no release | git snapshot, no release exists |
-| `luna-usb` | 0.2.3 | 0.2.3 | current |
-| `facedancer` | 3.1.3 | 3.1.3 | current |
-| `usb-protocol` | 0.9.2 | 0.9.2 | current |
-| `luna-soc` | **0.3.2+awto.1** | 0.3.2 | current -- see below, it was never behind |
+| OSS CAD Suite | `20260522` | nightly tags, `2026-08-04` latest | nightly-only; there is no stable channel, so "the release" is whichever nightly is pinned |
+| Yosys | `0.65+57` (`9d0cdb855`) | `0.67` (2026-07-09) | a post-0.65 dev build, two minor releases behind |
+| nextpnr-ecp5 | `0.10-74` (`ee605e2b`) | `0.10` (2026-03-12) | **ahead of the last release**, 74 commits past the tag |
+| ecppack / prjtrellis | `1.4-79` (`56bb170`) | `1.4` (2023-05-16) | ahead of the tag; prjtrellis has not cut a release in over three years and its commits are build/packaging cleanups |
 
-So nothing is stale. Measured rather than assumed: the fork is **zero commits
-behind upstream**, upstream `main` **is** the `0.3.2` tag, and `0.3.2` is an
-ancestor of the fork. It was reporting `0.2.0` because the version comes from git
-tags via `setuptools-git-versioning` and the fork carried **no tags**, so it fell
-back to `starting_version = "0.2.0"` while actually containing 0.3.2.
+Installed at `~/opt/oss-cad-suite`, sourced via `environment`. `docs/install.md`
+carries the download URL.
 
-Now tagged `0.3.2+awto.1` and reinstalled, so it reports what it is. A package that
-misreports its version is what made this look like a stale-dependency problem when
-the dependency was current -- worth more than the tag itself.
+## Python
 
-The tag had to be the PEP 440 **local** form. `0.3.2-awto.1` breaks the wheel
-build outright: `setuptools-git-versioning` parses the tag through
-`packaging.version.Version`, which rejects a hyphen, so the failure is a build
-error rather than a wrong version string. Caught because the reinstall failed
-loudly.
+Free-threaded CPython, installed as the default `python3`. **No virtualenv** —
+see the Python strategy section of the root `README.md` for why, and for the PATH
+ordering that console scripts depend on.
 
-## The pins are ranges, not hard pins
+| | |
+|---|---|
+| interpreter | CPython **3.15.0b3**, free-threading build |
+| GIL | disabled (`sys._is_gil_enabled()` → `False`) |
+| location | `~/opt/cpython-315t/bin/python3` |
+| override | `CYN_PYTHON` |
 
-- `cynthion` requires `amaranth~=0.5`, `luna-usb~=0.2.2`
-- `luna` requires `amaranth~=0.5.0`, `usb-protocol~=0.9.2`
+3.15 is beta and no distro packages a free-threaded build of it.
+`scripts/install.py` resolves the interpreter itself, preferring `python3.15t`
+and falling back through `python3.14t` / `python3.15` / `python3.14`.
 
-Compatible-release specifiers, so within a minor series they float. There is
-nothing to "release" -- pip already installs the newest compatible version.
+**No upstream dependency declares support for 3.15, or tests free-threading.**
+Amaranth and amaranth-soc have no issue, PR or CI job mentioning no-GIL or 3.15.
+This project is ahead of its dependencies here and gets no upstream signal; the
+`freethreading` check in `scripts/check.py` is the only thing asserting that no
+import silently re-enables the GIL.
 
-## The two things that are actually wrong
+### Packages
 
-**`repos/luna` is checked out and is NOT what gets imported.** `import luna`
-resolves to site-packages, so the local checkout is decorative -- editing it
-changes nothing that runs. Same class of trap as flashing firmware from one
-commit while running Python from another, which cost hours earlier in this
-session. Either install it editable or stop treating the checkout as live.
+Every package below is at the newest version its index offers.
+`pip list --outdated` is empty.
 
-Installed editable (so edits do take effect): `apollo_fpga`, `awto_probe`,
-`cynthion`, `facedancer`. Not editable, so edits do nothing: `luna`, `luna_soc`.
+| package | installed | newest available | source |
+|---|---|---|---|
+| `amaranth` | 0.5.9 | 0.5.9 | PyPI |
+| `amaranth-soc` | `0.1a1.dev32+g3e3d8b7` | `3e3d8b7` is upstream `main` HEAD | **git only** |
+| `amaranth-stdio` | `0.1.dev37+gd296ba4` | `d296ba4` is upstream `main` HEAD | **git only** |
+| `luna-usb` | 0.2.3 | 0.2.3 | PyPI |
+| `luna-soc` | `0.3.2+awto.1` | 0.3.2 | `awtoau/awto-luna-soc` fork |
+| `usb-protocol` | 0.9.2 | 0.9.2 | PyPI |
+| `cynthion` | `0.2.4.post30+git.edf35c99.dirty` | — | editable, from `repos/cynthion` |
+| `apollo-fpga` | `1.1.1.post3+git.39a2213a.dirty` | — | editable, from `repos/apollo` |
+| `pyusb` 1.3.1, `pyserial` 3.5, `pyvcd` 0.4.1, `numpy` 2.5.1, `pytest` 9.1.1 | | | PyPI |
 
-**`amaranth_soc` has no version and is vendored.** ~~It lives at
-`site-packages/luna_soc/gateware/vendor/amaranth_soc/`, reports version
-`unknown`, and is reachable only after importing a `luna_soc` module first --
-importing `amaranth_soc` directly raises `ModuleNotFoundError`. Both
-`ecp5-test/riscv/hello_soc.py` and `ecp5-test/i2c/multiplexed.py` carry a comment
-about that import order because it is invisible otherwise.~~
+`facedancer` is **not installed** in the live environment. Nothing in
+`ecp5-test/` or `scripts/` imports it; the patches recorded against it in
+`docs/upstream-boundary.md` apply to a facedancer install, not to this one.
 
-**Fixed 2026-07-31 — see "De-vendored" below.** Real `amaranth-soc` is now
-installed, so it wins over the vendored copy and the import-order comments are
-gone.
+`amaranth-boards` is **not installed** either. The two constructors that were
+needed from it, `LEDResources` and `ULPIResource`, are copied into
+`ecp5-test/cynthion_platform/resources.py`.
 
-## Why bumping luna-soc is not a one-liner
+### Constraints that must hold
 
-`cynthion` pins it to a fork, not to PyPI:
+**`pip install amaranth-soc` from PyPI does not get you amaranth-soc.** The PyPI
+name is a placeholder: version `0`, uploaded 2021, no modules, and `import
+amaranth_soc` then raises `ModuleNotFoundError`. It has to come from git:
 
-    luna-soc @ git+https://github.com/awtoau/awto-luna-soc.git@main
+    amaranth-soc @ git+https://github.com/amaranth-lang/amaranth-soc.git
 
-The fork exists for a reason recorded in `docs/luna_ecp5_fpga/luna_soc_fix_status.md`
-and `luna_soc_amaranth_fix_complete.md`: **8 files and 40-plus CSR classes were
-patched for an Amaranth API change.** Upstream 0.3.2 may or may not contain
-equivalent fixes; that has not been checked.
+`amaranth-stdio` is the same shape and worse — the PyPI entry is version `0` and
+the repository carries **no tags at all**, so there is no version to pin to.
 
-So the upgrade path is: check whether 0.3.2 subsumes the fork's patches, and if
-it does, drop the fork and take upstream. If it does not, rebase the fork onto
-0.3.2. Neither is a version bump -- both need the facedancer gateware build,
-which is the thing the original patches were for, re-tested afterwards.
+**Real `amaranth-soc` must stay installed, or `luna_soc` silently substitutes its
+own.** `luna_soc/__init__.py` appends its vendored tree to `sys.path` only when
+the real package is missing:
 
-## A live bug: the vendored amaranth_soc predates the Python 3.14 fix
+```python
+try:
+    import amaranth_soc
+    import amaranth_stdio
+except:
+    sys.path.append(.../gateware/vendor)
+```
 
-Reproduced on this machine, not inferred.
-
-`amaranth-soc` commit
+So the presence of real `amaranth-soc` is what keeps every design — ours *and*
+luna_soc's own peripherals — bound to upstream. Remove it and the vendored copy
+comes back with no error and no version string. The vendored tree was last
+re-synced 2025-01-07 and is missing four upstream fixes, including the Python
+3.14 annotation support in
 [`d8b5892`](https://github.com/amaranth-lang/amaranth-soc/commit/d8b58925533d9dd6be64a2ca9993bfe3a6d46ae9)
-(2026-01-28, "csr.reg: add Python 3.14 annotation support") replaces
-
-    if hasattr(self, "__annotations__"):
-        ... filter_fields(self.__annotations__)
-
-with `annotationlib.get_annotations(type(self))` on 3.14+, falling back to
-`type(self).__dict__.get("__annotations__", {})` below it.
-
-**On Python 3.14+ every class has `__annotations__`**, so the old path reads
-*inherited* annotations and the guard never distinguishes anything. We run
-**3.15t**, so this bites:
+(2026-01-28), without which the documented `csr.Field` annotation form fails:
 
     class Probe(csr.Register, access="rw"):
         value: csr.Field(csr.action.RW, 8)
 
     TypeError: Field collection must be a dict, list, or Field, not None
 
-The **dict form still works**, which is why `ecp5-test/i2c/multiplexed.py` builds
--- it happens to pass a dict. But the annotation form is the documented style, and
-it fails with a message that points nowhere near the cause.
+Nothing declares a dependency on `amaranth-soc`, so a fresh environment falls
+back to the vendored copy unless it is installed by hand.
 
-**Bumping luna-soc does not fix it.** Checked: upstream
-`greatscottgadgets/luna-soc@main` vendors the *same unfixed* `reg.py` --
-`annotationlib` absent, the old `hasattr` path present. So 0.3.2 carries the bug
-too, and the fix exists only in `amaranth-soc` upstream, which luna-soc has not
-re-synced from.
+**Version tags on the fork must use the PEP 440 local form.** `0.3.2+awto.1`
+works; `0.3.2-awto.1` breaks the wheel build outright, because
+`setuptools-git-versioning` parses the tag through `packaging.version.Version`,
+which rejects a hyphen. `luna-soc` derives its version from git tags, so a fork
+with no tags reports `starting_version = "0.2.0"` while actually containing
+0.3.2 — a package that misreports its version reads exactly like a stale
+dependency.
 
-That changes the upgrade calculus recorded above: the fork is not merely a legacy
-of old patches to be dropped, it is **where this fix has to live** until luna-soc
-re-vendors.
+**Editable installs are the difference between editing code and editing
+decoration.** `apollo_fpga`, `awto_probe` and `cynthion` are installed editable,
+so edits under `repos/` take effect. `luna` and `luna_soc` are **not**, so
+`import luna` resolves to site-packages and the checkout under `repos/` is
+inert.
 
-## De-vendored, 2026-07-31
+**Do not run anything that imports `cynthion` from inside `repos/cynthion/`.**
+That directory contains a `cynthion/` subdirectory which Python treats as a
+namespace package, shadowing the installed one: `cynthion.__file__` becomes
+`None` and `cynthion.shared.usb` fails to resolve.
 
-Resolved, and more cheaply than the section above assumed. **Nothing had to be
-patched and luna-soc did not have to be forked further.** The whole thing came
-down to one detail in `luna_soc/__init__.py`:
+### Two CSR behaviours that read as version skew and are not
 
-    try:
-        import amaranth_soc
-        import amaranth_stdio
-    except:
-        sys.path.append(.../gateware/vendor)
+Both are correct-by-design and cost time to distinguish from a broken dependency:
 
-The vendor directory is appended to `sys.path` **only when the real package is
-missing**. So `pip install amaranth-soc` is the entire fix: the `try` succeeds,
-the vendor path is never added, and our designs *and* luna_soc's own peripherals
-all bind to upstream. The vendored tree is still on disk, simply never reached.
-
-Installed `amaranth-soc 0.1a1.dev32+g3e3d8b7` (upstream `main` at `3e3d8b7`).
-Note the PyPI package named `amaranth-soc` is a **placeholder** -- version "0",
-no modules -- so it has to come from git.
-
-**Upstream already contains everything the vendored copy had, and four fixes it
-did not.** The vendored copy was behind, not ahead:
-
-| upstream commit | date | what |
-|---|---|---|
-| `d8b5892` | 2026-01-28 | the Python 3.14 annotation fix, backported by hand into the vendored copy |
-| `b4f8bb0` | 2026-02-24 | `csr.Bridge` with integer parts of the name |
-| `c9cd4cd` | 2026-03-03 | `wishbone.bus` optional-feature compatibility (adds `_FeatureShim`) |
-| `99d0837` | 2026-03-03 | `csr.Register` signature flow corrected `Out` -> `In` |
-
-The vendored copy's only genuinely local changes were the hand-backported
-`d8b5892` and a one-line tweak preserving `Register` docstrings for the SVD
-generator. `99d0837` flips the flow of the `element` member, which sounds like
-a breaking change but is internally consistent -- `csr.bus` was flipped to match
-in the same commit, and every consumer here goes through `csr.Builder` /
-`csr.Bridge` rather than touching `element` directly.
-
-`scripts/patch_amaranth_soc_annotations.py` is therefore **obsolete**: the fix it
-backported is upstream, and the file it patched is no longer imported.
-
-Verified by elaboration, not by imports, in
-`scripts/amaranth_soc_devendor_verify.py`:
-
-- `import amaranth_soc` standalone, with no `luna_soc` import first, resolving
-  outside the vendor tree -- which is what retires the import-order comments
-- all 11 `luna_soc` modules that import `amaranth_soc` still import, and
-  `amaranth_soc` is *still* upstream afterwards (no silent two-copy mix)
-- `multiplexed.py`, `vexii_cpu.py`, `vexii_irq.py` converted to RTLIL;
-  `hello_soc.py` (7115 lines) and `vexii_hello_soc.py` (12128 lines) taken to a
-  Verilog netlist through the real Cynthion platform with `do_build=False`, so
-  no yosys/nextpnr run and no hardware touched
-
-The `csr.Field` annotation form now works with no `luna_soc` import at all,
-which was the original bug.
-
-**Not yet done:** `cynthion` still pins `luna-soc` to the `awtoau/awto-luna-soc`
-fork, and nothing declares a dependency on `amaranth-soc`. The install is
-currently manual, so a fresh environment silently falls back to the vendored
-copy again. The durable fix is an explicit `amaranth-soc` dependency.
-
-## What this did NOT explain
-
-The CSR failures being chased when this audit started were **mine, not version
-skew**, and worth recording so the next person does not go looking at versions:
-
-- `csr.action.RW` fields cannot have their `r_data` driven by gateware. RW means
-  software owns the value. Returning a read byte through one is an elaboration
+- `csr.action.RW` fields cannot have `r_data` driven by gateware. RW means
+  software owns the value; returning a read byte through one is an elaboration
   error. Split write-data and read-data into separate registers.
-- `csr.Bridge` **already adds every register in the builder as a submodule**.
-  Adding them again raises `DuplicateElaboratable`.
+- `csr.Bridge` already adds every register in the builder as a submodule. Adding
+  them again raises `DuplicateElaboratable`.
 
-Both are correct-by-design behaviour that reads as a broken dependency.
+## Rust firmware
+
+| | in use | current |
+|---|---|---|
+| `rustc` / `cargo` | 1.97.0 (2026-07-07) | 1.97.0 |
+| target | `riscv32imac-unknown-none-elf` | installed |
+| toolchain file | **none** — `stable` by default | |
+
+No `rust-toolchain.toml` exists anywhere in the tree, so the firmware builds
+against whatever `stable` currently is.
+
+Our own firmware crates (`firmware/cynthion-boot`, `cynthion-payload`,
+`cynthion-soc`, `cynthion-soc-pac`) are on current dependencies, and deliberately
+so — the memory map is ours, so there is no upstream to stay compatible with:
+
+| crate | locked | newest |
+|---|---|---|
+| `riscv` | 0.16.1 | 0.16.1 |
+| `riscv-rt` | 0.18.0 | 0.18.0 |
+| `embedded-hal` | 1.0.0 | 1.0.0 |
+| `critical-section` | 1.2.0 | |
+
+`repos/cynthion/firmware/moondancer` is upstream's firmware and is **six major
+versions behind on both**: `riscv = "0.10"`, `riscv-rt = "0.11"`, plus
+`zerocopy = "0.7"` carrying its own TODO to bump. It declares `rust-version =
+"1.68"`. It is built by the `rust` check in `scripts/check.py`.
+
+Release profiles are measured, not conventional — `opt-level = "z"` is chosen for
+**speed**, because the 4 KiB direct-mapped I-cache dominates. The tables and
+their reasoning are in the `[profile.release]` comments of each `Cargo.toml`;
+re-measure with `./dev.py optlevel` if the cache geometry changes.
+
+## RISC-V core generation
+
+The core is **generated, not vendored** — see `docs/riscv-core-build.md`.
+
+| | in use | note |
+|---|---|---|
+| VexiiRiscv | `f8774d4` (2026-07-20) | pinned as a submodule; upstream `dev` is 48 commits ahead as of 2026-08-05 |
+| JDK | OpenJDK 25.0.4 | verified working; there is no toolchain freeze |
+| sbt launcher | 2.0.4 | |
+| sbt (build) | **1.10.0** | pinned by `repos/vexiiriscv/project/build.properties`; the 2.x launcher bootstraps it |
+| Scala | 2.12.18 | `repos/vexiiriscv/project/version.conf`, first entry wins |
+| SpinalHDL | built from source | `SPINALHDL_FROM_SOURCE=1` by default, from `ext/SpinalHDL` |
+
+**VexiiRiscv has no releases and no tags.** The submodule SHA is the only
+version there is, and upstream `dev` moves daily.
+
+`--region` is not optional when generating. VexiiRiscv's `defaultPma` covers only
+`0x80000000` and `0x10000000`, so a design with memory at `0x00000000` is in no
+region at all and every access traps, including every stack operation. The
+failure looks exactly like a dead CPU.
+
+## RISC-V host tooling
+
+| tool | version |
+|---|---|
+| `riscv64-linux-gnu-gcc` | 16.1.1 (Fedora cross 16.1.1-1) |
+| `riscv64-linux-gnu-*` binutils | 2.46 |
+| `qemu-system-riscv32` | 10.2.2 |
+
+`riscv64-linux-gnu-gcc` targets Linux but produces fine bare-metal objects; see
+the header of `scripts/riscv_firmware.py`.
+
+QEMU is used only as `-M virt`, and the pairing is deliberate: `virt` presents an
+NS16550A at `0x10000000` and a PLIC at `0x0c000000`, which is why the SoC console
+is a standard NS16550A (`ecp5-test/riscv/uart16550.py`) — one driver serves both
+the board and the test gate. `scripts/soc_test.py` drives it, with
+`memory-qemu.x`; building the `qemu` feature without that linker script links
+`.text` into the flash window, where `virt` has no memory, and produces an image
+that traps on the first fetch.
+
+## Apollo SAMD11 firmware
+
+| tool | version | note |
+|---|---|---|
+| `arm-none-eabi-gcc` | 15.2.0 (Fedora) | `/usr/bin` |
+| linker used by that gcc | Fedora's own binutils | `-print-prog-name=ld` → `/usr/arm-none-eabi/bin/ld`, **not** the one on PATH |
+| `arm-none-eabi-nm` / `size` / `objcopy` on PATH | **2.41.0.20231009** | Arm GNU Toolchain 13.2.rel1, from 2023 |
+
+**The ARM toolchain is split, and the split is invisible.**
+`/opt/arm-gnu-toolchain/…-13.2.Rel1/bin` precedes `/usr/bin` on PATH and contains
+binutils but **no gcc**. Compilation and linking are therefore consistent — gcc
+finds its own bundled `ld` regardless of PATH — but every script that shells out
+to a binutil by name gets the 2023 build: `scripts/verify_vectors.py`
+(`arm-none-eabi-nm`), `scripts/apollo_budget_check.py` (`size`) and
+`scripts/apollo_memory_report.py` (`objcopy`). Those are the tools that guard the
+flash budget, reading an ELF produced by a compiler ten major versions newer.
+
+LTO is enabled and load-bearing for the flash budget; `verify_vectors.py` guards
+a silent failure mode it can introduce.
+
+**TinyUSB is pinned at `5b08a65` (2023-09-27) — 3915 commits behind master.**
+That pin is upstream Apollo's, in `repos/apollo/.gitmodules`, not ours. Latest
+TinyUSB release is 0.21.0 (2026-06-30). The SAMD11's flash budget is the
+constraint on moving it.
+
+## Submodules
+
+`repos/` pins four. `scripts/submodule_patch_audit.py` refuses to let one be
+removed while it holds work that is on no remote.
+
+| submodule | pinned | fork | upstream default branch | drift |
+|---|---|---|---|---|
+| `repos/apollo` | `69c6ba8` (2026-08-03) | `awtoau/awto-apollo` | last moved **2024-12-10** | **60 ahead, 0 behind** |
+| `repos/cynthion` | `7fa0c6a` (2026-07-28) | `awtoau/awto-cynthion` | 2026-05-22 (`0.2.5`) | 25 ahead, 1 behind |
+| `repos/vexiiriscv` | `f8774d4` (2026-07-20) | upstream directly | `dev`, 2026-07-27 | 48 behind |
+| `repos/cynthion-hardware` | `e5cf493` | `awtoau/awto-cynthion-hardware` | KiCad sources | — |
+
+`repos/cynthion`'s Python package still pins the luna-soc fork:
+
+    "luna-soc @ git+https://github.com/awtoau/awto-luna-soc.git@main",
+
+`ecp5-test/riscv/vexii_hello_soc.py` is the one design that still imports
+`cynthion` for its platform (`cynthion.gateware.platform.cynthion_r1_4`) rather
+than the vendored `ecp5-test/cynthion_platform/`, so it reaches that pin. Every
+other design uses the vendored platform, which imports only `amaranth` and
+`amaranth.build`.
+
+## Upstream maintenance status
+
+Relevant because a dormant upstream means patches stay ours indefinitely, and
+`docs/upstream-boundary.md` records what has already been replaced.
+
+| upstream | last commit to default branch | latest release |
+|---|---|---|
+| `greatscottgadgets/apollo` | **2024-12-10** | v1.1.1 (2024-11-23) |
+| `greatscottgadgets/luna-soc` | **2025-05-19** | 0.3.2 (2025-05-19) |
+| `greatscottgadgets/luna` | 2025-08-22 | 0.2.3 (2025-08-22) |
+| `greatscottgadgets/cynthion` | 2026-05-22 | 0.2.5 (2026-05-22) |
+| `greatscottgadgets/facedancer` | 2026-05-22 | 3.1.3 (2026-05-22) |
+| `amaranth-lang/amaranth` | 2026-07-16 | v0.5.9 (2026-07-16) |
+| `amaranth-lang/amaranth-soc` | 2026-05-23 | none — tag `v0.1a` only |
+| `amaranth-lang/amaranth-stdio` | 2026-01-27 | none — no tags |
+| `amaranth-lang/amaranth-boards` | 2026-08-01 | v0.0.20 (2026-08-01) |
+| `YosysHQ/yosys` | 2026-08-04 | v0.67 (2026-07-09) |
+| `YosysHQ/nextpnr` | 2026-08-04 | nextpnr-0.10 (2026-03-12) |
+| `YosysHQ/prjtrellis` | 2026-05-09 | **1.4 (2023-05-16)** |
+| `SpinalHDL/VexiiRiscv` | 2026-07-27 | none — no tags |
+
+None are archived. Apollo's `main` is frozen, but a `hil-ci` branch moved
+2026-05-08, so the repository is not dead — only its default branch is.
+`amaranth-soc`'s CSR register API is still tracked by an open RFC
+([#68](https://github.com/amaranth-lang/amaranth-soc/issues/68)) and has no
+frozen release, so it will keep drifting from any vendored snapshot.
