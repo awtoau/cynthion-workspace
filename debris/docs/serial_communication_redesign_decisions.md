@@ -4,6 +4,12 @@
 **Status**: Design Review  
 **Label**: rover
 
+**Retired 2026-08-05.** The proposed fix is not what happened and cannot happen: the
+UART cannot move to PA08/PA09 (#65), and the runtime Apollo↔FPGA channel is the
+sideband on the existing FPGA_ADV wire —
+[`docs/sideband.md`](../../docs/sideband.md). The account of FPGA_ADV below predates
+Apollo's UART mode. Kept for the `4208bc6` archaeology.
+
 ## Core Finding: Original Design Lost in Translation
 
 ### What Was Intended

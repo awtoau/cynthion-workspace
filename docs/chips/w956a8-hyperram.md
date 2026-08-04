@@ -311,7 +311,25 @@ single-ended.
 ## How software reaches it
 
 `HyperRAMInterface` / `HyperRAMPHY` from luna, with `HyperRAMWishbone` providing an
-8 MiB cached and executable CPU window at `0x20000000` (#90).
+8 MiB cached and executable CPU window at `0x20000000` (#90). `main=1, exe=1` in the
+CPU's PMA list is what makes it cached and executable rather than routed to `iobus`
+one transaction at a time.
+
+**The window coalesces bursts.** `cti == INCR_BURST && bte == LINEAR` holds one
+HyperBus transaction open across beats (`ecp5-test/riscv/vexii_bootram.py:126-168`),
+capped at `HYPERRAM_MAX_BURST_WORDS = 748` to stay inside the part's 768-CK tCSM
+deadline. `scripts/soc_hyperram_sim.py` asserts the result — a 64-byte cache-line
+refill is **1 HyperBus transaction / 51 CK**, against the pre-change arrangement's
+**16 transactions / 336 CK** — and keeps the uncoalesced path as a negative control.
+
+**The CSR staging port is not redundant and is kept deliberately.** It is how
+firmware stages an image into HyperRAM before rebooting into it, and it works before
+caches are meaningful. The two paths answer different questions, so a benchmark
+should report both — and any HyperRAM figure must say which port it went through.
+Its register offsets come from `cynthion_soc_pac::bootram::offset`, generated from
+the SoC's own memory map, after hand-written constants drifted by four registers and
+had firmware polling `valid` from a byte inside `addr_rd`. `soc_generate_pac.py
+--check` now verifies committed register offsets as well as bases.
 
 The DQS path (#92) is upstream's controller with our PHY under it, which is the
 boundary [`../upstream-boundary.md`](../upstream-boundary.md) settles. **It has
