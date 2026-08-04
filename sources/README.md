@@ -29,6 +29,26 @@ in `../docs/luna_ecp5_fpga/hyperram-detailed.md`.
 These datasheets were still worth fetching: they are what settled it, and the 128 Mbit
 one is the control that let the dual-die hypothesis be tested and dropped.
 
+### The 10-page Winbond PDF is ABRIDGED, and it cost real work
+
+The copy fetched first is **10 pages**. The full document is **45**. Everything
+about timing behaviour is in the missing 35 -- including **section 10.2.2 Active
+Clock Stop** and Figure 13, on printed page 27, which is what says whether CK may
+legally be halted mid-burst. A question about stalling the data phase could not
+be answered from the abridged copy, and the absence looked like the part not
+supporting it rather than the document not covering it.
+
+**Validity check before trusting any candidate for this part:**
+
+    pdfinfo <file>            # Pages >= 45
+    pdftotext -layout <file> - | grep -c "Active Clock Stop"    # non-zero
+
+**Winbond's own site cannot serve it unauthenticated.** A
+`winbond.com/hq/support/documentation/downloadV2022.jsp?...` URL returns **HTTP
+200** whose body is a JavaScript redirect to the technical-support login page --
+so it fails as a success, not as an error, and a fetch that checks the status
+code will save the login page under the datasheet's name.
+
 ### The board's actual part is Winbond -- and its datasheet is now here
 
 `repos/cynthion/.../gateware/facedancer/top.py:42` names it: **`W956A8MBYA6I`**, a Winbond
@@ -38,7 +58,8 @@ but they are **not** the part on the board.
 
 | file | part | source |
 |---|---|---|
-| `Winbond-W956A8MBYA-64Mbit-HyperRAM.pdf` | W956D8MBYA / W956A8MBYA, 64 Mbit, rev A01-002 (Nov 2019), 10 pp | `https://xonstorage.z8.web.core.windows.net/pdf/winbond_w956d8mbya6i_apr22_xonlink.pdf` |
+| `Winbond-W956A8MBYA-64Mbit-HyperRAM.pdf` | **ABRIDGED, 10 pp** -- rev A01-002 (Nov 2019). Superseded by the entry below; see the warning. | `https://xonstorage.z8.web.core.windows.net/pdf/winbond_w956d8mbya6i_apr22_xonlink.pdf` |
+| `W956x8MBYA_A01-006.pdf` | **W956D8MBYA / W956A8MBYA, rev A01-006 (2022-07-29), 45 pp -- the full document** | `https://xonstorage.z8.web.core.windows.net/pdf/winbond_w956d8mbya6i_apr22_xonlink.pdf` |
 | `Winbond-W956D8MBY-128Mbit-HyperRAM.pdf` | W957D8MFYA / W957A8MFYA, 128 Mbit, rev A01-004 (Aug 2022), 45 pp | `https://media.digikey.com/pdf/Data%20Sheets/Winbond%20PDFs/W957x8MFYA_Rev_A01-004_8-4-22.pdf` |
 
 Two naming corrections to what was previously assumed here. **`W956D8MBY` is not the
