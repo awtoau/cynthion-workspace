@@ -128,7 +128,13 @@ impl Plic {
     ///
     /// 0 lets anything with a nonzero priority through, which is what this
     /// firmware wants: there is nothing here whose latency matters enough to
-    /// starve the other console for. RTIC will use this for critical sections.
+    /// starve the other console for.
+    ///
+    /// This used to say RTIC would use it for critical sections. It will not:
+    /// RTIC's RISC-V backend locks against `riscv-slic`'s own threshold, a byte
+    /// in `.bss`, and never writes this register. See `docs/rtic-adoption.md`.
+    /// What it is still for is `info`, which cannot otherwise show a source
+    /// masked by level rather than by enable.
     pub fn set_threshold(&self, level: u32) {
         // SAFETY: as above.
         unsafe { write_volatile(self.reg(THRESHOLD), level) }

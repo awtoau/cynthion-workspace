@@ -64,6 +64,9 @@ REGION_ALIAS("REGION_STACK",  RAM);
  * answers, indistinguishable from a dead core. */
 _stext = ORIGIN(REGION_TEXT);
 
+/* An alias riscv-rt does not export and RTIC 2.3.0 asks for. See memory.x. */
+PROVIDE(_ebss = __ebss);
+
 /* Unwind tables, which nothing on this target unwinds. See memory.x for the full
  * argument and the measurement.
  *
