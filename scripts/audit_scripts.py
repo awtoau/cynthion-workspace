@@ -8,12 +8,13 @@ What each script in `scripts/` is, and whether anything still reaches it.
 
     ./dev.py audit                 # the table, to stdout and tmp/logs/
     ./dev.py audit -- --markdown   # the same as a markdown table
+    ./dev.py audit -- --logging    # how the scripts LOG, via audit_logging.py
 
 ## Why this is a tool and not a judgement
 
-`scripts/` holds 167 files. Classifying them by name prefix is worthless -- a
+`scripts/` holds 87 files. Classifying them by name prefix is worthless -- a
 prefix says what a file was called, not whether anything calls it -- and reading
-167 files by hand produces an opinion that is stale the day after it is written.
+87 files by hand produces an opinion that is stale the day after it is written.
 
 So this reads them. For each file it recovers:
 
@@ -28,18 +29,30 @@ So this reads them. For each file it recovers:
 From that, reachability is computed rather than guessed: `dev.py` is the root,
 anything it names is live, anything those name is live, transitively.
 
-## The three classifications, and why "orphan" is not "delete"
+## The four classifications, and why none of them is "delete"
 
-  * **live** -- reachable from `dev.py`. These are load-bearing.
-  * **cited** -- not reachable, but named by a doc, a test, or a comment. Some
-    of these are reference material whose value is the finding, not the run.
+  * **live** -- reachable from `dev.py`, transitively. Load-bearing.
+  * **called** -- imported or spawned by other code, but not from `dev.py`.
+  * **documented** -- named only by prose. A spent probe lands here, and so
+    does a top-level tool a human runs from a README: the two are
+    indistinguishable to this program and the difference is the whole judgement.
   * **orphan** -- nothing anywhere mentions it.
 
-An orphan is a candidate for `debris/scripts/` or deletion, and which one it is
-still needs a human. The workspace rule is that non-regenerable content is
-retired to `debris/` and regenerable content is deleted; this tool cannot tell
-which a probe script is, because that depends on what it cost to write. It marks
-the candidates and stops there.
+The workspace rule is that non-regenerable content is retired to `debris/` and
+regenerable content is deleted; this tool cannot tell which a probe script is,
+because that depends on what it cost to write. It marks candidates and stops.
+
+## What counts as a call, and what stopped counting
+
+`called` used to be `if name in text`, which counted a comment explaining what a
+script had measured. Prose about a tool outlives the tool, so that kept spent
+tools alive by definition -- and worse, it manufactured `live`: `install.py` was
+reachable from `./dev.py` because `machine_setup.py` passes `"install"` to `dnf`.
+56 KiB of installer nothing had run in months, wearing a load-bearing badge.
+
+So for Python the evidence is the AST: imports, and string literals that are not
+docstrings. A bare stem counts only if it has an underscore, which every script
+named that way does and no argv verb does. Comments never reach the AST at all.
 
 ## The false-negative this cannot fix
 
@@ -130,55 +143,99 @@ def first_sentence(text):
     return ""
 
 
-def references_from(path, names):
-    """Which other scripts this file names, by import or by string.
+def docstring_nodes(tree):
+    """Every string node that is a docstring, so prose is not read as code.
 
-    Both forms are used here: `soc_run.py` invokes `soc_test.py` as a
-    subprocess with a path built from a string, while `check.py` imports
-    helpers. A grep for the bare filename catches the first; the AST catches the
-    second, including `from x import y` where the string never appears.
+    A module, class or function docstring is an `ast.Constant` like any other
+    string literal, and it is exactly where one script explains what another one
+    measured. Collected by identity so the string-literal pass below can skip it.
+    """
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef,
+                                 ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None)
+        if body and isinstance(body[0], ast.Expr) \
+                and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            out.add(id(body[0].value))
+    return out
+
+
+def references_from(path, names):
+    """Which other scripts this file INVOKES -- not which it mentions.
+
+    This used to be `if name in text`, and that is the bug #157 records: a
+    comment explaining what a script had measured counted as a call, so `called`
+    was an upper bound nobody could act on. It was worse than the issue said --
+    `install.py` was classified LIVE off a docstring example in
+    `logging_utils.py` and a "mirrors install.py" comment in `check.py`. Nothing
+    has run it in months.
+
+    So for Python the evidence is now the AST only:
+
+      * `import x` / `from x import y`, resolved against the script names;
+      * a string LITERAL naming the script -- a subprocess argv, or a bare
+        module name as in `soc_sims.py`'s `SIMS = ["soc_bus_sim", ...]`.
+
+    Comments never reach the AST, and docstrings are skipped explicitly. For a
+    non-Python caller (a `.toml` or a `.json` job file) there is no AST, so the
+    substring stands -- those formats have no comment syntax to be fooled by.
     """
     found = set()
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return found
+    others = [n for n in names if n != path.name]
+    stems = {n: (n[:-3] if n.endswith(".py") else n) for n in others}
 
-    for name in names:
-        if name == path.name:
-            continue
-        if name in text:
-            found.add(name)
-            continue
-        # A script named WITHOUT its suffix, as a quoted module name.
-        #
-        # `soc_sims.py` holds `SIMS = ["soc_bus_sim", "soc_clint_sim", ...]` and
-        # imports each one, so a search for "soc_clint_sim.py" finds nothing and
-        # three simulations that run on every `./dev.py sim` were reported as
-        # orphans. Quoted-exact rather than bare, because stems like `check` and
-        # `install` are ordinary words and an unquoted match would make almost
-        # everything look reachable.
-        stem = name[:-3] if name.endswith(".py") else name
-        if f'"{stem}"' in text or f"'{stem}'" in text:
-            found.add(name)
+    if path.suffix != ".py":
+        for name in others:
+            if name in text:
+                found.add(name)
+        return found
 
-    if path.suffix == ".py":
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            return found
-        for node in ast.walk(tree):
-            module = None
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    module = alias.name.split(".")[0]
-                    if f"{module}.py" in names:
-                        found.add(f"{module}.py")
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                module = node.module.split(".")[0]
-                if f"{module}.py" in names:
-                    found.add(f"{module}.py")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return found
+    skip = docstring_nodes(tree)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module = f"{alias.name.split('.')[0]}.py"
+                if module in names:
+                    found.add(module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            module = f"{node.module.split('.')[0]}.py"
+            if module in names:
+                found.add(module)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and id(node) not in skip:
+            for name in others:
+                if name in node.value:
+                    found.add(name)
+                elif node.value == stems[name] and bare_stem_is_evidence(stems[name]):
+                    found.add(name)
     return found
+
+
+def bare_stem_is_evidence(stem):
+    """Whether a literal equal to `stem` alone may be read as naming a script.
+
+    `soc_sims.py` holds `SIMS = ["soc_bus_sim", ...]` and builds each path from
+    it, so the bare stem has to count or fifteen live simulations read as
+    orphans. But `machine_setup.py` holds `["sudo", manager, "install", "-y"]`,
+    and that made `install.py` -- which nothing has run in months -- reachable
+    from `./dev.py`, which is how a 56 KiB dead installer kept a `live` badge.
+
+    An underscore is the whole difference: every script named this way has one,
+    and no argv verb does.
+    """
+    return "_" in stem
 
 
 def repo_files():
@@ -208,7 +265,19 @@ def main():
     parser.add_argument("--only",
                         choices=["live", "called", "documented", "orphan"],
                         help="report one classification")
-    args = parser.parse_args()
+    parser.add_argument("--logging", action="store_true",
+                        help="audit how the scripts LOG instead (audit_logging.py)")
+    args, rest = parser.parse_known_args()
+
+    # `audit_logging.py` was the one orphan in this table, and it audits the
+    # same directory for a different property. Reached through here it is
+    # discoverable from `./dev.py audit --logging` without a second door.
+    if args.logging:
+        import audit_logging
+        sys.argv = ["audit_logging.py", *rest]   # in-process: no child to capture
+        return audit_logging.main()
+    if rest:
+        parser.error(f"unrecognised arguments: {' '.join(rest)}")
 
     scripts = sorted(p for p in SCRIPTS.iterdir()
                      if p.is_file() and p.suffix in (".py", ".sh"))
@@ -228,8 +297,15 @@ def main():
     if root_shim.exists():
         reaches[ENTRY] = reaches.get(ENTRY, set()) | references_from(root_shim, names)
 
-    # Who names each script, from the whole tree.
+    # Who names each script, from the whole tree, in the two ways that differ.
+    #
+    # `invoked_by` is the same AST evidence `reaches` uses, so `called` means
+    # code really runs this. `named_by` stays a plain substring scan, because
+    # `documented` is a claim about PROSE and prose is exactly what a substring
+    # finds. Deciding `called` from the substring scan is what let `install.py`
+    # look like code was calling it when the four citations were all Markdown.
     named_by = {name: set() for name in names}
+    invoked_by = {name: set() for name in names}
     for path in repo_files():
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -239,6 +315,10 @@ def main():
         for name in names:
             if name in text and path.name != name:
                 named_by[name].add(where)
+        if path.suffix in CODE_SUFFIXES:
+            for name in references_from(path, names):
+                if path.name != name:
+                    invoked_by[name].add(where)
 
     # Reachability from the entry point, transitively. Computed, not assumed:
     # `dev.py` names five scripts and those name a dozen more, and the whole
@@ -257,7 +337,7 @@ def main():
         name = path.name
         if name in live:
             kind = "live"
-        elif any(Path(w).suffix in CODE_SUFFIXES for w in named_by[name]):
+        elif invoked_by[name]:
             kind = "called"
         elif named_by[name]:
             kind = "documented"
@@ -268,7 +348,8 @@ def main():
             "kind": kind,
             "size": path.stat().st_size,
             "touched": last_touched(path),
-            "cited_by": sorted(named_by[name]),
+            "cited_by": sorted(invoked_by[name] if kind == "called"
+                               else named_by[name]),
             "summary": summary_of(path),
         })
 
@@ -280,17 +361,15 @@ def main():
     # being broken. That is not hypothetical: this sweep archived eight scripts
     # that live code still needed, and each one surfaced as a crash at the moment
     # someone ran the tool that needed it, not when it was moved.
-    archived = {q.stem: q.name for q in (ROOT / "debris" / "scripts").glob("*.py")}
+    # Same evidence as `references_from`, and for the same reason: matching the
+    # filename in the text flagged `soc_board_sim.py` for a comment citing the
+    # register values `phy_probe.py` had read. A false alarm here blocks a
+    # retirement that is correct, which is the opposite of what this is for.
+    archived = {q.name for q in (ROOT / "debris" / "scripts").glob("*.py")}
     dangling = {}
     for path in scripts:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for stem, name in archived.items():
-            if (f"import {stem}" in text or f"from {stem} import" in text
-                    or name in text):
-                dangling.setdefault(name, []).append(path.name)
+        for name in references_from(path, archived):
+            dangling.setdefault(name, []).append(path.name)
 
     if args.only:
         rows = [r for r in rows if r["kind"] == args.only]
@@ -327,10 +406,13 @@ def main():
     lines.append(f"{len(rows)} scripts: {counts['live']} live, "
                  f"{counts['called']} called, {counts['documented']} documented, "
                  f"{counts['orphan']} orphan")
-    lines.append(f"live = reachable from ./{ENTRY}; called = named by other code; "
-                 f"documented = named only by prose; orphan = nothing mentions it")
-    lines.append("documented and orphan are the retirement candidates: nothing "
-                 "can run them without a human reading a doc first.")
+    lines.append(f"live = reachable from ./{ENTRY}; called = imported or spawned "
+                 f"by other code; documented = named only by prose; "
+                 f"orphan = nothing mentions it")
+    lines.append("documented is NOT the retirement list -- a top-level tool a "
+                 "human runs from a README lands here too. It is the list of "
+                 "things nothing can reach without reading prose first, so each "
+                 "one is either a promotion into ./dev.py or a retirement.")
 
     for line in lines:
         emit(line)
