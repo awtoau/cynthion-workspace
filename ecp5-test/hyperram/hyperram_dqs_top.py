@@ -76,9 +76,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "riscv"))
 
 from amaranth import Cat, Elaboratable, Module, Signal
 
-from luna.gateware.interface.psram import HyperRAMDQSInterface
 
 from hyperram_dqs_phy import HyperRAMDQSPHY
+from hyperram_dqs_controller import HyperRAMDQSController
+from vexii_bootram import HYPERRAM_LATENCY_CLOCKS
 
 
 # The rate the non-DQS path is already verified at is 120 MHz. This starts at 60
@@ -148,7 +149,9 @@ class HyperRAMDQSBringup(Elaboratable):
         bus = platform.request("ram", 0, dir="-")
 
         m.submodules.phy = phy = HyperRAMDQSPHY(bus=bus)
-        m.submodules.psram = psram = HyperRAMDQSInterface(phy=phy.phy)
+        m.submodules.psram = psram = HyperRAMDQSController(
+                phy=phy.phy, sync_mhz=self.sync_mhz,
+                high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
 
         # Held for the whole transfer, never pulsed. Both of these are traps this
         # workspace has already paid for on the non-DQS path

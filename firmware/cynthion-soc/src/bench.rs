@@ -422,14 +422,6 @@ mod probe {
     /// a uniform displacement is invisible there -- reads-late and writes-early
     /// differ by a global address translation the window cannot observe. A
     /// register holds a constant nobody here wrote: ID0 is 0x0c86. #186.
-    pub fn register_read(addr: u32) -> u16 {
-        let saved = LAST_SEL.load(core::sync::atomic::Ordering::Relaxed);
-        set_readclksel(saved | 0x40);           // bit 6: register space
-        let value = crate::hyperram::read_word_at(addr);
-        set_readclksel(saved);
-        value
-    }
-
     /// Choose which tap captures returning read data.
     pub static LAST_SEL: core::sync::atomic::AtomicU8 =
         core::sync::atomic::AtomicU8::new(0b010);
@@ -1234,7 +1226,3 @@ pub fn stalls() -> u32 {
     probe::stalls()
 }
 
-/// One 16-bit word from the part's register space. See `hr reg`.
-pub fn register_read(addr: u32) -> u16 {
-    probe::register_read(addr)
-}

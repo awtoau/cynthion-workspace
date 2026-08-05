@@ -676,9 +676,6 @@ class BootRAM(Elaboratable):
         # for it -- see the sweep comment in `elaborate`. #185.
         self.read_stall_cycles = Signal(2)
 
-        # Route staging reads to the part's register space (#186).
-        self.register_space = Signal()
-
         self.probe_dll_locked = Signal()
         self.probe_dll_ready = Signal()
         self.probe_burstdet = Signal()
@@ -978,11 +975,14 @@ class BootRAM(Elaboratable):
 
         m.d.comb += [
             psram.single_page.eq(0),
-            # Register space for the CSR staging port only. The Wishbone window
-            # is memory and must never see this; a burst into register space is
-            # meaningless. #186.
-            psram.register_space.eq(self.register_space
-                                    & (owner == OWNER_CSR)),
+            # Memory, always. Reading the part's ID and CR registers says
+            # nothing about whether the MEMORY path works -- a paired fetch in
+            # register space returns the same value in both halves, so it cannot
+            # even see a swapped pair -- and it was being cited as if it could.
+            # Use JTAG staging to write a known value if a verifiable read is
+            # wanted. `ecp5-test/hyperram/hyperram_identify.py` is where register
+            # access belongs, testing registers as registers.
+            psram.register_space.eq(0),
             psram.start_transfer.eq(start),
             psram.address.eq(live_address),
 

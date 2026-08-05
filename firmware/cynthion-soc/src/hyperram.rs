@@ -71,22 +71,6 @@ pub fn seek_word(word: u32) {
     seek(word);
 }
 
-/// One 16-bit word at `word_addr`, selected out of the pair that contains it.
-///
-/// The staging port moves 32 bits and cannot address a single word -- see
-/// `vexii_bootram.HyperRAMBoot`. This reads the containing pair and picks a half,
-/// which costs nothing extra: the transaction was going to move both anyway.
-///
-/// `pub` for `bench::register_read`, which wants one register and not a pair.
-pub fn read_word_at(word_addr: u32) -> u16 {
-    let pair = read_u32(word_addr & !1);
-    if word_addr & 1 == 0 {
-        pair as u16
-    } else {
-        (pair >> 16) as u16
-    }
-}
-
 /// `pub` for `src/bench.rs`'s cross-port check, which must write through THIS
 /// port and read through the memory window.
 pub fn write_u32_pub(word_addr: u32, value: u32) {
@@ -215,7 +199,7 @@ mod backend {
     // designated byte is accessed; the other bytes come from that shadow. A single
     // 32-bit `read_volatile` does not drive that handshake the way the bridge
     // expects, and the result is a value from the PREVIOUS access with its bytes
-    // shifted one position -- measured, non-deterministically, by `hr reg`.
+    // shifted one position -- measured, non-deterministically, on the board.
     //
     // Writes are not affected the same way (`ADDR` has always been written as a
     // u32 and staging works), but they go byte-wise here too so the two directions
