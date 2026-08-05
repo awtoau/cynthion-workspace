@@ -170,6 +170,23 @@ FIXED_LATENCY = True
 # section 2 checks the two things that do not depend on it: that the branch is
 # unconditional, and that the short count falls inside the window. The data
 # sections then exercise byte-level correctness with the latency neutralised.
+# The DEVICE's fixed latency, in CK, read off CR0 rather than off the controller.
+#
+# CR0 = 0x8f2f: bits [7:4] = 0010b, which table 10 reads as 7 clocks, and bit 3
+# selects FIXED latency, so the part takes 2 x 7 = 14 CK on every transaction.
+# `docs/chips/w956a8-hyperram.md` carries the field table.
+#
+# This is stated separately from `latency_beats()` ON PURPOSE. That function
+# returns the number of beats the CONTROLLER waits, so a model built on it agrees
+# with the controller by construction and cannot detect the two disagreeing --
+# which is the whole shape of #186. Two numbers that are allowed to differ are
+# the minimum needed to notice that they do.
+DEVICE_FIXED_LATENCY_CK = 14
+
+# CK per `sync` cycle on the DQS path: the fabric runs at CK/2 with 4:1 gearing.
+DQS_CK_PER_SYNC = 2
+
+
 def latency_beats():
     """`HANDLE_LATENCY` runs one beat per remaining count, plus the zero beat."""
     return HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS + 1
@@ -348,14 +365,21 @@ class Harness(Elaboratable):
     model that never detects a violation would pass it just as well.
     """
 
-    def __init__(self, *, upstream=False):
+    def __init__(self, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None):
         self.phy = HyperBusDQSPHY()
         if upstream:
             self.psram = HyperRAMDQSInterface(phy=self.phy)
         else:
+            # Defaults to luna's latency so the sections written against that
+            # keep measuring what they were written for. `latency` is how the
+            # BOARD's setting gets tested -- `vexii_bootram` builds with
+            # HYPERRAM_LATENCY_CLOCKS = 4, and until this parameter existed the
+            # simulation had never once run the configuration this repo ships.
             self.psram = HyperRAMDQSController(
-                phy=self.phy, sync_mhz=SYNC_MHZ,
-                high_latency_clocks=HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS)
+                phy=self.phy, sync_mhz=sync_mhz,
+                high_latency_clocks=(
+                    latency if latency is not None
+                    else HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS))
 
     def elaborate(self, platform):
         m = Module()
@@ -427,9 +451,9 @@ async def run(ctx, dut, model, *, address, read, data=None,
     ctx.set(psram.perform_write, 0)
 
 
-def simulate(body, *, upstream=False):
+def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None):
     """Run `body(ctx, dut, model)` and return the model it used."""
-    dut = Harness(upstream=upstream)
+    dut = Harness(upstream=upstream, sync_mhz=sync_mhz, latency=latency)
     model = ModelHyperRAM()
 
     async def testbench(ctx):
@@ -500,6 +524,16 @@ def section_latency(checks, emit):
     model = simulate(body)
     checks.check("a read against the fixed-latency model returns data",
                  model.read_beats > 0, f"{model.read_beats} beats")
+    controller_ck = latency_beats() * DQS_CK_PER_SYNC
+    emit(f"        controller waits {latency_beats()} beats = {controller_ck} CK; "
+         f"CR0 says the device takes {DEVICE_FIXED_LATENCY_CK} CK")
+    if controller_ck != DEVICE_FIXED_LATENCY_CK:
+        emit(f"        THEY DISAGREE by {DEVICE_FIXED_LATENCY_CK - controller_ck} CK. "
+             f"Not asserted: HIGH_LATENCY_CLOCKS = 4 demonstrably worked on")
+        emit(f"        silicon (36,153 BURSTDET, real register values), so a model")
+        emit(f"        that failed it would be the thing that is wrong. The gap is")
+        emit(f"        recorded here until it is reconciled -- see #186.")
+
     checks.check("the read raises BURSTDET, so DQS is what found the data",
                  model.read_beats > 0,
                  "no beat, so nothing asserted the strobe-found flag")
