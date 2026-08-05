@@ -401,6 +401,26 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
         emit(f"        first mismatch: index {bad['index'] & 0xFFFF} "
              f"pass {bad['index'] >> 16}, got {bad['got']:#010x}, "
              f"wanted {bad['want']:#010x}")
+        # DECODE the wrong word back to the address it belongs to. The pattern is
+        # invertible at 32 bits by construction -- low half is addr[0:16], high
+        # half is ~addr[16:32] -- so a displacement, an alias or a stuck address
+        # line is READ OFF rather than guessed at. "N errors" says a rung failed;
+        # "the word at A came from A+2" says why.
+        if result.get("bytes_per_word") == 4:
+            got = bad["got"]
+            source = (got & 0xFFFF) | (((~(got >> 16)) & 0xFFFF) << 16)
+            want_addr = (bad["want"] & 0xFFFF) | (
+                ((~(bad["want"] >> 16)) & 0xFFFF) << 16)
+            delta = source - want_addr
+            result["first_bad"]["source_word"] = source
+            result["first_bad"]["delta_words"] = delta
+            if delta:
+                emit(f"        that word belongs at device word {source:#x}, "
+                     f"{delta:+d} from the {want_addr:#x} asked for")
+            else:
+                emit(f"        the word decodes to the address asked for "
+                     f"({want_addr:#x}), so the ADDRESS is right and the DATA "
+                     f"is corrupt -- not a displacement")
     return result
 
 

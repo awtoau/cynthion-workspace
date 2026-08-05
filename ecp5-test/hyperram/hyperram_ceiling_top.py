@@ -265,9 +265,31 @@ class HyperRAMCeiling(Elaboratable):
         self.ck_mhz = sync_mhz * 2 if dqs else sync_mhz
 
     def pattern(self, word_addr):
-        """The word due at a device address. Address-derived: a stuck address shows."""
+        """The word due at a device address, using EVERY address bit.
+
+        This used to be `Cat(addr[:half], ~addr[:half])` -- the low 16 bits of
+        the address and their complement. The part is 4 Mi words, so that pattern
+        REPEATED 64 TIMES ACROSS IT: an addressing fault anywhere in bits 16..21
+        wrote and read the same value and was scored correct. The harness could
+        not see aliasing over the whole upper part, which is the one question
+        `docs/chips/w956a8-hyperram.md` raises about the undocumented upper 4 MiB.
+
+        At 32 bits the low half carries `addr[0:16]` and the high half carries
+        `addr[16:32]` complemented, so the value is INVERTIBLE: given a word that
+        came back wrong, the address it actually belongs to can be decoded rather
+        than guessed. That is what makes a displacement readable instead of
+        inferred -- the same property the 0-255 ramp has, and the reason it found
+        in one run what a self-comparing check had hidden all day.
+
+        At 16 bits an address of 22 bits cannot be encoded, so the high bits are
+        folded in by XOR. Aliasing then changes the value and is DETECTED, though
+        the source address is no longer uniquely recoverable.
+        """
         half = self.word_bits // 2
-        return Cat(word_addr[:half], ~word_addr[:half])
+        if half >= 16:
+            return Cat(word_addr[:half], ~word_addr[half:2 * half])
+        folded = word_addr[:half] ^ word_addr[half:2 * half] ^ word_addr[2 * half:]
+        return Cat(folded, ~folded)
 
     def elaborate(self, platform):
         m = Module()
