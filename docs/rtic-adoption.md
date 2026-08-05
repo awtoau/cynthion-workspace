@@ -165,13 +165,26 @@ Not flash, and not block RAM. Both are wrong answers and worth killing here.
 
 ## 5. The counter-argument, met rather than ignored
 
+**Withdrawn, and replaced by a measurement.** This section argued against an
+idle-shell figure. The repo owner has rejected that baseline outright — this
+core is a USB controller, and the workload that decides the question is device
+emulation. [`soc-workload-and-preemption.md`](soc-workload-and-preemption.md)
+measures one. Under it the unbounded turn costs **1,266 µs worst case and 700
+missed deadlines in 2,000 events**, so "a scheduler buys nothing here" is simply
+false; and **preemption alone fixes it for 440 bytes**, hand-written, which is
+not an argument for RTIC either. What survives of this section is the middle
+paragraph, kept below because it is the part that was never about the busy
+figure.
+
+The rest of the original section, for the record:
+
 `docs/hardware.md:820` measures an untouched shell at **0.15% busy** under QEMU.
 99.85% of cycles are `irq::pop` returning `None`.
 
 Taken at face value that is an argument that a scheduler buys nothing: there is
 no contention to arbitrate, so priorities and preemption have no work to do.
-It is a fair argument and it should not be waved away. Three things are true
-alongside it.
+It was a fair argument against the workload it was taken from, and it does not
+survive a real one. Three things are true alongside it.
 
 **A scheduler is not what RTIC is for here.** What RTIC provides that this
 firmware lacks is *checked* resource access. `RINGS` in `src/irq.rs` is a
@@ -321,7 +334,14 @@ changes a byte of the shipping image.
 * Nothing runs on the board. The skeleton has never been programmed.
 * No monotonic. Step 2 above.
 * No task actually does this firmware's work — `console_rx` and `type_c`
-  increment a counter.
+  increment a counter. **This is now the cheapest useful experiment left**:
+  `firmware/cynthion-soc/src/workload.rs` is a real device-emulation load with a
+  real deadline, and `scripts/soc_workload.py` runs it under QEMU against any
+  model. Pointing the RTIC tasks at `workload::handle` would fill in RTIC's
+  latency, its cache footprint and the cost of `critical_section::with` per
+  `pend` — three of the four things
+  [`soc-workload-and-preemption.md`](soc-workload-and-preemption.md) §6 lists as
+  unmeasured — in one build, with no board.
 * Decision 19 is still open. It is better informed, and its "blocked by:
   nothing known" is now a build result rather than a hope, but the trade in
   section 5 is a judgement nobody has made yet.
