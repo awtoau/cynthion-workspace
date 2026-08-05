@@ -107,8 +107,14 @@ re-synced 2025-01-07 and is missing four upstream fixes, including the Python
 
     TypeError: Field collection must be a dict, list, or Field, not None
 
-Nothing declares a dependency on `amaranth-soc`, so a fresh environment falls
-back to the vendored copy unless it is installed by hand.
+Both are declared in `scripts/machine_setup.py`, pinned to the commits above, so
+a fresh environment gets them rather than the vendored fallback. Until #190
+nothing declared either, and a clean install silently used the 2025 vendored
+tree. `scripts/amaranth_soc_check.py` — the `amaranthsoc` check in
+`scripts/check.py` — asserts neither name resolves inside
+`luna_soc/gateware/vendor`, because a declaration is invisible if it is dropped:
+
+    ./scripts/amaranth_soc_check.py --simulate-vendored   # proves it still fails
 
 **Version tags on the fork must use the PEP 440 local form.** `0.3.2+awto.1`
 works; `0.3.2-awto.1` breaks the wheel build outright, because
@@ -222,11 +228,20 @@ that traps on the first fetch.
 **The ARM toolchain is split, and the split is invisible.**
 `/opt/arm-gnu-toolchain/…-13.2.Rel1/bin` precedes `/usr/bin` on PATH and contains
 binutils but **no gcc**. Compilation and linking are therefore consistent — gcc
-finds its own bundled `ld` regardless of PATH — but every script that shells out
-to a binutil by name gets the 2023 build: `scripts/verify_vectors.py`
-(`arm-none-eabi-nm`), `scripts/apollo_budget_check.py` (`size`) and
-`scripts/apollo_memory_report.py` (`objcopy`). Those are the tools that guard the
-flash budget, reading an ELF produced by a compiler ten major versions newer.
+finds its own bundled `ld` regardless of PATH — but any script that shells out to
+a binutil by bare name gets the 2023 build, reading an ELF produced by a compiler
+ten major versions newer.
+
+The three guards no longer do. `scripts/armtools.py` resolves them beside the
+compiler — `arm-none-eabi-gcc -print-prog-name=nm` → 2.45 — and `verify_vectors.py`
+(`nm`), `apollo_budget_check.py` (`size`) and `apollo_memory_report.py`
+(`size`, `nm`) each print which binary they used and warn that PATH would have
+given the 2023 one. `size` needs the fallback path: gcc never invokes it, so
+`-print-prog-name=size` answers with the bare name and the install prefix is
+derived from a tool gcc does know. On the current build both versions agree
+byte-for-byte on `size -A` and `nm`, so nothing was being misreported *yet*.
+
+The PATH entry itself is untouched; see #191 for whether it should be.
 
 LTO is enabled and load-bearing for the flash budget; `verify_vectors.py` guards
 a silent failure mode it can introduce.

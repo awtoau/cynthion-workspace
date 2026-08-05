@@ -37,6 +37,17 @@ The three properties worth stating outright:
     real ratio and checks the sticky flag, which is the only report the hardware can
     give if that margin is ever wrong.
 
+## Where the time goes, and why most of it is not removable
+
+#175 read ~42 ms a check off `dev.log` and took it for a poll interval. Part of
+it was one -- `drain` sat out a flat 400 sync cycles after every frame, ~12% of
+the run, and now stops when the stager goes quiet. The rest is not a wait at
+all: a profile puts the whole cost inside `Simulator.advance`, 105,743 deltas,
+because a 512-byte image is 4,096 TCK bits and each one is two `ctx.delay` half
+periods with a 60 MHz clock running underneath. Tens of milliseconds a check IS
+the simulator's rate at that ratio; the only lever left is simulating fewer bits,
+which would mean testing less.
+
 ## What this cannot say
 
 The HyperRAM here is a testbench that acknowledges after a fixed delay, not
@@ -85,6 +96,20 @@ HDR_MAGIC  = 0
 HDR_LENGTH = 2
 HDR_CRC    = 4
 IMAGE_WORD = 16
+
+# How many bytes the layout check stages.
+#
+# The mechanism is "a multi-word frame shifts in, the words reach the FIFO, the
+# address advances, and the header lands in the order the bootloader reads it".
+# EIGHT BYTES PROVES ALL OF THAT. 512 proved it 64 times over: an image is one
+# frame per word, so its size is a repetition count wearing a payload's clothes,
+# and it dominated this file -- a 512-byte image is 4,096 TCK bits, each one two
+# `ctx.delay` half-periods.
+#
+# The larger size belongs in a soak run, where shifting thousands of bits is the
+# point rather than an accident. `--soak` restores it.
+IMAGE_BYTES = 8
+SOAK_IMAGE_BYTES = 512
 MAGIC = 0x4359_4e42
 
 
@@ -265,8 +290,39 @@ class Run:
         return dict(self.writes)
 
 
-async def drain(ctx, cycles=400):
-    """Let the FIFO empty into the HyperRAM before looking at the result."""
+# What "the FIFO has emptied" looks like from outside, counted in sync cycles
+# with `req` low. The writer's POP state dwells exactly one cycle per entry, and
+# the longest run of entries that does not raise `req` is the two address words,
+# so four consecutive quiet cycles cannot be a gap between two writes of a frame.
+QUIET_CYCLES = 4
+
+
+async def drain(ctx, dut, limit=400):
+    """Let the FIFO empty into the HyperRAM, and stop as soon as it has.
+
+    This was a flat 400 cycles, which is ~12% of this simulation and mostly spent
+    watching a design that finished long ago: five words at 22 cycles each is 110.
+    Waiting on the design instead of on a count costs nothing and asserts more --
+    a stager that never goes quiet now runs out `limit` rather than being handed
+    a fixed number of cycles that happened to be enough. See #175.
+
+    `limit` is not a duration to sit out. It is only reached if `req` never
+    settles, which the checks below would report anyway.
+    """
+    quiet = 0
+    for _ in range(limit):
+        await ctx.tick()
+        quiet = 0 if ctx.get(dut.req) else quiet + 1
+        if quiet >= QUIET_CYCLES:
+            return
+
+
+async def settle(ctx, cycles=8):
+    """Cycles for the reset's two-stage FFSynchronizer, not for the FIFO.
+
+    Two flops plus margin. Unlike `drain` there is nothing to watch: the whole
+    point of the wait is that `cpu_reset` is being sampled after the crossing.
+    """
     for _ in range(cycles):
         await ctx.tick()
 
@@ -299,7 +355,7 @@ def run_checks(checks, verbose):
 
     async def script(chain, ctx):
         await chain.frame(write_frame(0x40, words))
-        await drain(ctx)
+        await drain(ctx, run.dut)
         after["status"] = decode_status(await chain.frame(status_frame()))
 
     run.go(script)
@@ -322,9 +378,9 @@ def run_checks(checks, verbose):
 
     async def script(chain, ctx):
         await chain.frame(write_frame(0x1000, [0x0101, 0x0202]))
-        await drain(ctx)
+        await drain(ctx, run.dut)
         await chain.frame(write_frame(0x0002, [0x0303]))
-        await drain(ctx)
+        await drain(ctx, run.dut)
 
     run.go(script)
     checks.check(
@@ -340,7 +396,7 @@ def run_checks(checks, verbose):
         # neither may be a command that writes.
         await chain.frame(b"\x00" * 8)
         await chain.frame(b"\xff" * 8)
-        await drain(ctx)
+        await drain(ctx, run.dut)
 
     run.go(script)
     checks.check(
@@ -355,12 +411,12 @@ def run_checks(checks, verbose):
     async def script(chain, ctx):
         reset_states["before"] = ctx.get(run.dut.cpu_reset)
         await chain.frame(reset_frame(True))
-        await drain(ctx, 8)
+        await settle(ctx)
         reset_states["held"] = ctx.get(run.dut.cpu_reset)
         reset_states["reported"] = decode_status(
             await chain.frame(status_frame()))["cpu_reset"]
         await chain.frame(reset_frame(False))
-        await drain(ctx, 8)
+        await settle(ctx)
         reset_states["released"] = ctx.get(run.dut.cpu_reset)
 
     run.go(script)
@@ -381,7 +437,7 @@ def run_checks(checks, verbose):
     async def script(chain, ctx):
         await chain.frame(reset_frame(True))
         await chain.frame(write_frame(0, [0x1111]))
-        await drain(ctx)
+        await drain(ctx, run.dut)
         kept["after"] = ctx.get(run.dut.cpu_reset)
 
     run.go(script)
@@ -398,10 +454,10 @@ def run_checks(checks, verbose):
         # JSHIFT drops in the middle of the address, so the rest of this frame is
         # decoded against a fresh command byte and cannot mean `write` any more.
         await chain.frame(write_frame(0x20, [0xdead, 0xbeef]), abort_after=20)
-        await drain(ctx)
+        await drain(ctx, run.dut)
         aborted = list(run.writes)
         await chain.frame(write_frame(0x30, [0xcafe]))
-        await drain(ctx)
+        await drain(ctx, run.dut)
         run.aborted = aborted
 
     run.go(script)
@@ -417,7 +473,7 @@ def run_checks(checks, verbose):
 
     async def script(chain, ctx):
         await chain.frame(write_frame(0, list(range(0x100, 0x100 + 64))))
-        await drain(ctx, 2000)
+        await drain(ctx, run.dut, 2000)
         margin["status"] = decode_status(await chain.frame(status_frame()))
 
     run.go(script)
@@ -450,7 +506,7 @@ def run_checks(checks, verbose):
         f"{stalled['reused']} -- `staged` must have restarted at this frame")
 
     # --- the layout the bootloader reads --------------------------------
-    image = bytes((n * 7 + 3) & 0xff for n in range(512))
+    image = bytes((n * 7 + 3) & 0xff for n in range(IMAGE_BYTES))
     crc = zlib.crc32(image) & 0xffff_ffff
     run = Run(verbose=verbose)
 
@@ -458,16 +514,16 @@ def run_checks(checks, verbose):
         image_words = [int.from_bytes(image[n:n + 2], "little")
                        for n in range(0, len(image), 2)]
         await chain.frame(write_frame(IMAGE_WORD, image_words))
-        await drain(ctx)
+        await drain(ctx, run.dut)
         # Length and CRC before the magic, and the magic in its own frame, so a
         # host that dies mid-run never leaves a header describing an image that is
         # not there. Same ordering as `hyperram::write_header`.
         await chain.frame(write_frame(HDR_LENGTH, [
             len(image) & 0xffff, len(image) >> 16,
             crc & 0xffff, crc >> 16]))
-        await drain(ctx)
+        await drain(ctx, run.dut)
         await chain.frame(write_frame(HDR_MAGIC, [MAGIC & 0xffff, MAGIC >> 16]))
-        await drain(ctx)
+        await drain(ctx, run.dut)
 
     run.go(script)
     memory = run.memory()
@@ -505,15 +561,25 @@ def run_checks(checks, verbose):
 
 
 def main():
+    # Rebound rather than threaded through three call levels; the size is a
+    # property of the run, not of any one check.
+    global IMAGE_BYTES
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="stage the full %d-byte image instead of %d. The "
+                             "layout is identical either way; this shifts 64x "
+                             "the bits." % (SOAK_IMAGE_BYTES, IMAGE_BYTES))
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print every frame")
     args = parser.parse_args()
 
+    if args.soak:
+        IMAGE_BYTES = SOAK_IMAGE_BYTES
+
     checks = Checks(emit)
-    emit("jtag_stage.JTAGStager")
+    emit(f"jtag_stage.JTAGStager -- staging {IMAGE_BYTES} bytes")
     run_checks(checks, args.verbose)
     return checks.summary()
 

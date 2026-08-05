@@ -21,6 +21,7 @@ ELF = WORKSPACE / "repos/apollo/firmware/_build/cynthion_d11/firmware.elf"
 
 sys.path.insert(0, str(WORKSPACE / "scripts"))
 
+import armtools  # noqa: E402
 from devlog import emit  # noqa: E402
 
 # Vector table layout for the SAMD11, in slot order from the base of .text.
@@ -77,10 +78,19 @@ def main():
         emit(f"FAIL: {ELF} does not exist - build first")
         return 1
 
+    # Resolved beside the compiler rather than by PATH order: the ELF is from
+    # GCC 15.2.0 and the PATH nm here is from 2023. See #191.
+    nm = armtools.tool("nm")
+    if nm is None:
+        emit("FAIL: no arm-none-eabi-nm anywhere")
+        return 1
+    armtools.report(emit, "nm")
+    emit()
+
     # Map address -> symbol names.
     addr_to_names = {}
     name_to_addr = {}
-    for line in sh("arm-none-eabi-nm", ELF.as_posix()).splitlines():
+    for line in sh(nm, ELF.as_posix()).splitlines():
         m = re.match(r"^([0-9a-fA-F]+)\s+(\S)\s+(\S+)$", line)
         if not m:
             continue

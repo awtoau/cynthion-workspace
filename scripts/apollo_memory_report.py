@@ -37,7 +37,6 @@ is otherwise 568 bytes from its ceiling.
 
 import argparse
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +44,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import armtools  # noqa: E402
 from devlog import emit  # noqa: E402
 
 APOLLO = ROOT / "repos" / "apollo"
@@ -59,17 +59,9 @@ RAM_BYTES = 4 * 1024
 NOTABLE_BYTES = 64
 
 
-def tool(name):
-    for prefix in ("arm-none-eabi-", ""):
-        found = shutil.which(prefix + name)
-        if found:
-            return found
-    return None
-
-
 def sections(elf):
     """Section sizes, from `size -A`."""
-    output = subprocess.run([tool("size"), "-A", str(elf)],
+    output = subprocess.run([armtools.tool("size"), "-A", str(elf)],
                             capture_output=True, text=True).stdout
     found = {}
     for line in output.splitlines():
@@ -92,7 +84,7 @@ def symbols(elf):
     misreports the source, which is worth knowing before concluding anything
     about who can see what.
     """
-    output = subprocess.run([tool("nm"), "-S", "--size-sort", str(elf)],
+    output = subprocess.run([armtools.tool("nm"), "-S", "--size-sort", str(elf)],
                             capture_output=True, text=True).stdout
     found = []
     for line in output.splitlines():
@@ -123,8 +115,8 @@ def main():
                         help="an ELF to report on instead of building")
     args = parser.parse_args()
 
-    if not tool("size") or not tool("nm"):
-        print("no arm-none-eabi binutils on PATH")
+    if not armtools.tool("size") or not armtools.tool("nm"):
+        print("no arm-none-eabi binutils found")
         return 1
 
     elf = args.elf
@@ -146,6 +138,8 @@ def main():
             elf = candidates[0]
 
     emit(f"Apollo memory report: {elf.relative_to(ROOT) if ROOT in elf.parents else elf}")
+    emit()
+    armtools.report(emit, "size", "nm")
     emit()
 
     found = sections(elf)
