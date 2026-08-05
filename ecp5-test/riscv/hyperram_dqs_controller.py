@@ -335,6 +335,15 @@ class HyperRAMDQSController(Elaboratable):
             with m.State('RECOVERY'):
                 m.d.sync += self.phy.clk_en .eq(0)
 
+                # DEASSERT CS#. tCSHI is CS#-HIGH time, so counting cycles here
+                # without this holds the state and not the gap -- which is what a
+                # first attempt did, and what the negative control in
+                # `soc_hyperram_sim.py` section 4 caught immediately. The
+                # per-cycle defaults above assert `cs` on every cycle, and only
+                # IDLE's no-request branch clears it, so upstream's fall-through
+                # left CS# low from one transaction straight into the next.
+                m.d.sync += self.phy.cs.eq(0)
+
                 m.d.sync += recovery_remaining.eq(recovery_remaining - 1)
                 with m.If(recovery_remaining == 0):
                     m.next = 'IDLE'

@@ -121,6 +121,7 @@ from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from amaranth_soc import wishbone
 
+from hyperram_dqs_controller import HyperRAMDQSController
 from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMDQSInterface,
                                             HyperRAMInterface)
@@ -339,11 +340,22 @@ class ModelHyperRAM:
 
 
 class Harness(Elaboratable):
-    """`HyperRAMDQSInterface` with its record brought out for a Python model."""
+    """The DQS controller with its record brought out for a Python model.
 
-    def __init__(self):
+    `upstream=True` instantiates luna's class instead of the vendored one, so a
+    check can show a fault existing there and absent here in the same harness.
+    Without that, "our controller keeps tCSHI" is a claim with no control: a
+    model that never detects a violation would pass it just as well.
+    """
+
+    def __init__(self, *, upstream=False):
         self.phy = HyperBusDQSPHY()
-        self.psram = HyperRAMDQSInterface(phy=self.phy)
+        if upstream:
+            self.psram = HyperRAMDQSInterface(phy=self.phy)
+        else:
+            self.psram = HyperRAMDQSController(
+                phy=self.phy, sync_mhz=SYNC_MHZ,
+                high_latency_clocks=HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS)
 
     def elaborate(self, platform):
         m = Module()
@@ -415,9 +427,9 @@ async def run(ctx, dut, model, *, address, read, data=None,
     ctx.set(psram.perform_write, 0)
 
 
-def simulate(body):
+def simulate(body, *, upstream=False):
     """Run `body(ctx, dut, model)` and return the model it used."""
-    dut = Harness()
+    dut = Harness(upstream=upstream)
     model = ModelHyperRAM()
 
     async def testbench(ctx):
@@ -550,32 +562,35 @@ def section_recovery(checks, emit):
     """4. The gap between transactions, which the controller does not keep."""
     emit("\n4. tCSHI, the gap the controller's RECOVERY state does not keep\n")
 
-    checks.check("the controller's RECOVERY state is still a TODO upstream",
+    checks.check("upstream's RECOVERY state is still a TODO",
                  "# TODO: implement recovery" in _upstream_source(),
-                 "upstream implemented it; the gap may no longer be ours to keep")
+                 "upstream implemented it; the vendored copy may be redundant")
 
     async def back_to_back(ctx, dut, model):
         await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
         await run(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
 
+    # THE NEGATIVE CONTROL, and it is the whole value of this section. A model
+    # that could not detect a violation would pass the positive check silently,
+    # so upstream's controller is run through the same harness to prove the
+    # detector fires.
+    control = simulate(back_to_back, upstream=True)
+    checks.check("upstream's controller VIOLATES tCSHI back-to-back",
+                 control.cshi_violations > 0,
+                 "no violation seen from upstream either, so this harness "
+                 "cannot tell the two apart and the check below proves nothing")
+
     model = simulate(back_to_back)
-    checks.check("back-to-back transactions VIOLATE tCSHI",
-                 model.cshi_violations > 0,
-                 "no violation seen, so this check is not discriminating")
+    checks.check("the vendored controller keeps tCSHI with NO gap from the master",
+                 model.cshi_violations == 0,
+                 f"{model.cshi_violations} violations -- the RECOVERY counter is "
+                 f"not holding CS# high long enough")
 
     required = max(1, int(-(-T_CSHI_NS * SYNC_MHZ // 1000)))
-
-    async def with_gap(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
-        await run(ctx, dut, model, address=TEST_ADDRESS + 1, read=True,
-                  gap=required + 1)
-
-    model = simulate(with_gap)
-    checks.check("holding the gap the bring-up design counts fixes it",
-                 model.cshi_violations == 0,
-                 f"{model.cshi_violations} violations remain")
     emit(f"        tCSHI {T_CSHI_NS:g} ns at {SYNC_MHZ:g} MHz is "
-         f"{required} whole cycle(s)")
+         f"{required} whole cycle(s), counted inside the controller")
+    emit(f"        upstream: {control.cshi_violations} violations, "
+         f"vendored: {model.cshi_violations}")
 
 
 def section_structural(checks, emit):
