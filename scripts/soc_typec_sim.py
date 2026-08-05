@@ -326,13 +326,36 @@ CABLES = [
     # (name, cc1 band, cc2 band, orientation the sweep should reach)
     ("a cable on CC1", BAND_USB, BAND_NONE, "cc1"),
     ("a cable on CC2", BAND_NONE, BAND_USB, "cc2"),
-    ("a 3 A source on CC2", BAND_NONE, BAND_3A, "cc2"),
     ("nothing attached", BAND_NONE, BAND_NONE, "none"),
     ("an accessory on both pins", BAND_1A5, BAND_1A5, "both"),
 ]
 
+# One scenario per branch of `orientation`, and one more for each: a 3 A source
+# on CC2 takes the SAME path through the sequence as a cable on CC2 -- select
+# moves to CC2, the comparator answers about CC2 -- and differs only in the
+# BC_LVL value it reports. That is a value sweep, and a value sweep is a soak:
+# each entry here is a whole simulation, 0.6 s of bit-banged I2C, for a path the
+# entry above it already walked.
+SOAK_CABLES = CABLES[:2] + [
+    ("a 3 A source on CC2", BAND_NONE, BAND_3A, "cc2"),
+] + CABLES[2:]
+
+# Which CC2 scenario section 1's blindness pair reads. The check asserts the old
+# read cannot distinguish it from an empty port, which is true of any band on
+# CC2; the soak run keeps the 3 A source this section was written against.
+BLINDNESS_CC2 = "a cable on CC2"
+SOAK_BLINDNESS_CC2 = "a 3 A source on CC2"
+
 
 def run_orientation_checks(checks, verbose):
+    """Runs every cable scenario, and returns what each one read.
+
+    The answers are returned rather than dropped because the blindness section
+    below asks a question about two of them. It used to re-simulate those two --
+    same models, same driver, same two reads -- which was 1.2 s spent producing
+    numbers this loop had already produced.
+    """
+    answers = {}
     for name, cc1, cc2, expected in CABLES:
         target = ModelFusb302B(cc1=cc1, cc2=cc2, vbus=True)
         dut, build = make_sim(buses(target=target), verbose)
@@ -345,7 +368,7 @@ def run_orientation_checks(checks, verbose):
             seen["new"] = await sweep(driver, BUS_TARGET_C)
 
         build(testbench).run()
-
+        answers[name] = seen
         swept = seen.get("new", (None, None))
         checks.check(
             f"the sweep reads both bands with {name}",
@@ -368,24 +391,17 @@ def run_orientation_checks(checks, verbose):
                 f"CC` on a port with a cable in it -- and a check that cannot "
                 f"reproduce it is not evidence the sweep fixed anything.")
 
+    return answers
 
-def run_blindness_check(checks, verbose):
-    """The old read gives the same answer to two different connectors."""
-    answers = {}
-    for name, cc1, cc2 in [("empty", BAND_NONE, BAND_NONE),
-                           ("cc2", BAND_NONE, BAND_3A)]:
-        target = ModelFusb302B(cc1=cc1, cc2=cc2, vbus=True)
-        dut, build = make_sim(buses(target=target), verbose)
-        seen = {}
 
-        async def testbench(ctx, seen=seen):
-            driver = Driver(ctx, dut, verbose)
-            await driver.setup()
-            seen["old"] = await read_cc1_only(driver, BUS_TARGET_C)
-            seen["new"] = await sweep(driver, BUS_TARGET_C)
+def run_blindness_check(checks, swept):
+    """The old read gives the same answer to two different connectors.
 
-        build(testbench).run()
-        answers[name] = seen
+    `swept` is what section 1 read, by scenario name. Two of its runs are the
+    two connectors this compares, so the comparison is free.
+    """
+    answers = {"empty": swept["nothing attached"],
+               "cc2": swept[BLINDNESS_CC2]}
 
     checks.check(
         "the CC1-only read cannot tell an empty port from a cable on CC2",
@@ -778,9 +794,16 @@ def run_firmware_checks(checks, root):
 
 
 def main():
+    # Rebound rather than passed down: which cable scenarios run is a property
+    # of the run, not of any one check.
+    global CABLES, BLINDNESS_CC2
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="all %d cable scenarios rather than %d -- the extra "
+                             "one is a second band on a pin the run already "
+                             "reads." % (len(SOAK_CABLES), len(CABLES)))
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print every CSR access")
     parser.add_argument("--firmware", type=Path, default=FIRMWARE,
@@ -788,11 +811,14 @@ def main():
                              "(default: firmware/cynthion-soc/src)")
     args = parser.parse_args()
 
+    if args.soak:
+        CABLES = SOAK_CABLES
+        BLINDNESS_CC2 = SOAK_BLINDNESS_CC2
+
     checks = Checks(emit)
 
     emit("1. both bands, from one comparator")
-    run_orientation_checks(checks, args.verbose)
-    run_blindness_check(checks, args.verbose)
+    run_blindness_check(checks, run_orientation_checks(checks, args.verbose))
     emit()
 
     emit("2. the sweep changes nothing electrically")

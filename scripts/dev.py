@@ -95,13 +95,15 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
     "pac": ("regenerate the PAC and SVD from the SoC's own memory map",
             [PY, script("soc_generate_pac.py")], True),
 
-    "sim": ("run the gateware simulations",
+    "sim": ("run the gateware simulations, with their repetition",
             [PY, script("soc_sims.py")], True),
 
-    # The nine sub-second simulations, so `gate` gets gateware coverage without
-    # waiting on the six that cost real time. `ci` still runs `sim`.
-    "sim-fast": ("run the sub-second gateware simulations",
-                 [PY, script("soc_sims.py"), "--tier", "fast"], True),
+    # EVERY simulation, one cycle of each -- so `gate` gets the whole suite's
+    # coverage rather than the nine cheapest of fifteen. What `sim` adds over
+    # this is repetition, not tests: burst counts above one, the parameter
+    # sweeps, the long payloads. See #175 and soc_sims.py.
+    "sim-once": ("run every gateware simulation, one cycle each",
+                 [PY, script("soc_sims.py"), "--tier", "once"], True),
 
     # A working link checker that nothing invoked. `./dev.py audit` reported it
     # as an orphan alongside genuinely dead probes, which is the argument for
@@ -122,7 +124,7 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
 # so including it makes the gate red on every tree state, which is the failure
 # mode this file has already fixed twice today. Reformatting is its own commit
 # and its own review; `./dev.py fmt-check` runs on demand until then. See #165.
-GATE = ["test", "lint", "sim-fast", "build"]
+GATE = ["test", "lint", "sim-once", "build"]
 
 # ci = run-all-collect-all -> one GO/NO-GO. Every leg runs even after a failure:
 # a gateware build is about a minute, and finding the second problem on the next
