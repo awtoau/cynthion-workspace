@@ -451,10 +451,17 @@ async def run(ctx, dut, model, *, address, read, data=None,
     ctx.set(psram.perform_write, 0)
 
 
-def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None):
-    """Run `body(ctx, dut, model)` and return the model it used."""
+def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
+             model_latency=None):
+    """Run `body(ctx, dut, model)` and return the model it used.
+
+    `model_latency` sets the DEVICE's latency independently of the controller's.
+    Leaving it None keeps the old behaviour, where the model takes luna's class
+    constant -- convenient, and the reason this harness could never show the two
+    disagreeing.
+    """
     dut = Harness(upstream=upstream, sync_mhz=sync_mhz, latency=latency)
-    model = ModelHyperRAM()
+    model = ModelHyperRAM(latency=model_latency)
 
     async def testbench(ctx):
         await body(ctx, dut, model)

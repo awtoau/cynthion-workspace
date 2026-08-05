@@ -77,10 +77,20 @@ HYPERRAM_SIZE = 8 * 1024 * 1024
 # the starting point, not an answer.
 HYPERRAM_READCLKSEL = 0b010
 
-# Fixed-latency `sync` cycles for the DQS controller. Upstream is 5; at 4:1
-# gearing that is 10 CK and puts every capture setting at least one word late.
-# See `hyperram_dqs_controller` for what else changed there.
-HYPERRAM_LATENCY_CLOCKS = 4
+# Fixed-latency `sync` cycles for the DQS controller.
+#
+# SIX, derived from the part rather than from a tap sweep. CR0 = 0x8f2f selects
+# fixed latency at 7 clocks, so the device takes 14 CK on every transaction, and
+# at 4:1 gearing that is 7 fabric beats. The controller waits this count plus a
+# zero beat, so it must be at least 6 to still be listening when the data
+# arrives. `scripts/hyperram_latency_probe.py` sweeps it against the model and
+# reports 6, 7 and 8 completing while 1-5 do not.
+#
+# It was 4, chosen to pull the capture EARLIER against an assumed late read, and
+# upstream's 5 is also below the minimum. Both sample before the device presents,
+# which is what a uniform one-word displacement looks like -- the window read
+# 0/16 at 4 while single-word staging reads still came back correct. See #186.
+HYPERRAM_LATENCY_CLOCKS = 6
 
 # tCSM, the longest CS# may stay Low. CR1[1:0] = 01b, which Table 12 ties to a
 # 64 ms array refresh over 8192 rows at T_CASE < 85 C, halved.
