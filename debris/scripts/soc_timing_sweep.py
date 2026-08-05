@@ -59,7 +59,8 @@ BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 SOC = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
 BOOTLOADER = ROOT / "tmp" / "rust_boot.bin"
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# `build_timing.py` went back to `scripts/` with the HyperRAM runners (#189).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from build_timing import run_bounded
 
 # The clock under test. nextpnr names it after the net driving the global, and

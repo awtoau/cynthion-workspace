@@ -3,6 +3,24 @@
 Superseded documents kept for the reasoning they contain, not as current
 guidance. Nothing here describes how the code works today.
 
+## hyperram-burst-test-readme.md
+
+Retired 2026-08-05, from `ecp5-test/hyperram/HYPERRAM_TEST_README.md`. The only
+index that directory had, and it covered one of its eleven programs — anyone
+opening the directory read it as a description of the whole thing.
+
+Superseded by [`../../ecp5-test/hyperram/README.md`](../../ecp5-test/hyperram/README.md),
+which points at `./dev.py hyperram`, and by the inventory in
+[`../../ecp5-test/README.md`](../../ecp5-test/README.md). Its own subject,
+`hyperram_burst_test.py`, is recorded there as retirable: the simulation fails
+verification and exits zero, and it has never run on silicon.
+
+Kept rather than deleted for its "expected results" table — 150-200 ns single
+word, 2-3 Gbps burst-4. Those were **predictions, never measurements**, and the
+measured figures are two to five times off them. A guess that was written down
+as an expectation is worth being able to find again. See
+[#189](https://github.com/awtoau/cynthion-workspace/issues/189).
+
 ## apollo_moondancer_uart_watchdog_design.md, apollo_moondancer_uart_watchdog_workstream.md
 
 Retired 2026-07-28. Proposed an Apollo↔moondancer watchdog over a UART moved to

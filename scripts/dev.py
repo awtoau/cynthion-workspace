@@ -253,7 +253,7 @@ def cmd_describe(_extra: list[str]) -> int:
                        "125": "step skipped (tool absent)", "other": "failure"},
         # Which commands reach the board, so an agent can tell what is safe to
         # run unattended from what needs hardware present.
-        "needs_hardware": ["run", "console", "flash"],
+        "needs_hardware": ["run", "console", "flash", "hyperram"],
         "commands": {
             name: {k: v for k, v in meta.items() if k != "fn"}
             for name, meta in COMMANDS.items()
@@ -337,6 +337,19 @@ def cmd_diamond(extra: list[str]) -> int:
          args="[--levels z s 3] [--no-board]", kind="action")
 def cmd_optlevel(extra: list[str]) -> int:
     return run_tool([PY, script("opt_level_sweep.py")], extra)
+
+
+@command("the HyperRAM harnesses: what each measures, whether it ran, and run one",
+         args="[identify|regfuzz|ceiling|readclksel|fifo|ladder|measure|dqs-pins] "
+              "[-- args]",
+         kind="action")
+def cmd_hyperram(extra: list[str]) -> int:
+    """Bare `./dev.py hyperram` prints the inventory and touches nothing.
+
+    Named in `needs_hardware` because every harness but `dqs-pins` configures the
+    FPGA, so `gate` and `ci` must never acquire it.
+    """
+    return run_tool([PY, script("hyperram.py")], extra)
 
 
 @command("read every script in scripts/ and report what still reaches it",

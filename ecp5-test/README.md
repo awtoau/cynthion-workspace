@@ -9,15 +9,17 @@ This is the inventory of standalone FPGA experiments under `ecp5-test/`.
   deliberately not inferred from simulation or a successful build.
 - Library blocks and simulations are listed after the bitstreams so they are
   not mistaken for loadable tests.
+- The HyperRAM rows have a shorter door: `./dev.py hyperram` names every harness,
+  its runner, and whether anyone has ever put its result on silicon (#189).
 
 | bitstream | what it tests | build | silicon result | host driver | dependency movement / disposition |
 |---|---|---|---|---|---|
 | `fabric/fabric_gateware.py` | LUT/FF computation across the 12F-marked die's 25F fabric | **verified**, 20,476 LUT4, timing met | recorded clean runs and 1,575/1,575 control mismatches; harness refactor needs hardware confirmation | `scripts/fabric_build.py`, `fabric_run.py`, `fabric_control.py`, `fabric_sweep.py` | retained; common BIST owns command, counters, sticky error and runtime control |
 | `hyperram/hyperram_ceiling_top.py` | legal-tCSM sustained HyperRAM verify, DQS/non-DQS clock ceiling, READCLKSEL and BURSTDET | **verified** for both PHYs at 60 MHz sync | recorded 334.4 MB/s at CK 192 MHz; BURSTDET stayed clear; harness/phase parameter needs hardware confirmation | `scripts/hyperram_ceiling.py` | retained; current DQS PHY is local and the controller's recovery gap remains caller-owned |
-| `hyperram/hyperram_dqs_top.py` | first isolated DQS write/read bring-up | **verified**, 60 MHz sync | **invalid: hangs**; 398 M write cycles and zero words moved | LEDs only | retire in favour of `hyperram_ceiling_top.py`; `perform_write` rises in `m.d.sync` on the start edge, so the controller latches a read |
+| `hyperram/hyperram_dqs_top.py` | first isolated DQS write/read bring-up | **verified**, 60 MHz sync | **never on hardware**, and predicted to hang | LEDs only | retire in favour of `hyperram_ceiling_top.py`; `perform_write` rises in `m.d.sync` on the start edge, so the controller latches a read. The 398 M write cycles and zero words moved were measured in the SoC's DQS path (`75b974c`), not here — this row credited them to this file (#189) |
 | `hyperram/hyperram_fifo.py` | FIFO-fed burst throughput and data capture | syntax | recorded hardware measurements; not rerun | `scripts/hyperram_fifo.py` | keep as historical throughput probe; ceiling test applies tCSM and address-derived checking |
 | `hyperram/hyperram_speed.py` | one 2,048-word burst throughput | syntax | 220.2 MB/s recorded, **invalid as a sustained limit** | `scripts/hyperram_ladder.py` | retire; the burst holds CS# low about 17 us while CR1 specifies 4 us tCSM |
-| `hyperram/hyperram_stress.py` | repeated memory fill/read stress | syntax | hardware required | JTAG registers; no dedicated current runner | predates the DQS PHY, legal burst cap and shared control measurement |
+| `hyperram/hyperram_stress.py` | bulk, retention and random-access fill/verify | syntax | **passed on r1.4 at 120 MHz** — 0/16384 bulk, 0/16384 after ~6 ms retention, 0/4096 random, 119.8 MB/s (`3f436d4`) | JTAG registers; no dedicated current runner | predates the DQS PHY, legal burst cap and shared control measurement. This row read "hardware required" until #189; the file has not changed since the run |
 | `hyperram/hyperram_identify.py` | ID registers, density and bank aliasing | syntax | recorded identification result | `scripts/hyperram_identify.py` | diagnostic retained; uses the non-DQS LUNA interface |
 | `hyperram/hyperram_regfuzz.py` | configuration-register write/read behaviour | syntax | recorded probe result | `scripts/hyperram_regfuzz.py` | diagnostic retained; register semantics remain device-specific |
 | `hyperram/hyperram_test_minimal.py` | minimal single-word read/write bring-up | syntax | hardware required | LEDs | historical bring-up; no sticky verdict or negative control |
