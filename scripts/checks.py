@@ -29,6 +29,32 @@ doing the work they looked like they were doing, in Amaranth's simulator, and
 the one fixed interval among them was a 400-cycle FIFO drain worth 12%. Guessing
 from wall clock would have got all three wrong; see #175 and their docstrings.
 
+## Repeating a test does not establish that it is deterministic
+
+Running the suite N times and reporting "N consecutive runs, no failures" is
+close to worthless, and this file exists partly to stop that being mistaken for
+evidence. With the flake rates this repo has actually recorded:
+
+    flake rate                N=4    N=5   N=20     <- P(all clean anyway)
+    1 in 6                    48%    40%     3%
+    1 in 3                    20%    13%     0%
+    1 in 100                  96%    95%    82%
+
+A one-in-six flake survives five clean runs two times in five. A one-in-hundred
+flake survives twenty. Sampling can only ever fail to find something.
+
+**Make it deterministic instead.** The nondeterminism has a source: wall-clock
+dependence, the host scheduler, an unseeded generator, a poll that races the
+thing it polls. Remove the source. Where the quantity is genuinely
+host-dependent -- an interrupt's worst-case lateness under emulation is the
+laptop's scheduler, not the firmware -- do not assert on it at all; assert that
+the measurement exists and answer the real question on the board.
+
+`soc_test.py` records both halves of this: an assertion that passed twice and
+failed twice in four runs, removed because "an intermittent gate is worse than
+no gate -- it blocks work at random and teaches everyone to re-run until green,
+which is how a real failure gets waved through".
+
 ## Nine copies became one
 
 `class Checks` was defined nine times across `scripts/`, plus a tenth private
