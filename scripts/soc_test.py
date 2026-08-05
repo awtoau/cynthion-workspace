@@ -1471,8 +1471,16 @@ def main():
         stats, reply = stats_state("`stats` answers again after a busy turn")
 
         if idle is not None:
+            # The IPC is NOT a measurement under QEMU. On `virt`, `mcycle` and
+            # `minstret` are both the host TSC, so the ratio is 1.000 for every
+            # build ever made and says nothing about this firmware. Printed
+            # anyway because the check below needs it non-zero -- a zero is a
+            # counter standing still, which IS worth catching -- but labelled so
+            # it is not read as a result. `scripts/soc_workload.py` runs QEMU
+            # with `-icount shift=4` where a real figure is wanted.
             emit(f"        idle shell: busy {idle[1] / 100:.2f}% of "
-                 f"{idle[0]} cycles, ipc {idle[2] / 1000:.3f}")
+                 f"{idle[0]} cycles, ipc {idle[2] / 1000:.3f} "
+                 f"(QEMU: host TSC, not a measurement)")
 
         if stats is None or idle is None:
             check("the cycle and instruction counters are live", False,
