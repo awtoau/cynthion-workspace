@@ -27,11 +27,11 @@ Reproduce:
 
 | | superloop | preempt | **RTIC** |
 |---|---|---|---|
-| worst arrival→handled | 1,223 µs | 271 µs | **274 µs** |
+| worst arrival→handled | 1,220 µs | 271 µs | **274 µs** |
 | events past the 375 µs deadline | 600 / 2,000 | 0 | **0** |
 | dispatcher `.text` | — | +424 B | **+1,812 B** |
 | dispatch cost per event | — | 21 instr | **~180 instr** |
-| hot I-cache footprint | 3,904 B — **fits** | — | 5,312 B — **does not** |
+| hot I-cache footprint | 4,032 B — **fits, by one line** | — | 5,440 B — **does not** |
 | worst window with `mstatus.MIE` clear | 0 | 0 | **60 instr, ~1 µs** |
 
 **RTIC fixes the unbounded turn as completely as the hand-written dispatcher
@@ -101,7 +101,7 @@ job on an exact 5 ms grid.
 |---|---|---|---|---|---|
 | superloop, in the shell | 1,265 µs | 418 µs | 700 / 2,000 | 1,001 µs | — |
 | preempt, in the shell | 271 µs | 170 µs | 0 | 1,001 µs | — |
-| superloop, `workload_bare` | 1,223 µs | 402 µs | 600 / 2,000 | 1,001 µs | 3 µs |
+| superloop, `workload_bare` | 1,220 µs | 400 µs | 600 / 2,000 | 1,001 µs | 3 µs |
 | **RTIC**, `workload_rtic` | **274 µs** | **172 µs** | **0** | 1,005 µs | 0 µs |
 | RTIC, idle polls the resource | 275 µs | 173 µs | 0 | 1,006 µs | 3 µs |
 
@@ -111,7 +111,7 @@ job on an exact 5 ms grid.
 * **The deferred job pays 4-5 µs**, 1,005 against 1,001. It is preempted the same
   number of times; what it pays is the SLIC's own trap on the way back.
 * **Nothing dropped, nothing arrived early**, in any model.
-* The bare superloop's 1,223 µs against the shell superloop's 1,265 is the
+* The bare superloop's 1,220 µs against the shell superloop's 1,266 is the
   shell's own turn — the power poll, the event drain, the two shell polls —
   which is not in the bare binary. The defect is the unbounded turn either way.
 
@@ -294,22 +294,24 @@ flags.
 
 | | `workload_bare` | `workload_rtic` |
 |---|---|---|
-| blocks executed | 1,302,879 | 2,085,672 |
-| line accesses | 1,409,424 | 2,295,405 |
-| **misses** | **342** (0.02%) | **1,329** (0.06%) |
-| **footprint** | **61 lines = 3,904 B** | **83 lines = 5,312 B** |
-| sets holding >1 line | 9 | 23 |
+| blocks executed | 1,311,974 | 2,079,134 |
+| line accesses | 1,812,678 | 2,758,927 |
+| **misses** | **573** (0.03%) | **1,393** (0.05%) |
+| **footprint** | **63 lines = 4,032 B** | **85 lines = 5,440 B** |
+| sets holding >1 line | 9 | 26 |
 
-**The bare binary's hot footprint fits in the 4 KiB cache. The RTIC one does
-not.** 3,904 B against 4,096; 5,312 B against 4,096. That is the sharpest form
-the cache question has taken, and it is sharper than
-`soc-workload-and-preemption.md` §4's version because there the shell's own
-5,632 B already exceeded the cache before any runtime was added, so the
-dispatcher's 512 B could only make a bad number worse.
+**The bare binary's hot footprint fits in the 4 KiB cache — by one line. The
+RTIC one is 1,344 bytes over.** That is the sharpest form the cache question has
+taken, and it is sharper than `soc-workload-and-preemption.md` §4's version
+because there the shell's own 5,632 B already exceeded the cache before any
+runtime was added, so the dispatcher's 512 B could only make a bad number worse.
 
-+1,812 bytes of `.text` cost +1,408 bytes of footprint — a ratio of 0.78, where
-the hand-written dispatcher's 440 bytes cost 512 (1.16). RTIC's code is more
-contiguous; it is also four times as much of it.
+Read it as a margin rather than a verdict: 4,032 of 4,096 bytes is 64 bytes of
+headroom, and this binary is a workload harness rather than a firmware. What
+transfers is the **direction and the size of the step** — +1,812 bytes of `.text`
+cost +1,408 bytes of footprint, a ratio of 0.78 where the hand-written
+dispatcher's 440 bytes cost 512 (1.16). RTIC's code is more contiguous; it is
+also four times as much of it, and 1,408 bytes is 34% of this cache.
 
 Two honest limits on the miss counts, both from
 `soc-icache_model.py`'s own docstring: the addresses are the QEMU build's, so
@@ -321,12 +323,20 @@ not.**
 
 ## 9. What it cost to build, and what it would cost to go further
 
-`workload_rtic.rs` is 676 lines against `workload_bare.rs`'s 227, and about 200
+`workload_rtic.rs` is 665 lines against `workload_bare.rs`'s 223, and about 200
 of the difference is the probe, the instrumented critical section and comments.
 `src/workload.rs` needed 86 lines changed, all additive and all `#[cfg]`-gated:
 `usb_drain`, `type_c_run`, `begin`, `finish`, `completed`, and one `if` in the
 model name. **No shim beyond `rtic-adoption.md` §3's five was needed**, for the
 third time.
+
+One thing the port did need that is not RTIC's fault and is worth recording:
+`src/wl_report.rs`, 161 lines, because all three binaries carry a
+`#[riscv_rt::core_interrupt]` and `scripts/soc_irq_log_check.py` forbids a
+handler module from naming `Uart`, `fmt::Write` or `writeln!`. The console
+therefore lives in a module of its own, exactly as `src/usb_report.rs` does for
+the USB spikes and `src/events.rs` does for the shell. A single-file spike does
+not get to skip that.
 
 Dependencies, `cargo tree` on the QEMU target:
 
@@ -368,7 +378,7 @@ Linux's `autoconfig`; the data half is not. So every figure above is QEMU with
 | what does `critical_section` cost per pend? | not measured | **measured: 74 instr, worst window 60** |
 | does the PLIC survive adoption? | argued | **counted: 1,108 claims, 1,208 completes, nothing gated off** |
 | is there a CLINT monotonic? | "nothing for RISC-V" — **wrong** | **written and measured: 7 µs worst late** |
-| what does the runtime displace in the cache? | projected at ~47% | **measured: the hot set stops fitting**, 3,904 B → 5,312 B |
+| what does the runtime displace in the cache? | projected at ~47% | **measured: +1,408 B of footprint, 34% of the cache**, and the hot set stops fitting: 4,032 B → 5,440 B |
 | are the priorities and resources configurable? | asserted | **settled: yes**, and one obvious configuration is a priority-2 blocker |
 | is checked resource access worth 1,812 bytes? | a judgement | still a judgement |
 

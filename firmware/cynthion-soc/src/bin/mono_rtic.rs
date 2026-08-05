@@ -49,24 +49,13 @@
 use core::panic::PanicInfo;
 use core::sync::atomic::AtomicU32;
 
-/// `uart::report_errors` calls `crate::log!`, and this binary cannot have
-/// `src/log.rs`: that module stamps every line from `timer::millis`, and
-/// **`src/timer.rs` cannot be in this binary at all** -- it installs a
-/// `MachineTimer` handler, and the monotonic below is the owner of that vector
-/// and of the one comparator behind it. `symbol MachineTimer is already
-/// defined` is the linker saying exactly that, and it is the sharpest evidence
-/// there is that adopting a monotonic is not additive.
-///
-/// So: the same macro without the stamp.
-#[macro_export]
-macro_rules! log {
-    ($uart:expr, $($arg:tt)*) => {
-        {
-            let _ = ::core::writeln!($uart, "{}", ::core::format_args!($($arg)*));
-        }
-    };
-}
-
+// **`src/timer.rs` cannot be in this binary at all** -- it installs a
+// `MachineTimer` handler, and the monotonic below owns that vector and the one
+// comparator behind it. `symbol MachineTimer is already defined` is the linker
+// saying exactly that, and it is the sharpest evidence there is that adopting a
+// monotonic is not additive. `src/log.rs` goes with it, because it stamps every
+// line from `timer::millis`; `src/wl_report.rs` carries an unstamped `log!` for
+// `uart::report_errors` instead, and everything that formats.
 #[allow(dead_code)]
 #[path = "../clock.rs"]
 mod clock;
@@ -76,6 +65,9 @@ mod target;
 #[allow(dead_code)]
 #[path = "../uart.rs"]
 mod uart;
+#[allow(dead_code)]
+#[path = "../wl_report.rs"]
+mod wl_report;
 
 pub const MAX_CONSOLES: usize = 4;
 
@@ -284,10 +276,9 @@ fn panic(_info: &PanicInfo) -> ! {
 #[rtic::app(device = device, peripherals = false, backend = H0)]
 mod app {
     use super::{
-        clock, device, mono, target, uart, DONE, LATE_FIRE, OVERRUN_AT, PERIODS, PERIODS_WANTED,
-        PERIOD_US, TOTAL_LATE, WORST_EARLY, WORST_LATE,
+        clock, device, mono, target, wl_report, DONE, LATE_FIRE, OVERRUN_AT, PERIODS,
+        PERIODS_WANTED, PERIOD_US, TOTAL_LATE, WORST_EARLY, WORST_LATE,
     };
-    use core::fmt::Write;
     use core::sync::atomic::Ordering;
     use rtic_monotonics::Monotonic;
 
@@ -296,14 +287,13 @@ mod app {
 
     #[local]
     struct Local {
-        console: uart::Uart,
+        console: wl_report::Console,
     }
 
     #[init]
     fn init(_cx: init::Context) -> (Shared, Local) {
-        let mut console = uart::Uart::new(target::UART_BASES[0]);
-        console.init();
-        let _ = console.write_str("Cynthion RISC-V SoC: CLINT monotonic on RTIC\n");
+        let mut console = wl_report::Console::new(target::UART_BASES[0]);
+        console.banner("CLINT monotonic on RTIC");
 
         mono::ClintBackend::start();
         periodic::spawn().ok();
@@ -383,30 +373,18 @@ mod app {
 
         let per_us = target::TIME_HZ / 1_000_000;
         let periods = PERIODS.load(Ordering::Relaxed).max(1);
-        let _ = writeln!(
-            console,
-            "mono   periods {} of {} at {} us on an absolute grid",
-            periods, PERIODS_WANTED, PERIOD_US
+        console.monotonic(
+            (periods, PERIODS_WANTED),
+            PERIOD_US,
+            (
+                WORST_LATE.load(Ordering::Relaxed) / per_us,
+                TOTAL_LATE.load(Ordering::Relaxed) / periods / per_us,
+                TOTAL_LATE.load(Ordering::Relaxed),
+            ),
+            WORST_EARLY.load(Ordering::Relaxed),
+            (PERIOD_US / 2, LATE_FIRE.load(Ordering::Relaxed)),
+            target::TIME_HZ,
         );
-        let _ = writeln!(
-            console,
-            "  late    worst {} us  mean {} us  total {} ticks",
-            WORST_LATE.load(Ordering::Relaxed) / per_us,
-            TOTAL_LATE.load(Ordering::Relaxed) / periods / per_us,
-            TOTAL_LATE.load(Ordering::Relaxed)
-        );
-        let _ = writeln!(
-            console,
-            "  early   worst {} ticks (any is a defect)",
-            WORST_EARLY.load(Ordering::Relaxed)
-        );
-        let _ = writeln!(
-            console,
-            "  past    one deadline set {} us behind now, fired {} ticks late",
-            (PERIOD_US / 2),
-            LATE_FIRE.load(Ordering::Relaxed)
-        );
-        let _ = writeln!(console, "  clock   {} Hz", target::TIME_HZ);
         loop {
             core::hint::spin_loop();
         }

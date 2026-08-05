@@ -470,7 +470,7 @@ four parts, and it measures it in a hand-written form. It does not measure RTIC.
 | is the unbounded turn a real defect? | **settled: yes** | measured, §5 |
 | does preemption alone fix it? | **settled: yes**, 4.7x for 440 bytes | measured, §5 |
 | is there an RTIC subset that gives preemption alone? | **settled: no** | `rtic-macros`'s binding has one path, §2 |
-| what does RTIC's runtime displace in the cache? | **settled**: the hot set stops fitting, 3,904 B → 5,312 B | [`rtic-workload-port.md`](rtic-workload-port.md) §8 |
+| what does RTIC's runtime displace in the cache? | **settled**: +1,408 B of footprint, 34% of the cache, and the hot set stops fitting — 4,032 B → 5,440 B | [`rtic-workload-port.md`](rtic-workload-port.md) §8 |
 | what does `critical_section::with` cost per `pend`? | **settled**: 74 instructions, worst window 60 | [`rtic-workload-port.md`](rtic-workload-port.md) §3-§4 |
 | does RTIC fix the unbounded turn too? | **settled: yes**, 274 µs against preempt's 271 | [`rtic-workload-port.md`](rtic-workload-port.md) §2 |
 | IPC, I-cache misses, frontend/backend stalls | **not measured, and not measurable here** | the board — and this workload cannot reach it: the gateware's 16550 has no DATA loopback (`uart16550.py:545`), so the arrival generator needs a bitstream change first |

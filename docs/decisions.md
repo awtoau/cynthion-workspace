@@ -930,8 +930,8 @@ shape, which is the comparison that isolates the runtime
 
 | | superloop | **RTIC** |
 |---|---|---|
-| hot footprint | **3,904 B — fits** | **5,312 B — does not** |
-| modelled misses | 342 | 1,329 |
+| hot footprint | **4,032 B — fits, by one line** | **5,440 B — 1,344 B over** |
+| modelled misses | 573 | 1,393 |
 
 Still modelled from QEMU traces rather than counted on silicon — and the workload cannot
 reach silicon as it stands, because the gateware's 16550 implements the MSR half of local

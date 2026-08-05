@@ -73,6 +73,12 @@ mod timer;
 #[allow(dead_code)]
 #[path = "../uart.rs"]
 mod uart;
+// Everything that formats, so this file -- a handler module -- contains no
+// `writeln!`, no `fmt::Write` and no `Uart`. See its module comment and
+// `scripts/soc_irq_log_check.py`.
+#[allow(dead_code)]
+#[path = "../wl_report.rs"]
+mod wl_report;
 #[allow(dead_code)]
 #[path = "../workload.rs"]
 mod workload;
@@ -343,8 +349,9 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[rtic::app(device = device, peripherals = false, backend = H0)]
 mod app {
-    use super::{clock, device, plic, target, timer, uart, workload, CLAIMS, COMPLETES, LINE};
-    use core::fmt::Write;
+    use super::{
+        clock, device, plic, target, timer, uart, wl_report, workload, CLAIMS, COMPLETES, LINE,
+    };
     use core::sync::atomic::Ordering;
     use riscv::interrupt::Interrupt;
 
@@ -366,13 +373,12 @@ mod app {
 
     #[local]
     struct Local {
-        console: uart::Uart,
+        console: wl_report::Console,
     }
 
     #[init]
     fn init(_cx: init::Context) -> (Shared, Local) {
-        let mut console = uart::Uart::new(target::UART_BASES[0]);
-        console.init();
+        let console = wl_report::Console::new(target::UART_BASES[0]);
 
         let plic = plic::Plic::new(target::PLIC_BASE);
         plic.set_threshold(0);
@@ -414,7 +420,7 @@ mod app {
     #[idle(local = [console], shared = [progress])]
     fn idle(mut cx: idle::Context) -> ! {
         let console = cx.local.console;
-        let _ = console.write_str("Cynthion RISC-V SoC: workload on RTIC\n");
+        console.banner("workload on RTIC");
 
         let mut line = [0u8; 16];
         let mut used = 0;
@@ -432,7 +438,7 @@ mod app {
             let want = number(&line[..used]);
             used = 0;
             if want == 0 {
-                let _ = console.write_str("usage: usb <events>\n");
+                console.usage();
                 continue;
             }
 
@@ -467,25 +473,17 @@ mod app {
                 core::hint::spin_loop();
             }
 
-            workload::finish(console, started);
+            console.finish(started);
             let (events, defers) = cx.shared.progress.lock(|p| (p.events, p.defers));
             let (ticks, cost, late) = timer::stats();
-            let _ = writeln!(
-                console,
-                "  rtic    shared events {} defers {}  claims {} completes {}",
-                events,
-                defers,
+            console.shared(events, defers);
+            console.plic(
+                "rtic",
                 CLAIMS.load(Ordering::Relaxed),
-                COMPLETES.load(Ordering::Relaxed)
+                COMPLETES.load(Ordering::Relaxed),
             );
             let per_us = target::TIME_HZ / 1_000_000;
-            let _ = writeln!(
-                console,
-                "  tick    ticks {} worst cost {} us  worst late {} us",
-                ticks,
-                cost / per_us,
-                late / per_us
-            );
+            console.tick(ticks, cost / per_us, late / per_us);
             #[cfg(feature = "rticprobe")]
             report_probe(console);
         }
@@ -516,30 +514,21 @@ mod app {
     }
 
     #[cfg(feature = "rticprobe")]
-    fn report_probe(console: &mut uart::Uart) {
+    fn report_probe(console: &mut wl_report::Console) {
         use super::probe;
         let pends = probe::PENDS.load(Ordering::Relaxed).max(1);
         let traps = probe::TRAPS.load(Ordering::Relaxed).max(1);
         let locks = probe::LOCKS.load(Ordering::Relaxed).max(1);
-        let cs = probe::CS.load(Ordering::Relaxed).max(1);
-        let _ = writeln!(
-            console,
-            "  probe   pend {} x {} instr  trap->task {} x {} instr  lock {} x {} instr",
-            pends,
-            probe::PEND.load(Ordering::Relaxed) / pends,
-            traps,
-            probe::TRAP.load(Ordering::Relaxed) / traps,
-            locks,
-            probe::LOCK.load(Ordering::Relaxed) / locks
+        console.probe(
+            (pends, probe::PEND.load(Ordering::Relaxed) / pends),
+            (traps, probe::TRAP.load(Ordering::Relaxed) / traps),
+            (locks, probe::LOCK.load(Ordering::Relaxed) / locks),
         );
-        let _ = writeln!(
-            console,
-            "  cs      taken {} total {} instr  mean {} worst {} floor {} instr",
-            cs,
+        console.critical_sections(
+            probe::CS.load(Ordering::Relaxed),
             probe::CS_INSTR.load(Ordering::Relaxed),
-            probe::CS_INSTR.load(Ordering::Relaxed) / cs,
             probe::CS_WORST.load(Ordering::Relaxed),
-            probe::CS_FLOOR.load(Ordering::Relaxed)
+            probe::CS_FLOOR.load(Ordering::Relaxed),
         );
     }
 

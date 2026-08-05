@@ -44,6 +44,12 @@ mod timer;
 #[allow(dead_code)]
 #[path = "../uart.rs"]
 mod uart;
+// Everything that formats, so this file -- a handler module -- contains no
+// `writeln!`, no `fmt::Write` and no `Uart`. See its module comment and
+// `scripts/soc_irq_log_check.py`.
+#[allow(dead_code)]
+#[path = "../wl_report.rs"]
+mod wl_report;
 #[allow(dead_code)]
 #[path = "../workload.rs"]
 mod workload;
@@ -158,11 +164,8 @@ fn machine_external() {
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    use core::fmt::Write;
-
-    let mut console = uart::Uart::new(target::UART_BASES[0]);
-    console.init();
-    let _ = console.write_str("Cynthion RISC-V SoC: workload bare\n");
+    let mut console = wl_report::Console::new(target::UART_BASES[0]);
+    console.banner("workload bare");
 
     let plic = plic::Plic::new(target::PLIC_BASE);
     plic.set_threshold(0);
@@ -196,24 +199,17 @@ fn main() -> ! {
         // `workload::command` is the shell's `usb <n>`: it resets, switches the
         // console into loopback, and then IS the scheduler -- `service()` and
         // `drain()` once per turn until the run is over.
-        workload::command(&mut console, strip(&line[..used]));
+        console.run(strip(&line[..used]));
         used = 0;
 
         let (ticks, cost, late) = timer::stats();
         let per_us = target::TIME_HZ / 1_000_000;
-        let _ = writeln!(
-            console,
-            "  bare    claims {} completes {}",
+        console.plic(
+            "bare",
             CLAIMS.load(Ordering::Relaxed),
-            COMPLETES.load(Ordering::Relaxed)
+            COMPLETES.load(Ordering::Relaxed),
         );
-        let _ = writeln!(
-            console,
-            "  tick    ticks {} worst cost {} us  worst late {} us",
-            ticks,
-            cost / per_us,
-            late / per_us
-        );
+        console.tick(ticks, cost / per_us, late / per_us);
     }
 }
 
