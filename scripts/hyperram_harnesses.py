@@ -112,13 +112,6 @@ HARNESSES = {
         "yes, once -- ten chunk sizes at 120 MHz, 163,840 words verified "
         "(18144d3); the table is in docs/luna_ecp5_fpga/hyperram-detailed.md",
     ),
-    "ladder": (
-        "hyperram_ladder.py", "hyperram_speed.py",
-        "one 2,048-word burst at each of 60 and 120 MHz sync, timed in gateware",
-        "yes -- 118.9 MB/s at 60 (7b12525), 237.8 write / 237.3 read at 120 "
-        "(4e53660). INVALID as a sustained figure: the burst holds CS# low "
-        "~17 us against CR1's 4 us tCSM. Superseded by ceiling.",
-    ),
     "measure": (
         "hyperram_measure.py", None,
         "the SoC's own path: `hr cross` and `hr test` for correctness, then "
@@ -148,21 +141,19 @@ ORPHAN_TOPS = {
         "runner ever written. RUN, and passed: 0/16384 bulk, 0/16384 after ~6 ms "
         "retention, 0/4096 random, 119.8 MB/s at 120 MHz (3f436d4). The README "
         "row saying 'hardware required' is stale -- the file is unchanged since.",
-    "hyperram_test_minimal.py":
-        "single-word read/write bring-up, LEDs only. NEVER RUN, and cannot be: "
-        "its __main__ prints and constructs a PHY without ever building.",
-    "hyperram_dqs_top.py":
-        "first isolated DQS bring-up, LEDs only. NEVER RUN -- and it will hang "
-        "if it is, because perform_write rises in m.d.sync on the start edge. "
-        "The README row credits it with the 398 M-cycle hang; that was measured "
-        "in the SoC's DQS path (75b974c), not here. Superseded by ceiling_top.",
-    "hyperram_burst_test.py":
-        "single-word then four-word burst sequence. NEVER RUN on silicon; its "
-        "only driver, test_hyperram_build.py, still carries a literal "
-        "'/path/to/cynthion/constraints'. The mock-FSM sibling "
-        "hyperram_burst_test_sim.py ran once (2026-07-22, VCD at 9be11d7) and "
-        "FAILED verification while exiting zero.",
 }
+
+# RETIRED, and deleted rather than kept as a row here: `hyperram_test_minimal.py`
+# and `hyperram_burst_test.py` had never run and could not (one never builds, the
+# other's only driver carries a literal '/path/to/cynthion/constraints');
+# `hyperram_burst_test_sim.py` ran once and failed verification while exiting
+# zero; `hyperram_dqs_top.py` had never run and would hang if it did, because
+# `perform_write` rises in `m.d.sync` on the start edge; `hyperram_speed.py` and
+# its `hyperram_ladder.py` runner produced a figure that is invalid as a
+# sustained rate, holding CS# low ~17 us against CR1's 4 us tCSM.
+#
+# `ecp5-test/README.md` already said "retire" for every one of them. They are in
+# git history, which is where superseded code belongs.
 
 
 def table(markdown=False):

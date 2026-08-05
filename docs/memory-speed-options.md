@@ -390,7 +390,8 @@ reaching the tCSM limit"*. That splitter does not exist in
 `HyperRAMDQSInterface` and it is the piece of work this option really is.
 
 **Violating tCSM does not fail visibly** — it fails by forgetting later. That is
-how `hyperram_speed.py`'s 2048-word / 17 µs burst produced 220.2 MB/s, a number
+how `hyperram_speed.py` (since retired) produced 220.2 MB/s from a 2048-word
+/ 17 µs burst, a number
 this workspace has already retired.
 
 **Combined with Option 1** (12 CK overhead, 512 words): 512/524 = 97.71% →

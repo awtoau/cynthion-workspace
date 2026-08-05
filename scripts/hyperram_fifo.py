@@ -13,7 +13,8 @@ afterwards. Nothing here is timed from the host -- a JTAG register read takes
 would measure the debugger and not the RAM.
 
 The comparison that matters is against the streaming figure from
-hyperram_speed.py, so it is printed alongside every row: the question is not
+the retired hyperram_speed.py, so it is printed alongside every row: the
+question is not
 what the alternating pattern achieves in isolation but how much of the
 streaming rate survives turning the bus around.
 

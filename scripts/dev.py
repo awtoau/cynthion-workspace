@@ -351,7 +351,7 @@ def cmd_hyperram(extra: list[str]) -> int:
     Named in `needs_hardware` because every harness but `dqs-pins` configures the
     FPGA, so `gate` and `ci` must never acquire it.
     """
-    return run_tool([PY, script("hyperram.py")], extra)
+    return run_tool([PY, script("hyperram_harnesses.py")], extra)
 
 
 @command("read every script in scripts/ and report what still reaches it",

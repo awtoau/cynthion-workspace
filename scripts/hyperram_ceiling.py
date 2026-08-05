@@ -53,8 +53,12 @@ RESULTS = BUILD_ROOT / "results.json"
 OSS_CAD = Path.home() / "opt" / "oss-cad-suite" / "bin"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
-sys.path.insert(0, str(ROOT / "ecp5-test"))
 sys.path.insert(0, str(ROOT / "scripts"))
+# LAST, so it wins: `scripts/hyperram.py` is a module with the same name as the
+# `ecp5-test/hyperram/` package, and whichever path comes first shadows the
+# other. With `scripts` ahead of it this file could not import its own gateware
+# and died at startup with "'hyperram' is not a package".
+sys.path.insert(0, str(ROOT / "ecp5-test"))
 
 from devlog import emit  # noqa: E402
 
