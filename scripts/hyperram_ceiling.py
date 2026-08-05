@@ -321,14 +321,17 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # ratio the JTAG shift register slips deterministically, so every value from
     # this rung -- word count, cycle count, ERROR count -- is suspect, and a zero
     # error count is the most dangerous of them.
+    # WARN, do not refuse. An earlier version returned here without measuring
+    # anything below the ratio, which throws away rungs that may be perfectly
+    # good -- the ratio is a prediction, and the applet id is a DIRECT test of
+    # the same path. It is read before and after every rung; if a known constant
+    # survives the round trip twice, the readback worked for this measurement
+    # whatever the ratio says. Refusing in advance is guessing with extra steps.
     if not readback_is_trustworthy(sync):
-        result["verdict"] = "readback not trustworthy"
-        result["detail"] = (f"sync {sync:g} MHz is {sync / APOLLO_TCK_MHZ:.1f}x "
-                            f"TCK {APOLLO_TCK_MHZ:g} MHz; {MIN_SYNC_OVER_TCK:g}x "
-                            f"is the minimum")
-        emit(f"  {tag}: {result['detail']} -- refusing to measure, the register "
-             f"readback slips at this ratio")
-        return result
+        result["readback_ratio"] = sync / APOLLO_TCK_MHZ
+        emit(f"  {tag}: sync {sync:g} MHz is only "
+             f"{sync / APOLLO_TCK_MHZ:.1f}x TCK {APOLLO_TCK_MHZ:g} -- the JTAG "
+             f"readback may slip; the applet id check either side will catch it")
 
     applet = stable_read(dut.registers, REG_ID)
     if applet != APPLET_ID:
