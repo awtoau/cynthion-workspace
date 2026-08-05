@@ -113,11 +113,12 @@ defect rather than a stylistic one.
   get a compile-time ceiling analysis, and a low-priority task may take a
   millisecond on I2C because a console interrupt preempts it, so the
   mask-and-defer dance goes away.
-* **It does not fix the unbounded turn by itself.** The shell lives in `#[idle]`
-  and a `load` running there is preemptible — that is the fix — but the periodic
-  work still needs a monotonic, and `rtic-monotonics` 2.2.1 has SysTick, STM32
-  and Silabs and nothing for RISC-V. It would have to be written over
-  `mtime`/`mtimecmp`.
+* **It does fix the unbounded turn**, measured — the shell lives in `#[idle]`
+  and both jobs preempt it: 274 µs worst against the superloop's 1,223 and the
+  hand-written dispatcher's 271 ([`rtic-workload-port.md`](rtic-workload-port.md)
+  §2). The periodic work still needs a monotonic, and one exists now:
+  `rtic-monotonics` 2.2.1 has two RISC-V backends but no CLINT one, so it was
+  written over `mtime`/`mtimecmp` — §7 there, 7 µs worst lateness.
 * **Every `pend` and every `lock` takes a global critical section.**
   `riscv-slic` calls `critical_section::with` throughout and the only
   implementation here is `critical-section-single-hart`, which clears

@@ -210,9 +210,11 @@ removed or altered instruction is not.
 **Not yet, and not because of anything the port found.** The port worked. What
 is missing is unchanged from `docs/rtic-adoption.md` §9:
 
-* **No monotonic.** `rtic-monotonics` 2.2.1 still has nothing for RISC-V, and the
-  periodic work — the 50 ms power poll, the Type-C sweep — is what a scheduler is
-  for. This port covers the event half only.
+* **No monotonic** — *and the reason given here was wrong.*
+  `rtic-monotonics` 2.2.1 has two RISC-V backends (`esp32c3`, `esp32c6`); what it
+  lacks is a CLINT one, which is five methods.
+  [`rtic-workload-port.md`](rtic-workload-port.md) §7 has it written and
+  measured. This port still covers the event half only.
 * **Nothing has run on the board.** Every figure here is a build result or a QEMU
   run. The I-cache question is about *misses*, and `.text` bytes are a proxy for
   it, not a measurement of it.

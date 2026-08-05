@@ -290,9 +290,13 @@ Two properties the current code has and states its reasons for:
   half, then the low half. Two stores cannot be atomic on rv32 and the
   intermediate value is a real deadline the comparator will act on.
 
-**What `rtic_time::Monotonic` requires beyond that**, and there is no
-implementation of it for RISC-V in `rtic-monotonics` 2.2.1 — checked, not
-assumed:
+**What `rtic_time::Monotonic` requires beyond that.** The claim that followed
+here — that `rtic-monotonics` 2.2.1 has no RISC-V implementation — was wrong: it
+ships `esp32c3` and `esp32c6` backends. What it has none of is a **CLINT**
+backend, and all four requirements below are met by
+`rtic_time::TimerQueue` plus the five methods in `src/bin/mono_rtic.rs`
+([`rtic-workload-port.md`](rtic-workload-port.md) §7). The list is still what
+they are:
 
 1. **A `now()` that is monotone and wide enough not to wrap** during any
    scheduled delay. `timer.rs::mtime` already does the rv32 high-low-high retry
@@ -466,9 +470,10 @@ four parts, and it measures it in a hand-written form. It does not measure RTIC.
 | is the unbounded turn a real defect? | **settled: yes** | measured, §5 |
 | does preemption alone fix it? | **settled: yes**, 4.7x for 440 bytes | measured, §5 |
 | is there an RTIC subset that gives preemption alone? | **settled: no** | `rtic-macros`'s binding has one path, §2 |
-| what does RTIC's runtime displace in the cache? | **not measured** | run this workload against `src/bin/rtic.rs`; it currently increments a counter |
-| what does `critical_section::with` cost per `pend`? | **not measured** | same run, watching `late` in `time` |
-| IPC, I-cache misses, frontend/backend stalls | **not measured, and not measurable here** | the board, `--performance-counters 4`, `docs/riscv-core-build.md` |
+| what does RTIC's runtime displace in the cache? | **settled**: the hot set stops fitting, 3,904 B → 5,312 B | [`rtic-workload-port.md`](rtic-workload-port.md) §8 |
+| what does `critical_section::with` cost per `pend`? | **settled**: 74 instructions, worst window 60 | [`rtic-workload-port.md`](rtic-workload-port.md) §3-§4 |
+| does RTIC fix the unbounded turn too? | **settled: yes**, 274 µs against preempt's 271 | [`rtic-workload-port.md`](rtic-workload-port.md) §2 |
+| IPC, I-cache misses, frontend/backend stalls | **not measured, and not measurable here** | the board — and this workload cannot reach it: the gateware's 16550 has no DATA loopback (`uart16550.py:545`), so the arrival generator needs a bitstream change first |
 | is checked resource access worth 1,112 bytes over the dispatcher? | **not measurable** | a judgement, not a number |
 
 The last row is the real question and this document cannot answer it. `RINGS`
@@ -477,9 +482,17 @@ construction, and the Type-C ordering bug in §5 is precisely the class of defec
 a ceiling analysis does not catch and careful reading did — after it reached the
 board. That cuts both ways, and someone has to decide which way.
 
-**The cheapest next measurement** is flesh out `src/bin/rtic.rs` until it runs
-`workload::handle`, and re-run `scripts/soc_workload.py` against it. That fills
-three of the four unmeasured rows in one build and needs no board.
+**The cheapest next measurement was to flesh out `src/bin/rtic.rs` until it ran
+`workload::handle`.** Done, as `src/bin/workload_rtic.rs` against a same-shape
+`src/bin/workload_bare.rs`, and it filled three of the four rows above:
+[`rtic-workload-port.md`](rtic-workload-port.md).
+
+**The cheapest one now needs the board, and the board needs a bitstream.** The
+16550 in `ecp5-test/riscv/uart16550.py` implements the MSR half of local loopback
+and not the DATA half, so nothing on the FPGA can inject an arrival. Route TX
+back into the RX FIFO under `MCR.LOOP`, rebuild, flash three images, and
+`ICACHE_MISS` and `STALLED_CYCLES_FRONTEND` answer the cache question with the
+CPU's own counters instead of a model.
 
 ---
 
