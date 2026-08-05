@@ -335,6 +335,18 @@ class ModelHyperRAM:
                 self._beat = 0
 
         elif self._state == "data":
+            # NO CLOCK, NO TRANSFER. The write branch below used to check `dq_e`
+            # alone, so a word landed in this model even with CK stopped -- and
+            # that is exactly the failure being investigated in #186, where the
+            # controller registers its last word and leaves for RECOVERY in the
+            # same cycle, so the data reaches the pins after CK has stopped.
+            #
+            # With the gate missing, upstream's controller and one with a flush
+            # state were INDISTINGUISHABLE here: both "wrote" the word. The
+            # command phase already gated on `clk_en`; the data phase did not.
+            if not clk_en:
+                return dq_i, datavalid, burstdet
+
             if self._read:
                 dq_i = self.memory.get(self._address, 0)
                 datavalid = 1

@@ -317,8 +317,15 @@ class HyperRAMDQSController(Elaboratable):
                     m.next = 'IDLE'
 
                 with m.Elif(self.final_word):
+                    # Straight to RECOVERY, and a WRITE_FLUSH state added here was
+                    # REVERTED. The reasoning for it was that `dq.o` is registered
+                    # and so reaches the pins a cycle late, after RECOVERY has
+                    # stopped CK. But `clk_en` is registered too -- the per-cycle
+                    # defaults reload it every cycle, and RECOVERY's `clk_en.eq(0)`
+                    # lands on the cycle AFTER entry, which is the same cycle the
+                    # data becomes valid. The last word is clocked out. Holding an
+                    # extra cycle would emit an EXTRA word instead.
                     m.next = 'RECOVERY'
-
 
             # RECOVERY state: hold CS# high for tCSHI before the next transaction.
             #
