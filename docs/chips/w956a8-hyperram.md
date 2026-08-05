@@ -163,6 +163,49 @@ timing error.
 200 M words verified per rung, 128-word bursts, pattern derived from the device
 address. `%` is against 2 bytes per CK, which is what eight lines at DDR give.
 
+> **WITHDRAWN — every DQS figure below was measured with faulty instruments.**
+> The pattern used only the low 16 address bits and so repeated 64 times across
+> the part; the controller ran luna's `HIGH_LATENCY_CLOCKS = 5`, below the
+> minimum of 6 that CR0's 14 CK requires, so reads landed by count rather than
+> by strobe; the JTAG register readback slips below a `sync`/TCK ratio of about
+> 4; and the negative control armed while the engine was already running.
+>
+> Re-measured with all four fixed, the DQS ceiling is **CK 140 at 238.9 MB/s
+> read**, and **CK 180 fails in bulk with 4.7 M errors** — so "313.5 MB/s, DQS
+> clean" is not merely unverified, it is wrong. `scripts/hyperram_ceiling.py`,
+> and see #186/#188.
+
+## The DQS ladder, re-measured 2026-08-06
+
+`scripts/hyperram_ceiling.py`, CPU-free: the pattern is generated and verified in
+gateware, so nothing here goes through the CPU, the cache or `BootRAM`.
+
+| CK | read MB/s | errors | negative control | verdict |
+|---|---|---|---|---|
+| 120 | 204.8 | 0 | passed | **pass** |
+| **140** | **238.9** | **0** | **passed** | **pass — the verified ceiling** |
+| 160 | 273.1 | 0 | FAILED | invalid control |
+| 180 | 307.1 | 4,679,742 | passed | fail (bulk) |
+| 200 | 341.3 | 5,201,149 | FAILED | invalid control |
+| 220 | 375.6 | 6,536,532 | FAILED | invalid control |
+| 240 | 409.7 | 7,130,818 | passed | fail (bulk) |
+
+Write is consistently ~5% above read at every rung; both sit at 85.3% of
+theoretical.
+
+**How each rung fails is now readable**, because the pattern is invertible: a
+wrong word decodes to the address it actually came from. CK 180's first mismatch
+is **+2 device words** from the one asked for — a clean displacement, i.e. an
+alignment failure. CK 220's is +1,490,199 and CK 240's is nonsense: noise. Two
+different mechanisms, where both used to score as "errors".
+
+**Not explained.** The failing controls at 160, 200 and 220 each report exactly
+`matched 640`, and 640 is 5 x the 128-word burst. The same number three times is
+systematic, not chance. And **BURSTDET is clear on every rung**, so even the
+passing ones have not demonstrated that the strobe found the data — which is the
+standard this file's own harness sets.
+
+
 | device CK | non-DQS read | | DQS read | | verdict |
 |---|---|---|---|---|---|
 | 120 MHz | 198.2 MB/s | 82.6% | 209.0 MB/s | 87.1% | both clean |

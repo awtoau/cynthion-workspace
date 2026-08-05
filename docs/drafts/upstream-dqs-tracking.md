@@ -1,3 +1,15 @@
+
+> **WITHDRAWN — every DQS figure below was measured with faulty instruments.**
+> The pattern used only the low 16 address bits and so repeated 64 times across
+> the part; the controller ran luna's `HIGH_LATENCY_CLOCKS = 5`, below the
+> minimum of 6 that CR0's 14 CK requires, so reads landed by count rather than
+> by strobe; the JTAG register readback slips below a `sync`/TCK ratio of about
+> 4; and the negative control armed while the engine was already running.
+>
+> Re-measured with all four fixed, the DQS ceiling is **CK 140 at 238.9 MB/s
+> read**, and **CK 180 fails in bulk with 4.7 M errors** — so "313.5 MB/s, DQS
+> clean" is not merely unverified, it is wrong. `scripts/hyperram_ceiling.py`,
+> and see #186/#188.
 `greatscottgadgets/cynthion#147` "Add DQS support for HyperRAM" (mossmann) has
 been open since **2024-07-16 with zero comments**, while
 `greatscottgadgets/luna#236` *added* `HyperRAMDQSPHY` in May 2024.
