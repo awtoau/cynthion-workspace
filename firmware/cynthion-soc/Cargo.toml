@@ -71,6 +71,15 @@ models = []
 # should be doing.
 rtic = ["dep:rtic", "riscv/critical-section-single-hart"]
 
+# The non-RTIC half of the USB port (#115): moondancer's control-transfer path
+# in moondancer's own shape, a superloop over an event queue.
+#
+# Its own feature rather than riding on `rtic`, because `rtic` also turns on
+# `riscv/critical-section-single-hart`, which registers a global
+# `critical_section` implementation. A control build that carried it would not
+# be a control build.
+usbport = []
+
 # The spike, as a second binary rather than a `#[cfg]` through `src/main.rs`.
 #
 # `#[rtic::app]` emits its own `#[no_mangle] fn main`, so it cannot coexist with
@@ -82,6 +91,20 @@ rtic = ["dep:rtic", "riscv/critical-section-single-hart"]
 name = "cynthion-soc-rtic"
 path = "src/bin/rtic.rs"
 required-features = ["rtic"]
+
+# The USB port, both halves. Same source in `src/usb.rs` and `src/usb_report.rs`,
+# two dispatchers, so the size difference between them is RTIC and nothing else.
+# `scripts/soc_usb_probe.py` builds them and `scripts/soc_usb_test.py` runs them
+# under QEMU.
+[[bin]]
+name = "usb-rtic"
+path = "src/bin/usb_rtic.rs"
+required-features = ["rtic"]
+
+[[bin]]
+name = "usb-bare"
+path = "src/bin/usb_bare.rs"
+required-features = ["usbport"]
 
 [profile.release]
 # "z" for SPEED, not size. Measured on the board (`./dev.py optlevel`, #167):
