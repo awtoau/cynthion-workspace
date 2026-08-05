@@ -534,8 +534,8 @@ fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
             let (good, bitmap, want, got) = bench::hyper_line_write_check();
             let _ = writeln!(
                 uart,
-                "  line write: {}/16 correct, bad {:016b} want {:08x} got {:08x}",
-                good, bitmap, want, got
+                "  line write: {}/16 correct, bad {:016b} want {:08x} got {:08x}, ck-stalled {} cycles",
+                good, bitmap, want, got, bench::stalls()
             );
             if result.ok() {
                 let _ = writeln!(uart, "hyperram ports agree");
@@ -552,21 +552,21 @@ fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
                 let _ = writeln!(uart, "readclksel {}", n);
             }
             _ => {
-                let _ = writeln!(uart, "usage: hr sel <0-f>  (bits 2:0 tap, bit 3 phase)");
+                let _ = writeln!(uart, "usage: hr sel <0-3f>  (2:0 tap, 3 phase, 5:4 read stall)");
             }
         },
         b"sweep" => {
             // One bitstream, eight settings. The tap that captures returning
             // data is a property of the board and CK, and the built-in default
             // is upstream's untested guess.
-            for setting in 0..16u8 {
+            for setting in 0..64u8 {
                 bench::set_readclksel(setting);
                 let (good, bitmap, want, got) = bench::hyper_line_write_check();
                 let (_, _, seen, bursts) = bench::dqs_status();
                 let _ = writeln!(
                     uart,
-                    "  tap {} phase {}: {:2}/16, bad {:016b}, burstdet {} ({}), want {:08x} got {:08x}",
-                    setting & 7, setting >> 3, good, bitmap,
+                    "  tap {} phase {} rd-stall {}: {:2}/16, bad {:016b}, burstdet {} ({}), want {:08x} got {:08x}",
+                    setting & 7, (setting >> 3) & 1, setting >> 4, good, bitmap,
                     if seen { "y" } else { "n" }, bursts, want, got
                 );
             }

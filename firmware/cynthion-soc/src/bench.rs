@@ -358,10 +358,11 @@ mod probe {
     // MOVED when STATUS and BURSTS were added above it. It is a byte offset into
     // a generated map, and the generator is the authority -- see
     // `firmware/cynthion-soc-pac/src/hyperram_probe.rs`, which records +0x20.
-    const CLEAR: usize = 0x20;
+    const STALLS: usize = 0x20;
+    const CLEAR: usize = 0x24;
     /// Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase.
     /// Writable so sixteen combinations need one bitstream, not sixteen builds.
-    const SEL: usize = 0x21;
+    const SEL: usize = 0x25;
 
     /// Two byte reads, low first.
     ///
@@ -394,6 +395,16 @@ mod probe {
     ///     window -- READCLKSEL is on the wrong tap. This is #148.
     ///   * bursts counted but data wrong: the strobe is fine and the fault is
     ///     byte or half order, or the write mask.
+    /// Cycles the Active Clock Stop gate held CK off. Zero means the gate never
+    /// fired, which is a different fault from a misaligned one.
+    pub fn stalls() -> u32 {
+        // SAFETY: four bytes inside the generated HYPERRAM_PROBE window.
+        unsafe {
+            let reg = (BASE + STALLS) as *const u8;
+            (0..4).map(|i| (core::ptr::read_volatile(reg.add(i)) as u32) << (8 * i)).sum()
+        }
+    }
+
     pub fn dqs_status() -> (bool, bool, bool, u32) {
         // SAFETY: one byte inside the generated HYPERRAM_PROBE window.
         let status = unsafe { core::ptr::read_volatile((BASE + STATUS) as *const u8) };
@@ -410,7 +421,7 @@ mod probe {
         // SAFETY: one byte inside the generated HYPERRAM_PROBE window; a
         // write-only field.
         unsafe {
-            core::ptr::write_volatile((BASE + SEL) as *mut u8, tap & 0xf);
+            core::ptr::write_volatile((BASE + SEL) as *mut u8, tap & 0x3f);
         }
     }
 
@@ -1200,4 +1211,9 @@ pub fn dqs_status() -> (bool, bool, bool, u32) {
 /// Set the DQS read clock tap. See `hr sel` and `hr sweep`.
 pub fn set_readclksel(tap: u8) {
     probe::set_readclksel(tap);
+}
+
+/// Cycles the Active Clock Stop gate held CK off. See `hr cross`.
+pub fn stalls() -> u32 {
+    probe::stalls()
 }
