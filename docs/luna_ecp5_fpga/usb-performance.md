@@ -135,7 +135,7 @@ surprises, suspect the instrument before the device.
 | `scripts/usb_serial_speed.py` | CDC throughput, payload and bus columns |
 | `scripts/usb_oneway_speed.py` | one-way throughput, verification after timing |
 | `scripts/usb_async_speed.py` | queue-depth sweep with libusb1 |
-| `scripts/usb_speed_native.c` | native C, to rule out the host language |
+| `debris/scripts/usb_speed_native.c` | native C, to rule out the host language |
 
 ## In context
 

@@ -620,7 +620,7 @@ ULPI_BUSY    = 1 << 0
 ULPI_TIMEOUT = 1 << 1
 
 # What a USB3343 answers with. Confirmed on all three PHYs of this board by
-# scripts/phy_probe.py; deliberately not 0x00 or 0xff, either of which a dead
+# debris/scripts/phy_probe.py; deliberately not 0x00 or 0xff, either of which a dead
 # bus can produce.
 PHY_IDENTITY = {0x00: 0x24, 0x01: 0x04, 0x02: 0x09, 0x03: 0x00}
 

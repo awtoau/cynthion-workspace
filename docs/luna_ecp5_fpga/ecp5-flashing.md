@@ -173,7 +173,7 @@ Two ready-made checks in this workspace:
 
 ```bash
 .venv/bin/python scripts/selftest_leds.py   # LED register walk  -> tmp/selftest_leds.log
-.venv/bin/python scripts/phy_probe.py       # ULPI PHY data lines -> tmp/phy_probe.log
+.venv/bin/python debris/scripts/phy_probe.py       # ULPI PHY data lines -> tmp/phy_probe.log
 ```
 
 Note `selftest_leds.py` verifies the LED *register* round-trips — it reads back

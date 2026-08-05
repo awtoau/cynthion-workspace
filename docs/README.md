@@ -60,7 +60,6 @@ in its §13 got there in the first place.
 
 * [`ci_cd_workflows.md`](ci_cd_workflows.md) — or manually:
 * [`codex-agent.md`](codex-agent.md) — Handing work to Codex — here
-* [`cyn.md`](cyn.md) — Cyn Entry Point Architecture
 * [`decisions.md`](decisions.md) — Decisions, and the alternatives they were chosen over
 * [`gateware-architecture-plan.md`](gateware-architecture-plan.md) — Making the test gateware reusable by the CPU build
 * [`git.md`](git.md) — Git & Submodules Reference

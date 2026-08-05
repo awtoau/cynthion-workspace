@@ -42,7 +42,7 @@ design"*. Anything that brings a PHY up without going through the platform's
 
 ## Measured on this board
 
-`scripts/phy_probe.py`, result in `tmp/phy_probe.log` (2026-07-23):
+`debris/scripts/phy_probe.py`, result in `tmp/phy_probe.log` (2026-07-23):
 
 | | |
 |---|---|
@@ -118,7 +118,7 @@ can all produce something that looks like an answer, and `0424`/`0009` is only
 four of the eight bytes the bus can carry. So `phy` also walks a single bit
 across the scratch register (`0x16`): eight writes, eight read-backs, each value
 seen once. `scratch walk ff` means all eight data lines drove and returned
-independently. That is the same assertion `scripts/phy_probe.py` and the shipped
+independently. That is the same assertion `debris/scripts/phy_probe.py` and the shipped
 `cynthion selftest` make.
 
 A PHY that is genuinely absent does **not** read as zeros. It never releases
@@ -148,5 +148,5 @@ register `0x16`.
 
 | | |
 |---|---|
-| `scripts/phy_probe.py` | ID plus a walking-bit test on all 8 data lines, all three PHYs |
+| `debris/scripts/phy_probe.py` | ID plus a walking-bit test on all 8 data lines, all three PHYs |
 | `cynthion selftest` | the shipped equivalent |

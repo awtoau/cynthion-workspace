@@ -4,6 +4,19 @@
 
 This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific absolute paths naming a particular user or mount point; `scripts/check.py paths` enforces it.
 
+## Which installer, and why there are two
+
+**Setting up a machine is `./dev.py setup`**, which runs `scripts/machine_setup.py`:
+distro packages, submodules, the Rust target, the Python packages, udev.
+
+`scripts/install.py` is the older monolithic installer and its `setup` half is
+superseded by the above. It is kept for the subcommands that have no replacement
+— `versions`, `versions-check`, `toolchain-install`, `toolchain-status` — because
+`machine_setup.py` deliberately does not install the FPGA toolchain. The
+`setup`/`rebuild`/`clone-repos` sections below are historical: nothing in the
+repo invokes them, and `./dev.py audit` reports the file as `documented`,
+meaning this page is the only thing keeping it reachable. See #157.
+
 ## Documentation Ownership
 
 - This document is the canonical install, toolchain, and build-system reference.

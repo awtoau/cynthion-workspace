@@ -935,6 +935,6 @@ after a 68 µs gateware timeout, not zeros.
 | Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
 | the soft CPU and moondancer | [`moondancer/`](moondancer/) |
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |
-| workspace CLI | [`cyn.md`](cyn.md) |
+| workspace CLI | `./dev.py --help`, or `./dev.py describe` for JSON |
 
 - [Handing work to Codex](codex-agent.md) — project-specific clauses and track record; canonical setup and brief rules live in `awto-dan/docs/codex/`
