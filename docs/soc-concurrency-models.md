@@ -42,9 +42,6 @@ graph and a kernel tarball, and a gate that needs the network fails on a flight.
 For scale, the shell itself is 41,400 bytes of `.text`, 17,056 of `.rodata` and
 9,656 of `.bss`.
 
-`configUSE_TIMERS` off, `croutine`/`event_groups`/`stream_buffer` not linked,
-every option in it is off unless this firmware would use it.
-
 ### None of them gives a task a stack
 
 That is why the `.bss` column is tens of bytes rather than kilobytes. RTIC's
