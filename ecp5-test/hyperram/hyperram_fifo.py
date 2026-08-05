@@ -171,7 +171,11 @@ class HyperRAMFIFOTest(Elaboratable):
         m.d.comb += word_addr.eq(base_addr + offset)
 
         expected = Signal(16)
-        m.d.comb += expected.eq(Cat(word_addr[:8], ~word_addr[:8]))
+        # Every address bit, not just the low eight -- see the note in
+        # hyperram_stress.py. The docstring above says the pattern wraps at 64Ki;
+        # it actually wrapped at 256 words, which is what this fixes.
+        folded = word_addr[:8] ^ word_addr[8:16] ^ word_addr[16:24]
+        m.d.comb += expected.eq(Cat(folded, ~folded))
 
         m.d.comb += [
             psram.single_page.eq(0),

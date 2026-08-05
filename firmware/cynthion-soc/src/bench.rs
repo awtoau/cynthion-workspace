@@ -1111,8 +1111,22 @@ pub fn hyper_cross_check() -> CrossResult {
     // walk cannot alias one phase's line onto the other's.
     const WORD_A: u32 = 0x0020_0000;
     const WORD_B: u32 = 0x0020_1000;
-    const PATTERN_A: u32 = 0x5a3c_8765;
-    const PATTERN_B: u32 = 0xa5c3_1234;
+    // ADDRESS-DERIVED, not constants. `0x5a3c8765` and `0xa5c31234` told you a
+    // word came back wrong and nothing about where it came from -- and because
+    // the check writes and reads through paths sharing the same transforms, a
+    // fault common to both cancels and it reports success. That is how an
+    // inverted half-swap survived a day of this check passing.
+    //
+    // Low half is the word address, high half its complement, matching
+    // `hyperram_ceiling_top.pattern`: a wrong word decodes to the address it
+    // actually belongs to. It does not fix the self-comparison -- `hr ramp`
+    // exists for that, checking against an absolute `byte i == i` -- but it makes
+    // a displacement readable when this check does fail.
+    const fn addressed(word: u32) -> u32 {
+        (word & 0xffff) | (!(word >> 16) << 16)
+    }
+    const PATTERN_A: u32 = addressed(WORD_A);
+    const PATTERN_B: u32 = addressed(WORD_B);
 
     // --- A: written through the window, which needs no mask ------------------
     // SAFETY: `WORD_A * 2` is a 4-byte-aligned byte offset inside the 8 MiB

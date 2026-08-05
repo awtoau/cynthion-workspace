@@ -127,8 +127,17 @@ class HyperRAMStressTest(Elaboratable):
         # its complement in the high byte. Derived from the address so that a
         # word served from the wrong location is detectably wrong -- a constant
         # fill would make address errors invisible.
+        # EVERY address bit participates. This was `Cat(addr[:8], ~addr[:8])`,
+        # which uses eight address bits and therefore repeats every 256 words
+        # across a 4 Mi-word part: an addressing fault above bit 7 wrote and read
+        # the same value and scored correct. A 16-bit word cannot encode a 22-bit
+        # address, so the high bits are XOR-folded -- aliasing changes the value
+        # and is detected, even though the source address is not recoverable.
+        # `hyperram_ceiling_top.py` does the same, and at 32 bits can be
+        # invertible. See #186.
         def pattern(addr):
-            return Cat(addr[:8], ~addr[:8])
+            folded = addr[:8] ^ addr[8:16] ^ addr[16:24]
+            return Cat(folded, ~folded)
 
         expected = Signal(16)
 

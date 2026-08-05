@@ -934,17 +934,17 @@ class BootRAM(Elaboratable):
         # from a permutation that happens to leave those four bytes looking right.
         #
         # `hr ramp` writes 0-255, where every byte names its own position, and
-        # that is what settles it. Nothing here is asserted until it does, and the
-        # read side keeps the swap meanwhile because changing both at once cannot
-        # be attributed. See #186.
-        def swap_halves(value):
-            return Cat(value[16:32], value[0:16])
-
+        # that is what settles it.
+        #
+        # NEITHER DIRECTION SWAPS NOW. `hyperram_ceiling_top.py` is the reference:
+        # it drives `psram.write_data` from its pattern and compares
+        # `psram.read_data` against it directly, with no swap either way, and it
+        # moves millions of words. Whatever the controller's half convention is,
+        # a design that applies no transform on either side is self-consistent
+        # with it -- and `BootRAM` applying one on reads only was the remaining
+        # asymmetry between the two. See #186.
         read_word = Signal(32 if self._dqs else 16)
-        if self._dqs:
-            m.d.comb += read_word.eq(swap_halves(psram.read_data))
-        else:
-            m.d.comb += read_word.eq(psram.read_data)
+        m.d.comb += read_word.eq(psram.read_data)
 
         if self._dqs:
             # Every owner presents a whole 32-bit pair, so this is one assignment
