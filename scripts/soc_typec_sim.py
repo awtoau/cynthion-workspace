@@ -95,7 +95,7 @@ from i2c_mux import BUS_AUX_C, BUS_TARGET_C
 # soc_i2c_owner_sim.py rather than copied, for the reason that file gives about
 # sharing with soc_board_sim.py: a second copy of a device model drifts from the
 # first, and the two then disagree while both report success.
-from checks import Checks
+from sim_check_harness import Checks
 from soc_board_sim import (Bus, CR_ACK, CR_RD, CR_STA, CR_STO, CR_WR,
                            CR_SR, SR_RXACK)
 from soc_i2c_owner_sim import (Controller, RegisterSlave, buses,

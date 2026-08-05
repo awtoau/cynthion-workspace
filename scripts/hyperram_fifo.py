@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_timing import run_bounded
+from subprocess_timeout_from_history import run_bounded
 
 ROOT = Path(__file__).resolve().parent.parent
 GATEWARE = ROOT / "ecp5-test" / "hyperram" / "hyperram_fifo.py"

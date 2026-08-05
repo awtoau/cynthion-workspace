@@ -65,7 +65,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from checks import Checks  # noqa: E402
+from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 from amaranth.hdl import Fragment
@@ -620,7 +620,7 @@ ULPI_BUSY    = 1 << 0
 ULPI_TIMEOUT = 1 << 1
 
 # What a USB3343 answers with. Confirmed on all three PHYs of this board by
-# scripts/phy_probe.py; deliberately not 0x00 or 0xff, either of which a dead
+# debris/scripts/phy_probe.py; deliberately not 0x00 or 0xff, either of which a dead
 # bus can produce.
 PHY_IDENTITY = {0x00: 0x24, 0x01: 0x04, 0x02: 0x09, 0x03: 0x00}
 

@@ -21,7 +21,7 @@ ELF = WORKSPACE / "repos/apollo/firmware/_build/cynthion_d11/firmware.elf"
 
 sys.path.insert(0, str(WORKSPACE / "scripts"))
 
-import armtools  # noqa: E402
+import arm_binutils_resolve  # noqa: E402
 from devlog import emit  # noqa: E402
 
 # Vector table layout for the SAMD11, in slot order from the base of .text.
@@ -80,11 +80,11 @@ def main():
 
     # Resolved beside the compiler rather than by PATH order: the ELF is from
     # GCC 15.2.0 and the PATH nm here is from 2023. See #191.
-    nm = armtools.tool("nm")
+    nm = arm_binutils_resolve.tool("nm")
     if nm is None:
         emit("FAIL: no arm-none-eabi-nm anywhere")
         return 1
-    armtools.report(emit, "nm")
+    arm_binutils_resolve.report(emit, "nm")
     emit()
 
     # Map address -> symbol names.

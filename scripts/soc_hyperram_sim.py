@@ -125,7 +125,7 @@ from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMDQSInterface,
                                             HyperRAMInterface)
 
-from checks import Checks
+from sim_check_harness import Checks
 from vexii_bootram import (BootRAM, ClockStopPHY, HYPERRAM_CK_MHZ,
                            HYPERRAM_MAX_BURST_WORDS, HYPERRAM_TCSM_NS,
                            HyperRAMWishbone, hyperram_max_burst_words,

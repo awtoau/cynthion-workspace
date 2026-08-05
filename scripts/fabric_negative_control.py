@@ -29,7 +29,7 @@ silicon through the same JTAG path.
 This deliberately does not reconfigure. It verifies the loaded design has a
 clean baseline before arming the control.
 
-    ./scripts/fabric_control.py
+    ./scripts/fabric_negative_control.py
 """
 
 import argparse

@@ -37,7 +37,7 @@ placements, the coverage number says so and the extra builds bought nothing.
 
 It does not inherit the negative control. A different placement is a different
 design, so one configuration is rebuilt with a deliberately wrong golden
-constant and `fabric_control.py` must see every round mismatch. Without that,
+constant and `fabric_negative_control.py` must see every round mismatch. Without that,
 the clean runs are silence rather than evidence.
 
 Timing
@@ -271,7 +271,7 @@ def main():
             loaded = test(directory, args.rounds, emit)
             emit(f"  loaded; fabric_run.py's verdict: {loaded['verdict']}")
             outcome = subprocess.run(
-                [sys.executable, str(SCRIPTS / "fabric_control.py")],
+                [sys.executable, str(SCRIPTS / "fabric_negative_control.py")],
                 cwd=ROOT, capture_output=True, text=True)
             for line in (outcome.stdout or "").splitlines():
                 emit(f"  {line}")

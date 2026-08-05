@@ -20,7 +20,7 @@ The first run of anything has no history, so it gets a generous ceiling and is
 recorded. From then on the bound tightens to what the machine has demonstrated
 it can do.
 
-    from build_timing import run_bounded
+    from subprocess_timeout_from_history import run_bounded
     result = run_bounded(["make"], family="firmware", cwd=ROOT)
 """
 
