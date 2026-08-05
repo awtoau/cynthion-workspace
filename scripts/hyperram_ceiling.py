@@ -170,22 +170,52 @@ def delta(now, before):
     return (now - before) & MASK32
 
 
+def stable_read(registers, address, *, tries=4):
+    """Read a register until two consecutive reads agree.
+
+    THE READBACK CAN SLIP A BIT, and this was found the alarming way: a rung
+    refused to measure because the applet ID came back `0x48a48663` where
+    `0x48524331` ("HRC1") was expected -- and bits 8..23 of that are exactly the
+    wanted value shifted LEFT by one. A serial slip in the JTAG register path,
+    not a wrong bitstream.
+
+    That matters far beyond the ID. Every number this harness reports -- word
+    counts, ERROR counts, cycle counts -- comes back through the same interface,
+    so a slip can turn a nonzero error count into a zero one and a failing rung
+    into a passing one. An unchecked read is not a measurement.
+
+    Two agreeing reads do not make a slip impossible, but they make a SILENT one
+    much less likely, and a persistent disagreement is reported rather than
+    averaged away.
+    """
+    previous = registers.register_read(address)
+    for _ in range(tries - 1):
+        current = registers.register_read(address)
+        if current == previous:
+            return current
+        previous = current
+    raise ValueError(
+        f"register {address:#x} never read the same value twice in {tries} "
+        f"tries; the JTAG readback is slipping and no number from this rung "
+        f"can be trusted")
+
+
 def poll(dut, target_words, sync_hz, bytes_per_word):
     """Accumulate a window of at least `target_words` and return what moved."""
-    words0 = dut.registers.register_read(REG_WORDS)
-    errors0 = dut.registers.register_read(REG_ERRORS)
-    wcyc0 = dut.registers.register_read(REG_WRITE_CYCLES)
-    rcyc0 = dut.registers.register_read(REG_READ_CYCLES)
+    words0 = stable_read(dut.registers, REG_WORDS)
+    errors0 = stable_read(dut.registers, REG_ERRORS)
+    wcyc0 = stable_read(dut.registers, REG_WRITE_CYCLES)
+    rcyc0 = stable_read(dut.registers, REG_READ_CYCLES)
 
     polls = 0
     while polls < MAX_POLLS:
         polls += 1
-        words = dut.registers.register_read(REG_WORDS)
+        words = stable_read(dut.registers, REG_WORDS)
         if delta(words, words0) >= target_words:
             break
-    errors = dut.registers.register_read(REG_ERRORS)
-    wcyc = dut.registers.register_read(REG_WRITE_CYCLES)
-    rcyc = dut.registers.register_read(REG_READ_CYCLES)
+    errors = stable_read(dut.registers, REG_ERRORS)
+    wcyc = stable_read(dut.registers, REG_WRITE_CYCLES)
+    rcyc = stable_read(dut.registers, REG_READ_CYCLES)
 
     dwords = delta(words, words0)
     derrors = delta(errors, errors0)
@@ -237,7 +267,7 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
         emit(f"  {tag}: Apollo did not attach -- {exc}")
         return result
 
-    applet = dut.registers.register_read(REG_ID)
+    applet = stable_read(dut.registers, REG_ID)
     if applet != APPLET_ID:
         # A wrong applet id means the board is running something else. Reporting
         # its numbers as this rung's would be the worst possible outcome.
@@ -253,7 +283,7 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # The gateware states the clock it was built for. Checked against the host's
     # own idea rather than assumed: a rate computed from a requested frequency
     # that was not achieved is wrong by exactly the rounding error.
-    built_khz = dut.registers.register_read(REG_CLOCK)
+    built_khz = stable_read(dut.registers, REG_CLOCK)
     if abs(built_khz - round(sync * 1000)) > 1:
         result["verdict"] = "clock mismatch"
         result["detail"] = f"gateware says {built_khz} kHz, host expects " \
@@ -261,7 +291,7 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
         emit(f"  {tag}: {result['detail']} -- refusing to measure")
         return result
 
-    config = dut.registers.register_read(REG_CONFIG)
+    config = stable_read(dut.registers, REG_CONFIG)
     bytes_per_word = (config >> 8) & 0xFF
     burst = (config >> 16) & 0xFFFF
     result["bytes_per_word"] = bytes_per_word
@@ -293,10 +323,10 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
 
     dut.registers.register_write(REG_CONTROL, 0)
     dut.registers.register_write(REG_CONTROL, 0b01)
-    die_before = dut.registers.register_read(REG_DIE)
+    die_before = stable_read(dut.registers, REG_DIE)
     window = poll(dut, target_words, sync * 1e6, bytes_per_word)
-    die_after = dut.registers.register_read(REG_DIE)
-    status = dut.registers.register_read(REG_STATUS)
+    die_after = stable_read(dut.registers, REG_DIE)
+    status = stable_read(dut.registers, REG_STATUS)
 
     result.update(window)
     result["die_before"] = die_before & 0x3F if die_before & DIE_PRESENT else None
@@ -315,15 +345,32 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
 
     if status & (1 << 7):  # a mismatch was recorded; keep how it was wrong
         result["first_bad"] = {
-            "index": dut.registers.register_read(REG_BAD_INDEX),
-            "got": dut.registers.register_read(REG_BAD_GOT),
-            "want": dut.registers.register_read(REG_BAD_WANT),
+            "index": stable_read(dut.registers, REG_BAD_INDEX),
+            "got": stable_read(dut.registers, REG_BAD_GOT),
+            "want": stable_read(dut.registers, REG_BAD_WANT),
         }
         capture = []
         for addr in range(8):
             dut.registers.register_write(REG_CAPTURE_ADDR, addr)
-            capture.append(dut.registers.register_read(REG_CAPTURE_DATA))
+            capture.append(stable_read(dut.registers, REG_CAPTURE_DATA))
         result["capture"] = capture
+
+    # RE-CHECK THE APPLET ID after the run, not just before it. A JTAG readback
+    # slip mid-rung would otherwise leave every number above unchallenged, and a
+    # zero error count is exactly the value a slip is most dangerous for.
+    try:
+        closing = stable_read(dut.registers, REG_ID)
+    except ValueError as unstable:
+        result["verdict"] = "readback unstable"
+        result["detail"] = str(unstable)
+        emit(f"  {tag}: {result['detail']}")
+        return result
+    if closing != APPLET_ID:
+        result["verdict"] = "applet changed mid-rung"
+        result["detail"] = f"{closing:#010x} after the run"
+        emit(f"  {tag}: applet id was {closing:#010x} AFTER the measurement -- "
+             f"discarding it")
+        return result
 
     if not result["negative_control"]["passed"]:
         result["verdict"] = "invalid control"
