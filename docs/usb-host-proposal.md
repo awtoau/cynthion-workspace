@@ -998,10 +998,115 @@ have to be before any use.
 
 ## 20. Artifacts
 
-- `scripts/usb-host-core-area.py` — the §12 measurement.
-- `scripts/usb-host-area.py` — Part I §4's example-level measurement.
-- `tmp/host-core-area/core-area-results.json`, `tmp/logs/usb-host-core-area.log`.
-- GUH checkout: `tmp/host-research/guh` (pinned `fbd7077`; bump to `923c8490`).
+- `scripts/usb_host_area.py` — the §12 measurement, now against the vendored copy.
+- `debris/scripts/usb-host-core-area.py`, `debris/scripts/usb-host-area.py` —
+  the original measurements, retired once the code was vendored.
+- `tmp/usb-host-area/area-results.json`.
+- GUH is no longer a checkout: `ecp5-test/usb_host/guh/` is pinned at `923c8490`.
 
 **Part II touched no hardware either. All figures are from synthesis and
 place-and-route.**
+
+---
+---
+
+# Part III — What is built
+
+**Date:** 2026-08-05T20:45:00+10:00
+**Branch:** `usb-host-start`
+
+The first increment of §18, and only the first: **the engine is vendored and it
+enumerates a device in simulation.** Nothing is attached to the SoC, no CSR shim
+exists, no firmware has been written, and no hardware has been touched.
+
+## 21. The engine, vendored and exercised
+
+`ecp5-test/usb_host/guh/` — `sie.py`, `reset.py`, `types.py` at `923c8490`,
+byte-identical to upstream, with the licence beside them. `enumerator.py`,
+`descriptor.py`, `engines/` and `periph/` were **not** taken, per §16.
+
+`ecp5-test/usb_host/model.py` is ours: the wire (two UTMI interfaces facing each
+other, with the line-state priority the chirp needs) and a model device that is
+LUNA's own `USBDevice` with a control endpoint and a 512-byte bulk IN endpoint.
+Both ends are upstream gateware written without knowledge of the other, which is
+what makes the result evidence rather than a tautology.
+
+`scripts/usb_host_sie_sim.py` is the check, and it is in `scripts/soc_sims.py`
+(**541 checks, up from 520**, 8.1 s). Its 21 assertions, in three groups:
+
+- **The bus comes up, both ways.** A high-speed device is detected as HIGH; a
+  full-speed-only device falls back to FULL. The host half of the chirp is the
+  piece §1.3 identified as missing everywhere else, and detecting the wrong speed
+  is a failure that reports itself as nothing at all.
+- **The wire is right, checked independently.** Tokens and data packets are
+  captured at the device's UTMI, and CRC5/CRC16 are recomputed in Python from the
+  USB 2.0 polynomials rather than compared against another piece of gateware.
+- **Five control transfers enumerate a device.** GET_DESCRIPTOR, SET_ADDRESS,
+  GET_DESCRIPTOR at the new address, SET_CONFIGURATION, then a 512-byte bulk IN
+  whose every byte is predicted. §16's claim — enumeration is firmware's job and
+  does not need the 830 LUT enumerator — is now executed rather than argued. The
+  negative control is the transfer to the *old* address, which must time out.
+
+Three of §15.2's four traps are now assertions rather than warnings: `rx_len`
+reads 0 after a 512-byte packet, `idle` is a level held for 11450 cycles rather
+than a strobe, and the DATA PID on the wire is whatever the caller asked for. The
+fourth (NYET reported as ACK) needs a device that emits NYET, which LUNA's device
+stack does not.
+
+## 22. Measured again, from the vendored copy
+
+`scripts/usb_host_area.py`, same method as §12 — LFSR-driven scaffold, SoC clock
+generator, `fifo_depth=512`, baseline subtracted:
+
+| build | LUT | FF | BRAM | LUTRAM | fmax on the ULPI clock |
+|---|---|---|---|---|---|
+| baseline (CRG + LED) | 33 | 24 | 0 | 0 | 398.72 MHz |
+| `USBSIE(bus=target_phy, fifo_depth=512)` | 2113 | 458 | **0** | 96 | 125.55 MHz PASS at 60 |
+
+**Delta: 2080 LUT, 434 FF, 0 BRAM, 96 LUTRAM.** The LUT figure reproduces §12
+exactly from an independent rebuild; the FF count is new. **The SoC's own timing
+is unchanged, because nothing was added to the SoC** — §12.3's warning stands and
+the in-situ number is still the next increment's job.
+
+## 23. What the driver needs, whatever schedules it
+
+`docs/rtic-adoption.md` and #115 are unresolved, so nothing here assumes a
+scheduling model. The engine's interface is `events in, work out`, and what it
+asks of a driver is the same under a superloop, an interrupt handler or an RTIC
+task:
+
+1. **An edge, synthesised in the shim.** `status.idle` is a level and there is no
+   completion strobe. The shim must produce the rising edge, latch it, and hold
+   it level-high for the PLIC, which has no edge detector.
+2. **Response and byte count latched at completion.** `response` and `rx_len`
+   hold only until the next `start`, so a driver that is scheduled late reads a
+   different transfer's result. The shim must capture them, and must count RX
+   bytes itself because `rx_len` wraps.
+3. **One owner at a time.** The engine runs one transaction, has no queue, and
+   `start` is silently ignored unless it is idle. A dropped issue is therefore
+   invisible — the shim should raise a bit when it happens.
+4. **No deadline for correctness.** The engine holds its state indefinitely and
+   generates SOFs itself, so late servicing costs throughput, not correctness.
+   **This is the load-bearing statement for the RTIC question: host mode does not
+   need bounded latency to work, so it should not be the argument for or against
+   a scheduler.** It needs bounded latency to go fast, which is a different claim
+   and one to make with a measurement.
+5. **A bounded drain loop, not a byte per turn.** One high-speed packet is 512
+   FIFO accesses; whoever drains it should do so in one bounded loop.
+
+## 24. What is not done
+
+- **Nothing is attached to the SoC.** `target_phy` still belongs to
+  `UlpiRegisters` (§13), no CSR window exists, and the in-situ LUT/fmax figures
+  §19 asked for are still unmeasured.
+- **No firmware.** The enumeration above is a simulation testbench, not Rust.
+- **No CDC.** The bench runs the engine in `sync`; §14's crossing is untested.
+- **No VBUS or CC.** No `*_vbus_en` pin is driven anywhere, still.
+- **Nothing below UTMI.** The model wire hands over bytes, so bit stuffing, NRZI
+  and EOP are not exercised, and no ULPI PHY is involved.
+- **No hardware.** Same as Parts I and II.
+
+Next increment, in order: re-parent `target_phy` behind `UTMITranslator` (§13.2,
+which also unblocks #120 and #125), then the in-situ build for the numbers §19
+could not give, then the CSR/FIFO shim of §15 with §23's five requirements, then
+firmware enumeration.

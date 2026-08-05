@@ -81,6 +81,7 @@ SIMS = [
     "soc_test",
     "qspi_burst_sim",
     "bist_sim",
+    "usb_host_sie_sim",
 ]
 
 # The tiers, and the axis they are split on.

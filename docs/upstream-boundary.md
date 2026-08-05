@@ -181,6 +181,31 @@ and `CHID` is a single register window so channel setup is not re-entrant. All t
 produced plausible wrong answers rather than failures. The first two are now asserted in
 simulation rather than only written down.
 
+## Vendored: the USB host engine
+
+**`ecp5-test/usb_host/guh/` is `apfaudio/guh`'s `usbh` at commit `923c8490`, taken
+verbatim** — `sie.py` (the transaction engine), `reset.py` (bus reset and the host
+half of the high-speed chirp) and `types.py`. BSD-3-Clause; the licence sits beside
+them.
+
+This is the "do not inherit a stack to get one file" rule applied literally, and
+the reasons are stronger here than usual: GUH has no releases, no tags, one
+author, an explicit "interfaces will change" warning, and a stated policy of not
+accepting contributions. It is also why the pin is that commit and not the one the
+proposal was written against — at `fbd7077` three SoC-facing files carried
+CERN-OHL-S-2.0, a copy-paste leftover reported as `apfaudio/guh#1` and fixed on
+2026-07-30.
+
+Deliberately **not** taken: `enumerator.py` and `descriptor.py` (they discard the
+descriptors, hard-code the device address, and specialise the parser at synthesis
+time — `docs/usb-host-proposal.md` §16), `engines/*`, `periph/*`.
+
+The vendored files stay byte-identical so a pin bump is a diff. What we need and
+they do not do goes beside the package: `ecp5-test/usb_host/model.py` is ours,
+and `scripts/usb_host_sie_sim.py` asserts the engine's behaviour against LUNA's
+own device stack — including the three interface traps a CPU-facing shim has to
+handle, so a pin bump that changes any of them fails a test rather than the shim.
+
 ## Not yet decided
 
 **`luna-soc` fork.** `cynthion` pins `luna-soc` to `awtoau/awto-luna-soc`. The fork existed
