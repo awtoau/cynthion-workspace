@@ -507,7 +507,7 @@ FLASH_TEST_OFFSET = 0x00300000
 # very nearly pure refill.
 FLASH_MODE = "quad"
 
-# SCK = sync / (2 * (1 + divisor)), so at SYNC_MHZ = 60 and divisor 0 this design
+# SCK = sync / (2 * (1 + divisor)), so at SYNC_MHZ = 30 and divisor 0 this design
 # clocks the flash at 30 MHz. That is the SLOWEST rung on the measured table and
 # the reason is below.
 #
