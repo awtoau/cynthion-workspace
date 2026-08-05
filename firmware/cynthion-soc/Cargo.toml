@@ -149,6 +149,17 @@ rticprobe = ["rticwl", "dep:critical-section"]
 # builds differ in that one line. See `src/bin/workload_rtic.rs`'s `idle`.
 rticspin = ["rticwl"]
 
+# The CLINT monotonic, `src/bin/mono_rtic.rs`. Issue 4 of the six #115 raises,
+# and the one with no evidence before this: `rtic-monotonics` has no CLINT
+# backend, but it DOES have two RISC-V ones (esp32c3, esp32c6), so what was
+# needed was a `TimerQueueBackend` and not a port of the crate.
+#
+# `fugit` and `rtic-time` are named directly because the monotonic type is
+# written out rather than made by the crate's per-part macro -- the macro exists
+# to hardcode a frequency, and this one is `target::TIME_HZ`.
+rticmono = ["dep:rtic", "riscv/critical-section-single-hart",
+            "dep:rtic-monotonics", "dep:rtic-time", "dep:fugit"]
+
 # The spike, as a second binary rather than a `#[cfg]` through `src/main.rs`.
 #
 # `#[rtic::app]` emits its own `#[no_mangle] fn main`, so it cannot coexist with
@@ -211,6 +222,19 @@ optional = true
 # same feature on for the same reason.
 features = ["restore-state-bool"]
 
+[dependencies.rtic-monotonics]
+version = "2.2"
+optional = true
+default-features = false
+
+[dependencies.rtic-time]
+version = "2.0"
+optional = true
+
+[dependencies.fugit]
+version = "0.3"
+optional = true
+
 [dependencies.embassy-executor]
 version = "0.10"
 optional = true
@@ -252,6 +276,11 @@ required-features = ["embassy"]
 # The workload's third dispatcher. `required-features` names the base feature;
 # a build must add `rticcs` or `rticprobe` on top of it to link, and the comment
 # on those two says why.
+[[bin]]
+name = "mono-rtic"
+path = "src/bin/mono_rtic.rs"
+required-features = ["rticmono"]
+
 [[bin]]
 name = "workload-bare"
 path = "src/bin/workload_bare.rs"
