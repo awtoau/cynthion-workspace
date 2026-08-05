@@ -65,6 +65,7 @@ in its §13 got there in the first place.
 * [`gateware-architecture-plan.md`](gateware-architecture-plan.md) — Making the test gateware reusable by the CPU build
 * [`git.md`](git.md) — Git & Submodules Reference
 * [`github_actions.md`](github_actions.md) — (no title)
+* [`gsg-scenarios.md`](gsg-scenarios.md) — What upstream Cynthion officially does, and what implements it
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
