@@ -61,12 +61,13 @@ from amaranth_soc.memory import MemoryMap
 from luna.gateware.interface.psram import (HyperBusPHY, HyperRAMPHY,
                                             HyperRAMInterface)
 
-# Ours, not upstream's: upstream's DQS PHY cannot be instantiated on r1.4 at all.
-# `hyperram_dqs_phy` records the three I/O faults and `docs/upstream-boundary.md`
-# the rule -- vendor I/O for this board is ours, the HyperBus protocol above it
-# is not, which is why the controller below still comes from luna.
+# Both ours now. `hyperram_dqs_phy` records the three I/O faults that make
+# upstream's DQS PHY uninstantiable on r1.4; `hyperram_dqs_controller` is luna's
+# FSM vendored so its unimplemented tCSHI recovery and its forced latency branch
+# could be fixed. `docs/upstream-boundary.md`: do not inherit a stack to get one
+# file -- vendor the file.
 from hyperram_dqs_phy import HyperRAMDQSPHY
-from hyperram_latency import LatencyHyperRAMDQSInterface
+from hyperram_dqs_controller import HyperRAMDQSController
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
@@ -78,7 +79,7 @@ HYPERRAM_READCLKSEL = 0b010
 
 # Fixed-latency `sync` cycles for the DQS controller. Upstream is 5; at 4:1
 # gearing that is 10 CK and puts every capture setting at least one word late.
-# See `hyperram_latency` for the measurement.
+# See `hyperram_dqs_controller` for what else changed there.
 HYPERRAM_LATENCY_CLOCKS = 4
 
 # tCSM, the longest CS# may stay Low. CR1[1:0] = 01b, which Table 12 ties to a
@@ -98,8 +99,8 @@ HYPERRAM_TCK_MAX_NS = 100.0
 
 # How much of tCSM the cap is allowed to spend. The remaining tenth covers the
 # two things this arithmetic cannot see: the PLL solves to the nearest achievable
-# output rather than exactly `SYNC_MHZ`, and `RECOVERY` is a TODO upstream, so
-# the overhead below is a count of states rather than a measured gap.
+# output rather than exactly `SYNC_MHZ`, and the overhead below is a count of
+# states rather than a measured gap.
 HYPERRAM_TCSM_MARGIN = 0.9
 
 # CK in MHz when the caller does not say. `HyperRAMPHY` emits one CK per `sync`
@@ -682,8 +683,9 @@ class BootRAM(Elaboratable):
                     bus=ram_bus,
                     readclksel=self.readclksel[:3],
                     read_phase=self.readclksel[3])
-                psram = LatencyHyperRAMDQSInterface(
+                psram = HyperRAMDQSController(
                     phy=psram_phy.phy,
+                    sync_mhz=ck_mhz / 2,
                     high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
                 # Active high into the PHY; the pad is `PinsN` and the PHY reads
                 # that polarity from the pin map rather than restating it.

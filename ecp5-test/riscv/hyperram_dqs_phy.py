@@ -32,18 +32,6 @@ The layer above is protocol and is upstream's, unchanged. That is the boundary
 `docs/upstream-boundary.md` asks for: vendor I/O for this board is
 Cynthion-specific and ours; the HyperBus command encoding is not.
 
-## The board is wired for DQS, contrary to what was recorded
-
-`DQSBUFM` is not fabric. It serves one fixed DQS group, and the strobe has to
-arrive on that group's designated pin -- no routing reaches `DQSI`. r1.4 puts
-RWDS on D1, which prjtrellis tags `LDQS8`, and all eight DQ lines in `LDQ8`/
-`LDQSN8`. Same group, same bank.
-
-`scripts/hyperram_dqs_pins.py` checks this against the device database and is
-the reason the claim is stated rather than assumed;
-`docs/luna_ecp5_fpga/hyperram-detailed.md` previously recorded "unusable -- no
-DQS pin group", which is wrong.
-
 ## What this needs that the non-DQS path does not
 
   * **a `fast` domain at 2x `sync`.** `ODDRX2F`/`IDDRX2DQA`/`TSHX2DQA` are 4:1

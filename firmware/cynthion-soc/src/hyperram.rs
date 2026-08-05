@@ -209,8 +209,19 @@ mod backend {
     const ADDR: *mut u32 = (BASE + offset::ADDR) as *mut u32;
     const CTRL: *mut u8 = (BASE + offset::CTRL) as *mut u8;
     const STATUS: *const u8 = (BASE + offset::STATUS) as *const u8;
-    const DATA: *const u32 = (BASE + offset::DATA) as *const u32;
-    const WDATA: *mut u32 = (BASE + offset::WDATA) as *mut u32;
+    // BYTE pointers, and a 32-bit register is read and written a byte at a time.
+    //
+    // amaranth-soc gives a multi-byte register a shadow that is latched when one
+    // designated byte is accessed; the other bytes come from that shadow. A single
+    // 32-bit `read_volatile` does not drive that handshake the way the bridge
+    // expects, and the result is a value from the PREVIOUS access with its bytes
+    // shifted one position -- measured, non-deterministically, by `hr reg`.
+    //
+    // Writes are not affected the same way (`ADDR` has always been written as a
+    // u32 and staging works), but they go byte-wise here too so the two directions
+    // cannot drift apart.
+    const DATA: *const u8 = (BASE + offset::DATA) as *const u8;
+    const WDATA: *mut u8 = (BASE + offset::WDATA) as *mut u8;
 
     /// How long to wait for a transfer before giving up.
     ///
@@ -233,7 +244,11 @@ mod backend {
         // completes; spinning is correct because a HyperRAM word takes well under a
         // microsecond and there is nothing else for this CPU to do.
         unsafe {
-            write_volatile(WDATA, value);
+            write_volatile(WDATA, value as u8);
+            write_volatile(WDATA.add(1), (value >> 8) as u8);
+            write_volatile(WDATA.add(2), (value >> 16) as u8);
+            // The transfer starts on the LAST byte, so this one goes last.
+            write_volatile(WDATA.add(3), (value >> 24) as u8);
             let mut spins = 0u32;
             while read_volatile(STATUS) & 1 == 0 {
                 spins += 1;
@@ -259,7 +274,12 @@ mod backend {
                     return 0xffff_ffff;
                 }
             }
-            read_volatile(DATA)
+            // Lowest byte first: that is the order the old DATA_LO/DATA_HI pair
+            // used, and the order the shadow is built in.
+            (read_volatile(DATA) as u32)
+                | ((read_volatile(DATA.add(1)) as u32) << 8)
+                | ((read_volatile(DATA.add(2)) as u32) << 16)
+                | ((read_volatile(DATA.add(3)) as u32) << 24)
         }
     }
 }
