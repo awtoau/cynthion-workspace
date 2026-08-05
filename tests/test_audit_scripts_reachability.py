@@ -73,6 +73,24 @@ def test_script_known_to_run_is_reachable(name):
         "it would be reported as a retirement candidate")
 
 
+def test_a_rust_doc_comment_is_not_a_call(tmp_path):
+    """Rust and TOML have no AST here, so their comments are stripped instead.
+
+    `firmware/cynthion-soc/src/ulpi.rs` records which probe confirmed the PHY
+    IDs, and `cynthion-boot/Cargo.toml` records which script measured a size.
+    Both read as dependencies on scripts that are in `debris/`.
+    """
+    rs = tmp_path / "ulpi.rs"
+    rs.write_text("/// Confirmed by `scripts/phy_probe.py`.\n"
+                  "pub const VENDOR_ID: u16 = 0x0424;\n")
+    assert audit_scripts.references_from(rs, {"phy_probe.py"}) == set()
+
+    toml = tmp_path / "Cargo.toml"
+    toml.write_text("# `./scripts/soc_boot_size.py` re-runs the whole table.\n"
+                    'name = "cynthion-boot"\n')
+    assert audit_scripts.references_from(toml, {"soc_boot_size.py"}) == set()
+
+
 @pytest.fixture
 def resolver(tmp_path):
     """`references_from` over a file written for the occasion."""
@@ -110,9 +128,11 @@ def test_an_argv_verb_is_not_a_script(resolver):
     """`machine_setup.py` passes "install" to dnf; that is not `install.py`.
 
     This is what made a 56 KiB installer nothing had run look reachable from
-    `./dev.py`.
+    `./dev.py`. The case below uses a name no script in this repo has, because
+    naming the real one HERE makes it `called` -- by this file. That is the
+    same confusion in miniature, and it showed up the moment this test landed.
     """
-    assert resolver('run(["dnf", "install", "-y", pkg])\n',
-                    {"install.py"}) == set()
+    assert resolver('run(["dnf", "upgrade", "-y", pkg])\n',
+                    {"upgrade.py"}) == set()
     assert not audit_scripts.bare_stem_is_evidence("install")
     assert audit_scripts.bare_stem_is_evidence("soc_bus_sim")

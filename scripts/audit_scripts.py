@@ -163,6 +163,33 @@ def docstring_nodes(tree):
     return out
 
 
+# Line-comment syntax per language, for the non-Python callers. JSON has none.
+LINE_COMMENT = {".rs": ("//",), ".toml": ("#",), ".yml": ("#",),
+                ".yaml": ("#",), ".cfg": ("#",), ".sh": ("#",)}
+
+
+def without_comments(text, suffix):
+    """The same exclusion Python gets from its AST, for the languages without one.
+
+    Rust doc comments are where this repo records which probe produced a number,
+    so `firmware/cynthion-soc/src/ulpi.rs` "reached" `phy_probe.py` by saying
+    what it had confirmed. `Cargo.toml` does it too. Crude -- it will cut a URL
+    in half -- which costs nothing, because the only thing being looked for is a
+    script filename and no invocation follows a comment marker on its own line.
+    """
+    markers = LINE_COMMENT.get(suffix)
+    if not markers:
+        return text
+    out = []
+    for line in text.splitlines():
+        for marker in markers:
+            index = line.find(marker)
+            if index != -1:
+                line = line[:index]
+        out.append(line)
+    return "\n".join(out)
+
+
 def references_from(path, names):
     """Which other scripts this file INVOKES -- not which it mentions.
 
@@ -192,8 +219,9 @@ def references_from(path, names):
     stems = {n: (n[:-3] if n.endswith(".py") else n) for n in others}
 
     if path.suffix != ".py":
+        stripped = without_comments(text, path.suffix)
         for name in others:
-            if name in text:
+            if name in stripped:
                 found.add(name)
         return found
 
