@@ -84,6 +84,12 @@ mod bench;
 mod board;
 mod bus;
 mod clock;
+// The concurrency measurement for #115: a synthetic USB device-emulation load
+// and a preemptive dispatcher for it to run under. Both off by default, and
+// nothing below reaches either without the feature, so the shipping image is
+// byte-identical either way -- `scripts/soc_workload.py --sizes` checks it.
+#[cfg(feature = "preempt")]
+mod dispatch;
 mod events;
 mod fusb302;
 mod gpio;
@@ -104,6 +110,8 @@ mod typec;
 mod uart;
 mod ulpi;
 mod vbus;
+#[cfg(feature = "workload")]
+mod workload;
 
 use bus::Bus;
 use target::flash_word;
@@ -820,6 +828,8 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
                 let _ = uart.write_str("unknown: try `cpu stats`\n");
             }
         },
+        #[cfg(feature = "workload")]
+        b"usb" => workload::command(uart, trim(rest)),
         b"bench" => bench::command(uart, trim(rest)),
         b"info" => info::command(uart),
         b"selftest" => selftest::command(uart, &devices.power),
