@@ -65,6 +65,8 @@ def setup_logging(
     log_dir: Optional[Path] = None,
     level: int = logging.INFO,
     console_only: bool = False,
+    filename: Optional[str] = None,
+    file_only: bool = False,
 ) -> logging.Logger:
     """
     Setup logger with console and optional file output.
@@ -74,6 +76,12 @@ def setup_logging(
         log_dir: Directory for log files. If None, console only
         level: Logging level (default: INFO)
         console_only: Disable file logging even if log_dir provided
+        filename: Fixed log filename, appended to across runs. The default
+            instead opens a new <name>-<timestamp>.log per run, which suits a
+            long build worth keeping separately but leaves a file behind every
+            time -- wrong for something run as often as a pre-push hook
+        file_only: Skip the console handler, for a caller that prints its own
+            report and would otherwise emit each line twice
 
     Returns:
         Configured logger instance
@@ -90,20 +98,24 @@ def setup_logging(
     logger.handlers.clear()
 
     # Console handler with colors
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_formatter = ColoredFormatter(
-        fmt="%(levelname)s %(message)s",
-        use_color=True
-    )
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+    if not file_only:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_formatter = ColoredFormatter(
+            fmt="%(levelname)s %(message)s",
+            use_color=True
+        )
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
 
     # File handler if log_dir provided
     if log_dir and not console_only:
         log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        log_file = log_dir / f"{name}-{timestamp}.log"
+        if filename:
+            log_file = log_dir / filename
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            log_file = log_dir / f"{name}-{timestamp}.log"
 
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.DEBUG)

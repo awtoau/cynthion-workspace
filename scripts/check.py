@@ -17,8 +17,9 @@ directly as a pre-commit / pre-push hook:
 
     ln -s ../../scripts/check.py .git/hooks/pre-push
 
-Output goes to the console and to tmp/check.log; each check's full
-stdout+stderr lands in tmp/logs/check-<name>.log for post-mortem.
+Output goes to the console and, one line per check, to tmp/logs/check.log;
+each check's full stdout+stderr lands in tmp/logs/check-<name>.log for
+post-mortem.
 """
 
 import argparse
@@ -263,6 +264,7 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
     """Run one check, capturing output to tmp/logs/check-<name>.log."""
     skip = check.skip_reason() if check.skip_reason else None
     if skip:
+        logger.info("%s: skipped (%s)", check.name, skip)
         return Result(check.name, ok=True, seconds=0.0, skipped=True, detail=skip)
 
     LOGS.mkdir(parents=True, exist_ok=True)
@@ -278,6 +280,7 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
             if not step.cwd.exists():
                 msg = f"working directory missing: {step.cwd}"
                 log_file.write(msg + "\n")
+                logger.error("%s: %s", check.name, msg)
                 return Result(check.name, ok=False,
                               seconds=time.monotonic() - started,
                               detail=msg, failed_cmd=printable)
@@ -293,6 +296,10 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
 
             if proc.returncode != 0 and not step.informational:
                 tail = (proc.stdout or "").strip().splitlines()[-12:]
+                logger.error("%s: FAILED exit %d in %.1fs (%s), output in %s",
+                             check.name, proc.returncode,
+                             time.monotonic() - started, printable,
+                             log_path.name)
                 return Result(
                     check.name, ok=False,
                     seconds=time.monotonic() - started,
@@ -300,7 +307,9 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
                     failed_cmd=printable, tail=tail,
                 )
 
-    return Result(check.name, ok=True, seconds=time.monotonic() - started)
+    seconds = time.monotonic() - started
+    logger.info("%s: passed in %.1fs", check.name, seconds)
+    return Result(check.name, ok=True, seconds=seconds)
 
 
 def main() -> int:
@@ -342,7 +351,15 @@ def main() -> int:
         selected = [c for c in checks if not (args.fast and c.slow)]
 
     TMP.mkdir(parents=True, exist_ok=True)
-    logger = setup_logging("check.py", log_dir=LOGS)
+    # file_only: this script prints its own coloured report, so the logger's
+    # console half would say everything twice. The file half is the point --
+    # an appended record of which checks ran when, next to the per-check logs
+    # holding their output.
+    logger = setup_logging("check.py", log_dir=LOGS, filename="check.log",
+                           file_only=True)
+
+    logger.info("run: %d checks selected (%s), interpreter %s",
+                len(selected), ", ".join(c.name for c in selected), PYTHON)
 
     print(f"\n{BOLD}{CYAN}{'=' * 68}{RESET}")
     print(f"{BOLD}{CYAN}Local checks — {len(selected)} selected, interpreter {PYTHON}{RESET}")
@@ -380,6 +397,11 @@ def main() -> int:
           f"{YELLOW}{len(skipped)} skipped{RESET}  "
           f"in {elapsed:.1f}s")
     print(f"{BOLD}{CYAN}{'=' * 68}{RESET}")
+
+    logger.info("summary: %d passed, %d failed, %d skipped in %.1fs%s",
+                len(passed), len(failed), len(skipped), elapsed,
+                "" if not failed else
+                " -- failed: " + ", ".join(r.name for r in failed))
 
     for r in failed:
         print(f"\n{RED}{BOLD}✗ {r.name}{RESET} ({r.detail})")
