@@ -618,7 +618,7 @@ FLASH_PHY_FAST = False
 #
 # It also needs READCLKSEL calibrated (#148); the sweep harness exists and has
 # never been run on silicon.
-HYPERRAM_DQS = True
+HYPERRAM_DQS = False
 
 # Active Clock Stop, and coalescing with it. See #185.
 #
