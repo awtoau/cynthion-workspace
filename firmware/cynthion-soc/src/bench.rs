@@ -235,7 +235,6 @@ fn measure<F: FnOnce() -> u32>(accesses: u32, width: u32, body: F) -> (Run, u32)
 ///     set has been covered many times over.
 ///   * sequential: an increment, which walks 16 words per 64-byte line.
 #[inline(always)]
-#[inline(always)]
 fn step(state: &mut u32, mask: usize, random: bool) -> usize {
     if random {
         let mut x = *state;

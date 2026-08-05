@@ -11,7 +11,7 @@ RISC-V ports of RTIC and Zephyr both work unchanged -- neither of them
 will drive a custom timer peripheral without a port being written first. QEMU's
 `-M virt` has a CLINT too (`clint@2000000`), which is what makes
 `scripts/soc_test.py` evidence about the tick that ships. The alternatives
-weighed are in `../../docs/comparisons.md`.
+weighed are in `../../docs/decisions.md`.
 
 ## Register map -- the SiFive/QEMU layout, not chosen here
 
