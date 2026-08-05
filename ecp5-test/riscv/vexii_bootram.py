@@ -55,7 +55,8 @@ from amaranth.utils import log2_int
 from amaranth_soc import csr, wishbone
 from amaranth_soc.memory import MemoryMap
 
-from luna.gateware.interface.psram import HyperRAMPHY, HyperRAMInterface
+from luna.gateware.interface.psram import (HyperBusPHY, HyperRAMPHY,
+                                            HyperRAMInterface)
 
 # Ours, not upstream's: upstream's DQS PHY cannot be instantiated on r1.4 at all.
 # `hyperram_dqs_phy` records the three I/O faults and `docs/upstream-boundary.md`
@@ -77,10 +78,113 @@ HYPERRAM_READCLKSEL = 0b010
 # See `hyperram_mask` for the measurement.
 HYPERRAM_LATENCY_CLOCKS = 4
 
-# CR1 sets tCSM to 4 us. Leave an even-word margin below 768 CK at 192 MHz so
-# a missing Wishbone terminator cannot hold CS# low through a refresh deadline.
-HYPERRAM_MAX_BURST_WORDS = 748
-HYPERRAM_MAX_BURST_BEATS = HYPERRAM_MAX_BURST_WORDS // 2
+# tCSM, the longest CS# may stay Low. CR1[1:0] = 01b, which Table 12 ties to a
+# 64 ms array refresh over 8192 rows at T_CASE < 85 C, halved.
+HYPERRAM_TCSM_NS = 4000.0
+
+# Per-transaction overhead in CK, counted off `HyperRAMInterface`'s states:
+# 3 command words + 13 `HANDLE_LATENCY` + 1 `RECOVERY`. `LATCH_RWDS` runs with CK
+# held Low and does not count.
+HYPERRAM_OVERHEAD_CK = 17
+
+# tCK maximum. Rev A01-006 Table 22 bounds it at 100 ns; A01-003 leaves it blank.
+# Note 2, in both, says the real constraint is tCSM -- but a stall longer than
+# this sits in the gap between that note and the table on A01-006 silicon, so
+# nothing here goes there. See `docs/hyperram-bus-review.md` 5.
+HYPERRAM_TCK_MAX_NS = 100.0
+
+# How much of tCSM the cap is allowed to spend. The remaining tenth covers the
+# two things this arithmetic cannot see: the PLL solves to the nearest achievable
+# output rather than exactly `SYNC_MHZ`, and `RECOVERY` is a TODO upstream, so
+# the overhead below is a count of states rather than a measured gap.
+HYPERRAM_TCSM_MARGIN = 0.9
+
+# CK in MHz when the caller does not say. `HyperRAMPHY` emits one CK per `sync`
+# cycle, so for the non-DQS build this is `vexii_hello_soc.SYNC_MHZ` -- which
+# passes its own value in, because `riscv_clock_ladder.py` rewrites that constant
+# and a second copy here would drift silently. This default serves sims and
+# bring-up tops only.
+HYPERRAM_CK_MHZ = 60.0
+
+
+def hyperram_max_burst_words(ck_mhz, *, clock_stop=False):
+    """Words one transaction may hold CS# Low for, derived from tCSM.
+
+    THE CAP GUARDS A TIME LIMIT AND USED TO BE WRITTEN AS A BARE WORD COUNT.
+    748 words is right at CK 192 MHz and is 12.5 us -- over three times tCSM --
+    at the 60 MHz this SoC runs, unreachable today only because a Wishbone burst
+    never exceeds 32 words. It has to come from the clock.
+
+    `clock_stop` makes the divergence explicit rather than latent: Active Clock
+    Stop spends CS#-Low cycles that produce no word, one per 32-bit beat and so
+    one per two words, and the same wall-clock budget then buys two thirds as
+    many. Word count stops tracking CS#-Low time the moment CK can be gated.
+
+    Rounded down to an even number: a 32-bit beat is two 16-bit words at
+    `word_width=16` and a cap landing mid-beat would cut one in half.
+    """
+    budget_ck = (HYPERRAM_TCSM_NS * HYPERRAM_TCSM_MARGIN * 1e-3 * ck_mhz
+                 - HYPERRAM_OVERHEAD_CK)
+    return max(2, int(budget_ck / (1.5 if clock_stop else 1.0)) & ~1)
+
+
+def hyperram_max_stall_cycles(ck_mhz):
+    """`sync` cycles CK may be parked Low inside a data phase, from tCK max.
+
+    Six at 60 MHz. The bubble this design has to cover is ONE cycle -- the one
+    `RegisteredResponse` withholds STB for -- so the bound never fires in normal
+    operation. It exists for the case a master drops CYC part way through a
+    burst, where `mmap.req` never returns and CS# would otherwise stay Low until
+    the next reset.
+    """
+    return max(1, int(HYPERRAM_TCK_MAX_NS * 1e-3 * ck_mhz))
+
+
+# The cap at the default clock. `HyperRAMWishbone` computes its own from the
+# `ck_mhz` it is given -- this is here for a caller that wants to report or check
+# the number without building one.
+HYPERRAM_MAX_BURST_WORDS = hyperram_max_burst_words(HYPERRAM_CK_MHZ)
+
+
+class ClockStopPHY(Elaboratable):
+    """One `HyperBusPHY` record split in two, so CK can stop with CS# still Low.
+
+    Everything passes through except `clk_en`, which the device side sees as
+    `clk_en & ~stall`. `HyperRAMPHY` drives CK from
+    `ODDRX1F(i_D0=clk_en, i_D1=0)`, so dropping `clk_en` emits no pulse and parks
+    CK **Low** -- the state W956A8 rev A01-006 10.2.2 recommends stopping in, and
+    the one 10.1 defines as Idle.
+
+    This is Active Clock Stop: a named device state with its own truth-table row,
+    its own DC parameter (I_CC6) and its own timing figure, Figure 13, which draws
+    CS# held Low across a flat CK between two words of a data phase. It is NOT an
+    inference from silence, and it needs no change to `HyperRAMInterface` --
+    `docs/upstream-boundary.md` keeps the protocol layer upstream's, and this
+    wrapper is workspace gateware of the same kind as `HyperRAMWishbone`.
+
+    `dev` is the record the pads (or a device model) see; `ctrl` is the one to
+    hand `HyperRAMInterface`.
+    """
+
+    def __init__(self, *, dev):
+        self.dev = dev
+        self.ctrl = HyperBusPHY()
+        self.stall = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+        m.d.comb += [
+            self.dev.clk_en.eq(self.ctrl.clk_en & ~self.stall),
+            self.dev.cs.eq(self.ctrl.cs),
+            self.dev.reset.eq(self.ctrl.reset),
+            self.dev.dq.o.eq(self.ctrl.dq.o),
+            self.dev.dq.e.eq(self.ctrl.dq.e),
+            self.dev.rwds.o.eq(self.ctrl.rwds.o),
+            self.dev.rwds.e.eq(self.ctrl.rwds.e),
+            self.ctrl.dq.i.eq(self.dev.dq.i),
+            self.ctrl.rwds.i.eq(self.dev.rwds.i),
+        ]
+        return m
 
 
 class HyperRAMWishbone(wiring.Component):
@@ -115,6 +219,11 @@ class HyperRAMWishbone(wiring.Component):
     cycles. No amount of buffering fixes a sustained rate deficit, so coalescing
     is off by default and a caller that has a zero-wait master opts in.
 
+    The other way to opt in is `BootRAM`'s `clock_stop`, which removes the
+    promise instead of keeping it: CK stops on the word boundary and the device
+    waits. See `ClockStopPHY`. `sustained` without it is the arrangement the
+    board measured at 8/16 words correct.
+
     `word_width` is the controller's data width, not the bus's -- the bus is
     always 32 bits. `HyperRAMInterface` hands over 16 bits at a time, so a beat
     is two words and the low half is held in `read_low` until the high half
@@ -129,7 +238,8 @@ class HyperRAMWishbone(wiring.Component):
     | `in_valid` | in | one returned or accepted controller word |
     """
 
-    def __init__(self, *, size=HYPERRAM_SIZE, word_width=16, sustained=False):
+    def __init__(self, *, size=HYPERRAM_SIZE, word_width=16, sustained=False,
+                 ck_mhz=HYPERRAM_CK_MHZ, clock_stop=False):
         if size <= 0 or size & (size - 1):
             raise ValueError("HyperRAM window size must be a power of two")
         if size % 4:
@@ -138,6 +248,10 @@ class HyperRAMWishbone(wiring.Component):
             raise ValueError("HyperRAM controller word width must be 16 or 32")
         self._word_width = word_width
         self._sustained = sustained
+        # The cap is tCSM, in time, so it is computed from CK rather than stated.
+        self.max_burst_words = hyperram_max_burst_words(
+            ck_mhz, clock_stop=clock_stop)
+        self.max_burst_beats = self.max_burst_words // 2
 
         wb_addr_width = log2_int(size // 4)
         memory_map = MemoryMap(addr_width=log2_int(size), data_width=8)
@@ -181,7 +295,7 @@ class HyperRAMWishbone(wiring.Component):
         rmw_read = Signal()
         final_beat = Signal()
         bursting = Signal()
-        burst_beats = Signal(range(HYPERRAM_MAX_BURST_BEATS))
+        burst_beats = Signal(range(self.max_burst_beats))
 
         request = self.bus.cyc & self.bus.stb & ~pending
         word_event = self.granted & self.in_valid
@@ -224,7 +338,7 @@ class HyperRAMWishbone(wiring.Component):
                 final_beat.eq(
                     ~burst_candidate
                     | (self.bus.cti == wishbone.CycleType.END_OF_BURST)
-                    | (bursting & (burst_beats == HYPERRAM_MAX_BURST_BEATS - 1))
+                    | (bursting & (burst_beats == self.max_burst_beats - 1))
                 ),
             ]
             with m.If(~bursting):
@@ -232,7 +346,7 @@ class HyperRAMWishbone(wiring.Component):
                     bursting.eq(burst_candidate),
                     burst_beats.eq(1),
                 ]
-            with m.Elif(burst_beats == HYPERRAM_MAX_BURST_BEATS - 1):
+            with m.Elif(burst_beats == self.max_burst_beats - 1):
                 m.d.sync += [bursting.eq(0), burst_beats.eq(0)]
             with m.Else():
                 m.d.sync += burst_beats.eq(burst_beats + 1)
@@ -424,6 +538,12 @@ class BootRAM(Elaboratable):
     see that class for why a bubbling master and a held-open transaction corrupt
     each other.
 
+    `clock_stop` is the other half of that answer and the reason `sustained` can
+    ever be true here. It gates CK on word boundaries so the device waits out the
+    master's bubble instead of eating whatever is on DQ -- see `ClockStopPHY`, and
+    `docs/hyperram-bus-review.md` 5 for the datasheet clauses. Without it a
+    coalesced 64-byte line writes 48 device words where 32 are wanted.
+
     Attributes
     ----------
     port : HyperRAMBoot
@@ -432,16 +552,34 @@ class BootRAM(Elaboratable):
         The CPU's memory port; add `mmap.bus` to the SoC's Wishbone decoder.
     jtag_req, jtag_addr, jtag_data, jtag_ack : Signal
         The second requester, in `sync`. Wire these to a `JTAGStager`.
+    clk_stop : Signal
+        Drive a `ClockStopPHY.stall` with this when `interface` is supplied from
+        outside; zero unless `clock_stop`.
     """
 
-    def __init__(self, *, interface=None, dqs=False, sustained=False):
+    def __init__(self, *, interface=None, dqs=False, sustained=False,
+                 clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ):
         # DQS changes the data width -- 32 bits per beat against 16 -- so it is
         # recorded here and read where the word assembly is decided.
         self._dqs = dqs
+        if clock_stop and dqs:
+            # `HyperRAMDQSPHY` gears CK off `fast` through ODDRX2F and the mask
+            # path adds a second strobe; neither is modelled or measured, and
+            # gating a 2:1 geared clock is a different question from gating a
+            # 1:1 one. Refuse rather than emit something untested.
+            raise ValueError("Active Clock Stop is not wired for the DQS PHY")
+        self._clock_stop = clock_stop
+        self._max_stall = hyperram_max_stall_cycles(ck_mhz)
         self.port = HyperRAMBoot()
         self.mmap = HyperRAMWishbone(word_width=32 if dqs else 16,
-                                     sustained=sustained)
+                                     sustained=sustained, ck_mhz=ck_mhz,
+                                     clock_stop=clock_stop)
         self._interface = interface
+
+        # For a caller that supplies its own `interface`: what to hand a
+        # `ClockStopPHY`. When this module builds its own PHY it wires this up
+        # internally and the output is instrumentation.
+        self.clk_stop = Signal()
 
         self.jtag_req  = Signal()
         self.jtag_addr = Signal(32)
@@ -466,6 +604,10 @@ class BootRAM(Elaboratable):
         # data phase is not streaming and the gap is the fault.
         self.probe_word  = Signal()
         self.probe_busy  = Signal()
+        # A cycle with CK parked Low inside a data phase. This is the CS#-Low
+        # time that word count stops accounting for once `clock_stop` is on, so
+        # it is the thing to count against tCSM on the board.
+        self.probe_stall = Signal()
         # WHERE THE IDLE CYCLES GO. The controller is busy 72 CK of every 348 CK
         # line, so 276 CK are spent somewhere in this module and the window. These
         # split that time by state so it is attributed rather than guessed at:
@@ -522,7 +664,13 @@ class BootRAM(Elaboratable):
             else:
                 ram_bus = platform.request("ram")
                 psram_phy = HyperRAMPHY(bus=ram_bus)
-                psram = HyperRAMInterface(phy=psram_phy.phy)
+                if self._clock_stop:
+                    gate = ClockStopPHY(dev=psram_phy.phy)
+                    m.submodules.clock_stop = gate
+                    m.d.comb += gate.stall.eq(self.clk_stop)
+                    psram = HyperRAMInterface(phy=gate.ctrl)
+                else:
+                    psram = HyperRAMInterface(phy=psram_phy.phy)
                 m.d.comb += ram_bus.reset.o.eq(0)
             m.submodules += [psram_phy, psram]
         else:
@@ -603,7 +751,60 @@ class BootRAM(Elaboratable):
                     m.next = "IDLE"
 
         active = ~fsm.ongoing("IDLE")
-        word_event = Mux(writing, psram.write_ready, psram.read_ready)
+
+        # --- Active Clock Stop -----------------------------------------------
+        #
+        # A HyperBus data phase has no backpressure: once the latency has run the
+        # device moves a word every CK, and `write_ready`/`read_ready` are
+        # asserted whether or not anyone is listening. The only legal way to make
+        # it wait is to stop CK with CS# still Low. See `ClockStopPHY`.
+        #
+        # The stall is simply the window having no word to offer. `mmap.req` is
+        # `pending | (bursting & cyc & stb)` and `pending` is set at the start of
+        # a beat and cleared only when that beat completes -- and a beat can only
+        # complete on a `word_event`, which exists only in WRITE_DATA/READ_DATA.
+        # So `req` is high across SHIFT_COMMAND and HANDLE_LATENCY by
+        # construction, which is what keeps this out of the latency window, where
+        # DQ is High-Z and a pause is illegal. Nothing new tracks the FSM.
+        stall = Signal()
+        want_stall = Signal()
+        m.d.comb += want_stall.eq(
+            (active & (owner == OWNER_WISHBONE) & ~mmap.req)
+            if self._clock_stop else C(0))
+
+        # THE BOUND, stated where the stall is generated. Rev A01-006 gives tCK a
+        # 100 ns maximum that A01-003 leaves blank, so a longer pause sits in the
+        # gap between that table and 10.2.2 and this design does not go there.
+        # Six cycles at 60 MHz against a worst case of one; it fires only if a
+        # master abandons a burst, and then it closes the transaction rather than
+        # hold CS# Low -- which costs one duplicated word on a write, the lesser
+        # of that and missing a refresh deadline.
+        stall_count = Signal(range(self._max_stall + 1))
+        stall_timeout = Signal()
+        m.d.comb += stall.eq(want_stall & ~stall_timeout)
+        with m.If(start):
+            m.d.sync += [stall_count.eq(0), stall_timeout.eq(0)]
+        with m.Elif(stall):
+            m.d.sync += stall_count.eq(stall_count + 1)
+            with m.If(stall_count == self._max_stall - 1):
+                m.d.sync += stall_timeout.eq(1)
+        with m.Else():
+            m.d.sync += stall_count.eq(0)
+
+        # The CK gate is one cycle behind the word gate ON WRITES, and level with
+        # it on reads. `dq.o` is registered inside the controller, so the word on
+        # the wire in cycle T is the one `write_ready` accepted in T-1; a read's
+        # data and its RWDS transition arrive in the same cycle `read_ready`
+        # fires. Gate both at T and the last accepted write word is never clocked
+        # out. This is the fifth risk named in `docs/hyperram-bus-review.md` 5 --
+        # "the cycle the stall asserts must not be one in which the controller's
+        # registered `dq.o` has already moved on" -- and the sim is what settled
+        # it: without the register a coalesced line write returns 0/16.
+        stall_ck = Signal()
+        m.d.sync += stall_ck.eq(stall)
+        m.d.comb += self.clk_stop.eq(Mux(writing, stall_ck, stall))
+
+        word_event = Mux(writing, psram.write_ready, psram.read_ready) & ~stall
 
         # `wide` and "keeps the transaction open" used to be the same flag, which
         # worked only because the 16-bit controller made them coincide: the
@@ -706,7 +907,9 @@ class BootRAM(Elaboratable):
             psram.perform_write.eq(Mux(start, selected_write, writing)),
             # `current_final` already folds in the start edge through `half_done`
             # and `streaming`, so it no longer needs a Mux of its own here.
-            psram.final_word.eq(current_final),
+            # `stall_timeout` is the tCK escape above: closing the transaction is
+            # the only exit `HyperRAMInterface` offers, so the bound uses it.
+            psram.final_word.eq(current_final | stall_timeout),
             port.granted.eq(active & (owner == OWNER_CSR)),
             port.in_data.eq(Mux(live_address[0], read_word[16:32], read_word[:16])
                             if self._dqs else read_word),
@@ -728,6 +931,7 @@ class BootRAM(Elaboratable):
             self.probe_burst.eq(mmap.bus.ack & mmap.bursting_out),
             self.probe_word.eq(word_event),
             self.probe_busy.eq(~psram.idle),
+            self.probe_stall.eq(stall),
             self.probe_want.eq(mmap.req & fsm.ongoing("IDLE")),
             self.probe_arming.eq(fsm.ongoing("STARTING")),
             self.probe_cyc.eq(mmap.bus.cyc),

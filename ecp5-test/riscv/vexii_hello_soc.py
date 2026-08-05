@@ -1053,7 +1053,20 @@ class HelloSoC(Elaboratable):
         # wrote 48 words for a 32-word line and transposed every odd beat, which
         # is the fault `hr cross` reports and section 9 of
         # `scripts/soc_hyperram_sim.py` reproduces.
-        m.submodules.bootram = bootram = BootRAM(dqs=HYPERRAM_DQS)
+        #
+        # `clock_stop` (Active Clock Stop, `ClockStopPHY`) is what would let
+        # `sustained` be true. Section 11 of that same file has it returning
+        # 16/16 both ways in one transaction; it has never been on silicon, and
+        # the read half of it depends on a round-trip latency the model does not
+        # represent. Both stay off until a board run says otherwise.
+        #
+        # `ck_mhz` is passed rather than duplicated. The tCSM burst cap is a TIME
+        # limit expressed in words, so it has to know CK: `HyperRAMPHY` emits one
+        # CK per `sync` cycle, `HyperRAMDQSPHY` gears off `fast` at twice that.
+        # `riscv_clock_ladder.py` rewrites `SYNC_MHZ` here, and a second copy of
+        # the number inside `vexii_bootram` would drift the first time it did.
+        m.submodules.bootram = bootram = BootRAM(
+            dqs=HYPERRAM_DQS, ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ)
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
         decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
