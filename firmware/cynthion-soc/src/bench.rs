@@ -1205,6 +1205,12 @@ fn read_window(word_addr: u32) -> u32 {
 }
 
 /// Touch a whole D-cache worth of other HyperRAM so no line of interest survives.
+/// `pub` for the shell's `hr ramp`, which must read past the cache to see
+/// what the PART holds rather than what the CPU wrote a moment ago.
+pub fn evict_pub() {
+    evict();
+}
+
 fn evict() {
     let _ = hyper_window_read(0x3ff, 1024, false);
 }

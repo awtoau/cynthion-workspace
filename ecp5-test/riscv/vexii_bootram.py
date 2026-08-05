@@ -918,14 +918,25 @@ class BootRAM(Elaboratable):
 
         # --- controller width adaptation -------------------------------------
         #
-        # HyperBus sends the lower-addressed word first, and the DQS PHY puts
-        # the first word in the HIGH half of its 32-bit port (`dq.i[24:32]` is
-        # the first byte on the wire). Every port here expects the lower address
-        # in the low half, which is what the 16-bit controller produces
-        # naturally. Swap once at the boundary rather than in each of the three
-        # ports -- and note this ordering is asserted from the PHY's gearing
-        # wiring, so `dev.py test-board` cross-checks it by writing through one
-        # port and reading through another.
+        # HyperBus sends the lower-addressed word first.
+        #
+        # THIS COMMENT USED TO CLAIM the DQS PHY puts that first word in the HIGH
+        # half of its 32-bit port, and that `dev.py test-board` cross-checked it.
+        # The second part is definitely wrong: the cross-check writes and reads
+        # through paths that share this function, so an inverted swap cancels and
+        # it can never see one.
+        #
+        # OBSERVED, not concluded: staging `a5c31234` with the swap applied put
+        # `a5c3` into the lower word; without the swap it put `1234` there. That
+        # is consistent with the wire taking the low half first -- but the SECOND
+        # word is corrupt in both cases (`c3c3`, then `3434`: the first word's low
+        # byte repeated), so one 32-bit value cannot separate an ordering fault
+        # from a permutation that happens to leave those four bytes looking right.
+        #
+        # `hr ramp` writes 0-255, where every byte names its own position, and
+        # that is what settles it. Nothing here is asserted until it does, and the
+        # read side keeps the swap meanwhile because changing both at once cannot
+        # be attributed. See #186.
         def swap_halves(value):
             return Cat(value[16:32], value[0:16])
 
@@ -946,7 +957,20 @@ class BootRAM(Elaboratable):
             # in the first place: it drives `rwds.o` to 0 unconditionally, which
             # is why reaching it needed a subclass. Byte granularity was
             # synthesised for ports that never needed it.
-            m.d.comb += psram.write_data.eq(swap_halves(live_data))
+            # NO SWAP ON THE WRITE SIDE -- one-variable experiment, #186.
+            #
+            # The comment above asserts the PHY puts the first word on the wire
+            # in the HIGH half. The board says otherwise: staging `a5c31234`
+            # becomes `0x1234a5c3` after the swap, and memory comes back holding
+            # `a5c3` in the FIRST word -- the LOW half of the swapped value. That
+            # is what happens if the wire takes the low half first and the swap is
+            # backwards.
+            #
+            # The read side keeps the swap for now, deliberately: changing both at
+            # once cannot be attributed. If this alone fixes the write ordering,
+            # the two directions need opposite conventions and the comment above
+            # is wrong; if it does not, the fault is not the swap.
+            m.d.comb += psram.write_data.eq(live_data)
         else:
             m.d.comb += psram.write_data.eq(
                 Mux(second_word, live_data[16:], live_data[:16]))

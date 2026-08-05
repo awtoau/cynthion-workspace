@@ -555,6 +555,65 @@ fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
                 let _ = writeln!(uart, "usage: hr sel <0-3f>  (2:0 tap, 3 phase, 5:4 read stall)");
             }
         },
+        _ if rest.starts_with(b"ramp") => {
+            // A 0-255 byte ramp: every byte names its own position, so a
+            // displacement, a duplication or a swapped pair is READ off the dump
+            // rather than inferred from four bytes of a single word.
+            //
+            // `hr ramp` VERIFIES what is already there -- use it after staging
+            // the ramp over JTAG, which writes through a path that shares none
+            // of this SoC's write logic, so a failure is then unambiguously a
+            // READ fault. `hr ramp w` writes it through the memory window first,
+            // which tests the write path against the same known pattern.
+            const RAMP_AT: usize = 0x4000;      // bytes into the window
+            const RAMP_LEN: usize = 256;
+            let base = cynthion_soc_pac::base::HYPERRAM + RAMP_AT;
+            let writing = trim(&rest[4..]) == b"w";
+
+            if writing {
+                for i in (0..RAMP_LEN).step_by(4) {
+                    let word = (i as u32)
+                        | ((i as u32 + 1) << 8)
+                        | ((i as u32 + 2) << 16)
+                        | ((i as u32 + 3) << 24);
+                    // SAFETY: 4-byte aligned, inside the decoded 8 MiB window.
+                    unsafe { core::ptr::write_volatile((base + i) as *mut u32, word) };
+                }
+                bench::evict_pub();
+            }
+
+            let mut wrong = 0;
+            let mut first_bad = RAMP_LEN;
+            let mut got = [0u8; 16];
+            for i in 0..RAMP_LEN {
+                // SAFETY: as above; byte reads inside the same window.
+                let byte = unsafe { core::ptr::read_volatile((base + i) as *const u8) };
+                if i < 16 {
+                    got[i] = byte;
+                }
+                if byte != i as u8 {
+                    wrong += 1;
+                    if first_bad == RAMP_LEN {
+                        first_bad = i;
+                    }
+                }
+            }
+
+            let _ = writeln!(uart, "ramp {} at +{:x}, {} bytes",
+                             if writing { "written and verified" } else { "verified" },
+                             RAMP_AT, RAMP_LEN);
+            let _ = write!(uart, "  first 16 want 00..0f got");
+            for byte in got.iter() {
+                let _ = write!(uart, " {:02x}", byte);
+            }
+            let _ = writeln!(uart, "");
+            if wrong == 0 {
+                let _ = writeln!(uart, "  {}/{} correct -- the path is clean", RAMP_LEN, RAMP_LEN);
+            } else {
+                let _ = writeln!(uart, "  {}/{} wrong, first at +{:x}",
+                                 wrong, RAMP_LEN, first_bad);
+            }
+        }
         b"sweep" => {
             // One bitstream, eight settings. The tap that captures returning
             // data is a property of the board and CK, and the built-in default
