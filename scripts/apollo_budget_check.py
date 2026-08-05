@@ -43,7 +43,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import armtools  # noqa: E402
+import arm_binutils_resolve  # noqa: E402
 from devlog import emit  # noqa: E402
 
 APOLLO = ROOT / "repos" / "apollo"
@@ -66,7 +66,7 @@ RAM_CEILING = 0.85
 
 
 def sections(elf):
-    output = subprocess.run([armtools.tool("size"), "-A", str(elf)],
+    output = subprocess.run([arm_binutils_resolve.tool("size"), "-A", str(elf)],
                             capture_output=True, text=True).stdout
     found = {}
     for line in output.splitlines():
@@ -89,7 +89,7 @@ def main():
                              "reservation")
     args = parser.parse_args()
 
-    if not armtools.tool("size"):
+    if not arm_binutils_resolve.tool("size"):
         print("no arm-none-eabi-size anywhere -- skipping")
         return 0
     if not args.elf.exists():
@@ -97,7 +97,7 @@ def main():
         return 1
 
     # Which `size` produced these numbers, and whether PATH would have lied.
-    armtools.report(emit, "size")
+    arm_binutils_resolve.report(emit, "size")
     emit()
 
     found = sections(args.elf)

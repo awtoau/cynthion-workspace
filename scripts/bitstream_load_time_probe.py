@@ -43,9 +43,9 @@ the wire, and it is removable without any new gateware:
 
 All three are safe. Nothing here erases or programs the configuration flash.
 
-    ./scripts/fast_loader.py --mode measure
-    ./scripts/fast_loader.py --mode configure --bitstream tmp/.../top.bit
-    ./scripts/fast_loader.py --mode sink-test --bitstream tmp/.../top.bit
+    ./scripts/bitstream_load_time_probe.py --mode measure
+    ./scripts/bitstream_load_time_probe.py --mode configure --bitstream tmp/.../top.bit
+    ./scripts/bitstream_load_time_probe.py --mode sink-test --bitstream tmp/.../top.bit
 """
 
 import argparse
@@ -460,7 +460,7 @@ def main():
                         help="payload size for --mode measure (default 65536)")
     args = parser.parse_args()
 
-    logger = setup_logging("fast_loader", log_dir=LOG_DIR)
+    logger = setup_logging("bitstream_load_time_probe", log_dir=LOG_DIR)
 
     if args.mode == "measure":
         return mode_measure(logger, args)

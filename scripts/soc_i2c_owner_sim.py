@@ -98,7 +98,7 @@ from i2c_mux import I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR
 # soc_board_sim.py rather than copied. A second I2C slave model would drift from
 # the first, and the two would then disagree about what the bus does while both
 # reported success.
-from checks import Checks
+from sim_check_harness import Checks
 from soc_board_sim import (Bus, ModelSlave, CR_ACK, CR_RD, CR_STA,
                            CR_STO, CR_WR, CTR, CTR_EN, CR_SR, PRER, PRER_HI,
                            PRER_LO, SR_RXACK, SR_TIP, TXR_RXR)

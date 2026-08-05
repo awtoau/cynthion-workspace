@@ -41,7 +41,7 @@ it to go, which is the point.
 
     ./ecp5-test/loader/bitstream_sink.py --build
     ./ecp5-test/loader/bitstream_sink.py --build --program
-    ./scripts/fast_loader.py --mode sink-test --bitstream <file.bit>
+    ./scripts/bitstream_load_time_probe.py --mode sink-test --bitstream <file.bit>
 """
 
 import sys as _uid_sys

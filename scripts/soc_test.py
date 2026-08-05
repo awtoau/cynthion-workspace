@@ -96,7 +96,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from checks import Checks  # noqa: E402
+from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
 CRATE = ROOT / "firmware" / "cynthion-soc"

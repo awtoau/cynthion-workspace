@@ -106,7 +106,7 @@ board index. This note covers the silicon, not the gateware running on it.
 |---|---|
 | pin map (vendored) | `ecp5-test/cynthion_platform/cynthion_r1_4.py` |
 | fabric test gateware | `ecp5-test/fabric/fabric_gateware.py` |
-| build / run / control | `scripts/fabric_build.py`, `fabric_run.py`, `fabric_control.py`, `fabric_placement.py`, `fabric_sim.py`, `fabric_golden.py` |
+| build / run / control | `scripts/fabric_build.py`, `fabric_run.py`, `fabric_negative_control.py`, `fabric_placement.py`, `fabric_sim.py`, `fabric_golden.py` |
 | flashing and configuration | [`../luna_ecp5_fpga/ecp5-flashing.md`](../luna_ecp5_fpga/ecp5-flashing.md) |
 | live opcode sweep | [`../luna_ecp5_fpga/dynamic-opcode-probe.md`](../luna_ecp5_fpga/dynamic-opcode-probe.md), `scripts/ecp5_cmd_probe.py` |
 
