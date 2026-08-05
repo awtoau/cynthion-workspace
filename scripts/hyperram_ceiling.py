@@ -170,8 +170,58 @@ def delta(now, before):
     return (now - before) & MASK32
 
 
+# Apollo clocks TCK at 12 MHz (`scripts/soc_jtag_stage_sim.py` states it, and
+# `jtag_stage.py` constrains the domain at 20 MHz with headroom).
+APOLLO_TCK_MHZ = 12.0
+
+# How much faster than TCK `sync` must be for the register interface to be
+# trustworthy.
+#
+# luna's `JTAGRegisterInterface` does NOT clock its shift register from TCK. It
+# samples TCK into the `sync` domain and shifts on a detected edge:
+#
+#     m.d.sync += jtag_clk_delayed.eq(jtag_clk)
+#     jtag_strobe = rising_edge_detected(m, jtag_clk_delayed)
+#     with m.If(jtag_strobe):
+#         m.d.sync += data_register.eq(Cat(data_register[1:], jtag_tdi))
+#
+# Oversampling like that needs several `sync` edges per TCK half-period, or an
+# edge is missed or seen twice and the shift register SLIPS A BIT. Measured: at
+# sync 60 (5x) the readback is clean; at sync 30 (2.5x) the applet id came back
+# 0x48a48663 against 0x48524331, whose bits 8..23 are the wanted value shifted
+# left by one.
+#
+# Four is chosen as the smallest ratio above the 2.5 that demonstrably failed
+# with room to spare, and below the 5 that demonstrably worked. It is a bound
+# from two measurements, not a datasheet figure -- so it is stated here rather
+# than buried, and a rung that fails it is refused rather than retried.
+MIN_SYNC_OVER_TCK = 4.0
+
+
+def readback_is_trustworthy(sync_mhz):
+    """Is `sync` fast enough for the JTAG register interface? See above."""
+    return sync_mhz >= MIN_SYNC_OVER_TCK * APOLLO_TCK_MHZ
+
+
 def stable_read(registers, address, *, tries=4):
     """Read a register until two consecutive reads agree.
+
+    ONLY FOR REG_ID, REG_CONFIG AND REG_CLOCK -- the applet identity and two
+    build-time constants. Everything else in this applet either counts (words,
+    cycles, errors) or latches during the run (status), so two consecutive reads
+    legitimately differ and demanding agreement raises on a good rung. That
+    happened twice while this was being written, both times from applying it by
+    blanket substitution rather than naming the registers it is valid for. `REG_WORDS` and the cycle counters
+    advance while the engine runs, so two consecutive reads legitimately differ
+    and this would raise on a perfectly good rung -- it did, the first time it
+    was applied by a blanket substitution. Live counters are protected by the
+    ratio guard and the closing id check instead.
+
+    THIS CATCHES A TRANSIENT SLIP AND NOTHING ELSE. A slip caused by too low a
+    `sync`/TCK ratio is DETERMINISTIC: the same wrong value comes back every
+    time, two reads agree, and this returns it with confidence. That is why
+    `readback_is_trustworthy` exists and why it is checked first -- retries are
+    not a substitute for a ratio that holds.
 
     THE READBACK CAN SLIP A BIT, and this was found the alarming way: a rung
     refused to measure because the applet ID came back `0x48a48663` where
@@ -202,20 +252,20 @@ def stable_read(registers, address, *, tries=4):
 
 def poll(dut, target_words, sync_hz, bytes_per_word):
     """Accumulate a window of at least `target_words` and return what moved."""
-    words0 = stable_read(dut.registers, REG_WORDS)
-    errors0 = stable_read(dut.registers, REG_ERRORS)
-    wcyc0 = stable_read(dut.registers, REG_WRITE_CYCLES)
-    rcyc0 = stable_read(dut.registers, REG_READ_CYCLES)
+    words0 = dut.registers.register_read(REG_WORDS)
+    errors0 = dut.registers.register_read(REG_ERRORS)
+    wcyc0 = dut.registers.register_read(REG_WRITE_CYCLES)
+    rcyc0 = dut.registers.register_read(REG_READ_CYCLES)
 
     polls = 0
     while polls < MAX_POLLS:
         polls += 1
-        words = stable_read(dut.registers, REG_WORDS)
+        words = dut.registers.register_read(REG_WORDS)
         if delta(words, words0) >= target_words:
             break
-    errors = stable_read(dut.registers, REG_ERRORS)
-    wcyc = stable_read(dut.registers, REG_WRITE_CYCLES)
-    rcyc = stable_read(dut.registers, REG_READ_CYCLES)
+    errors = dut.registers.register_read(REG_ERRORS)
+    wcyc = dut.registers.register_read(REG_WRITE_CYCLES)
+    rcyc = dut.registers.register_read(REG_READ_CYCLES)
 
     dwords = delta(words, words0)
     derrors = delta(errors, errors0)
@@ -267,6 +317,19 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
         emit(f"  {tag}: Apollo did not attach -- {exc}")
         return result
 
+    # REFUSE before reading anything, not after a number looks odd. Below the
+    # ratio the JTAG shift register slips deterministically, so every value from
+    # this rung -- word count, cycle count, ERROR count -- is suspect, and a zero
+    # error count is the most dangerous of them.
+    if not readback_is_trustworthy(sync):
+        result["verdict"] = "readback not trustworthy"
+        result["detail"] = (f"sync {sync:g} MHz is {sync / APOLLO_TCK_MHZ:.1f}x "
+                            f"TCK {APOLLO_TCK_MHZ:g} MHz; {MIN_SYNC_OVER_TCK:g}x "
+                            f"is the minimum")
+        emit(f"  {tag}: {result['detail']} -- refusing to measure, the register "
+             f"readback slips at this ratio")
+        return result
+
     applet = stable_read(dut.registers, REG_ID)
     if applet != APPLET_ID:
         # A wrong applet id means the board is running something else. Reporting
@@ -300,7 +363,19 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # The control uses the same generator and comparator as the clean window,
     # with only the internally-computed golden complemented. Every checked word
     # must mismatch or a later zero-error result is silence, not evidence.
+    # ARM THE COMPLEMENT BEFORE STARTING THE ENGINE, in three writes.
+    #
+    # `command_go` is a rising-edge detect on control[0] and `negative` is
+    # control[1] (ecp5-test/bist.py). Writing 0b11 raises both in the SAME write,
+    # so the engine starts on the edge where `negative` is only just becoming
+    # valid -- and the words already in flight are compared against the
+    # un-complemented golden and correctly MATCH. That is what "78 of 6,871,936
+    # words matched" was, and why the control was given a burst of slack instead
+    # of being fixed.
+    #
+    # 0b10 first sets the complement with go still low; 0b11 then raises go alone.
     dut.registers.register_write(REG_CONTROL, 0)
+    dut.registers.register_write(REG_CONTROL, 0b10)
     dut.registers.register_write(REG_CONTROL, 0b11)
     control = poll(dut, BURST_WORDS, sync * 1e6, bytes_per_word)
     # Demanding errors == words exactly is too strict by one burst. The control
@@ -312,7 +387,10 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # One burst of slack, and no more: the point of the control is that a later
     # zero-error result is evidence rather than silence, and a control that
     # tolerated a percentage would stop proving the comparator runs at all.
-    control_slack = burst
+    # No slack. The one-burst allowance existed only to absorb the arming race
+    # fixed above; with the complement stable before the engine starts, EVERY
+    # checked word must mismatch or the comparator is not doing its job.
+    control_slack = 0
     result["negative_control"] = {
         "words": control["words"], "errors": control["errors"],
         "matched": control["words"] - control["errors"],
@@ -323,10 +401,10 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
 
     dut.registers.register_write(REG_CONTROL, 0)
     dut.registers.register_write(REG_CONTROL, 0b01)
-    die_before = stable_read(dut.registers, REG_DIE)
+    die_before = dut.registers.register_read(REG_DIE)
     window = poll(dut, target_words, sync * 1e6, bytes_per_word)
-    die_after = stable_read(dut.registers, REG_DIE)
-    status = stable_read(dut.registers, REG_STATUS)
+    die_after = dut.registers.register_read(REG_DIE)
+    status = dut.registers.register_read(REG_STATUS)
 
     result.update(window)
     result["die_before"] = die_before & 0x3F if die_before & DIE_PRESENT else None
@@ -345,14 +423,14 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
 
     if status & (1 << 7):  # a mismatch was recorded; keep how it was wrong
         result["first_bad"] = {
-            "index": stable_read(dut.registers, REG_BAD_INDEX),
-            "got": stable_read(dut.registers, REG_BAD_GOT),
-            "want": stable_read(dut.registers, REG_BAD_WANT),
+            "index": dut.registers.register_read(REG_BAD_INDEX),
+            "got": dut.registers.register_read(REG_BAD_GOT),
+            "want": dut.registers.register_read(REG_BAD_WANT),
         }
         capture = []
         for addr in range(8):
             dut.registers.register_write(REG_CAPTURE_ADDR, addr)
-            capture.append(stable_read(dut.registers, REG_CAPTURE_DATA))
+            capture.append(dut.registers.register_read(REG_CAPTURE_DATA))
         result["capture"] = capture
 
     # RE-CHECK THE APPLET ID after the run, not just before it. A JTAG readback
