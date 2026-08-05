@@ -36,7 +36,7 @@ stay low. Refresh is distributed and cannot run while CS# is low, so a burst
 longer than that is not slow, it is illegal -- and it fails by forgetting later
 rather than by returning anything wrong at the time.
 
-`hyperram_speed.py` moved 2048 words in one transaction: 17 us at 120 MHz, over
+`hyperram_speed.py` (retired) moved 2048 words in one transaction: 17 us at 120 MHz, over
 four times tCSM. Its 220.2 MB/s is therefore a rate the part is not specified to
 sustain. `BURST_WORDS` here is 128, which is 2.13 us of CS# low at the slowest
 clock swept and less above it, so every transaction is legal and the throughput
@@ -358,8 +358,9 @@ class HyperRAMCeiling(Elaboratable):
         # `m.d.sync` on entry to WRITE_START arrives one cycle late: the
         # controller latches a READ, runs a read transaction, and never asserts
         # `write_ready`. Measured, not reasoned about -- that version reported
-        # 398 M write cycles and zero words moved. `hyperram_dqs_top.py` still
-        # has this shape and has never been on hardware.
+        # 398 M write cycles and zero words moved. `hyperram_dqs_top.py` had the
+        # same shape and was retired for it -- never run on hardware, and it
+        # would have hung if it had been.
         writing = Signal()
         last = Signal()
         start = Signal()
@@ -373,9 +374,27 @@ class HyperRAMCeiling(Elaboratable):
         # What reads are judged against. The same value that was written, unless
         # this is the negative control, in which case it is a value the part
         # cannot produce.
+        # The negative control compares against the pattern of an address the
+        # PART DOES NOT HAVE, rather than against the complement.
+        #
+        # `~expected` is not a safe "impossible" value. Now that `pattern` uses
+        # every address bit it is INVERTIBLE, which means every 32-bit value is
+        # the pattern of exactly one address -- including the complement, which
+        # is `pattern(~word_addr)`. So a read landing on the wrong address could
+        # legitimately match it, and the control could not tell a broken
+        # comparator from a displaced read. Measured: 1,191 words of 3,566,592
+        # "matched" their own complement, which is 1 in 3,000 and far too
+        # systematic to be chance.
+        #
+        # The part is 8 MiB, so 2**22 sixteen-bit words: address bit 22 is the
+        # first one it cannot have. `pattern(word_addr | 1 << 22)` is therefore a
+        # value no legitimate read can return, whatever address it lands on.
+        unreachable = Signal(32)
+        m.d.comb += unreachable.eq(word_addr | (1 << 22))
+
         checked_against = Signal(self.word_bits)
         m.d.comb += checked_against.eq(
-            Mux(harness.negative, ~expected, expected))
+            Mux(harness.negative, self.pattern(unreachable), expected))
 
         m.d.sync += heartbeat.eq(heartbeat + 1)
         with m.If(burstdet):
