@@ -49,7 +49,7 @@ Measured at `b403978`, before the changes in §5.
 | DP16KD | 44 / 56 (78%) |
 | `$glbnet$clk` Fmax | 73.69 MHz against a 60 MHz constraint |
 | `./dev.py test` | 97 checks |
-| `./scripts/soc_sims.py` | 530 checks across 15 simulations |
+| `./scripts/soc_sims.py` | 531 checks across 15 simulations |
 
 ## 2. Three ways to measure fabric area, and what each is good for
 
@@ -259,8 +259,14 @@ arithmetic on a surface that has since tripled.
 
 After: `.text` 41,016 · `.rodata` 16,560 · flash image **57,600** (−880) ·
 TRELLIS_COMB 14,025 · TRELLIS_FF 7,481 · DP16KD 44 · `$glbnet$clk` 73.05 MHz ·
-`./dev.py test` 97 checks · `./scripts/soc_sims.py` 530 checks in 15
+`./dev.py test` 97 checks · `./scripts/soc_sims.py` 531 checks in 15
 simulations · `./dev.py lint` 8 passed.
+
+Both check counts are **tree-state dependent** and that is worth knowing before
+anyone reads a difference into one: the suite has a paired check on whether the
+working tree is clean, so an uncommitted tree reports 96 and 530 and a committed
+one 97 and 531. The numbers above are from the committed tree, as are the
+baselines in §1.
 
 The `stream_buffer` change was verified by converting both versions to Verilog
 and diffing: the only differences are `src` attributes and the order of two
