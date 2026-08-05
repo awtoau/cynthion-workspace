@@ -1768,10 +1768,19 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let argument = trim(rest);
 
     if argument.is_empty() {
+        // `in c/a` is the INPUT register, and it reaches no pin.
+        // `vexii_hello_soc.py` deliberately does not request
+        // `control_vbus_in_en`/`aux_vbus_in_en` -- nothing here has a reason to
+        // command a power input closed, and hardware overvoltage protection
+        // (D17, a 5.6 V zener) backs that. So the register reads back whatever
+        // was last written to it and drives nothing.
+        //
+        // Printed as `(nc)` because printing it bare made the shell able to lie
+        // about power: `in c1 a0` reads as the board's input state and is not.
         let (control_in, aux_in) = vbus::inputs();
         let _ = writeln!(
             uart,
-            "vbus {:02x}  c{} a{} t{}  in c{} a{}",
+            "vbus {:02x}  c{} a{} t{}  in c{} a{} (nc)",
             vbus::state(),
             vbus::is_closed(vbus::Source::Control) as u8,
             vbus::is_closed(vbus::Source::Aux) as u8,
