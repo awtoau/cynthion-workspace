@@ -20,17 +20,20 @@ copies it into block RAM and jumps to it.
     path        needs                          reaches HyperRAM through
     ----------  -----------------------------  -------------------------------------
     CPU memory  a running CPU                  `HyperRAMWishbone`, cache-line bursts
-    USB bulk    a running CPU and console      `HyperRAMBoot`, one word at a time
-    JTAG ER1    only a configured FPGA         `jtag_stage.JTAGStager`, one word at a time
+    USB bulk    a running CPU and console      `HyperRAMBoot`, one 32-bit pair at a time
+    JTAG ER1    only a configured FPGA         `jtag_stage.JTAGStager`, one pair at a time
 
 The JTAG path exists for the case the USB path cannot serve: a board whose
 console is wedged still has JTAG, and staging over it holds the CPU in reset
 throughout. Both land in the same layout, so `firmware/cynthion-boot` runs either
 unchanged -- it reads the header and cannot tell which path filled it.
 
-## The staging CSR moves one word at a time
+## The staging CSR moves one 32-bit pair at a time
 
-Fetch a 16-bit word, auto-increment, raise a flag the firmware polls.
+Fetch a pair, auto-increment by two, raise a flag the firmware polls. It was 16
+bits wide until the DQS PHY made that the expensive choice -- see
+`HyperRAMBoot`'s docstring, and `docs/hyperram-32-bit-only.md` for the survey of
+what other HyperRAM controllers do.
 
   * No FIFO, no side-effecting read, no register whose value depends on how
     many times it has been read. That last class of bug cost a day on the SPI
@@ -63,7 +66,7 @@ from luna.gateware.interface.psram import (HyperBusPHY, HyperRAMPHY,
 # the rule -- vendor I/O for this board is ours, the HyperBus protocol above it
 # is not, which is why the controller below still comes from luna.
 from hyperram_dqs_phy import HyperRAMDQSPHY
-from hyperram_mask import MaskedHyperRAMDQSInterface
+from hyperram_latency import LatencyHyperRAMDQSInterface
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
@@ -75,7 +78,7 @@ HYPERRAM_READCLKSEL = 0b010
 
 # Fixed-latency `sync` cycles for the DQS controller. Upstream is 5; at 4:1
 # gearing that is 10 CK and puts every capture setting at least one word late.
-# See `hyperram_mask` for the measurement.
+# See `hyperram_latency` for the measurement.
 HYPERRAM_LATENCY_CLOCKS = 4
 
 # tCSM, the longest CS# may stay Low. CR1[1:0] = 01b, which Table 12 ties to a
@@ -387,17 +390,39 @@ class HyperRAMBoot(wiring.Component):
 
     Registers, on a byte-wide CSR bus:
 
-        0x00  addr     W  32   set the word address
-        0x04  addr_rd  R  32   read it back; auto-increments after each fetch
-        0x08  ctrl     W   1   bit 0: fetch the word at `addr`
-        0x0c  status   R   1   bit 0: `data` holds a fetched word
-        0x0d  data_lo  R   8   low byte
-        0x0e  data_hi  R   8   high byte
-        0x10  wdata    W  16   store this word at `addr`, then auto-increment
+        0x00  addr     W  32   set the word address; must be EVEN
+        0x04  addr_rd  R  32   read it back; auto-increments by 2 after each fetch
+        0x08  ctrl     W   1   bit 0: fetch the pair at `addr`
+        0x0c  status   R   1   bit 0: `data` holds a fetched pair
+        0x10  data     R  32   the fetched pair
+        0x14  wdata    W  32   store this pair at `addr`, then auto-increment
 
-    Reads have no side effects, so firmware may read `data_lo`/`data_hi` in either order,
-    twice, or not at all. `status.valid` clears when the next fetch starts, not when data
-    is read.
+    Reads have no side effects, so firmware may read `data` twice or not at all.
+    `status.valid` clears when the next fetch starts, not when data is read.
+
+    ## Why this is 32 bits wide and addresses in PAIRS
+
+    It used to move one 16-bit word, because the non-DQS controller moves one
+    16-bit word per cycle and matching it was free. The DQS PHY moves 32 bits per
+    cycle and has no narrower mode -- `HyperBusDQSPHY` is "a 32-bit HyperBus
+    interface on a DQS group for use with a 4:1 PHY module" -- so a 16-bit port
+    on top of it has to be synthesised from a half-select and an RWDS byte mask.
+
+    That synthesis was the source of three separate faults: writes came back with
+    the masked half replaced by a copy of the other (`a5c3` read as `c3c3`), an
+    odd start address hung the read path outright, and every access carried an
+    address-bit-0 mux that no other HyperRAM controller has. LiteX's
+    `litehyperbus` and OpenHBMC both express byte granularity as byte enables on
+    a 32-bit bus mapped onto RWDS; neither has a narrow side-port, and luna's own
+    DQS interface ties the write mask to zero because it does not support one.
+
+    Nothing here needs 16-bit granularity. This port stages a firmware image,
+    which is a byte stream of arbitrary length, and the CPU reaches HyperRAM only
+    through a cached 32-bit window whose traffic is whole 64-byte cache lines.
+
+    `addr` stays in the part's native 16-bit word units, because that is what the
+    datasheet and the memory window both use -- but a 32-bit access covers two of
+    them, so it must be even and the auto-increment steps by two.
     """
 
     def __init__(self):
@@ -415,15 +440,13 @@ class HyperRAMBoot(wiring.Component):
                                   access="w")
         self._status = csr.Register({"valid": csr.Field(csr.action.R, 1)},
                                     access="r")
-        self._data_lo = csr.Register({"data": csr.Field(csr.action.R, 8)},
-                                     access="r")
-        self._data_hi = csr.Register({"data": csr.Field(csr.action.R, 8)},
-                                     access="r")
+        self._data = csr.Register({"data": csr.Field(csr.action.R, 32)},
+                                  access="r")
 
-        # Writing `wdata` stores that word at `addr` and auto-increments -- one register
-        # write per word, no separate "go" strobe. This is how firmware stages an image
+        # Writing `wdata` stores that pair at `addr` and auto-increments -- one register
+        # write per pair, no separate "go" strobe. This is how firmware stages an image
         # into HyperRAM before rebooting into it.
-        self._wdata = csr.Register({"data": csr.Field(csr.action.W, 16)},
+        self._wdata = csr.Register({"data": csr.Field(csr.action.W, 32)},
                                    access="w")
 
         builder = csr.Builder(addr_width=5, data_width=8)
@@ -431,9 +454,8 @@ class HyperRAMBoot(wiring.Component):
         builder.add("addr_rd", self._addr_rd, offset=0x04)
         builder.add("ctrl", self._ctrl, offset=0x08)
         builder.add("status", self._status, offset=0x0c)
-        builder.add("data_lo", self._data_lo, offset=0x0d)
-        builder.add("data_hi", self._data_hi, offset=0x0e)
-        builder.add("wdata", self._wdata, offset=0x10)
+        builder.add("data", self._data, offset=0x10)
+        builder.add("wdata", self._wdata, offset=0x14)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
         super().__init__({
@@ -443,9 +465,9 @@ class HyperRAMBoot(wiring.Component):
             "req":       wiring.Out(1),   # held high until `done`
             "req_write": wiring.Out(1),   # the pending request is a write
             "req_addr":  wiring.Out(32),
-            "req_data":  wiring.Out(16),
+            "req_data":  wiring.Out(32),
             "granted":   wiring.In(1),    # the arbiter is serving us
-            "in_data":   wiring.In(16),
+            "in_data":   wiring.In(32),
             "in_valid":  wiring.In(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
@@ -456,8 +478,8 @@ class HyperRAMBoot(wiring.Component):
         wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
 
         address = Signal(32)
-        data = Signal(16)
-        wdata = Signal(16)
+        data = Signal(32)
+        wdata = Signal(32)
         is_write = Signal()
         valid = Signal()
         busy = Signal()
@@ -471,8 +493,7 @@ class HyperRAMBoot(wiring.Component):
         m.d.comb += [
             self._addr_rd.f.addr.r_data.eq(address),
             self._status.f.valid.r_data.eq(valid),
-            self._data_lo.f.data.r_data.eq(data[:8]),
-            self._data_hi.f.data.r_data.eq(data[8:]),
+            self._data.f.data.r_data.eq(data),
             self.req.eq(busy),
             self.req_write.eq(is_write),
             self.req_addr.eq(address),
@@ -496,7 +517,7 @@ class HyperRAMBoot(wiring.Component):
             # directions, so leaving it clear after a write meant the poll never
             # completed -- a hang, with the transfer having actually succeeded.
             m.d.sync += [busy.eq(0), is_write.eq(0), valid.eq(1),
-                         address.eq(address + 1)]
+                         address.eq(address + 2)]
 
         with m.If(self._ctrl.f.fetch.w_stb & ~busy):
             m.d.sync += is_write.eq(0)
@@ -513,9 +534,10 @@ class HyperRAMBoot(wiring.Component):
                 data.eq(self.in_data),
                 valid.eq(1),
                 busy.eq(0),
-                # Auto-increment so a sequential copy needs one register write per word
-                # instead of two. HyperRAM addresses are in 16-bit words.
-                address.eq(address + 1),
+                # Auto-increment so a sequential copy needs one register write per
+                # access. `addr` counts the part's 16-bit words and this access moved
+                # two of them.
+                address.eq(address + 2),
             ]
 
         return m
@@ -583,7 +605,10 @@ class BootRAM(Elaboratable):
 
         self.jtag_req  = Signal()
         self.jtag_addr = Signal(32)
-        self.jtag_data = Signal(16)
+        # 32 bits, and `jtag_addr` must be even: every owner of this arbiter now
+        # presents a whole 32-bit pair. See `HyperRAMBoot`'s docstring for why the
+        # 16-bit ports were removed rather than kept alongside.
+        self.jtag_data = Signal(32)
         self.jtag_ack  = Signal()
 
         # Instrumentation, for #173. These are the three facts that separate
@@ -657,7 +682,7 @@ class BootRAM(Elaboratable):
                     bus=ram_bus,
                     readclksel=self.readclksel[:3],
                     read_phase=self.readclksel[3])
-                psram = MaskedHyperRAMDQSInterface(
+                psram = LatencyHyperRAMDQSInterface(
                     phy=psram_phy.phy,
                     high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
                 # Active high into the PHY; the pad is `PinsN` and the PHY reads
@@ -690,15 +715,23 @@ class BootRAM(Elaboratable):
 
         owner = Signal(range(3))
         writing = Signal()
-        wide = Signal()
         address = Signal(32)
         write_data = Signal(32)
         second_word = Signal()
 
+        # Does a 32-bit beat take TWO controller words? That is a property of the
+        # controller's width alone, now that every owner presents 32 bits -- the
+        # non-DQS controller moves 16 bits per cycle, the DQS one moves 32.
+        #
+        # It used to be a per-owner signal, set for the Wishbone window and clear
+        # for the staging ports, because the staging ports were 16 bits wide. It
+        # was never gated on `dqs`, so in DQS builds the window was still marked
+        # wide against a controller that was already 32 bits.
+        wide = not self._dqs
+
         start = Signal()
         selected_owner = Signal(range(3))
         selected_write = Signal()
-        selected_wide = Signal()
         selected_address = Signal(32)
         selected_data = Signal(32)
 
@@ -707,7 +740,6 @@ class BootRAM(Elaboratable):
         m.d.comb += [
             selected_owner.eq(OWNER_CSR),
             selected_write.eq(port.req_write),
-            selected_wide.eq(0),
             selected_address.eq(port.req_addr),
             selected_data.eq(port.req_data),
         ]
@@ -715,7 +747,6 @@ class BootRAM(Elaboratable):
             m.d.comb += [
                 selected_owner.eq(OWNER_WISHBONE),
                 selected_write.eq(mmap.req_write),
-                selected_wide.eq(1),
                 selected_address.eq(mmap.req_addr),
                 selected_data.eq(mmap.req_data),
             ]
@@ -723,7 +754,6 @@ class BootRAM(Elaboratable):
             m.d.comb += [
                 selected_owner.eq(OWNER_JTAG),
                 selected_write.eq(1),
-                selected_wide.eq(0),
                 selected_address.eq(self.jtag_addr),
                 selected_data.eq(self.jtag_data),
             ]
@@ -737,7 +767,6 @@ class BootRAM(Elaboratable):
                     m.d.sync += [
                         owner.eq(selected_owner),
                         writing.eq(selected_write),
-                        wide.eq(selected_wide),
                         address.eq(selected_address),
                         write_data.eq(selected_data),
                         second_word.eq(0),
@@ -754,7 +783,7 @@ class BootRAM(Elaboratable):
 
             with m.State("BUSY"):
                 with m.If(psram.idle):
-                    m.d.sync += [writing.eq(0), wide.eq(0), second_word.eq(0)]
+                    m.d.sync += [writing.eq(0), second_word.eq(0)]
                     m.next = "IDLE"
 
         active = ~fsm.ongoing("IDLE")
@@ -842,9 +871,11 @@ class BootRAM(Elaboratable):
         # that bursts. The DQS controller separates them -- the window still
         # bursts but its beat is now one word -- so they are two signals.
 
-        # Has this owner's 32-bit beat been fully transferred?
+        # Has this owner's 32-bit beat been fully transferred? On the DQS
+        # controller one word IS the beat, so this is always true and the whole
+        # second-word half disappears at elaboration.
         half_done = Signal()
-        m.d.comb += half_done.eq(Mux(start, ~selected_wide, ~wide | second_word))
+        m.d.comb += half_done.eq(second_word if wide else 1)
 
         # Does this owner continue past the current beat? Only the window does,
         # and only while it says so; that is what makes a cache line one burst
@@ -858,8 +889,9 @@ class BootRAM(Elaboratable):
 
         # Do not advance past the closing half. This holds both `final_word` and the
         # last write data through recovery, as required by the upstream controller.
-        with m.If(active & wide & word_event & ~current_final):
-            m.d.sync += second_word.eq(~second_word)
+        if wide:
+            with m.If(active & word_event & ~current_final):
+                m.d.sync += second_word.eq(~second_word)
 
         # The 32 bits this owner is presenting. The window replaces its fields on
         # the edge that acknowledges the previous beat, so mid-burst the live
@@ -892,39 +924,42 @@ class BootRAM(Elaboratable):
             m.d.comb += read_word.eq(psram.read_data)
 
         if self._dqs:
-            # Staging owners present one 16-bit word. Duplicate it into both
-            # halves and let the mask decide which lands, so a store to an odd
-            # word address needs neither a read-modify-write nor a buffer.
-            staged = live_data[:16]
-            m.d.comb += psram.write_data.eq(swap_halves(
-                Mux(streaming, live_data, Cat(staged, staged))))
-
-            # Which of the four byte lanes to inhibit, indexed by the swapped
-            # value's own bytes: 0 and 1 are the even word, 2 and 3 the odd one.
-            # The Wishbone window always presents a whole 32-bit beat -- its
-            # partial stores go through the read-merge-write path in
-            # `HyperRAMWishbone` -- so it inhibits nothing.
-            inhibit = Signal(4)
-            m.d.comb += inhibit.eq(
-                Mux(streaming, 0b0000, Mux(live_address[0], 0b0011, 0b1100)))
-            # `rwds.o` is in wire order, bit 3 first, and the wire carries the
-            # even word's high byte, its low byte, then the odd word's two.
-            m.d.comb += psram.write_mask.eq(
-                Cat(inhibit[2], inhibit[3], inhibit[0], inhibit[1]))
+            # Every owner presents a whole 32-bit pair, so this is one assignment
+            # and there is no byte mask at all.
+            #
+            # It used to duplicate a 16-bit staging word into both halves and let
+            # an RWDS mask choose which landed. That never worked on silicon --
+            # `a5c3` read back as `c3c3`, the masked half replaced by a copy of
+            # the other -- and luna's DQS interface does not support a write mask
+            # in the first place: it drives `rwds.o` to 0 unconditionally, which
+            # is why reaching it needed a subclass. Byte granularity was
+            # synthesised for ports that never needed it.
+            m.d.comb += psram.write_data.eq(swap_halves(live_data))
         else:
             m.d.comb += psram.write_data.eq(
                 Mux(second_word, live_data[16:], live_data[:16]))
 
-        # A 32-bit controller transfers an aligned PAIR of words, so the odd
-        # address bit picks a half rather than a transaction.
-        #
-        # It must stay EVEN. Compensating a read skew by asking for the word
-        # before was tried and HANGS the board: an odd start address gives the
-        # DQS gearing nothing to align to, `datavalid` never arrives, the beat
-        # never acknowledges and the CPU stalls in the load forever. The skew is
-        # corrected in the PHY's read window instead, where it belongs.
-        aligned = Signal(32)
-        m.d.comb += aligned.eq(live_address & ~1)
+        # `live_address` is already even by construction: the window addresses in
+        # 32-bit beats and both staging ports step by two. The `& ~1` that used to
+        # be here was covering for the 16-bit ports, which could name an odd word.
+        # A staging port is 32 bits, so on the 16-bit controller it takes two
+        # words: hold the first and present the pair when the second lands. The
+        # window does the same thing inside `HyperRAMWishbone`; the staging ports
+        # used to need none of it because they were themselves 16 bits.
+        if wide:
+            staged_low = Signal(16)
+            staging_word = active & (owner == OWNER_CSR) & word_event
+            with m.If(staging_word & ~second_word):
+                m.d.sync += staged_low.eq(read_word)
+            staged_read = Cat(staged_low, read_word)
+            staged_valid = staging_word & second_word
+            # One ack per 32-bit pair, not per device word.
+            jtag_done = (active & (owner == OWNER_JTAG)
+                         & psram.write_ready & second_word)
+        else:
+            staged_read = read_word
+            staged_valid = active & (owner == OWNER_CSR) & word_event
+            jtag_done = active & (owner == OWNER_JTAG) & psram.write_ready
 
         m.d.comb += [
             psram.single_page.eq(0),
@@ -934,7 +969,7 @@ class BootRAM(Elaboratable):
             psram.register_space.eq(self.register_space
                                     & (owner == OWNER_CSR)),
             psram.start_transfer.eq(start),
-            psram.address.eq(aligned if self._dqs else live_address),
+            psram.address.eq(live_address),
 
             # These are held from the start edge through the whole transfer. Earlier
             # pulsed drivers returned plausible wrong data rather than failing.
@@ -945,15 +980,14 @@ class BootRAM(Elaboratable):
             # the only exit `HyperRAMInterface` offers, so the bound uses it.
             psram.final_word.eq(current_final | stall_timeout),
             port.granted.eq(active & (owner == OWNER_CSR)),
-            port.in_data.eq(Mux(live_address[0], read_word[16:32], read_word[:16])
-                            if self._dqs else read_word),
-            port.in_valid.eq(active & (owner == OWNER_CSR) & word_event),
+            port.in_data.eq(staged_read),
+            port.in_valid.eq(staged_valid),
 
             mmap.granted.eq(active & (owner == OWNER_WISHBONE)),
             mmap.in_data.eq(read_word),
             mmap.in_valid.eq(active & (owner == OWNER_WISHBONE) & word_event),
 
-            self.jtag_ack.eq(active & (owner == OWNER_JTAG) & psram.write_ready),
+            self.jtag_ack.eq(jtag_done),
 
             # #173. `start` is the transaction begin the FSM already computes;
             # `mmap.bus.ack` is one Wishbone beat completing; `bursting` is the

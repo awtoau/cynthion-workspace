@@ -28,7 +28,7 @@
 //! to be the same on both sides or a staged image is unreadable by the thing that
 //! staged it. Sharing the file makes that true by construction rather than by review.
 //!
-//! Only the three primitives at the bottom -- `seek`, `write_word`, `read_word` -- know
+//! Only the three primitives at the bottom -- `seek`, `write_pair`, `read_pair` -- know
 //! where the words actually go. Everything above them (the header layout, `staged()`,
 //! `Crc32`, the magic, the bounds checks) is shared by both targets, so the QEMU test
 //! exercises the real staging logic against a RAM stand-in rather than a
@@ -71,35 +71,41 @@ pub fn seek_word(word: u32) {
     seek(word);
 }
 
-/// `pub` for `src/bench.rs`'s cross-port check, which must write through THIS
-/// port and read through the memory window. Same reason `read_u32` is public:
-/// a second copy of the lo/hi convention could disagree with this one.
-/// One 16-bit word at `word_addr`, through the staging port. `pub` for
-/// `bench::register_read`, which needs a single word and not `read_u32`'s pair.
+/// One 16-bit word at `word_addr`, selected out of the pair that contains it.
+///
+/// The staging port moves 32 bits and cannot address a single word -- see
+/// `vexii_bootram.HyperRAMBoot`. This reads the containing pair and picks a half,
+/// which costs nothing extra: the transaction was going to move both anyway.
+///
+/// `pub` for `bench::register_read`, which wants one register and not a pair.
 pub fn read_word_at(word_addr: u32) -> u16 {
-    seek(word_addr);
-    read_word()
+    let pair = read_u32(word_addr & !1);
+    if word_addr & 1 == 0 {
+        pair as u16
+    } else {
+        (pair >> 16) as u16
+    }
 }
 
-pub fn write_word_pub(value: u16) {
-    write_word(value);
+/// `pub` for `src/bench.rs`'s cross-port check, which must write through THIS
+/// port and read through the memory window.
+pub fn write_u32_pub(word_addr: u32, value: u32) {
+    write_u32(word_addr, value);
 }
 
 fn write_u32(word_addr: u32, value: u32) {
     seek(word_addr);
-    write_word(value as u16);
-    write_word((value >> 16) as u16);
+    write_pair(value);
 }
 
-/// `pub` for `src/memory.rs`, which reads one word for the shell's `hyperram read`
-/// and must assemble the halves exactly as the header above is assembled -- a
-/// second copy of the lo/hi convention could disagree with the bootloader about
-/// which half is which and nothing would catch it.
+/// `pub` for `src/memory.rs`, which reads one pair for the shell's `hyperram read`.
+///
+/// The port is 32 bits wide, so this is a single transfer and there is no longer a
+/// lo/hi assembly convention for a second copy to disagree with. `word_addr` counts
+/// the part's 16-bit words and must be EVEN.
 pub fn read_u32(word_addr: u32) -> u32 {
     seek(word_addr);
-    let lo = read_word() as u32;
-    let hi = read_word() as u32;
-    lo | (hi << 16)
+    read_pair()
 }
 
 /// CRC-32 (IEEE 802.3), computed a byte at a time without a lookup table.
@@ -154,7 +160,7 @@ pub enum Reject {
     NoMagic,
     /// Magic present, length zero or past the image region: a corrupt header.
     Length,
-    /// Every word read back as 0xffff, which is what the CSR port returns when the
+    /// Every word read back as all ones, which is what the CSR port returns when the
     /// HyperRAM controller never answers. Distinguishable from `NoMagic` only because
     /// erased memory reads as all ones and `MAGIC` deliberately is not.
     Silent,
@@ -181,7 +187,7 @@ pub fn staged() -> Result<(u32, u32), Reject> {
 }
 
 use backend::seek;
-pub use backend::{read_word, write_word};
+pub use backend::{read_pair, write_pair};
 
 /// The HyperRAM CSR port on the FPGA, per `HyperRAMBoot` in
 /// `ecp5-test/riscv/vexii_bootram.py`.
@@ -203,9 +209,8 @@ mod backend {
     const ADDR: *mut u32 = (BASE + offset::ADDR) as *mut u32;
     const CTRL: *mut u8 = (BASE + offset::CTRL) as *mut u8;
     const STATUS: *const u8 = (BASE + offset::STATUS) as *const u8;
-    const DATA_LO: *const u8 = (BASE + offset::DATA_LO) as *const u8;
-    const DATA_HI: *const u8 = (BASE + offset::DATA_HI) as *const u8;
-    const WDATA: *mut u16 = (BASE + offset::WDATA) as *mut u16;
+    const DATA: *const u32 = (BASE + offset::DATA) as *const u32;
+    const WDATA: *mut u32 = (BASE + offset::WDATA) as *mut u32;
 
     /// How long to wait for a transfer before giving up.
     ///
@@ -221,9 +226,9 @@ mod backend {
         unsafe { write_volatile(ADDR, word) };
     }
 
-    /// Store one 16-bit word and advance. The address auto-increments in gateware, so a
-    /// sequential write is one store per word with no address bookkeeping.
-    pub fn write_word(value: u16) {
+    /// Store one 32-bit pair and advance by two words. The address auto-increments in
+    /// gateware, so a sequential write is one store per pair with no address bookkeeping.
+    pub fn write_pair(value: u32) {
         // SAFETY: uncached peripheral registers. `busy` clears when the transfer
         // completes; spinning is correct because a HyperRAM word takes well under a
         // microsecond and there is nothing else for this CPU to do.
@@ -239,8 +244,8 @@ mod backend {
         }
     }
 
-    /// Fetch one 16-bit word and advance.
-    pub fn read_word() -> u16 {
+    /// Fetch one 32-bit pair and advance by two words.
+    pub fn read_pair() -> u32 {
         // SAFETY: as above. The valid flag is cleared by the gateware when the fetch
         // starts, so this cannot observe the previous word and return early.
         unsafe {
@@ -249,12 +254,12 @@ mod backend {
             while read_volatile(STATUS) & 1 == 0 {
                 spins += 1;
                 if spins > TIMEOUT {
-                    // 0xffff reads as "no image" to `staged()`, so a dead peripheral
+                    // All-ones reads as "no image" to `staged()`, so a dead peripheral
                     // makes the board fall through to the shell rather than hang.
-                    return 0xffff;
+                    return 0xffff_ffff;
                 }
             }
-            (read_volatile(DATA_LO) as u16) | ((read_volatile(DATA_HI) as u16) << 8)
+            read_volatile(DATA)
         }
     }
 }
@@ -295,26 +300,33 @@ mod backend {
         CURSOR.store(word as usize, Ordering::Relaxed);
     }
 
-    pub fn write_word(value: u16) {
+    /// The array stays 16-bit, because that is the part's word and the header
+    /// offsets are in those units. A pair is two entries, low word first --
+    /// matching the wire, where HyperBus sends the lower address first.
+    pub fn write_pair(value: u32) {
         // Out-of-range writes are dropped rather than wrapping. Wrapping would corrupt
         // the header from an over-long image and make a bounds bug look like a CRC
         // failure; on the board the gateware simply addresses past the image area.
         let index = CURSOR.load(Ordering::Relaxed);
         if index < WORDS {
-            STORE[index].store(value, Ordering::Relaxed);
+            STORE[index].store(value as u16, Ordering::Relaxed);
         }
-        CURSOR.store(index + 1, Ordering::Relaxed);
+        if index + 1 < WORDS {
+            STORE[index + 1].store((value >> 16) as u16, Ordering::Relaxed);
+        }
+        CURSOR.store(index + 2, Ordering::Relaxed);
     }
 
-    pub fn read_word() -> u16 {
-        // 0xffff past the end matches what the SoC backend returns when the peripheral
+    pub fn read_pair() -> u32 {
+        // All ones past the end matches what the SoC backend returns when the peripheral
         // never answers, which `staged()` already treats as "no image".
         let index = CURSOR.load(Ordering::Relaxed);
-        CURSOR.store(index + 1, Ordering::Relaxed);
-        if index < WORDS {
-            STORE[index].load(Ordering::Relaxed)
+        CURSOR.store(index + 2, Ordering::Relaxed);
+        if index + 1 < WORDS {
+            (STORE[index].load(Ordering::Relaxed) as u32)
+                | ((STORE[index + 1].load(Ordering::Relaxed) as u32) << 16)
         } else {
-            0xffff
+            0xffff_ffff
         }
     }
 }

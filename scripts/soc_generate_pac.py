@@ -535,7 +535,7 @@ def cross_check(peripherals, emit):
     # addresses must come from the register walk. Checking the references as well
     # as the generated file makes a reintroduced literal fail immediately.
     hyperram = (src / "hyperram.rs").read_text()
-    for name in ("ADDR", "CTRL", "STATUS", "DATA_LO", "DATA_HI", "WDATA"):
+    for name in ("ADDR", "CTRL", "STATUS", "DATA", "WDATA"):
         if f"offset::{name}" not in hyperram:
             emit(f"  hyperram.rs no longer refers to bootram::offset::{name}")
             firmware_ok = False

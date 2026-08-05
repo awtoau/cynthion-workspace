@@ -1676,7 +1676,8 @@ fn load(index: usize, uart: &mut Uart, len: u32) {
 
     let mut crc = hyperram::Crc32::new();
     let mut received = 0u32;
-    let mut pending: Option<u8> = None;
+    let mut pending: u32 = 0;
+    let mut held: u32 = 0;
 
     // Seek once; the gateware auto-increments, so the inner loop is one store per word.
     hyperram::seek_image();
@@ -1703,16 +1704,20 @@ fn load(index: usize, uart: &mut Uart, len: u32) {
         crc.push(byte);
         received += 1;
 
-        // HyperRAM is 16 bits wide, so bytes are paired little-endian.
-        match pending.take() {
-            None => pending = Some(byte),
-            Some(low) => hyperram::write_word((low as u16) | ((byte as u16) << 8)),
+        // The staging port moves a 32-bit pair, so bytes are grouped four at a time,
+        // little-endian.
+        pending = (pending >> 8) | ((byte as u32) << 24);
+        held += 1;
+        if held == 4 {
+            hyperram::write_pair(pending);
+            held = 0;
         }
     }
 
-    // An odd-length image still has to fill its final word.
-    if let Some(low) = pending {
-        hyperram::write_word(low as u16);
+    // A length that is not a multiple of four still has to fill its final pair. The
+    // unused bytes are outside `len`, so the bootloader never reads them.
+    if held != 0 {
+        hyperram::write_pair(pending >> (8 * (4 - held)));
     }
 
     let crc = crc.finish();

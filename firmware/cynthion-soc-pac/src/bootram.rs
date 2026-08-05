@@ -6,9 +6,8 @@ pub struct RegisterBlock {
     ctrl: Ctrl,
     _reserved3: [u8; 0x03],
     status: Status,
-    data_lo: DataLo,
-    data_hi: DataHi,
-    _reserved6: [u8; 0x01],
+    _reserved4: [u8; 0x03],
+    data: Data,
     wdata: Wdata,
 }
 impl RegisterBlock {
@@ -32,17 +31,12 @@ impl RegisterBlock {
     pub const fn status(&self) -> &Status {
         &self.status
     }
-    #[doc = "0x0d - BOOTRAM.DATA_LO, 8 bits at +0x0d"]
+    #[doc = "0x10 - BOOTRAM.DATA, 32 bits at +0x10"]
     #[inline(always)]
-    pub const fn data_lo(&self) -> &DataLo {
-        &self.data_lo
+    pub const fn data(&self) -> &Data {
+        &self.data
     }
-    #[doc = "0x0e - BOOTRAM.DATA_HI, 8 bits at +0x0e"]
-    #[inline(always)]
-    pub const fn data_hi(&self) -> &DataHi {
-        &self.data_hi
-    }
-    #[doc = "0x10 - BOOTRAM.WDATA, 16 bits at +0x10"]
+    #[doc = "0x14 - BOOTRAM.WDATA, 32 bits at +0x14"]
     #[inline(always)]
     pub const fn wdata(&self) -> &Wdata {
         &self.wdata
@@ -68,20 +62,15 @@ pub mod ctrl;
 pub type Status = crate::Reg<status::StatusSpec>;
 #[doc = "BOOTRAM.STATUS, 1 bits at +0x0c"]
 pub mod status;
-#[doc = "DATA_LO (r) register accessor: BOOTRAM.DATA_LO, 8 bits at +0x0d\n\nYou can [`read`](crate::Reg::read) this register and get [`data_lo::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@data_lo`] module"]
-#[doc(alias = "DATA_LO")]
-pub type DataLo = crate::Reg<data_lo::DataLoSpec>;
-#[doc = "BOOTRAM.DATA_LO, 8 bits at +0x0d"]
-pub mod data_lo;
-#[doc = "DATA_HI (r) register accessor: BOOTRAM.DATA_HI, 8 bits at +0x0e\n\nYou can [`read`](crate::Reg::read) this register and get [`data_hi::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@data_hi`] module"]
-#[doc(alias = "DATA_HI")]
-pub type DataHi = crate::Reg<data_hi::DataHiSpec>;
-#[doc = "BOOTRAM.DATA_HI, 8 bits at +0x0e"]
-pub mod data_hi;
-#[doc = "WDATA (w) register accessor: BOOTRAM.WDATA, 16 bits at +0x10\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`wdata::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@wdata`] module"]
+#[doc = "DATA (r) register accessor: BOOTRAM.DATA, 32 bits at +0x10\n\nYou can [`read`](crate::Reg::read) this register and get [`data::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@data`] module"]
+#[doc(alias = "DATA")]
+pub type Data = crate::Reg<data::DataSpec>;
+#[doc = "BOOTRAM.DATA, 32 bits at +0x10"]
+pub mod data;
+#[doc = "WDATA (w) register accessor: BOOTRAM.WDATA, 32 bits at +0x14\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`wdata::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@wdata`] module"]
 #[doc(alias = "WDATA")]
 pub type Wdata = crate::Reg<wdata::WdataSpec>;
-#[doc = "BOOTRAM.WDATA, 16 bits at +0x10"]
+#[doc = "BOOTRAM.WDATA, 32 bits at +0x14"]
 pub mod wdata;
 
 /// Byte offsets from this peripheral's generated base address.
@@ -90,7 +79,6 @@ pub mod offset {
     pub const ADDR_RD: usize = 0x04;
     pub const CTRL: usize = 0x08;
     pub const STATUS: usize = 0x0c;
-    pub const DATA_LO: usize = 0x0d;
-    pub const DATA_HI: usize = 0x0e;
-    pub const WDATA: usize = 0x10;
+    pub const DATA: usize = 0x10;
+    pub const WDATA: usize = 0x14;
 }

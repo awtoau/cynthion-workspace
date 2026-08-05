@@ -185,10 +185,16 @@ def stage(sink, image, emit):
     """
     crc = zlib.crc32(image) & 0xffff_ffff
 
-    # HyperRAM is 16 bits wide, so an odd-length image still fills its last word.
+    # Pad to a whole 32-bit PAIR, not just to a 16-bit word.
+    #
+    # The sink collects two wire words and issues one 32-bit request, because the
+    # DQS controller has no narrower granule. A frame ending on an odd word would
+    # leave that half-pair sitting in the sink, and the following frame's address
+    # would discard it -- the last word of the image, silently.
+    #
     # The pad is outside `length`, so the bootloader never reads it and the CRC is
     # over the image as given.
-    padded = image + (b"\x00" if len(image) % 2 else b"")
+    padded = image + b"\x00" * (-len(image) % 4)
 
     started = time.perf_counter()
     image_seconds = sink.write(IMAGE_WORD, padded)

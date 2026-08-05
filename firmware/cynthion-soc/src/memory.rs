@@ -118,7 +118,7 @@ impl Region {
             Region::Hyperram => {
                 // Over the CSR staging port, not the memory window at 0x20000000,
                 // and the difference matters here. Every spin in
-                // `hyperram::read_word` is bounded, so a part or a controller that
+                // `hyperram::read_pair` is bounded, so a part or a controller that
                 // never answers costs milliseconds and returns 0xffff; a load from
                 // the memory window would stall the bus with nothing in this
                 // firmware able to give up on it. A shell that hangs is worse than

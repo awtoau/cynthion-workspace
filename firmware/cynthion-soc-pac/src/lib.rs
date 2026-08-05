@@ -55,14 +55,14 @@ impl core::fmt::Debug for FlashIla {
 }
 #[doc = "flash_ila: 4 registers at 0xf0000300"]
 pub mod flash_ila;
-#[doc = "bootram: 7 registers at 0xf0000400"]
+#[doc = "bootram: 6 registers at 0xf0000400"]
 pub type Bootram = crate::Periph<bootram::RegisterBlock, 0xf000_0400>;
 impl core::fmt::Debug for Bootram {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("Bootram").finish()
     }
 }
-#[doc = "bootram: 7 registers at 0xf0000400"]
+#[doc = "bootram: 6 registers at 0xf0000400"]
 pub mod bootram;
 #[doc = "apollo_uart: 8 registers at 0xf0000500"]
 pub type ApolloUart = crate::Periph<apollo_uart::RegisterBlock, 0xf000_0500>;

@@ -656,7 +656,7 @@ fn hyper_read(mask: u32, accesses: u32, random: bool) -> u32 {
             // bookkeeping a sequential walk needs.
             hyperram::seek_word(HYPER_BASE);
         }
-        sum = sum.wrapping_add(hyperram::read_word() as u32);
+        sum = sum.wrapping_add(hyperram::read_pair());
     }
     sum
 }
@@ -672,7 +672,7 @@ fn hyper_write(mask: u32, accesses: u32, random: bool) -> u32 {
         } else if count & mask == 0 {
             hyperram::seek_word(HYPER_BASE);
         }
-        hyperram::write_word(count as u16);
+        hyperram::write_pair(count);
     }
     0
 }
@@ -685,12 +685,12 @@ fn hyper_write(mask: u32, accesses: u32, random: bool) -> u32 {
 fn hyper_verify() -> u32 {
     hyperram::seek_word(HYPER_BASE);
     for index in 0..HYPER_LARGE_WORDS {
-        hyperram::write_word((index ^ PATTERN) as u16);
+        hyperram::write_pair(index ^ PATTERN);
     }
     hyperram::seek_word(HYPER_BASE);
     let mut bad = 0;
     for index in 0..HYPER_LARGE_WORDS {
-        if hyperram::read_word() != (index ^ PATTERN) as u16 {
+        if hyperram::read_pair() != (index ^ PATTERN) {
             bad += 1;
         }
     }
@@ -856,7 +856,7 @@ fn flash(uart: &mut Uart) {
 /// Does the staging port answer at all?
 ///
 /// One word out and back. Worth its own call because every spin in
-/// `hyperram::read_word` is bounded at 100_000 iterations rather than being
+/// `hyperram::read_pair` is bounded at 100_000 iterations rather than being
 /// unbounded, and a dead port would therefore make the walks below take about a
 /// minute rather than fail -- which reads as a hung shell. See the same bound's
 /// comment in `src/hyperram.rs`, which exists for the same reason.
@@ -867,9 +867,9 @@ fn flash(uart: &mut Uart) {
 /// calls it only when a read came back ambiguous.
 pub fn hyper_present() -> bool {
     hyperram::seek_word(HYPER_BASE);
-    hyperram::write_word(PATTERN as u16);
+    hyperram::write_pair(PATTERN);
     hyperram::seek_word(HYPER_BASE);
-    hyperram::read_word() == PATTERN as u16
+    hyperram::read_pair() == PATTERN
 }
 
 /// `bench hyperram` -- the CSR staging port, which is not a memory-mapped region.
@@ -1135,10 +1135,8 @@ pub fn hyper_cross_check() -> CrossResult {
     let a_window = read_window(WORD_A);
     let a_staged = crate::hyperram::read_u32(WORD_A);
 
-    // --- B: written through the staging port, 16 bits at a time --------------
-    crate::hyperram::seek_word(WORD_B);
-    crate::hyperram::write_word_pub(PATTERN_B as u16);
-    crate::hyperram::write_word_pub((PATTERN_B >> 16) as u16);
+    // --- B: written through the staging port, one 32-bit pair -----------------
+    crate::hyperram::write_u32_pub(WORD_B, PATTERN_B);
     let b_staged = crate::hyperram::read_u32(WORD_B);
     evict();
     let b_window = read_window(WORD_B);

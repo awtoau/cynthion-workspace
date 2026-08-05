@@ -87,7 +87,7 @@
 //! | `pass`           | 188   |
 //! | `boot`           | 132   |
 //! | `hyperram::read_u32` | 48 |
-//! | `hyperram::backend::read_word` | 48 |
+//! | `hyperram::backend::read_pair` | 48 |
 //! | `enter_image`    | 64    |
 //! | `_start`         | 12    |
 //! | `.rodata`, `.data`, `.bss` | 0, and `memory.x` asserts the last two |
@@ -211,10 +211,11 @@ fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
 
     let mut done: u32 = 0;
     while done < length {
-        // HyperRAM is 16 bits wide and the address auto-increments in gateware, so a
-        // sequential read is one fetch per two bytes with no address bookkeeping.
-        let word = hyperram::read_word();
-        for shift in [0u32, 8] {
+        // The staging port moves a 32-bit pair and the address auto-increments in
+        // gateware, so a sequential read is one fetch per four bytes with no address
+        // bookkeeping.
+        let word = hyperram::read_pair();
+        for shift in [0u32, 8, 16, 24] {
             if done < length {
                 let byte = (word >> shift) as u8;
                 crc.push(byte);

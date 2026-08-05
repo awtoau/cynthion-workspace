@@ -286,8 +286,18 @@ class Run:
         sim.run()
 
     def memory(self):
-        """The HyperRAM contents the writes produced, as {word address: value}."""
-        return dict(self.writes)
+        """The HyperRAM contents the writes produced, as {word address: value}.
+
+        The sink now presents a 32-bit PAIR per request, because the DQS
+        controller has no narrower granule, so each write lands in TWO 16-bit
+        word slots -- low word first, matching the wire order HyperBus uses.
+        The link itself is still 16-bit; the pairing happens in the sink.
+        """
+        words = {}
+        for address, value in self.writes:
+            words[address] = value & 0xffff
+            words[address + 1] = (value >> 16) & 0xffff
+        return words
 
 
 # What "the FIFO has emptied" looks like from outside, counted in sync cycles
@@ -349,7 +359,12 @@ def run_checks(checks, verbose):
         status["idle"])
 
     # --- a write frame lands where it says ------------------------------
-    words = [0x1234, 0xabcd, 0x0000, 0xffff, 0x5a5a]
+    #
+    # An EVEN number of words: the sink pairs two wire words into one 32-bit
+    # request, so an odd trailing word stays in the sink rather than reaching
+    # HyperRAM. That is checked on its own below, and it is why
+    # `scripts/soc_jtag_stage.py` pads the image to four bytes.
+    words = [0x1234, 0xabcd, 0x0000, 0xffff, 0x5a5a, 0x00f0]
     run = Run(verbose=verbose)
     after = {}
 
@@ -359,9 +374,11 @@ def run_checks(checks, verbose):
         after["status"] = decode_status(await chain.frame(status_frame()))
 
     run.go(script)
-    expected = [(0x40 + n, word) for n, word in enumerate(words)]
+    # One request per PAIR, addressed by the pair's first word.
+    expected = [(0x40 + 2 * n, words[2 * n] | (words[2 * n + 1] << 16))
+                for n in range(len(words) // 2)]
     checks.check(
-        "a write frame stores its words at consecutive addresses",
+        "a write frame stores its pairs at consecutive addresses",
         run.writes == expected,
         f"got {run.writes!r}\nwant {expected!r}")
     checks.check(
@@ -379,14 +396,33 @@ def run_checks(checks, verbose):
     async def script(chain, ctx):
         await chain.frame(write_frame(0x1000, [0x0101, 0x0202]))
         await drain(ctx, run.dut)
-        await chain.frame(write_frame(0x0002, [0x0303]))
+        await chain.frame(write_frame(0x0002, [0x0303, 0x0404]))
         await drain(ctx, run.dut)
 
     run.go(script)
     checks.check(
         "a second frame starts at its own address, not where the first stopped",
-        run.writes == [(0x1000, 0x0101), (0x1001, 0x0202), (0x0002, 0x0303)],
+        run.writes == [(0x1000, 0x0101 | (0x0202 << 16)),
+                       (0x0002, 0x0303 | (0x0404 << 16))],
         run.writes)
+
+    # --- an odd trailing word is held, not written ----------------------
+    #
+    # The sink has half a pair and nothing to complete it. It must NOT invent the
+    # other half: a frame that names a new address restarts the pair, so the
+    # stranded word is dropped rather than written to the wrong place. The host
+    # pads the image so this never arises for real data.
+    run = Run(verbose=verbose)
+
+    async def script(chain, ctx):
+        await chain.frame(write_frame(0x20, [0xaaaa, 0xbbbb, 0xcccc]))
+        await drain(ctx, run.dut)
+
+    run.go(script)
+    checks.check(
+        "an odd trailing word is held in the sink, not written as half a pair",
+        run.writes == [(0x20, 0xaaaa | (0xbbbb << 16))],
+        f"{run.writes!r} -- the third word has no partner and must not reach HyperRAM")
 
     # --- frames that must do nothing ------------------------------------
     run = Run(verbose=verbose)
@@ -456,14 +492,14 @@ def run_checks(checks, verbose):
         await chain.frame(write_frame(0x20, [0xdead, 0xbeef]), abort_after=20)
         await drain(ctx, run.dut)
         aborted = list(run.writes)
-        await chain.frame(write_frame(0x30, [0xcafe]))
+        await chain.frame(write_frame(0x30, [0xcafe, 0xf00d]))
         await drain(ctx, run.dut)
         run.aborted = aborted
 
     run.go(script)
     checks.check(
         "a frame cut short does not leave the decoder mid-word",
-        run.writes[len(run.aborted):] == [(0x30, 0xcafe)],
+        run.writes[len(run.aborted):] == [(0x30, 0xcafe | (0xf00d << 16))],
         f"after the abort: {run.writes!r}. The next frame must decode from its own "
         f"command byte, whatever the previous one was doing when it stopped.")
 
@@ -479,8 +515,8 @@ def run_checks(checks, verbose):
     run.go(script)
     checks.check(
         "64 words at 12 MHz TCK never outrun a 22-cycle HyperRAM write",
-        margin["status"]["overflow"] == 0 and len(run.writes) == 64,
-        f"{len(run.writes)} words written, overflow={margin['status']['overflow']}")
+        margin["status"]["overflow"] == 0 and len(run.writes) == 32,
+        f"{len(run.writes)} pairs written, overflow={margin['status']['overflow']}")
 
     run = Run(latency=None, depth=32, verbose=verbose)
     stalled = {}

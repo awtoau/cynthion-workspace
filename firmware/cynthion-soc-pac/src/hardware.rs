@@ -67,7 +67,7 @@ pub static PERIPHERALS: &[Peripheral] = &[
         name: "bootram",
         base: 0xf0000400,
         size: 0x00000020,
-        registers: 7,
+        registers: 6,
     },
     Peripheral {
         name: "apollo_uart",

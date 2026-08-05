@@ -51,7 +51,7 @@ pub const FLASH_ILA: usize = 0xf0000300;
 /// Size of the FLASH_ILA window, in bytes.
 pub const FLASH_ILA_SIZE: usize = 0x00000020;
 
-/// bootram: 7 registers at 0xf0000400
+/// bootram: 6 registers at 0xf0000400
 pub const BOOTRAM: usize = 0xf0000400;
 /// Size of the BOOTRAM window, in bytes.
 pub const BOOTRAM_SIZE: usize = 0x00000020;

@@ -188,7 +188,9 @@ class JTAGStager(Elaboratable):
 
         self.req  = Signal()
         self.addr = Signal(32)
-        self.data = Signal(16)
+        # 32 bits: two 16-bit wire words paired up. The link stays 16-bit; see
+        # the pairing FSM in `elaborate`.
+        self.data = Signal(32)
         self.ack  = Signal()
 
         self.cpu_reset = Signal()
@@ -347,12 +349,23 @@ class JTAGStager(Elaboratable):
         # The HyperRAM side, in `sync`.
         #
         address = Signal(32)
-        held    = Signal(16)
+        held    = Signal(32)
 
         m.d.comb += [self.addr.eq(address), self.data.eq(held)]
 
         entry_data = fifo.r_data[0:16]
         entry_tag  = fifo.r_data[16:18]
+
+        # THE WIRE FORMAT IS STILL 16-BIT WORDS. The arbiter below now takes a
+        # 32-bit pair, because the DQS controller has no narrower granule -- but
+        # that is a property of the memory side, not of the link, and pushing it
+        # onto the link would change the host tool and the frame format for no
+        # gain. Two data words are collected here and issued as one request.
+        #
+        # A `write` frame therefore wants an EVEN start address and an even
+        # number of data words. `scripts/soc_jtag_stage.py` pads the image, since
+        # a firmware image is a byte stream and its length is the host's to round.
+        second = Signal()
 
         with m.FSM() as fsm:
             with m.State("POP"):
@@ -361,18 +374,28 @@ class JTAGStager(Elaboratable):
                     with m.Switch(entry_tag):
                         with m.Case(TAG_ADDR_LO):
                             m.d.sync += address[0:16].eq(entry_data)
+                            # An address restarts the pair: a frame that names a
+                            # new start must not carry a half-pair into it.
+                            m.d.sync += second.eq(0)
                         with m.Case(TAG_ADDR_HI):
                             m.d.sync += address[16:32].eq(entry_data)
+                            m.d.sync += second.eq(0)
                         with m.Default():
-                            m.d.sync += held.eq(entry_data)
-                            m.next = "WRITE"
+                            with m.If(second):
+                                m.d.sync += [held[16:32].eq(entry_data),
+                                             second.eq(0)]
+                                m.next = "WRITE"
+                            with m.Else():
+                                m.d.sync += [held[0:16].eq(entry_data),
+                                             second.eq(1)]
 
             with m.State("WRITE"):
                 m.d.comb += self.req.eq(1)
                 with m.If(self.ack):
                     # The address advances here and nowhere else, so a `write` frame
-                    # names its start once and the rest is sequential.
-                    m.d.sync += address.eq(address + 1)
+                    # names its start once and the rest is sequential. Two 16-bit
+                    # words went out, so it steps by two.
+                    m.d.sync += address.eq(address + 2)
                     m.next = "POP"
 
         m.d.comb += busy.eq(fifo.r_rdy | ~fsm.ongoing("POP"))

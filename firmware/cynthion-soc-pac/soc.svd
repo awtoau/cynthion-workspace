@@ -822,7 +822,7 @@
     </peripheral>
     <peripheral>
       <name>BOOTRAM</name>
-      <description>bootram: 7 registers at 0xf0000400</description>
+      <description>bootram: 6 registers at 0xf0000400</description>
       <baseAddress>0xF0000400</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -903,55 +903,37 @@
           </fields>
         </register>
         <register>
-          <name>DATA_LO</name>
-          <description>BOOTRAM.DATA_LO, 8 bits at +0x0d</description>
-          <addressOffset>0xD</addressOffset>
-          <size>8</size>
+          <name>DATA</name>
+          <description>BOOTRAM.DATA, 32 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>32</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
               <name>DATA</name>
-              <description>data [7:0]</description>
+              <description>data [31:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>8</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>DATA_HI</name>
-          <description>BOOTRAM.DATA_HI, 8 bits at +0x0e</description>
-          <addressOffset>0xE</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>DATA</name>
-              <description>data [7:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>8</bitWidth>
+              <bitWidth>32</bitWidth>
               <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
           <name>WDATA</name>
-          <description>BOOTRAM.WDATA, 16 bits at +0x10</description>
-          <addressOffset>0x10</addressOffset>
-          <size>16</size>
+          <description>BOOTRAM.WDATA, 32 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>32</size>
           <access>write-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
               <name>DATA</name>
-              <description>data [15:0]</description>
+              <description>data [31:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
+              <bitWidth>32</bitWidth>
               <access>write-only</access>
             </field>
           </fields>
