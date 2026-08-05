@@ -592,6 +592,9 @@ class BootRAM(Elaboratable):
             # 1:1 one. Refuse rather than emit something untested.
             raise ValueError("Active Clock Stop is not wired for the DQS PHY")
         self._clock_stop = clock_stop
+        # The DQS PHY gears the fabric at CK/2, and the vendored controller needs
+        # the FABRIC clock to turn tCSHI into a cycle count.
+        self._sync_mhz = ck_mhz / 2 if dqs else ck_mhz
         self._max_stall = hyperram_max_stall_cycles(ck_mhz)
         self.port = HyperRAMBoot()
         self.mmap = HyperRAMWishbone(word_width=32 if dqs else 16,
@@ -685,7 +688,7 @@ class BootRAM(Elaboratable):
                     read_phase=self.readclksel[3])
                 psram = HyperRAMDQSController(
                     phy=psram_phy.phy,
-                    sync_mhz=ck_mhz / 2,
+                    sync_mhz=self._sync_mhz,
                     high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
                 # Active high into the PHY; the pad is `PinsN` and the PHY reads
                 # that polarity from the pin map rather than restating it.
