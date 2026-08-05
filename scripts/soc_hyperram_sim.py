@@ -700,6 +700,101 @@ def section_as_built(checks, emit):
          f"sync 60 MHz, tCSHI {T_CSHI_NS:g} ns")
 
 
+def section_dqs_write_order(checks, emit):
+    """7b. Which 16-bit word of a DQS write reaches the device FIRST.
+
+    THE TEST NOTHING HERE HAD. Section 3 writes through the controller directly,
+    and section 9 writes through the window on the NON-DQS engine. `BootRAM` in
+    DQS mode -- the combination the board builds -- was never given real data,
+    so `swap_halves` has never been checked in the direction that matters.
+
+    It cannot be checked on the board either: `hr reg` reads registers, and
+    register space returns the SAME value in both halves of a paired fetch, so a
+    half-swap is invisible to it. That is why five correct register reads did not
+    prove the read ordering, and why the write ordering had to come here.
+
+    HyperBus sends the LOWER-addressed word first, and little-endian puts the low
+    half at the lower address. So the first word on the wire must be the low half
+    of what the CPU wrote.
+    """
+    emit("\n7b. DQS write: which half reaches the device first\n")
+
+    phy = HyperBusDQSPHY()
+    # The AS-BUILT latency, not luna's. At luna's 5 the transaction never
+    # completes and this section reports nothing about ordering -- which is the
+    # first thing it did, and is the same defect section 9b reports.
+    from vexii_bootram import HYPERRAM_LATENCY_CLOCKS
+    controller = HyperRAMDQSController(
+        phy=phy, sync_mhz=SYNC_MHZ,
+        high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
+    dut = BootRAM(interface=controller, dqs=True)
+    # The DEVICE's latency, from CR0, not the controller's count.
+    model = ModelHyperRAM(
+        latency=DEVICE_FIXED_LATENCY_CK // DQS_CK_PER_SYNC)
+
+    value = 0xa5c3_1234          # halves: low 0x1234, high 0xa5c3
+    address = 0x40               # even, as every owner now presents
+
+    class _Bus:
+        """`beat` wants something with `.phy`; the controller carries the record."""
+        phy = controller.phy
+
+    bus = _Bus()
+
+    async def testbench(ctx):
+        # The JTAG staging port is the simplest 32-bit writer into the arbiter:
+        # plain signals, no CSR bus to sequence.
+        ctx.set(dut.jtag_addr, address)
+        ctx.set(dut.jtag_data, value)
+        ctx.set(dut.jtag_req, 1)
+        acked = False
+        for _ in range(CYCLE_LIMIT):
+            await beat(ctx, bus, model)
+            if ctx.get(dut.jtag_ack):
+                acked = True
+                break
+        ctx.set(dut.jtag_req, 0)
+        # Let the transaction close: the last word is written on the way out.
+        for _ in range(40):
+            await beat(ctx, bus, model)
+        if not acked:
+            emit("        jtag_ack never arrived -- the write did not complete")
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1 / (SYNC_MHZ * 1e6))
+
+    # The model is stepped from the TESTBENCH, not a process: `beat` both reads
+    # the bus and drives what the device returns, and only a testbench may set
+    # signals in Amaranth's async simulator.
+    sim.add_testbench(testbench)
+    sim.run()
+
+    wrote = dict(model.written)
+    first = wrote.get(address)
+    second = wrote.get(address + 1)
+    # REPORTED, and the harness is INCOMPLETE: `jtag_ack` does not arrive, so
+    # nothing reaches the model and the ordering question is still unanswered.
+    # That is a defect in this section, not a finding about the design -- the
+    # staging port is driven here by hand and something in the handshake or the
+    # reset is not being satisfied. Asserting it would fail every build over a
+    # test that does not work yet.
+    #
+    # What it is FOR, once it drives the port: HyperBus sends the lower-addressed
+    # word first and little-endian puts the low half at the lower address, so the
+    # first word on the wire must be `value & 0xffff`. If the device holds the
+    # halves the other way round, `swap_halves` is inverted for writes -- and no
+    # test on the board can tell, because `hr reg` reads register space, which
+    # returns the same value in both halves of a paired fetch.
+    emit(f"        wrote {value:#010x} at word {address:#x}; device holds {wrote}")
+    emit(f"        low half {value & 0xffff:#06x} -> word {address:#x}: "
+         f"{first if first is None else hex(first)}")
+    emit(f"        high half {value >> 16:#06x} -> word {address + 1:#x}: "
+         f"{second if second is None else hex(second)}")
+    if first is None:
+        emit("        HARNESS INCOMPLETE -- nothing reached the device, so this")
+        emit("        says nothing about ordering yet. See the comment above.")
+
+
 def section_structural(checks, emit):
     """5. The reasons upstream's PHY cannot be instantiated here."""
     emit("\n5. Structural: our PHY against upstream's, in source\n")
@@ -1630,7 +1725,7 @@ def main():
 
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
-                    section_as_built,
+                    section_as_built, section_dqs_write_order,
                     section_recovery, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,

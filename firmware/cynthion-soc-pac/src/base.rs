@@ -119,11 +119,11 @@ pub const CLINT_SIZE: usize = 0x00010000;
 /// `rdtime` counts one per `sync` cycle, so this is the timebase for
 /// every interval in the firmware. Hand-maintained it silently stretched
 /// or shrank them all whenever the gateware clock moved.
-pub const SYNC_HZ: u32 = 60000000;
+pub const SYNC_HZ: u32 = 30000000;
 
 /// I2C prescale for 80 kHz SCL at that clock, from the gateware's own
 /// `prescale_for` -- `f_SCL = f_sync / (5 * (PRER + 1))`.
-pub const I2C_PRESCALE: u16 = 149;
+pub const I2C_PRESCALE: u16 = 74;
 
 /// Whether the SPIFLASH window is cached (VexiiRiscv PMA `main`).
 ///
