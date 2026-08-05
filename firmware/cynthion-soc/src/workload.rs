@@ -427,6 +427,23 @@ pub fn usb_task() {
     drain();
 }
 
+/// The same body again for `src/bin/workload_rtic.rs`, returning how many events
+/// it completed.
+///
+/// [`drain`] with a counter, rather than `drain` itself, because RTIC's task
+/// hands the count to a `#[shared]` resource that `#[idle]` waits on -- which is
+/// the one piece of this workload's state that RTIC's ceiling analysis actually
+/// checks. One `addi` per event against `drain`; the 4,169 instructions of
+/// [`handle`] are identical.
+#[cfg(feature = "rticwl")]
+pub fn usb_drain() -> u32 {
+    let mut done = 0;
+    while step() {
+        done += 1;
+    }
+    done
+}
+
 /// The deferred job, recorded by the handler.
 ///
 /// The port of `irq::defer_type_c`: the handler masks the source and says a
@@ -477,6 +494,17 @@ pub fn type_c_task() {
         return;
     }
     service_body();
+}
+
+/// Version C: the same job as an RTIC task at priority 1, preempted by the
+/// event task at priority 2. `true` if there was one to run.
+#[cfg(feature = "rticwl")]
+pub fn type_c_run() -> bool {
+    if DEFERRED_PENDING.swap(0, Ordering::Acquire) == 0 {
+        return false;
+    }
+    service_body();
+    true
 }
 
 /// The interrupt source the deferred job hangs off.
@@ -587,10 +615,64 @@ pub mod source {
     }
 }
 
+/// Start a run: reset the counters, put the console in loopback, turn the
+/// arrival generator on and arm the deferral source.
+///
+/// Returns `(mcycle, minstret)` at the instant the run began, which [`finish`]
+/// subtracts. Split out of [`command`] for `src/bin/workload_rtic.rs`, whose
+/// main loop is an `#[idle]` task and whose wait is on a `#[shared]` resource
+/// rather than on [`COMPLETED`]. Everything between here and `finish` is what
+/// `command` does, in the same order.
+#[cfg(feature = "rticwl")]
+pub fn begin() -> (u32, u32) {
+    reset();
+    let base = target::UART_BASES[0];
+    // SAFETY: MCR on a 16550. Bit 4 is local loopback and touches nothing else.
+    unsafe { core::ptr::write_volatile((base + MCR) as *mut u8, MCR_LOOP) };
+    let cycles = metrics::mcycle();
+    let instret = metrics::minstret();
+    ACTIVE.store(1, Ordering::Release);
+    source::start();
+    (cycles, instret)
+}
+
+/// Events completed so far, for a waiter that must not take a lock to ask.
+///
+/// `src/bin/workload_rtic.rs` waits on this rather than on its `#[shared]`
+/// resource, and the reason is measured there: `lock` raises the SLIC threshold
+/// to the resource's ceiling, so an `#[idle]` that polls a shared resource holds
+/// the ceiling at the event task's own priority for a part of every iteration,
+/// and the task it is waiting for cannot preempt it there. Reading an atomic
+/// takes no threshold and no critical section.
+#[cfg(feature = "rticwl")]
+pub fn completed() -> u32 {
+    COMPLETED.load(Ordering::Relaxed)
+}
+
+/// End a run and print the same report `command` prints.
+#[cfg(feature = "rticwl")]
+pub fn finish(uart: &mut Uart, started: (u32, u32)) {
+    source::stop();
+    ACTIVE.store(0, Ordering::Release);
+    let base = target::UART_BASES[0];
+    // SAFETY: as `begin`. Back on the wire, and the console works again.
+    unsafe { core::ptr::write_volatile((base + MCR) as *mut u8, 0) };
+    let cycles = metrics::mcycle().wrapping_sub(started.0);
+    let instret = metrics::minstret().wrapping_sub(started.1);
+    report(uart, cycles, instret);
+}
+
 /// `usb <n>` -- run the workload until `n` events have been completed.
 ///
 /// Arrivals come from bytes typed at this console, which is what makes them
 /// arrive at the host's convenience rather than ours.
+///
+/// Not `#[cfg]`-ed away under `rticwl` even though that binary drives a run
+/// through [`begin`] and [`finish`] instead: cargo features are additive, and a
+/// build with `workload` and `rticwl` both on -- which is what
+/// `scripts/soc_feature_isolation_check.py` makes -- would then be a shell whose
+/// `usb` command had vanished. `src/bin/workload_rtic.rs` never calls it, so LTO
+/// drops it there; measured, the RTIC binary is the same size either way.
 pub fn command(uart: &mut Uart, rest: &[u8]) {
     let want = parse(rest).unwrap_or(0);
     if want == 0 {
@@ -666,7 +748,9 @@ fn report(uart: &mut Uart, cycles: u32, instret: u32) {
     let _ = writeln!(
         uart,
         "usb    model {} deadline {} us",
-        if cfg!(feature = "preempt") {
+        if cfg!(feature = "rticwl") {
+            "rtic"
+        } else if cfg!(feature = "preempt") {
             "preempt"
         } else {
             "superloop"

@@ -66,6 +66,10 @@ BUILD_DIR = ROOT / "tmp" / "isolation-build"
 # this script builds.
 TARGET_FEATURE = "qemu"
 
+# The measurement load. A feature that enables this one changes the shell on
+# purpose -- see where `spike_features` is computed.
+WORKLOAD_FEATURE = "workload"
+
 # Modules only the spikes use. None of these may be declared by src/main.rs.
 SPIKE_MODULES = ["usb", "usb_report"]
 
@@ -79,6 +83,33 @@ def declared_features():
         return set()
     return set(re.findall(r"^([A-Za-z0-9_-]+)\s*=", match.group(1),
                           re.MULTILINE))
+
+
+def feature_graph():
+    """`{feature: [what it enables]}` from the manifest's `[features]` table."""
+    text = MANIFEST.read_text()
+    match = re.search(r"^\[features\]\s*$(.*?)(?=^\[)", text,
+                      re.MULTILINE | re.DOTALL)
+    graph = {}
+    if not match:
+        return graph
+    for name, body in re.findall(r"^([A-Za-z0-9_-]+)\s*=\s*\[([^\]]*)\]",
+                                 match.group(1), re.MULTILINE | re.DOTALL):
+        graph[name] = [part.strip().strip('"')
+                       for part in body.split(",") if part.strip()]
+    return graph
+
+
+def enables(feature, graph, seen=None):
+    """Every feature `feature` turns on, transitively, including itself."""
+    seen = seen if seen is not None else set()
+    if feature in seen:
+        return seen
+    seen.add(feature)
+    for other in graph.get(feature, []):
+        if "/" not in other:
+            enables(other, graph, seen)
+    return seen
 
 
 def bin_targets():
@@ -207,7 +238,24 @@ def main():
 
     # Every spike feature that actually exists, turned on together. If the shell
     # survives all of them at once it survives any of them.
-    spike_features = sorted((required & features) - {TARGET_FEATURE})
+    #
+    # Minus the ones that turn on `workload`, whose whole purpose is to add the
+    # #115 measurement load TO the shell -- `docs/soc-workload-and-preemption.md`
+    # measures the shell with it and the shipping image is built without it. A
+    # feature that gates a `[[bin]]` AND implies `workload`
+    # (`wlbare`, `rticwl` and everything built on it) would otherwise be reported
+    # as changing the shell, which is true and is not the property this checks.
+    # Computed from the manifest rather than listed, so a new one is classified
+    # by what it enables.
+    graph = feature_graph()
+    workload_features = {name for name in features
+                         if WORKLOAD_FEATURE in enables(name, graph)}
+    spike_features = sorted((required & features)
+                            - {TARGET_FEATURE} - workload_features)
+    if workload_features & required:
+        emit(f"  note: {', '.join(sorted(workload_features & required))} "
+             f"imply `{WORKLOAD_FEATURE}`, which adds the #115 load to the "
+             f"shell by design; not checked for inertness")
     declared = {(CRATE / path).resolve() for path in targets}
     for source in sorted(BIN_DIR.glob("*.rs")):
         entry = next((p for p in targets

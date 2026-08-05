@@ -103,6 +103,52 @@ rtic = ["dep:rtic", "riscv/critical-section-single-hart"]
 # be a control build.
 usbport = []
 
+# The #115 workload on RTIC: `src/bin/workload_rtic.rs`, the third dispatcher
+# for the same `src/workload.rs`. Implies `workload` because the point is to run
+# the identical jobs somewhere else -- the same argument `preempt` makes -- and
+# `dep:rtic` without going through the `rtic` feature so that the shell's
+# `src/bin/rtic.rs` is not dragged in.
+#
+# Not `preempt`: the two are alternative dispatchers for the same tasks and a
+# build with both would pend each job twice.
+#
+# **This feature alone does not link.** It supplies no `critical_section`
+# implementation, and riscv-slic's generated code calls `critical_section::with`.
+# Pick one of the two below; they exist because the choice of implementation IS
+# one of the measurements.
+rticwl = ["dep:rtic", "workload"]
+
+# The control binary for the one above: the same workload, the same front end,
+# the same modules, dispatched by a superloop. Its own feature rather than plain
+# `workload` because the shell also has that, and the size difference that means
+# anything is between two binaries of the same shape -- differencing the shell
+# against an RTIC binary measures the shell.
+wlbare = ["workload"]
+
+# The port with `riscv`'s own single-hart critical section: the build every
+# latency and size figure is taken from, and the one a product would ship.
+rticcs = ["rticwl", "riscv/critical-section-single-hart"]
+
+# The instrumented variant, and NOT the build any latency figure is taken from:
+# it puts two `csrr minstret`s and two atomic adds inside every pend, every lock,
+# every dispatch and every critical section.
+#
+# It registers its OWN `critical_section` implementation -- the same single-hart
+# body with the counter reads around it -- which is why it cannot also enable
+# `riscv/critical-section-single-hart`: two implementations are a duplicate
+# symbol at link. So `rticcs` and `rticprobe` are mutually exclusive by
+# construction, and the harness builds them separately.
+rticprobe = ["rticwl", "dep:critical-section"]
+
+# The naive `#[idle]`: wait on the `#[shared]` resource rather than on an atomic.
+#
+# A configuration, not a bug in RTIC, and the reason it is a feature rather than
+# a footnote is that it costs something measurable -- `lock` raises the SLIC
+# threshold to the resource's ceiling, which is the event task's own priority, so
+# every poll is a window in which the event task cannot be dispatched. The two
+# builds differ in that one line. See `src/bin/workload_rtic.rs`'s `idle`.
+rticspin = ["rticwl"]
+
 # The spike, as a second binary rather than a `#[cfg]` through `src/main.rs`.
 #
 # `#[rtic::app]` emits its own `#[no_mangle] fn main`, so it cannot coexist with
@@ -152,6 +198,19 @@ debug = true         # kept -- costs nothing in the binary, and .elf is what get
 # Declared explicitly, because cargo auto-discovers `src/bin/*.rs` and builds
 # them all otherwise -- which put `model_embassy.rs` into the default build with
 # no `embassy_executor` to link against.
+# For `--features rticprobe` only, whose `critical_section` implementation is
+# instrumented rather than `riscv`'s. Already in the graph -- riscv-slic depends
+# on it -- so this declares the direct use rather than adding a package.
+[dependencies.critical-section]
+version = "1.2"
+optional = true
+# `RawRestoreState` is `()` unless a width is chosen, and a single-hart
+# implementation has to return whether IT was the acquire that cleared
+# `mstatus.MIE` -- otherwise a nested release re-enables interrupts inside the
+# outer critical section. `riscv`'s own `critical-section-single-hart` turns this
+# same feature on for the same reason.
+features = ["restore-state-bool"]
+
 [dependencies.embassy-executor]
 version = "0.10"
 optional = true
@@ -189,3 +248,16 @@ required-features = ["models"]
 name = "model-embassy"
 path = "src/bin/model_embassy.rs"
 required-features = ["embassy"]
+
+# The workload's third dispatcher. `required-features` names the base feature;
+# a build must add `rticcs` or `rticprobe` on top of it to link, and the comment
+# on those two says why.
+[[bin]]
+name = "workload-bare"
+path = "src/bin/workload_bare.rs"
+required-features = ["wlbare"]
+
+[[bin]]
+name = "workload-rtic"
+path = "src/bin/workload_rtic.rs"
+required-features = ["rticwl"]
