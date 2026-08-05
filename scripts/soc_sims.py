@@ -6,10 +6,18 @@
 """
 Runs the simulations under `scripts/` and prints how many checks each made.
 
-    ./scripts/soc_sims.py            # every simulation
+    ./scripts/soc_sims.py            # every simulation, with its repetition
     ./scripts/soc_sims.py plic clint # only the ones whose name contains these
-    ./scripts/soc_sims.py --tier fast # the sub-second set, for a pre-commit gate
+    ./scripts/soc_sims.py --tier once # every simulation, one cycle each
     ./scripts/soc_sims.py --list     # what is available
+
+## The two tiers
+
+`once` and `soak` differ in SCOPE, not in which simulations run -- both run all
+fifteen. `once` exercises each mechanism a single time; `soak` passes `--soak` to
+the simulations that have repetition to restore, and they put back their burst
+counts, parameter sweeps, long payloads and re-runs. `fast` and `all` still work
+as names for them.
 
 Exit status is 0 only if every simulation exited 0 and reported no FAIL, so this
 works as a gate the same way `scripts/check.py` does.
@@ -75,23 +83,27 @@ SIMS = [
     "bist_sim",
 ]
 
-# The fast tier: every simulation that costs about a second or less, which is
-# 1.1 s of work together and cheap enough to sit in `dev.py gate`. The six left
-# out are the ones with a real cost -- qspi_burst_sim alone is 7 s -- and they
-# stay in `ci`. See #175.
-FAST = [
-    "soc_bus_sim",
-    "uart16550_sim",
-    "soc_serial_sim",
-    "soc_plic_sim",
-    "soc_clint_sim",
-    "soc_hyperram_sim",
-    "soc_board_sim",
-    "sideband_advertise_sim",
-    "bist_sim",
-]
+# The tiers, and the axis they are split on.
+#
+# THE AXIS IS SCOPE, NOT COST. `once` runs EVERY simulation, each exercising its
+# mechanism exactly one time. `soak` runs every simulation too, and adds the
+# repetition: burst counts above one, parameter sweeps, the long payloads, the
+# re-runs that compare one run against another.
+#
+# The first attempt at this split ran nine of the fifteen simulations in the fast
+# tier and skipped six. That is tiering on cost, and it gets both ends wrong: it
+# demoted a one-cycle test for being expensive, and left cheap repetition in the
+# path that gates a commit. A test should not test the same thing more than once,
+# and repeating an operation in the hope it glitches is a soak. See #175.
+#
+# So there is no list of names here. The difference between the tiers is one
+# flag, passed to the simulations that have repetition to restore.
+TIERS = {"once": SIMS, "soak": SIMS}
 
-TIERS = {"fast": FAST, "all": SIMS}
+# What the tiers used to be called, kept working. `fast` meant "the cheap
+# simulations" and now means "one cycle of every simulation"; `all` meant "every
+# simulation" and now means "every simulation, with its repetition".
+TIER_ALIASES = {"fast": "once", "all": "soak"}
 
 RESET, BOLD, GREEN, RED, CYAN = (
     "\033[0m", "\033[1m", "\033[92m", "\033[91m", "\033[96m",
@@ -100,11 +112,27 @@ RESET, BOLD, GREEN, RED, CYAN = (
 RESULT = re.compile(r"^\s*(PASS|FAIL)\b", re.M)
 
 
-def run_one(name, python):
+def takes_soak(name):
+    """Whether this simulation has a `--soak` flag, read off its source.
+
+    Asked of the file rather than kept in a list here, because a list is a
+    second place to remember: a simulation that grows repetition and puts it
+    behind `--soak` would be run without the flag by a soak tier that had not
+    been told about it, and nothing would say so -- the count would not move and
+    the run would still pass. The declaration lives in exactly one place.
+    """
+    source = (ROOT / "scripts" / f"{name}.py").read_text()
+    return '"--soak"' in source
+
+
+def run_one(name, python, soak=False):
     """Run one simulation. Returns (name, ok, passed, failed, seconds, tail)."""
     started = time.monotonic()
+    command = [python, str(ROOT / "scripts" / f"{name}.py")]
+    if soak and takes_soak(name):
+        command.append("--soak")
     proc = subprocess.run(
-        [python, str(ROOT / "scripts" / f"{name}.py")],
+        command,
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
     out = proc.stdout or ""
@@ -122,31 +150,37 @@ def main():
     parser.add_argument("only", nargs="*", metavar="NAME",
                         help="substrings; run only simulations matching one")
     parser.add_argument("--list", action="store_true", help="list and exit")
-    parser.add_argument("--tier", choices=sorted(TIERS), default="all",
-                        help="`fast` is the sub-second set that gates a commit")
+    parser.add_argument("--tier", choices=sorted(TIERS) + sorted(TIER_ALIASES),
+                        default="soak",
+                        help="`once` runs every simulation one cycle each and "
+                             "gates a commit; `soak` adds the repetition. "
+                             "`fast` and `all` are the old names for them")
     # Two cores back, so a full-tilt run leaves the machine usable.
     parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() - 2),
                         help="how many to run at once (they are independent)")
     parser.add_argument("--python", default=sys.executable,
                         help="interpreter to run them with")
     args = parser.parse_args()
+    tier = TIER_ALIASES.get(args.tier, args.tier)
+    soak = tier == "soak"
 
     if args.list:
-        for name in TIERS[args.tier]:
-            print(f"  {name}")
+        for name in TIERS[tier]:
+            print(f"  {name}{'  --soak' if soak and takes_soak(name) else ''}")
         return 0
 
-    chosen = [n for n in TIERS[args.tier]
+    chosen = [n for n in TIERS[tier]
               if not args.only or any(word in n for word in args.only)]
     if not chosen:
         print(f"nothing matches {args.only}", file=sys.stderr)
         return 2
 
-    emit(f"\n{BOLD}SoC simulations{RESET}  ({len(chosen)} of {len(SIMS)})\n")
+    emit(f"\n{BOLD}SoC simulations{RESET}  ({len(chosen)} of {len(SIMS)}, "
+         f"tier {tier})\n")
 
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        results = list(pool.map(lambda n: run_one(n, args.python), chosen))
+        results = list(pool.map(lambda n: run_one(n, args.python, soak), chosen))
 
     # Back into the declared order, so two runs are comparable line by line.
     order = {name: index for index, name in enumerate(SIMS)}

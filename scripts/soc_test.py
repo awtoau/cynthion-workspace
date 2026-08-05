@@ -548,6 +548,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--no-build", action="store_true",
                         help="test the existing tmp/qemu-build image")
+    parser.add_argument("--soak", action="store_true",
+                        help="also measure the busy figure on a second, "
+                             "untouched emulator -- a second wait on the same "
+                             "idle interval, and half this file's runtime")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print the whole session transcript")
     parser.add_argument("--board", action="store_true",
@@ -1562,13 +1566,24 @@ def main():
         # QEMU session and gave it a quarter second to boot an emulator, so it
         # returned nothing and reported "a freshly booted shell reported no
         # busy figure" -- a board-mode assertion failing on a QEMU timeout.
-        fresh = None if board else ask_fresh_qemu(
+        #
+        # SOAK, because of that settle. The suite has already waited out one
+        # idle re-banner -- `the shell re-announces itself while idle`, above --
+        # and this waits out a second one, in a second emulator, to ask the busy
+        # figure again on a machine that has done nothing. Same interval, same
+        # mechanism, a second time: 1.9 s of the 4 s this file spends, for a
+        # reading that differs from the one at `work moves the busy fraction`
+        # only in the fixture it was taken on. The settle cannot be shortened
+        # without making the reading meaningless (see above), so the check goes
+        # to the soak tier whole rather than being weakened.
+        fresh = ask_fresh_qemu(
             "cpu stats", b"poll     every", 3.0,
-            settle=b"Cynthion RISC-V SoC", settle_s=IDLE_S)
+            settle=b"Cynthion RISC-V SoC", settle_s=IDLE_S
+        ) if args.soak and not board else None
         resting = re.search(rb"busy (\d+)\.(\d\d)%", fresh or b"")
         resting = (int(resting.group(1)) * 100 + int(resting.group(2))
                    if resting else None)
-        if not board:
+        if args.soak and not board:
             check("an untouched shell is mostly idle",
                   resting is not None and resting < 5_000,
                   "a freshly booted shell that nobody has typed at reported "

@@ -26,6 +26,7 @@ What is checked:
 Output goes to the console and to tmp/logs/dev.log.
 """
 
+import argparse
 import sys
 import warnings
 from pathlib import Path
@@ -55,7 +56,20 @@ BAUD = 230400
 TURNAROUND_US = 40
 
 # The opcodes this link does NOT implement, and the reason the check exists.
-REMOVED = {0x2B: "POWER", 0x2C: "DEVICES", 0x40: "LED", 0x03: "LED_RELEASE"}
+#
+# ONE OPCODE IS THE MECHANISM. There is no case for any of these in the decoder,
+# so all four take the identical path -- nothing matches, the default arm answers
+# with bit 0 clear -- and the only thing that differs between them is the number
+# in the check's name. Each one is a whole Simulator build of `SidebandLink`,
+# which is 440 ms of pysim compilation against 18 ms of wire time, so the four of
+# them were 1.5 s to walk one arm four times. POWER is the one the module
+# docstring names; `--soak` restores the other three.
+REMOVED = {0x2B: "POWER"}
+SOAK_REMOVED = {0x2B: "POWER", 0x2C: "DEVICES", 0x40: "LED", 0x03: "LED_RELEASE"}
+
+# Set by `--soak`. Guards the one check that is a comparison between two runs of
+# the same command, which is a repetition by construction.
+SOAK = False
 
 
 def crc8(data):
@@ -156,8 +170,13 @@ def run(checks):
     #
     # PING: the protocol version and the CPU's byte.
     #
+    # The window is the wider one the self-framing check below needs: that check
+    # used to send a SECOND identical PING for it, and a second PING is a second
+    # 440 ms Simulator build to watch the same reply go out. Widening this one
+    # costs 15 ms of wire time and answers both questions from one send.
     reply, start, seen = transact(link(), CMD_PING, message=0x5A,
-                                  quiet_cycles=quiet)
+                                  quiet_cycles=quiet * 2)
+    ping_reply, ping_seen = reply, seen
     values = [value for value, _ in reply]
     checks.check(
         "PING replies status, version, message, CRC -- four bytes",
@@ -222,21 +241,24 @@ def run(checks):
     # The heartbeat. Two commands in one run, so the toggle is observed rather
     # than assumed from two separate resets.
     #
-    dut = link()
-    first, _, _ = transact(dut, CMD_STATUS, quiet_cycles=quiet)
     # A second transaction on a fresh instance would restart the heartbeat, so
     # this one runs both commands against the same simulation.
     both = two_commands(dut_factory=link, divisor=divisor, quiet=quiet)
+    # And a third STATUS, on yet another instance, purely to compare its reply
+    # against the first of those two: a re-run of a command the run has already
+    # made, which is the definition of the soak tier.
+    first = transact(link(), CMD_STATUS, quiet_cycles=quiet)[0] if SOAK else None
     checks.check(
         "the heartbeat toggles on every reply",
         len(both) == 2 and ((both[0] >> 6) & 1) != ((both[1] >> 6) & 1),
         f"status bytes were {[bin(v) for v in both]}; a value that CHANGES is "
         f"what proves the responder is executing, where a repeated value could "
         f"be a wedged state machine replaying a stale buffer")
-    checks.check(
-        "and the first reply is otherwise identical between runs",
-        first and first[0][0] == both[0],
-        f"{bin(first[0][0]) if first else None} against {bin(both[0])}")
+    if SOAK:
+        checks.check(
+            "and the first reply is otherwise identical between runs",
+            first and first[0][0] == both[0],
+            f"{bin(first[0][0]) if first else None} against {bin(both[0])}")
 
     #
     # A byte in, from the host.
@@ -280,12 +302,14 @@ def run(checks):
     # answers each byte of it -- observed as three received bytes for a one-byte
     # command, the last being our own CRC.
     #
-    reply, _, seen = transact(link(), CMD_PING, quiet_cycles=quiet * 2)
+    # Read off the PING at the top of this run, whose window was widened to the
+    # `quiet * 2` this check wants. Sending another one proved nothing the first
+    # had not: same command, same instance state, same wire.
     checks.check(
         "the link does not frame its own reply as new commands",
-        len(reply) == 4 and seen["strobes"] == 0,
-        f"{len(reply)} bytes on the wire and {seen['strobes']} host bytes "
-        f"received; a single PING must produce exactly one reply")
+        len(ping_reply) == 4 and ping_seen["strobes"] == 0,
+        f"{len(ping_reply)} bytes on the wire and {ping_seen['strobes']} host "
+        f"bytes received; a single PING must produce exactly one reply")
 
     #
     # The clock property, kept by construction.
@@ -349,6 +373,22 @@ def two_commands(dut_factory, divisor, quiet):
 
 
 def main():
+    # Rebound rather than passed down: which opcodes are asked and whether the
+    # re-run comparison happens are properties of the run, not of a check.
+    global REMOVED, SOAK
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="all %d removed opcodes rather than %d, and the "
+                             "reply-across-runs comparison."
+                             % (len(SOAK_REMOVED), len(REMOVED)))
+    args = parser.parse_args()
+
+    if args.soak:
+        SOAK = True
+        REMOVED = SOAK_REMOVED
+
     emit("FPGA_ADV shipping link")
     checks = Checks(emit)
     run(checks)

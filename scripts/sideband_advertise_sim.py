@@ -26,6 +26,7 @@ What is checked:
 Output goes to the console and to tmp/logs/dev.log.
 """
 
+import argparse
 import sys
 import warnings
 from pathlib import Path
@@ -57,6 +58,17 @@ BAUD = 230400
 # 1 ms here stands in for the 100 ms on the board: the same three-frames-per-timeout
 # relationship, at a length a simulation can run.
 INTERVAL_MS = 1
+
+# How many advertisements the capture window holds.
+#
+# TWO FRAMES IS ONE INTERVAL. Everything the trace is asked -- the pattern, the
+# framing, the frame's width, the line released afterwards, the start-to-start
+# gap -- is a question about one frame or about the gap between two, and the
+# third frame answers the same questions a second time at the cost of a whole
+# simulated interval. The timeout check multiplies the largest gap by three
+# rather than needing three of them. `--soak` captures the third.
+FRAMES = 2
+SOAK_FRAMES = 3
 
 
 def capture(dut, cycles, *, enable=1, hold_until=0, rx_low_until=0):
@@ -122,8 +134,8 @@ def run(checks):
     interval = dut.interval_cycles
     frame_cycles = 10 * len(PATTERN) * divisor
 
-    # Long enough for three frames plus the guard before the first.
-    trace, drove_high = capture(dut, interval * 3 + frame_cycles * 2)
+    # Long enough for FRAMES frames plus the guard before the first.
+    trace, drove_high = capture(dut, interval * FRAMES + frame_cycles * 2)
     seen = frames(trace, divisor)
 
     checks.check(
@@ -270,6 +282,18 @@ def run(checks):
 
 
 def main():
+    # Rebound rather than passed down: how long the capture runs is a property
+    # of the run, not of any check.
+    global FRAMES
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="capture %d advertisements rather than %d"
+                             % (SOAK_FRAMES, FRAMES))
+    if parser.parse_args().soak:
+        FRAMES = SOAK_FRAMES
+
     emit("FPGA_ADV advertisement")
     checks = Checks(emit)
     run(checks)

@@ -115,7 +115,27 @@ FUSB302_ADDRESS = 0x22
 # the start of the sixteen measurement bytes the poll reads in one go.
 REG_REFRESH = 0x00
 REG_VBUS1 = 0x07
-MEASUREMENT_BYTES = 16
+
+# How many of those bytes a poll reads.
+#
+# THE PART HAS SIXTEEN; THE MECHANISM NEEDS FOUR. What the checks read of a block
+# is byte 0 (the sample) and, once, that every byte is the same unrefreshed value
+# -- so a pointer, an auto-increment and a block that returns the last latched
+# sample are all proved by four bytes, and the other twelve are the same byte
+# transfer repeated. On the wire a byte is 9 bits of 5*(PRER+1) = 180 sync cycles,
+# and this file's whole cost is bytes on the wire: seven block reads of twelve
+# surplus bytes each is 15,120 cycles of the 47,497 it simulated. `--soak`
+# restores the real sixteen.
+MEASUREMENT_BYTES = 4
+SOAK_MEASUREMENT_BYTES = 16
+
+# How many polls the one-owner section makes in a row.
+#
+# The mechanism is "poll n reads what poll n-1's REFRESH latched", which happens
+# once between two polls. A third poll asserts it a second time, which is what a
+# soak is for. Each surplus poll is a block read plus a PAST_WINDOW_CYCLES wait.
+POLLS = 2
+SOAK_POLLS = 3
 
 # FUSB302B registers. Both parts answer the SAME identity byte, which is the
 # entire reason a stale bus select is dangerous rather than merely wrong.
@@ -558,10 +578,10 @@ def run_two_owner_checks(checks, verbose):
         seen["first"] = data
         await driver.idle(PAST_WINDOW_CYCLES)
 
-        # ONE OWNER. Three polls in a row: each must read the sample that its own
+        # ONE OWNER. Polls in a row: each must read the sample that its own
         # previous REFRESH asked for. `own` records (expected, got) per poll.
         own = []
-        for _ in range(3):
+        for _ in range(POLLS):
             expected = pac.sequence          # the REFRESH that latched what we
             data, error = await one_cycle(driver)   # are about to read
             own.append((expected, None if data is None else data[0]))
@@ -593,7 +613,7 @@ def run_two_owner_checks(checks, verbose):
     own = seen.get("one_owner") or []
     checks.check(
         "with one owner, every poll reads the sample its own REFRESH latched",
-        len(own) == 3 and all(got == expected for expected, got in own),
+        len(own) == POLLS and all(got == expected for expected, got in own),
         f"(expected, got) per poll: {own!r}. A mismatch means a sample arrived "
         f"from an instant nobody asked about -- every individual number is "
         f"plausible, which is why this cannot be seen from the console.")
@@ -810,15 +830,27 @@ def run_firmware_checks(checks, root):
 
 
 def main():
+    # Rebound rather than threaded through three sections: how many bytes a poll
+    # reads and how many polls it makes are properties of the run.
+    global MEASUREMENT_BYTES, POLLS
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="the real %d-byte block read rather than %d, and %d "
+                             "polls rather than %d. Same checks, more wire time."
+                             % (SOAK_MEASUREMENT_BYTES, MEASUREMENT_BYTES,
+                                SOAK_POLLS, POLLS))
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print every CSR access")
     parser.add_argument("--firmware", type=Path, default=FIRMWARE,
                         help="firmware source to check structurally "
                              "(default: firmware/cynthion-soc/src)")
     args = parser.parse_args()
+
+    if args.soak:
+        MEASUREMENT_BYTES = SOAK_MEASUREMENT_BYTES
+        POLLS = SOAK_POLLS
 
     checks = Checks(emit)
 

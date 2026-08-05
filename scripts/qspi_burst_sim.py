@@ -126,11 +126,49 @@ DIVISOR = 1
 # the streaming length differ from the burst length -- the surplus is one beat
 # either way -- and 512 bytes is 2,130 sync cycles against 131,160, which is the
 # difference between a simulation that runs in a second and one that does not.
-SINGLE_LENGTH = 512
+#
+# 128 IS THE SAME EXPERIMENT. Every `simulate()` here begins with the power-on
+# streaming read, so this length is a fixed tax on all twelve of them, and a
+# streaming read is one byte's transfer repeated: 512 bytes proves nothing that
+# 128 does not, four times over. What the checks need of it is only that it is
+# longer than a burst (section 6 compares the two) and different from the burst
+# length (which is what makes the stale-length fault appear at all). `--soak`
+# restores the 512 that was measured on the board.
+SINGLE_LENGTH = 128
+SOAK_SINGLE_LENGTH = 512
 
-# Enough for two full single reads and far more than any burst here. A wedged
-# run consumes all of it; a working 4x4 burst finishes in 420.
-CYCLE_BUDGET = 8000
+# The wedge detector: a wedged run consumes all of it, a working one breaks out.
+# So it has to sit several times above the longest completing run, and that run
+# is the power-on read plus a burst -- which is why it scales with SINGLE_LENGTH
+# rather than being a constant. At 512 bytes a completing run is ~2,130 cycles
+# against this 8,000; at 128 it is ~800 against 4,000, a wider margin than the
+# soak figure has. Three of the twelve runs spend the whole budget, so this is
+# the second of the two numbers that decide what this file costs.
+CYCLE_BUDGET = 4000
+SOAK_CYCLE_BUDGET = 8000
+
+# How many reads a burst makes. ONE HANDOFF IS THE MECHANISM: the fault is the
+# first read leaving a surplus beat in the pipeline so that the *next* read's
+# header waits forever, so two reads contain it exactly once and four reads
+# contain it three times. Two is the smallest number that is a burst at all.
+#
+# `--soak` restores the four, and with it the two checks below whose text names
+# it -- "all four reads complete" and the sixteen bytes of "every requested byte
+# is consumed". Those assertions are not weakened here, they are soak-tier
+# assertions: what they say about four reads cannot be said about two, and the
+# once tier asserts the same completion per read through section 4.
+BURSTS = 2
+SOAK_BURSTS = 4
+
+# The quad-I/O read is a different command shape, not a repetition of the
+# single-lane one, so it keeps its own section in both tiers -- only the number
+# of times it is repeated moves.
+QUAD_BURSTS = 2
+SOAK_QUAD_BURSTS = 3
+
+# Set by `--soak`. Read by the two checks that can only be made about a burst of
+# four; see BURSTS above.
+SOAK = False
 
 
 class ECP5Sim(LatticePlatform):
@@ -420,12 +458,13 @@ def section_completes(checks, old_run, new_run):
 
     checks.check("the new sequencer completes",
           not new_run.wedged)
-    checks.check("all four reads complete",
-          new_run.reads == 4,
-          measurement=f"reads={new_run.reads}")
+    if SOAK:
+        checks.check("all four reads complete",
+              new_run.reads == 4,
+              measurement=f"reads={new_run.reads}")
     checks.check("nothing is left on o_stream",
           not new_run.o_pending,
-          measurement=f"{new_run.octets} bytes accepted for 4 reads of 4")
+          measurement=f"{new_run.octets} bytes accepted for {BURSTS} reads of 4")
 
 
 def section_balance(checks, old_run, new_run):
@@ -446,9 +485,10 @@ def section_balance(checks, old_run, new_run):
     checks.check("the new first read requests exactly what it reads",
           new_first == 4,
           measurement=f"{new_first} data beats for 4 bytes")
-    checks.check("every requested byte is consumed",
-          new_run.octets == 16,
-          measurement=f"{new_run.octets} bytes off o_stream for 4 reads of 4")
+    if SOAK:
+        checks.check("every requested byte is consumed",
+              new_run.octets == 16,
+              measurement=f"{new_run.octets} bytes off o_stream for 4 reads of 4")
 
 
 def section_stability(checks, old_run, new_run):
@@ -532,22 +572,24 @@ def section_trigger(checks):
           old_run.wedged and not new_run.wedged)
 
 
-def section_measurement(checks):
+def section_measurement(checks, small):
     emit("\n6. the cycle count is a measurement\n")
 
-    small = new(burst_len=4, burst_count=4)
-    large = new(burst_len=64, burst_count=4)
+    # `small` is section 1's run, not a second one of the same shape: it is the
+    # same burst at the same length against the same sequencer, so simulating it
+    # again was the file testing one thing twice at the cost of a full run.
+    large = new(burst_len=64, burst_count=BURSTS)
     single = new(burst_len=0, burst_count=1)
 
     checks.check("a run reports a nonzero cycle count",
           small.cycles > 0 and large.cycles > 0,
-          measurement=f"{small.cycles} for 4x4, {large.cycles} for 4x64")
+          measurement=f"{small.cycles} for {BURSTS}x4, {large.cycles} for {BURSTS}x64")
     checks.check("and it grows with the bytes asked for",
           large.cycles > small.cycles,
           measurement=f"{large.cycles} against {small.cycles} for 16x the payload")
 
-    # 4x(64-4) = 240 extra bytes, each 2*(divisor+1) sync cycles on four lanes.
-    expected = 4 * (64 - 4) * 2 * (DIVISOR + 1)
+    # BURSTS x (64-4) extra bytes, each 2*(divisor+1) sync cycles on four lanes.
+    expected = BURSTS * (64 - 4) * 2 * (DIVISOR + 1)
     measured = large.cycles - small.cycles
     checks.check("by the number of clocks those bytes cost",
           abs(measured - expected) <= 8,
@@ -556,7 +598,7 @@ def section_measurement(checks):
 
     checks.check("a burst is not the streaming read wearing a different length",
           small.cycles < single.cycles,
-          measurement=f"{small.cycles} for 4x4 against {single.cycles} for one "
+          measurement=f"{small.cycles} for {BURSTS}x4 against {single.cycles} for one "
           f"{SINGLE_LENGTH}-byte read")
 
     per_read = (small.cycles - small.reads) / small.reads
@@ -567,46 +609,66 @@ def section_measurement(checks):
           f"{8 * (DIVISOR + 1) * 5}")
 
 
-def section_latency(checks):
+def section_latency(checks, deep):
     emit("\n7. why a first simulation missed it\n")
 
-    shallow = old(burst_len=4, burst_count=4, latency_platform=False)
-    deep    = old(burst_len=4, burst_count=4, latency_platform=True)
+    # Only the shallow run is new. The deep one is section 1's old run --
+    # identical arguments, identical platform -- and simulating it twice was
+    # 8,000 wedged cycles spent re-asserting what section 1 had just asserted.
+    shallow = old(burst_len=4, burst_count=BURSTS, latency_platform=False)
 
     checks.check("at the simulator's default buffer latency of 2, the old one passes",
-          not shallow.wedged and shallow.reads == 4,
-          f"{shallow.reads} of 4 reads, no wedge -- and the bug is still there")
+          not shallow.wedged and shallow.reads == BURSTS,
+          f"{shallow.reads} of {BURSTS} reads, no wedge -- and the bug is still there")
     checks.check("at the ECP5's latency of 4, the same design wedges",
           deep.wedged,
-          f"{deep.reads} of 4 reads; IOStreamer reads the number off the "
+          f"{deep.reads} of {BURSTS} reads; IOStreamer reads the number off the "
           f"platform, and a simulation without one is a different machine")
 
 
 def main():
+    # Rebound rather than threaded through eight sections: how long a burst is
+    # and how many reads it makes are properties of the run, not of any check.
+    global SINGLE_LENGTH, CYCLE_BUDGET, BURSTS, QUAD_BURSTS, SOAK
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--soak", action="store_true",
+                        help="bursts of %d rather than %d, a %d-byte streaming "
+                             "read rather than %d, and the two checks that can "
+                             "only be stated about four reads."
+                             % (SOAK_BURSTS, BURSTS, SOAK_SINGLE_LENGTH,
+                                SINGLE_LENGTH))
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print every stream beat")
     args = parser.parse_args()
 
-    checks = Checks(emit)
-    emit("\nQSPI burst sequencer\n")
+    if args.soak:
+        SOAK = True
+        SINGLE_LENGTH = SOAK_SINGLE_LENGTH
+        CYCLE_BUDGET = SOAK_CYCLE_BUDGET
+        BURSTS = SOAK_BURSTS
+        QUAD_BURSTS = SOAK_QUAD_BURSTS
 
-    old_run = old(burst_len=4, burst_count=4, verbose=args.verbose)
-    new_run = new(burst_len=4, burst_count=4, verbose=args.verbose)
+    checks = Checks(emit)
+    emit(f"\nQSPI burst sequencer -- bursts of {BURSTS}, "
+         f"{SINGLE_LENGTH}-byte streaming read\n")
+
+    old_run = old(burst_len=4, burst_count=BURSTS, verbose=args.verbose)
+    new_run = new(burst_len=4, burst_count=BURSTS, verbose=args.verbose)
 
     section_completes(checks, old_run, new_run)
     section_balance(checks, old_run, new_run)
     section_stability(checks, old_run, new_run)
-    section_commands(checks, new_run, count=4, size=4,
+    section_commands(checks, new_run, count=BURSTS, size=4,
                      opcode=OPCODE_QUAD_READ, stride=BURST_STRIDE)
-    section_commands(checks, new(burst_len=16, burst_count=3, quad_io=True),
-                     count=3, size=16, opcode=OPCODE_QUAD_IO_READ,
+    section_commands(checks, new(burst_len=16, burst_count=QUAD_BURSTS,
+                                 quad_io=True),
+                     count=QUAD_BURSTS, size=16, opcode=OPCODE_QUAD_IO_READ,
                      stride=BURST_STRIDE)
     section_trigger(checks)
-    section_measurement(checks)
-    section_latency(checks)
+    section_measurement(checks, new_run)
+    section_latency(checks, old_run)
 
     return checks.summary()
 
