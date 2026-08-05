@@ -124,15 +124,21 @@ class HyperRAMProbe(wiring.Component):
         # live signal from the CPU would miss every one of them.
         self._bursts = csr.Register({"count": csr.Field(csr.action.R, 16)},
                                     access="r")
+        # Cycles the Active Clock Stop gate held CK off (#185). Without this
+        # there is no way to tell "the stall is misaligned" from "the stall
+        # never fires", and those want opposite fixes.
+        self._stalls = csr.Register({"count": csr.Field(csr.action.R, 32)},
+                                    access="r")
         self._clear = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
                                    access="w")
         # DQSBUFM's read clock tap, settable at RUN TIME. It is a property of
         # the board and of CK, so the alternative is eight bitstreams; this way
         # one bitstream sweeps all eight in a few milliseconds. See #148.
-        # Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase.
-        # One register because they are swept together: 8 taps x 2 phases is 16
-        # combinations from one bitstream instead of sixteen builds.
-        self._sel = csr.Register({"tap": csr.Field(csr.action.W, 4)},
+        # Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase,
+        # bits 5:4 the Active Clock Stop read delay (#185). One register because
+        # they are swept together, and a sweep that needs a rebuild per point is
+        # a sweep nobody runs.
+        self._sel = csr.Register({"tap": csr.Field(csr.action.W, 6)},
                                  access="w")
 
         builder = csr.Builder(addr_width=6, data_width=8)
@@ -147,6 +153,7 @@ class HyperRAMProbe(wiring.Component):
         builder.add("cyc", self._cyc)
         builder.add("status", self._status)
         builder.add("bursts", self._bursts)
+        builder.add("stalls", self._stalls)
         builder.add("clear", self._clear)
         builder.add("sel", self._sel)
         self._bridge = csr.Bridge(builder.as_memory_map())
@@ -165,7 +172,8 @@ class HyperRAMProbe(wiring.Component):
             "dll_locked": In(unsigned(1)),
             "dll_ready": In(unsigned(1)),
             "burstdet": In(unsigned(1)),
-            "sel": Out(unsigned(4)),
+            "stall": In(unsigned(1)),
+            "sel": Out(unsigned(6)),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -186,10 +194,11 @@ class HyperRAMProbe(wiring.Component):
         cyc = Signal(32)
         bursts = Signal(16)
         burstdet_seen = Signal()
+        stalls = Signal(32)
 
         # Upstream's default until firmware says otherwise, so a build that
         # never writes it behaves exactly as before.
-        sel = Signal(4, init=0b010)
+        sel = Signal(6, init=0b010)
         with m.If(self._sel.f.tap.w_stb):
             m.d.sync += sel.eq(self._sel.f.tap.w_data)
         m.d.comb += self.sel.eq(sel)
@@ -212,7 +221,7 @@ class HyperRAMProbe(wiring.Component):
             m.d.sync += [starts.eq(0), beats.eq(0), burst_beats.eq(0),
                          max_run.eq(0), run.eq(0), words.eq(0), busy.eq(0),
                          want.eq(0), arming.eq(0), cyc.eq(0),
-                         bursts.eq(0), burstdet_seen.eq(0)]
+                         bursts.eq(0), burstdet_seen.eq(0), stalls.eq(0)]
         with m.Else():
             with m.If(start_edge):
                 m.d.sync += starts.eq(starts + 1)
@@ -238,6 +247,8 @@ class HyperRAMProbe(wiring.Component):
                 m.d.sync += arming.eq(arming + 1)
             with m.If(self.cyc):
                 m.d.sync += cyc.eq(cyc + 1)
+            with m.If(self.stall):
+                m.d.sync += stalls.eq(stalls + 1)
             with m.If(self.burstdet):
                 m.d.sync += [bursts.eq(bursts + 1), burstdet_seen.eq(1)]
             with m.If(self.beat):
@@ -261,6 +272,7 @@ class HyperRAMProbe(wiring.Component):
             self._arming.f.count.r_data.eq(arming),
             self._cyc.f.count.r_data.eq(cyc),
             self._bursts.f.count.r_data.eq(bursts),
+            self._stalls.f.count.r_data.eq(stalls),
             self._status.f.dll_locked.r_data.eq(self.dll_locked),
             self._status.f.dll_ready.r_data.eq(self.dll_ready),
             self._status.f.burstdet.r_data.eq(burstdet_seen),

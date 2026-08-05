@@ -41,7 +41,7 @@ pub const FLASH_PROBE: usize = 0xf0000200;
 /// Size of the FLASH_PROBE window, in bytes.
 pub const FLASH_PROBE_SIZE: usize = 0x00000020;
 
-/// hyperram_probe: 13 registers at 0xf0000280
+/// hyperram_probe: 14 registers at 0xf0000280
 pub const HYPERRAM_PROBE: usize = 0xf0000280;
 /// Size of the HYPERRAM_PROBE window, in bytes.
 pub const HYPERRAM_PROBE_SIZE: usize = 0x00000040;

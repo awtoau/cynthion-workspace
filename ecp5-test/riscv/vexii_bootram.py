@@ -631,7 +631,11 @@ class BootRAM(Elaboratable):
         # The DQS read path's self-report. Zero on the non-DQS build, where
         # there is no DLL and no strobe detector to report anything.
         # Driven by the probe's CSR so the tap can be swept without a rebuild.
-        self.readclksel = Signal(4, init=HYPERRAM_READCLKSEL)
+        self.readclksel = Signal(6, init=HYPERRAM_READCLKSEL)
+
+        # 0..3. How many cycles late the read data is against the CK that asked
+        # for it -- see the sweep comment in `elaborate`. #185.
+        self.read_stall_cycles = Signal(2)
 
         self.probe_dll_locked = Signal()
         self.probe_dll_ready = Signal()
@@ -802,9 +806,32 @@ class BootRAM(Elaboratable):
         # it: without the register a coalesced line write returns 0/16.
         stall_ck = Signal()
         m.d.sync += stall_ck.eq(stall)
-        m.d.comb += self.clk_stop.eq(Mux(writing, stall_ck, stall))
 
-        word_event = Mux(writing, psram.write_ready, psram.read_ready) & ~stall
+        # The read side's delay is UNKNOWN on silicon and is swept, not chosen.
+        #
+        # The sim model returns read data in the same cycle as the CK that asked
+        # for it, so N=0 is correct there and the level-aligned gate passes.
+        # Hardware does not: `HyperRAMPHY` samples DQ and RWDS through `IDDRX1F`
+        # and tACC comes before that, so stopping CK at cycle T stops data
+        # arriving at T+N. Gate the wrong cycle and the controller keeps
+        # asserting `read_ready` at a window that has stopped listening.
+        #
+        # N is a property of the board and the PHY, so it is a runtime selector
+        # like READCLKSEL rather than a constant somebody picked. #185.
+        stall_pipe = Signal(4)
+        m.d.sync += stall_pipe.eq(Cat(stall, stall_pipe[:3]))
+        stall_read = Signal()
+        with m.Switch(self.read_stall_cycles):
+            with m.Case(0):
+                m.d.comb += stall_read.eq(stall)
+            for n in range(1, 4):
+                with m.Case(n):
+                    m.d.comb += stall_read.eq(stall_pipe[n - 1])
+
+        m.d.comb += self.clk_stop.eq(Mux(writing, stall_ck, stall_read))
+
+        word_event = (Mux(writing, psram.write_ready, psram.read_ready)
+                      & ~Mux(writing, stall, stall_read))
 
         # `wide` and "keeps the transaction open" used to be the same flag, which
         # worked only because the 16-bit controller made them coincide: the

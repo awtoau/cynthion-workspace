@@ -620,6 +620,19 @@ FLASH_PHY_FAST = False
 # never been run on silicon.
 HYPERRAM_DQS = False
 
+# Active Clock Stop, and coalescing with it. See #185.
+#
+# These go together: `sustained` is only legal when the master can stall the
+# device, and Active Clock Stop is the only thing that lets it. Section 11 of
+# `scripts/soc_hyperram_sim.py` has the pair returning 16/16 both ways in one
+# transaction against section 9's 8/16 in 48 words.
+#
+# On silicon the READ half is unproven -- the model returns read data in the
+# same cycle as the CK that asked for it and hardware does not. The delay is
+# swept at runtime via `hr sel` bits 5:4 rather than guessed. Turn this on to
+# run that sweep; leave it off otherwise.
+HYPERRAM_CLOCK_STOP = False
+
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `gateware_id.py` reports it to the
 # firmware, and a geometry reported from a different number than the one the
@@ -1066,7 +1079,8 @@ class HelloSoC(Elaboratable):
         # `riscv_clock_ladder.py` rewrites `SYNC_MHZ` here, and a second copy of
         # the number inside `vexii_bootram` would drift the first time it did.
         m.submodules.bootram = bootram = BootRAM(
-            dqs=HYPERRAM_DQS, ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ)
+            dqs=HYPERRAM_DQS, ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ,
+            clock_stop=HYPERRAM_CLOCK_STOP, sustained=HYPERRAM_CLOCK_STOP)
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
         decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
@@ -1092,7 +1106,9 @@ class HelloSoC(Elaboratable):
             hyper_probe.dll_locked.eq(bootram.probe_dll_locked),
             hyper_probe.dll_ready.eq(bootram.probe_dll_ready),
             hyper_probe.burstdet.eq(bootram.probe_burstdet),
+            hyper_probe.stall.eq(bootram.probe_stall),
             bootram.readclksel.eq(hyper_probe.sel),
+            bootram.read_stall_cycles.eq(hyper_probe.sel[4:6]),
         ]
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge

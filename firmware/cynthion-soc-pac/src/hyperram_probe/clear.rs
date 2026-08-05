@@ -9,7 +9,7 @@ impl W {
         StrobeW::new(self, 0)
     }
 }
-#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x20\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`](W). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x24\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`clear::W`](W). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct ClearSpec;
 impl crate::RegisterSpec for ClearSpec {
     type Ux = u8;
