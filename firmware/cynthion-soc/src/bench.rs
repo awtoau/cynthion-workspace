@@ -325,8 +325,6 @@ fn flash_read(mask: usize, accesses: u32, random: bool) -> u32 {
     sum
 }
 
-
-
 /// The HyperRAM transaction counters (#173), read around one walk.
 ///
 /// **This is the measurement that five readings of the source could not make.**
@@ -398,10 +396,13 @@ mod probe {
     ///     byte or half order, or the write mask.
     pub fn dqs_status() -> (bool, bool, bool, u32) {
         // SAFETY: one byte inside the generated HYPERRAM_PROBE window.
-        let status = unsafe {
-            core::ptr::read_volatile((BASE + STATUS) as *const u8)
-        };
-        (status & 1 != 0, status & 2 != 0, status & 4 != 0, read16(BURSTS))
+        let status = unsafe { core::ptr::read_volatile((BASE + STATUS) as *const u8) };
+        (
+            status & 1 != 0,
+            status & 2 != 0,
+            status & 4 != 0,
+            read16(BURSTS),
+        )
     }
 
     /// Choose which tap captures returning read data.
@@ -441,12 +442,16 @@ mod probe {
     /// `starts` already reports. An instrument that cannot be interpreted is
     /// worse than one that is absent.
     pub fn read() -> (u32, u32, u32, u32, u32, u32) {
-        (read16(STARTS), read16(BEATS), read32(BUSY), read32(WANT),
-         read32(ARMING), read32(CYC))
+        (
+            read16(STARTS),
+            read16(BEATS),
+            read32(BUSY),
+            read32(WANT),
+            read32(ARMING),
+            read32(CYC),
+        )
     }
 }
-
-
 
 /// The CPU's own performance counters, which the core now carries (#173).
 ///
@@ -554,8 +559,7 @@ fn hyper_window_read(mask: usize, accesses: u32, random: bool) -> u32 {
         // `main=1` memory rather than a device. Volatile anyway, because the
         // point is to measure the access rather than to let it be optimised away.
         let word = unsafe {
-            core::ptr::read_volatile(
-                (cynthion_soc_pac::base::HYPERRAM + index * 4) as *const u32)
+            core::ptr::read_volatile((cynthion_soc_pac::base::HYPERRAM + index * 4) as *const u32)
         };
         sum = sum.wrapping_add(word);
     }
@@ -883,7 +887,10 @@ fn hyper(uart: &mut Uart) {
             uart,
             "hyper win  transactions {}  beats {}  ({} beats per transaction, \
              16 is one per cache line)",
-            starts, beats, if starts > 0 { beats / starts } else { 0 });
+            starts,
+            beats,
+            if starts > 0 { beats / starts } else { 0 }
+        );
         // WHERE THE TIME GOES, per 64-byte cache line.
         //
         // The controller is busy for a fraction of a line and idle for the rest;
@@ -896,7 +903,11 @@ fn hyper(uart: &mut Uart) {
             let _ = writeln!(
                 uart,
                 "hyper win  per line: cyc {}  busy {}  want {}  arming {}  (cycles)",
-                cyc / starts, busy / starts, want / starts, arming / starts);
+                cyc / starts,
+                busy / starts,
+                want / starts,
+                arming / starts
+            );
 
             // THE CPU'S OWN ACCOUNT, over the same walk. `front` is cycles
             // stalled on instruction fetch: a five-instruction loop in a 4 KiB
@@ -910,7 +921,11 @@ fn hyper(uart: &mut Uart) {
                 uart,
                 "hyper win  per line: front-stall {}  back-stall {}  \
                  dcache-waiting {}  dcache-miss {}",
-                front / starts, back / starts, waiting / starts, dmiss / starts);
+                front / starts,
+                back / starts,
+                waiting / starts,
+                dmiss / starts
+            );
         }
         if starts > 0 {
             let per = (beats * 100) / starts;
@@ -918,7 +933,9 @@ fn hyper(uart: &mut Uart) {
                 uart,
                 "hyper win  {}.{:02} beats per transaction -- 16.00 is one \
                  transaction per 64-byte cache line, 1.00 is one per beat",
-                per / 100, per % 100);
+                per / 100,
+                per % 100
+            );
         }
         let (rnd, got) = measure(FLASH_RND_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_RND_ACCESSES, true)
@@ -1082,7 +1099,8 @@ pub fn hyper_cross_check() -> CrossResult {
     unsafe {
         core::ptr::write_volatile(
             (cynthion_soc_pac::base::HYPERRAM + (WORD_A as usize) * 2) as *mut u32,
-            PATTERN_A);
+            PATTERN_A,
+        );
     }
     evict();
     let a_window = read_window(WORD_A);
@@ -1162,7 +1180,8 @@ fn read_window(word_addr: u32) -> u32 {
     // SAFETY: as above; 4-byte aligned, inside the decoded window.
     unsafe {
         core::ptr::read_volatile(
-            (cynthion_soc_pac::base::HYPERRAM + (word_addr as usize) * 2) as *const u32)
+            (cynthion_soc_pac::base::HYPERRAM + (word_addr as usize) * 2) as *const u32,
+        )
     }
 }
 

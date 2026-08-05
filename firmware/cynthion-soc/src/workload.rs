@@ -12,42 +12,54 @@
 //!
 //! ## What moondancer actually does per event
 //!
-//! Read from `repos/cynthion/firmware/`, upstream at
-//! `greatscottgadgets/cynthion` (moondancer is a workspace member there, not a
-//! repo of its own):
+//! moondancer is a workspace member of `greatscottgadgets/cynthion`, at
+//! `firmware/moondancer`, and not a repo of its own. Paths below are relative to
+//! that `firmware/` directory; the gateware ones are `greatscottgadgets/luna-soc`
+//! under `luna_soc/gateware/core/`. Neither is checked out in this tree, so every
+//! line number below was read from the mirror rather than copied from a summary.
 //!
 //! * **In the handler**, on `USB0_EP_CONTROL`: acknowledge, read the endpoint
 //!   number, then drain the 8-byte setup FIFO **one byte at a time over MMIO**
-//!   (`lunasoc-hal/src/usb.rs:379-408`), `transmute` it to a `SetupPacket`, and
-//!   enqueue ~12 bytes into a 64-slot `heapless::mpmc::MpMcQueue`
-//!   (`moondancer/src/bin/moondancer.rs:31`, `src/util.rs:50-70`).
-//! * **In the main loop**, `dispatch_event`
-//!   (`moondancer/src/gcp/moondancer.rs:105-212`) copies the packet into a
-//!   second queue and, for anything it cannot answer locally, hands it to the
-//!   host over a second USB port. Each such hand-off zeroes **1 KiB stack
-//!   buffers two or three times** and clones the whole 64-slot event queue
-//!   (`libgreat/src/gcp.rs:85-95`, `moondancer.rs:465`) -- two to three
-//!   kilobytes of memset per command, independent of payload.
+//!   -- `while ... have().bit() { buffer[n] = ...data().read().byte().bits() }`,
+//!   `lunasoc-hal/src/usb.rs:380-392` -- build a `SetupPacket` from it, and
+//!   enqueue an `InterruptEvent` into a **64-slot** `Queue`
+//!   (`moondancer/src/bin/moondancer.rs:28`, handler at
+//!   `moondancer/src/util.rs:50-70`).
+//! * **A full queue is fatal.** `dispatch_event` drains it into the log and then
+//!   `loop { nop }` -- in interrupt context, forever
+//!   (`moondancer/src/bin/moondancer.rs:30-46`). The queue is an assertion, not
+//!   a buffer.
+//! * **In the main loop**, `Moondancer::dispatch_event`
+//!   (`moondancer/src/gcp/moondancer.rs:82`) copies the packet on, and anything
+//!   it cannot answer locally goes to the host over a second USB port. Each
+//!   command zeroes a **1 KiB** buffer (`LIBGREAT_MAX_COMMAND_SIZE = 1024`,
+//!   `libgreat/src/gcp.rs:15`) at `moondancer/src/bin/moondancer.rs:460`, and
+//!   the verbs zero their own at `gcp/moondancer.rs:560` and `:821` -- one to
+//!   three kilobytes of memset per command, independent of payload.
 //! * **On the write path**, `write_with_packet_size`
-//!   (`lunasoc-hal/src/usb.rs:487-553`) pushes the response into the endpoint
-//!   FIFO with **one 8-bit MMIO store per byte**, then spins on an ack flag.
-//! * A 512-byte bulk payload is copied **four to five times** between FIFO,
-//!   `rx_buffer`, `Packet.buffer`, a `Vec` memmove and the 1 KiB response
-//!   buffer (`gcp/moondancer.rs:167-186`, `:558`).
+//!   (`lunasoc-hal/src/usb.rs:487`) pushes the response into the endpoint FIFO
+//!   with **one 8-bit MMIO store per byte**.
+//! * A 512-byte bulk payload is copied repeatedly between the FIFO, a
+//!   `rx_buffer` and the packet buffer (`gcp/moondancer.rs:147-162`) before it
+//!   reaches the 1 KiB response buffer.
 //!
-//! Upstream's own numbers, from `moondancer/examples/bulk_speed_test.rs:390`
-//! and `:394`: 5.03 MB/s through the byte-at-a-time FIFO loop, 6.39 MB/s with
-//! no SRAM load behind it. At 60 MHz that is **11.9 cycles per MMIO byte
-//! store**, and a 512-byte packet is **~5,000-6,000 cycles, 85-100 us** -- about
-//! 80% of a 125 us high-speed microframe, which is why the part tops out near
-//! one packet per microframe.
+//! Upstream's own numbers, in comments beside the code that produced them:
+//! `moondancer/examples/bulk_speed_test.rs:390` reads 5.03 MB/s through the
+//! byte-at-a-time FIFO loop, `:394` reads 6.39 MB/s with no memory access
+//! behind it, and `:414-416` reads ~4.04 MB/s for the shape actually shipped.
+//! At 60 MHz, 5.03 MB/s is **11.9 cycles per MMIO byte store**, so a 512-byte
+//! packet is **~5,000-6,000 cycles, 85-100 us** -- about 80% of a 125 us
+//! high-speed microframe, which is why the part tops out near one packet per
+//! microframe.
 //!
 //! ## The deadline, which is not the one people assume
 //!
-//! **Packet level is soft.** `luna_soc`'s IN endpoint NAKs every IN token while
-//! the CPU is thinking (`usb2/ep_in.py:280-292`) and the OUT endpoint NAKs when
-//! it is not primed (`usb2/ep_out.py:277`), which USB 2.0 §8.5.3.3 makes
-//! legitimate flow control. A late CPU costs a retry, not a protocol error.
+//! **Packet level is soft.** luna-soc's IN endpoint NAKs every IN token while
+//! the CPU is still filling the FIFO -- *"We'll wait for it to do so, and NAK
+//! any packets that arrive"*, `usb2/ep_in.py:279-292` -- and the OUT endpoint
+//! NAKs when it is not primed (`nak_receives = token.is_out & ~ready_to_receive
+//! & ~stalled`, `usb2/ep_out.py:277`). USB 2.0 §8.5.3.3 makes that legitimate
+//! flow control, so a late CPU costs a retry, not a protocol error.
 //!
 //! **Transfer level is hard, and generous.** USB 2.0 §9.2.6.4: the first data
 //! packet of a control read within **500 ms**, the status stage within **50 ms**
@@ -58,11 +70,14 @@
 //!
 //! **There is exactly one hard, silent window, and it is in the gateware.** The
 //! control endpoint's setup FIFO is 8 bytes deep and is *cleared by the arrival
-//! of the next SETUP token* -- `clear_fifo = new_setup | reset_requested`,
-//! `usb2/ep_control.py:128-135`. Miss it and the previous setup packet is
-//! destroyed with the host already ACKed, and the firmware reads zero bytes
-//! (`moondancer/src/util.rs:61-62`). That endpoint also cannot NAK, by
-//! construction and by USB 2.0 §8.6.1 (`ep_control.py:33-34`). So the deadline
+//! of the next SETUP token* -- `clear_fifo = new_setup | reset_requested` at
+//! `usb2/ep_control.py:130`, feeding `ResetInserter(clear_fifo)` around a
+//! `depth=8` FIFO at `:135`. Miss it and the previous setup packet is destroyed
+//! with the host already ACKed, and the firmware reads zero bytes
+//! (`moondancer/src/util.rs:62-63`). That endpoint also cannot NAK: it *"always
+//! ACKs packets, and does not allow for any flow control; as a USB device must
+//! always be ready to accept control packets. [USB2.0: 8.6.1]"*,
+//! `ep_control.py:30-34`. So the deadline
 //! that matters is **one host control-transfer inter-arrival**: at high speed a
 //! short control transfer occupies about three microframes, so **~375 us**.
 //!
@@ -75,8 +90,11 @@
 //! Stated plainly, because none of it is hidden by the numbers:
 //!
 //! * **The arrival source is a 16550, not a USB device controller.** One
-//!   received byte is one USB event. Arrivals are therefore whatever the host
-//!   feeding the console produces -- bursty, which is the right shape, but not
+//!   received byte is one USB event, through a real PLIC source into the real
+//!   handler. The bytes are injected by the 1 ms tick through local loopback
+//!   ([`tick`]) rather than by a host, which buys reproducibility -- the two
+//!   models under test see the identical arrival sequence -- and gives up the
+//!   host's own jitter. Arrivals are bursty at 1 ms granularity and not
 //!   microframe-aligned.
 //! * **The FIFO is the 16550's scratch register.** SCR is eight bits of MMIO
 //!   with no side effect of any kind, on the SoC and on QEMU's `virt` alike, so
@@ -108,15 +126,17 @@ use crate::uart::Uart;
 /// Bytes in a USB setup packet. USB 2.0 §9.3.
 const SETUP_BYTES: usize = 8;
 
-/// A high-speed bulk packet, and `luna_soc`'s OUT FIFO depth
-/// (`usb2/ep_out.py:264-266`).
+/// A high-speed bulk packet. luna-soc's OUT FIFO is exactly one of them --
+/// `SyncFIFOBuffered(width=8, depth=self._max_packet_size)`,
+/// `usb2/ep_out.py:265`, and the IN FIFO the same at `ep_in.py:169`.
 const PACKET: usize = 512;
 
-/// libgreat's response buffer, zeroed per command (`libgreat/src/gcp.rs:85-95`).
+/// libgreat's response buffer, zeroed per command. `LIBGREAT_MAX_COMMAND_SIZE`
+/// is 1024 (`libgreat/src/gcp.rs:15`).
 const GCP_BUF: usize = 1024;
 
 /// Slots in the event queue. moondancer's is 64
-/// (`moondancer/src/bin/moondancer.rs:31`).
+/// (`moondancer/src/bin/moondancer.rs:28`).
 const SLOTS: usize = 64;
 
 /// How long the deferred job takes, in microseconds.
@@ -155,10 +175,11 @@ static TAIL: AtomicUsize = AtomicUsize::new(0);
 /// Events the handler enqueued, events the task completed, and events dropped
 /// because the queue was full.
 ///
-/// Dropping rather than what upstream does. `git_mirror`'s
-/// `bin/moondancer.rs:36-45` answers a full queue with `loop { nop }` **in
-/// interrupt context**, which makes the queue a fatal assertion rather than a
-/// buffer; the local fork already drops and counts.
+/// Dropping rather than what upstream does: `bin/moondancer.rs:30-46` answers a
+/// full queue by logging every entry and then `loop { nop }` **in interrupt
+/// context**, which makes the queue a fatal assertion rather than a buffer. A
+/// counter is the more useful instrument here, and `dropped` being nonzero is
+/// what says a measurement was taken past saturation.
 static ARRIVED: AtomicU32 = AtomicU32::new(0);
 static COMPLETED: AtomicU32 = AtomicU32::new(0);
 static DROPPED: AtomicU32 = AtomicU32::new(0);
