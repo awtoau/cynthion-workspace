@@ -631,11 +631,14 @@ class BootRAM(Elaboratable):
         # The DQS read path's self-report. Zero on the non-DQS build, where
         # there is no DLL and no strobe detector to report anything.
         # Driven by the probe's CSR so the tap can be swept without a rebuild.
-        self.readclksel = Signal(6, init=HYPERRAM_READCLKSEL)
+        self.readclksel = Signal(7, init=HYPERRAM_READCLKSEL)
 
         # 0..3. How many cycles late the read data is against the CK that asked
         # for it -- see the sweep comment in `elaborate`. #185.
         self.read_stall_cycles = Signal(2)
+
+        # Route staging reads to the part's register space (#186).
+        self.register_space = Signal()
 
         self.probe_dll_locked = Signal()
         self.probe_dll_ready = Signal()
@@ -925,7 +928,11 @@ class BootRAM(Elaboratable):
 
         m.d.comb += [
             psram.single_page.eq(0),
-            psram.register_space.eq(0),
+            # Register space for the CSR staging port only. The Wishbone window
+            # is memory and must never see this; a burst into register space is
+            # meaningless. #186.
+            psram.register_space.eq(self.register_space
+                                    & (owner == OWNER_CSR)),
             psram.start_transfer.eq(start),
             psram.address.eq(aligned if self._dqs else live_address),
 

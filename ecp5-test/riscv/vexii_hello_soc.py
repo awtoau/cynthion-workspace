@@ -618,7 +618,7 @@ FLASH_PHY_FAST = False
 #
 # It also needs READCLKSEL calibrated (#148); the sweep harness exists and has
 # never been run on silicon.
-HYPERRAM_DQS = False
+HYPERRAM_DQS = True
 
 # Active Clock Stop, and coalescing with it. See #185.
 #
@@ -1109,6 +1109,7 @@ class HelloSoC(Elaboratable):
             hyper_probe.stall.eq(bootram.probe_stall),
             bootram.readclksel.eq(hyper_probe.sel),
             bootram.read_stall_cycles.eq(hyper_probe.sel[4:6]),
+            bootram.register_space.eq(hyper_probe.sel[6]),
         ]
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge

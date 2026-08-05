@@ -463,6 +463,7 @@ const HELP: &[(&str, &str)] = &[
 ///
 ///     hr status   the DQS read path's self-report
 ///     hr read <hex>  one word over the staging port
+///     hr reg      the part's ID/CR registers -- an absolute read reference
 ///     hr sel <n>  bits 2:0 READCLKSEL, bit 3 read-window phase
 ///     hr sweep    try every READCLKSEL and say which ones read correctly
 ///     hr test     round-trip one word through the staging port
@@ -555,6 +556,50 @@ fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
                 let _ = writeln!(uart, "usage: hr sel <0-3f>  (2:0 tap, 3 phase, 5:4 read stall)");
             }
         },
+        b"reg" => {
+            // ID0 is 0x0c86 on the W956A8 and nothing here wrote it, so this is
+            // the one read whose correct answer is known independently of any
+            // write this SoC has made. #186.
+            // Four addresses, four values this repo already recorded, so a
+            // single matching word is not the whole of the evidence. CR0/CR1 are
+            // at 0x0800/0x0801; 0x1000 is Winbond's undocumented fifth block,
+            // read as 0x3030 by scripts/hyperram_regfuzz.py.
+            // See docs/chips/w956a8-hyperram.md.
+            let want = [0x0c86u16, 0x0001, 0x8f2f, 0xffc1, 0x3030];
+            let got = [
+                bench::register_read(0x0000),
+                bench::register_read(0x0001),
+                bench::register_read(0x0800),
+                bench::register_read(0x0801),
+                bench::register_read(0x1000),
+            ];
+            let name = ["id0", "id1", "cr0", "cr1", "w1000"];
+            let mut agree = 0;
+            for i in 0..want.len() {
+                let ok = got[i] == want[i];
+                if ok {
+                    agree += 1;
+                }
+                let _ = writeln!(
+                    uart,
+                    "  {:<5} {:04x}  want {:04x}  {}",
+                    name[i], got[i], want[i], if ok { "ok" } else { "MISMATCH" }
+                );
+            }
+            let _ = writeln!(
+                uart,
+                "read path {} ({}/{} known constants)",
+                if agree == want.len() {
+                    "CORRECT -- so a window skew is writes, not reads"
+                } else if agree == 0 {
+                    "WRONG -- the skew is in the read path itself"
+                } else {
+                    "PARTIAL -- not a uniform skew; read the mismatches"
+                },
+                agree,
+                want.len()
+            );
+        }
         b"sweep" => {
             // One bitstream, eight settings. The tap that captures returning
             // data is a property of the board and CK, and the built-in default

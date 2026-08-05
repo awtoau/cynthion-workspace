@@ -138,7 +138,12 @@ class HyperRAMProbe(wiring.Component):
         # bits 5:4 the Active Clock Stop read delay (#185). One register because
         # they are swept together, and a sweep that needs a rebuild per point is
         # a sweep nobody runs.
-        self._sel = csr.Register({"tap": csr.Field(csr.action.W, 6)},
+        # 2:0 DQSBUFM tap, 3 read-window phase, 5:4 clock-stop read delay,
+        # 6 REGISTER SPACE for the staging port -- reading a known constant
+        # (ID0 = 0x0c86) is the only absolute reference this SoC has for the
+        # read path, since every window experiment moves reads and writes
+        # together. #186.
+        self._sel = csr.Register({"tap": csr.Field(csr.action.W, 7)},
                                  access="w")
 
         builder = csr.Builder(addr_width=6, data_width=8)
@@ -173,7 +178,7 @@ class HyperRAMProbe(wiring.Component):
             "dll_ready": In(unsigned(1)),
             "burstdet": In(unsigned(1)),
             "stall": In(unsigned(1)),
-            "sel": Out(unsigned(6)),
+            "sel": Out(unsigned(7)),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -198,7 +203,7 @@ class HyperRAMProbe(wiring.Component):
 
         # Upstream's default until firmware says otherwise, so a build that
         # never writes it behaves exactly as before.
-        sel = Signal(6, init=0b010)
+        sel = Signal(7, init=0b010)
         with m.If(self._sel.f.tap.w_stb):
             m.d.sync += sel.eq(self._sel.f.tap.w_data)
         m.d.comb += self.sel.eq(sel)

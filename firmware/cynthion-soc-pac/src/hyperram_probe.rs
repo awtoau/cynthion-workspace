@@ -84,7 +84,7 @@ impl RegisterBlock {
     pub const fn clear(&self) -> &Clear {
         &self.clear
     }
-    #[doc = "0x25 - HYPERRAM_PROBE.SEL, 6 bits at +0x25"]
+    #[doc = "0x25 - HYPERRAM_PROBE.SEL, 7 bits at +0x25"]
     #[inline(always)]
     pub const fn sel(&self) -> &Sel {
         &self.sel
@@ -155,10 +155,10 @@ pub mod stalls;
 pub type Clear = crate::Reg<clear::ClearSpec>;
 #[doc = "HYPERRAM_PROBE.CLEAR, 1 bits at +0x24"]
 pub mod clear;
-#[doc = "SEL (w) register accessor: HYPERRAM_PROBE.SEL, 6 bits at +0x25\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`sel::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@sel`] module"]
+#[doc = "SEL (w) register accessor: HYPERRAM_PROBE.SEL, 7 bits at +0x25\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`sel::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@sel`] module"]
 #[doc(alias = "SEL")]
 pub type Sel = crate::Reg<sel::SelSpec>;
-#[doc = "HYPERRAM_PROBE.SEL, 6 bits at +0x25"]
+#[doc = "HYPERRAM_PROBE.SEL, 7 bits at +0x25"]
 pub mod sel;
 
 /// Byte offsets from this peripheral's generated base address.

@@ -1,9 +1,0 @@
-#!/usr/bin/env python3
-"""Cynthion CLI - entry point"""
-import sys
-import subprocess
-from pathlib import Path
-
-# Delegate to scripts/cyn
-scripts_cyn = Path(__file__).parent / "scripts" / "cyn"
-sys.exit(subprocess.run([sys.executable, str(scripts_cyn)] + sys.argv[1:]).returncode)

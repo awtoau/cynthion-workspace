@@ -45,9 +45,11 @@ whether the ring buffer fixes the reentrancy in practice is untested.
 
 57 lines adding graceful shutdown via a `cmd shutdown` path to `apollod.py`.
 
-Real work, but the target moved: `grep shutdown apollod.py` returns nothing, and
-this workspace now uses `scripts/cyn-daemon.py`. Only worth applying if
-`apollod.py` has a future. Otherwise delete.
+Real work, but the target moved: `grep shutdown apollod.py` returns nothing. The
+`cyn` daemon this once pointed at as the replacement is itself retired — it
+imported a module that had moved to `debris/`, so it raised `ModuleNotFoundError`
+on every run, and both it and the `./cyn` wrapper are now deleted. Only worth
+applying if `apollod.py` has a future. Otherwise delete.
 
 ## 3. `moondancer-uart0-log-port.diff` — recommend deleting
 
