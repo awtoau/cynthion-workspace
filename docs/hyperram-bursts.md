@@ -1,7 +1,7 @@
 # HyperRAM bursts: the data phase cannot be stalled
 
 **Index:** [`README.md`](README.md) · window and ports:
-[`hyperram-next-step.md`](hyperram-next-step.md) · rates and options:
+[`hyperram-next-step.md`](../debris/docs/hyperram-next-step.md) · rates and options:
 [`memory-speed-options.md`](memory-speed-options.md) · decisions:
 [`decisions.md`](decisions.md)
 

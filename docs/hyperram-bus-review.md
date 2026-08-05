@@ -11,7 +11,7 @@ nothing does.
 the gate wired. That makes §5 the recommendation and most of §1–§4 moot.
 
 **Index:** [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) ·
-[`hyperram-next-step.md`](hyperram-next-step.md) ·
+[`hyperram-next-step.md`](../debris/docs/hyperram-next-step.md) ·
 [`upstream-boundary.md`](upstream-boundary.md) ·
 [`riscv-core-build.md`](riscv-core-build.md)
 
