@@ -35,7 +35,7 @@ graph and a kernel tarball, and a gate that needs the network fails on a flight.
 |---|---|---|---|---|
 | bare riscv-rt (the Rust floor) | 760 | — | — | 4 |
 | **cooperative**, hand-written | 984 | **224** | 5% | 8 |
-| **Embassy 0.10**, `platform-riscv32` † | 1,808 | **1,048** | 26% | 120 |
+| **Embassy 0.10**, `platform-riscv32` | 1,808 | **1,048** | 26% | 120 |
 | **RTIC 2.3**, `riscv-clint-backend` | 2,312 | **1,552** | 38% | 24 |
 | bare C (the C floor) | 186 | — | — | 4 |
 
@@ -59,15 +59,6 @@ figure and nothing here computes one. The failure mode when such a floor is too
 small is the one `memory.x` already records: `.bss` overwritten by stack frames,
 the receive ring's indices coming back as stack addresses, and a panic about an
 index of 64016 in a 256-byte array.
-
-† **Not currently reproducible from this tree.** `embassy-executor` has never
-been declared in `firmware/cynthion-soc/Cargo.toml` in any commit, so
-`src/bin/model_embassy.rs` cannot build and these figures cannot be re-taken.
-They were measured with the dependency added locally and not committed. Every
-other row in this table rebuilds with `scripts/soc_model_probe.py`.
-
-Treat the Embassy numbers as indicative until the dependency is declared. The
-RTIC and cooperative figures are unaffected and have been re-measured since.
 
 ## 3. What each model needs, and what it fixes
 

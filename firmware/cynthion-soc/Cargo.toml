@@ -59,6 +59,15 @@ qemu = []
 # them.
 models = []
 
+# The Embassy skeleton in `src/bin/model_embassy.rs`. Optional dependencies, so
+# nothing here reaches the shipping image -- the same arrangement as `rtic`.
+#
+# Declared because the row it produces in `docs/soc-concurrency-models.md` was
+# measured with these added LOCALLY and never committed, which made a number in
+# a table that nobody could re-take.
+embassy = ["dep:embassy-executor", "dep:embassy-sync", "dep:static_cell",
+           "riscv/critical-section-single-hart"]
+
 # The #115 real-workload measurement: a synthetic USB device-emulation load
 # (`src/workload.rs`) and the `usb` shell command that runs it. Off, and every
 # hook into `src/main.rs` and `src/irq.rs` is `#[cfg]`-gated rather than
@@ -143,6 +152,19 @@ debug = true         # kept -- costs nothing in the binary, and .elf is what get
 # Declared explicitly, because cargo auto-discovers `src/bin/*.rs` and builds
 # them all otherwise -- which put `model_embassy.rs` into the default build with
 # no `embassy_executor` to link against.
+[dependencies.embassy-executor]
+version = "0.10"
+optional = true
+features = ["platform-riscv32", "executor-thread"]
+
+[dependencies.embassy-sync]
+version = "0.7"
+optional = true
+
+[dependencies.static_cell]
+version = "2"
+optional = true
+
 [[bin]]
 name = "model-bare"
 path = "src/bin/model_bare.rs"
