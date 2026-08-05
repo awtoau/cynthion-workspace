@@ -25,19 +25,19 @@ Numbers are measured unless marked *unverified*.
 | 5 | [FIFO depth](#5-uart-fifo-depth-8250--16550--16750) | fixed 16 | settled |
 | 6 | [Buffering](#6-buffering-deep-fifo-vs-elastic-buffer) | elastic buffer at the transport | settled |
 | 7 | [Interrupt controller](#7-interrupt-controller) | PLIC, written from spec | settled |
-| 8 | [PLIC source granularity](#8-per-device-plic-sources-vs-or-ed) | per device | **reversed** (#121 → #135) |
+| 8 | [PLIC source granularity](#8-per-device-plic-sources-vs-or-ed) | per device | settled (#135) |
 | 9 | [I2C topology](#9-i2c-three-controllers-vs-one-plus-a-mux) | one controller plus a mux | forced |
 | 10 | [I2C register map](#10-i2c-register-map) | OpenCores rev 0.9 | settled |
 | 11 | [SPI flash crossbar](#11-spi-flash-crossbar) | ours | upstream defect |
 | 12 | [SPI flash CS hold](#12-spi-flash-chip-select-hold) | ours | upstream defect |
 | 13 | [UART pad output enable](#13-uart-pad-output-enable) | ours | upstream defect |
 | 14 | [`amaranth-soc` source](#14-amaranth-soc-upstream-vs-vendored) | upstream package | settled |
-| 15 | [Firmware loading](#15-firmware-loading) | JTAG stream, and USB bulk | settled (#132); USB half untested end to end (#114) |
+| 15 | [Firmware loading](#15-firmware-loading) | JTAG stream, and USB bulk | settled (#132/#114) |
 | 16 | [Emulation](#16-emulation-and-simulation) | QEMU `-M virt` + targeted sims | settled |
 | 17 | [Register access](#17-register-access-transcription-vs-generated-pac) | generated PAC, addresses only | settled |
 | 18 | [Logging from handlers](#18-logging-from-an-interrupt-handler) | deferred ring | settled (#122/#124) |
-| 19 | [RTOS](#19-rtos-bare-loop-vs-rtic-vs-zephyr) | bare loop | **open** (#112/#115) |
-| 20 | [Device ownership](#20-multi-transaction-device-protocols) | one owner, cached reads | in progress (#123) |
+| 19 | [Concurrency model](#19-rtic-or-preemption-without-it) | superloop today | **open** (#201/#115) |
+| 20 | [Device ownership](#20-multi-transaction-device-protocols) | one owner, cached reads | settled (#123) |
 | 21 | [16550: written vs vendored](#21-16550-written-from-the-spec-vs-a-vendored-core) | ours, spec-checked against OpenCores | settled (#128) |
 | 22 | [What is resident at 0x0](#22-what-is-resident-at-0x0) | a 492-byte bootloader; the shell is an image | settled (#138) |
 | 23 | [QSPI burst sequencer](#23-qspi-burst-sequencer) | an FSM with an arming cycle | fixed, simulated, unrun on the board (#89) |
@@ -76,22 +76,19 @@ the debug module. The interrupt consequence is decision 7.
 | VexiiRiscv +caches | 3870 | 100 | 4900 | 2374 | 6 | 91.5 MHz | yes |
 | VexiiRiscv moondancer-like | 4126 | 100 | 5294 | 2460 | 6 | 84.4 MHz | yes |
 
-Three columns rather than one, because one is misleading. **LUT4** is yosys' cell count
-and is what the earlier version of this table reported. **LUTRAM** is `TRELLIS_DPR16X4`,
-which is *not* in the LUT4 figure and is where a TLB lands — an MMU read on LUT4 alone
-understates itself by half. **COMB** is nextpnr's packed-slice count for the same design,
-which includes both, and is the only column in the same unit as a whole-SoC utilisation
-report. The die has 24288 slices and 56 block RAMs.
+Three columns rather than one, because one is misleading. **LUT4** is yosys' cell count.
+**LUTRAM** is `TRELLIS_DPR16X4`, which is *not* in the LUT4 figure and is where a TLB
+lands — an MMU read on LUT4 alone understates itself by half. **COMB** is nextpnr's
+packed-slice count for the same design, which includes both, and is the only column in the
+same unit as a whole-SoC utilisation report. **FF** is yosys' whole-design total; the top
+module's own section excludes submodules and undercounts. The die has 24288 slices and 56
+block RAMs.
 
-Fmax for the VexiiRiscv rows is new: the core is placed inside a four-pin timing harness
-(a shift chain into every input, registers and a two-stage XOR tree out of every output),
-because a bare core has ~535 port bits against the package's 197 pins and could not be
-placed at all — which is why these rows read "synth only" before. The harness is
-validated by `soc-cpu` below: 72.7 MHz in the harness against **72.40 MHz** for the whole
-SoC on the board's own build, i.e. the core is the SoC's critical path and the harness
-finds the same one. FF counts are higher than the version of this table published on
-2026-07-29 because they are now taken from yosys' whole-design total rather than from the
-top module's own section, which excluded submodules; LUT4 is unchanged.
+Fmax comes from a four-pin timing harness — a shift chain into every input, registers and
+a two-stage XOR tree out of every output — because a bare core has ~535 port bits against
+the package's 197 pins and cannot be placed at all. The harness is validated by `soc-cpu`
+below: 72.7 MHz in the harness against **72.40 MHz** for the whole SoC on the board's own
+build, i.e. the core is the SoC's critical path and the harness finds the same one.
 
 Caveats stated in the log itself: BRAM counts are low because a CPU with no firmware
 never drives its bus and synthesis prunes the attached memory; CoreMark is not in this
@@ -145,26 +142,22 @@ actually needs. Hardware floating point is the other wall: `+rvfd` alone is 2092
 rv64gc userspace is out of reach, while a soft-float rv64imac kernel with Rust drivers is
 not.
 
-**Plausible, with the memory question unanswered here.** The core fits and closes timing
-with margin; what this table does not measure is main memory. 64 KiB of block RAM does not
-boot Linux, so the memory would have to be HyperRAM, and that is a bandwidth and latency
-question about the L1s in front of it rather than an area one.
+**The core fits and closes timing with margin; main memory is the half this table does not
+measure.** 64 KiB of block RAM does not boot Linux, so it would have to be HyperRAM — a
+bandwidth and latency question about the L1s in front of it, not an area one. The whole
+chain is in [`linux-on-cynthion.md`](linux-on-cynthion.md), which corrects one reading
+above: the block RAM wall is *this* SoC's, not the die's. A Linux-only build lands at 14 of
+56, so 8 KiB two-way L1s cost 24 of 56 rather than the whole part.
 
-The whole chain — what Linux needs, what a build stripped of the Cynthion SoC costs in
-block RAM, what HyperRAM delivers as cache-line refills, and whether it is worth doing —
-is in [`linux-on-cynthion.md`](linux-on-cynthion.md). One correction it makes to the
-reading above: the block RAM wall is a wall of *this* SoC, not of the die. A Linux-only
-build lands at 14 of 56, so 8 KiB two-way L1s cost 24 of 56 rather than the whole part.
-
-**The earlier report these figures replace** is
-[`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md).
-Its headline comparison — 12646 LUT4 for VexRiscv against 6876 — **is not a like-for-like
-figure**: the VexRiscv number includes the whole USB fabric and the VexiiRiscv rows do
-not, so it overstates VexRiscv by roughly the size of a USB stack. Its two configurations
-also differed in three ways at once (caches, atomics, supervisor mode), which is why
-`cpu_matrix.py` exists. Its benchmark rows, which remain usable as an
-apples-to-apples pair between *its own* two configurations: CoreMark total ticks
-6,133,969 vs 6,361,949 (+3.7%), DMIPS/MHz 0.74 vs 0.63.
+**A trap in the tree**, superseded by the tables above:
+[`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md)
+headlines 12646 LUT4 for VexRiscv against 6876, which is **not like for like** — the
+VexRiscv number includes the whole USB fabric and the VexiiRiscv one does not, so it
+overstates VexRiscv by roughly a USB stack, and its two configurations differ in three
+ways at once (caches, atomics, supervisor mode). That is why `cpu_matrix.py` exists. Its
+benchmark rows are usable, as an apples-to-apples pair between *its own* two
+configurations: CoreMark total ticks 6,133,969 vs 6,361,949 (+3.7%), DMIPS/MHz 0.74 vs
+0.63.
 
 ### 2. Cached vs cacheless
 
@@ -237,43 +230,40 @@ The second reason is the test gate: `-M virt` presents an NS16550A, so
 unchanged and `scripts/soc_test.py` exercises the code that ships rather than a lookalike.
 `target_soc.rs` and `target_qemu.rs` collapsed into one `target.rs`.
 
-**One deliberate deviation was made and then reversed: reading IIR used to clear
-nothing.** The reasoning was that IIR at +2 shares a 32-bit word with RBR at +0, so a
-state-changing read there could strobe RBR if the CPU widened a byte access — the same
-shape as the bug this peripheral replaced. THRE was made level-derived instead.
+**The register semantics are the standard's, read-to-clear included (#128).** The
+deviation that was weighed — IIR at +2 shares a 32-bit word with RBR at +0, so a
+state-changing read there could strobe RBR if the CPU widened a byte access, the shape of
+the bug this peripheral replaced — does not survive measurement:
 
-It was hardening against the wrong thing, and #128 reversed it:
+| | measured |
+|---|---|
+| Does this CPU widen a byte read? | **no.** `LsuCachelessWishbonePlugin` drives a single-byte `sel` (`VexiiRiscv.v:7499-7515`) |
+| Does the bridge strobe the other lanes? | **no.** `amaranth_soc.csr.wishbone` asserts `r_stb` per lane, `sel_index & ~we` |
+| Could a cache line fill reach it? | **no.** the console is in a `main=0` PMA region |
+| What protects the poll loop? | **the layout.** LSR at +5 is a different 32-bit word from RBR at +0, which holds whatever IIR does |
 
-| | what was assumed | what was measured |
-|---|---|---|
-| Does this CPU widen a byte read? | it might | **no.** `LsuCachelessWishbonePlugin` drives a single-byte `sel` (`VexiiRiscv.v:7499-7515`), found during the PAC work |
-| Does the bridge strobe the other lanes? | unknown | **no.** `amaranth_soc.csr.wishbone` asserts `r_stb` per lane, `sel_index & ~we` |
-| Could a cache line fill reach it? | unknown | **no.** the console is in a `main=0` PMA region |
-| What actually protects the poll loop? | the absence of side effects | **the layout.** LSR at +5 is a different 32-bit word from RBR at +0, which holds whatever IIR does |
+Deviating costs the property the standard map was chosen for: with IIR clearing nothing and
+THRE level-derived, a driver that sets ETBEI, takes the interrupt, reads IIR and returns —
+what the standard says to do, and what every 8250 driver does — never clears the transmit
+indication and gets an interrupt storm. Fighting a common, well-understood idiom buys a
+guarantee the layout already gives.
 
-The cost of the divergence was the property the standard map was chosen for. A driver that
-sets ETBEI, takes the interrupt, reads IIR and returns — which is what the standard says to
-do and what every 8250 driver does — got an interrupt storm. Read-to-clear status is a
-common, well-understood idiom; fighting it means fighting every 16550 driver ever written
-to buy a guarantee the layout already gives.
+Two conformance points a stock driver depends on, and neither is obvious from the register
+table alone:
 
-Two further divergences were found while restoring it, both of which would have broken a
-stock driver and neither of which was deliberate:
+  * **LSR.THRE means "the transmit FIFO is empty", not "it has room".** Linux's 8250 takes
+    the standard at its word: `serial8250_tx_chars` writes `up->tx_loadsz` — 16 — bytes
+    after seeing THRE once, which against the weaker meaning is fifteen bytes into a FIFO
+    with room for one. OpenCores agrees: `assign lsr5 = (tf_count==5'b0 && thre_set_en)`.
+  * **IIR reads `0b0001` at rest.** The standard's table has exactly one entry for idle; a
+    value that keeps the transmit id in bits 3:1 while bit 0 says "no interrupt pending"
+    is not in it.
 
-  * **LSR.THRE reported "the transmit FIFO has room" rather than "the transmit FIFO is
-    empty".** The standard's promise is the second one, and Linux's 8250 takes it up:
-    `serial8250_tx_chars` writes `up->tx_loadsz` — 16 — bytes after seeing THRE once. Against
-    the old bit that is fifteen bytes into a FIFO with room for one. OpenCores agrees:
-    `assign lsr5 = (tf_count==5'b0 && thre_set_en)`.
-  * **IIR read `0xc3` at rest**, holding the transmit id in bits 3:1 while bit 0 said "no
-    interrupt pending". The standard's table has one entry for idle, `0b0001`.
-
-LSR's error bits are now reported too — OE, FE and the bit 7 summary, cleared by the read
-that reports them. They were previously wired to zero for the same withdrawn reason. The
-peripheral cannot see an overrun itself: its `sink` backpressures, so a full FIFO there is
-a stall and not a loss, and the transport reports a destroyed byte on a pulse. Only the
-Apollo port can produce one — a line with no flow control — because the USB CDC endpoint
-NAKs while its buffer is full and the host retries.
+LSR reports its error bits — OE, FE and the bit 7 summary, cleared by the read that
+reports them. The peripheral cannot see an overrun itself: its `sink` backpressures, so a
+full FIFO there is a stall and not a loss, and the transport reports a destroyed byte on a
+pulse. Only the Apollo port can produce one — a line with no flow control — because the USB
+CDC endpoint NAKs while its buffer is full and the host retries.
 
 **The acceptance test — could a stock 8250 driver drive this unmodified?** Walked against
 `8250_port.c` in
@@ -446,11 +436,10 @@ read's HEADER waited on it for ever.
 | `busy` | the reader's | the run's, covering a latched trigger |
 | result | 1 of 4 reads, `i_stream.ready` low for ever | 4 of 4 |
 
-**The diagnosis committed with it was wrong.** "`start` is asserted again on the completion
-edge, but the reader is not yet back in IDLE" — the reader sets `done` and moves to IDLE in
-the same clock edge, so on the rising edge of `done` it *is* in IDLE and does take the
-strobe. `scripts/qspi_burst_sim.py` section 1 shows that handshake working while the design
-wedges anyway.
+**Not the handshake, which is the diagnosis this invites.** The reader sets `done` and
+moves to IDLE on the same clock edge, so a strobe on the rising edge of `done` *is* taken;
+`scripts/qspi_burst_sim.py` section 1 shows that handshake working while the design wedges
+anyway. The fault is the live `length`.
 
 **Pipeline depth is why simulation had not caught it.** Glasgow's `IOStreamer` reads its
 buffer latency off the platform: 2 with no platform, 4 for a `LatticePlatform`. At 2 the
@@ -484,32 +473,26 @@ adds the receive synchroniser, the framing-error drop and the idle qualifier tha
 
 ### 24. What the sideband link answers
 
-**Why the rich version existed.** During bring-up FPGA_ADV was the *only* channel that
-worked. There was no console, USB did not enumerate reliably, and a bitstream that said
-nothing gave no way to separate a dead CPU from a wedged peripheral from a working design
-whose output never reached the host. So the responder grew commands that read hardware
-directly — `POWER` from the PAC1954, `DEVICES` from the flash JEDEC ID and a HyperRAM
-presence bit, `LED` to drive the board display — and answered them from the fabric, with
-no CPU involved. That was correct for the problem it had.
+**The shipping link is `ecp5-test/sideband_link.py`, and it has three commands:** `PING`,
+`STATUS`, and `0x80`–`0xFF` to deliver a byte to the CPU. That is a heartbeat and a byte
+each way, which is the whole of what the shipping bitstream needs the wire for. The
+responder with the full set stays in `apollo_fpga.gateware.sideband`, instantiated by
+`ecp5-test/sideband/sideband_gateware.py`.
 
-**Why it stopped being the right shape.** Every one of those facts is now available, in
-better form, from a path that did not exist then:
+**The split is by what else can answer.** A responder that reads hardware from the fabric —
+`POWER` from the PAC1954, `DEVICES` from the flash JEDEC ID and a HyperRAM presence bit,
+`LED` for the board display — needs no CPU, which is what a board that will not boot far
+enough to have a console needs, and which a booting design has better sources for:
 
-| what the sideband reported | what reports it now |
+| what the sideband can answer with no CPU | what answers it once the SoC runs |
 |---|---|
 | PAC1954 power | `power`, over I2C, all four rails |
 | flash JEDEC ID, HyperRAM presence | `board`, from the caches rather than the bus |
 | image, CPU, gateware identity | `info` and `selftest`, from inside the process |
 
-Two consoles on independent ports (#128), and the SoC reading its own hardware (#126,
-#127), left the sideband as a second, lower-fidelity path to facts already available.
-
-**The shipping link is `ecp5-test/sideband_link.py`, and it has three commands:** `PING`,
-`STATUS`, and `0x80`–`0xFF` to deliver a byte to the CPU. That is a heartbeat and a byte
-each way, which is the whole of what the shipping bitstream needs the wire for. The
-responder with the full set stays in `apollo_fpga.gateware.sideband` and is instantiated
-by `ecp5-test/sideband/sideband_gateware.py` — a test bitstream, whose job is exactly a
-board that will not boot far enough to have a console.
+Two consoles on independent ports (#128) and the SoC reading its own hardware (#126, #127)
+leave the sideband a second, lower-fidelity path to facts already available — so the
+shipping bitstream drops them and the test bitstream keeps them.
 
 **`POWER` and `DEVICES` are removed, not stubbed.** The alternative was to keep answering
 them with a correct frame length, a valid CRC and zeros in the payload, so the host side
@@ -521,13 +504,12 @@ would not have to change:
 | The reader must know | which fields are real in which bitstream | nothing; the reply says |
 | Host decoder | keeps opcodes no gateware implements | matches the gateware |
 
-Zero-filling is a read-old-format fallback wearing a protocol's clothes. A design must not
-answer as though it might have a capability it does not have, and a decoder that knows
-opcodes its bitstream never implements can only mislead. `PING`'s version byte went 1 → 2
-so the two maps are told apart at runtime rather than inferred from a command that failed.
-`scripts/sideband_decoder.py` is now the shipping map alone; the test bitstream's extra
-commands moved to `ecp5-test/sideband/test_protocol.py`, beside the bitstream that
-answers them.
+Zero-filling is a read-old-format fallback wearing a protocol's clothes: a design must not
+answer as though it might have a capability it does not have. `PING`'s version byte is 2
+rather than 1 so the two maps are told apart at runtime rather than inferred from a command
+that failed. `scripts/sideband_decoder.py` carries the shipping map alone; the test
+bitstream's extra commands are in `ecp5-test/sideband/test_protocol.py`, beside the
+bitstream that answers them.
 
 **Apollo needs no change.** Its firmware never knew these opcodes — the host supplies the
 command byte and the expected length through vendor request `0xC3`, and
@@ -546,21 +528,17 @@ in full: [`sideband.md`](sideband.md#4-commands).
 | **saved** | **19** | **13** |
 | sourcing the removed fields would have cost | +299 | +0 |
 
-**Nineteen cells, 0.16% of an LFE5U-12F.** The saving is small and the change does not
-stand on it. It stands on the reply: the design says what it is rather than answering for
-what it is not. The 299 is what those commands would have cost had anything driven them —
-the SoC never did, so the fields were already constant-folded and that cost was never
-being paid.
-
-Issue #137.
+**Nineteen cells, 0.16% of an LFE5U-12F.** The change does not stand on the saving; it
+stands on the reply, which says what the design is rather than answering for what it is
+not. The 299 is what those commands would cost if anything drove them — the SoC never did,
+so the fields were constant-folded and that cost was never being paid. Issue #137.
 
 ### 25. FPGA_ADV: advertisement and sideband on one wire
 
-**The pin's primary purpose upstream is port takeover, and we were not using it for
-that.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz square wave; Apollo keeps the CONTROL
-port switched to the FPGA only while that continues. Every bitstream here is AUX-only, so
-the pin was free to carry the sideband instead — and the SoC consequently had **no way to
-ask for CONTROL at all**.
+**Upstream the pin's job is port takeover.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz
+square wave, and Apollo keeps the CONTROL port switched to the FPGA only while that
+continues. Every bitstream here is AUX-only, so the pin carries the sideband instead —
+which leaves the SoC **no way to ask for CONTROL** unless both jobs share the wire.
 
 A square wave and a UART cannot share the wire: the square wave is low for half of every
 20 ms and no byte survives it.
@@ -622,12 +600,10 @@ in the QEMU build, and the test gate would stop covering the interrupt path that
 the same property that made the console a standard 16550. Second reason: every generic
 Rust PLIC driver (`riscv-peripheral`) expects this register map.
 
-**The second reason used to name RTIC as well, and that was wrong.** It said a
-non-standard controller "means writing an RTIC backend before RTIC can be used". RTIC has
-no PLIC backend in any released version and never reads a claim register: its generic
-RISC-V backends dispatch out of `riscv-slic`, a *software* controller, from the machine
-software interrupt. Compiled and measured in `docs/rtic-adoption.md`. The QEMU argument
-above is unaffected and is the one that carried the decision anyway.
+**RTIC is not one of the reasons.** It has no PLIC backend in any released version and
+never reads a claim register: its generic RISC-V backends dispatch out of `riscv-slic`, a
+*software* controller, from the machine software interrupt —
+[`rtic-adoption.md`](rtic-adoption.md) and decision 19.
 
 It also satisfies the register discipline without adjustment: the only side-effecting read
 is the claim at 0x200004, alone in its 32-bit word, and `pending` — the register a poll
@@ -635,9 +611,9 @@ loop reads — is at 0x001000, two megabytes away.
 
 **What it cost, and what got it back.** Adding the PLIC and the second UART
 (commit `26ef424`) dropped Fmax on `sync` from 76.8 MHz to 60.8–67.5 MHz against a 60 MHz
-constraint — as little as 1.3% margin. The diagnosis was corrected in `18c1fa5`: the
-critical path was **16.45 ns of which 13.64 ns was wire**, and no logic optimisation
-shortens a path that is 83% routing. A flip-flop in the Wishbone response path:
+constraint — as little as 1.3% margin. The critical path was **16.45 ns of which 13.64 ns
+was wire**, and no logic optimisation shortens a path that is 83% routing. A flip-flop in
+the Wishbone response path (`18c1fa5`) is what got it back:
 
 | | before | after |
 |---|---|---|
@@ -649,15 +625,14 @@ shortens a path that is 83% routing. A flip-flop in the Wishbone response path:
 | utilisation | — | +420 LUT, +33 FF; block RAM unchanged at 42 of 56 |
 
 Verified: 26 PLIC checks, 16 QEMU checks, 9 bus checks; 24 interrupts taken with 0 stalls.
-`scripts/soc_plic_sim.py` caught its own first-draft bug — it never compared priorities, so
-the last source examined always won and the priority registers were stored, read back and
-ignored.
+`scripts/soc_plic_sim.py` asserts on priority explicitly, because a sim that does not will
+pass while the priority registers are stored, read back and ignored — the last source
+examined wins and nothing says so.
 
 ### 8. Per-device PLIC sources vs OR-ed
 
-**Per device.** Each FUSB302B `int` line has its own source — TARGET on 4, AUX on 5.
-**This reverses the original decision** (#121), which OR-ed both onto source 4; #135
-undid it.
+**Per device.** Each FUSB302B `int` line has its own source — TARGET on 4, AUX on 5
+(#135).
 
 | | **per device** | OR-ed |
 |---|---|---|
@@ -667,33 +642,33 @@ undid it.
 | Diagnostics | `irq` counts TARGET and AUX separately | one total |
 | Cost | one more priority register, pending bit and comparator | — |
 
-**Why the original reasoning was wrong.** It was true and it was about the wrong thing.
-With one muxed I2C controller only one device can be addressed at a time — that is
-[decision 9](#9-i2c-three-controllers-vs-one-plus-a-mux), it is forced by hardware, and it
-has not changed. The conclusion drawn from it was that per-device *interrupt* sources buy
-nothing, and that does not follow: serialised servicing is a statement about the bus, not
-about which device the handler is told to service. The PLIC supports 31 sources and the
-design uses 5, so the OR conserved nothing scarce. It was an optimisation by analogy with
-a constraint, applied where the constraint did not reach — the same class of error as
-sizing the console FIFO for USB packets ([decision 5](#5-uart-fifo-depth-8250--16550--16750)).
+**OR-ing conserves nothing scarce:** the PLIC allows 31 sources and this design uses 5.
 
-**What it does not buy: concurrency.** Servicing still serialises. This buys *knowing
-which*, and it deletes a correctness obligation rather than documenting one.
+**Serialised servicing is not an argument for OR-ing either.** Only one device can be
+addressed at a time — the I2C controller is muxed,
+[decision 9](#9-i2c-three-controllers-vs-one-plus-a-mux), forced by hardware — but that is
+a statement about the bus, not about which source raised the interrupt. Applying a bus
+constraint to the interrupt map is the same error as sizing the console FIFO for USB
+packets ([decision 5](#5-uart-fifo-depth-8250--16550--16750)): an optimisation by analogy,
+where the constraint does not reach.
 
-**The deferral survives, and per-device masking improves it.** Clearing a controller means
+**What per-device does not buy: concurrency.** Servicing still serialises. It buys
+*knowing which*, and it deletes a correctness obligation rather than documenting one.
+
+**The handler does not clear the controller it claimed.** Clearing one means
 reading three read-to-clear registers over I2C — about a millisecond at 80 kHz — on the
 single controller the power monitor's poll is also using: a long spin in interrupt context
-*and* a second master on a peripheral with no lock. So the handler still does **not** clear
-it. It masks the source it claimed and records which port through the ring (decision 18);
-normal context clears that device and re-enables that source. What changed is that the mask
-is now per device, so a TARGET awaiting its I2C clear no longer blinds AUX.
+*and* a second master on a peripheral with no lock. It masks the source it claimed and
+records which port through the ring (decision 18); normal context clears that device and
+re-enables that source. The mask is per device, so a TARGET awaiting its I2C clear does not
+blind AUX.
 
-`fault` got **no** source, and that was re-examined rather than inherited. Two reasons, the
-second binding: it means something different from `int` and is worth telling apart without
-a register read; and **nothing in the firmware can clear it** — it drops when the device's
-fault does. An interrupt on an uncleanable level must stay masked until something notices
-the level has gone, which is the 50 ms poll, so it would add a handler and keep the poll.
-`int` is clearable, which is why masking terminates there.
+`fault` gets **no** source. Two reasons, the second binding: it means something different
+from `int` and is worth telling apart without a register read; and **nothing in the
+firmware can clear it** — it drops when the device's fault does. An interrupt on an
+uncleanable level must stay masked until something notices the level has gone, which is the
+50 ms poll, so it would add a handler and keep the poll. `int` is clearable, which is why
+masking terminates there.
 
 Asserted in `scripts/soc_plic_sim.py` (the mux wired to a PLIC: the claim names the device,
 and the quiet device's source is never involved) and `scripts/soc_board_sim.py` (one line
@@ -726,7 +701,7 @@ identical.
 Two of these are kept. The USB path is what a working board uses; the JTAG stream is
 what a board whose console is not answering uses, and it is the one that can hold the
 CPU in reset while it works — the USB path needs a running shell to receive its own
-replacement (#114).
+replacement.
 
 **The register and stream figures differ by 5400x on the same wire.** Both are JTAG
 through the same SAMD11 at the same 12 MHz TCK; `scripts/soc_jtag_stage.py --benchmark`
@@ -774,17 +749,19 @@ The critical path stays where it was — the arbiter's grant register and the CP
 execute stage — so this is congestion and a second clock network on the die, not a new
 path through the sink. `scripts/soc_timing_sweep.py --compare uart-final jtag-sink`.
 
-**Verified on hardware, end to end**, which #114 asks for and the USB path still lacks:
-the CPU held in reset over ER1, a 2438-byte payload staged, the reset released, and the
-bootloader answering `staged image: 2438 bytes, crc 8b0eb054` / `crc ok; starting payload
-at 00008000`, followed by the payload's own output. Repeated at 16 KiB and 32 KiB with
-`overflow 0` and the word count matching.
+**Both paths are verified on hardware, end to end, including the failure path (#114).**
+JTAG: the CPU held in reset over ER1, a 2438-byte payload staged, the reset released, and
+the bootloader answering `staged image: 2438 bytes, crc 8b0eb054` / `crc ok; starting
+payload at 00008000`, followed by the payload's own output — repeated at 16 KiB and 32 KiB
+with `overflow 0` and the word count matching. Console: `scripts/soc_payload.py` against
+the shell's `load`, `staged 2476 bytes, crc a8cb0673; rebooting` → `payload running at
+00000400`. `scripts/soc_jtag_stage.py --corrupt` damages one image word and leaves the
+header alone, and the bootloader reports `staged image failed its CRC (2)` and falls back.
 
-**The 34 ms/word figure is reproduced, not fabricated.** `--benchmark` measures 28.0 ms
-per 16-bit word through the register-interface shape on r1.4; the difference from 34 is
-autodetection and session overhead the original would have included. It was previously
-cited as "measured" in `ecp5-test/riscv/vexii_bootram.py` and
-`firmware/cynthion-soc/src/main.rs` with no surviving harness; there is one now.
+**Two source files cite 34 ms/word** — `ecp5-test/riscv/vexii_bootram.py` and
+`firmware/cynthion-soc/src/main.rs`, from a harness that no longer exists. `--benchmark`
+measures 28.0 ms through the same shape on r1.4; the difference is autodetection and
+session overhead.
 
 **Adjacent hard negative** — an FPGA-side *bitstream* loader is impossible on this part.
 The ECP5 has no fabric path into its own configuration engine: the complete primitive list
@@ -864,7 +841,7 @@ template, so every register in the design reports "A CSR register."
 
 | | format in the handler | **deferred ring** (`firmware/cynthion-soc/src/events.rs`) |
 |---|---|---|
-| Cost | `Uart::put` waits for `LSR.THRE` — on a level-sensitive shared source that is not a delay, **it is a hang** presenting as a dead CPU with a running clock | three stores: a code and two `u32`s |
+| Cost | `Uart::put` waits for `LSR.THRE` — on a level-sensitive shared source that is not a delay, **it is a hang** presenting as a dead CPU with a running clock | four stores: a code, a 64-bit payload in two halves, and the instant |
 | `core::fmt` | a dispatch through `Arguments`, a conversion per value, a call per fragment | done in the main loop, on a console it owns |
 | Under a storm | stalls the handler | drops the record, increments a counter, **reports the count** |
 
@@ -884,8 +861,8 @@ Enforced in two layers, because either alone is insufficient:
 A rule with no alternative gets worked around rather than followed, which is why a handler
 *can* log — it just cannot be what formats and transmits.
 
-Ring: 16 entries, **192 bytes** of the 32 KiB the shell half of block RAM gives us.
-`push` clears `mstatus.MIE` for the copy — three or four instructions, no loop, still
+Ring: 16 entries of 16 bytes, **256 bytes** of block RAM. `push` clears `mstatus.MIE` for
+the copy — four stores, no loop, still
 wait-free, and free in a handler since the hardware already cleared MIE on trap entry. The
 alternative, a compare-exchange loop to reserve a slot, would be lock-free rather than
 wait-free and would still need the payload published separately.
@@ -898,43 +875,90 @@ main loop prints and clears. Bits cannot be lost, only coalesced; the count of r
 saw one is a separate `AtomicU32` the `irq` command prints. The ring is for events with
 arguments worth reading individually, which this is not.
 
-**Open (#124): the record encoding.** A 32-bit code with a typed 64-bit payload, tag in the
-code's upper bits (0 none, 1 u8, 2 u16, 3 u32, 4 u64, 5 f32, 8 f64, 16 8×u8, 17 8 ASCII).
-Entry size `u32` + `u64` is 12 bytes; padding to 16 makes indexing a shift, and is worth
-taking. Float caveat: the CPU is `rv32imac` with no F extension, so *formatting* floats
-pulls in compiler-builtins float code — reserve the tags, do not implement the formatters.
+**The record encoding (#124):** a 32-bit code with a typed 64-bit payload, tag in the
+code's upper bits (0 none, 1 u8, 2 u16, 3 u32, 4 u64, 5 f32, 8 f64, 16 8×u8, 17 8 ASCII),
+never a string. The entry is 16 bytes with no padding spent, so indexing is a shift. Float
+caveat: the CPU is `rv32imac` with no F extension, so *formatting* floats pulls in
+compiler-builtins float code — the tags are reserved, the formatters are not implemented.
 
-### 19. RTOS: bare loop vs RTIC vs Zephyr
+### 19. RTIC, or preemption without it
 
-**Open.** Both #112 and #115 are open and no decision has been made. What changed is that
-RTIC has now been compiled for this machine rather than argued about:
-`firmware/cynthion-soc/src/bin/rtic.rs`, behind `--features rtic`, measured by
-`scripts/rtic_probe.py`. The full write-up is [`rtic-adoption.md`](rtic-adoption.md).
+**Open — #201, with #115 for the RTIC half.**
 
-| | **bare loop today** | RTIC (#115) | Zephyr (#112) |
+**The question.** One defect is measured: **a turn of the main loop is unbounded, and
+every deferred thing waits for it** — a 50 ms poll with a **61 ms worst gap**, and under a
+device-emulation workload **1,266 µs worst case with 700 of 2,000 deadlines missed**.
+Nothing else on the list is a defect: the shell is 0.10–0.23% busy, the round-robin is
+fair, nothing is dropped, and `RINGS` is correct. Only preemption fixes the turn, and
+preemption is one of RTIC's four separable parts — so the question is whether RTIC's other
+three are worth their difference over preemption alone.
+
+Zephyr is not that question (#112): it needs the same peripherals plus a board port, a
+devicetree and drivers, and moondancer already has the structure an RTOS supplies, minus
+the scheduler an event-driven USB device does not need.
+
+**What preemption alone is worth**, hand-written in `src/dispatch.rs` behind
+`--features preempt`, on the identical arrival sequence
+([`soc-workload-and-preemption.md`](soc-workload-and-preemption.md)):
+
+| | superloop | preemption |
+|---|---|---|
+| worst arrival → handled | 1,266 µs | **271 µs** |
+| past the 375 µs deadline | 700 / 2,000 | **0 / 2,000** |
+| `.text` | — | **+440 bytes**, 70 instructions per dispatch (1.7% of the work) |
+
+**What each runtime costs**, same skeleton, same `opt-level = "z"`, against the language
+floor (`scripts/soc_model_probe.py`,
+[`soc-concurrency-models.md`](soc-concurrency-models.md)):
+
+| model | runtime `.text` | of the 4 KiB I-cache | RAM |
 |---|---|---|---|
-| Needs | — | a CLINT `msip` — **present and, until now, unused** | the same peripherals, plus a board port, a devicetree and drivers |
-| Blocked by | — | nothing; it builds for the board and for QEMU | moondancer's linker script puts `.text`/`.rodata` in SPI flash (#93) |
-| ISA | `riscv32imac` | matches | matches |
-| Prior art | — | `riscv-slic`'s CLINT backend, plus five shims and a linker alias | VexiiRiscv is a supported Zephyr target; Zephyr's `memc_mcux_flexspi_w956a8mbya.c` is where this board's HyperBus command encoding was confirmed |
-| Costs | — | 1,750 bytes of `.text` on a **4 KiB** I-cache, `Cargo.lock` 14 packages → 32, `mstatus.MIE` cleared on every pend and every lock | as below |
-| Argument against | — | 0.15% busy (`hardware.md`) says there is nothing to schedule — answered in `rtic-adoption.md` §5 | **it does not reduce the work, it adds to it**; moondancer is ~1,400 lines of Rust on `riscv-rt` with a generated PAC, a HAL, real handlers and `critical-section` — the structure an RTOS provides, minus a scheduler it does not need |
+| cooperative, hand-written | 224 | 5% | — |
+| hand-written **preemption** | 440 | 11% | — |
+| Embassy 0.10 | 1,048 | 26% | grows per task |
+| RTIC 2.3, `riscv-clint-backend` | 1,552 | 38% | **+1,332** in `.uninit` |
 
-The current firmware is built to be RTIC-ready rather than committed to it: the standard
-PLIC (decision 7), and a monotonic time source in `src/clock.rs`. The reason the console
-was moved off polling at all is that **RTIC cannot be layered on a polled main loop.**
+With moondancer's real control path in the tasks rather than a counter, RTIC is **+1,568,
+38.3%** ([`rtic-usb-port.md`](rtic-usb-port.md)) — the real workload made it more
+expensive, not less.
 
-**Two of those preparations turn out not to be what RTIC wants.** `Plic::set_threshold`
-was kept "for RTIC critical sections"; RTIC locks against the SLIC's own threshold, in
-`.bss`, and leaves the PLIC's at 0. And a hardware task's `binds =` names a *software*
-source, so `src/irq.rs`'s claim loop survives adoption — it shrinks to claim, `pend`,
-complete, and the PLIC keeps deciding which source while the SLIC decides when.
+**The cache is the budget, and it does not fit either way.** The hot footprint under load
+is **5,632 bytes against a 4 KiB direct-mapped cache**, before any runtime is added, and
+`.text` understates footprint by **1.2x** (the dispatcher's 440 bytes occupy 512), which
+projects RTIC at ~47%. That projection is modelled from QEMU traces, not measured on
+silicon.
+
+**Two structural findings, neither a matter of configuration.**
+
+  * **No RTIC subset gives preemption alone.** Both generic RISC-V backends are
+    `riscv-slic` backends and the SLIC *is* how RTIC preempts; the monotonic and the
+    resource locking are the droppable parts. `riscv-slic`'s API is `critical_section::with`
+    throughout, so taking the SLIC takes a global interrupt disable on every `pend`.
+  * **RTIC cannot bind a hardware interrupt.** `binds =` names a SLIC source, so no task
+    can consume the PLIC front end and `src/irq.rs` survives adoption with the SLIC in
+    series behind it. The event queue — the piece carrying the longest hand-written
+    correctness argument — is exactly what the ceiling analysis cannot reach. The trade is
+    not "compile-time correctness for cache"; it is correctness for *some* shared state,
+    for cache.
+
+**What would settle it is board-only**, and #115 should not close before it exists: RTIC's
+own I-cache footprint and latency under this workload, the cost of `critical_section::with`
+per `pend` and `lock`, and real IPC and miss counts from the CPU's performance counters —
+`./dev.py test`'s `ipc 1.000` is the host TSC under QEMU and has never measured anything.
+The last question has no runtime number at all: whether checked resource access is worth
+1,112 bytes over the dispatcher.
+
+Hardware timers cut across it: three comparators against one `mtimecmp` is 1,188 bytes of
+`.text` against 1,336 and 8 bytes of `.bss` against 40 — that 148 bytes *is* the software
+timer queue, and the set-in-the-past race goes with it — but `rtic_time::Monotonic` and
+`embassy-time` each want exactly one `set_compare`, so cheap comparators erode the case for
+both frameworks.
 
 ### 20. Multi-transaction device protocols
 
-**In progress (#123).** The PAC1954 has a state machine spanning transactions: REFRESH,
-then roughly 1 ms in which reads are NACKed — the part acknowledges its address and then
-NACKs the register pointer.
+**Settled (#123).** The PAC1954 has a state machine spanning transactions: REFRESH, then
+roughly 1 ms in which reads are NACKed — the part acknowledges its address and then NACKs
+the register pointer.
 
 | | read on demand | wait-and-retry (`cbbafe4`) | **one owner, cached reads** (#123) |
 |---|---|---|---|
@@ -982,12 +1006,8 @@ amaranth-soc reason is gone. Whether anything else still needs it has not been c
 
 ### 21. 16550: written from the spec vs a vendored core
 
-**The default is to take a proven implementation and change its back end. That default was
-not applied when this peripheral was written, and no candidate was looked at.** Recorded
-here because the omission is the interesting part: the decision that follows survives the
-review, but it was not made on the evidence at the time.
-
-The survey, run for #128:
+**The default is to take a proven implementation and change its back end.** The survey that
+tests that default here was run for #128:
 
 | | **ours** (`ecp5-test/riscv/uart16550.py`) | OpenCores `uart16550` | RoaLogic `apb4_uart16550` |
 |---|---|---|---|
@@ -1049,9 +1069,9 @@ argue for the bit engine we currently have no use for.
 
 ### 22. What is resident at 0x0
 
-The shell was resident and the payload slot was not, so the half of block RAM that grew
-was the half pinned at the reset vector. It reached **36,514 bytes against 32,768** and
-stopped linking; three branches in one day spent effort reclaiming bytes from it.
+With the shell resident and the payload slot not, the half of block RAM that grows is the
+half pinned at the reset vector. It reached **36,514 bytes against 32,768** and stopped
+linking.
 
 | | shell resident (was) | **bootloader resident** (#138) |
 |---|---|---|
@@ -1092,7 +1112,7 @@ means a second decoder window rather than a linker boundary, and the decode path
 
 | | state |
 |---|---|
-| RTOS (decision 19) | open — #112, #115 |
+| Concurrency model (decision 19) | open — #201, #115 |
 | HyperRAM Wishbone adapter | `HyperRAMWishbone` wraps upstream's controller at `0x20000000`, 8 MiB, `main=1 exe=1` (#90). DQS path unfinished (#92). Upstream's `HyperRAMInterface`/`HyperRAMPHY` measure 220.2 MB/s, 92.8% of theoretical |
 | `luna-soc` fork pin | see decision 14 |
 | Board platform vendoring | in progress: `CynthionPlatformRev1D4` is 206 lines of pins plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins the luna-soc fork. Target is a platform depending only on `amaranth`, `amaranth.build`, `amaranth_boards.resources` |
@@ -1104,6 +1124,5 @@ means a second decoder window rather than a linker boundary, and the decode path
 | Renode as an emulation alternative | — | never evaluated on the record |
 | Verilator as a simulation alternative | — | never evaluated on the record |
 | Type-C physical attach/detach | commit `bd7867b` | interrupt path verified; a real attach has not been exercised |
-| Firmware staging over USB bulk, end to end | #114 | each half exercised, the round trip is not. The JTAG path's round trip **is** verified — decision 15 |
 | The port request grants CONTROL | decision 25 | simulated frame-exact against Apollo's matcher; no bitstream built, and Apollo has never been put into `FPGA_ADV_MODE_UART` from the host |
 | The bootloader's sideband byte | `firmware/cynthion-boot` | written on every boot and **never read back** — nothing host-side speaks the sideband protocol to Apollo. `scripts/sideband_decoder.py` decodes a reply; no tool fetches one |
