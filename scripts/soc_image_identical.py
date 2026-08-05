@@ -38,6 +38,7 @@ Output is mirrored to ./tmp/logs/soc_image_identical.log.
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -88,6 +89,38 @@ def section(elf, name):
     return data
 
 
+def symbols(elf):
+    """`.text` symbols as {name: size}, with the crate disambiguator removed.
+
+    The byte comparison above can still fail for a reason that is not a change
+    to the shipping code. Adding a `[features]` entry changes the feature set,
+    that changes `-C metadata`, that changes every symbol hash, and LTO emits
+    the same functions in a different order -- same size, different bytes, and
+    `#[cfg]`-ed-out modules never compiled at all.
+
+    So this is the decisive instrument: the same functions at the same sizes
+    means nothing was added, removed or resized, whatever order the linker put
+    them in. `Cs<hash>_` is Rust v0 mangling's crate disambiguator and is
+    exactly the part that moves.
+    """
+    out = subprocess.run(["rust-objdump", "-t", str(elf)],
+                         capture_output=True, text=True).stdout
+    # `<addr> <flags> <section> <size> [.hidden] <name>`, and the optional
+    # `.hidden` between the size and the name is why this indexes from the front
+    # of the line rather than the back.
+    row = re.compile(r"^([0-9a-f]{8})\s+\S+\s+(\S+)\s+([0-9a-f]{8})\s+(.*)$")
+    found = {}
+    for line in out.splitlines():
+        match = row.match(line)
+        if match is None or match.group(2) != ".text":
+            continue
+        name = match.group(4).replace(".hidden ", "").strip()
+        name = re.sub(r"Cs[0-9A-Za-z]{10,}_", "Cs_", name)
+        name = re.sub(r"17h[0-9a-f]{16}E", "17hE", name)
+        found[name] = int(match.group(3), 16)
+    return found
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -115,6 +148,7 @@ def main():
         say("this tree failed to build:\n" + error)
         return 1
     mine = {name: section(ours, name) for name in (".text", ".rodata")}
+    mine_symbols = symbols(ours)
 
     say(f"restoring with: git checkout HEAD -- {CRATE}   (if interrupted)")
     git("checkout", args.ref, "--", str(CRATE))
@@ -124,10 +158,25 @@ def main():
             say(f"{args.ref} failed to build:\n" + error)
             return 1
         base = {name: section(theirs, name) for name in (".text", ".rodata")}
+        base_symbols = symbols(theirs)
     finally:
         git("checkout", "HEAD", "--", str(CRATE))
 
     status = 0
+    if mine_symbols == base_symbols:
+        say(f"symbols  IDENTICAL to {args.ref}  {len(mine_symbols)} in .text, "
+            "every one the same size")
+    else:
+        added = sorted(set(mine_symbols) - set(base_symbols))
+        gone = sorted(set(base_symbols) - set(mine_symbols))
+        resized = sorted(n for n in set(mine_symbols) & set(base_symbols)
+                         if mine_symbols[n] != base_symbols[n])
+        say(f"symbols  DIFFERENT: {len(added)} added, {len(gone)} removed, "
+            f"{len(resized)} resized")
+        for name in (added + gone + resized)[:20]:
+            say("           " + name)
+        status = 1
+
     for name in (".text", ".rodata"):
         if mine[name] == base[name]:
             say(f"{name:8} IDENTICAL to {args.ref}  {len(mine[name])} bytes")
@@ -144,6 +193,9 @@ def main():
         if name == ".rodata":
             say("         -- expected: build.rs stamps the commit and the "
                 "dirty flag into this section")
+        elif mine_symbols == base_symbols:
+            say("         -- same functions at the same sizes, so this is LTO "
+                "ordering: see the `symbols` docstring")
         else:
             status = 1
     return status
