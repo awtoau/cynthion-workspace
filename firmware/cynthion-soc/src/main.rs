@@ -1758,7 +1758,14 @@ fn panic(info: &PanicInfo) -> ! {
 /// is paid for in stack depth -- see the ASSERT in `memory.x`, which exists
 /// because this exact command overran it.
 fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
-    let argument = core::str::from_utf8(rest).unwrap_or("").trim();
+    // `trim(rest)`, not `core::str::from_utf8(rest).unwrap_or("").trim()`.
+    //
+    // This was the only place in the firmware that touched `core::str`, and it
+    // cost 1,152 bytes of `.text` and 256 of `.rodata`: UTF-8 validation,
+    // `<str>::trim`, and the Unicode whitespace table `<str>::trim` consults --
+    // to compare four ASCII words on a line the 16550 delivered as bytes.
+    // `crate::trim` is 88 bytes and is what every other command already uses.
+    let argument = trim(rest);
 
     if argument.is_empty() {
         let (control_in, aux_in) = vbus::inputs();
@@ -1774,7 +1781,7 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         );
         return;
     }
-    if argument == "off" {
+    if argument == b"off" {
         vbus::open_all();
         if let Some(bus) = devices.bus.as_mut() {
             let _ = fusb302::configure(bus, fusb302::Port::Target);
@@ -1783,9 +1790,9 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         return;
     }
     let charge = match argument {
-        "charge" => Some(fusb302::HostCurrent::Default),
-        "charge 1.5" => Some(fusb302::HostCurrent::A1_5),
-        "charge 3" => Some(fusb302::HostCurrent::A3),
+        b"charge" => Some(fusb302::HostCurrent::Default),
+        b"charge 1.5" => Some(fusb302::HostCurrent::A1_5),
+        b"charge 3" => Some(fusb302::HostCurrent::A3),
         _ => None,
     };
     if let Some(current) = charge {
@@ -1808,10 +1815,10 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         }
         return;
     }
-    if let Some(which) = argument.strip_prefix("input").map(str::trim) {
+    if let Some(which) = argument.strip_prefix(b"input").map(trim) {
         let ok = match which {
-            "control" => vbus::prefer_control(&devices.power),
-            "both" => {
+            b"control" => vbus::prefer_control(&devices.power),
+            b"both" => {
                 vbus::allow_all_inputs();
                 true
             }

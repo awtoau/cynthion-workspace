@@ -98,17 +98,20 @@ class StreamBuffer(wiring.Component):
                                      r_domain=self._o_domain)
         m.submodules.fifo = fifo
 
-        m.d.comb += [
-            fifo.w_data.eq(self.sink.payload),
-            # The FIFO gates this with `w_rdy` internally, so a producer that
-            # ignores backpressure loses the byte rather than corrupting the
-            # pointers. `sink.ready` is the honest answer to give it anyway.
-            fifo.w_en.eq(self.sink.valid),
-            self.sink.ready.eq(fifo.w_rdy),
-
-            self.source.payload.eq(fifo.r_data),
-            self.source.valid.eq(fifo.r_rdy),
-            fifo.r_en.eq(self.source.ready),
-        ]
+        # `w_stream` and `r_stream` are `amaranth.lib.fifo`'s own stream views of
+        # the FIFO's ports -- `w_data`/`w_en`/`w_rdy` presented as
+        # payload/valid/ready, and the read side likewise. They alias the same
+        # signals rather than adding any, so this produces a byte-identical
+        # netlist to the twelve lines of `m.d.comb` it replaces; what it buys is
+        # that `wiring.connect` checks the two signatures agree, where a hand
+        # assignment of `payload` to a differently-sized `w_data` would silently
+        # truncate.
+        #
+        # The FIFO gates `w_en` with `w_rdy` internally, so a producer that
+        # ignores backpressure loses the byte rather than corrupting the
+        # pointers -- and `sink.ready` is the honest answer to give it anyway,
+        # which is what `w_stream.ready` is.
+        wiring.connect(m, wiring.flipped(self.sink), fifo.w_stream)
+        wiring.connect(m, fifo.r_stream, wiring.flipped(self.source))
 
         return m

@@ -80,11 +80,21 @@ impl Source {
         }
     }
 
-    pub fn parse(text: &str) -> Option<Source> {
+    /// Bytes, not `&str`, and that is a size decision rather than a taste.
+    ///
+    /// The console line arrives as `&[u8]` and every other parser in this
+    /// firmware -- `memory::Region::parse`, `gpio::led_by_name`, `fusb302` --
+    /// takes it that way. This one took `&str`, so its one caller had to run
+    /// `core::str::from_utf8` first, and that pulled UTF-8 validation and
+    /// `<str>::trim` into the image; `<str>::trim` in turn pulled
+    /// `core::unicode::white_space::WHITESPACE_MAP`. Measured at **1,152 bytes
+    /// of `.text` and 256 of `.rodata`** for the privilege of comparing four
+    /// ASCII words -- see `docs/soc-size-review.md`.
+    pub fn parse(text: &[u8]) -> Option<Source> {
         match text {
-            "control" => Some(Source::Control),
-            "aux" => Some(Source::Aux),
-            "target_c" | "targetc" => Some(Source::TargetC),
+            b"control" => Some(Source::Control),
+            b"aux" => Some(Source::Aux),
+            b"target_c" | b"targetc" => Some(Source::TargetC),
             _ => None,
         }
     }
