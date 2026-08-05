@@ -229,15 +229,35 @@ something away from the two that do.
 
 ## 5. What is not measured
 
+**Superseded in part.** The busy figure quoted in section 3 is an *idle shell*,
+and the repo owner has withdrawn that baseline: this core is a USB controller
+and the workload that decides the question is device emulation.
+[`soc-workload-and-preemption.md`](soc-workload-and-preemption.md) is the
+measurement against a real one. Against that workload the unbounded turn costs
+**1,266 µs worst case and 700 missed deadlines in 2,000 events**, and preemption
+alone — 440 bytes, hand-written, no RTIC — takes that to 271 µs and zero.
+
+What that document settled, of the list below:
+
+* **Cache displacement**, now modelled rather than guessed. The hot footprint
+  under load is **5,632 bytes against a 4 KiB cache** — it already does not fit
+  before any runtime is added — and 440 bytes of `.text` cost 512 bytes of
+  footprint, 12.5% of the cache. The 38% in section 2 is bytes of `.text` over
+  cache size, and the honest multiplier from `.text` to footprint measured
+  **1.2x**, so 1,552 bytes projects to ~47% rather than 38%. Still a projection:
+  no runtime but the hand-written one has been run.
+* **Interrupt latency**, for the superloop and for preemption. Not for RTIC or
+  Embassy.
+
+Still not measured:
+
 * **Fmax, for any number of comparators.** Section 4.
-* **Cache displacement.** Every `runtime` figure above is bytes of `.text`, not
-  misses. What 1,552 resident bytes displace out of a 4 KiB direct-mapped cache
-  depends on where the linker put them, and nothing here has run two models on
-  the board and compared IPC. `./dev.py optlevel` is the tool that would.
-* **Interrupt latency, for any model.** `timer.rs` reports worst lateness and
-  `metrics.rs` reports worst turn, so the instrument exists; no model but the
-  current one has been run.
-  N of and nothing in this tree computes even one.
+* **RTIC's own cache and latency cost.** `src/bin/rtic.rs` still increments a
+  counter. Running `scripts/soc_workload.py` against a fleshed-out version is
+  the cheapest remaining experiment and needs no board.
+* **IPC, I-cache misses and stalls from the CPU's own counters.** Those are
+  `mhpmcounter3..6` on the board (`docs/riscv-core-build.md`); QEMU has no cache
+  and reports IPC 1.0 by construction.
 * **Anything on the board.** Every figure here is a build result or a QEMU
   measurement. No skeleton has been programmed.
 

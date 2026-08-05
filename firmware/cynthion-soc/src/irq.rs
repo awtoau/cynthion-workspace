@@ -196,7 +196,19 @@ fn service(index: usize) {
             return;
         }
         match uart.get() {
-            Some(byte) => ring.push(byte),
+            Some(byte) => {
+                // One arriving byte is one USB event, for the #115 measurement.
+                // The setup-FIFO drain happens HERE, in the handler, because
+                // that is where the gateware window is -- see `src/workload.rs`.
+                // A byte the workload took does NOT also reach the shell: the
+                // ring would fill, the source would be masked, and the run would
+                // deadlock waiting for arrivals it had itself switched off.
+                #[cfg(feature = "workload")]
+                if crate::workload::arrival(target::UART_BASES[index], byte) {
+                    continue;
+                }
+                ring.push(byte);
+            }
             None => return,
         }
     }
@@ -221,11 +233,36 @@ fn machine_external() {
         } else if let Some(port) = type_c_of(source) {
             defer_type_c(&plic, source, port);
         }
+        // The #115 workload's stand-in for a Type-C controller: a second
+        // level-sensitive source whose service is too long for a handler. Same
+        // deferral, same order, and under `preempt` the same `pend`.
+        #[cfg(feature = "workload")]
+        if source == crate::workload::source::SOURCE {
+            defer_workload(&plic, source);
+        }
         // ALWAYS, including for a source with no handler. A claim that is never
         // completed gates that source off for the rest of the session, with
         // `pending` reading zero and the peripheral asserting into the void.
         plic.complete(source);
     }
+
+    // The tail of the handler is where a preemptive dispatcher belongs: every
+    // source has been claimed and every task it wants has been pended, so this
+    // runs them in priority order with `mstatus.MIE` back on. See
+    // `src/dispatch.rs` for why `mepc` has to be saved around that.
+    #[cfg(feature = "preempt")]
+    crate::dispatch::run();
+}
+
+/// [`defer_type_c`], for the workload's stand-in source.
+///
+/// The same three steps in the same order -- complete, disable, record -- and
+/// the comment on `defer_type_c` is the reason for all three.
+#[cfg(feature = "workload")]
+fn defer_workload(plic: &Plic, source: u32) {
+    plic.complete(source);
+    plic.disable(source);
+    crate::workload::defer(crate::clock::Instant::ZERO.elapsed(crate::clock::now()));
 }
 
 /// A level-sensitive Type-C line, handled by NOT handling it here.

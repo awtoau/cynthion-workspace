@@ -247,6 +247,11 @@ fn tick() {
     MILLIS.fetch_add(PERIOD_MS, Ordering::Relaxed);
     TICKS.fetch_add(1, Ordering::Relaxed);
 
+    // The #115 workload's arrival generator. Here because a generator that ran
+    // in the main loop would be stopped by the long turn it exists to measure.
+    #[cfg(feature = "workload")]
+    crate::workload::tick();
+
     WORST_COST.fetch_max(entered.elapsed(clock::now()), Ordering::Relaxed);
 }
 

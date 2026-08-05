@@ -59,6 +59,20 @@ qemu = []
 # them.
 models = []
 
+# The #115 real-workload measurement: a synthetic USB device-emulation load
+# (`src/workload.rs`) and the `usb` shell command that runs it. Off, and every
+# hook into `src/main.rs` and `src/irq.rs` is `#[cfg]`-gated rather than
+# runtime-gated, so the default build does not compile a byte of it.
+# `scripts/soc_workload.py` drives it.
+workload = []
+
+# Preemption alone: the ~200-line priority dispatcher in `src/dispatch.rs`, with
+# the Type-C deferral ported onto it. Implies `workload` because the dispatcher's
+# task table names the workload's two jobs -- the point of the feature is to run
+# the same jobs somewhere else, so a build with one and not the other would have
+# nothing to measure.
+preempt = ["workload"]
+
 # The RTIC spike (`docs/rtic-adoption.md`, #115). Off, and the shell does not
 # know it exists: everything it adds is in `src/bin/rtic.rs`, which cargo does
 # not build without the feature, so `src/main.rs` is untouched and the shipping
