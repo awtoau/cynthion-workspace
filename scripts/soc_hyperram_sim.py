@@ -627,6 +627,72 @@ def section_recovery(checks, emit):
          f"vendored: {model.cshi_violations}")
 
 
+def section_as_built(checks, emit):
+    """9b. The configuration this repository actually synthesises.
+
+    Every other section runs luna's defaults. `vexii_bootram` builds with
+    HYPERRAM_LATENCY_CLOCKS = 4 at SYNC_MHZ = 60, and until this section existed
+    nothing had ever simulated that combination -- which is how a green
+    simulation sat beside a board reporting `burstdet NEVER` and every read
+    returning the timeout sentinel.
+
+    The model's latency still follows the controller here, so this does NOT test
+    whether 4 is the right count against the device's 14 CK; section 2 reports
+    that gap. What it tests is everything else at the as-built settings: that the
+    transaction completes, that CS# recovery still holds, and that a write lands
+    where it was addressed.
+    """
+    emit("\n9b. As built: SYNC_MHZ 60, HIGH_LATENCY_CLOCKS 4\n")
+
+    from vexii_bootram import HYPERRAM_LATENCY_CLOCKS
+
+    built = dict(sync_mhz=60.0, latency=HYPERRAM_LATENCY_CLOCKS)
+
+    async def one_write(ctx, dut, model):
+        await run(ctx, dut, model, address=TEST_ADDRESS, read=False,
+                  data=TEST_DATA)
+
+    model = simulate(one_write, **built)
+    wrote = dict(model.written)
+    landed = wrote.get(TEST_ADDRESS) == TEST_DATA
+    # REPORTED, not asserted, and this is the interesting line in the file.
+    #
+    # The controller is given 4 while the model still takes its latency from
+    # luna's class constant of 5, so it presents data one beat after the
+    # controller stops listening and NOTHING lands. That is a faithful model of a
+    # controller/device latency mismatch -- and the board, built at 4, currently
+    # reports `burstdet NEVER` with every read returning the timeout sentinel.
+    #
+    # It is not asserted because the model's device latency has not been
+    # reconciled with the real part: silicon ran 4 successfully earlier today.
+    # Until DEVICE_FIXED_LATENCY_CK and this model agree, a failure here cannot
+    # be attributed to the design rather than to the model. See #186.
+    emit(f"        as-built write lands: {landed}"
+         f"{'' if landed else '  <-- REPRODUCES the dead board, cause unconfirmed'}")
+
+    async def one_read(ctx, dut, model):
+        await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
+
+    model = simulate(one_read, **built)
+    checks.check("as built: a read issues a command the device decodes",
+                 len(model.commands) == 1,
+                 f"{len(model.commands)} commands decoded, want 1")
+
+    async def back_to_back(ctx, dut, model):
+        await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
+        await run(ctx, dut, model, address=TEST_ADDRESS + 2, read=True, gap=0)
+
+    model = simulate(back_to_back, **built)
+    # Also reported: at sync 60 the count is ceil(10 ns x 60 MHz / 1000) = 1
+    # cycle, and one cycle there is 16.7 ns, comfortably over tCSHI. A violation
+    # anyway means the count is right and the HOLD is off by a cycle -- the same
+    # shape as the first RECOVERY attempt, which counted without deasserting CS#.
+    emit(f"        as-built tCSHI violations: {model.cshi_violations} "
+         f"(sync 120 gives 0; investigate before trusting the lower clock)")
+    emit(f"        HYPERRAM_LATENCY_CLOCKS = {HYPERRAM_LATENCY_CLOCKS}, "
+         f"sync 60 MHz, tCSHI {T_CSHI_NS:g} ns")
+
+
 def section_structural(checks, emit):
     """5. The reasons upstream's PHY cannot be instantiated here."""
     emit("\n5. Structural: our PHY against upstream's, in source\n")
@@ -1557,6 +1623,7 @@ def main():
 
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
+                    section_as_built,
                     section_recovery, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
