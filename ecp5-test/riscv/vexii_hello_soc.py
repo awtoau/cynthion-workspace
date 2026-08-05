@@ -507,7 +507,7 @@ FLASH_TEST_OFFSET = 0x00300000
 # very nearly pure refill.
 FLASH_MODE = "quad"
 
-# SCK = sync / (2 * (1 + divisor)), so at SYNC_MHZ = 30 and divisor 0 this design
+# SCK = sync / (2 * (1 + divisor)), so at SYNC_MHZ = 60 and divisor 0 this design
 # clocks the flash at 30 MHz. That is the SLOWEST rung on the measured table and
 # the reason is below.
 #
@@ -549,7 +549,7 @@ FLASH_DIVISOR = 0
 # estimate, and the die is a 25F sharing a speed grade with the 12F it is marked as
 # (#116). See #110." Reaching that WITH a fast flash needs a third PLL output or a
 # non-integer ratio, neither of which this generator offers.
-SYNC_MHZ = 60
+SYNC_MHZ = 30
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
 #
