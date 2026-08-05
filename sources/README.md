@@ -210,7 +210,29 @@ easy way to attribute a JV limit to an FV part.
 | `FUSB302B-958669.pdf` | USB-C PD controller (#98) |
 | `PAC195X-Family-DS20006539B.pdf` | PAC1954 power monitor (#82, #84) |
 | `334x.pdf` | USB3343 PHY |
+| `Vishay-SiA483ADJ-P-Channel-30V-MOSFET.pdf` | SiA483ADJ — the VBUS pass MOSFET, Q1/Q2/Q4/Q5/Q6/Q7 (`https://www.vishay.com/docs/77080/sia483adj.pdf`) |
 | `S9c76cb8ac7dc4b77b5edfe7984049618q.pdf` | unidentified — rename when someone works out what it is |
+
+### The SiA483ADJ is a SINGLE device, and that closes an open question
+
+`../docs/hardware.md` records the VBUS switches as unsettled: the KiCad symbol is
+`Transistor_FET:SiA449DJ` with three pins, the fitted part is `SIA483ADJ-T1-GE3`, and
+Vishay's `DJ` suffix appears on dual devices in the same package — so a symbol/part-number
+disagreement left "one device or two?" open, and with it whether an open switch isolates
+or merely stops driving.
+
+Page 1 of this datasheet states **"PowerPAK SC-70-6L Single"** and **"P-Channel 30 V (D-S)
+MOSFET"**. One device per switch function, as the six-designator count already suggested.
+
+**Validity check before trusting a copy:**
+
+    pdfinfo <file>                                          # Pages = 9
+    pdftotext -layout <file> - | grep -ci 'SC-70-6L Single' # non-zero
+
+**Vishay serves a missing document as HTTP 200 with an HTML body.** The first fetch of
+this part landed as a 720 KB `<title>Page Not Found | Vishay</title>` page saved under a
+`.pdf` name — indistinguishable from a datasheet by name and size alone. The URL above
+is the working one; `file` on the result is what tells them apart.
 
 ## A failed download looks exactly like a datasheet
 
