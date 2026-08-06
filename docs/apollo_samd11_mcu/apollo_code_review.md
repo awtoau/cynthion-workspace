@@ -55,8 +55,8 @@ Apollo is the ARM-based debug controller on Cynthion. This review covers three a
 #### Refuted: none of the three "races" below exist
 
 **This section is superseded by
-[`apollo_race_conditions.md`](apollo_race_conditions.md), which checked each
-claim against the firmware (#61).** Kept here only so the claims are not
+#61, which checked each claim against the
+firmware.** Kept here only so the claims are not
 rediscovered:
 
 * *"Multiple USB hosts could request `TAKE_OVER` simultaneously"* —
@@ -183,8 +183,8 @@ If implementing dual CDC:
 ## Next Actions
 
 1. ~~**Implement mutex/synchronization** for FPGA state changes~~ — **withdrawn**,
-   see [`apollo_race_conditions.md`](apollo_race_conditions.md): bare-metal, one
-   host, and the one real race is fixed
+   see #61 and [`../chips/samd11-apollo.md`](../chips/samd11-apollo.md):
+   bare-metal, one host, and the one real race is fixed
 2. **Document buffer requirements** per MCU variant
 3. **Add DFU timeout handling**
 4. **Resolve hardware revision TODOs** (mark r0.2 as unsupported if needed)

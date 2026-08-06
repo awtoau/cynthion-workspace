@@ -127,7 +127,6 @@ in its §13 got there in the first place.
 * [`apollo_samd11_mcu/apollo_change_process.md`](apollo_samd11_mcu/apollo_change_process.md) — Apollo Change Tracking Process
 * [`apollo_samd11_mcu/apollo_code_review.md`](apollo_samd11_mcu/apollo_code_review.md) — Apollo Firmware Code Review
 * [`apollo_samd11_mcu/apollo_dfu_buffer_analysis.md`](apollo_samd11_mcu/apollo_dfu_buffer_analysis.md) — Apollo DFU Buffer Issues
-* [`apollo_samd11_mcu/apollo_race_conditions.md`](apollo_samd11_mcu/apollo_race_conditions.md) — Apollo Race Conditions in State Management
 * [`apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md`](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md) — Implementation Plan - Cynthion Serial Architecture Redesign
 * [`apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`](apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md) — Apollo Serial Interface and Mode Exclusivity Design
 * [`apollo_samd11_mcu/apollo_to_fpga_spi_design.md`](apollo_samd11_mcu/apollo_to_fpga_spi_design.md) — Apollo-to-FPGA SPI Design

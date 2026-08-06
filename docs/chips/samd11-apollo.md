@@ -105,6 +105,39 @@ On r0.6 and earlier (`BOARD_HAS_SHARED_BUTTON`) there is no USB_SWITCH: PA09 is
 PHY_RESET instead of FPGA_ADV, and PROGRAM_BUTTON shares PA16 with LED_A — which is
 why `button.c` saves the pin level, flips direction to read it, and restores it.
 
+## Concurrency: two contexts, and one of them is three ISRs
+
+**The firmware is bare-metal.** No RTOS, no scheduler, no threads —
+`grep -rl "FreeRTOS\|pthread\|xTaskCreate\|osThread" firmware/src` returns
+nothing, and `main.c:109` is a single `while (1)` calling `tud_task()`. Every USB
+vendor request is dispatched from inside that call, on that one stack.
+
+So **any claim of a race must name an ISR**, because nothing else preempts. There
+are three, all in `boards/cynthion_d11/fpga_adv.c`:
+
+| handler | state it shares with the main loop |
+|---|---|
+| `EIC_Handler` | `edge_counter` |
+| `SERCOM1_Handler` | `pattern_position`, `last_heartbeat`, `response`, `response_len`, `response_want` |
+| `TC1_Handler` | `tx_bits_left` |
+
+Every one of those is `volatile`. The other boards' handlers (`boards/*/uart.c`)
+are UART plumbing and touch no FPGA state.
+
+**The one race this shape allows was found and fixed.** `fpga_adv_task()` reads
+and clears the edge counter as a pair, and an edge landing between the two
+statements would be dropped — under-counting the window that feeds
+`fpga_requesting_port()`, whose threshold is `> 2`, and potentially missing an
+FPGA USB-takeover request. It is masked:
+
+    NVIC_DisableIRQ(EIC_IRQn);
+    window_edges = edge_counter;
+    edge_counter = 0;
+    NVIC_EnableIRQ(EIC_IRQn);
+
+A 2026-05 review instead reported three races in `vendor.c` and `fpga.c` and
+recommended mutexes. All three were refuted against the source — see #61.
+
 ## Links to the FPGA
 
 | link | pins | notes |
