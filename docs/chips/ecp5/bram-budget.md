@@ -1,7 +1,20 @@
-**Settled in pluribus, not here.** `pluribus: docs/fabric-test.md` — *"`LFE5U-12F`
-and `-25F` are the same die, and the open flow gives a 12F all 24,288 LUTs
-unpatched. That extra fabric worked on the one part tested, but binning/salvage
-is only bounded, not excluded."*
+**Settled, and older than this project.** David Shah, `YosysHQ/prjtrellis#55`,
+January 2019 — *"There isn't really any 12F silicon"*, and asked directly whether
+all 25K LUTs are usable on a 12F: *"Yes, you can, however **I'd rather not have
+this a highly advertised 'feature' of the Trellis flow at this point in time.**"*
+That sentence is why it reads as folklore rather than documentation.
+
+Great Scott Gadgets know too. Martin Ling, `greatscottgadgets/cynthion#185`:
+
+> The 12F and 25F parts are actually the same die. They both have all 25K LUTs.
+> The only thing that differs between them is the IDCODE… In *theory* the
+> manufacturer could be binning the parts, with those marked 12F being ones that
+> failed tests in one half of the LUTs. But in practice nobody has ever detected
+> any difference that I know of.
+
+`pluribus: docs/fabric-test.md` is where the consequence lives: the extra fabric
+worked on the one part tested, but binning is bounded rather than excluded, so
+"does my die work?" has no tool to answer it (#116).
 
 **There is nothing to override, and nextpnr does enforce a limit — it enforces
 the chipdb's.** From a build's own `top.tim`, invoked as plain
@@ -24,6 +37,33 @@ pluribus's. **This file is only what our designs actually use.**
 
 How much a design needs depends entirely on what the design is, and the split is
 sharper than expected.
+
+## Diamond enforces the marking; the open flow does not
+
+Same device string, two different ceilings:
+
+| flow | told | allows |
+|---|---|---|
+| `nextpnr-ecp5 --12k` | `LFE5U-12F` | **24,288 LUT4 / 56 EBR** — the die |
+| Diamond | `LFE5U-12F` | **12,288 LUT4 / 32 EBR** — the marking |
+
+Martin Ling, in `greatscottgadgets/cynthion#185`: *"If you use the proprietary
+toolchain, it will enforce a limit of 12K LUTs when you select the 12F part."*
+
+`scripts/diamond/flow.py` sets `DEVICE = "LFE5U-12F"`, which is correct and is
+not bypassed. Our SoC is 7,249 LUT4 and fits either ceiling, so no Diamond run
+here has met the limit.
+
+**But it bounds what Diamond can be used to check.** Any design over 12,288 LUT4
+cannot be built in Diamond for this part at all, so it cannot be cross-checked
+against the open flow — and upstream's own facedancer, at ~12.5K LUT4 and 44
+block RAMs, is already past both of Diamond's limits.
+
+So **the shipping Facedancer bitstream could not be produced by Lattice's own
+tools for the part it ships on.** It exists because the open flow models the die
+rather than the marking. That is not a criticism of it; it is the boundary of any
+Diamond-as-oracle comparison, and it is where that comparison stops being
+available.
 
 ## Measured
 
