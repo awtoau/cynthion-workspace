@@ -35,6 +35,25 @@ def setup_logging() -> None:
     )
 
 
+def open_issue_numbers() -> list[int]:
+    """Every open issue number.
+
+    From `tmp/issues/open.txt` when it exists -- a caller that wants a subset
+    writes one -- and otherwise from `gh`. It used to read that file
+    unconditionally and never wrote it, so a first run died with
+    FileNotFoundError on a path it had just created the directory for.
+    """
+    listing = OUT / "open.txt"
+    if listing.exists():
+        return [int(n) for n in listing.read_text().split()]
+    out = subprocess.run(
+        ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+         "--limit", "500", "--json", "number", "-q", ".[].number"],
+        capture_output=True, text=True, check=True,
+    )
+    return [int(n) for n in out.stdout.split()]
+
+
 def fetch(number: int) -> dict:
     out = subprocess.run(
         ["gh", "issue", "view", str(number), "--repo", REPO, "--json", FIELDS],
@@ -66,7 +85,7 @@ def render(d: dict) -> str:
 def main() -> int:
     setup_logging()
     OUT.mkdir(parents=True, exist_ok=True)
-    numbers = [int(n) for n in (OUT / "open.txt").read_text().split()]
+    numbers = open_issue_numbers()
     logging.info("fetching %d issues", len(numbers))
 
     def one(n: int):
