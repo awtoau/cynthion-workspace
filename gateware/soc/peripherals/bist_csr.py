@@ -178,6 +178,22 @@ class BistCsrTransport(wiring.Component):
             raise ValueError(f"register {address} is already defined")
 
     def elaborate(self, platform):
+        # Nothing declared by the time this elaborates means the engine has not
+        # run yet, and binding now would wire up nothing at all. Every result
+        # would read zero -- indistinguishable from a clean pass to anything
+        # that does not check the word count, which is the single failure mode
+        # this whole rig was built to make impossible.
+        #
+        # Raised rather than tolerated: a transport with no registers is never
+        # something a caller wants, and the fix is to add the engine as a
+        # submodule BEFORE this one.
+        if not self._params and not self._results:
+            raise ValueError(
+                "no registers were declared before this transport elaborated, "
+                "so every result would read zero. The engine declares them "
+                "during its own elaborate -- add it as a submodule BEFORE the "
+                "transport")
+
         m = Module()
         m.submodules.bridge = self._bridge
         connect(m, flipped(self.bus), self._bridge.bus)
