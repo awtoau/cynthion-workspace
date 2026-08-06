@@ -306,10 +306,25 @@ class HyperRAMCeiling(Elaboratable):
     """Write a burst, read it back, verify, repeat -- and count what disagrees."""
 
     def __init__(self, *, sync_mhz=100.0, dqs=True, burst_words=BURST_WORDS,
-                 negative_control=False):
+                 negative_control=False, transport=None, own_clocks=True):
+        """`transport` and `own_clocks` exist so this engine can be embedded.
+
+        Defaults reproduce the standalone JTAG applet exactly. Passing a
+        transport puts the same register window on another bus -- the CPU's CSR
+        bus, via `BistCsrTransport` -- without the engine knowing, since it only
+        ever calls `add_register` / `add_read_only_register` on the harness.
+        `own_clocks=False` says the caller has already made the domain, which is
+        what an SoC that pins its own `sync` does.
+
+        Neither changes what is measured. That is the point: the comparator, the
+        negative control and the sweep FSM are the same logic either way, so a
+        number from the embedded rig and a number from the applet are comparable.
+        """
         self.sync_mhz = sync_mhz
         self.dqs = dqs
         self.burst_words = burst_words
+        self._transport = transport
+        self._own_clocks = own_clocks
 
         # The negative control. Reads are checked against the COMPLEMENT of what
         # was written, which the part cannot return, so a working detector must
@@ -358,8 +373,9 @@ class HyperRAMCeiling(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz,
-                                          with_fast=self.dqs)
+        if self._own_clocks:
+            m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz,
+                                              with_fast=self.dqs)
 
         harness = BISTHarness(
             applet_id=APPLET_ID,
@@ -367,7 +383,8 @@ class HyperRAMCeiling(Elaboratable):
                 ident=REG_ID, control=REG_CONTROL, status=REG_STATUS,
                 checks=REG_WORDS, errors=REG_ERRORS,
                 actual=REG_ACTUAL, golden=REG_GOLDEN),
-            width=self.word_bits, negative_control=self.negative_control)
+            width=self.word_bits, negative_control=self.negative_control,
+            transport=self._transport)
         m.submodules.harness = harness
 
         # DQSBUFM has eight phase selections. Keeping this in a JTAG parameter

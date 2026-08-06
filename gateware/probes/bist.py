@@ -54,15 +54,32 @@ class BISTHarness(Elaboratable):
     STATUS_NEGATIVE = 1 << 3
 
     def __init__(self, *, applet_id, addresses, width=32,
-                 negative_control=False, simulate=False):
+                 negative_control=False, simulate=False, transport=None):
+        """`transport` is what carries the register window.
+
+        None and `simulate=False` gives `JTAGRegisterInterface`, which is what
+        every applet built so far uses. Passing one instead -- a
+        `BistCsrTransport`, say -- puts the same window on the CPU's CSR bus
+        without the engine knowing: it only ever calls `add_register` and
+        `add_read_only_register` on this harness.
+
+        That matters because JTAG is where three of this project's measurement
+        failures came from (#204), the sharpest being a readback that slips a
+        bit below a sync/TCK ratio of about four.
+        """
         if not 1 <= width <= 32:
             raise ValueError("BIST comparator width must be in 1..32")
+        if transport is not None and simulate:
+            raise ValueError(
+                "simulate=True means no transport at all; passing one as well "
+                "is a contradiction rather than a preference")
 
         self.applet_id = applet_id
         self.addresses = addresses
         self.width = width
         self.negative_control_init = negative_control
         self.simulate = simulate
+        self._transport = transport
 
         # Application side.
         self.busy = Signal()
@@ -93,6 +110,7 @@ class BISTHarness(Elaboratable):
         self.last_golden = Signal(width)
 
         self.registers = (None if simulate else
+                          transport if transport is not None else
                           JTAGRegisterInterface(default_read_value=0xDEADBEEF))
 
     def add_read_only_register(self, address, *, read):

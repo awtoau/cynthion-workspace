@@ -63,7 +63,18 @@ So a design that fits the die but not the marking cannot be built in Diamond by
 asking for the part that is on the board — which is where a Diamond-as-oracle
 comparison would otherwise stop.
 
-### The workaround: target the 25F, write it to the 12F
+### Target the 25F and stamp the 12F's IDCODE — the documented method
+
+**Not a local trick.** It is David Shah's original answer, `prjtrellis#55`
+(2019): *"use nextpnr as if you were building for the 25F, then add
+`--idcode 0x21111043` to the ecppack command line"*, and it is in shipping code —
+`litex-boards`' `radiona_ulx4m_ls_v2.py` carries `# Hack: 12F and 25F have same
+die`, building for 25F and overriding the IDCODE. prjtrellis' own ULX3S example
+`12.mk` does the same.
+
+For the **open** flow it is now unnecessary: `prjtrellis#127` (2020) made `--12k`
+work directly, which is why `nextpnr-ecp5 --12k` already reports 56 EBR here.
+It remains the method for **Diamond**, which enforces the marking.
 
 Diamond's refusal is a per-device rule in the tool, not anything about the
 silicon. Ask it for an `LFE5U-25F` and it places into all 24,288 LUT4 and 56 EBR,
@@ -86,6 +97,15 @@ the same either way, and the open flow already reaches all of it without any of
 this. And it is not free of the binning question — a 25F-targeted build placed
 into the upper half is exactly the region a salvage die would have failed on
 (#116).
+
+**Lattice's own datasheet corroborates the single die**, without ever saying so.
+The 12F is listed with **28 18×18 multipliers, identical to the 25F**, while the
+45F and 85F scale to 72 and 156 — a genuinely smaller die would not carry a
+25F-sized DSP column. And Table 3.8 groups *LFE5U-12F / LFE5U-25F / LFE5UM-25F*
+in one standby-current row at 77 mA, where the 45F is 116 mA and the 85F 212 mA.
+The 12F draws exactly a 25F's static current. It was also added to the family in
+**February 2016**, two years after the 2014 launch of 25/45/85 — a SKU on an
+existing die rather than a tapeout.
 
 What it *is*: the way to build a design in Diamond that the open flow will build
 and Diamond otherwise refuses, so the two can be compared at all above 12,288
