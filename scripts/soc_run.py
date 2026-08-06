@@ -49,6 +49,7 @@ import argparse
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +65,8 @@ IMAGE_ORIGIN = 0x400
 # different path from block RAM. The offset is moondancer's established firmware slot,
 # clear of the FPGA configuration at flash offset zero.
 RODATA_BIN = ROOT / "tmp" / "rust_rodata.bin"
+# What we last wrote to flash, and where. Compared before writing again.
+FLASH_WRITTEN = ROOT / "tmp" / "flash-written.txt"
 FLASH_RODATA_OFFSET = 0x000b_0000
 
 # The memory-mapped flash window, for deciding which sections load by
@@ -314,6 +317,9 @@ def main():
                         help="use scripts/riscv_firmware.py instead of the Rust crate")
     parser.add_argument("--write-tests", action="store_true",
                         help="C firmware only: compile in the flash erase/program tests")
+    parser.add_argument("--force-flash", action="store_true",
+                        help="write the flash even when it already holds this "
+                             "image; use if anything else has touched it")
     parser.add_argument("--no-flash", action="store_true",
                         help="do not program .rodata into flash; the board keeps "
                              "whatever it already holds, which is only correct if "
@@ -469,22 +475,61 @@ def main():
                     # FPGA configuration at offset zero -- but "clear of" is a
                     # fact about this layout, not a property of the tool, and the
                     # tool will write wherever it is told.
-                    emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
+                    # SKIP IF IT IS ALREADY THERE.
+                    #
+                    # Measured: one USB round trip to the flash is 3.00 ms, and
+                    # a 256-byte page costs several of them -- write-enable,
+                    # program, then poll the status register until the chip
+                    # reports done. 58,940 bytes is 231 pages and takes 4.72 s,
+                    # against roughly 0.6 s of actual W25Q32DV erase and program
+                    # time. The transport is the cost, not the flash.
+                    #
+                    # Most iterations do not change `.rodata` at all -- a
+                    # gateware edit, a clock change, a peripheral moving -- so
+                    # most of those 4.72 s buy nothing. The digest was already
+                    # being computed and printed; it just was not being
+                    # compared.
+                    #
+                    # The record is what THIS script last wrote. Anything else
+                    # touching the flash invalidates it, so `--force-flash`
+                    # exists and the record is deleted on any write failure
+                    # rather than left claiming a state that was not reached.
+                    want = f"{FLASH_RODATA_OFFSET:#x} {firmware_digest(RODATA_BIN)}"
+                    already = (FLASH_WRITTEN.read_text().strip()
+                               if FLASH_WRITTEN.exists() else None)
+                    if already == want and not args.force_flash:
+                        emit(f"  flash already holds this image "
+                             f"({firmware_digest(RODATA_BIN)} at "
+                             f"{FLASH_RODATA_OFFSET:#x}) -- not rewriting. "
+                             f"`--force-flash` writes it anyway.")
+                        wrote_flash = False
+                    else:
+                        wrote_flash = True
+                    if wrote_flash:
+                      emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
                          f"(bitstream at 0x0 is not touched)")
-                    result = run([sys.executable,
-                                  str(ROOT / "repos" / "apollo" / "apollo_fpga"
-                                      / "commands" / "cli.py"),
-                                  "flash-program",
-                                  "--offset", str(FLASH_RODATA_OFFSET),
-                                  str(RODATA_BIN)])
-                    if result.returncode != 0:
+                      started = time.perf_counter()
+                      result = run([sys.executable,
+                                    str(ROOT / "repos" / "apollo" / "apollo_fpga"
+                                        / "commands" / "cli.py"),
+                                    "flash-program",
+                                    "--offset", str(FLASH_RODATA_OFFSET),
+                                    str(RODATA_BIN)])
+                      if result.returncode != 0:
+                        # The record goes FIRST, so a partial write is never
+                        # remembered as a completed one.
+                        FLASH_WRITTEN.unlink(missing_ok=True)
                         emit("  flash write FAILED:")
                         emit((result.stderr or result.stdout).strip()[-500:])
                         emit("Refusing to configure: the board would run against "
                              ".rodata that is not this build, and every constant "
                              "it reads would be silently wrong.")
                         return 1
-                    emit("  flash written")
+                      elapsed = time.perf_counter() - started
+                      size = RODATA_BIN.stat().st_size
+                      FLASH_WRITTEN.write_text(want + "\n")
+                      emit(f"  flash written: {size} bytes in {elapsed:.2f} s "
+                           f"({size / elapsed / 1024:.1f} KiB/s)")
 
         # The bootloader, unless this is the C path -- that generator emits an
         # image linked for 0 and has no bootloader to sit under it.
