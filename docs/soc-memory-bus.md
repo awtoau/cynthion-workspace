@@ -1,4 +1,10 @@
-# The HyperRAM bus: is Wishbone the wrong choice?
+# The SoC's memory bus: is Wishbone the wrong choice?
+
+Was `hyperram-bus-review.md`. The subject is the SoC's interconnect -- Wishbone
+against AXI4 and TileLink, and what `RegisteredResponse` costs -- with HyperRAM
+as the case that forces the question. It is kept whole rather than split because
+it is one argument: the part cannot stall, therefore the bubble is inherent,
+therefore here are the four ways out, ranked.
 
 **No. The bus flavour is not the fault, and changing it would not have helped.**
 The fault is that a HyperBus data phase has no backpressure and every bus this

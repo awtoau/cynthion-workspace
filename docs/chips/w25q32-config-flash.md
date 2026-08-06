@@ -295,3 +295,232 @@ exceed it, and driving `USRMCLKI` from a phase-shifted PLL output (NanoMig, at
 | `scripts/flash_speed_ladder.py`, `flash_modes.py`, `qspi_ladder.py` | earlier speed and mode characterisation |
 | `scripts/test_flash_id.py` | JEDEC read |
 | `apollo flash-info` | JEDEC and unique ID |
+
+# Speed: every remaining option, and which are absent
+
+Moved here from `docs/memory-speed-options.md`, which now holds only the
+ranking and the parts that span both memories. These are properties of the
+part, so they belong beside the part.
+
+### Identification, settled two ways
+
+The board files name it outright. `repos/cynthion-hardware/bank8_configuration.kicad_sch:8011`
+and `cynthion.kicad_pcb:7294`:
+
+    (property "Part Number" "W25Q32JVSSIQ"
+    (property "Datasheet" "http://www.winbond.com/resource-files/w25q32jv%20revg%2003272018%20plus.pdf"
+
+`SS` = 8-pin SOIC 208-mil, `IQ` = industrial temperature with QE factory-set.
+The datasheet is **W25Q32JV Revision G, 27 March 2018**.
+
+Two things we read off the silicon corroborate it independently, which matters
+because a schematic records what was ordered rather than what was fitted:
+
+| we measured | what it proves |
+|---|---|
+| JEDEC `EF 40 16` | rules out JV-IM/JM (`70 16`) and both JW variants (`60 16`, `80 16`) |
+| SR2 `0x02`, QE already set | §7.1: QE is *"factory fixed default for part numbers with ordering options `IQ` & `JQ`"*. QE=0 is the IM/JM default |
+| SR3 exists and reads `0x60` | rules out **W25Q32BV**, which reads `40 16` too but has no Status Register-3 at all |
+
+Only **W25Q32FV** and **W25Q32JV-IQ/JQ** survive `EF 40 16` + SR3 + QE=1, and
+the schematic picks between them.
+
+### Correction to what this workspace recorded
+
+Two statements in the existing notes are wrong and are corrected here:
+
+| was recorded | correct |
+|---|---|
+| SR3 `0x60`, **"ADS clear"** ([`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md)) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
+| *"QPI mode can address in as few as 8 clocks"* ([`luna_ecp5_fpga/flash-detailed.md`](../luna_ecp5_fpga/flash-detailed.md)) | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
+
+### QPI (`0x38`) — absent
+
+The word "QPI" appears **three times** in the 80-page Rev G datasheet, and all
+three are the same cross-reference: *"For DTR, QPI supporting, please refer to
+W25Q32JV DTR datasheet."*
+
+The absence is evidenced rather than assumed — the part's complete instruction
+set is two tables, and neither contains `38h` or `FFh`:
+
+- **Table 1, Standard SPI**: `06 50 04 AB 90 9F 4B 03 0B 02 20 52 D8 C7/60 05 01
+  35 31 15 11 5A 44 42 48 7E 98 3D 36 39 75 7A B9 66 99`
+- **Table 2, Dual/Quad SPI**: `3B BB 92 32 6B 94 EB 77`
+
+That is all of it. No `38h`, no `C0h`, no `0Dh`/`BDh`/`EDh`, no 4-byte-address
+opcodes.
+
+**Even if it were present it would be worth roughly nothing here**, and this is
+the more useful finding, because it applies to any future part choice. QPI's
+advantage is that the *opcode* goes out on four lanes instead of one. But
+`0xEB` continuous read — which this board already does — **deletes the opcode
+entirely**. The two optimisations target the same eight clocks, and continuous
+read gets there first:
+
+| per 64-byte cache line, clocks at SCK | opcode | address | mode | dummy | data | total |
+|---|---|---|---|---|---|---|
+| `0xEB` quad I/O, SPI | 8 | 6 | 2 | 4 | 128 | **148** |
+| `0xEB` continuous, SPI — *what we run* | — | 6 | 2 | 4 | 128 | **140** |
+| QPI `0xEB` continuous, 2 dummy (hypothetical) | — | 6 | 2 | 2 | 128 | **138** |
+| QPI `0x0B`, 8 dummy (what 133 MHz would need) | 2 | 6 | — | 8 | 128 | **144** |
+
+**+1.4% at best, −2.8% at the clock we actually run.** The dummy-clock count in
+QPI is not free: the DTR-part datasheet's `0xC0` table ties 2 dummy clocks to a
+50 MHz ceiling and only 8 dummy clocks reach 133 MHz. At 144 MHz SCK the QPI
+path is *slower* than what we have.
+
+### DTR (`0xBD` / `0xED`) — absent, and it would be a downgrade anyway
+
+Winbond **split the die** at the J generation. The FV had DTR and QPI in one
+part; the JV bifurcated into **-IQ/JQ (`40 16`, plain SPI/Dual/Quad)** and
+**-IM/JM (`70 16`, adds QPI and DTR)**, in two separate datasheets. Ours is the
+stripped variant. This is the specific thing the brief asked to verify against
+the variant rather than the family, and the family answer would have been wrong.
+
+The arithmetic is worth doing anyway, because it decides whether fitting the
+`-IM` part is ever worth a rework:
+
+**DTR on the -IM is rated 66 MHz SCK at 3.0–3.6 V** (52 MHz below 3.0 V), against
+133 MHz for its SDR instructions. Four lanes at double rate at 66 MHz is
+4 × 2 × 66e6 / 8 = **66 MB/s**. We measure **71.7 MB/s** at 144 MHz SDR. Per
+cache line, `0xED` costs 8 opcode + 3 address + 8 dummy + 64 data = 83 clocks at
+66 MHz = **1258 ns**, against our 1028 ns.
+
+**Double-rate at half the clock is not a win.** Fitting the DTR part would make
+this board slower.
+
+### `0xC0` Set Read Parameters — absent, and QPI-only regardless
+
+Not in either instruction table. The DTR datasheet is explicit that it would not
+help even if it were: *"In Standard SPI mode, the 'Set Read Parameters (C0h)'
+instruction is not accepted. The dummy clocks for various Fast Read instructions
+in Standard/Dual/Quad SPI mode are **fixed**."*
+
+`0xEB`'s 4 dummy clocks in SPI mode are not adjustable on any W25Q32.
+
+### `0x77` Set Burst with Wrap — present, and it is a latency feature not a throughput one
+
+The one item on the brief's flash list that this part **does** have (§8.2.13).
+`77h` + 24 dummy bits + one byte: `W6,W5` = 00/01/10/11 → 8/16/32/64-byte wrap,
+`W4` = 0 enables it. Default `W4` = 1, i.e. **disabled**. It persists across
+transactions and across `/CS`, and it applies **only to `0xEB`** — not `0x6B`,
+not `0xBB`.
+
+**It does not eliminate the address phase.** §8.2.12: output *"starts at the
+initial address specified in the instruction, once it reaches the ending boundary
+of the 8/16/32/64-byte section, the output will wrap around to the beginning
+boundary automatically until /CS is pulled high"*. Every `0xEB` still carries its
+full 24-bit address, and holding `/CS` low simply re-reads the same section
+forever. The brief's hoped-for behaviour — successive wrapped bursts on one `/CS`
+low without re-issuing an address — **is not what this instruction does**.
+
+What it *is* worth is **critical-word-first**. Winbond says so directly: *"allows
+applications that use cache to quickly fetch a critical address and then fill the
+cache afterwards within a fixed length of data without issuing multiple read
+commands."*
+
+The arithmetic, for a 64-byte line of sixteen 4-byte CPU words at 144 MHz. A
+4-byte word costs 8 clocks on four lanes:
+
+| | clocks to the missed word | ns |
+|---|---|---|
+| no wrap, word at index *k* | 12 + 8(*k*+1) | — |
+| no wrap, average (*k* = 7.5) | 72 | **500** |
+| **wrap-64, always** | **20** | **139** |
+
+**A 72% cut in the stall before the CPU can resume** — but the line still takes
+the full 1028 ns to fill, so nothing about throughput changes, and it only pays
+at all if the cache restarts on the critical word rather than waiting for the
+line. VexiiRiscv's I-cache would have to be configured for it.
+
+**Cost:** one `0x77` transaction at init, plus a wrapped-read path in the
+controller, plus the cache configuration. Non-trivial, and it improves latency
+under a miss rather than throughput.
+
+### Drive strength — real, but there is no failure for it to fix
+
+SR3 `DRV1,DRV0`: `00` = 100%, `01` = 75%, `10` = 50%, **`11` = 25%, the factory
+default and what we read**. Writable volatile (`50h` then `11h`) and
+non-volatile (`06h` then `11h`).
+
+The datasheet gives **no ohms, no mA, and no tie to frequency or load** — the
+percentages are unqualified, and §9.5 fixes the AC conditions at `CL` ≤ 30 pF
+without reference to `DRV`. So there is no arithmetic to do; only an experiment.
+
+Two things make it lower-value than it looks:
+
+- **Nothing fails at 25% up to 144 MHz.** The ceiling reached was the test
+  design's own fmax at 149 MHz, not the flash. A stronger driver has no failure
+  to repair, and it cannot raise a limit that lives in the FPGA.
+- **A volatile write has already been attempted and did not take** — SR3 read
+  back unchanged at `0x60` through Apollo's background SPI.
+
+Worth doing only as part of a design that has first got past 149 MHz. Note the
+one paper argument in its favour: at 144 MHz the clock period is 6.94 ns and
+`tCLQV` is specified **max 6 ns**, so the read is already relying on the real
+part being far inside its guardband. If anything ever *does* go marginal at
+speed, this is the first knob.
+
+### What the flash arithmetic actually says
+
+**Bulk reads are done.** 71.70 MB/s against a four-lane SDR theoretical of
+4 × 144e6 / 8 = 72.0 MB/s is **99.58%**. There is no protocol overhead left to
+remove; every remaining option moves the ~12-clock transaction preamble, which
+is 0.4% of a bulk copy.
+
+**Cache lines have 13.5% of overhead**, and that is where the options land:
+
+| per 64-byte line at 144 MHz | clocks | ns | MB/s | vs today |
+|---|---|---|---|---|
+| `0xEB` continuous — **today** | 140 | 1028 (measured) | 62.3 | — |
+| overhead magically zero (the bound) | 128 | 944 | 67.8 | +8.9% |
+| QPI continuous, 2 dummy (not available) | 138 | 1014 | 63.1 | +1.4% |
+| **128-byte cache line, same mode** | 268 | 1916 | 66.8 | **+7.2%** |
+
+Measured points are within 5% of `clocks / 144 MHz + 55 ns`, so intermediate
+values can be read off the model.
+
+**Doubling the cache line to 128 bytes is the largest remaining flash win, and
+it is a configuration parameter.** It halves the transaction count and amortises
+the same 12 clocks over twice the data. It costs I-cache block RAM, which
+[`luna_ecp5_fpga/bram-budget.md`](../luna_ecp5_fpga/bram-budget.md) says is the
+scarce resource, and it is only a win if locality holds.
+
+**The largest item was taken while this survey was being written.**
+`FLASH_MODE = "quad"` landed in `03482f4` — 2.70× on a 16 KiB random walk, for
+**−261 LUTs and no block RAM**. What remains of the SoC gap is
+[`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md)'s two rows,
+`SYNC_MHZ` and the PHY, and they have a constraint that survey does not state:
+
+**`SYNC_MHZ` is gated by the CPU, not the flash.** The SoC's median Fmax is
+**75.0 MHz** across three place-and-route runs. Raising `sync` to 120 MHz for the
+flash's sake requires the RISC-V core to close at 120 MHz first — see
+[`riscv-clock-ceiling.md`](riscv-clock-ceiling.md). The flash's remaining 2× is
+real but it is not the flash's to give.
+
+One SoC-side step this survey adds: **`0xEB` continuous read is not adopted
+either**, and it is worth 1083 → 1028 ns per line, **5.1%**, on top of quad. It
+carries the sticky-state hazard already documented — the part remembers the mode
+across an FPGA reconfiguration, and answers the next opcode as if it were an
+address. Small win, real footgun; take it last if at all.
+
+### One measurement to take that would settle the residue
+
+**Read the full SFDP Basic Flash Parameter Table.** `scripts/flash_capacity_probe.py`
+already issues `0x5A` but decodes only the density word. JESD216's BFPT declares,
+from the die itself: which fast-read modes are supported, their dummy-cycle
+counts, whether 4-4-4 (QPI) is available, and — DWORD 1 bit 19 — whether DTR
+clocking is supported.
+
+That matters because there is **one live contradiction** between the datasheet
+and this board. Rev G documents no continuous-read mode at all; it says in four
+places that `M7-0` *"should be set to Fxh"*, which is the **non**-continuous
+encoding, and it has none of the FV's Figures 22b/24b describing opcode-skipping.
+Yet we have measured `0xEB` continuous working byte-exact with the opcode
+genuinely omitted, at 71.70 MB/s, and found the part *remembers the mode across
+an FPGA reconfiguration*. **The die implements a feature its own datasheet
+dropped.** SFDP would say whether anything else undocumented is there — and it is
+a read-only probe on a board that is otherwise fully characterised.
+
+---
+

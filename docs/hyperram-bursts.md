@@ -1,7 +1,7 @@
 # HyperRAM bursts: the data phase cannot be stalled
 
 **Index:** [`README.md`](README.md) · the bus question this answers half of:
-[`hyperram-bus-review.md`](hyperram-bus-review.md) · rates and options:
+[`soc-memory-bus.md`](soc-memory-bus.md) · rates and options:
 [`memory-speed-options.md`](memory-speed-options.md) · decisions:
 [`decisions.md`](decisions.md)
 
@@ -143,7 +143,7 @@ difference is not where the model said it would be. Unexplained.
 
 The modelling gap that motivated caution is real and separate: the model serves
 read data in the same cycle as the CK that asked for it, and silicon does not.
-See [`hyperram-bus-review.md`](hyperram-bus-review.md) §5.
+See [`soc-memory-bus.md`](soc-memory-bus.md) §5.
 
 ## Transaction overhead, in CK
 

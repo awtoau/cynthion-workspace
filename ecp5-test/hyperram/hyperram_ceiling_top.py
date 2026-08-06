@@ -854,16 +854,11 @@ class HyperRAMCeiling(Elaboratable):
                 pass
 
         #
-        # BOTH states in one register. A separate REG_CTRL_STATE at address 29
-        # read back 0xDEADBEEF -- luna's marker for an address the register file
-        # does not decode -- while 28 worked, so something bounds the space.
-        # Packing avoids the question and costs nothing: the engine's state is in
-        # bits 7:0 and the controller's in bits 15:8.
-        harness.add_read_only_register(
-            REG_FSM_STATE,
-            read=Cat(engine.state, Const(0, 8 - len(engine.state)),
-                     psram.state, Const(0, 8 - len(psram.state)),
-                     Const(0, 16)))
+        # The engine's state, so a stalled sweep says WHERE. The controller's own
+        # state was exposed alongside it briefly and is gone: Amaranth's FSM does
+        # not carry a readable `state` attribute here, and adding one broke
+        # `soc_hyperram_sim`. The engine state was what located the stall anyway.
+        harness.add_read_only_register(REG_FSM_STATE, read=engine.state)
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it

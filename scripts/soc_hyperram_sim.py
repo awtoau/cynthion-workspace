@@ -98,7 +98,7 @@ shows the fix passing is a check that would have passed before the fix.
      the master's bubble. Section 9 stays exactly where it is as the negative
      control, and this section runs two more: the gate removed, and the gate
      present but level-aligned rather than write-aligned, which is worse than
-     no gate at all. See `docs/hyperram-bus-review.md` 5 for the datasheet.
+     no gate at all. See `docs/soc-memory-bus.md` 5 for the datasheet.
 """
 
 import argparse

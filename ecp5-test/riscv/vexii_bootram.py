@@ -104,7 +104,7 @@ HYPERRAM_OVERHEAD_CK = 17
 # tCK maximum. Rev A01-006 Table 22 bounds it at 100 ns; A01-003 leaves it blank.
 # Note 2, in both, says the real constraint is tCSM -- but a stall longer than
 # this sits in the gap between that note and the table on A01-006 silicon, so
-# nothing here goes there. See `docs/hyperram-bus-review.md` 5.
+# nothing here goes there. See `docs/soc-memory-bus.md` 5.
 HYPERRAM_TCK_MAX_NS = 100.0
 
 # How much of tCSM the cap is allowed to spend. The remaining tenth covers the
@@ -574,7 +574,7 @@ class BootRAM(Elaboratable):
     `clock_stop` is the other half of that answer and the reason `sustained` can
     ever be true here. It gates CK on word boundaries so the device waits out the
     master's bubble instead of eating whatever is on DQ -- see `ClockStopPHY`, and
-    `docs/hyperram-bus-review.md` 5 for the datasheet clauses. Without it a
+    `docs/soc-memory-bus.md` 5 for the datasheet clauses. Without it a
     coalesced 64-byte line writes 48 device words where 32 are wanted.
 
     Attributes
@@ -844,7 +844,7 @@ class BootRAM(Elaboratable):
         # the wire in cycle T is the one `write_ready` accepted in T-1; a read's
         # data and its RWDS transition arrive in the same cycle `read_ready`
         # fires. Gate both at T and the last accepted write word is never clocked
-        # out. This is the fifth risk named in `docs/hyperram-bus-review.md` 5 --
+        # out. This is the fifth risk named in `docs/soc-memory-bus.md` 5 --
         # "the cycle the stall asserts must not be one in which the controller's
         # registered `dq.o` has already moved on" -- and the sim is what settled
         # it: without the register a coalesced line write returns 0/16.

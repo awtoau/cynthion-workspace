@@ -269,11 +269,8 @@ def main():
             if stuck == 200:
                 emit(f"  STALLED at cell {cell} (drive {cell // 8}, "
                      f"phase {cell % 8}) -- it has not advanced in 200 polls")
-                packed = registers.register_read(REG_FSM_STATE)
-                emit(f"  controller FSM state {(packed >> 8) & 0xFF} "
-                     f"(0 IDLE, 1 LATCH_RWDS, 2 SHIFT_COMMAND, 3 HANDLE_LATENCY, "
-                     f"4 READ_DATA, 5 WRITE_DATA, 6 RECOVERY)")
-                emit(f"  engine FSM state {packed & 0xFF} "
+                emit(f"  engine FSM state "
+                     f"{registers.register_read(REG_FSM_STATE)} "
                      f"-- see the state order in hyperram_ceiling_top.py")
                 emit(f"  applet id reads {registers.register_read(REG_ID):#010x}, "
                      f"want {APPLET_ID:#010x}")

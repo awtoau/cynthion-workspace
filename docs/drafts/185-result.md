@@ -16,7 +16,7 @@ delay 0-3 cycles:
 the delay. **The data does not respond at all.**
 
 So read-gate alignment is not the fault. That was the one thing this experiment
-existed to test, and it refutes the hypothesis in `hyperram-bus-review.md` §5
+existed to test, and it refutes the hypothesis in `soc-memory-bus.md` §5
 that the read half needed only the same register the write half needed.
 
 ## What made this answerable

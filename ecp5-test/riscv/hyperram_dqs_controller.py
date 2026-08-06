@@ -125,10 +125,6 @@ class HyperRAMDQSController(Elaboratable):
 
         # Status signals.
         self.idle             = Signal()
-        # The FSM's current state, brought out so a stall can say WHERE rather
-        # than being reasoned about. A harness that hangs waiting on `idle` has
-        # no way to ask what the controller is doing without this.
-        self.state            = Signal(4)
         self.read_ready       = Signal()
         self.write_ready      = Signal()
 
@@ -207,7 +203,6 @@ class HyperRAMDQSController(Elaboratable):
         m.d.sync += recovery_remaining.eq(self._recovery_cycles)
 
         with m.FSM() as fsm:
-            m.d.comb += self.state.eq(fsm.state)
 
             # IDLE state: waits for a transaction request
             with m.State('IDLE'):

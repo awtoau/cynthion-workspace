@@ -459,3 +459,287 @@ strobe is in use, and a live negative control on the rung being quoted. Until
 those three hold together, this file records no throughput figure.
 
 See #186 and #188. `scripts/hyperram_ceiling.py` is the instrument.
+
+# Speed: every remaining option, ranked by what it returns
+
+Moved here from `docs/memory-speed-options.md` for the same reason as the
+flash options: these are properties of the W956A8 and its configuration
+registers, not of the SoC that drives it.
+
+### The model these numbers come from
+
+At CK 192 MHz the theoretical rate is 2 bytes/CK × 192e6 = **384 MB/s**.
+Measured read is 334.4 = **87.08%**, so a 128-word transaction costs
+128 / 0.8708 = **147 CK**, i.e. **19 CK of overhead**.
+
+That matches the controller's own state machine, counted in `sync` cycles at
+2 CK each: `LATCH_RWDS` 1 + `SHIFT_COMMAND0` 1 + `SHIFT_COMMAND1` 1 +
+`HANDLE_LATENCY` 6 (loaded with `HIGH_LATENCY_CLOCKS = 5`, decrementing to 0) +
+`RECOVERY` 1 = 10 sync = **20 CK**. The model is sound, so the table below can be
+trusted arithmetically.
+
+**A useful cross-check:** the *write* path measures 351.1 MB/s = 91.4%, which is
+128/140, i.e. **12 CK of overhead**. Twelve clocks of overhead is therefore
+demonstrated achievable on this board, not merely calculated. (The mechanism is
+not established — writes do not wait on `DATAVALID` — so treat it as a bound, not
+an explanation.)
+
+### Option 1 — variable latency (`CR0[3] = 0`). +5%, and reading early is the failure mode
+
+`CR0` reads `0x8f2f`, so `CR0[3] = 1` — **fixed latency**, the power-on default.
+The part drives RWDS high during every CA period and always takes **2 × initial
+latency**.
+
+**Correcting a decode while we are here.** This workspace recorded `0x8f2f` as
+*"latency 2"*. `CR0[7:4]` = `0010b`, and Table 10 reads that as
+**"7 Clock Latency @ 200MHz Max Frequency (default)"** — 7 clocks, not 2. So
+fixed latency costs **14 CK** on every transaction, and variable latency costs 7.
+
+| `CR0[7:4]` | clocks | max CK |
+|---|---|---|
+| `1110b` | 3 | 83 MHz |
+| `1111b` | 4 | 100 MHz |
+| `0000b` | 5 | 133 MHz |
+| `0001b` | 6 | 166 MHz |
+| **`0010b`** | **7** | **200 MHz** — *what is set* |
+
+At CK 192 MHz the 7-clock setting is the only legal one, so **shortening the
+initial latency count is not available to us** (see Option 6). Variable latency
+is a different mechanism: same 7-clock count, but taken **once** instead of
+twice when no refresh is pending.
+
+**Worth:** overhead 19 → 12 CK. 128/140 = 91.43% → **351.1 MB/s, +5.0%** —
+exactly the write path's number, which is the corroboration above.
+
+Refresh collisions give some of it back. Distributed refresh is 64 ms / 8192 rows
+= **7.81 µs per row**; a 140 CK transaction at 192 MHz is 729 ns, so about
+729/7810 = **9.3%** of transactions start with a refresh outstanding and pay the
+long count anyway. Expected overhead 12 + 0.093 × 7 = 12.65 CK →
+**349.5 MB/s, +4.5%**.
+
+**What has to change together — and this is the part that bites.** Three things,
+and doing any one alone reads early or reads nothing:
+
+1. **`CR0[3]` must be cleared.** Nothing else works until the device stops
+   asserting RWDS unconditionally.
+2. **`HIGH_LATENCY_CLOCKS` must come down.** `READ_DATA` is the only state that
+   raises `phy.read`, which is what opens `DQSBUFM`'s capture window. Entering it
+   *late* loses the first words outright; entering it *early* is harmless because
+   `DATAVALID` gates the latch. So the count must be set to the **short**
+   value and left there. The counter is in `sync` cycles = 2 CK, so it cannot
+   express 7 CK at all — 3 sync = 6 CK is the correct floor.
+3. **RWDS must actually be sampled during the CA period — it is not today.**
+   `LATCH_RWDS` reads `phy.rwds.i` in the state *before* `SHIFT_COMMAND0`, i.e.
+   before the CA has been sent. Whatever `extra_latency` holds is not the
+   device's answer about this transaction. Upstream masks it with
+   `with m.If(extra_latency | 1)` and a `FIXME`, which is correct *only* while
+   fixed latency is set. Clear `CR0[3]` without fixing this and the controller
+   has no idea which latency applies.
+
+   This file already records that
+   LUNA's `extra_latency | 1` is *"the correct behaviour here"* rather than the
+   defect #90 called it. That stands — but it is correct only because of a
+   register setting we would be changing.
+
+**Cost:** a CR0 write in the bring-up sequence, two constants, and moving one
+sample into the CA window. Then a full re-verification, because the failure mode
+is silently-wrong data at full speed rather than an error — the same shape as
+every other trap on this interface.
+
+### Option 2 — longer bursts inside tCSM. +10.7%, and the cheapest thing on this page
+
+`CR1` reads `0xffc1`, so `CR1[1:0]` = `01b` = **4 µs tCSM**, and the burst is
+128 words.
+
+**`CR1[1:0]` is read-only and `01b` is the only defined value.** Table 13 lists
+`00b`, `10b` and `11b` as Reserved and the note says *"CR1[1:0] is read only."*
+Table 14 has exactly one row: TCASE < 85 °C, 64 ms refresh interval, 8192 rows,
+recommended tCSM 4 µs. **There is no longer tCSM to buy at any price** — that
+answers the brief's question directly. The datasheet's remark that *"the array
+refresh interval is longer at lower temperatures such that tCSM could be
+increased"* is not actionable on a part whose register will not take the value.
+
+At CK 192 MHz, 4 µs is **768 CK**. Subtracting 19 CK of overhead leaves room for
+**749 words**. Our 128 is using **17% of the budget**:
+
+| burst | +19 CK overhead | CK | µs at CK 192 | % of tCSM | efficiency | MB/s | vs today |
+|---|---|---|---|---|---|---|---|
+| **128 — today** | 147 | 147 | 0.77 | 19% | 87.1% | 334.4 | — |
+| 256 | 275 | 275 | 1.43 | 36% | 93.1% | 357.5 | **+6.9%** |
+| **512** | 531 | 531 | **2.77** | **69%** | 96.4% | **370.3** | **+10.7%** |
+| 704 | 723 | 723 | 3.77 | 94% | 97.4% | 374.0 | +11.8% |
+
+**512 words is the right answer**: it takes 10.7 of the available 11.8 points and
+leaves 31% of tCSM as margin, where 704 leaves 6%.
+
+**The catch, and it is the whole cost.** tCSM is **4 µs of wall-clock time at
+every frequency** — the write timing table gives 4.0 µs at 200, 166, 133 and
+100 MHz alike. So the legal burst in *words* scales with the clock:
+
+| device CK | tCSM in CK | max legal words |
+|---|---|---|
+| 60 MHz (non-DQS, slowest rung) | 240 | ~221 |
+| 120 MHz | 480 | ~461 |
+| 192 MHz | 768 | ~749 |
+
+**128 is a constant that is legal everywhere, which is why it is 128.** Raising
+it to 512 means making `BURST_WORDS` a function of the built clock, or splitting
+long transfers in the controller — which is what the datasheet says a host is
+supposed to do: *"host memory controller logic splitting long transactions when
+reaching the tCSM limit"*. That splitter does not exist in
+`HyperRAMDQSInterface` and it is the piece of work this option really is.
+
+**Violating tCSM does not fail visibly** — it fails by forgetting later. That is
+how `hyperram_speed.py` (since retired) produced 220.2 MB/s from a 2048-word
+/ 17 µs burst, a number
+this workspace has already retired.
+
+**Combined with Option 1** (12 CK overhead, 512 words): 512/524 = 97.71% →
+**375.2 MB/s, +12.2%**, and 97.7% of everything CK 192 can deliver. That is the
+realistic end of the road at this clock.
+
+### Option 3 — hybrid burst and wrap for cache lines. Latency, not throughput
+
+`CR0[2]` = 1 (legacy wrap) and `CR0[1:0]` = `11b` (32-byte wrap) today. Neither
+does anything, because our transactions are linear — wrapped-vs-linear is
+selected by a CA bit, not by CR0.
+
+Setting **`CR0[2] = 0` (hybrid) and `CR0[1:0] = 01b` (64-byte)** would matter the
+moment #90 puts a CPU on this bus. Hybrid burst is *"one wrapped burst followed
+by linear burst"*, and §9.4.2 describes exactly the cache case: *"The first cache
+line is filled starting at the critical word. Then the next sequential line in
+memory can be read in to the cache while the first line is being processed."*
+
+Note the feature summary marks hybrid burst **"64 Mbit only"** — it is available
+on our density and not on the 128 Mbit sibling.
+
+**Worth:** a 64-byte line is 32 device words, and a 4-byte CPU word is 2 CK. The
+transaction is 19 + 32 = 51 CK = 266 ns.
+
+| | CK to the missed word | ns at CK 192 |
+|---|---|---|
+| linear, word at index *k* | 19 + 2(*k*+1) | — |
+| linear, average (*k* = 7.5) | 36 | **188** |
+| **wrap-64, always** | **21** | **109** |
+
+**A 42% cut in the stall**, plus the hybrid tail prefetching the next line for
+free. Zero throughput change.
+
+**Cost:** two CR0 fields, a wrapped-CA path in the controller, and a cache that
+restarts on the critical word. Nothing to do until #90 lands; worth deciding
+*before* it does, because it shapes the peripheral.
+
+### Option 4 — drive strength (`CR0[14:12]`). Cheap to try, wrong shape for the failure
+
+`CR0[14:12]` = `000b` = **34 Ω**, the reset default. The full ladder, from
+Table 10 — note it is not monotonic in the code:
+
+| code | impedance | | code | impedance |
+|---|---|---|---|---|
+| `001b` | 115 Ω | | `101b` | 27 Ω |
+| `010b` | 67 Ω | | `110b` | 22 Ω |
+| `011b` | 46 Ω | | `111b` | **19 Ω — strongest** |
+| `000b` / `100b` | 34 Ω (default) | | | |
+
+`000b` and `100b` are the same value; §9.4.5 calls the default *"the mid-point of
+the available output impedance options"*, which is fair — 34 Ω sits fourth of
+seven.
+
+**It drives the right signals.** `CR0[14:12]` sets the impedance of **`DQ[7:0]`
+and RWDS as the memory drives them**, which is precisely the read path that
+fails at CK 200.
+
+**It looks like the wrong shape for our failure** — signal-integrity faults give
+scattered bit errors, and ours gives *transposed 16-bit halves borrowed from a
+neighbouring word*, structurally related to what was written. And the eye looks
+wide: at CK 200 the part's `tDV` min is **1.45 ns** against the ECP5's `tDWDQ`
+requirement of **0.519 ns** at speed grade 8.
+
+**But `tDV` is the wrong spec to check, and the right one is much tighter.** With
+a DQS-strobed read what matters is data valid *relative to the strobe*, which is
+`tDSS`/`tDSH` — and that is **±0.8 ns on our 166 MHz bin against ±0.4 ns on the
+200 MHz bin**. See the `tDSS` discussion under [Published work](#the-tdss-reading-that-argues-the-other-way):
+skew approaching half a UI moves the sample into the adjacent bit, and in a 4:1
+gearbox an adjacent-bit sample *is* a half-word displacement. **The failure
+signature does not distinguish the two hypotheses.**
+
+**So try it** — three register writes (`101b`, `110b`, `111b`) on a rung that
+already fails is among the cheapest experiments available, and on this reading it
+has a real chance rather than a token one.
+
+### Option 5 — differential clock (`CR1[6] = 0`). Untried, unremarked, and the board is already wired for it
+
+**This is not on the brief's list and it should be.**
+
+`CR1` reads `0xffc1`, so **`CR1[6] = 1` = "Single Ended - CK (default)"**. The
+datasheet's pin description is blunt about what that means: *"Single Ended Clock:
+**CK# is not used**, only a single ended CK is used."*
+
+Meanwhile the board drives a genuine complementary pair —
+`ecp5-test/cynthion_platform/cynthion_r1_4.py:206`:
+
+    Subsignal("clk", DiffPairs("C3", "D3", dir="o"), Attrs(IO_TYPE="LVCMOS33D")),
+
+**The FPGA has been driving CK# into a part that is configured to ignore it, on
+every build this workspace has ever run.** In single-ended mode the part slices
+CK against its own input threshold; in differential mode it clocks on *"the
+crossing of the CK and CK# signals"*, which is what removes threshold and
+common-mode error from the sampling instant. At CK 200 MHz the period is 5 ns and
+a half-period 2.5 ns, so threshold error is a direct duty-cycle error on a DDR
+bus — and duty-cycle error is exactly the class of fault that presents as a
+half-word landing in the wrong slot.
+
+The part specifies the differential mode properly (Table 25): `VID(AC)` min
+0.6 × VCCQ, `VIX` between 0.4 and 0.6 × VCCQ, and *"CK and CK# input slew rate
+must be ≥1 V/nS (2 V/nS if measured differentially)"*.
+
+**The obvious objection does not apply here.** `LVCMOS33D` is pseudo-differential
+— two complementary CMOS buffers rather than a true differential driver — and
+badly-matched legs would put skew straight onto `VIX`, potentially making
+differential mode *worse* than single-ended. But
+[`luna_ecp5_fpga/hyperram-detailed.md`](../luna_ecp5_fpga/hyperram-detailed.md)
+already established how the pair is actually built:
+
+> *"Amaranth drives an LVCMOS33D pair by driving the **true** pin only and
+> letting the bank generate the complement, so the clock path is
+> `ODDRX2F → DELAYG → OBZ → C3` and nothing else."*
+
+**The complement is generated by the I/O bank at the buffer, downstream of the
+`DELAYG` and of everything else.** Both legs share one source and one delay
+element, so the P-to-N skew is the buffer pair's own mismatch and not an
+accumulated routing difference. That is the good case for this option.
+
+**Two things still to check:** `VCCQ` is 3.3 V, so `VID` is the full rail-to-rail
+swing against a 3.6 V maximum — legal, with 0.3 V to spare. And `LVCMOS33D`
+P-to-N skew is not specified in the ECP5 datasheet, so the argument above is
+structural rather than numeric.
+
+**Cost: one CR1 write in the bring-up sequence, no gateware change.** It is the
+best return-per-effort experiment on the 200 MHz failure, ahead of drive
+strength, and nothing in this workspace has tried it.
+
+### Option 6 — a lower initial latency count. Do not
+
+`CR0[7:4]` could be `0001b` (6 clocks) at CK ≤ 166 or `0000b` (5 clocks) at
+CK ≤ 133. The trade is always bad:
+
+At CK 166 the theoretical ceiling is 332 MB/s. Even at 97.7% efficiency — 512-word
+bursts *and* variable latency *and* a 6-clock count — that is **324 MB/s**,
+below today's 334.4. **Never trade clock for latency on this part.** Recorded so
+nobody re-derives it.
+
+### Option 7 — partial array refresh (`CR1[4:2]`). Speculative, and it costs memory
+
+`CR1[4:2]` = `000b` = full array. Restricting to half the array halves the rows
+needing refresh, which *could* halve the ~9.3% refresh-collision rate that Option
+1 pays — worth about 0.4% of throughput, for 4 MiB of memory.
+
+**And it may do nothing.** The datasheet describes partial array refresh only as
+a standby-current feature and does not say the distributed refresh scheduler
+slows down; the device may simply refresh the remaining rows twice as often.
+tCSM certainly does not change — `CR1[1:0]` is read-only.
+
+Listed for completeness. Bad trade at any reading.
+
+---
+
