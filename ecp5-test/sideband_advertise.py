@@ -7,7 +7,7 @@
 Asks Apollo for the CONTROL port, on the wire the sideband already owns.
 
 FPGA_ADV's primary purpose upstream is port takeover, not debug. `ApolloAdvertiser`
-drives it as a 25 Hz square wave, and Apollo keeps the port switch on the FPGA only
+drives it as a 50 Hz square wave, and Apollo keeps the port switch on the FPGA only
 while that continues. Every bitstream here is AUX-only, so the pin has been free to
 carry the sideband instead -- and the SoC consequently has no way to ask for CONTROL.
 
