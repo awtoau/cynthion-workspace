@@ -21,7 +21,7 @@ Depth lives elsewhere and is linked, not repeated:
 | for | see |
 |---|---|
 | the CPU area and timing matrix, rv64 and MMU rows | [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost) |
-| HyperRAM and flash speed ceilings, and every remaining lever | [`memory-speed-options.md`](memory-speed-options.md) |
+| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`decisions.md`](decisions.md) 26 |
 | the 480 Mbps host engine, its integration design and register map | [`usb-host-proposal.md`](usb-host-proposal.md) |
 | the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
@@ -163,7 +163,7 @@ and refill cost is the open question below. Doubling the cache halves the refill
 | | figure | provenance |
 |---|---|---|
 | HyperRAM peak, CK 192 MHz, 2 bytes/CK DDR | 384 MB/s | arithmetic |
-| **measured read, 128-word bursts** | **334.4 MB/s** (87.1%) | measured — [`memory-speed-options.md`](memory-speed-options.md) |
+| **measured read, 128-word bursts** | **238.9 MB/s** at CK 140 (85.3%) | measured — [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md). The 334.4 MB/s this row used to claim is **withdrawn**; CK 180 fails in bulk |
 | measured write | 351.1 MB/s | measured |
 | fixed overhead per HyperBus transaction | **19 CK** | derived: 147 CK for 128 words |
 | the CSR staging port this replaced | **0.77 MB/s** | measured, `bench hyperram` |
@@ -260,7 +260,7 @@ product.
 
 | novel | why nobody has it |
 |---|---|
-| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`memory-speed-options.md`](memory-speed-options.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
+| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`hyperram-implementations.md`](hyperram-implementations.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
 | …at 334.4 MB/s | nothing faster on an ECP5 appears in the open record — the next published figure is Tiliqua's 200 MB/s |
 | **rv64 VexiiRiscv Linux on a 12F** | `linux-on-litex-vexriscv` is rv32 VexRiscv |
 | **Rust kernel drivers on this SoC** | the stated point of the exercise |

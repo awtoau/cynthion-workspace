@@ -604,7 +604,7 @@ FLASH_PHY_FAST = False
 # THE ONLY ROUTE PAST ~52 MB/s. `HyperRAMPHY` makes double-rate output from `sync`
 # alone, so CK is `SYNC_MHZ` and the bus tops out with it. `HyperRAMDQSPHY` uses
 # the ECP5's gearing primitives with an ECLK at 2x, which is what lets CK rise
-# toward the 192 the 334 MB/s figure in `docs/memory-speed-options.md` was taken
+# toward the 192 the withdrawn 334 MB/s figure was taken
 # at.
 #
 # Two consequences, both real work rather than a flag flip:

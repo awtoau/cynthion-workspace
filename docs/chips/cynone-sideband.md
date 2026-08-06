@@ -18,14 +18,14 @@ question below is measured against.
 
 | | |
 |---|---|
-| Responder, shipping SoC | [`ecp5-test/sideband_link.py`](../ecp5-test/sideband_link.py) — protocol v2 |
-| Responder, test bitstream | `apollo_fpga.gateware.sideband` via [`ecp5-test/sideband/sideband_gateware.py`](../ecp5-test/sideband/sideband_gateware.py) — protocol v1 |
-| Pad sharing, both blocks | [`ecp5-test/sideband_debug.py`](../ecp5-test/sideband_debug.py) |
-| Port request | [`ecp5-test/sideband_advertise.py`](../ecp5-test/sideband_advertise.py) |
-| CPU's end | [`ecp5-test/riscv/sideband_csr.py`](../ecp5-test/riscv/sideband_csr.py) |
+| Responder, shipping SoC | [`ecp5-test/sideband_link.py`](../../ecp5-test/sideband_link.py) — protocol v2 |
+| Responder, test bitstream | `apollo_fpga.gateware.sideband` via [`ecp5-test/sideband/sideband_gateware.py`](../../ecp5-test/sideband/sideband_gateware.py) — protocol v1 |
+| Pad sharing, both blocks | [`ecp5-test/sideband_debug.py`](../../ecp5-test/sideband_debug.py) |
+| Port request | [`ecp5-test/sideband_advertise.py`](../../ecp5-test/sideband_advertise.py) |
+| CPU's end | [`ecp5-test/riscv/sideband_csr.py`](../../ecp5-test/riscv/sideband_csr.py) |
 | Master | `repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` |
-| Host decode | [`scripts/sideband_decoder.py`](../scripts/sideband_decoder.py), [`ecp5-test/sideband/test_protocol.py`](../ecp5-test/sideband/test_protocol.py) |
-| Simulation | [`scripts/sideband_link_sim.py`](../scripts/sideband_link_sim.py) — the responder at the pad; [`scripts/sideband_advertise_sim.py`](../scripts/sideband_advertise_sim.py) — the advertisement, frame-exact |
+| Host decode | [`scripts/sideband_decoder.py`](../../scripts/sideband_decoder.py), [`ecp5-test/sideband/test_protocol.py`](../../ecp5-test/sideband/test_protocol.py) |
+| Simulation | [`scripts/sideband_link_sim.py`](../../scripts/sideband_link_sim.py) — the responder at the pad; [`scripts/sideband_advertise_sim.py`](../../scripts/sideband_advertise_sim.py) — the advertisement, frame-exact |
 
 Open work is tracked from [#184](https://github.com/awtoau/cynthion-workspace/issues/184),
 which is the master and lists the children. Nothing in this file is a plan.
@@ -105,7 +105,7 @@ tunnels to the host CDC. It is a strictly better console. **But R14/T14 are the
 ECP5's TDI/TMS**, so that link is unavailable during exactly the situation the
 sideband is for. The sideband's advantage over it is not bandwidth and not
 robustness; it is surviving a JTAG session — see
-[`chips/samd11-apollo.md`](chips/samd11-apollo.md). Any proposal that duplicates the
+[`chips/samd11-apollo.md`](samd11-apollo.md). Any proposal that duplicates the
 R14/T14 console on this wire is buying only that.
 
 The sideband likewise neither replaces JTAG nor reclaims its pins. Only one operation
@@ -186,7 +186,7 @@ This has bitten twice. `SidebandDebug`'s default was 115200 while the firmware r
 230400, a live 2× mismatch with no error anywhere because neither end ever frames a
 byte; and `SidebandDebug` derived its baud from an argument that could differ from the
 domain's real frequency (`decisions.md:206`,
-[`moondancer/soc-status-leds.md`](moondancer/soc-status-leds.md)).
+[`moondancer/soc-status-leds.md`](../moondancer/soc-status-leds.md)).
 
 ## 3. Turnaround: 40 µs, absolute
 
@@ -494,7 +494,7 @@ timeout later. `advertise` sits outside `own` because it is not something the li
 `scripts/sideband_advertise_sim.py` checks the frame bit-exactly against Apollo's
 matcher; nothing here has been observed on a wire. The one time Apollo was put into
 UART mode from a host, the commands timed out for unrelated reasons —
-[`moondancer/silent-soc-investigation.md`](moondancer/silent-soc-investigation.md).
+[`moondancer/silent-soc-investigation.md`](../moondancer/silent-soc-investigation.md).
 
 The port-ownership state machine on the Apollo side — who gets CONTROL and when, and
 the `0xc2` policy flag — is in [`hardware.md`](../hardware.md#who-gets-the-port-and-when).
@@ -582,7 +582,7 @@ re-muxed, so a partial frame cannot raise RXC against a pin no longer wired to i
   deliberate and protects the recovery path.
 * **Removed commands stay removed, not zero-stubbed.** [Decision 24](../decisions.md#24-what-the-sideband-link-answers).
 * **Anything Apollo-side is gated by the d11's memory budget**, which is enforced and
-  has single-digit headroom under the ceiling — [`chips/samd11-apollo.md`](chips/samd11-apollo.md#memory-budget--the-binding-constraint-on-this-board).
+  has single-digit headroom under the ceiling — [`chips/samd11-apollo.md`](samd11-apollo.md#memory-budget--the-binding-constraint-on-this-board).
   The FPGA side is cheap by comparison: the whole shipping sideband is 350 logic cells
   and 178 FF, 2.9% of an LFE5U-12F ([decision 25](../decisions.md#25-fpga_adv-advertisement-and-sideband-on-one-wire)).
   A proposal that fits the wire and the fabric can still fail on the MCU, and usually

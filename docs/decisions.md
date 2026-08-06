@@ -1108,6 +1108,65 @@ means a second decoder window rather than a linker boundary, and the decode path
 `18c1fa5` had to register to recover Fmax — so it costs timing, and the linker's
 `ASSERT`s plus a bounds check on the staged length are what stand in for it today.
 
+### 26. What to do next for memory speed, by return per effort
+
+**Decision: for the flash, nothing — it is finished. For the HyperRAM, two register
+writes before any design work.**
+
+This replaces the ranking that lived in `memory-speed-options.md`, which is now
+dissolved: the per-option analysis moved to
+[`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) and
+[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), the ECP5 primitives to
+[`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md), and the prior art to
+[`hyperram-implementations.md`](hyperram-implementations.md).
+
+**The old ranking was scored against a void measurement** and is not carried over
+as written. It ranked options as percentages of "everything CK 192 can deliver,"
+crediting 334.4 MB/s. That figure is withdrawn — the pattern aliased 64 times
+across the part, the controller latency was below CR0's minimum, and the negative
+control armed after the engine started. **CK 180 fails in bulk with 4.7 M errors.**
+The baseline below is 238.9 MB/s at CK 140, which is what survives a live control.
+
+**Flash — closed.**
+
+| rank | option | worth | effort |
+|---|---|---|---|
+| ✔ | `FLASH_MODE = "quad"` | **2.70×** measured | done in `03482f4`, for −261 LUTs |
+| 1 | replace luna_soc's PHY (`SCK` capped at `sync`/2) | 2× | large, and the only one not gated on the CPU clock |
+| 2 | raise `SYNC_MHZ` | 2× at 120 MHz | **gated by the RISC-V Fmax of 75 MHz**, not by the flash |
+| 3 | 128-byte I-cache line | +7.2% | a parameter, plus block RAM already at 75% |
+| 4 | `0xEB` continuous read in the SoC | +5.1% | small, but the mode is sticky across reconfiguration |
+| — | **QPI, DTR, `0xC0`** | **absent on this die** | — |
+
+Bulk quad reads already run at 99.6% of the four-lane theoretical maximum. There
+is no efficiency left; only SCK, and the instrument runs out before the flash does.
+
+**HyperRAM — the two cheap discriminators first.** Against 238.9 MB/s (85.3% of
+the 280 MB/s pin rate at CK 140), tCSM caps efficiency near 96.7% — 270.6 MB/s —
+because CS# may not stay Low beyond 4 µs. Longer bursts are worth ~2.8 of the
+remaining points. **8.5 points are unexplained**: the arithmetic predicts 93.8%
+for the burst length actually in use, and that gap has never been measured.
+
+| rank | option | what it establishes | effort |
+|---|---|---|---|
+| 1 | differential clock `CR1[6] = 0` | removes threshold error from the sampling instant; the board is wired for it and nobody has tried it | **one register write** |
+| 2 | drive strength `CR0[14:12]` | the `tDSS` finding makes this more plausible than the survey's first draft allowed | three register writes |
+| 3 | `CLKOS2_CPHASE`/`FPHASE` sweep | alignment faults move in discrete steps, skew faults narrow continuously — **this is the discriminator** | bitstreams only |
+| 4 | longer bursts inside tCSM | ~2.8 points, and it is the only throughput lever below the ceiling | a splitter in the controller |
+| 5 | `READCLKSEL` training from Tiliqua | converts "works, reason unknown" into a measured eye | drop-in from a common ancestor |
+| 6 | `CLKDIVF` + `ECLKSYNCB` + `ALIGNWD` | the only published open-source fix for a word-boundary slip on ECP5 | large; changes every HyperRAM bitstream |
+| 7 | fit the 5I (200 MHz) part | if a 200 MHz-screened part *also* slips, the fault is the gearing, not the memory | rework; diagnostic before upgrade |
+| — | lower initial latency count | **negative** — reading early is the failure mode | — |
+
+**Do 1 and 2 first.** They cost no design work and they separate the two live
+hypotheses — strobe skew against word-boundary alignment — which decides whether
+anything below them is worth starting. Neither LUNA nor Tiliqua writes CR0 at all,
+so there is no prior art to copy for either.
+
+**Revisit when** the 8.5 unexplained points are measured. Ranking effort against a
+gap nobody has instrumented is how the previous ranking came to recommend work at
+a clock that does not pass.
+
 ## What is not decided
 
 | | state |

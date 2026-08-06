@@ -27,7 +27,7 @@ no Status Register-3.
 **This matters because the JV split the feature set.** The `-IM`/`-JM` part gets
 QPI and DTR in a separate datasheet; the `-IQ` fitted here has **neither**, nor
 `0xC0` Set Read Parameters. See
-[`../memory-speed-options.md`](../memory-speed-options.md).
+[`../decisions.md`](../decisions.md) 26.
 
 **Correction: there is no ADS bit on this part.** This table previously read
 SR3 `0x60` as "ADS clear". ADS/ADP are 4-byte-addressing bits and exist only on
@@ -71,7 +71,7 @@ oscillator ceiling, which has nothing to do with user mode. The string `USRMCLK`
 does not appear in the ECP5 datasheet at all; FPGA-TN-02039 §6.1.2, the only
 `USRMCLK` documentation, gives no fmax, no setup/hold and no jitter; and
 prjtrellis has **no timing entry for this path in any speed grade**, so a clean
-nextpnr report says nothing about it. The honest statement is stronger than the
+nextpnr report says nothing about it. That statement is stronger than the
 one it replaces: **user-mode `USRMCLK` is unmodelled by the vendor and by the
 open toolchain**, and measurement is the only authority.
 
@@ -213,7 +213,7 @@ Whether quad SPI speeds up configuration:
   only, and **does not remove the address phase**. Default `W4` = 1, disabled.
 
 Every remaining speed option on this part, with the arithmetic:
-[`../memory-speed-options.md`](../memory-speed-options.md).
+[`../decisions.md`](../decisions.md) 26.
 
 ## What the SoC took, and what it bought (NEW, 2026-08-03)
 
@@ -298,7 +298,7 @@ exceed it, and driving `USRMCLKI` from a phase-shifted PLL output (NanoMig, at
 
 # Speed: every remaining option, and which are absent
 
-Moved here from `docs/memory-speed-options.md`, which now holds only the
+Moved here from the dissolved `memory-speed-options.md`, which held only the
 ranking and the parts that span both memories. These are properties of the
 part, so they belong beside the part.
 
@@ -331,7 +331,7 @@ Two statements in the existing notes are wrong and are corrected here:
 
 | was recorded | correct |
 |---|---|
-| SR3 `0x60`, **"ADS clear"** ([`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md)) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
+| SR3 `0x60`, **"ADS clear"** (this document) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
 | *"QPI mode can address in as few as 8 clocks"* ([`luna_ecp5_fpga/flash-detailed.md`](../luna_ecp5_fpga/flash-detailed.md)) | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
 
 ### QPI (`0x38`) — absent
@@ -489,13 +489,13 @@ scarce resource, and it is only a win if locality holds.
 **The largest item was taken while this survey was being written.**
 `FLASH_MODE = "quad"` landed in `03482f4` — 2.70× on a 16 KiB random walk, for
 **−261 LUTs and no block RAM**. What remains of the SoC gap is
-[`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md)'s two rows,
+this document's two rows,
 `SYNC_MHZ` and the PHY, and they have a constraint that survey does not state:
 
 **`SYNC_MHZ` is gated by the CPU, not the flash.** The SoC's median Fmax is
 **75.0 MHz** across three place-and-route runs. Raising `sync` to 120 MHz for the
 flash's sake requires the RISC-V core to close at 120 MHz first — see
-[`soc-clocking.md`](soc-clocking.md). The flash's remaining 2× is
+[`soc-clocking.md`](../soc-clocking.md). The flash's remaining 2× is
 real but it is not the flash's to give.
 
 One SoC-side step this survey adds: **`0xEB` continuous read is not adopted
@@ -524,3 +524,78 @@ a read-only probe on a board that is otherwise fully characterised.
 
 ---
 
+### Flash — the ECP5 scoreboard, and it is not close
+
+| project | mode | SCK | implied |
+|---|---|---|---|
+| **this board** | `0xEB` 1-4-4 continuous, `USRMCLK` | **144 MHz** | **71.7 MB/s** |
+| Hackaday Badge 2019 (LFE5U-45F) | **`0xEB` 1-4-4, `USRMCLK`** — the same approach | 48 MHz | ~24 MB/s |
+| LiteX / litespi ECP5 boards | `0x6B` 1-1-4 | sys_clk/2, 25–30 MHz | ~12–15 MB/s |
+| Microwatt on ECPIX-5 | 1-1-4, opcode+address always single-lane | 25 MHz | ~12.5 MB/s |
+| SaxonSoc ULX3S XIP | `0x3B` 1-1-2 | 12.5 MHz | ~3 MB/s |
+| Glasgow revD (LFE5U-25F) | quad, opt-in | 48 MHz max, 12 MHz default | ~24 / ~6 MB/s |
+
+The closest peer uses **the identical instruction and the identical `USRMCLK`
+path at a third of the clock.** The highest `USRMCLK` frequency reported anywhere
+is NanoMig's **84 MHz**, driven from a phase-shifted PLL output (`CLKOS2` at
+216°) — and its own comment says it is only used at power-up.
+
+### The measured answer to the QPI question
+
+`picosoc`'s `performance.py` commits raw cycle counts for exactly this
+comparison — iCE40, 253,741 instructions:
+
+| config | cycles | vs `0x03` |
+|---|---|---|
+| `0x03` 1-1-1 | 17,781,487 | 1.00× |
+| quad 1-4-4 | 4,698,331 | 3.79× |
+| **quad + continuous read** | **4,512,379** | **3.94×** |
+| quad + DDR + continuous (`0xED`) | 2,308,609 | 7.70× |
+
+Every adjacent step differs by exactly 23,244 cycles — the flash-restart count.
+**Dropping the 8-clock opcode phase is worth +4.1% at quad SDR.** QPI recovers
+only 6 of those 8 clocks, and only when continuous read is *not* already in use.
+That is a measured bound on the entire question, and it agrees with the
+arithmetic above.
+
+ZipCPU's `qflexpress` writeup reaches the same conclusion analytically — 28
+cycles/word plain 1-4-4, 20 with XIP — *"with the whole 8-cycle saving coming
+from the mode bits, not from QPI"*. He deferred DDR flash modes and never
+returned.
+
+**Almost nobody implements QPI on flash in an FPGA.** `gh search code "EnterQPI"`
+returns zero FPGA cores. LiteSPI has the 4-4-4 datapath but **never issues an
+enter-QPI command** for Winbond, and no Winbond module in its ~9000-line device
+database is declared QPI-capable. Its DTR opcodes (`0x0D`/`0xBD`/`0xED`) are
+transcribed from JESD216B with empty descriptions and **both PHYs assert
+`not flash.ddr`** — table entries, dead gateware. Sylvain Munaut's `no2qpimem`
+is the one core that genuinely issues `0x38`, and it is iCE40.
+
+**One warning from the only project to run the experiment.**
+`hsk/tangnano20k_spi_flash_example` has parallel directories for `0xEB`
+continuous, `0x38` QPI, and QPI continuous — and its README warns that **once the
+part enters QPI mode it never exits, so the board cannot be reprogrammed until a
+power cycle.** That is the same class of hazard as the continuous-read sticky
+state already documented for this board, and a good reason to be glad the
+question is moot here.
+
+### Boot configuration, which is a separate lever
+
+`ecppack --spimode qspi --freq 62.0` is documented and works. TN-02039 §6.1.4:
+Master SPI has serial/dual/quad submodes, quad issuing `0xEB` at *"four times the
+rate of standard SPI devices"*. The divider offers exactly
+{2.4, 4.8, 9.7, 19.4, 38.8, 62} MHz, default **2.4**.
+
+One published measurement: Dimitrios Kouzis-Loukas, 15 July 2025, on an
+LFE5UM5G-85F — `MCCLK_FREQ=62` plus quad read, *"It takes just 60 ms to configure
+the FPGA"*. He also reports the constraint that `0x03` works only to 38.8 MHz, so
+62 MHz needs at least `0x0B`.
+
+Three gotchas: **the ECP5 does not set the flash's QE bit** (neither technical
+note mentions QE; DiVA disables qspi config on r0.1 boards for exactly this) —
+ours is already set, so that one is free; `--spimode` breaks some programmers, and
+prjtrellis itself strips `spimode`/`freq` when emitting SVF, so build two
+bitstreams; and **SPI Quad is not supported on TQFP144**, a note added in
+datasheet revision 3.3.
+
+Existing analysis: [`luna_ecp5_fpga/qspi-boot-time.md`](../luna_ecp5_fpga/qspi-boot-time.md).

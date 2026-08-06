@@ -2,7 +2,7 @@
 
 **Index:** [`README.md`](README.md) · the bus question this answers half of:
 [`soc-memory-bus.md`](soc-memory-bus.md) · rates and options:
-[`memory-speed-options.md`](memory-speed-options.md) · decisions:
+[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) · decisions:
 [`decisions.md`](decisions.md)
 
 ## The constraint

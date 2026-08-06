@@ -76,7 +76,7 @@ and temperature to choose it. This board has never moved it off the default.
 selects single-ended clocking, where *"CK# is not used"*, while
 `cynthion_r1_4.py:206` declares `DiffPairs("C3", "D3")` with `LVCMOS33D`. One
 CR1 write switches the part to clocking on the CK/CK# crossing. Untried; see
-[`../memory-speed-options.md`](../memory-speed-options.md).
+[`../decisions.md`](../decisions.md) 26.
 
 **ID0 `0x0c86` decoded:**
 
@@ -305,7 +305,7 @@ proves `BURSTDET` does assert on a HyperBus part — though only at CK 120.
 
 Every remaining speed option on this part, the published ECP5 scoreboard, and
 what `ALIGNWD` has to do with the CK 200 failure:
-[`../memory-speed-options.md`](../memory-speed-options.md).
+[`../decisions.md`](../decisions.md) 26.
 
 ## tCSM sets the efficiency ceiling, and it is not 100%
 
@@ -328,7 +328,7 @@ amortising 17 CK over 256 words predicts **93.8%**. We measure **85.3%**. Those
 own inter-transaction states and its local recovery counter, which the 17 CK
 model does not count. **Not yet measured.**
 
-**These are not the `19 CK` in [`memory-speed-options.md`](../memory-speed-options.md).**
+**These are not the `19 CK` in [`../hyperram-bursts.md`](../hyperram-bursts.md).**
 That is a board measurement of the *DQS* engine at 4:1 gearing, a different
 quantity. Its former agreement with a `51 CK` figure here was a coincidence of
 the two-cycle model error described above, and reading the two as the same
@@ -487,11 +487,18 @@ those three hold together, this file records no throughput figure.
 
 See #186 and #188. `scripts/hyperram_ceiling.py` is the instrument.
 
-# Speed: every remaining option, ranked by what it returns
+## Speed: every remaining option, and what each returns
 
-Moved here from `docs/memory-speed-options.md` for the same reason as the
+Moved here from the dissolved `memory-speed-options.md` for the same reason as the
 flash options: these are properties of the W956A8 and its configuration
-registers, not of the SoC that drives it.
+registers, not of the SoC that drives it. Ranked in
+[`../decisions.md`](../decisions.md) 26.
+
+**Read the section immediately above first.** Every absolute figure below is
+scaled to 334.4 MB/s at CK 192, which is **void** -- CK 180 fails in bulk. The
+*ratios* survive, because they are arithmetic on burst length, latency and tCSM
+that does not depend on which clock is reachable; the MB/s columns do not. The
+verified baseline is 238.9 MB/s at CK 140.
 
 ### The model these numbers come from
 
@@ -770,3 +777,61 @@ Listed for completeness. Bad trade at any reading.
 
 ---
 
+## Two hardware options the board already anticipates
+
+Both are in the schematic, which means someone considered them at design time.
+
+**Fit the 200 MHz speed bin.** `repos/cynthion-hardware/ram.kicad_sch:2347`
+lists an approved substitution:
+
+    (property "Substitution" "W956A8MBYA5I, Infineon S27KL0642DPBHI020"
+
+`W956A8MBYA**5I**` is the **200 MHz** grade of the identical die — same
+datasheet, same registers, same package. Ours is the **6I**, 166 MHz. Section 2
+of the datasheet lists both.
+
+That reframes the ceiling: **we were running a 166 MHz bin at 192 MHz,
+15.7% past its grade, and the part that is specified to do 200 MHz is a different
+order code on the same reel.** If the CK 200 failure survives every gateware fix
+above, this is what the answer looks like — and if a 5I part *also* fails at 200
+with transposed halves, that proves the fault is the gearing, not the memory. As
+a diagnostic it is worth more than as an upgrade.
+
+**Move the bus to 1.8 V.** `power_supplies.kicad_sch:7364`:
+
+    VCCRAM is normally tied to +3V3 but regulator U15 may be populated
+    instead of R54 to support 1.8 V HyperRAM.
+
+`VCCRAM` appears throughout `bank6_7.kicad_sch`, so it feeds the FPGA bank as
+well as the memory — the swap is coherent at board level rather than a partial
+measure. The 1.8 V die (`W956D8MBYA5I`) has materially better AC specs at speed:
+
+| at 200 MHz | 1.8 V | 3.0 V |
+|---|---|---|
+| `tCKD` max, CK to DQ valid | **5.0 ns** | 6.5 ns |
+| `tCKDS` max, CK to RWDS valid | **5.0 ns** | 6.5 ns |
+| `tDSS` / `tDSH`, RWDS-to-DQ skew, at 166 MHz | **±0.45 ns** | ±0.8 ns |
+
+**Nearly half the RWDS-to-DQ skew** is the number that matters for a DQS-strobed
+read. Against that: a different part, a regulator to populate, and a check that
+nothing else in that bank needs 3.3 V — which has **not** been done and should be
+before anyone takes this seriously.
+
+### The `tDSS` reading that argues the other way
+
+One finding cuts against the alignment hypothesis and belongs on the record.
+
+The **`tDSS`/`tDSH` spec — RWDS transition to DQ valid — is ±0.8 ns at 166 MHz
+but ±0.4 ns at 200 MHz** in the 3.0 V column. The 200 MHz bin is screened to
+**twice the strobe-to-data skew tightness**, and we hold the 166 MHz bin. At
+CK 192 the UI is 2.6 ns, so ±0.8 ns of guaranteed skew is ±31% of it.
+
+For a `DQSBUFM` read that is not a small effect: skew approaching half a UI moves
+the sample into the adjacent bit, and in a 4:1 gearbox an adjacent-bit sample
+*is* a half-word displacement. **So the transposed-halves signature does not by
+itself distinguish a gearing fault from strobe skew**, and this page's earlier
+claim that drive strength is "the wrong shape for the failure" was overconfident.
+
+Both readings survive. The experiment that separates them is the phase/slip
+sweep: an alignment fault moves in discrete steps as `ALIGNWD` or `CPHASE`
+changes, and a skew fault narrows and widens continuously.
