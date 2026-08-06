@@ -7,13 +7,19 @@ CABGA256, speed grade 8.
 
 ## The headline: the part marked 12F is a 25F die, and the extra fabric computes
 
+**The term, used consistently across this repo: "the 12F is a 25F die."** The
+resources past what the marking advertises are "the extended space". It is not
+something anyone opts into — prjtrellis's chipdb for `LFE5U-12F` holds the die's
+resources, so `nextpnr-ecp5 --12k` offers them to every design built for this
+part, upstream's included.
+
 | what | value | source |
 |---|---|---|
 | IDCODE | `0x21111043` | `apollo jtag-scan`; also read back out of the bitstream by `ecpunpack` |
 | part reported | `LFE5U-12F` | same |
 | LUT4s advertised for a 12F | 12,288 | datasheet |
 | LUT4s on the die | 24,288 | a 25F; what `nextpnr-ecp5 --12k` reports |
-| **LUT4s placed, routed and verified** | **20,143** — 82.9% of the die, **164% of the 12,288 a 12F advertises** | [#116](https://github.com/awtoau/cynthion-workspace/issues/116) |
+| **LUT4s placed, routed and verified** | **20,143** (82.9% of the die; the datasheet advertises 12,288) | [#116](https://github.com/awtoau/cynthion-workspace/issues/116) |
 | beyond the marking | **7,855 LUT4s** | same |
 | timing | 86.43 MHz achieved against a 60 MHz constraint | nextpnr |
 | correctness | **22,026 rounds, zero mismatches** (2,002 + 20,024 across two runs) | fabric test |
