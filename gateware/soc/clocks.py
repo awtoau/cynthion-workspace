@@ -198,6 +198,14 @@ class SocClocks(Elaboratable):
                 "p_CLKOS2_CPHASE": self.clkos2_div - 1,
                 "p_CLKOS2_FPHASE": 0} if self.with_fast else {}),
             i_CLKI=osc,
+            # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` means the loop is closed
+            # through the CLKOP output, so CLKFB must be driven from it. Leaving
+            # it unconnected opens the loop: the PLL never locks, `sync` is held
+            # in reset for ever by the line below, and the design configures
+            # cleanly and does nothing. It cost a bisect to find, because a
+            # bitstream that builds and loads but never runs looks like a
+            # timing failure or a bad frequency rather than a missing wire.
+            i_CLKFB=clk_sync,
             i_RST=0, i_STDBY=0, i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,

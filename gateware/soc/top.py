@@ -559,7 +559,7 @@ FLASH_DIVISOR = 0
 # The "CPU corrupts above 60 MHz" ladder does NOT bound it: that result is
 # withdrawn (`docs/soc-clocking.md` section 2) because its signature is the
 # console FIFO's unsynchronised crossing, not the CPU.
-SYNC_MHZ = 72
+SYNC_MHZ = 30
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
 #
