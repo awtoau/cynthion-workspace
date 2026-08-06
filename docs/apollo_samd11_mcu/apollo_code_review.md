@@ -52,57 +52,33 @@ Apollo is the ARM-based debug controller on Cynthion. This review covers three a
 
 **Location**: `src/vendor.c`, `src/fpga.c`, `src/fpga_adv.c`
 
-#### Issue 1: FPGA Handoff Race
+#### Refuted: none of the three "races" below exist
 
-```c
-// From src/vendor.c (simplified)
-case VENDOR_REQUEST_TAKE_OVER:
-    fpga_take_over();  // No synchronization
-    break;
-```
+**This section is superseded by
+[`apollo_race_conditions.md`](apollo_race_conditions.md), which checked each
+claim against the firmware (#61).** Kept here only so the claims are not
+rediscovered:
 
-**Problem**: 
-- Multiple USB hosts could request `TAKE_OVER` simultaneously
-- FPGA state changes without atomic operations
-- No mutex or flag to prevent concurrent access
+* *"Multiple USB hosts could request `TAKE_OVER` simultaneously"* —
+  `VENDOR_REQUEST_TAKE_OVER` does not exist in the firmware, and a USB **device**
+  has exactly one host.
+* *"Another thread could call `fpga_set_state()`"* — `fpga_set_state()` does not
+  exist (the API is `fpga_set_online(bool)`), and the firmware is bare-metal with
+  no threads: one `while (1)` calling `tud_task()`, from which every vendor
+  request is dispatched.
+* *"USB disconnect during SPI transfer"* — the TODO at `debug_spi.c:138` is real
+  and still open, but it is a board-revision conditional, not a race.
 
-**Impact**: 
-- Undefined FPGA state if host commands race
-- Potential USB enumeration issues
-
-#### Issue 2: FPGA Online/Offline Transition
-
-**Location**: `src/fpga.c`
-
-```c
-void fpga_set_state(int state) {
-    // Sets pins, waits, resets - but no locking
-    // Another thread could call this while in progress
-}
-```
-
-**Problem**:
-- No protection against concurrent state changes
-- Pin state changes are not atomic
-- Timing assumptions not validated
-
-#### Issue 3: USB Disconnect During FPGA Access
-
-**Location**: `src/debug_spi.c`
-
-```c
-// TODO: don't run this on r0.2+ boards?
-```
-
-The TODO comment suggests uncertain behavior on hardware revisions.
+The one genuine concurrency defect was elsewhere — a read/clear pair on a counter
+shared with `EIC_Handler` — and it is fixed.
 
 ### Recommendations
 
-- [ ] Add mutex protection to `fpga_set_state()`
-- [ ] Implement atomic flags for USB handoff
-- [ ] Add state validation checks
-- [ ] Document hardware revision-specific behavior
-- [ ] Review timing assumptions on all FPGA transitions
+- [ ] Resolve `debug_spi.c:138`: decide whether `uart_release_pinmux()` should run
+      on r0.2+ boards, and delete the TODO either way
+- [x] ~~Add mutex protection to `fpga_set_state()`~~ — withdrawn; no threads, and
+      no such function
+- [x] ~~Implement atomic flags for USB handoff~~ — withdrawn; one host, one context
 
 ---
 
@@ -206,7 +182,9 @@ If implementing dual CDC:
 
 ## Next Actions
 
-1. **Implement mutex/synchronization** for FPGA state changes
+1. ~~**Implement mutex/synchronization** for FPGA state changes~~ — **withdrawn**,
+   see [`apollo_race_conditions.md`](apollo_race_conditions.md): bare-metal, one
+   host, and the one real race is fixed
 2. **Document buffer requirements** per MCU variant
 3. **Add DFU timeout handling**
 4. **Resolve hardware revision TODOs** (mark r0.2 as unsupported if needed)
