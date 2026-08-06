@@ -1,7 +1,11 @@
-# Block RAM on the ECP5-12F: who actually uses it
+**The part is marked `LFE5U-12F`, which advertises 28 `DP16KD`. The die has 56**
+— it is a 25F ([`lfe5u-12f.md`](lfe5u-12f.md)). nextpnr reports 56 and every
+figure below is against that, so **every design here past 28 blocks depends on
+the undocumented half.** A build that fits "at 73%" fits at 146% of what the
+marking promises, and would not fit a genuine 12F at all.
 
-The `LFE5U-12F` has 56 `DP16KD` blocks, 112 KiB. Whether that is tight depends
-entirely on what the design is, and the split is sharper than expected.
+How much a design needs depends entirely on what the design is, and the split is
+sharper than expected.
 
 ## Measured
 

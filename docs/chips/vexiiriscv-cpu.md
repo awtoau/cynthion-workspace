@@ -59,8 +59,7 @@ the same netlist has spread 8 MHz between runs.
 | no predictor | 12508 | 6554 | 42 / 56 | 74.54 / 75.24 / 78.75 MHz |
 | BTB, relaxed, `--relaxed-branch` | 12903 | 6942 | 44 / 56 | 64.23 / **71.81** / 72.88 MHz |
 
-Constraint is 60 MHz. BRAM is the tight resource on this die, at 75% before the
-BTB and 79% after.
+Constraint is 60 MHz.
 
 **A cached core is bigger than a cacheless one, and an early sweep said the
 opposite by more than 5x.** Its wrapper tied the L1 `cmd_ready` low, so the cached

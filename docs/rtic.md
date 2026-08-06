@@ -106,10 +106,7 @@ QEMU build's addresses and has no prefetch.
 **The solutions, which is the only part still open:**
 
 1. **Grow the cache.** The die is a 25F and the SoC is sized for a 12F — #110.
-   This is the direct fix and the one that makes the question go away. It costs
-   block RAM, which is at 79% after the BTB
-   ([`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)), so it is a real
-   trade rather than a free one.
+   This is the direct fix and the one that makes the question go away. It costs block RAM.
 2. **Take the 424-byte dispatcher.** It closes the same defect and leaves the hot
    set fitting.
 3. **Shrink the hot set** so a resident runtime fits beside it. Nothing has

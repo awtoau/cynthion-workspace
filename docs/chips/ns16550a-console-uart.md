@@ -138,8 +138,8 @@ identifying the part. The single gap is interrupt-line discovery.
 | ECP5 mapping | — | 16 × 8 bits → distributed LUT RAM (`TRELLIS_DPR16X4`) | 1024 × 8 → a whole `DP16KD` |
 
 **Depth is a constant, not a parameter.** Making it adjustable means firmware has
-to discover it, and the deeper parts buy that discovery with a block RAM on a die
-where block RAM is the tight resource.
+to discover it, and the deeper parts buy that discovery with a whole `DP16KD` per
+console against distributed LUT RAM.
 
 ## Why this is written from the spec rather than vendored
 
