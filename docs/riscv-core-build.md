@@ -26,7 +26,7 @@ that was believed and it is not true. Verified 2026-08-04 on
 error; do not conclude the toolchain is unusable.
 
 The generated file lands at `repos/vexiiriscv/VexiiRiscv.v` and is copied to
-`gateware/soc/matrix/soc-cpu/VexiiRiscv.v`, which is what the SoC elaborates
+`gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v`, which is what the SoC elaborates
 against and what `scripts/soc_generate_pac.py` uses for its metadata-only walk.
 
 ## The flags, and where they live

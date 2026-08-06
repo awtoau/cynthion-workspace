@@ -55,7 +55,7 @@ five cases may already be a subset of what we check. That comparison should be d
 any porting, because the likely outcome is "we already have this, under different names".
 
 Taking `control_phy` off Apollo to test it requires the port request —
-`gateware/sideband_advertise.py` — which is already built.
+`gateware/probes/sideband/sideband_advertise.py` — which is already built.
 
 ## How it would be tested
 

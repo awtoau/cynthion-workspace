@@ -48,7 +48,7 @@ that was there for the case where the CPU is the problem.
 
 `advertise` is outside `own`: it is not something the link *reports*, it is
 something the FPGA *does* -- emit the frame Apollo matches to grant the CONTROL
-port (`gateware/sideband_advertise.py`). The fabric has no opinion to override,
+port (`gateware/probes/sideband/sideband_advertise.py`). The fabric has no opinion to override,
 so there is no `fabric_advertise`.
 
 **It resets to 0, which is the opposite of upstream.** `ApolloAdvertiser`

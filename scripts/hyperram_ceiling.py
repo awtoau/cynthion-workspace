@@ -370,7 +370,7 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # ARM THE COMPLEMENT BEFORE STARTING THE ENGINE, in three writes.
     #
     # `command_go` is a rising-edge detect on control[0] and `negative` is
-    # control[1] (gateware/bist.py). Writing 0b11 raises both in the SAME write,
+    # control[1] (gateware/probes/bist.py). Writing 0b11 raises both in the SAME write,
     # so the engine starts on the edge where `negative` is only just becoming
     # valid -- and the words already in flight are compared against the
     # un-complemented golden and correctly MATCH. That is what "78 of 6,871,936

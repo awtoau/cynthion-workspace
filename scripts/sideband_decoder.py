@@ -21,7 +21,7 @@ and says nothing about the board.
 | `0x02` | `STATUS` | STATUS + CRC8 |
 | `0x80`-`0xFF` | write | STATUS + CRC8; the low 7 bits reach the CPU |
 
-Opcodes and payload sizes come from `gateware/sideband_link.py` -- the gateware
+Opcodes and payload sizes come from `gateware/probes/sideband/sideband_link.py` -- the gateware
 this decodes -- rather than being restated, so they cannot drift.
 
 ## What this decoder deliberately does not know
@@ -57,6 +57,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes" / "sideband"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

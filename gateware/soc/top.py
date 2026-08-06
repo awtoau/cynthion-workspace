@@ -1204,7 +1204,7 @@ class HelloSoC(Elaboratable):
         from luna.gateware.usb.devices.acm import USBSerialDevice
 
         # AUX rather than CONTROL or TARGET: CONTROL is shared with Apollo and has to be
-        # claimed (sideband bit 5, `gateware/sideband_advertise.py`), TARGET is the port
+        # claimed (sideband bit 5, `gateware/probes/sideband/sideband_advertise.py`), TARGET is the port
         # under test, and AUX belongs to the FPGA outright.
         bus = platform.request("aux_phy", 0)
 
@@ -1343,6 +1343,8 @@ class HelloSoC(Elaboratable):
         # so a bitstream that says nothing over USB can still be asked what it
         # is doing -- USB, the PHY and the CPU are all bypassed by this path.
         sys.path.insert(0, str(ROOT / "gateware"))
+        sys.path.insert(0, str(ROOT / "gateware" / "probes"))
+        sys.path.insert(0, str(ROOT / "gateware" / "probes" / "sideband"))
         from sideband_debug import SidebandDebug
         # The sideband's bit period is a cycle count derived from the domain frequency, so a
         # design that raises `sync` and leaves this at its default gets a DEAD link rather

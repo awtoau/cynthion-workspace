@@ -18,10 +18,10 @@ question below is measured against.
 
 | | |
 |---|---|
-| Responder, shipping SoC | [`gateware/sideband_link.py`](../../gateware/sideband_link.py) — protocol v2 |
+| Responder, shipping SoC | [`gateware/probes/sideband/sideband_link.py`](../../gateware/probes/sideband/sideband_link.py) — protocol v2 |
 | Responder, test bitstream | `apollo_fpga.gateware.sideband` via [`gateware/probes/sideband/sideband_gateware.py`](../../gateware/probes/sideband/sideband_gateware.py) — protocol v1 |
-| Pad sharing, both blocks | [`gateware/sideband_debug.py`](../../gateware/sideband_debug.py) |
-| Port request | [`gateware/sideband_advertise.py`](../../gateware/sideband_advertise.py) |
+| Pad sharing, both blocks | [`gateware/probes/sideband/sideband_debug.py`](../../gateware/probes/sideband/sideband_debug.py) |
+| Port request | [`gateware/probes/sideband/sideband_advertise.py`](../../gateware/probes/sideband/sideband_advertise.py) |
 | CPU's end | [`gateware/soc/peripherals/sideband_csr.py`](../../gateware/soc/peripherals/sideband_csr.py) |
 | Master | `repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` |
 | Host decode | [`scripts/sideband_decoder.py`](../../scripts/sideband_decoder.py), [`gateware/probes/sideband/test_protocol.py`](../../gateware/probes/sideband/test_protocol.py) |
@@ -212,7 +212,7 @@ different commands, share the framing, and are told apart by `PING`'s version by
 Why the maps diverged, and why the removed commands were removed rather than stubbed,
 is [`../architecture.md`](../architecture.md#peripherals).
 
-### Shipping — `gateware/sideband_link.py`, protocol v2
+### Shipping — `gateware/probes/sideband/sideband_link.py`, protocol v2
 
 | CMD | Name | Response | Total |
 |---|---|---|---|
@@ -449,7 +449,7 @@ only mode in which one wire does both jobs, and the reasoning over the alternati
 [`../architecture.md`](../architecture.md#peripherals).
 
 Apollo has implemented UART mode since the sideband landed. **No upstream gateware
-ever emitted the frame**; `gateware/sideband_advertise.py` is the missing half.
+ever emitted the frame**; `gateware/probes/sideband/sideband_advertise.py` is the missing half.
 
 | | |
 |---|---|

@@ -44,7 +44,7 @@ Needed, and not present:
    this scenario** and it should be settled before any code is written.
 4. **A bulk IN endpoint on CONTROL**, plus the vendor request handler for the five
    control requests, plus the descriptors.
-5. **The port request.** Already solved — `gateware/sideband_advertise.py`.
+5. **The port request.** Already solved — `gateware/probes/sideband/sideband_advertise.py`.
 6. **VBUS switching.** `gateware/soc/peripherals/vbus_csr.py` exists but is CPU-driven; the
    analyzer has no CPU, so the switch control must be driven from gateware state instead.
 

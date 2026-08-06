@@ -160,7 +160,7 @@ def main():
     args = parser.parse_args()
 
     sys.path.insert(0, str(ROOT / "gateware"))
-sys.path.insert(0, str(ROOT / "gateware" / "probes"))
+    sys.path.insert(0, str(ROOT / "gateware" / "probes"))
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from fabric.fabric_gateware import BLOCKS, ROUND_BITS
 

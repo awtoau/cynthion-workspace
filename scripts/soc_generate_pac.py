@@ -107,7 +107,7 @@ def build_soc():
     # The CPU is a black box for this walk; generating its implementation cannot
     # affect the decoder map. Reuse the checked-in matching profile so this
     # metadata-only command does not require sbt or a generator server.
-    cached_cpu = ROOT / "gateware" / "soc" / "matrix" / "soc-cpu" / "VexiiRiscv.v"
+    cached_cpu = ROOT / "gateware" / "probes" / "cpu_matrix" / "soc-cpu" / "VexiiRiscv.v"
     if not cached_cpu.exists():
         raise FileNotFoundError(f"memory-map elaboration needs {cached_cpu}")
     vexii_cpu.generate = lambda *args, **kwargs: cached_cpu

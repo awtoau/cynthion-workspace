@@ -30,7 +30,7 @@ or adopt a USB packet path. The children differ in how much they need on top of 
 |---|---|---|
 | Our own board platform | `gateware/board/cynthion_r1_4.py` | `control_phy`, `aux_phy`, `target_phy` resources and `apollo_port_sharing` already declared |
 | A working luna USB device on AUX | `gateware/probes/usb_serial/usb_serial.py`, instantiated in the SoC at `vexii_hello_soc.py:1175` | `USBSerialDevice` enumerates at high speed and loops back at 195.4 Mbps. luna's USB device gateware **builds and runs on our platform today** — the question is never "can luna's USB stack work here", only "is it wired to the right PHY with the right endpoints" |
-| CONTROL port handover | `gateware/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
+| CONTROL port handover | `gateware/probes/sideband/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
 | VBUS switch control | `gateware/soc/peripherals/vbus_csr.py` | The analyzer's pass-through and port-power control has a CPU-visible home already |
 | HyperRAM | `gateware/soc/peripherals/hyperram_dqs_phy.py`, mapped at `0x2000_0000` | The analyzer's 8 MiB capture buffer needs exactly this |
 | PAC generated from the SoC's own map | `./dev.py pac` | A new peripheral gets Rust accessors without hand-transcription |

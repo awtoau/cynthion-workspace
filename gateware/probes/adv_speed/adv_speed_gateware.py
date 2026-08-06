@@ -50,7 +50,7 @@ class AdvSpeedTest(Elaboratable):
     """ Transmits a counting byte stream on FPGA_ADV at a fixed baud. """
 
     # 115200 is the lowest rung of the sweep, NOT the operating rate. The link
-    # runs at 230400 and that is determined -- see `gateware/sideband_link.py`.
+    # runs at 230400 and that is determined -- see `gateware/probes/sideband/sideband_link.py`.
     # This module exists to challenge that with evidence, which is why it takes
     # a baud at all.
     def __init__(self, baud=115200, open_drain=False, clk_freq_hz=None):

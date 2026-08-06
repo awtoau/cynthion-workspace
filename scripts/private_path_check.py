@@ -79,7 +79,7 @@ PRIVATE = re.compile(r"/(?:" + "|".join(ROOTS) + r")/[A-Za-z0-9_][A-Za-z0-9_.-]*
 # doing its actual job -- authored files -- where it found exactly one real hit.
 #
 # If those artifacts ever stop being tracked, delete this entry with them.
-SKIP_PREFIXES = ("tmp/", ".claude/", "gateware/soc/matrix/")
+SKIP_PREFIXES = ("tmp/", ".claude/", "gateware/probes/cpu_matrix/")
 
 # Files exempt from the rule, with the reason. Keep this empty if you can: an
 # entry here is a path that ships to everyone who clones the repo.
