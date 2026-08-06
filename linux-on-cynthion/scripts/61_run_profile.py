@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unified config-driven RV64 profile runner.
 
-Profile definitions are loaded from riscv/config/profile_matrix.json.
+Profile definitions are loaded from linux-on-cynthion/config/profile_matrix.json.
 This replaces per-profile wrapper scripts while preserving reproducibility.
 """
 

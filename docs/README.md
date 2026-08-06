@@ -67,7 +67,7 @@ in its §13 got there in the first place.
 * [`gsg-scenarios.md`](gsg-scenarios.md) — What upstream Cynthion officially does, and what implements it
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
-* [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
+* [`../linux-on-cynthion/`](../linux-on-cynthion/) — **Linux on Cynthion**: the analysis, the bring-up plan, and the sweep scripts behind them
 * [`rtic.md`](rtic.md) — RTIC and the four alternatives: what the workload needs, and what each costs
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route

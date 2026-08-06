@@ -403,7 +403,7 @@ def build_report(rows: list[dict[str, str]], max_rows: int) -> str:
     lines.append("")
     lines.append("Or run all three steps together:")
     lines.append("")
-    lines.append("- `python3 riscv/scripts/dev.py --tag <change-name> --notes \"what changed\"`")
+    lines.append("- `python3 linux-on-cynthion/scripts/dev.py --tag <change-name> --notes \"what changed\"`")
     lines.append("")
 
     return "\n".join(lines)

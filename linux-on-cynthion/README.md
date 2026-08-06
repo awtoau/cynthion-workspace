@@ -1,4 +1,7 @@
-# RISC-V Bring-Up Workspace
+# Linux on Cynthion — the bring-up workspace
+
+The analysis lives in [`../linux-on-cynthion/ANALYSIS.md`](../linux-on-cynthion/ANALYSIS.md);
+this directory is the scripts, configs and captured results behind it.
 
 Assets for the Cynthion RISC-V bring-up experiment on ECP5 LFE5U-12F.
 
@@ -49,7 +52,7 @@ bring-up. The report column is kept and left empty.
 
 ## Legacy scripts
 
-`riscv/scripts/` is the original flow. It still runs, and its
+`linux-on-cynthion/scripts/` is the original flow. It still runs, and its
 simulation/place-and-route steps are still useful; its recorded numbers are not.
 
 | Script | Role |
@@ -74,11 +77,11 @@ simulation/place-and-route steps are still useful; its recorded numbers are not.
 `60_run_profile_matrix.py` usage:
 
 ```bash
-python3 riscv/scripts/60_run_profile_matrix.py --list
-python3 riscv/scripts/60_run_profile_matrix.py --profile soc_cumulative_uart --threads 8
-python3 riscv/scripts/60_run_profile_matrix.py --profile core_i4k_d4k_bpred_dual --threads 8,16,32
-python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8
-python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8 --reset-history
+python3 linux-on-cynthion/scripts/60_run_profile_matrix.py --list
+python3 linux-on-cynthion/scripts/60_run_profile_matrix.py --profile soc_cumulative_uart --threads 8
+python3 linux-on-cynthion/scripts/60_run_profile_matrix.py --profile core_i4k_d4k_bpred_dual --threads 8,16,32
+python3 linux-on-cynthion/scripts/60_run_profile_matrix.py --all --threads 8
+python3 linux-on-cynthion/scripts/60_run_profile_matrix.py --all --threads 8 --reset-history
 ```
 
 ## Output logs
@@ -90,13 +93,13 @@ python3 riscv/scripts/60_run_profile_matrix.py --all --threads 8 --reset-history
 
 ## Withdrawn results
 
-`riscv/metrics/` — the usage-history CSV and the generated ECP5 trend report —
+`metrics/` — the usage-history CSV and the generated ECP5 trend report —
 was deleted, along with 1.5 GB of build outputs and 36 GB of per-job sbt
 workspaces. The two tracked files are recoverable from git history at `2b84fe8~`.
 
 Headline figures. The Fmax figures are struck; the area figures are more
 defensible but include SoC glue, so they are not directly comparable with the
-VexRiscv rows in `docs/moondancer/riscv_state_of_play.md`:
+VexRiscv rows recorded elsewhere:
 
 | Configuration | LUT4 | FF | Fmax |
 |---|---|---|---|

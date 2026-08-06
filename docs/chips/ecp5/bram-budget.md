@@ -60,4 +60,4 @@ is exactly what an instruction cache exists to hide.
 |---|---|
 | `repos/cynthion/cynthion/python/src/gateware/analyzer/top.py` | the 9/56 design |
 | `repos/cynthion/cynthion/python/src/gateware/facedancer/top.py` | the 45/56 design |
-| `riscv/results/sweep_20260729.json` | 132 CPU configurations with BRAM per row |
+| `linux-on-cynthion/results/sweep_20260729.json` | 132 CPU configurations with BRAM per row. **That sweep's Fmax figures are withdrawn**; its area and BRAM rows stand but include SoC glue, so they are not a bare-core figure |

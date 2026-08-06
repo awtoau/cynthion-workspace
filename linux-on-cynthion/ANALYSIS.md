@@ -21,8 +21,8 @@ Depth lives elsewhere and is linked, not repeated:
 | for | see |
 |---|---|
 | the CPU area and timing matrix, rv64 and MMU rows | [below](#what-64-bit-and-an-mmu-cost-measured) |
-| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`architecture.md`](architecture.md) |
-| the 480 Mbps host engine, its integration design and register map | [`usb-host-options.md`](usb-host-options.md) |
+| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md), ranked in [`architecture.md`](../docs/architecture.md) |
+| the 480 Mbps host engine, its integration design and register map | [`usb-host-options.md`](../docs/usb-host-options.md) |
 | the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
 ---
@@ -127,7 +127,7 @@ residue of 4 is the remainder, not a per-module report.
 | Linux-only build | DP16KD |
 |---|---|
 | `soc-cpu +64 +MMU` L1s + BTB, 4 KiB direct-mapped | 12 |
-| boot ROM — the resident bootloader is 492 bytes ([`architecture.md` §22](architecture.md)) | 1 |
+| boot ROM — the resident bootloader is 492 bytes ([`architecture.md` §22](../docs/architecture.md)) | 1 |
 | one NS16550A's FIFOs | 1 |
 | HyperRAM DQS PHY and its 8 MiB Wishbone window | 0 |
 | SPI flash XIP window | 0 |
@@ -163,7 +163,7 @@ and refill cost is the open question below. Doubling the cache halves the refill
 | | figure | provenance |
 |---|---|---|
 | HyperRAM peak, CK 192 MHz, 2 bytes/CK DDR | 384 MB/s | arithmetic |
-| **measured read, 128-word bursts** | **238.9 MB/s** at CK 140 (85.3%) | measured — [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md). The 334.4 MB/s this row used to claim is **withdrawn**; CK 180 fails in bulk |
+| **measured read, 128-word bursts** | **238.9 MB/s** at CK 140 (85.3%) | measured — [`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md). The 334.4 MB/s this row used to claim is **withdrawn**; CK 180 fails in bulk |
 | measured write | 351.1 MB/s | measured |
 | fixed overhead per HyperBus transaction | **19 CK** | derived: 147 CK for 128 words |
 | the CSR staging port this replaced | **0.77 MB/s** | measured, `bench hyperram` |
@@ -177,10 +177,10 @@ so it is cacheable and executable, with JTAG keeping arbitration priority. It ha
 
 `HyperRAMWishbone` can coalesce an incrementing linear burst into one HyperBus
 transaction (`bootram.py`, capped at 748 words for tCSM — see
-[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md#how-software-reaches-it)),
+[`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md#how-software-reaches-it)),
 but `sustained` gates it and is **False**: coalescing corrupted alternate beats,
 because a HyperBus data phase cannot be stalled and this master bubbles. See
-[`soc-memory-bus.md`](soc-memory-bus.md) and #185.
+[`soc-memory-bus.md`](../docs/soc-memory-bus.md) and #185.
 
 So the table below is the arithmetic that motivated the change, not a
 description of the window today — the **first** row is what runs. Per 64-byte
@@ -223,7 +223,7 @@ For Linux the choice is made by driver availability, not by area or speed.
 | route | area | Linux driver | verdict |
 |---|---|---|---|
 | **SpinalHDL `UsbOhci`**, FS/LS 12 Mbps | 3736 COMB, 1 BRAM (§2 below) | **already exists** — `compatible = "generic-ohci"`, `ohci-platform` | the route Linux binds with nothing written |
-| **GUH SIE**, HS 480 Mbps | 2080 COMB, **0 BRAM** ([`usb-host-options.md` §12](usb-host-options.md)) | **none** — a bespoke register interface means writing an HCD | right answer to a different question |
+| **GUH SIE**, HS 480 Mbps | 2080 COMB, **0 BRAM** ([`usb-host-options.md` §12](../docs/usb-host-options.md)) | **none** — a bespoke register interface means writing an HCD | right answer to a different question |
 
 That fork is stark and worth stating plainly: **480 Mbps costs a Linux host
 controller driver that nobody has written; 12 Mbps costs nothing.** There is no open
@@ -260,7 +260,7 @@ product.
 
 | novel | why nobody has it |
 |---|---|
-| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
+| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
 | …at 334.4 MB/s | nothing faster on an ECP5 appears in the open record — the next published figure is Tiliqua's 200 MB/s |
 | **rv64 VexiiRiscv Linux on a 12F** | `linux-on-litex-vexriscv` is rv32 VexRiscv |
 | **Rust kernel drivers on this SoC** | the stated point of the exercise |
@@ -900,12 +900,12 @@ not.
 **The core fits and closes timing with margin; main memory is the half this table does not
 measure.** 64 KiB of block RAM does not boot Linux, so it would have to be HyperRAM — a
 bandwidth and latency question about the L1s in front of it, not an area one. The whole
-chain is in [`linux-on-cynthion.md`](linux-on-cynthion.md), which corrects one reading
+chain is in [`linux-on-cynthion.md`](../linux-on-cynthion/ANALYSIS.md), which corrects one reading
 above: the block RAM wall is *this* SoC's, not the die's. A Linux-only build lands at 14 of
 56, so 8 KiB two-way L1s cost 24 of 56 rather than the whole part.
 
 **A trap in the tree**, superseded by the tables above:
-[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
+[`chips/vexiiriscv-cpu.md`](../docs/chips/vexiiriscv-cpu.md)
 headlines 12646 LUT4 for VexRiscv against 6876, which is **not like for like** — the
 VexRiscv number includes the whole USB fabric and the VexiiRiscv one does not, so it
 overstates VexRiscv by roughly a USB stack, and its two configurations differ in three

@@ -16,6 +16,7 @@ common outcome.
 Deeper investigations, by area:
 
 - [docs/apollo_samd11_mcu](docs/apollo_samd11_mcu) — the debug MCU and its firmware
+- [linux-on-cynthion](linux-on-cynthion) — booting Linux on this board: analysis, plan, sweeps
 - [docs/chips/ecp5](docs/chips/ecp5) — flash, HyperRAM, USB and BRAM in depth
 - [docs/chips/vexiiriscv-cpu.md](docs/chips/vexiiriscv-cpu.md) — the soft CPU
 - [docs/upstream-boundary.md](docs/upstream-boundary.md) — what we take from upstream and

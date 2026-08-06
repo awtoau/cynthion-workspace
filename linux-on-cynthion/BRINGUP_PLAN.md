@@ -43,9 +43,9 @@ moondancer/facedancer feature parity, performance tuning.
 
 ## Phase 0: Baseline and tooling lock
 
-1. `python3 riscv/scripts/00_check_env.py`
-2. `python3 riscv/scripts/10_prepare_workdirs.py`
-3. `python3 riscv/scripts/20_capture_soc_baseline.py`
+1. `python3 linux-on-cynthion/scripts/00_check_env.py`
+2. `python3 linux-on-cynthion/scripts/10_prepare_workdirs.py`
+3. `python3 linux-on-cynthion/scripts/20_capture_soc_baseline.py`
 4. Install any tools reported missing.
 5. Confirm `qemu-system-riscv64` is available.
 
@@ -57,7 +57,7 @@ Exit: `riscv/out/env_report.json` and `riscv/out/soc_baseline.json` exist;
 
 1. Build or obtain a minimal RV64 kernel and initramfs for QEMU `virt`.
 2. Compile a QEMU-specific DTB, or use `virt` defaults if the kernel supports it.
-3. `python3 riscv/scripts/30_qemu_linux_smoke.py --kernel <Image> [--initrd <initramfs>] [--dtb <qemu.dtb>]`
+3. `python3 linux-on-cynthion/scripts/30_qemu_linux_smoke.py --kernel <Image> [--initrd <initramfs>] [--dtb <qemu.dtb>]`
 4. Confirm kernel starts, console works, rootfs handoff occurs.
 5. Freeze the known-good kernel cmdline here.
 
@@ -78,9 +78,9 @@ UART output confirms first instruction execution.
 
 Standalone core validation before SoC integration.
 
-1. `python3 riscv/scripts/40_run_vexii_rtl_smoke.py`
-2. `python3 riscv/scripts/41_run_vexii_postsynth_smoke.py`
-3. `python3 riscv/scripts/42_run_vexii_nextpnr_timing.py`
+1. `python3 linux-on-cynthion/scripts/40_run_vexii_rtl_smoke.py`
+2. `python3 linux-on-cynthion/scripts/41_run_vexii_postsynth_smoke.py`
+3. `python3 linux-on-cynthion/scripts/42_run_vexii_nextpnr_timing.py`
 
 Outputs (regenerated into gitignored `riscv/out/`):
 
@@ -101,13 +101,13 @@ place-and-route flow itself is still valid; only the numbers are not.
 
 1. Confirm reset vector and ROM/flash mapping.
 2. Build and package first-stage boot path, kernel image, and DTB from
-   `riscv/code/cynthion_rv64_min.dts`.
+   `linux-on-cynthion/code/cynthion_rv64_min.dts`.
 3. Define flash layout with offsets and size guardrails.
 4. Validate boot logs over UART.
 
 Exit: board consistently reaches Linux early boot logs; no flash overlap.
 
-Note: the DTS in `riscv/code/` is the RV64 skeleton and has not been revised
+Note: the DTS in `linux-on-cynthion/code/` is the RV64 skeleton and has not been revised
 for the RV32 decision.
 
 ## Phase 3: Root filesystem via USB network + NFS (not started)

@@ -556,7 +556,7 @@ HyperRAM core has never been tuned on this part; its ECP5 lineage is the separat
 `litex-hub/litehyperbus`, Greg Davill's `HyperRAMX2`.
 
 That absence is the load-bearing fact in
-[`../linux-on-cynthion.md`](../linux-on-cynthion.md): `linux-on-litex-vexriscv` runs
+[`../linux-on-cynthion.md`](../../linux-on-cynthion/ANALYSIS.md): `linux-on-litex-vexriscv` runs
 Linux on ECP5 today, but nobody has run it out of HyperRAM. What that document
 needs from this one is not the burst figure but the **per-transaction 19 CK
 overhead**, because a 64-byte cache line refilled one 32-bit word at a time pays
