@@ -1,20 +1,10 @@
 # The SoC: what it is made of, and where each piece came from
 
-A reference, not an argument. Every row is settled; the reasoning that got there
-is in git, and the parts that are still open are in
-[`decisions.md`](decisions.md).
+Still open: [`decisions.md`](decisions.md). Board:
+[`hardware.md`](hardware.md). Silicon: [`chips/`](chips/).
 
-**Index:** [`hardware.md`](hardware.md) — the board · [`chips/`](chips/) — the
-silicon · [`install.md`](install.md) — building it
-
-**Provenance** in the tables below:
-
-| | |
-|---|---|
-| **written** | implemented here from a specification or datasheet |
-| **generated** | emitted at elaboration or build time; not committed as source |
-| **vendored** | upstream source copied in so it could be fixed |
-| **upstream** | used as an unmodified dependency |
+Provenance — **written** from a spec · **generated** at elaboration · **vendored**
+so it could be fixed · **upstream** unmodified.
 
 ## Core
 

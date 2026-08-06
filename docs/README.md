@@ -40,12 +40,9 @@ be done -- that fact moves here and the issue links to it.
 
 ### Where a decision goes
 
-**Once a choice is made it stops being a decision and becomes architecture.**
-[`soc-architecture.md`](soc-architecture.md) says what the SoC is made of and
-where each piece came from — a table, no arguments.
-[`decisions.md`](decisions.md) holds only what is still open and what would
-settle it. Moving a row from the second to the first is the point at which the
-reasoning gets dropped; git keeps it.
+**A settled choice is architecture, not a decision.**
+[`soc-architecture.md`](soc-architecture.md) is what the SoC is made of;
+[`decisions.md`](decisions.md) is what is still open.
 [`upstream-boundary.md`](upstream-boundary.md) holds the policy on Great Scott
 Gadgets code, separately, because that is policy rather than measurement.
 
