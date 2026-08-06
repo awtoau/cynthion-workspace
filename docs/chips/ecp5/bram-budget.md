@@ -1,18 +1,12 @@
-**The 12F is a 25F die** ([`lfe5u-12f.md`](lfe5u-12f.md)), so the datasheet says
-32 `DP16KD` and the toolchain says 56.
+**Settled in pluribus, not here.** `pluribus: docs/fabric-test.md` — *"`LFE5U-12F`
+and `-25F` are the same die, and the open flow gives a 12F all 24,288 LUTs
+unpatched. That extra fabric worked on the one part tested, but binning/salvage
+is only bounded, not excluded."*
 
-prjtrellis's chipdb for `LFE5U-12F` holds **127 EBR tiles and 24,288 LUT4** —
-the die's, not the marking's — so `nextpnr-ecp5 --12k` offers 56 blocks to every
-design built for this part. Nobody opts into the extended space; the tool never
-mentions the smaller number.
-
-So percentages against 32 do not measure a limit anyone is exceeding — the open
-flow enforces no such limit. Whether **Lattice** guarantees the extended space is
-the real question, it is empirical, and #116 is where it is being answered.
-
-Source for 32: the ECP5 family datasheet's `LFE5U12` column, "sysMEM Blocks
-(18 Kb)". The same column gives **2/2 PLLs/DLLs**, which is what the second PLL
-in `hyperram_clocks.py` relies on.
+So the toolchain reports 56 `DP16KD` where the datasheet advertises 32, nobody
+opts in, and whether a given die is sound is an empirical question with no tool
+to answer it. That is pluribus's subject. **This file is only what our designs
+actually use.**
 
 How much a design needs depends entirely on what the design is, and the split is
 sharper than expected.
@@ -21,18 +15,11 @@ sharper than expected.
 
 All built for r1.4, same device, package and speed grade.
 
-Both counts given, since the datasheet's and the toolchain's disagree.
-
-| Design | `DP16KD` | of the datasheet's 32 | of the chipdb's 56 | LUT4 | What it is |
-|---|---|---|---|---|---|
-| USB analyzer | **9** | 28% | 16% | 8191 | capture at line rate |
-| the SoC | **41** | 128% | 73% | 6811 | soft CPU + firmware |
-| Facedancer SoC | **45** | 141% | 80% | 12824 | soft CPU + firmware |
-
-**Facedancer is upstream's own design and it is in the third row.** Great Scott
-Gadgets ship it on boards marked 12F and it works, which is the practical
-evidence that the die really does carry the extra memory — they are not opting
-into anything, they are building with the same chipdb.
+| Design | `DP16KD` of 56 | LUT4 | What it is |
+|---|---|---|---|
+| USB analyzer | **9** (16%) | 8191 | capture at line rate |
+| the SoC | **41** (73%) | 6811 | soft CPU + firmware |
+| Facedancer SoC | **45** (80%) | 12824 | soft CPU + firmware |
 
 All three build and produce bitstreams. **Facedancer must be built with
 `domain="usb"` at 60 MHz** — `top.py` reads

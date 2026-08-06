@@ -7,11 +7,11 @@ CABGA256, speed grade 8.
 
 ## The headline: the part marked 12F is a 25F die, and the extra fabric computes
 
-**The term, used consistently across this repo: "the 12F is a 25F die."** The
-resources past what the marking advertises are "the extended space". It is not
-something anyone opts into — prjtrellis's chipdb for `LFE5U-12F` holds the die's
-resources, so `nextpnr-ecp5 --12k` offers them to every design built for this
-part, upstream's included.
+**The die question is pluribus's, and it is settled there** — `pluribus:
+docs/fabric-test.md`: the 12F and 25F are the same die, the open flow gives a 12F
+all 24,288 LUTs unpatched, and binning is bounded rather than excluded. Nobody
+opts in; the chipdb is per-die. **What follows here is this board's part**, and
+"the 12F is a 25F die" is the phrase used for it throughout this repo.
 
 | what | value | source |
 |---|---|---|
