@@ -206,6 +206,48 @@ receptacle sharing `target_phy` with TARGET-C). Buttons: **two** — PROGRAM
 and, via the normal boot path, the FPGA too. Six FPGA LEDs (E13 C13 B14 A15 D12
 C11, active-low) and five MCU LEDs.
 
+### What the six FPGA LEDs mean
+
+Driven so that **a working board and a dead one do not look the same** — nothing
+drove them before, which is a large part of why the silent SoC took days.
+Declared `LEDResources(..., invert=True)`, so the gateware drives active-high.
+
+| # | colour | meaning | behaviour |
+|---|---|---|---|
+| 0 | **red** | any Wishbone bus error | solid, **latched** |
+| 1 | orange | CPU has fetched at least one instruction | solid, latched |
+| 2 | yellow | CPU has reached the I/O bus (third master alive) | solid, latched |
+| 3 | **green** | heartbeat | **flashing**, ~1.4 Hz |
+| 4 | blue | console data queued at least once | solid, latched |
+| 5 | violet | USB connected and configured | follows `serial.connect` |
+
+| what you see | what it means |
+|---|---|
+| green flashing, orange + yellow + blue, no red | working normally |
+| green flashing, nothing else | clock runs, CPU not fetching — reset or bitstream |
+| green flashing, orange only | CPU fetches, never reaches I/O — bus master or address map |
+| orange + yellow, no blue | CPU runs, never writes the console — firmware, not gateware |
+| **red lit** | a bus error occurred, whatever else looks right |
+| nothing | no clock, or no bitstream |
+
+**Everything except green is sticky**, because these events are brief — a bus
+error is one cycle, a first fetch happens once — and a human glances at the board
+at an arbitrary moment. *A fault that cleared itself is still a fault.* The same
+correction made the sideband usable: its `state` was raw Wishbone `cyc`, high only
+during a transaction, so reading `0` was near-certain even on a busy CPU. Latched,
+it answers "has this bus **ever** moved", which is the question being asked.
+
+**Green flashes rather than sitting solid** because a stuck-high output and a
+healthy design must not look the same. Motion proves the clock runs; a solid LED
+proves only that a pin is high, which is also what a design held in reset looks
+like.
+
+The heartbeat divider must be derived from the clock, not hardcoded. Getting it
+wrong here gives a heartbeat at the wrong rate, which is harmless; the same
+mistake in `SidebandDebug` gives a **dead** link
+([`chips/cynone-sideband.md`](chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
+`vexii_hello_soc.py` derives both from `SYNC_MHZ`. See #111.
+
 Only the **CONTROL** port is muxed. AUX and TARGET are hardwired to their PHYs,
 which is why `default_usb_connection = "aux_phy"` — gateware that wants a host link
 without fighting Apollo for the control port uses AUX.
@@ -962,7 +1004,7 @@ after a 68 µs gateware timeout, not zeros.
 | how fast the soft CPU can be clocked on this part | [`soc-clocking.md`](soc-clocking.md) |
 | flash, HyperRAM, USB and BRAM in depth | [`luna_ecp5_fpga/`](luna_ecp5_fpga/) |
 | Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
-| the soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md), [`soc-status-leds.md`](soc-status-leds.md) |
+| the soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |
 | workspace CLI | `./dev.py --help`, or `./dev.py describe` for JSON |
 

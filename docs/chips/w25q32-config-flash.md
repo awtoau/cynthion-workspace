@@ -122,7 +122,7 @@ measures. Per cache line `0xED` costs 8 + 3 + 8 + 64 = 83 clocks at 66 MHz =
 downgrade.** Genuine DDR on this board is the HyperRAM.
 
 Full speed table, read modes, clock domains and the bugs found getting there:
-[`../luna_ecp5_fpga/flash-detailed.md`](../luna_ecp5_fpga/flash-detailed.md).
+this document.
 
 ## Cache-line refill, which is what firmware execution pays (NEW, 2026-08-03)
 
@@ -332,7 +332,7 @@ Two statements in the existing notes are wrong and are corrected here:
 | was recorded | correct |
 |---|---|
 | SR3 `0x60`, **"ADS clear"** (this document) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
-| *"QPI mode can address in as few as 8 clocks"* ([`luna_ecp5_fpga/flash-detailed.md`](../luna_ecp5_fpga/flash-detailed.md)) | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
+| *"QPI mode can address in as few as 8 clocks"* (recorded in an earlier flash note, now folded in here) | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
 
 ### QPI (`0x38`) — absent
 
@@ -523,6 +523,52 @@ dropped.** SFDP would say whether anything else undocumented is there — and it
 a read-only probe on a board that is otherwise fully characterised.
 
 ---
+
+### Why the clock is on N9, and why that pin is the constrained one
+
+| FPGA pin | function | flash |
+|---|---|---|
+| T8 | `D0/PICO/IO0/PB11B` | IO0 |
+| T7 | `D1/POCI/IO1/PB11A` | IO1 |
+| M7 | `D2/IO2/PB9B` | IO2 |
+| N7 | `D3/IO3/PB9A` | IO3 |
+| N8 | `CSSPI/PB15A` | CS |
+| **N9** | **MCLK/CCLK** | **CLK** |
+
+sysCONFIG: *"The MCLK is **always reserved** for use in MSPI mode, in most
+post-configuration applications, as the reference clock for performing memory
+transactions with the external SPI PROM."* If the FPGA is to configure itself from
+this flash, the clock has to be on N9 — there is no alternative ball.
+
+**The asymmetry is in the silicon, not the layout.** The data pins carry dual
+designations (`PB11A`, `PB11B`, `PB9A`, `PB9B`) — ordinary bank-8 I/O as well as
+MSPI pins — which is why they keep working at full speed after configuration.
+MCLK has no alternate function, so it is reachable only through `USRMCLK`
+([`lfe5u-12f-ecp5.md`](lfe5u-12f-ecp5.md)).
+
+A board that never boots from flash escapes this entirely: the reservation applies
+in *"most"* post-configuration applications, a convention rather than a hardware
+rule, and outside MSPI mode even `CSSPIN` reverts to general-purpose I/O. Such a
+board could put the flash clock on an ordinary bank pin. Not available here: on
+r1.4 the only copper to the flash clock is from N9, so it is a PCB change for a
+future revision, and it would cost the recovery path — a board that cannot
+configure itself from flash depends entirely on the debug controller.
+
+### Divisor 3 fails while 2 and 4 pass, and that is the build, not the part
+
+The SCK divisor is a bitstream register rather than a build-time constant, so it
+sweeps over JTAG without rebuilding — about 30 seconds against roughly five
+minutes per point.
+
+Sweeping it found a **non-monotonic** failure: at 120 MHz `sync`, divisor 3
+(30 MHz) failed with 22 of 64 bytes wrong, repeatably across three runs, while
+both faster divisors (1, 2) and every slower one (4, 5, 7) passed. At 60 MHz
+`sync` a *different* divisor failed.
+
+**A failure that moves with the build rather than with SCK is place-and-route
+variation on the sample path, not the part.** Addressing it means constraining
+that path or sweeping the sample offset per divisor — not clocking slower. Worth
+knowing before anyone reads a single failing rung as a device limit.
 
 ### Flash — the ECP5 scoreboard, and it is not close
 

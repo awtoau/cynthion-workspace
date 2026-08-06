@@ -123,7 +123,7 @@ FLASH_TEST_OFFSET = 0x00000040
 #   4 MiB and above aliases back to offset 0 -- SFDP declares 4 MiB and the
 #                   address wraps -- so a write at 4 MiB+ lands ON the
 #                   bitstream while appearing to be nowhere near it. Verified
-#                   in docs/luna_ecp5_fpga/flash-detailed.md.
+#                   in docs/chips/w25q32-config-flash.md.
 #
 # 2 MiB is comfortably above the largest bitstream this device takes (~320 KiB)
 # and comfortably below the 4 MiB wrap.

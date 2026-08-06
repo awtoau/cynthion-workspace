@@ -68,7 +68,6 @@ in its §13 got there in the first place.
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
-* [`soc-status-leds.md`](soc-status-leds.md) — Six FPGA LEDs, driven so a working board and a dead one do not look the same
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
@@ -106,7 +105,6 @@ in its §13 got there in the first place.
 * [`luna_ecp5_fpga/dynamic-opcode-probe.md`](luna_ecp5_fpga/dynamic-opcode-probe.md) — Probing the ECP5 configuration engine on live silicon
 * [`luna_ecp5_fpga/ecp5-flashing.md`](luna_ecp5_fpga/ecp5-flashing.md) — ECP5 Flashing — Cynthion Gateware Load Process
 * [`luna_ecp5_fpga/ecp5_command_probe.md`](luna_ecp5_fpga/ecp5_command_probe.md) — Dynamic probe of the ECP5 configuration engine
-* [`luna_ecp5_fpga/flash-detailed.md`](luna_ecp5_fpga/flash-detailed.md) — Configuration flash: identification, read modes and speed
 * [`luna_ecp5_fpga/flash-partitioning.md`](luna_ecp5_fpga/flash-partitioning.md) — Partitioned configuration flash on Cynthion r1.4
 * [`luna_ecp5_fpga/hyperram-detailed.md`](luna_ecp5_fpga/hyperram-detailed.md) — HyperRAM: what the part is, how much of it there is, and how fast it goes
 * [`luna_ecp5_fpga/luna_soc_amaranth_fix_complete.md`](luna_ecp5_fpga/luna_soc_amaranth_fix_complete.md) — Luna-SoC Amaranth 0.5.x Compatibility Fix — COMPLETE
@@ -117,7 +115,6 @@ in its §13 got there in the first place.
 * [`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md) — RV32 Equivalence and Variation Report (2026-07-22)
 * [`luna_ecp5_fpga/session-audit-2026-07-30.md`](luna_ecp5_fpga/session-audit-2026-07-30.md) — Session audit: what was found, what was written down, what is stranded
 * [`luna_ecp5_fpga/usb-performance.md`](luna_ecp5_fpga/usb-performance.md) — LUNA USB gateware: measured performance
-* [`luna_ecp5_fpga/vexriscv_update_blocked.md`](luna_ecp5_fpga/vexriscv_update_blocked.md) — VexRISCV Update Attempt — Blocked
 * [`luna_ecp5_fpga/where-findings-live.md`](luna_ecp5_fpga/where-findings-live.md) — Where the ECP5 findings live
 
 ### Apollo, SAMD11 firmware

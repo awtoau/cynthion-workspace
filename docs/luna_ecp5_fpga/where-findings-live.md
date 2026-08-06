@@ -44,8 +44,8 @@ Board findings — things that depend on Cynthion r1.4, Apollo, or this design.
   one of those cost months. Add to the table in that file instead.
 - `dynamic-opcode-probe.md` — the live-silicon opcode sweep. Its generic ECP5
   facts are summarised in pluribus's README; the Apollo specifics stay here.
-- `flash-partitioning.md`, `reconfigure-initn-gap.md`, `flash-detailed.md`,
-  `flash-detailed.md` — flash, boot selection, and the INITN gap.
+- `flash-partitioning.md`, `reconfigure-initn-gap.md` — flash, boot selection
+  and the INITN gap. The part itself is `../chips/w25q32-config-flash.md`.
 
 **Retired to `debris/docs/`** — kept for reasoning, wrong on their numbers or their
 titles: `apollo-configure-speed.md`, `jtag_configure_bottleneck.md` (both predate the

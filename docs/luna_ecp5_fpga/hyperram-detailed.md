@@ -251,7 +251,8 @@ sits beside the HyperRAM, so its die temperature is a usable proxy for local amb
 
 The same question asked of the configuration flash came back a clean negative -- SFDP
 declares 4 MiB, everything above it aliases offset 0, 4-byte addressing absent. See
-`flash-detailed.md`. Two parts on one board, same question, opposite answers.
+`../chips/w25q32-config-flash.md`. Two parts on one board, same question,
+opposite answers.
 
 ## Three bugs found writing the probe, all one shape
 
