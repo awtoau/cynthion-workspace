@@ -1,4 +1,4 @@
-# Concurrency on this SoC: what the workload needs, and what each model costs
+# RTIC on this SoC: what the workload needs, and what each model costs
 
 Issue #115, and the decision is [`decisions.md`](decisions.md) 19. This replaces
 five separate documents written as the work happened; what follows is what they

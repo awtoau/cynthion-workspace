@@ -3,7 +3,7 @@
 //!
 //! The shell's `--features workload` and `--features preempt` builds are the
 //! control for *latency* -- their figures are in
-//! `docs/soc-concurrency.md` §5 and the harness re-asserts them --
+//! `docs/rtic.md` §5 and the harness re-asserts them --
 //! but they cannot be the control for *size*: the shell is 42 KB of console,
 //! power monitor, I2C and Type-C that the RTIC binary does not contain, so
 //! differencing their `.text` measures the shell and not the dispatcher.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthesise N periodic comparators for the ECP5 and report what they cost.
 
-The gateware half of `docs/soc-concurrency.md`. The firmware half --
+The gateware half of `docs/rtic.md`. The firmware half --
 `scripts/soc_model_probe.py` -- measures what a software timer queue costs in
 `.text`; this measures what replacing it with hardware costs in LUTs.
 

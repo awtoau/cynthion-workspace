@@ -603,7 +603,7 @@ Rust PLIC driver (`riscv-peripheral`) expects this register map.
 **RTIC is not one of the reasons.** It has no PLIC backend in any released version and
 never reads a claim register: its generic RISC-V backends dispatch out of `riscv-slic`, a
 *software* controller, from the machine software interrupt —
-[`soc-concurrency.md`](soc-concurrency.md) and decision 19.
+[`rtic.md`](rtic.md) and decision 19.
 
 It also satisfies the register discipline without adjustment: the only side-effecting read
 is the claim at 0x200004, alone in its 32-bit word, and `pending` — the register a poll
@@ -899,7 +899,7 @@ the scheduler an event-driven USB device does not need.
 
 **What preemption alone is worth**, hand-written in `src/dispatch.rs` behind
 `--features preempt`, on the identical arrival sequence
-([`soc-concurrency.md`](soc-concurrency.md)):
+([`rtic.md`](rtic.md)):
 
 | | superloop | preemption |
 |---|---|---|
@@ -909,7 +909,7 @@ the scheduler an event-driven USB device does not need.
 
 **What each runtime costs**, same skeleton, same `opt-level = "z"`, against the language
 floor (`scripts/soc_model_probe.py`,
-[`soc-concurrency.md`](soc-concurrency.md)):
+[`rtic.md`](rtic.md)):
 
 | model | runtime `.text` | of the 4 KiB I-cache | RAM |
 |---|---|---|---|
@@ -919,14 +919,14 @@ floor (`scripts/soc_model_probe.py`,
 | RTIC 2.3, `riscv-clint-backend` | 1,552 | 38% | **+1,332** in `.uninit` |
 
 With moondancer's real control path in the tasks rather than a counter, RTIC is **+1,568,
-38.3%** ([`soc-concurrency.md`](soc-concurrency.md)) — the real workload made it more
+38.3%** ([`rtic.md`](rtic.md)) — the real workload made it more
 expensive, not less.
 
 **The cache is the budget.** In the shell the hot footprint under load is **5,632 bytes
 against a 4 KiB direct-mapped cache** before any runtime is added, so the dispatcher's
 512 bytes of footprint only make a bad number worse. Between two binaries of the same
 shape, which is the comparison that isolates the runtime
-([`soc-concurrency.md`](soc-concurrency.md) §8), it is sharper:
+([`rtic.md`](rtic.md) §8), it is sharper:
 
 | | superloop | **RTIC** |
 |---|---|---|

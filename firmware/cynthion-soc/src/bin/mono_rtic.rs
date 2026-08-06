@@ -1,7 +1,7 @@
 //! A CLINT monotonic for RTIC, written and measured.
 //!
 //! Issue 4 of the six: **implementation of a CLINT monotonic.**
-//! `docs/soc-concurrency.md` §9 and `docs/soc-concurrency.md` §8 both record that
+//! `docs/rtic.md` §9 and `docs/rtic.md` §8 both record that
 //! `rtic-monotonics` 2.2.1 "has SysTick, STM32 and Silabs and nothing for
 //! RISC-V". **That is wrong, and this binary is the correction.** The crate ships
 //! `esp32c3.rs` and `esp32c6.rs`, both RISC-V, both `TimerQueueBackend`
@@ -18,7 +18,7 @@
 //! All five are below, and `src/timer.rs` already contains the hard parts of two
 //! of them for its own 1 ms tick. The sorted queue, the insert path, the
 //! re-arm-on-earlier-insert and the deadline-in-the-past case -- everything
-//! `docs/soc-concurrency.md` §3 lists as the bulk of the work -- are
+//! `docs/rtic.md` §3 lists as the bulk of the work -- are
 //! `rtic_time::TimerQueue`'s, not ours.
 //!
 //! ## What it costs to have one, and what it takes away

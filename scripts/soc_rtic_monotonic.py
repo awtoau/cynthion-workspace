@@ -6,7 +6,7 @@
 """Build and run `src/bin/mono_rtic.rs` under QEMU.
 
 Issue #115's fourth open question is "implementation of a CLINT monotonic", and
-`docs/soc-concurrency.md` §9 answers it with "`rtic-monotonics` 2.2.1 has nothing
+`docs/rtic.md` §9 answers it with "`rtic-monotonics` 2.2.1 has nothing
 for RISC-V". That is checkable and it is wrong: the crate ships `esp32c3` and
 `esp32c6` backends, both RISC-V. What it has no backend for is the **CLINT**,
 which is five methods of `rtic_time::TimerQueueBackend`.

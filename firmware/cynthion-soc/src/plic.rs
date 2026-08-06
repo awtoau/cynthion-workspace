@@ -132,7 +132,7 @@ impl Plic {
     ///
     /// This used to say RTIC would use it for critical sections. It will not:
     /// RTIC's RISC-V backend locks against `riscv-slic`'s own threshold, a byte
-    /// in `.bss`, and never writes this register. See `docs/soc-concurrency.md`.
+    /// in `.bss`, and never writes this register. See `docs/rtic.md`.
     /// What it is still for is `info`, which cannot otherwise show a source
     /// masked by level rather than by enable.
     pub fn set_threshold(&self, level: u32) {
