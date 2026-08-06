@@ -3,10 +3,24 @@ and `-25F` are the same die, and the open flow gives a 12F all 24,288 LUTs
 unpatched. That extra fabric worked on the one part tested, but binning/salvage
 is only bounded, not excluded."*
 
-So the toolchain reports 56 `DP16KD` where the datasheet advertises 32, nobody
-opts in, and whether a given die is sound is an empirical question with no tool
-to answer it. That is pluribus's subject. **This file is only what our designs
-actually use.**
+**There is nothing to override, and nextpnr does enforce a limit — it enforces
+the chipdb's.** From a build's own `top.tim`, invoked as plain
+`nextpnr-ecp5 --12k --package CABGA256 --speed 8`:
+
+    Info: 	                DCCA:       1/     56     1%
+    Info: 	              DP16KD:       5/     56     8%
+    Info: 	          MULT18X18D:       4/     28    14%
+    Info: 	             EHXPLLL:       1/      2    50%
+
+56 block RAMs, not the datasheet's 32, with no flag asking for it — and the
+build would fail at 57. So "no limit" was the wrong way to put it: the limit is
+the die's, because the chipdb is per-die, and a design cannot exceed it.
+
+(`MULT18X18D: 4/28` in that same report is where the 32 was once mis-stated as
+28. The multiplier count sits directly under the memory count.)
+
+Whether a given die is *sound* is the separate, empirical question, and it is
+pluribus's. **This file is only what our designs actually use.**
 
 How much a design needs depends entirely on what the design is, and the split is
 sharper than expected.

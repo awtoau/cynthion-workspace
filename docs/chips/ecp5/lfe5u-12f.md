@@ -10,7 +10,9 @@ CABGA256, speed grade 8.
 **The die question is pluribus's, and it is settled there** — `pluribus:
 docs/fabric-test.md`: the 12F and 25F are the same die, the open flow gives a 12F
 all 24,288 LUTs unpatched, and binning is bounded rather than excluded. Nobody
-opts in; the chipdb is per-die. **What follows here is this board's part**, and
+opts in and nothing is overridden: `nextpnr-ecp5 --12k` reports `DP16KD 5/56`
+and `EHXPLLL 1/2` on a plain invocation, because the chipdb is per-die. It does
+enforce a limit — the die's. **What follows here is this board's part**, and
 "the 12F is a 25F die" is the phrase used for it throughout this repo.
 
 | what | value | source |
