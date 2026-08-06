@@ -1117,8 +1117,7 @@ This replaces the ranking that lived in `memory-speed-options.md`, which is now
 dissolved: the per-option analysis moved to
 [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) and
 [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), the ECP5 primitives to
-[`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md), and the prior art to
-[`hyperram-implementations.md`](hyperram-implementations.md).
+[`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md), and the prior art into both chip docs.
 
 **The old ranking was scored against a void measurement** and is not carried over
 as written. It ranked options as percentages of "everything CK 192 can deliver,"

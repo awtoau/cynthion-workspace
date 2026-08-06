@@ -118,8 +118,7 @@ test is whether a finding would be useful to someone with a different ECP5 board
 Moved here from `memory-speed-options.md`, because these are ECP5 primitives and
 the question gets asked about the FPGA, not about the memory. The HyperRAM side
 of the same problem is in [`w956a8-hyperram.md`](w956a8-hyperram.md); what other
-projects achieved with these primitives is in
-[`../hyperram-implementations.md`](../hyperram-implementations.md).
+projects achieved with these primitives is below and in the part doc.
 
 ### The clock structure is not the canonical ECP5 one, and that is the leading hypothesis
 
@@ -207,6 +206,45 @@ conflated the first two.
 **Correction: the port table discrepancy is a datasheet error, not a silicon
 limit.** An earlier draft of this page treated it as "8 values on paper, possibly
 4 in silicon". TN-02035 settles it at eight.
+
+### Tiliqua has already implemented LUNA's TODO, and it is a drop-in
+
+`apfaudio/tiliqua` vendors LUNA's `psram.py` split across three files and changed
+**exactly one thing that matters**. Where LUNA hardcodes `READCLKSEL = 0b010`,
+Tiliqua drives it from a runtime register with the mandatory `PAUSE`-before /
+`PAUSE`-after sequence, and runs a training FSM (`periph/psram.py:198-223`):
+
+    with m.If(timeout == 127):
+        m.d.sync += counter.eq(counter + 1)
+        with m.If(counter == 127):
+            m.next = "IDLE"
+        with m.If(~psram.phy.burstdet):
+            m.d.sync += readclksel.eq(readclksel + 1)
+            m.d.sync += counter.eq(0)
+
+Dummy read, wait, check `BURSTDET`; if low, increment `READCLKSEL` (wrapping
+0→7) and restart. It requires **128 consecutive bursts with `BURSTDET` high**
+before releasing — matching TN-02035's recommendation exactly. Commit
+`37180a74`, September 2024.
+
+**This is the single most reusable thing found.** Same file lineage, same
+primitive, proven on real ECP5 HyperRAM silicon — and it establishes that
+`BURSTDET` *does* assert on a HyperBus part, which was the open question.
+
+Two caveats before copying it wholesale:
+
+- **Tiliqua runs at CK 120 MHz**, 40% below where we already are, so it is not
+  evidence about 192 or 200.
+- **First-pass-wins is the wrong policy.** It stops at the first `READCLKSEL`
+  that works, which may be the edge of the eye. `jeanthom/gram`
+  (`libgram/src/calibration.c`) does it properly: sweep 0..7, find the **minimum**
+  and **maximum** values that assert, and program the **midpoint**. LiteX's BIOS
+  does the same with `delay_mid = (delay_min + delay_max) / 2` and a comment
+  worth keeping — `delay_min = delay - 1; // delay on edges can be spotty`.
+
+Everything else in Tiliqua is unchanged from LUNA, including
+`LOW/HIGH_LATENCY_CLOCKS = 3/5`, the `extra_latency | 1`, and the tied-off margin
+control. **Neither LUNA nor Tiliqua writes CR0 at all**, so every option in the
 
 ### `BURSTDET` — four specific reasons ours may be staying low
 

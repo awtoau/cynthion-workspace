@@ -68,7 +68,6 @@ in its §13 got there in the first place.
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
-* [`hyperram-implementations.md`](hyperram-implementations.md) — What other ECP5 HyperRAM designs achieve, and how they calibrate
 * [`soc-status-leds.md`](soc-status-leds.md) — Six FPGA LEDs, driven so a working board and a dead one do not look the same
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think

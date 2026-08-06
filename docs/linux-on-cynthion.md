@@ -180,7 +180,7 @@ transaction (`vexii_bootram.py`, capped at 748 words for tCSM — see
 [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md#how-software-reaches-it)),
 but `sustained` gates it and is **False**: coalescing corrupted alternate beats,
 because a HyperBus data phase cannot be stalled and this master bubbles. See
-[`hyperram-bursts.md`](hyperram-bursts.md) and #185.
+[`soc-memory-bus.md`](soc-memory-bus.md) and #185.
 
 So the table below is the arithmetic that motivated the change, not a
 description of the window today — the **first** row is what runs. Per 64-byte
@@ -260,7 +260,7 @@ product.
 
 | novel | why nobody has it |
 |---|---|
-| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`hyperram-implementations.md`](hyperram-implementations.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
+| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
 | …at 334.4 MB/s | nothing faster on an ECP5 appears in the open record — the next published figure is Tiliqua's 200 MB/s |
 | **rv64 VexiiRiscv Linux on a 12F** | `linux-on-litex-vexriscv` is rv32 VexRiscv |
 | **Rust kernel drivers on this SoC** | the stated point of the exercise |

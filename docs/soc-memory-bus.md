@@ -24,7 +24,6 @@ checked by §11 of `scripts/soc_hyperram_sim.py`, and **off by default** — see
 cannot settle, which is the read path's round-trip latency.
 
 **Index:** [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) ·
-[`hyperram-bursts.md`](hyperram-bursts.md) ·
 [`upstream-boundary.md`](upstream-boundary.md) ·
 [`riscv-core-build.md`](riscv-core-build.md)
 
@@ -166,6 +165,23 @@ the half the board reported first.
 
 Note also that a read shim which speculatively increments *is* §4's prefetch
 buffer, arrived at from the other end and with a worse interface.
+
+**What the bubble does on the wire**, since "the master is one cycle late" does
+not obviously mean "the data is wrong". Nothing in the path can stall, so the
+deficit appears as *extra words*:
+
+    cycle 20   beat 0 low half
+    cycle 21   beat 0 high half + ack
+    cycle 22   beat 0 low half AGAIN   <- STB withheld; req_data falls back to a
+                                          dat_w the CPU has not advanced
+    cycle 23   beat 1 high half        <- now one word out of step
+    cycle 24   beat 1 low half
+
+The duplicate goes to a real address, and it leaves `BootRAM`'s `second_word`
+(which free-runs with the device) one ahead of the window's (which resets per
+beat), so every following beat goes out high-half-first. That is the
+`8/16 correct, want 200f0e0d got 0e0d200f` signature: even beats right, odd beats
+with their halves transposed.
 
 **COST.** ~2-entry skid plus a speculative address counter and burst-abort
 handling, reads only. Small, perhaps 100 LUTs. **Inferred** — not built.
@@ -512,6 +528,32 @@ known pattern with the gate's alignment as the variable.
 
 Then a board run of `hr cross` and `bench`.
 
+## Why none of the tests caught this
+
+Every path that could have found the corrupt burst was blind to it, which is the
+part worth keeping:
+
+* `bench hyperram` only **reads**.
+* `hr test` / `hr read` move one 16-bit word at a time through the staging CSR,
+  which never opens a multi-word transaction.
+* `soc_hyperram_sim.py` covered burst **reads** and **single** writes — there was
+  no burst-write case at all.
+* A cross-port check writes and reads through the same path, so read and write
+  skew largely cancel, which is why a *total* read fault presented as a *half*
+  write fault.
+* Since `.text` moved to flash, firmware never writes a cache line to HyperRAM in
+  normal operation.
+
+The board had already measured it and nobody recognised it: `7351eb9` recorded
+`words 10848 against 3616 beats, exactly 3.0 per 32-bit beat`, flagged as not
+understood. Three words per beat is this fault, in the units it happens in.
+
+**`RegisteredResponse` must be in the simulated path.** A harness that drives
+`mmap.bus` directly models a master that replaces a beat on the acknowledging
+edge — which this SoC is not — and reports **16/16 correct** with the bug
+invisible. That single insertion is the difference between a model that agrees
+with the board bit-for-bit and one that contradicts it.
+
 ## Two defects found on the way, neither caused by any of the above — both fixed
 
 **`HYPERRAM_MAX_BURST_WORDS` was 3.1x too permissive at the clock this SoC runs.**
@@ -537,6 +579,12 @@ never happened. It had not mattered because `clk_en` was high throughout every
 data phase simulated. Now gated, along with the read address advance and the
 latency countdown — see the experiment above, where the last of those is what
 lets the harness catch a pause in the wrong place.
+
+**`ModelHyperRAM16` entered its data phase on the wrong cycle.** It counted
+`HIGH_LATENCY_CLOCKS` where the controller loads `HIGH_LATENCY_CLOCKS - 2`, and
+recorded **zero** words for a single write. Reads never exposed it: RWDS gates the
+controller's sampling so the model simply waited, but a write is not strobed, so
+the words went past while the model was still counting.
 
 ## What could not be determined
 

@@ -328,7 +328,7 @@ amortising 17 CK over 256 words predicts **93.8%**. We measure **85.3%**. Those
 own inter-transaction states and its local recovery counter, which the 17 CK
 model does not count. **Not yet measured.**
 
-**These are not the `19 CK` in [`../hyperram-bursts.md`](../hyperram-bursts.md).**
+**These are not the `19 CK` in [`../soc-memory-bus.md`](../soc-memory-bus.md).**
 That is a board measurement of the *DQS* engine at 4:1 gearing, a different
 quantity. Its former agreement with a `51 CK` figure here was a coincidence of
 the two-cycle model error described above, and reading the two as the same
@@ -390,7 +390,7 @@ The reason is not a preference. A HyperBus data phase cannot be stalled, this
 master bubbles a cycle after every acknowledgement, and coalescing therefore
 wrote 48 device words for a 32-word line and corrupted alternate beats — on the
 shipping path, from the day it was added.
-[`../hyperram-bursts.md`](../hyperram-bursts.md) has the mechanism and the cycle
+[`../soc-memory-bus.md`](../soc-memory-bus.md) has the mechanism and the cycle
 trace; recovering the burst is #185.
 
 Simulated cost per 64-byte line, counted off the controller's states: **1
@@ -486,6 +486,44 @@ strobe is in use, and a live negative control on the rung being quoted. Until
 those three hold together, this file records no throughput figure.
 
 See #186 and #188. `scripts/hyperram_ceiling.py` is the instrument.
+
+### How that compares — the ECP5 scoreboard
+
+
+| project | part | device CK | peak | published measurement | read capture |
+|---|---|---|---|---|---|
+| **this board** | Winbond W956A8, LFE5U-12F | **140 MHz** | 280 MB/s | **238.9 MB/s** (334.4 at CK 192 **withdrawn**) | `DQSBUFM` 4:1 |
+| DiVA, historic | LFE5U-25F-8, 1.8 V | 165 MHz | 330 MB/s | — | `IDDRX2F` + `DELAYF`, **no `DQSBUFM`** |
+| orbtrace | LFE5U-25F | 150 MHz | 300 MB/s | — | `IDDRX2F` + `DELAYF` |
+| DiVA, current | LFE5U-25F-8 | 150 MHz | 300 MB/s | ~194 MB/s sustained (inferred from its video load) | as above |
+| boson-sd | LFE5U-25F-8 | 140 MHz | 280 MB/s | prints its own MB/s at boot | as above |
+| **Tiliqua** | Cypress S27KL, LFE5U-45F | 120 MHz | 240 MB/s | *"tested up to 200 MB/sec"* | `DQSBUFM` 4:1 **+ READCLKSEL training** |
+| **LUNA, pre-DQS** | — | 120 MHz | 240 MB/s | *"120 MHz DDR for a nominal rate of 1920 Mbit/s"* | `IDDRX1F` 2:1 |
+| LiteX `hyperbus.py` | Certus-NX, **not ECP5** | 25 MHz | 50 MB/s | **46.7 MiB/s write, 22.7 read** | fabric SDR |
+
+Our own upstream's published figure is the LUNA row — Great Scott Gadgets,
+*"HyperRAM controller for USB analysis"*, 9 Feb 2022. **The DQS work has taken
+that from 240 MB/s nominal to 238.9 MB/s measured under a live negative
+control — a smaller gain than this page used to claim, and one that survives.**
+
+Two clean negatives, so nobody re-searches: **ULX3S / Radiona have no HyperRAM at
+all** (SDRAM and DDR3 boards), and **1BitSquared published no HyperRAM gateware
+or numbers**. The related FUSBee5 board says *"Hyperram is now fully connected…
+but still needs testing"* and never followed up.
+
+**No ECP5 board in `litex-boards` calls `add_hyperram`.** Upstream LiteX's
+HyperRAM core has never been tuned on this part; its ECP5 lineage is the separate
+`litex-hub/litehyperbus`, Greg Davill's `HyperRAMX2`.
+
+That absence is the load-bearing fact in
+[`../linux-on-cynthion.md`](../linux-on-cynthion.md): `linux-on-litex-vexriscv` runs
+Linux on ECP5 today, but nobody has run it out of HyperRAM. What that document
+needs from this one is not the burst figure but the **per-transaction 19 CK
+overhead**, because a 64-byte cache line refilled one 32-bit word at a time pays
+it sixteen times — 36.6 MB/s by arithmetic, against 241 if the Wishbone window
+coalesced the CTI burst. Unmeasured.
+
+
 
 ## Speed: every remaining option, and what each returns
 

@@ -1571,7 +1571,7 @@ def section_line_refill(checks, emit):
     # These read 51 and 336 until the model's data phase was corrected: it
     # entered two cycles late, reads tolerated it because RWDS gates the
     # controller's sampling, and the extra two showed up in every total. NOT the
-    # same quantity as the 19 CK in `docs/hyperram-bursts.md`, which is a
+    # same quantity as the 19 CK in `docs/soc-memory-bus.md`, which is a
     # board measurement of the DQS engine at 4:1 gearing.
     burst_cycles = sum(burst_model.transaction_cycles)
     classic_cycles = sum(classic_model.transaction_cycles)
