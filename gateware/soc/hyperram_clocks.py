@@ -49,7 +49,7 @@ runtime axis swept inside it.
 from amaranth import ClockDomain, ClockSignal, Elaboratable, Instance, Module, Signal
 from amaranth.lib.cdc import FFSynchronizer
 
-__all__ = ["HyperRAMDomains", "solve_hr_pll", "reachable_ck"]
+__all__ = ["HyperRAMDomains", "ThreeDomainClocks", "solve_hr_pll", "reachable_ck"]
 
 # EHXPLLL limits, from the ECP5 datasheet. Same window the SoC's own generator
 # uses; duplicated here rather than imported because that one lives in the
@@ -140,6 +140,12 @@ class HyperRAMDomains(Elaboratable):
         # on a clock that is still moving.
         self.locked = Signal()
 
+        # The reference. Defaults to a signal the caller drives with the board
+        # oscillator; taking it from `sync` instead would feed one PLL from
+        # another's output, which multiplies jitter and serialises lock for no
+        # benefit -- both PLLs have the same 60 MHz source available.
+        self._clki = Signal()
+
     def elaborate(self, platform):
         m = Module()
 
@@ -170,7 +176,7 @@ class HyperRAMDomains(Elaboratable):
                 "p_CLKOS2_DIV": self.clkos2_div,
                 "p_CLKOS2_CPHASE": self.clkos2_div - 1,
                 "p_CLKOS2_FPHASE": 0} if self.dqs else {}),
-            i_CLKI=ClockSignal("sync_por" if hasattr(platform, "_por") else "sync"),
+            i_CLKI=self._clki,
             i_RST=0, i_STDBY=0, i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
@@ -187,4 +193,101 @@ class HyperRAMDomains(Elaboratable):
         # that is the domain the engine gates on.
         m.submodules += FFSynchronizer(locked_raw, self.locked, o_domain="hr")
 
+        return m
+
+
+class ThreeDomainClocks(Elaboratable):
+    """`usb` from the oscillator, `sync` from PLL0, `hr`/`hr_fast` from PLL1.
+
+    Three clocks that have nothing to do with each other, generated so that
+    nothing to do with each other is what they are.
+
+    ## `usb` is the oscillator, not a PLL output
+
+    `VariableClockDomainGenerator` solves `sync` and `usb` from ONE PLL, and
+    refuses any build where `usb` lands more than 0.5% off 60 MHz -- for a
+    measured reason: a 90 MHz sync build put `usb` at 63.000 MHz, placed and
+    configured cleanly, and never appeared on the USB bus, while a *higher* 100
+    MHz sync build with `usb` at exactly 60.000 enumerated at once. A
+    source-synchronous parallel interface has no mechanism to absorb a frequency
+    error.
+
+    That constraint is what leaves only 60, 100 and 120 MHz reachable for `sync`
+    below 130. It does not have to exist. **The board's primary clock is a
+    discrete 60 MHz oscillator on A8, and the FPGA SOURCES the ULPI clock**
+    (`clk_dir='o'` on all three PHY resources) -- so `usb` can be that
+    oscillator, passed through. Exactly 60.000 MHz by construction, with less
+    jitter than a PLL copy of it, and `sync` is then free.
+
+    ## What that buys
+
+    `sync` stops being constrained by `usb`, and `hr` was never constrained by
+    either. Three independent axes:
+
+        usb    60.000 MHz, fixed, from the oscillator
+        sync   the CPU, pinned wherever it builds cleanly
+        hr     the HyperRAM, swept -- 15 rungs between CK 100 and 200
+
+    The measurement consequence is the point. Previously a HyperRAM ladder rung
+    moved the CPU clock, the console divisor, the CLINT tick and the flash SCK
+    divisor with it, so no two rungs were comparable. Now a rung moves CK.
+    """
+
+    def __init__(self, *, sync_mhz, ck_mhz, dqs=True, input_mhz=60.0):
+        self.sync_mhz = sync_mhz
+        self.input_mhz = input_mhz
+        self.hr = HyperRAMDomains(ck_mhz=ck_mhz, dqs=dqs, input_mhz=input_mhz)
+
+        if abs(input_mhz - 60.0) > 1e-9:
+            raise ValueError(
+                f"`usb` is the {input_mhz:g} MHz oscillator passed through, and "
+                "the ULPI PHY needs exactly 60.000 MHz with no tolerance to "
+                "speak of -- a 63.000 MHz build placed cleanly and never "
+                "appeared on the USB bus. A different oscillator needs a PLL "
+                "output for `usb` and this class is the wrong one.")
+
+        solved = solve_hr_pll(sync_mhz, input_mhz, with_fast=False)
+        if solved is None:
+            raise ValueError(
+                f"no PLL configuration gives a sync of {sync_mhz:g} MHz; "
+                f"VCO must land in {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz")
+        (self.sync_vco_mhz, self.sync_clki_div, self.sync_clkfb_div,
+         self.sync_clkop_div, _) = solved
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.hr_domains = self.hr
+
+        m.domains.usb = ClockDomain()
+        m.domains.sync = ClockDomain()
+
+        osc = Signal()
+        if platform is not None:
+            m.d.comb += osc.eq(platform.request("clk_60MHz", 0).i)
+
+        # `usb` IS the oscillator. No PLL, no divider, no tolerance to check.
+        # Both PLLs take the same reference, so neither is fed from the other's
+        # output.
+        m.d.comb += [ClockSignal("usb").eq(osc), self.hr._clki.eq(osc)]
+
+        clk_sync = Signal()
+        m.submodules.pll0 = Instance(
+            "EHXPLLL",
+            p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
+            p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
+            p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
+            p_CLKI_DIV=self.sync_clki_div,
+            p_CLKFB_DIV=self.sync_clkfb_div,
+            p_FEEDBK_PATH="CLKOP",
+            p_CLKOP_ENABLE="ENABLED",
+            p_CLKOP_DIV=self.sync_clkop_div,
+            p_CLKOP_CPHASE=self.sync_clkop_div - 1,
+            p_CLKOP_FPHASE=0,
+            i_CLKI=osc, i_RST=0, i_STDBY=0,
+            i_PHASESEL0=0, i_PHASESEL1=0, i_PHASEDIR=1,
+            i_PHASESTEP=1, i_PHASELOADREG=1,
+            i_PLLWAKESYNC=0, i_ENCLKOP=0,
+            o_CLKOP=clk_sync,
+        )
+        m.d.comb += ClockSignal("sync").eq(clk_sync)
         return m
