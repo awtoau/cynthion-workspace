@@ -774,8 +774,18 @@ def configure_and_read(args, emit):
                 return 1
             emit(f"console: {node}")
             port = serial.Serial(node, 115200, timeout=8)
-            data = port.read(400)
-            port.close()
+            try:
+                data = port.read(400)
+            except serial.SerialException as exc:
+                # "readiness to read but returned no data" is what a SECOND
+                # reader on the tty produces. The empty-read path below already
+                # diagnoses that, but this exception jumped straight over it and
+                # printed a traceback instead -- so a board that was working
+                # perfectly read as a crashed script.
+                emit(f"console read failed: {exc}")
+                data = b""
+            finally:
+                port.close()
             emit("--- console ---")
             emit(data.decode("ascii", "replace").strip()[:500])
 
