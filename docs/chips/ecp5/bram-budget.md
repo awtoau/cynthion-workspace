@@ -11,11 +11,18 @@ sharper than expected.
 
 All built for r1.4, same device, package and speed grade.
 
-| Design | BRAM | LUT4 | What it is |
-|---|---|---|---|
-| USB analyzer | **9 / 56 (16%)** | 8191 | capture at line rate |
-| Facedancer SoC | 45 / 56 (80%) | 12824 | soft CPU + firmware |
-| RISC-V hello SoC | 41 / 56 (73%) | 6811 | soft CPU + firmware |
+Stated against both counts, because the difference is the whole question: 28 is
+what the marking promises, 56 is what the die has.
+
+| Design | `DP16KD` | of a 12F's 28 | of the 25F die's 56 | LUT4 | What it is |
+|---|---|---|---|---|---|
+| USB analyzer | **9** | 32% | 16% | 8191 | capture at line rate |
+| RISC-V hello SoC | **41** | **146% — does not fit** | 73% | 6811 | soft CPU + firmware |
+| Facedancer SoC | **45** | **161% — does not fit** | 80% | 12824 | soft CPU + firmware |
+
+**Only the analyzer would run on the part this board says it has.** Both SoCs
+depend on the undocumented half of the die, and by a wide margin — not by a
+block or two at the edge.
 
 All three build and produce bitstreams. **Facedancer must be built with
 `domain="usb"` at 60 MHz** — `top.py` reads
