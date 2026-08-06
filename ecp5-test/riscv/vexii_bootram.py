@@ -32,7 +32,7 @@ unchanged -- it reads the header and cannot tell which path filled it.
 
 Fetch a pair, auto-increment by two, raise a flag the firmware polls. It was 16
 bits wide until the DQS PHY made that the expensive choice -- see
-`HyperRAMBoot`'s docstring, and `docs/hyperram-32-bit-only.md` for the survey of
+`HyperRAMBoot`'s docstring, and `docs/soc-memory-bus.md` for the survey of
 what other HyperRAM controllers do.
 
   * No FIFO, no side-effecting read, no register whose value depends on how

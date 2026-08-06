@@ -43,19 +43,19 @@ Cynthion-specific and ours; the HyperBus command encoding is not.
     where `HyperBusPHY` moves 16. Anything written against the 16-bit interface
     reads back looking bit-shifted -- see the trap in `hyperram-detailed.md`.
 
-## Two upstream defects this does not fix, and why
+## Two upstream defects, both fixed in the vendored controller
 
-`HyperRAMDQSInterface`'s `RECOVERY` state carries `# TODO: implement recovery`
-and falls straight through to `IDLE`, so CS can be re-asserted on the next
-cycle. And `with m.If(extra_latency | 1)` makes the low-latency branch dead.
+`HyperRAMDQSInterface`'s `RECOVERY` state carried `# TODO: implement recovery`
+and fell straight through to `IDLE`, so CS could be re-asserted on the next
+cycle; and `with m.If(extra_latency | 1)` made the low-latency branch dead.
 
-Neither is fixed here because both are in the protocol layer, which is not this
-file's business, and the second is **correct for this part as configured**: CR0
-reads `0x8f2f` with fixed-latency enabled, so the device takes the long latency
-on every transaction and the branch upstream forces is the right one. Honouring
-RWDS would only pay after CR0 is reprogrammed to variable latency, which is a
-change to make deliberately and measure. `hyperram_dqs_top.py` holds the
-recovery gap outside the controller instead, where it can be counted.
+Both are protocol-layer, not this file's business, and both are now handled in
+`hyperram_dqs_controller.py`: RECOVERY deasserts CS and holds it for a tCSHI-
+derived count, and the latency branch is gated on a `fixed_latency` parameter
+rather than a hardcoded `| 1`. CR0 reads `0x8f2f` with fixed latency enabled, so
+the long branch is still the right one for this part as configured — the
+difference is that reprogramming CR0 to variable latency now changes behaviour
+instead of being ignored.
 """
 
 from amaranth import (Cat, ClockSignal, Elaboratable, Instance, Module, Mux,
