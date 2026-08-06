@@ -96,6 +96,70 @@ REG_BAD_GOT     = 13
 REG_BAD_WANT    = 14
 REG_CONTROL     = 15
 REG_READCLKSEL  = 16
+# The PART's own tuning, writable at runtime. Bit 16 is "apply this"; bits 15:0
+# are the value. Left clear the part keeps its power-on configuration, which
+# matters because a CR1 write changes how it clocks EVERYTHING.
+REG_DEVICE_CR0  = 19
+REG_DEVICE_CR1  = 20
+# Stop after this many PASSES, zero meaning free-run. One pass is `burst_words`
+# device words, so a limit of 1 is a 128-word / 256-byte run -- the cheap screen.
+REG_PASS_LIMIT  = 21
+
+# The gateware-driven sweep. Writing 1 to REG_SWEEP_GO starts it; REG_SWEEP_DONE
+# reads 1 when the table is complete; REG_SWEEP_ADDR selects a row and
+# REG_SWEEP_DATA reads it back. The whole matrix is then ONE JTAG session
+# instead of one configure and one round trip per combination -- which was the
+# entire cost, measured at 72 seconds for 64 cells with none finished.
+#
+# It also cuts the exposure to the readback slipping. 320 round trips is 320
+# chances to slip a bit; one table read is one, and the applet id either side
+# validates it.
+REG_SWEEP_GO    = 22
+REG_SWEEP_DONE  = 23
+REG_SWEEP_ADDR  = 24
+REG_SWEEP_DATA  = 25
+# The engine FSM's current state, so a stall says WHERE. Without it a hung sweep
+# is a silent poll loop, which cost fourteen minutes before the poll was taught
+# to report the cell index -- and the cell index still does not say which state.
+REG_FSM_STATE   = 28
+REG_CTRL_STATE  = 29   # the HyperBus controller's own FSM state
+
+# Combinations the sweep walks: capture phase 0-7 against CR0 drive code 0-7.
+SWEEP_PHASES = 8
+SWEEP_DRIVES = 8
+SWEEP_CELLS = SWEEP_PHASES * SWEEP_DRIVES
+
+# Passes per cell, and which cells to run, both set over JTAG.
+#
+# THIS IS WHAT MAKES IT REUSABLE. A screen is one pass across every cell -- 256
+# bytes each, seconds for the matrix. A SOAK is the same gateware with the mask
+# narrowed to the settings worth trusting and the pass count raised: same code
+# path, same comparator, same negative control, just pointed at fewer cells for
+# longer. Without that split, a soak means a different harness and a different
+# set of bugs.
+REG_SWEEP_PASSES = 26
+REG_SWEEP_MASK   = 27   # phases in bits 7:0, drive codes in bits 15:8
+
+# One row: errors in the low 24 bits, then the flags. Errors saturate rather
+# than wrap -- a wrapped count that lands near zero reads as a pass.
+ROW_ERROR_BITS = 24
+ROW_BURSTDET = 1 << 24
+ROW_STALLED = 1 << 25
+ROW_SKIPPED = 1 << 26   # masked out, so its zero error count means nothing
+ROW_CONTROL_OK = 1 << 27  # the negative pass mismatched everywhere, as it must
+
+# Each cell runs TWICE: the measurement, then one pass with the comparator
+# pointed at a value the part cannot return. Without that second pass a zero
+# error count says only that nothing was reported, which is exactly what made
+# the retired 313.5 MB/s figure worthless. It costs one burst per cell.
+
+# Where those registers live in the part's register space.
+CR0_ADDRESS = 0x0800
+CR1_ADDRESS = 0x0801
+
+# CR0 as the part powers up. The sweep replaces only the drive-strength field.
+CR0_POWER_ON = 0x8F2F
+APPLY_BIT = 1 << 16
 REG_ACTUAL      = 17
 REG_GOLDEN      = 18
 
@@ -312,6 +376,109 @@ class HyperRAMCeiling(Elaboratable):
         readclksel = Signal(3, init=0b010)
         harness.add_register(REG_READCLKSEL, value_signal=readclksel)
 
+        # --- the gateware-driven sweep --------------------------------------
+        #
+        # The host used to drive every combination: configure, write registers,
+        # run, read back. That is one FPGA configuration per cell, and it was the
+        # whole cost. Here the applet walks the combinations itself and records a
+        # row each, so the host writes one bit and reads one table.
+        sweep_passes = Signal(32, init=1)
+        sweep_mask = Signal(32, init=0xFFFF)
+        harness.add_register(REG_SWEEP_PASSES, value_signal=sweep_passes)
+        harness.add_register(REG_SWEEP_MASK, value_signal=sweep_mask)
+
+        sweep_go = Signal(32)
+        sweep_done = Signal()
+        sweep_addr = Signal(32)
+        sweep_cell = Signal(range(SWEEP_CELLS + 1))
+        sweeping = Signal()
+
+        # EDGE, not level. `sweep_done` stays set after a sweep, and the start
+        # condition tested `~sweep_done`, so a second GO never started anything:
+        # the host wrote GO, read DONE still set from last time, and pulled back
+        # the PREVIOUS table. A soak silently returned its own screen.
+        # Which half of the cell is running: the measurement, or the negative
+        # control that must fail.
+        sweep_control_pass = Signal()
+        sweep_control_ok = Signal()
+
+        # The MEASUREMENT's results, latched before the control pass runs and
+        # overwrites the counters. Recording `harness.errors` in SWEEP_RECORD
+        # would otherwise report the control's error count as the cell's.
+        cell_errors = Signal(32)
+        cell_burstdet = Signal()
+
+        sweep_go_previous = Signal()
+        sweep_start = Signal()
+        m.d.sync += sweep_go_previous.eq(sweep_go[0])
+        m.d.comb += sweep_start.eq(sweep_go[0] & ~sweep_go_previous)
+
+        # LATCH THE REQUEST. `sweep_start` is a one-cycle pulse and the only
+        # place that acts on it is READ_RECOVER, under a condition that is true
+        # on a small fraction of cycles -- so the pulse was essentially always
+        # thrown away and the sweep never began. The engine kept free-running,
+        # which read as "stalled at cell 0" when it had never started cell 0.
+        #
+        # A level survives until it is consumed, which is what a request across
+        # two clock-rate-mismatched things has to be.
+        sweep_pending = Signal()
+        with m.If(sweep_start):
+            m.d.sync += sweep_pending.eq(1)
+
+        harness.add_register(REG_SWEEP_GO, value_signal=sweep_go)
+        harness.add_register(REG_SWEEP_ADDR, value_signal=sweep_addr)
+        harness.add_read_only_register(
+            REG_SWEEP_DONE, read=Cat(sweep_done, sweep_cell,
+                                     Const(0, 32 - 1 - len(sweep_cell))))
+
+        results_mem = Memory(shape=32, depth=SWEEP_CELLS, init=[])
+        m.submodules.results_mem = results_mem
+        results_write = results_mem.write_port()
+        results_read = results_mem.read_port(domain="sync")
+        m.d.comb += results_read.addr.eq(sweep_addr[:len(results_read.addr)])
+        harness.add_read_only_register(REG_SWEEP_DATA, read=results_read.data)
+
+        # The cell index decomposes into the two knobs. Phase is the fast axis so
+        # a row of the printed map is one drive strength.
+        sweep_phase = Signal(3)
+        sweep_drive = Signal(3)
+        m.d.comb += [sweep_phase.eq(sweep_cell[:3]),
+                     sweep_drive.eq(sweep_cell[3:6])]
+
+        # Is this cell in the mask? A masked-out cell is recorded as SKIPPED
+        # rather than left blank, because a zero error count with no flag reads
+        # exactly like a clean pass -- which is the mistake that has cost this
+        # project the most today.
+        # CR0 for this cell: the power-on value with the drive field replaced.
+        sweep_cr0 = Signal(16)
+        m.d.comb += sweep_cr0.eq(
+            (CR0_POWER_ON & ~(0b111 << 12)) | (sweep_drive << 12))
+
+        cell_selected = Signal()
+        m.d.comb += cell_selected.eq(sweep_mask.bit_select(sweep_phase, 1)
+                                     & sweep_mask[8:16].bit_select(sweep_drive, 1))
+
+        # Until now this applet exposed exactly ONE knob -- the capture phase --
+        # so drive strength and the device's own initial latency could not be
+        # swept at all, and every ladder varied the clock against one arbitrary
+        # set of device settings. `hyperram_regfuzz.py` proved the CR0 write path
+        # works on this board; it was simply never wired here.
+        device_cr0 = Signal(32)
+        device_cr1 = Signal(32)
+        harness.add_register(REG_DEVICE_CR0, value_signal=device_cr0)
+        harness.add_register(REG_DEVICE_CR1, value_signal=device_cr1)
+
+        # A BOUNDED RUN, which this applet could not do.
+        #
+        # The engine free-ran and the host could only poll a counter, so asking
+        # for 128 words returned five million: by the time a poll came back the
+        # engine had lapped it many times. Every "cheap screen" therefore cost a
+        # full run, which is why a 64-cell sweep took as long as a ladder.
+        #
+        # Zero keeps the old behaviour exactly.
+        pass_limit = Signal(32)
+        harness.add_register(REG_PASS_LIMIT, value_signal=pass_limit)
+
         dll_locked = Signal(reset=1)
         dll_ready = Signal(reset=1)
         burstdet = Signal()
@@ -323,7 +490,7 @@ class HyperRAMCeiling(Elaboratable):
             # `dir="-"`: this PHY drives raw pads. The pin map is the platform's.
             bus = platform.request("ram", 0, dir="-")
             m.submodules.phy = phy = HyperRAMDQSPHY(
-                bus=bus, readclksel=readclksel)
+                bus=bus, readclksel=Mux(sweeping, sweep_phase, readclksel))
             m.submodules.psram = psram = HyperRAMDQSController(
                 phy=phy.phy, sync_mhz=self.sync_mhz,
                 high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
@@ -394,7 +561,8 @@ class HyperRAMCeiling(Elaboratable):
 
         checked_against = Signal(self.word_bits)
         m.d.comb += checked_against.eq(
-            Mux(harness.negative, self.pattern(unreachable), expected))
+            Mux(harness.negative | sweep_control_pass,
+                self.pattern(unreachable), expected))
 
         m.d.sync += heartbeat.eq(heartbeat + 1)
         with m.If(burstdet):
@@ -404,14 +572,21 @@ class HyperRAMCeiling(Elaboratable):
         recovery_cycles = max(1, ceil(T_CSHI_NS * self.sync_mhz / 1000.0))
         recovery = Signal(range(recovery_cycles + 1))
 
+        # A register-space write, when the configuration phase is running. It
+        # steals the controller's inputs for one short transaction and leaves
+        # every other part of the datapath alone.
+        configuring = Signal()
+        config_address = Signal(32)
+        config_data = Signal(32)
+
         m.d.comb += [
             psram.single_page.eq(0),
-            psram.register_space.eq(0),
-            psram.address.eq(base),
+            psram.register_space.eq(configuring),
+            psram.address.eq(Mux(configuring, config_address, base)),
             # Held for the whole transfer, never pulsed -- both of these are traps
             # already paid for on this interface.
             psram.perform_write.eq(writing),
-            psram.write_data.eq(expected),
+            psram.write_data.eq(Mux(configuring, config_data, expected)),
             psram.final_word.eq(last),
             psram.start_transfer.eq(start),
         ]
@@ -434,7 +609,7 @@ class HyperRAMCeiling(Elaboratable):
             m.d.sync += [bad_index.eq(0), bad_got.eq(0), bad_want.eq(0),
                          bad_seen.eq(0)]
 
-        with m.FSM():
+        with m.FSM() as engine:
             with m.State("RESET"):
                 # RESET# low for the first half of this state, released for the
                 # second. tRP is 200 ns and tRPH 400 ns; halves of 2**16 `sync`
@@ -443,6 +618,80 @@ class HyperRAMCeiling(Elaboratable):
                 # it, so being generous costs nothing.
                 m.d.comb += reset_assert.eq(~heartbeat[15])
                 with m.If(heartbeat[16] & dll_ready):
+                    # Configure the PART before measuring it, if the host asked.
+                    # Skipped entirely when neither apply bit is set, so the
+                    # default path is byte-for-byte what it was.
+                    with m.If(sweep_pending):
+                        m.d.sync += [sweeping.eq(1), sweep_cell.eq(0),
+                                     sweep_done.eq(0), passes.eq(0),
+                                     sweep_pending.eq(0)]
+                        m.next = "SWEEP_CELL"
+                    with m.Elif(device_cr0[16] | device_cr1[16]):
+                        m.next = "CONFIG_CR0"
+                    with m.Else():
+                        m.next = "WRITE_START"
+
+            # CONFIG_CR0 / CONFIG_CR1 -- one register-space write each.
+            #
+            # A register write needs no recovery: the controller returns straight
+            # to IDLE from WRITE_DATA when `is_register` is latched, so waiting
+            # on `psram.idle` is the whole handshake. `final_word` is held high
+            # because one word IS the transaction.
+            with m.State("CONFIG_CR0"):
+                m.d.comb += [
+                    configuring.eq(1),
+                    config_address.eq(CR0_ADDRESS),
+                    # While sweeping, the cell index chooses the drive code and
+                    # everything else in CR0 keeps its power-on value.
+                    config_data.eq(Mux(sweeping, sweep_cr0, device_cr0[:16])),
+                    writing.eq(1),
+                    last.eq(1),
+                    # `sweeping` counts as "apply". This gated on the HOST's
+                    # apply bit alone, which a gateware sweep never sets, so
+                    # every cell fell through without writing CR0 and ran at the
+                    # power-on drive strength. The eight drive rows were eight
+                    # repeats of one configuration.
+                    start.eq(psram.idle & (sweeping | device_cr0[16])),
+                ]
+                with m.If(~(sweeping | device_cr0[16])):
+                    m.next = "CONFIG_CR1"
+                with m.Elif(~psram.idle):
+                    m.next = "CONFIG_CR0_WAIT"
+
+            with m.State("CONFIG_CR0_WAIT"):
+                # THE SAME VALUE as the state that started the write. The
+                # controller latches `write_data` during WRITE_DATA, which
+                # happens HERE -- so holding the host's register instead of the
+                # sweep's wrote CR0 = 0x0000 during a sweep. CR0[15] is deep
+                # power down, and 1 is normal operation, so that put the part to
+                # sleep and the sweep hung waiting for a device that had stopped
+                # answering.
+                m.d.comb += [configuring.eq(1), writing.eq(1), last.eq(1),
+                             config_address.eq(CR0_ADDRESS),
+                             config_data.eq(Mux(sweeping, sweep_cr0,
+                                                device_cr0[:16]))]
+                with m.If(psram.idle):
+                    m.next = "CONFIG_CR1"
+
+            with m.State("CONFIG_CR1"):
+                m.d.comb += [
+                    configuring.eq(1),
+                    config_address.eq(CR1_ADDRESS),
+                    config_data.eq(device_cr1[:16]),
+                    writing.eq(1),
+                    last.eq(1),
+                    start.eq(psram.idle & device_cr1[16]),
+                ]
+                with m.If(~device_cr1[16]):
+                    m.next = "WRITE_START"
+                with m.Elif(~psram.idle):
+                    m.next = "CONFIG_CR1_WAIT"
+
+            with m.State("CONFIG_CR1_WAIT"):
+                m.d.comb += [configuring.eq(1), writing.eq(1), last.eq(1),
+                             config_address.eq(CR1_ADDRESS),
+                             config_data.eq(device_cr1[:16])]
+                with m.If(psram.idle):
                     m.next = "WRITE_START"
 
             with m.State("WRITE_START"):
@@ -509,7 +758,112 @@ class HyperRAMCeiling(Elaboratable):
                 with m.If(psram.idle & (recovery >= recovery_cycles)):
                     m.d.sync += [recovery.eq(0), passes.eq(passes + 1),
                                  base.eq(base + device_words)]
-                    m.next = "WRITE_START"
+                    # Halt at the limit instead of looping. `passes` is the count
+                    # BEFORE this increment, so `+ 1` is what it will become.
+                    #
+                    # While sweeping, the limit is the per-cell pass count and
+                    # reaching it ends the CELL, not the run.
+                    # START HERE TOO, not only out of RESET. `sweep_go` used to
+                    # be sampled in RESET alone -- a state the FSM leaves once at
+                    # power-up -- so a host writing GO afterwards was ignored and
+                    # the sweep never began. This is the state the engine returns
+                    # to every pass, so GO is seen within one burst of the write.
+                    control_done = Signal()
+                    m.d.comb += control_done.eq(
+                        Mux(sweep_control_pass, passes >= 0,
+                            passes + 1 >= sweep_passes))
+                    with m.If(sweeping & control_done):
+                        with m.If(sweep_control_pass):
+                            # The control has run: it passes only if EVERY word
+                            # mismatched.
+                            m.d.sync += [
+                                sweep_control_ok.eq(harness.errors
+                                                    >= harness.checks),
+                                sweep_control_pass.eq(0),
+                            ]
+                            m.next = "SWEEP_RECORD"
+                        with m.Else():
+                            m.d.sync += [cell_errors.eq(harness.errors),
+                                         cell_burstdet.eq(burstdet_seen)]
+                            m.next = "SWEEP_CONTROL"
+                    with m.Elif(sweep_pending & ~sweeping):
+                        m.d.sync += [sweeping.eq(1), sweep_cell.eq(0),
+                                     passes.eq(0), sweep_done.eq(0),
+                                     sweep_pending.eq(0)]
+                        m.next = "SWEEP_CELL"
+                    with m.Elif((pass_limit != 0) & (passes + 1 >= pass_limit)):
+                        m.next = "HALTED"
+                    with m.Else():
+                        m.next = "WRITE_START"
+
+            # SWEEP_RECORD -- one row, then on to the next cell.
+            #
+            # Errors SATURATE at the field width rather than wrapping: a wrapped
+            # count that lands near zero reads as a pass, which is the failure
+            # mode this whole exercise exists to stop.
+            # SWEEP_CONTROL -- one pass with the comparator pointed at an
+            # unreachable value. EVERY checked word must mismatch; if any match,
+            # the comparator is not discriminating and the measurement above is
+            # silence rather than evidence.
+            with m.State("SWEEP_CONTROL"):
+                m.d.comb += harness.clear.eq(1)
+                m.d.sync += [sweep_control_pass.eq(1), passes.eq(0),
+                             base.eq(0)]
+                m.next = "WRITE_START"
+
+            with m.State("SWEEP_RECORD"):
+                saturated = Signal(ROW_ERROR_BITS)
+                m.d.comb += saturated.eq(
+                    Mux(cell_errors > (2**ROW_ERROR_BITS - 1),
+                        2**ROW_ERROR_BITS - 1, cell_errors))
+                m.d.comb += [
+                    results_write.addr.eq(sweep_cell),
+                    results_write.data.eq(
+                        Cat(saturated, cell_burstdet,
+                            cell_errors == 0, ~cell_selected,
+                            sweep_control_ok)),
+                    results_write.en.eq(1),
+                ]
+                m.d.sync += sweep_cell.eq(sweep_cell + 1)
+                with m.If(sweep_cell + 1 >= SWEEP_CELLS):
+                    m.d.sync += [sweep_done.eq(1), sweeping.eq(0)]
+                    m.next = "HALTED"
+                with m.Else():
+                    m.next = "SWEEP_CELL"
+
+            # SWEEP_CELL -- reset the per-cell counters and configure the part
+            # for the new drive code before measuring it.
+            with m.State("SWEEP_CELL"):
+                # Clear the harness counters too, not just the local ones. They
+                # were left accumulating across every cell, which saturated the
+                # error field during the first one and made all 64 rows read
+                # 16,777,215 -- obvious only because the field saturates instead
+                # of wrapping.
+                m.d.comb += harness.clear.eq(1)
+                m.d.sync += [passes.eq(0), base.eq(0), burstdet_seen.eq(0),
+                             bad_seen.eq(0)]
+                with m.If(cell_selected):
+                    m.next = "CONFIG_CR0"
+                with m.Else():
+                    # Masked out: record it as skipped without touching the part.
+                    m.next = "SWEEP_RECORD"
+
+            # HALTED -- the bounded run is over. Nothing is driven, the counters
+            # hold, and the host reads them at its leisure.
+            with m.State("HALTED"):
+                pass
+
+        #
+        # BOTH states in one register. A separate REG_CTRL_STATE at address 29
+        # read back 0xDEADBEEF -- luna's marker for an address the register file
+        # does not decode -- while 28 worked, so something bounds the space.
+        # Packing avoids the question and costs nothing: the engine's state is in
+        # bits 7:0 and the controller's in bits 15:8.
+        harness.add_read_only_register(
+            REG_FSM_STATE,
+            read=Cat(engine.state, Const(0, 8 - len(engine.state)),
+                     psram.state, Const(0, 8 - len(psram.state)),
+                     Const(0, 16)))
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it

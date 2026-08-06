@@ -82,6 +82,11 @@ class BISTHarness(Elaboratable):
         self.error = Signal()
         self.checks = Signal(32)
         self.errors = Signal(32)
+
+        # Pulse to zero the counters from inside the design. See the note by
+        # `command_go`: without this a gateware sweep cannot start a fresh
+        # measurement per cell, because the only clear was a host register write.
+        self.clear = Signal()
         self.negative = Signal(init=negative_control)
         self.status_extra = Signal(28)
         self.last_actual = Signal(width)
@@ -106,6 +111,11 @@ class BISTHarness(Elaboratable):
         m = Module()
         addresses = self.addresses
 
+        # A GATEWARE-DRIVEN clear, for a sweep that walks combinations itself.
+        # The counters previously cleared only on `command_go`, which is a rising
+        # edge of the HOST's control register -- unreachable from inside the
+        # design. A sweep therefore accumulated errors across every cell and
+        # saturated during the first one.
         command_go = Signal()
         negative = self.negative
 
@@ -139,7 +149,7 @@ class BISTHarness(Elaboratable):
 
         # A new measurement clears the accumulated verdict. Within a run the
         # error is sticky: a mismatch lasting one cycle survives a slow poll.
-        with m.If(command_go):
+        with m.If(command_go | self.clear):
             m.d.sync += [
                 self.done_sticky.eq(0),
                 self.error.eq(0),

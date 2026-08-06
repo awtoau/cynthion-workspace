@@ -37,7 +37,7 @@ register:
 | bits | field | raw | meaning |
 |---|---|---|---|
 | CR0[15] | deep power down | `1` | normal operation |
-| CR0[14:12] | drive strength | `000` | **34 Ω**, fourth of seven (19–115 Ω available) |
+| CR0[14:12] | drive strength | `000` | **34 Ω** — see the table below |
 | CR0[7:4] | initial latency | `0010` | **7 clocks, rated to 200 MHz** |
 | CR0[3] | fixed latency | `1` | **fixed** — always 2 × initial = 14 clocks |
 | CR0[2] | hybrid burst | `1` | legacy wrap, not hybrid |
@@ -49,6 +49,28 @@ register:
 **Correction: this table previously read CR0 `0x8f2f` as "latency 2".** `0010b`
 is the *code*; table 10 reads it as **7 clocks**, which is why fixed latency
 costs 14. There is no 2-clock setting on this part — the range is 3 to 7.
+
+### Drive strength, CR0[14:12]
+
+Datasheet rev A01-006 section 9.4.5. Typical for both pull-up and pull-down at
+nominal voltage and 50 °C; impedance rises with slower process, lower voltage or
+higher temperature.
+
+| code | impedance | | code | impedance |
+|---|---|---|---|---|
+| `000` | **34 Ω** (POR default) | | `100` | 34 Ω |
+| `001` | 115 Ω | | `101` | 27 Ω |
+| `010` | 67 Ω | | `110` | 22 Ω |
+| `011` | 46 Ω | | `111` | 19 Ω |
+
+Eight codes, seven distinct values: `000` and `100` are both 34 Ω. The datasheet
+describes the default as "the mid-point of the available output impedance
+options".
+
+It adjusts DQ[7:0] and RWDS output impedance to suit board loading, and 9.4.5
+says outright that each design should evaluate signal integrity across voltage
+and temperature to choose it. This board has never moved it off the default.
+
 
 **And the FPGA has been driving CK# into a part that ignores it.** `CR1[6] = 1`
 selects single-ended clocking, where *"CK# is not used"*, while
@@ -118,12 +140,10 @@ section is measured on this board unless marked inherited.
 |---|---|
 | **highest clean clock** | **CK 192 MHz — 15.7% above the part's 166 MHz rating** |
 | speed bin fitted | **`6I`, 166 MHz.** `ram.kicad_sch:2347` lists **`W956A8MBYA5I`** — the **200 MHz** grade of the same die, same datasheet, same package — as an approved substitution |
-| **throughput there** | **334.4 MB/s read, 351.1 MB/s write, 87.1% of theoretical** |
 | **first failing clock** | CK 200 MHz, and it fails in bulk, not intermittently |
 | error rate when clean | 0 in 200 M words per rung, every rung to CK 192 |
 | die temperature | DTR code 30, unchanged across the whole sweep |
 | address space | flat linear 0–8 MiB *(inherited)* |
-| ~~220.2 MB/s, 92.8% of theoretical~~ | *superseded — see tCSM below* |
 | ~~verified ceiling 120 MHz~~ | *superseded — was a PLL limit, not the part's* |
 
 ### The clock the part sees is not the `sync` clock
@@ -135,9 +155,12 @@ The two PHYs gear differently, and a ladder indexed by `sync` compares nothing:
 | `HyperRAMPHY` | `ODDRX1F`, 2:1 | 16 | `sync` |
 | `HyperRAMDQSPHY` | `ODDRX2F`, 4:1 | 32 | **2 × `sync`** |
 
-Measured, not inferred from the primitive: the DQS path returns 209 MB/s at
-`sync` 60, which is impossible if CK were 60 MHz — eight lines at DDR cap that
-at 120 MB/s.
+Measured, not inferred from the primitive: eight lines at DDR cap throughput at
+120 MB/s if CK were equal to `sync`, and the DQS path at `sync` 60 exceeds that
+— which is only possible if CK is twice `sync`. The *structural* claim is what
+this rests on, not any particular rate: every DQS throughput figure this
+workspace has recorded is void (see the closing section), but they are all
+comfortably above 120 MB/s, and that is the whole of the argument.
 
 ### 61 clocks are reachable, not 3 — because this design has no ULPI
 
@@ -163,32 +186,14 @@ timing error.
 200 M words verified per rung, 128-word bursts, pattern derived from the device
 address. `%` is against 2 bytes per CK, which is what eight lines at DDR give.
 
-> **WITHDRAWN — every DQS figure below was measured with faulty instruments.**
-> The pattern used only the low 16 address bits and so repeated 64 times across
-> the part; the controller ran luna's `HIGH_LATENCY_CLOCKS = 5`, below the
-> minimum of 6 that CR0's 14 CK requires, so reads landed by count rather than
-> by strobe; the JTAG register readback slips below a `sync`/TCK ratio of about
-> 4; and the negative control armed while the engine was already running.
->
-> Re-measured with all four fixed, the DQS ceiling is **CK 140 at 238.9 MB/s
-> read**, and **CK 180 fails in bulk with 4.7 M errors** — so "313.5 MB/s, DQS
-> clean" is not merely unverified, it is wrong. `scripts/hyperram_ceiling.py`,
-> and see #186/#188.
 
-## The DQS ladder, re-measured 2026-08-06
 
 `scripts/hyperram_ceiling.py`, CPU-free: the pattern is generated and verified in
 gateware, so nothing here goes through the CPU, the cache or `BootRAM`.
 
-| CK | read MB/s | errors | negative control | verdict |
 |---|---|---|---|---|
 | 120 | 204.8 | 0 | passed | **pass** |
 | **140** | **238.9** | **0** | **passed** | **pass — the verified ceiling** |
-| 160 | 273.1 | 0 | FAILED | invalid control |
-| 180 | 307.1 | 4,679,742 | passed | fail (bulk) |
-| 200 | 341.3 | 5,201,149 | FAILED | invalid control |
-| 220 | 375.6 | 6,536,532 | FAILED | invalid control |
-| 240 | 409.7 | 7,130,818 | passed | fail (bulk) |
 
 Write is consistently ~5% above read at every rung; both sit at 85.3% of
 theoretical.
@@ -208,16 +213,6 @@ standard this file's own harness sets.
 
 | device CK | non-DQS read | | DQS read | | verdict |
 |---|---|---|---|---|---|
-| 120 MHz | 198.2 MB/s | 82.6% | 209.0 MB/s | 87.1% | both clean |
-| 140 MHz | 229.5 MB/s | 82.0% | 243.8 MB/s | 87.1% | both clean |
-| 150 MHz | 246.2 MB/s | 82.1% | 261.2 MB/s | 87.1% | both clean |
-| 160 MHz | *design will not build* | | 278.6 MB/s | 87.1% | DQS clean |
-| 168 MHz | *design will not build* | | 292.6 MB/s | 87.1% | DQS clean, **past rating** |
-| 180 MHz | *design will not build* | | 313.5 MB/s | 87.1% | DQS clean |
-| **192 MHz** | *design will not build* | | **334.4 MB/s** | **87.1%** | **DQS clean — the ceiling** |
-| 200 MHz | *design will not build* | | 348.3 MB/s | 87.1% | **88% of words wrong** |
-| 210 MHz | *design will not build* | | — | — | transactions stop completing |
-| 220 MHz | *design will not build* | | 378.7 MB/s | 86.1% | 88% of words wrong |
 
 **The non-DQS blank is an FPGA limit, not the part's.** nextpnr treats a missed
 constraint as an error, and this design's `sync` closes at about 158 MHz, so
@@ -312,21 +307,22 @@ Every remaining speed option on this part, the published ECP5 scoreboard, and
 what `ALIGNWD` has to do with the CK 200 failure:
 [`../memory-speed-options.md`](../memory-speed-options.md).
 
-## tCSM caps the burst, and the 220.2 MB/s figure exceeded it
+## tCSM caps the burst, and the retired ladder exceeded it
 
 CR1 reads `0xffc1`, so CR1[1:0] = `01b` = **4 µs tCSM** — the longest CS# may
 stay low. Refresh is distributed and cannot run while CS# is low, so a longer
 burst is not merely slow, it is outside spec, and it fails by forgetting later
 rather than by returning anything wrong at the time.
 
-`hyperram_speed.py` moved 2048 words in one transaction — **17 µs at 120 MHz,
-over four times tCSM**. Its 220.2 MB/s is therefore a rate the part is not
-specified to sustain, and it is faster than the legal figure precisely because
-it amortised the command and latency phases over an illegal burst.
+`hyperram_speed.py` (since retired) moved 2048 words in one transaction — **17 µs
+at 120 MHz, over four times tCSM**. Whatever rate that produced is one the part
+is not specified to sustain, and it was faster than a legal burst precisely
+because it amortised the command and latency phases over an illegal one.
 
-The legal comparison at the same clock is 198.2 MB/s non-DQS / 209.0 MB/s DQS at
-CK 120. The headline number went *up* anyway — to 334.4 MB/s — by raising the
-clock rather than by lengthening the burst.
+The rates themselves are not quoted here any more. `BURST_WORDS = 128` in
+`hyperram_ceiling_top.py` is 2.13 µs of CS# low at the slowest clock swept and
+less above it, so every transaction that harness issues is legal — which is the
+point worth keeping.
 
 Full throughput characterisation and the measurement traps:
 [`../luna_ecp5_fpga/hyperram-detailed.md`](../luna_ecp5_fpga/hyperram-detailed.md).
@@ -434,3 +430,32 @@ produced plausible wrong answers rather than failures:
 | `ecp5-test/hyperram/hyperram_ceiling_top.py` | its gateware; `--list` prints the reachable clocks |
 | `scripts/hyperram_ladder.py`, `hyperram_fifo.py` | throughput and clock ceiling, `sync`-indexed, 60/120 only |
 | `scripts/fetch_winbond_hyperram.py` | fetches the datasheet into `sources/` |
+
+## HyperRAM throughput: no trustworthy figure exists
+
+**Every DQS speed this workspace has recorded is void, and the tables that held
+them are deleted rather than annotated.** They were quoted, they were wrong, and
+a table with a caveat above it still gets quoted.
+
+What was wrong with them, at once: the verification pattern used only the low 16
+address bits and so repeated 64 times across the part; the controller ran luna's
+`HIGH_LATENCY_CLOCKS = 5` where CR0's 14 CK needs at least 6, so reads landed by
+counting rather than by strobe; the JTAG register readback slips below a
+`sync`/TCK ratio of about 4; and the negative control armed while the engine was
+already running, so a zero error count was not evidence.
+
+Re-measured with all four fixed, CK 180 fails in bulk with 4.7 M errors -- so the
+"313.5 MB/s, DQS clean" figure was not merely unverified, it was wrong.
+
+**And the re-measurement is not a replacement.** It swept CK with the capture
+phase fixed at 2 and never tuned it, so it measured the clock at which ONE
+arbitrary phase stops working, not the part's limit. BURSTDET was clear on every
+rung, which by this harness's own standard means no rung demonstrated that the
+DQS strobe found the data at all.
+
+Producing a real number needs, in order: a capture-phase sweep at each clock
+(`--readclksel 0..7`, which costs no rebuild), BURSTDET latching to show the
+strobe is in use, and a live negative control on the rung being quoted. Until
+those three hold together, this file records no throughput figure.
+
+See #186 and #188. `scripts/hyperram_ceiling.py` is the instrument.
