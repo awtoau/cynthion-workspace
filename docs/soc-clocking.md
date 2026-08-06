@@ -1,12 +1,15 @@
-# SoC clocking: a PLL divider bug, and a fabric limit the CPU crosses silently
+# SoC clocking: a PLL divider bug, and a withdrawn ceiling
 
-Two findings, either of which will cost a day if rediscovered:
+One standing finding and one retraction:
 
 1. A **PLL divider bug** silently breaks USB at almost every frequency in
-   60–130 MHz. Only three are safe.
-2. The **fabric limit sits below 92 MHz**, and the CPU crosses it by *corrupting
-   its output* rather than by stopping — so a design that is over the limit looks
-   like it works.
+   60–130 MHz. Only three are safe. This still holds and will cost a day if
+   rediscovered.
+2. The **"CPU corrupts its output above 60 MHz" result is WITHDRAWN.** Its
+   signature — correct counter values, dropped characters, fine while
+   `sync == usb` and broken once they differ — is the console's own
+   `SyncFIFOBuffered` bug, not the CPU. That FIFO has since been fixed and the
+   ladder has not been re-run, so **the CPU's working ceiling is unmeasured.**
 
 Issue #110 asked whether Lattice Diamond's place-and-route reaches a higher clock
 than nextpnr on the VexiiRiscv SoC. The premise was that nextpnr's
@@ -69,7 +72,7 @@ This also retires one row of the original table: the 80 MHz build that
 "succeeded" had `usb` at 62.2 MHz, so it could never have enumerated. Passing
 timing was never the same as working.
 
-## 2. Above 60 MHz the CPU corrupts its output rather than stopping
+## 2. The CPU's ceiling is NOT known — this measurement is WITHDRAWN
 
 nextpnr's build script runs under `set -e` with no `--timing-allow-fail`, so a
 design that misses its constraint stops the build. That is a refusal to vouch
@@ -88,7 +91,7 @@ identical; only the verdict changes.
 | 100 | 92.0 MHz | yes | 60.000 | enumerates, **output corrupted** |
 | 110 | 96.0 MHz | yes | 61.111 | enumerates, **output corrupted** |
 
-The corruption is the finding. At 100 MHz the console prints:
+At 100 MHz the console printed:
 
     tick00001
     tk00002
@@ -100,21 +103,46 @@ and at 110 MHz:
     ik00002
     ic 000
 
-The counter still increments -- 1, 2, 3 -- so the CPU is **executing**, fetching,
-looping and incrementing. But characters are dropped and mangled. This is
-exactly the predicted failure of a marginal design: it does not halt, it
-computes and transfers wrongly. A check that only asked "did the device
-enumerate" would have scored both of these as passes.
+The conclusion drawn at the time was that the counter still increments -- 1, 2,
+3 -- so the CPU is executing while characters are dropped around it: a marginal
+design computing wrongly rather than halting.
 
-Note that 110 MHz corrupts *and* has a 1.85% PHY error, so it fails twice over;
-100 MHz has a perfect PHY clock and still corrupts, which is what isolates the
-fault to the design's own logic rather than to USB.
+**That conclusion does not follow, because the console is in the path and it had
+a bug with exactly this signature.** From `stream_buffer.py`:
+
+> A `SyncFIFOBuffered` between `sync` at 80 MHz and `usb` at 60 worked perfectly
+> while both were 60 MHz, then produced a stream with **correct counter VALUES
+> and dropped CHARACTERS** -- `tic 00000`, `tck 000001` -- because bytes vanished
+> in transit while the arithmetic that produced them was untouched. That is the
+> signature of an unsynchronised crossing.
+
+Same symptom, same arithmetic-intact-characters-missing shape, and the same
+trigger: it works when `sync == usb` and fails when they differ. The ladder's own
+table IS that pattern -- 60 passes, everything above corrupts -- which is what an
+unsynchronised FIFO does, not what a timing-marginal CPU does.
+
+The "perfect PHY clock at 100 MHz" was read as isolating the fault to the
+design's own logic rather than to USB. It does not: an exact 60.000 MHz `usb`
+clock is precisely the case where the FIFO still has two unequal domains to
+cross. It rules out the PHY, not the crossing in front of it.
+
+`StreamBuffer` now takes `i_domain` and `o_domain` explicitly and is a genuine
+asynchronous FIFO when they differ. **The ladder has not been re-run since.**
+
+So the CPU's working ceiling is **unmeasured**. nextpnr achieved 92 MHz on the
+100 MHz build and 96 on the 110 MHz one, and whether either runs correctly is
+open. Any claim that this RISC-V "tops out around 75 MHz" -- including ones in
+this repo's own commit messages -- rests on this withdrawn measurement.
+
+Re-running it is cheap: the same script, the fixed `StreamBuffer`, and a readout
+that is not the console. Until then, no number here bounds the CPU.
 
 ## Diamond, and what #110 asked
 
 The comparison against Lattice Diamond, why it could not answer the question as
 posed, and what to do about #110 are recorded in the issue rather than here.
-This file is for the two findings above, which outlive it.
+This file is for the findings above. Note that only the first -- the three
+exact-60 PLL solutions -- is a standing result; the second is a withdrawal.
 
 ## Reproducing
 

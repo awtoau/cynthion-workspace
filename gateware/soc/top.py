@@ -537,18 +537,23 @@ FLASH_DIVISOR = 0
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
 #
-# 60, and it is now pinned by the FLASH rather than by the CPU -- the opposite of what
-# the old comment here described.
+# PROVISIONAL. This value is not derived from anything, and an earlier comment
+# here claimed it was -- it said the flash bound made `sync` "therefore 60",
+# which does not follow. The flash bound caps `sync`; it does not choose it.
 #
-# `sync` no longer has to serve the flash: the PHY has its own domain. But both outputs
-# divide ONE VCO, so the ratio is an integer and `fast = 2 x sync`. The flash domain
-# closes at 124.77 MHz in this design (measured -- see FLASH_FAST_RATIO), so `fast`
-# must be <= 120 and `sync` is therefore 60.
+# What IS a constraint: both outputs divide ONE VCO, so the ratio is an integer
+# and `fast = 2 x sync`. The flash domain closes at 124.77 MHz in this design
+# (measured -- see FLASH_FAST_RATIO), so `fast` <= 120 and therefore
+# `sync` <= 60. That is a ceiling, and 30 and 60 both sit under it.
 #
-# The CPU could run faster alone: "the design already meets 72-91 MHz by nextpnr's own
-# estimate, and the die is a 25F sharing a speed grade with the 12F it is marked as
-# (#116). See #110." Reaching that WITH a fast flash needs a third PLL output or a
-# non-integer ratio, neither of which this generator offers.
+# What is NOT a constraint, despite having been treated as one: the "CPU
+# corrupts its output above 60 MHz" ladder. That result is withdrawn --
+# `docs/soc-clocking.md` section 2 -- because its signature is the console
+# FIFO's unsynchronised crossing, not the CPU. The FIFO is fixed and the ladder
+# has not been re-run, so the CPU's working ceiling is unmeasured.
+#
+# Determining this needs a measurement, not an argument: re-run the ladder with
+# a readout that is not the console. #110 and #172.
 SYNC_MHZ = 30
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
