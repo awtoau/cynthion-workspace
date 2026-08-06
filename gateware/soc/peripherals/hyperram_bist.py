@@ -131,15 +131,15 @@ class HyperRAMBist(wiring.Component):
         # Without this the engine runs in `sync`, which is the CPU's clock, and
         # the whole rig collapses back to what it was built to escape: changing
         # CK would drag the console divisor and the CLINT tick with it.
+        # The transport is elaborated HERE, in `sync`, and deliberately NOT
+        # inside the renamer below. Its CSR bridge talks to the CPU, so it must
+        # be clocked by the CPU. `BISTHarness` only elaborates a transport it
+        # created itself, which is what leaves this one to us.
+        m.submodules.transport = self._transport
+
         m.submodules.engine = DomainRenamer({"sync": self._domain,
                                              "fast": f"{self._domain}_fast"})(
             self._engine)
-        # The transport is deliberately NOT added here. `BISTHarness.elaborate`
-        # already does `m.submodules.registers = registers`, and adding the same
-        # instance in two places elaborates it twice -- which surfaces four
-        # frames inside `amaranth_soc` as `'frozenset' object has no attribute
-        # 'add'`, the CSR bridge's shadow having been frozen by the first pass.
-        # Only the bus needs joining up, and that does not require ownership.
         connect(m, flipped(self.bus), self._transport.bus)
         return m
 

@@ -109,6 +109,10 @@ class BISTHarness(Elaboratable):
         self.last_actual = Signal(width)
         self.last_golden = Signal(width)
 
+        # Whether this harness OWNS the transport, and therefore elaborates it.
+        # True for the JTAG one it builds itself; false for one handed in, which
+        # the caller elaborates in the caller's own domain. See `elaborate`.
+        self._owns_registers = transport is None
         self.registers = (None if simulate else
                           transport if transport is not None else
                           JTAGRegisterInterface(default_read_value=0xDEADBEEF))
@@ -142,7 +146,16 @@ class BISTHarness(Elaboratable):
                          negative.eq(self.sim_negative)]
         else:
             registers = self.registers
-            m.submodules.registers = registers
+            # Added here ONLY when this harness created it. An externally
+            # supplied transport belongs to whoever built it, and that matters
+            # for more than tidiness: the SoC rig wraps this engine in a
+            # DomainRenamer to move it to `hr`, and anything elaborated inside
+            # that is renamed with it. A CSR bridge dragged into `hr` while the
+            # CPU stays in `sync` never completes its handshake, so the FIRST
+            # register read stalls the bus and the shell hangs with nothing
+            # printed -- which reads as a lock-up rather than a clocking fault.
+            if self._owns_registers:
+                m.submodules.registers = registers
 
             control = Signal(32, init=(self.CONTROL_NEGATIVE
                                        if self.negative_control_init else 0))
