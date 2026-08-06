@@ -51,8 +51,7 @@ standard PLIC.
 Tie them off explicitly in a design that has none, so "no source" and "nobody
 wired it" do not look identical.
 
-`cpu/irq.py` is a smaller pending/enable concentrator kept for moondancer's
-generated PAC. It is in no SoC here; prefer the PLIC.
+Interrupts are the PLIC (`cpu/plic.py`) and the CLINT (`cpu/clint.py`).
 
 The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
 cacheless, PLIC vs a smaller concentrator -- are in `../../docs/architecture.md`.

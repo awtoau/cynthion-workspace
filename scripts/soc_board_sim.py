@@ -41,7 +41,7 @@ received byte with its count. The count is checked for the property it exists
 for: that neither read clears anything, so a repeated byte and a silence are
 distinguishable without a side-effecting register.
 
-**The I2C bus mux** has never run on silicon in any form -- `gateware/probes/i2c/multiplexed.py`
+**The I2C bus mux** has never run on silicon in any form -- the retired prototype in `debris/`
 is marked simulation-only -- so the checks here are about the two properties that
 would be expensive to discover on a board: that the select cannot move underneath
 a transfer, and that the shared interrupt is the OR of the two `int` lines and

@@ -87,7 +87,8 @@ whether the reason was a defect, a limit, or a standard we preferred to adopt.
 **Worth noting rather than using:** luna-soc's `InterruptController` exposes
 `add(peripheral, name=, number=)` and `interrupts()`, which its SVD generator reads. Any
 replacement that wants to keep that generator working has to keep those signatures —
-`gateware/soc/cpu/irq.py` does, which is why it is still in the tree.
+`debris/code/gateware/soc_cpu_irq.py` did, and it is retired there rather than in the
+tree — a replacement that wants that generator has a signature to copy.
 
 ## Still expected from upstream — and it is Cynthion-specific work
 

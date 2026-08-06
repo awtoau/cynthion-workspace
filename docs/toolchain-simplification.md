@@ -58,7 +58,6 @@ Our own designs, all four sites:
 | File | Import | Why |
 |---|---|---|
 | `gateware/soc/top.py:45` | `core.blockram` | real use |
-| `gateware/probes/i2c/multiplexed.py:69` | `core.blockram` | **aliasing only** — `# noqa: F401 (aliases amaranth_soc)` |
 | `scripts/patch_amaranth_soc_annotations.py:110` | `core.blockram` | aliasing only, to locate the file it patches |
 
 So the genuine surface is exactly two things:
@@ -112,7 +111,7 @@ PASS  things only luna_soc provides          (blockram/cpu correctly absent)
 PASS  REAL multiplexed.py elaborated against real amaranth-soc
 ```
 
-The last one is the decisive result. `gateware/probes/i2c/multiplexed.py` was imported
+The last one is the decisive result. the retired I2C mux prototype was imported
 **unmodified**, with `luna_soc` replaced by an empty stub module so the aliasing
 import became a no-op, and it **elaborated to 4670 lines of RTLIL**. The
 peripheral is already portable; its luna_soc line is pure accident.

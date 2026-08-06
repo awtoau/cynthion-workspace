@@ -69,7 +69,7 @@ __all__ = ["I2CBusMux", "BUS_TARGET_C", "BUS_AUX_C", "BUS_POWER_MONITOR",
 
 
 # Bus select values. The order is the platform's resource order rather than
-# anything electrical, and it matches `gateware/probes/i2c/multiplexed.py` so that the
+# anything electrical, and it matches the retired prototype in `debris/` so that the
 # simulation-only predecessor and this do not disagree about what "1" means.
 BUS_TARGET_C = 0
 BUS_AUX_C = 1

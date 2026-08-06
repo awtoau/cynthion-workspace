@@ -125,10 +125,6 @@ def _peripherals():
         from peripherals.hyperram_probe import HyperRAMProbe
         return HyperRAMProbe()
 
-    def vexii_irq():
-        from cpu.irq import InterruptController
-        return InterruptController()
-
     return [
         ("uart16550",          uart16550,          "x2 in the SoC"),
         ("plic",               plic,               "5 sources"),
@@ -146,7 +142,6 @@ def _peripherals():
         ("flash_probe",        flash_probe,        "instrumentation"),
         ("flash_ila",          flash_ila,          "instrumentation, 1 DP16KD"),
         ("hyperram_probe",     hyperram_probe,     "instrumentation"),
-        ("vexii_irq",          vexii_irq,          "IN NO SoC"),
     ]
 
 
