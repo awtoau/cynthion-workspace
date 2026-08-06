@@ -7,7 +7,7 @@
 A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
 
     from vexii_cpu import VexiiRiscv
-    cpu = VexiiRiscv(reset_addr=0x100b0000)
+    cpu = VexiiRiscv(reset_addr=0x0)   # ours is 0x0, not a flash base
 
 ## Ports
 
