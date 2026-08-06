@@ -1,6 +1,6 @@
 //! What the FPGA_ADV sideband link reports.
 //!
-//! One byte of CSR, driving `gateware/soc/sideband_csr.py`. The link itself
+//! One byte of CSR, driving `gateware/soc/peripherals/sideband_csr.py`. The link itself
 //! is a UART and a CRC on pin T6, answering the Apollo microcontroller when USB
 //! and the CPU's consoles cannot -- see `gateware/sideband_debug.py`.
 //!

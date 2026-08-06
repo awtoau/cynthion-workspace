@@ -28,7 +28,7 @@ CSR bus run in `sync`, which is 60 MHz today and is a free parameter: raising
 `SYNC_MHZ` makes them unrelated clocks, and a design that only worked because two
 PLL outputs happened to be the same frequency is a design that breaks silently
 later. The same argument already forced the console's elastic buffers to be
-asynchronous (`stream_buffer.py`), after raising `sync` to 80 MHz produced a
+asynchronous (`peripherals/stream_buffer.py`), after raising `sync` to 80 MHz produced a
 stream with correct counter values and dropped characters.
 
 So the crossing is a **four-phase handshake on two toggles**, not a pulse
@@ -72,7 +72,7 @@ the PHY" instead of "the peripheral is stuck", and the next read starts clean.
 
 **No read here has a side effect.** DATA is a plain latch: reading it twice gives
 the same byte and advances nothing, so a widened, prefetched or replayed read
-cannot consume a result -- the hazard `uart16550.py` exists to eliminate. STATUS
+cannot consume a result -- the hazard `peripherals/uart16550.py` exists to eliminate. STATUS
 is a wire from two flags. The only side-effecting address is CONTROL, and it is
 side-effecting on write, where speculation cannot reach it. `timeout` is cleared
 by the START of the next transaction rather than by reading STATUS, for the same
@@ -86,7 +86,7 @@ from amaranth.lib.wiring    import In, Out
 
 from amaranth_soc           import csr
 
-from uart16550              import SplitRW
+from peripherals.uart16550              import SplitRW
 
 
 __all__ = ["UlpiRegisters", "TIMEOUT_CYCLES"]

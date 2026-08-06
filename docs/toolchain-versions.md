@@ -211,7 +211,7 @@ the header of `scripts/riscv_firmware.py`.
 
 QEMU is used only as `-M virt`, and the pairing is deliberate: `virt` presents an
 NS16550A at `0x10000000` and a PLIC at `0x0c000000`, which is why the SoC console
-is a standard NS16550A (`gateware/soc/uart16550.py`) — one driver serves both
+is a standard NS16550A (`gateware/soc/peripherals/uart16550.py`) — one driver serves both
 the board and the test gate. `scripts/soc_test.py` drives it, with
 `memory-qemu.x`; building the `qemu` feature without that linker script links
 `.text` into the flash window, where `virt` has no memory, and produces an image
@@ -267,7 +267,7 @@ removed while it holds work that is on no remote.
 
     "luna-soc @ git+https://github.com/awtoau/awto-luna-soc.git@main",
 
-`gateware/soc/vexii_hello_soc.py` is the one design that still imports
+`gateware/soc/top.py` is the one design that still imports
 `cynthion` for its platform (`cynthion.gateware.platform.cynthion_r1_4`) rather
 than the vendored `gateware/board/`, so it reaches that pin. Every
 other design uses the vendored platform, which imports only `amaranth` and

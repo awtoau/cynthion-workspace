@@ -226,7 +226,7 @@ fn tick() {
 
     // How late the handler was: the deadline is a value on the same counter
     // `entered` was read from -- the CLINT compares against `rdtime` itself, see
-    // `vexii_clint.py` -- so the low halves subtract directly. Both were going
+    // `cpu/clint.py` -- so the low halves subtract directly. Both were going
     // to be read anyway, so this costs one subtraction.
     //
     // Discarded if it exceeds a period, which means the low half wrapped

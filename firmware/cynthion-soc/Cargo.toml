@@ -28,7 +28,7 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 
 # RTIC, for the `rtic` feature below and nothing else. `riscv-clint-backend`
 # rather than `riscv-mecall-backend` because the SoC already wires the CLINT's
-# `msip` to the CPU's software-interrupt input (`vexii_hello_soc.py`), so
+# `msip` to the CPU's software-interrupt input (`top.py`), so
 # pending a task is one MMIO store rather than a trap through `ecall`.
 #
 # It brings a second copy of the `riscv` crate: riscv-slic 0.2.0 pins 0.12.1

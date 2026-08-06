@@ -47,7 +47,7 @@ its own docstring says to report what it produced. `firmware/.../target.rs`
 derives `TIME_HZ` from the request by hand, and this is what lets that copy be
 checked instead of trusted.
 
-`cpu` carries what `vexii_cpu.py` was asked to generate, which is not otherwise
+`cpu` carries what `cpu/cpu.py` was asked to generate, which is not otherwise
 knowable from inside the process: `misa` on this core reads 0x40001100 -- `rv32im`
 -- while it is generated `--with-rva --with-rvc`, so the core understates itself
 and this is the other account.
@@ -107,7 +107,7 @@ Worth writing down, because each was checked rather than assumed:
 
 Every read returns what the field holds and changes nothing; nothing here can be
 written. `die` is the one field that varies, and it varies on its own account --
-so this window is outside the hazards `uart16550.py` describes, and a diagnostic
+so this window is outside the hazards `peripherals/uart16550.py` describes, and a diagnostic
 may read any of it at any rate.
 
 ## Why the values are not in the SVD
@@ -190,7 +190,7 @@ class GatewareId(wiring.Component):
         `target::TIME_HZ` in the firmware is a hand-derived copy of the request,
         and this is what lets it be checked rather than trusted.
     cache_sets, cache_ways : int
-        As passed to `vexii_cpu.VexiiRiscv`.
+        As passed to `cpu/cpu.py`'s `VexiiRiscv`.
     cpu_flags : int
         The CPU_* bits above, for the ISA extensions the core was generated
         with.

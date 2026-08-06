@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Checks the three peripherals added at `BOARD_BASE` in `vexii_hello_soc.py`.
+Checks the three peripherals added at `BOARD_BASE` in `top.py`.
 
     python3 scripts/soc_board_sim.py
     python3 scripts/soc_board_sim.py -v      # print every CSR access and bus edge
@@ -14,7 +14,7 @@ Exit status 0 if every check passes. Output goes to the terminal and to
 
 ## What is checked, and why each check is here
 
-**The I2C master** (`gateware/soc/i2c_master.py`) is driven against a model
+**The I2C master** (`gateware/soc/peripherals/i2c_master.py`) is driven against a model
 slave written in the testbench rather than in gateware -- a slave in Amaranth
 would share this controller's idea of what an I2C bus is, and would agree with
 it whether or not either was right. The model here reacts only to edges on SCL
@@ -62,6 +62,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -72,12 +73,12 @@ from amaranth.hdl import Fragment
 from amaranth.sim import Simulator
 from amaranth_soc import gpio
 
-from i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
-from sideband_csr import SidebandControl
-from gateware_id import (GatewareId, MAGIC, pack_built, pack_cpu,
+from peripherals.i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
+from peripherals.sideband_csr import SidebandControl
+from peripherals.gateware_id import (GatewareId, MAGIC, pack_built, pack_cpu,
                          CPU_M, CPU_A, CPU_C, CPU_RDTIME)
-from ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
-from i2c_mux import (I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR,
+from peripherals.ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
+from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR,
                      LINE_TARGET_INT, LINE_AUX_INT, LINE_TARGET_FAULT,
                      LINE_AUX_FAULT)
 

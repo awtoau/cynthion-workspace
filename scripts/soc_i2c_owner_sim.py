@@ -32,7 +32,7 @@ cached -- so the collision stops being rare and becomes impossible.
 ## What is checked here, and what each check is evidence for
 
 **Sections 1-3 run the real gateware** -- `i2c_master.I2CMaster` and
-`i2c_mux.I2CBusMux`, wired the way `vexii_hello_soc.py` wires them -- against
+`i2c_mux.I2CBusMux`, wired the way `top.py` wires them -- against
 device models written here in Python, which react only to edges on SCL and SDA.
 A model written in Amaranth would share the controller's idea of what an I2C bus
 is and would agree with it whether or not either was right.
@@ -83,6 +83,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from devlog import emit  # noqa: E402
@@ -91,8 +92,8 @@ from amaranth import Elaboratable, Module, Mux, Signal
 from amaranth.hdl import Fragment
 from amaranth.sim import Simulator
 
-from i2c_master import I2CMaster
-from i2c_mux import I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR
+from peripherals.i2c_master import I2CMaster
+from peripherals.i2c_mux import I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR
 
 # The slave model, the CSR accessor and the check reporter are shared with
 # soc_board_sim.py rather than copied. A second I2C slave model would drift from
@@ -161,7 +162,7 @@ PAST_WINDOW_CYCLES = REFRESH_WINDOW_CYCLES + 400
 
 
 class ThreeBuses(Elaboratable):
-    """One controller, one mux, three buses -- as `vexii_hello_soc.py` wires it.
+    """One controller, one mux, three buses -- as `top.py` wires it.
 
     The fan-out is reproduced here in Amaranth rather than in the testbench,
     because it is part of what is being checked: an unselected bus is driven

@@ -79,7 +79,7 @@ class ClockCrossedPHY(wiring.Component):
     the PHY's `source` combinationally from it -- so the FIFO's output mux and the
     PHY's bit-counter carry chain became ONE combinational path. nextpnr put the
     flash domain's critical path exactly there: `to_phy.r_data[32]`, the first bit
-    of `len`, into a CCU2C chain in `vexii_flash.py`. `AsyncFIFOBuffered` registers
+    of `len`, into a CCU2C chain in `peripherals/flash.py`. `AsyncFIFOBuffered` registers
     the output and breaks it.
 
     `depth` is 4 rather than 2 because an AsyncFIFO's usable depth is its depth

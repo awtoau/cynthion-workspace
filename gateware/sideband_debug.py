@@ -11,7 +11,7 @@ Three things, and no more:
   * **liveness** -- `SidebandLink`, answering PING and STATUS with a heartbeat
     that toggles per reply
   * **a byte each way** -- PING carries one out, a `0x80`-`0xFF` opcode carries
-    seven bits in; the CPU's end is `gateware/soc/sideband_csr.py`
+    seven bits in; the CPU's end is `gateware/soc/peripherals/sideband_csr.py`
   * **the CONTROL port request** -- `SidebandAdvertiser`, the frame Apollo
     matches to hand the port over
 

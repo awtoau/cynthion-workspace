@@ -32,7 +32,7 @@ and knows more than the fabric does. This register lets the firmware say so.
 
 **`rxcnt` rather than a ready flag, and rather than read-to-clear.** A flag
 cleared by reading `rx` makes reading a side-effecting operation, which is the
-hazard `uart16550.py` spends a page on. A count has no such hazard -- the CPU
+hazard `peripherals/uart16550.py` spends a page on. A count has no such hazard -- the CPU
 keeps its own copy and compares -- and it distinguishes "Apollo sent the same
 byte again" from "Apollo has sent nothing", which a flag cannot. It wraps rather
 than saturating: the CPU is comparing against its own last value, so wrapping is
@@ -64,7 +64,7 @@ clearing the bit hands the port back one Apollo timeout later.
 Four addresses, plain storage, and **no register whose read changes anything**.
 `ctrl` and `tx` read back what was written; `rx` and `rxcnt` are windows onto
 state the link updates. That keeps the whole peripheral outside the class of
-hazards `uart16550.py` describes, and it is why the receive side is a count
+hazards `peripherals/uart16550.py` describes, and it is why the receive side is a count
 rather than a flag.
 
 ## What is not here

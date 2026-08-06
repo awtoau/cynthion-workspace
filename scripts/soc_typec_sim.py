@@ -30,7 +30,7 @@ interrupt that nothing could name.
 ## What is checked here, and what each check is evidence for
 
 **Sections 1-3 run the real gateware** -- `i2c_master.I2CMaster` and
-`i2c_mux.I2CBusMux` wired as `vexii_hello_soc.py` wires them -- against a
+`i2c_mux.I2CBusMux` wired as `top.py` wires them -- against a
 FUSB302B model written here in Python that reacts only to edges on SCL and SDA.
 The model is a *part*, not a mirror of the driver: its `STATUS0` answers with
 whichever CC pin the measure select currently points at, its interrupt registers
@@ -85,11 +85,12 @@ ROOT = Path(__file__).resolve().parent.parent
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from devlog import emit  # noqa: E402
 
-from i2c_mux import BUS_AUX_C, BUS_TARGET_C
+from peripherals.i2c_mux import BUS_AUX_C, BUS_TARGET_C
 
 # The gateware harness, the model-slave base and the reporter are shared with
 # soc_i2c_owner_sim.py rather than copied, for the reason that file gives about

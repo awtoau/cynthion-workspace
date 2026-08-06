@@ -13,7 +13,7 @@
 //!                at `target::BOOT_STATUS`
 //!     cpu        the core's own `misa` and identity CSRs
 //!     trap       `mstatus`, `mtvec`, and the PLIC's threshold and enables
-//!     gateware   a CSR in the bitstream (`gateware/soc/gateware_id.py`)
+//!     gateware   a CSR in the bitstream (`gateware/soc/peripherals/gateware_id.py`)
 //!
 //! ## The gateware line is the reason this command exists
 //!
@@ -56,7 +56,7 @@ pub mod build {
 
 /// The gateware's account of itself: five read-only words in the bitstream.
 ///
-/// Register map and encodings: `gateware/soc/gateware_id.py`.
+/// Register map and encodings: `gateware/soc/peripherals/gateware_id.py`.
 pub mod gateware {
     use core::ptr::read_volatile;
 

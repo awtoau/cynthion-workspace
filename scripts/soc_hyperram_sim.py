@@ -112,6 +112,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes" / "hyperram"))
 
@@ -121,17 +122,17 @@ from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from amaranth_soc import wishbone
 
-from hyperram_dqs_controller import HyperRAMDQSController
+from peripherals.hyperram_dqs_controller import HyperRAMDQSController
 from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMDQSInterface,
                                             HyperRAMInterface)
 
 from sim_check_harness import Checks
-from vexii_bootram import (BootRAM, ClockStopPHY, HYPERRAM_CK_MHZ,
+from bootram import (BootRAM, ClockStopPHY, HYPERRAM_CK_MHZ,
                            HYPERRAM_MAX_BURST_WORDS, HYPERRAM_TCSM_NS,
                            HyperRAMWishbone, hyperram_max_burst_words,
                            hyperram_max_stall_cycles)
-from wishbone_pipe import RegisteredResponse
+from bus.wishbone_pipe import RegisteredResponse
 
 
 # `sync`. Only the ratio to the device matters here, since nothing in this file
@@ -663,7 +664,7 @@ def section_as_built(checks, emit):
     """
     emit("\n9b. As built: SYNC_MHZ 60, HIGH_LATENCY_CLOCKS 4\n")
 
-    from vexii_bootram import HYPERRAM_LATENCY_CLOCKS
+    from bootram import HYPERRAM_LATENCY_CLOCKS
 
     built = dict(sync_mhz=60.0, latency=HYPERRAM_LATENCY_CLOCKS)
 
@@ -735,7 +736,7 @@ def section_dqs_write_order(checks, emit):
     # The AS-BUILT latency, not luna's. At luna's 5 the transaction never
     # completes and this section reports nothing about ordering -- which is the
     # first thing it did, and is the same defect section 9b reports.
-    from vexii_bootram import HYPERRAM_LATENCY_CLOCKS
+    from bootram import HYPERRAM_LATENCY_CLOCKS
     controller = HyperRAMDQSController(
         phy=phy, sync_mhz=SYNC_MHZ,
         high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
@@ -811,7 +812,7 @@ def section_structural(checks, emit):
     """5. The reasons upstream's PHY cannot be instantiated here."""
     emit("\n5. Structural: our PHY against upstream's, in source\n")
 
-    ours = (ROOT / "gateware" / "soc" / "hyperram_dqs_phy.py").read_text()
+    ours = (ROOT / "gateware" / "soc" / "peripherals" / "hyperram_dqs_phy.py").read_text()
     upstream = _upstream_source()
 
     checks.check("upstream assigns bus.clk as a single net",

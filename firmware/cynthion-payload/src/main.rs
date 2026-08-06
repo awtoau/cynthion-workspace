@@ -25,7 +25,7 @@ use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
 /// Same console peripheral the shell uses -- the NS16550A in
-/// `gateware/soc/uart16550.py`. Hardcoded for the same reason and with the same
+/// `gateware/soc/peripherals/uart16550.py`. Hardcoded for the same reason and with the same
 /// eventual fix: a generated PAC.
 ///
 /// Not shared with `cynthion-soc`'s `src/uart.rs`: that would make this crate depend on

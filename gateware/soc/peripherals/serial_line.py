@@ -7,7 +7,7 @@
 `amaranth_stdio.serial.AsyncSerial` wired to a real pad, with the four things a
 real pad needs.
 
-`uart16550.py` is a byte pipe with no bits on a wire. This is the other half for
+`peripherals/uart16550.py` is a byte pipe with no bits on a wire. This is the other half for
 the one port that does have them: the Apollo-facing console on R14/T14. It
 converts between the 16550's `amaranth.lib.stream` ports and AsyncSerial's
 rdy/ack handshake.
@@ -62,7 +62,7 @@ bit.
     the SAMD11 samples mid-bit.
   * Releasing when idle is still the policy, and still the only arbitration on
     the FPGA side of these pins -- see `APOLLO_UART_BASE` in
-    `vexii_hello_soc.py`.
+    `top.py`.
 
 ## What this cannot fix
 

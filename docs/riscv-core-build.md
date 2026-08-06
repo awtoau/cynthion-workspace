@@ -9,10 +9,10 @@ time and the assumption cost real work.
 
 ## The command
 
-`gateware/soc/vexii_cpu.py` runs it. Nothing else needs to be invoked by hand:
+`gateware/soc/cpu/cpu.py` runs it. Nothing else needs to be invoked by hand:
 
 ```python
-import vexii_cpu
+import cpu.cpu
 vexii_cpu.generate(reset_addr=0x0, cache_sets=64)   # -> repos/vexiiriscv/VexiiRiscv.v
 ```
 
@@ -31,7 +31,7 @@ against and what `scripts/soc_generate_pac.py` uses for its metadata-only walk.
 
 ## The flags, and where they live
 
-`GENERATE_FLAGS` in `gateware/soc/vexii_cpu.py` is the single list. Each entry
+`GENERATE_FLAGS` in `gateware/soc/cpu/cpu.py` is the single list. Each entry
 carries its reasoning in a comment there; that file is the authority and this is
 a map, not a copy.
 

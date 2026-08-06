@@ -18,7 +18,7 @@ the gate wired. That makes §5 the recommendation and most of §1–§4 moot.
 
 **It is now built and it simulates clean**: 16/16 beats both directions, 32
 device words, one transaction per line, against the 8/16 and 48 words the board
-measures without it. `ClockStopPHY` in `gateware/soc/vexii_bootram.py`,
+measures without it. `ClockStopPHY` in `gateware/soc/bootram.py`,
 checked by §11 of `scripts/soc_hyperram_sim.py`, and **off by default** — see
 "The smallest experiment, run" below for what is settled and what the model
 cannot settle, which is the read path's round-trip latency.
@@ -507,7 +507,7 @@ mattered.
    able to *fail*: the device counts latency in CK and `HANDLE_LATENCY` counts
    `sync` cycles, so a pause inside the window would shift the whole data phase
    and every beat would be wrong.
-2. **The record split is `ClockStopPHY` in `gateware/soc/vexii_bootram.py`**,
+2. **The record split is `ClockStopPHY` in `gateware/soc/bootram.py`**,
    not a harness wrapper — the simulation drives the same gateware a build would.
    `BootRAM` gains `clock_stop`, default **off**.
 3. **`clk_en_dev = clk_en & ~stall` is one register short on writes.** `dq.o` is
@@ -571,7 +571,7 @@ with the board bit-for-bit and one that contradicts it.
 ## Two defects found on the way, neither caused by any of the above — both fixed
 
 **`HYPERRAM_MAX_BURST_WORDS` was 3.1x too permissive at the clock this SoC runs.**
-`vexii_bootram.py` set 748 words with the comment "below 768 CK at 192 MHz" —
+`bootram.py` set 748 words with the comment "below 768 CK at 192 MHz" —
 4 µs, correct for CK 192. `SYNC_MHZ` is 60 and `HYPERRAM_DQS` is False, so CK is
 60 MHz and 748 words was **12.5 µs, over three times tCSM**. Unreachable because
 a Wishbone burst never exceeds 32 words, and dead entirely while
@@ -580,7 +580,7 @@ CS#-low time stop tracking word count at all.
 
 Now `hyperram_max_burst_words(ck_mhz, clock_stop=)`, from tCSM with a tenth of
 the budget held back for the PLL's actual solved frequency and for `RECOVERY`
-being a TODO upstream. `vexii_hello_soc.py` passes its own `SYNC_MHZ` in rather
+being a TODO upstream. `top.py` passes its own `SYNC_MHZ` in rather
 than a second copy of the number being kept here, because
 `riscv_clock_ladder.py` rewrites that constant. **198 words at CK 60, 132 with
 clock stop, 674 at CK 192** — and §8 checks all four against tCSM as well as

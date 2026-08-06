@@ -50,7 +50,7 @@ and fell straight through to `IDLE`, so CS could be re-asserted on the next
 cycle; and `with m.If(extra_latency | 1)` made the low-latency branch dead.
 
 Both are protocol-layer, not this file's business, and both are now handled in
-`hyperram_dqs_controller.py`: RECOVERY deasserts CS and holds it for a tCSHI-
+`peripherals/hyperram_dqs_controller.py`: RECOVERY deasserts CS and holds it for a tCSHI-
 derived count, and the latency branch is gated on a `fixed_latency` parameter
 rather than a hardcoded `| 1`. CR0 reads `0x8f2f` with fixed latency enabled, so
 the long branch is still the right one for this part as configured — the

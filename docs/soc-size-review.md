@@ -72,7 +72,7 @@ is mapping, and mapping depends on the neighbours; read the DFF column first.
 
 Four builds of nominally the same design gave **14,178, 14,200, 14,025 and
 14,476** TRELLIS_COMB. The cause is not placement — synthesis is deterministic
-given a netlist. It is that `gateware_id.py` bakes the build timestamp and the
+given a netlist. It is that `peripherals/gateware_id.py` bakes the build timestamp and the
 git hash in as 32-bit constants and synthesis folds them, so a build a minute
 later is a different netlist. **Up to 451 TRELLIS_COMB of spread from a clock**,
 against a design whose whole instrumentation block is 1,074.
@@ -143,14 +143,14 @@ decoder windows.
 
 The measurement that made the three worth counting together: they exist to
 answer questions, and two of those questions are answered.
-`vexii_flash.py`'s own docstring says the ILA "was built to find the JEDEC read
-fault, which is fixed", and `flash_cdc.py` records that once the PHY moves to
+`peripherals/flash.py`'s own docstring says the ILA "was built to find the JEDEC read
+fault, which is fixed", and `peripherals/flash_cdc.py` records that once the PHY moves to
 its own domain the ILA's captures cross a clock boundary unsynchronised and are
 "evidence about gross behaviour only".
 
 ### `ObservablePHY` is a 130-line verbatim copy, and it is still verbatim
 
-`gateware/soc/vexii_flash.py`'s `ObservablePHY` re-implements
+`gateware/soc/peripherals/flash.py`'s `ObservablePHY` re-implements
 `luna_soc`'s `SPIPHYController.elaborate` statement for statement, adding only
 assignments that expose internals to the ILA. Its docstring states the
 obligation — "If upstream changes, this must be re-synced or it is measuring a
@@ -226,7 +226,7 @@ Checked against the installed libraries by running them, not by reading them.
 | `StreamBuffer`'s FIFO↔stream wiring | `amaranth.lib.fifo`'s `w_stream` / `r_stream` | **replaced** — byte-identical Verilog, §7 |
 | `Plic` | nothing | `amaranth_soc.event.Monitor` **raises `DriverConflict` and does not elaborate**, as `upstream-boundary.md` says. Re-verified here; `csr.event.EventMonitor` fails the same way |
 | `blockram` (from luna_soc) | `amaranth_soc.wishbone.sram.WishboneSRAM` | **not a swap.** Its signature carries no `cti`/`bte`/`err`, so cache-line refills lose registered-feedback bursting. Same 2 cycles a beat, fewer features |
-| `flash_cdc.ClockCrossedPHY` | `luna_soc`'s own `SPIControlPortCDC` | ours uses `AsyncFIFOBuffered` where upstream uses `AsyncFIFO`, and `flash_cdc.py` records that the unbuffered form put the FIFO output mux and the PHY's carry chain on one path. Ours is the fixed one |
+| `flash_cdc.ClockCrossedPHY` | `luna_soc`'s own `SPIControlPortCDC` | ours uses `AsyncFIFOBuffered` where upstream uses `AsyncFIFO`, and `peripherals/flash_cdc.py` records that the unbuffered form put the FIFO output mux and the PHY's carry chain on one path. Ours is the fixed one |
 | `SplitRW` (read and write are different registers) | nothing in `amaranth_soc.csr.action` | correct as written, and already shared by four peripherals |
 | `SerialLine` | `amaranth_stdio.serial.AsyncSerial` | already a wrapper; the four things it adds are all things `AsyncSerial` deliberately leaves out |
 
@@ -240,10 +240,10 @@ the whole of `luna_soc.gateware.core.spiflash`:
     mmap.py 207   phy.py 246   port.py 172   controller.py 164
     utils.py  93   __init__.py 116                  = 998 lines
 
-from `vexii_flash.py` (`SPIFlashMemoryMap`, `SPIPHYController`,
+from `peripherals/flash.py` (`SPIFlashMemoryMap`, `SPIPHYController`,
 `SPIClockGenerator`, `SPIController`, `SPIControlPort`, `StreamCore2PHY`,
-`StreamPHY2Core`, `WaitTimer`, `PinSignature`), `vexii_hello_soc.py`
-(`ECP5ConfigurationFlashInterface`) and `flash_cdc.py` (`SPIControlPort`).
+`StreamPHY2Core`, `WaitTimer`, `PinSignature`), `top.py`
+(`ECP5ConfigurationFlashInterface`) and `peripherals/flash_cdc.py` (`SPIControlPort`).
 
 **1,125 lines, not 127.** The "321 lines against 4,078" trade in that document is
 arithmetic on a surface that has since tripled.
@@ -252,10 +252,10 @@ arithmetic on a surface that has since tripled.
 
 | change | `.text` | `.rodata` | fabric |
 |---|---:|---:|---|
-| `stream_buffer.py` uses `fifo.w_stream` / `r_stream` | — | — | **byte-identical Verilog** |
+| `peripherals/stream_buffer.py` uses `fifo.w_stream` / `r_stream` | — | — | **byte-identical Verilog** |
 | `vbus_command` and `vbus::Source::parse` take bytes | −384 | −496 | — |
 | `bench.rs`: duplicate `#[inline(always)]` removed | 0 | 0 | — |
-| `vexii_clint.py`: docstring pointed at a file that does not exist | — | — | — |
+| `cpu/clint.py`: docstring pointed at a file that does not exist | — | — | — |
 
 After: `.text` 41,016 · `.rodata` 16,560 · flash image **57,600** (−880) ·
 TRELLIS_COMB 14,025 · TRELLIS_FF 7,481 · DP16KD 44 · `$glbnet$clk` 73.05 MHz ·
@@ -277,16 +277,16 @@ silently truncate.
 
 ## 8. Things that are wrong rather than merely large
 
-**`vbus_csr.py`'s `input` register drives nothing.** `VbusControl` exposes
-`control_vbus_in_en` and `aux_vbus_in_en`, and `vexii_hello_soc.py` states that
+**`peripherals/vbus_csr.py`'s `input` register drives nothing.** `VbusControl` exposes
+`control_vbus_in_en` and `aux_vbus_in_en`, and `top.py` states that
 the two pads are "deliberately NOT requested". So the register is writable, reads
-back what was written, and reaches no pin — while `vbus_csr.py`'s own docstring
+back what was written, and reaches no pin — while `peripherals/vbus_csr.py`'s own docstring
 says "`vbus input both` restores the permissive state at runtime" and
 `vbus::inputs()` reports its value to the operator as though it were the state of
 the board. A shell that says the AUX input is open when nothing has opened it is
 worse than a shell with no such command.
 
-**`gateware/soc/vexii_irq.py` is in no design.** 119 lines, 149 LUT4-equivalent
+**`gateware/soc/cpu/irq.py` is in no design.** 119 lines, 149 LUT4-equivalent
 if it were ever instantiated. `upstream-boundary.md` keeps it so luna_soc's SVD
 generator "still finds the map" — but `repos/cynthion`'s facedancer top imports
 `InterruptController` from `luna_soc.gateware.cpu`, not from here, so nothing in
@@ -304,7 +304,7 @@ of `luna_soc.gateware.cpu.VexRiscv` in the tree.
 `hyperram/hyperram_fifo.py:109`) and
 `docs/luna_ecp5_fpga/fast-bitstream-loading.md` (`loader/bitstream_sink.py:25`).
 `./dev.py docs` checks links in Markdown and nothing checks them in source
-comments, which is why these survived. A fourth, in `vexii_clint.py`, is fixed
+comments, which is why these survived. A fourth, in `cpu/clint.py`, is fixed
 in §7.
 
 **`vbus::discharge()` has no caller** (`firmware/cynthion-soc/src/vbus.rs:305`).
@@ -326,5 +326,5 @@ Reading their source suggests otherwise; running them does not.
 constructs its Wishbone signature with no `features`, so it has no `cti`, no
 `bte` and no `err` — and the CPU's cache-line refills are registered-feedback
 bursts. Its acknowledge also takes the same two cycles a beat that
-`wishbone_pipe.py` already documents for the block RAM, so there is no latency
+`bus/wishbone_pipe.py` already documents for the block RAM, so there is no latency
 argument either.

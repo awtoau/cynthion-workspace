@@ -33,7 +33,7 @@ built.
 The rest is arithmetic that should be measured rather than asserted: the same
 run reports how many cycles a transfer and a burst beat take with and without
 the stage, which is where the "1.5x on bus-bound work" figure in
-`wishbone_pipe.py` comes from.
+`bus/wishbone_pipe.py` comes from.
 
 ## What this cannot say
 
@@ -48,6 +48,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -67,7 +68,7 @@ from amaranth_soc          import wishbone                  # noqa: E402
 # it onto sys.modules under the bare name.
 from luna_soc.gateware.core import blockram                 # noqa: E402
 
-from wishbone_pipe import RegisteredResponse                # noqa: E402
+from bus.wishbone_pipe import RegisteredResponse                # noqa: E402
 
 # A small memory with distinct, non-zero words.
 #

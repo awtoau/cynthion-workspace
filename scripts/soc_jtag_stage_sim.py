@@ -63,6 +63,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -73,14 +74,14 @@ from amaranth       import ClockDomain, Module          # noqa: E402
 from amaranth.hdl   import Fragment                     # noqa: E402
 from amaranth.sim   import Simulator                    # noqa: E402
 
-from jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,  # noqa: E402
+from bus.jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,  # noqa: E402
                         SIGNATURE, JTAGStager)
 
 # The two clocks, as the board runs them.
 #
 # Not round numbers picked for convenience: 12 MHz is what `spi_init(SPI_FPGA_JTAG,
 # ..., 1, ...)` in Apollo's `firmware/src/jtag.c` sets, and 60 MHz is `SYNC_MHZ` in
-# `vexii_hello_soc.py`. The ratio between them is the whole margin.
+# `top.py`. The ratio between them is the whole margin.
 SYNC_HZ = 60e6
 JTCK_HZ = 12e6
 

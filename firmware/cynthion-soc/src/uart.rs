@@ -2,14 +2,14 @@
 //!
 //! One type, any number of instances, and the same code on the FPGA and under
 //! QEMU: `-M virt` presents an `ns16550a` at 0x10000000 and
-//! `gateware/soc/uart16550.py` presents the same register map at whatever
+//! `gateware/soc/peripherals/uart16550.py` presents the same register map at whatever
 //! address the SoC's decoder gives it. Nothing below is conditional on the
 //! target, so `scripts/soc_test.py` exercises the driver the board runs.
 //!
 //! **The discipline: poll LSR, act on RBR/THR, and never read anything else to
 //! find out whether you may.** RBR at +0 pops the FIFO; LSR at +5 is in a
 //! different 32-bit word and cannot be aliased onto it. See the module
-//! docstring in `gateware/soc/uart16550.py`.
+//! docstring in `gateware/soc/peripherals/uart16550.py`.
 //!
 //! ## A read of LSR destroys what it returns
 //!

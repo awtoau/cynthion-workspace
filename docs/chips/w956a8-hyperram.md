@@ -381,7 +381,7 @@ one transaction at a time.
 
 **The window can coalesce bursts, and currently does not.** `cti == INCR_BURST
 && bte == LINEAR` holds one HyperBus transaction open across beats
-(`gateware/soc/vexii_bootram.py`), capped at `HYPERRAM_MAX_BURST_WORDS = 748`
+(`gateware/soc/bootram.py`), capped at `HYPERRAM_MAX_BURST_WORDS = 748`
 for tCSM. `sustained` gates it and is **False**.
 
 The reason is not a preference. A HyperBus data phase cannot be stalled, this

@@ -17,7 +17,7 @@ console is wedged is still reloadable.
     IR    value  claimed by
     ----  -----  --------------------------------------------
     ER1   0x32   this sink
-    ER2   0x38   the RISC-V debug module (`vexii_cpu.py`)
+    ER2   0x38   the RISC-V debug module (`cpu/cpu.py`)
 
 `JTAGG` is a singleton -- one per die -- and presents both. `UserJTAG` instantiates
 it once and hands out each tap; nothing else in this tree may instantiate another.

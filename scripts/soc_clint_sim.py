@@ -44,6 +44,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -53,7 +54,7 @@ from devlog import emit  # noqa: E402
 from amaranth.hdl import Fragment            # noqa: E402
 from amaranth.sim import Simulator           # noqa: E402
 
-from vexii_clint import (Clint, MSIP_BASE, MTIMECMP_BASE, MTIME_BASE,  # noqa: E402
+from cpu.clint import (Clint, MSIP_BASE, MTIMECMP_BASE, MTIME_BASE,  # noqa: E402
                          NEVER)
 
 MTIMECMP_LO = MTIMECMP_BASE + 0
@@ -124,7 +125,7 @@ class Bus:
 
 
 class Counter:
-    """A free-running `mtime`, driven at one per cycle as `vexii_cpu.py` does.
+    """A free-running `mtime`, driven at one per cycle as `cpu/cpu.py` does.
 
     The peripheral does not own the counter -- it takes it as an input, so that
     `csrr time` and a load from 0xbff8 cannot disagree -- which means the

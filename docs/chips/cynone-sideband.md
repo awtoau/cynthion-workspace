@@ -22,7 +22,7 @@ question below is measured against.
 | Responder, test bitstream | `apollo_fpga.gateware.sideband` via [`gateware/probes/sideband/sideband_gateware.py`](../../gateware/probes/sideband/sideband_gateware.py) — protocol v1 |
 | Pad sharing, both blocks | [`gateware/sideband_debug.py`](../../gateware/sideband_debug.py) |
 | Port request | [`gateware/sideband_advertise.py`](../../gateware/sideband_advertise.py) |
-| CPU's end | [`gateware/soc/sideband_csr.py`](../../gateware/soc/sideband_csr.py) |
+| CPU's end | [`gateware/soc/peripherals/sideband_csr.py`](../../gateware/soc/peripherals/sideband_csr.py) |
 | Master | `repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` |
 | Host decode | [`scripts/sideband_decoder.py`](../../scripts/sideband_decoder.py), [`gateware/probes/sideband/test_protocol.py`](../../gateware/probes/sideband/test_protocol.py) |
 | Simulation | [`scripts/sideband_link_sim.py`](../../scripts/sideband_link_sim.py) — the responder at the pad; [`scripts/sideband_advertise_sim.py`](../../scripts/sideband_advertise_sim.py) — the advertisement, frame-exact |

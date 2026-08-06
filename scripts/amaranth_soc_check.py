@@ -30,7 +30,7 @@ a declaration is invisible and a red check is not.
 ## Imported the way the designs import it
 
 `from luna_soc.gateware.core import blockram` first, then the bare name -- the
-load-bearing order documented at `gateware/soc/vexii_hello_soc.py:89`. Asking
+load-bearing order documented at `gateware/soc/top.py:89`. Asking
 the question any other way answers a different question than the one the build
 asks.
 

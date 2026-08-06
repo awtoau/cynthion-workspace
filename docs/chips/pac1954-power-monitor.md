@@ -178,7 +178,7 @@ rather than vanishes.**
 |---|---|
 | host over JTAG | `gateware/probes/power_monitor/power_monitor_gateware.py` (applet `0x504D4F4E` "PMON") + `scripts/power_probe.py` |
 | free-running poller | `gateware/probes/sideband/sideband_gateware.py` — reads one register on a loop, blinks an LED when it sees `0x54` |
-| RISC-V CPU | `gateware/soc/i2c_master.py` (OpenCores register map) wired in `gateware/soc/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/bus.rs` (which owns `bus/i2c.rs` and `bus/mux.rs`) and `src/power.rs`, shell commands `i2c` and `power` |
+| RISC-V CPU | `gateware/soc/peripherals/i2c_master.py` (OpenCores register map) wired in `gateware/soc/top.py`; driver `firmware/cynthion-soc/src/bus.rs` (which owns `bus/i2c.rs` and `bus/mux.rs`) and `src/power.rs`, shell commands `i2c` and `power` |
 
 ### From the SoC shell
 

@@ -31,7 +31,7 @@ Byte offsets from the base of a 4 MiB window:
 
 ## Register discipline
 
-The rule (see `uart16550.py`): **a read must never change state, and nothing
+The rule (see `peripherals/uart16550.py`): **a read must never change state, and nothing
 anyone polls may share a 32-bit word with one that does.** The standard map
 already complies:
 
@@ -72,7 +72,7 @@ from amaranth_soc          import csr
 # reach different hardware", which claim/complete is the other instance of in
 # this SoC. `amaranth_soc.csr.action` has no equivalent -- R and W are
 # one-directional and RW owns its own storage.
-from uart16550             import SplitRW
+from peripherals.uart16550             import SplitRW
 
 
 __all__ = ["Plic"]

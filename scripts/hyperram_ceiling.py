@@ -172,7 +172,7 @@ def delta(now, before):
 
 
 # Apollo clocks TCK at 12 MHz (`scripts/soc_jtag_stage_sim.py` states it, and
-# `jtag_stage.py` constrains the domain at 20 MHz with headroom).
+# `bus/jtag_stage.py` constrains the domain at 20 MHz with headroom).
 APOLLO_TCK_MHZ = 12.0
 
 # How much faster than TCK `sync` must be for the register interface to be

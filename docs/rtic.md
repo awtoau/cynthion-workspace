@@ -121,7 +121,7 @@ Nothing here is a reason to reject RTIC on a machine with a bigger cache.
 
 | | |
 |---|---|
-| IPC and `ICACHE_MISS` on silicon | needs a bitstream first: `uart16550.py` implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
+| IPC and `ICACHE_MISS` on silicon | needs a bitstream first: `peripherals/uart16550.py` implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
 | what shrinking the hot set would take | unmeasured |
 
 ## Reproducing

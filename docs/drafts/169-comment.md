@@ -9,7 +9,7 @@
 - **Submodules: eight → four.** apollo, cynthion, cynthion-hardware, vexiiriscv.
   luna, packetry and saturn-v went with facedancer.
 - **The `gateware` check is deleted**, not repointed — question 3 answered.
-  `socmap` elaborates `gateware/soc/vexii_hello_soc.py` and is the gateware
+  `socmap` elaborates `gateware/soc/top.py` and is the gateware
   coverage. The `flutter` check went too, with the dashboard.
 - **The `.gitignore` `lib/` trap is fixed.** The block is `/lib/` and `/lib64/`,
   anchored, with a comment naming the 36 files it cost. **That bullet above is
@@ -29,7 +29,7 @@
   `cynthion.gateware.platform.cynthion_r1_4`:
   `scripts/soc_generate_pac.py:138`, `scripts/soc_diagram.py:171`,
   `scripts/bram_patch.py:255`, `gateware/probes/bram_probe/bram_probe.py:192`,
-  `gateware/soc/vexii_hello_soc.py:1705`, and `scripts/phy_probe.py:15` —
+  `gateware/soc/top.py:1705`, and `scripts/phy_probe.py:15` —
   the last of which is not a platform import at all, but
   `cynthion.selftest.registers`, and needs upstream's selftest bitstream to be
   useful. It is a separate decision, not a conversion.
@@ -37,7 +37,7 @@
   `rust`, `apollo`, `python`, `freethreading`.
 - `scripts/sideband_build.py:40` → **43**, and `scripts/fabric_build.py:72` does
   the same `sys.path.insert(0, "repos/apollo")` and was missed.
-- Stale comment citations in `vexii_hello_soc.py`: `176, 181, 277, 312, 1642` →
+- Stale comment citations in `top.py`: `176, 181, 277, 312, 1642` →
   `177, 182, 278, 313, 1711`. Line **84** — the `variable_clock` import — is
   unchanged and is still what makes `repos/apollo` load-bearing.
 

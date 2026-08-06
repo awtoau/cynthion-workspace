@@ -18,7 +18,7 @@ No claim, no complete, no priorities. Software reads `pending`, takes
 keep luna_soc's signatures so `luna_soc/generate/svd.py` still finds the map
 and the generated PAC keeps its interrupt numbering.
 
-**For a new SoC, use `vexii_plic.py` instead.** A standard PLIC is what keeps
+**For a new SoC, use `cpu/plic.py` instead.** A standard PLIC is what keeps
 the firmware's interrupt path identical on the board and under QEMU's `-M
 virt`, which is where the test gate runs. This peripheral is kept for
 moondancer's existing PAC. See `../../docs/architecture.md`.

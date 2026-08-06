@@ -10,12 +10,12 @@ proposals for the owner rather than actions taken.
 **Blocks:** any host-mode bitstream. **Also unblocks:** #120, #125.
 
 `platform.request("target_phy")` may be called once, and
-`gateware/soc/vexii_hello_soc.py` already calls it, driving `clk`, `rst`,
+`gateware/soc/top.py` already calls it, driving `clk`, `rst`,
 `stp`, `data.o` and `data.oe` combinationally from `UlpiRegisters`. A host engine
 needs the same pins, and there is no mux point.
 
 Arbitration is the wrong fix, for a reason more basic than contention:
-`ulpi_window.py` hard-wires `data_oe = ~dir_i` and waits for `dir` to fall before
+`peripherals/ulpi_window.py` hard-wires `data_oe = ~dir_i` and waits for `dir` to fall before
 driving. A host engine receiving a packet holds `dir` high, so the window's
 4096-cycle timeout fires and a working system reports a broken PHY.
 

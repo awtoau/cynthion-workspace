@@ -5,7 +5,7 @@
 
 """Check `ObservablePHY` against the `luna_soc` PHY it copies.
 
-`gateware/soc/vexii_flash.py`'s `ObservablePHY` re-implements
+`gateware/soc/peripherals/flash.py`'s `ObservablePHY` re-implements
 `luna_soc.gateware.core.spiflash.phy.SPIPHYController.elaborate` line for line,
 adding only assignments that expose internal signals to `FlashILA`. Its own
 docstring states the obligation:
@@ -38,7 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "soc_upstream_copy_check.log"
-OURS = ROOT / "gateware" / "soc" / "vexii_flash.py"
+OURS = ROOT / "gateware" / "soc" / "peripherals" / "flash.py"
 
 
 def _canonical(text):

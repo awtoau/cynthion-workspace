@@ -27,7 +27,7 @@ and an LED. Nothing exotic.
 
 This is the least USB-dependent scenario in the whole set, and most of it already exists.
 
-- **LEDs:** `vexii_hello_soc.py` drives the six USER LEDs from an `amaranth_soc.gpio`
+- **LEDs:** `top.py` drives the six USER LEDs from an `amaranth_soc.gpio`
   block at `GPIO_BASE`. Present.
 - **USER button and Pmod A:** the platform declares them; the GPIO peripheral is upstream
   `amaranth_soc.gpio`, unmodified, with per-pin direction control — which is what the Pmod

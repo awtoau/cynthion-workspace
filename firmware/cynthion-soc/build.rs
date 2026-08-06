@@ -14,7 +14,7 @@
 //!
 //! `usercode()` there stamps the ECP5's USERCODE with `short=7 & 0x7fffffff`,
 //! and sets bit 31 when `git status --porcelain` says anything. The gateware's
-//! `gateware_id.py` puts the same word in a CSR, and `info` compares the two --
+//! `peripherals/gateware_id.py` puts the same word in a CSR, and `info` compares the two --
 //! so the two definitions of "dirty" have to be the same one. In particular
 //! this uses plain `--porcelain`, which counts untracked files: a build with an
 //! untracked file present is called dirty by both sides, and agreeing matters

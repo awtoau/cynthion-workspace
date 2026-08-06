@@ -32,7 +32,7 @@ the same breath: read `lines` to find who asserted, write `select` to reach it.
 Both reads are pure. The FUSB302B's own interrupt registers are read-to-clear
 and that is where clearing belongs -- a clear-on-read CSR here would put a
 state-changing read one byte from the register the handler polls
-(`uart16550.py`).
+(`peripherals/uart16550.py`).
 
 ## Traps this is shaped around
 

@@ -22,7 +22,7 @@ divider is set by software rather than fixed at generation, so this receives at
 a configured rate and will produce framing errors rather than silence if the
 two disagree -- which is the more diagnosable failure.
 
-    ./gateware/soc/vexii_bench_soc.py --build
+    ./gateware/soc/bench.py --build
 """
 
 import sys as _uid_sys

@@ -48,6 +48,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -58,11 +59,11 @@ from amaranth import Module                  # noqa: E402
 from amaranth.hdl import Fragment            # noqa: E402
 from amaranth.sim import Simulator           # noqa: E402
 
-from i2c_mux import I2CBusMux                # noqa: E402
-from uart16550 import Uart16550              # noqa: E402
-from vexii_plic import Plic, CONTEXT_BASE, ENABLE_BASE, PENDING_BASE  # noqa: E402
+from peripherals.i2c_mux import I2CBusMux                # noqa: E402
+from peripherals.uart16550 import Uart16550              # noqa: E402
+from cpu.plic import Plic, CONTEXT_BASE, ENABLE_BASE, PENDING_BASE  # noqa: E402
 
-# Source numbers, matching what gateware/soc/vexii_hello_soc.py wires up.
+# Source numbers, matching what gateware/soc/top.py wires up.
 CONSOLE = 1
 APOLLO = 2
 TYPE_C_TARGET = 4
@@ -425,7 +426,7 @@ def run_type_c_checks(checks, verbose):
     """One PLIC source per FUSB302B, driven from the mux that raises them.
 
     The mux alone is checked in `scripts/soc_board_sim.py`; what is checked here
-    is the composition `vexii_hello_soc.py` builds -- each `int` line on its own
+    is the composition `top.py` builds -- each `int` line on its own
     source -- and the property the split exists for:
 
     **A handler learns which device asserted from the claim, and touches nothing

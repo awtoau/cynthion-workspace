@@ -23,7 +23,7 @@ one LED pin, so nothing is dangling. The baseline is that scaffold with no engin
 in it, and it is subtracted.
 
 Clocking is `VariableClockDomainGenerator(sync_mhz=60)` -- the SoC's own generator
-(`gateware/soc/vexii_hello_soc.py`), not LUNA's -- so the `sync`/`usb` split and
+(`gateware/soc/top.py`), not LUNA's -- so the `sync`/`usb` split and
 the 60 MHz constraint match the design this would go into.
 
 ## What this number is, and what it is not

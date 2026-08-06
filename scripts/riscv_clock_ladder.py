@@ -29,7 +29,7 @@ merely enumerates proves neither.
 
 **The sideband.** Its bit period is a cycle count fixed at build time, so a design that
 raises `sync` and leaves the responder's `clk_freq_hz` alone gets a dead debug link rather
-than a slow one. `vexii_hello_soc.py` derives both from `SYNC_MHZ`, so this only has to
+than a slow one. `top.py` derives both from `SYNC_MHZ`, so this only has to
 rewrite one constant.
 
 **The `usb` domain must stay at 60 MHz.** The ULPI PHY requires it. Only `sync` and `fast`
@@ -54,7 +54,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "tmp" / "riscv_clock_ladder.json"
-GATEWARE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
+GATEWARE = ROOT / "gateware" / "soc" / "top.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))

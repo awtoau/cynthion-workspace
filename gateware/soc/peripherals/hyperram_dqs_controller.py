@@ -30,7 +30,7 @@ recovery` and falls straight through to `IDLE`, so CS# can be re-asserted on the
 next cycle. The W956A8 wants 10 ns between transactions; at CK 180 (sync 90) one
 `sync` cycle is 11.1 ns, so the old arrangement had about a nanosecond of margin
 and only by accident. `hyperram_dqs_top.py` counted the gap outside the
-controller, but `vexii_bootram.py` -- the SoC, the thing that actually runs --
+controller, but `bootram.py` -- the SoC, the thing that actually runs --
 enforced nothing at all. Now the controller holds it, so every caller gets it.
 
 **The latency branch says what it means.** Upstream forces the long count with

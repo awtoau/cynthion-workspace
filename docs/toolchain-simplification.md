@@ -57,7 +57,7 @@ Our own designs, all four sites:
 
 | File | Import | Why |
 |---|---|---|
-| `gateware/soc/vexii_hello_soc.py:45` | `core.blockram` | real use |
+| `gateware/soc/top.py:45` | `core.blockram` | real use |
 | `gateware/probes/i2c/multiplexed.py:69` | `core.blockram` | **aliasing only** — `# noqa: F401 (aliases amaranth_soc)` |
 | `scripts/patch_amaranth_soc_annotations.py:110` | `core.blockram` | aliasing only, to locate the file it patches |
 

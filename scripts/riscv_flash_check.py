@@ -103,7 +103,7 @@ JEDEC_NO_RESPONSE = ("00000000", "00ffffff", "ffffffff")
 EXPECT_CAPACITY = 4 * 1024 * 1024
 
 # The CPU clock, for turning cycle counts into a rate. Must match SYNC_MHZ in
-# gateware/soc/vexii_hello_soc.py.
+# gateware/soc/top.py.
 SYNC_MHZ = 80
 
 # How many console lines to read before deciding.

@@ -59,74 +59,74 @@ from amaranth.hdl import Fragment                        # noqa: E402
 def _peripherals():
     """(name, thunk, note) for each module, in the order the review reads them."""
     def uart16550():
-        from uart16550 import Uart16550
+        from peripherals.uart16550 import Uart16550
         return Uart16550()
 
     def plic():
-        from vexii_plic import Plic
+        from cpu.plic import Plic
         return Plic(sources=5)
 
     def clint():
-        from vexii_clint import Clint
+        from cpu.clint import Clint
         return Clint()
 
     def i2c_master():
-        from i2c_master import I2CMaster
+        from peripherals.i2c_master import I2CMaster
         return I2CMaster()
 
     def i2c_mux():
-        from i2c_mux import I2CBusMux
+        from peripherals.i2c_mux import I2CBusMux
         return I2CBusMux()
 
     def sideband_csr():
-        from sideband_csr import SidebandControl
+        from peripherals.sideband_csr import SidebandControl
         return SidebandControl()
 
     def vbus_csr():
-        from vbus_csr import VbusControl
+        from peripherals.vbus_csr import VbusControl
         return VbusControl()
 
     def gateware_id():
-        from gateware_id import GatewareId
+        from peripherals.gateware_id import GatewareId
         return GatewareId(sync_hz=60_000_000, usb_hz=60_000_000,
                           cache_sets=64)
 
     def ulpi_window():
-        from ulpi_window import UlpiRegisters
+        from peripherals.ulpi_window import UlpiRegisters
         return UlpiRegisters()
 
     def serial_line():
-        from serial_line import SerialLine
+        from peripherals.serial_line import SerialLine
         return SerialLine(divisor=520, data_bits=8)
 
     def stream_buffer_sync():
-        from stream_buffer import StreamBuffer
+        from peripherals.stream_buffer import StreamBuffer
         return StreamBuffer(depth=64)
 
     def stream_buffer_async():
-        from stream_buffer import StreamBuffer
+        from peripherals.stream_buffer import StreamBuffer
         return StreamBuffer(depth=16, i_domain="sync", o_domain="usb")
 
     def wishbone_pipe():
-        from wishbone_pipe import RegisteredResponse
+        from bus.wishbone_pipe import RegisteredResponse
         return RegisteredResponse(addr_width=30, data_width=32,
                                   granularity=8,
                                   features={"cti", "bte", "err"})
 
     def flash_probe():
-        from vexii_flash import FlashPinProbe
+        from peripherals.flash import FlashPinProbe
         return FlashPinProbe()
 
     def flash_ila():
-        from vexii_flash import FlashILA
+        from peripherals.flash import FlashILA
         return FlashILA(sample_depth=1024)
 
     def hyperram_probe():
-        from hyperram_probe import HyperRAMProbe
+        from peripherals.hyperram_probe import HyperRAMProbe
         return HyperRAMProbe()
 
     def vexii_irq():
-        from vexii_irq import InterruptController
+        from cpu.irq import InterruptController
         return InterruptController()
 
     return [

@@ -1,7 +1,7 @@
 # NS16550A — the console UART, in fabric
 
 The register map both of this SoC's consoles answer on. Not a chip: it is
-`gateware/soc/uart16550.py`, instantiated twice, and it is here with the chip
+`gateware/soc/peripherals/uart16550.py`, instantiated twice, and it is here with the chip
 notes because a driver author needs the same thing from it that they need from a
 part — which reads change state, and what they change.
 
@@ -9,7 +9,7 @@ part — which reads change state, and what they change.
 
 | | |
 |---|---|
-| Source | [`../../gateware/soc/uart16550.py`](../../gateware/soc/uart16550.py) |
+| Source | [`../../gateware/soc/peripherals/uart16550.py`](../../gateware/soc/peripherals/uart16550.py) |
 | Driver | `firmware/cynthion-soc/src/uart.rs`, one type for both instances and for QEMU |
 | Instances | index 0, USB CDC-ACM on AUX; index 1, async serial on R14/T14 to Apollo |
 | Base addresses | `cynthion_soc_pac::base`, generated from the SoC's own memory map — **not written down here** |
@@ -165,7 +165,7 @@ Four reasons it stays ours, in order of weight:
   divisor and a shift register's latency invented so a module could be told it was
   a UART. The Apollo port genuinely is a serial line, but on pins shared with JTAG,
   needing an output enable held across the stop bit, an idle qualifier and a pad
-  synchroniser. A stock 16550 has none of those (#113; `serial_line.py` is the
+  synchroniser. A stock 16550 has none of those (#113; `peripherals/serial_line.py` is the
   answer).
 * **Licence.** The most-proven candidate is LGPL 2.1 against this tree's
   BSD-3-Clause.
@@ -189,7 +189,7 @@ be wanted. Both argue for the bit engine there is currently no use for.
 
   * **No baud rate, on either instance's register map.** DLL and DLM are stored,
     read back, and connected to nothing. Bit timing for the Apollo line lives in
-    `serial_line.py`, where the wire was chosen.
+    `peripherals/serial_line.py`, where the wire was chosen.
   * **No modem pins.** MCR is stored and ignored; MSR reads a constant `0xb0`,
     "ready", so a driver waiting on CTS terminates. The exception is MCR bit 4
     LOOP, which routes MCR's four output bits into MSR's four status bits —

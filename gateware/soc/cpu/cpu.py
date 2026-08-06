@@ -6,7 +6,7 @@
 """
 A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
 
-    from vexii_cpu import VexiiRiscv
+    from cpu.cpu import VexiiRiscv
     cpu = VexiiRiscv(reset_addr=0x0)   # ours is 0x0, not a flash base
 
 ## Ports
@@ -14,11 +14,11 @@ A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
     ibus          Out  instruction fetch, through the L1 I-cache
     dbus          Out  data, through the L1 D-cache -- `main=1` PMA regions only
     iobus         Out  uncached data -- every `main=0` (I/O) PMA region
-    irq_external  In   one wire; drive it from `vexii_plic.py`
-    irq_timer     In   drive it from `vexii_clint.py`
+    irq_external  In   one wire; drive it from `cpu/plic.py`
+    irq_timer     In   drive it from `cpu/clint.py`
     irq_software  In   likewise
     mtime         Out  the counter behind `rdtime`, for that CLINT to compare
-    ext_reset     In   holds the core in reset; `jtag_stage.py` drives it
+    ext_reset     In   holds the core in reset; `bus/jtag_stage.py` drives it
     jtag_*        I/O  the ER2 tap, from `jtag_stage.UserJTAG`
 
 All three buses are 30-bit addressed, 32-bit data, granularity 8, with
@@ -44,14 +44,14 @@ expects.
 
 Standard RISC-V: one machine external wire, not VexRiscv's 32-bit
 `irq_external` array with mask/pending in CPU CSRs. Concentrating sources and
-reporting which fired is therefore a peripheral's job -- `vexii_plic.py`, a
+reporting which fired is therefore a peripheral's job -- `cpu/plic.py`, a
 standard PLIC.
 
-`irq_timer` and `irq_software` are the CLINT's, and `vexii_clint.py` is one.
+`irq_timer` and `irq_software` are the CLINT's, and `cpu/clint.py` is one.
 Tie them off explicitly in a design that has none, so "no source" and "nobody
 wired it" do not look identical.
 
-`vexii_irq.py` is a smaller pending/enable concentrator kept for moondancer's
+`cpu/irq.py` is a smaller pending/enable concentrator kept for moondancer's
 generated PAC. It is in no SoC here; prefer the PLIC.
 
 The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
@@ -307,7 +307,7 @@ class VexiiRiscv(wiring.Component):
         # The RISC-V debug module, on the ER2 tap.
         #
         # ER2 = 0x38 rather than ER1 = 0x32 because ER1 carries the HyperRAM staging
-        # sink (`jtag_stage.py`), and two things answering one instruction would
+        # sink (`bus/jtag_stage.py`), and two things answering one instruction would
         # corrupt both.
         #
         # `jtag_rstn` is active low, and `capture` is the non-shift half of the enable

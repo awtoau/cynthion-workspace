@@ -64,11 +64,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
 
-from jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,   # noqa: E402
+from bus.jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,   # noqa: E402
                         SIGNATURE)
 
 # The ECP5 user instruction the sink answers on. ER2 (0x38) belongs to the RISC-V
-# debug module; see `gateware/soc/jtag_stage.py`.
+# debug module; see `gateware/soc/bus/jtag_stage.py`.
 ER1 = 0x32
 
 # The staging layout, in 16-bit HyperRAM words, from

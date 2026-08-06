@@ -484,9 +484,9 @@ class HyperRAMCeiling(Elaboratable):
         burstdet = Signal()
 
         if self.dqs:
-            from hyperram_dqs_phy import HyperRAMDQSPHY
-            from hyperram_dqs_controller import HyperRAMDQSController
-            from vexii_bootram import HYPERRAM_LATENCY_CLOCKS
+            from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
+            from peripherals.hyperram_dqs_controller import HyperRAMDQSController
+            from bootram import HYPERRAM_LATENCY_CLOCKS
             # `dir="-"`: this PHY drives raw pads. The pin map is the platform's.
             bus = platform.request("ram", 0, dir="-")
             m.submodules.phy = phy = HyperRAMDQSPHY(

@@ -26,7 +26,7 @@ and not on the board, the bug is below the firmware.
 
 That argument only holds because both builds are the same source, and it got considerably
 stronger when the SoC's console became a standard NS16550A
-(`gateware/soc/uart16550.py`). `virt` presents an NS16550A too, so `src/uart.rs` --
+(`gateware/soc/peripherals/uart16550.py`). `virt` presents an NS16550A too, so `src/uart.rs` --
 the console driver itself, the thing that polls LSR and pokes THR -- is now compiled
 unchanged for both. `--features qemu` selects a different list of base addresses in
 `src/target.rs`, a flash stand-in, and a RAM array in place of the three HyperRAM MMIO

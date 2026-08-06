@@ -33,19 +33,19 @@ Structurally this is the closest match to work we have already done, because the
 **register reads over a debug transport**, not USB traffic.
 
 - **The three PHY tests** read a USB3343's vendor/product ID registers over ULPI. Our
-  `gateware/soc/ulpi_window.py` already does exactly this for `target_phy`, with a
+  `gateware/soc/peripherals/ulpi_window.py` already does exactly this for `target_phy`, with a
   documented four-phase clock-domain handshake and a bounded wait. Extending it to
   `aux_phy` and `control_phy` is a resource-request change, and it is the only new gateware
   the PHY tests need.
 - **The HyperRAM test** reads the identification registers. We have a HyperRAM controller,
-  a probe peripheral (`hyperram_probe.py`) and an identify script
+  a probe peripheral (`peripherals/hyperram_probe.py`) and an identify script
   (`scripts/hyperram_identify.py`). This is already covered by our own tooling, differently.
 - **The debug-connection test** is an Apollo JTAG check that does not involve the FPGA
   design at all.
 - **The transport is the real difference.** Upstream reaches the registers over a
   JTAG-tunnelled debug interface; we reach ours over the CPU's CSR bus, and we have a third
   option — the sideband link — that upstream does not use for this. We have
-  `gateware/soc/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
+  `gateware/soc/bus/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
   either.
 
 The question this scenario really asks is not "can we port it" but **"do we want upstream's

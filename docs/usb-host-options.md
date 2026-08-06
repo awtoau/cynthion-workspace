@@ -670,7 +670,7 @@ that is the first step in §18.**
 
 What `18c1fa5` implies for another decoder window is favourable: the Wishbone
 round trip now terminates at `RegisteredResponse`'s flip-flop
-(`gateware/soc/wishbone_pipe.py:96`), so a ninth subordinate adds one address
+(`gateware/soc/bus/wishbone_pipe.py:96`), so a ninth subordinate adds one address
 comparator and one leaf in the ACK gather to a path with ~8 ns of budget rather
 than 16. The condition is that the new subordinate's own ACK must be
 combinationally cheap — which a CSR multiplexer is.
@@ -762,7 +762,7 @@ worst cross-domain delay in the current build at 11.83 ns.
 
 Both idioms are already in the tree and proven: the four-phase toggle handshake
 at `ulpi_window.py:235-311`, and `StreamBuffer` wrapping `AsyncFIFOBuffered` at
-`gateware/soc/stream_buffer.py:96`, in use at `vexii_hello_soc.py:988-991`.
+`gateware/soc/peripherals/stream_buffer.py:96`, in use at `vexii_hello_soc.py:988-991`.
 
 Use the handshake for the transfer registers (a few crossings per transfer, so
 latency is free) and the async FIFO for the byte streams (where a per-byte
@@ -783,7 +783,7 @@ architecture.
 
 A new Wishbone window, `usb_host` at **0xf0001000, size 0x100** — free, aligned,
 inside the declared uncached PMA region (`base=f0000000 size=10000000 main=0`,
-`gateware/soc/vexii_cpu.py:110-113`), and clear of the PLIC at 0xf0400000. It
+`gateware/soc/cpu/cpu.py:110-113`), and clear of the PLIC at 0xf0400000. It
 needs a 32-bit data port, so it takes its own `decoder.add()` rather than
 sitting behind the 8-bit `board` CSR decoder.
 

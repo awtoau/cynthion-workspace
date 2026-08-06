@@ -64,7 +64,7 @@ is current without writing anything
 firmware's constant with it and renaming one is a compile error.
 
 The generator also cross-checks the map it read against the `*_BASE` constants in
-`vexii_hello_soc.py` and against the literals in `target.rs`, and refuses to write
+`top.py` and against the literals in `target.rs`, and refuses to write
 anything if they disagree. A disagreement is a defect in one of the three, not a
 formatting difference.
 
@@ -80,7 +80,7 @@ What the memory map does **not** carry is prose: `csr.Register` rewrites
 "A CSR register" and the SVD's descriptions are mechanical. Bit-level meaning is
 only present where the gateware declares separate CSR fields — the 16550's
 registers are each one 8-bit field, so `LSR.DR` and `IER.ERBFI` live in
-`gateware/soc/uart16550.py`, and the standard's own offsets and read side
+`gateware/soc/peripherals/uart16550.py`, and the standard's own offsets and read side
 effects are restated once, in
 [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — they are the
 NS16550A's rather than ours, and cannot drift with the memory map.
@@ -246,7 +246,7 @@ The heartbeat divider must be derived from the clock, not hardcoded. Getting it
 wrong here gives a heartbeat at the wrong rate, which is harmless; the same
 mistake in `SidebandDebug` gives a **dead** link
 ([`chips/cynone-sideband.md`](chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
-`vexii_hello_soc.py` derives both from `SYNC_MHZ`. See #111.
+`top.py` derives both from `SYNC_MHZ`. See #111.
 
 Only the **CONTROL** port is muxed. AUX and TARGET are hardwired to their PHYs,
 which is why `default_usb_connection = "aux_phy"` — gateware that wants a host link
@@ -516,7 +516,7 @@ gated by `POWER_CONTROL_ENABLE`, and `repos/packetry/src/backend/cynthion.rs`
 carries the command word (bits 3–7). Reset defaults are deliberate:
 `target_c_vbus_en` **closed**, everything else **open**.
 
-The SoC exposes the switches through `vbus_csr.py`; firmware gates every close
+The SoC exposes the switches through `peripherals/vbus_csr.py`; firmware gates every close
 against a fresh PAC1954 reading. `vbus control` powers TARGET-A from CONTROL.
 `vbus charge` additionally routes that supply to TARGET-C and presents Rp there.
 
@@ -646,7 +646,7 @@ They are kept here because they recur.
 
 ## The SoC shell — reaching this hardware from a prompt
 
-The RISC-V SoC (`gateware/soc/vexii_hello_soc.py`, firmware
+The RISC-V SoC (`gateware/soc/top.py`, firmware
 `firmware/cynthion-soc/`) answers a line-oriented shell on **both** its consoles:
 the USB CDC node on AUX, and the Apollo-facing port on the shared JTAG pins.
 
@@ -689,7 +689,7 @@ The gateware line is the reason the command exists. **Firmware and bitstream are
 built separately and need never have been built together** — `load` replaces the
 firmware over the console without rebuilding the bitstream, which is the point of
 it. So the bitstream carries its own git hash in a register
-(`gateware/soc/gateware_id.py`), `info` prints both, and it says `MISMATCH`
+(`gateware/soc/peripherals/gateware_id.py`), `info` prints both, and it says `MISMATCH`
 when they differ. Same for the clock: the register holds what the PLL actually
 produced, and `SYNC MISMATCH` means every interval derived from
 `target::TIME_HZ` is wrong by that ratio.
@@ -917,7 +917,7 @@ detail:
 | `mcountinhibit` | yes | same plugin; unused here |
 | `mhpmcounter3..31`, `mhpmevent3..31` | **decode, read hardwired zero** | allocated as WARL-zero dummies while `additionalCounterCount` is 0 |
 
-So `--with-rdtime` in `gateware/soc/vexii_cpu.py` gates `rdtime` and these
+So `--with-rdtime` in `gateware/soc/cpu/cpu.py` gates `rdtime` and these
 counters together, and `info`'s `NO RDTIME` line is the one warning for both.
 **Cache miss counts are not available**: they would live in the HPM counters,
 and reaching them needs `--performance-counters N` added to `GENERATE_FLAGS`, a

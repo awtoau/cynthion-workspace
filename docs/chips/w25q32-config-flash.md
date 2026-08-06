@@ -180,7 +180,7 @@ RISC-V storage.
 | host, slow | `apollo flash` — bit-banged through Apollo's software JTAG TAP |
 | host, fast | `apollo flash --fast` — FlashBridge gateware in FPGA SRAM, USB bulk straight to the fabric, Apollo out of the data path |
 | CPU, memory-mapped | `SPIFlashMemoryMap` window; see [Register reference](../hardware.md#register-reference) for the address |
-| CPU, arbitrary commands | `HoldableSPIController` + `FairSPIControlPortCrossbar` in `gateware/soc/vexii_flash.py` — **not** luna_soc's, which has two defects here ([`../upstream-boundary.md`](../upstream-boundary.md)) |
+| CPU, arbitrary commands | `HoldableSPIController` + `FairSPIControlPortCrossbar` in `gateware/soc/peripherals/flash.py` — **not** luna_soc's, which has two defects here ([`../upstream-boundary.md`](../upstream-boundary.md)) |
 | sideband | `scripts/sideband_read.py` |
 
 Boot-image selection, slot layout and the partition work:

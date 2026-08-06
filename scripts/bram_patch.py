@@ -55,7 +55,7 @@ Four checks, all of which refuse rather than warn:
 Neither is a difference in logic, and both are reconciled rather than ignored -- if
 anything else moved, the comparison still fails.
 
-- `gateware_id.py` packs `datetime.now()` into a register. The build's own stamp is
+- `peripherals/gateware_id.py` packs `datetime.now()` into a register. The build's own stamp is
   read back out of its `top.il` and the design elaborated a second time with it pinned,
   which is why the source check costs two elaborations rather than one.
 - LUNA names some generated modules after `id(self)`, so a module carries a different
@@ -266,7 +266,7 @@ PYTHON_ID = re.compile(r"_\d{10,}\b")
 def built_stamp(fresh, built):
     """Read the build's own `gateware_id` timestamp out of its RTLIL.
 
-    `gateware_id.py` packs `datetime.now()` into a register, so no two elaborations of
+    `peripherals/gateware_id.py` packs `datetime.now()` into a register, so no two elaborations of
     identical source are byte-identical and a bare comparison can never pass. This
     recovers the built-in timestamp so the design can be elaborated again *with* it,
     which turns the comparison back into an exact one instead of an approximate one.
@@ -438,7 +438,7 @@ def patch(args):
         if not path.exists():
             raise Refuse(f"no {path.relative_to(ROOT)}; there is no build to patch")
 
-    import vexii_hello_soc as soc
+    import top as soc
 
     old_words = [int(line, 16) for line in hex_path.read_text().split()]
     if len(old_words) != soc.RAM_SIZE // 4:
@@ -480,7 +480,7 @@ def patch(args):
             # approximate one -- if anything but the stamp moved, this still fails.
             stamp = built_stamp(fresh, built)
             if stamp is not None:
-                import gateware_id
+                import peripherals.gateware_id as gateware_id
                 gateware_id.pack_built = lambda when, word=stamp: word
                 fresh = PYTHON_ID.sub("_id", elaborate_il(old_words, soc))
         if fresh != built:

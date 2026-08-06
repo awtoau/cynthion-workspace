@@ -10,7 +10,7 @@ smallest thing that proves it.
 `rv64imac`, built for this board and nothing else. The Linux build **does not carry
 the Cynthion SoC** — it exists to prove a RISC-V core with the HyperRAM and flash
 drivers, a console, and possibly a USB host for a disk. Everything else in
-`vexii_hello_soc.py` comes out. Judge every number below against that.
+`top.py` comes out. Judge every number below against that.
 
 **No board was touched.** Every figure is from synthesis, place-and-route, a
 datasheet, source checked out in this tree, or a measurement already recorded
@@ -62,8 +62,8 @@ link 7.
   the area table below as a measured data point.
 - **Main memory that is not block RAM.** 64 KiB does not boot a kernel.
 - **A console, a timer, an interrupt controller.** All three exist and are in use:
-  NS16550A (`uart16550.py`, and QEMU `-M virt` presents the same part), CLINT
-  (`vexii_clint.py`), PLIC (`vexii_plic.py`).
+  NS16550A (`peripherals/uart16550.py`, and QEMU `-M virt` presents the same part), CLINT
+  (`cpu/clint.py`), PLIC (`cpu/plic.py`).
 - **Storage** only if the demonstration wants a root filesystem on a disk. An
   initramfs does not.
 
@@ -176,7 +176,7 @@ so it is cacheable and executable, with JTAG keeping arbitration priority. It ha
 ### The arithmetic that has to be checked on the board
 
 `HyperRAMWishbone` can coalesce an incrementing linear burst into one HyperBus
-transaction (`vexii_bootram.py`, capped at 748 words for tCSM — see
+transaction (`bootram.py`, capped at 748 words for tCSM — see
 [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md#how-software-reaches-it)),
 but `sustained` gates it and is **False**: coalescing corrupted alternate beats,
 because a HyperBus data phase cannot be stalled and this master bubbles. See
@@ -364,7 +364,7 @@ sbt "runMain spinal.lib.com.usb.ohci.UsbOhciWishbone \
      --port-count 1 --phy-frequency 60000000 --dma-width 32"
 ```
 
-then instantiate the emitted Verilog the way `gateware/soc/vexii_cpu.py:276`
+then instantiate the emitted Verilog the way `gateware/soc/cpu/cpu.py:276`
 already instantiates `VexiiRiscv.v` — `platform.add_file` plus an `Instance` —
 add `wb_ctrl` as a decoder subordinate and `wb_dma` as a fourth arbiter master,
 and run `scripts/soc_timing_sweep.py`.
@@ -373,7 +373,7 @@ and run `scripts/soc_timing_sweep.py`.
 
 One sbt run and a handful of nextpnr runs. The machinery all exists:
 `scripts/usb-host-core-area.py` did exactly this shape of measurement for GUH,
-and `scripts/emit_verilog.py` / `vexii_cpu.py` already carry SpinalHDL-generated
+and `scripts/emit_verilog.py` / `cpu/cpu.py` already carry SpinalHDL-generated
 Verilog into an Amaranth design.
 
 ### What it proves, and why it is the *right* first step
@@ -750,7 +750,7 @@ proposal's §15.3, **line rate is reachable here**.
 |---|---|---|
 | **5a. Re-export as a USB mass-storage *device*** on `aux_phy`/`control_phy`. The SoC already runs LUNA's device stack there for the CDC-ACM console; add a Bulk-Only Transport interface and forward SCSI commands to the target stick. | one more bulk endpoint pair of gateware; firmware SCSI forwarding | **Least new gateware of the three.** Linux sees an ordinary USB stick, mounts it with zero custom anything. Recommended. |
 | **5b. USB/IP.** Firmware relays URBs over the existing link; a userspace shim on the PC serves the USB/IP protocol on localhost:3240; `usbip attach` binds the **in-tree `vhci-hcd`**. | no gateware; substantial firmware; a PC-side userspace bridge | No kernel code, no DRAM, and it generalises to *any* device class rather than just storage. More firmware than 5a. |
-| **5c. Linux on the SoC**, binding `ohci-platform` via `compatible = "generic-ohci"` — the literal reading of the goal. | supervisor + MMU on VexiiRiscv (**not currently enabled** — `vexii_cpu.py` generates machine-mode only); the 8 MiB HyperRAM window (`d66e940`, never run); a kernel build and a DTB | **Part I is this route, costed.** It fits and it closes; the open number is what HyperRAM delivers as line refills. |
+| **5c. Linux on the SoC**, binding `ohci-platform` via `compatible = "generic-ohci"` — the literal reading of the goal. | supervisor + MMU on VexiiRiscv (**not currently enabled** — `cpu/cpu.py` generates machine-mode only); the 8 MiB HyperRAM window (`d66e940`, never run); a kernel build and a DTB | **Part I is this route, costed.** It fits and it closes; the open number is what HyperRAM delivers as line refills. |
 
 **So: is the OHCI-to-Linux route reachable on this hardware, or blocked by the
 ULPI PHYs? Reachable, and the PHYs are not the blocker.** The remaining obstacle

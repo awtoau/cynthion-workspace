@@ -8,7 +8,7 @@ A stream in, the same stream out, with a chosen amount of slack and an optional
 clock-domain crossing in between.
 
 Buffering lives HERE, next to where the transport is chosen -- not in
-`uart16550.py`, whose 16-byte FIFOs are 16 bytes because the NS16550A's are.
+`peripherals/uart16550.py`, whose 16-byte FIFOs are 16 bytes because the NS16550A's are.
 Every byte beyond that covers a property of the transport (how long the far end
 can be busy, its packet size, its clock), and none of those are properties of a
 register map.

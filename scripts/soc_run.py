@@ -68,7 +68,7 @@ FLASH_RODATA_OFFSET = 0x000b_0000
 
 # The memory-mapped flash window, for deciding which sections load by
 # programming the part rather than by bitstream init. Must match FLASH_BASE
-# and FLASH_SIZE in gateware/soc/vexii_hello_soc.py.
+# and FLASH_SIZE in gateware/soc/top.py.
 FLASH_BASE = 0x1000_0000
 FLASH_SIZE = 0x0040_0000
 
@@ -79,7 +79,7 @@ BOOT_CRATE = ROOT / "firmware" / "cynthion-boot"
 BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
             / "cynthion-boot")
 BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
-GATEWARE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
+GATEWARE = ROOT / "gateware" / "soc" / "top.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "gateware"))

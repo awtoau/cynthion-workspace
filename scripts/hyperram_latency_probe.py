@@ -42,12 +42,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from devlog import emit, log  # noqa: E402
 
 import soc_hyperram_sim as sim  # noqa: E402
-from vexii_bootram import HYPERRAM_LATENCY_CLOCKS  # noqa: E402
+from bootram import HYPERRAM_LATENCY_CLOCKS  # noqa: E402
 
 # What the board is built with, and what the ceiling harness ran at.
 BOARD_SYNC_MHZ = 60.0

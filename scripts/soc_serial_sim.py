@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Checks `gateware/soc/serial_line.py` against issue #113.
+Checks `gateware/soc/peripherals/serial_line.py` against issue #113.
 
     python3 scripts/soc_serial_sim.py
     python3 scripts/soc_serial_sim.py -v      # print every byte and edge
@@ -66,6 +66,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -76,7 +77,7 @@ from amaranth.hdl import Fragment
 from amaranth.sim import Simulator
 from amaranth_stdio.serial import AsyncSerialTX
 
-from serial_line import SerialLine
+from peripherals.serial_line import SerialLine
 
 
 # Small enough that a character is a few hundred simulated cycles rather than
@@ -471,7 +472,7 @@ def run_structural_checks(checks, verbose):
         "when constructed with a `pins` argument, and this design does not "
         "pass one.")
 
-    soc = (ROOT / "gateware" / "soc" / "vexii_hello_soc.py").read_text()
+    soc = (ROOT / "gateware" / "soc" / "top.py").read_text()
     checks.check(
         "and the SoC does not hand a raw pad to an AsyncSerial",
         "rx.i.eq(apollo_pins.rx.i)" not in soc,

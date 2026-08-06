@@ -8,7 +8,7 @@
 A single I2C controller reaching all three of the board's I2C buses.
 
 **Simulation only.** The design that runs on hardware is
-`gateware/soc/i2c_mux.py` plus `i2c_master.py`, which has the OpenCores
+`gateware/soc/peripherals/i2c_mux.py` plus `peripherals/i2c_master.py`, which has the OpenCores
 register map and a CPU behind it. Keep this for the sim tests in
 `test_multiplexed.py`.
 

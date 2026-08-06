@@ -5,7 +5,7 @@
 
 """
 A single-master I2C controller, deliberately unremarkable, for the same reason
-`uart16550.py` is a 16550: the interesting part of a peripheral is the part that
+`peripherals/uart16550.py` is a 16550: the interesting part of a peripheral is the part that
 is already written down somewhere else.
 
 The register map is the OpenCores "I2C-Master Core" (Richard Herveille,
@@ -44,7 +44,7 @@ bus fabric, and nothing else), so this is written rather than imported.
 
 The rule this project enforces is that **a read must never change state, and a
 status register must never share a 32-bit word with a side-effecting register**
-(the full argument is in `uart16550.py`). Checked against this map:
+(the full argument is in `peripherals/uart16550.py`). Checked against this map:
 
   * Every readable address here -- PRERlo, PRERhi, CTR, RXR, SR -- is a plain
     latch or a wire from a flag. Reading any of them twice gives the same
@@ -130,7 +130,7 @@ from amaranth.lib.wiring    import In, Out
 
 from amaranth_soc           import csr
 
-from uart16550              import SplitRW
+from peripherals.uart16550              import SplitRW
 
 
 __all__ = ["I2CMaster", "prescale_for", "SLOTS_BIT"]

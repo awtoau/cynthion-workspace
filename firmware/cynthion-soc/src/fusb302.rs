@@ -44,7 +44,7 @@
 //! ## The interrupt, and why the handler does not touch this file
 //!
 //! **One PLIC source per `int` line**, not an OR of the two -- see
-//! `gateware/soc/i2c_mux.py`, which says so where the sources are wired, and
+//! `gateware/soc/peripherals/i2c_mux.py`, which says so where the sources are wired, and
 //! `docs/architecture.md` decision 8 for why. This comment used to claim the
 //! opposite, while citing the file that contradicts it.
 //!

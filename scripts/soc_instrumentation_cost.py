@@ -86,7 +86,7 @@ STUB = {stub!r}
 # TRELLIS_COMB between two builds of an otherwise identical design -- which is a
 # fifth of the number this script exists to report. Fixing both makes the two
 # netlists differ only in what is being measured.
-import gateware_id
+import peripherals.gateware_id as gateware_id
 from datetime import datetime, timezone
 _real = gateware_id.GatewareId
 
@@ -103,7 +103,7 @@ if STUB:
     # whole memory map survive and only the logic goes. `elaborate` still
     # instantiates the CSR bridge -- a peripheral that did not answer at its
     # address would change the decoder, not just the module.
-    import vexii_flash, hyperram_probe
+    import peripherals.flash, hyperram_probe
     from amaranth import Module
     from amaranth.lib import wiring
 
@@ -126,7 +126,7 @@ if STUB:
     vexii_flash.FlashPinProbe = _Probe
     hyperram_probe.HyperRAMProbe = _Hyper
 
-import vexii_hello_soc
+import top as vexii_hello_soc
 from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
 # The block RAM initialiser does not affect the fabric this measures, and the

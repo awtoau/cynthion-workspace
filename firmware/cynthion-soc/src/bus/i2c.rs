@@ -1,6 +1,6 @@
 //! The I2C controller itself: bytes on wires, and nothing about which bus.
 //!
-//! Drives `gateware/soc/i2c_master.py`, which is the OpenCores I2C master
+//! Drives `gateware/soc/peripherals/i2c_master.py`, which is the OpenCores I2C master
 //! register map. Nothing here is specific to what is on the bus except
 //! `pac195x`, at the bottom, which knows how to ask a Microchip PAC195x for its
 //! name.

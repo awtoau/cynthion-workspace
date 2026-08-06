@@ -171,7 +171,7 @@ fn image_is_flash() -> bool {
 /// low byte.
 const STATUS_MARK: u32 = 0x424f_5400;
 
-/// The FPGA_ADV sideband register, per `gateware/soc/sideband_csr.py`.
+/// The FPGA_ADV sideband register, per `gateware/soc/peripherals/sideband_csr.py`.
 ///
 /// From the generated memory map rather than transcribed, which is what
 /// `scripts/check.py`'s `socmap` check enforces across this whole tree.

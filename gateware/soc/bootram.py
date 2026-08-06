@@ -66,8 +66,8 @@ from luna.gateware.interface.psram import (HyperBusPHY, HyperRAMPHY,
 # FSM vendored so its unimplemented tCSHI recovery and its forced latency branch
 # could be fixed. `docs/upstream-boundary.md`: do not inherit a stack to get one
 # file -- vendor the file.
-from hyperram_dqs_phy import HyperRAMDQSPHY
-from hyperram_dqs_controller import HyperRAMDQSController
+from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
+from peripherals.hyperram_dqs_controller import HyperRAMDQSController
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 

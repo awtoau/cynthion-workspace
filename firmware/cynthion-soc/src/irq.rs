@@ -291,7 +291,7 @@ fn defer_type_c(plic: &Plic, source: u32, port: usize) {
     // Complete BEFORE masking, and never the other way round.
     //
     // The PLIC ignores a completion for a source the context is not enabled for
-    // -- the spec's rule, implemented in `gateware/soc/vexii_plic.py` and
+    // -- the spec's rule, implemented in `gateware/soc/cpu/plic.py` and
     // warned about in that file's own comment. Disabling first therefore threw
     // the completion away, left `claimed` set for good, and since
     // `pending[i] = sources[i] & ~claimed[i]`, gated the source off permanently.

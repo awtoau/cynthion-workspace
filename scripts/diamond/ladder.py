@@ -59,7 +59,7 @@ checking the arithmetic is the whole point.
 vary, which `VariableClockDomainGenerator` already handles.
 
 **`SidebandDebug` derives its baud from the clock**, so raising `sync` without
-raising it gives a dead debug link rather than a slow one.  `vexii_hello_soc.py`
+raising it gives a dead debug link rather than a slow one.  `top.py`
 derives both from `SYNC_MHZ`, so only that one constant is rewritten.
 
     ./dev.py diamond ladder -- --check-edif
@@ -79,7 +79,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "diamond_riscv_ladder.log"
 RESULTS = ROOT / "tmp" / "diamond_riscv_ladder.json"
-GATEWARE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
+GATEWARE = ROOT / "gateware" / "soc" / "top.py"
 BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 WORK = ROOT / "tmp" / "diamond"
 

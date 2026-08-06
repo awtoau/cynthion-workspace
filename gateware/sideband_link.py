@@ -27,7 +27,7 @@ A value that *changes* proves the responder is executing, where a repeated value
 could be a wedged state machine replaying a stale buffer.
 
 **A byte each way.** `PING` carries one byte out, a `WRITE` opcode carries seven
-bits in, and `gateware/soc/sideband_csr.py` is the CPU's end of both. This
+bits in, and `gateware/soc/peripherals/sideband_csr.py` is the CPU's end of both. This
 works when USB has not enumerated, when the console is silent, and when JTAG is
 occupied -- ER1 belongs to Apollo's debug SPI and ER2 to the RISC-V debug module.
 

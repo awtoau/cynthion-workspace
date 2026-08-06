@@ -1,6 +1,6 @@
 //! Which I2C bus the one controller is driving, and who is asking for it.
 //!
-//! Two registers in front of `gateware/soc/i2c_mux.py`. The board has three
+//! Two registers in front of `gateware/soc/peripherals/i2c_mux.py`. The board has three
 //! physically separate I2C buses because both FUSB302Bs answer to `0x22` and
 //! cannot be told apart on one wire, so the select here does the job an address
 //! would otherwise do -- and every transaction has to set it, because there is

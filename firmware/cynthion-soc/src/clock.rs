@@ -11,7 +11,7 @@
 //! ## `rdtime`, and why it is available on both targets
 //!
 //! RISC-V defines the `time` CSR as a read-only, free-running counter. The SoC's
-//! CPU is generated `--with-rdtime` and `gateware/soc/vexii_cpu.py` drives it
+//! CPU is generated `--with-rdtime` and `gateware/soc/cpu/cpu.py` drives it
 //! from a counter incremented once per `sync` cycle; QEMU's `-M virt` drives it
 //! from the CLINT. So this file needs no `#[cfg]` -- only the tick RATE differs,
 //! and that is `target::TIME_HZ`, exactly where every other target difference
@@ -52,7 +52,7 @@ impl Instant {
     ///
     /// One caller: `src/timer.rs`, which compares the CLINT's `mtimecmp`
     /// against a reading to find out how late a tick was. That is sound because
-    /// the CLINT compares against this very counter -- `vexii_clint.py` takes
+    /// the CLINT compares against this very counter -- `cpu/clint.py` takes
     /// `mtime` from the CPU's `rdtime` rather than keeping one of its own -- so
     /// a deadline and a reading are values on the same scale.
     ///

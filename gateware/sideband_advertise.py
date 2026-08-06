@@ -48,7 +48,7 @@ Upstream advertises by default and `ApolloAdvertiserRequestHandler` provides `st
 The polarity is inverted here: `enable` resets low. A bitstream that seized CONTROL
 on configuration would take the port from Apollo's own debug interface, which is the
 path used to recover the board. Asking is a decision firmware makes; see
-`gateware/soc/sideband_csr.py` bit 5.
+`gateware/soc/peripherals/sideband_csr.py` bit 5.
 """
 
 from amaranth import Cat, Const, Elaboratable, Module, Mux, Signal

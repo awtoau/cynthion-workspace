@@ -40,7 +40,7 @@
 //!     --features qemu  -> src/target.rs + memory-qemu.x  (image at 0x8000_0000)
 //!
 //! One console driver serves both targets. The SoC's console peripheral
-//! (`gateware/soc/uart16550.py`) and QEMU's `-M virt` are both a standard NS16550A, so
+//! (`gateware/soc/peripherals/uart16550.py`) and QEMU's `-M virt` are both a standard NS16550A, so
 //! `src/uart.rs` drives each unchanged and the whole difference is base addresses, a
 //! flash stand-in and a linker script.
 //!
@@ -1673,7 +1673,7 @@ fn reboot() -> ! {
 /// flash-write` uses, and about four orders of magnitude faster than a JTAG register
 /// interface, which `scripts/soc_jtag_stage.py --benchmark` measures at 28 ms per 16-bit
 /// word. That is a property of poking a control-plane register per word, not of JTAG:
-/// the streaming sink in `gateware/soc/jtag_stage.py` moves 32 KiB over the same wire
+/// the streaming sink in `gateware/soc/bus/jtag_stage.py` moves 32 KiB over the same wire
 /// in 85 ms, and unlike this path it needs no running CPU.
 ///
 /// They go to HyperRAM rather than straight into the image region because the next step
@@ -1833,7 +1833,7 @@ fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 
     if argument.is_empty() {
         // `in c/a` is the INPUT register, and it reaches no pin.
-        // `vexii_hello_soc.py` deliberately does not request
+        // `top.py` deliberately does not request
         // `control_vbus_in_en`/`aux_vbus_in_en` -- nothing here has a reason to
         // command a power input closed, and hardware overvoltage protection
         // (D17, a 5.6 V zener) backs that. So the register reads back whatever

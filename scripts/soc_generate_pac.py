@@ -11,7 +11,7 @@ Emits `soc.svd` from the Amaranth SoC, then a Peripheral Access Crate from that.
 The register map is not written down anywhere today -- it is *implied* by the
 `csr.Builder` calls in the gateware, and firmware rediscovers it by hand. Every
 base address in `firmware/cynthion-soc/src/target.rs` was transcribed by a human
-reading `gateware/soc/vexii_hello_soc.py`, and the surface grew by three
+reading `gateware/soc/top.py`, and the surface grew by three
 peripherals (GPIO, I2C, sideband) in one sitting.
 
 That is the class of error that cost most of a day elsewhere: firmware sent
@@ -103,8 +103,7 @@ def build_soc():
     Imports rather than builds: the memory map is decided during elaboration, so no
     synthesis or place-and-route is involved and no board is touched.
     """
-    import vexii_cpu
-
+    import cpu.cpu as vexii_cpu
     # The CPU is a black box for this walk; generating its implementation cannot
     # affect the decoder map. Reuse the checked-in matching profile so this
     # metadata-only command does not require sbt or a generator server.
@@ -113,7 +112,7 @@ def build_soc():
         raise FileNotFoundError(f"memory-map elaboration needs {cached_cpu}")
     vexii_cpu.generate = lambda *args, **kwargs: cached_cpu
 
-    import vexii_hello_soc
+    import top as vexii_hello_soc
     from amaranth.hdl import Fragment, UnusedElaboratable
 
     # Requesting a platform resource builds a PinBuffer per pin, and elaborating
@@ -459,14 +458,14 @@ def verify_svd(path, peripherals, emit):
 def cross_check(peripherals, emit):
     """Compare generated addresses against the remaining independent copies.
 
-    The point of the whole exercise. `vexii_hello_soc.py` names the addresses it
+    The point of the whole exercise. `top.py` names the addresses it
     passes to `decoder.add()`, and `target.rs` names the addresses the firmware
     dereferences; neither is derived from the map, so either can be wrong. A
     mismatch reported here is a real defect in one of the three, not a formatting
     difference -- resolve it, do not adjust this function.
     """
     import re
-    import vexii_hello_soc as soc_module
+    import top as soc_module
 
     bases = {peripheral.name: peripheral.base for peripheral in peripherals}
     expected = {
@@ -673,8 +672,8 @@ def write_bases(peripherals, emit):
     # go on -- and the comment in `target.rs` was still claiming `main=1` after
     # the window was switched to uncached, which is exactly the drift this
     # generator exists to remove.
-    import vexii_hello_soc as soc_module
-    from i2c_master import prescale_for
+    import top as soc_module
+    from peripherals.i2c_master import prescale_for
 
     # CLOCK-DERIVED CONSTANTS, generated for the reason today made expensive.
     #

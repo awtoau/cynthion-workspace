@@ -5,7 +5,7 @@
 """
 What the host engine is exercised against, since there is no packet path here.
 
-This SoC has no USB controller of any kind: `gateware/soc/ulpi_window.py`
+This SoC has no USB controller of any kind: `gateware/soc/peripherals/ulpi_window.py`
 reads a USB3343's registers and cannot send or receive a packet
 (`docs/rtic-usb-port.md` section 1). So a host engine cannot be tested against
 anything already in the tree, and the model below is what stands in for the bus

@@ -52,8 +52,8 @@ shared one would have carried is described in
 [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
 negotiation is not on the critical path.
 
-**Done, and on silicon** (#121). `gateware/soc/i2c_mux.py` is the select and
-the four Type-C signals; `gateware/soc/i2c_master.py` gained an `idle` output
+**Done, and on silicon** (#121). `gateware/soc/peripherals/i2c_mux.py` is the select and
+the four Type-C signals; `gateware/soc/peripherals/i2c_master.py` gained an `idle` output
 so the select cannot move underneath a transfer. The two `int` lines were OR-ed
 onto one PLIC source here, **and #135 gave each its own** — one controller does
 mean one device at a time on the bus, but that says nothing about which device the

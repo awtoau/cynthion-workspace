@@ -38,11 +38,11 @@ Byte offsets from the base of a 64 KiB window:
 **No read in this peripheral changes any state**, so there is nothing to keep
 apart from a poll loop and nothing to tabulate. `mtime` is a wire from the
 counter; `mtimecmp` and `msip` read back their own storage. Compare
-`uart16550.py`, which has three side-effecting reads and a table saying so.
+`peripherals/uart16550.py`, which has three side-effecting reads and a table saying so.
 
 ## mtime is read-only, and it is the counter `rdtime` already reads
 
-`mtime` is an input, driven in `vexii_hello_soc.py` from `VexiiRiscv.mtime` --
+`mtime` is an input, driven in `top.py` from `VexiiRiscv.mtime` --
 the same free-running counter the `time` CSR reads. One counter, so `csrr time`
 and a load from 0xbff8 cannot disagree, and `src/clock.rs` and `src/timer.rs`
 are measuring the same thing.
@@ -71,14 +71,14 @@ targets.
 the specification defines `mip.MTIP`. There is no acknowledge register: the only
 way to lower the line is to move the deadline, which is what the handler's
 `mtimecmp += period` does. A handler that returns without advancing it is
-re-entered immediately and forever -- the same livelock `vexii_plic.py` and
-`uart16550.py` describe, arrived at from the other direction.
+re-entered immediately and forever -- the same livelock `cpu/plic.py` and
+`peripherals/uart16550.py` describe, arrived at from the other direction.
 
 ## Cost
 
 Two 64-bit comparisons' worth of carry chain, one flip-flop per bit of
 `mtimecmp` (64) and `msip` (1), and the 16-bit address decode. The counter
-itself is not here -- it already existed in `vexii_cpu.py` for `rdtime`.
+itself is not here -- it already existed in `cpu/cpu.py` for `rdtime`.
 
 The comparator's result is REGISTERED rather than driven straight out. A 64-bit
 `>=` is a 64-bit carry chain, and this design has spent commits recovering

@@ -36,7 +36,7 @@ rather than reachable by remembering a path and a flag.
 
 #185 is about coalescing: a HyperBus data phase cannot be stalled, and the SoC's
 Wishbone master bubbles, so holding a transaction open corrupts the write. That
-master is `HyperRAMWishbone` in `gateware/soc/vexii_bootram.py` (`sustained`
+master is `HyperRAMWishbone` in `gateware/soc/bootram.py` (`sustained`
 defaults to False for exactly this reason), and **not one of the eleven tops
 under `gateware/probes/hyperram/` goes near it.** Every one drives `HyperRAMInterface`
 or `HyperRAMDQSInterface` from its own FSM, which supplies and consumes a word

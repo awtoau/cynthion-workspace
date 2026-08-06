@@ -311,7 +311,7 @@ mod device {
     impl Msip {
         pub fn pend(&self) {
             // SAFETY: the CLINT window, uncached on the SoC and a device under
-            // QEMU. Bit 0 is the only bit `vexii_clint.py` implements.
+            // QEMU. Bit 0 is the only bit `cpu/clint.py` implements.
             unsafe { core::ptr::write_volatile(self.0, 1) }
         }
 

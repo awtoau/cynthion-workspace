@@ -70,7 +70,7 @@ side-effect free to harden against a widened access instead;
 
 No baud generator, no start bits, no line. Bytes go in and out on stream ports;
 the transport is the instantiator's choice (USB CDC, or a pin via
-`serial_line.py`). These exist only so a generic driver's setup sequence
+`peripherals/serial_line.py`). These exist only so a generic driver's setup sequence
 succeeds, and each is stored and otherwise ignored:
 
     DLL/DLM   set no rate; without them a driver would transmit its divisor
@@ -81,7 +81,7 @@ succeeds, and each is stored and otherwise ignored:
 ## Interrupt
 
 `irq` is a LEVEL, held while any enabled condition holds, reported through IIR in
-the standard priority order, and wired to `vexii_plic.py`. IER resets to zero, so
+the standard priority order, and wired to `cpu/plic.py`. IER resets to zero, so
 a design that polls LSR and ignores `irq` is unaffected.
 
     IIR id  condition                       enabled by  cleared by
@@ -115,9 +115,9 @@ Where a byte is actually destroyed is a property of the transport:
 
   * a USB CDC endpoint NAKs while its buffer is full and the host retries, so
     that path loses nothing and drives neither input.
-  * an async serial line has no flow control. `serial_line.py` presents a byte
+  * an async serial line has no flow control. `peripherals/serial_line.py` presents a byte
     for one cycle whether or not anything is ready for it, and counts the frames
-    it drops for a bad stop bit. `vexii_hello_soc.py` wires both to these inputs.
+    it drops for a bad stop bit. `top.py` wires both to these inputs.
 
 Each input is a one-cycle pulse; each latches its bit until LSR is read.
 
@@ -125,7 +125,7 @@ Each input is a one-cycle pulse; each latches its bit until LSR is read.
 
 16 bytes because the NS16550A has 16 bytes. Anything deeper belongs between
 this peripheral and the transport, sized for that transport --
-`stream_buffer.py`.
+`peripherals/stream_buffer.py`.
 
 ## Instantiating more than one
 
@@ -407,7 +407,7 @@ class Uart16550(wiring.Component):
         #   tx_pending   IER.ETBEI and the transmit FIFO emptied
         #
         # LEVEL SENSITIVE, held for as long as a condition holds. The PLIC in
-        # front of this expects a level (`vexii_plic.py`), and so does a handler
+        # front of this expects a level (`cpu/plic.py`), and so does a handler
         # that drains only part of a FIFO: an edge would mean the remaining
         # bytes are never announced, giving a console that accepts one burst and
         # then appears to hang.

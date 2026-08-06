@@ -6,8 +6,8 @@
 """
 A VexiiRiscv SoC on block RAM: a core, memory, and a way to see it run.
 
-    ./gateware/soc/vexii_hello_soc.py --build
-    ./gateware/soc/vexii_hello_soc.py --build --program
+    ./gateware/soc/top.py --build
+    ./gateware/soc/top.py --build --program
 
 Block RAM is single-cycle and needs no cache, bus wrapper or latency tuning, so
 the only things that can be wrong are the CPU, its reset vector and the
@@ -20,24 +20,24 @@ peripheral it writes to.
     1      Uart16550    async serial on R14/T14         Apollo's CDC
 
 Same NS16550A register map, same driver, different transport -- which is the
-point of a standard part. `serial_line.py` is the PHY behind index 1.
+point of a standard part. `peripherals/serial_line.py` is the PHY behind index 1.
 
   * **USB carries the primary console** because R14/T14 are the same wires as
     JTAG TDI/TMS, so a design driving them competes with the thing loading its
     own bitstream. The CDC gateware measures 195.4 Mbps loopback
     (`../../docs/usb-performance.md`).
   * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
-    share a 32-bit word with RBR at +0. See `uart16550.py`, and
+    share a 32-bit word with RBR at +0. See `peripherals/uart16550.py`, and
     `../../docs/architecture.md` for what that replaced.
 
 ## Interrupts
 
-Both UARTs' `irq` lines go to a standard RISC-V PLIC (`vexii_plic.py`), whose
+Both UARTs' `irq` lines go to a standard RISC-V PLIC (`cpu/plic.py`), whose
 output is the CPU's single machine external interrupt, so the consoles are
 interrupt-driven.
 
 The machine timer and software interrupts come from a standard RISC-V CLINT
-(`vexii_clint.py`), comparing against the same counter `rdtime` reads. A 1 ms
+(`cpu/clint.py`), comparing against the same counter `rdtime` reads. A 1 ms
 tick is `mtimecmp += period` in the handler; `firmware/cynthion-soc/src/timer.rs`
 is the driver.
 
@@ -54,7 +54,7 @@ paths that ship.
 
 The JTAG sink holds the CPU in reset while it writes, so it works on a board whose
 console is wedged -- which the console path by definition cannot. Both leave the same
-header for the bootloader. See `jtag_stage.py`.
+header for the bootloader. See `bus/jtag_stage.py`.
 
 ## Board peripherals
 
@@ -96,26 +96,26 @@ from luna_soc.gateware.core         import blockram
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
-import vexii_cpu
-from vexii_cpu import VexiiRiscv
-from jtag_stage import JTAGStager, UserJTAG
-from uart16550 import Uart16550
-from vexii_plic import Plic
-from vexii_clint import Clint
-from serial_line import SerialLine
-from i2c_master import I2CMaster, prescale_for
-from sideband_csr import SidebandControl
-from vbus_csr import VbusControl
-from gateware_id import GatewareId
-from ulpi_window import UlpiRegisters
-from i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
+import cpu.cpu as vexii_cpu
+from cpu.cpu import VexiiRiscv
+from bus.jtag_stage import JTAGStager, UserJTAG
+from peripherals.uart16550 import Uart16550
+from cpu.plic import Plic
+from cpu.clint import Clint
+from peripherals.serial_line import SerialLine
+from peripherals.i2c_master import I2CMaster, prescale_for
+from peripherals.sideband_csr import SidebandControl
+from peripherals.vbus_csr import VbusControl
+from peripherals.gateware_id import GatewareId
+from peripherals.ulpi_window import UlpiRegisters
+from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_AUX_C as I2C_MUX_AUX_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
-from stream_buffer import StreamBuffer
-from wishbone_pipe import RegisteredResponse
-from flash_cdc import ClockCrossedPHY
-from hyperram_probe import HyperRAMProbe
-from vexii_flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
+from peripherals.stream_buffer import StreamBuffer
+from bus.wishbone_pipe import RegisteredResponse
+from peripherals.flash_cdc import ClockCrossedPHY
+from peripherals.hyperram_probe import HyperRAMProbe
+from peripherals.flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins)
 
@@ -389,7 +389,7 @@ BOOTRAM_BASE = 0xf0000400
 # 4 MiB because that is the smallest window a spec-compliant PLIC fits in -- the
 # claim register is at offset 0x200004 and the map is not negotiable, since the
 # whole point of being standard is that a driver that has never heard of this SoC
-# can find its way around. See gateware/soc/vexii_plic.py.
+# can find its way around. See gateware/soc/cpu/plic.py.
 #
 # 0xf0400000 rather than somewhere tidier: it must be 4 MiB aligned (the Wishbone
 # decoder requires a window aligned to its size), it must be inside the `main=0`
@@ -494,7 +494,7 @@ FLASH_TEST_OFFSET = 0x00300000
 # Read mode. "single" is 0x03, one lane, no dummy cycles -- the mode to bring up
 # first, because there is nothing in it to get subtly wrong. "quad" is 0xeb,
 # address and data on four lanes with `dummy_value=0xff0000`.
-# See gateware/soc/vexii_flash.py.
+# See gateware/soc/peripherals/flash.py.
 #
 # Quad needs no register write on this part: QE (SR2 bit 1) is already set, read
 # back as 0x02 (docs/chips/w25q32-config-flash.md). And 0xeb's dummy count is
@@ -595,7 +595,7 @@ FLASH_FAST_RATIO = 2
 # only 60 to 50 MHz.
 #
 # So the order is ODDR first, then this. The crossing itself is built and works
-# (`flash_cdc.py`); it is switched off because turning it on today would cost CPU clock
+# (`peripherals/flash_cdc.py`); it is switched off because turning it on today would cost CPU clock
 # for no net gain.
 FLASH_PHY_FAST = False
 
@@ -612,7 +612,7 @@ FLASH_PHY_FAST = False
 #   * it REQUIRES a `fast` domain -- `HyperRAMDQSPHY` reads `ClockSignal("fast")`
 #     for every ECLK -- so `with_fast` is forced on below;
 #   * its data path is 32 BITS per beat where the non-DQS one is 16, so the
-#     `wide`/`second_word` assembly in `vexii_bootram.py` -- which exists only to
+#     `wide`/`second_word` assembly in `bootram.py` -- which exists only to
 #     build a 32-bit Wishbone beat out of two 16-bit words -- has nothing to do
 #     and must be bypassed rather than left to halve the rate.
 #
@@ -634,7 +634,7 @@ HYPERRAM_DQS = False
 HYPERRAM_CLOCK_STOP = False
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
-# literal at the instantiation because `gateware_id.py` reports it to the
+# literal at the instantiation because `peripherals/gateware_id.py` reports it to the
 # firmware, and a geometry reported from a different number than the one the
 # core was generated with would be worse than not reporting it.
 CACHE_SETS = 64
@@ -915,7 +915,7 @@ class HelloSoC(Elaboratable):
         # controller, the crossbar -- is unchanged and still beside the CPU; the wrapper
         # has the same flipped SPIControlPort, so the crossbar cannot tell.
         #
-        # `flash_cdc.py` has the argument for FIFOs over a timing constraint, and for
+        # `peripherals/flash_cdc.py` has the argument for FIFOs over a timing constraint, and for
         # synchronising `cs` rather than queueing it.
         flash_phy_domain = "fast" if FLASH_PHY_FAST else "sync"
         flash_phy_inner = ObservablePHY(pads=flash_bus, divisor=FLASH_DIVISOR,
@@ -1055,8 +1055,8 @@ class HelloSoC(Elaboratable):
         #
         # This is what makes a firmware change cost seconds instead of a ~60 s
         # resynthesis: the image goes into HyperRAM and a resident bootloader copies
-        # it into block RAM. See gateware/soc/vexii_bootram.py.
-        from vexii_bootram import BootRAM
+        # it into block RAM. See gateware/soc/bootram.py.
+        from bootram import BootRAM
 
         # `sustained` is left at its default of False, and that is a decision
         # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
@@ -1570,7 +1570,7 @@ class HelloSoC(Elaboratable):
         # leave a PHY that had glitched during configuration with no way back.
         #
         # This is a register path only. There is no UTMI translator, no packet
-        # handling and no device stack on this port -- see `ulpi_window.py`.
+        # handling and no device stack on this port -- see `peripherals/ulpi_window.py`.
         target_phy = platform.request("target_phy", 0)
         m.d.comb += [
             target_phy.clk.o.eq(ClockSignal("usb")),
@@ -1741,7 +1741,7 @@ def main():
     # one is a duplicate keyword and the build fails outright. Stamping this
     # bitstream's USERCODE therefore means patching the vendored platform.
     #
-    # Until then the identity lives in a register instead -- `gateware_id.py`,
+    # Until then the identity lives in a register instead -- `peripherals/gateware_id.py`,
     # same encoding, read by the CPU rather than by JTAG. USERCODE is not
     # fabric-readable on this part in any case: it is a command in the
     # bitstream's command stream rather than a bit in a tile, so there is

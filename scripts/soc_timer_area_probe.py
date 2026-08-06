@@ -8,7 +8,7 @@ The gateware half of `docs/rtic.md`. The firmware half --
 Two shapes, because they are not the same peripheral:
 
     mtimecmp    a 64-bit comparator against `mtime`, which is what
-                `gateware/soc/vexii_clint.py` already has one of and what
+                `gateware/soc/cpu/clint.py` already has one of and what
                 `rtic_time::Monotonic` and `embassy-time` both assume
     reload      a 32-bit auto-reloading down-counter, which is what
                 `firmware/cynthion-soc/src/bin/model_coop_hwtimer.rs` assumes:
@@ -41,7 +41,7 @@ LOG = WORKSPACE / "tmp/logs/soc_timer_area_probe.log"
 class Comparators(Elaboratable):
     """N 64-bit `mtimecmp` registers against one shared `mtime`.
 
-    The shape `vexii_clint.py` already implements once. Each comparator is a
+    The shape `cpu/clint.py` already implements once. Each comparator is a
     64-bit register and a 64-bit unsigned compare, and the interrupt is the
     level `mtime >= mtimecmp` -- the specification's own definition, and what
     makes a handler that does not move the deadline re-enter forever.

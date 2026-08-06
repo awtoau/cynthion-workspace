@@ -87,7 +87,7 @@ PHY at `REGISTER_TARGET_ADDR` / `AUX` / `CONTROL`.
 ### From the SoC shell — `phy`
 
 The main SoC bitstream carries a ULPI register window on **`target_phy` only**
-(`gateware/soc/ulpi_window.py`, driver `firmware/cynthion-soc/src/ulpi.rs`).
+(`gateware/soc/peripherals/ulpi_window.py`, driver `firmware/cynthion-soc/src/ulpi.rs`).
 It is in the main bitstream deliberately: a standalone probe design evicts the
 SoC, so it cannot answer questions about a running system.
 

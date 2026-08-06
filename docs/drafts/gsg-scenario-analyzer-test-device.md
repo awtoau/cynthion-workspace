@@ -26,7 +26,7 @@ A loopback cable from AUX to TARGET, and nothing else. That is the entire point 
 
 This is the smallest port on the list and the one closest to what already runs.
 
-- `USBSerialDevice` on `aux_phy` in `vexii_hello_soc.py` is already a luna `USBDevice` on
+- `USBSerialDevice` on `aux_phy` in `top.py` is already a luna `USBDevice` on
   the same PHY, enumerating at high speed. Swapping a CDC-ACM function for an
   interrupt-endpoint function is a descriptor and endpoint-handler change, not new
   infrastructure.

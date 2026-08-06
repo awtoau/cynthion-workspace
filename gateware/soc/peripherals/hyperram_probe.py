@@ -44,7 +44,7 @@ consumes one word per CK and cannot be stalled. The third cycle wrote a
 duplicate word at a real address and left the engine's half-of-the-beat tracker
 one ahead of the window's, so every following beat went out high-half-first.
 48 words for a 32-word line, in BOTH directions. `sustained` in
-`vexii_bootram.py` is the fix; sections 9 and 10 of `scripts/soc_hyperram_sim.py`
+`bootram.py` is the fix; sections 9 and 10 of `scripts/soc_hyperram_sim.py`
 reproduce and then close it. So this counter should now read 2.0.
 
 `max_run` distinguishes "never bursts" from "bursts but gets cut short" -- a cap,

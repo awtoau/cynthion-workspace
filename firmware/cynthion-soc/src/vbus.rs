@@ -1,6 +1,6 @@
 //! The VBUS distribution switches: passing host power through to a target.
 //!
-//! The gateware side is `gateware/soc/vbus_csr.py`, one register whose bit
+//! The gateware side is `gateware/soc/peripherals/vbus_csr.py`, one register whose bit
 //! numbering is upstream's. This module holds the policy, because the gateware
 //! deliberately holds none.
 //!
@@ -30,7 +30,7 @@
 
 use crate::power;
 
-/// Bit positions, matching `gateware/soc/vbus_csr.py` and upstream's
+/// Bit positions, matching `gateware/soc/peripherals/vbus_csr.py` and upstream's
 /// analyzer state word. Bits 0-2 are upstream's own fields and are not ours.
 const BIT_TARGET_C: u8 = 3;
 const BIT_CONTROL: u8 = 4;

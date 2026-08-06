@@ -27,7 +27,7 @@ FUSB302B (commit `0ff3b5d`).
 
 Declared in `gateware/board/cynthion_r1_4.py`. `scl` is `dir="o"` —
 push-pull, no readback — so **clock stretching is impossible on this board**
-(`gateware/soc/i2c_master.py`). `scl`/`sda` carry `PULLMODE="NONE"`; the
+(`gateware/soc/peripherals/i2c_master.py`). `scl`/`sda` carry `PULLMODE="NONE"`; the
 pull-ups are on the board.
 
 ## Measured on this board
@@ -182,7 +182,7 @@ is that a state change can be looked into when it happens instead of polled.
 | liveness gateware | `gateware/probes/pins/fusb302_id.py` — JTAG applet `0x46555342` "FUSB" |
 | bus scanner | `gateware/probes/pins/i2c_scan.py` — applet `0x49324353` "I2CS" |
 | multiplexed master — superseded, and **it was never on silicon** | `gateware/probes/i2c/multiplexed.py`, `test_multiplexed.py` |
-| the mux that *is* on silicon | `gateware/soc/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
+| the mux that *is* on silicon | `gateware/soc/peripherals/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
 | firmware | `firmware/cynthion-soc/src/bus.rs` (owns the controller and the select), `fusb302.rs`, `typec.rs` |
 | bus and device ownership | `scripts/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
 | orientation and interrupt decode | `scripts/soc_typec_sim.py` — both bands from one comparator, and the read-to-clear registers |
@@ -201,7 +201,7 @@ SDA, and instantiating both against the same pads is a `DriverConflict`.
 
 Both controllers are reached from the RISC-V SoC over **one** I2C controller whose
 clock and data fan out to three pin-sets under a two-bit select
-(`gateware/soc/i2c_mux.py`). That mux is what makes two devices at `0x22`
+(`gateware/soc/peripherals/i2c_mux.py`). That mux is what makes two devices at `0x22`
 addressable at all, and **this is its first appearance on silicon** — the earlier
 `gateware/probes/i2c/multiplexed.py` was only ever simulated. Confirmed working:
 
