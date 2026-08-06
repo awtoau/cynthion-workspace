@@ -115,10 +115,8 @@ test is whether a finding would be useful to someone with a different ECP5 board
 
 ## Getting DDR data in and out at speed
 
-Moved here from `memory-speed-options.md`, because these are ECP5 primitives and
-the question gets asked about the FPGA, not about the memory. The HyperRAM side
-of the same problem is in [`w956a8-hyperram.md`](../w956a8-hyperram.md); what other
-projects achieved with these primitives is below and in the part doc.
+The HyperRAM side of the same problem is in
+[`w956a8-hyperram.md`](../w956a8-hyperram.md).
 
 ### The clock structure is not the canonical ECP5 one, and that is the leading hypothesis
 
@@ -203,9 +201,8 @@ conflated the first two.
 3. **The ECP5 datasheet's port table is wrong.** It lists `READCLKSEL[1:0]` — two
    bits. The technical note, the primitive and prjtrellis all have three.
 
-**Correction: the port table discrepancy is a datasheet error, not a silicon
-limit.** An earlier draft of this page treated it as "8 values on paper, possibly
-4 in silicon". TN-02035 settles it at eight.
+**The port table discrepancy is a datasheet error, not a silicon limit** —
+TN-02035 settles it at eight values.
 
 ### Tiliqua has already implemented LUNA's TODO, and it is a drop-in
 
@@ -279,10 +276,8 @@ Against that, in likely order:
 
 ### `RDLOADN` / `RDMOVE` — tied off, and that is correct
 
-`psram.py` sets `RDLOADN=0, RDMOVE=0, RDDIRECTION=1`. An earlier draft of this
-page listed sweeping them as a cheap experiment. **That was wrong**, and the
-correction is worth recording because it is the opposite of what the port names
-suggest.
+`psram.py` sets `RDLOADN=0, RDMOVE=0, RDDIRECTION=1`. **Sweeping them is not a
+cheap experiment**, which is the opposite of what the port names suggest.
 
 TN-02035 §8.10.1: *"If margin control is not used, then LOADN should be low to
 **continuously get code from DDRDLL**."* `RDLOADN=0` is the setting that keeps the

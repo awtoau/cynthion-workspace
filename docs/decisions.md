@@ -1139,15 +1139,11 @@ means a second decoder window rather than a linker boundary, and the decode path
 **Decision: for the flash, nothing — it is finished. For the HyperRAM, two register
 writes before any design work.**
 
-This replaces the ranking that lived in `memory-speed-options.md`, which is now
-dissolved: the per-option analysis moved to
-[`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) and
-[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), the ECP5 primitives to
-[`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md), and the prior art into both chip docs.
+Per-option analysis: [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md),
+[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), and the ECP5 primitives in
+[`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md).
 
-**The old ranking was scored against a void measurement** and is not carried over
-as written. It ranked options as percentages of "everything CK 192 can deliver,"
-crediting 334.4 MB/s. That figure is withdrawn — the pattern aliased 64 times
+**Do not rank against 334.4 MB/s at CK 192.** That figure is withdrawn — the pattern aliased 64 times
 across the part, the controller latency was below CR0's minimum, and the negative
 control armed after the engine started. **CK 180 fails in bulk with 4.7 M errors.**
 The baseline below is 238.9 MB/s at CK 140, which is what survives a live control.
@@ -1175,7 +1171,7 @@ for the burst length actually in use, and that gap has never been measured.
 | rank | option | what it establishes | effort |
 |---|---|---|---|
 | 1 | differential clock `CR1[6] = 0` | removes threshold error from the sampling instant; the board is wired for it and nobody has tried it | **one register write** |
-| 2 | drive strength `CR0[14:12]` | the `tDSS` finding makes this more plausible than the survey's first draft allowed | three register writes |
+| 2 | drive strength `CR0[14:12]` | the `tDSS` finding makes this plausible | three register writes |
 | 3 | `CLKOS2_CPHASE`/`FPHASE` sweep | alignment faults move in discrete steps, skew faults narrow continuously — **this is the discriminator** | bitstreams only |
 | 4 | longer bursts inside tCSM | ~2.8 points, and it is the only throughput lever below the ceiling | a splitter in the controller |
 | 5 | `READCLKSEL` training from Tiliqua | converts "works, reason unknown" into a measured eye | drop-in from a common ancestor |

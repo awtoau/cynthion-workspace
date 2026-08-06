@@ -569,10 +569,7 @@ coalesced the CTI burst. Unmeasured.
 
 ## Speed: every remaining option, and what each returns
 
-Moved here from the dissolved `memory-speed-options.md` for the same reason as the
-flash options: these are properties of the W956A8 and its configuration
-registers, not of the SoC that drives it. Ranked in
-[`../decisions.md`](../decisions.md) 26.
+Ranked in [`../decisions.md`](../decisions.md) 26.
 
 **Read the section immediately above first.** Every absolute figure below is
 scaled to 334.4 MB/s at CK 192, which is **void** -- CK 180 fails in bulk. The

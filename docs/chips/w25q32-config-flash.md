@@ -298,9 +298,7 @@ exceed it, and driving `USRMCLKI` from a phase-shifted PLL output (NanoMig, at
 
 # Speed: every remaining option, and which are absent
 
-Moved here from the dissolved `memory-speed-options.md`, which held only the
-ranking and the parts that span both memories. These are properties of the
-part, so they belong beside the part.
+Ranked against the flash's other options in [`../decisions.md`](../decisions.md) 26.
 
 ### Identification, settled two ways
 
@@ -332,7 +330,7 @@ Two statements in the existing notes are wrong and are corrected here:
 | was recorded | correct |
 |---|---|
 | SR3 `0x60`, **"ADS clear"** (this document) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
-| *"QPI mode can address in as few as 8 clocks"* (recorded in an earlier flash note, now folded in here) | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
+| *"QPI mode can address in as few as 8 clocks"* | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
 
 ### QPI (`0x38`) — absent
 

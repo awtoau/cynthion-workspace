@@ -1,8 +1,6 @@
 # RTIC on this SoC: what the workload needs, and what each model costs
 
-Issue #115, and the decision is [`decisions.md`](decisions.md) 19. This replaces
-five separate documents written as the work happened; what follows is what they
-established, once each.
+Issue #115, and the decision is [`decisions.md`](decisions.md) 19.
 
 **Index:** [`hardware.md`](hardware.md) · CPU:
 [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
