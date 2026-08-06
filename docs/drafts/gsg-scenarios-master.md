@@ -5,7 +5,7 @@ can do. We have replaced luna-soc with our own VexiiRiscv SoC. This issue is the
 of what upstream actually does, and the index of one child issue per scenario.
 
 The reference half — what each scenario is and what implements it upstream, with the
-wire contracts — is in [`docs/gsg-scenarios.md`](../blob/main/docs/gsg-scenarios.md).
+wire contracts — is in [`docs/gsg-scenarios.md`](https://github.com/awtoau/cynthion-workspace/blob/main/docs/gsg-scenarios.md).
 This issue holds the part that is not durable: what porting each one costs and how it
 would be tested.
 
@@ -100,7 +100,7 @@ entire host stack for free.
 
 Six discrepancies found between what greatscottgadgets.com documents and what the
 repositories contain, plus one upstream defect. They are recorded in
-[`docs/gsg-scenarios.md`](../blob/main/docs/gsg-scenarios.md#website-versus-code) rather
+[`docs/gsg-scenarios.md`](https://github.com/awtoau/cynthion-workspace/blob/main/docs/gsg-scenarios.md#website-versus-code) rather
 than here, because they stay true. The defect —
 `cynthion build facedancer` raising `NameError` — is worth reporting upstream.
 

@@ -443,6 +443,20 @@ transaction and raises CS# rather than stalling, so it is evidence of neither.
 collapse to one, and with them 15 of 16 `BootRAM` round trips — at the smallest
 change of any option here.
 
+### On silicon it gives 1/16, and the read gate is not why
+
+**Both flags are still off, and now for a measured reason.** Active Clock Stop
+passes 16/16 in simulation and gives **1/16 on the board**.
+
+A read-delay sweep across all four settings showed the stall firing
+(1,632–6,222 cycles) and the selector working monotonically, with
+**byte-identical data at every setting** — so read-gate alignment is not the
+cause, and the difference is not where the model said it would be. **Unexplained**
+(#185).
+
+The modelling gap that motivated caution is real and separate: the model serves
+read data in the same cycle as the CK that asked for it, and silicon does not.
+
 ## Ranked
 
 1. **CK gating (§5).** Legal, cited, device-supported, gate already present, two

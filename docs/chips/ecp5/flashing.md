@@ -11,8 +11,8 @@ question is where the bitstream lands:
 
 | Target | CLI flag | Persistence | Implementation |
 |---|---|---|---|
-| **FPGA SRAM** | `--upload` / `-U` | Volatile — lost on power cycle | [`toolchain_program()`](../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L66) |
-| **Configuration flash** | `--flash` / `-F` | Persistent — FPGA self-loads at boot | [`toolchain_flash()`](../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L88) |
+| **FPGA SRAM** | `--upload` / `-U` | Volatile — lost on power cycle | [`toolchain_program()`](../../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L66) |
+| **Configuration flash** | `--flash` / `-F` | Persistent — FPGA self-loads at boot | [`toolchain_flash()`](../../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L88) |
 
 Both call `ECP5_JTAGProgrammer` from `apollo_fpga.ecp5`; `configure()` writes
 SRAM, `flash()` writes the SPI configuration flash.
@@ -89,7 +89,7 @@ apollo configure build/top.bit
 ## Build settings
 
 The Cynthion platform pins `ecppack` options
-([core.py:60-62](../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L60-L62)):
+([core.py:60-62](../../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L60-L62)):
 
 ```python
 overrides = {'ecppack_opts': '--compress --freq 38.8'}
@@ -110,7 +110,7 @@ one can own it at a time, and this drives most of the operational friction.
 
 After a successful `--upload`, `toolchain_program()` calls
 `allow_fpga_takeover_usb()`
-([core.py:83](../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L83)),
+([core.py:83](../../../repos/cynthion/cynthion/python/src/gateware/platform/core.py#L83)),
 handing the port to the freshly loaded gateware. **The device re-enumerates
 mid-session.** Any open Apollo handle dies at this point — typically as
 `[Errno 110] Operation timed out` or a `[Errno 32] Pipe error` in the JTAG
@@ -160,7 +160,7 @@ first, then rebuild.
 
 The selftest gateware exposes an ID register that confirms the debug link
 reaches the loaded design
-([gateware.py:39](../../repos/cynthion/cynthion/python/src/selftest/gateware.py#L39)):
+([gateware.py:39](../../../repos/cynthion/cynthion/python/src/selftest/gateware.py#L39)):
 
 ```python
 from apollo_fpga import ApolloDebugger
@@ -206,7 +206,7 @@ holding the nodes.
 
 ## Related
 
-- [Cynthion selftest gateware](../../repos/cynthion/cynthion/python/src/gateware/selftest/top.py) — buildable top used in the examples above
+- [Cynthion selftest gateware](../../../repos/cynthion/cynthion/python/src/selftest/gateware.py) — buildable top used in the examples above
 - [Apollo selftest harness](../../../repos/apollo/apollo_fpga/support/selftest.py) — `ApolloSelfTestCase`, `@named_test`
 - [debris/scripts/cyn_main.py](../../../debris/scripts/cyn_main.py) — the retired `cyn flash gateware`, wired to `build/top.bit`; `./dev.py` is the entry point now
 - [docs/hardware.md](../../hardware.md) — the board index
