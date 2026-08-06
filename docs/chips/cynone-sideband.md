@@ -186,7 +186,7 @@ This has bitten twice. `SidebandDebug`'s default was 115200 while the firmware r
 230400, a live 2× mismatch with no error anywhere because neither end ever frames a
 byte; and `SidebandDebug` derived its baud from an argument that could differ from the
 domain's real frequency (`decisions.md:206`,
-[`soc-status-leds.md`](../soc-status-leds.md)).
+[`soc-status-leds.md`](../hardware.md#what-the-six-fpga-leds-mean)).
 
 ## 3. Turnaround: 40 µs, absolute
 

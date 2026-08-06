@@ -4,7 +4,7 @@
 //! two tasks that count. The shell is still `src/main.rs`. What this exists to
 //! do is hold the answer to the question `docs/decisions.md` decision 19 was
 //! asserting without evidence -- whether RTIC accepts this machine at all --
-//! in a form that a compiler re-checks. See `docs/rtic-adoption.md`.
+//! in a form that a compiler re-checks. See `docs/soc-concurrency.md`.
 //!
 //! ## RTIC does not use the PLIC
 //!

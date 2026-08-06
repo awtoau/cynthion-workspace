@@ -240,7 +240,7 @@ def main():
     # survives all of them at once it survives any of them.
     #
     # Minus the ones that turn on `workload`, whose whole purpose is to add the
-    # #115 measurement load TO the shell -- `docs/soc-workload-and-preemption.md`
+    # #115 measurement load TO the shell -- `docs/soc-concurrency.md`
     # measures the shell with it and the shipping image is built without it. A
     # feature that gates a `[[bin]]` AND implies `workload`
     # (`wlbare`, `rticwl` and everything built on it) would otherwise be reported

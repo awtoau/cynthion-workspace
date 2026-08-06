@@ -1,7 +1,7 @@
 //! The floor: what this machine costs with no concurrency runtime at all.
 //!
 //! Built by `scripts/soc_model_probe.py` as the zero of the comparison in
-//! `docs/soc-concurrency-models.md`. Every other skeleton does the same visible
+//! `docs/soc-concurrency.md`. Every other skeleton does the same visible
 //! work -- a PLIC front end, two sources, one shared counter, an idle loop --
 //! so the difference between its `.text` and this one is the runtime.
 //!

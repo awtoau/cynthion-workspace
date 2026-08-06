@@ -29,7 +29,7 @@ they were taken under; what to *do* about any of them is an issue. See
 **Firmware size is SPEED.** The I-cache is 4 KiB, direct-mapped, one way.
 `firmware/cynthion-soc/Cargo.toml` records `opt-level` `z` → `3` growing `.text`
 79% and costing **5.4x the IPC**, and
-[`soc-workload-and-preemption.md`](soc-workload-and-preemption.md) measures the
+[`soc-concurrency.md`](soc-concurrency.md) measures the
 hot footprint at 5,632 bytes — larger than the cache before any runtime is added.
 So in the firmware a library that is cleaner but bigger is a loss, and every
 change needs a `.text` delta beside it.

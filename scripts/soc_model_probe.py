@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build one skeleton per concurrency model and report what each runtime costs.
 
-`docs/soc-concurrency-models.md` is the reading. This is the measurement behind
+`docs/soc-concurrency.md` is the reading. This is the measurement behind
 it: five skeletons that do the SAME VISIBLE WORK -- a PLIC front end, two
 sources, one shared counter, an idle loop -- built by the same profile against
 the same linker script, so the difference between any two `.text` figures is the

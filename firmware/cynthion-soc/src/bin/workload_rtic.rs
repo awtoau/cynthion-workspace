@@ -1,7 +1,7 @@
 //! The #115 USB workload on RTIC 2.3, against the superloop and the
 //! hand-written dispatcher.
 //!
-//! `docs/soc-workload-and-preemption.md` §6 names this as the cheapest next
+//! `docs/soc-concurrency.md` §6 names this as the cheapest next
 //! measurement: *"flesh out `src/bin/rtic.rs` until it runs `workload::handle`,
 //! and re-run `scripts/soc_workload.py` against it"*. This is that. Same
 //! `src/workload.rs`, same arrival sequence, same 4,169 instructions of
@@ -129,7 +129,7 @@ mod metrics {
 /// adds per probe point would land inside the very path being timed. The clean
 /// build gives the latency and the size; this one gives the anatomy.
 ///
-/// `docs/soc-workload-and-preemption.md` §2 measured the hand-written
+/// `docs/soc-concurrency.md` §2 measured the hand-written
 /// dispatcher the same way -- `dispatch::run` brackets everything that is not
 /// the task with `minstret` -- so the two numbers are comparable.
 #[cfg(feature = "rticprobe")]
@@ -188,7 +188,7 @@ pub mod probe {
 
 /// A `critical_section` implementation that measures itself.
 ///
-/// The question `docs/soc-workload-and-preemption.md` §3 leaves open is not how
+/// The question `docs/soc-concurrency.md` §3 leaves open is not how
 /// many critical sections RTIC takes but **how long the machine spends with
 /// `mstatus.MIE` clear**, because that is the window in which the 1 ms tick
 /// cannot run and a second endpoint cannot be serviced. `riscv-slic` calls
@@ -291,7 +291,7 @@ impl Line {
 }
 
 /// The device the CLINT backend names. Identical to `src/bin/rtic.rs`'s and
-/// `src/bin/usb_rtic.rs`'s; `docs/rtic-adoption.md` §3 is why it is written out
+/// `src/bin/usb_rtic.rs`'s; `docs/soc-concurrency.md` §3 is why it is written out
 /// rather than taken from `riscv-peripheral`.
 mod device {
     pub mod interrupt {

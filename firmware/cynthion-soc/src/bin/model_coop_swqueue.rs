@@ -4,7 +4,7 @@
 //! Built by `scripts/soc_model_probe.py`. Its pair is `model_coop_hwtimer`,
 //! which schedules the same three jobs on three hardware comparators. The
 //! difference between the two `.text` figures is what a software timer queue
-//! costs, and it is the measurement `docs/soc-concurrency-models.md` uses to
+//! costs, and it is the measurement `docs/soc-concurrency.md` uses to
 //! answer whether the FPGA should grow comparators.
 //!
 //! Everything expensive here follows from one comparator: the deadlines are

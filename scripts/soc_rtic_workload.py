@@ -5,7 +5,7 @@
 
 """RTIC against the superloop and the hand-written dispatcher, same workload.
 
-`docs/soc-workload-and-preemption.md` §6 names this as the measurement that
+`docs/soc-concurrency.md` §6 names this as the measurement that
 would settle three of its four open rows: run the real workload against an RTIC
 build instead of a skeleton that increments a counter. `scripts/soc_workload.py`
 does the first two models; this adds the third and prints them side by side.
@@ -22,7 +22,7 @@ Four builds, and the reason there are four:
     rticprobe    the same, instrumented          the anatomy, never the latency
 
 The controls run first and their numbers are asserted against
-`docs/soc-workload-and-preemption.md` §5, so a change in the harness, the
+`docs/soc-concurrency.md` §5, so a change in the harness, the
 toolchain or QEMU is caught before anything is concluded about the thing under
 test. `--no-control` skips that, and says so in the output.
 
@@ -79,7 +79,7 @@ BANNER = {
     "bare": b"workload bare",
 }
 
-# What `docs/soc-workload-and-preemption.md` §5 records for the two controls, at
+# What `docs/soc-concurrency.md` §5 records for the two controls, at
 # 2,000 events. Asserted before the third model is believed: a new instrument's
 # first run is against the known-good configuration.
 #
@@ -243,11 +243,11 @@ def main() -> int:
             wrong = control_check(name, parse_report(report), args.events)
             for line in wrong:
                 devlog.log(f"CONTROL {name}: {line} from "
-                           f"docs/soc-workload-and-preemption.md §5", "ERROR")
+                           f"docs/soc-concurrency.md §5", "ERROR")
             failed = failed or bool(wrong)
             if not wrong:
                 devlog.emit("  control: reproduces "
-                            "docs/soc-workload-and-preemption.md §5")
+                            "docs/soc-concurrency.md §5")
         if trace is not None and trace.exists():
             devlog.emit(f"  trace {trace.stat().st_size // 1024} KiB -> "
                         f"scripts/soc_icache_model.py {trace}")

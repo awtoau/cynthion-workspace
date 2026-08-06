@@ -1070,7 +1070,7 @@ the in-situ number is still the next increment's job.
 
 ## 23. What the driver needs, whatever schedules it
 
-`docs/rtic-adoption.md` and #115 are unresolved, so nothing here assumes a
+`docs/soc-concurrency.md` and #115 are unresolved, so nothing here assumes a
 scheduling model. The engine's interface is `events in, work out`, and what it
 asks of a driver is the same under a superloop, an interrupt handler or an RTIC
 task:

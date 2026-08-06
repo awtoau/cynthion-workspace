@@ -2,7 +2,7 @@
 //!
 //! Issue #115 asks what preemption alone costs: not RTIC's resource locking, not
 //! a monotonic, not a software interrupt controller drained through `msip`. Just
-//! the one thing the defect list in `docs/soc-concurrency-models.md` says is a
+//! the one thing the defect list in `docs/soc-concurrency.md` says is a
 //! real defect -- that a turn of the main loop is unbounded, and every deferred
 //! job waits for it.
 //!

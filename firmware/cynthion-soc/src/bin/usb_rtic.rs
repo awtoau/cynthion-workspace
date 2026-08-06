@@ -4,7 +4,7 @@
 //! descriptor tables, same work per event. What differs is who dispatches: a
 //! superloop there, an `#[rtic::app]` hardware task here. Built by
 //! `scripts/soc_usb_probe.py`; see `src/usb.rs` for what is real and what is a
-//! stand-in, and `docs/rtic-adoption.md` for the backend.
+//! stand-in, and `docs/soc-concurrency.md` for the backend.
 //!
 //! ## What RTIC did not take over, and why
 //!
@@ -25,7 +25,7 @@
 //!
 //! ## What it cost to build
 //!
-//! Nothing new. The five shims `docs/rtic-adoption.md` records -- `peripherals =
+//! Nothing new. The five shims `docs/soc-concurrency.md` records -- `peripherals =
 //! false`, the `device` module, the `CoreInterrupt` alias, `use super::device`
 //! inside the app module, and `PROVIDE(_ebss = __ebss)` in both linker scripts
 //! -- were all it took the first time and all it takes with real work in the

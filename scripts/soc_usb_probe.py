@@ -7,7 +7,7 @@
 
     python3 scripts/soc_usb_probe.py
 
-`docs/rtic-adoption.md` and `docs/soc-concurrency-models.md` both measured RTIC
+`docs/soc-concurrency.md` and `docs/soc-concurrency.md` both measured RTIC
 against a skeleton whose tasks increment a counter. The objection to that
 measurement is fair and was made on #115: an idle skeleton says nothing about a
 runtime resident on the dispatch path of a real workload.
