@@ -19,7 +19,9 @@ directly as a pre-commit / pre-push hook:
 
 Output goes to the console and, one line per check, to tmp/logs/check.log;
 each check's full stdout+stderr lands in tmp/logs/check-<name>.log for
-post-mortem.
+post-mortem. A run first deletes any check-<name>.log whose check no longer
+exists, so a retired check's last output cannot be mistaken for a current
+result.
 """
 
 import argparse
@@ -312,6 +314,27 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
     return Result(check.name, ok=True, seconds=seconds)
 
 
+def prune_orphan_logs(names: List[str]) -> List[str]:
+    """Delete tmp/logs/check-<name>.log for checks that no longer exist.
+
+    A retired check leaves its last log behind, and nothing distinguishes that
+    file from the result of a check that ran a moment ago -- same directory,
+    same naming, and a mtime that only says when the check was last alive.
+    `check-gateware.log` outlived the `gateware` check by weeks that way, still
+    reading as current output for a check that had been deleted in #169.
+
+    Keyed off the full registered set rather than the checks selected for this
+    run, so `check.py rust` does not treat every other check as retired.
+    """
+    if not LOGS.is_dir():
+        return []
+    live = {f"check-{n}.log" for n in names}
+    orphans = sorted(p for p in LOGS.glob("check-*.log") if p.name not in live)
+    for path in orphans:
+        path.unlink()
+    return [p.name for p in orphans]
+
+
 def main() -> int:
     checks = build_checks()
     names = [c.name for c in checks]
@@ -360,6 +383,11 @@ def main() -> int:
 
     logger.info("run: %d checks selected (%s), interpreter %s",
                 len(selected), ", ".join(c.name for c in selected), PYTHON)
+
+    # Announced rather than silent: a deletion nobody is told about is
+    # indistinguishable from a log that was never written.
+    for orphan in prune_orphan_logs(names):
+        print(f"{YELLOW}⌫ removed {orphan} — no such check{RESET}")
 
     print(f"\n{BOLD}{CYAN}{'=' * 68}{RESET}")
     print(f"{BOLD}{CYAN}Local checks — {len(selected)} selected, interpreter {PYTHON}{RESET}")
