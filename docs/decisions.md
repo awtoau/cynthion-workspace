@@ -915,7 +915,6 @@ floor (`scripts/soc_model_probe.py`,
 |---|---|---|---|
 | cooperative, hand-written | 224 | 5% | — |
 | hand-written **preemption** | 440 | 11% | — |
-| Embassy 0.10 | 1,048 | 26% | grows per task |
 | RTIC 2.3, `riscv-clint-backend` | 1,552 | 38% | **+1,332** in `.uninit` |
 
 With moondancer's real control path in the tasks rather than a counter, RTIC is **+1,568,
@@ -978,9 +977,8 @@ resource access is worth 1,388 bytes over the dispatcher.
 
 Hardware timers cut across it: three comparators against one `mtimecmp` is 1,188 bytes of
 `.text` against 1,336 and 8 bytes of `.bss` against 40 — that 148 bytes *is* the software
-timer queue, and the set-in-the-past race goes with it — but `rtic_time::Monotonic` and
-`embassy-time` each want exactly one `set_compare`, so cheap comparators erode the case for
-both frameworks.
+timer queue, and the set-in-the-past race goes with it — but `rtic_time::Monotonic` wants
+exactly one `set_compare`, so cheap comparators erode the case for the framework.
 
 ### 20. Multi-transaction device protocols
 

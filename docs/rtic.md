@@ -59,20 +59,18 @@ misses 600 deadlines in 2,000, and the real duty cycle is three times higher.
 |---|---|---|---|---|---|---|
 | superloop (today) | — | 0 | — | no | no | nothing |
 | cooperative, hand-written | 984 | 224 | 8 | no | no | a dispatcher |
-| Embassy 0.10 `platform-riscv32` | 1,808 | 1,048 | 120 | no | no | an `embassy-time` driver |
 | **RTIC 2.3** `riscv-clint-backend` | 2,312 | 1,552 | 24 | **yes, by priority** | **yes, at compile time** | an `rtic_time::Monotonic` |
 | bare riscv-rt (the Rust floor) | 760 | — | 4 | | | |
 | bare C (the C floor) | 186 | — | 4 | | | |
 
-**None of them gives a task a stack**, which is why `.bss` is tens of bytes
-rather than kilobytes: RTIC tasks and cooperative jobs run to completion on the
-one stack, and an Embassy task is a compiler-sized state machine in a `static`. A
-model that did give each task a stack would be decided by a different number —
-how deep the shell's call chain is, which nothing here computes. `memory.x`
-reserves an 8 KiB floor and says so.
+**Neither gives a task a stack**, which is why `.bss` is tens of bytes rather
+than kilobytes: RTIC tasks and cooperative jobs both run to completion on the one
+stack. A model that did give each task a stack would be decided by a different
+number — how deep the shell's call chain is, which nothing here computes.
+`memory.x` reserves an 8 KiB floor and says so.
 
-**Every model leaves `src/irq.rs`'s PLIC claim loop in place.** No runtime has a
-PLIC backend, and that is not a gap in any of them.
+**Every model leaves `src/irq.rs`'s PLIC claim loop in place.** Neither runtime
+has a PLIC backend, and that is not a gap in either of them.
 
 ## RTIC, measured rather than argued
 
