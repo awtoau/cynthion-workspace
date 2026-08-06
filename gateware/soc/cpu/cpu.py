@@ -68,8 +68,19 @@ from amaranth.hdl           import unsigned
 
 from amaranth_soc           import wishbone
 
-ROOT = Path(__file__).resolve().parent.parent.parent
+# Four levels: cpu.py -> cpu/ -> soc/ -> gateware/ -> the workspace root. Three
+# stopped at `gateware/`, where there is no `repos/`, so a regeneration died with
+# FileNotFoundError on `gateware/repos/vexiiriscv`. It stayed hidden because a
+# cached netlist means this path is never touched -- only a cache miss reaches
+# it, and those are rare enough to be years apart.
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
 VEXII = ROOT / "repos" / "vexiiriscv"
+if not VEXII.is_dir():
+    raise FileNotFoundError(
+        f"the VexiiRiscv checkout is not at {VEXII}. It is a submodule: "
+        f"`git submodule update --init repos/vexiiriscv`. Regenerating the core "
+        f"needs it; a build with a cached netlist does not, which is why this "
+        f"can be missing for a long time without anything saying so.")
 
 # The generator flags that produce a Wishbone core with caches and atomics.
 #

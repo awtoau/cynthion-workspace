@@ -8,8 +8,10 @@ Attaches to the SoC console and prints it.
 
     ./scripts/tio_user.py
 
-At the repo root because it is meant to be run by hand and left running, unlike the
-scripts under `scripts/` that agents invoke.
+Meant to be run by hand and left running, unlike the scripts around it that agents
+invoke one-shot. It used to live at the repo root for that reason; moving it here
+left its own `ROOT` pointing at `scripts/`, so `import usb_ids` failed from every
+working directory until that was fixed.
 
 ## This owns the port
 
@@ -59,8 +61,12 @@ import sys
 import threading
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+# The workspace root, not `scripts/`. One `.parent` short pointed this at
+# `scripts/gateware`, which does not exist, so `import usb_ids` failed from every
+# working directory rather than only from some.
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 SERVE_PORT = 9000
 
