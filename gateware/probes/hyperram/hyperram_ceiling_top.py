@@ -307,7 +307,18 @@ class HyperRAMCeiling(Elaboratable):
 
     def __init__(self, *, sync_mhz=100.0, dqs=True, burst_words=BURST_WORDS,
                  negative_control=False, transport=None, own_clocks=True,
-                 own_leds=True):
+                 own_leds=True, own_dtr=True):
+        # `own_dtr=False` when this engine is embedded in a design that already
+        # has the DTR -- the SoC's `gateware_id` peripheral does. The ECP5 has
+        # exactly ONE, and two instantiations do not fail at elaboration: they
+        # fail in the placer as "no BELs remaining to implement cell type 'DTR'",
+        # which names neither design that wanted it.
+        #
+        # The BIST rig does not need its own. Die temperature is a property of
+        # the chip, not of the engine, and in the SoC variant the CPU can read it
+        # from `gateware_id` -- so REG_DIE reads zero there rather than
+        # duplicating a block that cannot be duplicated.
+        self._own_dtr = own_dtr
         """`transport` and `own_clocks` exist so this engine can be embedded.
 
         Defaults reproduce the standalone JTAG applet exactly. Passing a
@@ -888,15 +899,16 @@ class HyperRAMCeiling(Elaboratable):
         # Die temperature. DTROUT[7] is the valid flag; sampling without it
         # latches a mid-conversion value that looks like a temperature.
         #
-        dtr_counter = Signal(DTR_PERIOD_BITS)
-        m.d.sync += dtr_counter.eq(dtr_counter + 1)
-        dtr_bits = [Signal(name=f"dtr{i}") for i in range(8)]
-        m.submodules.dtr = Instance(
-            "DTR", i_STARTPULSE=(dtr_counter == 0),
-            **{f"o_DTROUT{i}": bit for i, bit in enumerate(dtr_bits)})
         die = Signal(8)
-        with m.If(dtr_bits[7]):
-            m.d.sync += die.eq(Cat(*dtr_bits))
+        if self._own_dtr:
+            dtr_counter = Signal(DTR_PERIOD_BITS)
+            m.d.sync += dtr_counter.eq(dtr_counter + 1)
+            dtr_bits = [Signal(name=f"dtr{i}") for i in range(8)]
+            m.submodules.dtr = Instance(
+                "DTR", i_STARTPULSE=(dtr_counter == 0),
+                **{f"o_DTROUT{i}": bit for i, bit in enumerate(dtr_bits)})
+            with m.If(dtr_bits[7]):
+                m.d.sync += die.eq(Cat(*dtr_bits))
 
         m.d.comb += [
             harness.busy.eq(1),

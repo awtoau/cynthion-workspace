@@ -390,6 +390,28 @@ FLASH_ILA_BASE = 0xf0000300
 # anywhere. Two guesses collided here before that was done.
 HYPERRAM_BIST_BASE = 0xf0000700
 
+# Device CK for the BIST variant, in MHz. Independent of SYNC_MHZ -- that
+# independence is the point of the variant, and `hyperram_clocks.py` refuses a
+# value the second PLL cannot reach rather than silently rounding to one it can.
+#
+# From the environment so that walking the ladder does not mean editing a tracked
+# file once per rung.
+HYPERRAM_BIST_CK_MHZ = float(os.environ.get("CYNTHION_HYPERRAM_CK_MHZ", "100"))
+
+# Which PHY the BIST variant measures. Its OWN choice, not `HYPERRAM_DQS`: that
+# flag is the shipping SoC's, and flipping it to measure something would change
+# the product as a side effect of taking a reading.
+#
+# It also decides how hard the fabric works. On the non-DQS path `hr` IS CK, so
+# the engine's logic has to close at the device rate -- measured at 87.67 MHz
+# against a 90 MHz constraint, which caps that path well under what the part
+# does. On the DQS path `hr` is CK/2 and `hr_fast` carries the gearing, so the
+# same logic reaches twice the CK.
+# Defaults to the DQS path -- it is the one under investigation (#92, #211) and
+# the only one whose fabric leaves headroom. Set CYNTHION_HYPERRAM_BIST_DQS=0 to
+# measure the other.
+HYPERRAM_BIST_DQS = os.environ.get("CYNTHION_HYPERRAM_BIST_DQS", "1") not in ("", "0")
+
 # The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
 #
 # Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
@@ -1184,10 +1206,27 @@ class CynthionSoC(Elaboratable):
         # unequal clocks -- and shows a level crossing losing 3 of 8 pulses at
         # CK 100 and duplicating at CK 180, which is what makes that a result.
         if HYPERRAM_BIST:
+            from hyperram_clocks import HyperRAMDomains
             from peripherals.hyperram_bist import HyperRAMBist
-            hyper_bist = HyperRAMBist(
-                ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ,
-                dqs=HYPERRAM_DQS)
+
+            # The second PLL, and the reason this variant exists. `hr` is the
+            # engine's clock and `hr_fast` its ECLK; neither is `sync`, so a CK
+            # rung can be chosen without moving the CPU, the console divisor or
+            # the CLINT tick.
+            #
+            # The DEVICE number goes in, not the fabric one: the DQS PHY emits
+            # two CK per `hr` cycle, so `hr = ck / 2` there, and taking `ck_mhz`
+            # here means a caller cannot get that factor of two wrong.
+            m.submodules.hr_car = hr_car = HyperRAMDomains(
+                ck_mhz=HYPERRAM_BIST_CK_MHZ, dqs=HYPERRAM_BIST_DQS)
+            # `usb` rather than `clk_60MHz`: the SoC's own generator has already
+            # requested that resource, and Amaranth allows one requester. `usb`
+            # is the same 60 MHz -- the FPGA sources the ULPI clock from it --
+            # so the two PLLs see the same rate, if not the same net.
+            m.d.comb += hr_car.clki.eq(ClockSignal("usb"))
+
+            hyper_bist = HyperRAMBist(ck_mhz=HYPERRAM_BIST_CK_MHZ,
+                                      dqs=HYPERRAM_BIST_DQS)
             m.submodules.hyper_bist = hyper_bist
             hyper_bist_bridge = WishboneCSRBridge(hyper_bist.bus, data_width=32)
             m.submodules.hyper_bist_bridge = hyper_bist_bridge

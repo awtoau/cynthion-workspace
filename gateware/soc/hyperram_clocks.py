@@ -140,11 +140,16 @@ class HyperRAMDomains(Elaboratable):
         # on a clock that is still moving.
         self.locked = Signal()
 
-        # The reference. Defaults to a signal the caller drives with the board
-        # oscillator; taking it from `sync` instead would feed one PLL from
-        # another's output, which multiplies jitter and serialises lock for no
-        # benefit -- both PLLs have the same 60 MHz source available.
-        self._clki = Signal()
+        # The reference, driven by the caller. `ThreeDomainClocks` wires it to
+        # the board oscillator; a design whose own generator has already
+        # requested `clk_60MHz` must pass an equivalent 60 MHz net, because
+        # Amaranth allows one requester per resource.
+        #
+        # Public, and checked at elaboration. It was private and undriven once:
+        # the PLL then had a constant 0 for a reference, never locked, and the
+        # build still succeeded -- nextpnr timed the dead domain against a
+        # default constraint and reported PASS.
+        self.clki = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -176,7 +181,7 @@ class HyperRAMDomains(Elaboratable):
                 "p_CLKOS2_DIV": self.clkos2_div,
                 "p_CLKOS2_CPHASE": self.clkos2_div - 1,
                 "p_CLKOS2_FPHASE": 0} if self.dqs else {}),
-            i_CLKI=self._clki,
+            i_CLKI=self.clki,
             i_RST=0, i_STDBY=0, i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
@@ -188,6 +193,19 @@ class HyperRAMDomains(Elaboratable):
         m.d.comb += ClockSignal("hr").eq(clk_hr)
         if self.dqs:
             m.d.comb += ClockSignal("hr_fast").eq(clk_hr_fast)
+
+        # TELL THE PLACER WHAT THESE RUN AT.
+        #
+        # Without this nextpnr times them against a default and prints a PASS
+        # that is about a frequency nobody chose -- a 12 MHz constraint on a
+        # domain intended to run at 50, reported as passing. Every number the
+        # rig then produces is taken on a clock whose timing was never checked,
+        # which is precisely the class of result this whole variant exists to
+        # stop producing.
+        if platform is not None:
+            platform.add_clock_constraint(clk_hr, self.hr_mhz * 1e6)
+            if self.dqs:
+                platform.add_clock_constraint(clk_hr_fast, 2 * self.hr_mhz * 1e6)
 
         # LOCK is asynchronous to everything. Synchronised into `hr` because
         # that is the domain the engine gates on.
@@ -268,7 +286,7 @@ class ThreeDomainClocks(Elaboratable):
         # `usb` IS the oscillator. No PLL, no divider, no tolerance to check.
         # Both PLLs take the same reference, so neither is fed from the other's
         # output.
-        m.d.comb += [ClockSignal("usb").eq(osc), self.hr._clki.eq(osc)]
+        m.d.comb += [ClockSignal("usb").eq(osc), self.hr.clki.eq(osc)]
 
         clk_sync = Signal()
         m.submodules.pll0 = Instance(

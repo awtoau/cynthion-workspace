@@ -46,7 +46,7 @@ pass and held still, `go` and `done` cross as pulses, counters are read after
 `done`. `bist_csr.py` carries the reasoning and the reason it is not a FIFO.
 """
 
-from amaranth import Module
+from amaranth import DomainRenamer, Module
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, connect, flipped
 from amaranth_soc import csr
@@ -99,13 +99,17 @@ class HyperRAMBist(wiring.Component):
                                            engine_domain=domain)
         # `own_clocks=False`: the SoC's generator makes `hr`.
         # `own_leds=False`: the SoC's GPIO already owns them.
+        # `own_dtr=False`: `gateware_id` has the ECP5's single DTR, and the
+        #   engine does not need one -- die temperature is a property of the
+        #   chip, readable from there.
         # The HyperRAM pins it still requests itself, and must -- that is the
         # one resource this variant hands it exclusively, which is why BootRAM
         # is not built alongside.
         self._engine = HyperRAMCeiling(
             sync_mhz=ck_mhz / 2 if dqs else ck_mhz,
             dqs=dqs, negative_control=negative_control,
-            transport=self._transport, own_clocks=False, own_leds=False)
+            transport=self._transport, own_clocks=False, own_leds=False,
+            own_dtr=False)
 
         # One bit wider than the engine's: parameters and results occupy two
         # windows, so every engine register has two bus addresses. See
@@ -119,7 +123,17 @@ class HyperRAMBist(wiring.Component):
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules.engine = self._engine
+        # The engine is written in `sync`/`fast` like every other probe, and is
+        # MOVED here rather than parameterised. That keeps one copy of it shared
+        # with the JTAG applet -- a second copy differing only in domain names is
+        # how two rigs stop measuring the same thing.
+        #
+        # Without this the engine runs in `sync`, which is the CPU's clock, and
+        # the whole rig collapses back to what it was built to escape: changing
+        # CK would drag the console divisor and the CLINT tick with it.
+        m.submodules.engine = DomainRenamer({"sync": self._domain,
+                                             "fast": f"{self._domain}_fast"})(
+            self._engine)
         # The transport is deliberately NOT added here. `BISTHarness.elaborate`
         # already does `m.submodules.registers = registers`, and adding the same
         # instance in two places elaborates it twice -- which surfaces four
