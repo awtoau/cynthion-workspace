@@ -34,7 +34,7 @@ the SoC.
 
 | | what | provenance | detail |
 |---|---|---|---|
-| PLIC | RISC-V PLIC, 31 sources, 5 used, per-device | written | [`hardware.md`](hardware.md#register-reference), #135 |
+| PLIC | RISC-V PLIC, one source per device | written | [`hardware.md`](hardware.md#register-reference), #135 |
 | CLINT | `mtime`/`mtimecmp` | written | same |
 | concurrency | RTIC 2.3, `riscv-clint-backend` | upstream | [`rtic.md`](rtic.md) |
 | monotonic | CLINT-backed, ~60 lines | written | same — `rtic-monotonics` has no CLINT backend |
@@ -66,10 +66,9 @@ one shape — a hold expressed as a ready. Each is named with its reproducer in
 | | what | provenance | detail |
 |---|---|---|---|
 | at `0x0` | **the bootloader** — `firmware/cynthion-boot`, 492 bytes | written | [`hardware.md`](hardware.md), #138 |
-| the firmware | `firmware/cynthion-soc` — an **image** the bootloader loads, not resident | written | it does not fit block RAM |
+| the firmware | `firmware/cynthion-soc` — an **image** the bootloader loads | written | too large to be resident |
 | firmware load | JTAG stream, and USB bulk | written | #132, #114 |
-| memory map | 12 peripherals, 55 registers, 96 fields | generated | [`hardware.md`](hardware.md#register-reference) |
-| register access | generated PAC, **addresses only** | generated | same — svd2rust's accessors do not fit granularity-8 CSRs |
+| memory map and PAC | generated from the design; **addresses only** | generated | `scripts/soc_generate_pac.py`, [`hardware.md`](hardware.md#register-reference) |
 
 ## Dependencies and verification
 
@@ -77,5 +76,5 @@ one shape — a hold expressed as a ready. Each is named with its reproducer in
 |---|---|---|---|
 | `amaranth-soc` | upstream package, from git | upstream | [`toolchain-versions.md`](toolchain-versions.md) — PyPI's is a placeholder |
 | emulation | QEMU `-M virt` | upstream | cannot reach a PHY or any of our peripherals |
-| simulation | 16 pysim simulations, 543 checks | written | `scripts/soc_sims.py` — the only tier that tests gateware without a board |
-| unit tests | 62, in `tests/` | written | |
+| simulation | Amaranth pysim | written | `scripts/soc_sims.py` — the only tier that tests gateware without a board |
+| unit tests | pytest, in `tests/` | written | |
