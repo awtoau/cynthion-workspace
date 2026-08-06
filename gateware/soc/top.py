@@ -81,7 +81,7 @@ from amaranth.lib.cdc               import FFSynchronizer
 # requires that -- the PLL runs a 480 MHz VCO and each output divides it, so 80, 96, 100
 # and the rest are all reachable. This one takes an arbitrary frequency, derives real
 # dividers with ecppll, and reports what it actually produced.
-from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
+from clocks import SocClocks
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import usb_ids
@@ -537,24 +537,29 @@ FLASH_DIVISOR = 0
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
 #
-# PROVISIONAL. This value is not derived from anything, and an earlier comment
-# here claimed it was -- it said the flash bound made `sync` "therefore 60",
-# which does not follow. The flash bound caps `sync`; it does not choose it.
+# The CPU clock, and it is now genuinely free.
 #
-# What IS a constraint: both outputs divide ONE VCO, so the ratio is an integer
-# and `fast = 2 x sync`. The flash domain closes at 124.77 MHz in this design
-# (measured -- see FLASH_FAST_RATIO), so `fast` <= 120 and therefore
-# `sync` <= 60. That is a ceiling, and 30 and 60 both sit under it.
+# It used to be one of exactly three values. `usb` and `sync` came from ONE PLL,
+# both dividing one VCO, so pinning `usb` to exactly 60.000 MHz for the ULPI PHY
+# left only 60, 100 and 120 reachable for `sync` below 130. That is a property of
+# the old topology, not of the part.
 #
-# What is NOT a constraint, despite having been treated as one: the "CPU
-# corrupts its output above 60 MHz" ladder. That result is withdrawn --
-# `docs/soc-clocking.md` section 2 -- because its signature is the console
-# FIFO's unsynchronised crossing, not the CPU. The FIFO is fixed and the ladder
-# has not been re-run, so the CPU's working ceiling is unmeasured.
+# `clocks.py` takes `usb` straight from the 60 MHz oscillator on A8 -- the FPGA
+# sources the ULPI clock -- so `usb` is exact by construction and `sync` is
+# unconstrained by it. Measured against `ecppll`, every integer MHz from 63 to
+# 130 is reachable within 0.5% bar eight, worst case 1.87%.
 #
-# Determining this needs a measurement, not an argument: re-run the ladder with
-# a readout that is not the console. #110 and #172.
-SYNC_MHZ = 30
+# 80 is a starting point, not a determination: nothing here has been measured at
+# it yet. The one real ceiling left is the flash, and only when `fast` is built
+# -- `fast` is a second output of this same PLL at FLASH_FAST_RATIO x sync, and
+# the flash PHY closes at 124.77 MHz measured. Both FLASH_PHY_FAST and
+# HYPERRAM_DQS are currently off, so no `fast` domain exists and nothing bounds
+# this but the fabric.
+#
+# The "CPU corrupts above 60 MHz" ladder does NOT bound it: that result is
+# withdrawn (`docs/soc-clocking.md` section 2) because its signature is the
+# console FIFO's unsynchronised crossing, not the CPU.
+SYNC_MHZ = 72
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
 #
@@ -673,7 +678,11 @@ class HelloSoC(Elaboratable):
         # `fast` is needed if EITHER the flash PHY is decoupled or the HyperRAM
         # uses its DQS PHY -- the latter reads `ClockSignal("fast")` for every
         # ECLK, so it cannot elaborate without one.
-        m.submodules.car = car = VariableClockDomainGenerator(
+        # `usb` comes from the 60 MHz oscillator directly, not from this PLL --
+        # the FPGA sources the ULPI clock, so it is exactly 60.000 by
+        # construction. That is what frees `sync`: it no longer has to share a
+        # VCO with a domain pinned to 60. See `clocks.py`.
+        m.submodules.car = car = SocClocks(
             sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST or HYPERRAM_DQS,
             fast_ratio=FLASH_FAST_RATIO)
 
