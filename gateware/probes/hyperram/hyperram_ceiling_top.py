@@ -306,7 +306,8 @@ class HyperRAMCeiling(Elaboratable):
     """Write a burst, read it back, verify, repeat -- and count what disagrees."""
 
     def __init__(self, *, sync_mhz=100.0, dqs=True, burst_words=BURST_WORDS,
-                 negative_control=False, transport=None, own_clocks=True):
+                 negative_control=False, transport=None, own_clocks=True,
+                 own_leds=True):
         """`transport` and `own_clocks` exist so this engine can be embedded.
 
         Defaults reproduce the standalone JTAG applet exactly. Passing a
@@ -325,6 +326,12 @@ class HyperRAMCeiling(Elaboratable):
         self.burst_words = burst_words
         self._transport = transport
         self._own_clocks = own_clocks
+        # A top-level applet owns the board; an embedded engine owns nothing it
+        # was not handed. `platform.request` is not idempotent, so an embedded
+        # copy asking for `led` fights the SoC's own GPIO for it and the build
+        # dies on "Resource led#0 has already been requested" -- a failure that
+        # names the resource and not the reason.
+        self._own_leds = own_leds
 
         # The negative control. Reads are checked against the COMPLEMENT of what
         # was written, which the part cannot return, so a working detector must
@@ -922,7 +929,7 @@ class HyperRAMCeiling(Elaboratable):
         # LEDs. Not the evidence -- the registers are -- but a board that shows
         # nothing is indistinguishable from a board that is not configured.
         #
-        if platform is not None:
+        if platform is not None and self._own_leds:
             leds = [platform.request("led", n, dir="o") for n in range(6)]
             m.d.comb += [
                 leds[0].o.eq(~dll_locked),                    # red:    no DLL

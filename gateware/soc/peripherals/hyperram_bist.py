@@ -79,30 +79,57 @@ class HyperRAMBist(wiring.Component):
         self.negative_control = negative_control
         self._domain = domain
 
-        # Imported here rather than at module scope: the probes tree is not on
-        # `sys.path` for every consumer of this package, and a top-level import
-        # would make the SoC unimportable for anyone who has not added it.
+        # Imported here rather than at module scope, and with the path added
+        # rather than assumed: the engine lives under `gateware/probes/`, which
+        # is not on `sys.path` for every consumer of this package. A top-level
+        # import would make the whole SoC unimportable for anyone who had not
+        # added it, and the failure would name this module rather than the path.
+        import sys
+        from pathlib import Path
+        here = Path(__file__).resolve()
+        for extra in (here.parents[2] / "probes",   # the engine
+                      here.parent):                 # this package's siblings
+            if str(extra) not in sys.path:
+                sys.path.insert(0, str(extra))
+
         from hyperram.hyperram_ceiling_top import HyperRAMCeiling
         from bist_csr import BistCsrTransport
 
         self._transport = BistCsrTransport(addr_width=addr_width,
                                            engine_domain=domain)
+        # `own_clocks=False`: the SoC's generator makes `hr`.
+        # `own_leds=False`: the SoC's GPIO already owns them.
+        # The HyperRAM pins it still requests itself, and must -- that is the
+        # one resource this variant hands it exclusively, which is why BootRAM
+        # is not built alongside.
         self._engine = HyperRAMCeiling(
             sync_mhz=ck_mhz / 2 if dqs else ck_mhz,
-            dqs=dqs, negative_control=negative_control)
+            dqs=dqs, negative_control=negative_control,
+            transport=self._transport, own_clocks=False, own_leds=False)
 
+        # One bit wider than the engine's: parameters and results occupy two
+        # windows, so every engine register has two bus addresses. See
+        # `BistCsrTransport`.
         super().__init__({
-            "bus": In(csr.Signature(addr_width=addr_width, data_width=8)),
+            "bus": In(csr.Signature(addr_width=addr_width + 1, data_width=8)),
         })
+        # The transport builds its whole window at construction, so the map is
+        # available immediately and no finalize step exists to be forgotten.
+        self.bus.memory_map = self._transport.bus.memory_map
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.engine = self._engine
-        m.submodules.transport = self._transport
+        # The transport is deliberately NOT added here. `BISTHarness.elaborate`
+        # already does `m.submodules.registers = registers`, and adding the same
+        # instance in two places elaborates it twice -- which surfaces four
+        # frames inside `amaranth_soc` as `'frozenset' object has no attribute
+        # 'add'`, the CSR bridge's shadow having been frozen by the first pass.
+        # Only the bus needs joining up, and that does not require ownership.
         connect(m, flipped(self.bus), self._transport.bus)
         return m
 
     @property
     def transport(self):
-        """The register window, for a caller that must finalize() it."""
+        """The register window, for a caller that wants it directly."""
         return self._transport

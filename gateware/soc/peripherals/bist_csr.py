@@ -40,13 +40,8 @@ There is deliberately no FIFO. `stream_buffer.py` records a `SyncFIFOBuffered`
 between two domains that "worked perfectly while both were 60, then produced a
 stream with correct counter values and dropped characters" once they differed;
 that is what a continuous crossing costs, and there is no continuous crossing
-here.
-
-## Register layout
-
-The engine addresses its registers by number, as it did over JTAG. This maps
-each to a 32-bit CSR at `4 * address`, so the firmware's view is a flat array
-and adding a register in the engine does not move the others.
+here. `scripts/soc_bist_cdc_sim.py` measures both, and shows a level crossing
+losing 3 of 8 pulses at CK 100 and duplicating at CK 180.
 """
 
 from amaranth import Module, Signal
@@ -55,16 +50,16 @@ from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, connect, flipped
 from amaranth_soc import csr
 
-__all__ = ["BistCsrTransport"]
+__all__ = ["BistCsrTransport", "PulseCross"]
 
 
-class _PulseCross(wiring.Component):
+class PulseCross(wiring.Component):
     """One pulse from `i_domain` to `o_domain`, through a toggle.
 
     A level-crossing `go` is lost whenever the source cycle is shorter than the
-    destination one, which is exactly the case here in one direction and will be
-    the other once the ladder moves. Toggle-and-edge-detect does not care about
-    the ratio.
+    destination one, and duplicated when it is longer. Toggle-and-edge-detect
+    does not care about the ratio, which matters because `hr` is CK/2 and moves
+    across the ladder while `sync` stays pinned.
     """
 
     def __init__(self, *, i_domain, o_domain):
@@ -89,78 +84,110 @@ class _PulseCross(wiring.Component):
 class BistCsrTransport(wiring.Component):
     """`add_register` / `add_read_only_register`, over CSR rather than JTAG.
 
-    Built in two phases, like the JTAG one: registers are declared during the
-    engine's `elaborate`, and the CSR bank is assembled from them afterwards.
-    `finalize()` is what does the assembling, and calling it twice or adding a
-    register after it is an error rather than a silent no-op.
+    ## Why the whole window is built up front, and why there are two
+
+    The obvious shape -- collect the registers the engine declares, then assemble
+    a bank from them -- cannot work. The engine declares its registers during
+    ITS elaborate, but `amaranth_soc` needs the memory map before the bridge is
+    constructed, and the bridge is constructed when this is. That ordering is a
+    cycle, not something rearranging calls can fix; it surfaces as
+    "registers must be added before finalize()" raised four frames inside the
+    SoC's own elaborate.
+
+    So the map does not depend on which registers exist. Every address gets a
+    register whether the engine uses it or not, and the two methods bind a signal
+    to one that is already there. An unused address reads zero.
+
+    That leaves the field TYPE, which also has to be fixed before the engine
+    speaks: `csr.action.RW` exposes `.data`, what the CPU wrote, and has no
+    `.r_data` for the gateware to drive; `csr.action.R` is the other way round.
+    There is no field that is both. Declaring the split up front means restating
+    the engine's register map here, where it would rot out of step -- and the way
+    it would rot is a result silently reading back the CPU's last write, which
+    looks exactly like a working measurement.
+
+    So the window is built TWICE, at two offsets:
+
+        base + 0x000 + 4*N    parameter N, RW, CPU writes and engine reads
+        base + 0x100 + 4*N    result N, R, engine drives and CPU reads
+
+    Address N therefore exists in both forms, and which one is real is settled by
+    whichever method the engine calls. Nothing needs to know in advance, and the
+    firmware side is unambiguous: parameters are written low, results are read
+    high.
+
+    The cost is 128 registers rather than the ~25 the engine uses. They are LUT
+    RAM, not block RAM. What it buys is a construction order that works and a map
+    that cannot drift.
     """
 
+    #: Byte offset of the result window from the peripheral's base. Parameters
+    #: sit below it. The firmware's `bist.rs` carries the same constant.
+    RESULT_WINDOW = 0x100
+
     def __init__(self, *, addr_width=8, engine_domain="hr"):
+        # `addr_width` is the ENGINE's, i.e. how many registers it can name. The
+        # bus is one bit wider because each one appears in both windows.
         self._addr_width = addr_width
         self._engine_domain = engine_domain
-        self._params = {}       # address -> Signal, sync -> engine
-        self._results = {}      # address -> Signal, engine -> sync
-        self._finalized = False
+        self._count = (1 << addr_width) // 4
+        self._bus_addr_width = addr_width + 1
+        self._params = {}
+        self._results = {}
 
-        super().__init__({"bus": In(csr.Signature(addr_width=addr_width, data_width=8))})
+        builder = csr.Builder(addr_width=self._bus_addr_width, data_width=8)
+        self._param_regs = {}
+        self._result_regs = {}
+        for address in range(self._count):
+            w = csr.Register({"w": csr.Field(csr.action.RW, 32)}, access="rw")
+            builder.add(f"p{address:02x}", w, offset=4 * address)
+            self._param_regs[address] = w
+
+            r = csr.Register({"w": csr.Field(csr.action.R, 32)}, access="r")
+            builder.add(f"q{address:02x}", r,
+                        offset=self.RESULT_WINDOW + 4 * address)
+            self._result_regs[address] = r
+        self._bridge = csr.Bridge(builder.as_memory_map())
+
+        super().__init__({"bus": In(csr.Signature(addr_width=self._bus_addr_width,
+                                                  data_width=8))})
+        self.bus.memory_map = self._bridge.bus.memory_map
 
     # -- the two methods BISTHarness calls -----------------------------------
 
-    def add_register(self, address, *, value_signal):
+    # `name` is accepted and ignored: `JTAGRegisterInterface` takes it for its
+    # own debug output, and the engine passes it through. Rejecting it here
+    # would make the two transports non-interchangeable for no benefit, which
+    # is the one thing this class exists not to be.
+    def add_register(self, address, *, value_signal, name=None):
         """A parameter the CPU writes and the engine reads."""
-        if self._finalized:
-            raise RuntimeError("registers must be added before finalize()")
-        if address in self._params or address in self._results:
-            raise ValueError(f"register {address} is already defined")
+        self._claim(address)
         self._params[address] = value_signal
 
-    def add_read_only_register(self, address, *, read):
+    def add_read_only_register(self, address, *, read, name=None):
         """A result the engine produces and the CPU reads."""
-        if self._finalized:
-            raise RuntimeError("registers must be added before finalize()")
-        if address in self._params or address in self._results:
-            raise ValueError(f"register {address} is already defined")
+        self._claim(address)
         self._results[address] = read
 
-    # -- assembly -------------------------------------------------------------
-
-    def finalize(self):
-        """Build the CSR bank from the registers the engine declared."""
-        if self._finalized:
-            raise RuntimeError("finalize() has already been called")
-        self._finalized = True
-
-        builder = csr.Builder(addr_width=self._addr_width, data_width=8)
-        self._fields = {}
-        for address, sig in sorted(self._params.items()):
-            reg = csr.Register({"value": csr.Field(csr.action.RW, 32)}, access="rw")
-            builder.add(f"param{address:02x}", reg, offset=4 * address)
-            self._fields[("param", address)] = (reg, sig)
-        for address, sig in sorted(self._results.items()):
-            reg = csr.Register({"value": csr.Field(csr.action.R, 32)}, access="r")
-            builder.add(f"result{address:02x}", reg, offset=4 * address)
-            self._fields[("result", address)] = (reg, sig)
-
-        self._bridge = csr.Bridge(builder.as_memory_map())
-        self.bus.memory_map = self._bridge.bus.memory_map
-        return self
+    def _claim(self, address):
+        if address >= self._count:
+            raise ValueError(
+                f"register {address} is outside this window: addr_width="
+                f"{self._addr_width} holds {self._count} registers")
+        if address in self._params or address in self._results:
+            raise ValueError(f"register {address} is already defined")
 
     def elaborate(self, platform):
-        if not self._finalized:
-            raise RuntimeError(
-                "BistCsrTransport.finalize() was never called, so the CSR bank "
-                "holds none of the engine's registers")
         m = Module()
         m.submodules.bridge = self._bridge
         connect(m, flipped(self.bus), self._bridge.bus)
 
-        for (kind, _address), (reg, sig) in self._fields.items():
-            if kind == "param":
-                # sync -> hr. Held still across `go`, so a plain assignment is
-                # the crossing; see the module docstring.
-                m.d.comb += sig.eq(reg.f.value.data)
-            else:
-                # hr -> sync. Read after `done`, likewise.
-                m.d.comb += reg.f.value.r_data.eq(sig)
+        for address, sig in self._params.items():
+            # sync -> hr. Held still across `go`, so a plain assignment is the
+            # crossing; see the module docstring.
+            m.d.comb += sig.eq(self._param_regs[address].f.w.data)
+        for address, sig in self._results.items():
+            # hr -> sync. Read after `done`, likewise.
+            m.d.comb += self._result_regs[address].f.w.r_data.eq(sig)
 
         return m

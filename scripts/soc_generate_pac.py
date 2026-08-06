@@ -486,23 +486,29 @@ def cross_check(peripherals, emit):
         "FLASH_ILA": soc_module.FLASH_ILA_BASE,
         "BOOTRAM": soc_module.BOOTRAM_BASE,
     }
-
-    # The HyperRAM memory window is the one peripheral a build variant removes:
-    # HYPERRAM_BIST hands the part to a BIST engine the CPU commands instead, so
-    # nothing of the bus sits between the engine and the device (#226). Absent is
-    # correct there and a defect anywhere else, so it is checked either way round
-    # rather than skipped.
+    # Two peripherals one build variant removes. HYPERRAM_BIST hands the part to
+    # a BIST engine the CPU commands, so nothing of the bus sits between the
+    # engine and the device (#226) -- the memory window goes. BootRAM goes with
+    # it because it requests the same `ram` resource and Amaranth allows a single
+    # requester; that is not a preference but the reason the two cannot coexist.
+    #
+    # Absent is correct in that variant and a defect in the other, so each is
+    # asserted either way round rather than dropped from the comparison. A
+    # peripheral that merely vanished from `expected` would let a real
+    # disappearance pass unnoticed, which is the failure this generator exists
+    # to catch.
+    ok_bist = True
     if getattr(soc_module, "HYPERRAM_BIST", False):
-        if "HYPERRAM" in bases:
-            emit("  MISMATCH gateware HYPERRAM: HYPERRAM_BIST is set, so the "
-                 f"memory window should be absent -- found at 0x{bases['HYPERRAM']:08x}")
-            ok_bist = False
-        else:
-            emit("  HYPERRAM window absent, as HYPERRAM_BIST requires")
-            ok_bist = True
+        expected.pop("BOOTRAM", None)
+        for removed in ("HYPERRAM", "BOOTRAM"):
+            if removed in bases:
+                emit(f"  MISMATCH gateware {removed}: HYPERRAM_BIST is set, so "
+                     f"it should be absent -- found at 0x{bases[removed]:08x}")
+                ok_bist = False
+            else:
+                emit(f"  {removed} absent, as HYPERRAM_BIST requires")
     else:
         expected["HYPERRAM"] = soc_module.HYPERRAM_BASE
-        ok_bist = True
 
     ok = ok_bist
     for name, address in sorted(expected.items()):
