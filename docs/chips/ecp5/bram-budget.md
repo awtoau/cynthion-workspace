@@ -59,11 +59,37 @@ cannot be built in Diamond for this part at all, so it cannot be cross-checked
 against the open flow — and upstream's own facedancer, at ~12.5K LUT4 and 44
 block RAMs, is already past both of Diamond's limits.
 
-So **the shipping Facedancer bitstream could not be produced by Lattice's own
-tools for the part it ships on.** It exists because the open flow models the die
-rather than the marking. That is not a criticism of it; it is the boundary of any
-Diamond-as-oracle comparison, and it is where that comparison stops being
-available.
+So a design that fits the die but not the marking cannot be built in Diamond by
+asking for the part that is on the board — which is where a Diamond-as-oracle
+comparison would otherwise stop.
+
+### The workaround: target the 25F, write it to the 12F
+
+Diamond's refusal is a per-device rule in the tool, not anything about the
+silicon. Ask it for an `LFE5U-25F` and it places into all 24,288 LUT4 and 56 EBR,
+because that is one die and Trellis's own database says so:
+
+    LFE5U-12F    idcode 0x21111043   frames 7562  bits/frame 592  max_row 50  max_col 72
+    LFE5U-25F    idcode 0x41111043   frames 7562  bits/frame 592  max_row 50  max_col 72
+
+**Identical frame count, identical frame width, identical grid.** The
+configuration is the same size and the same shape; the only difference in the
+whole record is the top nibble of the IDCODE, `2` against `4`.
+
+So the bitstream a 25F build produces is loadable on the 12F-marked part. What
+stops it is the loader's IDCODE check, not the device: the part reports
+`0x21111043` and the bitstream asks for `0x41111043`. Reconcile those — patch the
+top nibble, or configure with a loader that does not verify it — and it runs.
+
+**Two things this is not.** It is not a way to get more silicon: the fabric is
+the same either way, and the open flow already reaches all of it without any of
+this. And it is not free of the binning question — a 25F-targeted build placed
+into the upper half is exactly the region a salvage die would have failed on
+(#116).
+
+What it *is*: the way to build a design in Diamond that the open flow will build
+and Diamond otherwise refuses, so the two can be compared at all above 12,288
+LUT4.
 
 ## Measured
 

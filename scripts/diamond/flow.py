@@ -49,6 +49,19 @@ FPGA_BIN = FOUNDRY / "bin" / "lin64"
 
 # The part actually on the board. -12F is the constraint the whole project
 # is working against; using a bigger part would make every number meaningless.
+#
+# It is also a CEILING here in a way it is not in the open flow. Diamond enforces
+# the marking -- 12,288 LUT4 and 32 EBR -- while `nextpnr-ecp5 --12k` offers the
+# die's 24,288 and 56, because its chipdb is per-die. Same device string, two
+# limits. So a design between those two sizes builds in one flow and is refused
+# by the other, and cannot be compared.
+#
+# The workaround, when a comparison above 12,288 LUT4 is actually needed: build
+# for `LFE5U-25F` and write the result to the 12F-marked part. Trellis's own
+# database gives the two identical `frames`, `bits_per_frame` and grid, with the
+# IDCODE differing only in the top nibble (0x21111043 against 0x41111043), so the
+# configuration is the same size and shape and only the loader's IDCODE check
+# stands in the way. See `docs/chips/ecp5/bram-budget.md`.
 ARCH = "ECP5U"
 DEVICE = "LFE5U-12F"
 PACKAGE = "CABGA256"
