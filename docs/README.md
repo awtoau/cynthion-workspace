@@ -70,7 +70,7 @@ in its §13 got there in the first place.
 * [`../linux-on-cynthion/`](../linux-on-cynthion/) — **Linux on Cynthion**: the analysis, the bring-up plan, and the sweep scripts behind them
 * [`rtic.md`](rtic.md) — RTIC and the four alternatives: what the workload needs, and what each costs
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
-* [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
+* [`chips/ecp5/clocks.md`](chips/ecp5/clocks.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
 * [`soc-size-review.md`](soc-size-review.md) — Where the SoC's size actually is — per-peripheral area, per-module `.text`, and why two of the obvious ways to measure both give wrong answers

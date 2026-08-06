@@ -1001,7 +1001,7 @@ after a 68 µs gateware timeout, not zeros.
 | the FPGA_ADV wire — protocol, rate, port ownership | [`chips/cynone-sideband.md`](chips/cynone-sideband.md) |
 | what we take from upstream and what we replaced | [`upstream-boundary.md`](upstream-boundary.md) |
 | making the test gateware reusable by the CPU | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
-| how fast the soft CPU can be clocked on this part | [`soc-clocking.md`](soc-clocking.md) |
+| how fast the soft CPU can be clocked on this part | [`chips/ecp5/clocks.md`](chips/ecp5/clocks.md) |
 | flash, HyperRAM, USB and BRAM in depth | [`chips/ecp5/`](chips/ecp5/) |
 | Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
 | the soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
