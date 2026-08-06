@@ -52,6 +52,24 @@ rtic = { version = "2.3", features = ["riscv-clint-backend"], optional = true }
 [features]
 qemu = []
 
+# The HyperRAM BIST measurement variant (#226), matching `HYPERRAM_BIST` in
+# `gateware/soc/top.py`. That bitstream gives the HyperRAM pins to a BIST engine
+# the CPU commands over CSR, so there is no memory window and no BootRAM -- the
+# engine owns the part, and two things cannot drive the same pins.
+#
+# This feature therefore REMOVES rather than adds: every command that addresses
+# the window is compiled out, because in that bitstream those addresses decode to
+# nothing. They are not stubbed to return an error value; a measurement command
+# that answers at all is the failure mode this whole rig exists to avoid, so they
+# are absent from the help and from the dispatch.
+#
+# It builds against the SHIPPING PAC. The BIST peripheral's base is a constant in
+# `src/bist.rs` checked against `top.py` by `tests/test_bist_constants.py`, which
+# is what lets one committed PAC serve both builds -- a PAC generated with the
+# gateware flag set would leave the shipping image checking itself against a map
+# it does not have.
+hyperram-bist = []
+
 # The concurrency-model skeletons that produced the table in
 # `docs/rtic.md`. They are measurement artefacts, not code the
 # shell uses, and they are kept because a size comparison nobody can rebuild is

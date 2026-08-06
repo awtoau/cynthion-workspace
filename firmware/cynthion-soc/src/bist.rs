@@ -29,6 +29,23 @@
 //! (`hyperram_ceiling_top.py`), deliberately not renumbered: two rigs sharing a
 //! numbering is what lets a number from one be compared with a number from the
 //! other.
+//!
+//! Each address appears **twice**, because no `amaranth_soc` CSR field is both
+//! CPU-writable and gateware-driven, and which one an address needs is not known
+//! until the engine elaborates -- after the bank must exist. So:
+//!
+//! ```text
+//! base + 0x000 + 4*N    parameter N, the CPU writes
+//! base + 0x100 + 4*N    result N, the engine drives
+//! ```
+//!
+//! [`Bist::write`] therefore targets the low window and [`Bist::read`] the high
+//! one, which is not an arbitrary convention: every register this file writes is
+//! an engine parameter and every one it reads is an engine result. Reading a
+//! parameter's number out of the result window yields zero rather than an error,
+//! so [`Bist::present`] is the guard -- `ID` is a result, and if the offset were
+//! wrong it would not match `APPLET_ID` and no measurement would be taken.
+//! `BistCsrTransport::RESULT_WINDOW` is the same constant on the gateware side.
 
 #![allow(dead_code)]
 
@@ -140,6 +157,17 @@ impl Cell {
     }
 }
 
+/// Where the BIST peripheral sits, matching `HYPERRAM_BIST_BASE` in
+/// `gateware/soc/top.py`.
+///
+/// A literal rather than a PAC constant, and deliberately: the PAC is generated
+/// from whichever variant the gateware flag selects, and only one of the two can
+/// be committed. Taking this from the PAC would mean committing the measurement
+/// variant's map, which would leave the shipping image checking itself against a
+/// map it does not have. `tests/test_bist_constants.py` asserts this equals the
+/// gateware's, so the two cannot drift silently.
+pub const BASE: usize = 0xf000_0700;
+
 /// The BIST peripheral's register window.
 pub struct Bist {
     base: usize,
@@ -152,17 +180,21 @@ impl Bist {
         Self { base }
     }
 
-    #[inline]
-    fn addr(&self, reg: usize) -> *mut u32 {
-        (self.base + 4 * reg) as *mut u32
-    }
+    /// Byte offset of the result window. Mirrors
+    /// `BistCsrTransport.RESULT_WINDOW` in `gateware/soc/peripherals/bist_csr.py`.
+    const RESULT_WINDOW: usize = 0x100;
 
+    /// A result the engine drives. See the module docs for why this is not the
+    /// same address as the parameter of the same number.
     pub fn read(&self, reg: usize) -> u32 {
-        unsafe { core::ptr::read_volatile(self.addr(reg)) }
+        let addr = (self.base + Self::RESULT_WINDOW + 4 * reg) as *const u32;
+        unsafe { core::ptr::read_volatile(addr) }
     }
 
+    /// A parameter the CPU sets and the engine reads.
     pub fn write(&self, reg: usize, value: u32) {
-        unsafe { core::ptr::write_volatile(self.addr(reg), value) }
+        let addr = (self.base + 4 * reg) as *mut u32;
+        unsafe { core::ptr::write_volatile(addr, value) }
     }
 
     /// Is the engine present and answering? Checked before any measurement.

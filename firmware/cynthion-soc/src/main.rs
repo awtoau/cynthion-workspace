@@ -470,6 +470,41 @@ const HELP: &[(&str, &str)] = &[
 ///     hr cross    do the window and the staging port agree?
 ///     hr bench    the same walk as `bench hyperram`
 ///     hr id       HyperBus has no identify
+/// The `hr` verb in the BIST measurement bitstream (#226).
+///
+/// One subcommand, because in that bitstream there is nothing else to address:
+/// the engine owns the HyperRAM pins and its own PHY, so the memory window, the
+/// BootRAM and the SoC's DQS status registers all decode to nothing. The other
+/// subcommands are not stubbed out with an error return -- they are absent, so
+/// that no measurement command in this image can answer at all.
+#[cfg(feature = "hyperram-bist")]
+fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
+    // SAFETY: `bist::BASE` is the peripheral's CSR base, checked against the
+    // gateware's own constant by `tests/test_bist_constants.py`.
+    let engine = unsafe { bist::Bist::new(bist::BASE) };
+
+    if !engine.present() {
+        let _ = writeln!(uart, "hr: no BIST engine here -- is this the BIST bitstream?");
+        return;
+    }
+
+    match rest {
+        b"" | b"sweep" => bist::sweep(uart, &engine, 1),
+        _ if rest.starts_with(b"sweep") => match parse_hex(trim(&rest[5..])) {
+            // Passes per cell. More of them raises the chance a marginal
+            // setting is caught erring, at linear cost in time.
+            Some(n) if n > 0 => bist::sweep(uart, &engine, n),
+            _ => {
+                let _ = writeln!(uart, "usage: hr sweep <hex passes>");
+            }
+        },
+        _ => {
+            let _ = writeln!(uart, "usage: hr sweep [hex passes]   (BIST bitstream)");
+        }
+    }
+}
+
+#[cfg(not(feature = "hyperram-bist"))]
 fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
     match rest {
         b"status" => {
