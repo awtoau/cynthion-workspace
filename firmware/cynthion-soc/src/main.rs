@@ -81,6 +81,7 @@ use core::ptr::{read_volatile, write_volatile};
 use riscv_rt::entry;
 
 mod bench;
+mod bist;
 mod board;
 mod bus;
 mod clock;
