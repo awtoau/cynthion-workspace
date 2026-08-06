@@ -221,6 +221,16 @@ impl Bist {
     /// Returns `(errors, words)`. `words == 0` means the engine never ran and
     /// the caller must not treat the zero errors as a result.
     pub fn run(&self, negative: bool, passes: u32) -> (u32, u32) {
+        let (errors, words, _) = self.run_verbose(negative, passes);
+        (errors, words)
+    }
+
+    /// As `run`, plus whether the poll timed out and the last STATUS seen.
+    ///
+    /// Returns `(errors, words, status)`. On a timeout `words` is zero, which
+    /// `verdict()` reads as NoResult -- a wedged engine can never be reported as
+    /// a pass, however its counters happen to read.
+    pub fn run_verbose(&self, negative: bool, passes: u32) -> (u32, u32, u32) {
         self.write(reg::PASS_LIMIT, passes);
         // Arm the control BEFORE `go`. Arming after the engine has started is
         // exactly the defect that made every pre-2026-08-06 zero meaningless:
@@ -230,18 +240,33 @@ impl Bist {
         self.write(reg::CONTROL, mode | control::GO);
         self.write(reg::CONTROL, mode);
 
-        // Poll. Bounded, so a wedged engine reports as one rather than hanging
-        // the shell -- and a timeout returns zero words, which `verdict()`
-        // reads as NoResult rather than as a pass.
+        // Poll, bounded. The bound has to be DERIVED, not picked: at
+        // 200_000_000 spins a wedged engine took long enough per cell that a
+        // 128-cell sweep was indistinguishable from a lockup, which is how this
+        // was first reported.
+        //
+        // A pass is a burst of a few thousand words. Even allowing a very
+        // generous 1e6 `hr` cycles for one -- 20 ms at the slowest rung this rig
+        // builds, `hr` 50 MHz for CK 100 -- and a CPU at 30 MHz, that is about
+        // 600k CPU cycles. This spin is a CSR read plus a mask and a branch,
+        // call it 10 cycles, so a legitimate pass finishes inside ~60k spins.
+        //
+        // 2e6 is ~30x that margin and still gives up in under a second, so a
+        // wedge is REPORTED rather than waited on. If a future rung genuinely
+        // needs longer, raise it with the arithmetic, not by rounding up.
+        const LIMIT: u32 = 2_000_000;
         let mut spins: u32 = 0;
-        const LIMIT: u32 = 200_000_000;
-        while self.read(reg::STATUS) & status::DONE == 0 {
+        let mut last = self.read(reg::STATUS);
+        while last & status::DONE == 0 {
             spins = spins.wrapping_add(1);
             if spins > LIMIT {
-                return (0, 0);
+                // Zero words, deliberately: `verdict()` turns that into
+                // NoResult. The status goes back so the caller can say WHY.
+                return (0, 0, last);
             }
+            last = self.read(reg::STATUS);
         }
-        (self.read(reg::ERRORS), self.read(reg::WORDS))
+        (self.read(reg::ERRORS), self.read(reg::WORDS), last)
     }
 
     /// One cell: the real pass and its control, in that order.
@@ -249,6 +274,24 @@ impl Bist {
         let (errors, words) = self.run(false, passes);
         let (control_errors, control_words) = self.run(true, passes);
         Cell { axes, errors, words, control_errors, control_words }
+    }
+
+    /// As `cell`, reporting the STATUS each half ended on.
+    pub fn cell_verbose(&self, axes: Axes, passes: u32) -> (Cell, u32, u32) {
+        let (errors, words, st_real) = self.run_verbose(false, passes);
+        let (control_errors, control_words, st_ctrl) = self.run_verbose(true, passes);
+        (Cell { axes, errors, words, control_errors, control_words }, st_real, st_ctrl)
+    }
+
+    /// Decode STATUS for a human. Why a cell produced nothing is usually here.
+    pub fn describe_status(&self, uart: &mut Uart, label: &str, st: u32) {
+        let _ = writeln!(
+            uart, "      {}: status {:#06x} busy={} done={} error={} negative={}",
+            label, st,
+            (st & status::BUSY != 0) as u8,
+            (st & status::DONE != 0) as u8,
+            (st & status::ERROR != 0) as u8,
+            (st & status::NEGATIVE != 0) as u8);
     }
 }
 
@@ -258,14 +301,27 @@ impl Bist {
 /// with no way to see why (#210), and a row per cell means a hang names the cell
 /// it hung on.
 pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32) {
+    sweep_verbose(uart, bist, passes, false)
+}
+
+/// The sweep, optionally narrating every cell.
+///
+/// `verbose` prints the axes BEFORE the pass runs and decodes STATUS after each
+/// half. Without it the row is printed only once both halves have returned, so a
+/// cell that never completes names nothing -- which is how `hr sweep` came to
+/// read as a lockup rather than as a wedged engine on a particular setting.
+pub fn sweep_verbose(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
     if !bist.present() {
         let _ = writeln!(uart, "bist: no engine at this address (id {:#010x})",
                          bist.read(reg::ID));
         return;
     }
 
-    let _ = writeln!(uart, "bist: ck {} kHz, config {:#x}",
-                     bist.read(reg::CLOCK), bist.read(reg::CONFIG));
+    let _ = writeln!(uart, "bist: ck {} kHz, config {:#x}, id {:#010x}",
+                     bist.read(reg::CLOCK), bist.read(reg::CONFIG),
+                     bist.read(reg::ID));
+    bist.describe_status(uart, "at rest", bist.read(reg::STATUS));
+    let _ = writeln!(uart, "bist: {} passes per cell, 128 cells", passes);
     let _ = writeln!(uart, "drive  clk  sel   errors     words   control  verdict");
 
     for drive in 0u8..8 {
@@ -273,10 +329,29 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32) {
             for readclksel in 0u8..8 {
                 let axes = Axes { drive, single_ended_clock: single_ended, readclksel };
                 bist.configure(&axes);
-                let cell = bist.cell(axes, passes);
+
+                // BEFORE the pass, so a cell that never returns is named by the
+                // last line printed rather than leaving a blank terminal.
+                if verbose {
+                    let _ = writeln!(uart, "  cell drive {} {} sel {} -- running",
+                                     drive,
+                                     if single_ended { "se" } else { "dif" },
+                                     readclksel);
+                }
+
+                let (cell, st_real, st_ctrl) = bist.cell_verbose(axes, passes);
+                if verbose {
+                    bist.describe_status(uart, "real   ", st_real);
+                    bist.describe_status(uart, "control", st_ctrl);
+                }
                 let verdict = match cell.verdict() {
                     Verdict::Pass => "PASS",
                     Verdict::Fail(_) => "fail",
+                    // A timeout is reported as itself. It reaches NoResult by
+                    // the same door as a control that did not fire, and the two
+                    // want completely different next steps.
+                    Verdict::NoResult if cell.words == 0 && cell.control_words == 0 =>
+                        "NO RESULT -- engine never completed (timeout)",
                     Verdict::NoResult => "NO RESULT -- control did not fire",
                 };
                 let _ = writeln!(

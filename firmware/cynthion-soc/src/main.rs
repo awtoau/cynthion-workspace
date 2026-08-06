@@ -488,19 +488,47 @@ fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
         return;
     }
 
-    match rest {
-        b"" | b"sweep" => bist::sweep(uart, &engine, 1),
-        _ if rest.starts_with(b"sweep") => match parse_hex(trim(&rest[5..])) {
-            // Passes per cell. More of them raises the chance a marginal
-            // setting is caught erring, at linear cost in time.
-            Some(n) if n > 0 => bist::sweep(uart, &engine, n),
-            _ => {
-                let _ = writeln!(uart, "usage: hr sweep <hex passes>");
-            }
-        },
-        _ => {
-            let _ = writeln!(uart, "usage: hr sweep [hex passes]   (BIST bitstream)");
+    // 256 passes per cell to start with. One pass is a single burst, and a
+    // marginal setting can survive one and fail the next -- the whole point of
+    // the axis sweep is to find settings that are marginal rather than broken,
+    // so the default has to be big enough that "passed" means something. It is
+    // selectable because the cost is linear: 128 cells x 2 halves x N passes.
+    const DEFAULT_PASSES: u32 = 256;
+
+    // Verbose by default. This rig exists because previous HyperRAM numbers
+    // were taken with broken instruments, so the expensive failure is a quiet
+    // run that looks fine. `q` silences it once a configuration is trusted.
+    let mut passes = DEFAULT_PASSES;
+    let mut verbose = true;
+
+    let mut argument = trim(if rest.starts_with(b"sweep") { &rest[5..] } else { rest });
+    while !argument.is_empty() {
+        let (word, remainder) = split_word(argument);
+        match word {
+            b"v" => verbose = true,
+            b"q" => verbose = false,
+            _ => match parse_hex(word) {
+                Some(n) if n > 0 => passes = n,
+                _ => {
+                    let _ = writeln!(uart,
+                        "usage: hr [sweep] [hex passes] [v|q]   (default {} passes, verbose)",
+                        DEFAULT_PASSES);
+                    return;
+                }
+            },
         }
+        argument = trim(remainder);
+    }
+
+    bist::sweep_verbose(uart, &engine, passes, verbose);
+}
+
+/// The first word of `text`, and what follows it.
+#[cfg(feature = "hyperram-bist")]
+fn split_word(text: &[u8]) -> (&[u8], &[u8]) {
+    match text.iter().position(|&b| b == b' ') {
+        Some(at) => (&text[..at], &text[at + 1..]),
+        None => (text, &text[..0]),
     }
 }
 
