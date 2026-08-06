@@ -1,8 +1,11 @@
-**The part is marked `LFE5U-12F`, which advertises 28 `DP16KD`. The die has 56**
-— it is a 25F ([`lfe5u-12f.md`](lfe5u-12f.md)). nextpnr reports 56 and every
-figure below is against that, so **every design here past 28 blocks depends on
-the undocumented half.** A build that fits "at 73%" fits at 146% of what the
-marking promises, and would not fit a genuine 12F at all.
+**The part is marked `LFE5U-12F`, which advertises 32 `DP16KD`. The die has 56**
+— it is a 25F ([`lfe5u-12f.md`](lfe5u-12f.md)). nextpnr reports 56, and every
+figure below is against that, so **a design past 32 blocks depends on memory the
+marking does not promise.**
+
+Source for 32: the ECP5 family datasheet's `LFE5U12` column, "sysMEM Blocks
+(18 Kb)". The same column gives **2/2 PLLs/DLLs**, which is what the second PLL
+in `hyperram_clocks.py` relies on.
 
 How much a design needs depends entirely on what the design is, and the split is
 sharper than expected.
@@ -11,18 +14,27 @@ sharper than expected.
 
 All built for r1.4, same device, package and speed grade.
 
-Stated against both counts, because the difference is the whole question: 28 is
-what the marking promises, 56 is what the die has.
+Stated against both counts, because the difference is the question: 32 is what
+the marking promises, 56 is what the die has.
 
-| Design | `DP16KD` | of a 12F's 28 | of the 25F die's 56 | LUT4 | What it is |
+| Design | `DP16KD` | of a 12F's 32 | of the 25F die's 56 | LUT4 | What it is |
 |---|---|---|---|---|---|
-| USB analyzer | **9** | 32% | 16% | 8191 | capture at line rate |
-| RISC-V hello SoC | **41** | **146% — does not fit** | 73% | 6811 | soft CPU + firmware |
-| Facedancer SoC | **45** | **161% — does not fit** | 80% | 12824 | soft CPU + firmware |
+| USB analyzer | **9** | 28% | 16% | 8191 | capture at line rate |
+| the SoC | **41** | **128%** | 73% | 6811 | soft CPU + firmware |
+| Facedancer SoC | **45** | **141%** | 80% | 12824 | soft CPU + firmware |
 
-**Only the analyzer would run on the part this board says it has.** Both SoCs
-depend on the undocumented half of the die, and by a wide margin — not by a
-block or two at the edge.
+**What the last two rows imply is not established and should not be asserted
+from this table alone.** Facedancer is upstream's own design and Great Scott
+Gadgets ship it on boards marked 12F, so "needs 141% of a 12F" cannot be the
+whole story. Three readings, none of them checked:
+
+* every Cynthion carries a 25F die, and upstream builds against what the part
+  really has;
+* our build of facedancer differs from theirs — it needed `domain="usb"` fixing
+  here, so it is not established as faithful;
+* the figure is right and upstream relies on the same undocumented margin.
+
+The analyzer, at 9 blocks, fits either way and settles nothing.
 
 All three build and produce bitstreams. **Facedancer must be built with
 `domain="usb"` at 60 MHz** — `top.py` reads

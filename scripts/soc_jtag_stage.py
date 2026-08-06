@@ -409,7 +409,7 @@ def main():
             emit("removes the header, not the bytes. Reconfiguring is what puts")
             emit("the bitstream's own image back, in about a second:")
             emit("  python3 repos/apollo/apollo_fpga/commands/cli.py configure \\")
-            emit("      tmp/vexii_hello/build/top.bit")
+            emit("      tmp/soc/build/top.bit")
             if link:
                 link.close()
             return 0

@@ -24,7 +24,7 @@ makes the same distinction for the hypothetical timer shapes it measures, and
 this shares its `synth()` technique.
 
 For a real delta, build the SoC both ways and diff `Info: Device utilisation`
-in `tmp/vexii_hello/build/top.tim` -- and run `scripts/pnr_noise.py` before
+in `tmp/soc/build/top.tim` -- and run `scripts/pnr_noise.py` before
 believing any Fmax difference, because this design has closed anywhere between
 71.45 and 76.99 MHz across identical builds.
 

@@ -45,7 +45,7 @@ Boxes are distance from the bus fabric, measured on those same edges, so a new p
 is filed next to the ones it structurally resembles rather than by a list of names kept
 here.
 
-The yosys netlist (`tmp/vexii_hello/build/top.json`) was the other candidate source and
+The yosys netlist (`tmp/soc/build/top.json`) was the other candidate source and
 is not used: `synth_ecp5` flattens, so that file is one `top` module of 14,700 LUT-level
 cells with no hierarchy left. The unflattened `top.il` does keep it -- and its module
 list matches this script's fragment tree exactly -- but it is an 8.6 MB build artifact
@@ -165,7 +165,7 @@ def elaborate(emit):
     else:
         emit("CPU verilog: no cached copy, running the generator")
 
-    import top as vexii_hello_soc
+    import top as soc_top
     from amaranth.hdl._ir import Fragment
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
@@ -185,7 +185,7 @@ def elaborate(emit):
 
     # Contents are irrelevant -- only the shape of the design is read -- but the SoC
     # refuses an image larger than its block RAM, so keep it small.
-    soc = vexii_hello_soc.HelloSoC(firmware=[0] * 16)
+    soc = soc_top.CynthionSoC(firmware=[0] * 16)
 
     # `prepare()` rather than a bare `Fragment.get`: it is what propagates clock domains
     # down the tree and computes, for every fragment, which signals are used inside it.

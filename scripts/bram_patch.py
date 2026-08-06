@@ -87,7 +87,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "tmp" / "vexii_hello" / "build"
+BUILD = ROOT / "tmp" / "soc" / "build"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
@@ -253,7 +253,7 @@ def elaborate_il(words, soc):
     takes -- and unlike a source hash it compares the thing that was actually built.
     """
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
-    plan = CynthionPlatformRev1D4().prepare(soc.HelloSoC(firmware=words), "top")
+    plan = CynthionPlatformRev1D4().prepare(soc.CynthionSoC(firmware=words), "top")
     return plan.files["top.il"]
 
 

@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
+BITSTREAM = ROOT / "tmp" / "soc" / "build" / "top.bit"
 
 # Where Apollo's reference reads are dropped. `flash-read` writes to a file
 # rather than stdout, so it needs somewhere to put them.

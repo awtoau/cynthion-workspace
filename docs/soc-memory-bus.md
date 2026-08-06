@@ -215,7 +215,7 @@ That leaves two shapes, and both are bad:
   have built §4 and paid for an AXI4 port to get there.
 - **HyperRAM on its own AXI4 port, bypassing the fabric.** Architecturally
   legitimate and the only version that helps. But HyperRAM is `exe=1`
-  (`vexii_hello_soc.py:689`), so `ibus` reaches it too and `--fetch-axi4` comes
+  (`soc/top.py:689`), so `ibus` reaches it too and `--fetch-axi4` comes
   along, which means a two-master AXI4 arbiter written from scratch in Amaranth
   plus an AXI4 slave for the HyperRAM window.
 

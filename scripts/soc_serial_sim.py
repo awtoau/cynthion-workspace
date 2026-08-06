@@ -476,7 +476,7 @@ def run_structural_checks(checks, verbose):
     checks.check(
         "and the SoC does not hand a raw pad to an AsyncSerial",
         "rx.i.eq(apollo_pins.rx.i)" not in soc,
-        "vexii_hello_soc.py still wires apollo_pins.rx.i straight into a PHY.")
+        "soc/top.py still wires apollo_pins.rx.i straight into a PHY.")
 
     # A configuration that would let a frame cut short by disarming survive into
     # the next arming must be refused rather than accepted and silently wrong.

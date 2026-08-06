@@ -37,7 +37,7 @@ This is the inventory of standalone FPGA experiments under `gateware/`.
 | `led_patterns_simple.py` | LEDs and user-button pattern selection | syntax; archived `led_patterns.bit` exists | manual visual test only | button and LEDs | historical board bring-up; legacy Amaranth CLI surface |
 | `led_pattern_gateware_hello_world.py` | USB-controlled LED patterns | syntax | manual visual test only | `led_pattern_hello_world.py` | historical USB bring-up; PID allocation is centralized in `usb_ids.py` |
 | `riscv/vexii_bench_soc.py` | generated MicroSoc CoreMark console bridge | syntax; generated `MicroSoc.v` required | hardware result depends on generated image | generated firmware plus USB host | measurement fixture; the Scala/sbt generator is an external prerequisite |
-| `riscv/vexii_hello_soc.py` | active Vexii SoC with HyperRAM, flash, USB, JTAG and board I/O | syntax; firmware required to build | recorded silicon boot, console and board tests | `scripts/soc_test.py`, `soc_jtag_stage.py`, console scripts and firmware shell | retained active design; drivers, PAC and memory map are checked together |
+| `soc/top.py` | active Vexii SoC with HyperRAM, flash, USB, JTAG and board I/O | syntax; firmware required to build | recorded silicon boot, console and board tests | `scripts/soc_test.py`, `soc_jtag_stage.py`, console scripts and firmware shell | retained active design; drivers, PAC and memory map are checked together |
 
 ## Components that are not bitstreams
 

@@ -4,7 +4,7 @@
  * from flash. Flash offset 0 holds the FPGA configuration; 0xb0000 is the established
  * Moondancer firmware offset and leaves that image intact.
  *
- * Sizes must match ecp5-test/riscv/vexii_hello_soc.py: RAM_BASE, RAM_SIZE, IMAGE_ORIGIN.
+ * Sizes must match ecp5-test/riscv/soc/top.py: RAM_BASE, RAM_SIZE, IMAGE_ORIGIN.
  *
  * This is the HARDWARE script, named `memory.x` because that is what the `-Tmemory.x` in
  * .cargo/config.toml asks for, so it is what every plain `cargo build` uses. Its
@@ -80,7 +80,7 @@ _reset_vector = 0x00000000;
  * WRITABLE -- .data, .bss and the stack -- so the 63 KiB stops being a budget the
  * shell competes with itself for, and the image can grow into 3392 KiB of flash.
  *
- * This requires FLASH_CACHED in ecp5-test/riscv/vexii_hello_soc.py. `exe=0` forbids
+ * This requires FLASH_CACHED in ecp5-test/riscv/soc/top.py. `exe=0` forbids
  * instruction fetch from the window, so the uncached configuration cannot run code from
  * here at all; the two settings are one decision. */
 REGION_ALIAS("REGION_TEXT",   FLASH);

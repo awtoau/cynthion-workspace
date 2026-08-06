@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
+BITSTREAM = ROOT / "tmp" / "soc" / "build" / "top.bit"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
 sys.path.insert(0, str(ROOT / "gateware"))

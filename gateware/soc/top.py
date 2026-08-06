@@ -640,7 +640,7 @@ HYPERRAM_CLOCK_STOP = False
 CACHE_SETS = 64
 
 
-class HelloSoC(Elaboratable):
+class CynthionSoC(Elaboratable):
     """VexRiscv, 64 KiB of block RAM, and a USB serial console."""
 
     def __init__(self, firmware):
@@ -1735,7 +1735,7 @@ def main():
     # packaged platform has no such dependency.
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
-    build_dir = ROOT / "tmp" / "vexii_hello" / "build"
+    build_dir = ROOT / "tmp" / "soc" / "build"
 
     # No `**ecppack_opts()` here, and it was tried: `CynthionPlatformRev1D4`
     # passes its own `ecppack_opts` in `toolchain_prepare`
@@ -1749,7 +1749,7 @@ def main():
     # bitstream's command stream rather than a bit in a tile, so there is
     # nothing for a primitive to read.
     CynthionPlatformRev1D4().build(
-        HelloSoC(firmware=words),
+        CynthionSoC(firmware=words),
         do_program=args.program,
         build_dir=str(build_dir))
 

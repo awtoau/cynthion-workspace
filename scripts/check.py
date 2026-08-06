@@ -212,7 +212,7 @@ def build_checks() -> List[Check]:
                 # The one check that can see drift between the gateware and the
                 # firmware. `--check` regenerates into tmp/ and compares; it also
                 # compares the map against the *_BASE constants in
-                # vexii_hello_soc.py and the literals in target.rs, so a
+                # soc/top.py and the literals in target.rs, so a
                 # peripheral that moved without the crate being regenerated fails
                 # here instead of on the board.
                 #

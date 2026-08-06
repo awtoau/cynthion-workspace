@@ -80,7 +80,7 @@ BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
             / "cynthion-boot")
 BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
-BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
+BITSTREAM = ROOT / "tmp" / "soc" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 
@@ -566,7 +566,7 @@ def main():
         # build's. Reading the first would report an older attempt as if it
         # were current, which is the same class of mistake as a stale
         # bitstream.
-        timing = ROOT / "tmp" / "vexii_hello" / "build" / "top.tim"
+        timing = ROOT / "tmp" / "soc" / "build" / "top.tim"
         frequencies = []
         if timing.exists():
             for line in timing.read_text().splitlines():
@@ -603,7 +603,7 @@ def main():
                 emit((result.stderr or result.stdout).strip()[-700:])
             return 1
 
-        report = ROOT / "tmp" / "vexii_hello" / "build" / "top.rpt"
+        report = ROOT / "tmp" / "soc" / "build" / "top.rpt"
         if report.exists():
             undriven = report.read_text().count("has no driver")
             emit(f"gateware built. undriven wires: {undriven}")

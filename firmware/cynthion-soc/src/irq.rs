@@ -376,7 +376,7 @@ pub fn init() {
     for &source in target::UART_IRQS {
         // Priority 1, the lowest that is not "never". Equal for both consoles,
         // so the PLIC's tie-break decides -- lowest source number first, which
-        // is the USB console. See IRQ_CONSOLE in vexii_hello_soc.py.
+        // is the USB console. See IRQ_CONSOLE in soc/top.py.
         plic.set_priority(source, 1);
         plic.enable(source);
 
