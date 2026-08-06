@@ -15,7 +15,7 @@ Exit status 0 if every assertion held. Output goes to the terminal and to
 ## What is under test
 
 `ecp5-test/usb_host/guh/` -- GUH's `USBSIE` and `USBResetController`, vendored at
-`923c8490` and byte-identical to upstream. `docs/usb-host-proposal.md` section 18
+`923c8490` and byte-identical to upstream. `docs/usb-host-options.md` section 18
 recommends taking exactly those and writing enumeration in firmware, and this is
 the layer that recommendation rests on: if the engine cannot run a control
 transfer against a real device stack, nothing above it is worth building.
@@ -28,7 +28,7 @@ rather than a tautology.
 ## What it asserts, in three groups
 
 **The bus comes up.** The host half of the high-speed chirp handshake is the one
-piece nobody else in this ecosystem has written (`docs/usb-host-proposal.md`
+piece nobody else in this ecosystem has written (`docs/usb-host-options.md`
 section 1.3), so it is checked in both directions: a high-speed device is
 detected as high speed, and a full-speed-only device falls back to full speed.
 A chirp that lands on the wrong answer would still enumerate -- slowly, and with
@@ -53,7 +53,7 @@ the model answered at 0 a moment earlier.
 
 ## The three traps, now executable
 
-`docs/usb-host-proposal.md` section 15.2 lists four traps in this interface that
+`docs/usb-host-options.md` section 15.2 lists four traps in this interface that
 a CPU-facing shim has to handle. Three of them are checked here, so a pin bump
 that changes any of them fails this file rather than the shim:
 

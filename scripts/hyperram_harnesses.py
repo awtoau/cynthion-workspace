@@ -110,7 +110,7 @@ HARNESSES = {
         "throughput against chunk size when writes and reads alternate, i.e. how "
         "much of the streaming rate survives turning the bus around",
         "yes, once -- ten chunk sizes at 120 MHz, 163,840 words verified "
-        "(18144d3); the table is in docs/luna_ecp5_fpga/hyperram-detailed.md",
+        "(18144d3); the table is in docs/chips/w956a8-hyperram.md",
     ),
     "measure": (
         "hyperram_measure.py", None,

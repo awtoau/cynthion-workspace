@@ -20,7 +20,7 @@ at a fixed position in that group. So "use the DQS PHY" is not only a gateware
 decision: the board has to have wired RWDS to the group's DQS pin and the eight
 DQ lines into the same group.
 
-`docs/luna_ecp5_fpga/hyperram-detailed.md` records the DQS PHY as "unusable --
+`docs/chips/w956a8-hyperram.md` records the DQS PHY as "unusable --
 no DQS pin group", which is a claim about the wiring, not about the code. It was
 never checked against the database. This checks it.
 

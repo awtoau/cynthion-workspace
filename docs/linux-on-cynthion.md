@@ -22,7 +22,7 @@ Depth lives elsewhere and is linked, not repeated:
 |---|---|
 | the CPU area and timing matrix, rv64 and MMU rows | [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost) |
 | HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`decisions.md`](decisions.md) 26 |
-| the 480 Mbps host engine, its integration design and register map | [`usb-host-proposal.md`](usb-host-proposal.md) |
+| the 480 Mbps host engine, its integration design and register map | [`usb-host-options.md`](usb-host-options.md) |
 | the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
 ---
@@ -223,7 +223,7 @@ For Linux the choice is made by driver availability, not by area or speed.
 | route | area | Linux driver | verdict |
 |---|---|---|---|
 | **SpinalHDL `UsbOhci`**, FS/LS 12 Mbps | 3736 COMB, 1 BRAM (§2 below) | **already exists** — `compatible = "generic-ohci"`, `ohci-platform` | the route Linux binds with nothing written |
-| **GUH SIE**, HS 480 Mbps | 2080 COMB, **0 BRAM** ([`usb-host-proposal.md` §12](usb-host-proposal.md)) | **none** — a bespoke register interface means writing an HCD | right answer to a different question |
+| **GUH SIE**, HS 480 Mbps | 2080 COMB, **0 BRAM** ([`usb-host-options.md` §12](usb-host-options.md)) | **none** — a bespoke register interface means writing an HCD | right answer to a different question |
 
 That fork is stark and worth stating plainly: **480 Mbps costs a Linux host
 controller driver that nobody has written; 12 Mbps costs nothing.** There is no open
@@ -330,7 +330,7 @@ None of the three is an area question, and none of them has been measured.
 Sections 1–8 below keep their original numbering and their internal cross-references.
 They answer "what is the shortest path to a host that enumerates a device and that
 Linux can reach, if full speed is acceptable" — the storage link of Part I's chain,
-and the one Linux binds without a driver being written. `docs/usb-host-proposal.md`
+and the one Linux binds without a driver being written. `docs/usb-host-options.md`
 answers the 480 Mbps question separately and is not superseded by this.
 
 ## 0. The answer in one paragraph
@@ -624,7 +624,7 @@ close to one-to-one: `tx` ↔ `tx_data`/`tx_valid`/`tx_ready`, `rx.flow` ↔
 
 So it is a real option, and it is the *right* option if the design ever wants
 high speed on the same port, or wants the analyzer and the host to share one
-`UTMITranslator` as `docs/usb-host-proposal.md` §13.4 proposes. But it is
+`UTMITranslator` as `docs/usb-host-options.md` §13.4 proposes. But it is
 **several hundred lines of new gateware that nobody has ever written** — no ULPI
 back end for SpinalHDL's OHCI exists in SpinalHDL, in any fork, or anywhere on
 GitHub. Against "least new gateware", six wires beat it.
@@ -694,7 +694,7 @@ those pins in either direction without checking the release files.
 
 ### Licence, settled
 
-`docs/usb-host-proposal.md` §19.1 recorded that the SpinalHDL licence "was not
+`docs/usb-host-options.md` §19.1 recorded that the SpinalHDL licence "was not
 confirmed (the repository reports `NOASSERTION`)". **It is now confirmed, from
 the checkout in this tree:** `ext/SpinalHDL/LICENSE` says "The Spinal HDL core is
 under the LGPL license / The Spinal HDL lib is under the MIT license", and
@@ -842,7 +842,7 @@ each cycle is still compliant — it just runs slower. At FS's 1.22 MB/s against
    as a USB MSC device on a port we already drive. Linux *on* the SoC is Part I,
    and it is gated on the HyperRAM refill measurement rather than on anything USB.
 
-This does not displace `docs/usb-host-proposal.md`. That document's
+This does not displace `docs/usb-host-options.md`. That document's
 recommendation — vendor GUH's SIE for 480 Mbps with a bespoke register interface
 — remains the right answer to the question **#105** asked. This is the answer to
 a different and easier question, and the two can coexist on the same board: GUH

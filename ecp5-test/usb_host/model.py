@@ -188,7 +188,7 @@ class ModelDevice(Elaboratable):
     The bulk endpoint emits an up-counter, so a received packet has a value the
     simulation can predict byte by byte rather than merely count. Its packet size
     is the high-speed maximum of 512, which is also what makes the SIE's 8-bit
-    `rx_len` wrap -- the trap that `docs/usb-host-proposal.md` section 15.2 warns
+    `rx_len` wrap -- the trap that `docs/usb-host-options.md` section 15.2 warns
     about, and that the simulation now asserts rather than describes.
     """
 
@@ -258,7 +258,7 @@ class Bench:
 
     `usb` is renamed onto `sync` for the same reason GUH's own tests do it: the
     simulation has one clock, and the CDC that the real integration needs
-    (`docs/usb-host-proposal.md` section 14 -- the host belongs in `usb`, the CPU
+    (`docs/usb-host-options.md` section 14 -- the host belongs in `usb`, the CPU
     is in `sync`) is a property of the SoC boundary rather than of the engine.
     What this bench proves therefore stops at that boundary, and the crossing
     needs its own test when the shim is written.

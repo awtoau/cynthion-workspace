@@ -3,7 +3,7 @@
 The main programmable device on Cynthion r1.4. Lattice ECP5, marked `LFE5U-12F`,
 CABGA256, speed grade 8.
 
-**Index:** [`../hardware.md`](../hardware.md)
+**Index:** [`../hardware.md`](../../hardware.md)
 
 ## The headline: the part marked 12F is a 25F die, and the extra fabric computes
 
@@ -57,14 +57,14 @@ Marginal block RAM surfaces as garbage instructions or dropped bytes, not as
 something subtle. Worth revisiting only if a fault appears that smells like memory
 corruption.
 
-Who actually consumes it: [`../luna_ecp5_fpga/bram-budget.md`](../luna_ecp5_fpga/bram-budget.md).
+Who actually consumes it: [`../chips/ecp5/bram-budget.md`](../ecp5/bram-budget.md).
 
 ## DSP blocks
 
 The ECP5 has DSP blocks, so a hardware multiplier is cheap. Measured at **16
 cycles** for an integer multiply against 123 for a soft-float single-precision
 multiply — which is why `rv32im` earns its area on this part. CPU configuration
-is in [`vexiiriscv-cpu.md`](vexiiriscv-cpu.md).
+is in [`vexiiriscv-cpu.md`](../vexiiriscv-cpu.md).
 
 ## Clocking
 
@@ -76,28 +76,28 @@ The PLL is driven by `VariableClockDomainGenerator`
 hardcoded taps. Ours solves for `sync` **and** `usb` together so `usb` lands on
 exactly 60 MHz — `ecppll` optimises its primary output and lets the secondary fall
 where it may, and a `usb` clock 3.7% out does not enumerate the ULPI PHY. See
-[`../upstream-boundary.md`](../upstream-boundary.md) and #111.
+[`../upstream-boundary.md`](../../upstream-boundary.md) and #111.
 
 How fast the soft CPU can be clocked on this part:
-[`../soc-clocking.md`](../soc-clocking.md).
+[`../soc-clocking.md`](../../soc-clocking.md).
 
 ## How software reaches it
 
 | path | mechanism |
 |---|---|
 | configuration over JTAG | Apollo bit-bangs the TAP; `apollo` CLI |
-| configuration from flash | at power-on, from the [W25Q32](w25q32-config-flash.md) at offset 0 |
+| configuration from flash | at power-on, from the [W25Q32](../w25q32-config-flash.md) at offset 0 |
 | debug registers / ILA | JTAG ER1 (`0x32`) / ER2 (`0x38`) tunnel, via `JTAGRegisterInterface` |
 | reconfigure | Apollo drives PROGRAMN (MCU PA08); the fabric can also self-trigger via `self_program` (T13) |
 
 JTAG pins on the FPGA side are **R11 (TDI)** and **T11 (TMS)**, which are wired to
 the UART pins R14/T14 — see the pin-sharing section of
-[`../hardware.md`](../hardware.md).
+[`../hardware.md`](../../hardware.md).
 
 ## Registers
 
 **SoC peripheral registers are not documented here.** The SoC's own memory map is
-the authority — see [Register reference](../hardware.md#register-reference) in the
+the authority — see [Register reference](../../hardware.md#register-reference) in the
 board index. This note covers the silicon, not the gateware running on it.
 
 ## Code and scripts
@@ -107,8 +107,8 @@ board index. This note covers the silicon, not the gateware running on it.
 | pin map (vendored) | `ecp5-test/cynthion_platform/cynthion_r1_4.py` |
 | fabric test gateware | `ecp5-test/fabric/fabric_gateware.py` |
 | build / run / control | `scripts/fabric_build.py`, `fabric_run.py`, `fabric_negative_control.py`, `fabric_placement.py`, `fabric_sim.py`, `fabric_golden.py` |
-| flashing and configuration | [`../luna_ecp5_fpga/ecp5-flashing.md`](../luna_ecp5_fpga/ecp5-flashing.md) |
-| live opcode sweep | [`../luna_ecp5_fpga/dynamic-opcode-probe.md`](../luna_ecp5_fpga/dynamic-opcode-probe.md), `scripts/ecp5_cmd_probe.py` |
+| flashing and configuration | [`../chips/ecp5/flashing.md`](../ecp5/flashing.md) |
+| live opcode sweep | [`../chips/ecp5/config-engine-probe.md`](../ecp5/config-engine-probe.md), `scripts/ecp5_cmd_probe.py` |
 
 Generic ECP5/toolchain findings live in pluribus (`docs/ecp5/`), not here — the
 test is whether a finding would be useful to someone with a different ECP5 board.
@@ -117,7 +117,7 @@ test is whether a finding would be useful to someone with a different ECP5 board
 
 Moved here from `memory-speed-options.md`, because these are ECP5 primitives and
 the question gets asked about the FPGA, not about the memory. The HyperRAM side
-of the same problem is in [`w956a8-hyperram.md`](w956a8-hyperram.md); what other
+of the same problem is in [`w956a8-hyperram.md`](../w956a8-hyperram.md); what other
 projects achieved with these primitives is below and in the part doc.
 
 ### The clock structure is not the canonical ECP5 one, and that is the leading hypothesis
@@ -394,7 +394,7 @@ workspace has been quoting.
   CCLK/USRMCLK/MCLK entry in any speed grade** of prjtrellis's timing database.
   A clean nextpnr report says nothing whatever about this path.
 
-So [`chips/w25q32-config-flash.md`](w25q32-config-flash.md)'s *"132% past
+So [`chips/w25q32-config-flash.md`](../w25q32-config-flash.md)'s *"132% past
 the 62 MHz Lattice specifies for `MCLK`"* is comparing against the wrong number.
 **There is no vendor figure for user-mode `USRMCLK` at all** — we are in
 unmodelled territory, and measurement is the only authority. That is a stronger

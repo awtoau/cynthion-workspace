@@ -29,7 +29,7 @@ the 60 MHz constraint match the design this would go into.
 ## What this number is, and what it is not
 
 It is the engine on the ULPI pins at ~10% occupancy. It is **not** the in-situ
-figure: `docs/usb-host-proposal.md` section 12.3 records that this design is
+figure: `docs/usb-host-options.md` section 12.3 records that this design is
 routing-bound and that placement is stochastic to within about 9 MHz, so the cost
 inside a 50%-full SoC has to be measured inside a 50%-full SoC. That build needs
 `target_phy` to change owner (section 13), which is the next increment and not

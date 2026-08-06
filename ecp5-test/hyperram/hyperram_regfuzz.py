@@ -8,7 +8,7 @@
 Reads sixteen HyperRAM register addresses and reports every one that answers.
 
 The capacity question is settled -- the part is 8 MiB and four independent sources agree
-(`../../docs/luna_ecp5_fpga/hyperram-detailed.md`). This asks the remaining question:
+(`../../docs/chips/w956a8-hyperram.md`). This asks the remaining question:
 **is anything reachable in the register space that the datasheets do not document?**
 
 HyperBus documents exactly four registers: ID0 at 0x0, ID1 at 0x1, CR0 at 0x800 and CR1

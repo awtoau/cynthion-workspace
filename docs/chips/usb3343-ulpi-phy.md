@@ -61,7 +61,7 @@ The shipped selftest makes the equivalent assertion —
 **Not measured:** eye quality, signal integrity, or anything analogue. Enumeration
 at 480 Mbps is exercised indirectly by every gateware build that brings a port up;
 CDC loopback on this path measures 195.4 Mbps
-([`../luna_ecp5_fpga/usb-performance.md`](../luna_ecp5_fpga/usb-performance.md)).
+([`../usb-performance.md`](../usb-performance.md)).
 
 ## How software reaches them
 

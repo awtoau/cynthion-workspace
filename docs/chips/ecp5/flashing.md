@@ -79,7 +79,7 @@ FPGA and implicitly erases, so LUNA clears both flags
 ### Loading a pre-built bitstream
 
 To push an existing `.bit` without rebuilding, use Apollo directly — this is
-what the retired [`cyn_main.py:969`](../../debris/scripts/cyn_main.py#L969) did, before
+what the retired [`cyn_main.py:969`](../../../debris/scripts/cyn_main.py#L969) did, before
 `./dev.py` replaced it:
 
 ```bash
@@ -207,7 +207,7 @@ holding the nodes.
 ## Related
 
 - [Cynthion selftest gateware](../../repos/cynthion/cynthion/python/src/gateware/selftest/top.py) — buildable top used in the examples above
-- [Apollo selftest harness](../../repos/apollo/apollo_fpga/support/selftest.py) — `ApolloSelfTestCase`, `@named_test`
-- [debris/scripts/cyn_main.py](../../debris/scripts/cyn_main.py) — the retired `cyn flash gateware`, wired to `build/top.bit`; `./dev.py` is the entry point now
-- [docs/hardware.md](../hardware.md) — the board index
-- [docs/chips/w25q32-config-flash.md](../chips/w25q32-config-flash.md) — the flash part itself
+- [Apollo selftest harness](../../../repos/apollo/apollo_fpga/support/selftest.py) — `ApolloSelfTestCase`, `@named_test`
+- [debris/scripts/cyn_main.py](../../../debris/scripts/cyn_main.py) — the retired `cyn flash gateware`, wired to `build/top.bit`; `./dev.py` is the entry point now
+- [docs/hardware.md](../../hardware.md) — the board index
+- [docs/chips/w25q32-config-flash.md](../w25q32-config-flash.md) — the flash part itself

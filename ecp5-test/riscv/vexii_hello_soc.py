@@ -25,7 +25,7 @@ point of a standard part. `serial_line.py` is the PHY behind index 1.
   * **USB carries the primary console** because R14/T14 are the same wires as
     JTAG TDI/TMS, so a design driving them competes with the thing loading its
     own bitstream. The CDC gateware measures 195.4 Mbps loopback
-    (`../../docs/luna_ecp5_fpga/usb-performance.md`).
+    (`../../docs/usb-performance.md`).
   * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
     share a 32-bit word with RBR at +0. See `uart16550.py`, and
     `../../docs/decisions.md` for what that replaced.
@@ -1199,7 +1199,7 @@ class HelloSoC(Elaboratable):
         # endpoint without them is silent with nothing to say why.
         #
         # USBSerialDevice measures 195.4 Mbps CDC-ACM loopback in
-        # docs/luna_ecp5_fpga/usb-performance.md; CDC costs essentially nothing over raw
+        # docs/usb-performance.md; CDC costs essentially nothing over raw
         # bulk, being the same two stream endpoints plus descriptors.
         from luna.gateware.usb.devices.acm import USBSerialDevice
 

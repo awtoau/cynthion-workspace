@@ -150,7 +150,7 @@ above: the block RAM wall is *this* SoC's, not the die's. A Linux-only build lan
 56, so 8 KiB two-way L1s cost 24 of 56 rather than the whole part.
 
 **A trap in the tree**, superseded by the tables above:
-[`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md)
+[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
 headlines 12646 LUT4 for VexRiscv against 6876, which is **not like for like** — the
 VexRiscv number includes the whole USB fabric and the VexiiRiscv one does not, so it
 overstates VexRiscv by roughly a USB stack, and its two configurations differ in three
@@ -1143,7 +1143,7 @@ This replaces the ranking that lived in `memory-speed-options.md`, which is now
 dissolved: the per-option analysis moved to
 [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) and
 [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), the ECP5 primitives to
-[`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md), and the prior art into both chip docs.
+[`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md), and the prior art into both chip docs.
 
 **The old ranking was scored against a void measurement** and is not carried over
 as written. It ranked options as percentages of "everything CK 192 can deliver,"

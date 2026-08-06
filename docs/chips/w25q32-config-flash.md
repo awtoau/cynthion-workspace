@@ -184,9 +184,9 @@ RISC-V storage.
 | sideband | `scripts/sideband_read.py` |
 
 Boot-image selection, slot layout and the partition work:
-[`../luna_ecp5_fpga/flash-partitioning.md`](../luna_ecp5_fpga/flash-partitioning.md).
+[`../chips/ecp5/flash-partitioning.md`](../chips/ecp5/flash-partitioning.md).
 Whether quad SPI speeds up configuration:
-[`../luna_ecp5_fpga/qspi-boot-time.md`](../luna_ecp5_fpga/qspi-boot-time.md).
+[`../chips/ecp5/qspi-boot-time.md`](../chips/ecp5/qspi-boot-time.md).
 
 ## Registers that affect read speed (NEW, 2026-08-03)
 
@@ -483,7 +483,7 @@ values can be read off the model.
 **Doubling the cache line to 128 bytes is the largest remaining flash win, and
 it is a configuration parameter.** It halves the transaction count and amortises
 the same 12 clocks over twice the data. It costs I-cache block RAM, which
-[`luna_ecp5_fpga/bram-budget.md`](../luna_ecp5_fpga/bram-budget.md) says is the
+[`chips/ecp5/bram-budget.md`](../chips/ecp5/bram-budget.md) says is the
 scarce resource, and it is only a win if locality holds.
 
 **The largest item was taken while this survey was being written.**
@@ -544,7 +544,7 @@ this flash, the clock has to be on N9 — there is no alternative ball.
 designations (`PB11A`, `PB11B`, `PB9A`, `PB9B`) — ordinary bank-8 I/O as well as
 MSPI pins — which is why they keep working at full speed after configuration.
 MCLK has no alternate function, so it is reachable only through `USRMCLK`
-([`lfe5u-12f-ecp5.md`](lfe5u-12f-ecp5.md)).
+([`ecp5/lfe5u-12f.md`](ecp5/lfe5u-12f.md)).
 
 A board that never boots from flash escapes this entirely: the reservation applies
 in *"most"* post-configuration applications, a convention rather than a hardware
@@ -644,4 +644,4 @@ prjtrellis itself strips `spimode`/`freq` when emitting SVF, so build two
 bitstreams; and **SPI Quad is not supported on TQFP144**, a note added in
 datasheet revision 3.3.
 
-Existing analysis: [`luna_ecp5_fpga/qspi-boot-time.md`](../luna_ecp5_fpga/qspi-boot-time.md).
+Existing analysis: [`chips/ecp5/qspi-boot-time.md`](../chips/ecp5/qspi-boot-time.md).

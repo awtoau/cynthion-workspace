@@ -17,7 +17,7 @@ not been checked. Every assertion is traceable to source in `repos/`,
 
 | part | what it is | how software reaches it | note |
 |---|---|---|---|
-| **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die** | JTAG (Apollo), config from flash | [`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md) |
+| **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die** | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
 | **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, holds the bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
 | **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** (#90) | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) |
 
@@ -1002,7 +1002,7 @@ after a 68 µs gateware timeout, not zeros.
 | what we take from upstream and what we replaced | [`upstream-boundary.md`](upstream-boundary.md) |
 | making the test gateware reusable by the CPU | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
 | how fast the soft CPU can be clocked on this part | [`soc-clocking.md`](soc-clocking.md) |
-| flash, HyperRAM, USB and BRAM in depth | [`luna_ecp5_fpga/`](luna_ecp5_fpga/) |
+| flash, HyperRAM, USB and BRAM in depth | [`chips/ecp5/`](chips/ecp5/) |
 | Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
 | the soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |

@@ -240,7 +240,7 @@ Typical gateware size:
 
 **ECP5 total**: 12,288 LUT4s advertised for an `LFE5U-12F`, but the die on r1.4 is a 25F
 with 24,288 and 20,143 have been placed and verified — see
-[`../docs/chips/lfe5u-12f-ecp5.md`](../docs/chips/lfe5u-12f-ecp5.md). Either way, all
+[`../docs/chips/ecp5/lfe5u-12f.md`](../docs/chips/ecp5/lfe5u-12f.md). Either way, all
 patterns use well under 1% of it.
 
 ---

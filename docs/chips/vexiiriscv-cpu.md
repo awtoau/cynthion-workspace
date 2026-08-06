@@ -1,7 +1,7 @@
 # VexiiRiscv — the SoC's CPU
 
 The RISC-V core in `ecp5-test/riscv/vexii_hello_soc.py`. Not a chip on the board:
-it is a soft core inside the [ECP5](lfe5u-12f-ecp5.md), and it has a note here for
+it is a soft core inside the [ECP5](ecp5/lfe5u-12f.md), and it has a note here for
 the same reason the flash and the HyperRAM do — what it actually does on this
 board differs from what its parameters suggest, and the measurements have to live
 somewhere they can be found.

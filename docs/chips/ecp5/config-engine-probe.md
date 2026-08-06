@@ -94,6 +94,26 @@ untouched.
 `Unrecognized FPGA (43101121)`. The wire bytes are `21 11 10 43`, confirmed
 here. Adjacent `_read_status` and `_read_usercode` use big-endian correctly.
 
+## What bounds these negatives
+
+Stronger than they were — a positive control proves the harness can observe the
+engine changing state, and the sweep covers the vendor's own opcode list rather
+than a guess. Still bounded by:
+
+* Only payload lengths 0/1/4/8 bytes were swept generically, plus vendor-specified
+  widths and targeted longer reads. An opcode needing a specific longer argument
+  could be missed.
+* For the five declared-but-never-used opcodes no vendor sequence exists, so
+  "inert" means *inert under every sequence tried here*, not unimplemented.
+* One device, one variant. Security/OTP reads returning zero may reflect
+  unprogrammed fuses on this part rather than an unimplemented opcode.
+* 24 codes were never issued, by choice. Their behaviour is unknown deliberately.
+
+One finding worth naming separately: **`LSC_PRELOAD` (0x1C) is boundary scan**,
+sharing its code with `LSC_SAMPLE`. It returns live pin state and is not a
+reconfiguration mechanism, which is what its name suggests to a reader looking
+for one.
+
 ## Scope
 
 The generic sweep used 0/1/4/8-byte payloads plus vendor-specified widths, with

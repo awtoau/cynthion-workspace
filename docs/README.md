@@ -82,12 +82,12 @@ in its §13 got there in the first place.
 * [`upstream-yosys-edif-notes.md`](upstream-yosys-edif-notes.md) — yosys -> Lattice Diamond EDIF handoff: three blockers
 * [`upstream-yosys-write-edif-hierarchy.md`](upstream-yosys-write-edif-hierarchy.md) — yosys `write_edif` emits `$scopeinfo` cells as instances of undeclared cells
 * [`upstreamable-patches.md`](upstreamable-patches.md) — Patches worth sending upstream
-* [`usb-host-proposal.md`](usb-host-proposal.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
+* [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
 
 ### Per-chip notes
 
 * [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) — FUSB302B ×2 — the USB-C PD controllers
-* [`chips/lfe5u-12f-ecp5.md`](chips/lfe5u-12f-ecp5.md) — ECP5 `LFE5U-12F` — the FPGA, and it is a 25F die
+* [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — ECP5 `LFE5U-12F` — the FPGA, and it is a 25F die
 * [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — NS16550A — the console UART, in fabric
 * [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) — PAC1954-1 — the power monitor
 * [`chips/samd11-apollo.md`](chips/samd11-apollo.md) — ATSAMD11D14A — the Apollo debug microcontroller
@@ -101,22 +101,22 @@ in its §13 got there in the first place.
 
 ### LUNA and the ECP5
 
-* [`luna_ecp5_fpga/bram-budget.md`](luna_ecp5_fpga/bram-budget.md) — Block RAM on the ECP5-12F: who actually uses it
+* [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md) — Block RAM on the ECP5-12F: who actually uses it
 * [`luna_ecp5_fpga/diamond-findings-moved.md`](luna_ecp5_fpga/diamond-findings-moved.md) — Diamond findings live in pluribus
-* [`luna_ecp5_fpga/dynamic-opcode-probe.md`](luna_ecp5_fpga/dynamic-opcode-probe.md) — Probing the ECP5 configuration engine on live silicon
-* [`luna_ecp5_fpga/ecp5-flashing.md`](luna_ecp5_fpga/ecp5-flashing.md) — ECP5 Flashing — Cynthion Gateware Load Process
-* [`luna_ecp5_fpga/ecp5_command_probe.md`](luna_ecp5_fpga/ecp5_command_probe.md) — Dynamic probe of the ECP5 configuration engine
-* [`luna_ecp5_fpga/flash-partitioning.md`](luna_ecp5_fpga/flash-partitioning.md) — Partitioned configuration flash on Cynthion r1.4
-* [`luna_ecp5_fpga/hyperram-detailed.md`](luna_ecp5_fpga/hyperram-detailed.md) — HyperRAM: what the part is, how much of it there is, and how fast it goes
+* [`chips/ecp5/config-engine-probe.md`](chips/ecp5/config-engine-probe.md) — Probing the ECP5 configuration engine on live silicon
+* [`chips/ecp5/flashing.md`](chips/ecp5/flashing.md) — ECP5 Flashing — Cynthion Gateware Load Process
+* [`chips/ecp5/config-engine-probe.md`](chips/ecp5/config-engine-probe.md) — Dynamic probe of the ECP5 configuration engine
+* [`chips/ecp5/flash-partitioning.md`](chips/ecp5/flash-partitioning.md) — Partitioned configuration flash on Cynthion r1.4
+* [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) — HyperRAM: what the part is, how much of it there is, and how fast it goes
 * [`luna_ecp5_fpga/luna_soc_amaranth_fix_complete.md`](luna_ecp5_fpga/luna_soc_amaranth_fix_complete.md) — Luna-SoC Amaranth 0.5.x Compatibility Fix — COMPLETE
 * [`luna_ecp5_fpga/luna_soc_fix_status.md`](luna_ecp5_fpga/luna_soc_fix_status.md) — Luna-SoC Amaranth 0.5.x Compatibility Fix Status
-* [`luna_ecp5_fpga/memory-interface-options.md`](luna_ecp5_fpga/memory-interface-options.md) — Connecting flash and HyperRAM to a RISC-V: the options
-* [`luna_ecp5_fpga/qspi-boot-time.md`](luna_ecp5_fpga/qspi-boot-time.md) — Does quad-SPI speed up ECP5 configuration from flash?
-* [`luna_ecp5_fpga/reconfigure-initn-gap.md`](luna_ecp5_fpga/reconfigure-initn-gap.md) — `trigger_fpga_reconfiguration()` leaves INITN held low
-* [`luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md`](luna_ecp5_fpga/riscv32_equivalence_and_variation_report_2026-07-22.md) — RV32 Equivalence and Variation Report (2026-07-22)
+* [`decisions.md`](decisions.md) — Connecting flash and HyperRAM to a RISC-V: the options
+* [`chips/ecp5/qspi-boot-time.md`](chips/ecp5/qspi-boot-time.md) — Does quad-SPI speed up ECP5 configuration from flash?
+* [`chips/ecp5/reconfigure-initn-gap.md`](chips/ecp5/reconfigure-initn-gap.md) — `trigger_fpga_reconfiguration()` leaves INITN held low
+* [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — RV32 Equivalence and Variation Report (2026-07-22)
 * [`luna_ecp5_fpga/session-audit-2026-07-30.md`](luna_ecp5_fpga/session-audit-2026-07-30.md) — Session audit: what was found, what was written down, what is stranded
-* [`luna_ecp5_fpga/usb-performance.md`](luna_ecp5_fpga/usb-performance.md) — LUNA USB gateware: measured performance
-* [`luna_ecp5_fpga/where-findings-live.md`](luna_ecp5_fpga/where-findings-live.md) — Where the ECP5 findings live
+* [`usb-performance.md`](usb-performance.md) — LUNA USB gateware: measured performance
+* [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — Where the ECP5 findings live
 
 ### Apollo, SAMD11 firmware
 

@@ -13,7 +13,7 @@ Fetch anything missing with the URL below. `sources/*.pdf` is gitignored.
 | `ISSI-IS66WVH8M8-64Mbit-HyperRAM.pdf` | IS66/67WVH8M8ALL/BLL, 64 Mbit, 8M x 8 | `https://www.issi.com/WW/pdf/66-67WVH8M8ALL-BLL.pdf` |
 | `ISSI-IS66WVH16M8-128Mbit-HyperRAM.pdf` | IS66/67WVH16M8ALL/BLL, 128 Mbit, 16M x 8 | `https://www.issi.com/WW/pdf/66-67WVH16M8ALL-BLL.pdf` |
 
-**What these settled** (#109, `../docs/luna_ecp5_fpga/hyperram-detailed.md`):
+**What these settled** (#109, `../docs/chips/w956a8-hyperram.md`):
 
 **The part is 8 MiB and always was.** `ID0 = 0x0c86` gives raw fields of 12 and 8, and
 **both are count-minus-one** — table 5.2 states `00000` = *"One Row address bit"*. So it
@@ -24,7 +24,7 @@ Rows: 8192".
 look like it held twice its marking. Two further hypotheses were published to explain
 that non-existent 2x gap — including a dual-die reading of ID0[15:14], which the 128 Mbit
 datasheet does document but which does not apply here. Both are retracted; the detail is
-in `../docs/luna_ecp5_fpga/hyperram-detailed.md`.
+in `../docs/chips/w956a8-hyperram.md`.
 
 These datasheets were still worth fetching: they are what settled it, and the 128 Mbit
 one is the control that let the dual-die hypothesis be tested and dropped.
@@ -198,8 +198,21 @@ easy way to attribute a JV limit to an FV part.
 
 | file | part | source |
 |---|---|---|
-| `Lattice-ECP5-Family-DataSheet-FPGA-DS-02012.pdf` | ECP5 / ECP5-5G family, FPGA-DS-02012 v1.9, March 2018 | `https://www.latticesemi.com/view_document?document_id=50461` |
-| `Lattice-ECP5-sysCONFIG-FPGA-TN-02039.pdf` | sysCONFIG user guide, FPGA-TN-02039-2.3, March 2024 — configuration modes, timing, and the SPI boot path | `https://www.latticesemi.com/view_document?document_id=50462` |
+| `Lattice-ECP5-Family-DataSheet-FPGA-DS-02012.pdf` | ECP5 / ECP5-5G family, FPGA-DS-02012 v1.9, March 2018 | `https://www.latticesemi.com/view_document?document_id=50461` | **108 pages** |
+| `Lattice-ECP5-sysCONFIG-FPGA-TN-02039.pdf` | sysCONFIG user guide, FPGA-TN-02039-2.3, March 2024 — configuration modes, timing, and the SPI boot path | `https://www.latticesemi.com/view_document?document_id=50462` | **74 pages** |
+
+### One file here was never a PDF, and nothing caught it
+
+`Infineon-AN226576-Getting-Started-with-HyperRAM.pdf` was **14 KB of HTML** — a
+bot page saved under a datasheet's name — sitting between multi-megabyte real
+datasheets since 2026-08-06. Deleted.
+
+It is the failure this file's own last section describes, and it survived because
+the manifest recorded a URL and a title but no way to check the copy. **Every row
+above now carries a page count**, verified with `pdfinfo`, which is the cheapest
+check that distinguishes a document from a login page:
+
+    pdfinfo <file> | grep Pages      # a bot page has no Pages line at all
 
 ## Other parts
 

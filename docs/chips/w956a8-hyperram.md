@@ -352,7 +352,7 @@ less above it, so every transaction that harness issues is legal — which is th
 point worth keeping.
 
 Full throughput characterisation and the measurement traps:
-[`../luna_ecp5_fpga/hyperram-detailed.md`](../luna_ecp5_fpga/hyperram-detailed.md).
+[`../chips/w956a8-hyperram.md`](../chips/w956a8-hyperram.md).
 
 ## Wiring on r1.4
 
@@ -486,6 +486,48 @@ strobe is in use, and a live negative control on the rung being quoted. Until
 those three hold together, this file records no throughput figure.
 
 See #186 and #188. `scripts/hyperram_ceiling.py` is the instrument.
+
+## FIFO-style access: alternating writes and reads
+
+A capture buffer does not get a 2048-word burst — writes and reads alternate and
+every turnaround pays the command and latency phase again. `hyperram_fifo.py`
+sweeps chunk size under that pattern: write N words, read N words back and
+verify, repeat until 16384 words have moved each way, at every N from 8 to 4096.
+The same volume moves at every chunk size, so cycle counts differ only by the
+number of turnarounds.
+
+| chunk | bytes | write | read | combined | % of streaming | errors |
+|---|---|---|---|---|---|---|
+| 8 | 16 | 68.6 MB/s | 56.5 MB/s | 61.9 MB/s | 26.1% | 0 |
+| 16 | 32 | 106.7 MB/s | 91.4 MB/s | 98.5 MB/s | 41.5% | 0 |
+| 32 | 64 | 147.7 MB/s | 132.4 MB/s | 139.6 MB/s | 58.8% | 0 |
+| 64 | 128 | 182.9 MB/s | 170.7 MB/s | 176.6 MB/s | 74.4% | 0 |
+| 128 | 256 | 207.6 MB/s | 199.5 MB/s | 203.4 MB/s | 85.7% | 0 |
+| **256** | **512** | **222.6 MB/s** | **217.9 MB/s** | **220.2 MB/s** | **92.8%** | **0** |
+| 512 | 1024 | 231.0 MB/s | 228.4 MB/s | 229.7 MB/s | 96.8% | 0 |
+| 1024 | 2048 | 235.4 MB/s | 234.1 MB/s | 234.7 MB/s | 98.9% | 0 |
+| 2048 | 4096 | 237.7 MB/s | 237.0 MB/s | 237.3 MB/s | 100.0% | 0 |
+| 4096 | 8192 | 238.8 MB/s | 238.5 MB/s | 238.7 MB/s | 100.6% | 0 |
+
+The combined figure is total bytes over total time, which is what a FIFO sees —
+not the average of the two rates. All 163840 words verified against an
+address-derived pattern with zero mismatches; a full rebuild and reconfiguration
+returned bit-identical cycle counts.
+
+One USB high-speed bulk packet is 512 bytes, which sits above the 90% mark
+without tuning.
+
+### Overhead is a constant, not a rate
+
+Dividing each phase by its repetition count:
+
+    cycles per write transaction = N + 20
+    cycles per read transaction  = N + 26
+
+Exactly 20 and 26 across all ten sizes, no size dependence. At N=8 the overhead
+is 2.5–3x the payload; at N=4096 it is half a percent. This reconciles with the
+streaming test independently: that measured 2067 write and 2071 read cycles for
+2048 words against 2068 and 2074 predicted here.
 
 ### How that compares — the ECP5 scoreboard
 
@@ -769,7 +811,7 @@ must be ≥1 V/nS (2 V/nS if measured differentially)"*.
 — two complementary CMOS buffers rather than a true differential driver — and
 badly-matched legs would put skew straight onto `VIX`, potentially making
 differential mode *worse* than single-ended. But
-[`luna_ecp5_fpga/hyperram-detailed.md`](../luna_ecp5_fpga/hyperram-detailed.md)
+[`chips/w956a8-hyperram.md`](../chips/w956a8-hyperram.md)
 already established how the pair is actually built:
 
 > *"Amaranth drives an LVCMOS33D pair by driving the **true** pin only and

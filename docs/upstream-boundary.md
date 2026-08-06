@@ -198,7 +198,7 @@ CERN-OHL-S-2.0, a copy-paste leftover reported as `apfaudio/guh#1` and fixed on
 
 Deliberately **not** taken: `enumerator.py` and `descriptor.py` (they discard the
 descriptors, hard-code the device address, and specialise the parser at synthesis
-time — `docs/usb-host-proposal.md` §16), `engines/*`, `periph/*`.
+time — `docs/usb-host-options.md` §16), `engines/*`, `periph/*`.
 
 The vendored files stay byte-identical so a pin bump is a diff. What we need and
 they do not do goes beside the package: `ecp5-test/usb_host/model.py` is ours,

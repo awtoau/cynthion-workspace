@@ -80,7 +80,7 @@ host trigger fails identically with `INITN=0`.
 The fix looks like one line — call `permit_fpga_configuration(true)` from
 `trigger_fpga_reconfiguration()` before pulsing PROGRAMN — but it is firmware
 and wants its own testing. **Not yet attempted.** See
-`docs/luna_ecp5_fpga/reconfigure-initn-gap.md`.
+`docs/chips/ecp5/reconfigure-initn-gap.md`.
 
 ### `flash-fast` port handback (#75)
 

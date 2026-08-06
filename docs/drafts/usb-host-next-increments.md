@@ -36,7 +36,7 @@ with the host engine instantiated on the same PHY, in simulation.
 
 `scripts/usb_host_area.py` measures the engine standalone: 2080 LUT, 434 FF, 0
 BRAM, 96 LUTRAM, 125.55 MHz against a 60 MHz target. That is at about 10%
-occupancy. `docs/usb-host-proposal.md` §12.3 records that this design's critical
+occupancy. `docs/usb-host-options.md` §12.3 records that this design's critical
 path is routing-dominated and that placement varies by roughly 9 MHz between
 runs, so the figure that decides the design is the one at ~60% occupancy inside
 `HelloSoC`, alongside `scripts/soc_timing_sweep.py`.
@@ -48,7 +48,7 @@ has one owner.
 
 ## Draft 3 — the CSR/FIFO shim, with five requirements from the engine
 
-`docs/usb-host-proposal.md` §15 has the register map. §23 has what the engine
+`docs/usb-host-options.md` §15 has the register map. §23 has what the engine
 demands of whatever drives it, and the shim is where four of the five live:
 
 1. synthesise the completion edge from `status.idle` and hold it level-high for

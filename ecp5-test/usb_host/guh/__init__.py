@@ -19,7 +19,7 @@
 
 Not taken: `enumerator.py` and `descriptor.py` (they throw the descriptors away,
 hard-code the device address, and specialise the parser at synthesis time --
-`docs/usb-host-proposal.md` section 16), `engines/*` (fixed-function classes),
+`docs/usb-host-options.md` section 16), `engines/*` (fixed-function classes),
 `periph/*` (a block device, not a host controller).
 
 ## Why vendored rather than depended on

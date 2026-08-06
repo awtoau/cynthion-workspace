@@ -1,4 +1,4 @@
-# USB Host Mode on Cynthion at 480 Mbps — Proposal
+# USB host mode on Cynthion at 480 Mbps — the options
 
 **Status:** proposal, no hardware exercised
 **Date:** 2026-07-30T19:30:00+10:00; integration design added 2026-08-03T01:30:00+10:00
