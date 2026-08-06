@@ -104,3 +104,7 @@ test.vcd
 
 # Upstream gateware built in a container for comparison; regenerable.
 tmp/upstream-build/
+
+# Upstream bitstreams pulled from PyPI for comparison; regenerable.
+tmp/upstream-shipped/
+tmp/upstream-src/
