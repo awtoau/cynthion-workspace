@@ -1,11 +1,12 @@
-# RTIC on this SoC: what the workload needs, and what each model costs
+# RTIC on this SoC: the measurement behind the decision, and what it costs
 
-Issue #115, and the decision is [`decisions.md`](decisions.md) 19.
+**RTIC is the concurrency model** — [`decisions.md`](decisions.md) 19, issue #115.
+This is the evidence, not a re-argument.
 
 **Index:** [`hardware.md`](hardware.md) · CPU:
 [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
 
-## The answer
+## What it fixes, and what it costs
 
 | | superloop (today) | preempt | RTIC |
 |---|---|---|---|
@@ -15,12 +16,9 @@ Issue #115, and the decision is [`decisions.md`](decisions.md) 19.
 | dispatch cost per event | — | 21 instr | ~180 instr |
 | worst window with `mstatus.MIE` clear | 0 | 0 | 60 instr, ~1 µs |
 
-**The unbounded turn is real, and it is fixable for 424 bytes without RTIC.**
-RTIC closes it just as completely — 274 µs against 271 — so everything that
-separates them is cost, not capability.
-
-What RTIC additionally sells is **checked resource access**, a compile-time
-property with no runtime number. That is the whole of the remaining judgement.
+**RTIC closes the unbounded turn** — 274 µs against the hand-written
+dispatcher's 271, zero deadline misses either way. The dispatcher is kept in the
+tree as the fallback if the I-cache stays 4 KiB, not as a rival.
 
 ## The workload that decides it
 
@@ -83,7 +81,7 @@ running the same workload as `workload_bare.rs` so the two are comparable.
 | does the PLIC survive adoption? | **yes** — 1,108 claims, 1,208 completes, nothing gated off |
 | is there a CLINT monotonic? | **yes** — written and measured, 7 µs worst late |
 | priorities and shared resources configurable? | **yes**, and one obvious configuration is a priority-2 blocker |
-| is checked access worth 1,812 bytes? | **a judgement**, and it stays one |
+| is checked access worth 1,812 bytes? | **yes** — decision 19 |
 
 **`rtic-monotonics` 2.2.1 has two RISC-V backends.** What it lacks is a CLINT
 one, which is why writing ours was small. An earlier claim that RISC-V had
@@ -124,7 +122,6 @@ Nothing here is a reason to reject RTIC on a machine with a bigger cache.
 | | |
 |---|---|
 | IPC and `ICACHE_MISS` on silicon | needs a bitstream first: `uart16550.py` implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
-| whether checked resource access earns 1,812 bytes | a judgement, not a measurement |
 | what shrinking the hot set would take | unmeasured |
 
 ## Reproducing

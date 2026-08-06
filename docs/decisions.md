@@ -879,102 +879,53 @@ compiler-builtins float code — the tags are reserved, the formatters are not i
 
 ### 19. RTIC, or preemption without it
 
-**Open — #201, with #115 for the RTIC half.**
+**RTIC.** #115 for the port, #201 for the surrounding comparison, and
+[`rtic.md`](rtic.md) for every measurement behind this.
 
-**The question.** One defect is measured: **a turn of the main loop is unbounded, and
-every deferred thing waits for it** — a 50 ms poll with a **61 ms worst gap**, and under a
-device-emulation workload **1,266 µs worst case with 700 of 2,000 deadlines missed**.
-Nothing else on the list is a defect: the shell is 0.10–0.23% busy, the round-robin is
-fair, nothing is dropped, and `RINGS` is correct. Only preemption fixes the turn, and
-preemption is one of RTIC's four separable parts — so the question is whether RTIC's other
-three are worth their difference over preemption alone.
+**The defect it fixes.** A turn of the main loop is unbounded and every deferred
+thing waits for it — a 50 ms poll with a 61 ms worst gap, and under a
+device-emulation workload **1,220 µs worst case with 600 of 2,000 deadlines
+missed**. RTIC takes that to **274 µs and zero misses**. Nothing else on the
+original list was a defect: the round-robin is fair, nothing is dropped, `RINGS`
+is correct.
 
-Zephyr is not that question (#112): it needs the same peripherals plus a board port, a
-devicetree and drivers, and moondancer already has the structure an RTOS supplies, minus
-the scheduler an event-driven USB device does not need.
+**What it costs:** +1,812 bytes of `.text`, ~180 instructions per event (4.3% of
+an event), a `critical_section` per `pend` of 74 instructions whose worst window
+with `mstatus.MIE` clear is 60 instructions (~1 µs), and 15 packages.
 
-**What preemption alone is worth**, hand-written in `src/dispatch.rs` behind
-`--features preempt`, on the identical arrival sequence
-([`rtic.md`](rtic.md)):
-
-| | superloop | preemption |
-|---|---|---|
-| worst arrival → handled | 1,266 µs | **271 µs** |
-| past the 375 µs deadline | 700 / 2,000 | **0 / 2,000** |
-| `.text` | — | **+440 bytes**, 70 instructions per dispatch (1.7% of the work) |
-
-**What each runtime costs**, same skeleton, same `opt-level = "z"`, against the language
-floor (`scripts/soc_model_probe.py`,
-[`rtic.md`](rtic.md)):
-
-| model | runtime `.text` | of the 4 KiB I-cache | RAM |
-|---|---|---|---|
-| cooperative, hand-written | 224 | 5% | — |
-| hand-written **preemption** | 440 | 11% | — |
-| RTIC 2.3, `riscv-clint-backend` | 1,552 | 38% | **+1,332** in `.uninit` |
-
-With moondancer's real control path in the tasks rather than a counter, RTIC is **+1,568,
-38.3%** ([`rtic.md`](rtic.md)) — the real workload made it more
-expensive, not less.
-
-**The cache is the budget.** In the shell the hot footprint under load is **5,632 bytes
-against a 4 KiB direct-mapped cache** before any runtime is added, so the dispatcher's
-512 bytes of footprint only make a bad number worse. Between two binaries of the same
-shape, which is the comparison that isolates the runtime
-([`rtic.md`](rtic.md) §8), it is sharper:
-
-| | superloop | **RTIC** |
-|---|---|---|
-| hot footprint | **4,032 B — fits, by one line** | **5,440 B — 1,344 B over** |
-| modelled misses | 573 | 1,393 |
-
-Still modelled from QEMU traces rather than counted on silicon — and the workload cannot
-reach silicon as it stands, because the gateware's 16550 implements the MSR half of local
-loopback and not the data half, so nothing on the FPGA can inject an arrival.
-
-**RTIC fixes the turn as well as the hand-written dispatcher does**, on the same workload:
-**274 µs worst against 271**, zero deadline misses, for **+1,812 bytes** of `.text` against
-+424 and **~180 instructions per event** against 21. The `critical_section` on every `pend`
-is 74 instructions and its **worst window with `mstatus.MIE` clear is 60 instructions,
-~1 µs**; the 1 ms tick's worst lateness did not move.
-
-**Two structural findings, neither a matter of configuration.**
+**Two structural consequences, neither configurable.**
 
   * **No RTIC subset gives preemption alone.** Both generic RISC-V backends are
-    `riscv-slic` backends and the SLIC *is* how RTIC preempts; the monotonic and the
-    resource locking are the droppable parts. `riscv-slic`'s API is `critical_section::with`
-    throughout, so taking the SLIC takes a global interrupt disable on every `pend`.
-  * **RTIC cannot bind a hardware interrupt.** `binds =` names a SLIC source, so no task
-    can consume the PLIC front end and `src/irq.rs` survives adoption with the SLIC in
-    series behind it. The event queue — the piece carrying the longest hand-written
-    correctness argument — is exactly what the ceiling analysis cannot reach. The trade is
-    not "compile-time correctness for cache"; it is correctness for *some* shared state,
-    for cache.
+    `riscv-slic` backends and the SLIC *is* how RTIC preempts; the monotonic and
+    the resource locking are the droppable parts. `riscv-slic`'s API is
+    `critical_section::with` throughout, so taking the SLIC takes a global
+    interrupt disable on every `pend`.
+  * **RTIC cannot bind a hardware interrupt.** `binds =` names a SLIC source, so
+    no task consumes the PLIC front end and **`src/irq.rs` survives adoption**
+    with the SLIC in series behind it. The event queue — the piece carrying the
+    longest hand-written correctness argument — is therefore outside what RTIC's
+    ceiling analysis can reach.
 
-**A third finding, from the port rather than the crates.** An `#[idle]` that polls a
-`#[shared]` resource is a priority-2 blocker: `lock` raises the SLIC threshold to the
-ceiling, so `pend` does not even raise `msip` and the event waits. Measured, that
-configuration spends **31% of the run with interrupts globally disabled against 0.4%** —
-and its worst latency is 1 µs worse, which is the evidence that the *duration* of a single
-critical section is what matters and the aggregate is not.
+**One configuration mistake worth naming:** an `#[idle]` that polls a `#[shared]`
+resource is a priority-2 blocker. `lock` raises the SLIC threshold to the
+ceiling, so `pend` does not even raise `msip` and the event waits — 31% of the run
+with interrupts globally disabled against 0.4%, and 1 µs worse latency. The
+*duration* of a single critical section is what matters; the aggregate is not the
+number.
 
-**A monotonic exists.** The earlier note that `rtic-monotonics` 2.2.1 "has nothing for
-RISC-V" was wrong — it has two RISC-V backends and no CLINT one. That is five methods and
-~60 lines (`src/bin/mono_rtic.rs`): 7 µs worst lateness over 100 periods on an absolute
-5 ms grid, deadline-in-the-past exercised. It costs 11 packages and the whole of
-`mtimecmp` — `src/timer.rs` cannot be in the same binary, which the linker says as
-`symbol MachineTimer is already defined`.
+**The monotonic is written**, five methods and ~60 lines over the CLINT
+(`src/bin/mono_rtic.rs`): 7 µs worst lateness over 100 periods on an absolute 5 ms
+grid. It costs the whole of `mtimecmp` — `src/timer.rs` cannot be in the same
+binary, which the linker says as `symbol MachineTimer is already defined`.
 
-**What is left is board-only, and #115 should not close before it exists:** real IPC and
-`ICACHE_MISS` from the CPU's performance counters — `./dev.py test`'s `ipc 1.000` is the
-host TSC under QEMU and has never measured anything. Getting there needs a bitstream with
-data loopback in the 16550. And one question has no runtime number at all: whether checked
-resource access is worth 1,388 bytes over the dispatcher.
+**The constraint is the I-cache, and it is a separate decision.** 4 KiB
+direct-mapped, and RTIC's hot footprint is 5,440 B where the bare binary's 4,032 B
+fits by one line. That is an argument for growing the cache on a die that is a 25F
+(#110), not against RTIC. See [`rtic.md`](rtic.md) for the three options.
 
-Hardware timers cut across it: three comparators against one `mtimecmp` is 1,188 bytes of
-`.text` against 1,336 and 8 bytes of `.bss` against 40 — that 148 bytes *is* the software
-timer queue, and the set-in-the-past race goes with it — but `rtic_time::Monotonic` wants
-exactly one `set_compare`, so cheap comparators erode the case for the framework.
+**Revisit if** the cache stays 4 KiB *and* the hot set cannot be shrunk — in which
+case the 424-byte hand-written dispatcher fixes the same defect and leaves the
+footprint fitting.
 
 ### 20. Multi-transaction device protocols
 
