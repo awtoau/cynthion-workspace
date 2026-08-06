@@ -25,7 +25,7 @@ not been checked. Every assertion is traceable to source in `repos/`,
 published ECP5 scoreboard, and what is ruled out on these exact parts:
 [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) and
 [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), ranked in
-[`decisions.md`](decisions.md) 26.
+[`decisions.md`](decisions.md).
 | **PAC1954-1** | 4-channel power monitor | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |

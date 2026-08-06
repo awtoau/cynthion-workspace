@@ -40,9 +40,12 @@ be done -- that fact moves here and the issue links to it.
 
 ### Where a decision goes
 
-[`decisions.md`](decisions.md) holds every technical choice where a real
-alternative existed, in tables. A decision does not get its own file unless the
-*reasoning* is long enough to need one -- then the table row links to it.
+**Once a choice is made it stops being a decision and becomes architecture.**
+[`soc-architecture.md`](soc-architecture.md) says what the SoC is made of and
+where each piece came from — a table, no arguments.
+[`decisions.md`](decisions.md) holds only what is still open and what would
+settle it. Moving a row from the second to the first is the point at which the
+reasoning gets dropped; git keeps it.
 [`upstream-boundary.md`](upstream-boundary.md) holds the policy on Great Scott
 Gadgets code, separately, because that is policy rather than measurement.
 
@@ -60,7 +63,7 @@ in its §13 got there in the first place.
 
 * [`ci_cd_workflows.md`](ci_cd_workflows.md) — or manually:
 * [`codex-agent.md`](codex-agent.md) — Handing work to Codex — here
-* [`decisions.md`](decisions.md) — Decisions, and the alternatives they were chosen over
+* [`decisions.md`](decisions.md) — Decisions still open, and what would settle them
 * [`gateware-architecture-plan.md`](gateware-architecture-plan.md) — Making the test gateware reusable by the CPU build
 * [`git.md`](git.md) — Git & Submodules Reference
 * [`github_actions.md`](github_actions.md) — (no title)
@@ -69,6 +72,7 @@ in its §13 got there in the first place.
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
 * [`rtic.md`](rtic.md) — RTIC and the four alternatives: what the workload needs, and what each costs
+* [`soc-architecture.md`](soc-architecture.md) — **what the SoC is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled

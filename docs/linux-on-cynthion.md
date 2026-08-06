@@ -20,8 +20,8 @@ Depth lives elsewhere and is linked, not repeated:
 
 | for | see |
 |---|---|
-| the CPU area and timing matrix, rv64 and MMU rows | [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost) |
-| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`decisions.md`](decisions.md) 26 |
+| the CPU area and timing matrix, rv64 and MMU rows | [below](#what-64-bit-and-an-mmu-cost-measured) |
+| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`decisions.md`](decisions.md) |
 | the 480 Mbps host engine, its integration design and register map | [`usb-host-options.md`](usb-host-options.md) |
 | the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
@@ -57,7 +57,7 @@ link 7.
   `--with-mmu`: `--with-supervisor` is `addISA("s","u")` and
   `withMmu = checkISA("s") && !disableMmu` (`Param.scala:584,724`). `xlen` picks the
   scheme — sv39 at 64. Supervisor is separable from the MMU; the MMU is not
-  separable from supervisor. [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost).
+  separable from supervisor. [below](#what-64-bit-and-an-mmu-cost-measured).
 - **Soft float, by choice.** `rv64imac`, no `--with-rvfd`. The FPU row survives in
   the area table below as a measured data point.
 - **Main memory that is not block RAM.** 64 KiB does not boot a kernel.
@@ -69,7 +69,7 @@ link 7.
 
 ## The CPU, measured
 
-From [`decisions.md` §1a](decisions.md#1a-64-bit-and-an-mmu-what-linux-would-cost) —
+From [below](#what-64-bit-and-an-mmu-cost-measured) —
 `scripts/cpu_matrix.py`, core plus its own block RAM, in a four-pin timing harness
 validated against the whole-SoC build (72.7 MHz harness vs **72.40 MHz** on the
 board's own bitstream, i.e. the harness finds the same critical path).
@@ -848,3 +848,68 @@ recommendation — vendor GUH's SIE for 480 Mbps with a bespoke register interfa
 a different and easier question, and the two can coexist on the same board: GUH
 speaks UTMI through `UTMITranslator`, this speaks six wires in serial mode, and
 they are mutually exclusive only in that both want `target_phy`.
+
+## What 64-bit and an MMU cost, measured
+
+Linux with Rust drivers forces rv64 with an MMU — stock distributions are rv64gc, glibc
+has no upstream rv32 port, and Rust for Linux has no rv32 target — so the only question is
+resources. One variable per row, from the `+caches` row above:
+
+| variant | LUT4 | LUTRAM | COMB | FF | BRAM | Fmax | closes 60 MHz |
+|---|---|---|---|---|---|---|---|
+| rv32 +caches (above) | 3870 | 100 | 4900 | 2374 | 6 | 91.5 MHz | yes |
+| rv32 +caches +supervisor, no MMU | 4123 | 100 | 5073 | 2426 | 6 | 90.0 MHz | yes |
+| rv32 +caches +supervisor +MMU (sv32) | 4979 | 220 | 6626 | 2761 | 6 | 71.4 MHz | yes |
+| rv64 +caches | 6182 | 148 | 7760 | 3835 | 10 | 81.2 MHz | yes |
+| rv64 +caches +supervisor, no MMU | 6257 | 148 | 8135 | 3887 | 10 | 70.0 MHz | yes |
+| rv64 +caches +supervisor +MMU (sv39) | 7529 | 300 | 10437 | 4390 | 10 | 76.8 MHz | yes |
+| rv64 +MMU +rva | 8110 | 300 | 10948 | 4540 | 10 | 68.4 MHz | yes |
+| rv64 +MMU +rva, 2-way caches | 9031 | 352 | 11758 | 4813 | **20** | 72.7 MHz | yes |
+| rv64 +MMU +rva +rvfd | 17474 | 396 | **20927** | 8344 | 10 | **41.9 MHz** | **no** |
+| `soc-cpu` — this SoC's own flags, rv32 | 5313 | 108 | 5999 | 3511 | 8 | 72.7 MHz | yes |
+| `soc-cpu` +64 | 8613 | 164 | 10020 | 5105 | 12 | 75.8 MHz | yes |
+| `soc-cpu` +64 +MMU | 9374 | 316 | 12109 | 5721 | 12 | 69.9 MHz | yes |
+
+**The flags.** There is no `--with-mmu`. `--with-supervisor` is `addISA("s","u")`, and
+`withMmu = checkISA("s") && !disableMmu` (`Param.scala:584,724`), so the MMU arrives as a
+side effect of supervisor mode and the only way to name it separately is to ask for
+supervisor and then take it away with `--without-mmu`. Two consequences: supervisor **is**
+separable from the MMU (S-mode with `--without-mmu` — 253 LUT4 at rv32, 75 at rv64), the
+MMU is **not** separable from supervisor, and `--without-mmu` on a core that never asked
+for supervisor is a **no-op** — it is present on the base rows above and does nothing
+there. `xlen` picks the scheme on its own: sv32 at 32, sv39 at 64 (`Param.scala:855`).
+Because a flag that silently did nothing would read as a free MMU, `cpu_matrix.py` now
+reads xlen, S-mode, MMU and FPU back out of the generated Verilog and prints what it
+found rather than what was asked for.
+
+**What binds.** Swapping this SoC's core for its 64-bit MMU equivalent is +6110 COMB and
+**+4 block RAM** (`soc-cpu` → `soc-cpu+64+mmu`). Against the current whole-SoC build
+(12903 COMB, 53%; 44 of 56 BRAM, 79%; 72.40 MHz) that is **19013 COMB, 78%** and **48 of
+56 BRAM, 86%**. Both fit. The MMU itself is nearly free in block RAM — its TLB is
+asynchronously read and lands in LUT RAM, +152 `DPR16X4` cells and 0 BRAM — and the four
+block RAMs are the *width*, not the translation: a 64-bit L1 is twice as wide.
+
+Block RAM binds first, and not on the core: **one more cache way costs ten block RAMs**
+(10 → 20 at rv64). 4 KiB direct-mapped L1s are small for a kernel, and 8 KiB two-way ones
+put the SoC at 44 − 8 + 20 = **56 of 56**, the entire die, before any of the RAM Linux
+actually needs. Hardware floating point is the other wall: `+rvfd` alone is 20927 COMB,
+86% of the die for the CPU by itself, and it misses 60 MHz at 41.9 MHz — so a stock
+rv64gc userspace is out of reach, while a soft-float rv64imac kernel with Rust drivers is
+not.
+
+**The core fits and closes timing with margin; main memory is the half this table does not
+measure.** 64 KiB of block RAM does not boot Linux, so it would have to be HyperRAM — a
+bandwidth and latency question about the L1s in front of it, not an area one. The whole
+chain is in [`linux-on-cynthion.md`](linux-on-cynthion.md), which corrects one reading
+above: the block RAM wall is *this* SoC's, not the die's. A Linux-only build lands at 14 of
+56, so 8 KiB two-way L1s cost 24 of 56 rather than the whole part.
+
+**A trap in the tree**, superseded by the tables above:
+[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
+headlines 12646 LUT4 for VexRiscv against 6876, which is **not like for like** — the
+VexRiscv number includes the whole USB fabric and the VexiiRiscv one does not, so it
+overstates VexRiscv by roughly a USB stack, and its two configurations differ in three
+ways at once (caches, atomics, supervisor mode). That is why `cpu_matrix.py` exists. Its
+benchmark rows are usable, as an apples-to-apples pair between *its own* two
+configurations: CoreMark total ticks 6,133,969 vs 6,361,949 (+3.7%), DMIPS/MHz 0.74 vs
+0.63.

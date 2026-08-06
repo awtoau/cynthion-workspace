@@ -171,8 +171,8 @@ Four reasons it stays ours, in order of weight:
   BSD-3-Clause.
 * **The memory map would stop being generated.** A black box has no
   `amaranth_soc` memory map, so the peripheral's description goes back to being
-  hand-written — which is what [`../decisions.md`](../decisions.md) 17 exists to
-  prevent.
+  hand-written, losing the generated memory map
+  ([`../soc-architecture.md`](../soc-architecture.md)).
 
 **What was taken from the proven core instead: its behaviour, as the
 specification.** `uart_regs.v` was read line by line against ours during #128 and

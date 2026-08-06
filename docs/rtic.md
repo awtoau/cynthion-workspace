@@ -1,6 +1,6 @@
 # RTIC on this SoC: the measurement behind the decision, and what it costs
 
-**RTIC is the concurrency model** — [`decisions.md`](decisions.md) 19, issue #115.
+**RTIC is the concurrency model** — [`soc-architecture.md`](soc-architecture.md), issue #115.
 This is the evidence, not a re-argument.
 
 **Index:** [`hardware.md`](hardware.md) · CPU:
@@ -81,7 +81,7 @@ running the same workload as `workload_bare.rs` so the two are comparable.
 | does the PLIC survive adoption? | **yes** — 1,108 claims, 1,208 completes, nothing gated off |
 | is there a CLINT monotonic? | **yes** — written and measured, 7 µs worst late |
 | priorities and shared resources configurable? | **yes**, and one obvious configuration is a priority-2 blocker |
-| is checked access worth 1,812 bytes? | **yes** — decision 19 |
+| is checked access worth 1,812 bytes? | **yes**, it is adopted |
 
 **`rtic-monotonics` 2.2.1 has two RISC-V backends.** What it lacks is a CLINT
 one, which is why writing ours was small. An earlier claim that RISC-V had

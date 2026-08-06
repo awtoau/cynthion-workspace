@@ -27,7 +27,7 @@ no Status Register-3.
 **This matters because the JV split the feature set.** The `-IM`/`-JM` part gets
 QPI and DTR in a separate datasheet; the `-IQ` fitted here has **neither**, nor
 `0xC0` Set Read Parameters. See
-[`../decisions.md`](../decisions.md) 26.
+[`../decisions.md`](../decisions.md).
 
 **Correction: there is no ADS bit on this part.** This table previously read
 SR3 `0x60` as "ADS clear". ADS/ADP are 4-byte-addressing bits and exist only on
@@ -213,7 +213,7 @@ Whether quad SPI speeds up configuration:
   only, and **does not remove the address phase**. Default `W4` = 1, disabled.
 
 Every remaining speed option on this part, with the arithmetic:
-[`../decisions.md`](../decisions.md) 26.
+[`../decisions.md`](../decisions.md).
 
 ## What the SoC took, and what it bought (NEW, 2026-08-03)
 
@@ -298,7 +298,7 @@ exceed it, and driving `USRMCLKI` from a phase-shifted PLL output (NanoMig, at
 
 # Speed: every remaining option, and which are absent
 
-Ranked against the flash's other options in [`../decisions.md`](../decisions.md) 26.
+Ranked against the flash's other options in [`../decisions.md`](../decisions.md).
 
 ### Identification, settled two ways
 

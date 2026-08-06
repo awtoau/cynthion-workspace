@@ -76,7 +76,7 @@ and temperature to choose it. This board has never moved it off the default.
 selects single-ended clocking, where *"CK# is not used"*, while
 `cynthion_r1_4.py:206` declares `DiffPairs("C3", "D3")` with `LVCMOS33D`. One
 CR1 write switches the part to clocking on the CK/CK# crossing. Untried; see
-[`../decisions.md`](../decisions.md) 26.
+[`../decisions.md`](../decisions.md).
 
 **ID0 `0x0c86` decoded:**
 
@@ -305,7 +305,7 @@ proves `BURSTDET` does assert on a HyperBus part — though only at CK 120.
 
 Every remaining speed option on this part, the published ECP5 scoreboard, and
 what `ALIGNWD` has to do with the CK 200 failure:
-[`../decisions.md`](../decisions.md) 26.
+[`../decisions.md`](../decisions.md).
 
 ## tCSM sets the efficiency ceiling, and it is not 100%
 
@@ -569,7 +569,7 @@ coalesced the CTI burst. Unmeasured.
 
 ## Speed: every remaining option, and what each returns
 
-Ranked in [`../decisions.md`](../decisions.md) 26.
+Ranked in [`../decisions.md`](../decisions.md).
 
 **Read the section immediately above first.** Every absolute figure below is
 scaled to 334.4 MB/s at CK 192, which is **void** -- CK 180 fails in bulk. The
