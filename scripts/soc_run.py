@@ -48,6 +48,7 @@ worse than one that says it did.
 import argparse
 import re
 import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -330,15 +331,35 @@ def main():
                              "firmware, which it does not once .text is in flash")
     parser.add_argument("--skip-tests", action="store_true",
                         help="configure even though the QEMU shell tests have not run")
+    parser.add_argument("--hyperram-bist", action="store_true",
+                        help="the HyperRAM BIST measurement variant (#226): the "
+                             "engine owns the part, the CPU commands it over CSR")
     args = parser.parse_args()
 
     firmware = FIRMWARE_BIN
+
+    # The measurement variant (#226). One switch, because the gateware flag and
+    # the cargo feature have to agree: a BIST bitstream running shipping firmware
+    # would address a memory window that decodes to nothing, and shipping
+    # gateware running BIST firmware would find no engine. Setting either by hand
+    # is how that pairing gets broken.
+    env = None
+    if args.hyperram_bist:
+        env = dict(os.environ, CYNTHION_HYPERRAM_BIST="1")
+        emit("HYPERRAM BIST VARIANT: the CPU cannot address the HyperRAM in this")
+        emit("build -- the engine owns the pins. `hr sweep` is the whole shell.")
 
     # The gate. Before everything, including --no-build: a bitstream built earlier
     # from firmware that fails these assertions is no safer to load than one built
     # now, and the source it is tested against is the source on disk either way.
     if args.skip_tests:
         emit("shell tests SKIPPED (--skip-tests)")
+    elif args.hyperram_bist:
+        # QEMU has no HyperRAM and no BIST engine, so the gate can say nothing
+        # about the one thing this variant exists to measure. It is skipped
+        # rather than run-and-ignored: a green gate here would be evidence about
+        # the shipping shell, printed during a build of something else.
+        emit("shell tests skipped: QEMU has neither the HyperRAM nor the engine")
     elif args.c_firmware:
         emit("shell tests skipped: they cover the Rust crate, not the C generator")
     else:
@@ -373,7 +394,14 @@ def main():
     #
     # It is still a hard stop if the generator itself fails, because then
     # nothing knows where the peripherals are.
-    if not args.c_firmware:
+    if args.hyperram_bist:
+        # NOT regenerated here. This variant's map is not the committed PAC's,
+        # and writing it out would leave the shipping build checking itself
+        # against a map it does not have. The variant's firmware does not need
+        # it: `bist.rs` carries the one address it uses, and
+        # `tests/test_bist_constants.py` asserts that equals the gateware's.
+        emit("peripheral map left alone: this variant's is not the committed one")
+    elif not args.c_firmware:
         before = None
         generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
         if generated.exists():
@@ -413,7 +441,10 @@ def main():
             emit(f"C firmware: {firmware.stat().st_size} bytes")
         else:
             if not args.no_build:
-                result = run(["cargo", "build", "--release"], cwd=CRATE)
+                cargo = ["cargo", "build", "--release"]
+                if args.hyperram_bist:
+                    cargo += ["--features", "hyperram-bist"]
+                result = run(cargo, cwd=CRATE)
                 if result.returncode != 0:
                     emit("cargo build failed:")
                     emit((result.stderr or result.stdout).strip()[-900:])
@@ -547,7 +578,10 @@ def main():
                  f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
                  f'python3.15t {GATEWARE} --build --firmware {firmware} '
                  f'--bootloader {BOOT_BIN}')
-        result = run(["bash", "-c", build])
+        # `env` carries CYNTHION_HYPERRAM_BIST when --hyperram-bist was given.
+        # `bash -c` inherits it: the flag is read by `top.py` at import, so it
+        # has to be in the environment of the build, not of this script alone.
+        result = run(["bash", "-c", build], env=env)
         output = (result.stdout or "") + (result.stderr or "")
 
         # THE FREQUENCIES, on success as well as on failure.

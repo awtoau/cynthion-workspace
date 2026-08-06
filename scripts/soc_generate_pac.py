@@ -548,11 +548,27 @@ def cross_check(peripherals, emit):
     # supposed to be there.
     csr_bases = {address: name for name, address in bases.items()
                  if address >= 0xf0000000}
+
+    # The one address firmware is allowed to write out. `bist.rs` addresses a
+    # peripheral that exists only in the HYPERRAM_BIST variant, and the PAC is
+    # generated from whichever variant is selected -- so naming it would mean
+    # committing the measurement variant's map, which would leave the shipping
+    # image checking itself against a map it does not have.
+    #
+    # The exemption is per-FILE-and-peripheral, not blanket: any OTHER CSR base
+    # transcribed into bist.rs is still caught, and this base transcribed into
+    # any other file is still caught. What the scan protects against here is
+    # provided instead by `tests/test_bist_constants.py`, which asserts the
+    # literal equals `HYPERRAM_BIST_BASE` in `top.py`.
+    exempt = {"bist.rs": {"HYPERRAM_BIST"}}
+
     for path in sorted(src.glob("*.rs")):
         text = path.read_text()
         for literal in re.findall(r"0x([0-9a-fA-F][0-9a-fA-F_]*)", text):
             value = int(literal.replace("_", ""), 16)
             if value in csr_bases:
+                if csr_bases[value] in exempt.get(path.name, ()):
+                    continue
                 emit(f"  {path.name} has 0x{value:08x} written out; that is "
                      f"base::{csr_bases[value]} and it should be named, not copied")
                 firmware_ok = False
@@ -859,8 +875,15 @@ def render_offsets(peripheral):
     return "\n".join(lines)
 
 
-def check_offsets(peripherals, emit):
-    """Confirm the checked-in PAC exposes the offsets from this memory-map walk."""
+def check_offsets(peripherals, emit, variant=False):
+    """Confirm the checked-in PAC exposes the offsets from this memory-map walk.
+
+    `variant` says this is a measurement build (HYPERRAM_BIST) whose map is
+    deliberately not the committed PAC's. The comparison still RUNS and still
+    prints what differs -- that output is the description of the variant, and is
+    worth seeing -- but a difference is not a failure, because the committed PAC
+    is the shipping variant's and regenerating it here would break that build.
+    """
     ok = True
     checked = 0
     for peripheral in peripherals:
@@ -872,6 +895,11 @@ def check_offsets(peripherals, emit):
             emit(f"  {path.relative_to(ROOT)} offsets are STALE -- regenerate the PAC")
             ok = False
         checked += len(peripheral.registers)
+    if not ok and variant:
+        emit(f"committed register offsets: {checked} checked, and this variant's "
+             f"map is not theirs -- expected, the committed PAC is the shipping "
+             f"build's")
+        return True
     emit(f"committed register offsets: {checked} checked, "
          f"{'all current' if ok else 'STALE -- see above'}")
     return ok
@@ -1037,7 +1065,7 @@ def run(args, emit):
             emit("HYPERRAM_BIST is set: this is a measurement variant with a "
                  "deliberately different map, so the committed soc.svd is not "
                  "its reference and is left alone")
-            return 0 if check_offsets(peripherals, emit) else 1
+            return 0 if check_offsets(peripherals, emit, variant=True) else 1
 
         current = committed.read_bytes() == svd_path.read_bytes()
         emit("committed soc.svd is current" if current

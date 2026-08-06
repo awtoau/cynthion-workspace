@@ -68,6 +68,7 @@ as a literal.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -661,17 +662,23 @@ HYPERRAM_CLOCK_STOP = False
 # DQS write path (#92, #211) is therefore not in the way, so the matrix can be
 # produced without fixing it first.
 #
-# It is a measurement variant, not the shipping SoC: with this True the CPU
+# It is a measurement variant, not the shipping SoC: with this set the CPU
 # cannot address the HyperRAM at all, and BootRAM is gone too -- it requests the
 # same `ram` resource, and Amaranth allows one requester.
 #
-# Flipping this to True requires `scripts/soc_generate_pac.py` to be re-run: the
-# map gains a 128-register peripheral and loses two, so the committed PAC is not
-# its reference. The committed PAC is the shipping variant's, and
-# `--check` reporting the BIST map as stale is that fact, not a defect. Do not
-# commit a PAC generated with this True -- it would leave the shipping build
-# checking itself against a map it does not have.
-HYPERRAM_BIST = False
+# From the environment rather than an edited literal, so that building the
+# variant does not dirty the tree. A literal meant every build of it started with
+# a modified `top.py`, which is a state that gets committed by accident exactly
+# once and then ships.
+#
+#     CYNTHION_HYPERRAM_BIST=1 ./scripts/soc_run.py --hyperram-bist
+#
+# The firmware side is the `hyperram-bist` cargo feature, and it builds against
+# the SHIPPING PAC -- see `firmware/cynthion-soc/src/bist.rs`. So do not
+# regenerate the PAC with this set: the committed one is the shipping variant's,
+# and `soc_generate_pac.py --check` reporting the BIST map as stale is that fact
+# rather than a defect.
+HYPERRAM_BIST = os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0")
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
