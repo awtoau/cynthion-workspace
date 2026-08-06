@@ -13,16 +13,27 @@ invoke one-shot. It used to live at the repo root for that reason; moving it her
 left its own `ROOT` pointing at `scripts/`, so `import usb_ids` failed from every
 working directory until that was fixed.
 
-## This owns the port
+## This owns the tty, and shares it over a socket
 
-**Run this, and nothing else opens the port.** Only one process can read a tty.
+**Run this, and nothing else opens the tty.** Only one process can read one.
+
+**It serves on TCP 9000 by default**, so that is not a problem: anything else
+that wants the console -- `soc_run.py`, `soc_shell.py`, an agent -- reads AND
+writes through the socket while this terminal stays attached. One process owns
+the tty; everyone else goes through the port.
+
+    ./scripts/tio_user.py              # attach, and serve on 9000
+    ./scripts/tio_user.py --no-serve   # attach, exclusively
+
+Only one process can read a tty, and the failures when two try are quiet:
 
   * Two readers interleave the stream, each taking bytes the other never sees --
     output like `ivlive0alive`.
   * Every steal makes the other drop and reattach, which reads as the board
     reconfiguring in a loop when nothing of the sort is happening.
-  * `scripts/soc_run.py` checks for a service on port 9000 and reads through that
-    instead of competing. Pass `--serve` here to provide it.
+  * `scripts/soc_run.py` and `scripts/soc_shell.py` check for the service on port
+    9000 and read through it instead of competing. That service is on by default,
+    so this works unless you passed `--no-serve`.
 
 ## What it does that `tio` does not
 
@@ -158,9 +169,15 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--serve", action="store_true",
-                        help=f"also fan out on TCP {SERVE_PORT}, so scripts can read "
-                             f"without taking the port")
+    # ON BY DEFAULT. It used to be opt-in, and the result was that the port was
+    # held by a terminal with no way in: every script that wanted to read the
+    # console competed for the tty, got interleaved bytes or silence, and the
+    # answer each time was "restart it with --serve". A local socket costs
+    # nothing and removes that entire class of exchange.
+    parser.add_argument("--no-serve", dest="serve", action="store_false",
+                        help=f"do NOT fan out on TCP {SERVE_PORT} (serving is the "
+                             f"default; this makes the tty exclusive to you)")
+    parser.set_defaults(serve=True)
     args = parser.parse_args()
 
     try:
