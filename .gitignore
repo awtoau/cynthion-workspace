@@ -95,3 +95,9 @@ gateware/probes/cpu_matrix/*/top.svf
 gateware/probes/cpu_matrix/*/top.debug.v
 gateware/probes/cpu_matrix/*/build_top.*
 gateware/**/*.bit
+
+# Lattice tool droppings and stray build output at the root
+hdr_log
+tmp_synthesis.log
+test.vcd
+/build/

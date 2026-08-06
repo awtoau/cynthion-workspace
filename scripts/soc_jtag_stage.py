@@ -44,7 +44,7 @@ prints bytes per second; `docs/architecture.md` section 15 records what it shoul
 
 ## Reading the console afterwards
 
-A tty has one reader. If `./tio_user.py --serve` is running, this talks through its
+A tty has one reader. If `./scripts/tio_user.py --serve` is running, this talks through its
 socket on 9000; if something else holds the port, the run says which pid rather than
 reporting an empty console.
 """
@@ -338,7 +338,7 @@ def main():
                     for pid, command in thieves:
                         emit(f"      pid {pid}: {command}")
                     emit("Anything this reports about the console is contention,")
-                    emit("not silence. Stop it, or run `./tio_user.py --serve`.")
+                    emit("not silence. Stop it, or run `./scripts/tio_user.py --serve`.")
         except Exception as error:
             emit(f"no console ({error}); staging anyway")
 

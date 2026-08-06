@@ -33,7 +33,7 @@ sees, which looks like garbled firmware output rather than contention.
 
 A reader that is NOT serving cannot be talked through, and that case is far worse: this
 opens the tty successfully, writes successfully, and reads nothing, because the other
-process took every byte. The board looks dead and is not. A plain `tio_user.py` left
+process took every byte. The board looks dead and is not. A plain `scripts/tio_user.py` left
 running in another terminal costs an afternoon this way -- it happened, with a bitstream
 that was working the whole time. So before reporting silence, this looks for the other
 reader in /proc and names it. Silence with an explanation is a result; silence without one
@@ -274,7 +274,7 @@ def main():
                 emit(f"      pid {pid}: {command}")
             emit("The shell above said nothing because that process took every")
             emit("byte, not because the firmware is silent. A tty has exactly one")
-            emit("reader. Stop it, or restart it as `./tio_user.py --serve` so this")
+            emit("reader. Stop it, or restart it as `./scripts/tio_user.py --serve` so this")
             emit("script reads through its socket on port 9000 instead of competing.")
 
     emit()

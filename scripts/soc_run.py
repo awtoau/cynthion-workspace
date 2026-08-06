@@ -747,7 +747,7 @@ def configure_and_read(args, emit):
 
             # An empty read here has two causes and they look identical: the firmware
             # said nothing, or something else read what it said. A tty has one reader,
-            # and a `./tio_user.py` left running in another terminal takes every byte
+            # and a `./scripts/tio_user.py` left running in another terminal takes every byte
             # while this reports a blank console. That has been mistaken for dead
             # firmware on a board that was working perfectly.
             if not data.strip():
@@ -760,7 +760,7 @@ def configure_and_read(args, emit):
                     for pid, command in thieves:
                         emit(f"      pid {pid}: {command}")
                     emit("The blank console above is contention, not silence. Stop it,")
-                    emit("or restart it as `./tio_user.py --serve` so this reads through")
+                    emit("or restart it as `./scripts/tio_user.py --serve` so this reads through")
                     emit("its socket on port 9000 instead of competing for the tty.")
 
         emit()

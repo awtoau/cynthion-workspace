@@ -6,7 +6,7 @@
 """
 Attaches to the SoC console and prints it.
 
-    ./tio_user.py
+    ./scripts/tio_user.py
 
 At the repo root because it is meant to be run by hand and left running, unlike the
 scripts under `scripts/` that agents invoke.
