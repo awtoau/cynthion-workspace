@@ -9,7 +9,7 @@ A RISC-V PLIC: many interrupt sources onto the one machine external wire.
 Standard, not bespoke, so that `firmware/cynthion-soc/src/plic.rs` and RTIC's
 RISC-V backend both work unchanged -- QEMU's `-M virt` has a PLIC too, which is
 what makes `scripts/soc_test.py` evidence about the interrupt path that ships.
-The alternatives weighed are in `../../docs/decisions.md`.
+The alternatives weighed are in `../../docs/architecture.md`.
 
 ## Register map -- fixed by riscv-plic-spec 1.0.0, not chosen here
 

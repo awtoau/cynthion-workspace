@@ -11,7 +11,7 @@
 //! device asserted and [`Controllers::service`] services exactly the ports that
 //! did. It does NOT read the mux's `LINES` register to find out.
 //!
-//! That is the reversal in `docs/decisions.md` decision 8. With one shared
+//! That is the reversal in `docs/architecture.md` decision 8. With one shared
 //! source this loop had to clear EVERY asserting device before re-enabling, or
 //! the level stayed high and the interrupt re-fired immediately -- a storm that
 //! presents as a hung CPU, guarded only by a scan being written correctly. One

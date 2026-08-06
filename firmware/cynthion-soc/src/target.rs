@@ -36,7 +36,7 @@
 //!     `src/gpio.rs`). A `u16` access is a different bus transaction from the two
 //!     ordered byte accesses the hardware specifies.
 //!
-//! Hand-transcribed constants versus a generated PAC: `docs/decisions.md`.
+//! Hand-transcribed constants versus a generated PAC: `docs/architecture.md`.
 
 /// Every 16550 this build can talk on. The first is the primary console: the one
 /// that gets the boot banner, the bootloader's reports and any panic.
@@ -192,7 +192,7 @@ pub const BOOT_STATUS_TEXT: &[&str] = &[
 ///
 /// Not one OR-ed source: a shared level obliges its handler to clear every
 /// asserting device before returning, and one source per device removes that
-/// obligation rather than documenting it. See `docs/decisions.md` decision 8.
+/// obligation rather than documenting it. See `docs/architecture.md` decision 8.
 ///
 /// A slice, empty on a target with no Type-C hardware, so `src/irq.rs` matches a
 /// claimed source against it exactly as it does `UART_IRQS` -- an empty slice

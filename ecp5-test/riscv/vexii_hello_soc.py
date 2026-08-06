@@ -28,7 +28,7 @@ point of a standard part. `serial_line.py` is the PHY behind index 1.
     (`../../docs/usb-performance.md`).
   * **A standard 16550, not a bespoke peripheral**, because LSR at +5 cannot
     share a 32-bit word with RBR at +0. See `uart16550.py`, and
-    `../../docs/decisions.md` for what that replaced.
+    `../../docs/architecture.md` for what that replaced.
 
 ## Interrupts
 
@@ -451,7 +451,7 @@ IRQ_I2C = 3
 # construction: there is only ever one device behind the level being cleared.
 #
 # The PLIC supports 31 sources and this design now uses 5, so the OR conserved
-# nothing scarce. See `docs/decisions.md` decision 8 for the reversal.
+# nothing scarce. See `docs/architecture.md` decision 8 for the reversal.
 #
 # What does NOT change: the handler still defers. Clearing is ~1 ms of I2C on the
 # controller the foreground also uses, so `src/irq.rs` masks the asserting source

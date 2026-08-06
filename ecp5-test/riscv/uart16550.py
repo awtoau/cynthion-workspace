@@ -64,7 +64,7 @@ access (`VexiiRiscv.v:7499-7515`), `amaranth_soc.csr.wishbone` strobes only the
 lanes `sel` names, and the console sits in a `main=0` PMA region where no cache
 line fill reaches it. An earlier version of this peripheral made reading IIR
 side-effect free to harden against a widened access instead;
-`../../docs/decisions.md` records that decision and its reversal.
+`../../docs/architecture.md` records that decision and its reversal.
 
 ## There is no UART in this UART
 
@@ -137,7 +137,7 @@ the register map.
 
 Place each behind its own `WishboneCSRBridge` at its own base address.
 
-Bespoke vs 16550, and the FIFO-depth options, are in `../../docs/decisions.md`.
+Bespoke vs 16550, and the FIFO-depth options, are in `../../docs/architecture.md`.
 """
 
 from amaranth               import Module, Mux, Cat, C, Signal

@@ -27,7 +27,7 @@ no Status Register-3.
 **This matters because the JV split the feature set.** The `-IM`/`-JM` part gets
 QPI and DTR in a separate datasheet; the `-IQ` fitted here has **neither**, nor
 `0xC0` Set Read Parameters. See
-[`../decisions.md`](../decisions.md).
+[`../architecture.md`](../architecture.md).
 
 **Correction: there is no ADS bit on this part.** This table previously read
 SR3 `0x60` as "ADS clear". ADS/ADP are 4-byte-addressing bits and exist only on
@@ -213,7 +213,7 @@ Whether quad SPI speeds up configuration:
   only, and **does not remove the address phase**. Default `W4` = 1, disabled.
 
 Every remaining speed option on this part, with the arithmetic:
-[`../decisions.md`](../decisions.md).
+[`../architecture.md`](../architecture.md).
 
 ## What the SoC took, and what it bought (NEW, 2026-08-03)
 
@@ -298,7 +298,7 @@ exceed it, and driving `USRMCLKI` from a phase-shifted PLL output (NanoMig, at
 
 # Speed: every remaining option, and which are absent
 
-Ranked against the flash's other options in [`../decisions.md`](../decisions.md).
+Ranked against the flash's other options in [`../architecture.md`](../architecture.md).
 
 ### Identification, settled two ways
 
@@ -521,6 +521,22 @@ dropped.** SFDP would say whether anything else undocumented is there — and it
 a read-only probe on a board that is otherwise fully characterised.
 
 ---
+
+### What is left, ranked
+
+**Flash — closed.**
+
+| rank | option | worth | effort |
+|---|---|---|---|
+| ✔ | `FLASH_MODE = "quad"` | **2.70×** measured | done in `03482f4`, for −261 LUTs |
+| 1 | replace luna_soc's PHY (`SCK` capped at `sync`/2) | 2× | large, and the only one not gated on the CPU clock |
+| 2 | raise `SYNC_MHZ` | 2× at 120 MHz | **gated by the RISC-V Fmax of 75 MHz**, not by the flash |
+| 3 | 128-byte I-cache line | +7.2% | a parameter, plus block RAM already at 75% |
+| 4 | `0xEB` continuous read in the SoC | +5.1% | small, but the mode is sticky across reconfiguration |
+| — | **QPI, DTR, `0xC0`** | **absent on this die** | — |
+
+Bulk quad reads already run at 99.6% of the four-lane theoretical maximum. There
+is no efficiency left; only SCK, and the instrument runs out before the flash does.
 
 ### Why the clock is on N9, and why that pin is the constrained one
 

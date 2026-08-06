@@ -31,7 +31,7 @@ the reader stops draining `o_stream`; the deframer holds `frames.ready` low, the
 IOStreamer's skid buffer fills, and `i_stream.ready` goes low and stays there.
 The next read's HEADER waits on a `ready` that will never come.
 
-That is the same class as the two faults in `docs/decisions.md` -- a signal whose
+That is the same class as the two faults in `docs/architecture.md` -- a signal whose
 temporal semantics do not match how it is used -- and it is the CS-hold one
 almost exactly, inverted: there a latch was declared as a one-cycle pulse, here a
 value needed at one instant is produced one cycle late.

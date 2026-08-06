@@ -59,7 +59,7 @@ What was dropped as dead weight, verified rather than assumed:
       This class names no default generator; a design imports the one it wants.
       Designs here use `VariableClockDomainGenerator`, which solves for any
       `sync` rate while holding `usb` at exactly 60 MHz -- the LUNA generator
-      offers 60/120/240 MHz only. See `docs/decisions.md`.
+      offers 60/120/240 MHz only. See `docs/architecture.md`.
 
   `create_usb3_phy`, `get_led`, `request_optional`, `NullPin` (`LUNAPlatform`)
       Portability shims for designs that run on several boards. Nothing here

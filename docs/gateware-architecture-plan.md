@@ -58,7 +58,7 @@ so the select cannot move underneath a transfer. The two `int` lines were OR-ed
 onto one PLIC source here, **and #135 gave each its own** — one controller does
 mean one device at a time on the bus, but that says nothing about which device the
 handler should be told to service, and the PLIC had 27 spare sources. See
-[`decisions.md`](decisions.md) decision 8. The handler still *masks* rather than
+[`architecture.md`](architecture.md) decision 8. The handler still *masks* rather than
 clears: clearing needs a millisecond of I2C on the controller the foreground is
 also using, which is not a thing an interrupt handler may do. Normal context
 clears the device that asserted and re-enables its source.

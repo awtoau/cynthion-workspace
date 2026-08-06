@@ -2,7 +2,7 @@
 //!
 //! It is a spike, not the firmware: it boots, wires the PLIC to RTIC and runs
 //! two tasks that count. The shell is still `src/main.rs`. What this exists to
-//! do is hold the answer to the question `docs/decisions.md` decision 19 was
+//! do is hold the answer to the question `docs/architecture.md` decision 19 was
 //! asserting without evidence -- whether RTIC accepts this machine at all --
 //! in a form that a compiler re-checks. See `docs/rtic.md`.
 //!

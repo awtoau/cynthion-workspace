@@ -25,7 +25,7 @@ typing at a console can distinguish from working.
 The third section is the one thing here that is about a design choice rather than
 a specification: each FUSB302B has its own source, and the checks assert that a
 handler can service the device it claimed without reading, scanning or clearing
-anything belonging to the other. `docs/decisions.md` decision 8 is the argument;
+anything belonging to the other. `docs/architecture.md` decision 8 is the argument;
 these are the assertions that it is built that way.
 
 The one that actually matters most is `pending_read_has_no_side_effect`. This

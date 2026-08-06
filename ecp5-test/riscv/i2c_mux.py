@@ -17,7 +17,7 @@ r1.4 has three physically separate I2C buses, and the split is forced:
 
 **Both FUSB302Bs answer 0x22**, so they cannot share a bus. One `I2CMaster`
 fans out to all three pin-sets under this two-bit select --
-`docs/gateware-architecture-plan.md`, and `../../docs/decisions.md` for the
+`docs/gateware-architecture-plan.md`, and `../../docs/architecture.md` for the
 alternatives.
 
 Select and interrupt lines are one peripheral because the handler needs both in
@@ -47,7 +47,7 @@ state-changing read one byte from the register the handler polls
     A shared level obliges its handler to clear EVERY asserting device before
     returning, and missing one is a storm that presents as a hung CPU; two
     sources delete that obligation rather than documenting it. The PLIC has 27
-    spare sources, so nothing was saved by sharing (`../../docs/decisions.md`,
+    spare sources, so nothing was saved by sharing (`../../docs/architecture.md`,
     decision 8).
   * **`fault` gets no source at all.** It means something different from `int`,
     and nothing here can clear it -- it drops when the device's fault does. An

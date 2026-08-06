@@ -49,7 +49,7 @@ what other HyperRAM controllers do.
     `HyperRAMWishbone`'s `sustained` for why the master decides that.
 
 Placeholder-BRAM (`ecpbram`), JTAG staging and this USB path are compared in
-`../../docs/decisions.md`.
+`../../docs/architecture.md`.
 """
 
 from amaranth import C, Cat, Elaboratable, Module, Mux, Signal

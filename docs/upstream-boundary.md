@@ -68,7 +68,7 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 
 Each row below is a divergence from upstream. **The technical detail — what upstream does,
 what the measurement showed, what ours does instead — lives in
-[`decisions.md`](decisions.md).** This table is the policy view: what we replaced, and
+[`architecture.md`](architecture.md).** This table is the policy view: what we replaced, and
 whether the reason was a defect, a limit, or a standard we preferred to adopt.
 
 | what | ours | why it diverged | detail |

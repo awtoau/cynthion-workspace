@@ -36,7 +36,7 @@
 //!
 //! **Nothing else may read this part.** A second reader lands inside the 1 ms REFRESH
 //! window and reports a bus fault on a working bus. Full argument, including the measured
-//! collision rate: `docs/decisions.md#20-multi-transaction-device-protocols`.
+//! collision rate: `docs/architecture.md#20-multi-transaction-device-protocols`.
 //!
 //! Staleness is the cost, and staleness is the kind of wrongness that looks right. So:
 //!

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the RTIC skeleton and report what RTIC costs on this machine.
 
-`docs/decisions.md` decision 19 has said for months that RTIC fits this SoC
+`docs/architecture.md` decision 19 has said for months that RTIC fits this SoC
 "blocked by: nothing known", on the strength of the PLIC being a standard one.
 Nobody had compiled it. This does, for both targets, so the claim is a build
 result rather than a reading of the register map.

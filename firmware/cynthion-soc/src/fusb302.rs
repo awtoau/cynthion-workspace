@@ -45,7 +45,7 @@
 //!
 //! **One PLIC source per `int` line**, not an OR of the two -- see
 //! `ecp5-test/riscv/i2c_mux.py`, which says so where the sources are wired, and
-//! `docs/decisions.md` decision 8 for why. This comment used to claim the
+//! `docs/architecture.md` decision 8 for why. This comment used to claim the
 //! opposite, while citing the file that contradicts it.
 //!
 //! The distinction is not cosmetic. A SHARED level obliges whatever services it

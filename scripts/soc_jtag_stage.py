@@ -40,7 +40,7 @@ JTAG-staged image from a console-staged one.
 One `shift_data` carries the whole image, the way `LSC_BITSTREAM_BURST` carries a
 bitstream: `apollo_fpga` chunks it into USB transfers but the TAP never leaves
 SHIFT-DR, so the cost is the JTAG clock and not a round trip per word. The run
-prints bytes per second; `docs/decisions.md` section 15 records what it should be.
+prints bytes per second; `docs/architecture.md` section 15 records what it should be.
 
 ## Reading the console afterwards
 

@@ -158,7 +158,7 @@ The `int` lines were OR-ed onto a single source until #135. The argument for the
 was that with a multiplexed controller only one device can be talked to at a time,
 so per-device sources buy nothing. Servicing does serialise, and always will, but
 that is a fact about the bus rather than about which device the handler is told to
-service. See [`../decisions.md`](../decisions.md) decision 8.
+service. See [`../architecture.md`](../architecture.md) decision 8.
 
 **The trap the OR carried:** a shared line is level-sensitive, so the handler must
 read and clear *every* asserted device before the source is re-enabled. Missing one

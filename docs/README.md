@@ -42,7 +42,7 @@ be done -- that fact moves here and the issue links to it.
 
 **A settled choice is architecture, not a decision.**
 [`architecture.md`](architecture.md) is what the system is made of;
-[`decisions.md`](decisions.md) is what is still open.
+[`architecture.md`](architecture.md) is what is still open.
 [`upstream-boundary.md`](upstream-boundary.md) holds the policy on Great Scott
 Gadgets code, separately, because that is policy rather than measurement.
 
@@ -60,7 +60,7 @@ in its §13 got there in the first place.
 
 * [`ci_cd_workflows.md`](ci_cd_workflows.md) — or manually:
 * [`codex-agent.md`](codex-agent.md) — Handing work to Codex — here
-* [`decisions.md`](decisions.md) — Decisions still open, and what would settle them
+* [`architecture.md`](architecture.md) — Decisions still open, and what would settle them
 * [`gateware-architecture-plan.md`](gateware-architecture-plan.md) — Making the test gateware reusable by the CPU build
 * [`git.md`](git.md) — Git & Submodules Reference
 * [`github_actions.md`](github_actions.md) — (no title)

@@ -19,7 +19,7 @@ and there is no generated file to keep in step.
 
 Source: `repos/vexiiriscv`, options in `src/main/scala/vexiiriscv/Param.scala`.
 The choice of VexiiRiscv over VexRiscv, and cached over cacheless, is in
-[`../decisions.md`](../decisions.md).
+[`../architecture.md`](../architecture.md).
 
 ## Configuration
 

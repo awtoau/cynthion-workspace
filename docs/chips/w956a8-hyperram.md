@@ -76,7 +76,7 @@ and temperature to choose it. This board has never moved it off the default.
 selects single-ended clocking, where *"CK# is not used"*, while
 `cynthion_r1_4.py:206` declares `DiffPairs("C3", "D3")` with `LVCMOS33D`. One
 CR1 write switches the part to clocking on the CK/CK# crossing. Untried; see
-[`../decisions.md`](../decisions.md).
+[`../architecture.md`](../architecture.md).
 
 **ID0 `0x0c86` decoded:**
 
@@ -138,13 +138,11 @@ section is measured on this board unless marked inherited.
 
 | | |
 |---|---|
-| **highest clean clock** | **CK 192 MHz — 15.7% above the part's 166 MHz rating** |
+| **highest clock that survives a live negative control** | **CK 140 MHz, 238.9 MB/s** |
+| first clock that fails in bulk | **CK 180**, 4.7 M errors |
 | speed bin fitted | **`6I`, 166 MHz.** `ram.kicad_sch:2347` lists **`W956A8MBYA5I`** — the **200 MHz** grade of the same die, same datasheet, same package — as an approved substitution |
-| **first failing clock** | CK 200 MHz, and it fails in bulk, not intermittently |
-| error rate when clean | 0 in 200 M words per rung, every rung to CK 192 |
 | die temperature | DTR code 30, unchanged across the whole sweep |
 | address space | flat linear 0–8 MiB *(inherited)* |
-| ~~verified ceiling 120 MHz~~ | *superseded — was a PLL limit, not the part's* |
 
 ### The clock the part sees is not the `sync` clock
 
@@ -305,7 +303,7 @@ proves `BURSTDET` does assert on a HyperBus part — though only at CK 120.
 
 Every remaining speed option on this part, the published ECP5 scoreboard, and
 what `ALIGNWD` has to do with the CK 200 failure:
-[`../decisions.md`](../decisions.md).
+[`../architecture.md`](../architecture.md).
 
 ## tCSM sets the efficiency ceiling, and it is not 100%
 
@@ -569,13 +567,39 @@ coalesced the CTI burst. Unmeasured.
 
 ## Speed: every remaining option, and what each returns
 
-Ranked in [`../decisions.md`](../decisions.md).
+Ranked in [`../architecture.md`](../architecture.md).
 
-**Read the section immediately above first.** Every absolute figure below is
-scaled to 334.4 MB/s at CK 192, which is **void** -- CK 180 fails in bulk. The
-*ratios* survive, because they are arithmetic on burst length, latency and tCSM
-that does not depend on which clock is reachable; the MB/s columns do not. The
-verified baseline is 238.9 MB/s at CK 140.
+**The MB/s columns below are scaled to a clock that does not pass.** The *ratios*
+survive — they are arithmetic on burst length, latency and tCSM, independent of
+which clock is reachable — but read them as percentages, not as rates.
+
+### Which of these to try first
+
+**HyperRAM — the two cheap discriminators first.** Against 238.9 MB/s (85.3% of
+the 280 MB/s pin rate at CK 140), tCSM caps efficiency near 96.7% — 270.6 MB/s —
+because CS# may not stay Low beyond 4 µs. Longer bursts are worth ~2.8 of the
+remaining points. **8.5 points are unexplained**: the arithmetic predicts 93.8%
+for the burst length actually in use, and that gap has never been measured.
+
+| rank | option | what it establishes | effort |
+|---|---|---|---|
+| 1 | differential clock `CR1[6] = 0` | removes threshold error from the sampling instant; the board is wired for it and nobody has tried it | **one register write** |
+| 2 | drive strength `CR0[14:12]` | the `tDSS` finding makes this plausible | three register writes |
+| 3 | `CLKOS2_CPHASE`/`FPHASE` sweep | alignment faults move in discrete steps, skew faults narrow continuously — **this is the discriminator** | bitstreams only |
+| 4 | longer bursts inside tCSM | ~2.8 points, and it is the only throughput lever below the ceiling | a splitter in the controller |
+| 5 | `READCLKSEL` training from Tiliqua | converts "works, reason unknown" into a measured eye | drop-in from a common ancestor |
+| 6 | `CLKDIVF` + `ECLKSYNCB` + `ALIGNWD` | the only published open-source fix for a word-boundary slip on ECP5 | large; changes every HyperRAM bitstream |
+| 7 | fit the 5I (200 MHz) part | if a 200 MHz-screened part *also* slips, the fault is the gearing, not the memory | rework; diagnostic before upgrade |
+| — | lower initial latency count | **negative** — reading early is the failure mode | — |
+
+**Do 1 and 2 first.** They cost no design work and they separate the two live
+hypotheses — strobe skew against word-boundary alignment — which decides whether
+anything below them is worth starting. Neither LUNA nor Tiliqua writes CR0 at all,
+so there is no prior art to copy for either.
+
+**Revisit when** the 8.5 unexplained points are measured. Ranking effort against a
+gap nobody has instrumented is how the previous ranking came to recommend work at
+a clock that does not pass.
 
 ### The model these numbers come from
 

@@ -21,7 +21,7 @@ Depth lives elsewhere and is linked, not repeated:
 | for | see |
 |---|---|
 | the CPU area and timing matrix, rv64 and MMU rows | [below](#what-64-bit-and-an-mmu-cost-measured) |
-| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`decisions.md`](decisions.md) |
+| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), ranked in [`architecture.md`](architecture.md) |
 | the 480 Mbps host engine, its integration design and register map | [`usb-host-options.md`](usb-host-options.md) |
 | the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
@@ -127,7 +127,7 @@ residue of 4 is the remainder, not a per-module report.
 | Linux-only build | DP16KD |
 |---|---|
 | `soc-cpu +64 +MMU` L1s + BTB, 4 KiB direct-mapped | 12 |
-| boot ROM — the resident bootloader is 492 bytes ([`decisions.md` §22](decisions.md)) | 1 |
+| boot ROM — the resident bootloader is 492 bytes ([`architecture.md` §22](architecture.md)) | 1 |
 | one NS16550A's FIFOs | 1 |
 | HyperRAM DQS PHY and its 8 MiB Wishbone window | 0 |
 | SPI flash XIP window | 0 |

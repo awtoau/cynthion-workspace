@@ -240,7 +240,7 @@ fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
 /// image as the only thing to fall back to.
 ///
 /// The extra read is one more pass over the staged bytes, and only on a boot that has
-/// an image staged. `docs/decisions.md` section 15 measures the CPU-side HyperRAM port
+/// an image staged. `docs/architecture.md` section 15 measures the CPU-side HyperRAM port
 /// at roughly 8 ms for 32 KiB at 60 MHz, so the largest image this will accept costs
 /// about 16 ms more than a single pass would.
 fn boot() -> ! {

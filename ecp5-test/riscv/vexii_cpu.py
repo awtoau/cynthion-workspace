@@ -55,7 +55,7 @@ wired it" do not look identical.
 generated PAC. It is in no SoC here; prefer the PLIC.
 
 The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
-cacheless, PLIC vs a smaller concentrator -- are in `../../docs/decisions.md`.
+cacheless, PLIC vs a smaller concentrator -- are in `../../docs/architecture.md`.
 """
 
 import subprocess

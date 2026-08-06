@@ -614,7 +614,7 @@ docstring, in an issue — knows which way it was settled.
 | claim | where it appeared | settled |
 |---|---|---|
 | Push-pull while driving; open drain rejected because the RC would set the rate ceiling | `debris/docs/fpga-adv-sideband.md` §1 and §11 | **Wrong.** Open drain shipped at both ends (#88) and the soak refuted the RC argument. §1. |
-| `ApolloAdvertiser` is a **25 Hz** square wave | `sideband_advertise.py` docstring, `decisions.md` 25, `upstream-boundary.md` | **50 Hz.** `repos/apollo/apollo_fpga/gateware/advertiser.py:42-48` sets `half_period` to 10 ms and toggles each time, so the period is 20 ms. The accompanying "low for half of every 20 ms" was always right, and so is `hardware.md`'s "50 Hz, toggles every 10 ms". |
-| `fpga_adv_transceive()` at `fpga_adv.c:437` | `debris/docs/fpga-adv-sideband.md` §3.3, `decisions.md` 24 | The function is `fpga_adv_command()` at `:418`; `:437` is the mode guard. |
+| `ApolloAdvertiser` is a **25 Hz** square wave | `sideband_advertise.py` docstring, `architecture.md` 25, `upstream-boundary.md` | **50 Hz.** `repos/apollo/apollo_fpga/gateware/advertiser.py:42-48` sets `half_period` to 10 ms and toggles each time, so the period is 20 ms. The accompanying "low for half of every 20 ms" was always right, and so is `hardware.md`'s "50 Hz, toggles every 10 ms". |
+| `fpga_adv_transceive()` at `fpga_adv.c:437` | `debris/docs/fpga-adv-sideband.md` §3.3, `architecture.md` 24 | The function is `fpga_adv_command()` at `:418`; `:437` is the mode guard. |
 | `scripts/sideband_soak.py` and `sideband_contention_probe.py` are not in the tree | `debris/docs/sideband-review.md` §5 | They were retired to `debris/scripts/` in `25087b8`, not lost. The measurements they produced remain reproducible from there. |
 | Baud is 115200 | #209, describing firmware `a7b8283` | Correct **for that firmware**. `b48d4bf` raised both ends to 230400; the two must move together. |

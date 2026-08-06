@@ -1,6 +1,6 @@
 # Architecture: what this is made of, and where each piece came from
 
-Still open: [`decisions.md`](decisions.md). Board: [`hardware.md`](hardware.md).
+Still open: [`architecture.md`](architecture.md). Board: [`hardware.md`](hardware.md).
 Silicon: [`chips/`](chips/). Why we diverge from upstream:
 [`upstream-boundary.md`](upstream-boundary.md).
 
