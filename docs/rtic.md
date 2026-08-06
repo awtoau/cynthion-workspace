@@ -1,6 +1,6 @@
 # RTIC on this SoC: the measurement behind the decision, and what it costs
 
-**RTIC is the concurrency model** — [`soc-architecture.md`](soc-architecture.md), issue #115.
+**RTIC is the concurrency model** — [`architecture.md`](architecture.md), issue #115.
 This is the evidence, not a re-argument.
 
 **Index:** [`hardware.md`](hardware.md) · CPU:

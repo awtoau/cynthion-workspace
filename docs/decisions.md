@@ -2,7 +2,7 @@
 
 What has **not** been settled, and what would settle it. Everything already
 decided is architecture, and lives in
-[`soc-architecture.md`](soc-architecture.md) — a table of what the SoC is made
+[`architecture.md`](architecture.md) — a table of what the SoC is made
 of and where each piece came from, without the arguments that got there.
 
 **Scope.** Technical choices. The *policy* on upstream code — what Great Scott

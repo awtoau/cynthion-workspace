@@ -41,7 +41,7 @@ be done -- that fact moves here and the issue links to it.
 ### Where a decision goes
 
 **A settled choice is architecture, not a decision.**
-[`soc-architecture.md`](soc-architecture.md) is what the SoC is made of;
+[`architecture.md`](architecture.md) is what the system is made of;
 [`decisions.md`](decisions.md) is what is still open.
 [`upstream-boundary.md`](upstream-boundary.md) holds the policy on Great Scott
 Gadgets code, separately, because that is policy rather than measurement.
@@ -69,7 +69,7 @@ in its §13 got there in the first place.
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
 * [`rtic.md`](rtic.md) — RTIC and the four alternatives: what the workload needs, and what each costs
-* [`soc-architecture.md`](soc-architecture.md) — **what the SoC is made of, and where each piece came from**
+* [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled

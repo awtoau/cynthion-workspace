@@ -172,7 +172,7 @@ Four reasons it stays ours, in order of weight:
 * **The memory map would stop being generated.** A black box has no
   `amaranth_soc` memory map, so the peripheral's description goes back to being
   hand-written, losing the generated memory map
-  ([`../soc-architecture.md`](../soc-architecture.md)).
+  ([`../architecture.md`](../architecture.md)).
 
 **What was taken from the proven core instead: its behaviour, as the
 specification.** `uart_regs.v` was read line by line against ours during #128 and
