@@ -183,7 +183,7 @@ Plain `ecppll` is not a substitute: it solves for one clock. Asking it for 80/60
 `usb` at 62.222 MHz, **3.70% out**, and the ULPI PHY does not enumerate.
 
 Across 60–130 MHz in 2 MHz steps, **only 60, 100 and 120 land on an exact 60 MHz `usb`**
-— [`riscv-clock-ceiling.md`](riscv-clock-ceiling.md) §1.
+— [`soc-clocking.md`](soc-clocking.md) §1.
 
 **Hardware ceiling ladder** (same doc):
 
@@ -517,7 +517,7 @@ command byte and the expected length through vendor request `0xC3`, and
 (`repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c:418`). The only opcode-derived
 constant is `ADV_RESPONSE_MAX 18` at line 143, sized for `POWER`; the shipping link's
 longest reply is 4 bytes, so it is now larger than needed and still correct. Both maps
-in full: [`sideband.md`](sideband.md#4-commands).
+in full: [`chips/cynone-sideband.md`](chips/cynone-sideband.md#4-commands).
 
 **Measured, `scripts/sideband_cost.py`:**
 
@@ -558,9 +558,9 @@ emits it. The decision was to find the mechanism rather than invent one.
 collision-free by construction. An advertisement breaks that rule, at a bounded price:
 0.17% duty, open-drain overlap, CRC-and-retry, three frames per timeout, and a
 20-bit-period idle guard. The mechanism and its numbers are in
-[`sideband.md`](sideband.md#8-the-second-job-the-control-port-request); what the price
+[`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request); what the price
 does *not* cover is a saturated poll, which starves the guard and loses the port —
-[`sideband.md` §9](sideband.md#9-how-the-two-jobs-interfere) and #184.
+[`chips/cynone-sideband.md` §9](chips/cynone-sideband.md#9-how-the-two-jobs-interfere) and #184.
 
 Measured cost: **+124 logic cells and +82 flip-flops**, against a shipping sideband of 350
 logic and 178 FF — 2.9% of an LFE5U-12F. The port request is the larger part of this

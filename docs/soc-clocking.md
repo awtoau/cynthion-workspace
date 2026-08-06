@@ -1,7 +1,15 @@
-# The RISC-V SoC clock ceiling: it was never place-and-route
+# SoC clocking: a PLL divider bug, and a fabric limit the CPU crosses silently
 
-Issue #110 asked whether Lattice Diamond's place-and-route reaches a higher
-clock than nextpnr on the VexiiRiscv SoC. The premise was that nextpnr's
+Two findings, either of which will cost a day if rediscovered:
+
+1. A **PLL divider bug** silently breaks USB at almost every frequency in
+   60–130 MHz. Only three are safe.
+2. The **fabric limit sits below 92 MHz**, and the CPU crosses it by *corrupting
+   its output* rather than by stopping — so a design that is over the limit looks
+   like it works.
+
+Issue #110 asked whether Lattice Diamond's place-and-route reaches a higher clock
+than nextpnr on the VexiiRiscv SoC. The premise was that nextpnr's
 achieved frequency climbs with the requested one -- 72.6 at 60, 76.3 at 80,
 86.1 at 90, 92.0 at 100 -- so ~92 MHz looked like where nextpnr stopped trying
 rather than where the silicon stopped working.
@@ -102,78 +110,11 @@ Note that 110 MHz corrupts *and* has a 1.85% PHY error, so it fails twice over;
 100 MHz has a perfect PHY clock and still corrupts, which is what isolates the
 fault to the design's own logic rather than to USB.
 
-## 3. Diamond could not answer the question that was asked
+## Diamond, and what #110 asked
 
-Two Diamond configurations exist, and the informative one is unavailable.
-
-**PAR isolation (`--mode yosys`) remains structurally blocked.** Feeding the
-*same yosys netlist* into Diamond's place-and-route is what would isolate PAR
-from synthesis. It was re-checked rather than inherited from the earlier
-finding, and `ngdbuild` still rejects the netlist with exactly the two
-documented error classes and no new ones:
-
-    ERROR - ngdbuild: Block console.fifo.r_data_LUT4_Z_6: missing INITSTATE property on ROM .
-    ERROR - ngdbuild: INITVAL string not allowed on single-port or dual-port block
-                      cpu...regfile_fpga.asMem_ram.1.9(TRELLIS_DPR16X4)
-
-yosys emits Project Trellis's primitive vocabulary (`TRELLIS_DPR16X4`,
-`TRELLIS_FF`, LUT4 `INIT`); Diamond's library has none of those cells. The two
-toolchains meet at the bitstream, not at the netlist. No fourth blocker has
-appeared -- the three documented handoff bugs are still worked around
-successfully, and this is the wall behind them. See
-the pluribus repo's `docs/ecp5/diamond-par-isolation-blocked.md`.
-
-**Whole-toolchain (`--mode lse`) did not complete.** Diamond's LSE synthesis was
-stopped after **21 minutes 23 seconds at 98-99% CPU without emitting a
-netlist** -- no `.ngd`, so map, par, trce and bitgen were never reached. The
-entire yosys + nextpnr flow on the same RTL takes roughly 20 seconds, so this is
-over 60x the whole open flow spent on synthesis alone, still unfinished. The
-earlier measurement of ~7x on the smaller analyzer design was optimistic for
-this one.
-
-That is a bounded negative rather than a partial result: no Diamond frequency
-figure exists for this design, claimed or verified, because Diamond never
-produced anything to measure. It was stopped deliberately rather than left to
-run, per the standing instruction not to spend unbounded effort on the handoff.
-
-One handoff detail is worth recording for anyone repeating this: `behavioural.v`
-already *contains* the VexiiRiscv module, because yosys read the pre-generated
-core in and re-emitted it. Passing `VexiiRiscv.v` again as an extra source stops
-LSE immediately:
-
-    ERROR - synthesis: extra0.v(11603): duplicate module name VexiiRiscv. VERI-1206
-
-### The frequency table, as asked for
-
-| requested | nextpnr claimed | nextpnr verified | Diamond claimed | Diamond verified |
-|---|---|---|---|---|
-| 60 | 89.0 MHz | **PASS** | -- | -- |
-| 90 | 86.1 MHz | no enumeration (PHY clock) | none (synthesis unfinished) | -- |
-| 100 | 92.0 MHz | enumerates, output corrupt | none (synthesis unfinished) | -- |
-| 110 | 96.0 MHz | enumerates, output corrupt | none (synthesis unfinished) | -- |
-
-Diamond built **nothing** at any frequency, so it did not build where nextpnr
-refused. The comparison was therefore not obtained -- and it was also rendered
-moot, because the ceiling turned out not to be place-and-route.
-
-## What #110 should do now
-
-**The open flow is not the constraint, so switching toolchains does not help.**
-Even had Diamond placed 5% faster, both frequencies above 60 that a Diamond
-bitstream could use -- 100 and 120 -- are ones where this CPU already computes
-wrongly at nextpnr's own 92 MHz placement. A better placer does not fix a design
-that corrupts data at the clock it is given.
-
-The order of work that follows from this:
-
-1. **Fix the PLL divider** (done -- it now refuses rather than shipping a dead
-   PHY). Any future ladder must step 60 -> 100 -> 120 and nothing between,
-   because nothing between can work.
-2. **Find what corrupts at 92 MHz.** The counter advances while characters
-   drop, which points at the console FIFO / USB path rather than at the CPU
-   core -- a CPU miscomputing would give wrong tick *values*, not missing
-   characters. That is a specific, testable next question.
-3. **Re-measure the true ceiling at 100 MHz only**, once (2) is understood.
+The comparison against Lattice Diamond, why it could not answer the question as
+posed, and what to do about #110 are recorded in the issue rather than here.
+This file is for the two findings above, which outlive it.
 
 ## Reproducing
 

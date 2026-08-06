@@ -79,7 +79,7 @@ where it may, and a `usb` clock 3.7% out does not enumerate the ULPI PHY. See
 [`../upstream-boundary.md`](../upstream-boundary.md) and #111.
 
 How fast the soft CPU can be clocked on this part:
-[`../riscv-clock-ceiling.md`](../riscv-clock-ceiling.md).
+[`../soc-clocking.md`](../soc-clocking.md).
 
 ## How software reaches it
 

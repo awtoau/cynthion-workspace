@@ -18,12 +18,27 @@ theoretical maximum**. There is no efficiency left to find; only SCK, and the
 instrument runs out before the flash does. The fourth candidate, `0x77`, is real
 but it is a latency feature, not a throughput one.
 
-**The HyperRAM has about 12% left, and it is mostly burst length.** Today's
-334.4 MB/s is 87.1% of theoretical, and the missing 12.9% is per-transaction
-overhead on 128-word bursts. Longer bursts recover about 10.7% of it and
-variable latency about 5%; together they reach **~375 MB/s, 97.7% of
-theoretical**, at the clock already proven. Past that the only lever is the
-clock, and the clock is where the CK 200 failure lives.
+**The HyperRAM's verified figure is 238.9 MB/s at CK 140**, which is 85.3% of
+the 280 MB/s pin rate. Every higher number this workspace has quoted — 313.5 at
+CK 180, 334.4 at CK 192 — is **withdrawn**: they were measured with a pattern
+that aliased 64 times across the part, a controller latency below the minimum
+CR0 requires, a JTAG readback that slips, and a negative control that armed after
+the engine started. Re-measured, **CK 180 fails in bulk with 4.7 M errors**.
+
+What is left, against the verified figure:
+
+* **tCSM makes ~96–97% the ceiling, not 100%.** CS# may not stay Low beyond 4 µs,
+  so the per-transaction overhead cannot be amortised away. At CK 140 that is
+  270.6 MB/s.
+* **Longer bursts** are the cheapest lever: 128 fabric beats against a tCSM-legal
+  486 device words. Worth ~2.8 points.
+* **8.5 points are unexplained.** The arithmetic predicts 93.8% for the burst
+  length actually used and we measure 85.3%. That gap is not device overhead and
+  has not been measured.
+* **Above CK 140 the capture phase must be tuned per clock** — the window moves,
+  and every ladder so far held one phase (#148).
+
+Details in [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md).
 
 **Both numbers appear to be the fastest in the open record.** A survey of the
 open FPGA ecosystem found nothing faster on an ECP5 for either part — the nearest
@@ -270,13 +285,23 @@ before anyone takes this seriously.
 
 ## Published work
 
-### Both of these numbers appear to be the fastest in the open record
+### The HyperRAM half of this claim is withdrawn
 
-A survey of GitHub, GitLab, Codeberg and the FPGA blogs found **nothing faster
-than either of our figures on an ECP5**, and for the flash nothing within 3×.
-That is worth stating carefully — it means there is no published recipe to copy
-for going faster, and it also means the traps below were found by people working
-*below* our operating point, so they are necessary rather than sufficient.
+A survey of GitHub, GitLab, Codeberg and the FPGA blogs found nothing faster than
+our figures on an ECP5, and for the flash nothing within 3×. **The flash half
+stands. The HyperRAM half does not.**
+
+The scoreboard below credits this board with **334.4 MB/s at CK 192**, and that
+measurement is void — the pattern aliased 64 times across the part, the
+controller latency was below the minimum CR0 requires, the JTAG readback slips,
+and the negative control armed after the engine started. Re-measured, **CK 180
+already fails in bulk**, and the highest figure that survives a live negative
+control is **238.9 MB/s at CK 140**.
+
+So this is not a record claim any more. Against the scoreboard's other entries
+238.9 MB/s may still compare well, but that comparison has not been redone, and
+claiming a record from a withdrawn number is how the original error propagated
+into two upstream PR drafts.
 
 ### HyperRAM on ECP5 — the scoreboard
 

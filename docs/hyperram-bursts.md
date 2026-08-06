@@ -153,29 +153,12 @@ not fitted to a measurement:
     one 64-byte line, coalesced      49 CK
     sixteen separate transfers      304 CK
 
-### tCSM sets the efficiency ceiling, and it is not 100%
+### The efficiency ceiling is in the chip doc
 
-The pin rate is 2 bytes per CK (x8, DDR). Every transaction pays the overhead
-above, and tCSM caps CS# Low at 4 us, so the burst cannot be made long enough to
-hide it. That fixes a ceiling no implementation can beat:
+tCSM caps CS# Low at 4 us, so the overhead above cannot be amortised away and
+there is a hard ceiling below 100% of the pin rate. That is a property of the
+PART, so it lives with the part:
+[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md).
 
-| CK | theoretical | tCSM-legal ceiling | measured (`hyperram_ceiling.py`) |
-|---|---|---|---|
-| 120 | 240.0 MB/s | 230.6 (96.1%) | 204.8 (85.3%) |
-| 140 | 280.0 MB/s | **270.6 (96.6%)** | **238.9 (85.3%)** |
-| 180 | 360.0 MB/s | 350.6 (97.4%) | fails to verify |
-
-**"100% of theoretical" is therefore the wrong target; ~96–97% is the real one.**
-
-The measured 85.3% has two gaps, and only one is understood. The harness bursts
-128 fabric beats — 256 device words — where tCSM allows 486 at CK 140, and
-amortising 17 CK over 256 words predicts **93.8%**. We measure **85.3%**. Those
-8.5 points are not device overhead; the most likely home is the ceiling harness's
-own inter-transaction states and its local recovery counter, which the 17 CK
-model does not count. **Not yet measured.**
-
-**These are not the `19 CK` in [`memory-speed-options.md`](memory-speed-options.md).**
-That is a board measurement of the *DQS* engine at 4:1 gearing, a different
-quantity. Its former agreement with a `51 CK` figure here was a coincidence of
-the two-cycle model error described above, and reading the two as the same
-number is a mistake this paragraph exists to prevent.
+The short version: ~96-97% is the real ceiling, we measure 85.3%, and 8.5 of the
+missing points are not device overhead and are not yet explained.

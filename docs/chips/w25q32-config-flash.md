@@ -495,7 +495,7 @@ scarce resource, and it is only a win if locality holds.
 **`SYNC_MHZ` is gated by the CPU, not the flash.** The SoC's median Fmax is
 **75.0 MHz** across three place-and-route runs. Raising `sync` to 120 MHz for the
 flash's sake requires the RISC-V core to close at 120 MHz first — see
-[`riscv-clock-ceiling.md`](riscv-clock-ceiling.md). The flash's remaining 2× is
+[`soc-clocking.md`](soc-clocking.md). The flash's remaining 2× is
 real but it is not the flash's to give.
 
 One SoC-side step this survey adds: **`0xEB` continuous read is not adopted

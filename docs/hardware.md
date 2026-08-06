@@ -110,7 +110,7 @@ generates them. Their maps are in
 | `spi_flash` / `qspi_flash` | SPI / quad SPI | W25Q32 | T8 T7 (M7 N7), CS N8, SCK via `USRMCLK` |
 | `hyper_ram` | HyperBus, DDR | W956A8MBYA6I | dq F2…G4, clk C3/D3, rwds D1, cs B2 |
 | JTAG | 4-wire | ECP5 TAP | ECP5 R11 TDI, T11 TMS; MCU PA10/11/14/15 |
-| FPGA_ADV | single wire, half-duplex — [`sideband.md`](sideband.md) | Apollo ↔ ECP5 | MCU PA09 ↔ ECP5 T6 |
+| FPGA_ADV | single wire, half-duplex — [`chips/cynone-sideband.md`](chips/cynone-sideband.md) | Apollo ↔ ECP5 | MCU PA09 ↔ ECP5 T6 |
 | `uart` | async serial | Apollo ↔ ECP5 | ECP5 R14 rx, T14 tx |
 
 ### Three I2C buses, and the reason is not a preference
@@ -294,7 +294,7 @@ between the two statements is not dropped (`fpga_adv.c:682-697`).
 
 The same wire also carries the sideband command protocol, and the third encoding —
 the framed advertisement Apollo's UART mode matches — is what lets one wire do both.
-That is [`sideband.md`](sideband.md#8-the-second-job-the-control-port-request), which
+That is [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request), which
 also covers why `PatternUartStreamer`'s 1 Mbaud cannot be decoded by Apollo's
 230400-baud receiver.
 
@@ -914,7 +914,7 @@ after a 68 µs gateware timeout, not zeros.
 - **`int` (T6)** is the FPGA_ADV keepalive and sideband line, not a
   general-purpose interrupt. It is declared `PULLMODE="UP"` because the ECP5
   defaults to pull-*down*, which fights Apollo's PA09 pull-up —
-  [`sideband.md`](sideband.md#1-the-wire).
+  [`chips/cynone-sideband.md`](chips/cynone-sideband.md#1-the-wire).
 - **D+/D- are swapped on the board** and corrected inside the PHYs by a vendor
   register write the platform performs. See
   [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md).
@@ -927,10 +927,10 @@ after a 68 µs gateware timeout, not zeros.
 | topic | doc |
 |---|---|
 | every alternative weighed, and why, in tables | [`decisions.md`](decisions.md) |
-| the FPGA_ADV wire — protocol, rate, port ownership | [`sideband.md`](sideband.md) |
+| the FPGA_ADV wire — protocol, rate, port ownership | [`chips/cynone-sideband.md`](chips/cynone-sideband.md) |
 | what we take from upstream and what we replaced | [`upstream-boundary.md`](upstream-boundary.md) |
 | making the test gateware reusable by the CPU | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
-| how fast the soft CPU can be clocked on this part | [`riscv-clock-ceiling.md`](riscv-clock-ceiling.md) |
+| how fast the soft CPU can be clocked on this part | [`soc-clocking.md`](soc-clocking.md) |
 | flash, HyperRAM, USB and BRAM in depth | [`luna_ecp5_fpga/`](luna_ecp5_fpga/) |
 | Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
 | the soft CPU and moondancer | [`moondancer/`](moondancer/) |

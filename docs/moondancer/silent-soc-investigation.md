@@ -156,7 +156,7 @@ worth recording because none of them is "the link is broken".
 `wValue`, and any value it does not recognise **sets the mode** rather than reading
 anything — so an initial query with `wValue=0` selected EIC mode, the opposite of what
 was wanted. The full table is
-[`../sideband.md`](../sideband.md#10-the-host-interface).
+[`../sideband.md`](../chips/cynone-sideband.md#10-the-host-interface).
 
 **UART mode must be selected explicitly.** EIC is the power-on default, so a
 host that never chooses behaves like older firmware. With `wValue=1` the mode
@@ -174,7 +174,7 @@ Baud was checked and ruled out **for this firmware**: the gateware responder and
 `a7b8283`. `b48d4bf` raises both to 230400, which *would* break the link if the
 gateware were rebuilt against it while the MCU stayed on `a7b8283` — worth
 knowing before flashing that commit. 230400 is the settled rate and 115200 is the
-worse one; see [`../sideband.md`](../sideband.md#2-rate-230400-and-faster-is-better).
+worse one; see [`../sideband.md`](../chips/cynone-sideband.md#2-rate-230400-and-faster-is-better).
 
 So the sideband is a sound instrument that currently cannot be read. Making it
 diagnostic means flashing `b48d4bf` or later, which is a firmware change and

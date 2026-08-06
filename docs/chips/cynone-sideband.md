@@ -1,4 +1,4 @@
-# The FPGA_ADV sideband link
+# CynOne: the one-wire sideband between Apollo and the ECP5
 
 **One wire between Apollo and the ECP5, carrying two jobs that interfere.** This is
 the reference for all of it: the electrical rules, the protocol, the port-ownership
@@ -210,7 +210,7 @@ It is a per-*exchange* cost, not per byte, and it amortises away — see §6.
 **Two opcode maps, one envelope.** The shipping SoC and the test bitstream answer
 different commands, share the framing, and are told apart by `PING`'s version byte.
 Why the maps diverged, and why the removed commands were removed rather than stubbed,
-is [decision 24](decisions.md#24-what-the-sideband-link-answers).
+is [decision 24](../decisions.md#24-what-the-sideband-link-answers).
 
 ### Shipping — `ecp5-test/sideband_link.py`, protocol v2
 
@@ -446,7 +446,7 @@ UART share it: upstream `ApolloAdvertiser` drives FPGA_ADV with a 20 ms period �
 `half_period = clk_freq_hz × 10e-3` and a toggle each time, so a **50 Hz square wave**
 — which is low for half of every 20 ms, and no byte survives that. UART mode is the
 only mode in which one wire does both jobs, and the reasoning over the alternatives is
-[decision 25](decisions.md#25-fpga_adv-advertisement-and-sideband-on-one-wire).
+[decision 25](../decisions.md#25-fpga_adv-advertisement-and-sideband-on-one-wire).
 
 Apollo has implemented UART mode since the sideband landed. **No upstream gateware
 ever emitted the frame**; `ecp5-test/sideband_advertise.py` is the missing half.
@@ -497,7 +497,7 @@ UART mode from a host, the commands timed out for unrelated reasons —
 [`moondancer/silent-soc-investigation.md`](moondancer/silent-soc-investigation.md).
 
 The port-ownership state machine on the Apollo side — who gets CONTROL and when, and
-the `0xc2` policy flag — is in [`hardware.md`](hardware.md#who-gets-the-port-and-when).
+the `0xc2` policy flag — is in [`hardware.md`](../hardware.md#who-gets-the-port-and-when).
 
 ## 9. How the two jobs interfere
 
@@ -580,11 +580,11 @@ re-muxed, so a partial frame cannot raise RXC against a pin no longer wired to i
 * **"I am alive" already exists.** §5, status bit 6. It needs a poll, not a mechanism.
 * **The advertisement is off at reset.** §8. Inverting upstream's polarity is
   deliberate and protects the recovery path.
-* **Removed commands stay removed, not zero-stubbed.** [Decision 24](decisions.md#24-what-the-sideband-link-answers).
+* **Removed commands stay removed, not zero-stubbed.** [Decision 24](../decisions.md#24-what-the-sideband-link-answers).
 * **Anything Apollo-side is gated by the d11's memory budget**, which is enforced and
   has single-digit headroom under the ceiling — [`chips/samd11-apollo.md`](chips/samd11-apollo.md#memory-budget--the-binding-constraint-on-this-board).
   The FPGA side is cheap by comparison: the whole shipping sideband is 350 logic cells
-  and 178 FF, 2.9% of an LFE5U-12F ([decision 25](decisions.md#25-fpga_adv-advertisement-and-sideband-on-one-wire)).
+  and 178 FF, 2.9% of an LFE5U-12F ([decision 25](../decisions.md#25-fpga_adv-advertisement-and-sideband-on-one-wire)).
   A proposal that fits the wire and the fabric can still fail on the MCU, and usually
   does.
 
