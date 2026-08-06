@@ -105,26 +105,6 @@ def run(cmd, cwd=None, env=None, shell=False):
                           capture_output=True, text=True)
 
 
-def apollo_env(base=None):
-    """The environment the Apollo CLI needs to import its own package.
-
-    `cli.py` is run as a SCRIPT, so Python puts `apollo_fpga/commands/` on
-    sys.path -- not `repos/apollo`, which is where `import apollo_fpga` has to
-    resolve from. It worked only while the package happened to be pip-installed
-    in the ambient environment, and the day that stopped being true every flash
-    write and every configure died on `ModuleNotFoundError: No module named
-    'apollo_fpga'` -- a submodule in the tree, reported as missing.
-
-    Prepended rather than replacing PYTHONPATH, so an installed copy still wins
-    if someone has deliberately put one there.
-    """
-    env = dict(base or os.environ)
-    root = str(ROOT / "repos" / "apollo")
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = f"{root}{os.pathsep}{existing}" if existing else root
-    return env
-
-
 def firmware_digest(path=None):
     """A short hash of the firmware image, for saying WHICH firmware.
 
@@ -527,7 +507,7 @@ def main():
                                       / "commands" / "cli.py"),
                                   "flash-program",
                                   "--offset", str(FLASH_RODATA_OFFSET),
-                                  str(RODATA_BIN)], env=apollo_env())
+                                  str(RODATA_BIN)])
                     if result.returncode != 0:
                         emit("  flash write FAILED:")
                         emit((result.stderr or result.stdout).strip()[-500:])
@@ -754,7 +734,7 @@ def configure_and_read(args, emit):
 
         result = run([sys.executable,
                       str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"),
-                      "configure", str(BITSTREAM)], env=apollo_env())
+                      "configure", str(BITSTREAM)])
         if result.returncode != 0:
             emit("configure failed:")
             emit((result.stderr or result.stdout).strip()[-400:])
