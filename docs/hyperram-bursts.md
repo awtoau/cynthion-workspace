@@ -100,7 +100,14 @@ at `SYNC_MHZ = 60`, non-DQS PHY:
 | beats per HyperBus transaction | 16 | 1.00 |
 | 64-byte line write | 8/16 words | 16/16 |
 
-Coalescing is worth 2–3x and is not available to a master that bubbles.
+Coalescing is worth **2–3x against this window at CK 60 on the non-DQS path**,
+which is what that table measures. It is not the whole gap and must not be quoted
+as if it were: the part itself does **238.9 MB/s** CPU-free at CK 140 against the
+SoC's 5.43, and that 44x splits roughly **9x from per-transaction overhead** (17
+CK of command, latency and recovery for every 2 CK of payload) and **4x from the
+CPU issuing one dependent load at a time**. Coalescing addresses the first only.
+
+Coalescing is not available to a master that bubbles.
 Recovering it needs one of: a master that never bubbles, a prefetch/FIFO deep
 enough to source or sink a word per cycle for a whole line, or a controller that
 accepts backpressure — which is only possible if CK may legally be gated
@@ -127,12 +134,16 @@ arrangement above stays in §9 as the negative control.
 `HyperRAMInterface` is untouched, as
 [`upstream-boundary.md`](upstream-boundary.md) requires.
 
-**Both flags are still off.** `sustained` and `clock_stop` stay false until a
-board run, and one thing has to be measured first: the model serves read data in
-the same cycle as the CK that asked for it, and silicon does not. See
-[`hyperram-bus-review.md`](hyperram-bus-review.md) §5 and the experiment section
-below it for what that changes on the read path and what it does not change on
-the write path.
+**Both flags are still off, and now for a measured reason.** The board run
+happened: Active Clock Stop passes 16/16 in simulation and gives **1/16 on
+silicon**. A read-delay sweep across all four settings showed the stall firing
+(1,632–6,222 cycles) and the selector working monotonically, with **byte-identical
+data at every setting** — so read-gate alignment is not the cause and the
+difference is not where the model said it would be. Unexplained.
+
+The modelling gap that motivated caution is real and separate: the model serves
+read data in the same cycle as the CK that asked for it, and silicon does not.
+See [`hyperram-bus-review.md`](hyperram-bus-review.md) §5.
 
 ## Transaction overhead, in CK
 
@@ -141,6 +152,27 @@ not fitted to a measurement:
 
     one 64-byte line, coalesced      49 CK
     sixteen separate transfers      304 CK
+
+### tCSM sets the efficiency ceiling, and it is not 100%
+
+The pin rate is 2 bytes per CK (x8, DDR). Every transaction pays the overhead
+above, and tCSM caps CS# Low at 4 us, so the burst cannot be made long enough to
+hide it. That fixes a ceiling no implementation can beat:
+
+| CK | theoretical | tCSM-legal ceiling | measured (`hyperram_ceiling.py`) |
+|---|---|---|---|
+| 120 | 240.0 MB/s | 230.6 (96.1%) | 204.8 (85.3%) |
+| 140 | 280.0 MB/s | **270.6 (96.6%)** | **238.9 (85.3%)** |
+| 180 | 360.0 MB/s | 350.6 (97.4%) | fails to verify |
+
+**"100% of theoretical" is therefore the wrong target; ~96–97% is the real one.**
+
+The measured 85.3% has two gaps, and only one is understood. The harness bursts
+128 fabric beats — 256 device words — where tCSM allows 486 at CK 140, and
+amortising 17 CK over 256 words predicts **93.8%**. We measure **85.3%**. Those
+8.5 points are not device overhead; the most likely home is the ceiling harness's
+own inter-transaction states and its local recovery counter, which the 17 CK
+model does not count. **Not yet measured.**
 
 **These are not the `19 CK` in [`memory-speed-options.md`](memory-speed-options.md).**
 That is a board measurement of the *DQS* engine at 4:1 gearing, a different
