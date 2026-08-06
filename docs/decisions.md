@@ -922,11 +922,26 @@ With moondancer's real control path in the tasks rather than a counter, RTIC is 
 38.3%** ([`rtic-usb-port.md`](rtic-usb-port.md)) — the real workload made it more
 expensive, not less.
 
-**The cache is the budget, and it does not fit either way.** The hot footprint under load
-is **5,632 bytes against a 4 KiB direct-mapped cache**, before any runtime is added, and
-`.text` understates footprint by **1.2x** (the dispatcher's 440 bytes occupy 512), which
-projects RTIC at ~47%. That projection is modelled from QEMU traces, not measured on
-silicon.
+**The cache is the budget.** In the shell the hot footprint under load is **5,632 bytes
+against a 4 KiB direct-mapped cache** before any runtime is added, so the dispatcher's
+512 bytes of footprint only make a bad number worse. Between two binaries of the same
+shape, which is the comparison that isolates the runtime
+([`rtic-workload-port.md`](rtic-workload-port.md) §8), it is sharper:
+
+| | superloop | **RTIC** |
+|---|---|---|
+| hot footprint | **4,032 B — fits, by one line** | **5,440 B — 1,344 B over** |
+| modelled misses | 573 | 1,393 |
+
+Still modelled from QEMU traces rather than counted on silicon — and the workload cannot
+reach silicon as it stands, because the gateware's 16550 implements the MSR half of local
+loopback and not the data half, so nothing on the FPGA can inject an arrival.
+
+**RTIC fixes the turn as well as the hand-written dispatcher does**, on the same workload:
+**274 µs worst against 271**, zero deadline misses, for **+1,812 bytes** of `.text` against
++424 and **~180 instructions per event** against 21. The `critical_section` on every `pend`
+is 74 instructions and its **worst window with `mstatus.MIE` clear is 60 instructions,
+~1 µs**; the 1 ms tick's worst lateness did not move.
 
 **Two structural findings, neither a matter of configuration.**
 
@@ -941,12 +956,25 @@ silicon.
     not "compile-time correctness for cache"; it is correctness for *some* shared state,
     for cache.
 
-**What would settle it is board-only**, and #115 should not close before it exists: RTIC's
-own I-cache footprint and latency under this workload, the cost of `critical_section::with`
-per `pend` and `lock`, and real IPC and miss counts from the CPU's performance counters —
-`./dev.py test`'s `ipc 1.000` is the host TSC under QEMU and has never measured anything.
-The last question has no runtime number at all: whether checked resource access is worth
-1,112 bytes over the dispatcher.
+**A third finding, from the port rather than the crates.** An `#[idle]` that polls a
+`#[shared]` resource is a priority-2 blocker: `lock` raises the SLIC threshold to the
+ceiling, so `pend` does not even raise `msip` and the event waits. Measured, that
+configuration spends **31% of the run with interrupts globally disabled against 0.4%** —
+and its worst latency is 1 µs worse, which is the evidence that the *duration* of a single
+critical section is what matters and the aggregate is not.
+
+**A monotonic exists.** The earlier note that `rtic-monotonics` 2.2.1 "has nothing for
+RISC-V" was wrong — it has two RISC-V backends and no CLINT one. That is five methods and
+~60 lines (`src/bin/mono_rtic.rs`): 7 µs worst lateness over 100 periods on an absolute
+5 ms grid, deadline-in-the-past exercised. It costs 11 packages and the whole of
+`mtimecmp` — `src/timer.rs` cannot be in the same binary, which the linker says as
+`symbol MachineTimer is already defined`.
+
+**What is left is board-only, and #115 should not close before it exists:** real IPC and
+`ICACHE_MISS` from the CPU's performance counters — `./dev.py test`'s `ipc 1.000` is the
+host TSC under QEMU and has never measured anything. Getting there needs a bitstream with
+data loopback in the 16550. And one question has no runtime number at all: whether checked
+resource access is worth 1,388 bytes over the dispatcher.
 
 Hardware timers cut across it: three comparators against one `mtimecmp` is 1,188 bytes of
 `.text` against 1,336 and 8 bytes of `.bss` against 40 — that 148 bytes *is* the software

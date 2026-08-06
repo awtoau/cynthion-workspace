@@ -273,12 +273,17 @@ Each step is separately revertible and each ends with `./dev.py gate` green.
 
 1. **Done.** The dependency, the feature, the skeleton, `scripts/rtic_probe.py`,
    this document, the `_ebss` alias. Nothing the shell links changes.
-2. **A CLINT monotonic.** `rtic-monotonics` 2.2.1 has SysTick, STM32 and Silabs
-   timers and **nothing for RISC-V** — checked, not assumed. So this is an
-   implementation of `rtic_time::Monotonic` over `src/timer.rs`'s `mtime` and
-   `mtimecmp`, which is the bulk of the remaining new code. Unit-testable on the
-   host: the three-store `set_mtimecmp` sequence and the wrap arithmetic are
-   pure functions of two `u32`s.
+2. **A CLINT monotonic. Done — see
+   [`rtic-workload-port.md`](rtic-workload-port.md) §7.** What this step said
+   here was wrong: `rtic-monotonics` 2.2.1 does **not** have "nothing for
+   RISC-V". It ships `esp32c3.rs` and `esp32c6.rs`, both RISC-V, both ordinary
+   `TimerQueueBackend` implementations over a compare register. What it has no
+   backend for is the *CLINT*, which is five methods and about 60 lines
+   (`src/bin/mono_rtic.rs`); the sorted queue and the insert path are
+   `rtic_time::TimerQueue`'s. Measured at 7 µs worst lateness over 100 periods on
+   an absolute 5 ms grid, with the deadline-in-the-past case exercised.
+   It costs 11 more packages and the whole of `mtimecmp`: `src/timer.rs` cannot
+   be in the same binary.
 3. **Give the crate a `[lib]`.** The skeleton includes `plic.rs` and `target.rs`
    by `#[path]` because a `src/bin/` target cannot say `use crate::`. That is
    fine for a spike and wrong for the product. This step is mechanical, touches
