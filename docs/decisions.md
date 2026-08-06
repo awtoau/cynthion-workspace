@@ -22,7 +22,7 @@ Numbers are measured unless marked *unverified*.
 | 2 | [Caches](#2-cached-vs-cacheless) | cached | forced by atomics |
 | 3 | [Clock generator](#3-clock-generation) | `VariableClockDomainGenerator` | settled (#111) |
 | 4 | [Console peripheral](#4-console-peripheral) | NS16550A | settled |
-| 5 | [FIFO depth](#5-uart-fifo-depth-8250--16550--16750) | fixed 16 | settled |
+| 5 | FIFO depth → [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) | fixed 16 | settled |
 | 6 | [Buffering](#6-buffering-deep-fifo-vs-elastic-buffer) | elastic buffer at the transport | settled |
 | 7 | [Interrupt controller](#7-interrupt-controller) | PLIC, written from spec | settled |
 | 8 | [PLIC source granularity](#8-per-device-plic-sources-vs-or-ed) | per device | settled (#135) |
@@ -272,14 +272,6 @@ CDC endpoint NAKs while its buffer is full and the host retries.
 needs the *data* half of MCR loopback to discover an unknown interrupt line. A driver told
 its interrupt by a devicetree never runs it. Two of the fixes above (THRE, and MCR.LOOP
 routing MCR into MSR) came out of that walk rather than out of the issue.
-
-### 5. UART FIFO depth: 8250 / 16550 / 16750
-
-**16 bytes, fixed.** Every driver assumes 16 on seeing 16550A in IIR, so depth is
-a constant rather than a parameter — making it adjustable means firmware has to
-discover it. 16 × 8 bits fits distributed LUT RAM; 32 or 64 costs a whole
-`DP16KD` on a die where block RAM is the tight resource. Detail:
-[`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md).
 
 ### 6. Buffering: deep FIFO vs elastic buffer
 
