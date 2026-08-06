@@ -9,7 +9,7 @@ time and the assumption cost real work.
 
 ## The command
 
-`ecp5-test/riscv/vexii_cpu.py` runs it. Nothing else needs to be invoked by hand:
+`gateware/soc/vexii_cpu.py` runs it. Nothing else needs to be invoked by hand:
 
 ```python
 import vexii_cpu
@@ -26,12 +26,12 @@ that was believed and it is not true. Verified 2026-08-04 on
 error; do not conclude the toolchain is unusable.
 
 The generated file lands at `repos/vexiiriscv/VexiiRiscv.v` and is copied to
-`ecp5-test/riscv/matrix/soc-cpu/VexiiRiscv.v`, which is what the SoC elaborates
+`gateware/soc/matrix/soc-cpu/VexiiRiscv.v`, which is what the SoC elaborates
 against and what `scripts/soc_generate_pac.py` uses for its metadata-only walk.
 
 ## The flags, and where they live
 
-`GENERATE_FLAGS` in `ecp5-test/riscv/vexii_cpu.py` is the single list. Each entry
+`GENERATE_FLAGS` in `gateware/soc/vexii_cpu.py` is the single list. Each entry
 carries its reasoning in a comment there; that file is the authority and this is
 a map, not a copy.
 

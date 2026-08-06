@@ -11,7 +11,7 @@ Emits `soc.svd` from the Amaranth SoC, then a Peripheral Access Crate from that.
 The register map is not written down anywhere today -- it is *implied* by the
 `csr.Builder` calls in the gateware, and firmware rediscovers it by hand. Every
 base address in `firmware/cynthion-soc/src/target.rs` was transcribed by a human
-reading `ecp5-test/riscv/vexii_hello_soc.py`, and the surface grew by three
+reading `gateware/soc/vexii_hello_soc.py`, and the surface grew by three
 peripherals (GPIO, I2C, sideband) in one sitting.
 
 That is the class of error that cost most of a day elsewhere: firmware sent
@@ -82,8 +82,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "firmware" / "cynthion-soc-pac"
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
@@ -108,7 +108,7 @@ def build_soc():
     # The CPU is a black box for this walk; generating its implementation cannot
     # affect the decoder map. Reuse the checked-in matching profile so this
     # metadata-only command does not require sbt or a generator server.
-    cached_cpu = ROOT / "ecp5-test" / "riscv" / "matrix" / "soc-cpu" / "VexiiRiscv.v"
+    cached_cpu = ROOT / "gateware" / "soc" / "matrix" / "soc-cpu" / "VexiiRiscv.v"
     if not cached_cpu.exists():
         raise FileNotFoundError(f"memory-map elaboration needs {cached_cpu}")
     vexii_cpu.generate = lambda *args, **kwargs: cached_cpu

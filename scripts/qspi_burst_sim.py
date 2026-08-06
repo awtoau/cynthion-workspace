@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Checks the burst sequencer in `ecp5-test/qspi/qspi_gateware.py`.
+Checks the burst sequencer in `gateware/probes/qspi/qspi_gateware.py`.
 
     python3 scripts/qspi_burst_sim.py
     python3 scripts/qspi_burst_sim.py -v     # every stream beat
@@ -96,7 +96,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test" / "qspi"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes" / "qspi"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from sim_check_harness import Checks  # noqa: E402

@@ -21,7 +21,7 @@ and says nothing about the board.
 | `0x02` | `STATUS` | STATUS + CRC8 |
 | `0x80`-`0xFF` | write | STATUS + CRC8; the low 7 bits reach the CPU |
 
-Opcodes and payload sizes come from `ecp5-test/sideband_link.py` -- the gateware
+Opcodes and payload sizes come from `gateware/sideband_link.py` -- the gateware
 this decodes -- rather than being restated, so they cannot drift.
 
 ## What this decoder deliberately does not know
@@ -30,7 +30,7 @@ this decodes -- rather than being restated, so they cannot drift.
 answers them as unknown commands, and a decoder that still knew them could only
 mislead: it would report a query as understood when the design has no such
 capability. They belong to the test bitstream, and their host side lives with it
-in `ecp5-test/sideband/test_protocol.py`.
+in `gateware/probes/sideband/test_protocol.py`.
 
 `PING`'s version byte is how the two are told apart at runtime: v1 is the test
 bitstream's responder, v2 is this link.
@@ -56,7 +56,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
@@ -165,7 +165,7 @@ def decode_ping(payload):
     version, message = payload
     note = "" if version == gw.PROTOCOL_VERSION else \
         f" (expected v{gw.PROTOCOL_VERSION} -- this may be the test bitstream, " \
-        f"whose extra commands live in ecp5-test/sideband/test_protocol.py)"
+        f"whose extra commands live in gateware/probes/sideband/test_protocol.py)"
     return f"protocol v{version}{note}, message 0x{message:02x}"
 
 
@@ -211,7 +211,7 @@ def decode_fusb302_device_id(value):
     """DEVICE_ID (0x01) on the FUSB302B: version and revision nibbles.
 
     Not reachable over the sideband -- no command exposes the Type-C buses. Read
-    today by ecp5-test/pins/fusb302_id.py over JTAG registers. Kept here so the
+    today by gateware/probes/pins/fusb302_id.py over JTAG registers. Kept here so the
     decode is ready when a command exists.
     """
     version = (value >> 4) & 0xF
@@ -249,4 +249,4 @@ if __name__ == "__main__":
     emit(f"  message 0x7f       0x{encode_message(gw.CMD_WRITE_MASK):02x}")
     emit()
     emit("POWER, DEVICES and LED are NOT here: the shipping link does not")
-    emit("implement them. See ecp5-test/sideband/test_protocol.py.")
+    emit("implement them. See gateware/probes/sideband/test_protocol.py.")

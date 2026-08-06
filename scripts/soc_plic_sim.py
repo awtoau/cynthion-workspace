@@ -48,7 +48,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from sim_check_harness import Checks  # noqa: E402
@@ -62,7 +62,7 @@ from i2c_mux import I2CBusMux                # noqa: E402
 from uart16550 import Uart16550              # noqa: E402
 from vexii_plic import Plic, CONTEXT_BASE, ENABLE_BASE, PENDING_BASE  # noqa: E402
 
-# Source numbers, matching what ecp5-test/riscv/vexii_hello_soc.py wires up.
+# Source numbers, matching what gateware/soc/vexii_hello_soc.py wires up.
 CONSOLE = 1
 APOLLO = 2
 TYPE_C_TARGET = 4

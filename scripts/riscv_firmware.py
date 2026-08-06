@@ -42,7 +42,7 @@ OUT = ROOT / "tmp" / "riscv_hello"
 
 # CoreMark is vendored in the VexiiRiscv submodule rather than fetched.
 COREMARK = ROOT / "repos" / "vexiiriscv" / "ext" / "NaxSoftware" / "baremetal" / "coremark"
-PORT = ROOT / "ecp5-test" / "riscv" / "coremark_port"
+PORT = ROOT / "gateware" / "soc" / "coremark_port"
 
 # Enough iterations that the run is dominated by work rather than by startup,
 # and few enough that it finishes in seconds on a 60 MHz core.
@@ -79,7 +79,7 @@ RAM_SIZE = 64 * 1024
 CONSOLE_BASE = 0xf0000000
 
 # The memory-mapped configuration SPI flash and the SPI controller's registers.
-# Must match ecp5-test/riscv/vexii_hello_soc.py -- FLASH_BASE, FLASH_CSR_BASE
+# Must match gateware/soc/vexii_hello_soc.py -- FLASH_BASE, FLASH_CSR_BASE
 # and FLASH_TEST_OFFSET there.
 FLASH_BASE = 0x10000000
 FLASH_CSR_BASE = 0xf0000100
@@ -202,7 +202,7 @@ CONSOLE_H = """
 
 #define CONSOLE_BASE  {console_base:#x}u
 
-/* An NS16550A -- Uart16550 in ecp5-test/riscv/uart16550.py, and byte-identical
+/* An NS16550A -- Uart16550 in gateware/soc/uart16550.py, and byte-identical
    to the one QEMU's -M virt presents. Write THR at +0, poll LSR at +5 for room.
 
    LSR is at +5 and not next to THR on purpose: it is the register a poll loop
@@ -291,7 +291,7 @@ FLASH_H = """
 #define FLASH_TX     (*(volatile unsigned int  *)(FLASH_CSR_BASE + 0xc))
 
 /* Chip select hold, a LATCHING register at offset 0x20 -- see
-   HoldableSPIController in ecp5-test/riscv/vexii_flash.py.
+   HoldableSPIController in gateware/soc/vexii_flash.py.
 
    The `cs` register at 0x4 is a write-pulse and cannot hold chip select across
    transfers; upstream's CS collapses to the TX FIFO's occupancy, so it drops
@@ -606,7 +606,7 @@ static inline unsigned int flash_page_program(unsigned int offset,
 
    Counters in the gateware, sampled at the pads rather than anywhere in the
    fabric, so a non-zero reading means the signal genuinely left the design.
-   See FlashPinProbe in ecp5-test/riscv/vexii_flash.py.
+   See FlashPinProbe in gateware/soc/vexii_flash.py.
 
    All sticky or cumulative, never live. An SCK edge is one cycle wide and the
    CPU reads these thousands of cycles later, so a live sample would read zero
@@ -1420,7 +1420,7 @@ def main():
     emit()
     emit(f"  disassembly: {elf.with_suffix('.lst')}")
     emit()
-    emit("next: ./ecp5-test/riscv/vexii_hello_soc.py --build --program")
+    emit("next: ./gateware/soc/vexii_hello_soc.py --build --program")
 
     return 0
 

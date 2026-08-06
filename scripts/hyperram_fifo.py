@@ -32,8 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subprocess_timeout_from_history import run_bounded
 
 ROOT = Path(__file__).resolve().parent.parent
-GATEWARE = ROOT / "ecp5-test" / "hyperram" / "hyperram_fifo.py"
-BUILD_DIR = ROOT / "ecp5-test" / "hyperram" / "fifo_build"
+GATEWARE = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_fifo.py"
+BUILD_DIR = ROOT / "gateware" / "probes" / "hyperram" / "fifo_build"
 BITSTREAM = BUILD_DIR / "top.bit"
 LOG = ROOT / "tmp" / "hyperram_fifo.log"
 
@@ -81,10 +81,10 @@ def gateware_constants():
 
 def build():
     script = (
-        'import sys; sys.path.insert(0,"ecp5-test"); '
+        'import sys; sys.path.insert(0,"gateware"); '
         'sys.path.insert(0,"repos/apollo")\n'
         'from hyperram.hyperram_fifo import HyperRAMFIFOTest\n'
-        'from cynthion_platform.cynthion_r1_4 import '
+        'from board.cynthion_r1_4 import '
         'CynthionPlatformRev1D4\n'
         'CynthionPlatformRev1D4().build(HyperRAMFIFOTest(), do_program=False, '
         f'build_dir="{BUILD_DIR.relative_to(ROOT)}")\n'

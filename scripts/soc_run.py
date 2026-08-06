@@ -68,7 +68,7 @@ FLASH_RODATA_OFFSET = 0x000b_0000
 
 # The memory-mapped flash window, for deciding which sections load by
 # programming the part rather than by bitstream init. Must match FLASH_BASE
-# and FLASH_SIZE in ecp5-test/riscv/vexii_hello_soc.py.
+# and FLASH_SIZE in gateware/soc/vexii_hello_soc.py.
 FLASH_BASE = 0x1000_0000
 FLASH_SIZE = 0x0040_0000
 
@@ -79,10 +79,10 @@ BOOT_CRATE = ROOT / "firmware" / "cynthion-boot"
 BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
             / "cynthion-boot")
 BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
-GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
+GATEWARE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 # Imported rather than restated. `fast_build_env.py` held a byte-identical copy of this
 # string and the reasoning behind it, and `./dev.py audit` found it by reporting it as
@@ -172,7 +172,7 @@ def bitstream_is_stale(emit):
 
     built = BITSTREAM.stat().st_mtime
     newer = []
-    for source in sorted((ROOT / "ecp5-test" / "riscv").glob("*.py")):
+    for source in sorted((ROOT / "gateware" / "soc").glob("*.py")):
         if source.stat().st_mtime >= built:
             newer.append(source.relative_to(ROOT))
     if not newer:

@@ -59,7 +59,7 @@ wants it instantiates `apollo: apollo_fpga/gateware/advertiser.py::ApolloAdverti
 toggles the `FPGA_ADV` pin on a 20 ms period; Apollo leaves the port switch on the FPGA for
 as long as that advertisement continues, and hands it back when it stops. Vendor request
 `0xF0` on the advertiser's interface stops it deliberately. `luna:
-luna/gateware/platform/core.py::port_sharing()` names this mechanism `"advertising"`.
+luna/gateware/board/core.py::port_sharing()` names this mechanism `"advertising"`.
 
 Every scenario that presents a USB device on CONTROL depends on this. It is a hard
 prerequisite, not a detail.
@@ -219,7 +219,7 @@ transfers. Sources at `cynthion: cynthion/python/examples/tutorials/`, each with
 `test-gateware-usb-device-0N.py` host script.
 
 The platform files these build against are
-`cynthion: cynthion/python/src/gateware/platform/cynthion_r{0_1..0_7,1_0..1_4}.py` — 13 board
+`cynthion: cynthion/python/src/gateware/board/cynthion_r{0_1..0_7,1_0..1_4}.py` — 13 board
 revisions, selected by the `LUNA_PLATFORM` environment variable.
 
 ### 11. Factory hardware validation

@@ -31,7 +31,7 @@ transaction at 4 is the thing that is wrong, not the design. That is the control
 this probe is read against, and it is why the output says which values the MODEL
 accepts rather than which values are correct.
 
-`ecp5-test/hyperram/hyperram_ceiling_top.py` is the instrument for the opposite
+`gateware/probes/hyperram/hyperram_ceiling_top.py` is the instrument for the opposite
 question -- what the part does at speed, with no CPU in the loop.
 """
 
@@ -42,7 +42,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from devlog import emit, log  # noqa: E402
 

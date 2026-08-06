@@ -32,7 +32,7 @@ CONTROL only.
   reconfigures without re-synthesising; `./dev.py stage` stages firmware over JTAG without
   rebuilding the bitstream; `./dev.py flash` reads and verifies the SPI flash.
 - We have our own fast-loading path (`scripts/fast_loader.py`) and our own flash tooling
-  (`ecp5-test/riscv/vexii_flash.py`, `scripts/flash_backup.py`).
+  (`gateware/soc/vexii_flash.py`, `scripts/flash_backup.py`).
 - Our SoC maps SPI flash at `0x1000_0000`, matching upstream's choice, with a modal
   memory-map controller and a `spiflash` CSR block.
 

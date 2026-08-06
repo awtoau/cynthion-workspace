@@ -13,7 +13,7 @@
 //!                at `target::BOOT_STATUS`
 //!     cpu        the core's own `misa` and identity CSRs
 //!     trap       `mstatus`, `mtvec`, and the PLIC's threshold and enables
-//!     gateware   a CSR in the bitstream (`ecp5-test/riscv/gateware_id.py`)
+//!     gateware   a CSR in the bitstream (`gateware/soc/gateware_id.py`)
 //!
 //! ## The gateware line is the reason this command exists
 //!
@@ -25,7 +25,7 @@
 //!
 //! So both sides carry the same 32-bit identifier -- the short git hash with bit
 //! 31 set when the tree was dirty, which is also what
-//! `ecp5-test/build_helpers.py` stamps into the ECP5's USERCODE -- and this
+//! `gateware/build_helpers.py` stamps into the ECP5's USERCODE -- and this
 //! command prints both and says when they differ. A mismatch is not always a
 //! fault: staging firmware onto a bitstream from an earlier commit is a normal
 //! working state. It is a fact worth having on screen before spending a day on a
@@ -56,7 +56,7 @@ pub mod build {
 
 /// The gateware's account of itself: five read-only words in the bitstream.
 ///
-/// Register map and encodings: `ecp5-test/riscv/gateware_id.py`.
+/// Register map and encodings: `gateware/soc/gateware_id.py`.
 pub mod gateware {
     use core::ptr::read_volatile;
 
@@ -104,7 +104,7 @@ pub mod gateware {
     pub struct Id {
         pub magic: u32,
         /// Bit 31 dirty, bits 30..0 the short git hash. The encoding
-        /// `ecp5-test/build_helpers.py` stamps into USERCODE.
+        /// `gateware/build_helpers.py` stamps into USERCODE.
         pub git: u32,
         /// Packed UTC: year-2000, month, day, hour, minute, second.
         pub built: u32,

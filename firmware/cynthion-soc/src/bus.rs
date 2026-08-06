@@ -3,7 +3,7 @@
 //!
 //! The board has THREE physically separate I2C buses and ONE controller to drive
 //! them, because both FUSB302Bs answer to address `0x22` and cannot be told apart
-//! on one wire (`ecp5-test/riscv/i2c_mux.py`). A register in the mux says which
+//! on one wire (`gateware/soc/i2c_mux.py`). A register in the mux says which
 //! pin-set the controller is wired to, and nothing in a reply says which bus it
 //! came from -- both Type-C controllers even return the same identity byte,
 //! `0x91`. So a stale select does not produce an error. It produces a plausible

@@ -18,7 +18,7 @@ the gate wired. That makes §5 the recommendation and most of §1–§4 moot.
 
 **It is now built and it simulates clean**: 16/16 beats both directions, 32
 device words, one transaction per line, against the 8/16 and 48 words the board
-measures without it. `ClockStopPHY` in `ecp5-test/riscv/vexii_bootram.py`,
+measures without it. `ClockStopPHY` in `gateware/soc/vexii_bootram.py`,
 checked by §11 of `scripts/soc_hyperram_sim.py`, and **off by default** — see
 "The smallest experiment, run" below for what is settled and what the model
 cannot settle, which is the read path's round-trip latency.
@@ -237,7 +237,7 @@ to spend that on.
 
 ## 4. A line buffer — the answer if §5 turns out to be wrong
 
-**`ecp5-test/hyperram/hyperram_fifo.py` is not this.** It is a throughput sweep
+**`gateware/probes/hyperram/hyperram_fifo.py` is not this.** It is a throughput sweep
 that alternates write and read chunks to find the granularity at which the
 ~23-cycle turnaround stops dominating — "somewhere between is the granularity a
 FIFO should use, and this sweep finds it by measurement" (`:15-18`). It measures
@@ -507,7 +507,7 @@ mattered.
    able to *fail*: the device counts latency in CK and `HANDLE_LATENCY` counts
    `sync` cycles, so a pause inside the window would shift the whole data phase
    and every beat would be wrong.
-2. **The record split is `ClockStopPHY` in `ecp5-test/riscv/vexii_bootram.py`**,
+2. **The record split is `ClockStopPHY` in `gateware/soc/vexii_bootram.py`**,
    not a harness wrapper — the simulation drives the same gateware a build would.
    `BootRAM` gains `clock_stop`, default **off**.
 3. **`clk_en_dev = clk_en & ~stall` is one register short on writes.** `dq.o` is

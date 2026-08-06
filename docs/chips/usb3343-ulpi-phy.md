@@ -14,7 +14,7 @@ topology on this board applies to them.
 
 ## Wiring on r1.4
 
-`ULPIResource` declarations in `ecp5-test/cynthion_platform/cynthion_r1_4.py`, all
+`ULPIResource` declarations in `gateware/board/cynthion_r1_4.py`, all
 `IO_TYPE="LVCMOS33"`, `SLEWRATE="FAST"`:
 
 | resource | `data[0..7]` | `clk` | `dir` | `nxt` | `stp` | `rst` |
@@ -87,7 +87,7 @@ PHY at `REGISTER_TARGET_ADDR` / `AUX` / `CONTROL`.
 ### From the SoC shell — `phy`
 
 The main SoC bitstream carries a ULPI register window on **`target_phy` only**
-(`ecp5-test/riscv/ulpi_window.py`, driver `firmware/cynthion-soc/src/ulpi.rs`).
+(`gateware/soc/ulpi_window.py`, driver `firmware/cynthion-soc/src/ulpi.rs`).
 It is in the main bitstream deliberately: a standalone probe design evicts the
 SoC, so it cannot answer questions about a running system.
 

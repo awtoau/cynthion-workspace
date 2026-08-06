@@ -85,7 +85,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from devlog import emit  # noqa: E402
 

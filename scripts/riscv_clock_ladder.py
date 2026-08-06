@@ -54,11 +54,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "tmp" / "riscv_clock_ladder.json"
-GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
+GATEWARE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

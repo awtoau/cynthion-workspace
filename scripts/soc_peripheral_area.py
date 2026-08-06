@@ -3,7 +3,7 @@
 # What each SoC peripheral costs, synthesised on its own.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Synthesise every peripheral in `ecp5-test/riscv/` alone and report its area.
+"""Synthesise every peripheral in `gateware/soc/` alone and report its area.
 
 Written for `docs/soc-size-review.md`, which needs a per-module number for
 every "this could be deleted" claim. The alternative -- building the whole SoC
@@ -41,12 +41,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RISCV = ROOT / "ecp5-test" / "riscv"
+RISCV = ROOT / "gateware" / "soc"
 BUILD = ROOT / "tmp" / "peripheral-area"
 LOG = ROOT / "tmp" / "logs" / "soc_peripheral_area.log"
 
 sys.path.insert(0, str(RISCV))
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 from amaranth.back import verilog                        # noqa: E402
 from amaranth.hdl import Fragment                        # noqa: E402

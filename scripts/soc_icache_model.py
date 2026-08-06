@@ -25,7 +25,7 @@ touches, and the order blocks executed in.
     ./scripts/soc_icache_model.py tmp/logs/trace-workload.log
     ./scripts/soc_icache_model.py --from-symbol tmp/logs/trace-preempt.log
 
-Geometry from `ecp5-test/riscv/vexii_cpu.py`'s `GENERATE_FLAGS`:
+Geometry from `gateware/soc/vexii_cpu.py`'s `GENERATE_FLAGS`:
 `--fetch-l1-sets 64 --fetch-l1-ways 1`, 4 KiB total, so a 64-byte line.
 
 Output is mirrored to ./tmp/logs/soc_icache_model.log.

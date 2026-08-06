@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Computes the expected round signature for `ecp5-test/fabric` on the host.
+Computes the expected round signature for `gateware/probes/fabric` on the host.
 
 The value this prints is what the gateware is built to compare against, so it
 has to be right for the wrong reason to be impossible. Two independent things
@@ -38,7 +38,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

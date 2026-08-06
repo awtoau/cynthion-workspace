@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

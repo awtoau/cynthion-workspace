@@ -18,7 +18,7 @@ marking implies, as the ECP5 on this board turned out to be
 
 ## What it does to the board
 
-**Configures the FPGA** with `ecp5-test/hyperram/identify_build/top.bit`, replacing
+**Configures the FPGA** with `gateware/probes/hyperram/identify_build/top.bit`, replacing
 whatever gateware is loaded. SRAM only -- no flash is written, and a power cycle restores
 the previous configuration.
 
@@ -41,7 +41,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BITSTREAM = ROOT / "ecp5-test" / "hyperram" / "identify_build" / "top.bit"
+BITSTREAM = ROOT / "gateware" / "probes" / "hyperram" / "identify_build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -123,7 +123,7 @@ def main():
 
     if not BITSTREAM.exists():
         emit(f"bitstream missing: {BITSTREAM}")
-        emit("build it first -- see ecp5-test/hyperram/hyperram_identify.py")
+        emit("build it first -- see gateware/probes/hyperram/hyperram_identify.py")
         return 1
 
     if not args.skip_configure:

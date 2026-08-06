@@ -55,10 +55,11 @@ OSS_CAD = Path.home() / "opt" / "oss-cad-suite" / "bin"
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "scripts"))
 # LAST, so it wins: `scripts/hyperram.py` is a module with the same name as the
-# `ecp5-test/hyperram/` package, and whichever path comes first shadows the
+# `gateware/probes/hyperram/` package, and whichever path comes first shadows the
 # other. With `scripts` ahead of it this file could not import its own gateware
 # and died at startup with "'hyperram' is not a package".
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes"))
 
 from devlog import emit  # noqa: E402
 
@@ -137,9 +138,9 @@ def build_one(ck, dqs, sync):
     out = BUILD_ROOT / tag_of(ck, dqs)
     script = (
         "import sys\n"
-        f"sys.path[:0]={[str(ROOT / 'ecp5-test'), str(ROOT / 'repos' / 'apollo')]!r}\n"
+        f"sys.path[:0]={[str(ROOT / 'gateware'), str(ROOT / 'repos' / 'apollo')]!r}\n"
         "from hyperram.hyperram_ceiling_top import HyperRAMCeiling\n"
-        "from cynthion_platform import CynthionPlatformRev1D4\n"
+        "from board import CynthionPlatformRev1D4\n"
         f"d = HyperRAMCeiling(sync_mhz={sync!r}, dqs={dqs!r})\n"
         "CynthionPlatformRev1D4().build(d, build_dir=%r, do_program=False)\n"
         "print('BUILD OK')\n" % str(out)
@@ -369,7 +370,7 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # ARM THE COMPLEMENT BEFORE STARTING THE ENGINE, in three writes.
     #
     # `command_go` is a rising-edge detect on control[0] and `negative` is
-    # control[1] (ecp5-test/bist.py). Writing 0b11 raises both in the SAME write,
+    # control[1] (gateware/bist.py). Writing 0b11 raises both in the SAME write,
     # so the engine starts on the edge where `negative` is only just becoming
     # valid -- and the words already in flight are compared against the
     # un-complemented golden and correctly MATCH. That is what "78 of 6,871,936

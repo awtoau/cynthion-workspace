@@ -30,7 +30,7 @@ CONTROL, or CONTROL plus AUX depending on the variant. One or two cables.
 Very little, and part of it is already done.
 
 **We have already measured 195.4 Mbps CDC-ACM loopback** through `USBSerialDevice` on
-`aux_phy` (`ecp5-test/usb_serial/usb_serial.py`, instantiated in `vexii_hello_soc.py`).
+`aux_phy` (`gateware/probes/usb_serial/usb_serial.py`, instantiated in `vexii_hello_soc.py`).
 That is a throughput measurement on this platform's USB path, taken with a design that is
 in the tree today.
 

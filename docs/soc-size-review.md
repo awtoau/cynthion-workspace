@@ -150,7 +150,7 @@ its own domain the ILA's captures cross a clock boundary unsynchronised and are
 
 ### `ObservablePHY` is a 130-line verbatim copy, and it is still verbatim
 
-`ecp5-test/riscv/vexii_flash.py`'s `ObservablePHY` re-implements
+`gateware/soc/vexii_flash.py`'s `ObservablePHY` re-implements
 `luna_soc`'s `SPIPHYController.elaborate` statement for statement, adding only
 assignments that expose internals to the ILA. Its docstring states the
 obligation — "If upstream changes, this must be re-synced or it is measuring a
@@ -286,7 +286,7 @@ says "`vbus input both` restores the permissive state at runtime" and
 the board. A shell that says the AUX input is open when nothing has opened it is
 worse than a shell with no such command.
 
-**`ecp5-test/riscv/vexii_irq.py` is in no design.** 119 lines, 149 LUT4-equivalent
+**`gateware/soc/vexii_irq.py` is in no design.** 119 lines, 149 LUT4-equivalent
 if it were ever instantiated. `upstream-boundary.md` keeps it so luna_soc's SVD
 generator "still finds the map" — but `repos/cynthion`'s facedancer top imports
 `InterruptController` from `luna_soc.gateware.cpu`, not from here, so nothing in
@@ -298,7 +298,7 @@ nothing built it. **Deleted**, with `cpu_area.py`: both existed to compare
 VexRiscv against VexiiRiscv, a settled choice, and they were the only importers
 of `luna_soc.gateware.cpu.VexRiscv` in the tree.
 
-**Three doc references in `ecp5-test/` point at files that do not exist** —
+**Three doc references in `gateware/` point at files that do not exist** —
 `docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`),
 `docs/luna_ecp5_fpga/hyperram-speed.md` (`hyperram/hyperram_identify.py:11,80`,
 `hyperram/hyperram_fifo.py:109`) and

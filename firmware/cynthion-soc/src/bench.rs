@@ -11,7 +11,7 @@
 //! ## The ratio is the measurement
 //!
 //! The D-cache is 4 KiB: 64 sets, 1 way, 64-byte lines. Sets and ways come from
-//! `--lsu-l1-sets 64 --lsu-l1-ways 1` in `ecp5-test/riscv/vexii_cpu.py`; the
+//! `--lsu-l1-sets 64 --lsu-l1-ways 1` in `gateware/soc/vexii_cpu.py`; the
 //! line length is the bank memory in the generated core,
 //! `LsuL1Plugin_logic_banks_0_mem`, which is 1024 words -- 4 KiB over 64 sets is
 //! 64 bytes. The I-cache is the same shape.

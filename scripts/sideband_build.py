@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Builds `ecp5-test/sideband` for one (baud, drive style) pair.
+Builds `gateware/probes/sideband` for one (baud, drive style) pair.
 
 Exists so the soak runner does not have to shell out through a heredoc. The
 earlier ladder script invoked the build with `bash -c` wrapping a Python
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD_DIR = ROOT / "ecp5-test" / "sideband" / "build"
+BUILD_DIR = ROOT / "gateware" / "probes" / "sideband" / "build"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -39,12 +39,12 @@ OSS_CAD = Path.home() / "opt" / "oss-cad-suite" / "bin"
 
 BUILD_SCRIPT = """
 import sys
-sys.path.insert(0, "ecp5-test")
+sys.path.insert(0, "gateware")
 sys.path.insert(0, "repos/apollo")
 from sideband.sideband_gateware import SidebandTest
-from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from board.cynthion_r1_4 import CynthionPlatformRev1D4
 CynthionPlatformRev1D4().build(SidebandTest(), do_program=False,
-                               build_dir="ecp5-test/sideband/build")
+                               build_dir="gateware/probes/sideband/build")
 print("BUILD OK")
 """
 

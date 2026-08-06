@@ -3,7 +3,7 @@
 //! The three PHYs on this board are parallel ULPI: no bus address, no I2C, an
 //! 8-bit data bus with `dir`/`nxt`/`stp` handshaking, and registers reached by
 //! putting a command byte on that bus during an idle turn. The transaction lives
-//! in gateware (`ecp5-test/riscv/ulpi_window.py`); this is the four-register CSR
+//! in gateware (`gateware/soc/ulpi_window.py`); this is the four-register CSR
 //! interface in front of it.
 //!
 //! ## Only TARGET

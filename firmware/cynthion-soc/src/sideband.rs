@@ -1,8 +1,8 @@
 //! What the FPGA_ADV sideband link reports.
 //!
-//! One byte of CSR, driving `ecp5-test/riscv/sideband_csr.py`. The link itself
+//! One byte of CSR, driving `gateware/soc/sideband_csr.py`. The link itself
 //! is a UART and a CRC on pin T6, answering the Apollo microcontroller when USB
-//! and the CPU's consoles cannot -- see `ecp5-test/sideband_debug.py`.
+//! and the CPU's consoles cannot -- see `gateware/sideband_debug.py`.
 //!
 //! The point of this register is that until it is written, the FABRIC decides
 //! what the link says: whether a byte ever reached the USB endpoint, whether
@@ -13,7 +13,7 @@
 //!
 //! `ADVERTISE` is the other half, and is not part of that handover: it asks
 //! Apollo for the CONTROL port by putting the frame Apollo matches on the same
-//! wire (`ecp5-test/sideband_advertise.py`). Every bitstream here is AUX-only, so
+//! wire (`gateware/sideband_advertise.py`). Every bitstream here is AUX-only, so
 //! this is the only way the SoC can claim CONTROL at all.
 
 use core::ptr::{read_volatile, write_volatile};

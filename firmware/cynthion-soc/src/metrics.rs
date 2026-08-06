@@ -67,7 +67,7 @@
 //!
 //! `mcycle` (0xb00), `minstret` (0xb02) and their high halves are decoded by the
 //! generated core -- `COMB_CSR_PerformanceCounterPlugin_logic_csrFilter` in
-//! `VexiiRiscv.v` -- because `--with-rdtime` in `ecp5-test/riscv/vexii_cpu.py`
+//! `VexiiRiscv.v` -- because `--with-rdtime` in `gateware/soc/vexii_cpu.py`
 //! adds `zicntr`, and `zicntr` is what instantiates `PerformanceCounterPlugin`.
 //! One flag gates `rdtime` and these together, so `info`'s `NO RDTIME` line is
 //! the warning for both. An undecoded CSR read traps rather than reading zero.

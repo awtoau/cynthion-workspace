@@ -18,13 +18,13 @@ question below is measured against.
 
 | | |
 |---|---|
-| Responder, shipping SoC | [`ecp5-test/sideband_link.py`](../../ecp5-test/sideband_link.py) — protocol v2 |
-| Responder, test bitstream | `apollo_fpga.gateware.sideband` via [`ecp5-test/sideband/sideband_gateware.py`](../../ecp5-test/sideband/sideband_gateware.py) — protocol v1 |
-| Pad sharing, both blocks | [`ecp5-test/sideband_debug.py`](../../ecp5-test/sideband_debug.py) |
-| Port request | [`ecp5-test/sideband_advertise.py`](../../ecp5-test/sideband_advertise.py) |
-| CPU's end | [`ecp5-test/riscv/sideband_csr.py`](../../ecp5-test/riscv/sideband_csr.py) |
+| Responder, shipping SoC | [`gateware/sideband_link.py`](../../gateware/sideband_link.py) — protocol v2 |
+| Responder, test bitstream | `apollo_fpga.gateware.sideband` via [`gateware/probes/sideband/sideband_gateware.py`](../../gateware/probes/sideband/sideband_gateware.py) — protocol v1 |
+| Pad sharing, both blocks | [`gateware/sideband_debug.py`](../../gateware/sideband_debug.py) |
+| Port request | [`gateware/sideband_advertise.py`](../../gateware/sideband_advertise.py) |
+| CPU's end | [`gateware/soc/sideband_csr.py`](../../gateware/soc/sideband_csr.py) |
 | Master | `repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` |
-| Host decode | [`scripts/sideband_decoder.py`](../../scripts/sideband_decoder.py), [`ecp5-test/sideband/test_protocol.py`](../../ecp5-test/sideband/test_protocol.py) |
+| Host decode | [`scripts/sideband_decoder.py`](../../scripts/sideband_decoder.py), [`gateware/probes/sideband/test_protocol.py`](../../gateware/probes/sideband/test_protocol.py) |
 | Simulation | [`scripts/sideband_link_sim.py`](../../scripts/sideband_link_sim.py) — the responder at the pad; [`scripts/sideband_advertise_sim.py`](../../scripts/sideband_advertise_sim.py) — the advertisement, frame-exact |
 
 Open work is tracked from [#184](https://github.com/awtoau/cynthion-workspace/issues/184),
@@ -48,7 +48,7 @@ resistor on the net.** The line idles high on two internal pulls: the ECP5's
 unconfigured IO to pull-*down* while Apollo pulls PA09 up. Opposing pulls settle at
 a mid-rail divider voltage when neither end drives, which a UART reads as a
 permanent break — not a slow link, a dead one. Both ends must agree on idle-high.
-Declared at `ecp5-test/cynthion_platform/cynthion_r1_4.py:120-126`.
+Declared at `gateware/board/cynthion_r1_4.py:120-126`.
 
 The ECP5 specifies the pull as a current, tens of µA, so its effective impedance is
 V/I — tens of kΩ, far too soft to time an edge with. The output driver is separately
@@ -212,7 +212,7 @@ different commands, share the framing, and are told apart by `PING`'s version by
 Why the maps diverged, and why the removed commands were removed rather than stubbed,
 is [`../architecture.md`](../architecture.md#peripherals).
 
-### Shipping — `ecp5-test/sideband_link.py`, protocol v2
+### Shipping — `gateware/sideband_link.py`, protocol v2
 
 | CMD | Name | Response | Total |
 |---|---|---|---|
@@ -449,7 +449,7 @@ only mode in which one wire does both jobs, and the reasoning over the alternati
 [`../architecture.md`](../architecture.md#peripherals).
 
 Apollo has implemented UART mode since the sideband landed. **No upstream gateware
-ever emitted the frame**; `ecp5-test/sideband_advertise.py` is the missing half.
+ever emitted the frame**; `gateware/sideband_advertise.py` is the missing half.
 
 | | |
 |---|---|

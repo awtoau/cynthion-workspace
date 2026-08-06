@@ -381,7 +381,7 @@ one transaction at a time.
 
 **The window can coalesce bursts, and currently does not.** `cti == INCR_BURST
 && bte == LINEAR` holds one HyperBus transaction open across beats
-(`ecp5-test/riscv/vexii_bootram.py`), capped at `HYPERRAM_MAX_BURST_WORDS = 748`
+(`gateware/soc/vexii_bootram.py`), capped at `HYPERRAM_MAX_BURST_WORDS = 748`
 for tCSM. `sustained` gates it and is **False**.
 
 The reason is not a preference. A HyperBus data phase cannot be stalled, this
@@ -448,11 +448,11 @@ produced plausible wrong answers rather than failures:
 |---|---|
 | `scripts/hyperram_dqs_pins.py` | is the DQS group reachable? Device database, no board |
 | `scripts/soc_hyperram_sim.py` | the protocol layer against a model of this part |
-| `ecp5-test/hyperram/hyperram_dqs_top.py` | DQS bring-up bitstream (`--build` never programs) |
+| `gateware/probes/hyperram/hyperram_dqs_top.py` | DQS bring-up bitstream (`--build` never programs) |
 | `scripts/hyperram_identify.py` | ID0/ID1/CR0/CR1 and bank aliasing |
 | `scripts/hyperram_regfuzz.py` | the `0x1000` register block, plus a write test |
 | `scripts/hyperram_ceiling.py` | **the clock ceiling and throughput, both PHYs, indexed by device CK** |
-| `ecp5-test/hyperram/hyperram_ceiling_top.py` | its gateware; `--list` prints the reachable clocks |
+| `gateware/probes/hyperram/hyperram_ceiling_top.py` | its gateware; `--list` prints the reachable clocks |
 | `scripts/hyperram_ladder.py`, `hyperram_fifo.py` | throughput and clock ceiling, `sync`-indexed, 60/120 only |
 | `scripts/fetch_winbond_hyperram.py` | fetches the datasheet into `sources/` |
 
@@ -811,7 +811,7 @@ datasheet's pin description is blunt about what that means: *"Single Ended Clock
 **CK# is not used**, only a single ended CK is used."*
 
 Meanwhile the board drives a genuine complementary pair —
-`ecp5-test/cynthion_platform/cynthion_r1_4.py:206`:
+`gateware/board/cynthion_r1_4.py:206`:
 
     Subsignal("clk", DiffPairs("C3", "D3", dir="o"), Attrs(IO_TYPE="LVCMOS33D")),
 

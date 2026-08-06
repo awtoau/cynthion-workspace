@@ -49,7 +49,7 @@ pub const UART_BASES: &[usize] = &[
     // The USB CDC-ACM console on the AUX port -- an ordinary /dev/ttyACM node.
     cynthion_soc_pac::base::CONSOLE,
     // The Apollo-facing serial port on the shared JTAG pins (R14/T14). See the
-    // comment on APOLLO_UART_BASE in ecp5-test/riscv/vexii_hello_soc.py for why
+    // comment on APOLLO_UART_BASE in gateware/soc/vexii_hello_soc.py for why
     // firmware must never speak first on this one.
     cynthion_soc_pac::base::APOLLO_UART,
 ];
@@ -123,7 +123,7 @@ const _: () = assert!(UART_BASES.len() == UART_IRQS.len());
 /// How many times the `time` CSR advances per second.
 ///
 /// On the board it is a counter incremented once per `sync` cycle inside the CPU
-/// wrapper (`rdtime` in `ecp5-test/riscv/vexii_cpu.py`), so it is the `sync`
+/// wrapper (`rdtime` in `gateware/soc/vexii_cpu.py`), so it is the `sync`
 /// frequency and nothing else -- raise `SYNC_MHZ` in the gateware and this must
 /// follow, or every interval built on it stretches or shrinks in proportion. The
 /// symptom of forgetting is a "50 ms" poll that runs at 37 ms, which nothing
@@ -146,7 +146,7 @@ pub const TIME_HZ: u32 = 10_000_000;
 /// peripheral would still want it, and QEMU is not a bitstream at all, so under
 /// `-M virt` `info` says so rather than inventing an identity.
 ///
-/// See `ecp5-test/riscv/gateware_id.py` for the register map.
+/// See `gateware/soc/gateware_id.py` for the register map.
 #[cfg(not(feature = "qemu"))]
 pub const GATEWARE: Option<usize> = Some(cynthion_soc_pac::base::BOARD_GATEWARE);
 
@@ -263,7 +263,7 @@ pub struct Board {
     pub ulpi: usize,
     /// PRER for the I2C bus. `f_SCL = f_sync / (5 * (PRER + 1))`, so at 60 MHz
     /// 149 gives 80 kHz -- see the bit-timing section of
-    /// `ecp5-test/riscv/i2c_master.py` for why 80 and not 100.
+    /// `gateware/soc/i2c_master.py` for why 80 and not 100.
     ///
     /// This is a constant here rather than computed, because the firmware does
     /// not know what `sync` runs at: `SYNC_MHZ` lives in the gateware. If the

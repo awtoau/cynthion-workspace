@@ -16,7 +16,7 @@ TARGET port.**
 
 The peripherals are: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`,
 `i2c_mux`, `vbus`, `gateware_id`, `plic`, `clint`, `spiflash`, `bootram`, `hyperram`.
-`ecp5-test/riscv/ulpi_window.py` reads and writes a USB3343's PHY registers over
+`gateware/soc/ulpi_window.py` reads and writes a USB3343's PHY registers over
 `target_phy` and cannot send or receive a single packet. Moondancer's firmware expects
 three sets of `usb{0,1,2}` + `ep_control` + `ep_in` + `ep_out` CSR peripherals; none of
 them exist here.
@@ -28,11 +28,11 @@ or adopt a USB packet path. The children differ in how much they need on top of 
 
 | Asset | Where | Why it matters |
 |---|---|---|
-| Our own board platform | `ecp5-test/cynthion_platform/cynthion_r1_4.py` | `control_phy`, `aux_phy`, `target_phy` resources and `apollo_port_sharing` already declared |
-| A working luna USB device on AUX | `ecp5-test/usb_serial/usb_serial.py`, instantiated in the SoC at `vexii_hello_soc.py:1175` | `USBSerialDevice` enumerates at high speed and loops back at 195.4 Mbps. luna's USB device gateware **builds and runs on our platform today** — the question is never "can luna's USB stack work here", only "is it wired to the right PHY with the right endpoints" |
-| CONTROL port handover | `ecp5-test/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
-| VBUS switch control | `ecp5-test/riscv/vbus_csr.py` | The analyzer's pass-through and port-power control has a CPU-visible home already |
-| HyperRAM | `ecp5-test/riscv/hyperram_dqs_phy.py`, mapped at `0x2000_0000` | The analyzer's 8 MiB capture buffer needs exactly this |
+| Our own board platform | `gateware/board/cynthion_r1_4.py` | `control_phy`, `aux_phy`, `target_phy` resources and `apollo_port_sharing` already declared |
+| A working luna USB device on AUX | `gateware/probes/usb_serial/usb_serial.py`, instantiated in the SoC at `vexii_hello_soc.py:1175` | `USBSerialDevice` enumerates at high speed and loops back at 195.4 Mbps. luna's USB device gateware **builds and runs on our platform today** — the question is never "can luna's USB stack work here", only "is it wired to the right PHY with the right endpoints" |
+| CONTROL port handover | `gateware/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
+| VBUS switch control | `gateware/soc/vbus_csr.py` | The analyzer's pass-through and port-power control has a CPU-visible home already |
+| HyperRAM | `gateware/soc/hyperram_dqs_phy.py`, mapped at `0x2000_0000` | The analyzer's 8 MiB capture buffer needs exactly this |
 | PAC generated from the SoC's own map | `./dev.py pac` | A new peripheral gets Rust accessors without hand-transcription |
 | `smolusb::control::Control` | upstream, trait-based over `D: UsbDriver` | The control-transfer state machine is hardware-independent and ports verbatim. It is the one part that is portable today |
 

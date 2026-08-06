@@ -2,7 +2,7 @@
 //!
 //! Built by `scripts/soc_model_probe.py`. Its pair is `model_coop_swqueue`,
 //! which schedules the same three jobs on the one `mtimecmp`
-//! `ecp5-test/riscv/vexii_clint.py` provides today. The difference between the
+//! `gateware/soc/vexii_clint.py` provides today. The difference between the
 //! two `.text` figures is what the software timer queue costs.
 //!
 //! **The peripheral this assumes does not exist yet.** It is the smallest thing

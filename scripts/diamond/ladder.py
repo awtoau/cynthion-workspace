@@ -79,14 +79,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "diamond_riscv_ladder.log"
 RESULTS = ROOT / "tmp" / "diamond_riscv_ladder.json"
-GATEWARE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
+GATEWARE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
 BUILD = ROOT / "tmp" / "vexii_hello" / "build"
 WORK = ROOT / "tmp" / "diamond"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 # The same configure and verify the open-flow ladder uses.  Importing rather
 # than reimplementing is deliberate: if the two ladders judged a frequency by

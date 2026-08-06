@@ -43,7 +43,7 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 **Vendor the board definition rather than inheriting a stack for it.** The r1.4 pin map is
 340 lines of hardware wiring; taking it via `cynthion` pulls in `LUNAApolloPlatform`,
 `LUNAPlatform` and a `luna-soc` fork pin. Now vendored at
-`ecp5-test/cynthion_platform/cynthion_r1_4.py`; see
+`gateware/board/cynthion_r1_4.py`; see
 [`hardware.md`](hardware.md).
 
 ## Used as-is, and we intend to keep using it
@@ -62,7 +62,7 @@ version. Each has a recorded reason and, where the fault is upstream's, a reprod
 | `SPIFlashMemoryMap` | `luna_soc.gateware.core.spiflash` | Verified byte-exact against `apollo flash-read`. |
 | `amaranth-soc` | **upstream**, not luna_soc's vendored copy | See below. |
 | `amaranth_soc.gpio.Peripheral` | **upstream** `amaranth-soc` | The board's six LEDs, the power monitor's PWRDN and the USER button. Mode/Input/Output/SetClr, per-pin, with configurable input synchroniser stages -- everything a bespoke LED register would have had to grow, already documented and already tested. Its `INPUT_ONLY` reset mode is also what lets the fabric keep driving the LEDs until firmware asks for one; see the LED comment in `vexii_hello_soc.py`. The alternative was `luna_soc`'s gpio, which the policy reserves. |
-| `AsyncSerial` | `amaranth-stdio` | The bit engine for the Apollo-facing UART. Wrapped, not replaced -- `ecp5-test/riscv/serial_line.py` adds the pad handling it deliberately leaves to the instantiator, and everything below the frame is upstream's. |
+| `AsyncSerial` | `amaranth-stdio` | The bit engine for the Apollo-facing UART. Wrapped, not replaced -- `gateware/soc/serial_line.py` adds the pad handling it deliberately leaves to the instantiator, and everything below the frame is upstream's. |
 
 ## Diverged, with reasons
 
@@ -74,20 +74,20 @@ whether the reason was a defect, a limit, or a standard we preferred to adopt.
 | what | ours | why it diverged | detail |
 |---|---|---|---|
 | Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. #111 | [architecture](architecture.md#core) |
-| SPI crossbar | `FairSPIControlPortCrossbar` (`ecp5-test/riscv/vexii_flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [architecture](architecture.md#peripherals) |
+| SPI crossbar | `FairSPIControlPortCrossbar` (`gateware/soc/vexii_flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [architecture](architecture.md#peripherals) |
 | SPI controller | `HoldableSPIController` (same file) | **upstream defect.** The CS field is `csr.action.W` — a one-cycle pulse — used as a latch. Reproducer: ILA capture | [architecture](architecture.md#peripherals) |
-| UART pad output enable | `SerialLine` (`ecp5-test/riscv/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. #113 | [architecture](architecture.md#peripherals) |
-| Console peripheral | `Uart16550` (`ecp5-test/riscv/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [architecture](architecture.md#peripherals) |
-| Interrupt controller | `Plic` (`ecp5-test/riscv/vexii_plic.py`) | **nothing usable upstream.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; `amaranth_soc`'s `EventMonitor` does not elaborate; VexiiRiscv's is Tilelink-only | [architecture](architecture.md#interrupts-and-time) |
-| I2C master | `I2CMaster` (`ecp5-test/riscv/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [architecture](architecture.md#peripherals) |
+| UART pad output enable | `SerialLine` (`gateware/soc/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. #113 | [architecture](architecture.md#peripherals) |
+| Console peripheral | `Uart16550` (`gateware/soc/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [architecture](architecture.md#peripherals) |
+| Interrupt controller | `Plic` (`gateware/soc/vexii_plic.py`) | **nothing usable upstream.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; `amaranth_soc`'s `EventMonitor` does not elaborate; VexiiRiscv's is Tilelink-only | [architecture](architecture.md#interrupts-and-time) |
+| I2C master | `I2CMaster` (`gateware/soc/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [architecture](architecture.md#peripherals) |
 | `amaranth_soc` | **upstream**, not luna_soc's vendored copy | **stale vendor.** The vendored tree reported version `unknown` and was four commits behind, including fixes it never had | [architecture](architecture.md#dependencies-and-verification) |
-| Board platform | vendored at `ecp5-test/cynthion_platform/` | **in progress.** `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to the `awtoau/awto-luna-soc` fork. Target: a self-contained platform depending only on `amaranth`, `amaranth.build` and `amaranth_boards.resources` | — |
-| CONTROL port request | `SidebandAdvertiser` (`ecp5-test/sideband_advertise.py`) | **incompatible with the pin's other use.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz square wave (20 ms period), which cannot share the wire with the sideband UART. Apollo's own `FPGA_ADV_MODE_UART` already defines the alternative — the frame `C1 14 01 A5` — and no gateware emitted it. #137 | [architecture](architecture.md#peripherals), [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request) |
+| Board platform | vendored at `gateware/board/` | **in progress.** `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to the `awtoau/awto-luna-soc` fork. Target: a self-contained platform depending only on `amaranth`, `amaranth.build` and `amaranth_boards.resources` | — |
+| CONTROL port request | `SidebandAdvertiser` (`gateware/sideband_advertise.py`) | **incompatible with the pin's other use.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz square wave (20 ms period), which cannot share the wire with the sideband UART. Apollo's own `FPGA_ADV_MODE_UART` already defines the alternative — the frame `C1 14 01 A5` — and no gateware emitted it. #137 | [architecture](architecture.md#peripherals), [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request) |
 
 **Worth noting rather than using:** luna-soc's `InterruptController` exposes
 `add(peripheral, name=, number=)` and `interrupts()`, which its SVD generator reads. Any
 replacement that wants to keep that generator working has to keep those signatures —
-`ecp5-test/riscv/vexii_irq.py` does, which is why it is still in the tree.
+`gateware/soc/vexii_irq.py` does, which is why it is still in the tree.
 
 ## Still expected from upstream — and it is Cynthion-specific work
 
@@ -144,7 +144,7 @@ reserves — and reserving it means writing it, because nobody else has this boa
 |---|---|---|
 | `HyperRAMInterface`, `HyperRAMDQSInterface` | **upstream, unchanged** | command encoding, latency, burst. Verified: 220.2 MB/s on the non-DQS path |
 | `HyperRAMPHY` (non-DQS) | **upstream, unchanged** | it elaborates here and it works |
-| `HyperRAMDQSPHY` | **ours** (`ecp5-test/riscv/hyperram_dqs_phy.py`) | upstream's cannot be instantiated on r1.4 at all — see below |
+| `HyperRAMDQSPHY` | **ours** (`gateware/soc/hyperram_dqs_phy.py`) | upstream's cannot be instantiated on r1.4 at all — see below |
 
 **Wrapping upstream's DQS PHY was not an option.** It fails for three separate reasons,
 none of them about DQS: it assigns `bus.clk` as a single net where the platform declares a
@@ -183,7 +183,7 @@ simulation rather than only written down.
 
 ## Vendored: the USB host engine
 
-**`ecp5-test/usb_host/guh/` is `apfaudio/guh`'s `usbh` at commit `923c8490`, taken
+**`gateware/probes/usb_host/guh/` is `apfaudio/guh`'s `usbh` at commit `923c8490`, taken
 verbatim** — `sie.py` (the transaction engine), `reset.py` (bus reset and the host
 half of the high-speed chirp) and `types.py`. BSD-3-Clause; the licence sits beside
 them.
@@ -201,7 +201,7 @@ descriptors, hard-code the device address, and specialise the parser at synthesi
 time — `docs/usb-host-options.md` §16), `engines/*`, `periph/*`.
 
 The vendored files stay byte-identical so a pin bump is a diff. What we need and
-they do not do goes beside the package: `ecp5-test/usb_host/model.py` is ours,
+they do not do goes beside the package: `gateware/probes/usb_host/model.py` is ours,
 and `scripts/usb_host_sie_sim.py` asserts the engine's behaviour against LUNA's
 own device stack — including the three interface traps a CPU-facing shim has to
 handle, so a pin bump that changes any of them fails a test rather than the shim.

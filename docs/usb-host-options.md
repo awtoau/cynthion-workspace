@@ -670,7 +670,7 @@ that is the first step in §18.**
 
 What `18c1fa5` implies for another decoder window is favourable: the Wishbone
 round trip now terminates at `RegisteredResponse`'s flip-flop
-(`ecp5-test/riscv/wishbone_pipe.py:96`), so a ninth subordinate adds one address
+(`gateware/soc/wishbone_pipe.py:96`), so a ninth subordinate adds one address
 comparator and one leaf in the ACK gather to a path with ~8 ns of budget rather
 than 16. The condition is that the new subordinate's own ACK must be
 combinationally cheap — which a CSR multiplexer is.
@@ -762,7 +762,7 @@ worst cross-domain delay in the current build at 11.83 ns.
 
 Both idioms are already in the tree and proven: the four-phase toggle handshake
 at `ulpi_window.py:235-311`, and `StreamBuffer` wrapping `AsyncFIFOBuffered` at
-`ecp5-test/riscv/stream_buffer.py:96`, in use at `vexii_hello_soc.py:988-991`.
+`gateware/soc/stream_buffer.py:96`, in use at `vexii_hello_soc.py:988-991`.
 
 Use the handshake for the transfer registers (a few crossings per transfer, so
 latency is free) and the async FIFO for the byte streams (where a per-byte
@@ -783,7 +783,7 @@ architecture.
 
 A new Wishbone window, `usb_host` at **0xf0001000, size 0x100** — free, aligned,
 inside the declared uncached PMA region (`base=f0000000 size=10000000 main=0`,
-`ecp5-test/riscv/vexii_cpu.py:110-113`), and clear of the PLIC at 0xf0400000. It
+`gateware/soc/vexii_cpu.py:110-113`), and clear of the PLIC at 0xf0400000. It
 needs a 32-bit data port, so it takes its own `decoder.add()` rather than
 sitting behind the 8-bit `board` CSR decoder.
 
@@ -1002,7 +1002,7 @@ have to be before any use.
 - `debris/scripts/usb-host-core-area.py`, `debris/scripts/usb-host-area.py` —
   the original measurements, retired once the code was vendored.
 - `tmp/usb-host-area/area-results.json`.
-- GUH is no longer a checkout: `ecp5-test/usb_host/guh/` is pinned at `923c8490`.
+- GUH is no longer a checkout: `gateware/probes/usb_host/guh/` is pinned at `923c8490`.
 
 **Part II touched no hardware either. All figures are from synthesis and
 place-and-route.**
@@ -1021,11 +1021,11 @@ exists, no firmware has been written, and no hardware has been touched.
 
 ## 21. The engine, vendored and exercised
 
-`ecp5-test/usb_host/guh/` — `sie.py`, `reset.py`, `types.py` at `923c8490`,
+`gateware/probes/usb_host/guh/` — `sie.py`, `reset.py`, `types.py` at `923c8490`,
 byte-identical to upstream, with the licence beside them. `enumerator.py`,
 `descriptor.py`, `engines/` and `periph/` were **not** taken, per §16.
 
-`ecp5-test/usb_host/model.py` is ours: the wire (two UTMI interfaces facing each
+`gateware/probes/usb_host/model.py` is ours: the wire (two UTMI interfaces facing each
 other, with the line-state priority the chirp needs) and a model device that is
 LUNA's own `USBDevice` with a control endpoint and a 512-byte bulk IN endpoint.
 Both ends are upstream gateware written without knowledge of the other, which is

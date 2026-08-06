@@ -82,10 +82,10 @@ MMD = ROOT / "tmp" / "soc_diagram.mmd"
 MD = ROOT / "tmp" / "soc_diagram.md"
 HTML = ROOT / "tmp" / "soc_diagram.html"
 
-SOC_SOURCE = ROOT / "ecp5-test" / "riscv" / "vexii_hello_soc.py"
+SOC_SOURCE = ROOT / "gateware" / "soc" / "vexii_hello_soc.py"
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Builds `ecp5-test/fabric` for a `--12k` target and refuses to produce a
+Builds `gateware/probes/fabric` for a `--12k` target and refuses to produce a
 bitstream that does not actually use the fabric beyond 12,288 LUTs.
 
 That refusal is the point. The whole experiment rests on the design occupying
@@ -68,10 +68,10 @@ ADVERTISED_LUTS = 12288
 
 BUILD_SCRIPT = """
 import sys
-sys.path.insert(0, "ecp5-test")
+sys.path.insert(0, "gateware")
 sys.path.insert(0, "repos/apollo")
 from fabric.fabric_gateware import FabricTest
-from cynthion_platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from board.cynthion_r1_4 import CynthionPlatformRev1D4
 
 design = FabricTest(blocks={blocks}, round_bits={round_bits}, golden={golden})
 CynthionPlatformRev1D4().build(design, do_program=False,
@@ -159,7 +159,8 @@ def main():
                         help="also write this build's transcript here")
     args = parser.parse_args()
 
-    sys.path.insert(0, str(ROOT / "ecp5-test"))
+    sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes"))
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from fabric.fabric_gateware import BLOCKS, ROUND_BITS
 

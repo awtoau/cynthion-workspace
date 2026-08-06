@@ -10,7 +10,7 @@
 //! commit, and reporting the hash alone would be a claim nobody could check --
 //! which is worse than reporting nothing, because it looks like an answer.
 //!
-//! ## The encoding is `ecp5-test/build_helpers.py`'s, deliberately
+//! ## The encoding is `gateware/build_helpers.py`'s, deliberately
 //!
 //! `usercode()` there stamps the ECP5's USERCODE with `short=7 & 0x7fffffff`,
 //! and sets bit 31 when `git status --porcelain` says anything. The gateware's
@@ -108,7 +108,7 @@ fn main() {
          pub const GIT_HASH: &str = {hash:?};\n\
          pub const GIT_BRANCH: &str = {branch:?};\n\
          pub const GIT_DIRTY: bool = {dirty};\n\
-         /// The same 32 bits `ecp5-test/build_helpers.py` stamps into USERCODE.\n\
+         /// The same 32 bits `gateware/build_helpers.py` stamps into USERCODE.\n\
          pub const GIT_WORD: u32 = {word:#010x};\n\
          pub const BUILT: &str = {built:?};\n\
          pub const RUSTC: &str = {rustc:?};\n\

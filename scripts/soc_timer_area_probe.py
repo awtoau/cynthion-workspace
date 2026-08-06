@@ -8,7 +8,7 @@ The gateware half of `docs/rtic.md`. The firmware half --
 Two shapes, because they are not the same peripheral:
 
     mtimecmp    a 64-bit comparator against `mtime`, which is what
-                `ecp5-test/riscv/vexii_clint.py` already has one of and what
+                `gateware/soc/vexii_clint.py` already has one of and what
                 `rtic_time::Monotonic` and `embassy-time` both assume
     reload      a 32-bit auto-reloading down-counter, which is what
                 `firmware/cynthion-soc/src/bin/model_coop_hwtimer.rs` assumes:

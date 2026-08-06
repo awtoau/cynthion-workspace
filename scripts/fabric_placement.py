@@ -48,7 +48,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
 
-CONFIG = ROOT / "ecp5-test" / "fabric" / "build" / "top.config"
+CONFIG = ROOT / "gateware" / "probes" / "fabric" / "build" / "top.config"
 
 TILE = re.compile(r"^\.tile\s+R(\d+)C(\d+)")
 SITE = re.compile(r"^word:\s+(SLICE[A-D]\.K\d)\.INIT")

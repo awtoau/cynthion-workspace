@@ -251,11 +251,11 @@ def build_checks() -> List[Check]:
         # `cynthion.gateware.analyzer.top` -- the USB analyzer bitstream inside
         # repos/cynthion, which this repo does not build -- and it did so for
         # `CynthionPlatformRev0D2`, while 43 references across scripts/ and
-        # ecp5-test/ target r1.4 and the board is r1.4.0. Upstream code, wrong
+        # gateware/ target r1.4 and the board is r1.4.0. Upstream code, wrong
         # board revision, and 17-50 s of a 17 s gate: ~98% of the wall time.
         #
         # The gateware this repo DOES build is checked by `socmap`, which
-        # elaborates ecp5-test/riscv/vexii_hello_soc.py in 0.7 s. See #169.
+        # elaborates gateware/soc/vexii_hello_soc.py in 0.7 s. See #169.
     ]
 
 

@@ -39,7 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "hyperram_regfuzz.log"
-BITSTREAM = ROOT / "ecp5-test" / "hyperram" / "regfuzz_build" / "top.bit"
+BITSTREAM = ROOT / "gateware" / "probes" / "hyperram" / "regfuzz_build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 
@@ -48,7 +48,7 @@ REGISTER_ID    = 1
 REGISTER_STATE = 2
 REGISTER_BASE  = 3
 
-# Must match PROBE_ADDRESSES in ecp5-test/hyperram/hyperram_regfuzz.py.
+# Must match PROBE_ADDRESSES in gateware/probes/hyperram/hyperram_regfuzz.py.
 PROBE_ADDRESSES = [
     0x0000, 0x0001, 0x0800, 0x0801,
     0x1000, 0x1001, 0x1002, 0x1003,

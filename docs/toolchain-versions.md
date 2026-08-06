@@ -64,12 +64,12 @@ Every package below is at the newest version its index offers.
 | `pyusb` 1.3.1, `pyserial` 3.5, `pyvcd` 0.4.1, `numpy` 2.5.1, `pytest` 9.1.1 | | | PyPI |
 
 `facedancer` is **not installed** in the live environment. Nothing in
-`ecp5-test/` or `scripts/` imports it; the patches recorded against it in
+`gateware/` or `scripts/` imports it; the patches recorded against it in
 `docs/upstream-boundary.md` apply to a facedancer install, not to this one.
 
 `amaranth-boards` is **not installed** either. The two constructors that were
 needed from it, `LEDResources` and `ULPIResource`, are copied into
-`ecp5-test/cynthion_platform/resources.py`.
+`gateware/board/resources.py`.
 
 ### Constraints that must hold
 
@@ -211,7 +211,7 @@ the header of `scripts/riscv_firmware.py`.
 
 QEMU is used only as `-M virt`, and the pairing is deliberate: `virt` presents an
 NS16550A at `0x10000000` and a PLIC at `0x0c000000`, which is why the SoC console
-is a standard NS16550A (`ecp5-test/riscv/uart16550.py`) — one driver serves both
+is a standard NS16550A (`gateware/soc/uart16550.py`) — one driver serves both
 the board and the test gate. `scripts/soc_test.py` drives it, with
 `memory-qemu.x`; building the `qemu` feature without that linker script links
 `.text` into the flash window, where `virt` has no memory, and produces an image
@@ -267,9 +267,9 @@ removed while it holds work that is on no remote.
 
     "luna-soc @ git+https://github.com/awtoau/awto-luna-soc.git@main",
 
-`ecp5-test/riscv/vexii_hello_soc.py` is the one design that still imports
+`gateware/soc/vexii_hello_soc.py` is the one design that still imports
 `cynthion` for its platform (`cynthion.gateware.platform.cynthion_r1_4`) rather
-than the vendored `ecp5-test/cynthion_platform/`, so it reaches that pin. Every
+than the vendored `gateware/board/`, so it reaches that pin. Every
 other design uses the vendored platform, which imports only `amaranth` and
 `amaranth.build`.
 

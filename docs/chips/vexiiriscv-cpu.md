@@ -1,6 +1,6 @@
 # VexiiRiscv — the SoC's CPU
 
-The RISC-V core in `ecp5-test/riscv/vexii_hello_soc.py`. Not a chip on the board:
+The RISC-V core in `gateware/soc/vexii_hello_soc.py`. Not a chip on the board:
 it is a soft core inside the [ECP5](ecp5/lfe5u-12f.md), and it has a note here for
 the same reason the flash and the HyperRAM do — what it actually does on this
 board differs from what its parameters suggest, and the measurements have to live
@@ -10,7 +10,7 @@ somewhere they can be found.
 
 ## Not committed — generated at elaboration
 
-`ecp5-test/riscv/vexii_cpu.py` runs the Scala generator on every build and hands
+`gateware/soc/vexii_cpu.py` runs the Scala generator on every build and hands
 Amaranth the resulting `VexiiRiscv.v`. A checked-in Verilog would drift silently
 from the flags that produced it; a nine-second `sbt` run would not.
 
@@ -23,7 +23,7 @@ The choice of VexiiRiscv over VexRiscv, and cached over cacheless, is in
 
 ## Configuration
 
-`GENERATE_FLAGS` in `ecp5-test/riscv/vexii_cpu.py`. RV32IMAC with `rdtime`,
+`GENERATE_FLAGS` in `gateware/soc/vexii_cpu.py`. RV32IMAC with `rdtime`,
 single issue, Wishbone throughout, plus the debug module on the existing JTAG
 chain.
 
@@ -143,7 +143,7 @@ obvious next one.
 
 ## Regenerating and reading the core
 
-    python3 -c "import sys; sys.path.insert(0,'ecp5-test/riscv'); \
+    python3 -c "import sys; sys.path.insert(0,'gateware/soc'); \
                 import vexii_cpu; print(vexii_cpu.generate(0))"
 
 The emitted `VexiiRiscv.v` is also left in `tmp/vexii_hello/build/` after any SoC

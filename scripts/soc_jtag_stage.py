@@ -58,8 +58,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
@@ -68,7 +68,7 @@ from jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,   # noqa: E402
                         SIGNATURE)
 
 # The ECP5 user instruction the sink answers on. ER2 (0x38) belongs to the RISC-V
-# debug module; see `ecp5-test/riscv/jtag_stage.py`.
+# debug module; see `gateware/soc/jtag_stage.py`.
 ER1 = 0x32
 
 # The staging layout, in 16-bit HyperRAM words, from

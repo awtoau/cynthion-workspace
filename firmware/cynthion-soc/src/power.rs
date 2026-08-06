@@ -2,7 +2,7 @@
 //!
 //! The part is a four-channel bus-voltage and shunt-current monitor at I2C
 //! `0x10` on the `power_monitor` bus. The conversion arithmetic and the channel
-//! map already existed in Python (`ecp5-test/power_monitor/registers.py`, driven
+//! map already existed in Python (`gateware/probes/power_monitor/registers.py`, driven
 //! over JTAG by `scripts/power_probe.py`); this is the same thing where the CPU
 //! can reach it, which is what makes continuous monitoring possible -- the JTAG
 //! path needs an Apollo debug session and therefore cannot run while anything

@@ -26,7 +26,7 @@ and not on the board, the bug is below the firmware.
 
 That argument only holds because both builds are the same source, and it got considerably
 stronger when the SoC's console became a standard NS16550A
-(`ecp5-test/riscv/uart16550.py`). `virt` presents an NS16550A too, so `src/uart.rs` --
+(`gateware/soc/uart16550.py`). `virt` presents an NS16550A too, so `src/uart.rs` --
 the console driver itself, the thing that polls LSR and pokes THR -- is now compiled
 unchanged for both. `--features qemu` selects a different list of base addresses in
 `src/target.rs`, a flash stand-in, and a RAM array in place of the three HyperRAM MMIO
@@ -506,7 +506,7 @@ def tree_is_dirty():
     """What both build stamps call dirty.
 
     Plain `--porcelain`, untracked files included, because that is what
-    `ecp5-test/build_helpers.py:usercode()` uses for the ECP5's USERCODE and
+    `gateware/build_helpers.py:usercode()` uses for the ECP5's USERCODE and
     what `firmware/cynthion-soc/build.rs` copies from it. The two definitions
     have to be the same one: `info` compares the words and would otherwise
     report a mismatch that is not one.

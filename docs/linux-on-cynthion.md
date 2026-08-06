@@ -364,7 +364,7 @@ sbt "runMain spinal.lib.com.usb.ohci.UsbOhciWishbone \
      --port-count 1 --phy-frequency 60000000 --dma-width 32"
 ```
 
-then instantiate the emitted Verilog the way `ecp5-test/riscv/vexii_cpu.py:276`
+then instantiate the emitted Verilog the way `gateware/soc/vexii_cpu.py:276`
 already instantiates `VexiiRiscv.v` — `platform.add_file` plus an `Instance` —
 add `wb_ctrl` as a decoder subordinate and `wb_dma` as a fourth arbiter master,
 and run `scripts/soc_timing_sweep.py`.

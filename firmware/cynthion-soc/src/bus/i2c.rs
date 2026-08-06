@@ -1,6 +1,6 @@
 //! The I2C controller itself: bytes on wires, and nothing about which bus.
 //!
-//! Drives `ecp5-test/riscv/i2c_master.py`, which is the OpenCores I2C master
+//! Drives `gateware/soc/i2c_master.py`, which is the OpenCores I2C master
 //! register map. Nothing here is specific to what is on the bus except
 //! `pac195x`, at the bottom, which knows how to ask a Microchip PAC195x for its
 //! name.
@@ -367,7 +367,7 @@ pub mod pac195x {
     /// Product ids for the family, from Table 7-1 of the datasheet.
     ///
     /// The board carries a PAC1954-1 (`0x7b`), confirmed on r1.4 silicon on
-    /// 2026-07-28 -- see `ecp5-test/power_monitor/registers.py`. The rest are
+    /// 2026-07-28 -- see `gateware/probes/power_monitor/registers.py`. The rest are
     /// here so a different board, or a different strap, reports what it is
     /// rather than "unknown".
     pub fn product_name(id: u8) -> &'static str {

@@ -11,7 +11,7 @@ wrong, fix it here; do not work around it in a third file.
 Board: **Cynthion r1.4** (`LFE5U-12F` marking, BG256) with the `cynthion_d11`
 Apollo build. Measurements are from one board unless stated otherwise; a second has
 not been checked. Every assertion is traceable to source in `repos/`,
-`ecp5-test/`, a script's output, or a cited commit.
+`gateware/`, a script's output, or a cited commit.
 
 ## The chips
 
@@ -41,7 +41,7 @@ measurements have to be findable.
 | **VexiiRiscv** | the SoC's RV32IMAC CPU, generated at elaboration | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md), and [`riscv-core-build.md`](riscv-core-build.md) for regenerating it |
 | **NS16550A ×2** | the console UARTs | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 
-The pin map itself is **`ecp5-test/cynthion_platform/cynthion_r1_4.py`** — 206
+The pin map itself is **`gateware/board/cynthion_r1_4.py`** — 206
 lines of pin declarations, vendored so that reaching it does not drag in
 `LUNAApolloPlatform`, `LUNAPlatform` and a `luna-soc` fork pin. That file is the
 authority on which signal is on which ball; the tables below quote it, they do not
@@ -80,7 +80,7 @@ What the memory map does **not** carry is prose: `csr.Register` rewrites
 "A CSR register" and the SVD's descriptions are mechanical. Bit-level meaning is
 only present where the gateware declares separate CSR fields — the 16550's
 registers are each one 8-bit field, so `LSR.DR` and `IER.ERBFI` live in
-`ecp5-test/riscv/uart16550.py`, and the standard's own offsets and read side
+`gateware/soc/uart16550.py`, and the standard's own offsets and read side
 effects are restated once, in
 [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — they are the
 NS16550A's rather than ours, and cannot drift with the memory map.
@@ -646,7 +646,7 @@ They are kept here because they recur.
 
 ## The SoC shell — reaching this hardware from a prompt
 
-The RISC-V SoC (`ecp5-test/riscv/vexii_hello_soc.py`, firmware
+The RISC-V SoC (`gateware/soc/vexii_hello_soc.py`, firmware
 `firmware/cynthion-soc/`) answers a line-oriented shell on **both** its consoles:
 the USB CDC node on AUX, and the Apollo-facing port on the shared JTAG pins.
 
@@ -689,12 +689,12 @@ The gateware line is the reason the command exists. **Firmware and bitstream are
 built separately and need never have been built together** — `load` replaces the
 firmware over the console without rebuilding the bitstream, which is the point of
 it. So the bitstream carries its own git hash in a register
-(`ecp5-test/riscv/gateware_id.py`), `info` prints both, and it says `MISMATCH`
+(`gateware/soc/gateware_id.py`), `info` prints both, and it says `MISMATCH`
 when they differ. Same for the clock: the register holds what the PLL actually
 produced, and `SYNC MISMATCH` means every interval derived from
 `target::TIME_HZ` is wrong by that ratio.
 
-The identifier is the one `ecp5-test/build_helpers.py` stamps into the ECP5's
+The identifier is the one `gateware/build_helpers.py` stamps into the ECP5's
 USERCODE — short hash, bit 31 set for a dirty tree — so what Apollo reads over
 JTAG and what the CPU reads from inside are the same number by construction.
 
@@ -917,7 +917,7 @@ detail:
 | `mcountinhibit` | yes | same plugin; unused here |
 | `mhpmcounter3..31`, `mhpmevent3..31` | **decode, read hardwired zero** | allocated as WARL-zero dummies while `additionalCounterCount` is 0 |
 
-So `--with-rdtime` in `ecp5-test/riscv/vexii_cpu.py` gates `rdtime` and these
+So `--with-rdtime` in `gateware/soc/vexii_cpu.py` gates `rdtime` and these
 counters together, and `info`'s `NO RDTIME` line is the one warning for both.
 **Cache miss counts are not available**: they would live in the HPM counters,
 and reaching them needs `--performance-counters N` added to `GENERATE_FLAGS`, a

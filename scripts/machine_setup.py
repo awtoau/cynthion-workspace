@@ -27,7 +27,7 @@ that they had drifted into being wrong:
   * It also pointed at `scripts/check-fast.sh`, which does not exist. The check
     runner is `./dev.py ci`.
   * It wrote a hand-maintained udev rules file. Those rules are GENERATED from
-    `ecp5-test/usb_ids.py` by `scripts/install_udev.py`, so that adding a test
+    `gateware/usb_ids.py` by `scripts/install_udev.py`, so that adding a test
     bitstream cannot leave the rules behind. A second hand-written copy in
     `/etc/udev/rules.d` is exactly the drift that generator exists to prevent,
     so this delegates instead.
@@ -90,7 +90,7 @@ EDITABLE = [
 # vendored copies to `sys.path` when the real packages are missing, with no error
 # and no version string, so the build does not fail, it produces different
 # gateware from a tree last re-synced 2025-01-07. Our own designs import both
-# names directly (`ecp5-test/riscv/serial_line.py`, every `csr`/`wishbone` user).
+# names directly (`gateware/soc/serial_line.py`, every `csr`/`wishbone` user).
 # See #190; `scripts/amaranth_soc_check.py` is what stops it regressing.
 #
 # Git, not the index: both PyPI names are placeholders at version `0` with no

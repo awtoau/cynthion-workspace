@@ -38,14 +38,14 @@ Needed, and not present:
    write our own.
 3. **A HyperRAM stream port.** Upstream's `HyperRAMPacketFIFO` instantiates luna's
    `HyperRAMInterface`/`HyperRAMPHY` directly. We have our own DQS PHY
-   (`ecp5-test/riscv/hyperram_dqs_phy.py`) behind a Wishbone map at `0x2000_0000`, tuned
+   (`gateware/soc/hyperram_dqs_phy.py`) behind a Wishbone map at `0x2000_0000`, tuned
    and measured. Reusing ours means writing a streaming front end for it; using luna's
    means two HyperRAM controllers in one repo. **This is the one real design decision in
    this scenario** and it should be settled before any code is written.
 4. **A bulk IN endpoint on CONTROL**, plus the vendor request handler for the five
    control requests, plus the descriptors.
-5. **The port request.** Already solved — `ecp5-test/sideband_advertise.py`.
-6. **VBUS switching.** `ecp5-test/riscv/vbus_csr.py` exists but is CPU-driven; the
+5. **The port request.** Already solved — `gateware/sideband_advertise.py`.
+6. **VBUS switching.** `gateware/soc/vbus_csr.py` exists but is CPU-driven; the
    analyzer has no CPU, so the switch control must be driven from gateware state instead.
 
 Match the wire contract exactly and Packetry works unmodified:

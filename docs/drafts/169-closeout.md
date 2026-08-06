@@ -38,14 +38,14 @@ Stated so the issue is not re-read as current.
 - **"four platform imports"** → **six** sites import
   `cynthion.gateware.platform.cynthion_r1_4`, and one of the six is not a
   platform import at all.
-- **`ecp5-test/riscv/vexii_hello_soc.py:176, 181, 277, 312, 1642`** (stale
+- **`gateware/soc/vexii_hello_soc.py:176, 181, 277, 312, 1642`** (stale
   comment citations) → now `177, 182, 278, 313, 1711`.
 - **`scripts/sideband_build.py:40`** → line **43**, and #169 missed
   `scripts/fabric_build.py:72`, which does the same `sys.path.insert(0,
   "repos/apollo")`.
 - **`machine_setup.py:72-76`** → the `EDITABLE` list is now ~line 83 and holds
   one entry.
-- `ecp5-test/riscv/vexii_hello_soc.py:84` — **still correct**, still the reason
+- `gateware/soc/vexii_hello_soc.py:84` — **still correct**, still the reason
   `repos/apollo` cannot be deleted today.
 
 ## Part 3 — the four checks whose subject is inside `repos/`
@@ -81,11 +81,11 @@ Six sites import `cynthion.gateware.platform.cynthion_r1_4`:
 | `scripts/soc_generate_pac.py:138` | elaborates the SoC to read its memory map — this **is** the `socmap` check | low; `--check` compares against the committed SVD, so a drift shows immediately |
 | `scripts/soc_diagram.py:171` | wraps `platform.request` to record what the SoC asked for | low |
 | `scripts/bram_patch.py:255` | `elaborate_il()` re-elaborates and compares RTLIL against the build directory | **the one real risk.** If the vendored platform emits RTLIL that differs by so much as a module name, every existing build directory reads as stale. Must be validated against a fresh build, and `tests/test_bram_patch_freshness.py` is the test that will say so |
-| `ecp5-test/bram_probe/bram_probe.py:192` | `--build` only | low, and it is a bring-up probe |
-| `ecp5-test/riscv/vexii_hello_soc.py:1705` | the `--build` path for the SoC bitstream. Its comment says "the installed cynthion package, not the in-repo source tree", which is about `amaranth_boards`, not about `cynthion_platform` | low, **but sequence it last**: another agent is live in this file |
+| `gateware/probes/bram_probe/bram_probe.py:192` | `--build` only | low, and it is a bring-up probe |
+| `gateware/soc/vexii_hello_soc.py:1705` | the `--build` path for the SoC bitstream. Its comment says "the installed cynthion package, not the in-repo source tree", which is about `amaranth_boards`, not about `board` | low, **but sequence it last**: another agent is live in this file |
 | `scripts/phy_probe.py:15` | **not a platform import.** `cynthion.selftest.registers` — four integer constants — and the script only works with upstream's *selftest bitstream* loaded, which is built from `repos/cynthion` | decide separately (below) |
 
-The target already exists and is already the majority: `ecp5-test/cynthion_platform/`
+The target already exists and is already the majority: `gateware/board/`
 (`__init__.py`, `core.py`, `cynthion_r1_4.py`, `resources.py`) is used by 12
 in-tree sites, depends only on `amaranth`, and documents in `core.py` exactly
 what it dropped from the LUNA chain and why.
@@ -122,12 +122,12 @@ Blocks step C. Six modules, **2,534 lines**:
 | `variable_clock.py` | 359 | none beyond amaranth + `ecppll` on PATH |
 | `advertiser.py` | 99 | `luna.gateware.usb.usb2.request`, `usb_protocol` |
 
-In-tree consumers: `ecp5-test/riscv/vexii_hello_soc.py:84`,
-`ecp5-test/qspi/qspi_gateware.py:48-49`,
-`ecp5-test/adv_uart/adv_uart_gateware.py:28`,
-`ecp5-test/sideband/sideband_gateware.py:32-37`,
-`ecp5-test/sideband/test_protocol.py:33`,
-`ecp5-test/hyperram/hyperram_dqs_top.py:134`,
+In-tree consumers: `gateware/soc/vexii_hello_soc.py:84`,
+`gateware/probes/qspi/qspi_gateware.py:48-49`,
+`gateware/probes/adv_uart/adv_uart_gateware.py:28`,
+`gateware/probes/sideband/sideband_gateware.py:32-37`,
+`gateware/probes/sideband/test_protocol.py:33`,
+`gateware/probes/hyperram/hyperram_dqs_top.py:134`,
 `scripts/qspi_burst_sim.py:111`.
 
 Two findings that change the shape of this step:

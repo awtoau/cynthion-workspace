@@ -16,7 +16,7 @@ can do with the board, and it is the one that says our platform must stay compat
 
 - Sources: `cynthion: cynthion/python/examples/tutorials/`, each with a matching
   `test-gateware-usb-device-0N.py` host script.
-- Platform files: `cynthion: cynthion/python/src/gateware/platform/cynthion_r{0_1..0_7,1_0..1_4}.py`
+- Platform files: `cynthion: cynthion/python/src/gateware/board/cynthion_r{0_1..0_7,1_0..1_4}.py`
   — 13 board revisions, selected by the `LUNA_PLATFORM` environment variable.
 - Entry point: `luna.top_level_cli(Top)`, which synthesises and uploads in one step.
 - Toolchain: the tutorials recommend YoWASP (`yowasp-yosys`, `yowasp-nextpnr-ecp5`) rather
@@ -32,7 +32,7 @@ device under construction appears on TARGET.
 Nothing needs porting. What needs *checking* is compatibility, and there is a real question
 here.
 
-**We have our own platform file**, `ecp5-test/cynthion_platform/cynthion_r1_4.py`, not
+**We have our own platform file**, `gateware/board/cynthion_r1_4.py`, not
 luna's. Any tutorial example a user runs against our repo resolves `platform.request("led", n)`,
 `platform.request("target_phy")` and `apollo_port_sharing` through ours. So the concrete
 question is: **does our platform present the same resource names, at the same indices, with
@@ -43,7 +43,7 @@ tutorial fails in a way that reads as the user's mistake.
 That comparison is mechanical and has not been done. It is the entire content of this
 child.
 
-Two known-good signs: `ecp5-test/cynthion_platform/core.py` already reports
+Two known-good signs: `gateware/board/core.py` already reports
 `control_phy: advertising` through `port_sharing()`, matching luna's interface, and
 `usb_serial.py` already builds a luna `USBDevice` against our platform successfully — which
 is tutorial parts 1–4's exact dependency.

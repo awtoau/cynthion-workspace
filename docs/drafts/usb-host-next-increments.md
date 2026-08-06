@@ -10,7 +10,7 @@ proposals for the owner rather than actions taken.
 **Blocks:** any host-mode bitstream. **Also unblocks:** #120, #125.
 
 `platform.request("target_phy")` may be called once, and
-`ecp5-test/riscv/vexii_hello_soc.py` already calls it, driving `clk`, `rst`,
+`gateware/soc/vexii_hello_soc.py` already calls it, driving `clk`, `rst`,
 `stp`, `data.o` and `data.oe` combinationally from `UlpiRegisters`. A host engine
 needs the same pins, and there is no mux point.
 

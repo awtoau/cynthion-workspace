@@ -14,7 +14,7 @@ Exit status 0 if every check passes. Output goes to the terminal and to
 
 ## What is checked, and why each check is here
 
-**The I2C master** (`ecp5-test/riscv/i2c_master.py`) is driven against a model
+**The I2C master** (`gateware/soc/i2c_master.py`) is driven against a model
 slave written in the testbench rather than in gateware -- a slave in Amaranth
 would share this controller's idea of what an I2C bus is, and would agree with
 it whether or not either was right. The model here reacts only to edges on SCL
@@ -41,7 +41,7 @@ received byte with its count. The count is checked for the property it exists
 for: that neither read clears anything, so a repeated byte and a silence are
 distinguishable without a side-effecting register.
 
-**The I2C bus mux** has never run on silicon in any form -- `ecp5-test/i2c/multiplexed.py`
+**The I2C bus mux** has never run on silicon in any form -- `gateware/probes/i2c/multiplexed.py`
 is marked simulation-only -- so the checks here are about the two properties that
 would be expensive to discover on a board: that the select cannot move underneath
 a transfer, and that the shared interrupt is the OR of the two `int` lines and
@@ -62,7 +62,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from sim_check_harness import Checks  # noqa: E402

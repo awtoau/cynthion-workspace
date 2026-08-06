@@ -44,7 +44,7 @@ BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 MIRROR = ROOT / "tmp" / "flash_reference"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
@@ -103,7 +103,7 @@ JEDEC_NO_RESPONSE = ("00000000", "00ffffff", "ffffffff")
 EXPECT_CAPACITY = 4 * 1024 * 1024
 
 # The CPU clock, for turning cycle counts into a rate. Must match SYNC_MHZ in
-# ecp5-test/riscv/vexii_hello_soc.py.
+# gateware/soc/vexii_hello_soc.py.
 SYNC_MHZ = 80
 
 # How many console lines to read before deciding.

@@ -73,8 +73,8 @@ def build(stub, build_dir):
 import sys
 from pathlib import Path
 ROOT = Path({str(ROOT)!r})
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 STUB = {stub!r}
 

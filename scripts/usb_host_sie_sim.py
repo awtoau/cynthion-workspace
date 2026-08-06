@@ -14,14 +14,14 @@ Exit status 0 if every assertion held. Output goes to the terminal and to
 
 ## What is under test
 
-`ecp5-test/usb_host/guh/` -- GUH's `USBSIE` and `USBResetController`, vendored at
+`gateware/probes/usb_host/guh/` -- GUH's `USBSIE` and `USBResetController`, vendored at
 `923c8490` and byte-identical to upstream. `docs/usb-host-options.md` section 18
 recommends taking exactly those and writing enumeration in firmware, and this is
 the layer that recommendation rests on: if the engine cannot run a control
 transfer against a real device stack, nothing above it is worth building.
 
 The other end is LUNA's own `USBDevice` with a control endpoint and a bulk IN
-endpoint (`ecp5-test/usb_host/model.py`). Both ends are upstream gateware that
+endpoint (`gateware/probes/usb_host/model.py`). Both ends are upstream gateware that
 was not written with the other in mind, which is what makes the result evidence
 rather than a tautology.
 
@@ -83,7 +83,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from sim_check_harness import Checks  # noqa: E402

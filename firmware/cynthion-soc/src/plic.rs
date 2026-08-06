@@ -1,7 +1,7 @@
 //! A RISC-V PLIC driver, parameterised by base address.
 //!
 //! Like `src/uart.rs`, and for the same reason: nothing below is conditional on
-//! the target. The SoC has a PLIC at `PLIC_BASE` (`ecp5-test/riscv/vexii_plic.py`)
+//! the target. The SoC has a PLIC at `PLIC_BASE` (`gateware/soc/vexii_plic.py`)
 //! and QEMU's `-M virt` has one at 0x0c000000, both with the register map the
 //! RISC-V PLIC specification defines, so this file is compiled unchanged for the
 //! board and for the emulator. The whole difference is two constants in
@@ -51,7 +51,7 @@ const THRESHOLD: usize = 0x0020_0000;
 ///
 /// **This is the one register in the SoC outside a UART's RBR whose read changes
 /// state**, and it is four megabytes from anything that gets polled -- see the
-/// register-discipline section of `ecp5-test/riscv/vexii_plic.py`. Do not read it
+/// register-discipline section of `gateware/soc/vexii_plic.py`. Do not read it
 /// speculatively, do not read it to "see what is pending" (that is what
 /// `PENDING_BASE` is for), and do not read it twice per interrupt.
 const CLAIM: usize = 0x0020_0004;

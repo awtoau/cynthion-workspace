@@ -18,7 +18,7 @@
 //!
 //! Each LED has two possible drivers: this peripheral, and the fabric's own
 //! diagnostic (bus activity, heartbeat, USB state -- see the LED comment in
-//! `ecp5-test/riscv/vexii_hello_soc.py`). The gateware muxes between them on the
+//! `gateware/soc/vexii_hello_soc.py`). The gateware muxes between them on the
 //! GPIO pin's output enable, so a pin in its RESET mode leaves the fabric
 //! driving and a pin put in push-pull takes over.
 //!
@@ -61,7 +61,7 @@ const MODE_PUSH_PULL: u16 = 0b01;
 /// The six LEDs, in the order they sit on the board.
 ///
 /// The discriminants are the GPIO pin numbers and match `GPIO_RED` and friends
-/// in `ecp5-test/riscv/vexii_hello_soc.py`. Nothing outside this module should
+/// in `gateware/soc/vexii_hello_soc.py`. Nothing outside this module should
 /// need them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Led {

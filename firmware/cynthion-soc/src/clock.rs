@@ -11,7 +11,7 @@
 //! ## `rdtime`, and why it is available on both targets
 //!
 //! RISC-V defines the `time` CSR as a read-only, free-running counter. The SoC's
-//! CPU is generated `--with-rdtime` and `ecp5-test/riscv/vexii_cpu.py` drives it
+//! CPU is generated `--with-rdtime` and `gateware/soc/vexii_cpu.py` drives it
 //! from a counter incremented once per `sync` cycle; QEMU's `-M virt` drives it
 //! from the CLINT. So this file needs no `#[cfg]` -- only the tick RATE differs,
 //! and that is `target::TIME_HZ`, exactly where every other target difference

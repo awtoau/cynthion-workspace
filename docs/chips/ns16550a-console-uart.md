@@ -1,7 +1,7 @@
 # NS16550A — the console UART, in fabric
 
 The register map both of this SoC's consoles answer on. Not a chip: it is
-`ecp5-test/riscv/uart16550.py`, instantiated twice, and it is here with the chip
+`gateware/soc/uart16550.py`, instantiated twice, and it is here with the chip
 notes because a driver author needs the same thing from it that they need from a
 part — which reads change state, and what they change.
 
@@ -9,7 +9,7 @@ part — which reads change state, and what they change.
 
 | | |
 |---|---|
-| Source | [`../../ecp5-test/riscv/uart16550.py`](../../ecp5-test/riscv/uart16550.py) |
+| Source | [`../../gateware/soc/uart16550.py`](../../gateware/soc/uart16550.py) |
 | Driver | `firmware/cynthion-soc/src/uart.rs`, one type for both instances and for QEMU |
 | Instances | index 0, USB CDC-ACM on AUX; index 1, async serial on R14/T14 to Apollo |
 | Base addresses | `cynthion_soc_pac::base`, generated from the SoC's own memory map — **not written down here** |

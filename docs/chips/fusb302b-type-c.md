@@ -25,14 +25,14 @@ multiplexed-master design in
 **Only TARGET and AUX have PD controllers.** CONTROL has a Type-C connector but no
 FUSB302B (commit `0ff3b5d`).
 
-Declared in `ecp5-test/cynthion_platform/cynthion_r1_4.py`. `scl` is `dir="o"` —
+Declared in `gateware/board/cynthion_r1_4.py`. `scl` is `dir="o"` —
 push-pull, no readback — so **clock stretching is impossible on this board**
-(`ecp5-test/riscv/i2c_master.py`). `scl`/`sda` carry `PULLMODE="NONE"`; the
+(`gateware/soc/i2c_master.py`). `scl`/`sda` carry `PULLMODE="NONE"`; the
 pull-ups are on the board.
 
 ## Measured on this board
 
-Bus scan (commit `82b0f1e`, `ecp5-test/pins/i2c_scan.py`), 0x08–0x77 write-address
+Bus scan (commit `82b0f1e`, `gateware/probes/pins/i2c_scan.py`), 0x08–0x77 write-address
 probe on all three buses:
 
 ```
@@ -41,7 +41,7 @@ target_type_c    0x22    FUSB302B
 aux_type_c       0x22    FUSB302B
 ```
 
-Register reads (commit `0ff3b5d`, `ecp5-test/pins/fusb302_id.py`):
+Register reads (commit `0ff3b5d`, `gateware/probes/pins/fusb302_id.py`):
 
 | register | target | aux | reads | decode |
 |---|---|---|---|---|
@@ -179,10 +179,10 @@ is that a state change can be looked into when it happens instead of polled.
 
 | | |
 |---|---|
-| liveness gateware | `ecp5-test/pins/fusb302_id.py` — JTAG applet `0x46555342` "FUSB" |
-| bus scanner | `ecp5-test/pins/i2c_scan.py` — applet `0x49324353` "I2CS" |
-| multiplexed master — superseded, and **it was never on silicon** | `ecp5-test/i2c/multiplexed.py`, `test_multiplexed.py` |
-| the mux that *is* on silicon | `ecp5-test/riscv/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
+| liveness gateware | `gateware/probes/pins/fusb302_id.py` — JTAG applet `0x46555342` "FUSB" |
+| bus scanner | `gateware/probes/pins/i2c_scan.py` — applet `0x49324353` "I2CS" |
+| multiplexed master — superseded, and **it was never on silicon** | `gateware/probes/i2c/multiplexed.py`, `test_multiplexed.py` |
+| the mux that *is* on silicon | `gateware/soc/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
 | firmware | `firmware/cynthion-soc/src/bus.rs` (owns the controller and the select), `fusb302.rs`, `typec.rs` |
 | bus and device ownership | `scripts/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
 | orientation and interrupt decode | `scripts/soc_typec_sim.py` — both bands from one comparator, and the read-to-clear registers |
@@ -201,9 +201,9 @@ SDA, and instantiating both against the same pads is a `DriverConflict`.
 
 Both controllers are reached from the RISC-V SoC over **one** I2C controller whose
 clock and data fan out to three pin-sets under a two-bit select
-(`ecp5-test/riscv/i2c_mux.py`). That mux is what makes two devices at `0x22`
+(`gateware/soc/i2c_mux.py`). That mux is what makes two devices at `0x22`
 addressable at all, and **this is its first appearance on silicon** — the earlier
-`ecp5-test/i2c/multiplexed.py` was only ever simulated. Confirmed working:
+`gateware/probes/i2c/multiplexed.py` was only ever simulated. Confirmed working:
 
 ```
 > i2c target

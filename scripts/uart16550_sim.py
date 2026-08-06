@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Drives `ecp5-test/riscv/uart16550.py` over its CSR bus and checks what it does.
+Drives `gateware/soc/uart16550.py` over its CSR bus and checks what it does.
 
     ./scripts/uart16550_sim.py
     ./scripts/uart16550_sim.py -v      # print every access
@@ -40,7 +40,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

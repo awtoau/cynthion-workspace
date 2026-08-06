@@ -16,14 +16,14 @@ Run any HyperRAM harness, and say what each measures and whether it has ever run
 ## Every harness is TWO files with the SAME name
 
 A runner under `scripts/` builds a bitstream, loads it and reads the result
-registers back; a gateware top under `ecp5-test/hyperram/` is what it builds.
+registers back; a gateware top under `gateware/probes/hyperram/` is what it builds.
 The pair share a basename because they are halves of one thing.
 
 That shape was read as duplication in #189 -- `hyperram_fifo.py`,
 `hyperram_regfuzz.py` and `hyperram_identify.py` each "existed twice". None of
 them did. The real fault was worse and the opposite way round: two of the three
 runners had been archived to `debris/scripts/` as spent one-offs while their
-gateware stayed live, so `ecp5-test/README.md` and `docs/chips/w956a8-hyperram.md`
+gateware stayed live, so `gateware/README.md` and `docs/chips/w956a8-hyperram.md`
 both name `scripts/hyperram_fifo.py`, `scripts/hyperram_regfuzz.py` and
 `scripts/hyperram_ladder.py` as the host drivers for paths that did not exist.
 `./dev.py audit` could not see it -- its DANGLING check reads only `scripts/`,
@@ -36,9 +36,9 @@ rather than reachable by remembering a path and a flag.
 
 #185 is about coalescing: a HyperBus data phase cannot be stalled, and the SoC's
 Wishbone master bubbles, so holding a transaction open corrupts the write. That
-master is `HyperRAMWishbone` in `ecp5-test/riscv/vexii_bootram.py` (`sustained`
+master is `HyperRAMWishbone` in `gateware/soc/vexii_bootram.py` (`sustained`
 defaults to False for exactly this reason), and **not one of the eleven tops
-under `ecp5-test/hyperram/` goes near it.** Every one drives `HyperRAMInterface`
+under `gateware/probes/hyperram/` goes near it.** Every one drives `HyperRAMInterface`
 or `HyperRAMDQSInterface` from its own FSM, which supplies and consumes a word
 per cycle by construction, so none of them can express the fault.
 
@@ -54,7 +54,7 @@ is in none of them.
 
 ## "Has it ever run" is a separate question from "does it build"
 
-`ecp5-test/README.md` records the build state of every test bitstream. This
+`gateware/README.md` records the build state of every test bitstream. This
 records whether anyone ever put the result on silicon and wrote the number down,
 which is a different and less flattering fact: a harness that was built and left
 is not coverage, and `hyperram_ceiling.py` sat in that state from the day it was
@@ -68,7 +68,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-TOPS = ROOT / "ecp5-test" / "hyperram"
+TOPS = ROOT / "gateware" / "probes" / "hyperram"
 
 
 # name -> (runner, gateware top, what it measures, whether it has ever run)
@@ -134,7 +134,7 @@ HARNESSES = {
 # other half of the same problem, and #189 is about being able to find both.
 #
 # The run/never-run calls here are from commit evidence, and two disagree with
-# `ecp5-test/README.md`'s silicon-result column -- see the note under each.
+# `gateware/README.md`'s silicon-result column -- see the note under each.
 ORPHAN_TOPS = {
     "hyperram_stress.py":
         "bulk, retention and random-access fill/verify; JTAG registers, no host "
@@ -152,7 +152,7 @@ ORPHAN_TOPS = {
 # its `hyperram_ladder.py` runner produced a figure that is invalid as a
 # sustained rate, holding CS# low ~17 us against CR1's 4 us tCSM.
 #
-# `ecp5-test/README.md` already said "retire" for every one of them. They are in
+# `gateware/README.md` already said "retire" for every one of them. They are in
 # git history, which is where superseded code belongs.
 
 
@@ -162,12 +162,12 @@ def table(markdown=False):
         out = ["| harness | runner | gateware top | measures | ever run |",
                "|---|---|---|---|---|"]
         out += [f"| `{n}` | `scripts/{r}` | "
-                f"{'`ecp5-test/hyperram/' + t + '`' if t else 'none (host only)'} "
+                f"{'`gateware/probes/hyperram/' + t + '`' if t else 'none (host only)'} "
                 f"| {m} | {e} |" for n, r, t, m, e in rows]
         out.append("")
         out.append("| gateware top with no runner | what it would measure |")
         out.append("|---|---|")
-        out += [f"| `ecp5-test/hyperram/{t}` | {w} |"
+        out += [f"| `gateware/probes/hyperram/{t}` | {w} |"
                 for t, w in sorted(ORPHAN_TOPS.items())]
         return "\n".join(out)
 
@@ -176,7 +176,7 @@ def table(markdown=False):
         out.append(f"  {name:<11} {measures}")
         out.append(f"              runner  scripts/{runner}")
         out.append(f"              top     "
-                   f"{'ecp5-test/hyperram/' + top if top else '-- host only'}")
+                   f"{'gateware/probes/hyperram/' + top if top else '-- host only'}")
         out.append(f"              run?    {evidence}")
         out.append("")
     out.append("  gateware tops with no runner:")
@@ -213,7 +213,7 @@ def main():
 
     runner, top, _measures, _evidence = HARNESSES[args.harness]
     if top and not (TOPS / top).exists():
-        print(f"missing gateware top: ecp5-test/hyperram/{top}", file=sys.stderr)
+        print(f"missing gateware top: gateware/probes/hyperram/{top}", file=sys.stderr)
         return 1
     rest = args.rest[1:] if args.rest[:1] == ["--"] else args.rest
     return subprocess.call([sys.executable, str(SCRIPTS / runner), *rest],

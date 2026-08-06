@@ -66,7 +66,7 @@ sit on: AUX labels at x=92.71 match the left-side pins (x=95.25), CONTROL at
 x=124.46 matches the right (x=123.19).
 
 Then confirmed physically — see *Validation* below. Encoded in
-`ecp5-test/power_monitor/registers.py`.
+`gateware/probes/power_monitor/registers.py`.
 
 ## Scaling
 
@@ -176,9 +176,9 @@ rather than vanishes.**
 
 | path | how |
 |---|---|
-| host over JTAG | `ecp5-test/power_monitor/power_monitor_gateware.py` (applet `0x504D4F4E` "PMON") + `scripts/power_probe.py` |
-| free-running poller | `ecp5-test/sideband/sideband_gateware.py` — reads one register on a loop, blinks an LED when it sees `0x54` |
-| RISC-V CPU | `ecp5-test/riscv/i2c_master.py` (OpenCores register map) wired in `ecp5-test/riscv/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/bus.rs` (which owns `bus/i2c.rs` and `bus/mux.rs`) and `src/power.rs`, shell commands `i2c` and `power` |
+| host over JTAG | `gateware/probes/power_monitor/power_monitor_gateware.py` (applet `0x504D4F4E` "PMON") + `scripts/power_probe.py` |
+| free-running poller | `gateware/probes/sideband/sideband_gateware.py` — reads one register on a loop, blinks an LED when it sees `0x54` |
+| RISC-V CPU | `gateware/soc/i2c_master.py` (OpenCores register map) wired in `gateware/soc/vexii_hello_soc.py`; driver `firmware/cynthion-soc/src/bus.rs` (which owns `bus/i2c.rs` and `bus/mux.rs`) and `src/power.rs`, shell commands `i2c` and `power` |
 
 ### From the SoC shell
 
@@ -254,7 +254,7 @@ with a side effect anywhere in it**. See
 elsewhere.
 
 ```bash
-apollo configure ecp5-test/power_monitor/build/top.bit
+apollo configure gateware/probes/power_monitor/build/top.bit
 ./scripts/power_probe.py                 # scan, identify, measure
 ./scripts/power_probe.py --address 0x10  # skip the scan
 ./scripts/power_probe.py --read 0xFE     # one register

@@ -2,7 +2,7 @@
 
 **Recommendation: a middle path. Do not drop `luna_soc` yet, but stop treating
 it as a workspace-wide dependency — it is only needed by the facedancer SoC
-build.** Our own `ecp5-test/` designs can move to real `amaranth-soc` today, and
+build.** Our own `gateware/` designs can move to real `amaranth-soc` today, and
 that removes the import-order hack, the annotation patch script, and most of the
 confusion. The fork stays only until the facedancer SoC is dealt with separately.
 
@@ -17,7 +17,7 @@ reasoned.
 | Is `luna_soc` a hard dependency of `cynthion`? | **Yes, unconditionally** — `import luna_soc` at `cynthion/python/src/__init__.py:9`, top level, not in a try/except |
 | Does the **analyzer** gateware need it? | **No.** Zero references in `gateware/analyzer/` |
 | Does the **facedancer** gateware need it? | **Yes** — 5 import sites in `gateware/facedancer/top.py` |
-| Do *our* `ecp5-test/` designs need it? | **No**, apart from the sys.path aliasing side effect |
+| Do *our* `gateware/` designs need it? | **No**, apart from the sys.path aliasing side effect |
 | Is real `amaranth-soc` a drop-in for what we use? | **Yes** — all 6 probes pass |
 | Is the py3.14 CSR annotation bug fixed upstream? | **Yes** — class-level `csr.Field` annotations work on real amaranth-soc under 3.15t |
 | Upstream test suite | **295 passed** in 0.51 s, in the throwaway venv |
@@ -57,8 +57,8 @@ Our own designs, all four sites:
 
 | File | Import | Why |
 |---|---|---|
-| `ecp5-test/riscv/vexii_hello_soc.py:45` | `core.blockram` | real use |
-| `ecp5-test/i2c/multiplexed.py:69` | `core.blockram` | **aliasing only** — `# noqa: F401 (aliases amaranth_soc)` |
+| `gateware/soc/vexii_hello_soc.py:45` | `core.blockram` | real use |
+| `gateware/probes/i2c/multiplexed.py:69` | `core.blockram` | **aliasing only** — `# noqa: F401 (aliases amaranth_soc)` |
 | `scripts/patch_amaranth_soc_annotations.py:110` | `core.blockram` | aliasing only, to locate the file it patches |
 
 So the genuine surface is exactly two things:
@@ -112,7 +112,7 @@ PASS  things only luna_soc provides          (blockram/cpu correctly absent)
 PASS  REAL multiplexed.py elaborated against real amaranth-soc
 ```
 
-The last one is the decisive result. `ecp5-test/i2c/multiplexed.py` was imported
+The last one is the decisive result. `gateware/probes/i2c/multiplexed.py` was imported
 **unmodified**, with `luna_soc` replaced by an empty stub module so the aliasing
 import became a no-op, and it **elaborated to 4670 lines of RTLIL**. The
 peripheral is already portable; its luna_soc line is pure accident.
@@ -210,10 +210,10 @@ but the facedancer build is the real test.
 
 ### Step 2 — cut our own designs loose
 
-`ecp5-test/i2c/multiplexed.py`: delete the `import luna_soc...blockram` line and
+`gateware/probes/i2c/multiplexed.py`: delete the `import luna_soc...blockram` line and
 its 6-line comment. Proven to work — that is what the RTLIL probe did.
 
-The three `riscv/` designs: vendor `blockram.py` (127 lines) into `ecp5-test/`
+The three `riscv/` designs: vendor `blockram.py` (127 lines) into `gateware/`
 and import `VexRiscv` explicitly. 321 lines total. Worth doing because it makes
 our designs independent of the fork.
 
@@ -271,7 +271,7 @@ submission.
 Steps 1–3 are safe and can be done immediately. Step 4 is the one that actually
 retires the fork, and it is a build test, not a judgement call.
 
-## Done 2026-07-31: the `cynthion` package is out of `ecp5-test/`
+## Done 2026-07-31: the `cynthion` package is out of `gateware/`
 
 A sixth step, not in the list above, turned out to be the cheapest of all and
 has been taken.
@@ -284,7 +284,7 @@ Getting it dragged in the whole stack, because `CynthionPlatform` inherits
 pins `luna-soc` to the fork.
 
 That pin map is board wiring. It changes when the hardware revision changes,
-which for r1.4 is never. So it is now vendored at `ecp5-test/cynthion_platform/`
+which for r1.4 is never. So it is now vendored at `gateware/board/`
 and the dependency is gone from our gateware.
 
 ### What it cost
@@ -330,7 +330,7 @@ survived.
 board reads its bitstream at on power-on. Not cosmetic.
 
 **`DEFAULT_CLOCK_FREQUENCIES_MHZ`** is read by
-`ecp5-test/adv_speed/adv_speed_gateware.py` to size a UART divisor.
+`gateware/probes/adv_speed/adv_speed_gateware.py` to size a UART divisor.
 
 ### Two things the plan did not anticipate
 
@@ -344,11 +344,11 @@ so they are copied verbatim into `resources.py`. Verbatim and not tidied: they
 build the pin records the map is expressed in, and a "cleaner" version that
 constructed a subsignal differently would silently change the pin map.
 
-**The package cannot be called `platform`.** `ecp5-test/` goes on `sys.path`, so
+**The package cannot be called `platform`.** `gateware/` goes on `sys.path`, so
 a package named `platform` there shadows the **standard library** `platform`
 module for the whole process. `amaranth/tracer.py` imports it. Found by doing it
 and watching the stdlib import resolve to our `__init__.py`. Hence
-`cynthion_platform`. Do not rename it back.
+`board`. Do not rename it back.
 
 ### Proof
 
@@ -379,7 +379,7 @@ python3 scripts/platform_vendor_compare.py   # → tmp/logs/platform_vendor_comp
 
 ### What still imports `cynthion`, and why that is correct
 
-Nothing in `ecp5-test/` does, except `riscv/vexii_hello_soc.py`, which was left
+Nothing in `gateware/` does, except `riscv/vexii_hello_soc.py`, which was left
 alone only because another investigation owned it at the time; its change is the
 same one-line import swap.
 
@@ -392,7 +392,7 @@ analyzer and facedancer gateware against r0.2 as a toolchain smoke test;
 deliberately, as the baseline it compares against.
 
 **This does not by itself retire the fork.** `luna` is still a real dependency of
-`ecp5-test/` for USB (`USBDevice`, `USBSerialDevice`, the stream endpoints),
+`gateware/` for USB (`USBDevice`, `USBSerialDevice`, the stream endpoints),
 HyperRAM (`HyperRAMInterface`) and `JTAGRegisterInterface`, and `luna_soc` still
 supplies `blockram` and the CPU wrappers. What changed is that the dependency is
 now on `luna` for things `luna` actually provides, rather than on the entire

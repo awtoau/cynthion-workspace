@@ -174,7 +174,7 @@ use backend::seek;
 pub use backend::{read_pair, write_pair};
 
 /// The HyperRAM CSR port on the FPGA, per `HyperRAMBoot` in
-/// `ecp5-test/riscv/vexii_bootram.py`.
+/// `gateware/soc/vexii_bootram.py`.
 #[cfg(not(feature = "qemu"))]
 mod backend {
     use core::ptr::{read_volatile, write_volatile};

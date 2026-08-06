@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Loads `ecp5-test/fabric` into the FPGA's volatile configuration and monitors it.
+Loads `gateware/probes/fabric` into the FPGA's volatile configuration and monitors it.
 
 **SRAM only. This never writes flash.** Configuration loaded this way is undone
 by a power cycle, so the board returns to its own boot gateware without any
@@ -72,7 +72,8 @@ ROOT = Path(__file__).resolve().parent.parent
 BITSTREAM = ROOT / "tmp" / "fabric" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from devlog import emit  # noqa: E402

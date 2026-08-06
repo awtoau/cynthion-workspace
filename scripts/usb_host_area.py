@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Measure the LUT, FF, BRAM and fmax cost of `ecp5-test/usb_host/guh`.
+Measure the LUT, FF, BRAM and fmax cost of `gateware/probes/usb_host/guh`.
 
     ./scripts/usb_host_area.py              # baseline, then the engine
     ./scripts/usb_host_area.py --configs sie
@@ -23,7 +23,7 @@ one LED pin, so nothing is dangling. The baseline is that scaffold with no engin
 in it, and it is subtracted.
 
 Clocking is `VariableClockDomainGenerator(sync_mhz=60)` -- the SoC's own generator
-(`ecp5-test/riscv/vexii_hello_soc.py`), not LUNA's -- so the `sync`/`usb` split and
+(`gateware/soc/vexii_hello_soc.py`), not LUNA's -- so the `sync`/`usb` split and
 the 60 MHz constraint match the design this would go into.
 
 ## What this number is, and what it is not
@@ -47,7 +47,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, log  # noqa: E402
@@ -127,7 +127,7 @@ CELLS = ("TRELLIS_COMB", "TRELLIS_FF", "TRELLIS_RAMW", "DP16KD")
 
 
 def measure(config):
-    from cynthion_platform import CynthionPlatformRev1D4
+    from board import CynthionPlatformRev1D4
 
     emit(f"  building {config} ...")
     build_dir = BUILD_ROOT / config

@@ -37,7 +37,7 @@ the wire, and it is removable without any new gateware:
   * `--mode configure` -- configure the FPGA over JTAG, timed. Volatile: this
                          writes SRAM only and never touches flash.
   * `--mode sink-test` -- push a bitstream-sized payload at the FPGA's own bulk
-                         endpoint (ecp5-test/loader/bitstream_sink.py) to show
+                         endpoint (gateware/probes/loader/bitstream_sink.py) to show
                          how fast that leg is, and hence that it is not the
                          constraint.
 
@@ -345,7 +345,7 @@ def mode_measure(logger, args):
 def mode_sink_test(logger, args):
     """Measures the FPGA's own bulk endpoint, the leg issue #100 assumed was slow.
 
-    Requires ecp5-test/loader/bitstream_sink.py to be loaded. The result is
+    Requires gateware/probes/loader/bitstream_sink.py to be loaded. The result is
     expected to be fast and, precisely because it is fast, to demonstrate that
     this leg is not what makes loading slow -- the constraint is upstream, in
     the debug controller.
@@ -368,7 +368,7 @@ def mode_sink_test(logger, args):
     if dev is None:
         logger.error("no bitstream sink at 1209:000e")
         logger.error("load it first:")
-        logger.error("  ./ecp5-test/loader/bitstream_sink.py --build --program")
+        logger.error("  ./gateware/probes/loader/bitstream_sink.py --build --program")
         return 1
 
     dev.set_configuration()

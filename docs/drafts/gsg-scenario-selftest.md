@@ -33,7 +33,7 @@ Structurally this is the closest match to work we have already done, because the
 **register reads over a debug transport**, not USB traffic.
 
 - **The three PHY tests** read a USB3343's vendor/product ID registers over ULPI. Our
-  `ecp5-test/riscv/ulpi_window.py` already does exactly this for `target_phy`, with a
+  `gateware/soc/ulpi_window.py` already does exactly this for `target_phy`, with a
   documented four-phase clock-domain handshake and a bounded wait. Extending it to
   `aux_phy` and `control_phy` is a resource-request change, and it is the only new gateware
   the PHY tests need.
@@ -45,7 +45,7 @@ Structurally this is the closest match to work we have already done, because the
 - **The transport is the real difference.** Upstream reaches the registers over a
   JTAG-tunnelled debug interface; we reach ours over the CPU's CSR bus, and we have a third
   option — the sideband link — that upstream does not use for this. We have
-  `ecp5-test/riscv/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
+  `gateware/soc/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
   either.
 
 The question this scenario really asks is not "can we port it" but **"do we want upstream's
@@ -55,7 +55,7 @@ five cases may already be a subset of what we check. That comparison should be d
 any porting, because the likely outcome is "we already have this, under different names".
 
 Taking `control_phy` off Apollo to test it requires the port request —
-`ecp5-test/sideband_advertise.py` — which is already built.
+`gateware/sideband_advertise.py` — which is already built.
 
 ## How it would be tested
 

@@ -11,7 +11,7 @@ Import this before building, or `source` the shell form it prints. Amaranth read
 into the generated build script, so **nothing is patched** -- these are documented
 override hooks.
 
-## Measured, on `ecp5-test/riscv/vexii_hello_soc.py`
+## Measured, on `gateware/soc/vexii_hello_soc.py`
 
     baseline                        70 s
     with nextpnr flags              59 s      and Fmax 72.6 -> 80.65 MHz

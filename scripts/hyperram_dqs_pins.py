@@ -48,7 +48,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
 
-# The part and package on r1.4, from `ecp5-test/cynthion_platform/cynthion_r1_4.py`.
+# The part and package on r1.4, from `gateware/board/cynthion_r1_4.py`.
 # `BG256` is Amaranth's name for what prjtrellis calls `CABGA256`.
 DEVICE = "LFE5U-12F"
 PACKAGE = "CABGA256"

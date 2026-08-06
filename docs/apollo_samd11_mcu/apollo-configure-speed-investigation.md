@@ -1104,7 +1104,7 @@ time.
 
 ## 2. The FPGA-side transfer really is ~6 ms -- and it does not matter
 
-`ecp5-test/loader/bitstream_sink.py` is the receiving half of the proposed
+`gateware/probes/loader/bitstream_sink.py` is the receiving half of the proposed
 loader: a bulk OUT endpoint on TARGET-C that counts bytes and never
 back-pressures. It builds (110 MHz against a 60 MHz constraint), loads, and
 enumerates at `1209:000e`. Pushing a 304726-byte bitstream at it:

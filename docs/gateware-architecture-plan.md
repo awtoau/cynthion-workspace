@@ -52,8 +52,8 @@ shared one would have carried is described in
 [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
 negotiation is not on the critical path.
 
-**Done, and on silicon** (#121). `ecp5-test/riscv/i2c_mux.py` is the select and
-the four Type-C signals; `ecp5-test/riscv/i2c_master.py` gained an `idle` output
+**Done, and on silicon** (#121). `gateware/soc/i2c_mux.py` is the select and
+the four Type-C signals; `gateware/soc/i2c_master.py` gained an `idle` output
 so the select cannot move underneath a transfer. The two `int` lines were OR-ed
 onto one PLIC source here, **and #135 gave each its own** — one controller does
 mean one device at a time on the bus, but that says nothing about which device the
@@ -62,7 +62,7 @@ handler should be told to service, and the PLIC had 27 spare sources. See
 clears: clearing needs a millisecond of I2C on the controller the foreground is
 also using, which is not a thing an interrupt handler may do. Normal context
 clears the device that asserted and re-enables its source.
-Note the earlier `ecp5-test/i2c/multiplexed.py` was never on silicon and is
+Note the earlier `gateware/probes/i2c/multiplexed.py` was never on silicon and is
 superseded.
 
 **On presenting the LEDs as a fake I2C device:** attractive for uniformity and
@@ -109,7 +109,7 @@ The registers themselves are already read and decoded from a standalone bitstrea
 the CPU-side path, not the knowledge.
 
 **FUSB302B and die temperature over the sideband.** Small, because the gateware
-exists -- `ecp5-test/pins/fusb302_id.py` already reads both controllers. What is
+exists -- `gateware/probes/pins/fusb302_id.py` already reads both controllers. What is
 missing is sideband *commands*, not blocks; the opcode map and what adding to it
 costs are in [`chips/cynone-sideband.md`](chips/cynone-sideband.md#4-commands). Temperature needs the `DTR`
 primitive instantiated, which it currently is not anywhere.

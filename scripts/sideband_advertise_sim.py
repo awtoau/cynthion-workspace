@@ -40,7 +40,7 @@ from amaranth.sim import Simulator
 warnings.filterwarnings("ignore", category=UnusedElaboratable)
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "ecp5-test"))
+sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from sim_check_harness import Checks  # noqa: E402

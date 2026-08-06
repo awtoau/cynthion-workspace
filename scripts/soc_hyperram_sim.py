@@ -112,8 +112,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "riscv"))
-sys.path.insert(0, str(ROOT / "ecp5-test" / "hyperram"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
+sys.path.insert(0, str(ROOT / "gateware" / "probes" / "hyperram"))
 
 from amaranth import Elaboratable, Module, Signal
 from amaranth.hdl import Fragment
@@ -811,7 +811,7 @@ def section_structural(checks, emit):
     """5. The reasons upstream's PHY cannot be instantiated here."""
     emit("\n5. Structural: our PHY against upstream's, in source\n")
 
-    ours = (ROOT / "ecp5-test" / "riscv" / "hyperram_dqs_phy.py").read_text()
+    ours = (ROOT / "gateware" / "soc" / "hyperram_dqs_phy.py").read_text()
     upstream = _upstream_source()
 
     checks.check("upstream assigns bus.clk as a single net",

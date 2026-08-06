@@ -55,7 +55,7 @@ Values are from one board. A second has not been checked.
 | | `cs` | N8 |
 | clock | `SCK` | **no ball number** — reachable only through the `USRMCLK` macro |
 
-Declared in `ecp5-test/cynthion_platform/cynthion_r1_4.py`. All four quad data
+Declared in `gateware/board/cynthion_r1_4.py`. All four quad data
 lines are wired, so quad mode is a gateware question, not rework.
 
 ## No read ceiling has been found (NEW, 2026-08-03)
@@ -78,7 +78,7 @@ open toolchain**, and measurement is the only authority.
 The limit reached is **the test design's own fmax**, not the flash and not the
 pin. SCK is `sync / (divisor + 1)`, so the sync clock a bitstream is built at is
 its top SCK; this design closes at 149 MHz and 144 is the fastest legal PLL rate
-below that. Two fixes moved it from 131 to 149 (`ecp5-test/qspi/qspi_gateware.py`);
+below that. Two fixes moved it from 131 to 149 (`gateware/probes/qspi/qspi_gateware.py`);
 above that the critical path is inside Glasgow's own `IOStreamer`, which is the
 part that has to run at SCK.
 
@@ -180,7 +180,7 @@ RISC-V storage.
 | host, slow | `apollo flash` — bit-banged through Apollo's software JTAG TAP |
 | host, fast | `apollo flash --fast` — FlashBridge gateware in FPGA SRAM, USB bulk straight to the fabric, Apollo out of the data path |
 | CPU, memory-mapped | `SPIFlashMemoryMap` window; see [Register reference](../hardware.md#register-reference) for the address |
-| CPU, arbitrary commands | `HoldableSPIController` + `FairSPIControlPortCrossbar` in `ecp5-test/riscv/vexii_flash.py` — **not** luna_soc's, which has two defects here ([`../upstream-boundary.md`](../upstream-boundary.md)) |
+| CPU, arbitrary commands | `HoldableSPIController` + `FairSPIControlPortCrossbar` in `gateware/soc/vexii_flash.py` — **not** luna_soc's, which has two defects here ([`../upstream-boundary.md`](../upstream-boundary.md)) |
 | sideband | `scripts/sideband_read.py` |
 
 Boot-image selection, slot layout and the partition work:
