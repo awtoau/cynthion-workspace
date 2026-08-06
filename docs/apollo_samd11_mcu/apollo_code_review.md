@@ -48,37 +48,13 @@ Apollo is the ARM-based debug controller on Cynthion. This review covers three a
 
 ## 2. Race Conditions
 
-### USB State Management
+There are none. Checked against the firmware in #61: it is bare-metal, so only an
+ISR can preempt, and the three this review reported were in code that does not
+exist. What can preempt what is in
+[`../chips/samd11-apollo.md`](../chips/samd11-apollo.md).
 
-**Location**: `src/vendor.c`, `src/fpga.c`, `src/fpga_adv.c`
-
-#### Refuted: none of the three "races" below exist
-
-**This section is superseded by
-#61, which checked each claim against the
-firmware.** Kept here only so the claims are not
-rediscovered:
-
-* *"Multiple USB hosts could request `TAKE_OVER` simultaneously"* —
-  `VENDOR_REQUEST_TAKE_OVER` does not exist in the firmware, and a USB **device**
-  has exactly one host.
-* *"Another thread could call `fpga_set_state()`"* — `fpga_set_state()` does not
-  exist (the API is `fpga_set_online(bool)`), and the firmware is bare-metal with
-  no threads: one `while (1)` calling `tud_task()`, from which every vendor
-  request is dispatched.
-* *"USB disconnect during SPI transfer"* — the TODO at `debug_spi.c:138` is real
-  and still open, but it is a board-revision conditional, not a race.
-
-The one genuine concurrency defect was elsewhere — a read/clear pair on a counter
-shared with `EIC_Handler` — and it is fixed.
-
-### Recommendations
-
-- [ ] Resolve `debug_spi.c:138`: decide whether `uart_release_pinmux()` should run
-      on r0.2+ boards, and delete the TODO either way
-- [x] ~~Add mutex protection to `fpga_set_state()`~~ — withdrawn; no threads, and
-      no such function
-- [x] ~~Implement atomic flags for USB handoff~~ — withdrawn; one host, one context
+Still open from it: `debug_spi.c:138` releases the UART pinmux on every board
+revision, and the `r0.2+` TODO above it was never answered.
 
 ---
 
@@ -182,13 +158,11 @@ If implementing dual CDC:
 
 ## Next Actions
 
-1. ~~**Implement mutex/synchronization** for FPGA state changes~~ — **withdrawn**,
-   see #61 and [`../chips/samd11-apollo.md`](../chips/samd11-apollo.md):
-   bare-metal, one host, and the one real race is fixed
-2. **Document buffer requirements** per MCU variant
-3. **Add DFU timeout handling**
-4. **Resolve hardware revision TODOs** (mark r0.2 as unsupported if needed)
-5. **If dual CDC needed**: Plan integration of second CDC interface
+1. **Document buffer requirements** per MCU variant
+2. **Add DFU timeout handling**
+3. **Resolve `debug_spi.c:138`** — decide whether `uart_release_pinmux()` should
+   run on r0.2+, and delete the TODO either way
+4. **If dual CDC needed**: Plan integration of second CDC interface
 
 ---
 
