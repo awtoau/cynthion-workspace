@@ -481,19 +481,40 @@ def cross_check(peripherals, emit):
         "PLIC": soc_module.PLIC_BASE,
         "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
-        "HYPERRAM": soc_module.HYPERRAM_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
         "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
         "FLASH_ILA": soc_module.FLASH_ILA_BASE,
         "BOOTRAM": soc_module.BOOTRAM_BASE,
     }
 
-    ok = True
+    # The HyperRAM memory window is the one peripheral a build variant removes:
+    # HYPERRAM_BIST hands the part to a BIST engine the CPU commands instead, so
+    # nothing of the bus sits between the engine and the device (#226). Absent is
+    # correct there and a defect anywhere else, so it is checked either way round
+    # rather than skipped.
+    if getattr(soc_module, "HYPERRAM_BIST", False):
+        if "HYPERRAM" in bases:
+            emit("  MISMATCH gateware HYPERRAM: HYPERRAM_BIST is set, so the "
+                 f"memory window should be absent -- found at 0x{bases['HYPERRAM']:08x}")
+            ok_bist = False
+        else:
+            emit("  HYPERRAM window absent, as HYPERRAM_BIST requires")
+            ok_bist = True
+    else:
+        expected["HYPERRAM"] = soc_module.HYPERRAM_BASE
+        ok_bist = True
+
+    ok = ok_bist
     for name, address in sorted(expected.items()):
         actual = bases.get(name)
         if actual != address:
-            emit(f"  MISMATCH gateware {name}: constant 0x{address:08x}, "
-                 f"map 0x{actual if actual is None else actual:08x}")
+            # `actual` is None when the peripheral is not in the map at all,
+            # which is what a build variant that drops one looks like. The
+            # conditional here used to yield `actual` on BOTH branches, so that
+            # case raised TypeError formatting None instead of reporting the
+            # mismatch -- an error path that crashed rather than explaining.
+            where = "ABSENT from the map" if actual is None else f"map 0x{actual:08x}"
+            emit(f"  MISMATCH gateware {name}: constant 0x{address:08x}, {where}")
             ok = False
     emit(f"gateware constants: {len(expected)} checked, "
          f"{'all agree' if ok else 'DISAGREEMENT ABOVE'}")
@@ -999,6 +1020,19 @@ def run(args, emit):
         if not committed.exists():
             emit("no committed soc.svd to compare against")
             return 1
+        # A measurement variant has a different memory map ON PURPOSE, so the
+        # committed SVD is not its reference and must not be regenerated from
+        # it -- that would hand the shipping firmware a map for a build it will
+        # never run on. Reported as a skip rather than as staleness, because
+        # "STALE -- run without --check" is an instruction to do exactly the
+        # wrong thing here.
+        import top as soc_module
+        if getattr(soc_module, "HYPERRAM_BIST", False):
+            emit("HYPERRAM_BIST is set: this is a measurement variant with a "
+                 "deliberately different map, so the committed soc.svd is not "
+                 "its reference and is left alone")
+            return 0 if check_offsets(peripherals, emit) else 1
+
         current = committed.read_bytes() == svd_path.read_bytes()
         emit("committed soc.svd is current" if current
              else "committed soc.svd is STALE -- run without --check")

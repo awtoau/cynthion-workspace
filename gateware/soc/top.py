@@ -633,6 +633,25 @@ HYPERRAM_DQS = False
 # run that sweep; leave it off otherwise.
 HYPERRAM_CLOCK_STOP = False
 
+# Take the HyperRAM OFF the Wishbone and hand it to a BIST engine the CPU
+# commands instead. See #226.
+#
+# Every HyperRAM figure this project has recorded was taken with at least one
+# broken instrument -- the controller sampling a CK early, RECOVERY with no
+# tCSHI gap, a negative control that armed after the engine started, and a JTAG
+# readback that slips below a sync/TCK ratio of about four. The last two were
+# only fixed on 2026-08-06, so nothing measured before then discriminates.
+#
+# This build exists to re-establish those numbers from zero with none of that in
+# the path: no JTAGRegisterInterface, and no decoder, cache, arbiter or
+# RegisteredResponse bubble between the engine and the part. The unfinished SoC
+# DQS write path (#92, #211) is therefore not in the way, so the matrix can be
+# produced without fixing it first.
+#
+# It is a measurement variant, not the shipping SoC: with this True the CPU
+# cannot address the HyperRAM at all.
+HYPERRAM_BIST = False
+
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
 # firmware, and a geometry reported from a different number than the one the
@@ -1088,7 +1107,12 @@ class CynthionSoC(Elaboratable):
         # This extra decoder window is the timing risk in #90: its address compare is
         # on the path that needed RegisteredResponse to recover Fmax. Simulation can
         # establish protocol and data integrity; only a build can measure the margin.
-        decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
+        #
+        # HYPERRAM_BIST drops it: the point of that variant is that nothing of the
+        # bus is between the engine and the part, so leaving the window mapped
+        # would defeat it. The staging port at BOOTRAM_BASE stays either way.
+        if not HYPERRAM_BIST:
+            decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
 
         # The HyperRAM transaction counters (#173). Inputs only, taken from
         # signals `BootRAM` already computes, so this cannot alter the timing of
