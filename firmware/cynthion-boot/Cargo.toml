@@ -26,6 +26,22 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 # is what keeps the `cfg` a known one and the build warning-clean.
 qemu = []
 
+# The HyperRAM BIST measurement variant (#226), matching `HYPERRAM_BIST` in
+# `gateware/soc/top.py` and the feature of the same name on `cynthion-soc`.
+#
+# In that bitstream the BIST engine owns the HyperRAM pins, so the SoC has no
+# memory window and no BootRAM -- and the staging header this bootloader reads
+# lives in BootRAM. The table above promises that every failure ends in a jump,
+# including "HyperRAM never answers", but that promise assumes the window
+# ANSWERS badly. Here it is absent from the decoder entirely, and VexiiRiscv
+# traps an access to an address in no declared region: the trap happens on the
+# first load, before any of those fallbacks can run, and the CPU is silent from
+# reset with no banner and no console.
+#
+# So the probe is compiled out rather than being allowed to fail. Nothing else
+# about the boot path changes -- the jump is the same jump, to the same address.
+hyperram-bist = []
+
 # Measured, not assumed. `./scripts/soc_boot_size.py` re-runs the whole table.
 #
 # | setting            | image bytes | vs committed |

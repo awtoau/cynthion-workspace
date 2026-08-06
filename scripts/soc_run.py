@@ -105,6 +105,26 @@ def run(cmd, cwd=None, env=None, shell=False):
                           capture_output=True, text=True)
 
 
+def apollo_env(base=None):
+    """The environment the Apollo CLI needs to import its own package.
+
+    `cli.py` is run as a SCRIPT, so Python puts `apollo_fpga/commands/` on
+    sys.path -- not `repos/apollo`, which is where `import apollo_fpga` has to
+    resolve from. It worked only while the package happened to be pip-installed
+    in the ambient environment, and the day that stopped being true every flash
+    write and every configure died on `ModuleNotFoundError: No module named
+    'apollo_fpga'` -- a submodule in the tree, reported as missing.
+
+    Prepended rather than replacing PYTHONPATH, so an installed copy still wins
+    if someone has deliberately put one there.
+    """
+    env = dict(base or os.environ)
+    root = str(ROOT / "repos" / "apollo")
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{root}{os.pathsep}{existing}" if existing else root
+    return env
+
+
 def firmware_digest(path=None):
     """A short hash of the firmware image, for saying WHICH firmware.
 
@@ -507,7 +527,7 @@ def main():
                                       / "commands" / "cli.py"),
                                   "flash-program",
                                   "--offset", str(FLASH_RODATA_OFFSET),
-                                  str(RODATA_BIN)])
+                                  str(RODATA_BIN)], env=apollo_env())
                     if result.returncode != 0:
                         emit("  flash write FAILED:")
                         emit((result.stderr or result.stdout).strip()[-500:])
@@ -520,7 +540,15 @@ def main():
         # The bootloader, unless this is the C path -- that generator emits an
         # image linked for 0 and has no bootloader to sit under it.
         if not args.c_firmware:
-            result = run(["cargo", "build", "--release"], cwd=BOOT_CRATE)
+            # The bootloader needs the same switch. It is the CPU's reset
+            # vector, and its staging probe reads the BootRAM window that this
+            # variant deletes -- an address in no declared region, which
+            # VexiiRiscv traps on the first load. Built without the feature, the
+            # BIST bitstream is silent from reset.
+            boot_cargo = ["cargo", "build", "--release"]
+            if args.hyperram_bist:
+                boot_cargo += ["--features", "hyperram-bist"]
+            result = run(boot_cargo, cwd=BOOT_CRATE)
             if result.returncode != 0:
                 emit("bootloader build failed:")
                 emit((result.stderr or result.stdout).strip()[-900:])
@@ -576,7 +604,13 @@ def main():
         # shell command rather than a bare exec.
         build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
                  f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
-                 f'python3.15t {GATEWARE} --build --firmware {firmware} '
+                 # `sys.executable`, not a literal `python3.15t`. Two
+                 # free-threaded 3.15 installs exist on this machine and only one
+                 # has amaranth; a bare name resolves through PATH, so the build
+                 # ran under whichever came first. When that changed, a tree that
+                 # had just elaborated fine under this script's own interpreter
+                 # failed with `No module named 'amaranth'`.
+                 f'{sys.executable} {GATEWARE} --build --firmware {firmware} '
                  f'--bootloader {BOOT_BIN}')
         # `env` carries CYNTHION_HYPERRAM_BIST when --hyperram-bist was given.
         # `bash -c` inherits it: the flag is read by `top.py` at import, so it
@@ -720,7 +754,7 @@ def configure_and_read(args, emit):
 
         result = run([sys.executable,
                       str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"),
-                      "configure", str(BITSTREAM)])
+                      "configure", str(BITSTREAM)], env=apollo_env())
         if result.returncode != 0:
             emit("configure failed:")
             emit((result.stderr or result.stdout).strip()[-400:])

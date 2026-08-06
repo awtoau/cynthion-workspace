@@ -244,6 +244,14 @@ fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
 /// at roughly 8 ms for 32 KiB at 60 MHz, so the largest image this will accept costs
 /// about 16 ms more than a single pass would.
 fn boot() -> ! {
+    // No staging RAM in the BIST variant -- the engine owns the part. Reading
+    // the header would trap on the first load, since the window is absent from
+    // the decoder rather than merely unresponsive, so the probe is skipped and
+    // the jump below happens exactly as it does on every other path.
+    #[cfg(feature = "hyperram-bist")]
+    let status = Status::NoMagic;
+
+    #[cfg(not(feature = "hyperram-bist"))]
     let status = match hyperram::staged() {
         Err(hyperram::Reject::NoMagic) => Status::NoMagic,
         Err(hyperram::Reject::Length) => Status::Length,
