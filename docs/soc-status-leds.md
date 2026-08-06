@@ -4,6 +4,21 @@ Six FPGA LEDs on Cynthion r1.4, driven so that **a working board and a dead one 
 look the same**. Nothing was driving them before, which is a large part of why the silent
 SoC took days: every failure mode looked identical from across the desk.
 
+**The rule they exist to serve:** *a null result is not evidence until the
+measurement is shown capable of producing a non-null one.* Every wrong diagnosis
+in that investigation shared one shape — a silent console, a `state=0` sideband
+read, a zero-byte tty read, each equally consistent with the fault and with the
+instrument not working.
+
+The sharpest case: `state` was wired to `Cat(cpu.ibus.cyc, cpu.iobus.cyc)`,
+Wishbone strobes that are high only during a transaction and sampled whenever the
+host happens to ask. Reading 0 was near-certain even on a busy CPU, and it nearly
+got reported as a dead core. Latching them **sticky** — "has this bus *ever*
+moved" — turned the same two wires into a decisive answer: `state=3`, CPU
+confirmed running while the console was still silent, which is what localised the
+fault to the last hop. The same principle is why the HyperRAM harness runs a
+negative control.
+
 Pins are `E13 C13 B14 A15 D12 C11`, active-low, declared in the platform as
 `LEDResources(..., invert=True)` so the gateware drives them active-high.
 
@@ -54,5 +69,5 @@ investigation, and it is the one that would have pointed at the console immediat
 The heartbeat divider must be derived from the clock, not hardcoded — a design that raises
 `sync` and leaves the count alone gets a heartbeat at the wrong rate, which is harmless,
 but the same mistake in `SidebandDebug` gives a **dead** debug link rather than a slow one
-([`../sideband.md`](../chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
+([`chips/cynone-sideband.md`](chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
 `vexii_hello_soc.py` derives both from `SYNC_MHZ` so they cannot drift. See #111.

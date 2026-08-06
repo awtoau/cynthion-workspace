@@ -186,7 +186,7 @@ This has bitten twice. `SidebandDebug`'s default was 115200 while the firmware r
 230400, a live 2× mismatch with no error anywhere because neither end ever frames a
 byte; and `SidebandDebug` derived its baud from an argument that could differ from the
 domain's real frequency (`decisions.md:206`,
-[`moondancer/soc-status-leds.md`](../moondancer/soc-status-leds.md)).
+[`soc-status-leds.md`](../soc-status-leds.md)).
 
 ## 3. Turnaround: 40 µs, absolute
 
@@ -494,7 +494,7 @@ timeout later. `advertise` sits outside `own` because it is not something the li
 `scripts/sideband_advertise_sim.py` checks the frame bit-exactly against Apollo's
 matcher; nothing here has been observed on a wire. The one time Apollo was put into
 UART mode from a host, the commands timed out for unrelated reasons —
-[`moondancer/silent-soc-investigation.md`](../moondancer/silent-soc-investigation.md).
+[#209](https://github.com/awtoau/cynthion-workspace/issues/209).
 
 The port-ownership state machine on the Apollo side — who gets CONTROL and when, and
 the `0xc2` policy flag — is in [`hardware.md`](../hardware.md#who-gets-the-port-and-when).
@@ -617,4 +617,4 @@ docstring, in an issue — knows which way it was settled.
 | `ApolloAdvertiser` is a **25 Hz** square wave | `sideband_advertise.py` docstring, `decisions.md` 25, `upstream-boundary.md` | **50 Hz.** `repos/apollo/apollo_fpga/gateware/advertiser.py:42-48` sets `half_period` to 10 ms and toggles each time, so the period is 20 ms. The accompanying "low for half of every 20 ms" was always right, and so is `hardware.md`'s "50 Hz, toggles every 10 ms". |
 | `fpga_adv_transceive()` at `fpga_adv.c:437` | `debris/docs/fpga-adv-sideband.md` §3.3, `decisions.md` 24 | The function is `fpga_adv_command()` at `:418`; `:437` is the mode guard. |
 | `scripts/sideband_soak.py` and `sideband_contention_probe.py` are not in the tree | `debris/docs/sideband-review.md` §5 | They were retired to `debris/scripts/` in `25087b8`, not lost. The measurements they produced remain reproducible from there. |
-| Baud is 115200 | `moondancer/silent-soc-investigation.md`, describing firmware `a7b8283` | Correct **for that firmware**. `b48d4bf` raised both ends to 230400; the two must move together. |
+| Baud is 115200 | #209, describing firmware `a7b8283` | Correct **for that firmware**. `b48d4bf` raised both ends to 230400; the two must move together. |

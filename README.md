@@ -17,7 +17,7 @@ Deeper investigations, by area:
 
 - [docs/apollo_samd11_mcu](docs/apollo_samd11_mcu) — the debug MCU and its firmware
 - [docs/luna_ecp5_fpga](docs/luna_ecp5_fpga) — flash, HyperRAM, USB and BRAM in depth
-- [docs/moondancer](docs/moondancer) — the soft CPU
+- [docs/chips/vexiiriscv-cpu.md](docs/chips/vexiiriscv-cpu.md) — the soft CPU
 - [docs/upstream-boundary.md](docs/upstream-boundary.md) — what we take from upstream and
   what we have replaced
 

@@ -117,7 +117,7 @@ primitive instantiated, which it currently is not anywhere.
 **Flash and HyperRAM benchmarking driven by the CPU.** The measurements that
 motivated the RISC-V work. **Blocked** on the silent-SoC problem: both CPUs
 enumerate and neither prints, cause not established
-(`docs/moondancer/silent-soc-investigation.md`).
+(#209).
 
 ## What this does not resolve
 

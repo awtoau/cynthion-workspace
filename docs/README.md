@@ -69,6 +69,7 @@ in its §13 got there in the first place.
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`linux-on-cynthion.md`](linux-on-cynthion.md) — Linux on Cynthion — what it would take, and whether it is worth it
 * [`hyperram-implementations.md`](hyperram-implementations.md) — What other ECP5 HyperRAM designs achieve, and how they calibrate
+* [`soc-status-leds.md`](soc-status-leds.md) — Six FPGA LEDs, driven so a working board and a dead one do not look the same
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
@@ -98,12 +99,6 @@ in its §13 got there in the first place.
 
 ### Moondancer / the SoC
 
-* [`moondancer/riscv_alternatives.md`](moondancer/riscv_alternatives.md) — RISC-V Alternatives for Cynthion Moondancer (RISC-V softcore on ECP5 FPGA)
-* [`moondancer/riscv_state_of_play.md`](moondancer/riscv_state_of_play.md) — RISC-V on Cynthion: where the work actually is
-* [`moondancer/silent-soc-investigation.md`](moondancer/silent-soc-investigation.md) — The silent RISC-V SoC: solved, after two real bugs and three wrong diagnoses
-* [`moondancer/soc-status-leds.md`](moondancer/soc-status-leds.md) — SoC status LEDs
-* [`moondancer/vexii_wishbone_findings.md`](moondancer/vexii_wishbone_findings.md) — VexiiRiscv on Wishbone: what building it actually showed
-* [`moondancer/vexriscv_update_blocked.md`](moondancer/vexriscv_update_blocked.md) — VexRISCV Update Attempt — Blocked
 
 ### LUNA and the ECP5
 

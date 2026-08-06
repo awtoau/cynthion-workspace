@@ -63,8 +63,8 @@ Who actually consumes it: [`../luna_ecp5_fpga/bram-budget.md`](../luna_ecp5_fpga
 
 The ECP5 has DSP blocks, so a hardware multiplier is cheap. Measured at **16
 cycles** for an integer multiply against 123 for a soft-float single-precision
-multiply — which is why `rv32im` earns its area on this part. Recorded in
-[`../moondancer/riscv_state_of_play.md`](../moondancer/riscv_state_of_play.md).
+multiply — which is why `rv32im` earns its area on this part. CPU configuration
+is in [`vexiiriscv-cpu.md`](vexiiriscv-cpu.md).
 
 ## Clocking
 

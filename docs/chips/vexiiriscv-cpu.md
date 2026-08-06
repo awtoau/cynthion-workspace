@@ -62,6 +62,19 @@ the same netlist has spread 8 MHz between runs.
 Constraint is 60 MHz. BRAM is the tight resource on this die, at 75% before the
 BTB and 79% after.
 
+**A cached core is bigger than a cacheless one, and an early sweep said the
+opposite by more than 5x.** Its wrapper tied the L1 `cmd_ready` low, so the cached
+cores could never fetch and were pruned as trivially small. Repaired, CPU alone:
+
+| configuration | LUT | BRAM |
+|---|---|---|
+| cacheless | 4072 | 8 |
+| i4k + d4k, as first measured | 967 | — |
+| i4k + d4k, wrapper repaired | **5212** | 14 |
+
+Kept because the failure is silent: a harness that prevents the thing it measures
+from working reports a small, plausible number rather than an error.
+
 ## The fetch floor, and the branch predictor (NEW, 2026-08-03)
 
 `bench` walks seven instructions per access with **every one hitting the

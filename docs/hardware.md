@@ -962,7 +962,7 @@ after a 68 µs gateware timeout, not zeros.
 | how fast the soft CPU can be clocked on this part | [`soc-clocking.md`](soc-clocking.md) |
 | flash, HyperRAM, USB and BRAM in depth | [`luna_ecp5_fpga/`](luna_ecp5_fpga/) |
 | Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
-| the soft CPU and moondancer | [`moondancer/`](moondancer/) |
+| the soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md), [`soc-status-leds.md`](soc-status-leds.md) |
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |
 | workspace CLI | `./dev.py --help`, or `./dev.py describe` for JSON |
 

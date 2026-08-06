@@ -62,8 +62,8 @@ fixed-payload benchmark, so their milliseconds are non-comparable) and
 ## One finding worth not losing
 
 **The ECP5 has DSP blocks, so a hardware multiplier is cheap.** Recorded in
-`docs/moondancer/riscv_state_of_play.md` as a reason to keep `mul` in a soft-CPU
-build rather than falling back to software.
+[`../chips/lfe5u-12f-ecp5.md`](../chips/lfe5u-12f-ecp5.md) as a reason to keep
+`mul` in a soft-CPU build rather than falling back to software.
 
 Confirmed by measurement: integer multiply costs **16 cycles** against 123 for a
 soft-float single-precision multiply. That is the DSP blocks doing the work, and
