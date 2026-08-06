@@ -5,8 +5,13 @@ tmp/ accumulates the residue of finished work: probe captures from a closed
 issue, drafts of comments already posted, .bin fixtures from a flash session
 that ended weeks ago. All of it is regenerable or already recorded elsewhere,
 but `rm` is the wrong verb for a judgement call made by a script -- so this
-moves rather than deletes, into /mnt/2tb/wastebasket/<slot>-<timestamp>/,
-where it stays recoverable until the user empties it.
+moves rather than deletes, into `<wastebasket>/<slot>-<timestamp>/`, where it
+stays recoverable until the user empties it.
+
+The wastebasket is machine-wide and shared across projects, so it must not live
+under any one project's data directory. It is derived as a sibling of the tree
+holding this checkout -- two levels above the repo root -- rather than hardcoded,
+and `WASTEBASKET_ROOT` overrides it.
 
 Two things are never moved:
   * git-tracked files. tmp/ is gitignored as a whole, but tmp/drafts/ was
@@ -27,6 +32,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -34,7 +40,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "tmp" / "logs"
-WASTEBASKET = Path("/mnt/2tb/wastebasket")
+WASTEBASKET = Path(os.environ.get("WASTEBASKET_ROOT") or ROOT.parents[1] / "wastebasket")
 
 log = logging.getLogger("clean_tmp")
 

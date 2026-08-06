@@ -129,6 +129,62 @@ So: yes for anything registered from a devicetree or with a fixed type, which is
 every path this SoC will meet, and yes through a legacy probe as far as
 identifying the part. The single gap is interrupt-line discovery.
 
+## Why 16 bytes, and not 32 or 64
+
+| | 8250 | **16550A** | 16650 / 16750 |
+|---|---|---|---|
+| FIFO | none | **16 bytes, fixed** | 32 / 64, discoverable |
+| driver assumption | — | every driver assumes 16 on seeing 16550A in IIR | needs a depth register, and nothing agrees about them |
+| ECP5 mapping | — | 16 × 8 bits → distributed LUT RAM (`TRELLIS_DPR16X4`) | 1024 × 8 → a whole `DP16KD` |
+
+**Depth is a constant, not a parameter.** Making it adjustable means firmware has
+to discover it, and the deeper parts buy that discovery with a block RAM on a die
+where block RAM is the tight resource.
+
+## Why this is written from the spec rather than vendored
+
+The default is to take a proven implementation and change its back end. Surveyed
+for #128 against OpenCores `uart16550` (Verilog, **LGPL 2.1**, ~135 KB) and
+RoaLogic `apb4_uart16550` (SystemVerilog, BSD-2, ~65 KB); ours is ~130 lines of
+Amaranth on an `amaranth_soc` CSR bus. There is no Amaranth- or Migen-native
+16550, so vendoring means a Verilog black box.
+
+Four reasons it stays ours, in order of weight:
+
+* **The back end is the surgery, and in the mature core it is not at the
+  boundary.** OpenCores instantiates `uart_transmitter` and `uart_receiver`
+  *inside* `uart_regs.v` and derives register semantics from their internals —
+  `lsr6` reads the transmitter FSM's `tstate`, `lsr5` its `tf_count`, and PE/FE/BI
+  come out of the receive FIFO as tag bits beside each byte. Cutting the bit
+  engine off means editing the one file that holds every register meaning:
+  modifying the proven part, which forfeits the proof. What would be inherited is
+  the register file — the half that is cheap to write and cheap to assert.
+* **Neither port wants a stock back end.** The console is a USB CDC byte pipe: no
+  baud rate, no start or stop bits, so a stock core could only be left unmodified
+  by feeding its serial pins through a serialiser and a matching deserialiser — a
+  divisor and a shift register's latency invented so a module could be told it was
+  a UART. The Apollo port genuinely is a serial line, but on pins shared with JTAG,
+  needing an output enable held across the stop bit, an idle qualifier and a pad
+  synchroniser. A stock 16550 has none of those (#113; `serial_line.py` is the
+  answer).
+* **Licence.** The most-proven candidate is LGPL 2.1 against this tree's
+  BSD-3-Clause.
+* **The memory map would stop being generated.** A black box has no
+  `amaranth_soc` memory map, so the peripheral's description goes back to being
+  hand-written — which is what [`../decisions.md`](../decisions.md) 17 exists to
+  prevent.
+
+**What was taken from the proven core instead: its behaviour, as the
+specification.** `uart_regs.v` was read line by line against ours during #128 and
+caught two divergences that assertions written from our own understanding would
+not have — **THRE means "FIFO empty", not "FIFO has room"**, and IIR's idle
+encoding. The driver is also exercised against QEMU's `ns16550a` on every run of
+`scripts/soc_test.py`.
+
+**Revisit if** a third transport appears that genuinely is an RS-232 line on
+unshared pins, or if character timeout and per-character error tagging turn out to
+be wanted. Both argue for the bit engine there is currently no use for.
+
 ## What this is not
 
   * **No baud rate, on either instance's register map.** DLL and DLM are stored,

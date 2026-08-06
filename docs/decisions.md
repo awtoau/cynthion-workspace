@@ -275,15 +275,11 @@ routing MCR into MSR) came out of that walk rather than out of the issue.
 
 ### 5. UART FIFO depth: 8250 / 16550 / 16750
 
-| | 8250 | **16550A** | 16650 / 16750 |
-|---|---|---|---|
-| FIFO | none | 16 bytes, fixed | 32 / 64, discoverable |
-| Driver assumption | — | every driver assumes 16 on seeing 16550A in IIR | needs a depth register, and nothing agrees about them |
-| ECP5 mapping | — | 16 × 8 bits → distributed LUT RAM (TRELLIS_DPR16X4) | 1024 × 8 → a DP16KD |
-
-Depth is a constant, not a parameter: making it adjustable means firmware has to discover
-it. An 8250 (no FIFO) peripheral was never weighed — 8250 appears in this tree only as the
-name of the Linux driver.
+**16 bytes, fixed.** Every driver assumes 16 on seeing 16550A in IIR, so depth is
+a constant rather than a parameter — making it adjustable means firmware has to
+discover it. 16 × 8 bits fits distributed LUT RAM; 32 or 64 costs a whole
+`DP16KD` on a die where block RAM is the tight resource. Detail:
+[`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md).
 
 ### 6. Buffering: deep FIFO vs elastic buffer
 
@@ -1032,66 +1028,17 @@ amaranth-soc reason is gone. Whether anything else still needs it has not been c
 
 ### 21. 16550: written from the spec vs a vendored core
 
-**The default is to take a proven implementation and change its back end.** The survey that
-tests that default here was run for #128:
+**Written from the spec, with the proven core read as the specification.** There
+is no Amaranth-native 16550, so vendoring means a Verilog black box — and in the
+mature core the bit engine is instantiated *inside* the register file, so cutting
+it off means editing the file that holds every register meaning, forfeiting the
+proof that was the reason to vendor. A black box also has no `amaranth_soc`
+memory map, which would undo decision 17.
 
-| | **ours** (`ecp5-test/riscv/uart16550.py`) | OpenCores `uart16550` | RoaLogic `apb4_uart16550` |
-|---|---|---|---|
-| Language | Amaranth | Verilog-2001 | SystemVerilog (packages, packed structs, enums) |
-| Licence | BSD-3-Clause, as the rest of this tree | **LGPL 2.1**, in every file header | BSD-2-Clause |
-| Size | ~130 lines of logic | 12 files, ~135 KB | 5 files, ~65 KB |
-| Bus | `amaranth_soc` CSR, granularity 8 | Wishbone B3 | APB4 |
-| Proven by | 34 assertions in `scripts/uart16550_sim.py`, plus QEMU parity through `soc_test.py` | two decades in OpenRISC/OpenCores SoCs | its own Verilator bench |
-| Back end | `amaranth.lib.stream` ports | RS-232 bit engine, **instantiated inside `uart_regs.v`** | RS-232 bit engine, separate files |
-| Has | DR, OE, FE, THRE/TEMT, IIR read-to-clear, 16-byte FIFOs | all of that plus character timeout, per-character error tags, break detection, RX trigger levels | same as OpenCores |
-
-There is no Amaranth- or Migen-native 16550, so vendoring means a Verilog black box —
-which is a road already taken here: `ecp5-test/riscv/vexii_cpu.py` instantiates
-`VexiiRiscv.v` through `platform.add_file`.
-
-**Why ours stays.**
-
-  * **The back end is the surgery, and in the mature core it is not at the boundary.**
-    OpenCores instantiates `uart_transmitter` and `uart_receiver` *inside* `uart_regs.v`
-    (lines 379 and 399) and derives the register semantics from their internals: `lsr6`
-    reads the transmitter FSM's `tstate`, `lsr5` its `tf_count`, and PE/FE/BI come out of
-    the receive FIFO as tag bits stored beside each byte (`rf_data_out[0:2]`). Cutting the
-    bit engine off means editing the one file that holds every register meaning — modifying
-    the proven part, which forfeits the proof. What would be inherited is the register file,
-    which is the half that is cheap to write and cheap to assert.
-  * **Neither of this board's two ports wants a stock back end.** The console is a USB CDC
-    byte pipe: no baud rate, no start or stop bits, so a stock core could only be left
-    unmodified by feeding its serial pins through a serialiser and a matching deserialiser —
-    a divisor and a shift register's latency invented so that a module could be told it was
-    a UART. The Apollo port genuinely is a serial line, but on pins shared with JTAG, which
-    needs an output enable held across the stop bit, an idle qualifier and a pad
-    synchroniser. A stock 16550 has none of those; that is issue #113, and `serial_line.py`
-    is the answer to it.
-  * **Licence.** The most-proven candidate is LGPL 2.1 and this tree is BSD-3-Clause, as is
-    everything it builds against. RoaLogic's BSD-2 would be fine, and its separation is
-    cleaner, but it is APB4 SystemVerilog with a package — a bus adapter and a yosys
-    SystemVerilog dependency on top of the same back-end surgery.
-  * **The memory map would stop being generated.** `scripts/soc_generate_pac.py` reads
-    `amaranth_soc` memory maps and emits the SVD the firmware's addresses come from. A black
-    box has no memory map, so the peripheral's description would go back to being
-    hand-written — which is exactly what decision 17 exists to prevent.
-
-**What a vendored core would not have solved either way:** the granularity-8 CSR semantics
-(a multi-byte register latches a shadow on its low byte and commits on its high byte), the
-`sync`↔`usb` crossing, and the elastic buffering sized per transport. Those are ours
-whatever sits in front of them.
-
-**What was taken from the proven core instead: its behaviour, as the specification.**
-`uart_regs.v` was read line by line against ours while #128 was implemented, and it caught
-two divergences that assertions written from our own understanding would not have —
-THRE meaning "FIFO empty" rather than "FIFO has room", and IIR's idle encoding. That is the
-principle applied at the level where it pays here. The other half is already in place: the
-driver is exercised against QEMU's `ns16550a`, a proven implementation, on every run of
-`scripts/soc_test.py`.
-
-**Revisit if** a third transport appears that genuinely is an RS-232 line with no shared
-pins, or if character timeout and per-character error tagging turn out to be wanted. Both
-argue for the bit engine we currently have no use for.
+`uart_regs.v` was read line by line against ours during #128 and caught two
+divergences: THRE means "FIFO empty", not "FIFO has room", and IIR's idle
+encoding. The survey, the licence comparison and the back-end argument are in
+[`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md).
 
 ### 22. What is resident at 0x0
 
