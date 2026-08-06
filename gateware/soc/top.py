@@ -82,6 +82,7 @@ from amaranth.lib.cdc               import FFSynchronizer
 # and the rest are all reachable. This one takes an arbitrary frequency, derives real
 # dividers with ecppll, and reports what it actually produced.
 from clocks import SocClocks
+from peripherals.clock_monitor import ClockMonitor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import usb_ids
@@ -234,6 +235,10 @@ ULPI_BASE      = BOARD_BASE + 0x1c
 I2C_MUX_BASE   = BOARD_BASE + 0x20
 VBUS_BASE      = BOARD_BASE + 0x24
 GATEWARE_BASE  = BOARD_BASE + 0x40
+# Measured clock rates, as opposed to `gateware_id`'s declared ones. Placed after
+# GATEWARE's 0x20 so the two read as a pair: what was asked for, and what
+# happened.
+CLOCKS_BASE    = BOARD_BASE + 0x60
 
 # What is on each GPIO pin.
 #
@@ -559,7 +564,7 @@ FLASH_DIVISOR = 0
 # The "CPU corrupts above 60 MHz" ladder does NOT bound it: that result is
 # withdrawn (`docs/soc-clocking.md` section 2) because its signature is the
 # console FIFO's unsynchronised crossing, not the CPU.
-SYNC_MHZ = 30
+SYNC_MHZ = 60
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
 #
@@ -824,6 +829,11 @@ class HelloSoC(Elaboratable):
             usb_hz=round(car.actual_usb_mhz * 1e6),
             cache_sets=CACHE_SETS)
 
+        # What the clocks ARE, counted against the oscillator, alongside what
+        # they were declared to be. A PLL that never locked reported 30 MHz from
+        # a constant while `sync` was not oscillating at all.
+        m.submodules.clock_monitor = clock_monitor = ClockMonitor(lock=car.locked)
+
         board_csr = csr.Decoder(addr_width=7, data_width=8)
         m.submodules.board_csr = board_csr
         board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
@@ -840,6 +850,8 @@ class HelloSoC(Elaboratable):
                       name="vbus")
         board_csr.add(gateware_id.bus,   addr=GATEWARE_BASE - BOARD_BASE,
                       name="gateware")
+        board_csr.add(clock_monitor.bus, addr=CLOCKS_BASE   - BOARD_BASE,
+                      name="clocks")
 
         board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
         m.submodules.board_bridge = board_bridge

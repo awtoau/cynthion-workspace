@@ -162,6 +162,12 @@ class SocClocks(Elaboratable):
         # round: it is the input frequency, exactly, by construction.
         self.actual_usb_mhz = input_mhz
 
+        # The PLL's LOCK, brought out so something can SEE it. It has existed in
+        # every generator here and never left the module: a PLL that failed to
+        # lock could only be inferred from its consequences, which is how an
+        # unconnected CLKFB cost a two-rebuild bisect.
+        self.locked = Signal()
+
     def elaborate(self, platform):
         m = Module()
 
@@ -213,6 +219,7 @@ class SocClocks(Elaboratable):
             **({"o_CLKOS2": clk_fast} if self.with_fast else {}),
             o_LOCK=locked,
         )
+        m.d.comb += self.locked.eq(locked)
 
         m.d.comb += [
             ClockSignal("usb").eq(osc),

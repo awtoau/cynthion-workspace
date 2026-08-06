@@ -522,6 +522,50 @@ pub fn command(uart: &mut Uart) {
                     target::TIME_HZ
                 );
             }
+            // MEASURED, not declared. Everything above is a constant baked in
+            // at elaboration and says what the gateware was ASKED for. This is
+            // counted in fabric against the 60 MHz oscillator, so it says what
+            // the silicon is doing -- and the two disagreeing is a fault that
+            // nothing else in this image can see.
+            //
+            // A PLL with its feedback unconnected reported `sync 30000000` from
+            // the constant while `sync` was not oscillating at all, and finding
+            // that cost a bisect across two rebuilds.
+            {
+                use cynthion_soc_pac::board_clocks::offset as clocks;
+                let base = cynthion_soc_pac::base::BOARD_CLOCKS;
+                // SAFETY: the generated base and offsets for a CSR peripheral
+                // this SoC always builds.
+                let khz = unsafe {
+                    core::ptr::read_volatile((base + clocks::SYNC_KHZ) as *const u32)
+                };
+                let status = unsafe {
+                    core::ptr::read_volatile((base + clocks::STATUS) as *const u32)
+                };
+                let locked = status & 1 != 0;
+                let valid = status & 2 != 0;
+
+                if !valid {
+                    let _ = writeln!(uart,
+                        "         clocks: NO MEASUREMENT YET (window incomplete)");
+                } else {
+                    let _ = writeln!(uart,
+                        "         measured sync {} kHz, pll {}",
+                        khz, if locked { "locked" } else { "UNLOCKED" });
+                    // 1% either way. The window quantises to about 0.003%, so
+                    // anything near this is a real disagreement rather than
+                    // measurement noise.
+                    let declared_khz = id.sync_hz / 1000;
+                    let slack = declared_khz / 100;
+                    if khz + slack < declared_khz || khz > declared_khz + slack {
+                        let _ = writeln!(uart,
+                            "         CLOCK MISMATCH: gateware declares {} kHz, \
+                             the fabric counts {}",
+                            declared_khz, khz);
+                    }
+                }
+            }
+
             if id.cpu & gateware::CPU_RDTIME == 0 {
                 // `src/clock.rs` is the only thing here that knows how much
                 // time has passed, and it is `rdtime` and nothing else. A core

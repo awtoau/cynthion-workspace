@@ -118,6 +118,12 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 7,
     },
     Peripheral {
+        name: "board_clocks",
+        base: 0xf0000660,
+        size: 0x00000010,
+        registers: 2,
+    },
+    Peripheral {
         name: "plic",
         base: 0xf0400000,
         size: 0x00400000,
