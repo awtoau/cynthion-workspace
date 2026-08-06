@@ -72,24 +72,40 @@ def tracked_files(directory: Path) -> set[Path]:
 
 def stale_files(directory: Path, cutoff: dt.datetime,
                 keep: set[Path]) -> list[Path]:
-    """Files directly in `directory` last modified before `cutoff`.
+    """Every file under `directory` last modified before `cutoff`.
 
-    Not recursive: a subdirectory of tmp/ is usually a build tree or a
-    still-live working set, and deciding about one of those as a unit is a
-    separate call from sweeping loose files.
+    Recursive. It was not, and that made it report success while moving almost
+    nothing: on a tmp/ holding 267 MB it swept 41 loose files, 197 KB, because
+    all the weight was in build trees one level down.
+
+    A directory is moved as a unit when every file in it is stale -- otherwise a
+    tree with one fresh log in it would be shredded, leaving the fresh file
+    behind in an otherwise-empty skeleton. Mixed trees have their stale files
+    moved individually and keep their shape.
     """
-    stale = []
-    for path in sorted(directory.iterdir()):
+    def stale_file(path: Path) -> bool:
         if not path.is_file() or path.is_symlink():
-            continue
+            return False
         if path.resolve() in keep:
-            log.debug("keep (tracked): %s", path.name)
+            log.debug("keep (tracked): %s", path)
+            return False
+        if dt.datetime.fromtimestamp(path.stat().st_mtime) >= cutoff:
+            log.debug("keep (recent):  %s", path)
+            return False
+        return True
+
+    stale: list[Path] = []
+    for path in sorted(directory.iterdir()):
+        if path.is_symlink():
             continue
-        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime)
-        if mtime >= cutoff:
-            log.debug("keep (recent):  %s", path.name)
-            continue
-        stale.append(path)
+        if path.is_dir():
+            files = [f for f in path.rglob("*") if f.is_file() and not f.is_symlink()]
+            if files and all(stale_file(f) for f in files):
+                stale.append(path)          # whole tree, as one unit
+            else:
+                stale.extend(f for f in files if stale_file(f))
+        elif stale_file(path):
+            stale.append(path)
     return stale
 
 
