@@ -292,10 +292,11 @@ generator "still finds the map" — but `repos/cynthion`'s facedancer top import
 `InterruptController` from `luna_soc.gateware.cpu`, not from here, so nothing in
 either tree reaches it.
 
-**`hello_soc.py` claims users it does not have.** Its docstring says it "stays as
-the smaller reference point that several scripts still build against". Nothing
-builds it: the only references anywhere are its own usage lines and one
-`print()` in `riscv_firmware.py` suggesting it as a next command.
+**`hello_soc.py` claimed users it did not have** — its docstring said it "stays
+as the smaller reference point that several scripts still build against", and
+nothing built it. **Deleted**, with `cpu_area.py`: both existed to compare
+VexRiscv against VexiiRiscv, a settled choice, and they were the only importers
+of `luna_soc.gateware.cpu.VexRiscv` in the tree.
 
 **Three doc references in `ecp5-test/` point at files that do not exist** —
 `docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`),

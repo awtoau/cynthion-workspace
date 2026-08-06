@@ -57,9 +57,7 @@ Our own designs, all four sites:
 
 | File | Import | Why |
 |---|---|---|
-| `ecp5-test/riscv/hello_soc.py:45-46` | `core.blockram`, `cpu.VexRiscv` | real use |
 | `ecp5-test/riscv/vexii_hello_soc.py:45` | `core.blockram` | real use |
-| `ecp5-test/riscv/cpu_area.py:33-34` | `core.blockram`, `cpu.VexRiscv` | real use |
 | `ecp5-test/i2c/multiplexed.py:69` | `core.blockram` | **aliasing only** — `# noqa: F401 (aliases amaranth_soc)` |
 | `scripts/patch_amaranth_soc_annotations.py:110` | `core.blockram` | aliasing only, to locate the file it patches |
 
@@ -91,11 +89,10 @@ Importing a luna_soc peripheral is what appends the vendor directory to
 `import luna_soc.gateware.core.blockram` before `from amaranth_soc import csr`,
 or `ModuleNotFoundError`.
 
-The second-order trap is worse and is documented at `hello_soc.py:37-44`:
+The second-order trap is worse:
 importing `luna_soc.gateware.vendor.amaranth_soc` *directly* yields a **different
 class object** for `wishbone.Interface` than the `sys.path`-aliased
 `amaranth_soc`, so `Decoder.add()` rejects a structurally identical bus. Only the
-bare name may be used downstream. Note `ecp5-test/riscv/cpu_area.py:33-37` does
 the ordering but carries no explanatory comment — the one site missing the note.
 
 If real `amaranth-soc` is installed standalone, the `try` succeeds, the vendor
@@ -110,7 +107,7 @@ environment was not touched). All six probes pass:
 PASS  import + versions                      amaranth_soc = 0.1.dev1+g3e3d8b7
 PASS  class-level csr.Field annotations (the py3.14 bug)
 PASS  csr.Builder + csr.Bridge (multiplexed.py shape)
-PASS  wishbone.Decoder + WishboneCSRBridge (hello_soc.py shape)
+PASS  wishbone.Decoder + WishboneCSRBridge
 PASS  things only luna_soc provides          (blockram/cpu correctly absent)
 PASS  REAL multiplexed.py elaborated against real amaranth-soc
 ```
@@ -374,8 +371,7 @@ would not catch a swapped pin; the per-signal ball comparison is the part that
 does.
 
 Five designs then elaborated to a bitstream against the vendored platform:
-`hyperram_identify`, `hyperram_regfuzz`, `hello_soc`, `vexii_bench_soc`,
-`bitstream_sink`. `scripts/check.py` is 6/6.
+`hyperram_identify`, `hyperram_regfuzz`, `vexii_bench_soc` and `bitstream_sink`. `scripts/check.py` is 6/6.
 
 ```bash
 python3 scripts/platform_vendor_compare.py   # → tmp/logs/platform_vendor_compare.log

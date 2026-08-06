@@ -83,8 +83,8 @@ peripheral is reachable either way:
     CPU                                         ->|
 
 That is what makes one implementation serve both builds. It is also how the
-existing `hello_soc.py` already reaches its console, so the pattern is proven in
-this tree rather than proposed.
+SoC already reaches its console this way, so the pattern is proven in this tree
+rather than proposed.
 
 Order, cheapest and most-load-bearing first:
 

@@ -156,4 +156,4 @@ build, which is where the net names in a nextpnr critical path resolve to.
 | `scripts/soc_run.py` | firmware, gateware, configure, console — the whole loop |
 | `scripts/soc_shell.py bench` | cycles/access, MB/s, instructions/access and IPC per region |
 | `scripts/soc_timing_sweep.py` | repeated place-and-route, min/median/max; `--allow-fail` records a configuration that misses the constraint instead of refusing to report it |
-| `scripts/cpu_matrix.py`, `ecp5-test/riscv/cpu_area.py` | core configurations against area |
+

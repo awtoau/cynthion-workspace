@@ -70,12 +70,12 @@ OBJDUMP = "riscv64-linux-gnu-objdump"
 # roughly a quarter, and block RAM is 64 KiB.
 ARCH = ["-march=rv32imac_zicsr", "-mabi=ilp32"]
 
-# Must match hello_soc.py. The CPU resets to 0x00000000, so the entry point has
+# Must match the SoC's reset vector. The CPU resets to 0x00000000, so the entry point has
 # to be the first thing in the image.
 RAM_BASE = 0x00000000
 RAM_SIZE = 64 * 1024
 # Bit 31 set: below 0x80000000 the data cache absorbs the stores.
-# See the note in ecp5-test/riscv/hello_soc.py.
+
 CONSOLE_BASE = 0xf0000000
 
 # The memory-mapped configuration SPI flash and the SPI controller's registers.
@@ -1420,7 +1420,7 @@ def main():
     emit()
     emit(f"  disassembly: {elf.with_suffix('.lst')}")
     emit()
-    emit("next: ./ecp5-test/riscv/hello_soc.py --build --program")
+    emit("next: ./ecp5-test/riscv/vexii_hello_soc.py --build --program")
 
     return 0
 
