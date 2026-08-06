@@ -101,3 +101,6 @@ hdr_log
 tmp_synthesis.log
 test.vcd
 /build/
+
+# Upstream gateware built in a container for comparison; regenerable.
+tmp/upstream-build/
