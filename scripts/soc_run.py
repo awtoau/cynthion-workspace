@@ -89,6 +89,11 @@ GATEWARE = ROOT / "gateware" / "soc" / "top.py"
 # board.
 SYNTH_LOG = ROOT / "tmp" / "logs" / "synthesis.log"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
+# The digest of the gateware sources the bitstream beside it was built from.
+# Written on a successful build, compared before every configure, and compared
+# again before synthesis so an unchanged tree does not resynthesise. See
+# `bitstream_is_stale`.
+GATEWARE_BUILT = ROOT / "tmp" / "vexii_hello" / "build" / "gateware-digest.txt"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 
@@ -157,47 +162,67 @@ def firmware_in_bitstream(build_dir, emit):
     return b"".join(word.to_bytes(4, "little") for word in words)
 
 
+def gateware_digest():
+    """A hash of every gateware source the bitstream is built from.
+
+    CONTENT, not modification time. See `bitstream_is_stale`.
+    """
+    import hashlib
+    digest = hashlib.sha256()
+    for source in sorted((ROOT / "gateware" / "soc").rglob("*.py")):
+        digest.update(source.relative_to(ROOT).as_posix().encode())
+        digest.update(source.read_bytes())
+    return digest.hexdigest()[:16]
+
+
 def bitstream_is_stale(emit):
-    """Is the built bitstream older than the gateware that describes it?
+    """Does the built bitstream describe gateware that is no longer this tree?
 
-    THE CHECK THAT WAS MISSING, and its absence cost an hour tonight.
+    THE CHECK THAT WAS MISSING, and its absence cost an hour: `./dev.py build`
+    failed at the gateware step, `./dev.py fw` skipped the build by design, and
+    `configure` loaded a bitstream from two clock settings ago. The board came
+    up, the shell answered, and every number read off it was attributed to a
+    configuration that had never been built. Both halves reported success.
 
-    `soc_run.py` has always compared the firmware in the bitstream against the
-    firmware just built. That comparison went vacuous when `.text` moved to flash:
-    nothing of the firmware travels in the bitstream any more, so it correctly
-    reports "does not apply" -- and nothing replaced it.
+    ## Content, not modification time
 
-    What happened then: `./dev.py build` FAILED at the gateware step, `./dev.py fw`
-    skipped the build by design, and `configure` loaded a bitstream from two clock
-    settings ago. The board came up, the shell answered, and every number read off
-    it was attributed to a configuration that had never been built. Both halves
-    reported success.
+    This compared mtimes, and mtimes are not a statement about content. **`git
+    checkout` rewrites the mtime of every file it touches, including files whose
+    content it does not change** -- so switching branches, merging, or checking
+    out the same commit again marked the bitstream stale and forced a 115-second
+    resynthesis that produced a byte-identical result. That is the single
+    largest waste in the edit-build-load loop, and the fastest synthesis is the
+    one that does not run.
 
-    Modification time rather than a hash, deliberately. The gateware stamps its git
-    hash into USERCODE, but that is a COMMITTED hash: it does not move for an edit
-    that has not been committed, which is the normal state while working and
-    exactly when this bites. An mtime comparison catches the edit itself.
+    A digest of the sources is recorded beside the bitstream when it is built and
+    compared here. It answers the question actually being asked -- "is this
+    bitstream built from this gateware" -- rather than a proxy for it.
 
-    Errs toward refusing. A bitstream the same age as its source is treated as
-    stale, because the interesting case is a build that just failed and left the
-    previous artifact in place with a plausible timestamp.
+    Not the committed git hash, which was the other candidate: that does not move
+    for an edit which has not been committed, and an uncommitted edit is the
+    normal state while working and exactly when this bites.
+
+    ## Errs toward refusing
+
+    No record beside the bitstream means stale. The interesting case is a build
+    that failed and left the previous artifact in place looking plausible, and a
+    missing record is indistinguishable from one that was never written.
     """
     if not BITSTREAM.exists():
         return False                    # a different error, reported elsewhere
 
-    built = BITSTREAM.stat().st_mtime
-    newer = []
-    for source in sorted((ROOT / "gateware" / "soc").glob("*.py")):
-        if source.stat().st_mtime >= built:
-            newer.append(source.relative_to(ROOT))
-    if not newer:
+    want = gateware_digest()
+    have = (GATEWARE_BUILT.read_text().strip()
+            if GATEWARE_BUILT.exists() else None)
+    if have == want:
         return False
 
-    emit("STALE BITSTREAM: the gateware has changed since it was built.")
-    for source in newer[:6]:
-        emit(f"  newer than the bitstream: {source}")
-    if len(newer) > 6:
-        emit(f"  ... and {len(newer) - 6} more")
+    emit("STALE BITSTREAM: it was not built from this gateware.")
+    if have is None:
+        emit(f"  no record beside the bitstream; cannot show it was built "
+             f"from these sources (want {want})")
+    else:
+        emit(f"  bitstream built from {have}, this tree is {want}")
     emit("Refusing to configure. The board would run a gateware that is not this")
     emit("source -- a different clock, a different memory map, or a peripheral")
     emit("that moved -- and every measurement taken from it would be attributed")
@@ -586,6 +611,27 @@ def main():
                  f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
                  f'python3.15t {GATEWARE} --build --firmware {firmware} '
                  f'--bootloader {BOOT_BIN}')
+        # SKIP IT ENTIRELY when the sources have not changed.
+        #
+        # This is the same argument as the flash write's skip, and a bigger
+        # number: 115 s against 3.5 s. The old mtime comparison could not make
+        # it, because `git checkout` rewrites mtimes on files it does not
+        # change, so a branch switch forced a full resynthesis that produced a
+        # byte-identical bitstream.
+        #
+        # `--force-flash` has no counterpart here on purpose: deleting the
+        # digest file is the escape hatch, and it is one that cannot be reached
+        # by accident.
+        want_gateware = gateware_digest()
+        have_gateware = (GATEWARE_BUILT.read_text().strip()
+                         if GATEWARE_BUILT.exists() else None)
+        if BITSTREAM.exists() and have_gateware == want_gateware:
+            emit(f"synthesis SKIPPED: the bitstream was built from these exact "
+                 f"sources ({want_gateware})")
+            emit(f"  delete {GATEWARE_BUILT.relative_to(ROOT)} to force a "
+                 f"rebuild")
+            return configure_and_read(args, emit)
+
         # Say what is about to take a minute, BEFORE it takes it. Amaranth,
         # yosys and nextpnr print nothing this log can see until they are done,
         # so without this line the log has a silent 60-90 s hole in it and the
@@ -681,6 +727,10 @@ def main():
             if not reasons:
                 emit((result.stderr or result.stdout).strip()[-700:])
             return 1
+
+        # Recorded only now, after the build has returned zero. Written before
+        # it would claim a bitstream that may not exist.
+        GATEWARE_BUILT.write_text(gateware_digest() + "\n")
 
         report = ROOT / "tmp" / "vexii_hello" / "build" / "top.rpt"
         if report.exists():

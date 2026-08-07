@@ -366,6 +366,22 @@ pub fn type_c_interrupts(port: usize) -> u32 {
 ///
 /// Call once, after every `Uart::init()` and after the bootloader has decided
 /// not to jump anywhere. Order matters throughout and each step says why.
+/// The interrupt CONTROLLER, and nothing that is plugged into it.
+///
+/// **Machine before peripherals.** This is the PLIC's own configuration -- the
+/// threshold, and `mstatus.MIE` -- and it deliberately enables no source. A
+/// source is claimed by the peripheral behind it, in [`claim`], once that
+/// peripheral is in a state where an interrupt from it would mean something.
+///
+/// It used to be one function that enabled the consoles and the Type-C
+/// controllers from two lists held here. That arrangement is why the I2C source
+/// has never fired: it is wired in `gateware/soc/top.py`, and adding it meant
+/// remembering to add it to a third list in a file that is not the I2C driver.
+/// A peripheral that claims its own source cannot be forgotten by a list it is
+/// not in. See #246.
+///
+/// Safe to call before any peripheral exists: a threshold of 0 with nothing
+/// enabled cannot deliver anything.
 pub fn init() {
     let plic = Plic::new(target::PLIC_BASE);
 
@@ -373,47 +389,68 @@ pub fn init() {
     // critical enough to justify starving the other console.
     plic.set_threshold(0);
 
+    // SAFETY: the handler is installed at link time, the trap vector was set by
+    // riscv-rt's `_setup_interrupts`, and the rings are `static` and initialised
+    // before `main` runs. NO SOURCE IS ENABLED YET, so enabling delivery here
+    // cannot deliver anything -- which is what makes it safe to do this before
+    // the peripherals rather than after them.
+    unsafe {
+        riscv::interrupt::enable_interrupt(Interrupt::MachineExternal);
+        riscv::interrupt::enable();
+    }
+}
+
+/// A peripheral claims its PLIC source, now that it is ready to be interrupted.
+///
+/// Called by the peripheral's own bring-up, not from a list here. The order
+/// matters and it is the peripheral that knows it: the FUSB302Bs must have had
+/// their interrupt registers cleared first, or the first thing delivered is a
+/// plug event from the previous session.
+///
+/// `priority` is 1 for everything on this board -- the lowest that is not
+/// "never". Nothing here is latency critical enough to starve anything else, and
+/// equal priorities leave the PLIC's tie-break to decide, which is lowest source
+/// number first.
+pub fn claim(source: u32, priority: u32) {
+    let plic = Plic::new(target::PLIC_BASE);
+    plic.set_priority(source, priority);
+    plic.enable(source);
+
+    // Release any claim left in flight by a `j _start` reboot. The CPU restarts;
+    // the PLIC does not. A source claimed by the previous session and never
+    // completed stays gated forever, and the symptom is a console that
+    // enumerates, banners, and then ignores every keystroke.
+    //
+    // Harmless when there is nothing to release: completing a source that was
+    // not claimed clears a bit that was already clear.
+    plic.complete(source);
+}
+
+/// The consoles claim their sources and start asking.
+///
+/// One call rather than a `claim` per port at the call site, because the
+/// receive-interrupt enable in the 16550 has to follow the PLIC enable: a UART
+/// asking before the PLIC will deliver is a byte that lands in the ring with
+/// nothing scheduled to come and get it.
+pub fn claim_consoles() {
     for &source in target::UART_IRQS {
-        // Priority 1, the lowest that is not "never". Equal for both consoles,
-        // so the PLIC's tie-break decides -- lowest source number first, which
-        // is the USB console. See IRQ_CONSOLE in vexii_hello_soc.py.
-        plic.set_priority(source, 1);
-        plic.enable(source);
-
-        // Release any claim left in flight by a `j _start` reboot. The CPU
-        // restarts; the PLIC does not. A source claimed by the previous session
-        // and never completed stays gated forever, and the symptom is a console
-        // that enumerates, banners, and then ignores every keystroke.
-        //
-        // Harmless when there is nothing to release: completing a source that
-        // was not claimed clears a bit that was already clear.
-        plic.complete(source);
+        claim(source, 1);
     }
-
-    // One Type-C source per controller, on a target that has them. Same
-    // priority as the consoles: nothing here is more urgent than a keystroke,
-    // and a plug event that waits a few microseconds is a plug event nobody
-    // notices waited. Equal to each other too, so the PLIC's tie-break decides
-    // between the two ports -- TARGET first, which is the port a person plugs
-    // a device under test into.
-    for &source in target::TYPE_C_IRQS {
-        plic.set_priority(source, 1);
-        plic.enable(source);
-        plic.complete(source);
-    }
-
     // The UARTs start asking only now that there is something to answer them.
     for &base in target::UART_BASES {
         UartRx::new(base).enable_rx_interrupt();
     }
+}
 
-    // SAFETY: the handler above is installed at link time, the trap vector was
-    // set by riscv-rt's `_setup_interrupts`, and every source is configured. The
-    // rings are `static` and initialised before `main` runs, so there is no
-    // window in which the handler can touch uninitialised state.
-    unsafe {
-        riscv::interrupt::enable_interrupt(Interrupt::MachineExternal);
-        riscv::interrupt::enable();
+/// The Type-C controllers claim their sources.
+///
+/// **Only valid after `type_c.start`**, which clears both parts' interrupt
+/// registers. Before that, the first delivery is a state change from the
+/// previous session and the report it produces describes a cable that may no
+/// longer be there.
+pub fn claim_type_c() {
+    for &source in target::TYPE_C_IRQS {
+        claim(source, 1);
     }
 }
 

@@ -84,6 +84,7 @@ already, which is exactly what an assertion is for.
 """
 
 import argparse
+import atexit
 import os
 import re
 import socket
@@ -111,6 +112,44 @@ BUILD_DIR = ROOT / "tmp" / "qemu-build"
 ELF = BUILD_DIR / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
 
 QEMU = "qemu-system-riscv32"
+
+# Every `Session` that has been constructed and not closed.
+#
+# `close()` is called from a `finally` at every use, which covers a failing
+# assertion. It does not cover an exception raised before the `try`, a Ctrl-C, or
+# a `sys.exit` from deeper in -- and this firmware has no exit path, so a child
+# that escapes runs until the machine is rebooted. `atexit` closes the gap, and
+# `assert_no_orphans` below turns "probably fine" into an assertion.
+LIVE_SESSIONS: set = set()
+
+
+def _kill_live_sessions():
+    for session in list(LIVE_SESSIONS):
+        try:
+            session.close()
+        except Exception:      # noqa: BLE001 -- interpreter teardown, best effort
+            pass
+
+
+atexit.register(_kill_live_sessions)
+
+
+def assert_no_orphans(check):
+    """No emulator this run started is still alive.
+
+    Asserted rather than assumed. An orphan is invisible -- the suite passes, the
+    next run passes, and the only symptom is that everything gets slower and the
+    timing figures drift. That is exactly the kind of failure this project keeps
+    finding at the bottom of a long investigation.
+    """
+    check("no emulator left running", not LIVE_SESSIONS,
+          f"{len(LIVE_SESSIONS)} QEMU session(s) are still alive at the end of "
+          f"this run.\n"
+          f"This firmware is an infinite loop with no exit path, so each one "
+          f"takes a core\n"
+          f"until the machine is rebooted, and the next run's timing "
+          f"measurements are\n"
+          f"measuring the contention rather than the code.")
 
 # `virt`, because its 16550 at 0x10000000 and DRAM at 0x80000000 are what
 # firmware/cynthion-soc/memory-qemu.x and the qemu branch of src/target.rs are written
@@ -417,6 +456,14 @@ class Session:
         self.errors = bytearray()
         self.reader = threading.Thread(target=self._drain, daemon=True)
         self.reader.start()
+        # Registered so it is killed even on a path that never reaches a
+        # `finally` -- an exception between construction and the `try`, or a
+        # Ctrl-C. An orphaned emulator is not harmless: this firmware is an
+        # infinite loop by design, so it never exits, and one left behind takes a
+        # core for as long as the machine is up. Several of those make the next
+        # run's timing measurements meaningless, which is the failure mode that
+        # matters here -- a slow board and a busy host look identical.
+        LIVE_SESSIONS.add(self)
         self.errs = threading.Thread(target=self._drain_err, daemon=True)
         self.errs.start()
 
@@ -472,6 +519,7 @@ class Session:
         # taken every byte QEMU wrote.
         self.proc.kill()
         self.proc.wait()
+        LIVE_SESSIONS.discard(self)
 
 
 def show(data):
@@ -1908,6 +1956,9 @@ def main():
             # describes and `soc_run.py` does not configure a board with an
             # image stamped from a state that no longer exists.
             build_firmware()
+
+    # Last, after every session has had its chance to be closed.
+    assert_no_orphans(check)
 
     emit()
     if args.verbose:
