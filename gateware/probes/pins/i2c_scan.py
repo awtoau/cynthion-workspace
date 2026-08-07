@@ -39,7 +39,13 @@ from amaranth.lib                   import io
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
 from luna.gateware.interface.i2c    import I2CInitiator
-from luna.gateware.interface.jtag   import JTAGRegisterInterface
+# `jtag_registers` sits beside `bist` one directory up; a build script may
+# only have put this applet's own directory on the path.
+import sys as _probe_sys
+from pathlib import Path as _probe_Path
+_probe_sys.path.insert(0, str(_probe_Path(__file__).resolve().parent.parent))
+
+from jtag_registers import JTAGRegisterInterface
 
 
 CLOCK_FREQUENCIES = {"fast": 60, "sync": 60, "usb": 60}

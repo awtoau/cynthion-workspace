@@ -58,7 +58,13 @@ from luna.gateware.interface.psram import HyperRAMPHY
 # branch made a parameter. The PHY beneath it is still upstream's.
 from peripherals.hyperram_controller import HyperRAMController
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag import JTAGRegisterInterface
+# `jtag_registers` sits beside `bist` one directory up; a build script may
+# only have put this applet's own directory on the path.
+import sys as _probe_sys
+from pathlib import Path as _probe_Path
+_probe_sys.path.insert(0, str(_probe_Path(__file__).resolve().parent.parent))
+
+from jtag_registers import JTAGRegisterInterface
 
 CLOCK_MHZ = 60
 APPLET_ID = 0x52465A5A  # "RFZZ"

@@ -20,7 +20,7 @@ look like a new protocol. ``addresses`` says where this common contract lands.
 from dataclasses import dataclass
 
 from amaranth import Cat, Const, Elaboratable, Module, Mux, Signal
-from luna.gateware.interface.jtag import JTAGRegisterInterface
+from jtag_registers import JTAGRegisterInterface
 
 
 @dataclass(frozen=True)

@@ -47,6 +47,7 @@ tree.
 | source | role | status |
 |---|---|---|
 | `bist.py` | shared JTAG BIST command/status and comparator | retained; simulated by `scripts/bist_sim.py` |
+| `jtag_registers.py` | the JTAG register transport every applet reads through, clocked by TCK | replaces luna's `JTAGRegisterInterface` (#204); simulated by `scripts/soc_jtag_registers_sim.py` |
 | `riscv/*.py` except the four designs above | SoC peripherals, PHYs and CPU wrappers | covered by `scripts/soc_sims.py` and SoC integration |
 | `sideband_advertise.py`, `sideband_link.py`, `sideband_debug.py` | drop-in FPGA_ADV blocks | covered by dedicated simulations and active SoC integration |
 | `board/`, `build_helpers.py`, `usb_ids.py` | local platform and build/identity support | shared infrastructure, not loadable designs |

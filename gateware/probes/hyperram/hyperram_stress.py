@@ -39,7 +39,13 @@ from amaranth.lib                        import io
 from amaranth.lib.memory                 import Memory
 
 from luna.gateware.architecture.car      import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag        import JTAGRegisterInterface
+# `jtag_registers` sits beside `bist` one directory up; a build script may
+# only have put this applet's own directory on the path.
+import sys as _probe_sys
+from pathlib import Path as _probe_Path
+_probe_sys.path.insert(0, str(_probe_Path(__file__).resolve().parent.parent))
+
+from jtag_registers import JTAGRegisterInterface
 from luna.gateware.interface.psram       import HyperRAMPHY
 
 # Ours: luna's `HyperRAMInterface` with tCSHI enforced and the dead low-latency

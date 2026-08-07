@@ -75,6 +75,7 @@ SIMS = [
     "soc_typec_sim",
     "soc_hyperram_sim",
     "soc_jtag_stage_sim",
+    "soc_jtag_registers_sim",
     "soc_board_sim",
     "sideband_link_sim",
     "sideband_advertise_sim",
