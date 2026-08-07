@@ -133,17 +133,23 @@ Rust dependencies, tracked in this repository's issues.
 | [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | moondancer | `gcp/moondancer.rs` | clamp endpoint `max_packet_size` to 512 (the HS limit) instead of rejecting SuperSpeed devices |
 | [#65](https://github.com/awtoau/cynthion-workspace/issues/65) | apollo | `uart.c`, `console.c`, `vendor.c`, `apollo_mode.c` | JTAG/UART arbitration on the shared PA11/PA14 pins — see [`hardware.md`](hardware.md#pin-sharing--the-two-hazards) |
 
-## Decided: HyperRAM splits at the PHY
+## Decided: HyperRAM splits at the PHY, and both controllers are vendored
 
-**We keep upstream's controller and replace upstream's PHY.** The split is at the record
-between them, and it falls out of the policy rather than being a compromise: `HyperBus` is
-a published protocol and the layer that speaks it is generic; the layer below it is ECP5
-I/O for r1.4's pin map, which is exactly the "genuinely Cynthion-specific" the policy
-reserves — and reserving it means writing it, because nobody else has this board.
+**The PHY split still holds**, and it falls out of the policy rather than being a
+compromise: `HyperBus` is a published protocol and the layer that speaks it is generic;
+the layer below it is ECP5 I/O for r1.4's pin map, which is exactly the "genuinely
+Cynthion-specific" the policy reserves — and reserving it means writing it, because
+nobody else has this board. `HyperRAMPHY` stays upstream's because it works here;
+`HyperRAMDQSPHY` could not be instantiated at all.
+
+**Both controllers are now vendored, for two defects each** — not rewritten. The FSMs are
+upstream's, copied with the changes marked in place, which is the same shape as the board
+definition: do not inherit a stack to get one file.
 
 | layer | whose | why |
 |---|---|---|
-| `HyperRAMInterface`, `HyperRAMDQSInterface` | **upstream, unchanged** | command encoding, latency, burst. Verified: 220.2 MB/s on the non-DQS path |
+| `HyperRAMDQSController` | **ours** (`gateware/soc/peripherals/hyperram_dqs_controller.py`) | luna's `HyperRAMDQSInterface`, vendored, with tCSHI enforced and the latency branch made a parameter |
+| `HyperRAMController` | **ours** (`gateware/soc/peripherals/hyperram_controller.py`) | luna's `HyperRAMInterface`, vendored, with the identical two fixes |
 | `HyperRAMPHY` (non-DQS) | **upstream, unchanged** | it elaborates here and it works |
 | `HyperRAMDQSPHY` | **ours** (`gateware/soc/peripherals/hyperram_dqs_phy.py`) | upstream's cannot be instantiated on r1.4 at all — see below |
 
@@ -158,23 +164,30 @@ module's `elaborate`.
 no DQS pin group"; the device database says RWDS is on `LDQS8` and every DQ line is in the
 same group, and nextpnr agrees. `scripts/hyperram_dqs_pins.py` is the check.
 
-Two upstream defects are **left in place, deliberately**, both in the controller:
+Two upstream defects sit in **both** controllers, and both are now fixed in both. They
+were left in place for a while, and the reason that stopped being tenable is worth
+recording: the non-DQS path is what the SoC ships **and** the baseline every DQS result is
+compared against, so leaving the fixes in one of the two made every side-by-side
+measurement a comparison of two different instruments (#215, split out of #208).
 
 - `RECOVERY` carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
-  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). The gap is held by the
-  caller instead, where it can be counted. `scripts/soc_hyperram_sim.py` asserts
-  back-to-back transactions violate it and that holding the gap fixes it.
+  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers now
+  hold it, counted from the caller's `sync_mhz` so it follows the clock. It used to be
+  held outside the controller by `hyperram_ceiling_top.py` and by nothing at all in
+  `bootram.py`. `scripts/soc_hyperram_sim.py` sections 4 and 4b assert that upstream's
+  controller violates it back-to-back and that ours does not — the negative control is
+  upstream's own class, through the same harness.
 - `with m.If(extra_latency | 1)` makes the low-latency branch dead, which #90 reports as
   costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
   reads `0x8f2f`, which selects *fixed* latency, so the device takes the long count every
-  time and RWDS says nothing about the transaction. Honouring RWDS pays only after CR0 is
-  reprogrammed to variable latency — two changes, not one, and worth measuring rather than
-  assuming.
+  time and RWDS says nothing about the transaction. So the behaviour is unchanged and the
+  intent is now stated: `fixed_latency=True` by default, `False` for a part reprogrammed
+  to variable latency — two changes, not one, and worth measuring rather than assuming.
 
 **The Wishbone peripheral (#90) is workspace gateware.** `HyperRAMWishbone` wraps the
-upstream controller with a 32-bit memory port: full stores and reads are two-word
-HyperBus bursts, while partial stores read, merge and write because the upstream
-controller exposes no RWDS mask input.
+controller with a 32-bit memory port: full stores and reads are two-word HyperBus bursts,
+while partial stores read, merge and write because the controller — upstream's FSM,
+unchanged in this respect — exposes no RWDS mask input.
 
 Three bugs were found in *our own* use of that interface, not in it: `final_word` must be
 held rather than pulsed, `perform_write`/`write_data` must be held for the whole transfer,

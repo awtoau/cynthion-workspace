@@ -40,6 +40,28 @@ No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
 [Python strategy](#python-strategy).
 
+### The board console
+
+Start it once and leave it running:
+
+```bash
+./scripts/tio_user.py           # attaches, and serves on TCP 9000
+```
+
+**One process can read a tty, and this is that process.** It fans the stream out
+on port 9000 by default, so everything else -- `soc_run.py`, `soc_shell.py`, an
+agent -- reads *and writes* through the socket while your terminal stays
+attached. Nothing has to take the port off you, and nothing has to be restarted
+to let something else in.
+
+Without it running, tools open the tty directly, which is fine when nothing else
+has it. What is NOT fine is two readers at once: the bytes interleave, each takes
+what the other never sees, and the result reads as a dead board rather than as a
+contended port. `soc_shell.py` names the offending process when it detects this.
+
+`--no-serve` makes the tty exclusive to your terminal, which is occasionally what
+you want and is never the default.
+
 ## Repository map
 
 | Path | Repo | Upstream | Contents |

@@ -136,6 +136,15 @@ impl core::fmt::Debug for BoardGateware {
 }
 #[doc = "board/gateware: 7 registers at 0xf0000640"]
 pub mod board_gateware;
+#[doc = "board/clocks: 2 registers at 0xf0000660"]
+pub type BoardClocks = crate::Periph<board_clocks::RegisterBlock, 0xf000_0660>;
+impl core::fmt::Debug for BoardClocks {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("BoardClocks").finish()
+    }
+}
+#[doc = "board/clocks: 2 registers at 0xf0000660"]
+pub mod board_clocks;
 #[doc = "plic: 9 registers at 0xf0400000"]
 pub type Plic = crate::Periph<plic::RegisterBlock, 0xf040_0000>;
 impl core::fmt::Debug for Plic {
@@ -187,6 +196,8 @@ pub struct Peripherals {
     pub board_vbus: BoardVbus,
     #[doc = "BOARD_GATEWARE"]
     pub board_gateware: BoardGateware,
+    #[doc = "BOARD_CLOCKS"]
+    pub board_clocks: BoardClocks,
     #[doc = "PLIC"]
     pub plic: Plic,
     #[doc = "CLINT"]
@@ -227,6 +238,7 @@ impl Peripherals {
             board_i2c_mux: BoardI2cMux::steal(),
             board_vbus: BoardVbus::steal(),
             board_gateware: BoardGateware::steal(),
+            board_clocks: BoardClocks::steal(),
             plic: Plic::steal(),
             clint: Clint::steal(),
         }

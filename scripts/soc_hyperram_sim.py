@@ -61,6 +61,11 @@ shows the fix passing is a check that would have passed before the fix.
      complains; back-to-back transactions are asserted to violate it and the
      bring-up design's counter is asserted to fix it.
 
+ 4b. **The same gap, on the non-DQS controller.** That path carries the CPU's
+     memory and four of the harnesses, and it is the baseline every DQS
+     comparison is read against -- so the same fix, with luna's
+     `HyperRAMInterface` through the same harness as the negative control.
+
   5. **Structural, against the PHY source.** The three reasons upstream's PHY
      cannot be instantiated on r1.4, asserted rather than described, so that a
      later edit which reintroduces one is caught here.
@@ -102,6 +107,7 @@ shows the fix passing is a check that would have passed before the fix.
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -123,6 +129,10 @@ from amaranth.sim import Simulator
 from amaranth_soc import wishbone
 
 from peripherals.hyperram_dqs_controller import HyperRAMDQSController
+from peripherals.hyperram_controller import HyperRAMController
+# Upstream's two controllers are imported for ONE purpose: to be the negative
+# control. Sections 4 and 4b run them through the same harness as ours, so
+# "the vendored controller keeps tCSHI" is a claim with something behind it.
 from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMDQSInterface,
                                             HyperRAMInterface)
@@ -154,7 +164,7 @@ DQS_BEAT_BITS = 32
 # The part is configured for FIXED latency: CR0 reads `0x8f2f` and bit 3 selects
 # it. So the device takes the same latency on every transaction and RWDS during
 # the command period says nothing about this one. That is the fact section 2
-# rests on, and it comes from `docs/chips/w956a8-hyperram.md`, which decoded it
+# rests on, and it comes from `docs/chips/hyperram/w956a8.md`, which decoded it
 # from a register the board actually returned.
 FIXED_LATENCY = True
 
@@ -175,7 +185,7 @@ FIXED_LATENCY = True
 #
 # CR0 = 0x8f2f: bits [7:4] = 0010b, which table 10 reads as 7 clocks, and bit 3
 # selects FIXED latency, so the part takes 2 x 7 = 14 CK on every transaction.
-# `docs/chips/w956a8-hyperram.md` carries the field table.
+# `docs/chips/hyperram/w956a8.md` carries the field table.
 #
 # This is stated separately from `latency_beats()` ON PURPOSE. That function
 # returns the number of beats the CONTROLLER waits, so a model built on it agrees
@@ -186,6 +196,13 @@ DEVICE_FIXED_LATENCY_CK = 14
 
 # CK per `sync` cycle on the DQS path: the fabric runs at CK/2 with 4:1 gearing.
 DQS_CK_PER_SYNC = 2
+
+# `sync` for every non-DQS section. It was a bare `1 / 192e6` at four `add_clock`
+# calls and nowhere else; the controller now needs the figure too, to turn tCSHI
+# into a cycle count, so the two must come from the same place or the sim would
+# be judging a controller built for one clock against a model running another.
+# On this path `HyperRAMPHY` emits one CK per `sync` cycle, so it is also CK.
+NON_DQS_SYNC_MHZ = 192.0
 
 
 def latency_beats():
@@ -647,6 +664,147 @@ def section_recovery(checks, emit):
          f"vendored: {model.cshi_violations}")
 
 
+class NonDQSProtocolHarness(Elaboratable):
+    """The 16-bit controller alone, with its record brought out for a model.
+
+    The same shape as `Harness`, for the other path: `upstream=True`
+    instantiates luna's `HyperRAMInterface` rather than the vendored
+    `HyperRAMController`, so the fix and its absence run through one testbench.
+
+    `NonDQSHarness` further down is not this. That one has the window, the engine
+    and `RegisteredResponse` in the path, which is what sections 8-11 are about;
+    this is the protocol layer with nothing above it, so a gap measured here is
+    the controller's own and not some master's arrival pattern.
+    """
+
+    def __init__(self, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ):
+        self.phy = HyperBusPHY()
+        if upstream:
+            self.psram = HyperRAMInterface(phy=self.phy)
+        else:
+            self.psram = HyperRAMController(phy=self.phy, sync_mhz=sync_mhz)
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.psram = self.psram
+        return m
+
+
+async def beat16(ctx, dut, model):
+    """One `sync` cycle on the 16-bit record: show the model the bus, drive back."""
+    dq_i, rwds_i = model.step(
+        cs=ctx.get(dut.phy.cs),
+        clk_en=ctx.get(dut.phy.clk_en),
+        dq_o=ctx.get(dut.phy.dq.o),
+        dq_e=ctx.get(dut.phy.dq.e),
+    )
+    ctx.set(dut.phy.dq.i, dq_i)
+    ctx.set(dut.phy.rwds.i, rwds_i)
+    await ctx.tick()
+
+
+async def run16(ctx, dut, model, *, address, read, data=None, gap=0):
+    """One transaction on the 16-bit controller, requested `gap` beats after idle.
+
+    `gap` 0 is back-to-back: the request goes up on the first cycle the
+    controller says it is idle. That is what a caller with work queued does, and
+    it is the case in which nothing but the controller can hold tCSHI.
+    """
+    psram = dut.psram
+
+    for _ in range(gap):
+        await beat16(ctx, dut, model)
+
+    ctx.set(psram.register_space, 0)
+    ctx.set(psram.single_page, 0)
+    ctx.set(psram.address, address)
+    ctx.set(psram.perform_write, 0 if read else 1)
+    if data is not None:
+        ctx.set(psram.write_data, data)
+    ctx.set(psram.final_word, 1)
+    ctx.set(psram.start_transfer, 1)
+    await ctx.tick()
+    ctx.set(psram.start_transfer, 0)
+
+    for _ in range(CYCLE_LIMIT):
+        await beat16(ctx, dut, model)
+        if ctx.get(psram.idle) and model._state == "idle":
+            break
+
+    ctx.set(psram.final_word, 0)
+    ctx.set(psram.perform_write, 0)
+
+
+def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ):
+    """Run `body(ctx, dut, model)` on the 16-bit path and return the model."""
+    dut = NonDQSProtocolHarness(upstream=upstream, sync_mhz=sync_mhz)
+    model = ModelHyperRAM16(sync_mhz=sync_mhz)
+
+    async def testbench(ctx):
+        await body(ctx, dut, model)
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1 / (sync_mhz * 1e6), domain="sync")
+    sim.add_testbench(testbench)
+    sim.run()
+    return model
+
+
+def section_recovery_non_dqs(checks, emit):
+    """4b. The same gap on the non-DQS controller, which is what the SoC ships.
+
+    Section 4 checks the DQS controller. This path carries the CPU's memory, the
+    firmware staging buffer and four of the harnesses, and it was still running
+    upstream's `RECOVERY` until the controller was vendored -- so every non-DQS
+    number ever recorded here, including the baseline the DQS results are read
+    against, was taken with the gap unheld.
+    """
+    emit("\n4b. tCSHI on the non-DQS controller -- the path the SoC ships\n")
+
+    async def back_to_back(ctx, dut, model):
+        await run16(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
+        await run16(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
+
+    # THE NEGATIVE CONTROL. Same harness, same model, luna's controller: if this
+    # does not fire, the detector is broken and the check below means nothing.
+    control = simulate16(back_to_back, upstream=True)
+    checks.check("upstream's non-DQS controller VIOLATES tCSHI back-to-back",
+                 control.cshi_violations > 0,
+                 "no violation from upstream either, so this harness cannot "
+                 "tell the two apart and the check below proves nothing")
+    checks.check("...and it is the GAP that differs, not the transaction count",
+                 len(control.commands) == 2,
+                 f"{len(control.commands)} commands from the control")
+
+    model = simulate16(back_to_back)
+    checks.check("the vendored controller keeps tCSHI with NO gap from the master",
+                 model.cshi_violations == 0,
+                 f"{model.cshi_violations} violations -- the RECOVERY counter is "
+                 f"not holding CS# high long enough")
+    checks.check("...and still issues both transactions",
+                 len(model.commands) == 2,
+                 f"{len(model.commands)} commands")
+    checks.check("...at the addresses asked for",
+                 model.commands == [TEST_ADDRESS, TEST_ADDRESS + 1],
+                 f"decoded {[hex(a) for a in model.commands]}")
+
+    # The window and the engine in the path, which is sections 8-11's harness and
+    # the SoC's own arrangement. A gap the protocol layer holds must survive the
+    # thing above it asking for the next line immediately.
+    refill_model, _ = simulate_line_refill(incrementing=False)
+    checks.check("sixteen classic transactions through the window keep it too",
+                 refill_model.cshi_violations == 0,
+                 f"{refill_model.cshi_violations} violations across "
+                 f"{len(refill_model.commands)} transactions")
+
+    required = max(1, math.ceil(T_CSHI_NS * NON_DQS_SYNC_MHZ / 1000.0))
+    emit(f"        tCSHI {T_CSHI_NS:g} ns at {NON_DQS_SYNC_MHZ:g} MHz is "
+         f"{required} whole cycle(s), counted inside the controller")
+    emit(f"        upstream: {control.cshi_violations} violations, "
+         f"vendored: {model.cshi_violations}, "
+         f"through the window: {refill_model.cshi_violations}")
+
+
 def section_as_built(checks, emit):
     """9b. The configuration this repository actually synthesises.
 
@@ -965,7 +1123,7 @@ def section_wishbone(checks, emit):
 
 
 class ControlledInterface:
-    """The HyperRAMInterface signal surface, driven by section 7."""
+    """The HyperRAMController signal surface, driven by section 7."""
 
     def __init__(self):
         self.address = Signal(32)
@@ -1119,8 +1277,9 @@ class NonDQSHarness(Elaboratable):
         self.phy = HyperBusPHY()
         self._ck_align = ck_align
         self.gate = ClockStopPHY(dev=self.phy) if clock_stop else None
-        self.interface = HyperRAMInterface(
-            phy=self.gate.ctrl if clock_stop else self.phy)
+        self.interface = HyperRAMController(
+            phy=self.gate.ctrl if clock_stop else self.phy,
+            sync_mhz=NON_DQS_SYNC_MHZ)
         self.bootram = BootRAM(interface=self.interface, sustained=sustained,
                                clock_stop=clock_stop)
         self._pipe = pipe
@@ -1150,9 +1309,18 @@ class NonDQSHarness(Elaboratable):
 class ModelHyperRAM16:
     """A 16-bit fixed-latency read model, observed only through HyperBus."""
 
-    def __init__(self):
+    def __init__(self, *, sync_mhz=NON_DQS_SYNC_MHZ, tcshi_ns=T_CSHI_NS):
         self.commands = []
         self.transaction_cycles = []
+        # Whole cycles of CS# high tCSHI needs at this clock, rounded up -- the
+        # same arithmetic the controller does, done independently of it. Two at
+        # 192 MHz.
+        self._cshi_required = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
+        # How many cycles CS# has been high. Starts far past the requirement so
+        # the first transaction of a run is not judged against a gap that never
+        # existed.
+        self._cs_high_cycles = 10**6
+        self.cshi_violations = 0
         self._state = "idle"
         self._ca = []
         self._latency = 0
@@ -1170,6 +1338,12 @@ class ModelHyperRAM16:
         dq_i, rwds_i = 0, 0
 
         if cs and not self._previous_cs:
+            # CS# just fell. Judged here, before anything about the command is
+            # known, and against the model's own cycle count rather than against
+            # anything the controller reports.
+            if self._cs_high_cycles < self._cshi_required:
+                self.cshi_violations += 1
+            self._cs_high_cycles = 0
             self._state = "command"
             self._ca = []
             self._active_cycles = 0
@@ -1181,6 +1355,7 @@ class ModelHyperRAM16:
         self._previous_cs = cs
 
         if not cs:
+            self._cs_high_cycles += 1
             return dq_i, rwds_i
 
         if self._state == "command" and clk_en and dq_e:
@@ -1206,7 +1381,7 @@ class ModelHyperRAM16:
                 # instead put the model two cycles late -- reads survived it,
                 # because RWDS gates the controller's sampling and it simply
                 # waited, but writes are not strobed and the model missed them.
-                self._latency = HyperRAMInterface.HIGH_LATENCY_CLOCKS - 2
+                self._latency = HyperRAMController.HIGH_LATENCY_CLOCKS - 2
                 self._state = "latency"
         elif self._state == "latency":
             # Counted in CK, not in `sync` cycles, which only differ once
@@ -1315,7 +1490,7 @@ def simulate_line_refill(*, incrementing):
                 break
 
     sim = Simulator(Fragment.get(dut, None))
-    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_clock(1 / (NON_DQS_SYNC_MHZ * 1e6), domain="sync")
     sim.add_testbench(testbench)
     sim.run()
     return model, observed
@@ -1399,7 +1574,7 @@ def simulate_single_write(*, adr=0x100):
         await drive_line(ctx, dut, model, write=True, base=adr, beats=1)
 
     sim = Simulator(Fragment.get(dut, None))
-    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_clock(1 / (NON_DQS_SYNC_MHZ * 1e6), domain="sync")
     sim.add_testbench(testbench)
     sim.run()
     return model
@@ -1423,7 +1598,7 @@ def simulate_cross(*, sustained, beats=16, base=0x100, clock_stop=False,
                          out=read_back, stalls=stalls)
 
     sim = Simulator(Fragment.get(dut, None))
-    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_clock(1 / (NON_DQS_SYNC_MHZ * 1e6), domain="sync")
     sim.add_testbench(testbench)
     sim.run()
     model.stalls = stalls
@@ -1519,7 +1694,7 @@ def read_line(*, sustained, clock_stop=False, base=0x300, beats=16):
                          beats=beats, out=out)
 
     sim = Simulator(Fragment.get(dut, None))
-    sim.add_clock(1 / 192e6, domain="sync")
+    sim.add_clock(1 / (NON_DQS_SYNC_MHZ * 1e6), domain="sync")
     sim.add_testbench(testbench)
     sim.run()
     want = [((0xa000 + 2 * i + 1) << 16) | (0xa000 + 2 * i)
@@ -1739,7 +1914,8 @@ def main():
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
                     section_as_built, section_dqs_write_order,
-                    section_recovery, section_structural, section_wishbone,
+                    section_recovery, section_recovery_non_dqs,
+                    section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
                     section_clock_stop):

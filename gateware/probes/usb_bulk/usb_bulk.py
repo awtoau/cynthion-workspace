@@ -56,7 +56,7 @@ from amaranth                       import (Cat, DomainRenamer, Elaboratable,
 from amaranth.lib.fifo              import SyncFIFOBuffered
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag   import JTAGRegisterInterface
+from jtag_registers import JTAGRegisterInterface
 from luna.usb2                      import (USBDevice, USBStreamInEndpoint,
                                             USBStreamOutEndpoint)
 

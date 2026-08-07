@@ -87,6 +87,7 @@ in its §13 got there in the first place.
 
 ### Per-chip notes
 
+* [`plans/`](plans/) — **working documents**: audits and sequencing, expected to be annotated and eventually deleted. Not a home for findings
 * [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) — FUSB302B ×2 — the USB-C PD controllers
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — ECP5 `LFE5U-12F` — the FPGA, and it is a 25F die
 * [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — NS16550A — the console UART, in fabric
@@ -95,7 +96,7 @@ in its §13 got there in the first place.
 * [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) — USB3343 ×3 — the ULPI PHYs
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
-* [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) — Winbond W956A8MBYA6I — the HyperRAM
+* [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — Winbond W956A8MBYA6I — the HyperRAM
 
 ### Moondancer / the SoC
 
@@ -103,12 +104,14 @@ in its §13 got there in the first place.
 ### The ECP5, beyond the part itself
 
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — the part: a 25F die, its primitives, and the DDR path
+* **[`chips/ecp5/programming-paths.md`](chips/ecp5/programming-paths.md) — every way code gets onto this board, and every way it boots**: start here, then follow it to the file that owns the detail
 * [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md) — block RAM: who actually uses it
 * [`chips/ecp5/config-engine-probe.md`](chips/ecp5/config-engine-probe.md) — probing the configuration engine on live silicon
 * [`chips/ecp5/flashing.md`](chips/ecp5/flashing.md) — the gateware load process
 * [`chips/ecp5/flash-partitioning.md`](chips/ecp5/flash-partitioning.md) — partitioned configuration flash on r1.4
 * [`chips/ecp5/qspi-boot-time.md`](chips/ecp5/qspi-boot-time.md) — does quad-SPI speed up configuration from flash?
 * [`chips/ecp5/reconfigure-initn-gap.md`](chips/ecp5/reconfigure-initn-gap.md) — `trigger_fpga_reconfiguration()` leaves INITN held low
+* [`chips/ecp5/peripheral-clock-audit.md`](chips/ecp5/peripheral-clock-audit.md) — every peripheral against the new clock topology, now that `sync` and `usb` are not the same
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — RV32 Equivalence and Variation Report (2026-07-22)
 * [`usb-performance.md`](usb-performance.md) — LUNA USB gateware: measured performance
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — Where the ECP5 findings live

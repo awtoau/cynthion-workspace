@@ -81,7 +81,8 @@ from amaranth.lib.cdc               import FFSynchronizer
 # requires that -- the PLL runs a 480 MHz VCO and each output divides it, so 80, 96, 100
 # and the rest are all reachable. This one takes an arbitrary frequency, derives real
 # dividers with ecppll, and reports what it actually produced.
-from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator
+from clocks import SocClocks
+from peripherals.clock_monitor import ClockMonitor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import usb_ids
@@ -234,6 +235,10 @@ ULPI_BASE      = BOARD_BASE + 0x1c
 I2C_MUX_BASE   = BOARD_BASE + 0x20
 VBUS_BASE      = BOARD_BASE + 0x24
 GATEWARE_BASE  = BOARD_BASE + 0x40
+# Measured clock rates, as opposed to `gateware_id`'s declared ones. Placed after
+# GATEWARE's 0x20 so the two read as a pair: what was asked for, and what
+# happened.
+CLOCKS_BASE    = BOARD_BASE + 0x60
 
 # What is on each GPIO pin.
 #
@@ -537,19 +542,14 @@ FLASH_DIVISOR = 0
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
 #
-# 60, and it is now pinned by the FLASH rather than by the CPU -- the opposite of what
-# the old comment here described.
-#
-# `sync` no longer has to serve the flash: the PHY has its own domain. But both outputs
-# divide ONE VCO, so the ratio is an integer and `fast = 2 x sync`. The flash domain
-# closes at 124.77 MHz in this design (measured -- see FLASH_FAST_RATIO), so `fast`
-# must be <= 120 and `sync` is therefore 60.
-#
-# The CPU could run faster alone: "the design already meets 72-91 MHz by nextpnr's own
-# estimate, and the die is a 25F sharing a speed grade with the 12F it is marked as
-# (#116). See #110." Reaching that WITH a fast flash needs a third PLL output or a
-# non-integer ratio, neither of which this generator offers.
-SYNC_MHZ = 30
+# The CPU clock. Bounded by:
+#   - the PLL: 13 in-spec frequencies 63..130 MHz, listed in `clocks.py`
+#   - the fabric: what nextpnr closes, which varies with placement
+#   - `fast` = FLASH_FAST_RATIO x sync when built, and the flash PHY closes at
+#     124.77 MHz -- so it caps sync whenever FLASH_PHY_FAST or HYPERRAM_DQS is on
+# `usb` is the A8 oscillator, so the PHY does not constrain this.
+# 60 is a rung with margin. The real ceiling is unmeasured.
+SYNC_MHZ = 60
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
 #
@@ -668,7 +668,11 @@ class HelloSoC(Elaboratable):
         # `fast` is needed if EITHER the flash PHY is decoupled or the HyperRAM
         # uses its DQS PHY -- the latter reads `ClockSignal("fast")` for every
         # ECLK, so it cannot elaborate without one.
-        m.submodules.car = car = VariableClockDomainGenerator(
+        # `usb` comes from the 60 MHz oscillator directly, not from this PLL --
+        # the FPGA sources the ULPI clock, so it is exactly 60.000 by
+        # construction. That is what frees `sync`: it no longer has to share a
+        # VCO with a domain pinned to 60. See `clocks.py`.
+        m.submodules.car = car = SocClocks(
             sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST or HYPERRAM_DQS,
             fast_ratio=FLASH_FAST_RATIO)
 
@@ -810,6 +814,11 @@ class HelloSoC(Elaboratable):
             usb_hz=round(car.actual_usb_mhz * 1e6),
             cache_sets=CACHE_SETS)
 
+        # What the clocks ARE, counted against the oscillator, alongside what
+        # they were declared to be. A PLL that never locked reported 30 MHz from
+        # a constant while `sync` was not oscillating at all.
+        m.submodules.clock_monitor = clock_monitor = ClockMonitor(lock=car.locked)
+
         board_csr = csr.Decoder(addr_width=7, data_width=8)
         m.submodules.board_csr = board_csr
         board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
@@ -826,6 +835,8 @@ class HelloSoC(Elaboratable):
                       name="vbus")
         board_csr.add(gateware_id.bus,   addr=GATEWARE_BASE - BOARD_BASE,
                       name="gateware")
+        board_csr.add(clock_monitor.bus, addr=CLOCKS_BASE   - BOARD_BASE,
+                      name="clocks")
 
         board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
         m.submodules.board_bridge = board_bridge

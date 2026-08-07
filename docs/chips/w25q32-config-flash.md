@@ -1,10 +1,219 @@
 # Winbond W25Q32 — the configuration flash
 
 The SPI NOR flash the ECP5 boots from on Cynthion r1.4. **Exactly 4 MiB**, and
-unlike the [HyperRAM](w956a8-hyperram.md) on the same board it is exactly what its
+unlike the [HyperRAM](hyperram/w956a8.md) on the same board it is exactly what its
 marking says.
 
 **Index:** [`../hardware.md`](../hardware.md)
+
+## Performance
+
+Structure per [`../plans/performance-sections.md`](../plans/performance-sections.md).
+Datasheet references are **W25Q32JV Revision G, 27 March 2018**
+(`sources/Winbond-W25Q32JV-32Mbit-SPI-Flash-RevG.pdf`, 80 pp), which is the
+revision `bank8_configuration.kicad_sch:8011` names.
+
+Two things this section exists to make obvious. **The clock pin, not the part, is
+what bounds reads** — SCK can only leave this FPGA through `USRMCLK`, which has
+no DDR output, so SCK can never exceed the fabric clock driving it. And **the
+host→flash programming path is a different path from CPU reads and is ~20× slower
+than the chip it is programming**, with SCK playing no part in that at all.
+
+### 1. Theoretical maximum
+
+**Reads.** §9.6 AC Electrical Characteristics (p. 63) gives three clock ratings,
+and the board runs at 3.3 V so the first applies:
+
+| symbol | applies to | max |
+|---|---|---|
+| `fC1` | everything except `0x03`, at VCC 3.0–3.6 V | **133 MHz** |
+| `fC2` | the same, at VCC 2.7–3.0 V | 104 MHz |
+| `fR` | `0x03` Read Data only | **50 MHz** |
+
+Lane count multiplies directly, because every mode moves one bit per lane per
+clock — there are no DTR opcodes on this die:
+
+    0x03  1-1-1 @  50 MHz  =  1 x  50e6 / 8 =   6.25 MB/s
+    0x0B  1-1-1 @ 133 MHz  =  1 x 133e6 / 8 =  16.6  MB/s
+    0xBB  1-2-2 @ 133 MHz  =  2 x 133e6 / 8 =  33.3  MB/s
+    0xEB  1-4-4 @ 133 MHz  =  4 x 133e6 / 8 =  66.5  MB/s   <- the part's ceiling
+
+**Continuous Read is a per-transaction saving, not a bulk one.** It removes the
+8-clock opcode phase and nothing else, so it is invisible on a large copy and
+worth 5.4% on a 64-byte cache line. Clocks per 64-byte line, at SCK:
+
+| mode | opcode | address | mode byte | dummy | data | total |
+|---|---|---|---|---|---|---|
+| `0x03` 1-1-1 | 8 | 24 | — | 0 | 512 | **544** |
+| `0x0B` 1-1-1 | 8 | 24 | — | 8 | 512 | **552** |
+| `0x6B` 1-1-4 | 8 | 24 | — | 8 | 128 | **168** |
+| `0xEB` 1-4-4 | 8 | 6 | 2 | 4 | 128 | **148** |
+| `0xEB` continuous | — | 6 | 2 | 4 | 128 | **140** |
+
+**Writes and erases are three orders of magnitude away, and they are not clocked
+at all** — they are self-timed, so SCK is irrelevant to them. §9.6, p. 64, with
+the page at 256 bytes and the array at 16,384 pages (§6.1, p. 9):
+
+| operation | payload | typ | max | typ throughput |
+|---|---|---|---|---|
+| page program `tPP` | 256 B | **0.4 ms** | 3 ms | **625 KiB/s** |
+| sector erase `tSE` | 4 KiB | 45 ms | 400 ms | 88.9 KiB/s |
+| block erase `tBE1` | 32 KiB | 120 ms | 1600 ms | 266.7 KiB/s |
+| block erase `tBE2` | 64 KiB | 150 ms | 2000 ms | 426.7 KiB/s |
+| chip erase `tCE` | 4 MiB | 10 s | 50 s | 419 KiB/s |
+| **erase + program the whole part** | 4 MiB | 10 s + 6.55 s | — | **253 KiB/s** |
+
+So the part's own ceiling is **66.5 MB/s reading and 253 KiB/s writing** — a
+factor of 270. Erase dominates a small write and program dominates a large one.
+
+### 2. Achievable on this board — the pin binds, and it is `USRMCLK`
+
+**SCK is on N9 = MCLK/CCLK, and N9 has no alternate function.** The four data
+lines do: T8/T7 are `PB11B`/`PB11A` and M7/N7 are `PB9B`/`PB9A`, ordinary bank-8
+I/O as well as MSPI pins, which is why they keep working at full rate after
+configuration. MCLK does not, and sysCONFIG FPGA-TN-02039 says why — *"The MCLK
+is always reserved for use in MSPI mode, in most post-configuration
+applications, as the reference clock for performing memory transactions with the
+external SPI PROM."* On r1.4 the only copper to the flash clock is from N9.
+
+**So SCK is not a pin that can be requested.** The platform's `qspi_flash`
+resource has `dq` and `cs` and **no clock at all**
+(`gateware/board/cynthion_r1_4.py:95-101`); `ECP5ConfigurationFlashInterface`
+proxies every other signal through to the real pins and supplies `sck` as a plain
+signal that the `USRMCLK` macro consumes (`gateware/soc/top.py:920-928`).
+
+**And there is no DDR at that site, which is the whole constraint.** nextpnr
+refuses an `ODDRX1F` whose `Q` drives anything but a top-level output, and
+`USRMCLK` is not one — but underneath that, the CCLK site has **no
+`DATAMUX_ODDR`/`IOLDO` mux** in the Trellis routing database, unlike every real
+PIO, and `JA4`'s mux sources carry **no global-clock spine source**, so a global
+clock cannot reach `USRMCLKI` without passing through a LUT or FF. There is no
+software fix.
+
+**The consequence, stated as the rule it is:**
+
+> **SCK ≤ the fabric clock of the domain that generates it.** Never 2×.
+
+| generator | SCK | note |
+|---|---|---|
+| luna_soc `SPIClockGenerator` | **domain / 2** | toggles SCK as a register — structurally halved |
+| Glasgow `IOStreamer` | **domain / 1** | routes the domain clock itself; how 144 MHz was reached |
+
+Reaching the part's in-spec 133 MHz therefore needs a **133 MHz fabric domain**
+on an LFE5U-12F speed grade 8. Inside the full SoC it does not exist: nextpnr
+reports the flash PHY's own domain — and the PHY is the only thing in it —
+closing at **111–125 MHz** (`gateware/soc/top.py:590-594`, `fast` 144 → 124.77 MHz
+FAIL, `fast` 120 → 111.26 MHz FAIL). So:
+
+    in-SoC board max, quad  = 4 x 125e6 / 8 = 62.5 MB/s   (94% of the part)
+    in-spec board max, quad = 4 x 133e6 / 8 = 66.5 MB/s   (needs a domain that does not close)
+
+**What a board revision would buy, precisely.** If SCK were on an ordinary bank
+pin, an `ODDRX1F` would give SCK = 2 × fabric, and the part's full 133 MHz would
+come from a **66.5 MHz** domain — a clock this design already closes at
+comfortably. That is the number: *the part's rated ceiling at half the fabric
+clock, instead of a fabric clock the device cannot reach.* It would cost the
+boot-from-flash path — the reservation is a convention rather than a hardware
+rule, and outside MSPI mode even `CSSPIN` reverts to general-purpose I/O, so such
+a board is possible — and a board that cannot configure itself from flash depends
+entirely on the debug controller for recovery.
+
+**As built today, the ceiling is 15.0 MB/s.** `SYNC_MHZ = 60`,
+`FLASH_DIVISOR = 0`, `FLASH_PHY_FAST = False`, `FLASH_MODE = "quad"`
+(`gateware/soc/top.py:513`, `:540`, `:567`, `:615`), so SCK is `60 / 2` = **30 MHz**
+and quad gives `4 × 30e6 / 8` = 15.0 MB/s. Lane count is finished; only the clock
+is left, and it is gated by the CPU rather than by the flash — `fast` must divide
+the same VCO as `sync` by an integer.
+
+**The host→flash programming path has a different bound entirely.** Apollo drives
+the flash over its background SPI through USB vendor requests, and one
+response-requiring transfer costs **3.00 ms** of USB round trip, measured
+(`repos/apollo` `90c8b7b`). At 256 bytes a page, the pacing is round trips per
+page — a write-enable and a completion poll — not SCK, not lane count, and not
+anything the FPGA does.
+
+### 3. Measured
+
+| path | conditions | figure | source |
+|---|---|---|---|
+| bulk read, gateware harness | `0xEB` continuous, quad, **SCK 144 MHz**, `sync` 144, 1 KiB windows verified at bytes 0–15 **and** 1008–1023 | **71.70 MB/s** | `scripts/flash_ceiling.py --run`, 2026-08-03 |
+| bulk read, single lane | `0x03`, SCK 144 MHz, same harness | 17.96 MB/s | as above |
+| cache-line refill | `0xEB` continuous, SCK 144 MHz, 256 strided reads timed in the FPGA | **1028 ns / 64 B = 62.3 MB/s** | as above |
+| cache-line refill | `0x03` single, SCK 144 MHz | 3833 ns / 64 B | as above |
+| SoC memory-mapped read | `0xEB` **non**-continuous, quad, SCK 36 MHz, sequential | 11.27 MB/s, 5.68 µs / line | `scripts/soc_shell.py bench` |
+| **host→flash program** | 58,940 B at offset `0xb0000`, `apollo flash-program` via Apollo background SPI, erase = 1 × 32 KiB block + 7 × 4 KiB sectors | **3.33 s = 17.3 KiB/s** | `repos/apollo` `90c8b7b`, driven by `scripts/soc_run.py`, 2026-08-06 |
+| page program, sector erase, block erase on the part | — | **never measured** | #93 — every figure above is a read |
+
+Three conditions worth attaching rather than assuming:
+
+- **71.70 MB/s is out of spec.** SCK 144 MHz is 8% past `fC1` = 133 MHz, and
+  `0x03` at 144 MHz is 2.9× past its own 50 MHz rating. Nothing failed at any of
+  60 points, but the limit reached was the *test design's* fmax of 149 MHz, not
+  the flash — so this says the part is comfortable, not that 144 MHz is a
+  supported operating point.
+- **The 11.27 MB/s row no longer describes the built SoC.** It was taken at
+  `SYNC_MHZ = 72`, i.e. SCK 36 MHz. `SYNC_MHZ` is **60** today, so SCK is 30 MHz
+  and the same firmware would be slower. Re-measure before quoting it.
+- **17.3 KiB/s is after a fix, not before.** The same image took **4.71 s** until
+  two redundant USB round trips per page were removed — a write-enable
+  verification that re-checks a latch which either works on the first page or not
+  at all, and a completion poll immediately followed by the next page's own wait.
+  231 pages × 2 round trips × 3.00 ms predicted 1.4 s; 1.38 s was measured.
+
+### 4. The gap, and what closes it
+
+**The host→flash path is the whole story, and the gap is transport, not silicon.**
+For that exact 58,940-byte image, from §9.6 typicals:
+
+| | |
+|---|---|
+| erase — `0xb0000` is 64 KiB-aligned, so 1 × 32 KiB block + 7 × 4 KiB sectors | `120 + 7 × 45` = **435 ms** |
+| program — 231 pages × `tPP` 0.4 ms | **92 ms** |
+| **what the W25Q32JV itself needs** | **≈ 0.53 s** |
+| **measured wall time** | **3.33 s** |
+| **the part's share** | **16%** |
+
+**2.8 seconds of that is USB round trips**, and SCK does not appear anywhere in
+the arithmetic. Removing it needs the page loop to run on the MCU — host ships
+bulk, the SAMD11 paces the flash at SPI speed — which is a firmware command that
+does not exist, on a part at 94.4% of its flash budget. **#100** tracks it.
+
+*(A note on provenance: `repos/apollo` `90c8b7b` and `scripts/soc_run.py:483`
+give the program share as ~0.16 s. That uses `tPP` = 0.7 ms from the
+**preliminary 2014** copy of the datasheet that was in `sources/`; Revision G
+says 0.4 ms, which is 92 ms. The gap is wider than those comments claim, not
+narrower.)*
+
+Ranked, with what each is worth:
+
+| rank | option | worth | effort |
+|---|---|---|---|
+| ✔ | `FLASH_MODE = "quad"` | **2.70×** on a 16 KiB random walk | done in `03482f4`, for **−261 LUTs** and no block RAM |
+| 1 | **page loop on the SAMD11** (#100) | 3.33 s → ~0.6 s, **5.5×**, on every firmware iteration | a firmware command that does not exist, on a part at 94.4% of its budget |
+| 2 | replace luna_soc's PHY — SCK is capped at `domain`/2 | **2×** on reads | the only read option not gated on the CPU clock |
+| 3 | raise the flash domain | 2× at 120 MHz | `fast` must divide the same VCO as `sync`; the SoC's median Fmax is 75.0 MHz and the flash PHY's own is 111–125 |
+| 4 | 128-byte I-cache line | +7.2% | a parameter, plus block RAM already at 75% |
+| 5 | `0xEB` continuous read in the SoC | +5.1% per line | small, and the mode is sticky across an FPGA reconfiguration |
+| 6 | `0x77` Set Burst with Wrap | 72% off the **stall**, 0% off throughput | needs a wrapped-read path and an I-cache that restarts on the critical word |
+| — | **SCK on an ordinary bank pin** | the part's 133 MHz from a 66.5 MHz domain | **a board revision**, and it costs self-configuration |
+| — | QPI, DTR, `0xC0` | **absent on this die** | — |
+
+**Unknown:** about a third of the SoC's per-line cost. The model says 4.18 µs at
+SCK 36 for `0xEB`; the board said 5.68 µs. The regime is right and the residue
+has never been instrumented.
+
+### Summary
+
+| path | theoretical | board max | measured | % of board max | what closes the gap |
+|---|---|---|---|---|---|
+| bulk read, quad `0xEB` continuous | **66.5 MB/s** @ 133 MHz | 62.5 MB/s (fabric 125 MHz, the flash PHY's fmax) | **71.70 MB/s** @ SCK 144 — *out of spec* | >100% | nothing; the instrument ran out before the flash did |
+| bulk read, quad, **as the SoC is built** | 66.5 MB/s | **15.0 MB/s** @ SCK 30 | 11.27 MB/s @ SCK 36 — **stale, `SYNC_MHZ` has moved** | ~75% | the PHY's /2, then the domain clock |
+| bulk read, 1-lane `0x0B` | 16.6 MB/s @ 133 MHz | 15.6 MB/s | 17.95 MB/s @ SCK 144 | >100% | superseded by quad |
+| bulk read, 1-lane `0x03` | 6.25 MB/s @ 50 MHz | 6.25 MB/s in spec | 17.96 MB/s @ SCK 144 | 287% | the opcode's rating is not a wall on this board |
+| CPU cache-line refill | 62.3 MB/s @ SCK 144 | 12.8 MB/s @ SCK 30 (140-clock model) | 11.27 MB/s equivalent @ SCK 36 | — | continuous read, then the domain clock |
+| page program, on the part | **625 KiB/s** (`tPP` 0.4 ms typ) | 625 KiB/s — the chip binds, the board does not | **never measured** (#93) | — | nothing on the board affects it |
+| sector erase, on the part | 88.9 KiB/s (`tSE` 45 ms typ) | 88.9 KiB/s | **never measured** (#93) | — | pick the largest erase unit that fits |
+| **host → flash programming** | ~109 KiB/s for this image, chip-bound | ~109 KiB/s — transport is the only variable | **17.3 KiB/s** (58,940 B / 3.33 s) | **16%** | **the page loop on the SAMD11 (#100)** |
 
 ## Identification, read from the part
 

@@ -91,5 +91,5 @@ already aged into a contradiction with
 window did not coalesce bursts. The durable half — the burst-coalescing
 implementation, the 748-word tCSM cap, the 51-CK versus 336-CK simulation result, and
 why the CSR staging port is kept — is now in
-[`docs/chips/w956a8-hyperram.md`](../../docs/chips/w956a8-hyperram.md). The remaining
+[`docs/chips/hyperram/w956a8.md`](../../docs/chips/hyperram/w956a8.md). The remaining
 work is [#90](https://github.com/awtoau/cynthion-workspace/issues/90).

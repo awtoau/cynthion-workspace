@@ -13,7 +13,7 @@ Fetch anything missing with the URL below. `sources/*.pdf` is gitignored.
 | `ISSI-IS66WVH8M8-64Mbit-HyperRAM.pdf` | IS66/67WVH8M8ALL/BLL, 64 Mbit, 8M x 8 | `https://www.issi.com/WW/pdf/66-67WVH8M8ALL-BLL.pdf` |
 | `ISSI-IS66WVH16M8-128Mbit-HyperRAM.pdf` | IS66/67WVH16M8ALL/BLL, 128 Mbit, 16M x 8 | `https://www.issi.com/WW/pdf/66-67WVH16M8ALL-BLL.pdf` |
 
-**What these settled** (#109, `../docs/chips/w956a8-hyperram.md`):
+**What these settled** (#109, `../docs/chips/hyperram/w956a8.md`):
 
 **The part is 8 MiB and always was.** `ID0 = 0x0c86` gives raw fields of 12 and 8, and
 **both are count-minus-one** — table 5.2 states `00000` = *"One Row address bit"*. So it
@@ -24,7 +24,7 @@ Rows: 8192".
 look like it held twice its marking. Two further hypotheses were published to explain
 that non-existent 2x gap — including a dual-die reading of ID0[15:14], which the 128 Mbit
 datasheet does document but which does not apply here. Both are retracted; the detail is
-in `../docs/chips/w956a8-hyperram.md`.
+in `../docs/chips/hyperram/w956a8.md`.
 
 These datasheets were still worth fetching: they are what settled it, and the 128 Mbit
 one is the control that let the dual-die hypothesis be tested and dropped.
@@ -68,6 +68,24 @@ supply voltage (1.8 V vs 3.0 V), and both are covered by one combined datasheet.
 combined document is the first file above and it is the datasheet for the part on the
 board. The nearest genuine 128 Mbit HyperRAM is **`W957D8MFYA`** (a 2-die DDP), which is
 the second file, kept under the requested filename.
+
+#### Rev A01-006 no longer lists the 6I part that is on the board
+
+Section 2, Order Information, in `W956x8MBYA_A01-006.pdf` has **two rows** and both
+are the 200 MHz `5I`: `W956D8MBYA5I` (1.8 V) and `W956A8MBYA5I` (3.0 V). The
+board's `W956A8MBYA6I` is not in it. The revision history says why — **A01-004,
+2 Sep 2021: *"Remove W956D8MBYA6I (1.8V) and W956A8MBYA6I (3.0V) 166MHz part
+number"***.
+
+The 166 MHz **specifications survive** — Table 21 (read timing, p. 37), Table 22
+(clock timing, p. 38) and Table 24 (write timing) all still carry a 166 MHz
+column, and it is the column the fitted part is graded to. So the part is
+specified but no longer orderable, which is the opposite of the usual failure and
+worth stating: a future build of this board cannot buy the 6I and must take the
+5I substitution the schematic already approves.
+
+`../docs/chips/hyperram/w956a8.md` previously said *"Section 2 of the datasheet
+lists both"*. It does not, and that is corrected there.
 
 #### What they settled: `0x1000` is the Manufacturer Information Register
 
@@ -185,14 +203,43 @@ the address-bit fields.
 
 The board's flash is a **Winbond W25Q32JV**, JEDEC `EF 40 16`.
 
-| file | part | source |
-|---|---|---|
-| `Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` | W25Q32**JV**, 3V 32 Mbit, dual/quad SPI & QPI — the part fitted | `https://www.winbond.com/resource-files/w25q32jv%20revi%2005182022%20plus.pdf` |
-| `Winbond-W25Q32FV-32Mbit-SPI-Flash.pdf` | W25Q32**FV**, the previous generation | vendor mirror |
+| file | part | pages | source |
+|---|---|---|---|
+| `Winbond-W25Q32JV-32Mbit-SPI-Flash-RevG.pdf` | W25Q32**JV**, 3V 32 Mbit, dual/quad SPI — **Revision G, 27 March 2018, the revision the schematic names** | **80** | `https://www.winbond.com/resource-files/w25q32jv%20revg%2003272018%20plus.pdf` |
+| `Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` | W25Q32JV — **Preliminary Revision A1, 18 November 2014.** Superseded; see the warning below | 78 | the `revi 05182022` URL below now **404s**; this file is not what that URL named |
+| `Winbond-W25Q32FV-32Mbit-SPI-Flash.pdf` | W25Q32**FV**, the previous generation | — | vendor mirror |
 
 Both generations are kept because they differ in the timing maximums that
 `../docs/luna_ecp5_fpga/flash-detailed.md` transcribes, and reading the wrong one is an
 easy way to attribute a JV limit to an FV part.
+
+### The JV copy that was here was the 2014 PRELIMINARY, and one number differs
+
+`Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` is titled *"Preliminary W25Q32JVXXIQ RevA0
+Nov182014"* in its own PDF metadata and carries `Preliminary-Revision A1` in every
+page footer. The manifest row claimed it was Revision I (May 2022) and gave a URL
+that returns **HTTP 404** today, so nothing could have caught it — the row recorded
+a URL and a title but no way to check the copy, which is the same failure the
+Infineon section below describes.
+
+**It matters.** §9.6 AC Electrical Characteristics, Page Program Time `tPP`:
+
+| | typ | max |
+|---|---|---|
+| Preliminary Rev A1 (2014) | **0.7 ms** | 3 ms |
+| **Revision G (2018) — the fitted part** | **0.4 ms** | 3 ms |
+
+A 231-page write is 162 ms by the preliminary and **92 ms** by Rev G, and that
+figure is the denominator in the host→flash transport gap in
+`../docs/chips/w25q32-config-flash.md`. Everything else checked identical:
+`fC1` 133 MHz / `fC2` 104 MHz / `fR` 50 MHz, `tSE` 45/400 ms, `tBE1` 120/1600 ms,
+`tBE2` 150/2000 ms, `tCE` 10/50 s.
+
+**Validity check before trusting a candidate for this part:**
+
+    pdfinfo <file> | grep Pages                              # Pages = 80
+    pdftotext -layout <file> - | grep -c 'Revision G'         # non-zero
+    pdftotext -layout <file> - | grep -c 'Preliminary'        # ZERO
 
 ## FPGA
 
@@ -256,3 +303,21 @@ Six files arrived here named `*.pdf` and were **HTML bot-check or error pages**:
 `file <name>.pdf` is the check — "HTML document" rather than "PDF document" catches every
 one of them, and it costs nothing to run after a fetch. Both notes above about Mouser and
 ISSI describe the same failure; this is the general form of it.
+
+## `lattice-ecp5-sysconfig-FPGA-TN-02039.pdf`
+
+ECP5 and ECP5-5G sysCONFIG User Guide, **FPGA-TN-02039-2.3, March 2024**, 74 pages.
+
+    https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02039-2-3-ECP5-and-ECP5-5G-sysCONFIG.pdf
+
+A mirror, because Lattice's own copy is behind a block page — Mouser's returned an
+HTML interstitial rather than a PDF. Verify a good copy by page count (74) and by
+the presence of the string `6.6. TransFR Operation`; a truncated download loses
+exactly the configuration sections that matter.
+
+Answers #234: the ECP5 does support loading without taking the design down.
+**Background Mode** is "a configuration mode where all the I/O pins remain
+operational"; **NDR (TransFR)**, bit 28 of the control register, keeps an I/O at
+its previous value through `PROGRAMN`/`REFRESH` instead of tristating it; and
+Dual Boot / Multi Boot hold two patterns in the one SPI flash. `REFRESH` is
+issuable over JTAG, which is the port we already have.

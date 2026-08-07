@@ -23,7 +23,7 @@ That shape was read as duplication in #189 -- `hyperram_fifo.py`,
 `hyperram_regfuzz.py` and `hyperram_identify.py` each "existed twice". None of
 them did. The real fault was worse and the opposite way round: two of the three
 runners had been archived to `debris/scripts/` as spent one-offs while their
-gateware stayed live, so `gateware/README.md` and `docs/chips/w956a8-hyperram.md`
+gateware stayed live, so `gateware/README.md` and `docs/chips/hyperram/w956a8.md`
 both name `scripts/hyperram_fifo.py`, `scripts/hyperram_regfuzz.py` and
 `scripts/hyperram_ladder.py` as the host drivers for paths that did not exist.
 `./dev.py audit` could not see it -- its DANGLING check reads only `scripts/`,
@@ -38,9 +38,10 @@ rather than reachable by remembering a path and a flag.
 Wishbone master bubbles, so holding a transaction open corrupts the write. That
 master is `HyperRAMWishbone` in `gateware/soc/bootram.py` (`sustained`
 defaults to False for exactly this reason), and **not one of the eleven tops
-under `gateware/probes/hyperram/` goes near it.** Every one drives `HyperRAMInterface`
-or `HyperRAMDQSInterface` from its own FSM, which supplies and consumes a word
-per cycle by construction, so none of them can express the fault.
+under `gateware/probes/hyperram/` goes near it.** Every one drives
+`HyperRAMController` or `HyperRAMDQSController` from its own FSM, which supplies
+and consumes a word per cycle by construction, so none of them can express the
+fault.
 
 That is not a criticism of them -- they measure the part, correctly, which is why
 they report 198-314 MB/s against the SoC's 5.43. It is the reason the fault
@@ -80,7 +81,7 @@ HARNESSES = {
         "hyperram_identify.py", "hyperram_identify.py",
         "ID0/ID1/CR0/CR1, the density they decode to, and whether banks alias",
         "yes -- ID0 0x0c86 and the 8 MiB boundary bracketed (d77f052, c535ba7, "
-        "1c8d10a); the part is in docs/chips/w956a8-hyperram.md because of it",
+        "1c8d10a); the part is in docs/chips/hyperram/w956a8.md because of it",
     ),
     "regfuzz": (
         "hyperram_regfuzz.py", "hyperram_regfuzz.py",
@@ -92,12 +93,12 @@ HARNESSES = {
         "hyperram_ceiling.py", "hyperram_ceiling_top.py",
         "the device CK at which reads stop verifying, both PHYs, with BURSTDET "
         "and a per-word error count under a legal tCSM burst cap",
-        "yes, but not until 2026-08-03 -- written, built and left before that. "
-        "Full 22-rung sweep 2026-08-05 (tmp/hyperram-ceiling/results.json): DQS "
-        "clean to CK 180 at 313.5 MB/s, non-DQS capped at CK 140 by the FABRIC, "
-        "not the part -- it clocks the fabric at CK, so CK 150/160/180 miss "
-        "timing at 139.3/147.7/134.6 MHz and never produce a bitstream. Six "
-        "rungs report 'invalid control' and are correctly refused, not scored.",
+        "yes, but every rung it produced is VOID -- see "
+        "docs/chips/hyperram/bist-plan.md. The apparatus had four faults at "
+        "once, and no figure from it survives. What does survive is a fact "
+        "about our design rather than the part: non-DQS is capped at CK 140 "
+        "by the FABRIC, because it clocks the fabric at CK, so CK 150/160/180 "
+        "miss timing at 139.3/147.7/134.6 MHz and never produce a bitstream.",
     ),
     "readclksel": (
         "hyperram_readclksel_sweep.py", "hyperram_ceiling_top.py",
@@ -110,7 +111,7 @@ HARNESSES = {
         "throughput against chunk size when writes and reads alternate, i.e. how "
         "much of the streaming rate survives turning the bus around",
         "yes, once -- ten chunk sizes at 120 MHz, 163,840 words verified "
-        "(18144d3); the table is in docs/chips/w956a8-hyperram.md",
+        "(18144d3); the table is in docs/chips/hyperram/w956a8.md",
     ),
     "measure": (
         "hyperram_measure.py", None,

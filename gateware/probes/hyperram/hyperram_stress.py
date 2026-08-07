@@ -30,14 +30,30 @@ Each phase reports its own error count, so a failure says which property broke
 rather than just that something did.
 """
 
+import sys
+from pathlib                             import Path
+
 from amaranth                            import (Cat, Const, Elaboratable, Module,
                                                  Signal, unsigned)
 from amaranth.lib                        import io
 from amaranth.lib.memory                 import Memory
 
 from luna.gateware.architecture.car      import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag        import JTAGRegisterInterface
-from luna.gateware.interface.psram       import HyperRAMPHY, HyperRAMInterface
+# `jtag_registers` sits beside `bist` one directory up; a build script may
+# only have put this applet's own directory on the path.
+import sys as _probe_sys
+from pathlib import Path as _probe_Path
+_probe_sys.path.insert(0, str(_probe_Path(__file__).resolve().parent.parent))
+
+from jtag_registers import JTAGRegisterInterface
+from luna.gateware.interface.psram       import HyperRAMPHY
+
+# Ours: luna's `HyperRAMInterface` with tCSHI enforced and the dead low-latency
+# branch made a parameter. The PHY beneath it is still upstream's. This harness
+# is the validated known-good reference `docs/chips/hyperram/bist-plan.md` names,
+# so it has to be running the same controller as everything it is compared with.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "soc"))
+from peripherals.hyperram_controller     import HyperRAMController
 
 
 CLOCK_MHZ = 120
@@ -106,7 +122,7 @@ class HyperRAMStressTest(Elaboratable):
         ram_bus = platform.request("ram")
         psram_phy = HyperRAMPHY(bus=ram_bus)
         m.submodules.psram_phy = psram_phy
-        psram = HyperRAMInterface(phy=psram_phy.phy)
+        psram = HyperRAMController(phy=psram_phy.phy, sync_mhz=CLOCK_MHZ)
         m.submodules.psram = psram
 
         m.submodules.lfsr = lfsr = LFSR()

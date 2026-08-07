@@ -69,12 +69,26 @@ from pathlib import Path
 
 from amaranth import Elaboratable, Module, Signal, Cat, C
 
-ROOT = Path(__file__).resolve().parent.parent.parent
+# Four levels: this file -> hyperram/ -> probes/ -> gateware/ -> the repo
+# root. Three stopped at `gateware/`, so the sys.path entries below pointed
+# at `gateware/gateware` and the vendored controller could not be imported.
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
-from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY
+from luna.gateware.interface.psram import HyperRAMPHY
+
+# Ours: luna's `HyperRAMInterface` with tCSHI enforced and the dead low-latency
+# branch made a parameter. The PHY beneath it is still upstream's.
+from peripherals.hyperram_controller import HyperRAMController
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag import JTAGRegisterInterface
+# `jtag_registers` sits beside `bist` one directory up; a build script may
+# only have put this applet's own directory on the path.
+import sys as _probe_sys
+from pathlib import Path as _probe_Path
+_probe_sys.path.insert(0, str(_probe_Path(__file__).resolve().parent.parent))
+
+from jtag_registers import JTAGRegisterInterface
 
 # Conservative: identification is a handful of transactions, so there is nothing to gain
 # from pushing the clock, and 60 MHz is the rate hyperram-speed.md verified as clean.
@@ -135,7 +149,7 @@ class HyperRAMIdentify(Elaboratable):
         ram_bus = platform.request("ram")
         psram_phy = HyperRAMPHY(bus=ram_bus)
         m.submodules.psram_phy = psram_phy
-        psram = HyperRAMInterface(phy=psram_phy.phy)
+        psram = HyperRAMController(phy=psram_phy.phy, sync_mhz=CLOCK_MHZ)
         m.submodules.psram = psram
 
         id0 = Signal(16)

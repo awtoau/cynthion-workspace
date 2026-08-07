@@ -57,7 +57,7 @@ from pathlib import Path
 from amaranth import Cat, Const, Elaboratable, Module, Signal
 
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
-from luna.gateware.interface.jtag import JTAGRegisterInterface
+from jtag_registers import JTAGRegisterInterface
 from luna.gateware.usb.usb2.device import USBDevice
 from luna.gateware.usb.usb2.endpoints.stream import USBStreamOutEndpoint
 

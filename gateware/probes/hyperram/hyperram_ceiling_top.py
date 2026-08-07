@@ -66,14 +66,19 @@ from math import ceil
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "riscv"))
+# `gateware/soc`, for the two vendored controllers and `bootram`'s constants.
+# This line used to name `gateware/probes/riscv`, which does not exist -- so the
+# DQS branch below could only ever import when the caller had already put the SoC
+# on the path, and the non-DQS branch now needs it too.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "soc"))
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable,
                       Instance, Module, Mux, ResetSignal, Signal)
 from amaranth.lib.memory import Memory
 
-from luna.gateware.interface.psram import (HyperRAMPHY,
-                                           HyperRAMInterface)
+from luna.gateware.interface.psram import HyperRAMPHY
+
+from peripherals.hyperram_controller import HyperRAMController
 
 from bist import BISTAddresses, BISTHarness
 
@@ -151,7 +156,7 @@ ROW_CONTROL_OK = 1 << 27  # the negative pass mismatched everywhere, as it must
 # Each cell runs TWICE: the measurement, then one pass with the comparator
 # pointed at a value the part cannot return. Without that second pass a zero
 # error count says only that nothing was reported, which is exactly what made
-# the retired 313.5 MB/s figure worthless. It costs one burst per cell.
+# this harness's entire retired ladder worthless. It costs one burst per cell.
 
 # Where those registers live in the part's register space.
 CR0_ADDRESS = 0x0800
@@ -180,9 +185,14 @@ ADDRESS_BITS = 22
 # was wrong; these say *how* -- shifted, stuck, or noise.
 CAPTURE_DEPTH = 64
 
-# tCSHI, CS# high between transactions, from the datasheet. The controller's
-# RECOVERY state is `# TODO: implement recovery` and falls through to IDLE, so
-# this gap exists only because the caller makes it.
+# tCSHI, CS# high between transactions, from the datasheet.
+#
+# BOTH controllers now hold this themselves -- upstream's `RECOVERY` was
+# `# TODO: implement recovery` and fell through to IDLE, which is why this
+# applet counted the gap itself. The counter below is kept: it is the only place
+# a violation would show up as a wrong measurement rather than as data
+# corruption, and a harness that measures a ceiling should not also be the thing
+# that assumes the controller is right.
 T_CSHI_NS = 10.0
 
 # The DTR conversion is retriggered by the wrap of a free-running counter. 2**19
@@ -214,7 +224,12 @@ def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
 
     Returns (vco, clki_div, clkfb_div, clkop_div, clkos2_div) or None.
     """
-    for clki_div in range(1, 8):
+    # CLKI_DIV stops at 6, not 7. The ECP5's phase detector has a 10 MHz
+    # minimum (FPGA-DS-02012 Table 3.23), and 60/7 = 8.57 MHz is under it --
+    # a configuration that builds and whose jitter the datasheet does not
+    # guarantee. `gateware/soc/clocks.py` carries the same floor as
+    # `PFD_MIN_MHZ`, where it removed 55 of 68 candidate frequencies.
+    for clki_div in range(1, 7):
         for clkfb_div in range(1, 81):
             if abs(input_mhz * clkfb_div / clki_div - sync_mhz) > tolerance:
                 continue
@@ -336,7 +351,7 @@ class HyperRAMCeiling(Elaboratable):
         REPEATED 64 TIMES ACROSS IT: an addressing fault anywhere in bits 16..21
         wrote and read the same value and was scored correct. The harness could
         not see aliasing over the whole upper part, which is the one question
-        `docs/chips/w956a8-hyperram.md` raises about the undocumented upper 4 MiB.
+        `docs/chips/hyperram/w956a8.md` raises about the undocumented upper 4 MiB.
 
         At 32 bits the low half carries `addr[0:16]` and the high half carries
         `addr[16:32]` complemented, so the value is INVERTIBLE: given a word that
@@ -501,7 +516,8 @@ class HyperRAMCeiling(Elaboratable):
         else:
             bus = platform.request("ram")
             m.submodules.phy = phy = HyperRAMPHY(bus=bus)
-            m.submodules.psram = psram = HyperRAMInterface(phy=phy.phy)
+            m.submodules.psram = psram = HyperRAMController(
+                phy=phy.phy, sync_mhz=self.sync_mhz)
             # The non-DQS PHY never drives RESET#; the platform's buffer holds it
             # released, which is the behaviour this path has always had.
             reset_assert = Signal()

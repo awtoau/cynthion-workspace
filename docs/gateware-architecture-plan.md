@@ -105,7 +105,7 @@ bitstream will configure the ports differently. The point is proving all three
 **HyperRAM ID and serial readback.** Small, and closes a real gap: DEVICES
 currently reports `hyperram absent` as a presence bit with no identity behind it.
 The registers themselves are already read and decoded from a standalone bitstream
-— [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) — so what is missing is
+— [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — so what is missing is
 the CPU-side path, not the knowledge.
 
 **FUSB302B and die temperature over the sideband.** Small, because the gateware

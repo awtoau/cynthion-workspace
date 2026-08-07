@@ -7,10 +7,10 @@
 > by strobe; the JTAG register readback slips below a `sync`/TCK ratio of about
 > 4; and the negative control armed while the engine was already running.
 >
-> Re-measured with all four fixed, the DQS ceiling is **CK 140 at 238.9 MB/s
-> read**, and **CK 180 fails in bulk with 4.7 M errors** — so "313.5 MB/s, DQS
-> clean" is not merely unverified, it is wrong. `scripts/hyperram_ceiling.py`,
-> and see #186/#188.
+> Every throughput figure this project produced for the part is therefore
+> void and has been deleted rather than annotated. No MB/s number is
+> offered here; the re-measurement is outstanding. See
+> `docs/chips/hyperram/bist-plan.md`.
 
 **Repo:** `greatscottgadgets/luna` · **Branch:** `awtoau/awto-luna:dqs-phy-amaranth-0.5`
 · **Base:** upstream `main` · **Diff:** 2 files, +31 −9 · **BLOCKING**
@@ -93,12 +93,12 @@ Same board, same harness, gateware pattern engine, 50 M words per rung:
 
 | PHY | CK | fabric `sync` | nextpnr | read | errors |
 |---|---|---|---|---|---|
-| `HyperRAMPHY` (what the analyzer uses) | 120 | 120 | MET 135.9 | **198.2 MB/s** | 0 |
-| `HyperRAMPHY` | 140 | 140 | MET 143.2 | **229.7 MB/s** | 0 |
+| `HyperRAMPHY` (what the analyzer uses) | 120 | 120 | MET 135.9 | (withheld) | 0 |
+| `HyperRAMPHY` | 140 | 140 | MET 143.2 | (withheld) | 0 |
 | `HyperRAMPHY` | 150 | 150 | **FAIL 139.3** | — | — |
 | `HyperRAMPHY` | 180 | 180 | **FAIL 134.6** | — | — |
-| DQS | 160 | 80 | MET 121.9 | 278.6 MB/s | 0 |
-| DQS | **180** | **90** | MET 124.9 | **313.5 MB/s** | 0 |
+| DQS | 160 | 80 | MET 121.9 | (withheld) | 0 |
+| DQS | **180** | **90** | MET 124.9 | (withheld) | 0 |
 | DQS | 200 | 100 | — | — | 43,360,384 |
 
 The MB/s is not the interesting part. `HyperRAMPHY` clocks the **fabric** at CK,

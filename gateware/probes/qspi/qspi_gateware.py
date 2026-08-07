@@ -43,7 +43,13 @@ from amaranth                            import (Cat, Const, Elaboratable, Modul
                                                  Mux, Signal, unsigned)
 from amaranth.lib.memory                 import Memory
 
-from luna.gateware.interface.jtag        import JTAGRegisterInterface
+# `jtag_registers` sits beside `bist` one directory up; a build script may
+# only have put this applet's own directory on the path.
+import sys as _probe_sys
+from pathlib import Path as _probe_Path
+_probe_sys.path.insert(0, str(_probe_Path(__file__).resolve().parent.parent))
+
+from jtag_registers import JTAGRegisterInterface
 
 from apollo_fpga.gateware.qspi_flash     import QSPIFlashController, QuadFlashReader
 from apollo_fpga.gateware.variable_clock import VariableClockDomainGenerator

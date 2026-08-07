@@ -609,7 +609,7 @@ better evidenced.
 `scripts/usb-host-core-area.py`. Each configuration is a top level whose only
 job is to keep synthesis from folding the core away: every `USBSIEInterface`
 input is driven from a free-running LFSR, every output is XOR-reduced onto one
-LED pin. Clocking is `VariableClockDomainGenerator(sync_mhz=60)` — the SoC's
+LED pin. Clocking is `SocClocks(sync_mhz=60)` — the SoC's
 generator, not LUNA's — so the domains match the design this would go into. The
 baseline is that scaffolding with no host in it, and is subtracted.
 

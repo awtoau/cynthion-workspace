@@ -19,11 +19,11 @@ not been checked. Every assertion is traceable to source in `repos/`,
 |---|---|---|---|
 | **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die** | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
 | **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, holds the bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** (#90) | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) |
+| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** (#90) | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 
 **Making either memory faster** — every remaining option with its arithmetic, the
 published ECP5 scoreboard, and what is ruled out on these exact parts:
-[`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) and
+[`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) and
 [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), ranked in
 [`architecture.md`](architecture.md).
 | **PAC1954-1** | 4-channel power monitor | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
@@ -665,7 +665,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `info` | what this image is, what CPU it is on, what bitstream it is inside | below |
 | `selftest` | runs the CPU, the block RAM and each identity register | below |
 | `flash id`, `flash read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories, same verb and same reply | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) |
+| `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories, same verb and same reply | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `time` | the 1 ms CLINT tick: uptime, `mtime`, and what the handler costs | below |

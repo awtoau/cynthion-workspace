@@ -101,7 +101,7 @@ read as a whole one.
 
 ## Not swept here
 
-CR1[6], which selects differential clocking. `docs/chips/w956a8-hyperram.md`
+CR1[6], which selects differential clocking. `docs/chips/hyperram/w956a8.md`
 records that the FPGA has been driving CK# into a part configured to ignore it,
 and that switching is untried. It belongs in this sweep eventually, but a CR1
 write that lands wrong changes how the part clocks EVERYTHING, and that wants
@@ -127,7 +127,7 @@ from hyperram.hyperram_ceiling_top import (  # noqa: E402
     REG_CTRL_STATE, REG_FSM_STATE, REG_SWEEP_GO, REG_SWEEP_MASK, REG_SWEEP_PASSES, ROW_BURSTDET,
     ROW_ERROR_BITS, ROW_SKIPPED, ROW_STALLED, SWEEP_CELLS)
 
-# CR0 fields, from docs/chips/w956a8-hyperram.md. The power-on value is 0x8f2f.
+# CR0 fields, from docs/chips/hyperram/w956a8.md. The power-on value is 0x8f2f.
 CR0_DEFAULT = 0x8F2F
 CR0_DRIVE_SHIFT = 12
 CR0_DRIVE_MASK = 0b111

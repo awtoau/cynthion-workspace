@@ -28,7 +28,7 @@ the SoC.
 | caches | I and D, 64 sets × 1 way × 64 B = 4 KiB each | generated | same — cached is forced by atomics |
 | buses | three Wishbone masters: `ibus`, `dbus` cached, `iobus` uncached | generated | same |
 | branch prediction | `BtbPlugin`, 512 sets, relaxed | generated | same |
-| clocks | `VariableClockDomainGenerator` | written | [`soc-clocking.md`](soc-clocking.md), #111 |
+| clocks | `SocClocks` ([`gateware/soc/clocks.py`](../gateware/soc/clocks.py)) | written | [`soc-clocking.md`](soc-clocking.md) |
 
 ## Interrupts and time
 
@@ -52,7 +52,7 @@ behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 | I2C | one controller plus a mux, OpenCores rev 0.9 map | written | forced — the parts share one bus |
 | device protocols | one owner, cached reads | written | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md), #123 |
 | SPI flash | crossbar, chip-select hold, quad `0xEB` | written | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), #89 |
-| HyperRAM | `HyperRAMWishbone` at `0x2000_0000`, 8 MiB, `main=1 exe=1` | vendored | [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md), [`soc-memory-bus.md`](soc-memory-bus.md), #90 |
+| HyperRAM | `HyperRAMWishbone` at `0x2000_0000`, 8 MiB, `main=1 exe=1` | vendored | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md), [`soc-memory-bus.md`](soc-memory-bus.md), #90 |
 | sideband | FPGA_ADV, one wire, three commands | written | [`chips/cynone-sideband.md`](chips/cynone-sideband.md), #137 |
 | ULPI window | register access on `target_phy`, no packet path | written | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | GPIO, VBUS, `gateware_id`, I2C mux | | written | [`hardware.md`](hardware.md#register-reference) |
