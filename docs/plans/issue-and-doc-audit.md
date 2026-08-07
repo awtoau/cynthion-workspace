@@ -9,6 +9,63 @@ document text. Where a claim could not be settled it says so.
 
 ---
 
+
+## STATUS — updated 2026-08-07 afternoon
+
+Sections 6a and 6b are **done**. What follows below them is the audit as
+written; this header is what has changed since.
+
+**13 closed:** [#172](https://github.com/awtoau/cynthion-workspace/issues/172),
+[#178](https://github.com/awtoau/cynthion-workspace/issues/178),
+[#189](https://github.com/awtoau/cynthion-workspace/issues/189),
+[#190](https://github.com/awtoau/cynthion-workspace/issues/190),
+[#191](https://github.com/awtoau/cynthion-workspace/issues/191),
+[#201](https://github.com/awtoau/cynthion-workspace/issues/201),
+[#204](https://github.com/awtoau/cynthion-workspace/issues/204),
+[#207](https://github.com/awtoau/cynthion-workspace/issues/207),
+[#209](https://github.com/awtoau/cynthion-workspace/issues/209),
+[#211](https://github.com/awtoau/cynthion-workspace/issues/211),
+[#215](https://github.com/awtoau/cynthion-workspace/issues/215),
+[#221](https://github.com/awtoau/cynthion-workspace/issues/221),
+[#229](https://github.com/awtoau/cynthion-workspace/issues/229).
+
+Each closed with the evidence, and each verified against the tree rather than
+taken from this document — two of the audit's claims were wrong on detail
+(#191's guards call a module function, not a method; #189's "duplicates" are
+host-runner/gateware-top pairs).
+
+**9 filed, so closing lost nothing:**
+
+| | why it exists |
+|---|---|
+| [#241](https://github.com/awtoau/cynthion-workspace/issues/241) [#242](https://github.com/awtoau/cynthion-workspace/issues/242) [#243](https://github.com/awtoau/cynthion-workspace/issues/243) | the nine peripheral defects from #229, which lived only in a doc |
+| [#244](https://github.com/awtoau/cynthion-workspace/issues/244) | the prior-art research, the one live third of #207 |
+| [#245](https://github.com/awtoau/cynthion-workspace/issues/245) [#246](https://github.com/awtoau/cynthion-workspace/issues/246) [#247](https://github.com/awtoau/cynthion-workspace/issues/247) | RTIC adoption, per-peripheral, under the new `rtic` label |
+| [#232](https://github.com/awtoau/cynthion-workspace/issues/232) | build metrics — **implemented and recording** |
+| [#234](https://github.com/awtoau/cynthion-workspace/issues/234) | preload a bitstream and switch, instead of a full configure |
+
+**F1 is resolved.** `origin/hyperram-bist` is salvaged: `hyperram_clocks.py`, the
+CDC simulation and the upstream-reproduction notes came across in
+[#231](https://github.com/awtoau/cynthion-workspace/pull/231); the five
+BIST-specific files did not. Salvaging found the same open-loop PLL bug
+(`i_CLKFB` undriven) that cost a bisect on `clocks.py`.
+
+**F3 is resolved.** `docs/soc-clocking.md` no longer says the three-frequency
+limit holds —
+[#233](https://github.com/awtoau/cynthion-workspace/pull/233).
+
+**F2 is PARTLY done.** The void figures are gone from the part doc, the plan,
+the drafts and `gateware/README.md`. Still to check: whether any survive
+elsewhere — `gateware/soc/top.py:622` was found restating one after the first
+pass.
+
+**Still unstarted:** §4 (documents asserting something false) and §5 (nobody
+tracking these). §2/6c — the 55 stale bodies — is with an agent.
+
+Open issues: **107 → 109**, which is the point. Closing thirteen and filing nine
+better-scoped ones is not a reduction exercise.
+
+
 ## 0. The three findings that matter most
 
 ### F1. `origin/hyperram-bist` is 28 commits of unlanded work that redoes today's branch
