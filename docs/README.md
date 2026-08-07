@@ -104,6 +104,7 @@ in its §13 got there in the first place.
 ### The ECP5, beyond the part itself
 
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — the part: a 25F die, its primitives, and the DDR path
+* **[`chips/ecp5/programming-paths.md`](chips/ecp5/programming-paths.md) — every way code gets onto this board, and every way it boots**: start here, then follow it to the file that owns the detail
 * [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md) — block RAM: who actually uses it
 * [`chips/ecp5/config-engine-probe.md`](chips/ecp5/config-engine-probe.md) — probing the configuration engine on live silicon
 * [`chips/ecp5/flashing.md`](chips/ecp5/flashing.md) — the gateware load process
