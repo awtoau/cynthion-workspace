@@ -39,9 +39,12 @@ not the CPU's number and never was.
 It does not give the HyperRAM its own clock. `fast` here is still a second output
 of the SAME PLL as `sync`, because the flash PHY and the DQS PHY both read
 `ClockSignal("fast")` as their edge clock and the DQS 4:1 gearing requires it to
-be exactly twice its fabric domain. Moving the HyperRAM onto the second PLL is a
-separate change -- see `hyperram_clocks.py` -- and it is what makes CK sweepable
-without touching the CPU.
+be exactly twice its fabric domain.
+
+`hyperram_clocks.HyperRAMDomains` is the second PLL, and composes with this one:
+both take the oscillator as their reference, so neither is fed from the other's
+output. Instantiating it is what makes CK sweepable without touching the CPU, and
+it is not wired into `top.py` yet (#230).
 """
 
 from amaranth import (ClockDomain, ClockSignal, Elaboratable, Instance, Module,
