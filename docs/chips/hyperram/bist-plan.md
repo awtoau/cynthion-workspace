@@ -3,7 +3,7 @@
 How to characterise the W956A8 and get a number worth keeping.
 The part itself: [w956a8.md](w956a8.md).
 
-Absorbs #92, #148, #187, #188, #205, #210, #213, #214, #226.
+The work: #230.
 
 ## Shape
 
