@@ -3,6 +3,17 @@
 **RTIC is the concurrency model** — [`architecture.md`](architecture.md), issue #115.
 This is the evidence, not a re-argument.
 
+> **The numbers below measure a synthetic workload, not this system.** They come
+> from the `workload` feature — a stand-in built to be measured, because no real
+> load existed to measure. They are fair between the models, since all three ran
+> the same stand-in, but they are not a statement about what the shipping
+> firmware does.
+>
+> Adoption is not gated on them. The real system has instruments already:
+> `--performance-counters 4` exposes `STALLED_CYCLES_FRONTEND`/`BACKEND`, and the
+> PLIC counts `irqs`, `stalls`, `buffered` and `lost` per source. Those, under
+> RTIC against the poller, are the comparison worth having.
+
 **Index:** [`hardware.md`](hardware.md) · CPU:
 [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
 
