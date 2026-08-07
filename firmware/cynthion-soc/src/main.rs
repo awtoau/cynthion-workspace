@@ -346,6 +346,34 @@ fn primary() -> Uart {
     Uart::new(target::UART_BASES[0])
 }
 
+/// One line of the boot report: what came up, and what it came up AS.
+///
+/// The board used to say nothing between the banner and the first power sample.
+/// Everything in `boot` either worked silently or failed silently, so the two
+/// were the same picture -- and a peripheral that is configured wrongly looks
+/// exactly like one that is configured rightly until something downstream
+/// misbehaves and gets blamed instead. The masked I2C interrupt sat in this
+/// firmware for months and would have been one line here.
+///
+/// **The detail is read back from what was configured, not restated as a
+/// literal.** A line that prints the number the code was written with reports
+/// the source, not the machine, and is exactly the kind of claim this project
+/// keeps having to withdraw.
+///
+/// `status` is a short verdict -- `ok`, `ABSENT`, `WARN`, `FAIL` -- and any
+/// explanation belongs in `detail`. It comes SECOND, before the detail, because
+/// `core::fmt::Arguments` ignores width and padding: a `{:52}` on the detail
+/// silently does nothing and the column never lines up. Two `&str` fields pad
+/// properly, so the verdicts form a column that can be scanned for the one that
+/// is not `ok`.
+///
+/// An absent peripheral prints `ABSENT` and stays in the list. A missing line
+/// reads as a subsystem nobody thought about; a present one reading `ABSENT`
+/// reads as a board without it, which is the truth on the emulator.
+fn init_line(uart: &mut Uart, what: &str, status: &str, detail: core::fmt::Arguments) {
+    let _ = writeln!(uart, "init  {:9} {:7} {}", what, status, detail);
+}
+
 /// Everything that happens before the first turn of whichever loop runs.
 ///
 /// Factored out of `main` for #245, so the two dispatchers cannot come up
@@ -373,6 +401,11 @@ fn boot() -> Devices {
     // that verified would be printing its own banner here instead.
     banner(&mut console);
 
+    init_line(&mut console, "uart",
+              "ok",
+              format_args!("{} port(s), rx through the irq ring, no divisor here",
+                           target::UART_BASES.len()));
+
     let mut devices = Devices::new();
 
     // The board's I2C controller, set up once rather than per command.
@@ -384,10 +417,36 @@ fn boot() -> Devices {
     // because a scan is also how a wedged bus gets recovered.
     if let Some(bus) = devices.bus.as_mut() {
         bus.init();
+        // The SCL rate this build will actually clock, derived the way the
+        // controller derives it -- `f_SCL = f_sync / (5 * (PRER + 1))` -- from
+        // the prescale the gateware's own `prescale_for` produced and the clock
+        // it produced it for. Not the 80 kHz that was asked for: the divider is
+        // an integer, so what comes out is what the bus gets.
+        let scl_hz = target::BOARD
+            .map(|board| target::TIME_HZ / (5 * (board.i2c_prescale as u32 + 1)))
+            .unwrap_or(0);
+        init_line(&mut console, "i2c",
+                  "ok",
+                  format_args!("{} Hz scl, prescale {} at {} Hz sync",
+                               scl_hz,
+                               target::BOARD.map(|b| b.i2c_prescale).unwrap_or(0),
+                               target::TIME_HZ));
 
         // Uniform bipolar VSENSE: any port can source or sink through the
         // bidirectional switch tree. A failed write is retried by the poller.
-        let _ = devices.power.configure(bus);
+        //
+        // The result is REPORTED. It was discarded with `let _`, so a power
+        // monitor that never took its configuration produced a board that came
+        // up looking identical and measured on whatever range the part reset to
+        // -- and the poller's retry, which is the reason discarding it was
+        // defensible, is invisible from here either way.
+        let configured = devices.power.configure(bus);
+        init_line(&mut console, "pac1954",
+                  if configured.is_ok() { "ok" } else { "WARN" },
+                  format_args!("4 channels, bipolar vsense, refresh every {} ms{}",
+                               power::INTERVAL_MS,
+                               if configured.is_ok() { "" }
+                               else { " -- no answer; the poller retries" }));
 
         // Both Type-C controllers, configured so they interrupt on a state
         // change rather than needing to be polled. AFTER the controller is set
@@ -395,6 +454,18 @@ fn boot() -> Devices {
         // when the source is first enabled -- `configure` clears the parts'
         // interrupt registers on the way through for exactly that reason.
         devices.type_c.start(&mut console, bus);
+        init_line(&mut console, "fusb302b",
+                  "ok",
+                  format_args!("{} controller(s), interrupt on state change",
+                               target::TYPE_C_IRQS.len()));
+    } else {
+        // Listed, not skipped. On the emulator there is no I2C and nothing on
+        // it, and a boot report that simply omitted them would read as a boot
+        // that had not got to them yet.
+        for what in ["i2c", "pac1954", "fusb302b"] {
+            init_line(&mut console, what, "ABSENT",
+                      format_args!("no i2c on this target"));
+        }
     }
 
     // Interrupts on, and not before now.
@@ -403,6 +474,35 @@ fn boot() -> Devices {
     // leaves them off and takes no traps at all, so this is the first thing in the boot
     // that enables one.
     irq::init();
+
+    // WHICH sources, read back from the PLIC rather than counted from the lists
+    // that were just walked. The mask is the hardware's answer, and it is the
+    // only thing here that can disagree with the code above.
+    //
+    // This line is why the report exists. `enabled 00000036` is bits 1, 2, 4 and
+    // 5 -- the two consoles and the two Type-C controllers -- and bit 3, the
+    // I2C transaction-complete source, is CLEAR. It is wired in
+    // `gateware/soc/top.py` and this firmware never enables it, so it has never
+    // asserted, and the power monitor spins on the bus instead of being woken by
+    // it. That was invisible for months and is one line here. See #246.
+    {
+        let plic = plic::Plic::new(target::PLIC_BASE);
+        let enabled = plic.enabled();
+        let i2c_masked = target::BOARD.is_some()
+            && enabled & (1 << cynthion_soc_pac::base::BOARD_I2C_IRQ) == 0;
+        init_line(&mut console, "plic",
+                  if i2c_masked { "WARN" } else { "ok" },
+                  format_args!("enabled {:08x}: {} console(s), {} type-c{}",
+                               enabled,
+                               target::UART_IRQS.len(),
+                               target::TYPE_C_IRQS.len(),
+                               if i2c_masked {
+                                   " -- i2c source MASKED, the bus is polled \
+                                    rather than woken (#246)"
+                               } else {
+                                   ""
+                               }));
+    }
 
     // The 1 ms tick, and with it the millisecond count every line below is
     // stamped from.
@@ -421,6 +521,25 @@ fn boot() -> Devices {
     // the whole session is counted rather than the part after someone typed
     // `rtic`. See `src/sched.rs`.
     sched::init();
+    init_line(&mut console, "timer",
+              "ok",
+              format_args!("{} ms tick on mtimecmp, {} Hz counter",
+                           timer::PERIOD_MS, target::TIME_HZ));
+    // Whether the counters are REAL, asked of them rather than assumed from the
+    // target. `-M virt` decodes `mhpmcounter3..31` as hardwired zero, so a CSR
+    // read is legal there and the answer is not a measurement -- and a build
+    // that had lost `--performance-counters 4` would look the same. `metrics.rs`
+    // carried a comment for months saying these did not exist.
+    let (fe, be) = bench::hpm::stalls();
+    init_line(&mut console, "hpm",
+              if fe == 0 && be == 0 { "ABSENT" } else { "ok" },
+              format_args!("4 counters selected: frontend/backend stalls, cache{}",
+                           if fe == 0 && be == 0 { " -- read as hardwired zero here" }
+                           else { "" }));
+    init_line(&mut console, "sched",
+              "ok",
+              format_args!("{}, {} task: power_refresh every {} ms",
+                           sched::MODEL, 1, power::INTERVAL_MS));
 
     devices
 }
