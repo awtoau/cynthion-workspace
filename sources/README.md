@@ -69,6 +69,24 @@ combined document is the first file above and it is the datasheet for the part o
 board. The nearest genuine 128 Mbit HyperRAM is **`W957D8MFYA`** (a 2-die DDP), which is
 the second file, kept under the requested filename.
 
+#### Rev A01-006 no longer lists the 6I part that is on the board
+
+Section 2, Order Information, in `W956x8MBYA_A01-006.pdf` has **two rows** and both
+are the 200 MHz `5I`: `W956D8MBYA5I` (1.8 V) and `W956A8MBYA5I` (3.0 V). The
+board's `W956A8MBYA6I` is not in it. The revision history says why — **A01-004,
+2 Sep 2021: *"Remove W956D8MBYA6I (1.8V) and W956A8MBYA6I (3.0V) 166MHz part
+number"***.
+
+The 166 MHz **specifications survive** — Table 21 (read timing, p. 37), Table 22
+(clock timing, p. 38) and Table 24 (write timing) all still carry a 166 MHz
+column, and it is the column the fitted part is graded to. So the part is
+specified but no longer orderable, which is the opposite of the usual failure and
+worth stating: a future build of this board cannot buy the 6I and must take the
+5I substitution the schematic already approves.
+
+`../docs/chips/hyperram/w956a8.md` previously said *"Section 2 of the datasheet
+lists both"*. It does not, and that is corrected there.
+
 #### What they settled: `0x1000` is the Manufacturer Information Register
 
 **Section 9.1, Table 5 -- "Register Space Address Map (for single die 64Mb device)".** The
@@ -285,3 +303,21 @@ Six files arrived here named `*.pdf` and were **HTML bot-check or error pages**:
 `file <name>.pdf` is the check — "HTML document" rather than "PDF document" catches every
 one of them, and it costs nothing to run after a fetch. Both notes above about Mouser and
 ISSI describe the same failure; this is the general form of it.
+
+## `lattice-ecp5-sysconfig-FPGA-TN-02039.pdf`
+
+ECP5 and ECP5-5G sysCONFIG User Guide, **FPGA-TN-02039-2.3, March 2024**, 74 pages.
+
+    https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02039-2-3-ECP5-and-ECP5-5G-sysCONFIG.pdf
+
+A mirror, because Lattice's own copy is behind a block page — Mouser's returned an
+HTML interstitial rather than a PDF. Verify a good copy by page count (74) and by
+the presence of the string `6.6. TransFR Operation`; a truncated download loses
+exactly the configuration sections that matter.
+
+Answers #234: the ECP5 does support loading without taking the design down.
+**Background Mode** is "a configuration mode where all the I/O pins remain
+operational"; **NDR (TransFR)**, bit 28 of the control register, keeps an I/O at
+its previous value through `PROGRAMN`/`REFRESH` instead of tristating it; and
+Dual Boot / Multi Boot hold two patterns in the one SPI flash. `REFRESH` is
+issuable over JTAG, which is the port we already have.
