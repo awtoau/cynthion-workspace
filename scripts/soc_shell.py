@@ -89,6 +89,15 @@ OPEN_ATTEMPTS = 6
 # short is a false empty result -- which is the exact failure this script exists to stop.
 REPLY_S = 2.0
 
+# What the shell prints when it is ready for another line. Its arrival is the
+# shell's own statement that a reply is complete, which is why every read here
+# waits for it rather than for a duration -- see `Link.read_until_prompt`.
+# Just the `>`, without the space the shell prints after it: the reply is
+# right-stripped before the comparison, so a trailing space would never match and
+# every read would wait out its full budget -- which is the bug this replaced,
+# reintroduced one layer down.
+PROMPT = b">"
+
 
 def other_readers(node):
     """Every other process holding `node` open, as (pid, command) pairs.
@@ -194,6 +203,47 @@ class Link:
         except OSError:
             return b""
 
+    def read_until_prompt(self, budget_s=REPLY_S + 2):
+        """Everything up to and including the shell's prompt, or until `budget_s`.
+
+        **Waits for a condition, not for a duration.** This was a blind
+        `time.sleep(REPLY_S)` followed by a drain, so every command cost its full
+        budget whether or not the answer had already arrived -- and the answers
+        arrive in milliseconds. `soc_probe` makes three of these calls and took
+        36 seconds to run eleven checks, essentially all of it sleeping.
+
+        The prompt is what says the shell has finished: it prints `> ` when it is
+        ready for the next line, so its arrival is the shell's own statement that
+        the reply is complete rather than a guess about how long one takes.
+
+        The budget stays, and it is a real bound rather than a pause -- a board
+        that never answers has to be reported rather than waited on for ever.
+        Reaching it means "no prompt came back", which is information, and the
+        caller prints whatever did arrive.
+        """
+        deadline = time.monotonic() + budget_s
+        reply = b""
+        while time.monotonic() < deadline:
+            chunk = self.read_available()
+            if chunk:
+                reply += chunk
+                if reply.rstrip().endswith(PROMPT):
+                    break
+        return reply
+
+    def settle(self, seconds):
+        """Shorten the underlying read timeout, so a wait can end early.
+
+        `recv` and `read` block for the timeout they were opened with, so a
+        four-second socket timeout makes the loop above check its deadline once
+        every four seconds no matter how tight the budget is. The prompt arrives
+        in milliseconds; the granularity has to be finer than the answer.
+        """
+        if self.sock:
+            self.sock.settimeout(seconds)
+        else:
+            self.port.timeout = seconds
+
     def close(self):
         try:
             (self.sock or self.port).close()
@@ -246,13 +296,10 @@ def main():
     # reply proves the shell is alive before any real command is judged.
     for command in ["", *args.commands]:
         link.write(command.encode() + b"\r")
-        time.sleep(REPLY_S)
-        reply = b""
-        while True:
-            chunk = link.read_available()
-            if not chunk:
-                break
-            reply += chunk
+        # Fine-grained, so the loop notices the prompt when it arrives rather
+        # than at the next multiple of the socket timeout.
+        link.settle(0.05)
+        reply = link.read_until_prompt()
         text = reply.decode("ascii", "replace")
         if text.strip():
             got_anything = True
