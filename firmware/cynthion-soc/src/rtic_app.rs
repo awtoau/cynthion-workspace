@@ -11,33 +11,24 @@
 //! about a stand-in. That distinction is the whole of #115's "do not gate this on
 //! a benchmark".
 //!
-//! ## The default build never sees any of this
+//! ## This is the entry point
 //!
-//! `src/main.rs` declares this module `#[cfg(feature = "rtic")]` and gates its
-//! own `#[entry] fn main` on `not(feature = "rtic")`. The two are exclusive
-//! because they have to be: `#[rtic::app]` emits its own `#[no_mangle] fn main`
-//! and riscv-rt's `#[entry]` emits the same symbol, so a binary with both does
-//! not link.
+//! `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`. There is no
+//! `#[entry]` anywhere else and no superloop to fall back to: the two used to be
+//! mutually exclusive by the linker, which is why the choice was a feature, and
+//! #245 settled it.
 //!
-//! Build without the feature and the dispatcher is the superloop, unchanged, to
-//! the instruction. That is deliberate and is stated in `Cargo.toml`: the
-//! hardware image is the product.
+//! ## What lives here, and what does not
 //!
-//! ## What is shared, and what is not
+//! Almost nothing lives here. `main::boot` runs the prologue, `#[idle]` calls
+//! `main::housekeeping` and `main::consoles`, and `power_refresh` calls
+//! `power::Monitor::service`. This file is the dispatch and the resource
+//! declarations; the work is where it always was.
 //!
-//! Shared: everything below the dispatcher. `main::boot` runs the same prologue
-//! for both models -- UARTs, bus, Type-C, `irq::init`, `timer::start` -- and
-//! `main::housekeeping` and `main::consoles` are the loop body minus the power
-//! poll. The two models differ in three places and nowhere else:
-//!
-//!     who runs the loop body        the superloop's `loop {}`, or `#[idle]`
-//!     what decides a REFRESH is due the interval check, or the 1 ms tick
-//!     what protects `Devices`       `&mut`, or a SLIC ceiling
-//!
-//! Not shared, and not moved: the consoles. Bytes still arrive through
-//! `src/irq.rs`'s machine-external handler into a ring, under both models. #245
-//! is about ONE peripheral, and a measurement with two variables in it measures
-//! neither. #247 sweeps the rest.
+//! The consoles are NOT tasks. Bytes arrive through `src/irq.rs`'s
+//! machine-external handler into a ring -- hardware priority, above every SLIC
+//! source, and nothing a task could improve on. #247 is the sweep of what should
+//! become tasks; the consoles are not on it.
 //!
 //! ## RTIC does not use the PLIC, and this file does not pretend otherwise
 //!

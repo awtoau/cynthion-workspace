@@ -258,7 +258,6 @@ fn tick() {
     // release the loop can be late for, and this one cannot be. It pends a SLIC
     // source -- one MMIO store to `msip` -- and prints nothing, which is the rule
     // this file already lives under.
-    #[cfg(feature = "rtic")]
     crate::rtic_app::tick();
 
     WORST_COST.fetch_max(entered.elapsed(clock::now()), Ordering::Relaxed);

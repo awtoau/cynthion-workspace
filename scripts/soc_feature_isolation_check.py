@@ -29,7 +29,7 @@ way". This checks it rather than asserting it, three ways:
 ## Features that change the shell ON PURPOSE
 
 Not every optional feature is a spike. `workload` adds the #115 measurement load
-to the shell, and since #245 `rtic` replaces its dispatcher: build it and the
+to the shell: build one and the
 PAC1954's REFRESH cycle is an RTIC task rather than a poll. For those, "the
 shell is unchanged" is not the claim being made and asserting it would be
 asserting the opposite of what the feature is for.
@@ -99,9 +99,13 @@ def shell_features():
     are the shell, and a feature named in one of them changes it by design.
 
     Derived rather than listed so that a new feature is classified by the code
-    that uses it. Today it finds `workload` and `preempt` (the #115 measurement
-    load and its dispatcher) and `rtic` (the #245 conversion of the PAC1954's
-    REFRESH cycle to a task).
+    that uses it. Today it finds `workload` and `preempt`, the #115 measurement
+    load and its dispatcher.
+
+    It used to find `rtic` as well. That feature is gone: RTIC is the shell's
+    only dispatcher since #245, so there is no longer a build in which the
+    dispatcher is a variable -- and nothing here has to hold two versions of the
+    shell in its head to say whether a feature moved it.
     """
     found = set()
     for path in sorted(SRC_DIR.glob("*.rs")):
@@ -285,8 +289,8 @@ def main():
     #
     # Minus the ones the SHELL opts into, and minus anything that transitively
     # turns one of those on. Those change the shell by design -- `workload` adds
-    # the #115 measurement load, `rtic` replaces the dispatcher (#245) -- and
-    # asserting they do not would be asserting the opposite of what they are for.
+    # the #115 measurement load -- and asserting they do not would be asserting
+    # the opposite of what they are for.
     # Both halves are computed rather than listed: which features the shell names
     # comes from its own `#[cfg]`s, and which other features imply them comes
     # from the manifest, so a new one is classified by the code and not by
@@ -338,9 +342,11 @@ def main():
     # One at a time, because "all of them together changed it" does not say
     # which, and the answer is the interesting part: a feature that only adds a
     # [[bin]] cannot touch the shell, but one that also turns on a feature of a
-    # SHARED dependency can. `rtic` is exactly that shape -- it enables
-    # `riscv/critical-section-single-hart` on a crate the shell links -- so it
-    # is the one worth watching.
+    # SHARED dependency can. `rticcs` is that shape -- it enables
+    # `riscv/critical-section-single-hart` on a crate the shell links -- so it is
+    # the one worth watching. (`rtic` used to be the example and is now
+    # unconditional, which is why that feature is no longer on the shared-crate
+    # list: the shell always carries it.)
     baseline, error = build_shell([])
     reference = None
     if error:

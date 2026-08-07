@@ -1,56 +1,46 @@
-//! Which dispatcher this image was built with, and what it is achieving.
+//! What the dispatcher is achieving, and what it costs.
 //!
-//! Issue #245, under #115. The firmware has two concurrency models and the
-//! shipping one is chosen at compile time:
-//!
-//!     default            the superloop in `src/main.rs`
-//!     --features rtic    the `#[rtic::app]` in `src/rtic_app.rs`
-//!
-//! **The default is the superloop and must stay that way.** The hardware image
-//! is the product, and a feature that had to be remembered on every build would
-//! eventually be forgotten on one -- the same argument `Cargo.toml` makes for
-//! the `qemu` gate.
+//! Issue #245, under #115. This firmware has one concurrency model and it is
+//! `#[rtic::app]` in `src/rtic_app.rs`. It used to have two, chosen at compile
+//! time, with the superloop shipping and RTIC behind a feature; the superloop is
+//! gone and the measurements that decided it are in `docs/rtic.md`.
 //!
 //! ## Why this module exists at all
 //!
-//! Because "is RTIC better" is a question about the SHIPPING firmware and there
-//! was no way to ask it. `docs/rtic.md`'s figures come from
-//! `src/workload.rs`, a synthetic load built to be measured, and it says so at
-//! the top. #115 asks for the real thing instead, and names the three
-//! instruments that already exist and go unread:
+//! Because "is the dispatcher doing its job" is a question about the SHIPPING
+//! firmware and there was no way to ask it. #115 names three instruments that
+//! already existed and went unread:
 //!
 //!     metrics::polled()        the REFRESH cycle's achieved interval
 //!     the PLIC's counters      irqs, stalls, buffered and lost, per source
 //!     mhpmcounter3/4           STALLED_CYCLES_FRONTEND and _BACKEND
 //!
-//! The `rtic` command below prints all three, in the same shape under both
-//! models, so the two transcripts subtract. It reports the model it was built
-//! with first, because a table that does not say which dispatcher produced it is
-//! a table nobody can compare against another.
+//! The `rtic` command below prints all three. It reports the model first, and
+//! that line survives the superloop's removal deliberately: a transcript that
+//! does not say what produced it is a transcript nobody can compare against
+//! another, and the day a second model appears every figure taken before it
+//! stops comparing.
 //!
 //! ## Gap and lateness are different questions
 //!
 //! Both are printed and neither substitutes for the other.
 //!
-//! **Gap** is the interval between two consecutive runs, from
-//! `src/metrics.rs`. It says what period the REFRESH cycle is actually
-//! achieving. A poller that is late every time but consistently late has a
-//! perfect gap.
+//! **Gap** is the interval between two consecutive runs, from `src/metrics.rs`.
+//! It says what period the REFRESH cycle is actually achieving. A task that is
+//! late every time but consistently late has a perfect gap.
 //!
 //! **Lateness** is how long a run waited after it became due, recorded by
-//! [`released`]. It is what a dispatcher can fix. Under the superloop a run
-//! becomes due one interval after the last one and waits for the loop to come
-//! round; under RTIC it becomes due on the 1 ms tick grid and waits for the SLIC
-//! to dispatch it. Same definition, two schedulers, so the numbers subtract.
+//! [`released`]. It is what a dispatcher can fix. A run becomes due on the 1 ms
+//! tick grid and waits for the SLIC to dispatch it.
 //!
-//! ## "No better" is a result
+//! ## What still limits it
 //!
-//! #245 says so explicitly and it is worth repeating where the numbers are
-//! produced: this command exists to record an answer, not to produce a
-//! favourable one. If the shell's `&mut Devices` is held across a long command
-//! then the RTIC task blocks on the same resource the superloop's turn does, and
-//! the lateness will not move. That is a fact about where the sharing is, and it
-//! is more useful than a tuned figure.
+//! If the shell's `&mut Devices` is held across a long command then the task
+//! blocks on the same resource the command holds, and no dispatcher can fix
+//! that. `#[idle]` takes the lock per step rather than around the loop for
+//! exactly this reason, and a whole command is still inside one because `run()`
+//! takes `&mut Devices`. That is a fact about where the sharing is; this command
+//! reports it rather than hiding it.
 
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -66,15 +56,14 @@ use crate::power;
 use crate::target;
 use crate::uart::{self, Uart};
 
-/// Which dispatcher this image was built with.
+/// The dispatcher. There is one.
 ///
-/// `cfg!` rather than `#[cfg]`, so both spellings are type-checked in both
-/// builds and the string cannot go stale on the branch nobody is compiling.
-pub const MODEL: &str = if cfg!(feature = "rtic") {
-    "rtic"
-} else {
-    "superloop"
-};
+/// Kept as a constant rather than deleted with the superloop, because the `rtic`
+/// command prints it and a transcript that does not say what produced it is a
+/// transcript nobody can compare against another. It is also what a future
+/// second model would have to change, and having to change one constant is the
+/// cheapest possible reminder that transcripts from before it do not compare.
+pub const MODEL: &str = "rtic";
 
 /// The PAC1954's REFRESH cycle: `power::Monitor::service`, every
 /// [`power::INTERVAL_MS`].
@@ -82,11 +71,10 @@ pub const POWER: usize = 0;
 
 /// How many tasks this module accounts for.
 ///
-/// One, and that is the whole of #245: the power monitor is the FIRST peripheral
-/// onto RTIC, chosen because it already measures its own jitter. The consoles
-/// are still the machine-external handler filling a ring under both models --
-/// unchanged, deliberately, so that this measurement has exactly one variable in
-/// it. #247 sweeps the rest.
+/// One. The power monitor was the first peripheral onto RTIC, chosen because it
+/// already measured its own jitter, and it is still the only one: the consoles
+/// are the machine-external handler filling a ring, which is a hardware priority
+/// above every SLIC source and is not a task. #247 sweeps the rest.
 const TASKS: usize = 1;
 
 /// What each task is, for the report. Parallel to the ids above.
@@ -94,9 +82,7 @@ struct Task {
     name: &'static str,
     /// The period it is supposed to run at, in milliseconds.
     period_ms: u32,
-    /// Its RTIC priority. Meaningless under the superloop, which has no
-    /// priorities at all, and printed as `-` there rather than as a number that
-    /// would read as a property of a build that does not have one.
+    /// Its RTIC priority.
     priority: u8,
 }
 
@@ -114,8 +100,8 @@ const TABLE: [Task; TASKS] = [Task {
 /// handler at hardware priority anyway -- above every SLIC source, so this
 /// number cannot starve them.
 ///
-/// Here rather than in `src/rtic_app.rs` so that the superloop build can print
-/// the priority the RTIC build would use without compiling the app.
+/// Here rather than in `src/rtic_app.rs` so that this module can report it
+/// without depending on the app, which depends on this module.
 pub const POWER_PRIORITY: u8 = 1;
 
 /// How many times each task has run.
@@ -123,10 +109,9 @@ static RUNS: [AtomicU32; TASKS] = [const { AtomicU32::new(0) }; TASKS];
 
 /// How many times each task has been released and not yet run.
 ///
-/// Under RTIC this is the tick pending the task; under the superloop nothing
-/// pends anything, so it stays equal to [`RUNS`] and the difference is the
-/// diagnostic: a pend count that outruns the run count is a task being released
-/// again before it got to run, which the SLIC coalesces into one dispatch.
+/// The tick pending the task. The difference from [`RUNS`] is the diagnostic: a
+/// pend count that outruns the run count is a task being released again before
+/// it got to run, which the SLIC coalesces into one dispatch.
 static RELEASES: [AtomicU32; TASKS] = [const { AtomicU32::new(0) }; TASKS];
 
 /// The worst lateness seen, in counter ticks. A maximum, never halved.
@@ -199,18 +184,15 @@ pub fn boot_complete(uart: &mut Uart) {
     metrics::restart();
 }
 
-/// A task became due. Called by whatever decides that -- the 1 ms tick under
-/// RTIC, and nothing under the superloop, where the decision and the run are the
-/// same instant.
+/// A task became due. Called by the 1 ms tick, which is what decides that.
 pub fn pended(task: usize) {
     RELEASES[task].store(RELEASES[task].load(RELAXED).saturating_add(1), RELAXED);
 }
 
 /// A task is running now, `late` ticks after it was due.
 ///
-/// Called from the task body under both models, with the SAME definition of
-/// late, which is the only reason the two transcripts can be subtracted. See the
-/// module comment.
+/// Called from the task body. `late` is measured from the instant the tick
+/// recorded when it pended, so it is the wait for dispatch and nothing else.
 pub fn released(task: usize, late: u32) {
     RUNS[task].store(RUNS[task].load(RELAXED).saturating_add(1), RELAXED);
 
@@ -225,12 +207,6 @@ pub fn released(task: usize, late: u32) {
     WORST_LATE[task].fetch_max(late, RELAXED);
     TOTAL_LATE[task].store(TOTAL_LATE[task].load(RELAXED).saturating_add(late), RELAXED);
 
-    // Under the superloop nothing pends, so the release IS the run. Counted here
-    // rather than left at zero, so the `pends` column means the same thing in
-    // both transcripts instead of being blank in one of them.
-    if !cfg!(feature = "rtic") {
-        pended(task);
-    }
 }
 
 /// The PLIC and its five sources, as the `irq` command prints them.
@@ -293,7 +269,7 @@ pub fn sources(uart: &mut Uart) {
 ///
 /// Four blocks, and each one is a thing #115 asked for:
 ///
-///     model    which dispatcher, from cfg!(feature = "rtic")
+///     model    the dispatcher, so a transcript says what produced it
 ///     task     runs, achieved period, and lateness against the period
 ///     plic     the per-source counters, unchanged from `irq`
 ///     stalls   mhpmcounter3/4 against mcycle
@@ -324,18 +300,15 @@ pub fn command(uart: &mut Uart) {
             uart,
             "task     {} prio {} period {} ms  runs {}  pends {}",
             task.name,
-            // A priority the superloop does not have. See `POWER_PRIORITY`.
-            if cfg!(feature = "rtic") {
-                task.priority as i32
-            } else {
-                -1
-            },
+            task.priority,
             task.period_ms,
             runs,
             releases
         );
-        if !cfg!(feature = "rtic") {
-            let _ = write!(uart, " (= runs)");
+        // `pends` above `runs` is a task being released again before it got to
+        // run, which the SLIC coalesces into one dispatch. Equal is healthy.
+        if releases != runs {
+            let _ = write!(uart, "  COALESCED {}", releases - runs);
         }
         let _ = writeln!(uart);
 
@@ -367,16 +340,32 @@ pub fn command(uart: &mut Uart) {
         // A dispatcher can be reliably late and still hold the period exactly;
         // one that drifts holds neither. `+0` here with a nonzero lateness above
         // is the normal, healthy reading and not a contradiction.
-        let achieved = clock::to_millis(worst_gap);
-        let _ = writeln!(
-            uart,
-            "  gap    worst {} ms  asked {} ms  {:+} ms   the INTERVAL between \
-             runs, over {} of them",
-            achieved,
-            task.period_ms,
-            achieved as i32 - task.period_ms as i32,
-            polls
-        );
+        // A gap is between TWO runs, so one run has no gap and no run has less
+        // than that. Printed as unmeasured rather than as `0 ms  -50 ms`, which
+        // is what it said when `rtic` was typed inside the first period: an
+        // interval of zero against a period of fifty, which reads as a
+        // catastrophically fast poller rather than as an absent measurement.
+        // Same defect as the lateness measured from a zero instant, one line
+        // over.
+        if polls < 2 {
+            let _ = writeln!(
+                uart,
+                "  gap    not yet measured  asked {} ms   needs two runs, has \
+                 {}",
+                task.period_ms, polls
+            );
+        } else {
+            let achieved = clock::to_millis(worst_gap);
+            let _ = writeln!(
+                uart,
+                "  gap    worst {} ms  asked {} ms  {:+} ms   the INTERVAL \
+                 between runs, over {} of them",
+                achieved,
+                task.period_ms,
+                achieved as i32 - task.period_ms as i32,
+                polls
+            );
+        }
 
         // Ticks last, because they are what was measured and microseconds are
         // what a reader wants. Printed at all so a figure under a microsecond is

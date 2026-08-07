@@ -603,10 +603,10 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print the whole session transcript")
     parser.add_argument("--features", default="",
-                        help="extra cargo features on top of `qemu`. `rtic` runs "
-                             "this whole suite against the RTIC dispatcher, which "
-                             "is what makes it a gate for a feature build rather "
-                             "than a gate for something else that was not flashed")
+                        help="extra cargo features on top of `qemu`, so this "
+                             "gates the image actually being flashed rather than "
+                             "a different one. The dispatcher is not among them "
+                             "any more -- RTIC is the only one there is")
     parser.add_argument("--board", action="store_true",
                         help="run against the BOARD over its console instead of "
                              "QEMU. Needs a configured board already running this "
@@ -620,7 +620,6 @@ def main():
     # empty element makes cargo's `--features` list a comma with nothing either
     # side of it, which it accepts and which then means nothing to read.
     extra = [f for f in args.features.split(",") if f]
-    rtic_expected = "rtic" in extra
     if extra:
         emit(f"features: qemu,{','.join(extra)}")
 
@@ -1361,27 +1360,23 @@ def main():
         # shipping image is the poller, and a firmware that quietly shipped the
         # other one would otherwise be indistinguishable from here.
         #
-        # With no `--features`, this suite builds `qemu` and nothing else, so
-        # `superloop` is the only correct answer. `--features rtic` runs the
-        # SAME assertions against the other dispatcher, which is what makes the
-        # two transcripts subtract -- and what makes flashing a feature build a
-        # gated operation rather than an unguarded one.
-        want_model = b"model    rtic" if rtic_expected else b"model    superloop"
+        # There is one dispatcher and `rtic` says which. The assertion is not
+        # ceremony: `#[rtic::app]` emits this firmware's `fn main`, so a build
+        # that had somehow lost it would not link rather than run something
+        # else -- but the line is also the header of every transcript, and a
+        # transcript that does not say what produced it cannot be compared with
+        # one taken after the next dispatcher change.
         reply = command("rtic",
-                        [want_model, b"task     power_refresh",
+                        [b"model    rtic", b"task     power_refresh",
                          b"asked 50 ms", b"stalls   frontend"],
                         "`rtic` reports the model, the task and the counters")
-        check(f"the build reports the dispatcher it was built with "
-              f"({want_model.split()[-1].decode()})",
-              want_model in reply,
-              "`rtic` does not report the dispatcher this suite built.\n"
-              "With no `--features` the shipping arrangement -- "
-              "`#[cfg(not(feature = \"rtic\"))]` on the entry point, the feature\n"
-              "off in Cargo.toml, `soc_feature_isolation_check.py` -- should "
-              "make `superloop` the only\n"
-              "possible answer, and a firmware that quietly shipped the other "
-              "one would otherwise be\n"
-              "indistinguishable from here.\n"
+        check("the dispatcher is RTIC",
+              b"model    rtic" in reply,
+              "`rtic` did not report the RTIC dispatcher. The superloop was "
+              "removed in #245;\n"
+              "there is no other entry point, so this failing means the command "
+              "is reporting\n"
+              "something other than what is running.\n"
               f"received: {show(reply) or '(nothing)'}")
 
         # The lateness and the gap are derived from the SAME instants, so they

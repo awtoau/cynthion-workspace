@@ -3,56 +3,81 @@
 **RTIC is the concurrency model** — [`architecture.md`](architecture.md), issue #115.
 This is the evidence, not a re-argument.
 
-> **The numbers below measure a synthetic workload, not this system.** They come
-> from the `workload` feature — a stand-in built to be measured, because no real
-> load existed to measure. They are fair between the models, since all three ran
-> the same stand-in, but they are not a statement about what the shipping
-> firmware does.
->
-> Adoption is not gated on them. The real system has instruments already:
-> `--performance-counters 4` exposes `STALLED_CYCLES_FRONTEND`/`BACKEND`, and the
-> PLIC counts `irqs`, `stalls`, `buffered` and `lost` per source. Those, under
-> RTIC against the poller, are the comparison worth having.
->
-> **The first conversion is done (#245, below) and the comparison is NOT taken
-> here.** It waits for the board.
+> **The numbers in the later sections measure a synthetic workload, not this
+> system.** They come from the `workload` feature — a stand-in built to be
+> measured, because when they were taken no real load existed to measure. They
+> are fair between the models, since all three ran the same stand-in, but they
+> are not a statement about what the shipping firmware does. The section
+> immediately below is the one that is.
 
 **Index:** [`hardware.md`](hardware.md) · CPU:
 [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
 
-## The PAC1954 on RTIC, and where its numbers will come from
+## The decision, and the measurement it was made on
 
-Issue #245. `--features rtic` now converts the SHELL rather than building a spike
-beside it: `src/rtic_app.rs` is the entry point, `src/main.rs`'s `#[entry]` is
-gated off, and the PAC1954's 50 ms REFRESH cycle is a
-`#[task(binds = PowerRefresh, priority = 1)]` released by the 1 ms tick instead
-of a poll at the top of the main loop.
+Issue #245. The superloop is **gone**. `src/rtic_app.rs` emits this firmware's
+`fn main`; there is no `#[entry]` elsewhere, no `rtic` feature, and no path back.
 
-**The default build is unchanged and is still the superloop.** That is checked
-rather than asserted, by `scripts/soc_feature_isolation_check.py`, and
-`scripts/soc_test.py` asserts that the shipping image says `superloop` when asked.
+For one day there were two, chosen at compile time, so that the comparison could
+be made with exactly one variable in it: both dispatchers called the same
+`power::Monitor::service`, ran the same `boot`, and shared every line of the
+shell. The only difference was how the REFRESH cycle was reached — a check at the
+top of a loop, or a task released by the 1 ms tick.
 
-Both models call the same `power::Monitor::service`, so the only variable between
-them is how it was reached. The shell's `rtic` command reports which model it was
-built as, the task's run count, its release lateness against its period, the
-PLIC's per-source counters, and `STALLED_CYCLES_FRONTEND`/`_BACKEND`:
+**Matched runs on hardware, 364 against 363 dispatches:**
 
-    > rtic
-    model    superloop  (1 task)
-    task     power_refresh prio -1 period 50 ms  runs 99  pends 99 (= runs)
-             late worst 2140 ticks  mean 370 ticks  gap worst 50 ms over 99 polls
-    plic  @f0400000 pending 00000000 enabled 00000036
-      0 src 1 irqs 15   stalls 0 buffered 0 lost 0
-      ...
-    stalls   frontend N backend N  of M cycles
+| | superloop | rtic |
+|---|---|---|
+| release lateness, worst | 132 µs | **86 µs** |
+| release lateness, mean | **5 µs** | 57 µs |
+| achieved period, worst | 50 ms | 50 ms |
+| frontend stalls | 44 / 1000 cycles | 452 / 1000 |
+| backend stalls | 648 / 1000 cycles | **343 / 1000** |
+| `.text` | — | +1,700 B |
 
-**The comparison itself is deferred to hardware and is not in this document.**
-QEMU cannot take it: `-M virt` has no PAC1954, so the two milliseconds of I²C the
-board spends inside the task are absent, and it reads `mhpmcounter3`/`4` as
-hardwired zero, so both stall counters come back `--`. A figure taken there would
-measure the emulator's idle loop and be quoted afterwards as if it measured this
-SoC — which is the exact failure the caveat at the top of this file exists to
-prevent. Run `rtic` on the board under each build; that is the measurement.
+RTIC **bounds the worst case and costs the mean**. The stall profile inverts: the
+superloop waits on MMIO, RTIC on instruction fetch through the SLIC path.
+
+### That is not a win, and the superloop went anyway
+
+Worth stating plainly, because #245 explicitly admitted "no better" as a result
+and this is close to it.
+
+The measurement was taken with **one task**, and with that task **spinning on
+I²C** rather than being woken by it — the transaction-complete interrupt is
+wired in `gateware/soc/top.py` and has never fired, which is
+[#246](https://github.com/awtoau/cynthion-workspace/issues/246). So the figure
+above is RTIC paying a dispatcher's price to do the superloop's work. It is a
+floor, not a verdict.
+
+The decision was made on architecture rather than on that number: one dispatcher,
+preemptive, with peripherals as tasks — and a losing path kept "just in case" is
+a dead branch nobody dares touch. #246 removes the spin, #247 adds the tasks that
+give priorities something to arbitrate, and #259 re-measures.
+
+### What went with it
+
+- `power::Monitor::poll` — the interval check at the top of the loop. `service`
+  remains and is the only caller's whole job.
+- The `rtic` cargo feature, and `riscv/critical-section-single-hart` with it,
+  which moves to `[dependencies]` because every build now needs it.
+- `soc_test.py`'s "the shipping image must say `superloop`" assertion, and the
+  `--features rtic` duality that ran the suite twice.
+
+One thing did **not** go: the `model` line in the `rtic` command. A transcript
+that does not say what produced it cannot be compared with one taken after the
+next dispatcher change.
+
+### One trap, recorded
+
+`crate::rtic_app::tick()` in `src/timer.rs` was `#[cfg(feature = "rtic")]`.
+Removing the feature made that cfg permanently **false**, so the tick stopped
+pending the task and it simply never ran — a build that compiled cleanly, booted,
+answered every command, and had no scheduler. Nothing caught it except
+`soc_test.py`'s `polls > 0` assertion on the achieved interval.
+
+A `#[cfg]` on a feature that no longer exists is not a compile error. Grep for
+the feature name after deleting one.
 
 ## What it fixes, and what it costs
 
