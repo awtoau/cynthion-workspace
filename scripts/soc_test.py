@@ -480,7 +480,7 @@ def show(data):
             .replace("\r", "<CR>").replace("\n", "<LF>\n"))
 
 
-def build_firmware():
+def build_firmware(extra=()):
     """Build the QEMU image. `None` on success, otherwise the error text.
 
     RUSTFLAGS, not CARGO_TARGET_<TRIPLE>_RUSTFLAGS: cargo JOINS the
@@ -494,7 +494,7 @@ def build_firmware():
     env["RUSTFLAGS"] = ("-C link-arg=-Tmemory-qemu.x "
                         "-C link-arg=-Tlink.x")
     build = subprocess.run(
-        ["cargo", "build", "--release", "--features", "qemu",
+        ["cargo", "build", "--release", "--features", ",".join(["qemu", *extra]),
          "--target-dir", str(BUILD_DIR)],
         cwd=CRATE, env=env, capture_output=True, text=True)
     if build.returncode != 0:
@@ -554,6 +554,11 @@ def main():
                              "idle interval, and half this file's runtime")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print the whole session transcript")
+    parser.add_argument("--features", default="",
+                        help="extra cargo features on top of `qemu`. `rtic` runs "
+                             "this whole suite against the RTIC dispatcher, which "
+                             "is what makes it a gate for a feature build rather "
+                             "than a gate for something else that was not flashed")
     parser.add_argument("--board", action="store_true",
                         help="run against the BOARD over its console instead of "
                              "QEMU. Needs a configured board already running this "
@@ -563,6 +568,14 @@ def main():
     checks = Checks(emit)
     check = checks.check
 
+    # Empty string means no extra features, not one feature named "". A stray
+    # empty element makes cargo's `--features` list a comma with nothing either
+    # side of it, which it accepts and which then means nothing to read.
+    extra = [f for f in args.features.split(",") if f]
+    rtic_expected = "rtic" in extra
+    if extra:
+        emit(f"features: qemu,{','.join(extra)}")
+
     if args.board:
         # Nothing is built and nothing is loaded: this drives whatever the
         # board is already running. Use `./dev.py fw` to put firmware there
@@ -571,7 +584,7 @@ def main():
         # in a combined build-and-test step went wrong".
         emit("target: the board, over its console")
     elif not args.no_build:
-        failed = build_firmware()
+        failed = build_firmware(extra)
         if failed is not None:
             emit("cargo build (qemu) failed:")
             emit(failed)
@@ -1300,19 +1313,56 @@ def main():
         # shipping image is the poller, and a firmware that quietly shipped the
         # other one would otherwise be indistinguishable from here.
         #
-        # This suite builds `--features qemu` and nothing else, so `superloop` is
-        # the only correct answer. The other model is exercised by building
-        # `--features qemu,rtic` and running the same shell; see `docs/rtic.md`.
+        # With no `--features`, this suite builds `qemu` and nothing else, so
+        # `superloop` is the only correct answer. `--features rtic` runs the
+        # SAME assertions against the other dispatcher, which is what makes the
+        # two transcripts subtract -- and what makes flashing a feature build a
+        # gated operation rather than an unguarded one.
+        want_model = b"model    rtic" if rtic_expected else b"model    superloop"
         reply = command("rtic",
-                        [b"model    superloop", b"task     power_refresh",
-                         b"period 50 ms", b"stalls   frontend"],
+                        [want_model, b"task     power_refresh",
+                         b"asked 50 ms", b"stalls   frontend"],
                         "`rtic` reports the model, the task and the counters")
-        check("the default build is the superloop, not RTIC",
-              b"model    rtic" not in reply,
-              "`rtic` says this image was built with the RTIC dispatcher. The "
-              "shipping image is the superloop and this suite builds it with "
-              "`--features qemu` alone, so either the feature leaked into the "
-              "build or the entry point is no longer gated on it.\n"
+        check(f"the build reports the dispatcher it was built with "
+              f"({want_model.split()[-1].decode()})",
+              want_model in reply,
+              "`rtic` does not report the dispatcher this suite built.\n"
+              "With no `--features` the shipping arrangement -- "
+              "`#[cfg(not(feature = \"rtic\"))]` on the entry point, the feature\n"
+              "off in Cargo.toml, `soc_feature_isolation_check.py` -- should "
+              "make `superloop` the only\n"
+              "possible answer, and a firmware that quietly shipped the other "
+              "one would otherwise be\n"
+              "indistinguishable from here.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
+        # The lateness and the gap are derived from the SAME instants, so they
+        # cannot disagree: lateness is the achieved gap minus the period, which
+        # makes `late <= gap` an identity rather than a tolerance. Asserting it
+        # is how a lateness measured against the wrong origin gets caught.
+        #
+        # It has already happened once. `power::Monitor::poll` measured the first
+        # poll's lateness against `Instant::ZERO`, so the first sample was the
+        # whole of boot -- 430 ms on the board -- and it then stood as the worst
+        # case for the rest of the session and dominated the mean. The board
+        # printed `late worst 25786941 ticks` beside `gap worst 50 ms`, which is
+        # 8 periods of lateness on a poller that had never missed a period.
+        #
+        # Neither number was implausible on its own. The check is the relation.
+        late_us = re.search(rb"late\s+worst\s+(\d+) us", reply)
+        gap_ms = re.search(rb"gap\s+worst\s+(\d+) ms", reply)
+        check("the worst lateness does not exceed the worst achieved gap",
+              late_us is not None and gap_ms is not None
+              and int(late_us.group(1)) <= int(gap_ms.group(1)) * 1000,
+              "`rtic` reports a lateness larger than the interval it was "
+              "measured within.\n"
+              "Lateness IS the gap minus the period, so this is not a tolerance "
+              "being exceeded --\n"
+              "it means one of the two is measured from an origin the other "
+              "does not share.\n"
+              "The known cause is a first sample taken against a zero instant, "
+              "which reports\n"
+              "boot time as lateness.\n"
               f"received: {show(reply) or '(nothing)'}")
 
         # `virt` decodes mhpmcounter3..31 as hardwired zero, so the two stall

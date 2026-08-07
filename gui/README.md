@@ -10,7 +10,7 @@ It was retired to `debris/` and brought back; this is where it lives now.
 Flutter is not on the default PATH on this machine:
 
 ```bash
-export PATH=/home/dan/development/flutter/bin:$PATH
+export PATH=$HOME/development/flutter/bin:$PATH
 cd gui
 flutter pub get
 flutter run -d linux          # or: flutter build linux --debug

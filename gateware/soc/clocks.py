@@ -85,6 +85,27 @@ PFD_MIN_MHZ = 10.0
 # The ULPI PHY's requirement, and the only reason this number appears here.
 USB_PHY_MHZ = 60.0
 
+# What the FABRIC has been observed to close at, as distinct from what the PLL
+# can produce. The two are different questions and only one of them was being
+# asked.
+#
+# `solve_pll` will happily return dividers for 130 MHz. The design's own recorded
+# timing says the fabric will not follow: an 8 ns bus path, and the BTB closing
+# at 57.55 MHz unrelaxed. So a build could be requested that is guaranteed to
+# fail place-and-route, and the only signal was a synthesis run 90-120 s later
+# with a message about a net rather than about the request.
+#
+# 90 MHz is deliberately generous against the ~65-79 MHz this design has actually
+# measured across placements -- the point is to refuse the absurd, not to
+# second-guess a build that might close. `SYNC_CEILING_OVERRIDE` exists because
+# the ceiling is a measurement of one design at one moment and will move; it is
+# an argument rather than an edit so that raising it is visible in the command
+# that did it.
+#
+# Same class as the `fPFD` floor above: the solver knows something the caller
+# does not, and staying silent about it costs a build.
+SYNC_CEILING_MHZ = 90.0
+
 # How long RESETB is held low, in `usb` cycles. The USB334x datasheet Rev 1.2
 # section 5.6.2: cycling RESETB resets the ULPI registers to their defaults and
 # every internal state machine, "by bringing the pin low for a minimum of 1
@@ -165,7 +186,22 @@ class SocClocks(Elaboratable):
     """
 
     def __init__(self, *, sync_mhz, with_fast=False, fast_ratio=2,
-                 input_mhz=USB_PHY_MHZ):
+                 input_mhz=USB_PHY_MHZ, ceiling_mhz=SYNC_CEILING_MHZ):
+        # Refused HERE, before a solve that would succeed and a synthesis that
+        # would not. The PLL reaching a frequency says nothing about the fabric
+        # closing at it, and until this existed the two were conflated: an
+        # out-of-reach request produced a place-and-route failure two minutes
+        # later, reported as a message about a net.
+        if ceiling_mhz is not None and sync_mhz > ceiling_mhz:
+            raise ValueError(
+                f"sync = {sync_mhz:g} MHz is above the {ceiling_mhz:g} MHz this "
+                f"fabric has been observed to close at. The PLL can produce it; "
+                f"place-and-route is not expected to, and the failure would "
+                f"arrive ~2 minutes from now as a message about a net rather "
+                f"than about this number. Measured on this design: 64.5-79.4 MHz "
+                f"across placements. Pass `ceiling_mhz=` to try anyway, or "
+                f"`ceiling_mhz=None` to disable the check.")
+
         self.sync_mhz = sync_mhz
         self.with_fast = with_fast
         self.fast_ratio = fast_ratio

@@ -161,6 +161,44 @@ pub fn init() {
     bench::hpm::select();
 }
 
+/// Boot is over: report what it cost, then start the measurement again.
+///
+/// Called once from `src/main.rs`, after the boot sequence and before the loop.
+///
+/// **Startup is not a sample of steady state, and leaving it in the totals makes
+/// every later number wrong.** Configuring the PAC1954, probing two FUSB302Bs
+/// and waiting for USB all hold the bus for milliseconds at a time and starve
+/// the periodic task while they do. That produced a `late worst` of 12.6 ms on a
+/// task whose steady-state worst is under 100 us -- a real event, but one that
+/// happened once, before the system was running, and that then stood as the
+/// headline for the rest of the session.
+///
+/// The startup figures are PRINTED before they are cleared. They are a real
+/// measurement of a real thing -- how long the board takes to become useful --
+/// and discarding them silently would replace a misleading number with a missing
+/// one.
+pub fn boot_complete(uart: &mut Uart) {
+    for (index, task) in TABLE.iter().enumerate() {
+        let runs = RUNS[index].load(RELAXED);
+        let worst = WORST_LATE[index].load(RELAXED);
+        if runs != 0 {
+            let _ = writeln!(
+                uart,
+                "sched    startup: {} ran {} time(s), worst {} us late -- \
+                 cleared, steady state starts now",
+                task.name,
+                runs,
+                clock::to_micros(worst)
+            );
+        }
+        RUNS[index].store(0, RELAXED);
+        RELEASES[index].store(0, RELAXED);
+        WORST_LATE[index].store(0, RELAXED);
+        TOTAL_LATE[index].store(0, RELAXED);
+    }
+    metrics::restart();
+}
+
 /// A task became due. Called by whatever decides that -- the 1 ms tick under
 /// RTIC, and nothing under the superloop, where the decision and the run are the
 /// same instant.
@@ -301,39 +339,76 @@ pub fn command(uart: &mut Uart) {
         }
         let _ = writeln!(uart);
 
-        // Ticks, not milliseconds, for the lateness. `clock::to_millis`
-        // truncates, and every interesting answer here is under a millisecond --
-        // printing it in milliseconds would render the whole comparison as `0`.
-        // The counter rate is on the `time` command's own line and in
-        // `target::TIME_HZ`.
+        // Ticks AND microseconds. Ticks alone were the primary unit because
+        // `to_millis` truncates and every interesting answer here is well under
+        // a millisecond -- but a bare tick count sat on the same line as a
+        // `gap worst 50 ms`, and two numbers in different units on one line get
+        // compared. They were not comparable, and the comparison said the
+        // lateness was 8 periods when the gap said it was none.
+        //
         // `checked_div`, so a task that has never run prints 0 rather than
         // dividing by its own run count. That happens on every boot: the first
         // `rtic` typed inside the first period has nothing to average.
         let mean = total.checked_div(runs).unwrap_or(0);
+        // `late worst N us` and `gap worst N ms` are the tokens
+        // `scripts/soc_test.py` and `scripts/soc_probe.py` parse, so the wording
+        // around them can change and the checks keep working. What follows each
+        // is the sentence saying WHICH question it answers -- the two were on one
+        // line in different units once, and got compared.
         let _ = writeln!(
             uart,
-            "         late worst {} ticks  mean {} ticks  gap worst {} ms over {} polls",
+            "  late   worst {} us  mean {} us     how long after it was DUE a \
+             run started",
+            clock::to_micros(worst),
+            clock::to_micros(mean),
+        );
+
+        // The interval between consecutive runs, which is a DIFFERENT question.
+        // A dispatcher can be reliably late and still hold the period exactly;
+        // one that drifts holds neither. `+0` here with a nonzero lateness above
+        // is the normal, healthy reading and not a contradiction.
+        let achieved = clock::to_millis(worst_gap);
+        let _ = writeln!(
+            uart,
+            "  gap    worst {} ms  asked {} ms  {:+} ms   the INTERVAL between \
+             runs, over {} of them",
+            achieved,
+            task.period_ms,
+            achieved as i32 - task.period_ms as i32,
+            polls
+        );
+
+        // Ticks last, because they are what was measured and microseconds are
+        // what a reader wants. Printed at all so a figure under a microsecond is
+        // still visible instead of rendering as `0`.
+        let _ = writeln!(
+            uart,
+            "         {} / {} ticks of the {} MHz counter behind both",
             worst,
             mean,
-            clock::to_millis(worst_gap),
-            polls
+            target::TIME_HZ / 1_000_000,
         );
     }
 
     sources(uart);
 
-    // The two counters #115 names, read at last. `select` ran at boot, so these
-    // are lifetime totals of the same events over the same cycles `mcycle`
-    // counted -- and the ratio is the useful part: a dispatcher that idles in a
-    // tighter loop moves the frontend number, one that waits on MMIO moves the
-    // backend one.
+    // The two counters #115 names. The ratio is the useful part: a dispatcher
+    // that idles in a tighter loop moves the frontend number, one that waits on
+    // MMIO moves the backend one.
+    //
+    // From `metrics`, NOT from three CSR reads here. `mhpmcounter3/4` and
+    // `mcycle` are 64-bit counters on an RV32 core, so a read gets the low word
+    // and it wraps every 71.6 s at 60 MHz. Divided against each other after a
+    // wrap they gave `3366 / 952 per 1000 cycles` on the board -- more stalled
+    // cycles than cycles, which is not a large error but an impossible one.
+    // `metrics::turn` takes the deltas per loop pass, where a wrap cannot
+    // happen, and halves all three together so the ratio survives.
     //
     // Both zero means the counters are not implemented on this target, which is
     // QEMU: `-M virt` decodes `mhpmcounter3..31` as hardwired zero, so the CSR
     // read is legal and the answer is not a measurement. Reported as `--`
     // rather than as a suspiciously perfect score.
-    let (frontend, backend) = bench::hpm::stalls();
-    let cycles = metrics::mcycle();
+    let (frontend, backend, cycles) = metrics::stall_window();
     if frontend == 0 && backend == 0 {
         let _ = writeln!(
             uart,

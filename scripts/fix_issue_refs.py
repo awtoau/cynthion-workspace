@@ -496,7 +496,7 @@ FIXES = {
             "link below pointed at a path on one machine's filesystem, which nobody else "
             "can follow."
         ),
-        [("[firmware/src/jtag.c](/mnt/2tb/git/awtoau/awto-apollo/firmware/src/jtag.c)",
+        [("[firmware/src/jtag.c](<absolute-path-on-one-machine>/awto-apollo/firmware/src/jtag.c)",
           "`repos/apollo/firmware/src/jtag.c`")],
     ),
     73: (
