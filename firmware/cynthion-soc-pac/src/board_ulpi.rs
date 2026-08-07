@@ -17,12 +17,12 @@ impl RegisterBlock {
     pub const fn data(&self) -> &Data {
         &self.data
     }
-    #[doc = "0x02 - BOARD_ULPI.CONTROL, 2 bits at +0x02"]
+    #[doc = "0x02 - BOARD_ULPI.CONTROL, 3 bits at +0x02"]
     #[inline(always)]
     pub const fn control(&self) -> &Control {
         &self.control
     }
-    #[doc = "0x03 - BOARD_ULPI.STATUS, 2 bits at +0x03"]
+    #[doc = "0x03 - BOARD_ULPI.STATUS, 3 bits at +0x03"]
     #[inline(always)]
     pub const fn status(&self) -> &Status {
         &self.status
@@ -38,15 +38,15 @@ pub mod address;
 pub type Data = crate::Reg<data::DataSpec>;
 #[doc = "BOARD_ULPI.DATA, 8 bits at +0x01"]
 pub mod data;
-#[doc = "CONTROL (w) register accessor: BOARD_ULPI.CONTROL, 2 bits at +0x02\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`control::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@control`] module"]
+#[doc = "CONTROL (w) register accessor: BOARD_ULPI.CONTROL, 3 bits at +0x02\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`control::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@control`] module"]
 #[doc(alias = "CONTROL")]
 pub type Control = crate::Reg<control::ControlSpec>;
-#[doc = "BOARD_ULPI.CONTROL, 2 bits at +0x02"]
+#[doc = "BOARD_ULPI.CONTROL, 3 bits at +0x02"]
 pub mod control;
-#[doc = "STATUS (r) register accessor: BOARD_ULPI.STATUS, 2 bits at +0x03\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@status`] module"]
+#[doc = "STATUS (r) register accessor: BOARD_ULPI.STATUS, 3 bits at +0x03\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@status`] module"]
 #[doc(alias = "STATUS")]
 pub type Status = crate::Reg<status::StatusSpec>;
-#[doc = "BOARD_ULPI.STATUS, 2 bits at +0x03"]
+#[doc = "BOARD_ULPI.STATUS, 3 bits at +0x03"]
 pub mod status;
 
 /// Byte offsets from this peripheral's generated base address.

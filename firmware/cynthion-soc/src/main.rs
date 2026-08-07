@@ -448,6 +448,7 @@ const HELP: &[(&str, &str)] = &[
     ("log [n|tags]", "the deferred event log"),
     ("map", "every peripheral window, from the generated map"),
     ("phy", "the USB PHYs"),
+    ("phy reset", "pulse TARGET's RESETB, and prove it reached"),
     ("pmod", "connector pins: ball, resource, free or claimed"),
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
@@ -906,7 +907,7 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
         b"led" => board_led(uart, rest),
         b"i2c" => board_i2c(uart, rest, devices),
         b"power" => board_power(uart, rest, devices),
-        b"phy" => board_phy(uart),
+        b"phy" => board_phy(uart, trim(rest)),
         // Split here rather than inside the command, because "there is no board"
         // is a fact about this build and not about the Type-C controllers. The
         // command then takes a `&mut Bus` it can use unconditionally.
@@ -1411,12 +1412,16 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 /// A PHY that is not there does not read as zeros -- it never releases `dir`,
 /// so the gateware's 68 us timeout fires and this says so, which is a different
 /// message from "answered, wrongly".
-fn board_phy(uart: &mut Uart) {
+fn board_phy(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
         None => return board_absent(uart),
     };
     let phy = ulpi::Ulpi::new(board.ulpi);
+
+    if rest == b"reset" {
+        return board_phy_reset(uart, &phy);
+    }
 
     // A named read, so one failure reports which register it was on rather than
     // leaving the caller to count lines.
@@ -1513,6 +1518,109 @@ fn board_phy(uart: &mut Uart) {
                 "A DATA LINE IS STUCK"
             }
         );
+    }
+}
+
+/// `phy reset` -- pulse TARGET's RESETB, and prove that it reached the pin.
+///
+/// The proof matters more than the reset. Between the `soc-clocks` work and
+/// #241 both driven ULPI reset pads were tied de-asserted, and NOTHING SAID SO:
+/// the PHY answers its identity registers either way, because its own power-on
+/// reset had already run at cold boot. A command that pulsed a wire and printed
+/// "done" would have passed on the broken bitstream.
+///
+/// So the check is a register the reset is specified to clear. The USB334x
+/// datasheet Rev 1.2 section 5.6.2: cycling RESETB low for at least 1 us
+/// "reset[s] the ULPI registers to their default state (and reset[s] all
+/// internal state machines)", and Table 7.1 gives the Scratch register's default
+/// as 00h. Write 0x5a, reset, read:
+///
+///     0x00  the pad moved, the PHY saw it
+///     0x5a  the pad did not move, or is not connected to RESETB
+///
+/// The value survives on the broken build and is cleared on the fixed one, so
+/// this command distinguishes them without a scope.
+fn board_phy_reset(uart: &mut Uart, phy: &ulpi::Ulpi) {
+    const MARKER: u8 = 0x5a;
+
+    let _ = writeln!(uart, "phy reset  target_phy");
+
+    // 1. Leave a mark the reset is specified to erase.
+    if let Err(error) = phy.write(ulpi::usb3343::REG_SCRATCH, MARKER) {
+        let _ = writeln!(uart, "  scratch write   {}", error.as_str());
+        return;
+    }
+    match phy.read(ulpi::usb3343::REG_SCRATCH) {
+        Ok(MARKER) => {
+            let _ = writeln!(uart, "  scratch set     {:02x}", MARKER);
+        }
+        // Without this the whole test is vacuous: a scratch register that never
+        // held the marker reads 0x00 afterwards whatever the reset did.
+        Ok(other) => {
+            let _ = writeln!(
+                uart,
+                "  scratch set     {:02x}  NOT {:02x} -- the PHY did not take the \
+                 marker, so this test cannot tell you anything",
+                other, MARKER
+            );
+            return;
+        }
+        Err(error) => {
+            let _ = writeln!(uart, "  scratch read    {}", error.as_str());
+            return;
+        }
+    }
+
+    // 2. RESETB low for 2.133 us, then 1.200 ms of the PHY's preparation time.
+    // Both are counted in gateware against the 60.000 MHz oscillator; this
+    // returns when the PHY is ready, not when the pulse ends.
+    let _ = writeln!(uart, "  resetb          low 2.133 us, then 1.200 ms tprep");
+    if let Err(error) = phy.reset_phy() {
+        let _ = writeln!(uart, "  reset           {}", error.as_str());
+        return;
+    }
+
+    // 3. And the PHY must still be there afterwards. A reset that left it
+    // wedged, or a preparation time cut short, shows up here as a timeout.
+    let vendor = match phy.read(ulpi::usb3343::REG_VENDOR_ID_LOW) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = writeln!(
+                uart,
+                "  after reset     {}  -- the PHY did not come back",
+                error.as_str()
+            );
+            return;
+        }
+    };
+
+    match phy.read(ulpi::usb3343::REG_SCRATCH) {
+        Ok(0x00) => {
+            let _ = writeln!(
+                uart,
+                "  scratch now     00  RESET REACHED THE PHY (vendor {:02x})",
+                vendor
+            );
+        }
+        Ok(MARKER) => {
+            let _ = writeln!(
+                uart,
+                "  scratch now     {:02x}  RESET DID NOT REACH THE PHY -- the pad \
+                 never moved (#241)",
+                MARKER
+            );
+        }
+        Ok(other) => {
+            let _ = writeln!(
+                uart,
+                "  scratch now     {:02x}  neither 00 nor {:02x}; the window is \
+                 returning something else entirely",
+                other, MARKER
+            );
+        }
+        Err(error) => {
+            let _ = writeln!(uart, "  scratch read    {}", error.as_str());
+        }
     }
 }
 

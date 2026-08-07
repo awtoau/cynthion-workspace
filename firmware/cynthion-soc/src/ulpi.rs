@@ -32,16 +32,19 @@ use core::ptr::{read_volatile, write_volatile};
 const ADDRESS: usize = 0;
 /// Byte to write; on read, the byte the last transaction returned.
 const DATA: usize = 1;
-/// Write-only: bit 0 starts a read, bit 1 starts a write.
+/// Write-only: bit 0 starts a read, bit 1 starts a write, bit 2 resets the PHY.
 const CONTROL: usize = 2;
-/// Read-only: bit 0 busy, bit 1 the last transaction timed out.
+/// Read-only: bit 0 busy, bit 1 the last transaction timed out, bit 2 a PHY
+/// reset is running.
 const STATUS: usize = 3;
 
 const CONTROL_READ: u8 = 1 << 0;
 const CONTROL_WRITE: u8 = 1 << 1;
+const CONTROL_PHY_RESET: u8 = 1 << 2;
 
 const STATUS_BUSY: u8 = 1 << 0;
 const STATUS_TIMEOUT: u8 = 1 << 1;
+const STATUS_RESETTING: u8 = 1 << 2;
 
 /// Turns of the poll loop before this driver gives up on the peripheral.
 ///
@@ -53,6 +56,19 @@ const STATUS_TIMEOUT: u8 = 1 << 1;
 /// the peripheral is not there at all, which is a bitstream/firmware mismatch
 /// rather than a PHY problem, and this is what makes the two distinguishable.
 const SPINS: u32 = 10_000;
+
+/// Turns of the poll loop while a PHY reset runs.
+///
+/// A separate bound from `SPINS`, and it has to be: the reset sequence is
+/// 128 + 72000 cycles of the 60 MHz ULPI clock -- 1.202 ms -- which is four
+/// orders of magnitude longer than a register transaction. Polled against
+/// `SPINS` a perfectly good reset would be reported as an absent peripheral.
+///
+/// One turn is an uncached CSR read, which is several CPU cycles at the very
+/// least, so at the highest clock this SoC has ever been built at (130 MHz)
+/// 1.202 ms is under 160_000 cycles and this covers it several times over.
+/// Reaching it means the peripheral is not there, same as `SPINS`.
+const RESET_SPINS: u32 = 2_000_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -144,6 +160,41 @@ impl Ulpi {
             write_volatile(self.reg(CONTROL), CONTROL_WRITE);
         }
         self.settle()
+    }
+
+    /// Pulse the TARGET PHY's RESETB and wait out its preparation time.
+    ///
+    /// This is the only way back for a PHY that has glitched. Before #241 there
+    /// was none: both driven reset pads were tied de-asserted, so recovery meant
+    /// reconfiguring the FPGA -- which the firmware running on that FPGA cannot
+    /// do. Afterwards every ULPI register is at its power-up default, so
+    /// anything that had configured the PHY has to do it again.
+    ///
+    /// TARGET only. AUX carries the console this reply travels over and CONTROL
+    /// is shared with Apollo; the gateware wires this bit to TARGET's pad alone,
+    /// so there is nothing here that could reset the wrong one.
+    ///
+    /// The durations are the datasheet's, and they are the gateware's: RESETB
+    /// low for 2.133 us, then 1.200 ms of TPREP. `STATUS.resetting` is set for
+    /// all of it, so this polls one bit rather than counting out a delay that
+    /// would have to track the CPU clock. It returns when the PHY is ready to be
+    /// spoken to, not when the pulse ends.
+    pub fn reset_phy(&self) -> Result<(), Error> {
+        // SAFETY: a write to CONTROL, the one side-effecting address here, and
+        // write-only so speculation cannot reach it.
+        unsafe {
+            write_volatile(self.reg(CONTROL), CONTROL_PHY_RESET);
+        }
+        let mut spins = 0u32;
+        loop {
+            if self.status() & STATUS_RESETTING == 0 {
+                return Ok(());
+            }
+            spins += 1;
+            if spins > RESET_SPINS {
+                return Err(Error::NoPeripheral);
+            }
+        }
     }
 }
 
