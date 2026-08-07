@@ -35,8 +35,9 @@ Why elastic buffering at the transport rather than a deep FIFO in the UART:
 `../../docs/architecture.md`.
 """
 
-from amaranth               import Module
+from amaranth               import Module, ResetSignal, Signal
 from amaranth.lib           import wiring, stream
+from amaranth.lib.cdc       import AsyncFFSynchronizer
 from amaranth.lib.fifo      import AsyncFIFOBuffered, SyncFIFOBuffered
 from amaranth.lib.wiring    import In, Out
 
@@ -112,6 +113,54 @@ class StreamBuffer(wiring.Component):
         # pointers -- and `sink.ready` is the honest answer to give it anyway,
         # which is what `w_stream.ready` is.
         wiring.connect(m, wiring.flipped(self.sink), fifo.w_stream)
-        wiring.connect(m, fifo.r_stream, wiring.flipped(self.source))
+
+        if self._i_domain == self._o_domain:
+            wiring.connect(m, fifo.r_stream, wiring.flipped(self.source))
+            return m
+
+        # ---- flushing the buffered output register on a write-domain reset ---
+        #
+        # `AsyncFIFO` handles its own reset properly: the write domain's reset is
+        # brought across by an `AsyncFFSynchronizer` and forces the read-side
+        # counters to match the write side, so the queue empties. **The register
+        # that `AsyncFIFOBuffered` adds in front of it does not.**
+        #
+        # That register lives in the READ domain and reloads only under
+        # `If(r_en | ~r_rdy)`. With a beat latched and nothing reading, both are
+        # false, so it holds -- indefinitely, through any number of write-domain
+        # resets, until a consumer takes it.
+        #
+        # The consequence on this board is #239, and it is one byte rather than a
+        # bufferful: the host types while `sync` is still waiting for PLL lock,
+        # the ULPI power-on reset clears the queue, and the shell's FIRST
+        # KEYSTROKE is a character from before it existed.
+        #
+        # So: bring the write reset across ourselves, and while it is asserted
+        # hold `valid` low and `ready` high. One cycle of `r_en` with the queue
+        # empty makes the register reload `r_rdy` from a `fifo.r_rdy` that is
+        # already 0, which is what actually clears it; the rest of the assertion
+        # costs nothing. The real reset is 72128 cycles, so there is no question
+        # of it being too short.
+        #
+        # `AsyncFFSynchronizer` and not `FFSynchronizer`: the write reset is
+        # asynchronous to this domain and may be released while the read clock is
+        # anywhere, which is the same reason `AsyncFIFO` uses one internally.
+        flushing = Signal()
+        m.submodules.flush_cdc = AsyncFFSynchronizer(
+            ResetSignal(self._i_domain, allow_reset_less=True), flushing,
+            o_domain=self._o_domain)
+
+        with m.If(flushing):
+            m.d.comb += [
+                fifo.r_stream.ready.eq(1),
+                self.source.valid.eq(0),
+                self.source.payload.eq(0),
+            ]
+        with m.Else():
+            m.d.comb += [
+                fifo.r_stream.ready.eq(self.source.ready),
+                self.source.valid.eq(fifo.r_stream.valid),
+                self.source.payload.eq(fifo.r_stream.payload),
+            ]
 
         return m

@@ -69,6 +69,7 @@ SIMS = [
     "soc_bus_sim",
     "uart16550_sim",
     "soc_serial_sim",
+    "soc_stream_buffer_sim",
     "soc_plic_sim",
     "soc_clint_sim",
     "soc_i2c_owner_sim",
