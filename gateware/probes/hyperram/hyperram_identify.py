@@ -69,7 +69,10 @@ from pathlib import Path
 
 from amaranth import Elaboratable, Module, Signal, Cat, C
 
-ROOT = Path(__file__).resolve().parent.parent.parent
+# Four levels: this file -> hyperram/ -> probes/ -> gateware/ -> the repo
+# root. Three stopped at `gateware/`, so the sys.path entries below pointed
+# at `gateware/gateware` and the vendored controller could not be imported.
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
