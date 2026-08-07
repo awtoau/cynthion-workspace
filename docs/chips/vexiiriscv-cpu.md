@@ -8,6 +8,216 @@ somewhere they can be found.
 
 **Index:** [`../hardware.md`](../hardware.md)
 
+## Performance
+
+Structure and rules: [`../plans/performance-sections.md`](../plans/performance-sections.md).
+
+**Almost every ceiling on this page is the fabric's, not the core's.** A soft CPU
+has no datasheet; what it can do is set by the parameters it was generated with
+and by what nextpnr can place. Keeping those two apart is most of the value here.
+
+Everything below is in **cycles and IPC**, which do not move when `SYNC_MHZ`
+does. `SYNC_MHZ` has been 30, 72, 30 and 60 in the last week
+(`git log -p gateware/soc/top.py`), so any MB/s figure is only meaningful with
+its clock attached, and cycle counts are the durable form.
+
+### 1. Theoretical maximum — the core's own parameters
+
+| axis | figure | where it comes from |
+|---|---|---|
+| issue width | 1 lane, 1 decoder, in order | `GENERATE_FLAGS`, `ParamSimple` defaults |
+| **IPC ceiling** | **1.00** | one lane retires at most one instruction per cycle |
+| I-cache | 4 KiB — 64 sets × **1 way** × 64 B line | `--fetch-l1-sets 64 --fetch-l1-ways 1` |
+| D-cache | 4 KiB — 64 sets × **1 way** × 64 B line | `--lsu-l1-sets 64 --lsu-l1-ways 1` |
+| line length | 64 B | `LsuL1Plugin_logic_banks_0_mem` in the generated Verilog is 1024 words; 4 KiB over 64 sets |
+| D-cache hit | 1 cycle by construction | block RAM is single-cycle on this part |
+| BTB | 512 sets, 1 chunk, 16-bit hash | `--with-btb` at `Param.scala` defaults |
+| return stack | **0** entries — `rasDepth` follows `--with-ras`, which is absent | `cpu.py` |
+| perf counters | `mhpmcounter3..6` + `mcycle`/`minstret` | `--performance-counters 4` |
+
+**One way is the number that matters.** Both caches are direct-mapped, so any two
+lines 4 KiB apart evict each other unconditionally — no associativity to absorb
+it, and no policy to tune. That is not a corner case; it is what 36 KB of `.text`
+does against a 4 KiB I-cache all day.
+
+At `sync` = 60 MHz an IPC of 1.00 would be **60 MIPS**. Nothing here approaches
+it, and section 3 says by how much.
+
+### 2. Achievable on this board — the fabric binds, not the core
+
+**nextpnr sets the clock, and it is a distribution rather than a number.**
+`scripts/soc_timing_sweep.py` places and routes three times per configuration,
+because `--parallel-refine` mutates a shared placement across sixteen threads and
+the same netlist has spread 8 MHz between runs:
+
+| configuration | LUT | FF | BRAM | fmax min / median / max |
+|---|---|---|---|---|
+| no predictor | 12,508 | 6,554 | 42 / 56 | 74.54 / 75.24 / 78.75 MHz |
+| BTB relaxed + `--relaxed-branch` (ships) | 12,903 | 6,942 | 44 / 56 | 64.23 / **71.81** / 72.88 MHz |
+
+So "the SoC runs at 71.81 MHz" is a placement statistic. Quoting the median
+without the min is quoting a configuration that builds two times in three.
+
+**The clearest proof that the fabric binds is the BTB.** `--with-btb` at the
+generator's default `jumpAt = 1` closed at **57.55 MHz against a 60 MHz
+constraint** — a hard fail — with the critical path starting at
+`BtbPlugin_logic_mem.0.0.DOA8`: 4.10 ns of `DP16KD` clock-to-q before a single
+LUT, then the 16-bit hash compare, the hit decision and the fetch redirect all in
+one cycle. Nothing about *prediction* was wrong. `--relaxed-btb` moved the
+redirect to `jumpAt = 2` and it closed. See the variants table below.
+
+Three more places the fabric, not the core, is the limit:
+
+- **`--btb-sets 128` bought nothing and still cost 44 BRAM**, because 128 × ~50
+  bits does not fall below one `DP16KD` pair. The BTB's *size* was never the
+  problem — its *depth in a cycle* was.
+- **`--relaxed-branch` was worth 11 MHz for 0.7% of a cycle count**, and the path
+  it fixed was routing-bound: 13 ns of routing against 3 ns of logic on a die
+  52% full. That ratio is a placement fact.
+- **The performance counters cost clock.** `firmware/cynthion-soc/src/bench.rs`
+  records that the design stopped closing at 72 MHz when they were added, which
+  is why `SYNC_MHZ` is 60. The instrument that measures the stalls is part of
+  what sets the ceiling.
+
+**Block RAM, not LUT, is what stops the caches growing.** From
+`linux-on-cynthion/results/sweep_20260729.json`, 132 configurations — **that
+sweep's fmax column is withdrawn; its area and BRAM rows stand** (they include
+SoC glue, so they are not bare-core figures):
+
+| cache sets | per cache | n | BRAM min–max (median) | LUT median |
+|---|---|---|---|---|
+| 0 (cacheless) | — | 3 | 8–8 (8) | 4,072 |
+| 64 | 4 KiB | 43 | 10–20 (**18**) | 7,048 |
+| 128 | 8 KiB | 43 | 13–24 (**22**) | 6,654 |
+| 256 | 16 KiB | 43 | 17–32 (**30**) | 6,695 |
+
+**LUT is flat across the whole range and BRAM is not.** Going from 4 KiB to
+16 KiB caches costs **+12 blocks** at the median, which is exactly the
+arithmetic: two caches × 12 KiB of extra data ÷ 2 KiB per `DP16KD` = 12. The SoC
+places **44 of 56** today, so 16 KiB caches would need 56 of 56 and leave nothing
+for anything else. See [`ecp5/bram-budget.md`](ecp5/bram-budget.md).
+
+**The CPU's real clock ceiling is unmeasured.**
+[`../soc-clocking.md`](../soc-clocking.md) §2 withdraws the "corrupts above
+60 MHz" result: its signature — correct counter values, dropped characters, fine
+while `sync == usb` — was the console's own `SyncFIFOBuffered` CDC bug. That FIFO
+is fixed and the ladder has not been re-run. **No number in this repository
+bounds this CPU's clock**, including ones in its own commit messages.
+
+### 3. Measured
+
+`scripts/soc_shell.py bench` on the board, all three regions walked with
+`read_volatile`/`write_volatile` and `mcycle`/`minstret` around them. Cycle
+counts are clock-invariant; the walk's own loop is fetched from flash, which
+section 4 returns to.
+
+| region | working set | pattern | cycles/access | what it exercises |
+|---|---|---|---|---|
+| block RAM | 2 KiB | read seq | **22.77** | every fetch an I-cache hit, every load a D-cache hit — the floor |
+| block RAM | 8 KiB | read seq | 25.38 | one D-cache line refill per 16 accesses |
+| block RAM | 8 KiB | write rnd | 84.07 | ~50% miss on a write-back cache |
+| flash | 16 KiB | read seq | 43.99 | one 64-byte line per 16 accesses, quad SPI |
+| flash | 16 KiB | read rnd | 352.66 | a line refill on essentially every access |
+| HyperRAM | 4 KiB | read seq | 148.15 | CSR staging port — `main=0`, uncached by construction |
+
+**Cycles per instruction, with nothing in the way: 3.23.** The block RAM 2 KiB
+sequential row is seven instructions per access (22.77 × IPC 0.309 = 7.04), so
+22.77 / 7.04 = 3.23 cycles per instruction with no memory, no miss and no
+mispredict. Before the BTB the same row read 28.77 at IPC 0.244 — 7.02
+instructions, **4.09 cycles each**.
+
+**IPC: 0.309 at best, 0.056 at worst, and the axis is code size.** From
+`./dev.py optlevel` (#167), the whole firmware rather than a walk:
+
+| `opt-level` | `.text` | IPC | flash seq |
+|---|---|---|---|
+| `z` | 36,160 | **0.302** | 9.63 MB/s |
+| `s` | 43,348 | 0.171 | 11.11 |
+| `3` | 64,576 | 0.056 | 11.57 |
+
+79% more code costs **5.4× the IPC**, and flash throughput *rises* while it
+happens — the link got faster and the CPU got five times slower, so what changed
+is how often it has to go there. 36 KB of `.text` against 4 KiB direct-mapped is
+the entire mechanism. This is why `opt-level = "z"` is set for speed.
+
+**Cache miss cost, derived from adjacent rows** — not measured in isolation, and
+labelled so:
+
+| | derivation | cycles |
+|---|---|---|
+| block RAM line refill | (25.38 − 22.77) × 16 accesses per line | **≈ 42** |
+| flash line refill, quad SPI | 352.66 − 43.99 | **≈ 309** |
+| D-cache hit | by construction, never isolated | 1 |
+
+**Fetch versus data stalls: NEVER MEASURED.** This is the row the counters exist
+for, and there is no reading in this tree.
+
+The hardware is there. `--performance-counters 4` is in `GENERATE_FLAGS`, and
+`bench.rs`'s `hpm` module writes `mhpmevent3..6` and reads `mhpmcounter3..6`:
+
+    0x04  STALLED_CYCLES_FRONTEND   waiting on instruction fetch
+    0x05  STALLED_CYCLES_BACKEND    waiting on data
+    0x19  DCACHE_LOAD_MISS
+    0x1A  DCACHE_WAITING
+
+It is wired into the HyperRAM memory-window walk only, and **no counter output is
+recorded anywhere in this repository.** The one figure attributed to them — *"the
+CPU spent 79% of every cache line stalled on instruction fetch"*, with HyperRAM
+reading 13.3 MB/s while the bus did 63.1 — appears in the doc comments of
+`bench.rs` and `gateware/soc/cpu/cpu.py` and nowhere else. **Treat it as the
+reason the counters were added, not as a counter reading.**
+
+One trap for whoever runs them: `firmware/cynthion-soc/src/metrics.rs:75` states
+that `mhpmcounter3..31` "decode and read hardwired zero" because "nothing passes
+`--performance-counters N`". That is **stale** — `cpu.py:123` passes it — and
+`metrics.rs` is the file most likely to be read first.
+
+### 4. The gap, and what closes it
+
+Ranked, with what each is worth.
+
+1. **The I-cache, and it is most of the gap.** 4 KiB, one way, against 36 KB of
+   `.text`. Worth: the `opt-level` table brackets it at **5.4× in IPC** from code
+   size alone, and that is a lower bound on what associativity or capacity could
+   recover. Cost: +12 BRAM for 16 KiB caches, and there are exactly 12 free.
+   Whether it then closes timing is **unknown**.
+2. **Firmware out of block RAM.** 64 KiB of program memory is ~32 blocks. Execute
+   in place from flash, or from HyperRAM, and the cache budget above stops being
+   all-or-nothing. Cost: fetch latency — which is what the I-cache exists to
+   hide, so the order matters and (1) has to come with it.
+3. **`--with-ras`.** `rasDepth = 4` inside `BtbPlugin`, cheap in area, and a
+   shell returns constantly. **Never measured.** Worth: unknown, and it is the
+   obvious next one.
+4. **The clock.** nextpnr's median is 71.81 MHz against the 60 MHz the design
+   ships at, so ~20% is sitting in the placement statistic — and the *real*
+   ceiling is unmeasured above that. Worth: 20% of throughput at least, for the
+   price of re-running `nextpnr_allow_fail_ladder.py` with the fixed
+   `StreamBuffer` and a readout that is not the console. Every cycle count above
+   is clock-invariant, so this is pure gain.
+5. **Read the counters.** Not a gap in performance but a gap in knowing where the
+   gap is: the split between frontend and backend stalls would rank items 1–3
+   instead of leaving them argued. Costs one `bench` run.
+6. **`GSharePlugin`.** Needs `withBtb`, adds a 4 KiB history table — three more
+   `DP16KD` against 44 of 56 — and a `HistoryPlugin` on the fetch path that had
+   to be relaxed twice to reach 71 MHz. It only improves direction prediction for
+   branches the BTB already has a target for. The BRAM makes it last.
+
+### Summary
+
+| path | theoretical | board max | measured | % of board max | what closes the gap |
+|---|---|---|---|---|---|
+| IPC, tight loop all hits | 1.00 (single issue, in order) | 1.00 — the fabric does not lower it | **0.309** — block RAM 2 KiB seq | 31% | I-cache; RAS; unknown remainder |
+| IPC, whole firmware | 1.00 | 1.00 | **0.302** at `opt-level = "z"`; 0.056 at `3` | 30% / 6% | I-cache size — 4 KiB against 36 KB `.text` |
+| cycles per instruction | 1.00 | 1.00 | **3.23**, nothing in the way (was 4.09 before the BTB) | 31% | fetch pipeline depth |
+| D-cache hit | 1 cycle | 1 cycle | 1 by construction, **never isolated** | — | a targeted micro-walk |
+| block RAM line refill | — | — | **≈ 42 cycles**, derived from two rows | — | — |
+| flash line refill | — | — | **≈ 309 cycles**, derived; quad SPI at 144 MHz SCK | — | SCK is already at the instrument's limit |
+| HyperRAM, CSR staging port | — | uncached by construction (`main=0`) | 148.15 cycles/access | — | the memory window (#90), not this port |
+| fetch stall fraction | 0% | — | **NEVER MEASURED** — counters present, nothing recorded | — | one `bench` run; read `mhpmcounter3` |
+| data stall fraction | 0% | — | **NEVER MEASURED** | — | same run, `mhpmcounter4` |
+| clock | 400 MHz PLL `fOUT` | 71.81 MHz median nextpnr, 3 runs; **true ceiling unmeasured** | 60 MHz shipping | 84% of the median | re-run the ladder with the fixed `StreamBuffer` |
+| BRAM budget | 56 on the die | 56 | 44 used; 16 KiB caches would need 56 | 79% | firmware out of block RAM |
+
 ## Not committed — generated at elaboration
 
 `gateware/soc/cpu/cpu.py` runs the Scala generator on every build and hands
