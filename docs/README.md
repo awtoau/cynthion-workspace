@@ -87,6 +87,7 @@ in its §13 got there in the first place.
 
 ### Per-chip notes
 
+* [`plans/`](plans/) — **working documents**: audits and sequencing, expected to be annotated and eventually deleted. Not a home for findings
 * [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) — FUSB302B ×2 — the USB-C PD controllers
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — ECP5 `LFE5U-12F` — the FPGA, and it is a 25F die
 * [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — NS16550A — the console UART, in fabric
