@@ -101,6 +101,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit, spawn  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS  # noqa: E402
 
+# The recorder every build goes through. Area, timing and the full configuration
+# land in Postgres from one unconditional call below, so there is no way to
+# produce a bitstream without a row describing it -- and if the database is not
+# there, the record is spooled rather than lost. See #232 and
+# scripts/build_metrics.py.
+import build_metrics  # noqa: E402
+
 
 def run(cmd, cwd=None, env=None, shell=False):
     return subprocess.run(cmd, cwd=cwd or ROOT, env=env, shell=shell,
@@ -592,7 +599,9 @@ def main():
                  f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
                  f'python3.15t {GATEWARE} --build --firmware {firmware} '
                  f'--bootloader {BOOT_BIN}')
+        build_started = time.perf_counter()
         result = run(["bash", "-c", build])
+        build_seconds = time.perf_counter() - build_started
         output = (result.stdout or "") + (result.stderr or "")
 
         # THE FREQUENCIES, on success as well as on failure.
@@ -627,6 +636,26 @@ def main():
             latest[entry.split("'")[1] if "'" in entry else entry] = entry
         for entry in latest.values():
             emit("  " + entry)
+
+        # RECORD IT. Every build, no flag to skip, before the failure return.
+        #
+        # A build that misses timing is the most interesting row in the table --
+        # it is the one that says how far past the edge a change pushed the
+        # design -- so this runs for a failed place-and-route too, and the row
+        # carries `status='fail'`.
+        #
+        # It is here rather than in `dev.py` because `dev.py build` is not the
+        # only way a bitstream gets made: `./dev.py run` and a bare
+        # `scripts/soc_run.py` both reach this line, and metrics that only the
+        # tidy path records are metrics with a hole exactly where somebody was
+        # in a hurry. See #232.
+        #
+        # It cannot fail the build. If Postgres is down the record is spooled to
+        # tmp/build-metrics/pending/ and said so loudly; the bitstream is still
+        # good and throwing it away over a stopped database would be absurd.
+        build_metrics.record_build(
+            BITSTREAM.parent, status="ok" if result.returncode == 0 else "fail",
+            build_seconds=build_seconds)
 
         if result.returncode != 0:
             emit("gateware build failed:")
