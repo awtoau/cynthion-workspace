@@ -414,70 +414,19 @@ impl Monitor {
         Ok(latched.map(|latched| Sample { readings, latched }))
     }
 
-    /// Sample if the interval has elapsed, and report anything worth reporting.
-    ///
-    /// **The superloop's half of the REFRESH cycle, and only the superloop's.**
-    /// It is the poll issue #245 is about: every turn of the main loop reads the
-    /// clock, compares, and returns. Under `--features rtic` the comparison is
-    /// not made here at all -- `src/timer.rs` makes it on the 1 ms grid and pends
-    /// a task -- so this function does not exist in that build and a stray caller
-    /// is a compile error rather than two schedulers for one device.
-    ///
-    /// Called from the main loop with the primary console. This is normal
-    /// context, not a handler -- it may print, and it may spin on the I2C bus,
-    /// because nothing is waiting on it.
-    #[cfg(not(feature = "rtic"))]
-    pub fn poll(&mut self, uart: &mut Uart, bus: Option<&mut Bus>) {
-        let now = clock::now();
-        let elapsed = self.last.elapsed(now);
-        if elapsed < clock::millis(INTERVAL_MS) {
-            return;
-        }
-
-        // How far past its release this run is, which is the figure the `rtic`
-        // command compares between the two models. Under the superloop the
-        // release was one interval after the last run, so everything beyond the
-        // interval is lateness -- and it is charged to whatever held the loop.
-        //
-        // Note what this does NOT do: `self.last = now` rather than
-        // `self.last + INTERVAL`, so the lateness is not carried into the next
-        // period. The poller drifts instead of catching up, which is the
-        // opposite of what `src/timer.rs` does with `mtimecmp` and is the reason
-        // the achieved period and the lateness are two separate numbers.
-        //
-        // The FIRST poll is excluded, and it has to be. `last` is
-        // `Instant::ZERO` until a poll has run, so `elapsed` on that turn is the
-        // whole uptime and the "lateness" is however long boot took -- 430 ms on
-        // this board. That one sample then stands as the worst case for the rest
-        // of the session and dominates the mean, which is how `rtic` came to
-        // report `late worst 25786941 ticks` beside a correct `gap worst 50 ms`:
-        // two numbers derived from the same instants that could not both be
-        // true. `metrics::polled` already discards its first sample for exactly
-        // this reason, which is why the gap was right and the lateness was not.
-        let late = if self.last == Instant::ZERO {
-            0
-        } else {
-            elapsed - clock::millis(INTERVAL_MS)
-        };
-        crate::sched::released(crate::sched::POWER, late);
-
-        self.service(uart, bus);
-    }
-
-    /// One REFRESH cycle, unconditionally: the work, with no decision about when.
+    /// One REFRESH cycle: the work, with no decision about when.
     ///
     /// **The sole owner of the PAC1954's REFRESH cycle.** Everything else asks
     /// [`Monitor::latest`], which touches nothing.
     ///
-    /// Split out of [`Monitor::poll`] for #245. The two callers are the two
-    /// dispatchers -- the superloop above, and `power_refresh` in
-    /// `src/rtic_app.rs` -- and the point of the split is that they share this
-    /// body exactly, so a jitter figure taken under one is comparable with the
-    /// other. Anything that moved into the caller would be a difference between
-    /// the models that is not the model.
+    /// There is one caller and it is `power_refresh` in `src/rtic_app.rs`. The
+    /// interval check that used to live beside this, in a `poll` the main loop
+    /// ran on every turn, is gone with the superloop (#245): when this runs is
+    /// the tick's decision now, and this function does not have an opinion about
+    /// it.
     ///
-    /// Still normal context under both, and still allowed to print and to spin
-    /// on I2C: under RTIC this is a task at a priority, not a handler.
+    /// Normal context, and still allowed to print and to spin on I2C -- this is
+    /// a task at a priority, not a handler.
     ///
     /// `bus` is an `Option` rather than this function reaching for
     /// `target::BOARD` itself, so that a target with no board is a missing

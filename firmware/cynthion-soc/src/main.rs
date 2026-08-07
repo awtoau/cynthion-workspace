@@ -50,25 +50,21 @@
 //! source, so resist the urge to `#[cfg]` anything below this line -- put the difference
 //! in `src/target.rs` instead.
 //!
-//! ## Two dispatchers, one shell
+//! ## One dispatcher
 //!
-//! The other `#[cfg]` in this file, and the only one, is the concurrency model:
+//! `#[rtic::app]` in `src/rtic_app.rs`, and it emits this firmware's
+//! `#[no_mangle] fn main`. There is no `#[entry]` in this file.
 //!
-//!     default          -> the superloop below
-//!     --features rtic  -> the `#[rtic::app]` in `src/rtic_app.rs`
+//! There used to be two, chosen at compile time, with a superloop shipping and
+//! RTIC behind a feature. That arrangement existed to make the comparison in
+//! #245 possible with exactly one variable in it; the comparison was made on
+//! hardware, the decision followed, and keeping the losing path afterwards would
+//! be a dead branch nobody dares touch. `docs/rtic.md` holds the measurements.
 //!
-//! **The default is the superloop and the product is the default.** A feature that
-//! had to be remembered on every build would eventually be forgotten on one, which is
-//! the same argument the `qemu` gate makes above.
-//!
-//! It is the ENTRY POINT that is gated and not the loop body, because `#[rtic::app]`
-//! emits its own `#[no_mangle] fn main` and riscv-rt's `#[entry]` emits the same
-//! symbol. Everything below the entry point is shared: `boot`, `housekeeping`,
-//! `consoles`, `Devices`, `Shell`, `run` and every command. The models differ in who
-//! runs the loop body, in what decides the PAC1954's REFRESH cycle is due, and in
-//! whether `Devices` is protected by `&mut` or by a priority ceiling -- and in nothing
-//! else, deliberately, because a comparison with more than one variable in it measures
-//! neither. The `rtic` command prints the comparison; #245 and #115 are the issues.
+//! What is left in this file is everything below the dispatcher and it is
+//! unchanged: `boot`, `housekeeping`, `consoles`, `Devices`, `Shell`, `run` and
+//! every command. `#[idle]` calls the same three functions in the same order the
+//! superloop's `loop {}` did.
 //!
 //! ## More than one console
 //!
@@ -98,13 +94,6 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
-// Only the superloop has one. `#[rtic::app]` emits its own `fn main`, so the
-// RTIC build has no `#[entry]` to attach and importing it would be an unused
-// import -- which on this crate is a warning, and a warning nobody reads is how
-// a real one gets missed.
-#[cfg(not(feature = "rtic"))]
-use riscv_rt::entry;
-
 mod bench;
 mod board;
 mod bus;
@@ -127,11 +116,9 @@ mod metrics;
 mod plic;
 mod power;
 mod power_rails;
-// The RTIC dispatcher (#245). `#[rtic::app]` emits its own `#[no_mangle] fn
-// main`, so it and the `#[entry]` below are mutually exclusive by the linker --
-// which is why the entry point is gated rather than the loop body. Off by
-// default: the shipping image is the superloop.
-#[cfg(feature = "rtic")]
+// THE dispatcher. `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`,
+// so there is no `#[entry]` anywhere in this file and no second loop for one to
+// attach to. #245.
 mod rtic_app;
 mod sched;
 mod selftest;
@@ -374,13 +361,13 @@ fn init_line(uart: &mut Uart, what: &str, status: &str, detail: core::fmt::Argum
     let _ = writeln!(uart, "init  {:9} {:7} {}", what, status, detail);
 }
 
-/// Everything that happens before the first turn of whichever loop runs.
+/// Everything that happens before the first turn of `#[idle]`.
 ///
-/// Factored out of `main` for #245, so the two dispatchers cannot come up
-/// differently. The superloop below calls it and so does `rtic_app`'s
-/// `#[init]`; a board that behaved differently under the two models would be a
-/// difference this arrangement is unable to produce, which is what makes the
-/// jitter comparison mean anything.
+/// Called from `rtic_app`'s `#[init]`. Factored out of the entry point for #245,
+/// when there were two dispatchers and a board that came up differently under
+/// them would have made the comparison meaningless. The second dispatcher is
+/// gone; this stays factored because `#[init]` runs with interrupts masked and
+/// the phase structure below is easier to read than it would be inlined there.
 ///
 /// It ends with interrupts on and the tick running, so the caller may not assume
 /// it has the machine to itself afterwards.
@@ -611,57 +598,6 @@ fn consoles(shells: &mut [Shell; MAX_CONSOLES], devices: &mut Devices) {
     for (index, &base) in target::UART_BASES.iter().enumerate() {
         let mut uart = Uart::new(base);
         shells[index].poll(index, &mut uart, index < target::ANNOUNCING, devices);
-    }
-}
-
-/// The superloop: the dispatcher this firmware ships with.
-///
-/// Gated on `not(feature = "rtic")` and on nothing else, because
-/// `#[rtic::app]` emits its own `#[no_mangle] fn main` and two of those do not
-/// link. The default build has no `rtic` in the dependency graph at all, so this
-/// is the only entry point that exists in the product.
-#[cfg(not(feature = "rtic"))]
-#[entry]
-fn main() -> ! {
-    let mut devices = boot();
-    let mut console = primary();
-    let mut shells = [Shell::NEW; MAX_CONSOLES];
-
-    // Boot cost is reported and then discarded. Everything above this line ran
-    // once and held the bus for milliseconds at a time; measured into the same
-    // totals as the steady state it produces a worst case nothing afterwards
-    // approaches. See `sched::boot_complete`.
-    sched::boot_complete(&mut console);
-
-    loop {
-        // Close the turn that just ended: two `csrr`s, charged to busy or idle
-        // by whether anything called `metrics::busy` during it. See
-        // `src/metrics.rs` for why the tick is not one of the things that does.
-        metrics::turn();
-
-        // The board's own periodic work, before the consoles.
-        //
-        // Here rather than in an interrupt handler: the power monitor's poll
-        // spins on an I2C bus for a couple of milliseconds and prints when a
-        // rail changes, and a handler may do neither -- see `src/irq.rs`. A 50
-        // ms period does not need a handler to be met, and one turn of this
-        // loop is microseconds.
-        //
-        // **This is the poll #245 is about.** Most turns of this loop read the
-        // clock, find the interval has not elapsed, and return; the cost is not
-        // the reading, it is that the REFRESH cycle cannot happen until the turn
-        // that is running finishes. `--features rtic` builds the same body as a
-        // task released by the tick instead, and the `rtic` command prints what
-        // the difference is worth.
-        //
-        // It reports on the PRIMARY console only. The second port's TX pin is
-        // JTAG TMS and this firmware never transmits there unbidden, which is
-        // exactly what a background monitor would be doing -- see
-        // `target::ANNOUNCING`.
-        devices.power.poll(&mut console, devices.bus.as_mut());
-
-        housekeeping(&mut console, &mut devices);
-        consoles(&mut shells, &mut devices);
     }
 }
 

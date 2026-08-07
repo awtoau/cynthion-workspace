@@ -12,7 +12,7 @@ description = "Shell firmware for our VexiiRiscv SoC, on Cynthion r1.4 hardware"
 # No HAL crate at all: the console needs core::fmt::Write, which is in core. That is
 # what makes writeln! work, and it is about six lines to implement.
 [dependencies]
-riscv = "0.16"
+riscv = { version = "0.16", features = ["critical-section-single-hart"] }
 riscv-rt = "0.18"
 
 # Where every hardware peripheral is, generated from the SoC's own memory map by
@@ -35,7 +35,7 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 # while this crate and rtic both use 0.16. Both are inline-asm wrappers with no
 # symbols of their own, so they coexist -- but it is 16 packages against the 14
 # this crate has today, and that is the whole graph doubling for one feature.
-rtic = { version = "2.3", features = ["riscv-clint-backend"], optional = true }
+rtic = { version = "2.3", features = ["riscv-clint-backend"] }
 
 # Build the same shell against QEMU's `-M virt` instead of the FPGA.
 #
@@ -82,34 +82,25 @@ workload = []
 # nothing to measure.
 preempt = ["workload"]
 
-# RTIC AS THE SHELL'S DISPATCHER (#245, under #115).
+# `rtic` USED TO BE A FEATURE. It is not one any more (#245).
 #
-# It used to gate only `src/bin/rtic.rs`, a spike the shell did not know existed.
-# It still builds that -- the spike is the standing answer to "does RTIC accept
-# this machine at all" -- but since #245 it also REPLACES THE SHELL'S
-# DISPATCHER: `src/rtic_app.rs` becomes the entry point, `src/main.rs`'s
-# `#[entry]` is gated off, and the PAC1954's REFRESH cycle stops being a poll at
-# the top of the main loop and becomes a periodic task the 1 ms tick releases.
+# `#[rtic::app]` in `src/rtic_app.rs` is THE dispatcher: the shell has no other
+# entry point, the PAC1954's REFRESH cycle is a periodic task the 1 ms tick
+# releases, and there is no superloop to fall back to. The feature existed so
+# that the two could be compared with exactly one variable between them; the
+# comparison ran on hardware, the decision followed, and a losing path kept
+# afterwards is a dead branch nobody dares touch.
 #
-# **OFF, AND IT MUST STAY OFF.** The hardware image is the product and the
-# product is the superloop. This is the same rule `qemu` above lives under and it
-# is load-bearing for the same reason: a feature that had to be remembered on
-# every build would eventually be forgotten on one. Build with no features and
-# the dispatcher is the superloop, to the instruction --
-# `scripts/soc_feature_isolation_check.py` builds both and prints what the
-# difference costs (+1,700 bytes of `.text` when this was written). What it BUYS
-# is not measured yet and is not measurable under QEMU -- see `docs/rtic.md`.
+# `riscv/critical-section-single-hart` moves to `[dependencies]` with it:
+# riscv-slic's generated code calls `critical_section::with` and nothing links
+# without an implementation. It rode on the feature because registering one
+# globally is not something a build that did not use RTIC should do, and every
+# build uses RTIC now.
 #
-# The shell's `rtic` command reports which of the two it was built as, so a
-# board holding the wrong image says so in one word rather than being inferred
-# from its timing.
-#
-# `critical-section-single-hart` rides on the feature rather than sitting in
-# `[dependencies]` because riscv-slic's generated code calls
-# `critical_section::with` and nothing links without an implementation -- and
-# registering one globally is not something a build that does not use RTIC
-# should be doing.
-rtic = ["dep:rtic", "riscv/critical-section-single-hart"]
+# The other `rtic*` features below are unaffected. They gate the #115
+# measurement spikes -- separate binaries under `src/bin/` that are not the
+# shell -- and those remain off by default for the reason `qemu` above is off:
+# the hardware image is the product.
 
 # The non-RTIC half of the USB port (#115): moondancer's control-transfer path
 # in moondancer's own shape, a superloop over an event queue.
@@ -133,7 +124,13 @@ usbport = []
 # implementation, and riscv-slic's generated code calls `critical_section::with`.
 # Pick one of the two below; they exist because the choice of implementation IS
 # one of the measurements.
-rticwl = ["dep:rtic", "workload"]
+# Gates the two #115 measurement spikes under `src/bin/`, which are separate
+# binaries and not the shell. They used to ride on the `rtic` feature; that
+# feature is gone because RTIC is no longer optional, and a binary gated on
+# nothing would be built by every `cargo build`.
+rticspike = []
+
+rticwl = ["workload"]
 
 # The control binary for the one above: the same workload, the same front end,
 # the same modules, dispatched by a superloop. Its own feature rather than plain
@@ -174,7 +171,7 @@ rticspin = ["rticwl"]
 # `fugit` and `rtic-time` are named directly because the monotonic type is
 # written out rather than made by the crate's per-part macro -- the macro exists
 # to hardcode a frequency, and this one is `target::TIME_HZ`.
-rticmono = ["dep:rtic", "riscv/critical-section-single-hart",
+rticmono = ["riscv/critical-section-single-hart",
             "dep:rtic-monotonics", "dep:rtic-time", "dep:fugit"]
 
 # The spike, as a second binary. STILL a second binary after #245, for a reason
@@ -192,10 +189,14 @@ rticmono = ["dep:rtic", "riscv/critical-section-single-hart",
 #
 # `required-features` means cargo skips the target entirely when the feature is
 # off, so the default build does not compile, link or lint it.
+# The #245 spike, kept. It is the standing answer to "does RTIC accept this
+# machine at all", it is far smaller than the shell, and it is where a bring-up
+# problem gets isolated. `rticspike` gates it so a default `cargo build` still
+# produces the shell and nothing else.
 [[bin]]
 name = "cynthion-soc-rtic"
 path = "src/bin/rtic.rs"
-required-features = ["rtic"]
+required-features = ["rticspike"]
 
 # The USB port, both halves. Same source in `src/usb.rs` and `src/usb_report.rs`,
 # two dispatchers, so the size difference between them is RTIC and nothing else.
@@ -204,7 +205,7 @@ required-features = ["rtic"]
 [[bin]]
 name = "usb-rtic"
 path = "src/bin/usb_rtic.rs"
-required-features = ["rtic"]
+required-features = ["rticspike"]
 
 [[bin]]
 name = "usb-bare"

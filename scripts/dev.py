@@ -403,7 +403,7 @@ def cmd_probe(extra: list[str]) -> int:
 
 
 @command("run the shell suite against the BOARD instead of QEMU",
-         args="[-v] [--features rtic]", kind="action")
+         args="[-v] [--features ...]", kind="action")
 def cmd_test_board(extra: list[str]) -> int:
     """The same assertions, on real silicon.
 
@@ -411,8 +411,9 @@ def cmd_test_board(extra: list[str]) -> int:
     running this firmware. `./dev.py fw` puts it there.
 
     `--features` has to match what was flashed. It builds nothing here -- it
-    tells the suite which dispatcher to expect, and a mismatch is a real
-    failure worth keeping: it means the board is not running what you think.
+    tells the suite what to expect of the image already on the board, and a
+    mismatch is a real failure worth keeping: it means the board is not running
+    what you think.
     """
     return run_tool([PY, script("soc_test.py"), "--board"], extra)
 

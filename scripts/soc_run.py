@@ -163,15 +163,31 @@ def firmware_in_bitstream(build_dir, emit):
 
 
 def gateware_digest():
-    """A hash of every gateware source the bitstream is built from.
+    """A hash of everything that determines the bitstream's content.
 
     CONTENT, not modification time. See `bitstream_is_stale`.
+
+    **The git hash is in here, and it has to be.** The gateware stamps `HEAD`
+    into USERCODE, so two bitstreams built from byte-identical sources at
+    different commits are different bitstreams -- and `soc_probe` compares that
+    USERCODE against the firmware's own build stamp to catch a stale load. A
+    digest over the sources alone would let a commit skip synthesis and leave the
+    board stamped with the previous one, which turns that check into a false
+    positive. A check that cries wolf is worse than the staleness it was added to
+    catch.
+
+    So a commit costs a resynthesis. The saving is on the case that was actually
+    wasting the time: uncommitted iteration, and branch switches that rewrite
+    mtimes without changing a byte.
     """
     import hashlib
     digest = hashlib.sha256()
     for source in sorted((ROOT / "gateware" / "soc").rglob("*.py")):
         digest.update(source.relative_to(ROOT).as_posix().encode())
         digest.update(source.read_bytes())
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                          capture_output=True, text=True)
+    digest.update(head.stdout.strip().encode())
     return digest.hexdigest()[:16]
 
 
