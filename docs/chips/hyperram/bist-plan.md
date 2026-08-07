@@ -23,6 +23,56 @@ The work: #230.
 - `READCLKSEL` + phase is already a CSR: 16 settings in milliseconds.
 - CK and PLL phase joining it depends on `DCSC` and dynamic phase shift (#228).
 
+## Driving it: the CPU, from the console
+
+**No sweep FSM in gateware.** The CPU sets the parameters, starts the pass,
+polls, reads the counters and prints the row. Gateware runs one cell; the CPU
+decides what the next one is.
+
+- **One cell is one console command.** A single setting can be tried by hand,
+  in isolation, without a sweep and without a rebuild.
+- A sweep is the same command in a loop, so nothing is exercised in a sweep that
+  was not first exercised alone.
+- The last attempt put the loop in gateware. It died at cell 0 and there was no
+  way to ask it anything.
+
+### Every access is logged
+
+Each register write and read goes to the console — address, value, and what it
+means:
+
+    hr cell ck=120 tap=2 phase=0 drive=3 mode=diff
+      w CR0        f0000710 <- 0001b32f   drive 3, fixed latency
+      w READCLKSEL f0000704 <- 00000002   tap 2, phase 0
+      w PASSES     f0000708 <- 00000100
+      w CONTROL    f000070c <- 00000001   go
+      r STATUS     f0000700 -> 00000003   busy
+      r STATUS     f0000700 -> 00000002   done
+      r ERRORS     f0000714 -> 00000000
+      r WORDS      f0000718 -> 00000080
+      ... control pass ...
+      PASS  0 errors / 128 words, control fired 128/128
+
+- A hang then names the last access, rather than leaving a blank terminal.
+- A register that reads back wrong is visible at the point it happens, not
+  inferred from a bad result three steps later.
+- Verbosity is the default. A quiet mode exists for long sweeps, never for
+  bring-up.
+
+### Time estimated before it runs
+
+Print the estimate before starting, from cells × passes × words and the measured
+rate:
+
+    hr sweep ck=100..200 tap=0..7 phase=0..1
+      26112 cells x 256 passes x 128 words @ ~120 MB/s
+      estimated 41 min, plus 51 rebuilds if CK is not runtime-settable
+
+- A sweep whose cost is only discovered by running it gets abandoned halfway,
+  and half a sweep is not a result.
+- If the estimate is hours, that is the signal to cut an axis or go coarse
+  first — before spending them.
+
 ## Isolation: the engine must not displace anything
 
 **Hard requirement: adding the test engine must not remove a single thing the
