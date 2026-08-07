@@ -164,23 +164,30 @@ module's `elaborate`.
 no DQS pin group"; the device database says RWDS is on `LDQS8` and every DQ line is in the
 same group, and nextpnr agrees. `scripts/hyperram_dqs_pins.py` is the check.
 
-Two upstream defects are **left in place, deliberately**, both in the controller:
+Two upstream defects sit in **both** controllers, and both are now fixed in both. They
+were left in place for a while, and the reason that stopped being tenable is worth
+recording: the non-DQS path is what the SoC ships **and** the baseline every DQS result is
+compared against, so leaving the fixes in one of the two made every side-by-side
+measurement a comparison of two different instruments (#215, split out of #208).
 
 - `RECOVERY` carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
-  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). The gap is held by the
-  caller instead, where it can be counted. `scripts/soc_hyperram_sim.py` asserts
-  back-to-back transactions violate it and that holding the gap fixes it.
+  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers now
+  hold it, counted from the caller's `sync_mhz` so it follows the clock. It used to be
+  held outside the controller by `hyperram_ceiling_top.py` and by nothing at all in
+  `bootram.py`. `scripts/soc_hyperram_sim.py` sections 4 and 4b assert that upstream's
+  controller violates it back-to-back and that ours does not — the negative control is
+  upstream's own class, through the same harness.
 - `with m.If(extra_latency | 1)` makes the low-latency branch dead, which #90 reports as
   costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
   reads `0x8f2f`, which selects *fixed* latency, so the device takes the long count every
-  time and RWDS says nothing about the transaction. Honouring RWDS pays only after CR0 is
-  reprogrammed to variable latency — two changes, not one, and worth measuring rather than
-  assuming.
+  time and RWDS says nothing about the transaction. So the behaviour is unchanged and the
+  intent is now stated: `fixed_latency=True` by default, `False` for a part reprogrammed
+  to variable latency — two changes, not one, and worth measuring rather than assuming.
 
 **The Wishbone peripheral (#90) is workspace gateware.** `HyperRAMWishbone` wraps the
-upstream controller with a 32-bit memory port: full stores and reads are two-word
-HyperBus bursts, while partial stores read, merge and write because the upstream
-controller exposes no RWDS mask input.
+controller with a 32-bit memory port: full stores and reads are two-word HyperBus bursts,
+while partial stores read, merge and write because the controller — upstream's FSM,
+unchanged in this respect — exposes no RWDS mask input.
 
 Three bugs were found in *our own* use of that interface, not in it: `final_word` must be
 held rather than pulsed, `perform_write`/`write_data` must be held for the whole transfer,

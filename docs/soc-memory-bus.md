@@ -401,11 +401,11 @@ held. **Read from source.**
 
 So the change is: one `HyperBusPHY` record split in two with
 `clk_en_dev = clk_en_ctrl & ~stall`, and `& ~stall` on one existing `Mux`.
-**No modification to `HyperRAMInterface`**, which
-[`upstream-boundary.md`](upstream-boundary.md) records under "Decided: HyperRAM
-splits at the PHY" as **upstream, unchanged** — and which this leaves that way.
-The gating wrapper is workspace gateware of the same kind as
-`HyperRAMWishbone`.
+**No modification to the controller.** The gate sits beneath it, on the record,
+so it is workspace gateware of the same kind as `HyperRAMWishbone`. (The
+controller has since been vendored as `HyperRAMController` for two unrelated
+defects — see [`upstream-boundary.md`](upstream-boundary.md) — and this change
+still does not touch it.)
 
 **COST.** ~10 lines of pass-through wiring plus a stall term. **Inferred**, tens
 of LUTs. No RAM, no new FSM, no bus change.
@@ -511,7 +511,7 @@ mattered.
    not a harness wrapper — the simulation drives the same gateware a build would.
    `BootRAM` gains `clock_stop`, default **off**.
 3. **`clk_en_dev = clk_en & ~stall` is one register short on writes.** `dq.o` is
-   registered inside `HyperRAMInterface`, so the word on the wire in cycle *T* is
+   registered inside `HyperRAMController`, so the word on the wire in cycle *T* is
    the one `write_ready` accepted in *T−1*; gating *T* with the same term that
    gates `word_event` discards it. A read's data and its RWDS transition arrive
    in the cycle `read_ready` fires, so reads want no register. The gate is

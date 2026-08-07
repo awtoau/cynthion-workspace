@@ -20,7 +20,8 @@ A dating exercise, not a caveat:
 | defect | fixed |
 |---|---|
 | controller sampled a full CK early (`HIGH_LATENCY_CLOCKS` 5 → 6) | 2026-08-05 |
-| `RECOVERY` fell to `IDLE` with no tCSHI gap | 2026-08-05 |
+| `RECOVERY` fell to `IDLE` with no tCSHI gap — **DQS path only** | 2026-08-05 |
+| the same, on the **non-DQS** path: the baseline, and what the SoC ships (#215) | 2026-08-07 |
 | pattern used only the low address bits — repeated 64× across the part | 2026-08-06 |
 | the negative control armed **after** the engine started | 2026-08-06 |
 | JTAG readback slips a bit below a sync/TCK ratio of ~4 (#204) | 2026-08-06 |

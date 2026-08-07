@@ -14,7 +14,7 @@ in [`../../README.md`](../../README.md); `./dev.py hyperram` is the shorter answ
 
 **None of these exercise the coalescing write path in
 [#185](https://github.com/awtoau/cynthion-workspace/issues/185).** Each drives
-`HyperRAMInterface` from its own FSM, which supplies a word per cycle, so none of
+`HyperRAMController` from its own FSM, which supplies a word per cycle, so none of
 them can express the fault. The master that bubbles is `HyperRAMWishbone` in
 `../riscv/vexii_bootram.py`; the only harness on that path is
 `scripts/hyperram_measure.py`, which drives the shipping SoC and has no gateware

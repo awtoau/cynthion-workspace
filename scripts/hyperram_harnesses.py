@@ -38,9 +38,10 @@ rather than reachable by remembering a path and a flag.
 Wishbone master bubbles, so holding a transaction open corrupts the write. That
 master is `HyperRAMWishbone` in `gateware/soc/bootram.py` (`sustained`
 defaults to False for exactly this reason), and **not one of the eleven tops
-under `gateware/probes/hyperram/` goes near it.** Every one drives `HyperRAMInterface`
-or `HyperRAMDQSInterface` from its own FSM, which supplies and consumes a word
-per cycle by construction, so none of them can express the fault.
+under `gateware/probes/hyperram/` goes near it.** Every one drives
+`HyperRAMController` or `HyperRAMDQSController` from its own FSM, which supplies
+and consumes a word per cycle by construction, so none of them can express the
+fault.
 
 That is not a criticism of them -- they measure the part, correctly, which is why
 they report 198-314 MB/s against the SoC's 5.43. It is the reason the fault

@@ -1123,7 +1123,7 @@ def section_wishbone(checks, emit):
 
 
 class ControlledInterface:
-    """The HyperRAMInterface signal surface, driven by section 7."""
+    """The HyperRAMController signal surface, driven by section 7."""
 
     def __init__(self):
         self.address = Signal(32)
