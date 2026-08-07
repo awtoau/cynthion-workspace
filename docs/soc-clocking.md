@@ -1,10 +1,12 @@
-# SoC clocking: a PLL divider bug, and a withdrawn ceiling
+# SoC clocking: a PLL divider trap, and a withdrawn ceiling
 
-One standing finding and one retraction:
+One finding that is now designed around, and one retraction:
 
-1. A **PLL divider bug** silently breaks USB at almost every frequency in
-   60–130 MHz. Only three are safe. This still holds and will cost a day if
-   rediscovered.
+1. A **PLL divider trap**: deriving `usb` from the same PLL as `sync` silently
+   breaks USB at almost every frequency in 60–130 MHz, leaving only three
+   usable. **The arithmetic still holds; it is no longer a constraint**, because
+   `gateware/soc/clocks.py` takes `usb` from the 60 MHz oscillator instead. Read
+   this before ever putting the PHY back on a PLL.
 2. The **"CPU corrupts its output above 60 MHz" result is WITHDRAWN.** Its
    signature — correct counter values, dropped characters, fine while
    `sync == usb` and broken once they differ — is the console's own
@@ -18,14 +20,15 @@ achieved frequency climbs with the requested one -- 72.6 at 60, 76.3 at 80,
 rather than where the silicon stopped working.
 
 **The premise was right and the question was aimed at the wrong stage.** The
-ceiling is not placement. Two separate things cap this design, and neither is
-the placer:
+ceiling was not placement. Two things were believed to cap this design, and
+neither was the placer. Both have since moved:
 
-1. a **PLL divider bug** that silently breaks USB at almost every frequency
-2. a **real fabric limit** somewhere below 92 MHz, which the CPU crosses by
-   corrupting its output rather than stopping
+1. a **PLL divider trap** that silently breaks USB at almost every frequency —
+   real, and now designed around rather than lived with
+2. a **fabric limit below 92 MHz** which the CPU was said to cross by corrupting
+   its output — **withdrawn**, see section 2
 
-## 1. Only three frequencies in 60..130 MHz can work at all
+## 1. Only three frequencies work — IF `usb` comes from the PLL
 
 `VariableClockDomainGenerator` derives `usb` from the PLL's VCO by an **integer**
 division:
@@ -71,6 +74,27 @@ and the usable frequencies, rather than emitting a bitstream that cannot work.
 This also retires one row of the original table: the 80 MHz build that
 "succeeded" had `usb` at 62.2 MHz, so it could never have enumerated. Passing
 timing was never the same as working.
+
+### And now it is designed around, not lived with
+
+The whole trap exists because `usb` and `sync` divide **one VCO**. Nothing
+requires that. The board's primary clock is a discrete 60 MHz oscillator on A8
+and the FPGA *sources* the ULPI clock (`clk_dir='o'` on all three PHY
+resources), so `usb` can be that oscillator passed straight through — exactly
+60.000 MHz by construction, with no tolerance left to check and less jitter than
+a PLL copy of it.
+
+`gateware/soc/clocks.py` does that. The consequences:
+
+| | before | after |
+|---|---|---|
+| `usb` source | PLL output, integer-divided | the oscillator, directly |
+| `usb` accuracy | 1–5% wrong at most frequencies | exact, by construction |
+| `sync` choices in 60–130 MHz | **3** | every integer MHz 63–130 within 0.5%, bar eight |
+
+So section 1 is no longer a limit on the CPU clock. **It is still the reason not
+to put the PHY back on a PLL**, and `variable_clock.py`'s 0.5% refusal remains
+the right guard for anyone who tries.
 
 ## 2. The CPU's ceiling is NOT known — this measurement is WITHDRAWN
 

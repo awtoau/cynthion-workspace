@@ -185,14 +185,43 @@ the address-bit fields.
 
 The board's flash is a **Winbond W25Q32JV**, JEDEC `EF 40 16`.
 
-| file | part | source |
-|---|---|---|
-| `Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` | W25Q32**JV**, 3V 32 Mbit, dual/quad SPI & QPI — the part fitted | `https://www.winbond.com/resource-files/w25q32jv%20revi%2005182022%20plus.pdf` |
-| `Winbond-W25Q32FV-32Mbit-SPI-Flash.pdf` | W25Q32**FV**, the previous generation | vendor mirror |
+| file | part | pages | source |
+|---|---|---|---|
+| `Winbond-W25Q32JV-32Mbit-SPI-Flash-RevG.pdf` | W25Q32**JV**, 3V 32 Mbit, dual/quad SPI — **Revision G, 27 March 2018, the revision the schematic names** | **80** | `https://www.winbond.com/resource-files/w25q32jv%20revg%2003272018%20plus.pdf` |
+| `Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` | W25Q32JV — **Preliminary Revision A1, 18 November 2014.** Superseded; see the warning below | 78 | the `revi 05182022` URL below now **404s**; this file is not what that URL named |
+| `Winbond-W25Q32FV-32Mbit-SPI-Flash.pdf` | W25Q32**FV**, the previous generation | — | vendor mirror |
 
 Both generations are kept because they differ in the timing maximums that
 `../docs/luna_ecp5_fpga/flash-detailed.md` transcribes, and reading the wrong one is an
 easy way to attribute a JV limit to an FV part.
+
+### The JV copy that was here was the 2014 PRELIMINARY, and one number differs
+
+`Winbond-W25Q32JV-32Mbit-SPI-Flash.pdf` is titled *"Preliminary W25Q32JVXXIQ RevA0
+Nov182014"* in its own PDF metadata and carries `Preliminary-Revision A1` in every
+page footer. The manifest row claimed it was Revision I (May 2022) and gave a URL
+that returns **HTTP 404** today, so nothing could have caught it — the row recorded
+a URL and a title but no way to check the copy, which is the same failure the
+Infineon section below describes.
+
+**It matters.** §9.6 AC Electrical Characteristics, Page Program Time `tPP`:
+
+| | typ | max |
+|---|---|---|
+| Preliminary Rev A1 (2014) | **0.7 ms** | 3 ms |
+| **Revision G (2018) — the fitted part** | **0.4 ms** | 3 ms |
+
+A 231-page write is 162 ms by the preliminary and **92 ms** by Rev G, and that
+figure is the denominator in the host→flash transport gap in
+`../docs/chips/w25q32-config-flash.md`. Everything else checked identical:
+`fC1` 133 MHz / `fC2` 104 MHz / `fR` 50 MHz, `tSE` 45/400 ms, `tBE1` 120/1600 ms,
+`tBE2` 150/2000 ms, `tCE` 10/50 s.
+
+**Validity check before trusting a candidate for this part:**
+
+    pdfinfo <file> | grep Pages                              # Pages = 80
+    pdftotext -layout <file> - | grep -c 'Revision G'         # non-zero
+    pdftotext -layout <file> - | grep -c 'Preliminary'        # ZERO
 
 ## FPGA
 
