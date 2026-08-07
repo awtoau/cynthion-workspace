@@ -232,6 +232,8 @@ fn machine_external() {
             service(index);
         } else if let Some(port) = type_c_of(source) {
             defer_type_c(&plic, source, port);
+        } else if is_i2c(source) {
+            service_i2c();
         }
         // The #115 workload's stand-in for a Type-C controller: a second
         // level-sensitive source whose service is too long for a handler. Same
@@ -252,6 +254,53 @@ fn machine_external() {
     // `src/dispatch.rs` for why `mepc` has to be saved around that.
     #[cfg(feature = "preempt")]
     crate::dispatch::run();
+}
+
+/// Is this the I2C controller's completion source?
+///
+/// `None` on a target with no board, which is how the emulator gets a handler
+/// that cannot mistake one of its own sources for this one.
+fn is_i2c(source: u32) -> bool {
+    target::BOARD.is_some() && source == cynthion_soc_pac::base::BOARD_I2C_IRQ
+}
+
+/// The I2C completion, cleared HERE rather than deferred.
+///
+/// The opposite treatment from `defer_type_c` one function down, and the reason
+/// is the clear and not the peripheral. Source 3 is a level --
+/// `irq.eq(irq_flag & ien)` in `peripherals/i2c_master.py` -- and `irq_flag`
+/// goes down only on a write of `CR.IACK`. Completing at the PLIC while the
+/// peripheral still asserts re-delivers immediately, so something has to clear
+/// it before the `plic.complete` at the bottom of the claim loop.
+///
+/// That clear is ONE MMIO WRITE. A FUSB302B's is three read-to-clear registers
+/// over I2C at 80 kHz -- about a millisecond, on the controller the power task
+/// is also using -- which is why that one is masked and deferred and this one is
+/// not. Same rule, opposite answer, because the rule is about how long the clear
+/// takes.
+///
+/// The driver's own `command()` still spins on `SR.TIP`, which is a different
+/// bit and is not touched here. Both writing `IACK` is idempotent, so a handler
+/// and a driver acknowledging the same completion is not a race.
+fn service_i2c() {
+    I2C_INTERRUPTS.store(I2C_INTERRUPTS.load(Ordering::Relaxed).saturating_add(1),
+                         Ordering::Relaxed);
+    // Through `bus`, which owns every construction of a controller -- see
+    // `bus::acknowledge_i2c_interrupt` for why this one operation needs no
+    // ownership, and `scripts/soc_i2c_owner_sim.py` for the rule.
+    crate::bus::acknowledge_i2c_interrupt();
+}
+
+/// How many I2C completions have been delivered.
+///
+/// Zero here after traffic means the source is masked, `CTR.IEN` is clear, or
+/// the gateware is not driving it -- three different faults that used to be
+/// indistinguishable because none of them produced a number.
+static I2C_INTERRUPTS: AtomicU32 = AtomicU32::new(0);
+
+/// The count, for `irq` and `rtic` to print.
+pub fn i2c_interrupts() -> u32 {
+    I2C_INTERRUPTS.load(Ordering::Relaxed)
 }
 
 /// [`defer_type_c`], for the workload's stand-in source.

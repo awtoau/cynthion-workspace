@@ -70,6 +70,31 @@
 mod i2c;
 mod mux;
 
+/// Clear the I2C controller's completion flag. For the interrupt handler, and
+/// for nothing else.
+///
+/// **Here rather than in `irq.rs`, because one owner of the bus is enforced by
+/// these modules being private to `bus` and not by everyone remembering.**
+/// `scripts/soc_i2c_owner_sim.py` asserts that nothing outside this file
+/// constructs an `I2c`, and it caught the first version of this, which did.
+///
+/// It does NOT take a `&mut Bus`, and that is the point. Source 3 is a level:
+/// `irq.eq(irq_flag & ien)` in the gateware, with `irq_flag` cleared only by a
+/// write of `CR.IACK`. Completing at the PLIC while the peripheral still asserts
+/// re-delivers immediately. The handler therefore has to clear it while a driver
+/// in normal context owns the transaction -- so this is deliberately the one
+/// operation on the controller that needs no ownership: a single store, of a
+/// command with none of START, STOP, READ or WRITE set, which the gateware
+/// checks for and which moves nothing on the wire.
+///
+/// A transfer in flight is untouched by it. `IF` and `TIP` are different bits,
+/// and `command()` waits on `TIP`.
+pub fn acknowledge_i2c_interrupt() {
+    if let Some(board) = crate::target::BOARD {
+        i2c::I2c::new(board.i2c).acknowledge_interrupt();
+    }
+}
+
 pub use i2c::{pac195x, Error};
 pub use mux::{
     BUS_AUX_C, BUS_POWER_MONITOR, BUS_TARGET_C, LINE_AUX_FAULT, LINE_AUX_INT, LINE_TARGET_FAULT,
