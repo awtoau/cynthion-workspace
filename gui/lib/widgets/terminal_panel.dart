@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/device_profile.dart';
 import '../models/tty_line.dart';
+import '../providers/device_profile_provider.dart';
 import '../providers/tty_provider.dart';
 import '../theme.dart' as theme;
+import 'capability.dart';
 
 Color _srcColor(TtySource src) => switch (src) {
       TtySource.rv0    => const Color(0xFF3FB950),
@@ -52,6 +55,14 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel> {
       }
     });
 
+    final feed = feedStateFor(ref.watch(deviceProfileProvider), Cap.tty);
+    if (feed == FeedState.unsupported) {
+      return Column(children: [
+        _header(),
+        const Expanded(child: UnsupportedNotice(what: 'Console capture')),
+      ]);
+    }
+
     return Column(children: [
       _header(),
       Expanded(
@@ -96,6 +107,8 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel> {
             widget.title,
             style: const TextStyle(color: theme.textMuted, fontSize: 10),
           ),
+          const SizedBox(width: 6),
+          const FeedChip(cap: Cap.tty),
           const Spacer(),
           if (!_autoScroll)
             GestureDetector(

@@ -1,0 +1,1510 @@
+{
+  "_meta": {
+    "board": "Cynthion",
+    "version": "1.4",
+    "kicad_source": "repos/cynthion-hardware"
+  },
+  "nodes": [
+    {
+      "id": "host",
+      "label": "Host PC",
+      "sublabel": "linux",
+      "type": "host",
+      "position": {
+        "x": 53.5,
+        "y": 90.8
+      }
+    },
+    {
+      "id": "apollo",
+      "label": "Apollo",
+      "sublabel": "SAMD11 · 1d50:615c · SN:005600…",
+      "type": "apollo",
+      "kicad_ref": "U6",
+      "position": {
+        "x": 309.2,
+        "y": 216.2
+      },
+      "info": {
+        "partNumber": "ATSAMD11D14A-M",
+        "manufacturer": "Microchip",
+        "description": "IC MCU 32BIT 16KB FLASH 24QFN",
+        "pins": [],
+        "datasheet": "http://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-42363-SAM-D11_Datasheet.pdf"
+      }
+    },
+    {
+      "id": "pac1954",
+      "label": "PAC1954",
+      "sublabel": "I²C power monitor",
+      "type": "powerMonitor",
+      "kicad_ref": "U1",
+      "position": {
+        "x": 48.75,
+        "y": 413.7
+      },
+      "info": {
+        "partNumber": "PAC1954T",
+        "manufacturer": "Microchip",
+        "description": "IC CURRENT/VOLT MON 1% 16VQFN",
+        "pins": [],
+        "datasheet": "https://ww1.microchip.com/downloads/aemDocuments/documents/MSLD/ProductDocuments/DataSheets/PAC195X-Family-Data-Sheet-DS20006539.pdf"
+      }
+    },
+    {
+      "id": "fpga",
+      "label": "ECP5 FPGA",
+      "sublabel": "LFE5U-12F",
+      "type": "fpga",
+      "kicad_ref": "IC1",
+      "position": {
+        "x": 305.1,
+        "y": 350.9
+      },
+      "info": {
+        "partNumber": "LFE5U-12F-6BG256C",
+        "manufacturer": "Lattice",
+        "description": "FPGA - Field Programmable Gate Array ECP5; 12k LUTs; 1.1V",
+        "pins": [],
+        "datasheet": "https://www.latticesemi.com/-/media/LatticeSemi/Documents/DataSheets/ECP5/FPGA-DS-02012-2-2-ECP5-ECP5G-Family-Data-Sheet.ashx?document_id=50461"
+      }
+    },
+    {
+      "id": "riscv",
+      "label": "VexRiscv",
+      "sublabel": "soft core",
+      "type": "riscv",
+      "position": {
+        "x": 535.1,
+        "y": 213.8
+      }
+    },
+    {
+      "id": "targetA",
+      "label": "TARGET-A",
+      "sublabel": "1d50:615b",
+      "type": "targetA",
+      "position": {
+        "x": 521.97,
+        "y": 352.3
+      }
+    },
+    {
+      "id": "targetC",
+      "label": "TARGET-C",
+      "sublabel": "camera port",
+      "type": "targetC",
+      "position": {
+        "x": 537.54,
+        "y": 478.6
+      }
+    },
+    {
+      "id": "camera",
+      "label": "UTi261M",
+      "sublabel": "0bda:5830 UVC",
+      "type": "device",
+      "position": {
+        "x": 773.35,
+        "y": 548.0
+      }
+    },
+    {
+      "id": "moondancer",
+      "label": "moondancer",
+      "sublabel": "RISC-V firmware",
+      "type": "firmware",
+      "position": {
+        "x": 779.23,
+        "y": 97.4
+      }
+    },
+    {
+      "id": "gateware",
+      "label": "facedancer.bit",
+      "sublabel": "ECP5 gateware",
+      "type": "gateware",
+      "position": {
+        "x": 44.7,
+        "y": 562.7
+      }
+    },
+    {
+      "id": "apollod",
+      "label": "apollod",
+      "sublabel": "TTY daemon",
+      "type": "daemon",
+      "position": {
+        "x": 55.93,
+        "y": 260.2
+      }
+    },
+    {
+      "id": "facedancer",
+      "label": "facedancer",
+      "sublabel": "Python host lib",
+      "type": "library",
+      "position": {
+        "x": 773.71,
+        "y": 356.1
+      }
+    },
+    {
+      "id": "usb_ctrl",
+      "label": "CONTROL",
+      "sublabel": "USB-C · J2",
+      "type": "usbConnector",
+      "kicad_ref": "J2",
+      "position": {
+        "x": 175.0,
+        "y": 130.0
+      },
+      "info": {
+        "partNumber": "USB_C",
+        "description": "CONN RCPT USB2.0 TYPE-C 16POS",
+        "pins": [
+          {
+            "number": "A1",
+            "name": "GND_A1",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "A12",
+            "name": "GND_A12",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "A4",
+            "name": "VBUS_A4",
+            "signal": "CONTROL_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "A5",
+            "name": "CC1_A5",
+            "signal": "CONTROL_CC1",
+            "type": "signal"
+          },
+          {
+            "number": "A6",
+            "name": "D+_A6",
+            "signal": "CONTROL_D+",
+            "type": "signal"
+          },
+          {
+            "number": "A7",
+            "name": "D-_A7",
+            "signal": "CONTROL_D-",
+            "type": "signal"
+          },
+          {
+            "number": "A8",
+            "name": "SBU1_A8",
+            "signal": "unconnected-(J2-SBU1-PadA8)",
+            "type": "nc"
+          },
+          {
+            "number": "A9",
+            "name": "VBUS_A9",
+            "signal": "CONTROL_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "B1",
+            "name": "GND_B1",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "B12",
+            "name": "GND_B12",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "B4",
+            "name": "VBUS_B4",
+            "signal": "CONTROL_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "B5",
+            "name": "CC2_B5",
+            "signal": "CONTROL_CC2",
+            "type": "signal"
+          },
+          {
+            "number": "B6",
+            "name": "D+_B6",
+            "signal": "CONTROL_D+",
+            "type": "signal"
+          },
+          {
+            "number": "B7",
+            "name": "D-_B7",
+            "signal": "CONTROL_D-",
+            "type": "signal"
+          },
+          {
+            "number": "B8",
+            "name": "SBU2_B8",
+            "signal": "unconnected-(J2-SBU2-PadB8)",
+            "type": "nc"
+          },
+          {
+            "number": "B9",
+            "name": "VBUS_B9",
+            "signal": "CONTROL_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "S1",
+            "name": "SHIELD_S1",
+            "signal": "GND",
+            "type": "gnd"
+          }
+        ]
+      }
+    },
+    {
+      "id": "usb_target_a",
+      "label": "TARGET-A",
+      "sublabel": "USB-A · J3",
+      "type": "usbConnector",
+      "kicad_ref": "J3",
+      "position": {
+        "x": 670.0,
+        "y": 310.0
+      },
+      "info": {
+        "partNumber": "USB_A",
+        "description": "USB A TYPE RECEPTACLE, SHORT BODY",
+        "pins": [
+          {
+            "number": 1,
+            "name": "VBUS_1",
+            "signal": "TARGET_A_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": 2,
+            "name": "D-_2",
+            "signal": "TARGET_A_D-",
+            "type": "signal"
+          },
+          {
+            "number": 3,
+            "name": "D+_3",
+            "signal": "TARGET_A_D+",
+            "type": "signal"
+          },
+          {
+            "number": 4,
+            "name": "GND_4",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 5,
+            "name": "Shield_5",
+            "signal": "GND",
+            "type": "gnd"
+          }
+        ]
+      }
+    },
+    {
+      "id": "usb_target_c",
+      "label": "TARGET-C",
+      "sublabel": "USB-C · J4",
+      "type": "usbConnector",
+      "kicad_ref": "J4",
+      "position": {
+        "x": 670.0,
+        "y": 450.0
+      },
+      "info": {
+        "partNumber": "USB_C",
+        "description": "CONN RCPT USB2.0 TYPE-C 16POS",
+        "pins": [
+          {
+            "number": "A1",
+            "name": "GND_A1",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "A12",
+            "name": "GND_A12",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "A4",
+            "name": "VBUS_A4",
+            "signal": "TARGET_C_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "A5",
+            "name": "CC1_A5",
+            "signal": "CC1",
+            "type": "signal"
+          },
+          {
+            "number": "A6",
+            "name": "D+_A6",
+            "signal": "TARGET_C_D+",
+            "type": "signal"
+          },
+          {
+            "number": "A7",
+            "name": "D-_A7",
+            "signal": "TARGET_C_D-",
+            "type": "signal"
+          },
+          {
+            "number": "A8",
+            "name": "SBU1_A8",
+            "signal": "SBU1",
+            "type": "signal"
+          },
+          {
+            "number": "A9",
+            "name": "VBUS_A9",
+            "signal": "TARGET_C_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "B1",
+            "name": "GND_B1",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "B12",
+            "name": "GND_B12",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "B4",
+            "name": "VBUS_B4",
+            "signal": "TARGET_C_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "B5",
+            "name": "CC2_B5",
+            "signal": "CC2",
+            "type": "signal"
+          },
+          {
+            "number": "B6",
+            "name": "D+_B6",
+            "signal": "TARGET_C_D+",
+            "type": "signal"
+          },
+          {
+            "number": "B7",
+            "name": "D-_B7",
+            "signal": "TARGET_C_D-",
+            "type": "signal"
+          },
+          {
+            "number": "B8",
+            "name": "SBU2_B8",
+            "signal": "SBU2",
+            "type": "signal"
+          },
+          {
+            "number": "B9",
+            "name": "VBUS_B9",
+            "signal": "TARGET_C_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "S1",
+            "name": "SHIELD_S1",
+            "signal": "GND",
+            "type": "gnd"
+          }
+        ]
+      }
+    },
+    {
+      "id": "usb_aux",
+      "label": "AUX",
+      "sublabel": "USB-C · J1",
+      "type": "usbConnector",
+      "kicad_ref": "J1",
+      "position": {
+        "x": 670.0,
+        "y": 560.0
+      },
+      "info": {
+        "partNumber": "USB_C",
+        "description": "CONN RCPT USB2.0 TYPE-C 16POS",
+        "pins": [
+          {
+            "number": "A1",
+            "name": "GND_A1",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "A12",
+            "name": "GND_A12",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "A4",
+            "name": "VBUS_A4",
+            "signal": "AUX_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "A5",
+            "name": "CC1_A5",
+            "signal": "CC1",
+            "type": "signal"
+          },
+          {
+            "number": "A6",
+            "name": "D+_A6",
+            "signal": "AUX_D+",
+            "type": "signal"
+          },
+          {
+            "number": "A7",
+            "name": "D-_A7",
+            "signal": "AUX_D-",
+            "type": "signal"
+          },
+          {
+            "number": "A8",
+            "name": "SBU1_A8",
+            "signal": "AUX_SBU1",
+            "type": "signal"
+          },
+          {
+            "number": "A9",
+            "name": "VBUS_A9",
+            "signal": "AUX_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "B1",
+            "name": "GND_B1",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "B12",
+            "name": "GND_B12",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": "B4",
+            "name": "VBUS_B4",
+            "signal": "AUX_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "B5",
+            "name": "CC2_B5",
+            "signal": "CC2",
+            "type": "signal"
+          },
+          {
+            "number": "B6",
+            "name": "D+_B6",
+            "signal": "AUX_D+",
+            "type": "signal"
+          },
+          {
+            "number": "B7",
+            "name": "D-_B7",
+            "signal": "AUX_D-",
+            "type": "signal"
+          },
+          {
+            "number": "B8",
+            "name": "SBU2_B8",
+            "signal": "AUX_SBU2",
+            "type": "signal"
+          },
+          {
+            "number": "B9",
+            "name": "VBUS_B9",
+            "signal": "AUX_VBUS",
+            "type": "signal"
+          },
+          {
+            "number": "S1",
+            "name": "SHIELD_S1",
+            "signal": "GND",
+            "type": "gnd"
+          }
+        ]
+      }
+    },
+    {
+      "id": "usb_phy_a",
+      "label": "USB3343",
+      "sublabel": "PHY · TARGET-A",
+      "type": "usbPhy",
+      "kicad_ref": "U9",
+      "position": {
+        "x": 590.0,
+        "y": 310.0
+      },
+      "info": {
+        "partNumber": "USB3343-CP",
+        "manufacturer": "Microchip",
+        "description": "IC TRANSCEIVER 1/1 24QFN",
+        "pins": [],
+        "datasheet": "http://ww1.microchip.com/downloads/en/DeviceDoc/334x.pdf"
+      }
+    },
+    {
+      "id": "usb_phy_c",
+      "label": "USB3343",
+      "sublabel": "PHY · TARGET-C",
+      "type": "usbPhy",
+      "kicad_ref": "U9",
+      "position": {
+        "x": 590.0,
+        "y": 450.0
+      },
+      "info": {
+        "partNumber": "USB3343-CP",
+        "manufacturer": "Microchip",
+        "description": "IC TRANSCEIVER 1/1 24QFN",
+        "pins": [],
+        "datasheet": "http://ww1.microchip.com/downloads/en/DeviceDoc/334x.pdf"
+      }
+    },
+    {
+      "id": "config_flash",
+      "label": "W25Q32",
+      "sublabel": "4MB config flash",
+      "type": "flash",
+      "kicad_ref": "U7",
+      "position": {
+        "x": 420.0,
+        "y": 290.0
+      },
+      "info": {
+        "partNumber": "W25Q32JVSS",
+        "manufacturer": "Winbond",
+        "description": "IC FLASH 32M SPI 133MHZ 8SOIC",
+        "pins": [],
+        "datasheet": "http://www.winbond.com/resource-files/w25q32jv%20revg%2003272018%20plus.pdf"
+      }
+    },
+    {
+      "id": "hyperram",
+      "label": "HyperRAM",
+      "sublabel": "S27KS0641 8MB",
+      "type": "hyperram",
+      "kicad_ref": "U10",
+      "position": {
+        "x": 420.0,
+        "y": 410.0
+      },
+      "info": {
+        "partNumber": "S27KS0641GABHI020",
+        "manufacturer": "Infineon",
+        "description": "DRAM 64Mb HyperRAM x8, 166MHz, Ind temp, 3.0V",
+        "pins": [],
+        "datasheet": "https://www.winbond.com/resource-files/W956x8MBYA_64Mb_HyperBus_pSRAM_TFBGA24_datasheet_A01-002_20191113.pdf"
+      }
+    },
+    {
+      "id": "swd_mcu",
+      "label": "MCU SWD",
+      "sublabel": "10-pin · J6",
+      "type": "swd",
+      "kicad_ref": "J6",
+      "position": {
+        "x": 280.0,
+        "y": 140.0
+      },
+      "info": {
+        "partNumber": "Conn_ARM_JTAG_SWD_10",
+        "manufacturer": "",
+        "description": "CONN HEADER VERT 10POS 1.27MM",
+        "pins": [
+          {
+            "number": 1,
+            "name": "VCC",
+            "signal": "VCC",
+            "type": "power"
+          },
+          {
+            "number": 2,
+            "name": "SWDIO",
+            "signal": "SWDIO",
+            "type": "signal"
+          },
+          {
+            "number": 3,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 4,
+            "name": "SWDCLK",
+            "signal": "SWDCLK",
+            "type": "signal"
+          },
+          {
+            "number": 5,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 6,
+            "name": "SWO",
+            "signal": "SWO",
+            "type": "signal"
+          },
+          {
+            "number": 7,
+            "name": "KEY",
+            "signal": "NC",
+            "type": "nc"
+          },
+          {
+            "number": 8,
+            "name": "NC",
+            "signal": "NC",
+            "type": "nc"
+          },
+          {
+            "number": 9,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 10,
+            "name": "nRESET",
+            "signal": "~{RESET}",
+            "type": "signal"
+          }
+        ],
+        "datasheet": "http://infocenter.arm.com/help/topic/com.arm.doc.ddi0314h/DDI0314H_coresight_components_trm.pdf"
+      }
+    },
+    {
+      "id": "swd_fpga",
+      "label": "FPGA SWD",
+      "sublabel": "3-pin · J10",
+      "type": "swd",
+      "kicad_ref": "J10",
+      "position": {
+        "x": 680.0,
+        "y": 180.0
+      },
+      "info": {
+        "partNumber": "TC_SWD",
+        "description": "CABLE ADAPTER 6 POS",
+        "datasheet": "https://www.tag-connect.com/wp-content/uploads/bsk-pdf-manager/TC2030-CTX_1.pdf",
+        "pins": [
+          {
+            "number": 1,
+            "name": "Pin_1_1",
+            "signal": "+3V3",
+            "type": "power"
+          },
+          {
+            "number": 2,
+            "name": "Pin_2_2",
+            "signal": "MCU_SWDIO",
+            "type": "signal"
+          },
+          {
+            "number": 3,
+            "name": "Pin_3_3",
+            "signal": "~BTN_RESET",
+            "type": "signal"
+          },
+          {
+            "number": 4,
+            "name": "Pin_4_4",
+            "signal": "MCU_SWCLK",
+            "type": "signal"
+          },
+          {
+            "number": 5,
+            "name": "Pin_5_5",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 6,
+            "name": "Pin_6_6",
+            "signal": "Net-(D9-A)",
+            "type": "signal"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pmod_a",
+      "label": "PMOD-A",
+      "sublabel": "12-pin · J7",
+      "type": "pmod",
+      "kicad_ref": "J7",
+      "position": {
+        "x": 170.0,
+        "y": 540.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "CONN HDR 12POS 0.1 GOLD PCB R/A",
+        "pins": [
+          {
+            "number": 1,
+            "name": "IO1",
+            "signal": "PMOD_A1",
+            "type": "signal"
+          },
+          {
+            "number": 2,
+            "name": "IO2",
+            "signal": "PMOD_A2",
+            "type": "signal"
+          },
+          {
+            "number": 3,
+            "name": "IO3",
+            "signal": "PMOD_A3",
+            "type": "signal"
+          },
+          {
+            "number": 4,
+            "name": "IO4",
+            "signal": "PMOD_A4",
+            "type": "signal"
+          },
+          {
+            "number": 5,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 6,
+            "name": "VCC",
+            "signal": "+3V3",
+            "type": "power"
+          },
+          {
+            "number": 7,
+            "name": "IO7",
+            "signal": "PMOD_A7",
+            "type": "signal"
+          },
+          {
+            "number": 8,
+            "name": "IO8",
+            "signal": "PMOD_A8",
+            "type": "signal"
+          },
+          {
+            "number": 9,
+            "name": "IO9",
+            "signal": "PMOD_A9",
+            "type": "signal"
+          },
+          {
+            "number": 10,
+            "name": "IO10",
+            "signal": "PMOD_A10",
+            "type": "signal"
+          },
+          {
+            "number": 11,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 12,
+            "name": "VCC",
+            "signal": "+3V3",
+            "type": "power"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pmod_b",
+      "label": "PMOD-B",
+      "sublabel": "12-pin · J8",
+      "type": "pmod",
+      "kicad_ref": "J8",
+      "position": {
+        "x": 170.0,
+        "y": 610.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "CONN HDR 12POS 0.1 GOLD PCB R/A",
+        "pins": [
+          {
+            "number": 1,
+            "name": "IO1",
+            "signal": "PMOD_B1",
+            "type": "signal"
+          },
+          {
+            "number": 2,
+            "name": "IO2",
+            "signal": "PMOD_B2",
+            "type": "signal"
+          },
+          {
+            "number": 3,
+            "name": "IO3",
+            "signal": "PMOD_B3",
+            "type": "signal"
+          },
+          {
+            "number": 4,
+            "name": "IO4",
+            "signal": "PMOD_B4",
+            "type": "signal"
+          },
+          {
+            "number": 5,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 6,
+            "name": "VCC",
+            "signal": "+3V3",
+            "type": "power"
+          },
+          {
+            "number": 7,
+            "name": "IO7",
+            "signal": "PMOD_B7",
+            "type": "signal"
+          },
+          {
+            "number": 8,
+            "name": "IO8",
+            "signal": "PMOD_B8",
+            "type": "signal"
+          },
+          {
+            "number": 9,
+            "name": "IO9",
+            "signal": "PMOD_B9",
+            "type": "signal"
+          },
+          {
+            "number": 10,
+            "name": "IO10",
+            "signal": "PMOD_B10",
+            "type": "signal"
+          },
+          {
+            "number": 11,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 12,
+            "name": "VCC",
+            "signal": "+3V3",
+            "type": "power"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mezzanine",
+      "label": "Mezzanine",
+      "sublabel": "30-pin · J5",
+      "type": "mezzanine",
+      "kicad_ref": "J5",
+      "position": {
+        "x": 420.0,
+        "y": 580.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "CONN RCPT 30POS SMD GOLD",
+        "pins": [
+          {
+            "number": 1,
+            "name": "MEZZANINE1",
+            "signal": "MEZZANINE1",
+            "type": "signal"
+          },
+          {
+            "number": 2,
+            "name": "MEZZANINE2",
+            "signal": "MEZZANINE2",
+            "type": "signal"
+          },
+          {
+            "number": 3,
+            "name": "MEZZANINE3",
+            "signal": "MEZZANINE3",
+            "type": "signal"
+          },
+          {
+            "number": 4,
+            "name": "MEZZANINE4",
+            "signal": "MEZZANINE4",
+            "type": "signal"
+          },
+          {
+            "number": 5,
+            "name": "MEZZANINE5",
+            "signal": "MEZZANINE5",
+            "type": "signal"
+          },
+          {
+            "number": 6,
+            "name": "MEZZANINE6",
+            "signal": "MEZZANINE6",
+            "type": "signal"
+          },
+          {
+            "number": 7,
+            "name": "MEZZANINE7",
+            "signal": "MEZZANINE7",
+            "type": "signal"
+          },
+          {
+            "number": 8,
+            "name": "MEZZANINE8",
+            "signal": "MEZZANINE8",
+            "type": "signal"
+          },
+          {
+            "number": 9,
+            "name": "MEZZANINE9",
+            "signal": "MEZZANINE9",
+            "type": "signal"
+          },
+          {
+            "number": 10,
+            "name": "MEZZANINE10",
+            "signal": "MEZZANINE10",
+            "type": "signal"
+          },
+          {
+            "number": 11,
+            "name": "MEZZANINE11",
+            "signal": "MEZZANINE11",
+            "type": "signal"
+          },
+          {
+            "number": 12,
+            "name": "MEZZANINE12",
+            "signal": "MEZZANINE12",
+            "type": "signal"
+          },
+          {
+            "number": 13,
+            "name": "MEZZANINE13",
+            "signal": "MEZZANINE13",
+            "type": "signal"
+          },
+          {
+            "number": 14,
+            "name": "MEZZANINE14",
+            "signal": "MEZZANINE14",
+            "type": "signal"
+          },
+          {
+            "number": 15,
+            "name": "MEZZANINE15",
+            "signal": "MEZZANINE15",
+            "type": "signal"
+          },
+          {
+            "number": 16,
+            "name": "MEZZANINE16",
+            "signal": "MEZZANINE16",
+            "type": "signal"
+          },
+          {
+            "number": 17,
+            "name": "MEZZANINE17",
+            "signal": "MEZZANINE17",
+            "type": "signal"
+          },
+          {
+            "number": 18,
+            "name": "MEZZANINE18",
+            "signal": "MEZZANINE18",
+            "type": "signal"
+          },
+          {
+            "number": 19,
+            "name": "MEZZANINE19",
+            "signal": "MEZZANINE19",
+            "type": "signal"
+          },
+          {
+            "number": 20,
+            "name": "MEZZANINE20",
+            "signal": "MEZZANINE20",
+            "type": "signal"
+          },
+          {
+            "number": 21,
+            "name": "MEZZANINE21",
+            "signal": "MEZZANINE21",
+            "type": "signal"
+          },
+          {
+            "number": 22,
+            "name": "MEZZANINE22",
+            "signal": "MEZZANINE22",
+            "type": "signal"
+          },
+          {
+            "number": 23,
+            "name": "MEZZANINE23",
+            "signal": "MEZZANINE23",
+            "type": "signal"
+          },
+          {
+            "number": 24,
+            "name": "MEZZANINE24",
+            "signal": "MEZZANINE24",
+            "type": "signal"
+          },
+          {
+            "number": 25,
+            "name": "MEZZANINE25",
+            "signal": "MEZZANINE25",
+            "type": "signal"
+          },
+          {
+            "number": 26,
+            "name": "MEZZANINE26",
+            "signal": "MEZZANINE26",
+            "type": "signal"
+          },
+          {
+            "number": 27,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 28,
+            "name": "GND",
+            "signal": "GND",
+            "type": "gnd"
+          },
+          {
+            "number": 29,
+            "name": "VCC",
+            "signal": "+3V3",
+            "type": "power"
+          },
+          {
+            "number": 30,
+            "name": "VCC",
+            "signal": "+3V3",
+            "type": "power"
+          }
+        ],
+        "datasheet": "https://cdn.amphenol-cs.com/media/wysiwyg/files/drawing/10132798.pdf"
+      }
+    },
+    {
+      "id": "btn_program",
+      "label": "PROGRAM",
+      "sublabel": "SW1 button",
+      "type": "button",
+      "kicad_ref": "SW1",
+      "position": {
+        "x": 900.0,
+        "y": 200.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "SWITCH TACTILE SPST-NO 0.05A 12V",
+        "pins": []
+      }
+    },
+    {
+      "id": "btn_reset",
+      "label": "RESET",
+      "sublabel": "SW2 button",
+      "type": "button",
+      "kicad_ref": "SW2",
+      "position": {
+        "x": 900.0,
+        "y": 260.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "SWITCH TACTILE SPST-NO 0.05A 12V",
+        "pins": []
+      }
+    },
+    {
+      "id": "btn_user",
+      "label": "USER",
+      "sublabel": "SW3 button",
+      "type": "button",
+      "kicad_ref": "SW3",
+      "position": {
+        "x": 900.0,
+        "y": 320.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "SWITCH TACTILE SPST-NO 0.05A 12V",
+        "pins": []
+      }
+    },
+    {
+      "id": "leds",
+      "label": "LEDs",
+      "sublabel": "D2-D14 · LED[0..14]",
+      "type": "led",
+      "position": {
+        "x": 900.0,
+        "y": 400.0
+      },
+      "info": {
+        "partNumber": "",
+        "manufacturer": "",
+        "description": "LED array: D2(RED/LED0) D3(ORANGE/LED1) D4(YELLOW/LED2) D5(GREEN/LED3) D6(BLUE/LED4) D7(PURPLE/LED5) D10(ICE BLUE/LED10) D11(PINK/LED11) D12(WHITE/LED12) D13(PINK/LED13) D14(ICE BLUE/LED14) — driven by FPGA LED[0..14]",
+        "pins": []
+      }
+    }
+  ],
+  "connections": [
+    {
+      "fromId": "host",
+      "toId": "usb_ctrl",
+      "label": "CONTROL USB"
+    },
+    {
+      "fromId": "usb_ctrl",
+      "toId": "apollo",
+      "label": ""
+    },
+    {
+      "fromId": "apollo",
+      "toId": "fpga",
+      "label": "JTAG + UART",
+      "interface": "JTAG + config",
+      "nets": [
+        "FPGA_ADV",
+        "FPGA_CONFIG.DONE",
+        "FPGA_CONFIG.~PROGRAM",
+        "FPGA_JTAG.TCK",
+        "FPGA_JTAG.TDI",
+        "FPGA_JTAG.TDO",
+        "FPGA_JTAG.TMS"
+      ],
+      "voltage": "3.3 V",
+      "direction": "Apollo↔ECP5 FPGA",
+      "signal_type": "JTAG + config · 3.3 V · 7 nets"
+    },
+    {
+      "fromId": "apollo",
+      "toId": "pac1954",
+      "label": "I²C",
+      "interface": "power",
+      "nets": [
+        "+3V3",
+        "GND"
+      ],
+      "voltage": "3.3 V",
+      "signal_type": "shared supply 3.3 V",
+      "direction": ""
+    },
+    {
+      "fromId": "apollo",
+      "toId": "swd_mcu",
+      "label": "SWD",
+      "interface": "SWD",
+      "nets": [
+        "MCU_SWCLK",
+        "MCU_SWDIO"
+      ],
+      "voltage": "3.3 V",
+      "direction": "Apollo↔MCU SWD",
+      "signal_type": "SWD · 3.3 V · 2 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "config_flash",
+      "label": "SPI",
+      "interface": "SPI",
+      "nets": [
+        "FPGA_FLASH_CLK",
+        "IO0",
+        "IO1",
+        "IO2",
+        "IO3",
+        "~CS"
+      ],
+      "voltage": "3.3 V",
+      "direction": "ECP5 FPGA↔W25Q32",
+      "signal_type": "SPI · 3.3 V · 6 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "hyperram",
+      "label": "HyperBus",
+      "interface": "HyperBus",
+      "nets": [
+        "RAM.CK",
+        "RAM.DQ0",
+        "RAM.DQ1",
+        "RAM.DQ2",
+        "RAM.DQ3",
+        "RAM.DQ4",
+        "RAM.DQ5",
+        "RAM.DQ6",
+        "RAM.DQ7",
+        "RAM.RWDS",
+        "RAM.~CK",
+        "RAM.~CS",
+        "RAM.~RESET"
+      ],
+      "voltage": "VCCRAM",
+      "direction": "ECP5 FPGA↔HyperRAM",
+      "signal_type": "HyperBus · VCCRAM · 13 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "riscv",
+      "label": "internal"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "usb_phy_a",
+      "label": "ULPI",
+      "interface": "ULPI",
+      "nets": [
+        "CLK",
+        "DATA0",
+        "DATA1",
+        "DATA2",
+        "DATA3",
+        "DATA4",
+        "DATA5",
+        "DATA6",
+        "DATA7",
+        "DIR",
+        "NXT",
+        "STP",
+        "TARGET_PHY.~RESET"
+      ],
+      "voltage": "3.3 V",
+      "direction": "ECP5 FPGA↔USB3343",
+      "signal_type": "ULPI · 3.3 V · 13 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "usb_phy_c",
+      "label": "ULPI",
+      "interface": "ULPI",
+      "nets": [
+        "CLK",
+        "DATA0",
+        "DATA1",
+        "DATA2",
+        "DATA3",
+        "DATA4",
+        "DATA5",
+        "DATA6",
+        "DATA7",
+        "DIR",
+        "NXT",
+        "STP",
+        "TARGET_PHY.~RESET"
+      ],
+      "voltage": "3.3 V",
+      "direction": "ECP5 FPGA↔USB3343",
+      "signal_type": "ULPI · 3.3 V · 13 nets"
+    },
+    {
+      "fromId": "usb_phy_a",
+      "toId": "usb_target_a",
+      "label": "",
+      "interface": "USB2",
+      "nets": [
+        "PHY_D+",
+        "PHY_D-"
+      ],
+      "voltage": "",
+      "direction": "USB3343↔TARGET-A",
+      "signal_type": "USB2 · 2 nets"
+    },
+    {
+      "fromId": "usb_phy_c",
+      "toId": "usb_target_c",
+      "label": "",
+      "interface": "USB2",
+      "nets": [
+        "PHY_D+",
+        "PHY_D-"
+      ],
+      "voltage": "",
+      "direction": "USB3343↔TARGET-C",
+      "signal_type": "USB2 · 2 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "usb_aux",
+      "label": "AUX PHY"
+    },
+    {
+      "fromId": "targetC",
+      "toId": "camera",
+      "label": "UVC"
+    },
+    {
+      "fromId": "riscv",
+      "toId": "swd_fpga",
+      "label": "JTAG"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "pmod_a",
+      "label": "IO bank",
+      "interface": "IO bank",
+      "nets": [
+        "A1",
+        "A10",
+        "A2",
+        "A3",
+        "A4",
+        "A7",
+        "A8",
+        "A9"
+      ],
+      "voltage": "",
+      "direction": "ECP5 FPGA↔PMOD-A",
+      "signal_type": "IO bank · 8 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "pmod_b",
+      "label": "IO bank",
+      "interface": "IO bank",
+      "nets": [
+        "B1",
+        "B10",
+        "B2",
+        "B3",
+        "B4",
+        "B7",
+        "B8",
+        "B9"
+      ],
+      "voltage": "",
+      "direction": "ECP5 FPGA↔PMOD-B",
+      "signal_type": "IO bank · 8 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "mezzanine",
+      "label": "IO bank",
+      "interface": "IO bank",
+      "nets": [
+        "MEZZANINE10",
+        "MEZZANINE11",
+        "MEZZANINE12",
+        "MEZZANINE13",
+        "MEZZANINE18",
+        "MEZZANINE19",
+        "MEZZANINE20",
+        "MEZZANINE21",
+        "MEZZANINE22",
+        "MEZZANINE23",
+        "MEZZANINE24",
+        "MEZZANINE25",
+        "MEZZANINE26",
+        "MEZZANINE27",
+        "MEZZANINE28",
+        "MEZZANINE3",
+        "MEZZANINE4",
+        "MEZZANINE5",
+        "MEZZANINE6",
+        "MEZZANINE7",
+        "MEZZANINE8",
+        "MEZZANINE9"
+      ],
+      "voltage": "",
+      "direction": "ECP5 FPGA↔Mezzanine",
+      "signal_type": "IO bank · 22 nets"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "btn_program",
+      "label": "~BTN"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "btn_reset",
+      "label": "~BTN"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "btn_user",
+      "label": "~BTN"
+    },
+    {
+      "fromId": "fpga",
+      "toId": "leds",
+      "label": "LED[0..14]"
+    },
+    {
+      "fromId": "moondancer",
+      "toId": "riscv",
+      "label": "runs on"
+    },
+    {
+      "fromId": "gateware",
+      "toId": "fpga",
+      "label": "loaded into"
+    },
+    {
+      "fromId": "apollod",
+      "toId": "apollo",
+      "label": "ttyACM0-2"
+    },
+    {
+      "fromId": "facedancer",
+      "toId": "targetA",
+      "label": "GCP API"
+    }
+  ]
+}

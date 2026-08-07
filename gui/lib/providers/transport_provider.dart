@@ -7,8 +7,6 @@ class TransportNotifier extends Notifier<ApolloTransport?> {
   StreamSubscription? _stateSub;
   StreamSubscription? _eventSub;
   Timer? _pollTimer;
-  String _lastHost = '127.0.0.1';
-  int _lastPort = 8765;
   bool _autoConnecting = false;
 
   @override
@@ -20,8 +18,6 @@ class TransportNotifier extends Notifier<ApolloTransport?> {
 
   /// Start auto-connect with 200ms polling
   Future<void> startAutoConnect({String host = '127.0.0.1', int port = 8765}) async {
-    _lastHost = host;
-    _lastPort = port;
     _autoConnecting = true;
 
     // Cancel any existing poll timer

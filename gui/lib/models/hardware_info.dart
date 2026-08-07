@@ -1,7 +1,11 @@
 enum PinType { power, gnd, signal, nc }
 
 class NodePin {
-  final int number;
+  /// Pin designator as the schematic writes it. A string, not an int: a USB-C
+  /// receptacle numbers its pins `A1`…`B12` and a BGA uses `T13`. Casting this
+  /// to int threw on the first connector the extractor filled in, and the whole
+  /// board file failed to parse — the topology came up empty with no error.
+  final String number;
   final String name;
   final String signal; // net name from schematic
   final PinType type;

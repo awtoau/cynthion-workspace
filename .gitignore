@@ -19,9 +19,10 @@ eggs/
 # repo that ships a lib/ is a Flutter app -- where lib/ is not a build output,
 # it is the entire source tree. It silently untracked all of
 # debris/code/cynthion-{workspace,app}-prototype/app/lib/ (34 files) and two
-# files of the retired dashboard, in an archive whose whole purpose is that the
-# history survives. The Python-packaging sense of "lib" is a top-level build
-# directory, so say that.
+# files of the dashboard, in an archive whose whole purpose is that the history
+# survives. That dashboard is now `gui/`, live again, and `gui/lib/` is its
+# source: leave this anchored. The Python-packaging sense of "lib" is a
+# top-level build directory, so say that.
 /lib/
 /lib64/
 parts/
