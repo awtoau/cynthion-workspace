@@ -20,6 +20,27 @@ The theoretical figure minus what this hardware forces: pin count, trace length,
 package, supply, the FPGA's own limits. Say which constraint binds and why. This
 is usually well below (1) and the gap is a board fact, not a defect.
 
+**The binding constraint is often a PIN, not the part.** Name it explicitly.
+A part rated far higher than we achieve is usually limited by how it is wired,
+and that is a permanent board fact rather than something to optimise away.
+Candidates to check for every part:
+
+- the primitive that must drive it — on the ECP5 the configuration flash clock
+  can only come from `USRMCLK`, which has its own ceiling and is not a general
+  IO
+- whether the pin is in the right group — DQS capture needs the data lines and
+  the strobe in one DQS group
+- single-ended where differential was available, or the reverse
+- a pin shared three ways, so the rate is set by the arbitration and not the
+  signal
+- IO standard and drive strength, which are bitstream attributes and bound the
+  edge rate
+- whether the pin has a hard DDR register or is being done in fabric
+
+If a pin binds, say which pin, which primitive, and what the part would do if it
+were wired differently. That last figure is what tells you whether a board
+revision is worth it.
+
 ### 3. Measured
 
 What we actually get, with the conditions attached: clock, mode, width, burst
