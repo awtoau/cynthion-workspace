@@ -78,6 +78,7 @@ from peripherals.sideband_csr import SidebandControl
 from peripherals.gateware_id import (GatewareId, MAGIC, pack_built, pack_cpu,
                          CPU_M, CPU_A, CPU_C, CPU_RDTIME)
 from peripherals.ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
+from clocks import PHY_PAD_RESET_CYCLES, PHY_PREP_CYCLES
 from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR,
                      LINE_TARGET_INT, LINE_AUX_INT, LINE_TARGET_FAULT,
                      LINE_AUX_FAULT)
@@ -616,9 +617,11 @@ ULPI_ADDRESS, ULPI_DATA, ULPI_CONTROL, ULPI_STATUS = 0, 1, 2, 3
 
 ULPI_START_READ  = 1 << 0
 ULPI_START_WRITE = 1 << 1
+ULPI_PHY_RESET   = 1 << 2
 
-ULPI_BUSY    = 1 << 0
-ULPI_TIMEOUT = 1 << 1
+ULPI_BUSY      = 1 << 0
+ULPI_TIMEOUT   = 1 << 1
+ULPI_RESETTING = 1 << 2
 
 # What a USB3343 answers with. Confirmed on all three PHYs of this board by
 # debris/scripts/phy_probe.py; deliberately not 0x00 or 0xff, either of which a dead
@@ -695,7 +698,7 @@ class ModelPhy:
             self._state = "idle"
 
 
-def make_ulpi_sim(phy):
+def make_ulpi_sim(phy, **kwargs):
     """A simulator with a UlpiRegisters and a model PHY wired together.
 
     Two clock domains, and that is the point of the exercise: the CSR bus is in
@@ -704,7 +707,7 @@ def make_ulpi_sim(phy):
     only works when the two clocks happen to agree pass, and the design's whole
     reason for using a handshake is that `SYNC_MHZ` is a free parameter.
     """
-    dut = UlpiRegisters()
+    dut = UlpiRegisters(**kwargs)
 
     async def wires(ctx):
         while True:
@@ -870,6 +873,171 @@ def run_ulpi_checks(checks, verbose):
         f"after a timeout the next read gave STATUS {seen.get('status')!r} and "
         f"data {seen.get('data')!r}; expected a clear status and 0x24. The "
         f"timeout flag must also be cleared by the next START, not left set.")
+
+    # --- the timeout reset actually reaches the window ----------------------
+    #
+    # The check above passes whether or not it does, which is how #241 survived:
+    # LUNA's window parks in START_READ waiting for `dir` to fall, so simply
+    # dropping `dir` lets the stuck FSM walk out on its own and complete the read
+    # nobody asked for any more.
+    #
+    # What only a real reset gives is a window that will accept a DIFFERENT KIND
+    # of transaction next. A window still parked in START_READ ignores
+    # `write_request` -- IDLE is the only state that looks at it -- and finishes
+    # the old READ instead. The outer FSM sees `done`, reports success, and the
+    # PHY was never written.
+    #
+    # The PHY therefore has to still be stalled when the write STARTS, and let go
+    # during it. Releasing the bus beforehand, as the check above does, lets the
+    # parked FSM walk out on its own and hides the whole thing -- which is how
+    # this defect survived a passing test suite.
+    #
+    # `ResetInserter(sig)` means `{"sync": sig}` and this module is entirely
+    # `usb`, so the bare form inserts nothing at all and this check fails.
+    phy = ModelPhy({**PHY_IDENTITY, 0x16: 0x00}, stall=True)
+    dut, build = make_ulpi_sim(phy)
+    seen = {}
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+        await bus.write(ULPI_ADDRESS, 0x00)
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        seen["timed_out"] = await ulpi_settle(bus)
+
+        # Still stalled. The write starts against a bus the PHY still owns.
+        await bus.write(ULPI_ADDRESS, 0x16)
+        await bus.write(ULPI_DATA, 0x5a)
+        await bus.write(ULPI_CONTROL, ULPI_START_WRITE)
+        await bus.read(ULPI_STATUS)
+        await bus.read(ULPI_STATUS)
+
+        # And now it lets go, well inside the outer timeout.
+        phy.stall = False
+        phy.dir = 0
+        seen["status"] = await ulpi_settle(bus)
+        seen["written"] = phy.registers.get(0x16)
+        seen["writes"] = phy.writes
+
+    build(testbench).run()
+
+    checks.check(
+        "the timeout reset reaches the window, so the next WRITE is a write",
+        seen.get("timed_out") == ULPI_TIMEOUT and seen.get("written") == 0x5a
+        and seen.get("writes") == 1,
+        f"after a timed-out read the model PHY saw {seen.get('writes')} "
+        f"write(s) and holds {seen.get('written')!r} in 0x16; expected 1 and "
+        f"0x5a. A window still parked in START_READ ignores `write_request` and "
+        f"completes the old read, which the outer FSM reports as success.")
+
+    # --- the PHY reset ------------------------------------------------------
+    #
+    # Before #241 the PHYs had no reset under firmware control at all: both pads
+    # were driven from `ResetSignal("usb")`, which `clocks.py` had tied to 0. A
+    # PHY that glitched could only be recovered by reconfiguring the FPGA, which
+    # the firmware running on it cannot do.
+    #
+    # Short durations here -- the real ones are 128 + 72000 usb cycles, and
+    # simulating 1.2 ms at 0.7 us a cycle to watch a counter count is not a
+    # better test than checking the constants' arithmetic, which is done below.
+    PAD, PREP = 8, 24
+    phy = ModelPhy(PHY_IDENTITY)
+    dut, build = make_ulpi_sim(phy, pad_reset_cycles=PAD, prep_cycles=PREP)
+    seen = {}
+
+    async def watch(ctx):
+        """Count usb cycles the pad is asserted, and cycles after it releases.
+
+        The second counter is what the preparation time is checked against. It
+        is read by the testbench at the moment STATUS first shows the reset
+        finished, so polling latency can only make it larger -- and larger is
+        the safe direction. Releasing EARLY is the defect.
+        """
+        low = 0
+        fell = False
+        after = 0
+        while True:
+            if ctx.get(dut.phy_rst):
+                low += 1
+            elif low:
+                fell = True
+            if fell:
+                after += 1
+            seen["low"] = low
+            seen["after_pad"] = after
+            await ctx.tick("usb")
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+        seen["idle"] = await bus.read(ULPI_STATUS)
+        await bus.write(ULPI_CONTROL, ULPI_PHY_RESET)
+        # Read immediately: firmware has to be able to SEE that it started, or
+        # it polls a bit that is already clear and carries on into a PHY that is
+        # still in reset.
+        seen["started"] = await bus.read(ULPI_STATUS)
+        for _ in range(2000):
+            status = await bus.read(ULPI_STATUS)
+            if not (status & ULPI_RESETTING):
+                break
+        seen["finished"] = status
+        seen["at_clear"] = seen.get("after_pad")
+
+        # And the window works afterwards -- the reset holds it, so a design
+        # that held it for ever would pass every check above.
+        await bus.write(ULPI_ADDRESS, 0x00)
+        await bus.write(ULPI_CONTROL, ULPI_START_READ)
+        seen["after"] = await ulpi_settle(bus)
+        seen["vendor"] = await bus.read(ULPI_DATA)
+
+    def build_with_watch(testbench):
+        sim = build(testbench)
+        sim.add_testbench(watch, background=True)
+        return sim
+
+    build_with_watch(testbench).run()
+
+    checks.check(
+        "STATUS.resetting is clear until firmware asks for a reset",
+        seen.get("idle") == 0,
+        f"STATUS read {seen.get('idle')!r} before anything was written. A bit "
+        f"that is set at rest is one firmware would wait on for ever.")
+    checks.check(
+        "a PHY reset is visible in STATUS the moment it is asked for",
+        seen.get("started") is not None
+        and (seen["started"] & ULPI_RESETTING),
+        f"STATUS read {seen.get('started')!r} straight after writing the reset "
+        f"bit; bit 2 must already be set or firmware polls a flag that has not "
+        f"arrived and proceeds into a PHY still in reset.")
+    checks.check(
+        "the reset pad is asserted for the pad time and no longer",
+        seen.get("low") == PAD,
+        f"RESETB was asserted for {seen.get('low')!r} usb cycles, expected "
+        f"{PAD}. Short of it violates the USB334x's 1 us minimum (Rev 1.2 "
+        f"section 5.6.2); longer means the counter is not measuring what it "
+        f"claims.")
+    checks.check(
+        "and STATUS stays busy through the PHY's preparation time",
+        seen.get("at_clear") is not None and seen["at_clear"] >= PREP
+        and not (seen.get("finished", 1) & ULPI_RESETTING),
+        f"STATUS showed the reset finished {seen.get('at_clear')!r} usb cycles "
+        f"after RESETB released, and settled at {seen.get('finished')!r}; "
+        f"expected at least {PREP} and bit 2 clear. Releasing at the end of the "
+        f"pulse would let firmware talk to a PHY still inside TPREP.")
+    checks.check(
+        "the register window still works after a PHY reset",
+        seen.get("after") == 0 and seen.get("vendor") == 0x24,
+        f"the first read after a reset gave STATUS {seen.get('after')!r} and "
+        f"data {seen.get('vendor')!r}; expected a clear status and 0x24. The "
+        f"window is held in reset for the whole sequence and has to come back.")
+
+    # The real constants, checked as arithmetic rather than by simulating them.
+    checks.check(
+        "the PHY reset durations meet the USB334x datasheet",
+        PHY_PAD_RESET_CYCLES / 60.0 >= 1.0
+        and 1.0 <= PHY_PREP_CYCLES / 60_000.0 <= 1.2,
+        f"RESETB low for {PHY_PAD_RESET_CYCLES / 60.0:.3f} us and TPREP "
+        f"{PHY_PREP_CYCLES / 60_000.0:.3f} ms at 60.000 MHz. The datasheet asks "
+        f"for at least 1 us (Rev 1.2 section 5.6.2) and 1.0..1.2 ms "
+        f"(Table 4.3); TPREP must be the maximum, not the typical.")
 
 
 # i2c_mux.I2CBusMux register offsets.

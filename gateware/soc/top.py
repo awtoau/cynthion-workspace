@@ -1577,17 +1577,19 @@ class HelloSoC(Elaboratable):
         # requires and is why `usb` is not a free parameter the way `sync` is.
         #
         # `rst` is declared `rst_invert=True`, so the pad is active low and a 1
-        # here holds the PHY in reset. Driving it from `ResetSignal("usb")`
-        # means the PHY comes out of reset with the domain and is held only
-        # while the domain is, which is what a PHY expects; tying it to 0 would
-        # leave a PHY that had glitched during configuration with no way back.
+        # here holds the PHY in reset. It has two drivers, ORed: `car.phy_reset`
+        # is the power-on pulse, counted in `usb` and specified in `clocks.py`,
+        # and `ulpi.phy_rst` is the CSR-driven one firmware uses to recover a
+        # PHY that has glitched. Tying it to 0 -- which this line did between
+        # `soc-clocks` and #241 -- leaves a glitched PHY with no way back, since
+        # firmware cannot reconfigure the FPGA it is running on.
         #
         # This is a register path only. There is no UTMI translator, no packet
         # handling and no device stack on this port -- see `peripherals/ulpi_window.py`.
         target_phy = platform.request("target_phy", 0)
         m.d.comb += [
             target_phy.clk.o.eq(ClockSignal("usb")),
-            target_phy.rst.o.eq(ResetSignal("usb")),
+            target_phy.rst.o.eq(car.phy_reset | target_ulpi.phy_rst),
             target_phy.stp.o.eq(target_ulpi.stp_o),
             target_phy.data.o.eq(target_ulpi.data_o),
             target_phy.data.oe.eq(target_ulpi.data_oe),

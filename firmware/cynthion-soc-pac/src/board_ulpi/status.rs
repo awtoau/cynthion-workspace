@@ -4,6 +4,8 @@ pub type R = crate::R<StatusSpec>;
 pub type BusyR = crate::BitReader;
 #[doc = "Field `TIMEOUT` reader - timeout \\[1\\]"]
 pub type TimeoutR = crate::BitReader;
+#[doc = "Field `RESETTING` reader - resetting \\[2\\]"]
+pub type ResettingR = crate::BitReader;
 impl R {
     #[doc = "Bit 0 - busy \\[0\\]"]
     #[inline(always)]
@@ -15,8 +17,13 @@ impl R {
     pub fn timeout(&self) -> TimeoutR {
         TimeoutR::new(((self.bits >> 1) & 1) != 0)
     }
+    #[doc = "Bit 2 - resetting \\[2\\]"]
+    #[inline(always)]
+    pub fn resetting(&self) -> ResettingR {
+        ResettingR::new(((self.bits >> 2) & 1) != 0)
+    }
 }
-#[doc = "BOARD_ULPI.STATUS, 2 bits at +0x03\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOARD_ULPI.STATUS, 3 bits at +0x03\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct StatusSpec;
 impl crate::RegisterSpec for StatusSpec {
     type Ux = u8;

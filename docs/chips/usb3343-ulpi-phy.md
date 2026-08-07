@@ -136,6 +136,43 @@ TARGET, not a fault.
 Bringing the TARGET PHY out of reset costs about **22 mA on the AUX rail**,
 measured with `power` before and after (145 mA → 167 mA).
 
+## RESETB, and how to know it is connected
+
+`RESETB` is the only reset these parts have, and all three ULPI resources declare
+`rst_invert=True`, so the pad is active low. Two of the three are driven — TARGET
+from [`gateware/soc/top.py`](../../gateware/soc/top.py), AUX from LUNA's
+`UTMITranslator` — and both take `ResetSignal("usb")`.
+
+Two durations, both from the datasheet (Rev 1.2), and both counted in gateware
+against the 60.000 MHz oscillator so they are exact rather than approximate:
+
+| | | |
+|---|---|---|
+| RESETB low | **≥ 1 µs** | §5.6.2. Resets the ULPI registers to their defaults and every internal state machine. We use 128 cycles, 2.133 µs. |
+| TPREP | **1.0–1.2 ms** | Table 4.3, 60 MHz REFCLK, LPM disabled. From RESETB valid to the PHY de-asserting DIR; the bus is not the link's to drive before it. We use 72000 cycles, 1.200 ms — the maximum, not the typical. |
+
+At **cold power-up none of this shows**: the part's own POR runs when VDD18 comes
+up, long before FPGA configuration. What needs the pad is **warm
+reconfiguration** — reflashing or `trigger_fpga_reconfiguration()` does not
+power-cycle the PHY, so one carrying a stuck bus turn from the previous bitstream
+keeps it.
+
+That is why a pad tied de-asserted was invisible for as long as it was
+([#241](https://github.com/awtoau/cynthion-workspace/issues/241)): the PHY
+answers its identity registers either way.
+
+**`phy reset` is the check that is not fooled by that.** Scratch (`0x16`) is
+specified to return to `00h` on a RESETB cycle (Table 7.1), so the command writes
+`0x5a`, *verifies it took*, resets, and reads back:
+
+    phy reset  target_phy
+      scratch set     5a
+      resetb          low 2.133 us, then 1.200 ms tprep
+      scratch now     00  RESET REACHED THE PHY (vendor 24)
+
+`00` means the pad moved and the part saw it; `5a` means it did not. Verified on
+hardware 2026-08-07.
+
 ## Registers
 
 **PHY registers are ULPI registers, not SoC registers.** They are reached through

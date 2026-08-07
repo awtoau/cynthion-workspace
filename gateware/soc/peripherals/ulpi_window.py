@@ -67,16 +67,32 @@ the PHY" instead of "the peripheral is stuck", and the next read starts clean.
 
     +0  ADDRESS  rw  6-bit ULPI register address
     +1  DATA     rw  byte to write; on read, the byte the last read returned
-    +2  CONTROL  w   bit 0 start a read, bit 1 start a write
-    +3  STATUS   r   bit 0 busy, bit 1 timeout on the last transaction
+    +2  CONTROL  w   bit 0 start a read, bit 1 start a write,
+                     bit 2 reset the PHY
+    +3  STATUS   r   bit 0 busy, bit 1 timeout on the last transaction,
+                     bit 2 a PHY reset is in progress
 
 **No read here has a side effect.** DATA is a plain latch: reading it twice gives
 the same byte and advances nothing, so a widened, prefetched or replayed read
 cannot consume a result -- the hazard `peripherals/uart16550.py` exists to eliminate. STATUS
-is a wire from two flags. The only side-effecting address is CONTROL, and it is
+is a wire from three flags. The only side-effecting address is CONTROL, and it is
 side-effecting on write, where speculation cannot reach it. `timeout` is cleared
 by the START of the next transaction rather than by reading STATUS, for the same
 reason.
+
+## Resetting the PHY
+
+`CONTROL` bit 2 pulses TARGET's RESETB and then waits out the part's preparation
+time; `STATUS` bit 2 is set for the whole of it, so firmware polls one bit rather
+than counting a delay it would have to get right. Both durations come from the
+datasheet and live in `clocks.py`, which uses the same two constants for the
+power-on sequence.
+
+It resets **TARGET alone**, deliberately. AUX carries the console, so a command
+that reset it would take away the terminal printing the result, and CONTROL is
+shared with Apollo. Before this existed the PHYs had no reset at all under
+firmware control -- the pads were tied de-asserted, and the only way to recover a
+PHY that had glitched was to reconfigure the FPGA (#241).
 """
 
 from amaranth               import Module, Signal, ResetInserter
@@ -86,6 +102,8 @@ from amaranth.lib.wiring    import In, Out
 
 from amaranth_soc           import csr
 
+from clocks                             import (PHY_PAD_RESET_CYCLES,
+                                                PHY_PREP_CYCLES)
 from peripherals.uart16550              import SplitRW
 
 
@@ -130,7 +148,16 @@ class UlpiRegisters(wiring.Component):
     `sync`. Do not connect the two anywhere but here.
     """
 
-    def __init__(self):
+    def __init__(self, *, pad_reset_cycles=PHY_PAD_RESET_CYCLES,
+                 prep_cycles=PHY_PREP_CYCLES):
+        # The two PHY-reset durations, overridable ONLY so that a simulation can
+        # exercise the sequence without running 72128 usb cycles of it. The
+        # hardware never passes these; `scripts/soc_board_sim.py` checks the
+        # defaults against the datasheet arithmetic separately, so a shortened
+        # simulation cannot make a wrong constant pass.
+        self._pad_reset_cycles = pad_reset_cycles
+        self._prep_cycles = prep_cycles
+
         # +0. The ULPI register address. Six bits: ULPI's immediate address
         # space is 0x00-0x3f, and the extended space (0x2f as an escape) is not
         # implemented here because nothing on this board lives there.
@@ -145,12 +172,14 @@ class UlpiRegisters(wiring.Component):
         # +2. Write-only. A start bit that read back would be a status bit, and
         # a status bit that shares an address with a command is the arrangement
         # this project keeps finding at the bottom of its longest bugs.
-        self._control = csr.Register({"start": csr.Field(csr.action.W, 2)},
+        self._control = csr.Register({"start":     csr.Field(csr.action.W, 2),
+                                      "phy_reset": csr.Field(csr.action.W, 1)},
                                      access="w")
-        # +3. Pure. Both bits are wires from flags; reading it changes nothing,
-        # which is what makes it safe to poll.
-        self._status = csr.Register({"busy":    csr.Field(csr.action.R, 1),
-                                     "timeout": csr.Field(csr.action.R, 1)},
+        # +3. Pure. All three bits are wires from flags; reading it changes
+        # nothing, which is what makes it safe to poll.
+        self._status = csr.Register({"busy":      csr.Field(csr.action.R, 1),
+                                     "timeout":   csr.Field(csr.action.R, 1),
+                                     "resetting": csr.Field(csr.action.R, 1)},
                                     access="r")
 
         builder = csr.Builder(addr_width=2, data_width=8)
@@ -168,6 +197,7 @@ class UlpiRegisters(wiring.Component):
             "dir_i":   In(1),
             "nxt_i":   In(1),
             "stp_o":   Out(1),
+            "phy_rst": Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -228,7 +258,15 @@ class UlpiRegisters(wiring.Component):
 
         # ---- the usb side ----------------------------------------------------
         window_reset = Signal()
-        window = ResetInserter(window_reset)(ULPIRegisterWindow())
+        # `{"usb": ...}`, NOT a bare signal. `ResetInserter` given a plain Value
+        # means `{"sync": value}`, and `on_fragment` skips every domain not in
+        # that dict -- so on a module that is entirely `usb` (18 x `m.d.usb` and
+        # `m.FSM(domain="usb")`) the bare form inserts nothing at all and the
+        # timeout reset below reaches no logic. It was written that way, and the
+        # consequence was that one timeout parked the window for ever: every
+        # later transaction also timed out, and firmware reported a working PHY
+        # as absent until the FPGA was reconfigured.
+        window = ResetInserter({"usb": window_reset})(ULPIRegisterWindow())
         m.submodules.window = window
 
         request_usb = Signal()
@@ -313,6 +351,61 @@ class UlpiRegisters(wiring.Component):
                         timeout_usb.eq(1),
                         acknowledge.eq(request_usb),
                     ]
+                    m.next = "IDLE"
+
+        # ---- the deliberate PHY reset ----------------------------------------
+        #
+        # A second toggle handshake, for the same reason as the first: the write
+        # arrives in `sync` and the pulse has to be counted in `usb`, which is
+        # where the 60.000 MHz that makes the durations real lives.
+        #
+        # `SocClocks` holds this pad at power-up; this is the path back
+        # afterwards, and it is the only one -- the FPGA cannot be reconfigured
+        # by the firmware running on it. It resets TARGET alone. AUX carries the
+        # console, so a firmware command that reset it would take away the
+        # terminal printing the result, and CONTROL belongs to Apollo.
+        reset_request = Signal()
+        reset_ack_sync = Signal()
+        reset_acked = Signal()
+        resetting_sync = Signal()
+
+        m.d.comb += self._status.f.resetting.r_data.eq(resetting_sync)
+
+        phy_reset_start = self._control.f.phy_reset
+        with m.If(phy_reset_start.w_stb & (phy_reset_start.w_data != 0)
+                  & ~resetting_sync):
+            m.d.sync += [reset_request.eq(~reset_request), resetting_sync.eq(1)]
+        with m.Elif(reset_ack_sync != reset_acked):
+            m.d.sync += [reset_acked.eq(reset_ack_sync), resetting_sync.eq(0)]
+
+        reset_request_usb = Signal()
+        reset_ack = Signal()
+        m.submodules.reset_req_cdc = FFSynchronizer(reset_request,
+                                                   reset_request_usb,
+                                                   o_domain="usb")
+        m.submodules.reset_ack_cdc = FFSynchronizer(reset_ack, reset_ack_sync,
+                                                   o_domain="sync")
+
+        settled = self._pad_reset_cycles + self._prep_cycles
+        reset_elapsed = Signal(range(settled + 1))
+        with m.FSM(domain="usb"):
+            with m.State("IDLE"):
+                m.d.usb += reset_elapsed.eq(0)
+                with m.If(reset_request_usb != reset_ack):
+                    m.next = "RESETTING"
+
+            with m.State("RESETTING"):
+                m.d.usb += reset_elapsed.eq(reset_elapsed + 1)
+                # The pad, and the window with it. A register transaction in
+                # flight across a PHY reset would wait on a `dir` that is not
+                # coming and would be reported as a timeout, which is a true
+                # statement about the wrong thing.
+                m.d.comb += [
+                    self.phy_rst.eq(reset_elapsed < self._pad_reset_cycles),
+                    window_reset.eq(1),
+                ]
+                with m.If(reset_elapsed == settled - 1):
+                    m.d.usb += reset_ack.eq(reset_request_usb)
                     m.next = "IDLE"
 
         return m

@@ -1674,7 +1674,7 @@
         </register>
         <register>
           <name>CONTROL</name>
-          <description>BOARD_ULPI.CONTROL, 2 bits at +0x02</description>
+          <description>BOARD_ULPI.CONTROL, 3 bits at +0x02</description>
           <addressOffset>0x2</addressOffset>
           <size>8</size>
           <access>write-only</access>
@@ -1688,11 +1688,18 @@
               <bitWidth>2</bitWidth>
               <access>write-only</access>
             </field>
+            <field>
+              <name>PHY_RESET</name>
+              <description>phy_reset [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
           </fields>
         </register>
         <register>
           <name>STATUS</name>
-          <description>BOARD_ULPI.STATUS, 2 bits at +0x03</description>
+          <description>BOARD_ULPI.STATUS, 3 bits at +0x03</description>
           <addressOffset>0x3</addressOffset>
           <size>8</size>
           <access>read-only</access>
@@ -1710,6 +1717,13 @@
               <name>TIMEOUT</name>
               <description>timeout [1]</description>
               <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>RESETTING</name>
+              <description>resetting [2]</description>
+              <bitOffset>2</bitOffset>
               <bitWidth>1</bitWidth>
               <access>read-only</access>
             </field>

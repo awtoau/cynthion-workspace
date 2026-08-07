@@ -85,6 +85,25 @@ PFD_MIN_MHZ = 10.0
 # The ULPI PHY's requirement, and the only reason this number appears here.
 USB_PHY_MHZ = 60.0
 
+# How long RESETB is held low, in `usb` cycles. The USB334x datasheet Rev 1.2
+# section 5.6.2: cycling RESETB resets the ULPI registers to their defaults and
+# every internal state machine, "by bringing the pin low for a minimum of 1
+# microsecond and then high". 128 cycles is 2.133 us at 60.000 MHz -- twice the
+# minimum, and this clock is the oscillator rather than a PLL output, so the
+# figure is exact rather than rounded.
+PHY_PAD_RESET_CYCLES = 128
+
+# How long after RESETB is released before the PHY may be spoken to, in `usb`
+# cycles. TPREP is 1.0..1.2 ms with a 60 MHz REFCLK and LPM disabled (Table 4.3),
+# measured from REFCLK and RESETB both valid to the PHY de-asserting DIR. Until
+# then the bus is not the link's to drive. 72000 cycles is exactly 1.200 ms at
+# 60.000 MHz, which is the specified maximum and not a guess about the typical.
+#
+# Both constants are used twice: here for the power-on sequence, and in
+# `peripherals/ulpi_window.py` for the CSR-driven one. One definition, because a
+# datasheet number copied is a datasheet number that will diverge.
+PHY_PREP_CYCLES = 72_000
+
 
 def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
     """Dividers for `target_mhz` on CLKOP, and `ratio * target` on CLKOS2.
@@ -198,6 +217,15 @@ class SocClocks(Elaboratable):
         # unconnected CLKFB cost a two-rebuild bisect.
         self.locked = Signal()
 
+        # The ULPI PHYs' reset pad, active high here and inverted at the pin.
+        # Brought out so `top.py` can OR it with the CSR-driven reset without
+        # either of them owning the pad alone. See `elaborate` for the two
+        # durations and where they come from.
+        self.phy_reset = Signal()
+        # Asserted once the power-on sequence has finished and the PHYs have had
+        # their preparation time. `usb`'s reset is its inverse.
+        self.phy_ready = Signal()
+
     def elaborate(self, platform):
         m = Module()
 
@@ -205,6 +233,12 @@ class SocClocks(Elaboratable):
         m.domains.sync = ClockDomain()
         if self.with_fast:
             m.domains.fast = ClockDomain()
+
+        # The domain the power-on reset itself lives in. It is `usb`'s clock with
+        # no reset, and it has to be: a counter that releases `usb`'s reset
+        # cannot be held by that same reset, or it never counts and the release
+        # never comes.
+        m.domains.usb_por = ClockDomain(reset_less=True)
 
         osc = Signal()
         if platform is not None:
@@ -251,7 +285,37 @@ class SocClocks(Elaboratable):
         )
         m.d.comb += self.locked.eq(locked)
 
+        # ---- the ULPI PHYs' power-on reset ----------------------------------
+        #
+        # `usb` does not wait for the PLL. It is the oscillator, running before
+        # the PLL is asked for anything, and holding it until an unrelated PLL
+        # locks would reinvent the dependency this topology removes. But it must
+        # not be tied to 0 either: `usb`'s reset is the ONLY reset the three
+        # USB3343s have. Two of the three pads are driven from it -- `top.py`
+        # for TARGET, and LUNA's `UTMITranslator` for AUX -- and all three
+        # declare `rst_invert=True`, so a constant 0 leaves them permanently
+        # de-asserted. Cold power-up survives that on the PHY's own internal POR;
+        # warm reconfiguration does not, because reflashing does not power-cycle
+        # the part, and a PHY carrying a stuck bus turn from the previous
+        # bitstream keeps it.
+        #
+        # The pad pulses low for `PHY_PAD_RESET_CYCLES`, then the FPGA side stays
+        # in reset for the whole of TPREP: everything in `usb` starts on a PHY
+        # that has finished coming up, rather than racing it. On expiry the
+        # domain runs for the rest of the session -- this is a power-on reset,
+        # not a watchdog, and the way back afterwards is the CSR in
+        # `peripherals/ulpi_window.py`.
+        settled = PHY_PAD_RESET_CYCLES + PHY_PREP_CYCLES
+        por = Signal(range(settled + 1))
+        with m.If(por != settled):
+            m.d.usb_por += por.eq(por + 1)
         m.d.comb += [
+            self.phy_reset.eq(por < PHY_PAD_RESET_CYCLES),
+            self.phy_ready.eq(por == settled),
+        ]
+
+        m.d.comb += [
+            ClockSignal("usb_por").eq(osc),
             ClockSignal("usb").eq(osc),
             ClockSignal("sync").eq(clk_sync),
 
@@ -259,10 +323,7 @@ class SocClocks(Elaboratable):
             # frequency that drifts as it settles.
             ResetSignal("sync").eq(~locked),
 
-            # `usb` does NOT. It is the oscillator, running before the PLL is
-            # asked for anything, and holding it in reset until an unrelated PLL
-            # locks would be inventing a dependency that the topology removes.
-            ResetSignal("usb").eq(0),
+            ResetSignal("usb").eq(~self.phy_ready),
         ]
         if self.with_fast:
             m.d.comb += [ClockSignal("fast").eq(clk_fast),
