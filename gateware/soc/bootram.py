@@ -58,16 +58,18 @@ from amaranth.utils import log2_int
 from amaranth_soc import csr, wishbone
 from amaranth_soc.memory import MemoryMap
 
-from luna.gateware.interface.psram import (HyperBusPHY, HyperRAMPHY,
-                                            HyperRAMInterface)
+from luna.gateware.interface.psram import HyperBusPHY, HyperRAMPHY
 
-# Both ours now. `hyperram_dqs_phy` records the three I/O faults that make
-# upstream's DQS PHY uninstantiable on r1.4; `hyperram_dqs_controller` is luna's
-# FSM vendored so its unimplemented tCSHI recovery and its forced latency branch
-# could be fixed. `docs/upstream-boundary.md`: do not inherit a stack to get one
-# file -- vendor the file.
+# Both controllers are ours now, and so is one of the two PHYs.
+# `hyperram_dqs_phy` records the three I/O faults that make upstream's DQS PHY
+# uninstantiable on r1.4; the two controllers are luna's FSMs vendored so their
+# unimplemented tCSHI recovery and their forced latency branch could be fixed.
+# `HyperRAMPHY` stays upstream's -- it elaborates here and it works.
+# `docs/upstream-boundary.md`: do not inherit a stack to get one file -- vendor
+# the file.
 from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
 from peripherals.hyperram_dqs_controller import HyperRAMDQSController
+from peripherals.hyperram_controller import HyperRAMController
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
@@ -96,9 +98,10 @@ HYPERRAM_LATENCY_CLOCKS = 6
 # 64 ms array refresh over 8192 rows at T_CASE < 85 C, halved.
 HYPERRAM_TCSM_NS = 4000.0
 
-# Per-transaction overhead in CK, counted off `HyperRAMInterface`'s states:
+# Per-transaction overhead in CK, counted off `HyperRAMController`'s states:
 # 3 command words + 13 `HANDLE_LATENCY` + 1 `RECOVERY`. `LATCH_RWDS` runs with CK
-# held Low and does not count.
+# held Low and does not count, and neither does the rest of `RECOVERY`: only its
+# first cycle is spent with CS# still Low, which is what this budget is about.
 HYPERRAM_OVERHEAD_CK = 17
 
 # tCK maximum. Rev A01-006 Table 22 bounds it at 100 ns; A01-003 leaves it blank.
@@ -172,12 +175,12 @@ class ClockStopPHY(Elaboratable):
     This is Active Clock Stop: a named device state with its own truth-table row,
     its own DC parameter (I_CC6) and its own timing figure, Figure 13, which draws
     CS# held Low across a flat CK between two words of a data phase. It is NOT an
-    inference from silence, and it needs no change to `HyperRAMInterface` --
-    `docs/upstream-boundary.md` keeps the protocol layer upstream's, and this
-    wrapper is workspace gateware of the same kind as `HyperRAMWishbone`.
+    inference from silence, and it needs no change to the controller -- it sits
+    beneath one, on the record, and this wrapper is workspace gateware of the same
+    kind as `HyperRAMWishbone`.
 
     `dev` is the record the pads (or a device model) see; `ctrl` is the one to
-    hand `HyperRAMInterface`.
+    hand `HyperRAMController`.
     """
 
     def __init__(self, *, dev):
@@ -239,9 +242,9 @@ class HyperRAMWishbone(wiring.Component):
     board measured at 8/16 words correct.
 
     `word_width` is the controller's data width, not the bus's -- the bus is
-    always 32 bits. `HyperRAMInterface` hands over 16 bits at a time, so a beat
+    always 32 bits. `HyperRAMController` hands over 16 bits at a time, so a beat
     is two words and the low half is held in `read_low` until the high half
-    arrives; `HyperRAMDQSInterface` hands over 32, so a beat is one word and that
+    arrives; `HyperRAMDQSController` hands over 32, so a beat is one word and that
     assembly disappears. Everything else is identical, which is the reason this
     is a parameter rather than a second module.
 
@@ -712,9 +715,11 @@ class BootRAM(Elaboratable):
                     gate = ClockStopPHY(dev=psram_phy.phy)
                     m.submodules.clock_stop = gate
                     m.d.comb += gate.stall.eq(self.clk_stop)
-                    psram = HyperRAMInterface(phy=gate.ctrl)
+                    psram = HyperRAMController(phy=gate.ctrl,
+                                               sync_mhz=self._sync_mhz)
                 else:
-                    psram = HyperRAMInterface(phy=psram_phy.phy)
+                    psram = HyperRAMController(phy=psram_phy.phy,
+                                               sync_mhz=self._sync_mhz)
                 m.d.comb += ram_bus.reset.o.eq(0)
             m.submodules += [psram_phy, psram]
         else:
@@ -1016,7 +1021,7 @@ class BootRAM(Elaboratable):
             # `current_final` already folds in the start edge through `half_done`
             # and `streaming`, so it no longer needs a Mux of its own here.
             # `stall_timeout` is the tCK escape above: closing the transaction is
-            # the only exit `HyperRAMInterface` offers, so the bound uses it.
+            # the only exit `HyperRAMController` offers, so the bound uses it.
             psram.final_word.eq(current_final | stall_timeout),
             port.granted.eq(active & (owner == OWNER_CSR)),
             port.in_data.eq(staged_read),

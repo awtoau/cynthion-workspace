@@ -50,8 +50,13 @@ from amaranth import Elaboratable, Module, Signal, Array, C
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
-from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY
+from luna.gateware.interface.psram import HyperRAMPHY
+
+# Ours: luna's `HyperRAMInterface` with tCSHI enforced and the dead low-latency
+# branch made a parameter. The PHY beneath it is still upstream's.
+from peripherals.hyperram_controller import HyperRAMController
 from luna.gateware.architecture.car import LunaECP5DomainGenerator
 from luna.gateware.interface.jtag import JTAGRegisterInterface
 
@@ -114,7 +119,7 @@ class HyperRAMRegFuzz(Elaboratable):
         ram_bus = platform.request("ram")
         psram_phy = HyperRAMPHY(bus=ram_bus)
         m.submodules.psram_phy = psram_phy
-        psram = HyperRAMInterface(phy=psram_phy.phy)
+        psram = HyperRAMController(phy=psram_phy.phy, sync_mhz=CLOCK_MHZ)
         m.submodules.psram = psram
 
         results = Array([Signal(16, name=f"r{n}") for n in range(len(PROBE_ADDRESSES))])

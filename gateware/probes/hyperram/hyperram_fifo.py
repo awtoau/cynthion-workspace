@@ -40,13 +40,23 @@ register read takes ~35 ms and the transactions being measured take
 microseconds, so anything timed from the host measures the instrument.
 """
 
+import sys
+from pathlib                             import Path
+
 from amaranth                            import (Cat, Const, Elaboratable, Module,
                                                  Signal, unsigned)
 from amaranth.lib.memory                 import Memory
 
 from luna.gateware.architecture.car      import LunaECP5DomainGenerator
 from luna.gateware.interface.jtag        import JTAGRegisterInterface
-from luna.gateware.interface.psram       import HyperRAMPHY, HyperRAMInterface
+from luna.gateware.interface.psram       import HyperRAMPHY
+
+# Ours: luna's `HyperRAMInterface` with tCSHI enforced and the dead low-latency
+# branch made a parameter. The PHY beneath it is still upstream's. Turnaround is
+# what this harness measures, and tCSHI is part of a turnaround -- so the numbers
+# it reports are only comparable with the DQS path's once both keep it.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "soc"))
+from peripherals.hyperram_controller     import HyperRAMController
 
 
 # The verified operating point from the streaming test. Not raised here: this
@@ -112,7 +122,7 @@ class HyperRAMFIFOTest(Elaboratable):
         ram_bus = platform.request("ram")
         psram_phy = HyperRAMPHY(bus=ram_bus)
         m.submodules.psram_phy = psram_phy
-        psram = HyperRAMInterface(phy=psram_phy.phy)
+        psram = HyperRAMController(phy=psram_phy.phy, sync_mhz=CLOCK_MHZ)
         m.submodules.psram = psram
 
         phase_count = len(CHUNK_SIZES)

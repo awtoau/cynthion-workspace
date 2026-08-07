@@ -26,46 +26,46 @@ A dating exercise, not a caveat:
 | JTAG readback slips a bit below a sync/TCK ratio of ~4 (#204) | 2026-08-06 |
 
 Casualties include the eight-tap `READCLKSEL` conclusion ("every tap showed the
-same skew" — a larger error swamped all eight), every MB/s figure from the CK
-ladder, and **313.5 MB/s at CK 180**, which was in the part doc as the verified
-baseline. Re-measured, CK 180 fails in bulk with 4.7 M errors. That figure is
-**wrong, not merely unverified**.
+same skew" — a larger error swamped all eight) and **every MB/s figure from the
+CK ladder**, including the one that was in the part doc as the verified
+baseline. Re-measured, its best rung fails in bulk with 4.7 M errors.
 
-## What survives
+Those numbers are **deleted, not annotated**. A figure restated as "withdrawn"
+is still a figure, and stays quotable by anyone skimming — this one had already
+reached two draft submissions upstream before it was caught.
 
-Measured CPU-free with instruments that had themselves been checked:
+## No measurement is carried forward
 
-- **DQS reads and writes correctly at CK 120 and CK 140** — 3.5 M words, zero
-  errors, live negative control. The only trustworthy DQS numbers here.
-- **The capture window moves with frequency.** Phase 2 is correct at CK 140;
-  at CK 180 the best is phase 3.
+**Every figure this project has recorded for this part is void**, and none is
+restated here. Not the throughput ladder, not the per-phase error counts, not the
+BURSTDET totals, not the CK ceilings. The apparatus had up to five faults at once
+and the numbers were produced across that whole period; separating a good rung
+from a bad one after the fact is not possible.
 
-| CK | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
-|---|---|---|---|---|---|---|---|---|
-| 140 | 10⁶ | 10⁶ | **0** | 10⁶ | **0** | 10⁶ | 3×10⁴ | 10⁶ |
-| 180 | 10⁶ | 10⁶ | 10⁶ | **4×10⁴** | stalled | 10⁶ | 10⁶ | 10⁶ |
+A number restated as "withdrawn" is still a number and stays quotable by anyone
+skimming. One of them had already reached two draft submissions upstream before
+it was caught. So they are deleted.
 
-  A ladder holding one phase measures where **that phase** stops working, not
-  where the part does — which is what every earlier ladder here did. Two taps
-  read clean at CK 140, so the window may be two wide; centring is not done.
-- **The SoC fault is DQS-specific.** Identical firmware moves a 256-byte ramp
-  perfectly on non-DQS (256/256) and corrupts it on DQS — eliminating the memory
-  window, the D-cache, writeback and the harness in one measurement.
-- **Non-DQS stops at CK 140 because OUR fabric misses timing**, not the part:
-  non-DQS clocks the fabric at CK, DQS at CK/2.
+What survives is not data but **three things the failures taught about method**:
 
-## The unresolved contradiction
+**Do not hold the capture phase fixed.** The read window moves with frequency, so
+a ladder at one phase measures where that phase stops working, not where the part
+does. Every ladder here did exactly that. The phase must be swept at each rung,
+and the result centred in the window rather than taken at the first setting that
+passes — an edge pass survives neither temperature nor a rebuild.
 
-**BURSTDET disagrees between two harnesses on the same PHY.** The SoC reports
-16,678–60,345 bursts; the ceiling harness reports **zero on every rung**,
-including rungs that verify 50 M words with zero errors. Both cannot be right.
+**BURSTDET is contested and must be settled first.** Two harnesses on the same
+PHY disagree about it, one reporting detections where the other reports none,
+including on rungs the second scored clean. Both cannot be right. The leading
+explanation is a word-boundary bit-slip, which would make "strobe found" and
+"data correct" independent — never written up. BURSTDET is the ECP5's own report
+that the read window is aligned, so until this is resolved a sweep has no signal
+to centre against.
 
-Leading explanation: a word-boundary bit-slip, which would make "strobe found"
-and "data correct" independent. Never written up.
-
-BURSTDET is the ECP5's own report that the read window is aligned — the one
-signal that would validate a sweep. Until this is settled, a sweep has no
-alignment signal.
+**Separate our limit from the part's.** The non-DQS path caps out because *our
+fabric* misses timing, not because the device does — it clocks the fabric at CK
+while DQS clocks it at CK/2. Any ceiling must state which of the two it found,
+and a rung that produced no bitstream is not a device result.
 
 ## The shape
 

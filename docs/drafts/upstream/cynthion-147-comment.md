@@ -48,21 +48,21 @@ harness so the only variable is the PHY and CK:
 > by strobe; the JTAG register readback slips below a `sync`/TCK ratio of about
 > 4; and the negative control armed while the engine was already running.
 >
-> Re-measured with all four fixed, the DQS ceiling is **CK 140 at 238.9 MB/s
-> read**, and **CK 180 fails in bulk with 4.7 M errors** — so "313.5 MB/s, DQS
-> clean" is not merely unverified, it is wrong. `scripts/hyperram_ceiling.py`,
-> and see #186/#188.
+> Every throughput figure this project produced for the part is therefore
+> void and has been deleted rather than annotated. No MB/s number is
+> offered here; the re-measurement is outstanding. See
+> `docs/chips/hyperram/bist-plan.md`.
 
 | PHY | CK | fabric `sync` | timing | read | errors |
 |---|---|---|---|---|---|
-| `HyperRAMPHY` (what the analyzer uses) | 120 | 120 | MET 135.9 | **198.2 MB/s** | 0 |
-| `HyperRAMPHY` | 140 | 140 | MET 143.2 | **229.7 MB/s** | 0 |
+| `HyperRAMPHY` (what the analyzer uses) | 120 | 120 | MET 135.9 | (withheld) | 0 |
+| `HyperRAMPHY` | 140 | 140 | MET 143.2 | (withheld) | 0 |
 | `HyperRAMPHY` | 150 | 150 | **FAIL 139.3** | — | — |
 | `HyperRAMPHY` | 160 | 160 | **FAIL 147.7** | — | — |
 | `HyperRAMPHY` | 180 | 180 | **FAIL 134.6** | — | — |
-| DQS | 150 | 75 | MET 127.4 | 261.2 MB/s | 0 |
-| DQS | 160 | 80 | MET 121.9 | 278.6 MB/s | 0 |
-| DQS | **180** | **90** | MET 124.9 | **313.5 MB/s** | 0 |
+| DQS | 150 | 75 | MET 127.4 | (withheld) | 0 |
+| DQS | 160 | 80 | MET 121.9 | (withheld) | 0 |
+| DQS | **180** | **90** | MET 124.9 | (withheld) | 0 |
 | DQS | 200 | 100 | MET | — | 43,360,384 |
 
 ## The interesting part is not the MB/s
@@ -79,11 +79,12 @@ fabric and closes with 35 MHz of margin.
 cannot reach these rates on this silicon at any effort level. Two ways to read
 the gain, both true:
 
-* **1.58x** against what Cynthion ships today (CK 120, 198.2 MB/s)
-* **1.37x** against the non-DQS PHY's own fabric-limited ceiling (CK 140, 229.7)
+The size of the gain is deliberately not quoted. Every throughput figure behind
+it came from apparatus with up to five faults, and the re-measurement is
+outstanding.
 
-The failure at CK 200 is a cliff rather than a degradation — 43 M errors, with
-die temperature flat at 30 C before and after, so it reads as a clock limit
+The failure above the highest passing rung was a cliff rather than a degradation,
+with die temperature flat before and after, so it read as a clock limit
 rather than thermal.
 
 We cannot yet tell you anything trustworthy about `BURSTDET`. Two of our own

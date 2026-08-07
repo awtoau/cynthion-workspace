@@ -109,6 +109,7 @@ in its §13 got there in the first place.
 * [`chips/ecp5/flash-partitioning.md`](chips/ecp5/flash-partitioning.md) — partitioned configuration flash on r1.4
 * [`chips/ecp5/qspi-boot-time.md`](chips/ecp5/qspi-boot-time.md) — does quad-SPI speed up configuration from flash?
 * [`chips/ecp5/reconfigure-initn-gap.md`](chips/ecp5/reconfigure-initn-gap.md) — `trigger_fpga_reconfiguration()` leaves INITN held low
+* [`chips/ecp5/peripheral-clock-audit.md`](chips/ecp5/peripheral-clock-audit.md) — every peripheral against the new clock topology, now that `sync` and `usb` are not the same
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — RV32 Equivalence and Variation Report (2026-07-22)
 * [`usb-performance.md`](usb-performance.md) — LUNA USB gateware: measured performance
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — Where the ECP5 findings live

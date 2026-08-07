@@ -92,12 +92,12 @@ HARNESSES = {
         "hyperram_ceiling.py", "hyperram_ceiling_top.py",
         "the device CK at which reads stop verifying, both PHYs, with BURSTDET "
         "and a per-word error count under a legal tCSM burst cap",
-        "yes, but not until 2026-08-03 -- written, built and left before that. "
-        "Full 22-rung sweep 2026-08-05 (tmp/hyperram-ceiling/results.json): DQS "
-        "clean to CK 180 at 313.5 MB/s, non-DQS capped at CK 140 by the FABRIC, "
-        "not the part -- it clocks the fabric at CK, so CK 150/160/180 miss "
-        "timing at 139.3/147.7/134.6 MHz and never produce a bitstream. Six "
-        "rungs report 'invalid control' and are correctly refused, not scored.",
+        "yes, but every rung it produced is VOID -- see "
+        "docs/chips/hyperram/bist-plan.md. The apparatus had four faults at "
+        "once, and no figure from it survives. What does survive is a fact "
+        "about our design rather than the part: non-DQS is capped at CK 140 "
+        "by the FABRIC, because it clocks the fabric at CK, so CK 150/160/180 "
+        "miss timing at 139.3/147.7/134.6 MHz and never produce a bitstream.",
     ),
     "readclksel": (
         "hyperram_readclksel_sweep.py", "hyperram_ceiling_top.py",

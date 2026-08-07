@@ -133,17 +133,23 @@ Rust dependencies, tracked in this repository's issues.
 | [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | moondancer | `gcp/moondancer.rs` | clamp endpoint `max_packet_size` to 512 (the HS limit) instead of rejecting SuperSpeed devices |
 | [#65](https://github.com/awtoau/cynthion-workspace/issues/65) | apollo | `uart.c`, `console.c`, `vendor.c`, `apollo_mode.c` | JTAG/UART arbitration on the shared PA11/PA14 pins — see [`hardware.md`](hardware.md#pin-sharing--the-two-hazards) |
 
-## Decided: HyperRAM splits at the PHY
+## Decided: HyperRAM splits at the PHY, and both controllers are vendored
 
-**We keep upstream's controller and replace upstream's PHY.** The split is at the record
-between them, and it falls out of the policy rather than being a compromise: `HyperBus` is
-a published protocol and the layer that speaks it is generic; the layer below it is ECP5
-I/O for r1.4's pin map, which is exactly the "genuinely Cynthion-specific" the policy
-reserves — and reserving it means writing it, because nobody else has this board.
+**The PHY split still holds**, and it falls out of the policy rather than being a
+compromise: `HyperBus` is a published protocol and the layer that speaks it is generic;
+the layer below it is ECP5 I/O for r1.4's pin map, which is exactly the "genuinely
+Cynthion-specific" the policy reserves — and reserving it means writing it, because
+nobody else has this board. `HyperRAMPHY` stays upstream's because it works here;
+`HyperRAMDQSPHY` could not be instantiated at all.
+
+**Both controllers are now vendored, for two defects each** — not rewritten. The FSMs are
+upstream's, copied with the changes marked in place, which is the same shape as the board
+definition: do not inherit a stack to get one file.
 
 | layer | whose | why |
 |---|---|---|
-| `HyperRAMInterface`, `HyperRAMDQSInterface` | **upstream, unchanged** | command encoding, latency, burst. Verified: 220.2 MB/s on the non-DQS path |
+| `HyperRAMDQSController` | **ours** (`gateware/soc/peripherals/hyperram_dqs_controller.py`) | luna's `HyperRAMDQSInterface`, vendored, with tCSHI enforced and the latency branch made a parameter |
+| `HyperRAMController` | **ours** (`gateware/soc/peripherals/hyperram_controller.py`) | luna's `HyperRAMInterface`, vendored, with the identical two fixes |
 | `HyperRAMPHY` (non-DQS) | **upstream, unchanged** | it elaborates here and it works |
 | `HyperRAMDQSPHY` | **ours** (`gateware/soc/peripherals/hyperram_dqs_phy.py`) | upstream's cannot be instantiated on r1.4 at all — see below |
 
