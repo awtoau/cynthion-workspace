@@ -5,69 +5,6 @@ The method for characterising the W956A8 on this board. The part is
 
 Absorbs #92, #148, #187, #188, #205, #210, #213, #214 and #226.
 
-## The shared constraint
-
-**A HyperBus data phase cannot be stalled.** Once latency expires the device
-clocks a word every CK, and the controller asserts `write_ready`/`read_ready`
-every cycle regardless of listeners. Holding a transaction open promises a word
-per cycle; a master that cannot keep that promise must not coalesce. Most of what
-follows is downstream of this.
-
-## Every measurement before 2026-08-06 is void
-
-A dating exercise, not a caveat:
-
-| defect | fixed |
-|---|---|
-| controller sampled a full CK early (`HIGH_LATENCY_CLOCKS` 5 → 6) | 2026-08-05 |
-| `RECOVERY` fell to `IDLE` with no tCSHI gap — **DQS path only** | 2026-08-05 |
-| the same, on the **non-DQS** path: the baseline, and what the SoC ships (#215) | 2026-08-07 |
-| pattern used only the low address bits — repeated 64× across the part | 2026-08-06 |
-| the negative control armed **after** the engine started | 2026-08-06 |
-| JTAG readback slips a bit below a sync/TCK ratio of ~4 (#204) | 2026-08-06 |
-
-Casualties include the eight-tap `READCLKSEL` conclusion ("every tap showed the
-same skew" — a larger error swamped all eight) and **every MB/s figure from the
-CK ladder**, including the one that was in the part doc as the verified
-baseline. Re-measured, its best rung fails in bulk with 4.7 M errors.
-
-Those numbers are **deleted, not annotated**. A figure restated as "withdrawn"
-is still a figure, and stays quotable by anyone skimming — this one had already
-reached two draft submissions upstream before it was caught.
-
-## No measurement is carried forward
-
-**Every figure this project has recorded for this part is void**, and none is
-restated here. Not the throughput ladder, not the per-phase error counts, not the
-BURSTDET totals, not the CK ceilings. The apparatus had up to five faults at once
-and the numbers were produced across that whole period; separating a good rung
-from a bad one after the fact is not possible.
-
-A number restated as "withdrawn" is still a number and stays quotable by anyone
-skimming. One of them had already reached two draft submissions upstream before
-it was caught. So they are deleted.
-
-What survives is not data but **three things the failures taught about method**:
-
-**Do not hold the capture phase fixed.** The read window moves with frequency, so
-a ladder at one phase measures where that phase stops working, not where the part
-does. Every ladder here did exactly that. The phase must be swept at each rung,
-and the result centred in the window rather than taken at the first setting that
-passes — an edge pass survives neither temperature nor a rebuild.
-
-**BURSTDET is contested and must be settled first.** Two harnesses on the same
-PHY disagree about it, one reporting detections where the other reports none,
-including on rungs the second scored clean. Both cannot be right. The leading
-explanation is a word-boundary bit-slip, which would make "strobe found" and
-"data correct" independent — never written up. BURSTDET is the ECP5's own report
-that the read window is aligned, so until this is resolved a sweep has no signal
-to centre against.
-
-**Separate our limit from the part's.** The non-DQS path caps out because *our
-fabric* misses timing, not because the device does — it clocks the fabric at CK
-while DQS clocks it at CK/2. Any ceiling must state which of the two it found,
-and a rung that produced no bitstream is not a device result.
-
 ## The shape
 
 **Standard SoC.** The shell that boots, prints and can be interrogated. Not a
@@ -113,6 +50,30 @@ It is a bitstream attribute, so it is the **outer loop**: a few builds, each
 sweeping the runtime axes fully. Ignoring it fixes one variable silently and
 attributes its effect to the others.
 
+## Three things the earlier failures actually taught
+
+Not numbers — these change how you measure, and each one invalidated a whole
+class of result.
+
+**Do not hold the capture phase fixed.** The read window moves with frequency, so
+a ladder run at one phase finds where *that phase* stops working, not where the
+part stops. Every ladder here did exactly that. Sweep the phase at each rung and
+centre in the window rather than taking the first setting that passes — an edge
+pass survives neither temperature nor a rebuild.
+
+**BURSTDET is contested and must be settled first.** Two harnesses on the same
+PHY disagree about it, one reporting detections where the other reports none,
+including on rungs the second scored clean. Both cannot be right. The leading
+explanation is a word-boundary bit-slip, which would make "strobe found" and
+"data correct" independent — never written up. BURSTDET is the ECP5's own report
+that the read window is aligned, so until this is resolved a sweep has no signal
+to centre against.
+
+**Separate our limit from the part's.** The non-DQS path caps out because *our
+fabric* misses timing, not because the device does — it clocks the fabric at CK
+while DQS clocks it at CK/2. Any ceiling must say which of the two it found, and
+a rung that produced no bitstream is not a device result.
+
 ## What makes a result admissible
 
 **A pass requires a negative control that ran and failed.** Zero errors and a
@@ -129,6 +90,12 @@ text.
 
 The pattern must use **every address bit** and be invertible, so a displacement
 or a stuck line is read off the failure rather than inferred.
+
+And the device's own rule, which constrains any master that drives it: **a
+HyperBus data phase cannot be stalled.** Once latency expires the device clocks a
+word every CK and the controller asserts `write_ready`/`read_ready` every cycle
+regardless of listeners, so holding a transaction open is a promise to supply or
+consume a word per cycle. A master that cannot keep it must not coalesce.
 
 ## Preconditions
 
@@ -152,3 +119,28 @@ or a stuck line is read off the failure rather than inferred.
   counters and dropped data.
 - Is the DQS one-word-late read a read-late or a write-early fault (#186)? A rig
   measuring a path with a known offset measures the offset.
+
+## Why there are no old numbers here
+
+Everything measured before August 2026 has been deleted rather than marked
+unreliable. The reason is not one mistake but several, overlapping:
+
+- reads landed a full clock early, so data was captured before the part
+  presented it
+- CS# was re-asserted sooner than the part allows after a transaction
+- the test pattern repeated every 256 words, so most of the address space was
+  never actually checked — a fault that displaced data further than that scored
+  as correct
+- the negative control was armed after the engine had already started, so a
+  clean result was not evidence of anything
+- the JTAG readback dropped a bit at some clock ratios, so the numbers read back
+  were not always the numbers the gateware held
+
+These were fixed at different times between 5 and 7 August 2026. That spread is
+the problem: the measurements were taken across the whole period, so there is no
+way to tell which figure was taken with which fault still present. Sorting the
+good from the bad after the fact is not possible, so none of it is kept.
+
+They are deleted rather than annotated because a number restated as "withdrawn"
+is still a number, and stays quotable by anyone skimming. One of them had already
+reached two draft submissions to upstream before it was caught.
