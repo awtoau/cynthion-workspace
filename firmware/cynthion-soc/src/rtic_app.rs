@@ -256,6 +256,13 @@ mod app {
     /// the `rtic` command reports it rather than hiding it.
     #[idle(shared = [devices], local = [shells])]
     fn idle(mut cx: idle::Context) -> ! {
+        // Here rather than in `#[init]`, and at the same point the superloop
+        // does it: after boot, before the first turn. `#[init]` runs with
+        // interrupts masked, so the task cannot have been dispatched yet and
+        // there would be nothing to report -- and reporting the startup cost is
+        // half the point of the call. See `sched::boot_complete`.
+        sched::boot_complete(&mut crate::primary());
+
         loop {
             metrics::turn();
 

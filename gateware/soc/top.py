@@ -1089,8 +1089,17 @@ class HelloSoC(Elaboratable):
         # CK per `sync` cycle, `HyperRAMDQSPHY` gears off `fast` at twice that.
         # `riscv_clock_ladder.py` rewrites `SYNC_MHZ` here, and a second copy of
         # the number inside `vexii_bootram` would drift the first time it did.
+        #
+        # `car.actual_sync_mhz`, NOT `SYNC_MHZ`. The first is what the PLL
+        # dividers produce; the second is what was asked for, and they are equal
+        # today only because `solve_pll` refuses anything but an exact match. A
+        # tCSM cap derived from the request would be wrong by the rounding ratio
+        # the day that changes, and a burst cap that is too long is a device
+        # specification violated rather than a number that looks odd.
         m.submodules.bootram = bootram = BootRAM(
-            dqs=HYPERRAM_DQS, ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ,
+            dqs=HYPERRAM_DQS,
+            ck_mhz=(2 * car.actual_sync_mhz if HYPERRAM_DQS
+                    else car.actual_sync_mhz),
             clock_stop=HYPERRAM_CLOCK_STOP, sustained=HYPERRAM_CLOCK_STOP)
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
@@ -1308,8 +1317,16 @@ class HelloSoC(Elaboratable):
         # leaves the receive pad unsynchronised, delivers framing errors as
         # characters, and gives no output enable that survives the stop bit --
         # issue #113, and serial_line.py has the full account.
+        #
+        # From the SOLVED rate, like the console's divisor 60 lines below and for
+        # the same reason: a divisor computed from a clock the hardware is not
+        # running produces framing errors, and framing errors read as a cable or
+        # a driver fault. Nothing downstream can catch it -- `info`'s
+        # CLOCK MISMATCH compares the reported rate against the measured one, and
+        # cannot see a divisor baked into a peripheral from a third number.
         m.submodules.apollo_line = apollo_line = SerialLine(
-            divisor=int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD), data_bits=8)
+            divisor=int(car.actual_sync_mhz * 1e6 // APOLLO_UART_BAUD),
+            data_bits=8)
 
         # 115200 is four orders of magnitude slower than the CPU, so this is the
         # path where a deep transmit buffer earns its keep. Same domain both sides,
@@ -1413,11 +1430,18 @@ class HelloSoC(Elaboratable):
         led_pads = [platform.request("led", n).o for n in range(6)]
         leds = Signal(6)
 
-        # ~0.36 s on, ~0.36 s off at 60 MHz. Fast enough to read as deliberate, slow
-        # enough to be unmistakably a flash rather than a flicker.
-        heartbeat = Signal(range(int(SYNC_MHZ * 1e6 // 2) + 1))
+        # Half a second on, half a second off, at whatever `sync` the PLL SOLVED
+        # for -- not at what was requested. Fast enough to read as deliberate,
+        # slow enough to be unmistakably a flash rather than a flicker.
+        #
+        # This one is cosmetic and is fixed anyway: it is the only heartbeat the
+        # board has, so it is the thing someone will time with a stopwatch to
+        # ask whether the clock is what it says. A heartbeat derived from the
+        # request would answer that question with the request.
+        half_second = int(car.actual_sync_mhz * 1e6 // 2)
+        heartbeat = Signal(range(half_second + 1))
         heartbeat_on = Signal()
-        with m.If(heartbeat == int(SYNC_MHZ * 1e6 // 2)):
+        with m.If(heartbeat == half_second):
             m.d.sync += [heartbeat.eq(0), heartbeat_on.eq(~heartbeat_on)]
         with m.Else():
             m.d.sync += heartbeat.eq(heartbeat + 1)

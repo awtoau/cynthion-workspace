@@ -444,7 +444,22 @@ impl Monitor {
         // period. The poller drifts instead of catching up, which is the
         // opposite of what `src/timer.rs` does with `mtimecmp` and is the reason
         // the achieved period and the lateness are two separate numbers.
-        crate::sched::released(crate::sched::POWER, elapsed - clock::millis(INTERVAL_MS));
+        //
+        // The FIRST poll is excluded, and it has to be. `last` is
+        // `Instant::ZERO` until a poll has run, so `elapsed` on that turn is the
+        // whole uptime and the "lateness" is however long boot took -- 430 ms on
+        // this board. That one sample then stands as the worst case for the rest
+        // of the session and dominates the mean, which is how `rtic` came to
+        // report `late worst 25786941 ticks` beside a correct `gap worst 50 ms`:
+        // two numbers derived from the same instants that could not both be
+        // true. `metrics::polled` already discards its first sample for exactly
+        // this reason, which is why the gap was right and the lateness was not.
+        let late = if self.last == Instant::ZERO {
+            0
+        } else {
+            elapsed - clock::millis(INTERVAL_MS)
+        };
+        crate::sched::released(crate::sched::POWER, late);
 
         self.service(uart, bus);
     }

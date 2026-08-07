@@ -687,7 +687,20 @@ def write_bases(peripherals, emit):
     # Neither is a constant anyone should be maintaining by hand. `prescale_for`
     # is the gateware's own function, called here with the gateware's own clock,
     # so the number the firmware uses is the number the hardware was built for.
-    sync_hz = round(soc_module.SYNC_MHZ * 1e6)
+    # THE SOLVED RATE, not `SYNC_MHZ`. `SYNC_MHZ` is what the design asks the PLL
+    # for; `actual_sync_mhz` is what the dividers produce, recomputed from them.
+    # They agree today only because `solve_pll` refuses anything but an exact
+    # match, and the day it learns to approximate every interval in the firmware
+    # is wrong by the rounding ratio -- `rdtime` counts `sync` cycles, so
+    # `SYNC_HZ` is the timebase for all of them, and the I2C prescale sets a bus
+    # whose own comment names the symptom of getting it wrong: "a bus that
+    # violates its own setup times and answers most of the time".
+    #
+    # `top.py` derives the console divisor, the Apollo UART divisor, the HyperRAM
+    # CK and the heartbeat from the same value. This is the firmware's half of
+    # the same rule.
+    from clocks import SocClocks
+    sync_hz = round(SocClocks(sync_mhz=soc_module.SYNC_MHZ).actual_sync_mhz * 1e6)
     lines += [
         "/// The `sync` clock, in Hz, from the SoC's own `SYNC_MHZ`.",
         "///",

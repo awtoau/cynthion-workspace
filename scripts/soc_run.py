@@ -83,6 +83,11 @@ BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
             / "cynthion-boot")
 BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
+# Where the synthesis tools' own output goes. Thousands of lines per build, of
+# which about four are worth a person's attention -- so they are diverted here
+# rather than interleaved into `tmp/logs/dev.log`, which is the log about the
+# board.
+SYNTH_LOG = ROOT / "tmp" / "logs" / "synthesis.log"
 BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "gateware"))
@@ -343,6 +348,13 @@ def main():
                              "firmware, which it does not once .text is in flash")
     parser.add_argument("--skip-tests", action="store_true",
                         help="configure even though the QEMU shell tests have not run")
+    parser.add_argument("--features", default="",
+                        help="cargo features for the shell crate, comma-separated. "
+                             "`rtic` builds the RTIC dispatcher instead of the "
+                             "superloop -- see docs/rtic.md. The SHIPPING image "
+                             "takes no features, and the QEMU gate asserts that, "
+                             "so this is for a measurement run and not for a "
+                             "board that gets left in that state")
     args = parser.parse_args()
 
     firmware = FIRMWARE_BIN
@@ -359,7 +371,13 @@ def main():
         # handful of assertions; watching them tick past is the point, and a
         # captured block printed afterwards would arrive only once it no longer
         # mattered.
-        rc = spawn([sys.executable, str(ROOT / "scripts" / "soc_test.py")],
+        #
+        # The features go through, so the gate tests THE IMAGE BEING FLASHED. A
+        # gate that always ran the default build would pass while a feature build
+        # went to the board unexamined, which is the same shape as a stale
+        # bitstream: the check is real and it is about something else.
+        rc = spawn([sys.executable, str(ROOT / "scripts" / "soc_test.py")]
+                   + (["--features", args.features] if args.features else []),
                    cwd=ROOT)
         if rc != 0:
             emit("shell tests FAILED -- not configuring the board.")
@@ -426,7 +444,16 @@ def main():
             emit(f"C firmware: {firmware.stat().st_size} bytes")
         else:
             if not args.no_build:
-                result = run(["cargo", "build", "--release"], cwd=CRATE)
+                cargo = ["cargo", "build", "--release"]
+                if args.features:
+                    # Said out loud, every time. A board left running a
+                    # feature-built image looks exactly like one running the
+                    # shipping image, and the difference has to be in the log or
+                    # it is in nobody's head.
+                    cargo += ["--features", args.features]
+                    emit(f"BUILDING WITH FEATURES: {args.features} -- this is NOT "
+                         f"the shipping image")
+                result = run(cargo, cwd=CRATE)
                 if result.returncode != 0:
                     emit("cargo build failed:")
                     emit((result.stderr or result.stdout).strip()[-900:])
@@ -476,67 +503,9 @@ def main():
                     emit("  NOT WRITTEN (--no-flash). The board will run with "
                          "whatever .rodata flash already holds.")
                 else:
-                    # Writing the flash the board BOOTS from, so this states the
-                    # offset every time rather than assuming anyone remembers it.
-                    # 0xb0000 is moondancer's firmware slot and is clear of the
-                    # FPGA configuration at offset zero -- but "clear of" is a
-                    # fact about this layout, not a property of the tool, and the
-                    # tool will write wherever it is told.
-                    # SKIP IF IT IS ALREADY THERE.
-                    #
-                    # Measured: one USB round trip to the flash is 3.00 ms, and
-                    # a 256-byte page costs several of them -- write-enable,
-                    # program, then poll the status register until the chip
-                    # reports done. 58,940 bytes is 231 pages and takes 4.72 s,
-                    # against roughly 0.6 s of actual W25Q32DV erase and program
-                    # time. The transport is the cost, not the flash.
-                    #
-                    # Most iterations do not change `.rodata` at all -- a
-                    # gateware edit, a clock change, a peripheral moving -- so
-                    # most of those 4.72 s buy nothing. The digest was already
-                    # being computed and printed; it just was not being
-                    # compared.
-                    #
-                    # The record is what THIS script last wrote. Anything else
-                    # touching the flash invalidates it, so `--force-flash`
-                    # exists and the record is deleted on any write failure
-                    # rather than left claiming a state that was not reached.
-                    want = f"{FLASH_RODATA_OFFSET:#x} {firmware_digest(RODATA_BIN)}"
-                    already = (FLASH_WRITTEN.read_text().strip()
-                               if FLASH_WRITTEN.exists() else None)
-                    if already == want and not args.force_flash:
-                        emit(f"  flash already holds this image "
-                             f"({firmware_digest(RODATA_BIN)} at "
-                             f"{FLASH_RODATA_OFFSET:#x}) -- not rewriting. "
-                             f"`--force-flash` writes it anyway.")
-                        wrote_flash = False
-                    else:
-                        wrote_flash = True
-                    if wrote_flash:
-                      emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
-                         f"(bitstream at 0x0 is not touched)")
-                      started = time.perf_counter()
-                      result = run([sys.executable,
-                                    str(ROOT / "repos" / "apollo" / "apollo_fpga"
-                                        / "commands" / "cli.py"),
-                                    "flash-program",
-                                    "--offset", str(FLASH_RODATA_OFFSET),
-                                    str(RODATA_BIN)])
-                      if result.returncode != 0:
-                        # The record goes FIRST, so a partial write is never
-                        # remembered as a completed one.
-                        FLASH_WRITTEN.unlink(missing_ok=True)
-                        emit("  flash write FAILED:")
-                        emit((result.stderr or result.stdout).strip()[-500:])
-                        emit("Refusing to configure: the board would run against "
-                             ".rodata that is not this build, and every constant "
-                             "it reads would be silently wrong.")
-                        return 1
-                      elapsed = time.perf_counter() - started
-                      size = RODATA_BIN.stat().st_size
-                      FLASH_WRITTEN.write_text(want + "\n")
-                      emit(f"  flash written: {size} bytes in {elapsed:.2f} s "
-                           f"({size / elapsed / 1024:.1f} KiB/s)")
+                    emit("  deferred: flash is written just before the "
+                         "configure, so the board keeps running this one "
+                         "until the next is ready")
 
         # The bootloader, unless this is the C path -- that generator emits an
         # image linked for 0 and has no bootloader to sit under it.
@@ -552,7 +521,25 @@ def main():
                 emit("bootloader objcopy failed:")
                 emit((result.stderr or result.stdout).strip()[-400:])
                 return 1
-            emit(f"bootloader: {BOOT_BIN.stat().st_size} bytes")
+            # Where it goes, what it is for, and how much room is left -- a bare
+            # byte count answers none of those, and this is the one line about
+            # the thing that owns the reset vector.
+            #
+            # It is packed into the bitstream's block RAM initialiser at 0x0,
+            # not written to flash, so it changes only when the gateware is
+            # rebuilt. The kilobyte below IMAGE_ORIGIN is its budget; overrunning
+            # it would land on the shell's first instruction, and the symptom
+            # would be a board that configures and does nothing.
+            boot_size = BOOT_BIN.stat().st_size
+            emit(f"bootloader: {boot_size} bytes at 0x0 in block RAM, "
+                 f"{IMAGE_ORIGIN - boot_size} free below the shell at "
+                 f"{IMAGE_ORIGIN:#x}")
+            emit(f"  from {BOOT_CRATE.relative_to(ROOT)}; packed into the "
+                 f"bitstream, so it reaches the board only on a reconfigure")
+            if boot_size > IMAGE_ORIGIN:
+                emit(f"  OVERRUN: it does not fit under {IMAGE_ORIGIN:#x} and "
+                     f"would overwrite the shell's reset path")
+                return 1
         elif BOOT_BIN.exists():
             # A stale one from a Rust build would be packed at 0x0 under a C image
             # that is itself linked for 0x0. Two things at the reset vector is one
@@ -599,10 +586,28 @@ def main():
                  f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
                  f'python3.15t {GATEWARE} --build --firmware {firmware} '
                  f'--bootloader {BOOT_BIN}')
+        # Say what is about to take a minute, BEFORE it takes it. Amaranth,
+        # yosys and nextpnr print nothing this log can see until they are done,
+        # so without this line the log has a silent 60-90 s hole in it and the
+        # only thing to conclude from a hole is that something hung.
+        emit(f"synthesis: yosys + nextpnr on {GATEWARE.relative_to(ROOT)}, "
+             f"typically 60-120 s")
+        emit(f"  full tool output -> {SYNTH_LOG.relative_to(ROOT)} "
+             f"(thousands of lines; only the summary comes back here)")
         build_started = time.perf_counter()
         result = run(["bash", "-c", build])
         build_seconds = time.perf_counter() - build_started
         output = (result.stdout or "") + (result.stderr or "")
+
+        # DIVERTED, not discarded. Every line yosys and nextpnr produced goes to
+        # its own file: it is the record when a build misbehaves, and it is far
+        # too much to interleave into `dev.log`, where it buries the handful of
+        # lines that are about the board.
+        SYNTH_LOG.parent.mkdir(parents=True, exist_ok=True)
+        SYNTH_LOG.write_text(output)
+        emit(f"synthesis finished in {build_seconds:.1f} s "
+             f"({len(output.splitlines())} lines -> "
+             f"{SYNTH_LOG.relative_to(ROOT)})")
 
         # THE FREQUENCIES, on success as well as on failure.
         #
@@ -741,6 +746,91 @@ def main():
     return configure_and_read(args, emit)
 
 
+
+
+def write_rodata_flash(args, emit):
+    """Program `.rodata` into flash. `True` on success, `False` to abort.
+
+    **Called immediately before the configure, NOT when the artifact is built.**
+
+    The CPU executes from this flash. Writing it while the board is running
+    overwrites the `.text` of the shell that is running, so the board goes silent
+    at that instant -- and for a full build it then stays silent for the ninety
+    seconds of synthesis before anything reconfigures it. That looked like
+    synthesis killing the gateware, and it was the flash write two steps earlier.
+
+    Deferring it to here closes the window: the old image keeps running until the
+    new bitstream is ready, and the gap between the write and the reconfigure
+    that revives the CPU is now a couple of seconds rather than a couple of
+    minutes.
+    """
+    if not RODATA_BIN.exists() or not RODATA_BIN.stat().st_size:
+        return True
+    if args.build_only:
+        emit("  NOT WRITTEN (--build-only touches no hardware).")
+        return True
+    if args.no_flash:
+        emit("  NOT WRITTEN (--no-flash). The board will run with whatever "
+             ".rodata flash already holds.")
+        return True
+    # Writing the flash the board BOOTS from, so this states the offset every
+    # time rather than assuming anyone remembers it. 0xb0000 is moondancer's
+    # firmware slot and is clear of the FPGA configuration at offset zero -- but
+    # "clear of" is a fact about this layout, not a property of the tool, and the
+    # tool will write wherever it is told.
+    #
+    # SKIP IF IT IS ALREADY THERE. Measured: one USB round trip to the flash is
+    # 3.00 ms, and a 256-byte page costs several of them -- write-enable,
+    # program, then poll the status register until the chip reports done. 58,940
+    # bytes is 231 pages and takes 4.72 s, against roughly 0.6 s of actual
+    # W25Q32DV erase and program time. The transport is the cost, not the flash.
+    #
+    # Most iterations do not change `.rodata` at all -- a gateware edit, a clock
+    # change, a peripheral moving -- so most of those 4.72 s buy nothing. The
+    # digest was already being computed and printed; it just was not compared.
+    #
+    # The record is what THIS script last wrote. Anything else touching the flash
+    # invalidates it, so `--force-flash` exists and the record is deleted on any
+    # write failure rather than left claiming a state that was not reached.
+    want = f"{FLASH_RODATA_OFFSET:#x} {firmware_digest(RODATA_BIN)}"
+    already = (FLASH_WRITTEN.read_text().strip()
+               if FLASH_WRITTEN.exists() else None)
+    if already == want and not args.force_flash:
+        emit(f"  flash already holds this image "
+             f"({firmware_digest(RODATA_BIN)} at {FLASH_RODATA_OFFSET:#x}) "
+             f"-- not rewriting. `--force-flash` writes it anyway.")
+        return True
+
+    emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
+         f"(bitstream at 0x0 is not touched)")
+    emit(f"  the CPU executes from here, so it goes quiet NOW and comes back "
+         f"on the reconfigure a few seconds from now")
+    started = time.perf_counter()
+    result = run([sys.executable,
+                  str(ROOT / "repos" / "apollo" / "apollo_fpga"
+                      / "commands" / "cli.py"),
+                  "flash-program",
+                  "--offset", str(FLASH_RODATA_OFFSET),
+                  str(RODATA_BIN)])
+    if result.returncode != 0:
+        # The record goes FIRST, so a partial write is never remembered as a
+        # completed one.
+        FLASH_WRITTEN.unlink(missing_ok=True)
+        emit("  flash write FAILED:")
+        emit((result.stderr or result.stdout).strip()[-500:])
+        emit("Refusing to configure: the board would run against .rodata that "
+             "is not this build, and every constant it reads would be silently "
+             "wrong.")
+        return False
+    elapsed = time.perf_counter() - started
+    size = RODATA_BIN.stat().st_size
+    FLASH_WRITTEN.write_text(want + "\n")
+    emit(f"  flash written: {size} bytes in {elapsed:.2f} s "
+         f"({size / elapsed / 1024:.1f} KiB/s) over Apollo JTAG -> SPI "
+         f"bit-bang; bound by the W25Q32's page program, not the link")
+    return True
+
+
 def configure_and_read(args, emit):
     """Configure the FPGA, then report what the console says.
 
@@ -756,6 +846,20 @@ def configure_and_read(args, emit):
         # Nothing reaches the board past this point without the gateware on it
         # being the gateware in the tree.
         if bitstream_is_stale(emit):
+            return 1
+
+        # THE FLASH WRITE, here and not where the artifact was built.
+        #
+        # The CPU executes from this flash, so writing it overwrites the `.text`
+        # of the running shell and the board goes silent at that instant. Done
+        # before the gateware build, that silence lasted the ninety seconds of
+        # synthesis -- which reads as synthesis having killed the design, and was
+        # the flash write two steps earlier. Here, the old image runs until the
+        # new bitstream is ready and the gap is a couple of seconds.
+        #
+        # After the staleness check, so a run that is going to refuse to
+        # configure does not destroy the working image on its way to refusing.
+        if not write_rodata_flash(args, emit):
             return 1
 
         result = run([sys.executable,
@@ -786,7 +890,24 @@ def configure_and_read(args, emit):
             sock = None
 
         if served:
-            sock.settimeout(12)
+            # ANNOUNCED BEFORE THE WAIT, not after it.
+            #
+            # This is a bounded read of the board's console: it stops at 400
+            # bytes or at the timeout, whichever comes first, and a board that
+            # boots quietly will always hit the timeout. Printing the header
+            # afterwards left a silent 13 s hole between `configured` and the
+            # first console line, and a hole in a log reads as a hang.
+            #
+            # 12 s because the banner, the Type-C lines and the first power
+            # sample are all emitted within about a second of reset, and the
+            # remaining margin is for a board that is slow to enumerate. It is a
+            # display timeout: expiry means "nothing more arrived", which is
+            # information, not a failure.
+            CONSOLE_READ_SECONDS = 12
+            emit(f"reading the console for up to {CONSOLE_READ_SECONDS} s, "
+                 f"or until 400 bytes arrive -- a quiet board waits the "
+                 f"full {CONSOLE_READ_SECONDS} s")
+            sock.settimeout(CONSOLE_READ_SECONDS)
             buf = b""
             while len(buf) < 400:
                 try:

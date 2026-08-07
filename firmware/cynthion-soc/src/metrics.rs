@@ -130,6 +130,24 @@ static WORKED: AtomicU32 = AtomicU32::new(0);
 /// from and establishes the baseline only.
 static STARTED: AtomicU32 = AtomicU32::new(0);
 
+/// Stalled cycles, ACCUMULATED FROM DELTAS rather than read as a lifetime total.
+///
+/// `mhpmcounter3/4` and `mcycle` are 64-bit counters and this core is RV32, so
+/// every read gets the low word alone -- which wraps every 71.6 s at 60 MHz.
+/// Reading all three and dividing gave a ratio that was right for the first
+/// minute of a session and nonsense afterwards, because the numerator and the
+/// denominator wrap independently. The board printed `3366 / 952 per 1000
+/// cycles` -- more stalled cycles than cycles, which cannot happen.
+///
+/// So the deltas are taken in [`turn`], where the interval is a single loop pass
+/// and cannot approach a wrap, and accumulated here. They share the halving in
+/// [`turn`] with `WINDOW_CYCLES`, which is their denominator, so the RATIO
+/// survives the halving exactly while neither term can overflow.
+static WINDOW_STALL_FRONTEND: AtomicU32 = AtomicU32::new(0);
+static WINDOW_STALL_BACKEND: AtomicU32 = AtomicU32::new(0);
+static LAST_STALL_FRONTEND: AtomicU32 = AtomicU32::new(0);
+static LAST_STALL_BACKEND: AtomicU32 = AtomicU32::new(0);
+
 /// The power poll: how many, when the last one was, and the worst gap between
 /// two, in counter ticks.
 static POLLS: AtomicU32 = AtomicU32::new(0);
@@ -183,10 +201,18 @@ pub fn busy() {
 pub fn turn() {
     let cycles = mcycle();
     let instret = minstret();
+    let (stall_fe, stall_be) = crate::bench::hpm::stalls();
     let elapsed = cycles.wrapping_sub(LAST_CYCLE.load(RELAXED));
     let retired = instret.wrapping_sub(LAST_INSTR.load(RELAXED));
+    // Wrapping, for the reason `WINDOW_STALL_FRONTEND` gives: these are the low
+    // words of 64-bit counters and a turn is microseconds, so a delta is exact
+    // and a lifetime read is not.
+    let stalled_fe = stall_fe.wrapping_sub(LAST_STALL_FRONTEND.load(RELAXED));
+    let stalled_be = stall_be.wrapping_sub(LAST_STALL_BACKEND.load(RELAXED));
     LAST_CYCLE.store(cycles, RELAXED);
     LAST_INSTR.store(instret, RELAXED);
+    LAST_STALL_FRONTEND.store(stall_fe, RELAXED);
+    LAST_STALL_BACKEND.store(stall_be, RELAXED);
 
     // The first call has nothing to subtract from: the baseline it just stored
     // is the measurement's zero, and the difference against a static's initial
@@ -196,11 +222,20 @@ pub fn turn() {
         return;
     }
 
+    // The stall counters halve WITH `WINDOW_CYCLES`, their denominator, so the
+    // ratio is unchanged by the halving. Adding them to any other group, or
+    // halving them on their own schedule, would make the ratio jump.
     if WINDOW_CYCLES.load(RELAXED) >= HALVE_AT {
-        for counter in [&WINDOW_CYCLES, &WINDOW_BUSY, &WINDOW_INSTR, &WINDOW_TURNS] {
+        for counter in [&WINDOW_CYCLES, &WINDOW_BUSY, &WINDOW_INSTR, &WINDOW_TURNS,
+                        &WINDOW_STALL_FRONTEND, &WINDOW_STALL_BACKEND] {
             counter.store(counter.load(RELAXED) >> 1, RELAXED);
         }
     }
+
+    WINDOW_STALL_FRONTEND.store(
+        WINDOW_STALL_FRONTEND.load(RELAXED).saturating_add(stalled_fe), RELAXED);
+    WINDOW_STALL_BACKEND.store(
+        WINDOW_STALL_BACKEND.load(RELAXED).saturating_add(stalled_be), RELAXED);
 
     WINDOW_CYCLES.store(WINDOW_CYCLES.load(RELAXED).saturating_add(elapsed), RELAXED);
     WINDOW_INSTR.store(WINDOW_INSTR.load(RELAXED).saturating_add(retired), RELAXED);
@@ -254,6 +289,46 @@ pub fn polled() {
 /// without moving the first.
 pub fn poll_stats() -> (u32, u32) {
     (POLLS.load(RELAXED), WORST_GAP.load(RELAXED))
+}
+
+/// `(frontend, backend, cycles)` -- stalled cycles and the cycles they are out
+/// of, all three accumulated from deltas and all three halved together.
+///
+/// The three are only comparable BECAUSE they come from here rather than from
+/// three separate CSR reads: they cover the same interval and they have been
+/// scaled by the same power of two. Reading the CSRs directly gives lifetime
+/// low words that wrap independently, which is what produced a reported 3366
+/// stalled cycles per 1000 cycles.
+pub fn stall_window() -> (u32, u32, u32) {
+    (WINDOW_STALL_FRONTEND.load(RELAXED),
+     WINDOW_STALL_BACKEND.load(RELAXED),
+     WINDOW_CYCLES.load(RELAXED))
+}
+
+/// Throw away everything measured so far and start again from now.
+///
+/// **Boot is not a sample of steady state.** Configuring the PAC1954, probing
+/// two FUSB302Bs, waiting for USB enumeration and printing a banner all happen
+/// once, hold the bus for milliseconds at a time, and starve the periodic task
+/// while they do. Left in the totals they set a worst case that nothing in the
+/// running system will ever approach, and they drag the mean with them -- so
+/// every number afterwards describes a few hundred milliseconds that are over
+/// rather than the hours that follow.
+///
+/// `src/main.rs` calls this once, after the boot sequence and before the first
+/// turn of the loop, having printed the startup figures first. Discarding them
+/// silently would be worse than keeping them: startup cost is a real number and
+/// it is the one that says how long the board takes to become useful.
+pub fn restart() {
+    for counter in [&WINDOW_CYCLES, &WINDOW_BUSY, &WINDOW_INSTR, &WINDOW_TURNS,
+                    &WINDOW_STALL_FRONTEND, &WINDOW_STALL_BACKEND,
+                    &WORST_TURN, &POLLS, &WORST_GAP] {
+        counter.store(0, RELAXED);
+    }
+    // NOT the LAST_* baselines: they are where the next delta is measured from,
+    // and zeroing them would make the first turn after this count the whole of
+    // `mcycle` since reset -- the same defect as the scheduler's `Instant::ZERO`
+    // origin. `STARTED` stays set for the same reason.
 }
 
 /// An `Instant` back as the number it holds.

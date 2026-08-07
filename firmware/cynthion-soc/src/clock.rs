@@ -108,3 +108,21 @@ pub const fn millis(millis: u32) -> u32 {
 pub fn to_millis(ticks: u32) -> u32 {
     ticks / (target::TIME_HZ / 1000)
 }
+
+/// Ticks as whole microseconds, truncating, for intervals too short for
+/// [`to_millis`] to say anything about.
+///
+/// Scheduler lateness is the caller: the interesting answers there are tens of
+/// microseconds, which [`to_millis`] renders as `0` and makes the whole
+/// comparison unreadable. Reporting it in raw ticks instead put a bare
+/// `25786941` next to a `50 ms` on one line, and two numbers in different units
+/// on one line get compared -- so both are now printed.
+///
+/// `TIME_HZ / 1_000_000` is 60 at 60 MHz but **10 does not divide 1_000_000 into
+/// whole ticks on the QEMU target** (10 MHz gives 10 ticks/us, which is fine;
+/// the guard is for a future clock below 1 MHz, where the divisor would be zero
+/// and this would trap). `max(1)` makes that a wrong number rather than a
+/// division by zero, and `to_millis` is the one to use if it ever matters.
+pub fn to_micros(ticks: u32) -> u32 {
+    ticks / (target::TIME_HZ / 1_000_000).max(1)
+}

@@ -255,7 +255,9 @@ def cmd_describe(_extra: list[str]) -> int:
                        "125": "step skipped (tool absent)", "other": "failure"},
         # Which commands reach the board, so an agent can tell what is safe to
         # run unattended from what needs hardware present.
-        "needs_hardware": ["run", "console", "flash", "hyperram"],
+        "needs_hardware": ["run", "console", "flash", "hyperram", "probe",
+                           "test-board", "fw", "stage", "capture", "typec",
+                           "optlevel"],
         "commands": {
             name: {k: v for k, v in meta.items() if k != "fn"}
             for name, meta in COMMANDS.items()
@@ -386,13 +388,31 @@ def cmd_fmt_check(_extra: list[str]) -> int:
     return cargo_fmt(check=True)
 
 
+@command("after a load: is the FPGA alive, is it OURS, is what it reports true",
+         args="[--no-console]", kind="action")
+def cmd_probe(extra: list[str]) -> int:
+    """Eleven checks in the order that isolates the layer, so the FIRST failure
+    names it.
+
+    Reachable here rather than only as a script because it is what to run when
+    the board goes quiet, and "the board is dead" is not one state -- a lost
+    configuration, a stale bitstream, an unlocked PLL and a wedged CPU are four
+    different problems that look identical from a terminal.
+    """
+    return run_tool([PY, script("soc_probe.py")], extra)
+
+
 @command("run the shell suite against the BOARD instead of QEMU",
-         args="[-v]", kind="action")
+         args="[-v] [--features rtic]", kind="action")
 def cmd_test_board(extra: list[str]) -> int:
     """The same assertions, on real silicon.
 
     Not in `gate` or `ci`: it needs a board, already configured and already
     running this firmware. `./dev.py fw` puts it there.
+
+    `--features` has to match what was flashed. It builds nothing here -- it
+    tells the suite which dispatcher to expect, and a mismatch is a real
+    failure worth keeping: it means the board is not running what you think.
     """
     return run_tool([PY, script("soc_test.py"), "--board"], extra)
 

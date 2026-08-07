@@ -61,6 +61,20 @@ ROOTS = ["home", "Users", "mnt", "media"]
 # `$HOME/...` and `${REPOS_ROOT:-...}` are all fine.
 PRIVATE = re.compile(r"/(?:" + "|".join(ROOTS) + r")/[A-Za-z0-9_][A-Za-z0-9_.-]*")
 
+# A URL is not a filesystem path, and one of the ROOTS above is a common path
+# component in them. Two datasheet links in the GUI's hardware catalogue -- a
+# Lattice one and an Amphenol one, both carrying a directory named like a mount
+# point -- were reported as private paths. They are the opposite of private:
+# they are the citation, and they are the same for everyone who clones this.
+#
+# Blanked before the private-path scan rather than filtered after, so a line
+# carrying both a URL and a real private path still fails on the path. Anchored
+# on a scheme, so a bare absolute path is untouched.
+#
+# This comment names no example, deliberately: the check reads its own source
+# like any other tracked file, and an illustrative path here would fail it.
+URL = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+")
+
 # Paths whose contents are not published or not ours to edit. `tmp/` is
 # scratch, `.claude/` is per-machine agent state, and both are ignored by git
 # anyway -- listed so that a future `git add -f` cannot smuggle one in.
@@ -126,7 +140,11 @@ def main() -> int:
             emit(f"  {name}")
 
         for number, line in enumerate(text.splitlines(), 1):
-            for match in PRIVATE.finditer(line):
+            # URLs blanked to spaces rather than deleted, so the columns of
+            # anything after them on the line are unchanged and the reported
+            # match is still where it says it is.
+            scanned = URL.sub(lambda m: " " * len(m.group(0)), line)
+            for match in PRIVATE.finditer(scanned):
                 problems.append(
                     f"{name}:{number}: {match.group(0)}\n"
                     f"      {line.strip()[:120]}")

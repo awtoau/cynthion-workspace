@@ -30,6 +30,16 @@ Each check needs only the layers below it, so the FIRST failure names the layer:
     4. USB             console tty      the gateware's USB stack enumerated
     5. CPU executing   `info` replies   the core is fetching and running
     6. versions        no MISMATCH      the gateware and firmware are THIS tree
+    7. clocks          LOCK, no MISMATCH  the PLL locked and `sync` measures right
+    8. PHY reset       scratch cleared  RESETB reaches the pad (#241)
+    9. scheduler       late <= gap      the two are the same measurement
+
+Checks 1-6 ask "is this our design, and is it running". 7-9 ask "is what it
+says about itself TRUE", which is a different question and the one this project
+keeps getting wrong -- a dead PLL reported its intended rate from a constant, a
+reset pad tied de-asserted answered its identity registers anyway, and a
+scheduler measured its lateness against a zero instant and reported boot time.
+None of the three produced a symptom, and none is visible to the emulator.
 
 Step 2 is the one that matters most and is the one nothing did before. The ER1
 staging sink answers from a constant in the fabric, clocked by TCK, so it
@@ -164,7 +174,127 @@ def main() -> int:
             emit("reads -- clock rates, cache geometry, peripheral bases -- is")
             emit("potentially wrong, and nothing else here would notice.")
 
+        # -- 7..9, what the running design REPORTS about itself. --------------
+        #
+        # Everything above answers "is this our design and is it running". These
+        # answer "is what it says about itself true", which is a different
+        # question and the one this project keeps getting wrong: a dead PLL
+        # reported its intended rate from a constant, a reset pad tied
+        # de-asserted answered its identity registers anyway, and a scheduler
+        # measured its own lateness against a zero instant. None of the three
+        # produced a symptom. All three are checkable in a second from here.
+        #
+        # They live in this script rather than in `soc_test.py` because the
+        # emulator cannot see any of them: it has no PLL, no PHY, and a boot
+        # short enough to hide the third.
+        clock_checks(checks, output)
+        phy_reset_check(checks)
+        scheduler_check(checks)
+
     return checks.summary()
+
+
+def clock_checks(checks, info):
+    """The clocks are what the gateware says they are -- measured, not declared.
+
+    `ClockMonitor` counts `sync` against the 60 MHz oscillator, the one clock on
+    this board that cannot be wrong because it is a discrete part. `info` prints
+    the measurement beside the declaration and says `CLOCK MISMATCH` when they
+    disagree.
+
+    Asserting on it here rather than leaving it to be read: `gateware_id` once
+    reported `sync 30000000` from a constant while the PLL was not locked and
+    `sync` was not oscillating at all. Nothing downstream noticed, because
+    everything downstream took the constant's word for it.
+    """
+    measured = re.search(r"measured sync (\d+) kHz, pll (\w+)", info)
+
+    # "No measurement yet" is its own answer and must not read as a pass: the
+    # window is 1 ms and this runs seconds after boot, so an incomplete one means
+    # the counter is not running, which is the same silence as a stopped clock.
+    checks.check(
+        "the fabric has measured `sync` at all"
+        + (f" -- {measured.group(1)} kHz" if measured else ""),
+        measured is not None,
+        "`info` printed no clock measurement. `NO MEASUREMENT YET` means the "
+        "1 ms window never completed, which seconds after boot means the "
+        "counter is not being clocked.")
+
+    checks.check(
+        "the PLL is locked -- `sync` is a real clock, not a constant's claim",
+        measured is not None and measured.group(2) == "locked",
+        "`info` does not report the PLL locked. An unlocked PLL leaves `sync` "
+        "held in reset for ever while every declared frequency still reads "
+        "back correctly, because they are constants in the bitstream -- which "
+        "is exactly how an unconnected CLKFB cost a two-rebuild bisect.")
+
+    checks.check(
+        "measured `sync` agrees with what the gateware declares",
+        "CLOCK MISMATCH" not in info,
+        "`info` reports a measured clock that differs from the declared one by "
+        "more than 1%. The measurement is counted against the board's 60 MHz "
+        "oscillator -- a discrete part, and the one clock here that cannot be "
+        "wrong -- so it is the one to believe. The declaration is a constant "
+        "somebody chose.")
+
+
+def phy_reset_check(checks):
+    """RESETB reaches the TARGET PHY (#241).
+
+    Not "the command ran" -- the pad. `phy reset` writes 0x5a to the PHY's
+    scratch register, verifies it took, resets, and reads back; the USB334x
+    datasheet Rev 1.2 Table 7.1 gives the scratch default as 00h and section
+    5.6.2 says a RESETB cycle restores it.
+
+    This is a post-load check because the failure it catches is a WARM one:
+    cold power-up works regardless, since the part's own POR runs before the
+    FPGA is configured. What breaks is reconfiguration -- which is exactly what
+    a load is, and exactly when this script runs.
+    """
+    output = shell("phy reset")
+    reached = "RESET REACHED THE PHY" in output
+    did_not = "RESET DID NOT REACH" in output
+    checks.check(
+        "the TARGET PHY's RESETB pad moves -- scratch returned to its default",
+        reached,
+        "`phy reset` reported "
+        + ("that the pad never moved, so the PHY has no reset path (#241)."
+           if did_not else
+           f"neither outcome. Received: {output.strip()[-200:] or '(nothing)'}"))
+
+
+def scheduler_check(checks):
+    """The task's lateness and its achieved period are the same measurement.
+
+    Lateness IS the achieved gap minus the period, so `late <= gap` is an
+    identity. Asserting it catches a lateness measured from an origin the gap
+    does not share -- which is what happened: the first poll's lateness was taken
+    against a zero instant, so it reported the whole of boot, stood as the worst
+    case for the session, and dominated the mean.
+
+    Only the board can catch that one. Under the emulator boot is short enough
+    that the bad first sample is indistinguishable from a good one, which is why
+    `soc_test.py`'s version of this check passes either way.
+    """
+    output = shell("rtic")
+    late = re.search(r"late\s+worst\s+(\d+) us", output)
+    gap = re.search(r"gap\s+worst\s+(\d+) ms", output)
+
+    if late is None or gap is None:
+        checks.check("the scheduler reports its lateness and its period", False,
+                     "`rtic` did not print both figures. Received: "
+                     f"{output.strip()[-200:] or '(nothing)'}")
+        return
+
+    late_us, gap_us = int(late.group(1)), int(gap.group(1)) * 1000
+    checks.check(
+        f"scheduler lateness fits inside the achieved period "
+        f"({late_us} us worst, in a {gap_us // 1000} ms gap)",
+        late_us <= gap_us,
+        f"the worst lateness ({late_us} us) exceeds the worst gap it was "
+        f"measured within ({gap_us} us). These come from the same instants, so "
+        f"this is not a tolerance being exceeded -- one of them is measured "
+        f"from an origin the other does not share.")
 
 
 if __name__ == "__main__":

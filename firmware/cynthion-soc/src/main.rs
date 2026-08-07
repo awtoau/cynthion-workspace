@@ -146,8 +146,22 @@ mod vbus;
 mod workload;
 
 use bus::Bus;
+use clock::Instant;
 use target::flash_word;
 use uart::Uart;
+
+/// How long an idle console waits before printing the banner again.
+///
+/// Two seconds: slow enough to read, fast enough that attaching to a quiet board
+/// does not feel like attaching to a dead one. A shell that only prints on input
+/// is indistinguishable from one that has stopped -- there is nothing to see
+/// until you type, and no reason to believe typing will work.
+///
+/// Milliseconds, measured against `rdtime`, and NOT a count of loop turns. It
+/// was a count, and a turn is not a unit of time: under `--features rtic` a turn
+/// costs about four times as much, so the same number took four times as long
+/// and the QEMU suite reported the shell as silent.
+const BANNER_INTERVAL_MS: u32 = 2_000;
 
 /// The most consoles this build will run shells for.
 ///
@@ -220,7 +234,18 @@ pub struct Shell {
     /// Set by the first keypress. From then on the prompt is on screen and reprinting
     /// the banner would fight the line being edited.
     spoken: bool,
-    idle: u32,
+    /// When the banner was last printed. `None` until the first idle poll, which
+    /// is what stops the first one measuring against a zero instant -- the same
+    /// origin defect the scheduler had.
+    ///
+    /// A TIMESTAMP, not a turn count. This was `idle: u32`, compared against
+    /// 12,000,000 turns and described as "~2 s at 60 MHz". A turn is not a unit
+    /// of time: under `--features rtic` `#[idle]` takes two SLIC locks per pass
+    /// and each turn costs about four times as much, so the same count took
+    /// about eight seconds and the shell looked silent. It also scaled with the
+    /// number of consoles and with `SYNC_MHZ`, neither of which has anything to
+    /// do with how long a person waits before deciding a board is dead.
+    last_banner: Option<Instant>,
 }
 
 impl Shell {
@@ -228,7 +253,7 @@ impl Shell {
         line: [0u8; 64],
         len: 0,
         spoken: false,
-        idle: 0,
+        last_banner: None,
     };
 
     /// Handle at most one byte from `uart`, or count one turn of idleness.
@@ -253,16 +278,15 @@ impl Shell {
             Some(byte) => byte,
             None => {
                 if announce && !self.spoken {
-                    self.idle = self.idle.wrapping_add(1);
-                    // ~2 s at 60 MHz with one console, and proportionally longer with
-                    // more, since each turn of the outer loop now polls each of them.
-                    // Not calibrated; it only has to be slow enough to read and fast
-                    // enough that attaching does not feel dead. Under QEMU the same
-                    // count runs in about two seconds, because each pass costs one
-                    // emulated MMIO read -- close enough that the test does not need
-                    // its own value.
-                    if self.idle >= 12_000_000 {
-                        self.idle = 0;
+                    let now = clock::now();
+                    let last = *self.last_banner.get_or_insert(now);
+                    // 2 s, measured. Slow enough to read, fast enough that
+                    // attaching does not feel dead -- and now the SAME 2 s under
+                    // both dispatchers, at any `SYNC_MHZ`, with any number of
+                    // consoles, because it is a duration rather than a count of
+                    // something whose cost varies.
+                    if last.elapsed(now) >= clock::millis(BANNER_INTERVAL_MS) {
+                        self.last_banner = Some(now);
                         // Two lines printed is work, even though nobody asked
                         // for them. See `src/metrics.rs`.
                         metrics::busy();
@@ -461,6 +485,12 @@ fn main() -> ! {
     let mut devices = boot();
     let mut console = primary();
     let mut shells = [Shell::NEW; MAX_CONSOLES];
+
+    // Boot cost is reported and then discarded. Everything above this line ran
+    // once and held the bus for milliseconds at a time; measured into the same
+    // totals as the steady state it produces a worst case nothing afterwards
+    // approaches. See `sched::boot_complete`.
+    sched::boot_complete(&mut console);
 
     loop {
         // Close the turn that just ended: two `csrr`s, charged to busy or idle
