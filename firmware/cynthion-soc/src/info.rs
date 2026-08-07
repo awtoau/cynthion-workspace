@@ -478,10 +478,19 @@ pub fn command(uart: &mut Uart) {
             // is running on -- see the header of gateware_id.py.
             match id.celsius() {
                 Some((sign, degrees)) => {
+                    // The raw code stays, the caption goes. `uncalibrated` was
+                    // true and useless: it had been printed on every `info` long
+                    // enough to read as part of the label rather than as
+                    // something to act on, and nothing was going to act on it.
+                    // The reading is taken as the die temperature. #262.
+                    //
+                    // The code is kept because it is the measurement and the
+                    // degrees are a conversion of it -- anything that ever does
+                    // want to check the mapping needs the code, and it costs a
+                    // field.
                     let _ = writeln!(
                         uart,
-                        "         die {}{} C (dtr code {}, \
-                                            uncalibrated)",
+                        "         die {}{} C (dtr code {})",
                         sign,
                         degrees,
                         id.die & 0x3f
