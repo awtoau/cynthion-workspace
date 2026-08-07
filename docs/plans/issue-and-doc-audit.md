@@ -228,6 +228,39 @@ closed, so only #90's void-figures section needs an edit first.
 
 Details for numbers >116 are in §6c, for ≤116 in §6e. The bulk categories follow.
 
+> **DONE 2026-08-07.** 60 open issues were edited: 81 references rewritten, each
+> replacement path `test -e`'d before it was written, and a dated note at the top
+> wherever the staleness was a *fact* rather than a path. Reproducible with
+> `./scripts/fix_issue_refs.py` (the table of corrections is the data); dead
+> references are found with `./scripts/audit_issue_refs.py`.
+>
+> **Four entries above are false positives — this audit was wrong about them:**
+>
+> * **#24** — `scripts/dump-crash.py`, `decode-crash.py`, `monitor-apollo.py` are
+>   *proposed* host tooling under a "## Host tooling" heading, not citations. Not
+>   edited.
+> * **#116, #224** — `scripts/fabric_coverage_plan.py`, `fabric_test_gen.py`,
+>   `fabric_test_bridge.py`, `fabric_test_verify.py` and `docs/fabric-test.md` are
+>   **pluribus's**, and both issues say so in the surrounding sentence. The rest of
+>   the fabric suite is *not* on an abandoned branch either — `fabric_arcs.py`,
+>   `fabric_build.py`, `fabric_golden.py`, `fabric_negative_control.py`,
+>   `fabric_placement.py`, `fabric_run.py`, `fabric_sim.py`, `fabric_sweep.py` all
+>   landed in `scripts/` on 2026-08-06, so §5 item 2 is out of date. Neither issue
+>   was edited.
+> * **#228, #230** — `gateware/soc/hyperram_clocks.py` **exists on this branch**
+>   (added 2026-08-07 12:01, with `docs/upstream-reproduction.md`), so F1's
+>   headline consequence has partly resolved itself. #230's item 1 is still exactly
+>   right: the file is written and `top.py` does not instantiate it.
+>
+> Two references have no successor anywhere and are now annotated as such in the
+> issue rather than silently repointed: **`ecp5-test/CYNTHION_R14_PINMAP.md`**
+> (#107 — possible content loss) and **`docs/apollo_race_conditions.md`** (#54).
+> Ten more are dead-with-no-successor but their absence is itself the correction:
+> `scripts/extract-hardware.py`, `power_probe.py`, `jtag_isr_soak.py`,
+> `cyn_main.py`, `phy_probe.py`, `patch_amaranth_soc_annotations.py`,
+> `hyperram_ladder.py`, `docs/memory-speed-options.md`, `docs/hyperram-bursts.md`,
+> `repos/facedancer`.
+
 ### 2a. Issues citing `ecp5-test/` (the directory does not exist; it is `gateware/`)
 
 Mechanically derived — every one of these has at least one file reference that

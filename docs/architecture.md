@@ -28,7 +28,7 @@ the SoC.
 | caches | I and D, 64 sets × 1 way × 64 B = 4 KiB each | generated | same — cached is forced by atomics |
 | buses | three Wishbone masters: `ibus`, `dbus` cached, `iobus` uncached | generated | same |
 | branch prediction | `BtbPlugin`, 512 sets, relaxed | generated | same |
-| clocks | `VariableClockDomainGenerator` | written | [`soc-clocking.md`](soc-clocking.md), #111 |
+| clocks | `SocClocks` ([`gateware/soc/clocks.py`](../gateware/soc/clocks.py)) | written | [`soc-clocking.md`](soc-clocking.md) |
 
 ## Interrupts and time
 

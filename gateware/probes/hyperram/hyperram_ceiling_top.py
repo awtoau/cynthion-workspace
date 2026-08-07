@@ -224,7 +224,12 @@ def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
 
     Returns (vco, clki_div, clkfb_div, clkop_div, clkos2_div) or None.
     """
-    for clki_div in range(1, 8):
+    # CLKI_DIV stops at 6, not 7. The ECP5's phase detector has a 10 MHz
+    # minimum (FPGA-DS-02012 Table 3.23), and 60/7 = 8.57 MHz is under it --
+    # a configuration that builds and whose jitter the datasheet does not
+    # guarantee. `gateware/soc/clocks.py` carries the same floor as
+    # `PFD_MIN_MHZ`, where it removed 55 of 68 candidate frequencies.
+    for clki_div in range(1, 7):
         for clkfb_div in range(1, 81):
             if abs(input_mhz * clkfb_div / clki_div - sync_mhz) > tolerance:
                 continue
