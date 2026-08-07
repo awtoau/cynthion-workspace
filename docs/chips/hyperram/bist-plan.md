@@ -60,34 +60,22 @@ Acceptance for this stage, before any measurement is attempted:
 - `hr` runs at a frequency unrelated to `sync`, confirmed by measurement
 - the engine is idle and has moved nothing
 
-## Matrix
-
-| axis | where | runtime? |
-|---|---|---|
-| CK frequency | PLL1 | needs `DCSC` — unproven |
-| READCLKSEL + read-window phase | DQS PHY, 16 combinations | yes, CSR |
-| Device drive strength | W956A8 CR0[14:12] | yes |
-| Differential vs single-ended clock | W956A8 CR1[6] | yes |
-| FPGA pin drive strength | ECP5 `DRIVE`, `SLEWRATE` | no — bitstream |
-
-**Two drive strengths, both in the matrix:**
-
-- CR0[14:12] — how hard the **memory** drives DQ back.
-- ECP5 output buffers — how hard the **FPGA** drives CK, CS# and DQ on writes.
-- A write failure at high CK can be either one.
-- The FPGA side is a bitstream attribute → **outer loop**: a few builds, each
-  sweeping the runtime axes fully.
-
 ## Method
 
 - **Sweep the capture phase at every rung.** The window moves with frequency, so
   a fixed phase finds where that phase stops, not where the part stops.
 - **Centre in the window.** An edge pass survives neither temperature nor a
   rebuild.
-- **Settle BURSTDET before sweeping.** It is the only alignment signal. Two
-  harnesses on the same PHY currently disagree — one reports detections where the
-  other reports none, on rungs the second scored clean. Leading theory: a
-  word-boundary bit-slip, making "strobe found" and "data correct" independent.
+- **Do not trust BURSTDET yet.** It is meant to say the read window is aligned,
+  so it should assert exactly where the data is correct. Observed, it does the
+  opposite:
+  - in the ceiling harness it asserts **only at the one phase that fails in
+    bulk**, and reads zero at every phase that verifies clean
+  - the SoC, on the same PHY, reports tens of thousands of detections
+  - so it is currently anti-correlated with correctness in one harness and
+    uncorrelated in the other
+  - settle it before using it to centre a window, or it will centre on the wrong
+    one
 - **Say whose limit it is.** Non-DQS clocks the fabric at CK, DQS at CK/2, so a
   non-DQS ceiling is usually ours. A rung with no bitstream is not a device
   result.
@@ -131,6 +119,53 @@ Acceptance for this stage, before any measurement is attempted:
   dropped data.
 - Is the DQS one-word-late read a read-late or a write-early fault (#186)? A rig
   measuring a path with a known offset measures the offset.
+
+## The matrix
+
+### Axes
+
+| axis | values | count | runtime? |
+|---|---|---|---|
+| CK frequency | every even MHz 100–200 that the PLL reaches with `hr_fast = 2·hr` | **51** | needs `DCSC` (#228) |
+| READCLKSEL tap | 0–7 | 8 | yes, CSR |
+| Read-window phase | 0–1 | 2 | yes, CSR |
+| Device drive strength | CR0[14:12], 0–7 | 8 | yes, register write |
+| Clock mode | CR1[6] differential / single-ended | 2 | yes, register write |
+| FPGA pin drive | ECP5 `DRIVE` 4/8/12/16 mA | 4 | **no — bitstream** |
+
+Full cross product is **51 × 8 × 2 × 8 × 2 × 4 = 104,448 cells**, so it is not
+run flat:
+
+- FPGA drive is the outer loop — 4 builds, each sweeping everything runtime.
+- Inner sweep per build is 51 × 8 × 2 × 8 × 2 = **26,112 cells**.
+- Coarse-then-fine: walk CK in 10 MHz steps first, then refine around the edge.
+- Drive and clock mode are likely separable — hold them while finding the CK/phase
+  surface, then vary them at the edge. That is an assumption to test, not a given.
+
+### Recorded per cell
+
+| column | why it is there |
+|---|---|
+| `ck_mhz`, `readclksel`, `phase`, `drive`, `clk_mode`, `fpga_drive` | the cell's coordinates |
+| `verdict` | `Pass` / `Fail(n)` / `NoResult` |
+| `errors`, `words` | `words == 0` is NoResult, never a pass |
+| `control_errors`, `control_words` | the control must have run **and** failed |
+| `first_bad_addr`, `expected`, `got` | one bad word in ten million and ten million bad words are different faults |
+| `burstdet` | the ECP5's own alignment report — contested, see Method |
+| `dll_locked`, `dll_ready` | a rung that ran without a locked DLL is not a result |
+| `die_temp_before`, `die_temp_after` | a rung that failed hot is not a clock limit |
+| `read_cycles`, `write_cycles` | throughput, derived — not the headline |
+| `timed_out` | distinguishes a wedged engine from a fired control |
+
+### Reading the surface
+
+- The pass region is a **surface**, not a ceiling. Report its shape.
+- Per CK, report the **width** of the passing phase window, not just that one
+  phase passed. Width is margin.
+- A CK where the window is one tap wide is not the same result as one where it is
+  three, even if both pass.
+- The edge of the surface is where the interesting failure is: characterise it
+  rather than just recording where passing stopped.
 
 ## Why there are no old numbers here
 
