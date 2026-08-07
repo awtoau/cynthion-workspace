@@ -354,6 +354,22 @@ def cmd_hyperram(extra: list[str]) -> int:
     return run_tool([PY, script("hyperram_harnesses.py")], extra)
 
 
+@command("build area, timing and configuration in Postgres: status, report, graph",
+         args="[status|record|report|graph|flush|show|sql|selftest|collect] "
+              "[-- args]",
+         kind="action")
+def cmd_metrics(extra: list[str]) -> int:
+    """The reading end of the build record (#232).
+
+    Recording is NOT a command here and deliberately so: `soc_run.py` does it on
+    every gateware build, unconditionally, so no path produces a bitstream and no
+    row. What this offers is the other direction -- is the server up, what did
+    this build cost against the last one and against the best ever, and the
+    trend graphs.
+    """
+    return run_tool([PY, script("build_metrics.py")], extra or ["status"])
+
+
 @command("read every script in scripts/ and report what still reaches it",
          args="[--markdown] [--only live|cited|orphan]", kind="action")
 def cmd_audit(extra: list[str]) -> int:
