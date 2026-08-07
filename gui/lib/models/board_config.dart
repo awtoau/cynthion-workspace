@@ -56,6 +56,11 @@ NodeConnection _connFromJson(Map<String, dynamic> j) => NodeConnection(
       label: j['label'] as String? ?? '',
       active: j['active'] as bool? ?? true,
       dataActive: j['dataActive'] as bool? ?? false,
+      interface: j['interface'] as String? ?? '',
+      nets: (j['nets'] as List? ?? const []).map((e) => e as String).toList(),
+      voltage: j['voltage'] as String? ?? '',
+      signalType: j['signal_type'] as String? ?? '',
+      direction: j['direction'] as String? ?? '',
     );
 
 HardwareInfo _infoFromJson(Map<String, dynamic> j) => HardwareInfo(
@@ -69,10 +74,10 @@ HardwareInfo _infoFromJson(Map<String, dynamic> j) => HardwareInfo(
     );
 
 NodePin _pinFromJson(Map<String, dynamic> j) => NodePin(
-      j['number'] as int,
-      j['name'] as String,
-      j['signal'] as String,
-      _pinType(j['type'] as String),
+      '${j['number']}',
+      j['name'] as String? ?? '',
+      j['signal'] as String? ?? '',
+      _pinType(j['type'] as String? ?? ''),
     );
 
 // ignore: missing_return

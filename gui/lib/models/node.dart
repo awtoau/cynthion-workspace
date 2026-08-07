@@ -82,13 +82,62 @@ class NodeConnection {
   final bool active;
   final bool dataActive;
 
+  // ── Interface description ──────────────────────────────────────────────────
+  // Populated by gui/tools/extract-hardware.py from the KiCad netlist. A board
+  // file written by hand leaves these empty and the GUI falls back to [label].
+  /// `UART`, `SPI`, `JTAG`, `USB2`, `HyperBus`, `SWD`, `I2C`, `GPIO`, `power`…
+  final String interface;
+
+  /// Net names crossing between the two components, e.g. `MCU_UART0_RX`.
+  final List<String> nets;
+
+  /// Power domain the signals sit in, e.g. `3.3V`.
+  final String voltage;
+
+  /// One-liner for the hover chip, e.g. `UART 3.3 V CMOS`.
+  final String signalType;
+
+  /// `MCU→FPGA` where the schematic says which end drives.
+  final String direction;
+
   const NodeConnection({
     required this.fromId,
     required this.toId,
     this.label = '',
     this.active = true,
     this.dataActive = false,
+    this.interface = '',
+    this.nets = const [],
+    this.voltage = '',
+    this.signalType = '',
+    this.direction = '',
   });
+
+  /// What the hover chip shows: everything the extractor knew, or the plain
+  /// label when it knew nothing.
+  String get hoverLabel {
+    final parts = <String>[];
+    if (direction.isNotEmpty) {
+      parts.add(direction);
+    } else if (label.isNotEmpty) {
+      parts.add(label);
+    }
+    if (signalType.isNotEmpty) {
+      parts.add(signalType);
+    } else if (interface.isNotEmpty) {
+      parts.add(voltage.isEmpty ? interface : '$interface $voltage');
+    }
+    if (nets.isNotEmpty) {
+      // A HyperBus edge carries 13 nets and the mezzanine 22; the whole list
+      // makes a chip wider than the canvas.
+      const shown = 6;
+      final head = nets.take(shown).join(', ');
+      parts.add(nets.length > shown
+          ? '[$head, +${nets.length - shown} more]'
+          : '[$head]');
+    }
+    return parts.join('  ');
+  }
 }
 
 const nodeSize = Size(130, 62);
