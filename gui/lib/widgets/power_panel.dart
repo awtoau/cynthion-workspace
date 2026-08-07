@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/device_profile.dart';
 import '../models/node.dart';
+import '../providers/device_profile_provider.dart';
 import '../providers/power_provider.dart';
 import '../theme.dart' as theme;
+import 'capability.dart';
 
 class PowerPanel extends ConsumerWidget {
   const PowerPanel({super.key});
@@ -10,21 +13,24 @@ class PowerPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final channels = ref.watch(powerProvider);
+    final feed = feedStateFor(ref.watch(deviceProfileProvider), Cap.power);
 
     return Column(children: [
       _header(),
       Expanded(
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            children: channels
-                .map((ch) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: _ChannelRow(channel: ch),
-                    ))
-                .toList(),
-          ),
-        ),
+        child: feed == FeedState.unsupported
+            ? const UnsupportedNotice(what: 'Rail monitoring')
+            : Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  children: channels
+                      .map((ch) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: _ChannelRow(channel: ch),
+                          ))
+                      .toList(),
+                ),
+              ),
       ),
     ]);
   }
@@ -37,8 +43,10 @@ class PowerPanel extends ConsumerWidget {
         child: Row(children: [
           const Icon(Icons.bolt, size: 13, color: theme.colPower),
           const SizedBox(width: 6),
-          const Text('PAC1954 · power rails  [FAKE DATA]',
+          const Text('PAC1954 · power rails',
               style: TextStyle(color: theme.textMuted, fontSize: 11)),
+          const SizedBox(width: 8),
+          const FeedChip(cap: Cap.power),
         ]),
       );
 }

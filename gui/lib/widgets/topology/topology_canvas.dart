@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,18 +50,7 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
   }
 
   void _onNodeHover(String? id) {
-    _dbgLog('node_hover id=$id prev=$_hoveredNodeId mouse=$_mouseCanvasPos');
     setState(() => _hoveredNodeId = id);
-  }
-
-  static void _dbgLog(String msg) {
-    try {
-      // Same file as ConnectionPainter._log, and relative for the same reason.
-      File('tmp/connection_debug.log').writeAsStringSync(
-        '${DateTime.now().toIso8601String().substring(11, 23)} [canvas] $msg\n',
-        mode: FileMode.append,
-      );
-    } catch (_) {}
   }
 
   void _onCanvasMouseMove(PointerHoverEvent event) {
@@ -90,6 +78,17 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
     final nodes = ref.watch(topologyProvider);
     final connections = ref.watch(connectionsProvider);
     final hoveredNode = _hoveredNodeId != null ? nodes[_hoveredNodeId] : null;
+
+    // A malformed board file used to show as an empty canvas and nothing else:
+    // the provider's error was swallowed by `valueOrNull ?? const []` two
+    // layers down. Say so instead.
+    final config = ref.watch(boardConfigProvider);
+    if (config.hasError) {
+      return _CanvasMessage(
+        title: 'Board file would not load',
+        detail: '${config.error}',
+      );
+    }
 
     // AnimatedBuilder is outermost so animation ticks never cause the
     // InteractiveViewer to be torn down by an unrelated setState.
@@ -295,6 +294,34 @@ class _TopologyCanvasState extends ConsumerState<TopologyCanvas>
       ),
     );
   }
+}
+
+class _CanvasMessage extends StatelessWidget {
+  final String title;
+  final String detail;
+  const _CanvasMessage({required this.title, required this.detail});
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(title,
+                  style: TextStyle(
+                      color: theme.statusColor(NodeStatus.error), fontSize: 12)),
+              const SizedBox(height: 6),
+              Text(detail,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: theme.textMuted,
+                      fontSize: 10,
+                      fontFamily: 'monospace')),
+            ],
+          ),
+        ),
+      );
 }
 
 // ── Toolbar ───────────────────────────────────────────────────────────────────

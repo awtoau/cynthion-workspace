@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/transport_provider.dart';
+import '../providers/device_profile_provider.dart';
 import '../providers/inspect_provider.dart';
 import '../services/transport/apollo_transport.dart';
 import '../theme.dart' as theme;
@@ -115,11 +116,12 @@ class _TitleBar extends ConsumerWidget {
             ? const Color(0xFFD29922)
             : const Color(0xFF484F58);
 
+    final profile = ref.watch(deviceProfileProvider);
     final statusText = connected
-        ? transport!.displayName
+        ? '${transport!.displayName} · ${profile.label}'
         : connecting
             ? 'connecting…'
-            : 'stub data · apollod not connected';
+            : profile.label;
 
     return Container(
       height: 36,
