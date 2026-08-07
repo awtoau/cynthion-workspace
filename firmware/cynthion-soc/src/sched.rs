@@ -246,6 +246,22 @@ pub fn sources(uart: &mut Uart) {
             uart::error_reads(console)
         );
     }
+    // The I2C completion. Printed even when the count is zero, and especially
+    // then: zero after traffic means the source is masked, `CTR.IEN` is clear,
+    // or the gateware is not driving it, and those used to be indistinguishable
+    // because none of them produced a number. #246.
+    if let Some(board) = target::BOARD {
+        let count = irq::i2c_interrupts();
+        let _ = writeln!(
+            uart,
+            "  i2c           src {} irqs {}{}",
+            cynthion_soc_pac::base::BOARD_I2C_IRQ,
+            count,
+            if count == 0 { "  -- never fired" } else { "" }
+        );
+        let _ = board;
+    }
+
     // The Type-C sources, one per FUSB302B rather than one for both.
     //
     // Separately visible is half the point of giving them a source each: a

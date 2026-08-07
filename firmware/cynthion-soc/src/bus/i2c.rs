@@ -29,15 +29,40 @@
 //! where the peripheral is not there at all, and turns "the shell stopped
 //! responding" into "i2c: timeout".
 //!
-//! ## Polled, not interrupt-driven
+//! ## The completion interrupt: enabled, and what it is for
 //!
-//! The gateware raises an interrupt on completion and the SoC wires it to PLIC
-//! source 3, but `CTR.IEN` is left at its reset value of zero and this driver
-//! spins on `SR.TIP`. A shell command that reads a register has nothing else to
-//! do while it waits, so an interrupt would buy it nothing and cost a handler
-//! that has to be right about a level-sensitive source -- see the livelock
-//! contract in `irq.rs`. The wire exists so that a future driver, one filling
-//! the sideband's power payload from a timer, does not need a bitstream change.
+//! `CTR.IEN` is set and PLIC source 3 is claimed by [`I2c::init`]. Until #246 it
+//! was not: the source was wired in `gateware/soc/top.py`, `irq::init` enabled
+//! only the console and Type-C sources from a list held in that file, and the
+//! bit stayed clear at its reset value. `enabled 00000036` had bit 3 missing and
+//! nothing said so, which is why a peripheral now claims its own source rather
+//! than being remembered by a list somewhere else.
+//!
+//! **This driver still spins on `SR.TIP`.** The two are different bits and
+//! neither waits on the other: `TIP` is "a transfer is in progress" and is what
+//! says the command finished; `IF` is the completion flag and is what raises the
+//! line. A shell command reading a register has nothing else to do while it
+//! waits, so the spin is not the thing to remove first.
+//!
+//! What the interrupt gives today is EVIDENCE -- a source that fires and is
+//! counted, rather than one enabled and silent, which is what #246 asked for.
+//! What it enables next is the conversion that matters: under RTIC the REFRESH
+//! task holds `Devices` for the ~2 ms of a PAC1954 read, and a task that started
+//! a transfer, returned, and was pended again by this source would hold it for
+//! neither. That is #247, and it needs this bit set before it can be written.
+//!
+//! ## The handler must clear it AT THE PERIPHERAL
+//!
+//! Source 3 is a LEVEL: `self.irq.eq(irq_flag & ien)` in
+//! `gateware/soc/peripherals/i2c_master.py`, and `irq_flag` is cleared only by
+//! writing `CR.IACK`. Completing it at the PLIC while the peripheral still
+//! asserts re-delivers it immediately, which is the livelock `irq.rs` documents.
+//!
+//! [`I2c::acknowledge_interrupt`] is one MMIO write, so unlike the FUSB302B --
+//! whose clear is three read-to-clear registers over I2C, about a millisecond --
+//! it is short enough to do in the handler. That is the whole difference between
+//! the two sources' treatment, and it is a fact about the clear rather than
+//! about the peripheral.
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -51,6 +76,10 @@ const DATA: usize = 3;
 const CMD_STATUS: usize = 4;
 
 const CTR_EN: u8 = 0x80;
+/// Interrupt enable. The gateware drives PLIC source 3 from `irq_flag & ien`, so
+/// this bit is the difference between a source that is wired and a source that
+/// can fire.
+const CTR_IEN: u8 = 0x40;
 
 const CR_STA: u8 = 0x80;
 const CR_STO: u8 = 0x40;
@@ -136,18 +165,23 @@ impl I2c {
             write_volatile(self.reg(CTR), 0);
             write_volatile(self.reg(PRER_LO), prescale as u8);
             write_volatile(self.reg(PRER_HI), (prescale >> 8) as u8);
-            write_volatile(self.reg(CTR), CTR_EN);
+            write_volatile(self.reg(CTR), CTR_EN | CTR_IEN);
         }
         // Clear any completion left over from a previous run.
         //
         // `reset` and `go` restart this firmware with `j _start`, which resets
         // the CPU and nothing else -- the peripherals keep whatever state they
         // were in. IF set from the last command before a reboot would be
-        // reported by the next thing that looked at SR, and would raise an
-        // interrupt the moment anything set IEN. `irq::init()` calls
-        // `plic.complete()` for exactly the same reason and after exactly the
-        // same bug.
+        // reported by the next thing that looked at SR, and now that IEN is set
+        // above it would assert the line before anything was ready to clear it.
+        // `irq::init()` calls `plic.complete()` for exactly the same reason and
+        // after exactly the same bug.
+        //
+        // BEFORE the source is claimed, and that ordering is load-bearing: this
+        // is the FUSB302B rule applied to a second peripheral -- clear whatever
+        // the previous session left asserting, then enable delivery.
         self.acknowledge_interrupt();
+        crate::irq::claim(cynthion_soc_pac::base::BOARD_I2C_IRQ, 1);
     }
 
     fn status(&self) -> u8 {
