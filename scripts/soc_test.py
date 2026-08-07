@@ -705,7 +705,7 @@ def main():
                    b"info", b"selftest", b"ports", b"irq", b"time", b"cpu stats",
                    b"bench [region]", b"log [n|tags]", b"board", b"led",
                    b"i2c", b"power", b"phy", b"typec", b"sideband",
-                   b"load <hex>", b"reset"]
+                   b"load <hex>", b"reset", b"rtic"]
         command("help", listing, "`help` lists every command")
         command("?", listing, "`?` behaves as `help`")
 
@@ -1290,6 +1290,45 @@ def main():
               "console is dead for the rest of the session with nothing else to "
               "show for it.\n"
               f"received: {show(reply) or '(nothing)'}")
+
+        # --- which dispatcher this image is -------------------------------------
+        #
+        # `rtic` is the #245 command and this is the assertion that matters most
+        # about it: THE DEFAULT BUILD MUST SAY `superloop`. The whole arrangement
+        # -- `#[cfg(not(feature = "rtic"))]` on the entry point, the feature off
+        # in Cargo.toml, `soc_feature_isolation_check.py` -- exists so the
+        # shipping image is the poller, and a firmware that quietly shipped the
+        # other one would otherwise be indistinguishable from here.
+        #
+        # This suite builds `--features qemu` and nothing else, so `superloop` is
+        # the only correct answer. The other model is exercised by building
+        # `--features qemu,rtic` and running the same shell; see `docs/rtic.md`.
+        reply = command("rtic",
+                        [b"model    superloop", b"task     power_refresh",
+                         b"period 50 ms", b"stalls   frontend"],
+                        "`rtic` reports the model, the task and the counters")
+        check("the default build is the superloop, not RTIC",
+              b"model    rtic" not in reply,
+              "`rtic` says this image was built with the RTIC dispatcher. The "
+              "shipping image is the superloop and this suite builds it with "
+              "`--features qemu` alone, so either the feature leaked into the "
+              "build or the entry point is no longer gated on it.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
+        # `virt` decodes mhpmcounter3..31 as hardwired zero, so the two stall
+        # counters have no answer here and the command must SAY so rather than
+        # print two zeroes that would read as a perfect score. On the board they
+        # are real -- `gateware/soc/cpu/cpu.py` passes `--performance-counters
+        # 4` -- which is why this assertion is split by target.
+        if not board:
+            check("stalls with no counters behind them are reported as absent",
+                  b"frontend -- backend --" in reply,
+                  "`rtic` printed stall counts on a target that has no "
+                  "performance counters. Zero from an unimplemented CSR is not "
+                  "a measurement, and printing it as one is the "
+                  "plausible-wrong-answer failure this firmware keeps "
+                  "removing.\n"
+                  f"received: {show(reply) or '(nothing)'}")
 
         # --- the 1 ms tick ------------------------------------------------------
         #

@@ -9,10 +9,10 @@
     python3 scripts/soc_feature_isolation_check.py
     python3 scripts/soc_feature_isolation_check.py -v
 
-`firmware/cynthion-soc` carries four optional features -- `rtic`, `usbport`,
-`models`, `embassy` -- whose only purpose is to build measurement artefacts in
-`src/bin/`. The claim each of them makes is "the shipping image is byte-identical
-either way". This checks it rather than asserting it, three ways:
+`firmware/cynthion-soc` carries optional features -- `usbport`, `models`,
+`embassy` -- whose only purpose is to build measurement artefacts in `src/bin/`.
+The claim each of them makes is "the shipping image is byte-identical either
+way". This checks it rather than asserting it, three ways:
 
 1. **Every `src/bin/*.rs` has a `[[bin]]` entry with `required-features`.**
    Cargo auto-discovers `src/bin/`, so a target without an entry is built by
@@ -25,6 +25,25 @@ either way". This checks it rather than asserting it, three ways:
 
 3. **The shell's `.text` is identical with the features on and off.** The
    empirical half, and the one that would catch a mistake the first two miss.
+
+## Features that change the shell ON PURPOSE
+
+Not every optional feature is a spike. `workload` adds the #115 measurement load
+to the shell, and since #245 `rtic` replaces its dispatcher: build it and the
+PAC1954's REFRESH cycle is an RTIC task rather than a poll. For those, "the
+shell is unchanged" is not the claim being made and asserting it would be
+asserting the opposite of what the feature is for.
+
+They are told apart from the spikes by the shell ITSELF -- every
+`#[cfg(feature = "...")]` in `firmware/cynthion-soc/src/*.rs` names a feature the
+shell has deliberately opted into. That is derived rather than listed, so a new
+one is classified by the code rather than by whether anyone remembered to edit
+this file. They are still BUILT here, and the size of what they change is
+reported, because a deliberate change is still worth a number.
+
+**The default build is the baseline in every case**, which is the property that
+actually protects the product: the image that ships is the one built with no
+features at all.
 
 ## Why `.text` and not the whole file
 
@@ -55,6 +74,7 @@ from devlog import emit  # noqa: E402
 CRATE = ROOT / "firmware" / "cynthion-soc"
 MANIFEST = CRATE / "Cargo.toml"
 BIN_DIR = CRATE / "src" / "bin"
+SRC_DIR = CRATE / "src"
 MAIN = CRATE / "src" / "main.rs"
 
 # Its own build directory, so this never overwrites the artefact the bitstream
@@ -66,12 +86,28 @@ BUILD_DIR = ROOT / "tmp" / "isolation-build"
 # this script builds.
 TARGET_FEATURE = "qemu"
 
-# The measurement load. A feature that enables this one changes the shell on
-# purpose -- see where `spike_features` is computed.
-WORKLOAD_FEATURE = "workload"
-
 # Modules only the spikes use. None of these may be declared by src/main.rs.
 SPIKE_MODULES = ["usb", "usb_report"]
+
+
+def shell_features():
+    """Features the SHELL itself opts into, from its own `#[cfg(feature = ...)]`.
+
+    `src/*.rs` and not `src/bin/*.rs`: the spikes live in `src/bin/` and reach
+    shared code by `#[path]`, so anything they `#[cfg]` is about a binary the
+    default build never compiles. A gate in `src/` is different -- those files
+    are the shell, and a feature named in one of them changes it by design.
+
+    Derived rather than listed so that a new feature is classified by the code
+    that uses it. Today it finds `workload` and `preempt` (the #115 measurement
+    load and its dispatcher) and `rtic` (the #245 conversion of the PAC1954's
+    REFRESH cycle to a task).
+    """
+    found = set()
+    for path in sorted(SRC_DIR.glob("*.rs")):
+        found |= set(re.findall(r'feature\s*=\s*"([A-Za-z0-9_-]+)"',
+                                path.read_text()))
+    return found
 
 
 def declared_features():
@@ -172,6 +208,14 @@ def text_fingerprint(elf):
         # hashes. Both are metadata-derived; neither is the program.
         line = re.sub(r"::h[0-9a-f]{16}", "::hHASH", line)
         line = re.sub(r"Cs[0-9A-Za-z]{9,17}_", "CsHASH_", line)
+        # The machine outliner's serial numbers. LLVM names the functions it
+        # outlines `OUTLINED_FUNCTION_0`, `_1`, ... in the order it creates them,
+        # and that order moves when anything upstream of it does. Caught with
+        # `--features embassy`, which gates nothing the shell compiles: `.text`
+        # stayed at exactly 37,236 bytes and 12,582 instructions, and the whole
+        # of the difference was ONE call annotation reading `_9` instead of
+        # `_8`. A serial number is not the program.
+        line = re.sub(r"OUTLINED_FUNCTION_\d+", "OUTLINED_FUNCTION_N", line)
         # Addresses, and the direction of a PC-relative displacement.
         line = re.sub(r"[-+]?0x[0-9a-f]+", "0xADDR", line)
         # The displacement of an indirect jump, INCLUDING whether it has one:
@@ -239,23 +283,25 @@ def main():
     # Every spike feature that actually exists, turned on together. If the shell
     # survives all of them at once it survives any of them.
     #
-    # Minus the ones that turn on `workload`, whose whole purpose is to add the
-    # #115 measurement load TO the shell -- `docs/rtic.md`
-    # measures the shell with it and the shipping image is built without it. A
-    # feature that gates a `[[bin]]` AND implies `workload`
-    # (`wlbare`, `rticwl` and everything built on it) would otherwise be reported
-    # as changing the shell, which is true and is not the property this checks.
-    # Computed from the manifest rather than listed, so a new one is classified
-    # by what it enables.
+    # Minus the ones the SHELL opts into, and minus anything that transitively
+    # turns one of those on. Those change the shell by design -- `workload` adds
+    # the #115 measurement load, `rtic` replaces the dispatcher (#245) -- and
+    # asserting they do not would be asserting the opposite of what they are for.
+    # Both halves are computed rather than listed: which features the shell names
+    # comes from its own `#[cfg]`s, and which other features imply them comes
+    # from the manifest, so a new one is classified by the code and not by
+    # whether anyone edited this file.
     graph = feature_graph()
-    workload_features = {name for name in features
-                         if WORKLOAD_FEATURE in enables(name, graph)}
+    deliberate = shell_features()
+    by_design = {name for name in features
+                 if enables(name, graph) & deliberate}
     spike_features = sorted((required & features)
-                            - {TARGET_FEATURE} - workload_features)
-    if workload_features & required:
-        emit(f"  note: {', '.join(sorted(workload_features & required))} "
-             f"imply `{WORKLOAD_FEATURE}`, which adds the #115 load to the "
-             f"shell by design; not checked for inertness")
+                            - {TARGET_FEATURE} - by_design)
+    changing = sorted(by_design & required)
+    if changing:
+        emit(f"  note: {', '.join(changing)} change the shell BY DESIGN -- the "
+             f"shell's own `#[cfg(feature = ...)]`s name them. Built and sized "
+             f"below, not checked for inertness.")
     declared = {(CRATE / path).resolve() for path in targets}
     for source in sorted(BIN_DIR.glob("*.rs")):
         entry = next((p for p in targets
@@ -334,6 +380,37 @@ def main():
                     f"      (the shipping image is built without it, so the "
                     f"product is unaffected -- but the feature is not inert, "
                     f"and anything built WITH it is not the shell that ships)")
+
+    # 4. what the deliberate ones cost, reported rather than asserted
+    #
+    # A number, because a change made on purpose is still a change worth
+    # knowing the size of -- particularly here, where the I-cache is 4 KiB and
+    # direct-mapped, so `.text` is a speed question and not a space one. See the
+    # `opt-level` table in the crate's Cargo.toml.
+    if reference and changing:
+        for feature in changing:
+            elf, error = build_shell([feature])
+            if error:
+                failures.append(f"the shell did not build with "
+                                f"['{feature}']:\n{error}")
+                continue
+            got = text_fingerprint(elf)
+            if got is None:
+                continue
+            size, count, _ = got
+            if got == reference:
+                # Named by a shell source but inert in this configuration. True
+                # of a feature whose `#[cfg]` sits in a module the shell only
+                # compiles when a DIFFERENT feature is also on -- `rticmono`,
+                # which appears in `src/wl_report.rs` and does not imply
+                # `workload`. Reported rather than asserted, because it is a
+                # property of the combination and not of the feature.
+                emit(f"  note: `{feature}` is named by a shell source but "
+                     f"leaves its code identical on its own")
+                continue
+            emit(f"  note: `{feature}` builds; .text {size:,} bytes "
+                 f"({size - reference[0]:+,}), {count:,} instructions "
+                 f"({count - reference[1]:+,}) against the default")
 
     emit("")
     if failures:

@@ -82,10 +82,27 @@ workload = []
 # nothing to measure.
 preempt = ["workload"]
 
-# The RTIC spike (`docs/rtic.md`, #115). Off, and the shell does not
-# know it exists: everything it adds is in `src/bin/rtic.rs`, which cargo does
-# not build without the feature, so `src/main.rs` is untouched and the shipping
-# image is byte-identical either way. `scripts/rtic_probe.py` builds it.
+# RTIC AS THE SHELL'S DISPATCHER (#245, under #115).
+#
+# It used to gate only `src/bin/rtic.rs`, a spike the shell did not know existed.
+# It still builds that -- the spike is the standing answer to "does RTIC accept
+# this machine at all" -- but since #245 it also REPLACES THE SHELL'S
+# DISPATCHER: `src/rtic_app.rs` becomes the entry point, `src/main.rs`'s
+# `#[entry]` is gated off, and the PAC1954's REFRESH cycle stops being a poll at
+# the top of the main loop and becomes a periodic task the 1 ms tick releases.
+#
+# **OFF, AND IT MUST STAY OFF.** The hardware image is the product and the
+# product is the superloop. This is the same rule `qemu` above lives under and it
+# is load-bearing for the same reason: a feature that had to be remembered on
+# every build would eventually be forgotten on one. Build with no features and
+# the dispatcher is the superloop, to the instruction --
+# `scripts/soc_feature_isolation_check.py` builds both and prints what the
+# difference costs (+1,700 bytes of `.text` when this was written). What it BUYS
+# is not measured yet and is not measurable under QEMU -- see `docs/rtic.md`.
+#
+# The shell's `rtic` command reports which of the two it was built as, so a
+# board holding the wrong image says so in one word rather than being inferred
+# from its timing.
 #
 # `critical-section-single-hart` rides on the feature rather than sitting in
 # `[dependencies]` because riscv-slic's generated code calls
@@ -160,13 +177,21 @@ rticspin = ["rticwl"]
 rticmono = ["dep:rtic", "riscv/critical-section-single-hart",
             "dep:rtic-monotonics", "dep:rtic-time", "dep:fugit"]
 
-# The spike, as a second binary rather than a `#[cfg]` through `src/main.rs`.
+# The spike, as a second binary. STILL a second binary after #245, for a reason
+# that changed: it is no longer the only way to have RTIC here, it is the
+# smallest one. Two tasks that count and a PLIC front end, so its `.text` is the
+# RTIC runtime plus almost nothing -- which is what makes
+# `scripts/rtic_probe.py`'s size figure mean something. `src/rtic_app.rs` runs
+# the whole shell and cannot answer that question.
 #
 # `#[rtic::app]` emits its own `#[no_mangle] fn main`, so it cannot coexist with
-# riscv-rt's `#[entry]` in one binary -- the choice was a `#[cfg(not(...))]` on
-# the shell's entry point, which makes 1,700 lines dead code under the feature,
-# or this. `required-features` means cargo skips the target entirely when the
-# feature is off, so the default build does not compile, link or lint it.
+# riscv-rt's `#[entry]` in one binary. #245 took the other horn of that: a
+# `#[cfg(not(feature = "rtic"))]` on the shell's entry point. What made it cheap
+# was factoring the loop body out first -- `boot`, `housekeeping` and `consoles`
+# are shared, so nothing is dead code under either setting.
+#
+# `required-features` means cargo skips the target entirely when the feature is
+# off, so the default build does not compile, link or lint it.
 [[bin]]
 name = "cynthion-soc-rtic"
 path = "src/bin/rtic.rs"

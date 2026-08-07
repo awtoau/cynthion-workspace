@@ -50,6 +50,26 @@
 //! source, so resist the urge to `#[cfg]` anything below this line -- put the difference
 //! in `src/target.rs` instead.
 //!
+//! ## Two dispatchers, one shell
+//!
+//! The other `#[cfg]` in this file, and the only one, is the concurrency model:
+//!
+//!     default          -> the superloop below
+//!     --features rtic  -> the `#[rtic::app]` in `src/rtic_app.rs`
+//!
+//! **The default is the superloop and the product is the default.** A feature that
+//! had to be remembered on every build would eventually be forgotten on one, which is
+//! the same argument the `qemu` gate makes above.
+//!
+//! It is the ENTRY POINT that is gated and not the loop body, because `#[rtic::app]`
+//! emits its own `#[no_mangle] fn main` and riscv-rt's `#[entry]` emits the same
+//! symbol. Everything below the entry point is shared: `boot`, `housekeeping`,
+//! `consoles`, `Devices`, `Shell`, `run` and every command. The models differ in who
+//! runs the loop body, in what decides the PAC1954's REFRESH cycle is due, and in
+//! whether `Devices` is protected by `&mut` or by a priority ceiling -- and in nothing
+//! else, deliberately, because a comparison with more than one variable in it measures
+//! neither. The `rtic` command prints the comparison; #245 and #115 are the issues.
+//!
 //! ## More than one console
 //!
 //! The shell is not a singleton and neither is the console. `Shell` holds one line
@@ -78,6 +98,11 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
+// Only the superloop has one. `#[rtic::app]` emits its own `fn main`, so the
+// RTIC build has no `#[entry]` to attach and importing it would be an unused
+// import -- which on this crate is a warning, and a warning nobody reads is how
+// a real one gets missed.
+#[cfg(not(feature = "rtic"))]
 use riscv_rt::entry;
 
 mod bench;
@@ -102,6 +127,13 @@ mod metrics;
 mod plic;
 mod power;
 mod power_rails;
+// The RTIC dispatcher (#245). `#[rtic::app]` emits its own `#[no_mangle] fn
+// main`, so it and the `#[entry]` below are mutually exclusive by the linker --
+// which is why the entry point is gated rather than the loop body. Off by
+// default: the shipping image is the superloop.
+#[cfg(feature = "rtic")]
+mod rtic_app;
+mod sched;
 mod selftest;
 mod sideband;
 mod target;
@@ -144,7 +176,12 @@ const _: () = assert!(target::UART_BASES.len() <= MAX_CONSOLES);
 /// Empty on a target with no board -- `target::BOARD` is `None` under QEMU, so
 /// every field here is state about hardware that is not there, kept anyway so
 /// the commands that report it compile and run on both targets.
-struct Devices {
+/// `pub` and not private: `#[rtic::app]` names this type in the signature of
+/// `pub` items it generates inside its own module, and a less-visible type
+/// cannot appear in one -- `pub(crate)` is not enough, the compiler wants the
+/// same visibility. It costs nothing here: this crate is a binary with no
+/// `[lib]`, so there is no outside for anything to be public to.
+pub struct Devices {
     /// The board's one I2C controller and the mux in front of it, or `None` on a
     /// target that has no board.
     ///
@@ -175,7 +212,9 @@ impl Devices {
 ///
 /// Per-console rather than global: `spoken` latching on one port must not silence the
 /// re-banner on another, and two half-typed command lines must not share a buffer.
-struct Shell {
+/// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
+/// generated signatures too.
+pub struct Shell {
     line: [u8; 64],
     len: usize,
     /// Set by the first keypress. From then on the prompt is on screen and reprinting
@@ -283,8 +322,17 @@ fn primary() -> Uart {
     Uart::new(target::UART_BASES[0])
 }
 
-#[entry]
-fn main() -> ! {
+/// Everything that happens before the first turn of whichever loop runs.
+///
+/// Factored out of `main` for #245, so the two dispatchers cannot come up
+/// differently. The superloop below calls it and so does `rtic_app`'s
+/// `#[init]`; a board that behaved differently under the two models would be a
+/// difference this arrangement is unable to produce, which is what makes the
+/// jitter comparison mean anything.
+///
+/// It ends with interrupts on and the tick running, so the caller may not assume
+/// it has the machine to itself afterwards.
+fn boot() -> Devices {
     // Every UART, not just the primary: an uninitialised 16550 has its FIFOs in whatever
     // state the last boot left them, and on this SoC a `j _start` reboot restarts the CPU
     // without resetting the peripherals. A port left holding half a command line would
@@ -343,6 +391,75 @@ fn main() -> ! {
     // true: there was no clock to tell those lines apart. See `src/log.rs`.
     timer::start();
 
+    // The CPU's four performance counters, pointed at the events #115 names.
+    // After the tick, so the two stall counters and `mcycle` describe the same
+    // running system from the same instant -- and before either dispatcher, so
+    // the whole session is counted rather than the part after someone typed
+    // `rtic`. See `src/sched.rs`.
+    sched::init();
+
+    devices
+}
+
+/// The loop body's board half: everything a handler deferred, drained on a
+/// console that normal context owns.
+///
+/// Shared by both dispatchers (#245). It takes the console rather than making
+/// one, because under RTIC the caller is holding a lock and the borrow is what
+/// says so.
+fn housekeeping(console: &mut Uart, devices: &mut Devices) {
+    // Anything an interrupt handler wanted to say. Formatted and
+    // transmitted HERE, in normal context, on a console this loop owns --
+    // which is the entire arrangement: a handler cannot reach a `Uart`, and
+    // `events::drain` cannot be called without one. See `src/events.rs`.
+    events::drain(console);
+
+    // Anything a console has LOST, on the same terms and for the same
+    // reason: the read of LSR that discovers an overrun happens inside the
+    // interrupt handler, which may not print. The bits wait in
+    // `src/uart.rs` until here. A console that drops input silently is the
+    // failure this board keeps meeting; this is where it stops being
+    // silent.
+    uart::report_errors(console);
+
+    // A deferred Type-C interrupt, if one is waiting. Every pass rather than
+    // on a timer: the source is MASKED between the handler and here, so the
+    // only latency is one turn of this loop and nothing is lost while it
+    // takes. See `src/typec.rs`.
+    if let Some(bus) = devices.bus.as_mut() {
+        devices.type_c.service(console, bus);
+        devices.type_c.poll(console, bus);
+    }
+}
+
+/// The loop body's console half: one byte from each shell, round-robin.
+///
+/// Fair by construction and with no arbitration to get wrong: a console that is
+/// being pasted into cannot starve the others, because it still only gets one
+/// byte per turn.
+///
+/// Bytes come from the interrupt handler's rings, not from LSR, so the byte is
+/// already collected before this asks for it -- a console busy printing cannot
+/// miss one. What the caller still decides is how much of one console's input is
+/// handled before the other's, which is a fairness property worth keeping.
+fn consoles(shells: &mut [Shell; MAX_CONSOLES], devices: &mut Devices) {
+    for (index, &base) in target::UART_BASES.iter().enumerate() {
+        let mut uart = Uart::new(base);
+        shells[index].poll(index, &mut uart, index < target::ANNOUNCING, devices);
+    }
+}
+
+/// The superloop: the dispatcher this firmware ships with.
+///
+/// Gated on `not(feature = "rtic")` and on nothing else, because
+/// `#[rtic::app]` emits its own `#[no_mangle] fn main` and two of those do not
+/// link. The default build has no `rtic` in the dependency graph at all, so this
+/// is the only entry point that exists in the product.
+#[cfg(not(feature = "rtic"))]
+#[entry]
+fn main() -> ! {
+    let mut devices = boot();
+    let mut console = primary();
     let mut shells = [Shell::NEW; MAX_CONSOLES];
 
     loop {
@@ -359,47 +476,21 @@ fn main() -> ! {
         // ms period does not need a handler to be met, and one turn of this
         // loop is microseconds.
         //
+        // **This is the poll #245 is about.** Most turns of this loop read the
+        // clock, find the interval has not elapsed, and return; the cost is not
+        // the reading, it is that the REFRESH cycle cannot happen until the turn
+        // that is running finishes. `--features rtic` builds the same body as a
+        // task released by the tick instead, and the `rtic` command prints what
+        // the difference is worth.
+        //
         // It reports on the PRIMARY console only. The second port's TX pin is
         // JTAG TMS and this firmware never transmits there unbidden, which is
         // exactly what a background monitor would be doing -- see
         // `target::ANNOUNCING`.
         devices.power.poll(&mut console, devices.bus.as_mut());
 
-        // Anything an interrupt handler wanted to say. Formatted and
-        // transmitted HERE, in normal context, on a console this loop owns --
-        // which is the entire arrangement: a handler cannot reach a `Uart`, and
-        // `events::drain` cannot be called without one. See `src/events.rs`.
-        events::drain(&mut console);
-
-        // Anything a console has LOST, on the same terms and for the same
-        // reason: the read of LSR that discovers an overrun happens inside the
-        // interrupt handler, which may not print. The bits wait in
-        // `src/uart.rs` until here. A console that drops input silently is the
-        // failure this board keeps meeting; this is where it stops being
-        // silent.
-        uart::report_errors(&mut console);
-
-        // A deferred Type-C interrupt, if one is waiting. Every pass rather than
-        // on a timer: the source is MASKED between the handler and here, so the
-        // only latency is one turn of this loop and nothing is lost while it
-        // takes. See `src/typec.rs`.
-        if let Some(bus) = devices.bus.as_mut() {
-            devices.type_c.service(&mut console, bus);
-            devices.type_c.poll(&mut console, bus);
-        }
-
-        // Round-robin, one byte per console per pass. Fair by construction and with no
-        // arbitration to get wrong: a console that is being pasted into cannot starve
-        // the others, because it still only gets one byte per turn.
-        //
-        // Bytes come from the interrupt handler's rings, not from LSR, so the byte is
-        // already collected before this loop asks for it -- a console busy printing
-        // cannot miss one. What the loop still decides is how much of one console's input
-        // is handled before the other's, which is a fairness property worth keeping.
-        for (index, &base) in target::UART_BASES.iter().enumerate() {
-            let mut uart = Uart::new(base);
-            shells[index].poll(index, &mut uart, index < target::ANNOUNCING, &mut devices);
-        }
+        housekeeping(&mut console, &mut devices);
+        consoles(&mut shells, &mut devices);
     }
 }
 
@@ -453,6 +544,7 @@ const HELP: &[(&str, &str)] = &[
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
     ("reset", "jump to the reset vector"),
+    ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),
     ("sideband", "the sideband link"),
     ("time", "uptime, from mtime"),
@@ -759,66 +851,17 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             // that stays at zero for the *other* console, or `pending` stuck with a bit
             // set, which is a claim that was never completed.
             //
-            // Every register read below is side-effect free. In particular this does NOT
-            // read the claim register: that would take an interrupt away from the handler
-            // and never complete it, killing the console from a diagnostic command. See
-            // `Plic::claim`.
-            let plic = plic::Plic::new(target::PLIC_BASE);
-            let _ = writeln!(
-                uart,
-                "plic  @{:08x} pending {:08x} enabled {:08x}",
-                target::PLIC_BASE,
-                plic.pending(),
-                plic.enabled()
-            );
-            for console in 0..target::UART_BASES.len() {
-                let (interrupts, stalls, buffered) = irq::stats(console);
-                // `lost` counts LSR reads that found an error bit set -- an
-                // overrun or a framing error, both of which mean input that
-                // never reached the shell. Zero is the only good value; a
-                // number that climbs while nothing is typed is a noisy line.
-                let _ = writeln!(
-                    uart,
-                    "  {} src {} irqs {} stalls {} buffered {} lost {}",
-                    console,
-                    target::UART_IRQS[console],
-                    interrupts,
-                    stalls,
-                    buffered,
-                    uart::error_reads(console)
-                );
-            }
-            // The Type-C sources, one per FUSB302B rather than one for both.
-            //
-            // Separately visible is half the point of giving them a source
-            // each: a TARGET count that climbs while AUX stays at zero says
-            // which connector something is happening on, and a shared source
-            // could only ever have shown the sum. The `enabled` word above is
-            // the other half -- a port whose bit is clear there is one the
-            // handler has masked and `typec` has not finished servicing.
-            for (port, &source) in target::TYPE_C_IRQS.iter().enumerate() {
-                let _ = writeln!(
-                    uart,
-                    "  type-c {:6} src {} irqs {}",
-                    fusb302::Port::ALL[port].name(),
-                    source,
-                    irq::type_c_interrupts(port)
-                );
-            }
-            // The deferred log's own health. A handler may not print, so it
-            // records; if the ring fills, records are dropped rather than the
-            // handler stalling, and this is where that shows up. A nonzero
-            // count is not a failure by itself -- it means a burst outran the
-            // shell -- but a count that keeps climbing means events are being
-            // lost continuously, which is the state in which a fault becomes
-            // invisible. See `src/events.rs`.
-            let _ = writeln!(
-                uart,
-                "  log  waiting {} dropped {}",
-                events::waiting(),
-                events::dropped()
-            );
+            // The PLIC block itself is rendered by `src/sched.rs`, because the
+            // `rtic` command prints the same counters and two renderers would
+            // eventually answer the same question in two formats that could not
+            // be diffed.
+            sched::sources(uart);
+            sched::log_health(uart);
         }
+        // Which dispatcher this image was built with, and what it is achieving:
+        // the #115 comparison, on the shipping firmware rather than on a
+        // synthetic workload. See `src/sched.rs`.
+        b"rtic" => sched::command(uart),
         b"time" => {
             // The tick, and the evidence that it is a tick rather than a
             // counter someone reads.
