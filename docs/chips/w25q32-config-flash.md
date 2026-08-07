@@ -1,7 +1,7 @@
 # Winbond W25Q32 — the configuration flash
 
 The SPI NOR flash the ECP5 boots from on Cynthion r1.4. **Exactly 4 MiB**, and
-unlike the [HyperRAM](w956a8-hyperram.md) on the same board it is exactly what its
+unlike the [HyperRAM](hyperram/w956a8.md) on the same board it is exactly what its
 marking says.
 
 **Index:** [`../hardware.md`](../hardware.md)

@@ -13,7 +13,7 @@ Fetch anything missing with the URL below. `sources/*.pdf` is gitignored.
 | `ISSI-IS66WVH8M8-64Mbit-HyperRAM.pdf` | IS66/67WVH8M8ALL/BLL, 64 Mbit, 8M x 8 | `https://www.issi.com/WW/pdf/66-67WVH8M8ALL-BLL.pdf` |
 | `ISSI-IS66WVH16M8-128Mbit-HyperRAM.pdf` | IS66/67WVH16M8ALL/BLL, 128 Mbit, 16M x 8 | `https://www.issi.com/WW/pdf/66-67WVH16M8ALL-BLL.pdf` |
 
-**What these settled** (#109, `../docs/chips/w956a8-hyperram.md`):
+**What these settled** (#109, `../docs/chips/hyperram/w956a8.md`):
 
 **The part is 8 MiB and always was.** `ID0 = 0x0c86` gives raw fields of 12 and 8, and
 **both are count-minus-one** — table 5.2 states `00000` = *"One Row address bit"*. So it
@@ -24,7 +24,7 @@ Rows: 8192".
 look like it held twice its marking. Two further hypotheses were published to explain
 that non-existent 2x gap — including a dual-die reading of ID0[15:14], which the 128 Mbit
 datasheet does document but which does not apply here. Both are retracted; the detail is
-in `../docs/chips/w956a8-hyperram.md`.
+in `../docs/chips/hyperram/w956a8.md`.
 
 These datasheets were still worth fetching: they are what settled it, and the 128 Mbit
 one is the control that let the dual-die hypothesis be tested and dropped.

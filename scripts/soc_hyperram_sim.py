@@ -154,7 +154,7 @@ DQS_BEAT_BITS = 32
 # The part is configured for FIXED latency: CR0 reads `0x8f2f` and bit 3 selects
 # it. So the device takes the same latency on every transaction and RWDS during
 # the command period says nothing about this one. That is the fact section 2
-# rests on, and it comes from `docs/chips/w956a8-hyperram.md`, which decoded it
+# rests on, and it comes from `docs/chips/hyperram/w956a8.md`, which decoded it
 # from a register the board actually returned.
 FIXED_LATENCY = True
 
@@ -175,7 +175,7 @@ FIXED_LATENCY = True
 #
 # CR0 = 0x8f2f: bits [7:4] = 0010b, which table 10 reads as 7 clocks, and bit 3
 # selects FIXED latency, so the part takes 2 x 7 = 14 CK on every transaction.
-# `docs/chips/w956a8-hyperram.md` carries the field table.
+# `docs/chips/hyperram/w956a8.md` carries the field table.
 #
 # This is stated separately from `latency_beats()` ON PURPOSE. That function
 # returns the number of beats the CONTROLLER waits, so a model built on it agrees

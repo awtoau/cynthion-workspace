@@ -23,7 +23,7 @@ checked by §11 of `scripts/soc_hyperram_sim.py`, and **off by default** — see
 "The smallest experiment, run" below for what is settled and what the model
 cannot settle, which is the read path's round-trip latency.
 
-**Index:** [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) ·
+**Index:** [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) ·
 [`upstream-boundary.md`](upstream-boundary.md) ·
 [`riscv-core-build.md`](riscv-core-build.md)
 

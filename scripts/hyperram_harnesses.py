@@ -23,7 +23,7 @@ That shape was read as duplication in #189 -- `hyperram_fifo.py`,
 `hyperram_regfuzz.py` and `hyperram_identify.py` each "existed twice". None of
 them did. The real fault was worse and the opposite way round: two of the three
 runners had been archived to `debris/scripts/` as spent one-offs while their
-gateware stayed live, so `gateware/README.md` and `docs/chips/w956a8-hyperram.md`
+gateware stayed live, so `gateware/README.md` and `docs/chips/hyperram/w956a8.md`
 both name `scripts/hyperram_fifo.py`, `scripts/hyperram_regfuzz.py` and
 `scripts/hyperram_ladder.py` as the host drivers for paths that did not exist.
 `./dev.py audit` could not see it -- its DANGLING check reads only `scripts/`,
@@ -80,7 +80,7 @@ HARNESSES = {
         "hyperram_identify.py", "hyperram_identify.py",
         "ID0/ID1/CR0/CR1, the density they decode to, and whether banks alias",
         "yes -- ID0 0x0c86 and the 8 MiB boundary bracketed (d77f052, c535ba7, "
-        "1c8d10a); the part is in docs/chips/w956a8-hyperram.md because of it",
+        "1c8d10a); the part is in docs/chips/hyperram/w956a8.md because of it",
     ),
     "regfuzz": (
         "hyperram_regfuzz.py", "hyperram_regfuzz.py",
@@ -110,7 +110,7 @@ HARNESSES = {
         "throughput against chunk size when writes and reads alternate, i.e. how "
         "much of the streaming rate survives turning the bus around",
         "yes, once -- ten chunk sizes at 120 MHz, 163,840 words verified "
-        "(18144d3); the table is in docs/chips/w956a8-hyperram.md",
+        "(18144d3); the table is in docs/chips/hyperram/w956a8.md",
     ),
     "measure": (
         "hyperram_measure.py", None,

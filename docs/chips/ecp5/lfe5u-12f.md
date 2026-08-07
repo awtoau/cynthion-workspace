@@ -116,7 +116,7 @@ test is whether a finding would be useful to someone with a different ECP5 board
 ## Getting DDR data in and out at speed
 
 The HyperRAM side of the same problem is in
-[`w956a8-hyperram.md`](../w956a8-hyperram.md).
+[`hyperram/w956a8.md`](../hyperram/w956a8.md).
 
 ### The clock structure is not the canonical ECP5 one, and that is the leading hypothesis
 

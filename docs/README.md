@@ -95,7 +95,7 @@ in its §13 got there in the first place.
 * [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) — USB3343 ×3 — the ULPI PHYs
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
-* [`chips/w956a8-hyperram.md`](chips/w956a8-hyperram.md) — Winbond W956A8MBYA6I — the HyperRAM
+* [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — Winbond W956A8MBYA6I — the HyperRAM
 
 ### Moondancer / the SoC
 

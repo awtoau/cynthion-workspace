@@ -336,7 +336,7 @@ class HyperRAMCeiling(Elaboratable):
         REPEATED 64 TIMES ACROSS IT: an addressing fault anywhere in bits 16..21
         wrote and read the same value and was scored correct. The harness could
         not see aliasing over the whole upper part, which is the one question
-        `docs/chips/w956a8-hyperram.md` raises about the undocumented upper 4 MiB.
+        `docs/chips/hyperram/w956a8.md` raises about the undocumented upper 4 MiB.
 
         At 32 bits the low half carries `addr[0:16]` and the high half carries
         `addr[16:32]` complemented, so the value is INVERTIBLE: given a word that

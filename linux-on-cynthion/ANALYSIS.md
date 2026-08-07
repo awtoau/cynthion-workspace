@@ -21,7 +21,7 @@ Depth lives elsewhere and is linked, not repeated:
 | for | see |
 |---|---|
 | the CPU area and timing matrix, rv64 and MMU rows | [below](#what-64-bit-and-an-mmu-cost-measured) |
-| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md), ranked in [`architecture.md`](../docs/architecture.md) |
+| HyperRAM and flash speed ceilings, and every remaining lever | [`chips/hyperram/w956a8.md`](../docs/chips/hyperram/w956a8.md), ranked in [`architecture.md`](../docs/architecture.md) |
 | the 480 Mbps host engine, its integration design and register map | [`usb-host-options.md`](../docs/usb-host-options.md) |
 | the full-speed OHCI route in full | Part II of this document, §1–§8 |
 
@@ -163,7 +163,7 @@ and refill cost is the open question below. Doubling the cache halves the refill
 | | figure | provenance |
 |---|---|---|
 | HyperRAM peak, CK 192 MHz, 2 bytes/CK DDR | 384 MB/s | arithmetic |
-| **measured read, 128-word bursts** | **238.9 MB/s** at CK 140 (85.3%) | measured — [`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md). The 334.4 MB/s this row used to claim is **withdrawn**; CK 180 fails in bulk |
+| **measured read, 128-word bursts** | **238.9 MB/s** at CK 140 (85.3%) | measured — [`chips/hyperram/w956a8.md`](../docs/chips/hyperram/w956a8.md). The 334.4 MB/s this row used to claim is **withdrawn**; CK 180 fails in bulk |
 | measured write | 351.1 MB/s | measured |
 | fixed overhead per HyperBus transaction | **19 CK** | derived: 147 CK for 128 words |
 | the CSR staging port this replaced | **0.77 MB/s** | measured, `bench hyperram` |
@@ -177,7 +177,7 @@ so it is cacheable and executable, with JTAG keeping arbitration priority. It ha
 
 `HyperRAMWishbone` can coalesce an incrementing linear burst into one HyperBus
 transaction (`bootram.py`, capped at 748 words for tCSM — see
-[`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md#how-software-reaches-it)),
+[`chips/hyperram/w956a8.md`](../docs/chips/hyperram/w956a8.md#how-software-reaches-it)),
 but `sustained` gates it and is **False**: coalescing corrupted alternate beats,
 because a HyperBus data phase cannot be stalled and this master bubbles. See
 [`soc-memory-bus.md`](../docs/soc-memory-bus.md) and #185.
@@ -260,7 +260,7 @@ product.
 
 | novel | why nobody has it |
 |---|---|
-| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`chips/w956a8-hyperram.md`](../docs/chips/w956a8-hyperram.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
+| **HyperRAM as Linux main memory on ECP5** | **no ECP5 board in `litex-boards` calls `add_hyperram`** ([`chips/hyperram/w956a8.md`](../docs/chips/hyperram/w956a8.md)); LiteX's ECP5 HyperRAM lineage is the separate `litex-hub/litehyperbus` |
 | …at 334.4 MB/s | nothing faster on an ECP5 appears in the open record — the next published figure is Tiliqua's 200 MB/s |
 | **rv64 VexiiRiscv Linux on a 12F** | `linux-on-litex-vexriscv` is rv32 VexRiscv |
 | **Rust kernel drivers on this SoC** | the stated point of the exercise |
