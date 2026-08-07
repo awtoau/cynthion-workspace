@@ -72,13 +72,20 @@
 //! One flag gates `rdtime` and these together, so `info`'s `NO RDTIME` line is
 //! the warning for both. An undecoded CSR read traps rather than reading zero.
 //!
-//! **`mhpmcounter3..31` and `mhpmevent3..31` decode and read hardwired zero.**
-//! The plugin allocates the range as WARL-zero dummies when
-//! `additionalCounterCount` is 0, which it is: nothing passes
-//! `--performance-counters N`. Reading one is not a trap and not a measurement,
-//! so nothing here reads one. Cache miss counts -- the events worth having on a
-//! core whose cached configuration is mandatory -- need that flag, a new
-//! bitstream, and a board to check it on.
+//! **`mhpmcounter3..6` and `mhpmevent3..6` are REAL, and this comment used to say
+//! they were not.** `gateware/soc/cpu/cpu.py:123` passes
+//! `--performance-counters 4`, so the plugin allocates four counters with
+//! writable event selectors rather than the WARL-zero dummies it produces at
+//! `additionalCounterCount = 0`. The stale claim survived the flag being added
+//! (#173) and is corrected here because it was the reason nothing outside
+//! `src/bench.rs` read one.
+//!
+//! What they cost is timing, not space: the design stopped closing at 72 MHz
+//! when they were added, which is why `SYNC_MHZ` is 60. `src/bench.rs` owns the
+//! event ids and the selector writes; `src/sched.rs` reads
+//! `STALLED_CYCLES_FRONTEND` and `STALLED_CYCLES_BACKEND` through it for the
+//! `rtic` command, which is the #115 comparison this module's `busy` fraction
+//! cannot make on its own -- a turn can be busy and stalled at the same time.
 //!
 //! Only the low 32 bits are read, for the reason `src/clock.rs` gives for
 //! `rdtime`: a 64-bit read on rv32 is a retry loop, and every interval here is
@@ -235,6 +242,18 @@ pub fn polled() {
     if gap < clock::millis(power::AGE_LIMIT_MS) {
         WORST_GAP.fetch_max(gap, RELAXED);
     }
+}
+
+/// `(polls, worst gap in ticks)` -- what `stats` prints about the poller, for
+/// anything else that wants the same two numbers.
+///
+/// `src/sched.rs` is the caller: the `rtic` command reports the achieved period
+/// beside the release lateness, and the two answer different questions. The gap
+/// says what interval the REFRESH cycle is actually running at; the lateness
+/// says how long it waited after it was due. A dispatcher can fix the second
+/// without moving the first.
+pub fn poll_stats() -> (u32, u32) {
+    (POLLS.load(RELAXED), WORST_GAP.load(RELAXED))
 }
 
 /// An `Instant` back as the number it holds.

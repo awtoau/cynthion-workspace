@@ -13,9 +13,46 @@ This is the evidence, not a re-argument.
 > `--performance-counters 4` exposes `STALLED_CYCLES_FRONTEND`/`BACKEND`, and the
 > PLIC counts `irqs`, `stalls`, `buffered` and `lost` per source. Those, under
 > RTIC against the poller, are the comparison worth having.
+>
+> **The first conversion is done (#245, below) and the comparison is NOT taken
+> here.** It waits for the board.
 
 **Index:** [`hardware.md`](hardware.md) · CPU:
 [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
+
+## The PAC1954 on RTIC, and where its numbers will come from
+
+Issue #245. `--features rtic` now converts the SHELL rather than building a spike
+beside it: `src/rtic_app.rs` is the entry point, `src/main.rs`'s `#[entry]` is
+gated off, and the PAC1954's 50 ms REFRESH cycle is a
+`#[task(binds = PowerRefresh, priority = 1)]` released by the 1 ms tick instead
+of a poll at the top of the main loop.
+
+**The default build is unchanged and is still the superloop.** That is checked
+rather than asserted, by `scripts/soc_feature_isolation_check.py`, and
+`scripts/soc_test.py` asserts that the shipping image says `superloop` when asked.
+
+Both models call the same `power::Monitor::service`, so the only variable between
+them is how it was reached. The shell's `rtic` command reports which model it was
+built as, the task's run count, its release lateness against its period, the
+PLIC's per-source counters, and `STALLED_CYCLES_FRONTEND`/`_BACKEND`:
+
+    > rtic
+    model    superloop  (1 task)
+    task     power_refresh prio -1 period 50 ms  runs 99  pends 99 (= runs)
+             late worst 2140 ticks  mean 370 ticks  gap worst 50 ms over 99 polls
+    plic  @f0400000 pending 00000000 enabled 00000036
+      0 src 1 irqs 15   stalls 0 buffered 0 lost 0
+      ...
+    stalls   frontend N backend N  of M cycles
+
+**The comparison itself is deferred to hardware and is not in this document.**
+QEMU cannot take it: `-M virt` has no PAC1954, so the two milliseconds of I²C the
+board spends inside the task are absent, and it reads `mhpmcounter3`/`4` as
+hardwired zero, so both stall counters come back `--`. A figure taken there would
+measure the emulator's idle loop and be quoted afterwards as if it measured this
+SoC — which is the exact failure the caveat at the top of this file exists to
+prevent. Run `rtic` on the board under each build; that is the measurement.
 
 ## What it fixes, and what it costs
 

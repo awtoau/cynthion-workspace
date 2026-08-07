@@ -252,6 +252,15 @@ fn tick() {
     #[cfg(feature = "workload")]
     crate::workload::tick();
 
+    // The PAC1954's REFRESH cycle, released on this grid rather than by the main
+    // loop noticing (#245). Here for the same reason the line above is, and it
+    // is the whole point of the conversion: a release decided by the loop is a
+    // release the loop can be late for, and this one cannot be. It pends a SLIC
+    // source -- one MMIO store to `msip` -- and prints nothing, which is the rule
+    // this file already lives under.
+    #[cfg(feature = "rtic")]
+    crate::rtic_app::tick();
+
     WORST_COST.fetch_max(entered.elapsed(clock::now()), Ordering::Relaxed);
 }
 

@@ -494,7 +494,12 @@ mod probe {
 /// The plugin keeps 8-bit registers and flushes into the 64-bit CSR RAM when the
 /// MSB sets, so these are cheap on an FPGA -- but they cost timing: the design
 /// stopped closing at 72 MHz when they were added, which is why `SYNC_MHZ` is 60.
-mod hpm {
+///
+/// `pub(crate)` since #245: `src/sched.rs` reads the two stall counters for the
+/// `rtic` command. It shares this module rather than writing its own selector
+/// writes, because two modules pointing the same four counters at different
+/// events is a measurement that changes depending on which command ran last.
+pub(crate) mod hpm {
     /// Event ids, from VexiiRiscv's own table.
     pub const STALL_FRONTEND: u32 = 0x04;
     pub const STALL_BACKEND: u32 = 0x05;
@@ -525,6 +530,27 @@ mod hpm {
             core::arch::asm!("csrw 0x326, {0}", in(reg) DCACHE_LOAD_MISS,
                              options(nomem, nostack));
         }
+    }
+
+    /// The two stall counters, low words: `(frontend, backend)`.
+    ///
+    /// A LIFETIME reading rather than a difference, which is what makes it
+    /// useful to the `rtic` command: the counters free-run from reset and so
+    /// does `mcycle`, so the ratio of one to the other is the fraction of the
+    /// whole session the CPU spent waiting -- for instruction fetch (0x04) or
+    /// for data (0x05). A dispatcher that idles differently moves it.
+    ///
+    /// Reads only. [`select`] must have run first, or these are counting
+    /// whatever the plugin's reset value selects; `crate::sched::init` is what
+    /// calls it, once, at boot.
+    pub fn stalls() -> (u32, u32) {
+        let (frontend, backend): (u32, u32);
+        // SAFETY: as `read` below; reads of implemented machine CSRs.
+        unsafe {
+            core::arch::asm!("csrr {0}, 0xb03", out(reg) frontend, options(nomem, nostack));
+            core::arch::asm!("csrr {0}, 0xb04", out(reg) backend, options(nomem, nostack));
+        }
+        (frontend, backend)
     }
 
     /// The four counters, low words. A walk is far under 2^32 of anything.

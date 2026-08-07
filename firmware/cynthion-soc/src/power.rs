@@ -30,9 +30,16 @@
 //! ## One owner of the REFRESH cycle
 //!
 //! REFRESH-then-read is a protocol that spans two transactions with a window in
-//! the middle, and [`Monitor::poll`] owns it. Nothing else in this firmware may
-//! read the part: the transaction is private to this module and `poll` is its
-//! only caller, so there is no second REFRESH to collide with the first.
+//! the middle, and [`Monitor::service`] owns it. Nothing else in this firmware
+//! may read the part: the transaction is private to this module and `service` is
+//! its only caller, so there is no second REFRESH to collide with the first.
+//!
+//! **Who calls `service` is the concurrency model and nothing else** (#245).
+//! The default build is the superloop and reaches it through [`Monitor::poll`],
+//! which is the interval check at the top of the main loop; `--features rtic`
+//! deletes that function and reaches the same body from a periodic task the 1 ms
+//! tick releases. One owner either way, and the same 32 bytes of state, which is
+//! what makes the jitter figures the `rtic` command prints comparable.
 //!
 //! **Nothing else may read this part.** A second reader lands inside the 1 ms REFRESH
 //! window and reports a bus fault on a working bus. Full argument, including the measured
@@ -409,25 +416,64 @@ impl Monitor {
 
     /// Sample if the interval has elapsed, and report anything worth reporting.
     ///
-    /// **The sole owner of the PAC1954's REFRESH cycle.** Everything else asks
-    /// [`Monitor::latest`], which touches nothing.
+    /// **The superloop's half of the REFRESH cycle, and only the superloop's.**
+    /// It is the poll issue #245 is about: every turn of the main loop reads the
+    /// clock, compares, and returns. Under `--features rtic` the comparison is
+    /// not made here at all -- `src/timer.rs` makes it on the 1 ms grid and pends
+    /// a task -- so this function does not exist in that build and a stray caller
+    /// is a compile error rather than two schedulers for one device.
     ///
     /// Called from the main loop with the primary console. This is normal
     /// context, not a handler -- it may print, and it may spin on the I2C bus,
-    /// because nothing is waiting on it. An interrupt-driven version would have
-    /// to defer both, and buys nothing: a 50 ms period is not a latency anyone
-    /// can perceive.
+    /// because nothing is waiting on it.
+    #[cfg(not(feature = "rtic"))]
+    pub fn poll(&mut self, uart: &mut Uart, bus: Option<&mut Bus>) {
+        let now = clock::now();
+        let elapsed = self.last.elapsed(now);
+        if elapsed < clock::millis(INTERVAL_MS) {
+            return;
+        }
+
+        // How far past its release this run is, which is the figure the `rtic`
+        // command compares between the two models. Under the superloop the
+        // release was one interval after the last run, so everything beyond the
+        // interval is lateness -- and it is charged to whatever held the loop.
+        //
+        // Note what this does NOT do: `self.last = now` rather than
+        // `self.last + INTERVAL`, so the lateness is not carried into the next
+        // period. The poller drifts instead of catching up, which is the
+        // opposite of what `src/timer.rs` does with `mtimecmp` and is the reason
+        // the achieved period and the lateness are two separate numbers.
+        crate::sched::released(crate::sched::POWER, elapsed - clock::millis(INTERVAL_MS));
+
+        self.service(uart, bus);
+    }
+
+    /// One REFRESH cycle, unconditionally: the work, with no decision about when.
+    ///
+    /// **The sole owner of the PAC1954's REFRESH cycle.** Everything else asks
+    /// [`Monitor::latest`], which touches nothing.
+    ///
+    /// Split out of [`Monitor::poll`] for #245. The two callers are the two
+    /// dispatchers -- the superloop above, and `power_refresh` in
+    /// `src/rtic_app.rs` -- and the point of the split is that they share this
+    /// body exactly, so a jitter figure taken under one is comparable with the
+    /// other. Anything that moved into the caller would be a difference between
+    /// the models that is not the model.
+    ///
+    /// Still normal context under both, and still allowed to print and to spin
+    /// on I2C: under RTIC this is a task at a priority, not a handler.
     ///
     /// `bus` is an `Option` rather than this function reaching for
     /// `target::BOARD` itself, so that a target with no board is a missing
     /// resource rather than a `#[cfg]` -- and so the clock is still read on every
     /// target. See below.
-    pub fn poll(&mut self, uart: &mut Uart, bus: Option<&mut Bus>) {
-        let now = clock::now();
-        if self.last.elapsed(now) < clock::millis(INTERVAL_MS) {
-            return;
-        }
-        self.last = now;
+    pub fn service(&mut self, uart: &mut Uart, bus: Option<&mut Bus>) {
+        // When this run happened, which is what the NEXT one measures its
+        // interval against. Set here rather than in either caller, so the two
+        // dispatchers cannot disagree about when a poll counts as having
+        // started.
+        self.last = clock::now();
 
         // The interval elapsed, so this turn is busy -- and the gap since the
         // last poll is the jitter figure `stats` reports. Above the bus check
