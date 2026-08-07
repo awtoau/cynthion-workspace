@@ -60,6 +60,34 @@ Acceptance for this stage, before any measurement is attempted:
 - `hr` runs at a frequency unrelated to `sync`, confirmed by measurement
 - the engine is idle and has moved nothing
 
+## First test: four cells, 256 bytes
+
+Before the matrix, prove the process. This is a test **of the rig**, not of the
+part.
+
+- **256 bytes** — 128 16-bit words. Milliseconds to run.
+- **Four cells**, one CK, four capture phases. Everything else held.
+- **Data derived from the address**, so a displacement is read off the dump
+  rather than inferred. Byte at offset `i` encodes `i`.
+
+The result that validates the rig is **not** four passes:
+
+| outcome | what it means |
+|---|---|
+| at least one `Pass` | the rig can report success |
+| at least one `Fail` | the rig can **detect** failure — without this, a pass is worthless |
+| control fired in all four | zero errors means something in every cell |
+| a `Fail` names an address | the pattern is doing its job |
+
+- **Four passes is a failed smoke test.** It means either every phase is genuinely
+  good — implausible — or the rig cannot see a fault. Widen the phase spread
+  until one fails.
+- **Four `NoResult` is a wedged engine**, not a bad part. Fix the rig.
+- Pick the phase spread to straddle a suspected edge, so a pass and a fail are
+  both likely. Prior settings are a hint for where to look, never a result.
+
+Only once this behaves does the matrix mean anything.
+
 ## Method
 
 - **Sweep the capture phase at every rung.** The window moves with frequency, so
