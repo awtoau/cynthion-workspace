@@ -542,28 +542,13 @@ FLASH_DIVISOR = 0
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
 #
-# The CPU clock, and it is now genuinely free.
-#
-# It used to be one of exactly three values. `usb` and `sync` came from ONE PLL,
-# both dividing one VCO, so pinning `usb` to exactly 60.000 MHz for the ULPI PHY
-# left only 60, 100 and 120 reachable for `sync` below 130. That is a property of
-# the old topology, not of the part.
-#
-# `clocks.py` takes `usb` straight from the 60 MHz oscillator on A8 -- the FPGA
-# sources the ULPI clock -- so `usb` is exact by construction and `sync` is
-# unconstrained by it. Measured against `ecppll`, every integer MHz from 63 to
-# 130 is reachable within 0.5% bar eight, worst case 1.87%.
-#
-# 80 is a starting point, not a determination: nothing here has been measured at
-# it yet. The one real ceiling left is the flash, and only when `fast` is built
-# -- `fast` is a second output of this same PLL at FLASH_FAST_RATIO x sync, and
-# the flash PHY closes at 124.77 MHz measured. Both FLASH_PHY_FAST and
-# HYPERRAM_DQS are currently off, so no `fast` domain exists and nothing bounds
-# this but the fabric.
-#
-# The "CPU corrupts above 60 MHz" ladder does NOT bound it: that result is
-# withdrawn (`docs/soc-clocking.md` section 2) because its signature is the
-# console FIFO's unsynchronised crossing, not the CPU.
+# The CPU clock. Bounded by:
+#   - the PLL: 13 in-spec frequencies 63..130 MHz, listed in `clocks.py`
+#   - the fabric: what nextpnr closes, which varies with placement
+#   - `fast` = FLASH_FAST_RATIO x sync when built, and the flash PHY closes at
+#     124.77 MHz -- so it caps sync whenever FLASH_PHY_FAST or HYPERRAM_DQS is on
+# `usb` is the A8 oscillator, so the PHY does not constrain this.
+# 60 is a rung with margin. The real ceiling is unmeasured.
 SYNC_MHZ = 60
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
