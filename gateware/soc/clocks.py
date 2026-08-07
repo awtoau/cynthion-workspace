@@ -27,9 +27,20 @@ SOURCES the ULPI clock** -- `clk_dir='o'` on all three PHY resources in
 exactly 60.000 MHz by construction, with less jitter than a PLL copy, and no
 tolerance left to check.
 
-`sync` is then free. Measured against `ecppll` from a 60 MHz reference, every
-integer MHz from 63 to 130 is reachable within 0.5% except eight, the worst of
-which is 1.87% -- so in practice the CPU clock is whatever you want it to be.
+`sync` is then free, within the PLL's own specification. From a 60 MHz reference
+**13 integer frequencies between 63 and 130 MHz are reachable in spec**:
+
+    70  72  75  80  84  90  96  100  105  108  110  120  130
+
+That is 13 rather than 68 because of `PFD_MIN_MHZ` below, and the difference is
+the point: the other 55 are reachable only by dividing the reference below the
+phase detector's minimum, where the datasheet stops guaranteeing jitter. A
+solver that offered them would be offering configurations that build and then
+misbehave as noise.
+
+13 is still four times what the old topology allowed, and the constraint is now
+the PLL's published limit rather than an accident of sharing a VCO with the USB
+PHY.
 
 60 MHz appears in this file exactly once, as the USB PHY's requirement. It is
 not the CPU's number and never was.
@@ -58,6 +69,19 @@ VCO_MIN_MHZ = 400.0
 VCO_MAX_MHZ = 800.0
 DIV_MAX = 128
 
+# Phase-detector minimum, datasheet FPGA-DS-02012 Table 3.23. `CLKI / CLKI_DIV`
+# must stay at or above this.
+#
+# NOT optional, and it is easy to violate without noticing: the solver will
+# happily divide a 60 MHz reference by 60 to reach an awkward target, giving a
+# 1 MHz phase detector. That configuration builds, and the datasheet's note 3
+# says the jitter figures are simply not guaranteed there -- so it fails, if it
+# fails, as noise rather than as a refusal.
+#
+# Measured before this check existed: 55 of the 68 integer frequencies from 63
+# to 130 MHz were reachable only by breaking it.
+PFD_MIN_MHZ = 10.0
+
 # The ULPI PHY's requirement, and the only reason this number appears here.
 USB_PHY_MHZ = 60.0
 
@@ -74,6 +98,9 @@ def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
     `clkos2_div` is None when no ratio was asked for.
     """
     for clki_div in range(1, DIV_MAX + 1):
+        # The phase detector sees the divided reference, and it has a floor.
+        if input_mhz / clki_div < PFD_MIN_MHZ:
+            break
         for clkfb_div in range(1, DIV_MAX + 1):
             if abs(input_mhz / clki_div * clkfb_div - target_mhz) > tolerance:
                 continue
