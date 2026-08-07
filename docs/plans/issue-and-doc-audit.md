@@ -169,185 +169,25 @@ contested.
 
 ---
 
-## 1. Issues to close
+## 1-2. Issue triage — DONE
 
-| # | Title | Evidence |
-|---|---|---|
-| **215** | hyperram: vendor the non-DQS controller too | Delivered by `ac8a575`. `gateware/soc/peripherals/hyperram_controller.py` exists with both fixes: tCSHI at `:75,104,120,361` and `fixed_latency` at `:104`. `docs/chips/hyperram/bist-plan.md:189` already records `#215 … done 2026-08-07`. `docs/upstream-boundary.md:150-151` lists both controllers as ours. |
-| **229** | clocks: review every peripheral against the new topology | Delivered by `ac8a575`. `docs/chips/ecp5/peripheral-clock-audit.md:16` — *"This is the peripheral-by-peripheral review issue #229 asked for."* 24 modules, 15 sound, 9 defects, summary table at `:450-458`. **Do not close without first filing the 9 defects** — see §5. |
-| **204** | Replace luna's JTAGRegisterInterface | Delivered by `a9ec4be` (newest commit on this branch). `gateware/probes/jtag_registers.py` exists, is wire-compatible, and **all applets already import it**: `bist.py:23`, `sideband_gateware.py:34`, `hyperram_regfuzz.py:67`, `usb_serial.py:49`, `bitstream_sink.py:60`, `pin_survey.py:52`, `fusb302_id.py:40`, `i2c_scan.py`. `scripts/soc_jtag_registers_sim.py` is the sim. **Caveat:** `docs/chips/hyperram/bist-plan.md:188` still lists #204 as an unmet precondition — fix that line in the same pass. |
+Executed 2026-08-07. 19 closed, 14 filed, 60 bodies corrected, 81 references
+rewritten. The per-issue detail is in the issues themselves, which is where it
+belongs — each closure carries its evidence and each correction is a dated note
+on the issue.
 
-**Twelve more close candidates**, evidence in §6a and §6e:
-**#19, #22, #63, #90, #96** (done, ≤116) · **#172, #189, #190, #191, #209, #211, #221** (done, >116).
+Two of this document's own claims were wrong and were caught by checking the
+tree rather than trusting the report: [#191](https://github.com/awtoau/cynthion-workspace/issues/191)'s
+guards call a module function rather than a method, and
+[#189](https://github.com/awtoau/cynthion-workspace/issues/189)'s "three files
+existing twice" are host-runner/gateware-top pairs. The automated correction pass
+found four more, including that [#116](https://github.com/awtoau/cynthion-workspace/issues/116)
+and [#224](https://github.com/awtoau/cynthion-workspace/issues/224) cite
+*pluribus's* files and say so in the surrounding sentence.
 
-**Three to close as superseded**, §6b and §6e:
-**#178** (duplicate of #115) · **#201** (superseded by `docs/rtic.md` + #115) ·
-**#207** (branch merged, sweep superseded — re-file the prior-art research alone).
-
-**Plus #30, #31, #34** — the Flutter GUI issues, unworkable while the app sits in
-`debris/`. Close or convert to one "un-retire the GUI" issue.
-
-Two carry a condition:
-* **#90** — strike its "Performance expectations" section first; those figures are
-  the void class.
-* **#96** — its residue (HyperRAM read-back, USER button, 2 of 3 PHYs) needs a
-  successor issue or it is lost.
-
-### Counts
-
-| category | count |
-|---|---|
-| open issues | 107 |
-| **close — work landed** | **15** (#19, 22, 63, 90, 96, 172, 189, 190, 191, 204, 209, 211, 215, 221, 229) |
-| **close — superseded / duplicate** | **6** (#30, 31, 34, 178, 201, 207) |
-| **body needs correction** (excluding those being closed) | **55** |
-| — of which cite `ecp5-test/` | 14 |
-| — of which cite a deleted or moved doc | 22 |
-| — of which cite `repos/luna` | 5 |
-| — of which are factually wrong, not merely mis-pathed | 16 |
-| still real, verified untouched | ~40 |
-| marked UNSURE, needs human | 5 (#54, #116, #197, #223 pluribus half, #200 comment) |
-| open PRs, all repos | **0** |
-| documents asserting something false | **10 files, ~30 sites** (§4) |
-| dead file references inside `docs/` | **~90** |
-| unmerged branches with no PR or issue | **2** (28 and 1 commits) |
-
----
-
-## 2. Issues whose body is stale
-
-**The 55, excluding the 21 recommended for closure:**
-
-> 8, 9, 10, 11, 24, 53, 54, 73, 81, 83, 84, 86, 87, 89, 93, 95, 97, 100, 105,
-> 107, 108, 110, 115, 116, 125, 142, 143, 145, 153, 157, 162, 165, 169, 173,
-> 175, 176, 179, 180, 182, 183, 184, 185, 193, 194, 200, 202, 206, 217, 218,
-> 222, 223, 224, 225, 228, 230
-
-Eight more (#31, 63, 90, 172, 204, 207, 209, 211) are also stale but are being
-closed, so only #90's void-figures section needs an edit first.
-
-Details for numbers >116 are in §6c, for ≤116 in §6e. The bulk categories follow.
-
-> **DONE 2026-08-07.** 60 open issues were edited: 81 references rewritten, each
-> replacement path `test -e`'d before it was written, and a dated note at the top
-> wherever the staleness was a *fact* rather than a path. Reproducible with
-> `./scripts/fix_issue_refs.py` (the table of corrections is the data); dead
-> references are found with `./scripts/audit_issue_refs.py`.
->
-> **Four entries above are false positives — this audit was wrong about them:**
->
-> * **#24** — `scripts/dump-crash.py`, `decode-crash.py`, `monitor-apollo.py` are
->   *proposed* host tooling under a "## Host tooling" heading, not citations. Not
->   edited.
-> * **#116, #224** — `scripts/fabric_coverage_plan.py`, `fabric_test_gen.py`,
->   `fabric_test_bridge.py`, `fabric_test_verify.py` and `docs/fabric-test.md` are
->   **pluribus's**, and both issues say so in the surrounding sentence. The rest of
->   the fabric suite is *not* on an abandoned branch either — `fabric_arcs.py`,
->   `fabric_build.py`, `fabric_golden.py`, `fabric_negative_control.py`,
->   `fabric_placement.py`, `fabric_run.py`, `fabric_sim.py`, `fabric_sweep.py` all
->   landed in `scripts/` on 2026-08-06, so §5 item 2 is out of date. Neither issue
->   was edited.
-> * **#228, #230** — `gateware/soc/hyperram_clocks.py` **exists on this branch**
->   (added 2026-08-07 12:01, with `docs/upstream-reproduction.md`), so F1's
->   headline consequence has partly resolved itself. #230's item 1 is still exactly
->   right: the file is written and `top.py` does not instantiate it.
->
-> Two references have no successor anywhere and are now annotated as such in the
-> issue rather than silently repointed: **`ecp5-test/CYNTHION_R14_PINMAP.md`**
-> (#107 — possible content loss) and **`docs/apollo_race_conditions.md`** (#54).
-> Ten more are dead-with-no-successor but their absence is itself the correction:
-> `scripts/extract-hardware.py`, `power_probe.py`, `jtag_isr_soak.py`,
-> `cyn_main.py`, `phy_probe.py`, `patch_amaranth_soc_annotations.py`,
-> `hyperram_ladder.py`, `docs/memory-speed-options.md`, `docs/hyperram-bursts.md`,
-> `repos/facedancer`.
-
-### 2a. Issues citing `ecp5-test/` (the directory does not exist; it is `gateware/`)
-
-Mechanically derived — every one of these has at least one file reference that
-resolves to nothing in the tree:
-
-| # | dead reference | correct path |
-|---|---|---|
-| 97 | `ecp5-test/pins/pin_survey.py` | `gateware/probes/pins/pin_survey.py` |
-| 107 | `ecp5-test/CYNTHION_R14_PINMAP.md`, `docs/luna_ecp5_fpga/jtag-ceiling-reached.md`, `scripts/jtag_isr_soak.py` | first is gone entirely; check `docs/hardware.md` |
-| 110 | `ecp5-test/fabric/FABRIC_TEST.md`, `ecp5-test/riscv/vexii_cpu.py`, `scripts/hyperram_ladder.py` | `gateware/soc/cpu/cpu.py`; the other two are gone |
-| 142 | `ecp5-test/riscv/i2c_master.py` | `gateware/soc/peripherals/i2c_master.py` |
-| 153 | `ecp5-test/bist.py`, `ecp5-test/pins/pin_survey.py` | `gateware/probes/bist.py`, `gateware/probes/pins/pin_survey.py` |
-| 169 | `ecp5-test/bram_probe/bram_probe.py`, `ecp5-test/riscv/vexii_hello_soc.py`, `scripts/61_run_profile.py`, `scripts/phy_probe.py` | `gateware/probes/bram_probe/bram_probe.py`, `gateware/soc/top.py`; last two gone |
-| 172 | `ecp5-test/riscv/vexii_hello_soc.py` | `gateware/soc/top.py` — **and the premise is dead, see §2b** |
-| 176 | `ecp5-test/riscv/sideband_csr.py`, `ecp5-test/sideband_link.py` | `gateware/soc/peripherals/sideband_csr.py`, `gateware/probes/sideband/sideband_link.py` |
-| 202 | `ecp5-test/riscv/jtag_stage.py`, `ecp5-test/riscv/vexii_bootram.py` | `gateware/soc/bus/jtag_stage.py`, `gateware/soc/bootram.py` |
-| 204 | `ecp5-test/bist.py`, `ecp5-test/riscv/jtag_stage.py` | `gateware/probes/bist.py`, `gateware/soc/bus/jtag_stage.py` — moot if closed |
-| 206 | `ecp5-test/riscv/hyperram_dqs_phy.py` | `gateware/soc/peripherals/hyperram_dqs_phy.py` |
-| 211 | `ecp5-test/riscv/vexii_hello_soc.py` | `gateware/soc/top.py` |
-
-### 2b. Issues stale on the *clock* facts, not just paths
-
-* **#172** — *"clock: SYNC_MHZ is constrained by the PLL, not by the ULPI PHY — and the elastic buffers are already there"*. The premise is now resolved in the code: `gateware/soc/clocks.py` takes `usb` off the PLL entirely, so `sync` is no longer constrained by anything. Either close it as delivered by `cce87ec` or rewrite it to be about the *second* PLL (which is F1's territory).
-* **#211** — *"soc: SYNC_MHZ=30 and HYPERRAM_DQS=False are debug values that shipped"*. Still real, but the file moved (`gateware/soc/top.py`) and `aed8127` changed how the clock is reported (measured, not declared), which changes the symptom the issue describes.
-* **#228, #230** — both cite `gateware/soc/hyperram_clocks.py`, which exists **only on `origin/hyperram-bist`**. Not stale text so much as issues written against a different branch. See F1.
-
-### 2c. Issues citing `repos/luna/` (the submodule was removed)
-
-`.gitmodules` lists only `repos/cynthion`, `repos/apollo`, `repos/cynthion-hardware`,
-`repos/vexiiriscv`. `repos/luna` is gone.
-
-* **#83** — `repos/luna/pyproject.toml`
-* **#125** — `repos/luna/luna/gateware/interface/ulpi.py`
-
-`luna` is still a Python import dependency (`from luna.gateware...` in eight probe
-files), so these issues are still *real*; only the path is wrong. Issue **#222**
-("luna: what still depends on it") is the right place to record that.
-
-### 2d. Issues citing docs that were retired to `debris/`
-
-* **#179, #180, #182, #183** all cite `docs/sideband-review.md`. It is now
-  `debris/docs/sideband-review.md`. The live document is
-  `docs/chips/cynone-sideband.md`, which `docs/README.md` explicitly names as the
-  single owner of the FPGA_ADV subject.
-* **#184** cites `docs/sideband.md` — same.
-* **#185** cites `docs/hyperram-bursts.md`; **#207** cites `docs/hyperram-implementations.md`;
-  **#90** cites `docs/luna_ecp5_fpga/hyperram-implementation-survey.md` and
-  `…/memory-interface-options.md`; **#173** cites `docs/memory-speed-options.md`.
-  All four are gone. The surviving HyperRAM documents are
-  `docs/chips/hyperram/w956a8.md`, `docs/chips/hyperram/bist-plan.md`,
-  `docs/chips/hyperram/README.md`.
-* **#89** cites `docs/luna_ecp5_fpga/spi-flash-summary.md` → `debris/docs/spi-flash-summary.md`;
-  live doc is `docs/chips/w25q32-config-flash.md`.
-* **#108, #225** cite `docs/luna_ecp5_fpga/fast-bitstream-loading.md` → `debris/docs/`.
-* **#217, #218** cite `docs/decisions.md` — does not exist; `docs/architecture.md`
-  is what `docs/README.md:38` says holds open decisions.
-* **#53** cites `docs/apollo_dfu_buffer_analysis.md`; it is
-  `docs/apollo_samd11_mcu/apollo_dfu_buffer_analysis.md`.
-* **#54** cites `docs/apollo_race_conditions.md` — gone, no successor found. **UNSURE.**
-* **#145** cites `docs/usb-host-full-speed.md`; **#116/#224** cite `docs/fabric-test.md`;
-  **#162** cites `docs/linux-on-cynthion.md` (deleted by `c01ff9b`, now the
-  `linux-on-cynthion/` directory); **#209** cites
-  `docs/moondancer/silent-soc-investigation.md`; **#223** cites
-  `docs/chips/w956a8-hyperram.md` (renamed to `docs/chips/hyperram/w956a8.md` by
-  `398a6db`), `docs/ecp5/diamond-oracle.md` and `docs/ecp5/ecp5-primitive-coverage.md`.
-
-### 2e. Issues citing scripts that no longer exist
-
-**#116** is the most affected: `scripts/fabric_coverage_plan.py`,
-`fabric_test_bridge.py`, `fabric_test_gen.py` and `docs/fabric-test.md` are all
-absent — **because they live only on `origin/codex/issues-101-116`**, a branch 1
-ahead / 203 behind `main`, abandoned 2026-08-03. See §5.
-
-Others: **#24** (`scripts/decode-crash.py`, `dump-crash.py`, `monitor-apollo.py`),
-**#31** (`scripts/extract-hardware.py`), **#84** (`scripts/power_probe.py`),
-**#110** (`scripts/hyperram_ladder.py`), **#175** (`scripts/checks.py` — it is
-`scripts/check.py`), **#194** (`scripts/patch_amaranth_soc_annotations.py`),
-**#225** (`scripts/ecp5_analyze.py`, `ecp5_opcodes.py`, `ecp5_verify_reads.py`,
-`nextpnr_allow_fail_ladder.py`, `profile_shared.py`).
-
-### 2f. Apollo-firmware issues using repo-root-relative paths for submodule files
-
-**#63** (`firmware/src/jtag.c`), **#179** (`firmware/src/vendor.c`), **#73**
-(`tests/test_hardware.py`). These resolve under `repos/apollo/`, not the workspace
-root. Low severity, but they read as dead links.
-
----
+It also caught a real leak: [#63](https://github.com/awtoau/cynthion-workspace/issues/63)
+carried a private filesystem path, published on a public tracker. Now a
+repo-relative one.
 
 ## 3. Open PRs
 
@@ -370,6 +210,18 @@ Note the repo is `awtoau/awto-apollo`, not `awtoau/apollo`.
 ---
 
 ## 4. Documents asserting something false
+
+> **Partly done, 2026-08-07.** `docs/soc-clocking.md` is corrected
+> ([#233](https://github.com/awtoau/cynthion-workspace/pull/233)), and so are
+> `architecture.md`, `usb-host-options.md` and the `w956a8.md` clocking passage.
+> Correcting them turned up the same `fPFD` violation in
+> `hyperram_ceiling_top.py`'s own PLL solver, now fixed.
+>
+> **Remaining:** the mangled tables in `w956a8.md` (an orphaned separator with no
+> header, and a header with zero rows, both from `13f2c81`), several dead script
+> references, and `docs/README.md`'s broken sentence where the same link appears
+> twice while contrasting two files.
+
 
 | file:line | the stale text | why it is false |
 |---|---|---|
@@ -416,6 +268,21 @@ in the tree at `:433-448` rather than adding to it; `docs/upstream-boundary.md`
 ---
 
 ## 5. Nobody is tracking these
+
+> **Updated 2026-08-07.** Items 1, 4, 6 and 7 are resolved: `hyperram-bist` is
+> salvaged and its useful parts landed ([#231](https://github.com/awtoau/cynthion-workspace/pull/231));
+> the nine peripheral defects are now
+> [#241](https://github.com/awtoau/cynthion-workspace/issues/241)–[#243](https://github.com/awtoau/cynthion-workspace/issues/243);
+> everything is pushed and the tree is clean. Item 2 was **wrong** — the fabric
+> suite landed in `scripts/` on 2026-08-06 and is not stranded on
+> `origin/codex/issues-101-116`.
+>
+> **Still true, and worth acting on:** three stale remote branches
+> (`hyperram-bist` now redundant, `codex/issues-101-116`,
+> `chore/retire-flutter-and-facedancer` at 0 ahead of `main`), the six upstream
+> drafts in `docs/drafts/upstream/`, and the patchsets in `docs/patchset/` and
+> `docs/apollo/pending-patches/`.
+
 
 1. **`origin/hyperram-bist` — 28 commits, no PR, no issue.** See **F1**. This is
    the single largest untracked thing in the repo, and it collides head-on with
@@ -467,133 +334,6 @@ in the tree at `:433-448` rather than adding to it; `docs/upstream-boundary.md`
    open issue. The memory index notes a "UART-DMA patch unapplied" from 28 Jul;
    `docs/apollo/code-test/apollo-uart-dma.patch` is still sitting there. **UNSURE**
    whether it has since been applied.
-
----
-
-## 6. Per-issue triage
-
-Three independent passes, each verifying against the tree rather than the issue
-text. Spot-checked: `gateware/board/core.py:82`, `gateware/soc/top.py:567`,
-`docs/rtic.md:14`, and the existence of every script cited as evidence.
-
-### 6a. Close — work has landed
-
-| # | Title | Evidence |
-|---|---|---|
-| **172** | clock: SYNC_MHZ is constrained by the PLL, not the ULPI PHY | `cce87ec`. `gateware/soc/clocks.py:101` `class SocClocks`; `:225` `ClockSignal("usb").eq(osc)`; `:29-32` "every integer MHz from 63 to 130 is reachable within 0.5% except eight". The issue's premise is resolved. |
-| **189** | hyperram: all the test code in one place | `398a6db`, `aae83fb`. `scripts/hyperram_harnesses.py` is the one door (`./dev.py hyperram`); `gateware/probes/hyperram/README.md:1-25` states each harness and resolves all three alleged duplicates (runner/top pairs, not copies). |
-| **190** | toolchain: amaranth-soc is undeclared | `scripts/machine_setup.py:100-105` declares `amaranth-soc`/`amaranth-stdio` at pinned commits; `scripts/amaranth_soc_check.py:3` names #190 and is wired into `dev.py lint`. |
-| **191** | toolchain: the ARM binutils on PATH shadow the flash-budget guards | `scripts/arm_binutils_resolve.py` exists; all three guards use it — `verify_vectors.py:24,83,87`, `apollo_budget_check.py:46,69,92,100`, `apollo_memory_report.py:47,64,87,118,142` — and each calls `.report()`. |
-| **204** | Replace luna's JTAGRegisterInterface | `a9ec4be`. `gateware/probes/jtag_registers.py`, TCK-clocked, wire-compatible; adopted by all 9 applets. The only remaining luna JTAG import is `scripts/soc_jtag_registers_sim.py:101`, deliberately, as the negative control. |
-| **209** | console: nothing is queued on bulk endpoint 0x81 | Premise inverted. The console **is** CDC-ACM on a tty: `gateware/soc/top.py:3,19-20`, `gateware/usb_ids.py:66`, `scripts/tio_user.py:53-60`. The issue's claim *"no ttyACM node belongs to this SoC"* is false against the tree. |
-| **211** | soc: SYNC_MHZ=30 and HYPERRAM_DQS=False are debug values that shipped | `gateware/soc/top.py:567` `SYNC_MHZ = 60` with ~15 lines of justification at `:545-566`; `:636` `HYPERRAM_DQS = False` with rationale at `:625-635`; `:649` `HYPERRAM_CLOCK_STOP = False` likewise at `:639-648`. Meets its own "Done when". |
-| **215** | hyperram: vendor the non-DQS controller too | `ac8a575`. See §1. |
-| **221** | platform: CynthionPlatformRev1D4 still inherits LUNAPlatform | `gateware/board/core.py:82` — `class CynthionPlatform(LatticeECP5Platform)`. LUNA chain removed; rationale at `core.py:9-79`. |
-| **229** | clocks: review every peripheral against the new topology | See §1 — **file the 9 defects first**. |
-
-### 6b. Close as superseded / duplicate
-
-| # | Superseded by |
-|---|---|
-| **178** | Body is an unedited GitHub template stub. The question is answered by `docs/rtic.md:1-30` and owned by open **#115**. Duplicate of #115. |
-| **201** | `docs/rtic.md:3` — *"**RTIC is decided** … This is the evidence, not a re-argument"* (`427af22`), plus #115. Also numerically stale: issue says 1,266 µs / 700-of-2000 missed; `docs/rtic.md:14-17` records **1,220 µs** and **600 / 2,000**. |
-| **207** | Three parts, all overtaken: `rtic-workload-port` **merged** (`90f40e0`, commits reachable from `main`, branch gone); the gateware sweep superseded by `docs/chips/hyperram/bist-plan.md` and #230. **Only the prior-art research is live** — re-file that alone. |
-
-### 6c. Correct the body, keep the issue
-
-Beyond the path fixes in §2, these have stale *substance*:
-
-| # | verbatim stale text | correction |
-|---|---|---|
-| **143** | table row `W956A8 HyperRAM \| 166 MHz \| **192 MHz CK**, 334.4 MB/s` | withdrawn by `ac8a575`; `docs/chips/hyperram/w956a8.md:538`. The W25Q32 row still holds. |
-| **157** | *"The fix is an import/subprocess-aware check and is the main remaining piece of tooling work."* | **done** — `scripts/audit_scripts.py:229-244` is now AST-based (`ast.parse`, `Import`/`ImportFrom` walk) plus a DANGLING check at `:384`. Also *"58 files still sit in one flat namespace"* → **103**. Item 4 also looks done (`scripts/soc_run.py:111-123`). Still real: log retention, `scripts/` grouping, `./dev.py ci` fmt-check (`scripts/dev.py:122-126` calls it "a live debt"). |
-| **162** | *"`firmware/cynthion-soc/memory.x` puts everything in block RAM, deliberately"*, and `8532 free of 64512` | stage two landed: `memory.x:47-50` `FLASH : ORIGIN = 0x100B0000`, `REGION_ALIAS("REGION_TEXT", FLASH)`. Still real: `.data`/`.bss`/stack remain in `RAM … LENGTH = 63K`. |
-| **165** | the 43-file breakdown, *"`ecp5-test/riscv/` (8)"*, *"`scripts/` (13)"* | `gateware/soc/`; `scripts/` is now 103 files — the whole count needs re-deriving. |
-| **169** | *"`repos/` still carries eight submodules"* | `.gitmodules` has **four**. Also: the `gateware` check ("~98% of wall time") was deleted from `scripts/check.py`; `socmap` elaborates `gateware/soc/top.py`; `.gitignore:17` already fixed to anchored `/lib/`; line cites `vexii_hello_soc.py:176,181,277,312,1642` → `gateware/soc/top.py:177,182,278,313,1711`. A close-out draft already exists in-tree at `docs/drafts/169-closeout.md`. |
-| **173** | *"part burst rate (`docs/memory-speed-options.md`) \| **334.4 MB/s**"* — the 25× arithmetic rests on it | file gone, figure withdrawn. Item 1 partly answered: `gateware/soc/top.py:1108` `ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ` with DQS off → CK is 60, not 192, which is most of the gap. |
-| **175** | proposal 0 *"a `scripts/checks.py`"*; proposal 3 *"fast tier, under 2 seconds … nine cheapest simulations"* | harness is `scripts/sim_check_harness.py`. Proposal 3 was **deliberately rejected**: `scripts/soc_sims.py:91-103` — *"That is tiering on cost, and it gets both ends wrong… So there is no list of names here."* Tiers are `once`/`soak`, 17 sims. Proposals 1 and 2 done. Still real: 4 and 5. |
-| **185** | *"See `docs/hyperram-bursts.md` for the mechanism"* | gone; mechanism is `gateware/soc/bootram.py:215-241`. Note option 1 (`ClockStopPHY`) is now editable in-tree since `ac8a575` vendored the controller. |
-| **193** | — | `docs/upstreamable-patches.md:18` still says *"20 commits ahead"*; the correction #193 asks for has not been made. |
-| **200** | *"Create real forks — `awtoau/*` are independent repos, not GitHub forks, so a PR cannot be opened from them."* | **stale**: `awto-luna`, `awto-apollo`, `awto-cynthion` are all `isFork=true` today. Only `awto-luna-soc` is not. Steps 2–4 still real — no PRs exist against `greatscottgadgets/*`. |
-| **202** | `ecp5-test/riscv/vexii_bootram.py`, `…/jtag_stage.py` | `gateware/soc/bootram.py`, `gateware/soc/bus/jtag_stage.py`. Defect unchanged: `bootram.py:289,342,407,752`. |
-| **206** | `ecp5-test/riscv/hyperram_dqs_phy.py` and the quoted phase block | `gateware/soc/peripherals/hyperram_dqs_phy.py:385`. Substance holds — `swap_halves` is gone from gateware, so the convention is still unstated. |
-| **222** | table rows *"`luna.gateware.interface.jtag` \| 18"* and *"`board/` inherits `LUNAApolloPlatform`"*; problem 4 | jtag is now effectively **0** (see #204); problems 2 and 4 are **done** (#221, #215). Real counts today: `architecture.car` 21 files, `interface.psram` 14, `luna_soc…spiflash` 16, `interface.i2c` 6, `debug.ila` 1. Remaining substance is problem 1 (fork pin, #194) and problem 3 (spiflash). **Rewrite rather than close.** |
-| **223** | `docs/chips/w956a8-hyperram.md:285` | `docs/chips/hyperram/w956a8.md:285` (renamed by `398a6db`). Claim 1 still holds there; claim 2's evidence intact at `gateware/probes/fabric/fabric_gateware.py:432`. The pluribus claims are in another repo — **UNSURE, needs human**. |
-| **228** | *"`gateware/soc/clocks.py`, `gateware/soc/hyperram_clocks.py`, and `variable_clock.py`"* | `hyperram_clocks.py` does not exist here (see **F1**); `variable_clock.py` is only at `repos/apollo/apollo_fpga/gateware/`. Substance holds: `clocks.py:215-216` still ties `PHASESEL0/1`, `PHASEDIR`, `PHASESTEP`, `PHASELOADREG` off. Cites #210 and #226 as motivation — **both CLOSED**. |
-| **230** | *"`gateware/soc/hyperram_clocks.py` is written and has never been instantiated by `top.py`"* | that file does not exist on this branch (see **F1**); only a stale `gateware/soc/__pycache__/hyperram_clocks.cpython-315.pyc` remains. Also *"Today CK derives from `sync`, so moving CK moves the CPU clock"* needs restating. Preconditions **#204 and #215 are now cleared**; #186 and BURSTDET remain. |
-
-### 6d. Still real, verified untouched
-
-**#125** (no RX-CMD peripheral; `grep -rln "ULPIRxEventDecoder\|rx_event"` over `gateware/ firmware/ scripts/` → nothing) ·
-**#142** (`gateware/probes/pins/i2c_scan.py` scans addresses, not rates) ·
-**#145** (no serial-mode bit; `ulpi_window.py` has no reg-`07h` path) ·
-**#153** (`gateware/probes/bist.py` has no VBUS coverage; `pin_survey.py:242-255` still deliberately does not drive the enables) ·
-**#159** (`firmware/cynthion-soc/src/typec.rs:234-255` — `poll()` reads only the fault line off a CSR, never re-reads over I²C) ·
-**#160** (no `TARGET_FS_MONITOR`/chirp resource anywhere) ·
-**#171** (no line-editor crate in `firmware/cynthion-soc/Cargo.toml`) ·
-**#174** (`memory.x:47-50` — `REGION_TEXT` is FLASH, no HyperRAM text region) ·
-**#176** (`sideband_link.py:103` `CMD_WRITE_BASE = 0x80`, no revision opcode) ·
-**#179** (`repos/apollo/firmware/src/vendor.c:422` is the only caller of `fpga_adv_command()`) · **#180** · **#182** · **#183** ·
-**#181** (`repos/apollo/apollo_fpga/gateware/advertiser.py:51` still `m.d.comb += self.pad.o.eq(clk)`, no `.oe`) ·
-**#184** ·
-**#186** (named as the open question in the new plan, `docs/chips/hyperram/bist-plan.md:198`) ·
-**#192** · **#194** (`awto-luna-soc` still pinned in `docs/toolchain-versions.md:60,268`) ·
-**#195** (`versions.json` still `"Yosys 0.65+57"`) ·
-**#196** (no `rust-toolchain*` outside `repos/`/`debris/`) ·
-**#197** (**UNSURE** whether an upstream yosys issue now exists — needs a network check) ·
-**#198** (master; two children #190/#191 now done) ·
-**#199** (`scripts/apollo_budget_check.py:104-110` still `rom = text + data`, no `.relocate`) ·
-**#203** · **#212** (the ILA is still only on flash — `top.py:1063`, `:382`; **not** folded into the BIST plan, do not close as redundant) ·
-**#217** · **#218** (no Renode platform, no Verilator) ·
-**#219** · **#220** (`firmware/cynthion-boot/src/main.rs:125` still says *"Nothing reads these"*) ·
-**#224** · **#225** · **#227** (`gateware/soc/cpu/cpu.py:161-163` untouched).
-
-### 6e. Issues ≤ 116
-
-**Close — done:**
-
-| # | Title | Evidence |
-|---|---|---|
-| **19** | gateware: route VexRiscv JTAG debug through ECP5 JTAGG | `gateware/soc/top.py:727-742` — one `UserJTAG()` off the die's single `JTAGG`, ER2 to the CPU debug module, ER1 to the HyperRAM staging sink (verified verbatim). `gateware/soc/cpu/cpu.py:243-256, 318-340`; `gateware/soc/bus/jtag_stage.py:116-144`. **Caveat:** the core is VexiiRiscv not VexRiscv, and the PMOD-B fallback the issue asked to preserve does not exist. |
-| **22** | apollo: verify and enable UART forwarding to host via CDC-ACM | Bidirectional and implemented: `repos/apollo/firmware/src/console.c:116-121` drains UART RX into `tud_cdc_write_char()`, `:129-131` pushes CDC RX back. |
-| **63** | apollo firmware: allocate JTAG buffers from a pool | `repos/apollo/firmware/src/jtag.c:67-90` — `union comms_buffers { jtag_tx[…]; console_ring[…]; }`; `jtag.h:22` describes the old `extern uint8_t jtag_out_buffer[256]` in the past tense. Mechanism differs (static union + lock, not alloc/free) but the acceptance criterion is met. |
-| **90** | hyperram: Wishbone peripheral | `gateware/soc/top.py:356` `HYPERRAM_BASE = 0x20000000`, `:1117` `decoder.add(bootram.mmap.bus, …)`, `:721` `main=1,exe=1`. The LUNA defect it documents was fixed today at `hyperram_controller.py:293`. **Strike the "Performance expectations" section before closing** — "~1 cycle per 16-bit word", "~23 cycles fixed overhead", "measured on r1.4 at 120 MHz" are exactly the void class. |
-| **96** | riscv: standalone hardware self-test bitstream | `gateware/soc/top.py:1230-1249` (`USBSerialDevice` on `aux_phy`, own PID); `firmware/cynthion-soc/src/main.rs:455,900`; `firmware/cynthion-soc/src/selftest.rs`. **Residue if you want it tracked:** HyperRAM write/read-back, USER button, and 2 of the 3 PHYs are absent (only TARGET, `selftest.rs:558-590`). |
-
-**Close as superseded:**
-
-* **#30, #31, #34** — the Flutter GUI issues. No GUI in the tree; `connection_painter.dart` and every `pubspec.yaml` exist only under `debris/code/`. `scripts/extract-hardware.py` (the entire subject of #31) does not exist. These cannot be worked without first un-retiring an app.
-* **#100 deliverable 1** — "USB → SRAM (proposed) ~6 ms" is disproven by #108 and by `gateware/probes/loader/bitstream_sink.py:12-25`: the ECP5 has no fabric path into its own configuration engine. Deliverables 2 and 3 survive (`gateware/build_helpers.py:64` still emits only `--compress --freq 38.8 --usercode`).
-
-**Correct the body:**
-
-| # | verbatim stale text | correction |
-|---|---|---|
-| **8, 9, 10** | `venv/lib64/python3.11/site-packages/facedancer/…` | there is **no `venv/`** (`README.md:39`), the interpreter is **3.15.0rc1**, and `facedancer` is not importable at all. Re-express against upstream `greatscottgadgets/facedancer`; the "fix applied in venv" claim is unverifiable today. |
-| **11** | `luna/gateware/usb/usb2/endpoints/isochronous*.py`, *"The moondancer SoC gateware (`gateware/`)"* | `repos/luna` is gone; LUNA is a pip package. And `gateware/` here is **our** SoC — moondancer's is `repos/cynthion/cynthion/python/src/gateware/`. Firmware facts still hold (`smolusb/src/lib.rs:22` `EP_MAX_PACKET_SIZE: usize = 512`). |
-| **53** | *"Derived from `docs/apollo_dfu_buffer_analysis.md`"* | → `docs/apollo_samd11_mcu/apollo_dfu_buffer_analysis.md` |
-| **54** | *"Derived from `docs/apollo_race_conditions.md`"* | does not exist anywhere. **UNSURE** what replaced it. |
-| **73** | `rom: 13836 B … 96.51%` / `ram: 3544 B … 86.52%`; title says "94.4%" | measured today: `text 13608, data 80, bss 3472` → ROM **13688 B = 95.48%**, RAM **3552 B = 86.72%**. All three published numbers are wrong, in two directions. ⚠️ the ELF is a **2026-08-03 build artifact** — re-build before quoting. |
-| **81** | *"On `Python 3.15.0b3 free-threading build`"*; lists `luna` as editable "from the pinned submodules" | interpreter is **3.15.0rc1**; `repos/luna` is gone. |
-| **83** | `repos/luna/pyproject.toml:37`; *"\| `repos/luna/luna/gateware/` \| 18 \| fork of upstream \|"*; *"\| `scripts/`, `ecp5-test/` \| 0 \|"* | LUNA is an external package, so the "18 files are upstream's problem" section and step 2 reduce to "wait for a released LUNA". **Our** part unchanged and real: `repos/cynthion/…/gateware/analyzer/analyzer.py:11,418,636` still uses `Record`. |
-| **84** | *"the #82 gateware instantiates `I2CRegisterInterface` with `data_bytes=1`"* | that gateware is gone; `gateware/soc/peripherals/i2c_master.py` has **no `data_bytes` parameter at all**, so the stated prerequisite describes nothing. The 4-byte frame plan also predates the protocol rewrite (see #87). |
-| **86** | *"instantiated standalone in `ecp5-test/sideband/`"* | `gateware/probes/sideband/`. Work still real: nothing instantiates a USB device on `target_phy` (`top.py:1602-1611` takes it only for the ULPI register window). |
-| **87** | *"`0x01 PING  0x02 STATUS  0x2B POWER  0x40-0x7F LED`"* | **obsolete.** `gateware/probes/sideband/sideband_link.py:96-104`: `CMD_PING=0x01`, `CMD_STATUS=0x02`, `CMD_WRITE_BASE=0x80`/`CMD_WRITE_MASK=0x7F`. **POWER and the whole LED block no longer exist**; `:120` records the version bump "from the 0x01 of the responder that carried POWER and DEVICES". So "68 allocated, 188 free" is wrong and the capability-query argument needs restating. |
-| **89** | *"`docs/luna_ecp5_fpga/spi-flash-summary.md`"* | dissolved into `docs/chips/w25q32-config-flash.md`. Also *"This needs a soft CPU inside the FPGA"* — that CPU exists (`top.py:1015`), so the blocker is gone though the measurements are not done. |
-| **93** | *"once a RISC-V can drive it"* / depends on #91 | **#91 is CLOSED**; the CPU drives the flash today (`top.py:1015`, `selftest.rs:547`, `scripts/riscv_flash_check.py`). Gate satisfied, measurements not. |
-| **95** | *"`fpga_adv.c` carries both mechanisms in full"*; "~94% (#73)" | top-level `repos/apollo/firmware/src/fpga_adv.c` is now **38 lines of weak no-op stubs**; the real file is `repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` (`:44`, `:163` — EIC still the default, so still real). Flash → 95.48%. |
-| **97** | *"A first pass exists in `ecp5-test/pins/pin_survey.py`"* | `gateware/probes/pins/pin_survey.py:251-252`. **The headline "starting with the VBUS switches" has landed**: `gateware/soc/peripherals/vbus_csr.py`, instantiated `top.py:807`, mapped `:849-850`, pins driven `:1562-1566`. Genuinely remaining: PMOD loopback, `user_mezzanine`, USER-button press, edge-counting `target_usb_dp/dm`. |
-| **105** | *"vendor GUH and bring up `msc_host`"* | GUH **is vendored** (`gateware/probes/usb_host/guh/{types,reset,sie}.py`, upstream `923c8490`, BSD-3-Clause). But `guh/__init__.py` records that `engines/*` were **deliberately not taken**, so "bring up `msc_host`" as written is no longer the plan — no `msc_host` exists in `gateware/`. Still open: hardware bring-up, `target_c_vbus_en` drive, the TUSB322I/FUSB302B CC driver. |
-| **107** | `ecp5-test/CYNTHION_R14_PINMAP.md` | **does not exist anywhere** — not migrated into `gateware/`. Possible content loss. Flash "94.92% of 14336" → 95.48%. |
-| **108** | *"`docs/luna_ecp5_fpga/fast-bitstream-loading.md` holds the full analysis"* | path gone; negatives preserved by `a9e238b` and restated at `gateware/probes/loader/bitstream_sink.py:12-25` — **which itself still cites the dead path at `:26`**. |
-| **110** | *"**this is blocked on #91** … Do not start until the CPU produces output"* | **#91 is CLOSED** (`793e90e`) — the block is lifted. Also `ecp5-test/fabric/FABRIC_TEST.md` does not exist (surviving record `gateware/README.md:17`, now 20,476 LUT4 not 20,143); `ecp5-test/riscv/vexii_cpu.py` → `gateware/soc/cpu/cpu.py:235`; `scripts/hyperram_ladder.py` → the analogue is `scripts/riscv_clock_ladder.py`. Work not done: `top.py:567` `SYNC_MHZ = 60`, `:724` `cache_sets=64`. |
-| **115** | *"The SoC exposes only a bare `irq_external` on the CPU -- no PLIC or CLIC."* | **false.** PLIC at `gateware/soc/cpu/plic.py` (mapped `top.py:896`), CLINT at `cpu/clint.py` (`top.py:903-906`), named sources at `top.py:886-893`; firmware `plic.rs`, `irq.rs`. RTIC is an off-by-default cargo feature (`Cargo.toml:38,95`). Replace the body with: *the blocker is gone; what remains is switching the shipping image off the superloop.* |
-
-**Still real, verified (≤116):** #1, #2, #3, #4, #5 (all four cited defects confirmed verbatim — `cynthion_setup.py:39-40,97`, `cynthion_build.py:48`, `cynthion.py:39` `serial = "TODO"`, `selftest/host.py:32-33`) · #6, #7 (note `facedancer` is not installed, so neither is reproducible without reinstalling) · #13 · #17 · #20 (**its prerequisite #19 is now satisfied**) · #21 · #23 (`moondancer.rs:559-564` TODO intact) · #24 · #60 · #113 (`repos/apollo/firmware/src/boards/cynthion_d11/jtag.c:38` still lazy-calls `uart_configure_pinmux()`; the gateware half is fixed by `d7ac869`) · #116 (**UNSURE** whether the sweep ran — `scripts/fabric_sweep.py:3` exists and names #116, but no recorded result was found; and see §5 item 2).
-
-Two cross-issue conflicts worth reconciling when either is touched:
-* **#182 vs #199** — #182's headline *"flash: 11 bytes free"* is contradicted by #199, which says the guard misses `.relocate` and the real figure is 95.48%, already over the ceiling.
-* **#225's "one broken dependency"** is live and wider than the issue says: `docs/luna_ecp5_fpga/` does not exist but is still cited from `gateware/probes/loader/bitstream_sink.py:25`, `gateware/probes/hyperram/hyperram_identify.py:11`, `scripts/hyperram_identify.py:11`, `gateware/soc/peripherals/flash.py:38`, `scripts/hyperram_fifo.py:43`, `scripts/bitstream_load_time_probe.py:15,396`.
 
 ---
 
