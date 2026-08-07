@@ -23,6 +23,43 @@ The work: #230.
 - `READCLKSEL` + phase is already a CSR: 16 settings in milliseconds.
 - CK and PLL phase joining it depends on `DCSC` and dynamic phase shift (#228).
 
+## Isolation: the engine must not displace anything
+
+**Hard requirement: adding the test engine must not remove a single thing the
+SoC has today.** Not the HyperRAM window, not BootRAM, not the staging path, not
+the bootloader's behaviour. The SoC must boot, print and answer with the engine
+present and idle.
+
+The constraint that forces this:
+
+- The HyperRAM pins take **one driver**. `platform.request("ram")` succeeds once.
+- So the engine and the SoC's memory window cannot both own them by construction.
+
+The way that went wrong before, and must not repeat:
+
+- engine claims the pins → SoC's HyperRAM window must go
+- BootRAM stages through HyperRAM → BootRAM must go
+- no BootRAM → the bootloader's staging probe reads a window that is now absent
+- VexiiRiscv traps an access to an address in no declared region → **silent board
+  from reset**, no banner, no console
+
+Each removal was forced by the one before it. The result was a bitstream that
+could not be talked to, so a wedged engine was indistinguishable from a dead CPU.
+
+**Resolution: share the pins, do not reassign them.** One requester, with a mux
+selecting who drives:
+
+- default — the SoC's controller, exactly as today
+- test mode — the engine, selected by a CSR
+- the window, BootRAM, staging and the bootloader are all **unchanged and still
+  built**; they are simply not in use while a measurement runs
+
+Acceptance for this stage, before any measurement is attempted:
+
+- the SoC boots and `soc_probe` passes 6/6 with the engine present
+- `hr` runs at a frequency unrelated to `sync`, confirmed by measurement
+- the engine is idle and has moved nothing
+
 ## Matrix
 
 | axis | where | runtime? |
