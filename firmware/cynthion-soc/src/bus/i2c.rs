@@ -51,6 +51,34 @@
 //! a transfer, returned, and was pended again by this source would hold it for
 //! neither. That is #247, and it needs this bit set before it can be written.
 //!
+//! ## `wfi` was tried here, and measured worse
+//!
+//! #247 item 2 is this wait, and the obvious conversion is to sleep on the
+//! completion interrupt instead of spinning: a PAC1954 measurement read is nine
+//! bytes at 80 kHz, so this loop burns roughly a millisecond of full-rate
+//! instruction fetch, twenty times a second.
+//!
+//! Measured on the board, matched windows of about 900 million cycles:
+//!
+//!     spin   busy 6.34%   ipc 0.171   worst turn 293,293 cycles
+//!     wfi    busy 7.03%   ipc 0.162   worst turn 463,184 cycles
+//!
+//! Worse on every figure. The reason is in the core rather than in the idea:
+//! **VexiiRiscv implements `WFI` as a trap** -- `TrapReason.WFI` in
+//! `EnvPlugin.scala:144` -- so each wake costs a pipeline flush and a refill
+//! through a 4 KiB I-cache. At this transaction length the flush costs more than
+//! the spin saves, and the spin is a tight loop that stays resident.
+//!
+//! It is recorded rather than deleted because #247 says "no better is a
+//! legitimate outcome for any individual peripheral and worth recording", and
+//! because the arithmetic changes with the transaction: a longer transfer, or a
+//! core where `wfi` is a clock gate rather than a trap, flips it.
+//!
+//! What WOULD pay is not sleeping through the wait but not being in it -- a task
+//! that issues a command, returns, and is pended again by this source. That
+//! needs the driver to become a state machine and it needs the caller to be able
+//! to be resumed, which is the rest of #247.
+//!
 //! ## The handler must clear it AT THE PERIPHERAL
 //!
 //! Source 3 is a LEVEL: `self.irq.eq(irq_flag & ien)` in
@@ -97,7 +125,18 @@ const SR_AL: u8 = 0x20;
 /// The acknowledge the slave sent. Zero means it acknowledged.
 const SR_RXACK: u8 = 0x80;
 
-const TIMEOUT: u32 = 200_000;
+/// Turns of the spin before this driver gives up on the bus.
+///
+/// A count of iterations, which is a bound in instruction issue rate rather than
+/// in time and therefore means something different on a different clock. That is
+/// a known weakness and it is kept, because the alternative was measured and was
+/// worse -- see "`wfi` was tried" below.
+///
+/// It is generous by construction: a byte at 80 kHz is 110 us, and this is
+/// 200_000 turns of a loop whose body is one uncached MMIO read. Expiry means
+/// the controller is not there or SCL is being held down by something else, not
+/// that a transfer was slow.
+const WAIT_LIMIT: u32 = 200_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -195,7 +234,7 @@ impl I2c {
         // SAFETY: a write to CR, the peripheral's one side-effecting address.
         unsafe { write_volatile(self.reg(CMD_STATUS), command) };
 
-        let mut spins = 0u32;
+        let mut waits = 0u32;
         loop {
             let status = self.status();
             if status & SR_TIP == 0 {
@@ -204,8 +243,8 @@ impl I2c {
                 }
                 return Ok(status);
             }
-            spins += 1;
-            if spins > TIMEOUT {
+            waits += 1;
+            if waits > WAIT_LIMIT {
                 return Err(Error::Timeout);
             }
         }
