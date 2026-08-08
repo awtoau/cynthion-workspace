@@ -126,9 +126,9 @@ pub const CLINT_SIZE: usize = 0x00010000;
 /// or shrank them all whenever the gateware clock moved.
 pub const SYNC_HZ: u32 = 60000000;
 
-/// I2C prescale for 80 kHz SCL at that clock, from the gateware's own
+/// I2C prescale for 1000 kHz SCL at that clock, from the gateware's own
 /// `prescale_for` -- `f_SCL = f_sync / (5 * (PRER + 1))`.
-pub const I2C_PRESCALE: u16 = 149;
+pub const I2C_PRESCALE: u16 = 11;
 
 /// Whether the SPIFLASH window is cached (VexiiRiscv PMA `main`).
 ///

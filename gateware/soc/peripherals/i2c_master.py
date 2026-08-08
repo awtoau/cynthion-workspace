@@ -107,20 +107,61 @@ condition states one slot longer costs a fraction of a microsecond once per
 transfer and keeps the *data* rate exactly on the published formula, which is
 the number a driver computes a prescale from.
 
-At 60 MHz with PRER = 149 the slot is 2.5 us and the data rate is 80 kHz:
+## Which mode's minima, and it is not standard mode
 
-    t_LOW      7.5 us   spec 4.7 us
-    t_HIGH     5.0 us   spec 4.0 us
-    t_SU;STA   5.0 us   spec 4.7 us
-    t_HD;STA   5.0 us   spec 4.0 us
-    t_SU;STO   5.0 us   spec 4.0 us
-    t_BUF     15.0 us   spec 4.7 us
+**Every device on this bus is Fast-mode Plus.** Scanned rather than assumed:
 
-80 kHz rather than the round 100 kHz because at 100 kHz the slot is 2 us and
-t_SU;STA becomes 4 us against a 4.7 us minimum -- which would work on this
-board, on this day, and is exactly the kind of margin that turns into an
-intermittent months later. The bus is polled a few times a second; nothing here
-is waiting on it.
+    bus 0  target_type_c   0x22  FUSB302B    fSCL 0-1000 kHz
+    bus 1  aux_type_c      0x22  FUSB302B    fSCL 0-1000 kHz
+    bus 2  power_monitor   0x10  PAC1954-1   fSMB 0.010-1 MHz
+
+Nothing standard-mode is on it, and nothing ever has been. This file used to
+budget against standard mode's 4.7 us intervals anyway, and picked 80 kHz over
+the round 100 kHz because at 100 kHz t_SU;STA landed 0.7 us inside a *standard
+mode* minimum. That reasoning was sound and answered the question it was asked;
+nobody asked what the parts actually support. The bus ran twelve times slower
+than every device on it for the life of the project. See #269.
+
+At 60 MHz with PRER = 11 the slot is 200 ns and the data rate is exactly 1 MHz:
+
+    t_LOW      600 ns   Fm+ min 500 ns
+    t_HIGH     400 ns   Fm+ min 260 ns
+    t_SU;STA   400 ns   Fm+ min 260 ns
+    t_HD;STA   400 ns   Fm+ min 260 ns
+    t_SU;STO   400 ns   Fm+ min 260 ns
+    t_BUF     1200 ns   Fm+ min 500 ns
+    t_SU;DAT   200 ns   Fm+ min  50 ns
+
+The tightest is t_LOW at 20% margin; the rest are above 50%.
+
+## What actually limits the rate, and it is the board rather than this file
+
+**SDA's rise time.** The pull-ups are 2.2k -- R83/R84 on the monitor, R97 on
+target, R33 on aux, from `production/bom.csv` -- and `t_r ~= 0.8473 * R * C`
+over the spec's 0.3-0.7 Vdd window:
+
+     20 pF ->  37 ns        Fm+ allows 120 ns
+     50 pF ->  93 ns        Fm  allows 300 ns
+     65 pF -> 121 ns        the Fm+ edge
+    100 pF -> 186 ns        Fm+ exceeded, Fm fine
+
+Each device sits on its own mux segment, so the capacitance is one short trace
+and one load rather than a bus with three. 2.2k is a Fast-mode-Plus-grade
+pull-up and the sink current it implies -- 1.5 mA at 3.3 V -- is far inside every
+device's capability.
+
+**3.4 MHz is not available and not close.** The FUSB302B enumerates its modes as
+"Standard, Fast, or Fast Mode Plus" and stops at 1 MHz; Hs-mode is a different
+protocol needing an unacknowledged master code, a current-source pull-up on SCL,
+and t_r under 40 ns, which no resistor delivers. That is why the spec mandates a
+current source there.
+
+## If this ever misbehaves
+
+A bus marginal on rise time **answers most of the time**, which is the failure
+this file warns about in another form. `i2c power`, `i2c target` and `i2c aux`
+each read identity registers from a different part on a different segment, so
+three independent confirmations. Falling back is one constant: `I2C_SCL_HZ`.
 """
 
 from amaranth               import Module, Mux, Cat, C, Signal, ResetInserter
