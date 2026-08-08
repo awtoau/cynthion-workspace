@@ -53,6 +53,7 @@ this board, which is not what a default should assume.
 """
 
 from amaranth               import Cat, C, Module, Signal, DomainRenamer, unsigned
+from amaranth.lib.cdc       import FFSynchronizer
 from amaranth.lib           import wiring
 
 # luna_soc first, and the order is load-bearing. amaranth_soc is VENDORED
@@ -648,7 +649,34 @@ class HoldableSPIController(wiring.Component):
         # The whole point: CS is asserted while software holds it OR while the
         # upstream controller wants it. The OR rather than a replacement means
         # a command that does not bother to hold still works exactly as before.
-        m.d.comb += self.cs.eq(self._hold.f.select.data | self._inner.cs)
+        #
+        # ---- and the crossing, when there is one -------------------------
+        #
+        # `_hold` is an `amaranth_soc.csr` register, so its flip-flop is in
+        # `sync` -- it is on the CPU's bus and it cannot be anywhere else. The
+        # inner controller and the pad are in `self._domain`. When those differ,
+        # `hold.data` changes on a `sync` edge and is ORed straight onto a chip
+        # select that the SPI clock is timed against.
+        #
+        # Nothing in the FPGA samples it, which is why it builds and simulates
+        # clean: the thing that samples CS is the flash, and what it sees is an
+        # edge with no defined relationship to SCK. The W25Q32's tCSS/tCSH are
+        # setup and hold against the clock, so the failure is a command byte
+        # accepted or dropped depending on where the two clocks happen to sit --
+        # which is the class of fault this file already exists to fix once.
+        #
+        # `#241` was the same shape: a parameter that looked applied and was not.
+        # The difference here is that the parameter CANNOT simply be applied --
+        # renaming the register into `self._domain` would put the CPU's own bus
+        # there and move the crossing somewhere worse. So the register stays in
+        # `sync` and the LEVEL crosses, which is what `FFSynchronizer` is for.
+        held = self._hold.f.select.data
+        if self._domain != "sync":
+            crossed = Signal()
+            m.submodules.hold_cdc = FFSynchronizer(held, crossed,
+                                                  o_domain=self._domain)
+            held = crossed
+        m.d.comb += self.cs.eq(held | self._inner.cs)
 
         return m
 
