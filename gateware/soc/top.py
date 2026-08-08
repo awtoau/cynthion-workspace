@@ -1587,11 +1587,44 @@ class HelloSoC(Elaboratable):
         # push-pull mode, so the reset state is a 0 here, a 1 on the pad, and a
         # PAC1954 that is running -- which is what the I2C bus below needs.
         #
-        # `slow` and `gpio` on this resource are left as inputs (o and oe both
-        # default to 0 on a `dir="io"` pin). `slow` selects the chip's
-        # low-bandwidth sampling mode and `gpio` is its general-purpose pin;
-        # neither is needed to read a measurement, and driving a pin whose
-        # purpose has not been established is how a board gets damaged.
+        # SLOW IS DRIVEN LOW, and leaving it an input was costing 15x the
+        # sample rate.
+        #
+        # This used to say `slow` and `gpio` "are left as inputs ... neither is
+        # needed to read a measurement". The second half is wrong. **The board
+        # fits R85, 10k to +3V3**, so a pin left as an input is not neutral --
+        # it is pulled HIGH, and DS20006539B section 3.8 is unambiguous about
+        # what that means: "the SLOW pin is asserted, the sample rate is 8 SPS".
+        #
+        # 8 SPS is 125 ms per conversion against a 50 ms poll, so two of every
+        # three REFRESH cycles latched a conversion that had not changed. Seen
+        # on the board as runs of bit-identical readings across both rails and
+        # both quantities:
+        #
+        #     5.129 V  176.239 mA
+        #     5.129 V  176.239 mA      <- identical
+        #     5.130 V  177.154 mA
+        #     5.130 V  177.154 mA      <- identical
+        #     5.130 V  177.154 mA      <- identical
+        #
+        # Two independent conversions of a live rail do not agree to 488 uV and
+        # 152 uA. That is one conversion, read three times.
+        #
+        # The old caution -- "driving a pin whose purpose has not been
+        # established is how a board gets damaged" -- was the right instinct
+        # applied to a pin whose purpose IS established, in the datasheet, and
+        # which the board pulls up precisely so that it has a defined state. The
+        # part defaults `CTRL.SLOW_ALERT1` to the SLOW function and `power.rs`
+        # writes only `NEG_PWR_FSR`, so this is an input on the part and there
+        # is nothing to contend with.
+        #
+        # `gpio` (D6) stays an input, and that one IS unfinished business rather
+        # than a defect: R86 pulls it up as the open-drain ALERT2 the part can
+        # assert on conversion complete, which is #270.
+        m.d.comb += [
+            power_monitor.slow.o.eq(0),
+            power_monitor.slow.oe.eq(1),
+        ]
         m.d.comb += power_monitor.pwrdn.o.eq(
             board_gpio.pins[GPIO_PWRDN].o & board_gpio.pins[GPIO_PWRDN].oe)
         m.d.comb += board_gpio.pins[GPIO_PWRDN].i.eq(power_monitor.pwrdn.o)
