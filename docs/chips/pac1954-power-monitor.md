@@ -11,6 +11,151 @@ alone. Tracking: [#82](https://github.com/awtoau/cynthion-workspace/issues/82)
 (bring-up), [#84](https://github.com/awtoau/cynthion-workspace/issues/84)
 (streaming over the sideband link).
 
+## Performance
+
+Structure per [`../plans/performance-sections.md`](../plans/performance-sections.md);
+cross-cut against every other bus in [`bus-speed-audit.md`](bus-speed-audit.md).
+Datasheet references are **DS20006539B**,
+[`sources/PAC195X-Family-DS20006539B.pdf`](../../sources/PAC195X-Family-DS20006539B.pdf),
+96 pp.
+
+**Three rates and one resolution.** Two of the rates were wrong on the same day
+and for the same reason — a figure nobody had checked against the part. The bus
+went 80 kHz → 1 MHz
+([#269](https://github.com/awtoau/cynthion-workspace/issues/269)); the sample
+rate went 8 SPS → 1024 SPS
+([#273](https://github.com/awtoau/cynthion-workspace/issues/273)). The current
+LSB is still twice what it could be, and that one is open.
+
+### 1. Theoretical maximum
+
+**Bus.** AC Electrical Characteristics – I²C/SMBus Timing, p. 7:
+
+| `fSMB` | range | mode |
+|---|---|---|
+| Fast Mode Plus | 0.010 – **1 MHz** | what this bus runs |
+| High-Speed mode | 0.010 – **3.4 MHz** | unreachable here; see below |
+
+So this is a **3.4 MHz part**, not a 1 MHz one. The bus is at 1 MHz because the
+two FUSB302Bs sharing the controller stop there, and because Hs-mode is a
+different protocol needing an unacknowledged master code, a current-source
+pull-up on SCL and `t_r` under 40 ns — which no resistor delivers, and which is
+why the specification mandates a current source.
+
+**Sample rate.** §5.1 and CTRL `SAMPLE_MODE[3:0]` (Register 7-2, p. 45):
+
+| mode | rate |
+|---|---|
+| `0b0000` **1024 SPS adaptive accumulation** | the register default |
+| `0b0001` / `0b0010` / `0b0011` | 256 / 64 / 8 SPS adaptive |
+| `0b0100`…`0b0111` | 1024 / 256 / 64 / 8 SPS |
+| `0b1011` Burst mode | **5120 SPS**, one channel |
+
+**Resolution.** Both ADCs are 17-bit two's complement internally with *"an
+additional bit of resolution that is not accessible from the results register"*
+(p. 27); 16 bits reach the host. Full scale is what `NEG_PWR_FSR`
+(Register 7-11, p. 46) selects, per channel:
+
+| field | option | full scale | LSB |
+|---|---|---|---|
+| `CFG_VBn` `00` | unipolar (default) | 0 … +32 V | **488.3 µV** |
+| `CFG_VBn` `01` | bipolar | −32 … +32 V | 976.6 µV |
+| `CFG_VBn` `10` | bipolar FSR/2 | −16 … +16 V | **488.3 µV** |
+| `CFG_VSn` `00` | unipolar | 0 … +100 mV | 1.526 µV = 76.29 µA |
+| `CFG_VSn` `01` | bipolar | ±100 mV | **3.052 µV = 152.588 µA** |
+| `CFG_VSn` `10` | bipolar FSR/2 | ±50 mV | **1.526 µV = 76.294 µA** |
+
+### 2. Achievable on this board
+
+**The bus.** SCL is `Pins("D7", dir="o")` — a push-pull FPGA output with no `oe`
+— so the pull-up does not bind SCL's rise time and **no device on this bus may
+ever stretch the clock**. Only SDA rises through a resistor: 2.2k (R83/R84),
+`t_r ≈ 0.8473·R·C`, which reaches the Fm+ 120 ns limit at `Cb` = 64 pF. The part
+is alone on its mux segment, so `Cb` is one short trace and one load — but it has
+never been measured. See [`bus-speed-audit.md`](bus-speed-audit.md).
+
+**The sample rate was set by a pull-up resistor, and it is now driven.** Table
+3-1, PAC195X-1 Pin Function Table, gives VQFN **pin 1 = `SLOW/ALERT1`**,
+*"Default: SLOW Input pin. When high, all channels sample at 8 SPS"*; the
+schematic part is `PAC195X-1-VQFN`, so that numbering applies. §5.7 then
+describes this board exactly:
+
+> *"If a pull-up resistor is attached to the SLOW/ALERT1 pin for ALERT1
+> functionality, **the device will power-up in Slow mode because of being pulled
+> up at power-up.**"*
+
+`production/netlist.ipc` puts net `MON.SLOW` on **U1 pin 1**, ECP5 ball **C6**,
+and **R85 pin 2**; R85 pin 1 is `+3V3` and `production/bom.csv` gives R85 as
+**10k**. `power.rs` writes only `NEG_PWR_FSR` and never `CTRL`, so
+`SLOW_ALERT1[1:0]` stays at its POR value of `11` = the SLOW function. **The part
+converted at 8 SPS — 128× below its own default — for the life of the project**,
+and every measurement further down this page was taken there.
+
+Fixed in [`7d3b83c`](https://github.com/awtoau/cynthion-workspace/commit/7d3b83c):
+`top.py` now drives C6 low (`slow.o = 0`, `slow.oe = 1`), which overrides the
+10k with an ECP5 output sinking 0.33 mA. R85 is not a mistake — a 10k pull-up to
+VDD is precisely what §3.8 asks for on an ALERT1 pin, and 8 SPS was the
+documented cost of fitting it and never programming the mode.
+
+**Resolution, as configured rather than as specified.** Firmware writes
+`NEG_PWR_FSR = 0x5500`: every `CFG_VSn` = `01` (bipolar ±100 mV) and every
+`CFG_VBn` = `00` (unipolar 0–32 V).
+
+- **Current: half the available resolution is being spent on range.** `CFG_VSn`
+  = `10` (±50 mV) would halve the LSB from **152.588 µA to 76.294 µA** at the
+  cost of halving full scale from ±5 A to ±2.5 A. The measured offset noise on an
+  unplugged rail is 0.69–0.92 mA — 4.5 to 6 codes — so the finer LSB would be
+  real resolution rather than dither. Whether ±2.5 A is enough is a policy
+  question about what this board is expected to pass through: USB-C without an
+  e-marked cable is 3 A.
+- **Voltage: there is no resolution to recover, and this is the opposite of what
+  was assumed.** [`../plans/performance-sections.md`](../plans/performance-sections.md)
+  names *"a 0–31 V range used to measure a 5 V rail"* as the case to fix. It
+  cannot be fixed on this part. Register 7-11 offers exactly three VBUS options,
+  and the only one below 32 V is bipolar ±16 V — which halves the range and
+  halves the code count together, landing on **the same 488.3 µV/LSB**. A 5 V
+  rail genuinely occupies 16% of the codes and no register changes that.
+
+### 3. Measured
+
+| axis | conditions | figure | source |
+|---|---|---|---|
+| bus rate | `PRER` 11, `sync` 60 MHz | **1.000 MHz**, three devices answering by identity | `d820d9e` |
+| CPU spent on the poll | matched windows, 50 ms interval | 6.34% at 80 kHz → **2.70%** at 1 MHz | `d820d9e` |
+| one measurement read | four channels after REFRESH | ~2 ms → **~160 µs** | `d820d9e` |
+| **conversion rate, before** | 12 back-to-back reads of one live rail | **identical words repeating** — one conversion read three times | `7d3b83c` |
+| **conversion rate, after** | 40 reads in 1.68 s | **32 of 39 transitions changed, 19.0 changes/s** — the 50 ms poll is now the binding constraint | `7d3b83c` |
+| identity | `0xFE`/`0xFD`/`0xFF` | `0x54` / `0x7B` / `0x02`, by two independent paths | this file |
+| **VPOWERn accumulator** | — | **never read** | 32-bit, and it is what catches an event between polls |
+| **`VBUSn_AVG` / `VSENSEn_AVG`** | — | **never read** | 8× rolling average, Registers 7-7/7-8 |
+
+**The bus is no longer where the poll's cost is, and the arithmetic says so.**
+Pure bus time would have scaled with the 12.5× rate change:
+
+    6.34% x (80 / 1000)  =  0.51%      what 1 MHz should have cost
+    2.70% measured       -  0.51%      =  2.19 points that are not bus time
+
+So **≈2.2 percentage points is per-transaction overhead no clock rate touches**,
+and it is now 81% of what the poll costs. A further 3.4× on the bus — which is
+not available anyway — would recover at most 0.36 points. The next win on this
+path is the number of transactions, which is
+[#267](https://github.com/awtoau/cynthion-workspace/issues/267).
+
+### 4. The gap, and what closes it
+
+| rank | option | worth | effort |
+|---|---|---|---|
+| ✔ | **drive SLOW low** | **8 → 1024 SPS, 128×** | done in `7d3b83c`, two lines |
+| ✔ | I²C 80 kHz → 1 MHz | 6.34% → 2.70% CPU | done in `d820d9e`, one constant |
+| 1 | **`CFG_VSn` = `10`, ±50 mV** | **2×** on current resolution, 152.588 → 76.294 µA/LSB | one write, to the register the firmware already sets. Costs half the current range |
+| 2 | read `VPOWERn` or the `_AVG` registers | the accumulator integrates every conversion, so it is the only thing that can see an event between two 50 ms polls | a register the driver does not read yet |
+| 3 | the four JTAG probe bitstreams, still at 100 kHz | 10× on the bring-up paths | `period_cyc = 600` in four files `d820d9e` did not touch |
+| 4 | poll faster than 50 ms | up to 1024 SPS is now genuinely available | it was not worth asking before `7d3b83c`, because the converter was 2.5× slower than the poll |
+| — | Hs-mode, 3.4 MHz | the part supports it | **unavailable** — needs a current-source pull-up and `t_r` < 40 ns |
+
+**Unknown:** the SDA bus capacitance, which is what the whole rise-time margin
+rests on. What would establish it: a scope on the 0.3–0.7 V<sub>DD</sub> edge.
+
 ## Identity, read from the part
 
 | register | address | value | meaning |
@@ -264,10 +409,23 @@ Output goes to the console and to `tmp/power_probe.log`.
 
 ## Known limitations
 
-- Bus runs at 100 kHz; the part supports 400 kHz. Raise it now the link is known
-  good.
-- `SLOW` is driven low for the 1024 SPS default, but the actual sample timing has
-  not been verified against the datasheet.
+- ~~Bus runs at 100 kHz; the part supports 400 kHz.~~ **Both numbers were wrong**
+  and neither had a source. The SoC's bus ran at **80 kHz** and the part does
+  **1 MHz** Fast-mode Plus and **3.4 MHz** High-Speed (DS20006539B p. 7) — so the
+  gap understated was 12.5×, not 4×. The SoC path is at 1 MHz now
+  ([#269](https://github.com/awtoau/cynthion-workspace/issues/269)). **The four
+  JTAG probe bitstreams are still at 100 kHz** — `period_cyc = 600` in
+  [`../../gateware/probes/pins/i2c_scan.py`](../../gateware/probes/pins/i2c_scan.py),
+  [`../../gateware/probes/pins/fusb302_id.py`](../../gateware/probes/pins/fusb302_id.py),
+  [`../../gateware/probes/power_monitor/power_monitor_gateware.py`](../../gateware/probes/power_monitor/power_monitor_gateware.py)
+  and [`../../gateware/probes/sideband/sideband_gateware.py`](../../gateware/probes/sideband/sideband_gateware.py).
+- ~~`SLOW` is driven low for the 1024 SPS default, but the actual sample timing
+  has not been verified against the datasheet.~~ **It was not driven at all**, and
+  R85 pulls it up, so the part ran at 8 SPS. Verified and fixed in
+  [`7d3b83c`](https://github.com/awtoau/cynthion-workspace/commit/7d3b83c) — see
+  the Performance section.
 - `VPOWERn` (32-bit) has never been read — it is derivable from VBUS × VSENSE.
+  Not equivalently, though: the accumulator integrates *every* conversion, so it
+  is the only thing here that can see an event between two 50 ms polls.
 - The JTAG path requires an Apollo debug session, so it is unsuitable for
   continuous monitoring. That is what #84 addresses; the CPU path is another route.

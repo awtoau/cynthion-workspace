@@ -12,6 +12,134 @@ from `control_port`, `aux_port` and `target_port`.
 the ULPI register window, not over a shared serial bus. Nothing about the I2C
 topology on this board applies to them.
 
+## Performance
+
+Structure per [`../plans/performance-sections.md`](../plans/performance-sections.md);
+cross-cut against every other bus in [`bus-speed-audit.md`](bus-speed-audit.md).
+Datasheet references are **SMSC USB334x Revision 1.2 (02-08-13)**,
+[`sources/334x.pdf`](../../sources/334x.pdf), 92 pp.
+
+**This is the one interface on the board with no rate decision in it**, and that
+is worth stating rather than assuming. The 60 MHz is not a choice anyone made,
+cannot be raised, and is exactly right.
+
+### 1. Theoretical maximum
+
+**The ULPI clock is 60 MHz, fixed by the interface specification.** The part
+implements *"UTMI+ Low Pin Interface (ULPI) Specification, Revision 1.1"*
+(p. 1), whose whole arithmetic is that an 8-bit bus at 60 MHz carries USB high
+speed exactly:
+
+    8 bits x 60 MHz = 480 Mb/s = 60 MB/s     the ULPI byte lane
+    USB 2.0 high speed                        480 Mb/s = 60 MB/s
+
+Those are the same number by construction. A faster ULPI clock would carry
+nothing, because there is no faster USB 2.0.
+
+| line rate | Mb/s | MB/s | ULPI clocks per byte |
+|---|---|---|---|
+| high speed | 480 | 60.0 | 1 |
+| full speed | 12 | 1.5 | 40 |
+| low speed | 1.5 | 0.1875 | 320 |
+
+The datasheet's note 0.1 (p. 2) settles the direction: *"All versions support
+ULPI Clock In Mode (60MHz input at REFCLK)"*, and Table 4.3 (p. 19) rates
+`FREFCLK`, the REFCLK frequency accuracy, at **±500 ppm** with `DCREFCLK`, the
+duty cycle, at **20–80%**.
+
+### 2. Achievable on this board — the FPGA is the clock source, so there is nothing to raise
+
+**`clk_dir='o'`.** All three `ULPIResource` declarations put the clock pin in
+output mode, so these PHYs run in **ULPI Clock Input Mode**: the FPGA drives
+60 MHz into REFCLK and the PHY uses it directly as the interface clock. It is not
+a rate we ask a part for; it is a rate we supply.
+
+Which makes the oscillator the specification, and it clears the requirement by an
+order of magnitude. **Y1 is `SIT1602BC-23-33E-60.000000E`** — a SiTime SiT1602B
+MEMS oscillator on ball A8 through series resistor R108
+(`production/netlist.ipc`, `clock_misc.kicad_sch`). Its part number decodes to
+**±50 ppm total stability**, *"inclusive of initial tolerance at 25 °C, 1st year
+aging at 25 °C, and variations over operating temperature, rated power supply
+voltage and load"* (SiT1602B rev 1.08 Table 1), with a 45–55% duty cycle:
+
+| requirement | USB3343 needs | Y1 delivers | margin |
+|---|---|---|---|
+| REFCLK accuracy | ±500 ppm | **±50 ppm** | **10×** |
+| REFCLK duty cycle | 20–80% | 45–55% | wide |
+| USB 2.0 high-speed device clock | ±500 ppm | ±50 ppm | 10× |
+
+`usb` is that oscillator passed straight through with no PLL in the path
+([`../../gateware/soc/clocks.py`](../../gateware/soc/clocks.py) — `usb` is the
+one domain the PLL does not touch), so the 60.000 MHz in the design is exact
+rather than solved. That file's own docstring records what the alternative cost:
+a `sync` = 90 MHz build put `usb` at 63.000 MHz, placed and configured cleanly,
+and never appeared on the USB bus.
+
+**The pins are not the constraint either, for once.** `IO_TYPE="LVCMOS33"`,
+`SLEWRATE="FAST"` — so ECP5 Table 3.21 applies at its published figures, 150 MHz
+output and 200 MHz input. 60 MHz is **40%** of the output ceiling, the widest
+margin any fast interface on this board has. See
+[`ecp5/lfe5u-12f.md`](ecp5/lfe5u-12f.md) §2 for what that table does to the
+others.
+
+**The interface timing budget, at the 16.67 ns period** (Table 4.4, p. 20–21,
+the *"60MHz ULPI Input Clock"* rows, `CLoad` = 10 pF):
+
+| direction | parameter | value | what is left of the period |
+|---|---|---|---|
+| FPGA → PHY | `TSC`, `TSD` setup | 3 ns min | 13.67 ns for the FPGA to produce it |
+| FPGA → PHY | `THC`, `THD` hold | 0 ns min | no hold obligation at all |
+| PHY → FPGA | `TDC`, `TDD` output delay | 0.5–6.0 ns | 10.67 ns for the FPGA to capture it |
+
+Note 4.4 adds that *"REFCLK does not need to be aligned in any way to the ULPI
+signals"*, which is why a single clock net feeding both the PHY and the fabric is
+legal here.
+
+### 3. Measured
+
+| path | conditions | figure | source |
+|---|---|---|---|
+| PHY identity, all three | ULPI register window over JTAG | `0x24 0x04 0x09 0x00` — vendor `2404`, product `0900` | `debris/scripts/phy_probe.py`, 2026-07-23 |
+| data lines, all three | walking bit through scratch register `0x16`, rounds 0–2 | 8/8 on each PHY | as above |
+| **bulk IN, direct root port** | high speed, 512-byte packets, 284,306 transactions | **388.0 Mbps = 48.5 MB/s** | [`../usb-performance.md`](../usb-performance.md) |
+| bulk OUT, direct root port | as above | 338.8 Mbps = 42.3 MB/s | as above |
+| CDC-ACM loopback, combinational | as above | 195.4 Mbps = 24.4 MB/s | as above |
+| **the ULPI clock itself** | — | **never measured** | it has never needed to be; see below |
+
+388 Mbps is **81% of the 60 MB/s ULPI byte lane** and **91% of the 426 Mbps USB
+protocol maximum**. The device contributes 0.16% of the transaction budget: 1.0000
+ACKs per IN token, 512.0 bytes per token, one clock cycle from token to first data
+byte. **Nothing in the measured shortfall is the PHY or the clock.**
+
+**Not measured:** eye quality, signal integrity, or anything analogue on D+/D−.
+The 60 MHz on the clock pin has never been put on a scope either — what stands in
+for it is that `ClockMonitor`
+([`../../gateware/soc/peripherals/clock_monitor.py`](../../gateware/soc/peripherals/clock_monitor.py))
+counts `sync` against a 60,000-cycle `usb` window and the CPU reports a mismatch
+if the two disagree, so a wrong oscillator would be visible as a wrong `sync`.
+
+### 4. The gap, and what closes it
+
+**There is no gap on this interface, and nothing should be spent looking for
+one.** The three numbers agree: the specification says 60 MHz, the board supplies
+60.000 MHz at ±50 ppm, and the design configures 60 MHz.
+
+What is left is throughput, and none of it is here:
+
+| rank | option | worth | where it lives |
+|---|---|---|---|
+| — | raise the ULPI clock | **nothing.** There is no faster USB 2.0 | — |
+| 1 | close the 91% → 100% protocol gap | 388 → 426 Mbps | host and topology, not the device — [`../usb-performance.md`](../usb-performance.md) |
+| 2 | CDC-ACM path, 195.4 → 388 Mbps | **2×** | the combinational loopback harness, not the PHY |
+| — | a second PHY carrying traffic at once | 60 → 120 MB/s aggregate | three PHYs exist; no design drives two at line rate |
+
+**Two timing constants worth checking against this section rather than
+re-deriving.** Both are `usb` cycle counts, and both are exact rather than
+approximate now that `usb` is an oscillator: `PHY_PAD_RESET_CYCLES = 128` is
+2.133 µs against §5.6.2's *"minimum of 1 microsecond"*, and
+`PHY_PREP_CYCLES = 72_000` is 1.200 ms against `TPREP` 1.0–1.2 ms (Table 4.3,
+LPM disabled).
+
 ## Wiring on r1.4
 
 `ULPIResource` declarations in `gateware/board/cynthion_r1_4.py`, all

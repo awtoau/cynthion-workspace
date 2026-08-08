@@ -7,6 +7,132 @@ the console. Order part **`ATSAMD11D14A-MUT`** (substitution `-MNT`),
 
 **Index:** [`../hardware.md`](../hardware.md)
 
+## Performance — the clock rates this MCU sets for the whole board
+
+Structure per [`../plans/performance-sections.md`](../plans/performance-sections.md);
+cross-cut against every other bus in [`bus-speed-audit.md`](bus-speed-audit.md).
+Datasheet references are **Atmel-42363H-SAM-D11, 09/2016**,
+[`sources/Atmel-42363-SAM-D11_Datasheet.pdf`](../../sources/Atmel-42363-SAM-D11_Datasheet.pdf).
+
+Two rates leave this part and land on the FPGA: **JTAG TCK** and the **console
+UART**. Neither is bounded by the ECP5, and one of them has no room to move at
+all — which is the useful finding, because it is not obvious from either
+datasheet on its own.
+
+### 1. Theoretical maximum
+
+**The SERCOM is the whole story.** Every serial rate here comes from a SERCOM off
+GCLK0, and `CONF_CPU_FREQUENCY` is **48,000,000**
+([`peripheral_clk_config.h`](../../repos/apollo/lib/tinyusb/hw/mcu/microchip/samd11/config/peripheral_clk_config.h)),
+which is also the datasheet ceiling — **Table 35-6, Maximum Peripheral Clock
+Frequencies** (and its Table 40-6 twin for the other operating-condition set)
+gives `fGCLK_SERCOM0_CORE` a maximum of **48 MHz**, and the part's own overview
+states *"The SAM D11 devices operate at a maximum frequency of 48MHz"*.
+
+In SPI master mode the SERCOM divides that by an integer:
+
+    SCK = 48 MHz / (2 x (BAUD + 1))
+
+    BAUD  0 -> 24.0 MHz
+    BAUD  1 -> 12.0 MHz      <- what JTAG uses
+    BAUD  2 ->  8.0 MHz
+    BAUD  3 ->  6.0 MHz
+
+**There is no rung between 24 and 12.** That single fact decides the JTAG
+section below, and it is a property of the divider rather than of either part.
+
+The far end is more generous. ECP5 datasheet FPGA-DS-02012-1.9 **Table 3.43,
+JTAG Port Timing Specifications** gives `fMAX`, TCK clock frequency, as
+**25 MHz** — so the FPGA would accept BAUD 0.
+
+### 2. Achievable on this board — the round trip binds, not either endpoint
+
+**JTAG.** Apollo clocks TCK from SERCOM0 in SPI master mode with `BAUD = 1`
+([`boards/cynthion_d11/jtag.c`](../../repos/apollo/firmware/src/boards/cynthion_d11/jtag.c)),
+so **TCK = 12 MHz**. The obvious question is why not 24, given the ECP5 accepts
+25 — and the answer is a two-datasheet sum that neither document makes on its
+own.
+
+TDO changes on the falling TCK edge; the SERCOM (`CPOL = 1`, `CPHA = 1`) samples
+MISO on the rising edge, half a period later. So:
+
+| term | value | source |
+|---|---|---|
+| `tBTCO` — ECP5 TAP falling clock edge to valid output | **10 ns max** | FPGA-DS-02012 Table 3.43 |
+| `tMIS` — SAMD11 MISO setup to SCK, master | **21 ns typ** | Atmel-42363H §35.15.2, Table 35-50 |
+| board and pad delay | not accounted | — |
+| **required half period** | **≥ 31 ns** | |
+| **⇒ TCK ≤ 16.1 MHz** | | |
+
+24 MHz gives a 20.8 ns half period, 10 ns short. The SAMD11's own figure for
+master mode — **`tSCK` 84 ns typ, i.e. 11.9 MHz**, same table — arrives at the
+same place by a different route, and 12 MHz is one hair inside it.
+
+**So the gap between what the ECP5 allows (25 MHz) and what we run (12 MHz) is
+not slack. It is the divider having no rung in the window between 12.0 and
+16.1 MHz.** The binding constraint is the SAMD11's SERCOM, and it is already at
+its ceiling.
+
+Two caveats attached rather than buried. `tMIS` and `tSCK` are given in the
+**Typ.** column with no Min or Max, so the arithmetic above is an argument and
+not a guarantee; and it says nothing about *configuration* over JTAG, where a
+bit slipping is caught by the ECP5's own CRC rather than by a readback.
+
+**The UART, and it is not a rate question.** The Apollo serial line runs at
+**115200 8N1** on both sides — `uart_initialize(true, 115200)` in
+[`console.c`](../../repos/apollo/firmware/src/console.c), and
+`APOLLO_UART_BAUD = 115200` in
+[`../../gateware/soc/top.py`](../../gateware/soc/top.py) — which is 11.52 kB/s
+next to a 60 MHz CPU. A SERCOM off 48 MHz would reach several megabaud. What
+stops it is **not** the baud generator: R14/T14 on the FPGA are the ECP5's JTAG
+TDI/TMS pads, and PA10/11/14/15 on this part are shared three ways between JTAG,
+SERCOM0 SPI and SERCOM2 USART. Both ends of this link are pins that JTAG also
+needs, so the mitigation is a policy of never transmitting unbidden, not a
+faster wire. See the pin-sharing section below.
+
+The one-wire sideband link exists precisely because that policy leaves nothing
+able to speak first; it runs at 230400 and has its own analysis in
+[`cynone-sideband.md`](cynone-sideband.md) §2.
+
+**The USB round trip is the real ceiling on everything this part does for the
+host.** One response-requiring vendor transfer costs **3.00 ms** measured, and
+that is what paces `apollo flash-program`: 58,940 bytes took 3.33 s of which the
+flash itself needed ≈0.53 s. TCK does not appear in that arithmetic at all —
+see [`w25q32-config-flash.md`](w25q32-config-flash.md) §4.
+
+### 3. Measured
+
+| path | conditions | figure | source |
+|---|---|---|---|
+| JTAG shift | TCK 12 MHz, DMA-driven SPI | **750 kword/s** | [`../../gateware/soc/bus/jtag_stage.py`](../../gateware/soc/bus/jtag_stage.py) |
+| JTAG shift | polled path, 1024 bytes | ~700 µs, during which `tud_task()` cannot run | this file, *Links to the FPGA* |
+| USB vendor round trip | one response-requiring transfer | **3.00 ms** | `repos/apollo` `90c8b7b` |
+| host → flash program | 58,940 B at `0xb0000` | 3.33 s = 17.3 KiB/s | `scripts/soc_run.py`, 2026-08-06 |
+| **TCK at BAUD 0 (24 MHz)** | — | **never run** | the harness exists; see below |
+
+### 4. The gap, and what closes it
+
+| rank | option | worth | effort |
+|---|---|---|---|
+| 1 | **page loop on this MCU** (#100) | 3.33 s → ~0.6 s on every firmware iteration, **5.5×** | a command that does not exist, on a part at 94.9% of its flash budget |
+| 2 | fewer USB round trips per operation | 3.00 ms each, and they dominate every host-driven path | already done once — two redundant trips per page removed, 4.71 s → 3.33 s |
+| — | **TCK 12 → 24 MHz** | **unavailable.** 24 MHz is 10 ns short on the TDO round trip and past the ECP5's 25 MHz `fMAX` in any case | — |
+| — | a faster Apollo UART | **wrong lever.** The pins are JTAG's; the cost is arbitration | — |
+
+**Unknown, and cheap to settle:** whether TCK 24 MHz fails the way the
+arithmetic says. `jtag.c` already takes a SERCOM divider in the high byte of
+`wIndex` and counts bytes that return exactly as the TAP should have returned
+them — a benchmark written for this question, with the standard clocking
+restored afterwards so an exotic rate cannot leave the chain misconfigured.
+Running it at BAUD 0 costs one USB request and would convert a typical-column
+argument into a result.
+
+**Also unknown, and worth naming:** `apollo_fpga/jtag.py` advertises
+`max_frequency=405e3` and its `set_frequency()` is `pass` with a `# FIXME`, so
+every SVF `FREQUENCY` command is logged and discarded. Nothing is broken by it —
+the real rate is the firmware's 12 MHz — but anything reading that constant is
+being told something untrue.
+
 ## Memory budget — the binding constraint on this board
 
 | | measured | of | |

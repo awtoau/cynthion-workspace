@@ -271,7 +271,40 @@ check that distinguishes a document from a login page:
 | `PAC195X-Family-DS20006539B.pdf` | PAC1954 power monitor (#82, #84) |
 | `334x.pdf` | USB3343 PHY |
 | `Vishay-SiA483ADJ-P-Channel-30V-MOSFET.pdf` | SiA483ADJ — the VBUS pass MOSFET, Q1/Q2/Q4/Q5/Q6/Q7 (`https://www.vishay.com/docs/77080/sia483adj.pdf`) |
+| `SiTime-SiT1602-MEMS-oscillator.pdf` | SiT1602B, **rev 1.08, 1 Jan 2023, 18 pp** — Y1, the board's only oscillator (`https://www.sitime.com/datasheet/SiT1602`) |
 | `S9c76cb8ac7dc4b77b5edfe7984049618q.pdf` | unidentified — rename when someone works out what it is |
+
+### What the SiT1602 settled: the part number decodes, and it is ±50 ppm
+
+`clock_misc.kicad_sch` gives Y1 as **`SIT1602BC-23-33E-60.000000E`**, and every
+rate on this board descends from it — `usb` is that oscillator passed straight
+through, and `sync` is a PLL off the same pin. The Ordering Information guide
+(p. 13) decodes it field by field:
+
+| field | value | meaning |
+|---|---|---|
+| `C` | temperature range | **Commercial, −20 to +70 °C** |
+| `–` | drive strength | datasheet default |
+| `2` | package | 3.2 × 2.5 mm — matches the `Crystal_SMD_3225` footprint |
+| `3` | **frequency stability** | **±50 ppm** |
+| `33` | supply | 3.3 V ±10% |
+| `E` | pin 1 | Output Enable |
+| `E` | packing | 8 mm tape & reel, 1 ku |
+
+±50 ppm is Table 1's `F_stab`, *"inclusive of initial tolerance at 25 °C, 1st year
+aging at 25 °C, and variations over operating temperature, rated power supply
+voltage and load"* — so it is the total, not a bin at 25 °C. Against the USB3343's
+REFCLK accuracy requirement of ±500 ppm (Rev 1.2 Table 4.3) and USB 2.0 high
+speed's own ±500 ppm, that is **10× margin**. Duty cycle 45–55% against the PHY's
+20–80% requirement; RMS period jitter 1.8 ps typ.
+
+**Validity check before trusting a copy:**
+
+    pdfinfo <file>                                      # Pages = 18
+    pdftotext -layout <file> - | grep -c 'F_stab'       # non-zero
+
+Used by [`../docs/chips/bus-speed-audit.md`](../docs/chips/bus-speed-audit.md)
+and [`../docs/chips/usb3343-ulpi-phy.md`](../docs/chips/usb3343-ulpi-phy.md).
 
 ### The SiA483ADJ is a SINGLE device, and that closes an open question
 

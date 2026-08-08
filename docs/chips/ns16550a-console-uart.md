@@ -20,6 +20,102 @@ The offsets below are the NS16550A's own, fixed by the part being copied rather
 than by our decoder. What can drift — where the peripheral sits — is generated,
 and [`../hardware.md`](../hardware.md) explains why that is never transcribed.
 
+## Performance
+
+Structure per [`../plans/performance-sections.md`](../plans/performance-sections.md);
+cross-cut against every other bus in [`bus-speed-audit.md`](bus-speed-audit.md).
+
+**There is no baud ceiling here, because there is no baud generator.** DLL and
+DLM are stored and ignored — they exist so a generic driver's setup sequence
+succeeds, not so a rate can be set. Asking "what baud does the console run at" is
+asking the wrong peripheral; the answer belongs to whichever transport the
+instantiator wired behind it, and the two instances have completely different
+ones.
+
+### 1. Theoretical maximum
+
+**The peripheral itself.** Bytes cross on `sync`-clocked stream ports, one per
+cycle, so the 16550 could pass **60 MB/s** at `SYNC_MHZ = 60`. Nothing on this
+board comes within three orders of magnitude of that, and it is recorded only to
+say that the fabric is never the constraint.
+
+| instance | transport | its own ceiling |
+|---|---|---|
+| **0 — console** | USB CDC-ACM on the AUX PHY | the USB bulk path: 53.2 MB/s protocol maximum, 48.5 MB/s measured on this board |
+| **1 — Apollo** | `serial_line.py` on R14/T14 | 115200 8N1 = **11.52 kB/s**, and the pins are JTAG's |
+
+### 2. Achievable on this board
+
+**Instance 0 is packet-rate bound, not byte-rate bound, and that is a deliberate
+trade.** The endpoint asserts `serial.tx.last` on every byte
+([`../../gateware/soc/top.py`](../../gateware/soc/top.py)), so **one byte leaves
+per USB packet**. The reason is latency: a console emits a line and goes quiet,
+so waiting to fill a 512-byte packet would hold the banner indefinitely.
+
+The arithmetic of what that costs, from the USB 2.0 microframe:
+
+    13 bulk transactions per 125 us microframe   (the protocol maximum)
+    x 8000 microframes per second
+    x 1 byte per packet
+    = 104 kB/s ceiling
+
+against **53.2 MB/s** if the same endpoint sent full packets — a factor of 512,
+spent on interactive latency. This is a rate chosen for a reason other than what
+the transport supports, which is exactly the shape
+[`bus-speed-audit.md`](bus-speed-audit.md) looks for; the difference is that the
+reason is written down, correct, and about a property the byte rate cannot
+express.
+
+**Instance 1 is not a rate decision at all.** 115200 matches what the SAMD11
+opens ([`console.c`](../../repos/apollo/firmware/src/console.c)) and what every
+terminal expects on an Apollo tty. A SERCOM off 48 MHz would reach several
+megabaud. What stops it is that **R14/T14 are the ECP5's JTAG TDI/TMS pads** and
+PA10/11/14/15 on the MCU are shared three ways — so the mitigation for the link
+is a policy of never transmitting unbidden, not a faster wire. See
+[`samd11-apollo.md`](samd11-apollo.md).
+
+**What we configure.** The divisor is computed at elaboration from the PLL's
+*solved* rate rather than the requested one:
+
+    divisor = int(car.actual_sync_mhz * 1e6 // APOLLO_UART_BAUD)   # = 520 at 60 MHz
+
+which is 115384.6 baud against 115200 — **0.03% error**, where a UART tolerates
+about 2%. Reading `actual_sync_mhz` rather than `SYNC_MHZ` is what keeps that
+true if the PLL ever has to approximate.
+
+FIFOs, and each is sized where the transport is chosen: console 16/16, Apollo
+64 TX / 16 RX. 64 is a line of shell output, because at 115200 a byte is ~87 µs —
+four orders of magnitude slower than the CPU can produce them, and without the
+buffer a `help` listing would spend its whole length inside the 16550's bounded
+write spin, dropping most of itself.
+
+### 3. Measured
+
+| path | conditions | figure | source |
+|---|---|---|---|
+| CDC-ACM loopback, combinational | high speed, 512-byte packets | 195.4 Mbps = 24.4 MB/s | [`../usb-performance.md`](../usb-performance.md) |
+| **the console as actually built** | one byte per packet | **never measured** | nothing has ever timed a banner |
+| Apollo line | 115200 8N1, divisor 520 | 11.52 kB/s by construction | — |
+| overrun rate on either port | — | counted by `lost` per console, reported by `irq` | [`../hardware.md`](../hardware.md) |
+
+The 24.4 MB/s row is the *transport* with full packets and is **not** what this
+peripheral gets. It is here as the ceiling the one-byte-per-packet choice is
+measured against, not as a figure for the console.
+
+### 4. The gap, and what closes it
+
+| rank | option | worth | cost |
+|---|---|---|---|
+| — | a faster baud on instance 0 | **meaningless.** There is no baud generator and no wire | — |
+| 1 | pack the console TX endpoint | up to 512× on bulk output | **the banner stops appearing promptly.** A timed flush would keep both, and does not exist |
+| 2 | measure what the console actually achieves | it would replace an arithmetic ceiling with a number | a byte-counted flood over the CDC path |
+| — | a faster Apollo UART | **wrong lever.** The constraint is that both pins are JTAG's | — |
+
+**Unknown:** the console's real throughput. The 104 kB/s above assumes the host
+issues bulk transactions at the protocol maximum, which no CDC-ACM driver does.
+Nothing has ever measured it, and until something has, "the console is slow"
+remains an impression rather than a finding.
+
 ## Every read that changes state
 
 | read | changes | what a driver must do |
