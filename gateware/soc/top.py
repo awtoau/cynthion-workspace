@@ -274,10 +274,15 @@ GPIO_BUTTON  = 7
 
 GPIO_PIN_COUNT = 8
 
-# The I2C bus rate. See i2c_master.py for why 80 kHz rather than 100 kHz --
-# briefly, at 100 kHz the repeated-START setup interval lands 0.7 us inside a
-# standard-mode minimum, and a register read needs a repeated START.
-I2C_SCL_HZ = 80_000
+# The I2C bus rate. Fast-mode Plus, because every device on this bus is a
+# Fast-mode Plus part: two FUSB302Bs at 1 MHz and a PAC1954 at 1 MHz, each on
+# its own mux segment behind 2.2k pull-ups.
+#
+# It was 80 kHz, budgeted against STANDARD-mode minima on a bus with no
+# standard-mode devices on it -- twelve times slower than the parts, for the
+# life of the project. `i2c_master.py` has the slot arithmetic against Fm+ and
+# the rise-time limit that actually binds. See #269.
+I2C_SCL_HZ = 1_000_000
 
 # 115200 8N1, which is what the SAMD11 side is configured for
 # (`repos/apollo/firmware/src/boards/cynthion_d11/uart.c`) and what every terminal
