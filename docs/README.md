@@ -94,6 +94,7 @@ in its §13 got there in the first place.
 * [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) — PAC1954-1 — the power monitor
 * [`chips/samd11-apollo.md`](chips/samd11-apollo.md) — ATSAMD11D14A — the Apollo debug microcontroller
 * [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) — USB3343 ×3 — the ULPI PHYs
+* **[`chips/bus-speed-audit.md`](chips/bus-speed-audit.md) — every interface: what the part supports, what this board allows, what we configure**
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
 * [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — Winbond W956A8MBYA6I — the HyperRAM
@@ -106,6 +107,7 @@ in its §13 got there in the first place.
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — the part: a 25F die, its primitives, and the DDR path
 * **[`chips/ecp5/programming-paths.md`](chips/ecp5/programming-paths.md) — every way code gets onto this board, and every way it boots**: start here, then follow it to the file that owns the detail
 * [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md) — block RAM: who actually uses it
+* [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md) — every ball: used, requested-and-unconnected, or never requested
 * [`chips/ecp5/config-engine-probe.md`](chips/ecp5/config-engine-probe.md) — probing the configuration engine on live silicon
 * [`chips/ecp5/flashing.md`](chips/ecp5/flashing.md) — the gateware load process
 * [`chips/ecp5/flash-partitioning.md`](chips/ecp5/flash-partitioning.md) — partitioned configuration flash on r1.4

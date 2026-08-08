@@ -30,6 +30,105 @@ push-pull, no readback — so **clock stretching is impossible on this board**
 (`gateware/soc/peripherals/i2c_master.py`). `scl`/`sda` carry `PULLMODE="NONE"`; the
 pull-ups are on the board.
 
+## Performance
+
+Structure per [`../plans/performance-sections.md`](../plans/performance-sections.md);
+cross-cut against every other bus in [`bus-speed-audit.md`](bus-speed-audit.md).
+Datasheet references are **FUSB302B Rev 1.3**,
+[`sources/FUSB302B-958669.pdf`](../../sources/FUSB302B-958669.pdf), 38 pp.
+
+**This part is what caps the shared I²C bus at 1 MHz**, and it is the only device
+on it that does. The [PAC1954](pac1954-power-monitor.md) will do 3.4 MHz; these
+two will not, and one controller serves all three.
+
+### 1. Theoretical maximum
+
+The electrical table's own heading names the modes — *"I²C Interface Pins –
+Standard, Fast, or Fast Mode Plus Speed Mode (SDA, SCL)"* (p. 17) — and stops
+there. There is no High-Speed row. **"I²C Specifications Fast Mode Plus I²C
+Specification"**, p. 18:
+
+| symbol | parameter | min | max |
+|---|---|---|---|
+| `fSCL` | SCL clock frequency | 0 | **1000 kHz** |
+| `t_LOW` | SCL low period | 0.5 µs | — |
+| `t_HIGH` | SCL high period | 0.26 µs | — |
+| `t_SU;STA`, `t_HD;STA`, `t_SU;STO` | condition setup / hold | 0.26 µs | — |
+| `t_SU;DAT` | data setup | 50 ns | — |
+| `t_BUF` | bus free, STOP to START | 0.5 µs | — |
+| `t_r`, `t_f` | SDA and SCL rise / fall | — / 6 ns | **120 ns** |
+| `t_SP` | spike width suppressed by the input filter | 0 | 50 ns |
+| `t_VD;DAT`, `t_VD;ACK` | **the part's own** SCL-low to SDA-valid | 0 | **0.45 µs** |
+| `Cb` | capacitive load per bus line | — | 550 pF |
+| `CI` | capacitance per I/O pin | — | 5 pF typ |
+
+At 1 MHz a byte plus its acknowledge is 9 clocks, so the byte ceiling is
+**111.1 kB/s** — and every access here is one or two register bytes behind an
+address, so the transaction count dominates and the byte rate never will.
+
+Interrupt latency has one figure: `TINT_Mask`, *"Time from global interrupt mask
+bit cleared to when INT_N goes LOW"*, **50 µs** (p. 17).
+
+**PD message turnaround is not established.** Rev 1.3 describes the BMC physical
+layer and a 48-byte packet FIFO but states no signalling rate; that number lives
+in the USB PD specification, which is not in
+[`../../sources/`](../../sources/README.md). What would establish it: the PD
+spec's BMC bit rate and interframe timings, or a measurement on the CC line.
+
+### 2. Achievable on this board
+
+**Two devices at one fixed address is the binding constraint, and it is not a
+rate.** They are on separate pin-sets behind an FPGA-side mux with a **single**
+`I2CMaster`, so target and aux are serialised against each other *and* against
+the power monitor. Raising `fSCL` shortens each transaction; it does not make
+them concurrent. Three controllers would, at three times the logic.
+
+**SCL is push-pull, so only SDA rises through a resistor.** Both `scl`
+subsignals are `Pins(..., dir="o")` with no `oe`. The pull-ups are **2.2k** —
+R97 on target, R33 on aux, from `production/bom.csv` — and `t_r ≈ 0.8473·R·C`
+over the 0.3–0.7 V<sub>DD</sub> window gives:
+
+    20 pF ->  37 ns        Fm+ allows 120 ns
+    50 pF ->  93 ns
+    64 pF -> 120 ns        the Fm+ edge, at this resistor
+   100 pF -> 186 ns        Fm+ exceeded, Fast mode still fine
+
+Each part is alone on its segment, and its own contribution is 5 pF typ. **`Cb`
+has never been measured**, so the working assumption of 50 pF is an argument
+rather than a number — see [`bus-speed-audit.md`](bus-speed-audit.md).
+
+**One Fm+ parameter is a slave *output* and it is the one worth checking**, since
+a master cannot fix it by slowing its own edges. `t_VD;DAT` and `t_VD;ACK` are
+450 ns max. The controller drives SDA in slot 0 and samples at the end of slot 3,
+which is **1000 ns** after SCL falls — 550 ns of margin.
+
+**What we configure:** `I2C_SCL_HZ = 1_000_000` in
+[`../../gateware/soc/top.py`](../../gateware/soc/top.py), giving `PRER` = 11 at
+`sync` 60 MHz, a 200 ns slot and exactly 1.000 MHz. `t_LOW` at 600 ns is the
+tightest parameter, 20% inside the minimum; everything else is above 50%. The
+firmware constant is generated from the gateware's own `prescale_for`, so the two
+cannot drift.
+
+### 3. Measured
+
+| axis | conditions | figure | source |
+|---|---|---|---|
+| identity, both parts | `PRER` 11, 1 MHz, one per mux segment | `0x22` manufacturer `01`, on **both** target and aux | `d820d9e` |
+| bus rate | derived, not scoped | 1.000 MHz exactly | — |
+| **SDA rise time** | — | **never measured** | the one open question on this bus |
+| **PD message turnaround** | — | **never measured**, and no datasheet figure to compare against | — |
+| interrupt path | level-sensitive, PLIC | works; latency not timed | see *Interrupts* below |
+
+### 4. The gap, and what closes it
+
+| rank | option | worth | effort |
+|---|---|---|---|
+| — | raise `fSCL` above 1 MHz | **unavailable.** This part stops at Fm+, and the shared controller means the whole bus stops with it | — |
+| 1 | fewer transactions per operation | the bus is no longer where the CPU time goes — see [`pac1954-power-monitor.md`](pac1954-power-monitor.md) §3 | [#267](https://github.com/awtoau/cynthion-workspace/issues/267) |
+| 2 | a controller per segment | target, aux and the monitor stop serialising | three `I2CMaster` instances; nothing today needs the concurrency |
+| 3 | measure `Cb` on SDA | converts the rise-time margin from an argument into a number | a scope on the 0.3–0.7 V<sub>DD</sub> edge |
+| 4 | the probe bitstreams, still at 100 kHz | 10× on the bring-up paths | `period_cyc = 600` in [`../../gateware/probes/pins/fusb302_id.py`](../../gateware/probes/pins/fusb302_id.py) and [`../../gateware/probes/pins/i2c_scan.py`](../../gateware/probes/pins/i2c_scan.py) |
+
 ## Measured on this board
 
 Bus scan (commit `82b0f1e`, `gateware/probes/pins/i2c_scan.py`), 0x08–0x77 write-address

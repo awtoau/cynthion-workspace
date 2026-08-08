@@ -26,6 +26,12 @@ published ECP5 scoreboard, and what is ruled out on these exact parts:
 [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) and
 [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), ranked in
 [`architecture.md`](architecture.md).
+
+**Every bus rate on the board, against what its parts actually support** —
+three numbers per interface with a datasheet citation for each, and the gaps
+ranked: [`chips/bus-speed-audit.md`](chips/bus-speed-audit.md). Written after
+the I²C bus turned out to have run twelve times slower than every device on it
+for the life of the project.
 | **PAC1954-1** | 4-channel power monitor | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |

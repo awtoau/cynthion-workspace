@@ -450,8 +450,10 @@ fn boot() -> Devices {
         // The SCL rate this build will actually clock, derived the way the
         // controller derives it -- `f_SCL = f_sync / (5 * (PRER + 1))` -- from
         // the prescale the gateware's own `prescale_for` produced and the clock
-        // it produced it for. Not the 80 kHz that was asked for: the divider is
-        // an integer, so what comes out is what the bus gets.
+        // it produced it for, rather than from `I2C_SCL_HZ`. The divider is an
+        // integer, so what comes out is what the bus gets and not what was
+        // asked for -- 1 MHz happens to land exactly at PRER 11, and the next
+        // rate somebody picks may not.
         let scl_hz = target::BOARD
             .map(|board| target::TIME_HZ / (5 * (board.i2c_prescale as u32 + 1)))
             .unwrap_or(0);
