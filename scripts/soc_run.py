@@ -46,6 +46,7 @@ worse than one that says it did.
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -445,7 +446,22 @@ def main():
     #
     # It is still a hard stop if the generator itself fails, because then
     # nothing knows where the peripherals are.
-    if not args.c_firmware:
+    # ...except for the BIST variant, which deliberately has a DIFFERENT map:
+    # no HYPERRAM window and no BOOTRAM, because the engine owns the part's pins.
+    # Regenerating here would overwrite the committed PAC -- the shipping
+    # variant's -- with a measurement build's, and the next ordinary build would
+    # then check itself against a map it does not have.
+    #
+    # Nothing is lost by skipping it. The BIST peripheral is addressed by a
+    # literal in `firmware/cynthion-soc/src/bist.rs` precisely so that the PAC
+    # does not have to change, and `tests/test_bist_constants.py` holds that
+    # literal to `top.py` in 0.01 s.
+    if not args.c_firmware and os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0"):
+        emit("peripheral map NOT regenerated: CYNTHION_HYPERRAM_BIST has its own")
+        emit("  no HYPERRAM window and no BOOTRAM in that variant, by design.")
+        emit("  the committed PAC stays the shipping one; the BIST peripheral is")
+        emit("  a literal in bist.rs, checked by tests/test_bist_constants.py.")
+    elif not args.c_firmware:
         before = None
         generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
         if generated.exists():

@@ -491,10 +491,20 @@ def cross_check(peripherals, emit):
     ok = True
     for name, address in sorted(expected.items()):
         actual = bases.get(name)
-        if actual != address:
+        if actual == address:
+            continue
+        # ABSENT and MISMATCH are different faults and must not print the same
+        # line. This used to be one f-string with the None test inside the
+        # format spec, so the absent case formatted `None` with `:08x` and
+        # raised TypeError four frames up -- the diagnostic for a missing
+        # peripheral crashed instead of naming it.
+        if actual is None:
+            emit(f"  ABSENT gateware {name}: constant 0x{address:08x}, "
+                 f"but the elaborated map has no such peripheral")
+        else:
             emit(f"  MISMATCH gateware {name}: constant 0x{address:08x}, "
-                 f"map 0x{actual if actual is None else actual:08x}")
-            ok = False
+                 f"map 0x{actual:08x}")
+        ok = False
     emit(f"gateware constants: {len(expected)} checked, "
          f"{'all agree' if ok else 'DISAGREEMENT ABOVE'}")
 
