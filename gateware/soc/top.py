@@ -669,16 +669,24 @@ HYPERRAM_CLOCK_STOP = False
 # remainder is all stack slack. Code size costs real cycles on this design; data
 # size does not.
 #
-# Sets rather than ways, and that is a correctness constraint rather than a
-# preference. `flash_cache_flush()` in `scripts/riscv_firmware.py` displaces the
-# D-cache by reading its size linearly, which is only guaranteed while the cache
-# is DIRECT-MAPPED -- with two ways, a pseudo-LRU replacement policy decides what
-# survives and the flush stops being a proof. Doubling the sets keeps every line
-# uniquely addressed by its index, so the existing flush stays correct by
-# construction, and it leaves the cache hit path -- one tag compare, no way-select
-# mux -- timing-identical, which matters at a 90 MHz ceiling the BTB already had
-# to be relaxed to meet.
+# Sets rather than ways -- and an earlier version of this comment called that a
+# correctness constraint, which was wrong. It claimed `flash_cache_flush()` needs
+# a direct-mapped cache. The replacement policy is PLRU rather than random, so a
+# sweep of the full cache size still evicts every way; and that flush is only in
+# the generated C test firmware, while the Rust firmware uses a real `fence.i`.
+# See `cpu/cpu.py`'s GENERATE_FLAGS for the full correction.
+#
+# So the axis is open, and it is being measured rather than argued:
+# `scripts/soc_cache_sweep.py` builds each geometry and reports what it costs.
+# The case for ways is that RTIC's handlers are separate instruction working sets
+# that preempt each other, and two hot ones colliding on an index evict each
+# other however large a direct-mapped cache is. The case against is that
+# `bankCount = wayCount`, so ways cost block RAM fast, and a way-select mux lands
+# in the hit path.
+#
+# 3 ways is not an option: SpinalHDL's PLRU asserts `isPow2` on the way count.
 CACHE_SETS = 128
+CACHE_WAYS = 1
 
 
 class HelloSoC(Elaboratable):
@@ -752,7 +760,7 @@ class HelloSoC(Elaboratable):
         # it advertises drift apart silently. They did not, but only because both
         # happened to be 64.
         cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
-                         regions=regions)
+                         cache_ways=CACHE_WAYS, regions=regions)
         m.submodules.cpu = cpu
 
         # The die's one `JTAGG`, and both taps off it.
@@ -858,7 +866,7 @@ class HelloSoC(Elaboratable):
         m.submodules.gateware_id = gateware_id = GatewareId(
             sync_hz=round(car.actual_sync_mhz * 1e6),
             usb_hz=round(car.actual_usb_mhz * 1e6),
-            cache_sets=CACHE_SETS)
+            cache_sets=CACHE_SETS, cache_ways=CACHE_WAYS)
 
         # What the clocks ARE, counted against the oscillator, alongside what
         # they were declared to be. A PLL that never locked reported 30 MHz from

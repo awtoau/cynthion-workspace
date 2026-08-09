@@ -96,11 +96,31 @@ GENERATE_FLAGS = [
     # rather than the last word -- `top.py`'s CACHE_SETS is. They are kept equal
     # to it so no reader has to work out which number won.
     #
-    # ONE WAY IS LOAD-BEARING, not a default nobody revisited: `flash_cache_flush()`
-    # in `scripts/riscv_firmware.py` evicts the D-cache by reading its size at
-    # line stride, which reaches every set exactly once only while the cache is
-    # direct-mapped. Add a way and a replacement policy decides what survives --
-    # the flush keeps running and stops proving anything.
+    # ONE WAY IS A CHOICE THAT IS STILL OPEN, and an earlier version of this
+    # comment claimed it was forced. It is not. The claim was that
+    # `flash_cache_flush()` in `scripts/riscv_firmware.py` needs a direct-mapped
+    # cache, because it evicts by reading the cache's size at line stride. That
+    # is wrong twice over:
+    #
+    #   * the replacement policy is PLRU, not random (`FetchL1Plugin.scala:187`,
+    #     `Plru.scala`), and a sweep of the FULL cache size touches every set
+    #     `wayCount` times with distinct tags -- which evicts every way under
+    #     PLRU. The flush already reads the full size, so it survives ways > 1.
+    #   * that flush is only in the GENERATED C test firmware. The Rust firmware
+    #     uses a real `fence.i` (`firmware/cynthion-soc/src/main.rs`), so the
+    #     product never depended on the sweep at all.
+    #
+    # The real trade is conflict misses against Fmax and block RAM. RTIC does not
+    # context-switch -- it preempts on one stack -- but each handler is still a
+    # separate instruction working set, and in a direct-mapped cache two hot
+    # handlers that collide on an index evict each other no matter how large the
+    # cache is. Associativity fixes that; capacity does not. Against it,
+    # `bankCount = wayCount` (`FetchL1Plugin.scala:128`) so ways cost block RAM
+    # quickly, and a way-select mux lands in the hit path at an Fmax the BTB
+    # already had to be relaxed to meet.
+    #
+    # `scripts/soc_cache_sweep.py` measures that trade rather than arguing it.
+    # Note 3 ways does not exist: PLRU asserts `isPow2` on the way count.
     "--with-fetch-l1", "--fetch-l1-sets", "128", "--fetch-l1-ways", "1",
     "--with-lsu-l1", "--lsu-l1-sets", "128", "--lsu-l1-ways", "1",
     # All three are needed. A cached core still has an uncached LSU path --
@@ -182,18 +202,34 @@ DEFAULT_REGIONS = [
 ]
 
 
-def generate(reset_addr, cache_sets=128, output=None, regions=None):
+def generate(reset_addr, cache_sets=128, output=None, regions=None,
+             cache_ways=1):
     """Run the Scala generator and return the path to the Verilog.
 
     Regenerating is a few seconds, so this is called at elaboration rather than
     checked in. The alternative -- a committed .v -- drifts silently from the
     flags that produced it.
+
+    `cache_ways` MUST be a power of two. SpinalHDL's PLRU asserts `isPow2` on the
+    way count (`lib/misc/Plru.scala:15`), so 3 ways is not a configuration this
+    core has -- it is 1, 2 or 4. The failure is a Scala assertion during
+    generation rather than anything a build would quietly accept.
+
+    Ways cost block RAM faster than sets do: `bankCount = wayCount`
+    (`FetchL1Plugin.scala:128`), so each way is its own bank of DP16KDs on top of
+    its own tag and PLRU memory.
     """
+    if cache_ways & (cache_ways - 1):
+        raise ValueError(
+            f"cache_ways must be a power of two, not {cache_ways}: SpinalHDL's "
+            f"Plru asserts isPow2 on it (lib/misc/Plru.scala:15). Use 1, 2 or 4.")
     regions = regions if regions is not None else DEFAULT_REGIONS
     flags = list(GENERATE_FLAGS)
     for index, flag in enumerate(flags):
         if flag in ("--fetch-l1-sets", "--lsu-l1-sets"):
             flags[index + 1] = str(cache_sets)
+        if flag in ("--fetch-l1-ways", "--lsu-l1-ways"):
+            flags[index + 1] = str(cache_ways)
     flags += ["--reset-vector", hex(reset_addr)]
 
     # Declare every region the SoC actually has. VexiiRiscv's defaultPma
@@ -242,9 +278,10 @@ class VexiiRiscv(wiring.Component):
     data_width = 32
 
     def __init__(self, *, reset_addr=0x00000000, cache_sets=128,
-                 regions=None):
+                 regions=None, cache_ways=1):
         self._reset_addr = reset_addr
         self._cache_sets = cache_sets
+        self._cache_ways = cache_ways
         self._regions = regions
 
         super().__init__({
@@ -313,7 +350,8 @@ class VexiiRiscv(wiring.Component):
         m = Module()
 
         verilog = generate(self._reset_addr, self._cache_sets,
-                           regions=self._regions)
+                           regions=self._regions,
+                           cache_ways=self._cache_ways)
         if platform is not None:
             platform.add_file("VexiiRiscv.v", verilog.read_text())
 
