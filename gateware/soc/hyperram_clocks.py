@@ -49,7 +49,8 @@ runtime axis swept inside it.
 from amaranth import ClockDomain, ClockSignal, Elaboratable, Instance, Module, Signal
 from amaranth.lib.cdc import FFSynchronizer
 
-__all__ = ["HyperRAMDomains", "solve_hr_pll", "reachable_ck"]
+__all__ = ["HyperRAMDomains", "solve_hr_pll", "reachable_ck",
+           "solve_dcsc_rungs"]
 
 # EHXPLLL limits, from the ECP5 datasheet. Same window the SoC's own generator
 # uses; duplicated here rather than imported because that one lives in the
@@ -106,6 +107,59 @@ def reachable_ck(low, high, dqs=True, input_mhz=60.0):
                     hr, input_mhz, with_fast=dqs):
                 out.append(round(ck, 6))
     return sorted(set(out))
+
+
+def solve_dcsc_rungs(low, high, outputs=4, input_mhz=60.0, step=5.0):
+    """VCOs and divisors whose outputs cover `low`..`high` at `step` spacing.
+
+    **This is what makes CK a runtime axis.** `EHXPLLL` has four outputs --
+    CLKOP, CLKOS, CLKOS2, CLKOS3 -- each with an independent divider off the
+    SHARED VCO, and `DCSC` selects between clock sources glitchlessly at run
+    time. So one bitstream carries up to `outputs` CK values and the CPU picks
+    one with a register write.
+
+    Not a fabric divider: every rung is a real PLL output, so there is no added
+    jitter and the DDR gearing rides it normally.
+
+    The dividers are `p_` parameters -- bitstream config bits -- so the
+    FREQUENCIES are fixed per build; only the SELECTION is runtime. That is the
+    whole trick, and it turns ~31 bitstreams for a 5 MHz grid into a handful.
+
+    Returns a list of (vco_mhz, [ck_mhz, ...]), greedy-smallest-first.
+    """
+    # Reachable VCOs: 60 * clkfb/clki, times an output divider, inside the
+    # ECP5's 400-800 MHz VCO range. `clki` stops at 6 for the 10 MHz phase
+    # detector floor -- the same limit that makes the single-output axis coarse.
+    reachable = set()
+    for clki in range(1, 7):
+        for clkfb in range(1, 81):
+            base = input_mhz * clkfb / clki
+            for div in range(1, MAX_DIV + 1):
+                vco = base * div
+                if 400 <= vco <= 800:
+                    reachable.add(round(vco, 3))
+
+    def rungs_of(vco):
+        """The outputs of this VCO that land in range, best `outputs` of them."""
+        return sorted({round(vco / d, 1) for d in range(1, MAX_DIV + 1)
+                       if low <= vco / d <= high})
+
+    targets = [low + step * i for i in range(int((high - low) / step) + 1)]
+    chosen, covered = [], set()
+    while len(covered) < len(targets):
+        def gain_of(vco):
+            # Only `outputs` of them can be built, so score the best subset.
+            hits = [t for t in targets
+                    if any(abs(t - r) <= step / 2 for r in rungs_of(vco))]
+            return len(set(hits[:outputs]) - covered)
+        best = max(reachable, key=gain_of)
+        if not gain_of(best):
+            break                      # nothing left reaches an uncovered target
+        keep = [r for r in rungs_of(best)][:outputs]
+        chosen.append((best, keep))
+        covered |= {t for t in targets
+                    if any(abs(t - r) <= step / 2 for r in keep)}
+    return chosen
 
 
 class HyperRAMDomains(Elaboratable):
@@ -222,7 +276,6 @@ class HyperRAMDomains(Elaboratable):
             bridged = Signal()
             m.submodules.hr_fast_bridge = Instance(
                 "ECLKBRIDGECS",
-                p_CLK0_DIV="1", p_CLK1_DIV="1",
                 i_CLK0=clk_hr_fast, i_CLK1=0, i_SEL=0,
                 o_ECSOUT=bridged)
             m.d.comb += ClockSignal("hr_fast").eq(bridged)
