@@ -1670,9 +1670,9 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // and a misaligned table is read wrong rather than read as broken.
     let _ = writeln!(
         uart,
-        "  {:9}  {:>6} {:>7} {:>7}   {:>6} {:>7} {:>7}  {:>4}  {:>5}  {:>5}  {:>6}",
-        "port", "volts", "uv", "ov", "amps", "uc", "oc", "dbnc", "armed", "fired",
-        "floor"
+        "  {:9}  {:>6} {:>7} {:>7}   {:>6} {:>7} {:>7}  {:>8}  {:>5}  {:>5}  {:>6}",
+        "port", "volts", "uv", "ov", "amps", "uc", "oc", "debounce", "armed",
+        "fired", "floor"
     );
 
     let sample = devices.power.latest();
@@ -1775,7 +1775,7 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         }
         let _ = writeln!(
             uart,
-            " {:>7} {:>7}  {:>4}  {:>5}  {:>5}  {:>2}.{:03}",
+            " {:>7} {:>7}  {:>8}  {:>5}  {:>5}  {:>2}.{:03}",
             as_str(&cell[2]),
             as_str(&cell[3]),
             samples,
@@ -1797,10 +1797,11 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let _ = writeln!(uart);
     let _ = writeln!(
         uart,
-        "  uv ov uc oc  the four limits, in the units of the column beside them\n\
-         \x20 dbnc         consecutive out-of-range samples before ALERT asserts \
+        "  uv ov        under- and over-VOLTAGE limits, in volts\n\
+         \x20 uc oc        under- and over-CURRENT limits, in amps\n\
+         \x20 debounce     consecutive out-of-range samples before ALERT asserts \
          (1, 4, 8 or 16)\n\
-         \x20 armed/fired  one flag per limit, in the order uv ov uc oc\n\
+         \x20 armed/fired  one flag per limit\n\
          \x20 floor        below this current a port reads as disconnected\n\
          \x20 `--`         no limit set"
     );
