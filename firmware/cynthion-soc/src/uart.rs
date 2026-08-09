@@ -165,6 +165,23 @@ pub fn take_errors(index: usize) -> u8 {
     ERRORS[index].swap(0, Ordering::Relaxed)
 }
 
+/// Would [`report_errors`] print anything?
+///
+/// A peek, where `take_errors` is a swap, so asking does not consume the report.
+/// It exists because the line-restore in `Shell::interject` costs an erase and a
+/// reprinted prompt whether or not anything is said, and this runs on every turn
+/// of `#[idle]`. See `main::housekeeping`.
+pub fn errors_pending() -> bool {
+    let mut index = 0;
+    while index < target::UART_BASES.len() {
+        if ERRORS[index].load(Ordering::Relaxed) != 0 {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
 /// How many LSR reads have seen an error on console `index` since boot.
 pub fn error_reads(index: usize) -> u32 {
     ERROR_READS[index].load(Ordering::Relaxed)
