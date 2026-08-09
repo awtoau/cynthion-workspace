@@ -69,7 +69,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::uart::Uart;
 use crate::{
-    bench, hyperram, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices,
+    bench, hyperram, info, log, plic, power, sched, shell, target, timer, ulpi, vbus,
+    Devices,
 };
 
 /// Bytes of boot report kept for a console that attaches late.
@@ -341,14 +342,30 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
 }
 
 fn hyperram_init(out: &mut Out) {
-    let report = hyperram::init();
+    let report = hyperram::init(info::build::GIT_WORD);
+    if !report.alive {
+        return out.line(
+            "hyperram",
+            "FAIL",
+            format_args!(
+                "no round trip after {} CS# pulses -- the part is not answering",
+                report.pulses
+            ),
+        );
+    }
     out.line(
         "hyperram",
-        if report.alive { "ok" } else { "FAIL" },
+        if report.kept { "ok" } else { "WARN" },
         format_args!(
-            "{} CS# pulse(s), round trip {}",
+            "awake after {} CS# pulse(s), round trip ok, {}",
             report.pulses,
-            if report.alive { "ok" } else { "NEVER -- the part is not answering" }
+            if !report.kept {
+                "POWER WAS LOST: defaults in force, re-stage any image"
+            } else if report.stamp == info::build::GIT_WORD {
+                "power kept since this build wrote the canary"
+            } else {
+                "power kept, canary written by another build"
+            }
         ),
     );
 }

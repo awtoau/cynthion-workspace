@@ -170,12 +170,24 @@ pub fn staged() -> Result<(u32, u32), Reject> {
     Ok((length, read_u32(HDR_CRC)))
 }
 
-/// A word of the spare header space, for a round trip that proves the path.
-///
-/// `IMAGE_WORD` is 16 and the header itself uses 0, 2 and 4, so everything
-/// written here is untouched by a staged image and untouched by the bootloader.
+/// Spare header words. `IMAGE_WORD` is 16 and the header itself uses 0, 2 and
+/// 4, so everything written here is untouched by a staged image and untouched
+/// by the bootloader.
+#[cfg(feature = "image")]
+const CANARY_WORD: u32 = 6;
+#[cfg(feature = "image")]
+const STAMP_WORD: u32 = 8;
 #[cfg(feature = "image")]
 const SCRATCH_WORD: u32 = 10;
+
+/// The power-loss canary: present means the part kept power since some image
+/// wrote it, absent means it did not.
+///
+/// Deliberately not `0x0000_0000` (uninitialised), not `0xffff_ffff` (what the
+/// staging port returns when the controller never answers) and not [`MAGIC`],
+/// which would make a staged image look like a canary.
+#[cfg(feature = "image")]
+const CANARY: u32 = 0x4852_5057; // "HRPW"
 
 /// Two patterns, not one: a single value could match a port returning the last
 /// thing it saw, and these are complements, so a stuck lane fails one of them.
@@ -215,10 +227,15 @@ pub struct Init {
     pub pulses: u32,
     /// The round trip worked, so the path and the part are both there.
     pub alive: bool,
+    /// The canary was present: this part has not been power-cycled since an
+    /// image wrote it, so its contents are what that image left.
+    pub kept: bool,
+    /// The build stamp found beside the canary, whatever it was.
+    pub stamp: u32,
 }
 
-/// `hyperram_init()` -- wake it and prove the path. **It never asserts
-/// `RESET#`.**
+/// `hyperram_init()` -- wake it, prove the path, and record whether it kept
+/// power. **It never asserts `RESET#`.**
 ///
 /// §11.3.6: *"The host system should assume DRAM array data is lost after
 /// hardware reset"*, and the staging path deliberately depends on contents
@@ -231,11 +248,21 @@ pub struct Init {
 /// is Deep Power Down. Every subsequent reconfigure left the part asleep,
 /// because nothing power-cycles it and no path asserts `RESET#` (#226).
 ///
+/// The canary answers a question nothing could ask before: **was this part
+/// power-cycled?** Present with this build's `stamp` -- it kept power and its
+/// contents are ours. Present with another -- it kept power across a different
+/// image's run. Absent -- it lost power, the defaults genuinely are in force,
+/// and any staged image must be re-staged rather than believed. Today the
+/// bootloader assumes a staged image is valid with no evidence the RAM kept it.
+///
+/// `stamp` is passed IN: a staging driver has no business reading build
+/// metadata, and what it needs is a word that changes when the image does.
+///
 /// Non-destructive: everything written is spare header space above the CRC and
-/// below `IMAGE_WORD`, so a staged image is untouched. Idempotent: the same
-/// scratch word, the same two patterns, every time.
+/// below `IMAGE_WORD`, so a staged image is untouched. Idempotent: the canary
+/// is read before it is written and rewriting it changes nothing.
 #[cfg(feature = "image")]
-pub fn init() -> Init {
+pub fn init(stamp: u32) -> Init {
     let mut pulses = 0;
     let mut alive = false;
     while pulses < WAKE_PULSES {
@@ -252,7 +279,18 @@ pub fn init() -> Init {
             break;
         }
     }
-    Init { pulses, alive }
+    if !alive {
+        return Init { pulses, alive, kept: false, stamp: 0 };
+    }
+
+    let found = read_u32(CANARY_WORD);
+    let was = read_u32(STAMP_WORD);
+    // Written AFTER they are read, and unconditionally: this is what the next
+    // boot reads, and rewriting the same value is what makes the step
+    // idempotent.
+    write_u32(CANARY_WORD, CANARY);
+    write_u32(STAMP_WORD, stamp);
+    Init { pulses, alive, kept: found == CANARY, stamp: was }
 }
 
 use backend::seek;
