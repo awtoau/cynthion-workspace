@@ -147,14 +147,25 @@ path is the number of transactions, which is
 |---|---|---|---|
 | ✔ | **drive SLOW low** | **8 → 1024 SPS, 128×** | done in `7d3b83c`, two lines |
 | ✔ | I²C 80 kHz → 1 MHz | 6.34% → 2.70% CPU | done in `d820d9e`, one constant |
+| ✔ | **`REFRESH_V`, and read 1 ms later** | sample age floor **50 ms → 2 ms**, and the accumulators stop being reset | [#276](https://github.com/awtoau/cynthion-workspace/pull/276) |
 | 1 | **`CFG_VSn` = `10`, ±50 mV** | **2×** on current resolution, 152.588 → 76.294 µA/LSB | one write, to the register the firmware already sets. Costs half the current range |
-| 2 | read `VPOWERn` or the `_AVG` registers | the accumulator integrates every conversion, so it is the only thing that can see an event between two 50 ms polls | a register the driver does not read yet |
+| 2 | read `VPOWERn` or the `_AVG` registers | the accumulator integrates every conversion, so it is the only thing that can see an event between two 50 ms polls | a register the driver does not read yet. **Newly possible:** until [#276](https://github.com/awtoau/cynthion-workspace/pull/276) the driver sent `REFRESH`, which reset the accumulators every 50 ms, so they could never integrate anything |
 | 3 | the four JTAG probe bitstreams, still at 100 kHz | 10× on the bring-up paths | `period_cyc = 600` in four files `d820d9e` did not touch |
 | 4 | poll faster than 50 ms | up to 1024 SPS is now genuinely available | it was not worth asking before `7d3b83c`, because the converter was 2.5× slower than the poll |
-| — | Hs-mode, 3.4 MHz | the part supports it | **unavailable** — needs a current-source pull-up and `t_r` < 40 ns |
+| ? | Hs-mode, ~3 MHz on this segment | ~160 µs → ~55 µs per read | **worth testing, not ruled out** — [#272](https://github.com/awtoau/cynthion-workspace/issues/272). `I2C_HISPEED` (0x1C bit 0) *"enables the 3.4 MHz I2C operation by changing the pulse-width parameters of the Pulse Gobbler"* — an input **spike filter**, not protocol state, so ordinary framing may work. Out of spec; `t_r` < 40 ns at 2.2k needs C<sub>b</sub> under ~21 pF. The FUSB302Bs cap the *shared* controller at 1 MHz, so this is bus 2 alone |
 
 **Unknown:** the SDA bus capacitance, which is what the whole rise-time margin
-rests on. What would establish it: a scope on the 0.3–0.7 V<sub>DD</sub> edge.
+rests on. A scope on the 0.3–0.7 V<sub>DD</sub> edge would measure it directly.
+
+But it does not have to be measured to be *bounded*: `i2c soak <bus> <prescale>
+<reads>` reprograms the rate, hammers one segment and counts bus errors and
+wrong values, so the ceiling can be found by walking the prescale down until it
+breaks. Where it breaks implies C<sub>b</sub>. **A marginal bus answers most of
+the time**, so that command reads the device'"'"'s *identity* every pass — sixteen
+bits that must all be right, through a repeated START — rather than probing an
+address, which is one bit a marginal bus gets right by luck.
+
+Soaked clean: 2000 identity reads at 1 MHz, zero errors, zero wrong values.
 
 ## Identity, read from the part
 
@@ -247,16 +258,50 @@ Measurement registers, all 16-bit, one per channel:
 
 | Register | Address |
 |---|---|
-| `REFRESH` | `0x00` (Send Byte) |
+| `REFRESH` | `0x00` (Send Byte) — **not used**, see below |
+| `REFRESH_V` | `0x1F` (Send Byte) — what the driver sends |
 | `VBUSn` | `0x07`–`0x0A` |
 | `VSENSEn` | `0x0B`–`0x0E` |
 | `VBUSn_AVG` | `0x0F`–`0x12` (8× averaged) |
 | `VSENSEn_AVG` | `0x13`–`0x16` |
 | `VPOWERn` | `0x17`–`0x1A` (32-bit) |
 
-Issue `REFRESH` before reading: it latches VBUS, VSENSE and the accumulators
-together, so all four channels come from one sample instant rather than whenever
+Issue `REFRESH_V` before reading: it latches VBUS and VSENSE for all four
+channels together, so they come from one sample instant rather than from whenever
 each register happened to be read.
+
+**`REFRESH_V` (`0x1F`) and NOT `REFRESH` (`0x00`).** §5.1 distinguishes them:
+`REFRESH` reads accumulator data **and resets the accumulators**; `REFRESH_V`
+reads voltage, current and power **without** resetting them. This driver reads
+VBUS and VSENSE and never touches an accumulator, so `REFRESH` was destroying a
+feature it was not using — twenty times a second, from the day it was written
+until [#276](https://github.com/awtoau/cynthion-workspace/pull/276).
+
+Neither command triggers a conversion. The part is in continuous mode
+(`SAMPLE_MODE` = `0b0000`, and nothing here writes `CTRL`), so conversions
+free-run at 1024 SPS and a refresh **snapshots the most recent completed one**.
+The 1 ms below is a register-update delay, not a conversion time.
+
+### The cycle, and why it is two dispatches
+
+§5.2: the readable registers *"will be stable within 1 ms from sending the
+REFRESH command"*, and any command inside that window is *"ignored and NACKed"*.
+
+    t = 0      REFRESH_V   Send Byte,  ~30 us at 1 MHz
+    t = 1 ms   read        16 bytes,  ~170 us
+
+The 1 ms tick releases the second dispatch, so it lands where the part asks
+rather than where a timer was tuned to. Each dispatch holds the shared `Devices`
+for microseconds instead of the ~2 ms a single-shot transaction held it for.
+
+**This replaced reading the PREVIOUS cycle'"'"'s latch fifty milliseconds later.**
+That respected the 1 ms window by a wide margin and made every reading one whole
+interval stale — which stopped being defensible once
+[#273](https://github.com/awtoau/cynthion-workspace/pull/273) had the converter
+running at 1024 SPS, a fresh set every 977 us.
+
+Measured sample age across a 50 ms cycle, 25 reads: **min 2 ms, max 49 ms**. The
+2 ms floor is the 1 ms wait plus the read. Before, the *minimum* was 50 ms.
 
 ### Transfer size matters
 
@@ -329,7 +374,7 @@ rather than vanishes.**
 
 ```
 > power
-power @10  poll 50 ms  change 100 mA  sampled 63 ms ago
+power @10  poll 50 ms  change 100 mA  sampled 14 ms ago
   target_a  0.000 V      0.686 mA  disconnected
   target_c  0.006 V      0.762 mA  disconnected
   aux       5.165 V     34.408 mA  connected
@@ -346,12 +391,17 @@ inherited it could not answer "what is it now" — but the numbers come from the
 poller rather than from a read of this command's own.
 
 That is ownership, not caching for speed. The part is unavailable for 1 ms after
-a REFRESH and answers a read inside that window by acknowledging its address and
-then NACKing the register pointer; the poll issues a REFRESH every 50 ms, so a
-second caller reading on its own account landed in the window about one time in
-fifty and reported "no acknowledge (register pointer)" on a bus that was working
-perfectly. **One owner of the REFRESH cycle makes that impossible rather than
-rare.** The earlier fix — wait 2 ms, try once more — is deleted: it removed the
+a refresh and answers a read inside that window by acknowledging its address and
+then NACKing the register pointer. A second caller reading on its own account
+landed in that window and reported "no acknowledge (register pointer)" on a bus
+that was working perfectly. **One owner of the refresh cycle makes that
+impossible rather than rare.**
+
+The window matters more now, not less: since
+[#276](https://github.com/awtoau/cynthion-workspace/pull/276) the driver reads
+*inside* the cycle it started, 1 ms after its own `REFRESH_V`, rather than 50 ms
+later. The margin that used to be an interval wide is now the interval the
+datasheet specifies, and it belongs to one owner. The earlier fix — wait 2 ms, try once more — is deleted: it removed the
 symptom and left the structure, and a retry that can never fire is a claim about
 the system that is not true.
 
