@@ -48,9 +48,11 @@ not the CPU's number and never was.
 ## What this does NOT do
 
 It does not give the HyperRAM its own clock. `fast` here is still a second output
-of the SAME PLL as `sync`, because the flash PHY and the DQS PHY both read
-`ClockSignal("fast")` as their edge clock and the DQS 4:1 gearing requires it to
-be exactly twice its fabric domain.
+of the SAME PLL as `sync`: the flash PHY runs its logic in that domain, the DQS
+PHY takes it as an EDGE clock, and the DQS 4:1 gearing requires it to be exactly
+twice its fabric domain.
+
+`fast` is CLKOS and not CLKOS2, which is not interchangeable -- see `elaborate`.
 
 `hyperram_clocks.HyperRAMDomains` is the second PLL, and composes with this one:
 both take the oscillator as their reference, so neither is fed from the other's
@@ -127,15 +129,18 @@ PHY_PREP_CYCLES = 72_000
 
 
 def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
-    """Dividers for `target_mhz` on CLKOP, and `ratio * target` on CLKOS2.
+    """Dividers for `target_mhz` on CLKOP, and `ratio * target` on CLKOS.
 
     `FEEDBK_PATH="CLKOP"` means the feedback is taken AFTER the output divider,
     so CLKOP is `input / CLKI_DIV * CLKFB_DIV` and the VCO is that times
     CLKOP_DIV. Both outputs divide the one VCO, which is why `ratio` is a
     property of the pair and not a free choice per output.
 
-    Returns `(vco, clki_div, clkfb_div, clkop_div, clkos2_div)` or None.
-    `clkos2_div` is None when no ratio was asked for.
+    CLKOS rather than CLKOS2: only CLKOP and CLKOS reach an edge clock, and
+    `fast` is one. See `SocClocks.elaborate` and #314.
+
+    Returns `(vco, clki_div, clkfb_div, clkop_div, clkos_div)` or None.
+    `clkos_div` is None when no ratio was asked for.
     """
     for clki_div in range(1, DIV_MAX + 1):
         # The phase detector sees the divided reference, and it has a floor.
@@ -151,7 +156,12 @@ def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
                 if ratio is None:
                     return (vco, clki_div, clkfb_div, clkop_div, None)
                 # The second output is the same VCO divided again, so the ratio
-                # is only reachable when it divides CLKOP_DIV exactly.
+                # is only reachable when it divides CLKOP_DIV exactly. An
+                # indivisible CLKOP_DIV is SKIPPED, not rounded: the search moves
+                # on to a larger one, and if the VCO window holds none this
+                # returns None and `SocClocks` refuses with the reachable list.
+                # Rounding here would give a `fast` at the wrong frequency,
+                # which corrupts DDR data rather than failing to build.
                 if clkop_div % ratio:
                     continue
                 return (vco, clki_div, clkfb_div, clkop_div, clkop_div // ratio)
@@ -228,7 +238,16 @@ class SocClocks(Elaboratable):
                    if nearby else "Nothing nearby is reachable either."))
 
         (self.vco_mhz, self.clki_div, self.clkfb_div,
-         self.clkop_div, self.clkos2_div) = solved
+         self.clkop_div, self.clkos_div) = solved
+
+        # The solver's own invariant, restated where the division is USED. A
+        # `fast` at half of what the gearing expects builds cleanly and returns
+        # wrong data, so this must never be reached by a later edit to `solve_pll`.
+        if with_fast and self.clkop_div % fast_ratio:
+            raise ValueError(
+                f"CLKOP_DIV = {self.clkop_div} is not divisible by "
+                f"fast_ratio = {fast_ratio}; CLKOS divides the same VCO and "
+                f"cannot reach {fast_ratio}x sync from it.")
 
         # What the hardware will ACTUALLY produce, recomputed from the dividers
         # rather than echoed from the request. The firmware reports these and the
@@ -240,8 +259,8 @@ class SocClocks(Elaboratable):
         # asked for. They are computed anyway: the day that solver learns to
         # approximate, everything downstream is already reading the truth.
         self.actual_sync_mhz = input_mhz / self.clki_div * self.clkfb_div
-        self.actual_fast_mhz = (self.vco_mhz / self.clkos2_div
-                                if self.clkos2_div else None)
+        self.actual_fast_mhz = (self.vco_mhz / self.clkos_div
+                                if self.clkos_div else None)
 
         # `usb` IS the oscillator. Not a PLL output, so there is nothing to
         # round: it is the input frequency, exactly, by construction.
@@ -288,6 +307,12 @@ class SocClocks(Elaboratable):
             "EHXPLLL",
             a_ICP_CURRENT="12", a_LPF_RESISTOR="8",
             a_MFG_ENABLE_FILTEROPAMP="1", a_MFG_GMCREF_SEL="2",
+            # PINNED, and only when there is an edge clock to lose. X2/Y49 is the
+            # one PLL bel on the left ECLK mux, so a placer that swaps this
+            # design's PLLs silently drops `fast` back onto fabric with no error.
+            # Two PLLs both wanting an ECLK cannot coexist: nextpnr then refuses
+            # the bel outright, which is the loud failure and the intended one.
+            **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.with_fast else {}),
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
             p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
@@ -299,10 +324,18 @@ class SocClocks(Elaboratable):
             p_CLKOP_DIV=self.clkop_div,
             p_CLKOP_CPHASE=self.clkop_div - 1,
             p_CLKOP_FPHASE=0,
-            **({"p_CLKOS2_ENABLE": "ENABLED",
-                "p_CLKOS2_DIV": self.clkos2_div,
-                "p_CLKOS2_CPHASE": self.clkos2_div - 1,
-                "p_CLKOS2_FPHASE": 0} if self.with_fast else {}),
+            # CLKOS, NOT CLKOS2 -- the edge-clock network cannot see CLKOS2.
+            #
+            # The bank ECLK input mux takes CLKOP/CLKOS from either LEFT PLL, the
+            # four clock pads, and two fabric taps. CLKOS2/CLKOS3 exist only on
+            # the primary clock network, so an ECLK from CLKOS2 can arrive only
+            # through the fabric tap -- which nextpnr takes, announcing it as
+            # `log_info` and not as a warning. `HyperRAMDQSPHY` reads this as its
+            # ECLK, so that is a capture reference with skew nobody bounded. #314
+            **({"p_CLKOS_ENABLE": "ENABLED",
+                "p_CLKOS_DIV": self.clkos_div,
+                "p_CLKOS_CPHASE": self.clkos_div - 1,
+                "p_CLKOS_FPHASE": 0} if self.with_fast else {}),
             i_CLKI=osc,
             # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` means the loop is closed
             # through the CLKOP output, so CLKFB must be driven from it. Leaving
@@ -316,7 +349,7 @@ class SocClocks(Elaboratable):
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
             o_CLKOP=clk_sync,
-            **({"o_CLKOS2": clk_fast} if self.with_fast else {}),
+            **({"o_CLKOS": clk_fast} if self.with_fast else {}),
             o_LOCK=locked,
         )
         m.d.comb += self.locked.eq(locked)

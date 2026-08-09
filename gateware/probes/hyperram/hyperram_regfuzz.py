@@ -316,3 +316,4 @@ if __name__ == "__main__":
         print("built into gateware/probes/hyperram/regfuzz_build/")
     else:
         print(__doc__)
+w

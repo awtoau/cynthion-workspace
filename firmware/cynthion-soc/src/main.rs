@@ -389,6 +389,17 @@ fn reboot() -> ! {
 /// identical from the host, and that ambiguity has cost real time on this project.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // POWER FIRST, before anything is printed.
+    //
+    // A panicking CPU spins here forever with whatever the VBUS register was
+    // last set to, and a CPU reset does not clear it -- so a board that
+    // panicked mid-`vbus control` goes on passing host power to an attached
+    // target with nothing running. One store, and the gate is combinational so
+    // all four open in the same cycle. See `vbus::init`.
+    if target::BOARD.is_some() {
+        vbus::open_all();
+    }
+
     // A fresh handle rather than the one that panicked: taking it by value cannot
     // deadlock, and a `Uart` is nothing but an address so constructing one costs nothing.
     //
