@@ -784,13 +784,15 @@ class NonDQSProtocolHarness(Elaboratable):
     the controller's own and not some master's arrival pattern.
     """
 
-    def __init__(self, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ):
+    def __init__(self, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ,
+                 fixed_latency=True):
         self.phy = HyperBusPHY()
         self.sync_mhz = sync_mhz
         if upstream:
             self.psram = HyperRAMInterface(phy=self.phy)
         else:
-            self.psram = HyperRAMController(phy=self.phy, sync_mhz=sync_mhz)
+            self.psram = HyperRAMController(phy=self.phy, sync_mhz=sync_mhz,
+                                            fixed_latency=fixed_latency)
 
     def elaborate(self, platform):
         m = Module()
@@ -1444,12 +1446,18 @@ class ModelHyperRAM16:
     """A 16-bit fixed-latency read model, observed only through HyperBus."""
 
     def __init__(self, *, sync_mhz=NON_DQS_SYNC_MHZ, tcshi_ns=T_CSHI_NS,
-                 deliver=None):
+                 deliver=None, rwds_stale=0, rwds_extra=0):
         self.commands = []
         self.transaction_cycles = []
         # Read beats this device serves before going silent. See `ModelHyperRAM`.
         self.deliver = deliver
         self.read_beats = 0
+        # RWDS during the CA is the device asking for extra latency, and it is
+        # valid tDSV AFTER CS# falls -- so on the falling cycle itself the line
+        # still holds `rwds_stale`, whatever the last transaction left. That gap
+        # is the whole of #321.
+        self.rwds_stale = rwds_stale
+        self.rwds_extra = rwds_extra
         # Transactions that never brought `idle` back inside `completion_bound`,
         # and what `timed_out` read at the end of the last one.
         self.incomplete = 0
@@ -1590,6 +1598,12 @@ class ModelHyperRAM16:
             # Driving 0b10 here regardless of `clk_en` was a model defect on its
             # own account: it asserted a read strobe on a clock edge that never
             # happened, and it only went unnoticed because nothing gated CK.
+
+        if self._state == "command":
+            # The CA window: the answer once tDSV has passed, the leftover level
+            # on the cycle CS# falls. See `rwds_stale` above.
+            rwds_i = (self.rwds_extra if self._cs_low_cycles > 1
+                      else self.rwds_stale)
 
         return dq_i, rwds_i
 
@@ -2257,6 +2271,67 @@ def section_tcsm(checks, emit):
          f"clocked out {chopped.read_beats}, the extra one on the RECOVERY cycle")
 
 
+def section_ca_rwds(checks, emit):
+    """14. The extra-latency bit comes from the CA, not from before it.
+
+    The device answers on RWDS *during* the CA, tDSV after CS# falls. Sampling on
+    the falling cycle -- which `LATCH_RWDS` did -- reads the level the previous
+    transaction left. Dormant while `fixed_latency=True` forces the long count,
+    and live the moment #319 clears `CR0[3]`, so it is run here with the fixed
+    branch off. The DQS controller takes the identical change; its model has no
+    RWDS path to drive. See #321.
+    """
+    emit("\n14. The extra-latency sample, taken inside the CA\n")
+
+    latency_state = HyperRAMController.STATES.index("HANDLE_LATENCY")
+
+    def latency_cycles(*, stale, extra):
+        """Cycles spent in HANDLE_LATENCY, which is the choice the sample made."""
+        dut = NonDQSProtocolHarness(fixed_latency=False)
+        model = ModelHyperRAM16(rwds_stale=stale, rwds_extra=extra)
+        counted = 0
+
+        async def testbench(ctx):
+            nonlocal counted
+            psram = dut.psram
+            ctx.set(psram.address, TEST_ADDRESS)
+            ctx.set(psram.final_word, 1)
+            ctx.set(psram.start_transfer, 1)
+            await ctx.tick()
+            ctx.set(psram.start_transfer, 0)
+            for _ in range(completion_bound(NON_DQS_SYNC_MHZ)):
+                counted += ctx.get(psram.state) == latency_state
+                await beat16(ctx, dut, model)
+                if ctx.get(psram.idle):
+                    break
+
+        sim = Simulator(Fragment.get(dut, None))
+        sim.add_clock(1 / (NON_DQS_SYNC_MHZ * 1e6), domain="sync")
+        sim.add_testbench(testbench)
+        sim.run()
+        return counted
+
+    long_count = HyperRAMController.HIGH_LATENCY_CLOCKS - 1
+    short_count = HyperRAMController.LOW_LATENCY_CLOCKS - 1
+
+    asked = latency_cycles(stale=0, extra=1)
+    checks.check("RWDS raised mid-CA takes the LONG latency",
+                 asked == long_count, f"{asked} cycles, want {long_count}")
+
+    stale = latency_cycles(stale=1, extra=0)
+    checks.check("a level left over from before the CA does NOT extend it",
+                 stale == short_count,
+                 f"{stale} cycles, want {short_count} -- the sample came from "
+                 f"before the device answered")
+
+    checks.check("...and the two choices are distinguishable at all",
+                 long_count != short_count,
+                 f"long {long_count}, short {short_count}")
+
+    emit(f"        mid-CA high: {asked} cycles   stale high: {stale} cycles   "
+         f"(long {long_count}, short {short_count})")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="The HyperBus protocol layer, against a model of the part.")
@@ -2274,7 +2349,8 @@ def main():
                     section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
-                    section_clock_stop, section_escape, section_tcsm):
+                    section_clock_stop, section_escape, section_tcsm,
+                    section_ca_rwds):
         section(checks, emit)
 
     emit()

@@ -120,7 +120,7 @@ class HyperRAMController(Elaboratable):
     # checks this list against `fsm.encoding` and fails the build if the two drift,
     # so a rig decoding `state` decodes something verified rather than assumed.
     # See #318.
-    STATES = ("IDLE", "LATCH_RWDS", "SHIFT_COMMAND0", "SHIFT_COMMAND1",
+    STATES = ("IDLE", "CS_SETUP", "SHIFT_COMMAND0", "SHIFT_COMMAND1",
               "SHIFT_COMMAND2", "WRITE_DATA", "HANDLE_LATENCY", "READ_DATA",
               "RECOVERY")
 
@@ -147,7 +147,7 @@ class HyperRAMController(Elaboratable):
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
 
-        # CS#-Low cycles before the first data beat: LATCH_RWDS, three command
+        # CS#-Low cycles before the first data beat: CS_SETUP, three command
         # words, and HANDLE_LATENCY, which runs one cycle per remaining count plus
         # the zero cycle.
         self._data_entry_cycles = 4 + self.HIGH_LATENCY_CLOCKS - 1
@@ -304,7 +304,7 @@ class HyperRAMController(Elaboratable):
                 # Once we have a transaction request, latch in our control
                 # signals, and assert our chip-select.
                 with m.If(self.start_transfer):
-                    m.next = 'LATCH_RWDS'
+                    m.next = 'CS_SETUP'
 
                     m.d.sync += [
                         is_read             .eq(~self.perform_write),
@@ -313,18 +313,20 @@ class HyperRAMController(Elaboratable):
                         current_address     .eq(self.address),
                         self.phy.dq.o       .eq(0),
                         self.timed_out      .eq(0),
+                        extra_latency       .eq(0),
                     ]
 
                 with m.Else():
                     m.d.sync += self.phy.cs.eq(0)
 
 
-            # LATCH_RWDS -- latch in the value of the RWDS signal,
-            # which determines our read/write latency.
-            with m.State("LATCH_RWDS"):
-                m.d.sync += extra_latency.eq(self.phy.rwds.i),
+            # CS_SETUP -- CS# is Low and CK is still stopped, covering the
+            # registered `dq.o` reaching the pins. It sampled RWDS here until
+            # #321, which is before the CA the device answers with: the value
+            # latched was whatever the PREVIOUS transaction left.
+            with m.State("CS_SETUP"):
                 m.d.sync += self.phy.clk_en.eq(0)
-                m.next="SHIFT_COMMAND0"
+                m.next = "SHIFT_COMMAND0"
 
 
             # SHIFT_COMMANDx -- shift each of our command words out
@@ -341,6 +343,11 @@ class HyperRAMController(Elaboratable):
                     self.phy.dq.o.eq(ca[16:32]),
                     self.phy.dq.e.eq(1)
                 ]
+                # Mid-CA, which is where the device raises RWDS to ask for the
+                # extra latency; SHIFT_COMMAND2 ORs the live input on top and
+                # decides at the end of the CA. pulp and ChipFlow both sample
+                # here rather than earlier. (#321)
+                m.d.sync += extra_latency.eq(extra_latency | self.phy.rwds.i.any())
                 m.next = 'SHIFT_COMMAND2'
 
             with m.State('SHIFT_COMMAND2'):
@@ -360,13 +367,13 @@ class HyperRAMController(Elaboratable):
                 with m.Else():
                     m.next = "HANDLE_LATENCY"
 
-                    # Upstream writes `with m.If(extra_latency | 1)`, which makes the
-                    # low-latency branch dead code and carries its own FIXME. The part
-                    # this drives reports CR0 = 0x8f2f, whose bit 3 selects FIXED
-                    # latency, so the long count IS right here -- but forcing it with
-                    # `| 1` says that by accident. `fixed_latency=False` honours the
-                    # RWDS sample, for a part reprogrammed to variable latency.
-                    with m.If(extra_latency | int(self._fixed_latency)):
+                    # CR0 = 0x8f2f selects FIXED latency, so the long count is
+                    # right for this part; upstream's `extra_latency | 1` says so
+                    # by accident. `fixed_latency=False` honours the RWDS sample,
+                    # which is #319's sweep. The decision is taken at the end of
+                    # the CA, so a later RWDS change cannot erase it. (#321)
+                    with m.If(extra_latency | self.phy.rwds.i.any()
+                              | int(self._fixed_latency)):
                         m.d.sync += latency_clocks_remaining.eq(self.HIGH_LATENCY_CLOCKS-2)
                     with m.Else():
                         m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS-2)
