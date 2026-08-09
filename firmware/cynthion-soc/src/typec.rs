@@ -85,6 +85,12 @@ pub struct Controllers {
     pub serviced: [u32; 2],
 }
 
+/// What [`Controllers::init`] established.
+pub struct Init {
+    pub ports: usize,
+    pub configured: bool,
+}
+
 impl Controllers {
     pub const fn new() -> Self {
         Controllers {
@@ -97,11 +103,33 @@ impl Controllers {
         }
     }
 
+    /// `fusb302b_init()` -- `SW_RES` on both controllers, then the verdict.
+    ///
+    /// The parts have no reset pin, so the software reset IS the establishment,
+    /// and it is issued unconditionally -- correct from any prior state, which
+    /// is what the contract asks for. It also clears both parts' read-to-clear
+    /// interrupt registers, which is why the PLIC sources are claimed HERE and
+    /// not before: enabling first would deliver a state change from the
+    /// previous session, describing a cable that may no longer be there.
+    ///
+    /// Non-destructive: an FUSB302B holds register state and nothing else, and
+    /// what matters is re-read immediately.
+    ///
+    /// The verdict already existed and was thrown away -- `configured` was
+    /// computed and the boot report printed `ok` regardless (#315).
+    pub fn init(&mut self, uart: &mut Uart, bus: &mut Bus) -> Init {
+        self.start(uart, bus);
+        crate::irq::claim_type_c();
+        Init {
+            ports: crate::target::TYPE_C_IRQS.len(),
+            configured: self.configured,
+        }
+    }
+
     /// Configure both controllers so they interrupt on a state change.
     ///
-    /// Called once at boot and again by `typec init`. Reports per port, because
-    /// the two are independent devices on independent buses and one being absent
-    /// says nothing about the other.
+    /// Reports per port, because the two are independent devices on independent
+    /// buses and one being absent says nothing about the other.
     pub fn start(&mut self, uart: &mut Uart, bus: &mut Bus) {
         let mut all = true;
         for port in Port::ALL {

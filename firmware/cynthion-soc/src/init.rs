@@ -315,18 +315,17 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
     let Some(bus) = devices.bus.as_mut() else {
         return;
     };
-    devices.type_c.start(out.uart, bus);
-    // The sources are claimed HERE and not before: `start` clears both parts'
-    // read-to-clear interrupt registers, and enabling first would deliver a
-    // state change from the previous session, describing a cable that may no
-    // longer be there.
-    crate::irq::claim_type_c();
+    // The per-port lines this prints go straight at the console rather than
+    // into the retained report: they are `log!` records about cables, not a
+    // verdict about a peripheral, and the ring is for the latter.
+    let report = devices.type_c.init(out.uart, bus);
     out.line(
         "fusb302b",
-        "ok",
+        if report.configured { "ok" } else { "WARN" },
         format_args!(
-            "{} controller(s), interrupt on state change",
-            target::TYPE_C_IRQS.len()
+            "{} controller(s), sw_res then interrupt on state change{}",
+            report.ports,
+            if report.configured { "" } else { " -- a port did not answer" }
         ),
     );
 }
