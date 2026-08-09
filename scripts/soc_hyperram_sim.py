@@ -1923,7 +1923,7 @@ def section_line_refill(checks, emit):
 
     # 17 CK of overhead per transaction, and it is counted off the controller's
     # states rather than fitted: 3 command words + 13 `HANDLE_LATENCY` +
-    # 1 `RECOVERY`, with `LATCH_RWDS` before CK starts. So a transaction is
+    # 1 `RECOVERY`, with `CS_SETUP` before CK starts. So a transaction is
     # 17 + words -- 49 for a 32-word line, 19 each for sixteen 2-word transfers.
     #
     # These read 51 and 336 until the model's data phase was corrected: it
