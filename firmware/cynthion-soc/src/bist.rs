@@ -331,6 +331,15 @@ impl Bist {
             uart, "  ctrl    idle={} recovered={} start={}  (a=%{:03b} b=%{:03b})",
             (ctrl_b & 1) as u8, ((ctrl_b >> 1) & 1) as u8, ((ctrl_b >> 2) & 1) as u8,
             ctrl_a & 0b111, ctrl_b & 0b111);
+        // STICKY, and not cleared by `go`. A run that had to be rescued from a
+        // stall is not a clean run, and this must survive into the next reading
+        // -- a rig that recovers silently is a rig that reports a number taken
+        // after something went wrong.
+        if ctrl_b & 0b1000 != 0 {
+            let _ = writeln!(
+                uart, "  STALLED the controller failed to return to idle and \
+                       the engine was reset (sticky; power-cycle to clear)");
+        }
         let _ = (ctrl_a, ctrl_b);
     }
 

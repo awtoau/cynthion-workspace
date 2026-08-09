@@ -620,6 +620,34 @@ class HyperRAMCeiling(Elaboratable):
         recovery_cycles = max(1, ceil(T_CSHI_NS * self.sync_mhz / 1000.0))
         recovery = Signal(range(recovery_cycles + 1))
 
+        # How long a *_RECOVER state may wait for `psram.idle` before giving up.
+        #
+        # **Waits for**: the controller to finish draining a burst and return to
+        # IDLE.
+        #
+        # **Expected duration**: `recovery_cycles` for tCSHI (1 at every rung
+        # this rig builds, since tCSHI is 10 ns and `hr` is 50-100 MHz) plus the
+        # controller's own RECOVERY and its FSM transitions back to IDLE -- not
+        # enumerated here, so budget ~16 cycles.
+        #
+        # **Multiplier**: 16x that. Larger than this project's 1.25x rule
+        # because the controller's internal path is not enumerated, and a bound
+        # that false-trips would be reported as a device fault -- the one error
+        # this rig must not make. 256 cycles is 5.1 us at `hr` 50 MHz, which is
+        # still instant next to the alternative.
+        #
+        # **On expiry**: `stalled` latches, the FSM returns to RESET, and the CPU
+        # reads the bit. Before this the engine simply spun -- observed parked in
+        # READ_RECOVER with `read_cycles` past 693,000,000 and no way back except
+        # reconfiguring the FPGA, which is ~130 s per attempt. A rig that can
+        # wedge with no reset path costs more than the measurement it takes.
+        stall_limit = 16 * (recovery_cycles + 16)
+        stall = Signal(range(stall_limit + 1))
+        # Sticky, and NOT cleared by `go`: a run that had to be rescued from a
+        # stall is not a clean run, and the next reader must be able to see that
+        # even if the pass after it succeeds.
+        stalled = Signal()
+
         # A register-space write, when the configuration phase is running. It
         # steals the controller's inputs for one short transaction and leaves
         # every other part of the datapath alone.
@@ -764,10 +792,14 @@ class HyperRAMCeiling(Elaboratable):
                 # draining the transaction this state is waiting on.
                 m.d.comb += writing.eq(1)
                 m.d.sync += [write_cycles.eq(write_cycles + 1),
-                             recovery.eq(recovery + 1)]
+                             recovery.eq(recovery + 1),
+                             stall.eq(stall + 1)]
                 with m.If(psram.idle & (recovery >= recovery_cycles)):
-                    m.d.sync += [index.eq(0), recovery.eq(0)]
+                    m.d.sync += [index.eq(0), recovery.eq(0), stall.eq(0)]
                     m.next = "READ_START"
+                with m.Elif(stall >= stall_limit):
+                    m.d.sync += [stalled.eq(1), stall.eq(0), recovery.eq(0)]
+                    m.next = "RESET"
 
             with m.State("READ_START"):
                 # `writing` left at its default 0, so the controller latches a
@@ -797,13 +829,21 @@ class HyperRAMCeiling(Elaboratable):
                                 bad_want.eq(checked_against),
                             ]
                     with m.If(index == self.burst_words - 1):
-                        m.d.sync += recovery.eq(0)
+                        m.d.sync += [recovery.eq(0), stall.eq(0)]
                         m.next = "READ_RECOVER"
 
             with m.State("READ_RECOVER"):
                 m.d.sync += [read_cycles.eq(read_cycles + 1),
-                             recovery.eq(recovery + 1)]
-                with m.If(psram.idle & (recovery >= recovery_cycles)):
+                             recovery.eq(recovery + 1),
+                             stall.eq(stall + 1)]
+                # The stall escape comes FIRST, so a controller that never
+                # returns to IDLE cannot outlast it. Observed doing exactly that
+                # on hardware: idle=0 for ever after a read burst, while the same
+                # wait in WRITE_RECOVER passed. See #226.
+                with m.If(stall >= stall_limit):
+                    m.d.sync += [stalled.eq(1), stall.eq(0), recovery.eq(0)]
+                    m.next = "RESET"
+                with m.Elif(psram.idle & (recovery >= recovery_cycles)):
                     m.d.sync += [recovery.eq(0), passes.eq(passes + 1),
                                  base.eq(base + device_words)]
                     # Halt at the limit instead of looping. `passes` is the count
@@ -923,7 +963,8 @@ class HyperRAMCeiling(Elaboratable):
             read=Cat(psram.idle,                        # bit 0
                      recovery >= recovery_cycles,       # bit 1
                      start,                             # bit 2
-                     Const(0, 29)))
+                     stalled,                           # bit 3, sticky
+                     Const(0, 28)))
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it
