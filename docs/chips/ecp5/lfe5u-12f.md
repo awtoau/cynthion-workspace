@@ -181,7 +181,7 @@ CLKI_DIV ≤ 6:
 
 ### 3. Measured
 
-**Utilisation and timing** — one SoC build, `tmp/vexii_hello/build/top.tim` and
+**Utilisation and timing** — one SoC build, `tmp/awto_soc/build/top.tim` and
 `top.config`, `sync` constrained to 60 MHz:
 
 | resource | used | of | % |

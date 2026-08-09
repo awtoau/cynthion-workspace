@@ -55,7 +55,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "tmp" / "riscv_clock_ladder.json"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
-BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
+BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "gateware"))
@@ -100,7 +100,7 @@ def build():
     # nextpnr reports achieved frequency per clock; the sync domain is the one being
     # swept. A design can fail timing and still run -- nextpnr's estimate is
     # conservative -- so this is recorded rather than treated as pass/fail.
-    timing = ROOT / "tmp" / "vexii_hello" / "build" / "top.tim"
+    timing = ROOT / "tmp" / "awto_soc" / "build" / "top.tim"
     achieved = None
     if timing.exists():
         for line in timing.read_text().splitlines():

@@ -10,7 +10,7 @@
 //! ## Where the addresses come from
 //!
 //!   * **Hardware:** `cynthion_soc_pac::base`, which `scripts/soc_generate_pac.py`
-//!     writes out of `HelloSoC.decoder.bus.memory_map` -- the SoC's own
+//!     writes out of `AwtoSoc.decoder.bus.memory_map` -- the SoC's own
 //!     description of itself. Move a peripheral in the gateware and the constant
 //!     follows; rename one and this file stops compiling. Nothing here is
 //!     transcribed by hand.
@@ -101,7 +101,7 @@ pub const CLINT_BASE: usize = 0x0200_0000;
 /// order.
 ///
 /// Source 0 is reserved by the specification as "nothing pending", so real
-/// sources start at 1. These come from `HelloSoC.interrupt_sources`, which is
+/// sources start at 1. These come from `AwtoSoc.interrupt_sources`, which is
 /// declared immediately below the `plic.sources[...]` wiring it describes -- so
 /// the number the firmware enables and the wire that raises it cannot disagree.
 #[cfg(not(feature = "qemu"))]

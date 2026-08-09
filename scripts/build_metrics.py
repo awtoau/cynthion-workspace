@@ -7,7 +7,7 @@
 Area, timing and full configuration for every SoC build, in a database.
 
     ./dev.py metrics status         # is the server up, and how many rows are spooled
-    ./dev.py metrics record         # record the build sitting in tmp/vexii_hello/build
+    ./dev.py metrics record         # record the build sitting in tmp/awto_soc/build
     ./dev.py metrics report         # current vs previous vs best-ever vs branch point
     ./dev.py metrics graph          # trend graphs, written to reports/
     ./dev.py metrics flush          # push spooled records once the server is back
@@ -106,7 +106,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD_DIR = ROOT / "tmp" / "vexii_hello" / "build"
+BUILD_DIR = ROOT / "tmp" / "awto_soc" / "build"
 SPOOL = ROOT / "tmp" / "build-metrics" / "pending"
 # Rendered reports go to a ROOT-LEVEL `reports/`, not under `tmp/`.
 #
@@ -1679,7 +1679,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("status", help="is the server up, is anything spooled")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("record", help="record the build in tmp/vexii_hello/build")
+    p = sub.add_parser("record", help="record the build in tmp/awto_soc/build")
     p.add_argument("--build-dir", default=str(BUILD_DIR))
     p.add_argument("--target", default=DEFAULT_TARGET)
     p.add_argument("--status", default="ok")

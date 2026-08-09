@@ -103,7 +103,7 @@ A Linux build needs none of it.
 
 ### Logic area is settled by the pessimistic bound
 
-Current whole-SoC build, `tmp/vexii_hello/build/top.tim` (2026-08-03, LFE5U-12F,
+Current whole-SoC build, `tmp/awto_soc/build/top.tim` (2026-08-03, LFE5U-12F,
 CABGA256, speed 8): **12903 COMB (53%), 6942 FF (28%), 44 DP16KD (79%), 159 RAMW
 (5%), `sync` 72.40 MHz.**
 
@@ -355,7 +355,7 @@ solve it.
 
 ## 1. The recommended first step
 
-**Build `UsbOhciWishbone` inside `HelloSoC` and read the numbers. No board, no
+**Build `UsbOhciWishbone` inside `AwtoSoc` and read the numbers. No board, no
 firmware, no wiring.**
 
 ```
@@ -400,7 +400,7 @@ If it does not close, the mitigations are known and ordered:
 
 | | LUT4 (of 24288) | EBR (of 56) |
 |---|---|---|
-| SoC today (`tmp/vexii_hello/build/top.tim`) | 12201 (50%) | 42 (75%) |
+| SoC today (`tmp/awto_soc/build/top.tim`) | 12201 (50%) | 42 (75%) |
 | `+ UsbOhciWishbone`, 1 port | ~15937 (66%) | 43 (77%) |
 | `+` 4 KiB uncached DMA scratch (§5.3) | ~15937 (66%) | 45 (80%) |
 
