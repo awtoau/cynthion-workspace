@@ -126,7 +126,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     // two rows; `pac1954 init` and its siblings would be one of each per
     // family, in an image whose binding constraint is `.text`.
     ("init", "establish every peripheral again, in order"),
-    ("init <peripheral>", "one of uart i2c pac1954 fusb302b usb3343 vbus"),
+    ("init <peripheral>", "one of uart i2c pac1954 fusb302b w25q32 usb3343 vbus"),
     ("led [colour]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
     ("pac1954", "the four PAC1954 channels"),

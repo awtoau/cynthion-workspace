@@ -164,6 +164,38 @@ impl Region {
     }
 }
 
+/// The first word of an ECP5 bitstream, which is what offset 0 of this part
+/// holds. `flash id`, `cpu check` and `selftest` compare against it for the
+/// same reason: it is a value the flash cannot return by accident.
+const BITSTREAM_HEADER: u32 = 0x6150_00ff;
 
+/// What [`w25q32_init`] read.
+pub struct FlashInit {
+    pub word: u32,
+}
 
+impl FlashInit {
+    pub fn established(&self) -> bool {
+        self.word == BITSTREAM_HEADER
+    }
+}
 
+/// `w25q32_init()` -- **a read, and only a read**.
+///
+/// No erase, no program, no status-register write, ever. The bitstream lives at
+/// offset 0 and this image at 0xb0000, and there is nothing on this part a
+/// write could establish that is worth the risk of writing it.
+///
+/// What it establishes is therefore evidence rather than state, and the
+/// evidence is about Continuous Read -- the one mode that survives a
+/// reconfigure. A part left in it answers an opcode with an address phase and
+/// returns plausible data from the wrong offset, so offset 0 stops reading as a
+/// bitstream header. That is the whole of what is checkable from here.
+///
+/// **Exiting it is not implemented on the SoC path.** That needs a read with
+/// the opcode omitted and mode byte `0xff`, which
+/// `gateware/probes/qspi/qspi_gateware.py` can issue and the reader in
+/// `gateware/soc/peripherals/flash.py` cannot (#315).
+pub fn w25q32_init() -> FlashInit {
+    FlashInit { word: target::flash_word(0) }
+}

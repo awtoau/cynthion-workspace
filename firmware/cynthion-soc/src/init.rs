@@ -206,6 +206,7 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     i2c_init(&mut out, devices);
     pac1954_init(&mut out, devices);
     fusb302b_init(&mut out, devices);
+    w25q32_init(&mut out);
     usb3343_init(&mut out);
     vbus_init(&mut out);
     facilities(&mut out);
@@ -221,6 +222,7 @@ fn one(out: &mut Out, name: &[u8], devices: &mut Devices) -> bool {
         b"i2c" => i2c_init(out, devices),
         b"pac1954" => pac1954_init(out, devices),
         b"fusb302b" => fusb302b_init(out, devices),
+        b"w25q32" | b"flash" => w25q32_init(out),
         b"usb3343" => usb3343_init(out),
         b"vbus" => vbus_init(out),
         _ => return false,
@@ -330,6 +332,24 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
             "{} controller(s), sw_res then interrupt on state change{}",
             report.ports,
             if report.configured { "" } else { " -- a port did not answer" }
+        ),
+    );
+}
+
+fn w25q32_init(out: &mut Out) {
+    let report = crate::memory::w25q32_init();
+    out.line(
+        "w25q32",
+        if report.established() { "ok" } else { "WARN" },
+        format_args!(
+            "offset 0 reads {:08x}{}",
+            report.word,
+            if report.established() {
+                ", a bitstream header: not in continuous read"
+            } else {
+                " -- NOT a bitstream header; the part may be in continuous read, \
+                 which this path cannot exit (#315)"
+            }
         ),
     );
 }
