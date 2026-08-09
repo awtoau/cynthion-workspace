@@ -460,9 +460,22 @@ pub fn mv_to_code(millivolts: u32) -> u16 {
 /// `ua_to_code` serves both -- which is exactly why OC and UC worked from the
 /// first attempt while OV and UV never did.
 pub fn mv_to_limit_code(millivolts: i32) -> u16 {
-    let code = (millivolts as i64 * 128) / 125;
-    code.clamp(i16::MIN as i64, i16::MAX as i64) as i16 as u16
+    // 32-BIT, for the reason `ua_to_code` gives: the register's full scale is
+    // +/-32 V, so `32_000 * 128` is 4,096,000 and nowhere near `i32`. The `i64`
+    // this replaced linked `__divdi3` to produce a 16-bit field -- and LTO
+    // inlines this into `shell::run` and `PowerAlert`, so one `i64` here was
+    // four call sites.
+    //
+    // Clamped BEFORE the multiply. A wrapped product is a plausible-looking
+    // wrong threshold, which is the failure mode the doc comment above spent
+    // a threshold sweep discovering.
+    let millivolts = millivolts.clamp(-FULL_SCALE_MV, FULL_SCALE_MV);
+    let code = (millivolts * 128) / 125;
+    code.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16
 }
+
+/// Full scale of the VBUS limit registers: +/-32 V at 976.6 uV per code.
+const FULL_SCALE_MV: i32 = 32_000;
 
 /// An OV/UV limit code back to millivolts. The inverse of
 /// [`mv_to_limit_code`], and signed, because the register is.
@@ -476,10 +489,24 @@ pub fn limit_code_to_mv(raw: u16) -> i32 {
 /// reads, so a negative limit is meaningful -- the switch tree is bidirectional
 /// and a port can sink.
 pub fn ua_to_code(microamps: i32) -> u16 {
-    let magnitude = ((microamps.unsigned_abs() as u64) << 9) / 78125;
-    let magnitude = magnitude.min(i16::MAX as u64) as i16;
+    // 32-BIT THROUGHOUT. The bipolar full scale is +/-5 A, so the largest
+    // magnitude this can be handed is 5,000,000 uA, and `5_000_000 << 9` is
+    // 2,560,000,000 -- inside `u32`. The `u64` this replaced linked
+    // `__udivdi3`/`u64_div_rem` from compiler-builtins to produce a 16-bit
+    // register field.
+    //
+    // CLAMPED BEFORE THE SHIFT, not after. `u32` overflows at `<< 9` above
+    // 8,388,607 uA, and a wrapped shift yields a small code -- a wrong current
+    // limit that looks entirely plausible in the register.
+    let magnitude = microamps.unsigned_abs().min(FULL_SCALE_UA);
+    let magnitude = ((magnitude << 9) / 78125).min(i16::MAX as u32) as i16;
     (if microamps < 0 { -magnitude } else { magnitude }) as u16
 }
+
+/// Bipolar full-scale current: +/-5 A across the 20 mOhm shunt at +/-100 mV.
+///
+/// The bound [`ua_to_code`] clamps to, so the whole conversion stays in 32 bits.
+const FULL_SCALE_UA: u32 = 5_000_000;
 
 pub fn bus_mv(raw: u16) -> u32 {
     raw as u32 * 125 / 256

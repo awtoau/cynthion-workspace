@@ -1449,8 +1449,16 @@ def cmd_report(args) -> int:
                             "git_ref = :ref ORDER BY id DESC LIMIT 1",
                       {"target": args.target,
                        "ref": base_ref}) if base_ref else []
+    # Smallest firmware ever, which is NOT `best` -- that row is the smallest
+    # by COMB, and the build with the least logic is routinely not the one with
+    # the least code. Two different questions, two different rows.
+    small_rows = fetch(conn, "SELECT * FROM builds WHERE target = :target AND "
+                             "status = 'ok' AND fw_text_bytes IS NOT NULL "
+                             "ORDER BY fw_text_bytes ASC LIMIT 1",
+                       {"target": args.target})
     best = best_rows[0] if best_rows else None
     bp = base_rows[0] if base_rows else None
+    small = small_rows[0] if small_rows else None
 
     def col(row, key):
         return row.get(key) if row else None
@@ -1481,6 +1489,30 @@ def cmd_report(args) -> int:
     if bp is None:
         emit(f"  (no build recorded at the branch point "
              f"{(base_ref or 'unknown')[:12]})")
+
+    # SIZE, which was recorded from the first row and displayed by nothing.
+    # `.bss` is RAM rather than image and is marked so, because reading it as
+    # code size is the mistake that column invites.
+    emit("")
+    emit("SIZE (bytes)        current    vs prev  vs smallest  vs branch point")
+    for key, label in (("fw_text_bytes", ".text"),
+                       ("fw_rodata_bytes", ".rodata"),
+                       ("fw_data_bytes", ".data"),
+                       ("fw_bss_bytes", ".bss (RAM)"),
+                       ("fw_bram_image_bytes", "BRAM image"),
+                       ("fw_flash_image_bytes", "flash image"),
+                       ("fw_boot_bytes", "boot stub"),
+                       ("bitstream_bytes", "bitstream")):
+        value = current.get(key)
+        if value is None:
+            continue
+        emit(f"  {label:<18}{value:>8}"
+             f"{delta(value, col(prev, key)):<12}"
+             f"{delta(value, col(small, key)):<11}"
+             f"{delta(value, col(bp, key))}")
+    if current.get("fw_opt_level"):
+        emit(f"  built at opt-level {current['fw_opt_level']}, "
+             f"rustc {current.get('rustc_version')}")
 
     emit("")
     emit("TIMING (this build)")
@@ -1641,6 +1673,22 @@ def cmd_graph(args) -> int:
             ("MULT18X18D", [r.get("dsp") for r in rows]),
             ("TRELLIS_IO", [r.get("io") for r in rows]),
         ], labels),
+        # A series that is None or zero on every build is dropped rather than
+        # drawn flat along the axis: `rust_fw.bin` is empty on this design and a
+        # zero line reads as a measurement, not as an absence.
+        *([svg_chart("Firmware size", size_series, labels, unit=" B")]
+          if (size_series := [
+              (label, [r.get(key) for r in rows])
+              for key, label in (("fw_text_bytes", ".text"),
+                                 ("fw_rodata_bytes", ".rodata"),
+                                 ("fw_data_bytes", ".data"),
+                                 ("fw_bss_bytes", ".bss (RAM)"),
+                                 ("fw_flash_image_bytes", "flash image"),
+                                 ("fw_bram_image_bytes", "BRAM image"))
+              if any(r.get(key) for r in rows)]) else []),
+        svg_chart("Bitstream size", [
+            ("top.bit", [r.get("bitstream_bytes") for r in rows]),
+        ], labels, unit=" B"),
         svg_chart("fmax by clock domain (dashed pairs are the constraint)", [
             *[(clock.replace("$glbnet$", ""), [seen.get(i) for i in ids])
               for clock, seen in sorted(achieved.items())],
