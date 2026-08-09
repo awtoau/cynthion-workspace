@@ -292,12 +292,16 @@ mod app {
             metrics::turn();
 
             let mut console = crate::primary();
+            // The shells go into `housekeeping` as well as into `consoles`,
+            // because what it prints is unasked-for and the primary console's
+            // editor may be holding a half-typed line. See `Shell::interject`.
+            let shells = &mut *cx.local.shells;
             cx.shared
                 .devices
-                .lock(|devices| crate::housekeeping(&mut console, devices));
+                .lock(|devices| crate::housekeeping(shells, &mut console, devices));
             cx.shared
                 .devices
-                .lock(|devices| crate::consoles(cx.local.shells, devices));
+                .lock(|devices| crate::consoles(shells, devices));
         }
     }
 
