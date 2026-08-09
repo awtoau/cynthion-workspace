@@ -18,10 +18,19 @@ Only the three import lines differ from upstream: `LEDResources` and
 otherwise, see that module), and `CynthionPlatform` from the local reduced
 `.core`.
 
-The resource list, connectors, `default_clk`, device, package and speed grade
-below are untouched. Do not "improve" them. A pin map that differs from the
+**Plus the `ram` resource's electrical attributes** -- the one deliberate
+divergence, see `HYPERRAM_*` below and #311. Pin locations are untouched.
+
+Everything else -- pin map, connectors, `default_clk`, device, package, speed
+grade -- is upstream's. Do not "improve" it. A pin map that differs from the
 board is worse than no change at all: the build succeeds and the wrong ball
 drives the wrong net.
+
+`gateware/soc/top.py` does NOT build against this file. It imports the platform
+from the installed `cynthion` package (`repos/cynthion/...`), so the attributes
+below reach the probe bitstreams under `gateware/probes/` and not the shipping
+SoC. `scripts/hyperram_pin_patch.py` is what reaches a built bitstream either
+way.
 
 Upstream: repos/cynthion/cynthion/python/src/gateware/platform/cynthion_r1_4.py
 """
@@ -35,6 +44,26 @@ from .core import CynthionPlatform
 from .resources import LEDResources, ULPIResource
 
 __all__ = ["CynthionPlatformRev1D4"]
+
+# ---- HyperRAM pin drive, explicit rather than inherited. See #311. -----------
+#
+# There was no DRIVE here at all, so every pin ran at the silicon default and the
+# value in use was written down nowhere. This is the decision.
+#
+# Sweep order 8 -> 4 -> 12 -> 16 mA: 8 is the impedance match, 4 is the NEGATIVE
+# CONTROL (the rung that should violate the part's minimum input slew), 16
+# overshoots the W956A8's absolute maximum unterminated. Numbers in #311.
+HYPERRAM_DRIVE_LADDER = ("8", "4", "12", "16")
+
+# From the environment so walking a rung does not dirty a tracked file.
+# `scripts/hyperram_pin_patch.py` reaches the same rungs in a BUILT bitstream in
+# ~1 s, which is what makes these axes affordable; this is the default it starts
+# from, not the only way to move.
+HYPERRAM_CK_DRIVE = os.getenv("CYNTHION_HYPERRAM_CK_DRIVE", "8")
+HYPERRAM_DQ_DRIVE = os.getenv("CYNTHION_HYPERRAM_DQ_DRIVE", "8")
+# CS# and RESET# are static during a burst, so drive buys nothing there.
+HYPERRAM_CTRL_DRIVE = os.getenv("CYNTHION_HYPERRAM_CTRL_DRIVE", "4")
+
 
 class CynthionPlatformRev1D4(CynthionPlatform):
     """ Board description for Cynthion r1.4 """
@@ -202,12 +231,22 @@ class CynthionPlatformRev1D4(CynthionPlatform):
         ),
 
         # HyperRAM
+        #
+        # Per-subsignal attributes; the resource-level set below is the fallback
+        # for anything they do not name. Direction decides where DRIVE matters --
+        # CK always, DQ/RWDS on writes only, CS#/RESET# never. #311.
         Resource("ram", 0,
-            Subsignal("clk",   DiffPairs("C3", "D3", dir="o"), Attrs(IO_TYPE="LVCMOS33D")),
-            Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io")),
-            Subsignal("rwds",  Pins( "D1", dir="io")),
-            Subsignal("cs",    PinsN("B2", dir="o")),
-            Subsignal("reset", PinsN("C1", dir="o")),
+            # DRIVE is mirrored onto CK# by nextpnr, unlike SLEWRATE. #311.
+            Subsignal("clk",   DiffPairs("C3", "D3", dir="o"),
+                      Attrs(IO_TYPE="LVCMOS33D", DRIVE=HYPERRAM_CK_DRIVE)),
+            Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io"),
+                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE)),
+            Subsignal("rwds",  Pins( "D1", dir="io"),
+                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE)),
+            Subsignal("cs",    PinsN("B2", dir="o"),
+                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE)),
+            Subsignal("reset", PinsN("C1", dir="o"),
+                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE)),
             Attrs(IO_TYPE="LVCMOS33", SLEWRATE="FAST")
         ),
 
