@@ -66,6 +66,7 @@ Ctrl-C to stop.
 """
 
 import argparse
+import os
 import socket
 import subprocess
 import sys
@@ -123,26 +124,57 @@ def keyboard(state, lock):
     shell rather than as a missing relay. Socket clients had a write path from the
     start; the person sitting in front of it did not.
 
-    Line-buffered on purpose. The SoC shell is line-based and has its own editor, so
-    raw mode would only duplicate it -- and putting the terminal in raw mode means
-    Ctrl-C stops reaching this process, which is how you stop it.
+    RAW, one byte at a time, and that is a change: this was line-buffered "on
+    purpose" because the SoC shell was line-based and raw mode "would only
+    duplicate" its editor.
+
+    That stopped being true when the shell gained TAB completion and history
+    (#171). Both need the keystroke AS IT IS TYPED. Line-buffered, a TAB sits in
+    the terminal's own buffer and arrives after Enter -- by which time the line
+    is finished and there is nothing to complete. Arrow keys never arrive as
+    arrows at all. The feature was in the firmware, verified on the board, and
+    invisible from this terminal.
+
+    Ctrl-C now reaches the BOARD rather than this process, which is what a raw
+    terminal means. **Ctrl-] quits**, the same escape telnet and tio use, and the
+    banner says so.
 
     The handle comes from `state` under the lock rather than being captured, because a
     reconfigure replaces the port object and a thread holding the old one writes to a
     closed file. The write itself happens outside the lock so a blocking write cannot
     stall the reader loop's fan-out.
     """
-    for line in sys.stdin:
-        with lock:
-            device = state.get("port")
-        if device is None:
-            print("[not attached — nothing to send]", flush=True)
-            continue
-        try:
-            device.write(line.rstrip("\n").encode() + b"\r")
-            device.flush()
-        except OSError:
-            print("[write failed — the port went away]", flush=True)
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    print("[raw mode: keys go to the board as you type. Ctrl-] to quit]",
+          flush=True)
+    try:
+        tty.setraw(fd)
+        while True:
+            byte = os.read(fd, 1)
+            if not byte:
+                break
+            # Ctrl-]. The one key this terminal keeps, because a raw terminal
+            # hands Ctrl-C to the board and something has to end the session.
+            if byte == b"\x1d":
+                break
+            with lock:
+                device = state.get("port")
+            if device is None:
+                continue
+            try:
+                device.write(byte)
+                device.flush()
+            except OSError:
+                break
+    finally:
+        # Always, including on an exception: a terminal left in raw mode has no
+        # echo and no line editing, and the shell it returns to looks broken.
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        print("\r\n[detached]", flush=True)
 
 
 def serve(port, clients, lock, state):
