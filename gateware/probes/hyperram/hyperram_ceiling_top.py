@@ -653,7 +653,7 @@ class HyperRAMCeiling(Elaboratable):
 
         # What the PART says CR0 is, read back after configuring it.
         device_readback = Signal(32)
-        readback_started = Signal()
+
 
         # DID THE RUN FINISH. `harness.done` used to be an expression over
         # leftover signal values --
@@ -808,13 +808,25 @@ class HyperRAMCeiling(Elaboratable):
             # asked for, which turns "did the configuration apply" from an
             # inference about behaviour into a measurement.
             with m.State("CONFIG_VERIFY"):
+                # `start` IS THE TRANSACTION. Setting `configuring` alone only
+                # selects register space -- it does not issue anything, so the
+                # first version of this state read nothing and reported 0x0000,
+                # which looked exactly like a broken register path on the part.
+                # It was a missing strobe. Modelled on CONFIG_CR0 for that
+                # reason: same handshake, `writing` left low to make it a READ.
+                m.d.comb += [configuring.eq(1), last.eq(1),
+                             config_address.eq(CR0_ADDRESS),
+                             start.eq(psram.idle)]
+                with m.If(~psram.idle):
+                    m.next = "CONFIG_VERIFY_WAIT"
+
+            with m.State("CONFIG_VERIFY_WAIT"):
                 m.d.comb += [configuring.eq(1), last.eq(1),
                              config_address.eq(CR0_ADDRESS)]
                 with m.If(psram.read_ready):
                     m.d.sync += device_readback.eq(psram.read_data)
-                with m.If(psram.idle & readback_started):
+                with m.If(psram.idle):
                     m.next = "WRITE_START"
-                m.d.sync += readback_started.eq(1)
 
             with m.State("WRITE_START"):
                 # `writing` high in the SAME cycle as `start`, not one after it.
