@@ -16,10 +16,7 @@
 //! wire (`gateware/probes/sideband/sideband_advertise.py`). Every bitstream here is AUX-only, so
 //! this is the only way the SoC can claim CONTROL at all.
 
-use core::fmt::Write;
 
-use crate::uart::Uart;
-use crate::target;
 
 use core::ptr::{read_volatile, write_volatile};
 

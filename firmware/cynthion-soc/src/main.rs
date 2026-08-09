@@ -126,8 +126,6 @@ mod vbus;
 mod workload;
 
 use bus::Bus;
-use clock::Instant;
-use target::flash_word;
 use uart::Uart;
 
 

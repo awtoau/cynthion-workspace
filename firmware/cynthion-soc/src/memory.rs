@@ -42,7 +42,6 @@
 use crate::bench;
 use crate::hyperram;
 use crate::target;
-use crate::uart::Uart;
 
 /// The three memories on this board, and the only place a word becomes one of them.
 #[derive(Clone, Copy)]

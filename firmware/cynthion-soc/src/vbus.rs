@@ -28,10 +28,7 @@
 //! `docs/hardware.md` collects these; the primary ones are GSG's Cynthion
 //! Hardware Design Update and mossmann in greatscottgadgets/cynthion#184.
 
-use core::fmt::Write;
 
-use crate::uart::Uart;
-use crate::{fusb302, Devices};
 
 use crate::power;
 

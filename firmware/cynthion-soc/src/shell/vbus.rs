@@ -3,7 +3,7 @@
 
 use core::fmt::Write;
 
-use crate::shell::parse::{parse_decimal, trim};
+use crate::shell::parse::trim;
 use crate::uart::Uart;
 use crate::vbus::*;
 use crate::shell::console::board_absent;

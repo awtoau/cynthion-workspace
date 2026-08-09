@@ -330,7 +330,7 @@ mod app {
     ///
     /// It reports on the PRIMARY console only, as the poll did. The second
     /// port's TX pin is JTAG TMS and this firmware never transmits there
-    /// unbidden -- see `target::ANNOUNCING`.
+    /// unbidden -- see `target::NEVER_SPEAKS_FIRST`.
     ///
     /// **The I2C transaction is still a spin, and #245 asks for it not to be.**
     /// It is left as one here on purpose: IRQ 3 is wired in the gateware

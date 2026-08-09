@@ -7,7 +7,7 @@ use core::fmt::Write;
 
 use crate::shell::parse::{parse_hex, trim};
 use crate::uart::Uart;
-use crate::{bench, hyperram, memory};
+use crate::{bench, hyperram};
 
 /// Everything HyperRAM-specific, under one verb.
 ///

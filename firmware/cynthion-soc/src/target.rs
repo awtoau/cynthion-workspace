@@ -209,20 +209,23 @@ pub const TYPE_C_IRQS: &[u32] = &[
 #[cfg(feature = "qemu")]
 pub const TYPE_C_IRQS: &[u32] = &[];
 
-/// Consoles that announce themselves while idle.
+/// THE FPGA NEVER SPEAKS FIRST. A hardware constraint, not a preference.
 ///
-/// Index 0 only, and this is a hardware constraint rather than a preference. The
-/// second UART's TX pin (T14) is wired to the same net as JTAG TMS, which the
+/// The second UART's TX pin (T14) is on the same net as JTAG TMS, which the
 /// Apollo microcontroller drives whenever it is configuring the FPGA or scanning
 /// the chain. The FPGA tri-states its side except while transmitting, so the two
-/// only contend if the FPGA transmits unbidden. A console that re-banners every
-/// couple of seconds does exactly that, forever.
+/// contend only if the FPGA transmits unbidden.
 ///
-/// So: the FPGA never speaks first on a shared pin. Type on the Apollo tty and it
-/// answers; leave it alone and it is electrically absent. That bounds the
-/// contention window to "a human is using this port", which is not a window in
-/// which anyone is also running `apollo jtag-scan`.
-pub const ANNOUNCING: usize = 1;
+/// Type on the tty and it answers; leave it alone and it is electrically absent.
+/// That bounds the contention window to "a human is using this port", which is
+/// not a window in which anyone is also running `apollo jtag-scan`.
+///
+/// Enforced in three places, all of which wait to be asked or write only to the
+/// primary console: `shell::console::Shell::poll` (the banner), `events::drain`
+/// and `uart::report_errors`. There is no constant to check -- the rule is that
+/// nothing transmits without a reason, and a constant naming one console made it
+/// look like a setting.
+pub const NEVER_SPEAKS_FIRST: () = ();
 
 /// Where the board's own peripherals are, or `None` on a target that has no
 /// board.

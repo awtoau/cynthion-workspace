@@ -31,13 +31,11 @@ pub(crate) mod typec;
 pub(crate) mod vbus;
 
 use core::fmt::Write;
-use core::ptr::read_volatile;
 
 use self::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
-use crate::target::flash_word;
 use crate::{
-    bench, board, clock, events, info, log, metrics,
+    bench, board, clock, events, info, log,
     reboot, sched, scratch_responds, selftest, staging, target, timer,
     Devices,
 };

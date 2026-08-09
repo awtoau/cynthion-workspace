@@ -21,7 +21,7 @@ use embedded_cli::service::{Autocomplete, CommandProcessor, Help, ProcessError};
 use embedded_cli::autocomplete::{Autocompletion, Request};
 use embedded_io::{ErrorType, Write as IoWrite};
 
-use crate::shell::{HELP, HELP_WIDTH};
+use crate::shell::HELP;
 use crate::uart::Uart;
 
 /// Longest command line accepted. The old editor's buffer was 64.

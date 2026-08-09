@@ -44,10 +44,7 @@
 //! A driver that writes only the low byte of Mode has written nothing at all,
 //! and the symptom is an LED command that returns cleanly and does nothing.
 
-use core::fmt::Write;
 
-use crate::uart::Uart;
-use crate::target;
 
 use core::ptr::{read_volatile, write_volatile};
 

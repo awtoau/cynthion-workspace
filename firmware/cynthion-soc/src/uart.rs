@@ -179,7 +179,7 @@ pub fn error_reads(index: usize) -> u32 {
 ///
 /// It prints on the PRIMARY console whichever port lost the byte. The second
 /// port's transmit pin is JTAG TMS and this firmware never speaks there unbidden
-/// -- see `target::ANNOUNCING` -- and a port that is dropping input is the last
+/// -- see `target::NEVER_SPEAKS_FIRST` -- and a port that is dropping input is the last
 /// one to announce it on.
 pub fn report_errors(uart: &mut Uart) {
     use core::fmt::Write;

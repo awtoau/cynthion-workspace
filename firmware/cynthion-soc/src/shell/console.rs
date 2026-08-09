@@ -1,22 +1,21 @@
-//! One console's line editor, its idle banner, and the round-robin over them.
+//! One console's line editor, its banner, and the round-robin over them.
 //!
 //! The last of the shell that was still in `main.rs` (#296). `main` now boots
 //! the board and hands the consoles to this; it holds no shell state at all.
 //!
 //! Per-console, not global: `spoken` latching on one port must not silence the
-//! re-banner on another, and two half-typed lines must not share a buffer.
+//! banner on another, and two half-typed lines must not share a buffer.
 
 use core::fmt::Write;
 
-use crate::clock::{self, Instant};
 use crate::uart::Uart;
 use crate::shell::editor::{editor, Commands, Dispatch, Editor, CANDIDATES};
 use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 
-/// One console's line editor and its idle state.
+/// One console's line editor and its banner state.
 ///
 /// Per-console rather than global: `spoken` latching on one port must not silence the
-/// re-banner on another, and two half-typed command lines must not share a buffer.
+/// banner on another, and two half-typed command lines must not share a buffer.
 /// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
 /// generated signatures too.
 pub struct Shell {
@@ -46,21 +45,10 @@ pub struct Shell {
     /// `Cli` needs a writer and two buffers, so it cannot be made in const
     /// context.
     editor: Option<Option<Editor>>,
-    /// Set by the first keypress. From then on the prompt is on screen and reprinting
-    /// the banner would fight the line being edited.
+    /// Set by the first keypress, which is what the banner waits for. From then
+    /// on the prompt is on screen and reprinting it would fight the line being
+    /// edited.
     spoken: bool,
-    /// When the banner was last printed. `None` until the first idle poll, which
-    /// is what stops the first one measuring against a zero instant -- the same
-    /// origin defect the scheduler had.
-    ///
-    /// A TIMESTAMP, not a turn count. This was `idle: u32`, compared against
-    /// 12,000,000 turns and described as "~2 s at 60 MHz". A turn is not a unit
-    /// of time: under `--features rtic` `#[idle]` takes two SLIC locks per pass
-    /// and each turn costs about four times as much, so the same count took
-    /// about eight seconds and the shell looked silent. It also scaled with the
-    /// number of consoles and with `SYNC_MHZ`, neither of which has anything to
-    /// do with how long a person waits before deciding a board is dead.
-    last_banner: Option<Instant>,
 }
 
 /// The loop body's console half: one byte from each shell, round-robin.
@@ -76,7 +64,7 @@ pub struct Shell {
 pub(crate) fn consoles(shells: &mut [Shell; MAX_CONSOLES], devices: &mut Devices) {
     for (index, &base) in target::UART_BASES.iter().enumerate() {
         let mut uart = Uart::new(base);
-        shells[index].poll(index, &mut uart, index < target::ANNOUNCING, devices);
+        shells[index].poll(index, &mut uart, devices);
     }
 }
 
@@ -104,52 +92,40 @@ impl Shell {
         typed: false,
         editor: None,
         spoken: false,
-        last_banner: None,
     };
 
-    /// Handle at most one byte from `uart`, or count one turn of idleness.
+    /// Handle at most one byte from `uart`. Returns immediately if none arrived.
     ///
-   /// `announce` re-prints the banner and prompt periodically while nothing has been
-    /// typed. Printing them once is invisible: the CPU starts the moment the FPGA is
-    /// configured and the host takes about half a second to enumerate and bind a tty, so
-    /// a terminal attaching afterwards has already missed everything. Worse, an idle
-    /// shell that only prints on input is indistinguishable from a dead one -- there is
-    /// nothing to see until you type, and no reason to believe typing will work.
-    ///
-    /// It is off for every console but the first, because on this board the second one's
-    /// TX pin is shared with JTAG TMS and an unbidden transmission is bus contention.
-    /// See `target::ANNOUNCING`.
-    /// `index` selects this console's receive ring in `src/irq.rs`, and is also what
-    /// `load` needs to know which port a transfer is arriving on. It i s the index into
-    /// `target::UART_BASES`, so it is the same number everywhere.
-    pub(crate) fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool, devices: &mut Devices) {
+    /// `index` selects this console's receive ring in `src/irq.rs`, and is also
+    /// what `load` needs to know which port a transfer is arriving on. It is the
+    /// index into `target::UART_BASES`, so it is the same number everywhere.
+    pub(crate) fn poll(&mut self, index: usize, uart: &mut Uart, devices: &mut Devices) {
         // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
         // for everything this function ECHOES; only the receive direction moved.
         let byte = match irq::pop(index) {
             Some(byte) => byte,
-            None => {
-                if announce && !self.spoken {
-                    let now = clock::now();
-                    let last = *self.last_banner.get_or_insert(now);
-                    // 2 s, measured. Slow enough to read, fast enough that
-                    // attaching does not feel dead -- and now the SAME 2 s under
-                    // both dispatchers, at any `SYNC_MHZ`, with any number of
-                    // consoles, because it is a duration rather than a count of
-                    // something whose cost varies.
-                    if last.elapsed(now) >= clock::millis(BANNER_INTERVAL_MS) {
-                        self.last_banner = Some(now);
-                        // Two lines printed is work, even though nobody asked
-                        // for them. See `src/metrics.rs`.
-                        metrics::busy();
-                        banner(uart);
-                        let _ = write!(uart, "> ");
-                    }
-                }
-                return;
-            }
+            None => return,
         };
-        // First keypress: stop re-announcing, the user is here.
-        self.spoken = true;
+
+        // THE BANNER IS ANSWERED, NEVER OFFERED. It waits here until the first
+        // keypress and prints once.
+        //
+        // It used to reprint every 2 s on an idle console so an attaching
+        // terminal would not have missed it -- the CPU starts as soon as the
+        // FPGA is configured, and the host takes about half a second to
+        // enumerate and bind a tty. That transmits with nobody there, which is
+        // why it had to be restricted to console 0: console 1's TX is shared
+        // with JTAG TMS, and an unbidden transmission on it is bus contention.
+        //
+        // Nothing is unbidden now, so the restriction is gone with it and every
+        // console banners on its own first keypress.
+        if !self.spoken {
+            self.spoken = true;
+            // Two lines printed is work, even though the byte that asked for
+            // them was one keystroke. See `src/metrics.rs`.
+            metrics::busy();
+            banner(uart);
+        }
 
         // The line editor owns everything from here: echo, backspace, TAB
         // completion over `HELP`, and the history ring on the arrow keys.
@@ -298,19 +274,6 @@ impl Shell {
 
 /// The shadowed line's capacity, matching the editor's own command buffer.
 const LINE: usize = 64;
-
-/// How long an idle console waits before printing the banner again.
-///
-/// Two seconds: slow enough to read, fast enough that attaching to a quiet board
-/// does not feel like attaching to a dead one. A shell that only prints on input
-/// is indistinguishable from one that has stopped -- there is nothing to see
-/// until you type, and no reason to believe typing will work.
-///
-/// Milliseconds, measured against `rdtime`, and NOT a count of loop turns. It
-/// was a count, and a turn is not a unit of time: under `--features rtic` a turn
-/// costs about four times as much, so the same number took four times as long
-/// and the QEMU suite reported the shell as silent.
-pub(crate) const BANNER_INTERVAL_MS: u32 = 2_000;
 
 /// Which line editor this build carries, for `info`.
 ///
