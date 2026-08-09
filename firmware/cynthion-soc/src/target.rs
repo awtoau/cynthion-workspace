@@ -340,7 +340,7 @@ pub const HYPERRAM_SIZE: usize = 0x0080_0000;
 /// this exact address. That collision is why flash is reached through
 /// `flash_word()` rather than by the shell dereferencing a constant.
 #[cfg(not(feature = "qemu"))]
-const FLASH_BASE: usize = cynthion_soc_pac::base::SPIFLASH;
+pub const FLASH_BASE: usize = cynthion_soc_pac::base::SPIFLASH;
 
 /// How much flash the memory map decodes: 4 MiB, which is what the part holds.
 /// Above it the address aliases back onto offset 0, so a read past the end

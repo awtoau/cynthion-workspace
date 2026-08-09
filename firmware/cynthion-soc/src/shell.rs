@@ -69,7 +69,8 @@ use crate::{
 /// firmware avoids it.
 pub(crate) const HELP: &[(&str, &str)] = &[
     ("board", "every connector, rail and controller"),
-    ("bram", "the 64 KiB block RAM at address zero"),
+    ("bram", "block RAM at address zero"),
+    ("bram info", "base and size, from the generated map"),
     ("bram read <hex>", "one word of block RAM"),
     ("bram bench", "time a walk over block RAM"),
     ("cpu", "the RISC-V core"),
@@ -78,6 +79,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("cpu irq", "interrupt counts, per source"),
     ("cpu log [n|tags]", "the deferred event ring the handlers push to"),
     ("flash", "the memory-mapped W25Q32 config flash"),
+    ("flash info", "base and size, from the generated map"),
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
     ("flash bench", "time a walk over the flash window"),
@@ -88,7 +90,8 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     // while `help` was the only reader. It is not now: this table IS the
     // completion source, so a subcommand missing from here cannot be TAB-completed
     // and cannot be discovered without running the command wrongly first.
-    ("hyperram", "the 8 MiB HyperRAM, and its read window"),
+    ("hyperram", "HyperRAM, and its read window"),
+    ("hyperram info", "base and size, from the generated map"),
     ("hyperram status", "the DQS read path's self-report"),
     ("hyperram read <hex>", "one word over the staging port"),
     ("hyperram sel <n>", "READCLKSEL: 2:0 tap, 3 phase, 5:4 read stall"),
@@ -102,7 +105,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("i2c status", "the controller: base, prescale, selected bus"),
     ("i2c scan [bus]", "scan a bus behind the mux"),
     ("i2c soak <bus> <prer> <n>", "hammer one bus at one rate, count failures"),
-    ("info", "image, memory, boot, cpu, gateware"),
+    ("info", "this build and this board"),
     ("info map", "every peripheral window, from the generated map"),
     ("info pmod", "connector pins: ball, resource, free or claimed"),
     ("info ports", "the consoles: type, FIFO depth, and which answer"),

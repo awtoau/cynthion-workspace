@@ -90,6 +90,21 @@ impl Region {
         }
     }
 
+    /// Where the region starts. Same rule as [`size`](Self::size): from
+    /// `src/target.rs`, so it is the map the gateware built rather than a
+    /// literal that has to be kept in step with it.
+    /// `None` for HyperRAM: it IS decoded at a window, but nothing in this
+    /// firmware reaches it that way -- every access goes over the bounded CSR
+    /// staging port. Reporting the window would name an address no command
+    /// here uses.
+    pub(crate) fn base(self) -> Option<usize> {
+        match self {
+            Region::Bram => Some(0),
+            Region::Flash => Some(target::FLASH_BASE),
+            Region::Hyperram => None,
+        }
+    }
+
     /// Why this region has no `id`, or `None` for the one that has.
     pub(crate) fn no_id(self) -> Option<&'static str> {
         match self {
