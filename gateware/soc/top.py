@@ -686,28 +686,29 @@ HYPERRAM_CLOCK_STOP = False
 #
 # 3 ways is not an option: SpinalHDL's PLRU asserts `isPow2` on the way count.
 #
-# MEASURED, by `scripts/soc_cache_sweep.py`, on 56 blocks -- AND THE 128x2 ROW
-# DID NOT REPRODUCE, so the sweep is not yet trustworthy:
+# MEASURED by `scripts/soc_cache_sweep.py`, twice per geometry, synthesis forced:
 #
-#     128x1   8 KiB direct   48 BRAM   builds, 102 checks pass on the board
-#      64x2   8 KiB 2-way    50 BRAM   sweep only, not rebuilt
-#     128x2  16 KiB 2-way    52 BRAM   sweep said this and placed
-#     128x2  16 KiB 2-way    58 BRAM   REBUILT: does not place
-#      32x4   8 KiB 4-way    58 BRAM   does not place
+#     128x1   8 KiB direct   48 BRAM   78.32, 77.39 MHz   places
+#      64x2   8 KiB 2-way    50 BRAM   62.81, 75.30, 81.12 MHz   places
+#     128x2  16 KiB 2-way    --        --                 does NOT place
+#      32x4   8 KiB 4-way    58 BRAM   --                 does NOT place
 #
-# 4 ways is out of blocks either way: 58 on a die with 56, nextpnr failing on
-# `BtbPlugin_logic_mem` with "no BELs remaining". `bankCount = wayCount`, so each
-# way brings its own bank, tag memory and wider PLRU state. And 3 ways does not
-# exist: SpinalHDL's PLRU asserts `isPow2`.
+# 2 ways, because RTIC's handlers are separate instruction working sets that
+# preempt each other, and in a DIRECT-MAPPED cache two hot ones sharing an index
+# evict each other however large the cache is. That is a conflict miss;
+# associativity is the only fix for it, capacity is not.
 #
-# ONE WAY STAYS until that 52-vs-58 is explained. The netlist for the failing
-# build was checked and really does have two ways (`FetchL1Plugin_logic_ways_0`
-# and `_1`), so it is not a case of the geometry not being applied -- which makes
-# it worse, not better: two builds of the same geometry disagreed by 6 blocks on
-# a figure that is supposed to be deterministic. Adopting a geometry on the
-# favourable half of that would be adopting a number, not a result. See #287.
-CACHE_SETS = 128
-CACHE_WAYS = 1
+# Cost: +2 blocks. Fmax is NOT clearly worse -- 64x2 has measured 62.81, 75.30
+# and 81.12 MHz across three builds against a 60 MHz constraint, and 128x1 has
+# measured 67.76 to 79.58. Both spreads are ~15 MHz and they overlap, so no
+# ranking between them is supportable from these samples. The 62.81 floor is the
+# thing to watch, not a typical value. `./dev.py metrics report` diffs it; #291
+# is about making a regression explain itself.
+#
+# 4 ways does not fit (58 blocks on a die with 56) and 3 ways does not exist
+# (SpinalHDL's PLRU asserts isPow2).
+CACHE_SETS = 64
+CACHE_WAYS = 2
 
 
 class HelloSoC(Elaboratable):
