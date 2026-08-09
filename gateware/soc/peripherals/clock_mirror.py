@@ -38,9 +38,14 @@ the resource #314 was about. A toggle counter is two LUT4s and two FFs per
 source and touches nothing.
 
 The cost is that the source domain gains a fabric register. On `hr_fast` that
-means the net must reach the primary clock network as well as the edge clock --
-which is why this is OFF by default and why the ECLK arcs in `top.tim` are
-checked with it ON before it is used.
+means the net must reach the primary clock network as well as the edge clock,
+which is why this is OFF by default.
+
+It does not cost the edge clock: with the mirror on, the DQS build still routes
+`S1W2_ECLKI0` from `G_JLLCPLL0CLKOS` -- the dedicated PLL tap, not the fabric
+one -- and no clock falls back to general routing. Check that in `top.config`
+rather than the log if this changes; nextpnr announces the fallback as
+`log_info` and no summary carries it (#314).
 """
 
 from amaranth import Elaboratable, Module, Signal
