@@ -149,6 +149,7 @@ const REG_UV_NSAMPLES: u8 = 0x48;
 
 /// The five limit kinds, in the order their bits appear in the 24-bit word.
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
 pub enum Limit {
     OverCurrent,
     UnderCurrent,
@@ -349,6 +350,41 @@ pub fn mv_to_code(millivolts: u32) -> u16 {
     code.min(u16::MAX as u64) as u16
 }
 
+/// Millivolts to an OV/UV **limit** code, which is NOT the measurement scale.
+///
+/// DS20006539B section 5.16.4:
+///
+/// > These limits are specified with **two's complement values independent of
+/// > whether Unipolar/Bipolar or Unidirectional/Bidirectional modes** are set
+/// > for VBUS and VSENSE measurements.
+///
+/// So a limit is signed over +/-32 V -- 32768 codes for the positive half, or
+/// **976.6 uV each** -- while a VBUS measurement in our unipolar mode is
+/// unsigned over 0..32 V, **488.3 uV each**. The two scales differ by exactly
+/// two, and using the measurement scale for a limit programs twice the voltage
+/// asked for.
+///
+/// That is why every voltage limit silently failed to fire: `ov 5000` wrote the
+/// code for 10 V, which no rail on this board reaches, so the comparator was
+/// correct and the threshold was nonsense. It cost a threshold sweep, a channel
+/// comparison and a wrong conclusion recorded in a commit message before the
+/// sentence above was read properly.
+///
+/// **The current limits need no equivalent.** VSENSE is already bipolar
+/// (`NEG_PWR_FSR = 0x5500`), so measurement and limit share a scale and
+/// `ua_to_code` serves both -- which is exactly why OC and UC worked from the
+/// first attempt while OV and UV never did.
+pub fn mv_to_limit_code(millivolts: i32) -> u16 {
+    let code = (millivolts as i64 * 128) / 125;
+    code.clamp(i16::MIN as i64, i16::MAX as i64) as i16 as u16
+}
+
+/// An OV/UV limit code back to millivolts. The inverse of
+/// [`mv_to_limit_code`], and signed, because the register is.
+pub fn limit_code_to_mv(raw: u16) -> i32 {
+    (raw as i16 as i32 * 125) / 128
+}
+
 /// Microamps to a VSENSE code, signed. The inverse of [`current_ua`].
 ///
 /// The limits are compared against the same signed VSENSE the measurement
@@ -425,6 +461,21 @@ pub struct Monitor {
     /// Set only after all four VSENSE channels were programmed bipolar and a
     /// REFRESH activated the new range.
     configured: bool,
+    /// The limits, debounce and enable mask as last written or read.
+    ///
+    /// **`power` must reach no bus.** That is the #123 rule -- the command
+    /// prints the poller's cached sample so a second reader cannot land inside
+    /// the 1 ms window after a refresh, where the part NACKs the register
+    /// pointer and a working bus reports a fault. `soc_i2c_owner_sim.py`
+    /// asserts it, and it caught the status table reading limit registers to
+    /// display them.
+    ///
+    /// So the cache is written by the code that changes the part -- every
+    /// setter below, and the auto-backoff -- and the display reads this. The
+    /// values are still the part's; they are just not fetched by a command.
+    alert_limits: [[u16; 4]; 4],
+    alert_samples: [[u8; 4]; 4],
+    alert_enable: u32,
     /// Every limit bit that has fired since boot, accumulated.
     ///
     /// **`ALERT_STATUS` is read-to-clear and belongs to the service path.** A
@@ -497,6 +548,9 @@ impl Monitor {
             floor: [DEFAULT_FLOOR_UA; 4],
             live: false,
             configured: false,
+            alert_limits: [[0; 4]; 4],
+            alert_samples: [[1; 4]; 4],
+            alert_enable: 0,
             alert_fired: 0,
             refreshing: false,
             refresh_at: None,
@@ -705,6 +759,19 @@ impl Monitor {
     /// Reads no bus. This is what a display command asks; `alert_service` is
     /// what the service path calls, and calling it from anywhere else empties
     /// the register underneath the handler.
+    /// The cached limit, debounce and enable mask. No bus.
+    pub fn alert_limit_cached(&self, limit: Limit, channel: usize) -> u16 {
+        self.alert_limits[limit as usize][channel]
+    }
+
+    pub fn alert_samples_cached(&self, limit: Limit, channel: usize) -> u32 {
+        self.alert_samples[limit as usize][channel] as u32
+    }
+
+    pub fn alert_enable_cached(&self) -> u32 {
+        self.alert_enable
+    }
+
     pub fn alert_history(&self) -> u32 {
         self.alert_fired
     }
@@ -734,7 +801,7 @@ impl Monitor {
     /// scale differs between a current limit and a voltage one and this function
     /// should not have to know which.
     pub fn alert_set_limit(
-        &self,
+        &mut self,
         bus: &mut Bus,
         limit: Limit,
         channel: usize,
@@ -743,6 +810,9 @@ impl Monitor {
         let enabled = self.read24(bus, REG_ALERT_ENABLE)?;
         self.write24(bus, REG_ALERT_ENABLE, 0)?;
         let result = self.write16(bus, limit.limit_register(channel), raw);
+        if result.is_ok() {
+            self.alert_limits[limit as usize][channel] = raw;
+        }
         // Restored whatever happened above. An early return here would leave
         // the part with every alert disabled and nothing saying so.
         let restored = self.write24(bus, REG_ALERT_ENABLE, enabled);
@@ -755,7 +825,7 @@ impl Monitor {
     /// explicit that routing without enabling does nothing: "ALERTs must be
     /// enabled in Register 7-34 before you can route them to a pin."
     pub fn alert_arm(
-        &self,
+        &mut self,
         bus: &mut Bus,
         limit: Limit,
         channel: usize,
@@ -767,6 +837,9 @@ impl Monitor {
             let wanted = if on { current | bit } else { current & !bit };
             if wanted != current {
                 self.write24(bus, register, wanted)?;
+            }
+            if register == REG_ALERT_ENABLE {
+                self.alert_enable = wanted;
             }
         }
         Ok(())
@@ -780,7 +853,7 @@ impl Monitor {
     /// detector that is quietly less sensitive than asked for is the failure
     /// this whole issue is about.
     pub fn alert_set_nsamples(
-        &self,
+        &mut self,
         bus: &mut Bus,
         limit: Limit,
         channel: usize,
@@ -814,12 +887,14 @@ impl Monitor {
             bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &[wanted as u8]);
         let restored = self.write24(bus, REG_ALERT_ENABLE, enabled);
         result.and(restored)?;
-        Ok(match code {
+        let actual = match code {
             0 => 1,
             1 => 4,
             2 => 8,
             _ => 16,
-        })
+        };
+        self.alert_samples[limit as usize][channel] = actual as u8;
+        Ok(actual)
     }
 
     pub fn alert_nsamples(
@@ -860,6 +935,7 @@ impl Monitor {
     /// part is still asserting, the interrupt fires again immediately and this
     /// repeats -- which is correct, there is still a condition.
     fn service_alert(&mut self, uart: &mut Uart, bus: &mut Bus) {
+        let mut moved_any = false;
         match self.alert_service(bus) {
             Ok(fired) => {
                 // Recorded before anything else, because this is the only read
@@ -884,7 +960,7 @@ impl Monitor {
                                 if limit.is_current() {
                                     current_ua(raw) / 1000
                                 } else {
-                                    bus_mv(raw) as i32
+                                    limit_code_to_mv(raw)
                                 }
                             })
                             .unwrap_or(0);
@@ -936,9 +1012,10 @@ impl Monitor {
                         let raw = if limit.is_current() {
                             ua_to_code(moved.saturating_mul(1000))
                         } else {
-                            mv_to_code(moved.max(0) as u32)
+                            mv_to_limit_code(moved)
                         };
                         let rearmed = self.alert_set_limit(bus, limit, channel, raw).is_ok();
+                        moved_any |= rearmed;
                         let settled = if rearmed { moved } else { threshold };
 
                         if limit.is_current() {
@@ -997,6 +1074,25 @@ impl Monitor {
                 self.failures = self.failures.saturating_add(1);
                 crate::log!(uart, "power: alert unreadable: {}", error.as_str());
             }
+        }
+        // Discard whatever latched WHILE the limits were being moved.
+        //
+        // The back-off writes a new threshold, but the part may already have
+        // latched a trip against the old one -- the comparison runs at 1024 SPS
+        // and the write takes an I2C transaction. That stale latch arrives as a
+        // second alert for one event, and because the threshold has already
+        // moved past the reading it reports as "tripped, back in range" and
+        // steps the limit a second time:
+        //
+        //     power: aux ov 1.799 V, saw 5.137 V -- over by 3.338 V, limit -> 5.637
+        //     power: aux ov 5.636 V tripped, back in range -- limit -> 6.136
+        //
+        // One read, discarded. If the condition is genuinely still true the very
+        // next conversion re-asserts and the next service reports it properly --
+        // section 5.16.8: "the ALERT function will reassert, if the next
+        // converted sample detects the limit is exceeded".
+        if moved_any {
+            let _ = self.alert_service(bus);
         }
         crate::irq::resume_power_alert();
     }
