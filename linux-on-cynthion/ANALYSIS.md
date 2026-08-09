@@ -355,7 +355,7 @@ solve it.
 
 ## 1. The recommended first step
 
-**Build `UsbOhciWishbone` inside `HelloSoC` and read the numbers. No board, no
+**Build `UsbOhciWishbone` inside `AwtoSoc` and read the numbers. No board, no
 firmware, no wiring.**
 
 ```

@@ -711,8 +711,17 @@ CACHE_SETS = 64
 CACHE_WAYS = 2
 
 
-class HelloSoC(Elaboratable):
-    """VexRiscv, 64 KiB of block RAM, and a USB serial console."""
+class AwtoSoc(Elaboratable):
+    """This project's SoC. VexiiRiscv RV32IMAC, with:
+
+    - a PLIC (6 sources) and a CLINT
+    - 64 KiB of block RAM, HyperRAM, and memory-mapped SPI flash
+    - the board: LEDs, button, VBUS control, ULPI registers, sideband
+    - a PAC1954 power monitor behind an I2C mux
+    - a flash ILA, a flash pin probe, and a HyperRAM probe
+    - a JTAG debug tap, and a JTAG bitstream stager
+    - two 16550 consoles: one on USB serial, one on the Apollo UART
+    """
 
     def __init__(self, firmware):
         self.firmware = firmware
@@ -1920,7 +1929,7 @@ def main():
     # bitstream's command stream rather than a bit in a tile, so there is
     # nothing for a primitive to read.
     CynthionPlatformRev1D4().build(
-        HelloSoC(firmware=words),
+        AwtoSoc(firmware=words),
         do_program=args.program,
         build_dir=str(build_dir))
 

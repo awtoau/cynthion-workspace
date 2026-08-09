@@ -39,7 +39,7 @@ BRAM, 96 LUTRAM, 125.55 MHz against a 60 MHz target. That is at about 10%
 occupancy. `docs/usb-host-options.md` §12.3 records that this design's critical
 path is routing-dominated and that placement varies by roughly 9 MHz between
 runs, so the figure that decides the design is the one at ~60% occupancy inside
-`HelloSoC`, alongside `scripts/soc_timing_sweep.py`.
+`AwtoSoc`, alongside `scripts/soc_timing_sweep.py`.
 
 Depends on draft 1: the engine cannot be instantiated in the SoC until the PHY
 has one owner.

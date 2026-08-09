@@ -2,7 +2,7 @@
  *
  * One 64 KiB block RAM peripheral, cut in two by this file and by
  * firmware/cynthion-soc/memory.x. The cut is a linker fiction: the Wishbone decoder in
- * ecp5-test/riscv/vexii_hello_soc.py sees a single window at RAM_BASE, so the boundary
+ * gateware/soc/top.py sees a single window at RAM_BASE, so the boundary
  * can be moved to any address without touching the gateware or the DP16KD geometry.
  *
  * | region | origin | length | contents                                    |
@@ -16,7 +16,7 @@
  * margin, it is a coincidence waiting to be broken by a codegen change.
  *
  * The boundary must match, in this order of authority:
- *   - IMAGE_ORIGIN in ecp5-test/riscv/vexii_hello_soc.py, which packs both images
+ *   - IMAGE_ORIGIN in gateware/soc/top.py, which packs both images
  *   - RAM in firmware/cynthion-soc/memory.x
  *   - PAYLOAD in firmware/cynthion-payload/memory.x
  *   - MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs, which is IMAGE's length
