@@ -6,6 +6,25 @@ the same reason the flash and the HyperRAM do — what it actually does on this
 board differs from what its parameters suggest, and the measurements have to live
 somewhere they can be found.
 
+> **Read every number here as provisional.**
+>
+> - **The core has changed repeatedly and most figures do not say which one they
+>   were taken on.** The L1s have been 4 KiB direct-mapped, 8 KiB direct-mapped
+>   and 8 KiB 2-way (#283, #292); the dispatcher has been a superloop and RTIC
+>   (#245); `opt-level` was chosen against a cache that no longer exists (#167).
+> - **A measurement without its configuration cannot be judged**, only believed.
+>   Where the configuration is stated, it is stated. Where it is not, assume the
+>   figure predates the current core.
+> - **Verifying any assertion here needs the full matrix**, not one build: cache
+>   geometry x opt-level x dispatcher x clock. No such sweep has been run.
+>   #277 is that work; #291 is making a regression explain itself.
+> - **Fmax figures need repeats.** One identical design has closed at 62.81,
+>   67.76, 75.30, 77.39, 78.32, 79.58 and 81.12 MHz across builds -- a ~15 MHz
+>   placement spread, wider than most differences anyone wants to rank.
+>
+> Numbers with a stated date, commit and configuration are the trustworthy ones.
+> Treat the rest as a starting point for a re-measurement.
+
 **Index:** [`../hardware.md`](../hardware.md)
 
 ## Performance
