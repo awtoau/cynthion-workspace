@@ -350,13 +350,31 @@ mod backend {
     const DATA: *const u8 = (BASE + offset::DATA) as *const u8;
     const WDATA: *mut u8 = (BASE + offset::WDATA) as *mut u8;
 
-    /// How long to wait for a transfer before giving up.
+    /// How long to wait for a transfer before giving up, in spin turns.
     ///
-    /// A HyperRAM word takes well under a microsecond, so anything approaching this means
-    /// the peripheral is not responding. The bound matters more than the value: this code
-    /// runs BEFORE the console banner, so an unbounded spin gives a board that is silent
-    /// from power-on with no way to ask it why -- which is exactly what happened.
-    const TIMEOUT: u32 = 100_000;
+    /// The bound matters more than the value: this code runs BEFORE the console
+    /// banner, so an unbounded spin gives a board silent from power-on with no
+    /// way to ask it why -- which is exactly what happened once.
+    ///
+    /// **Derived, not chosen.** `gateware/soc/bootram.py` measures 156 cycles per
+    /// 16-bit word, so a 32-bit pair is 312. One turn of this loop is one uncached
+    /// MMIO read, ~11.9 cycles (`workload.rs`), so a healthy transfer is about
+    /// **26 turns**.
+    ///
+    /// 2,600 is **100x** that. Deliberately not the 1.25x the rules ask for: this
+    /// runs before anything can report a false trip, and a premature timeout here
+    /// drops a word into a staged image, which surfaces later as a CRC failure
+    /// pointing at the wrong thing. 100x still fails in ~31 us instead of the
+    /// ~20 ms the old 100,000 took -- a 38x improvement in how fast a dead
+    /// peripheral is noticed, with room for a first access after reset.
+    const TIMEOUT: u32 = 2_600;
+
+    // NO STATICS IN THIS FILE. `cynthion-boot` includes it with
+    // `#[path = "../../cynthion-soc/src/hyperram.rs"]` and has no .bss zeroing;
+    // its linker asserts `cynthion-boot has .bss; nothing zeroes it here`. A
+    // counter added here failed the bootloader build immediately, which is the
+    // guard doing its job. So these primitives REPORT a timeout and the SoC
+    // counts -- see `hyperram::timeouts`.
 
     /// Set the word address for the next transfer.
     pub fn seek(word: u32) {
@@ -366,7 +384,7 @@ mod backend {
 
     /// Store one 32-bit pair and advance by two words. The address auto-increments in
     /// gateware, so a sequential write is one store per pair with no address bookkeeping.
-    pub fn write_pair(value: u32) {
+    pub fn write_pair(value: u32) -> bool {
         // SAFETY: uncached peripheral registers. `busy` clears when the transfer
         // completes; spinning is correct because a HyperRAM word takes well under a
         // microsecond and there is nothing else for this CPU to do.
@@ -380,10 +398,14 @@ mod backend {
             while read_volatile(STATUS) & 1 == 0 {
                 spins += 1;
                 if spins > TIMEOUT {
-                    return;
+                    // The word is dropped, and the caller is told. Otherwise a
+                    // staged image simply has a hole and the failure appears
+                    // later as a bad CRC, blaming the transfer that read it.
+                    return false;
                 }
             }
         }
+        true
     }
 
     /// Fetch one 32-bit pair and advance by two words.
@@ -398,6 +420,13 @@ mod backend {
                 if spins > TIMEOUT {
                     // All-ones reads as "no image" to `staged()`, so a dead peripheral
                     // makes the board fall through to the shell rather than hang.
+                    //
+                    // NOT counted here -- no statics in this file, see above.
+                    // The value is indistinguishable from erased memory, so
+                    // "nothing was staged" and "the peripheral never answered"
+                    // still look alike to `staged()`. That ambiguity is the
+                    // remaining half of this defect and wants a caller that can
+                    // tell them apart; `hr test` is the place to add it.
                     return 0xffff_ffff;
                 }
             }
@@ -450,7 +479,7 @@ mod backend {
     /// The array stays 16-bit, because that is the part's word and the header
     /// offsets are in those units. A pair is two entries, low word first --
     /// matching the wire, where HyperBus sends the lower address first.
-    pub fn write_pair(value: u32) {
+    pub fn write_pair(value: u32) -> bool {
         // Out-of-range writes are dropped rather than wrapping. Wrapping would corrupt
         // the header from an over-long image and make a bounds bug look like a CRC
         // failure; on the board the gateware simply addresses past the image area.
@@ -462,6 +491,8 @@ mod backend {
             STORE[index + 1].store((value >> 16) as u16, Ordering::Relaxed);
         }
         CURSOR.store(index + 2, Ordering::Relaxed);
+        // Never times out: there is no peripheral to wait for.
+        true
     }
 
     pub fn read_pair() -> u32 {
