@@ -38,8 +38,8 @@ a map, not a copy.
 | what | flag |
 |---|---|
 | 32-bit, M/C/A, `rdtime` | `--xlen 32 --with-rvm --with-rvc --with-rva --with-rdtime` |
-| I-cache, 128 sets × 1 way | `--with-fetch-l1 --fetch-l1-sets 128 --fetch-l1-ways 1` |
-| D-cache, same shape | `--with-lsu-l1 --lsu-l1-sets 128 --lsu-l1-ways 1` |
+| I-cache, 64 sets × 2 ways | `--with-fetch-l1 --fetch-l1-sets 64 --fetch-l1-ways 2` |
+| D-cache, same shape | `--with-lsu-l1 --lsu-l1-sets 64 --lsu-l1-ways 2` |
 | Wishbone on all three buses | `--fetch-wishbone --lsu-wishbone --lsu-l1-wishbone` |
 | branch target buffer | `--with-btb --relaxed-branch --relaxed-btb` |
 | JTAG debug module on ER2 | `--debug-jtag-instruction` |
