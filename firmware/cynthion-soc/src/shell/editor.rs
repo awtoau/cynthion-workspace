@@ -100,29 +100,14 @@ impl Autocomplete for Commands {
             return;
         };
 
-        // Longest common prefix over everything that matches, so `po` offers
-        // `power`/`ports`' shared prefix rather than guessing one of them.
-        // `HELP`'s first column carries argument syntax (`power limit <k> ...`),
-        // so only the leading word is a candidate.
-        let (count, _) = candidates(typed);
-
-        let mut common: Option<&str> = None;
-        for (entry, _) in HELP {
-            let name = entry.split(' ').next().unwrap_or(entry);
-            if !name.starts_with(typed) || name == typed {
-                continue;
-            }
-            common = Some(match common {
-                None => name,
-                Some(prefix) => {
-                    let take = prefix
-                        .bytes()
-                        .zip(name.bytes())
-                        .take_while(|(a, b)| a == b)
-                        .count();
-                    &prefix[..take]
-                }
-            });
+        // THE SAME MATCHER THE ARGUMENT POSITIONS USE. The crate only ever asks
+        // about the first word -- `Request::from_input` returns `None` as soon as
+        // the line contains a space -- so this is depth 0 of `complete`, not a
+        // rule of its own. Two matchers is how `i2c st` came to list `selftest`.
+        let mut names = [""; CANDIDATES];
+        let count = crate::shell::complete(typed, &mut names);
+        if count == 0 {
+            return;
         }
 
         // AMBIGUOUS COMPLETIONS ARE PARTIAL, and saying so is what stops a space
@@ -134,9 +119,10 @@ impl Autocomplete for Commands {
             autocompletion.mark_partial();
         }
 
-        if let Some(name) = common {
+        let common = crate::shell::shared_prefix(&names[..count.min(names.len())]);
+        if common.len() > typed.len() {
             // Only the part not already typed.
-            autocompletion.merge_autocompletion(&name[typed.len()..]);
+            autocompletion.merge_autocompletion(&common[typed.len()..]);
         }
     }
 }
@@ -286,52 +272,8 @@ impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
     }
 }
 
-/// Candidates for `typed`, and whether more than one matched.
+/// How many completions one TAB can hold.
 ///
-/// The crate's `Autocomplete` hook has no writer, so an ambiguous TAB can only
-/// merge a prefix -- it cannot say WHY nothing more was added. `po` completing
-/// to `po` looks identical to a broken key. Listing is done at the call site
-/// instead, through `Cli::write`, which erases the line, prints, and restores
-/// the prompt and whatever was half-typed.
-pub fn candidates(typed: &str) -> (usize, [&'static str; 12]) {
-    let mut found = [""; 12];
-    let mut count = 0;
-    for (entry, _) in HELP {
-        let name = entry.split(' ').next().unwrap_or(entry);
-        if !name.starts_with(typed) {
-            continue;
-        }
-        // The table has several rows per family -- `power`, `power alert`,
-        // `power rate` -- and they share a first word. One entry each.
-        if found[..count.min(found.len())].contains(&name) {
-            continue;
-        }
-        if count < found.len() {
-            found[count] = name;
-        }
-        count += 1;
-    }
-    (count, found)
-}
-
-/// Every `HELP` row whose first word is exactly `name`, with its argument
-/// syntax and summary.
-///
-/// `power` matches one command name, so it is not ambiguous and
-/// [`candidates`] finds nothing to choose between -- but the family has seven
-/// rows, and TAB should show them. This is the second level: a word that IS a
-/// command, and also a prefix of a family.
-pub fn family(name: &str) -> (usize, [(&'static str, &'static str); 12]) {
-    let mut found = [("", ""); 12];
-    let mut count = 0;
-    for (entry, summary) in HELP {
-        if entry.split(' ').next() != Some(name) {
-            continue;
-        }
-        if count < found.len() {
-            found[count] = (entry, summary);
-        }
-        count += 1;
-    }
-    (count, found)
-}
+/// The root has the most, one per command family. Sized above that so the count
+/// `complete` returns is never the truncated one.
+pub const CANDIDATES: usize = 24;

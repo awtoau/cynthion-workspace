@@ -10,7 +10,7 @@ use core::fmt::Write;
 
 use crate::clock::{self, Instant};
 use crate::uart::Uart;
-use crate::shell::editor::{candidates, editor, family, Commands, Dispatch, Editor};
+use crate::shell::editor::{editor, Commands, Dispatch, Editor, CANDIDATES};
 use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 
 /// One console's line editor and its idle state.
@@ -20,19 +20,23 @@ use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 /// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
 /// generated signatures too.
 pub struct Shell {
-    /// The first word being typed, shadowed.
+    /// The WHOLE line being typed, shadowed.
     ///
     /// `Cli` owns the line and exposes no accessor, and the crate's
-    /// `Autocomplete` hook has no writer -- so listing candidates on an
-    /// ambiguous TAB needs the prefix tracked here. Only the FIRST word, because
-    /// only command names complete.
+    /// `Autocomplete` hook has no writer -- so a TAB that wants to list, or to
+    /// complete anything past the first word, needs the line tracked here.
+    ///
+    /// It held only the first word, cleared on every space, which is how `i2c
+    /// st` + TAB came to offer `selftest` and `sideband`: the shadow said `st`
+    /// and nothing recorded that a command name was no longer what was being
+    /// typed.
     ///
     /// It can drift: recalling a line from history replaces the input without a
     /// printable byte passing through here. Cleared on anything that could
     /// desynchronise it, so a stale list is never shown -- TAB after a recall
     /// lists nothing rather than something wrong.
-    word: [u8; 16],
-    word_len: usize,
+    line: [u8; LINE],
+    line_len: usize,
     /// Anything entered since the last Enter.
     typed: bool,
     /// The line editor, built on first keypress.
@@ -95,8 +99,8 @@ pub(crate) fn board_absent(uart: &mut Uart) {
 
 impl Shell {
     pub(crate) const NEW: Shell = Shell {
-        word: [0u8; 16],
-        word_len: 0,
+        line: [0u8; LINE],
+        line_len: 0,
         typed: false,
         editor: None,
         spoken: false,
@@ -105,7 +109,7 @@ impl Shell {
 
     /// Handle at most one byte from `uart`, or count one turn of idleness.
     ///
-    /// `announce` re-prints the banner and prompt periodically while nothing has been
+   /// `announce` re-prints the banner and prompt periodically while nothing has been
     /// typed. Printing them once is invisible: the CPU starts the moment the FPGA is
     /// configured and the host takes about half a second to enumerate and bind a tty, so
     /// a terminal attaching afterwards has already missed everything. Worse, an idle
@@ -116,7 +120,7 @@ impl Shell {
     /// TX pin is shared with JTAG TMS and an unbidden transmission is bus contention.
     /// See `target::ANNOUNCING`.
     /// `index` selects this console's receive ring in `src/irq.rs`, and is also what
-    /// `load` needs to know which port a transfer is arriving on. It is the index into
+    /// `load` needs to know which port a transfer is arriving on. It i s the index into
     /// `target::UART_BASES`, so it is the same number everywhere.
     pub(crate) fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool, devices: &mut Devices) {
         // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
@@ -177,16 +181,17 @@ impl Shell {
             _ => self.typed,
         };
 
-        // Track the first word so an ambiguous TAB can say what it matched.
+        // Shadow the line. Space is now KEPT -- it is what separates one level
+        // from the next, and clearing on it was the whole `i2c st` defect.
         match byte {
-            b' ' | b'\r' | b'\n' | 0x03 | 0x1b => self.word_len = 0,
+            b'\r' | b'\n' | 0x03 | 0x1b => self.line_len = 0,
             0x08 | 0x7f => {
-                self.word_len = self.word_len.saturating_sub(1);
+                self.line_len = self.line_len.saturating_sub(1);
             }
             0x20..=0x7e => {
-                if self.word_len < self.word.len() {
-                    self.word[self.word_len] = byte;
-                    self.word_len += 1;
+                if self.line_len < self.line.len() {
+                    self.line[self.line_len] = byte;
+                    self.line_len += 1;
                 }
             }
             _ => {}
@@ -195,42 +200,104 @@ impl Shell {
         let mut dispatch = Dispatch { index, devices };
         let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
 
-        // TAB with more than one match: list them. The crate has already merged
-        // the common prefix, so this explains why nothing more was added --
-        // otherwise `po` completing to `po` is indistinguishable from a dead key.
-        if byte == b'\t' && self.word_len > 0 {
-            let typed = core::str::from_utf8(&self.word[..self.word_len]).unwrap_or("");
-            let (count, names) = candidates(typed);
-            let (kin, rows) = family(typed);
-            if count > 1 {
-                // Ambiguous prefix: the command names to choose between.
-                let _ = editor.write(|writer| {
-                    for name in names.iter().take(count.min(names.len())) {
-                        writer.write_str(name)?;
-                        writer.write_str("  ")?;
-                    }
-                    Ok(())
-                });
-            } else if kin > 1 {
-                // A complete command that is also a family -- `power`, `flash`,
-                // `bench`. One row each, with its argument syntax, because the
-                // question at this point is "what can follow it", not "which
-                // command did I mean".
-                let _ = editor.write(|writer| {
-                    for (entry, summary) in rows.iter().take(kin.min(rows.len())) {
-                        writer.write_str("\r\n  ")?;
-                        writer.write_str(entry)?;
-                        for _ in entry.len()..crate::shell::HELP_WIDTH {
-                            writer.write_str(" ")?;
-                        }
-                        writer.write_str(summary)?;
-                    }
-                    Ok(())
-                });
-            }
+        if byte == b'\t' {
+            self.tab(index, devices);
         }
     }
+
+    /// One TAB, at whatever depth the line has reached.
+    ///
+    /// Split out because it needs `self.line` and `self.editor` at once, and
+    /// because the two halves are genuinely different jobs: INSERT what every
+    /// candidate agrees on, then LIST what is left to choose between.
+    ///
+    /// The crate does the inserting for the first word and nothing after it --
+    /// `Request::from_input` returns `None` once the line contains a space. Past
+    /// that point the completion is fed back in as keystrokes through
+    /// `process_byte`, which is the crate's own input path, so the echo, the
+    /// cursor and the command buffer all stay its business rather than becoming
+    /// a second implementation of them here.
+    fn tab(&mut self, index: usize, devices: &mut Devices) {
+        let Some(Some(editor)) = self.editor.as_mut() else {
+            return;
+        };
+        let line = core::str::from_utf8(&self.line[..self.line_len]).unwrap_or("");
+
+        let mut names = [""; CANDIDATES];
+        let count = crate::shell::complete(line, &mut names);
+        let shown = count.min(names.len());
+
+        // How much of the current word is already typed, so only the remainder
+        // is offered.
+        let partial = if line.ends_with(' ') {
+            ""
+        } else {
+            line.rsplit(' ').next().unwrap_or("")
+        };
+
+        let common = crate::shell::shared_prefix(&names[..shown]);
+        let mut insert = [0u8; 32];
+        let mut insert_len = 0;
+        if common.len() > partial.len() {
+            let extra = common[partial.len()..].as_bytes();
+            insert_len = extra.len().min(insert.len());
+            insert[..insert_len].copy_from_slice(&extra[..insert_len]);
+        }
+
+        // The first word is the crate's; it has already inserted the same bytes,
+        // so only the shadow needs catching up or the next TAB works from a
+        // stale line. Anything deeper is ours to type in.
+        let ours = line.contains(' ');
+        for &byte in &insert[..insert_len] {
+            if ours {
+                let mut dispatch = Dispatch { index, devices };
+                let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
+            }
+            if self.line_len < self.line.len() {
+                self.line[self.line_len] = byte;
+                self.line_len += 1;
+            }
+        }
+
+        if count > 1 {
+            // Still a choice to make. The crate has merged everything the
+            // candidates agree on, so this says WHY nothing more appeared --
+            // otherwise `po` completing to `po` looks like a dead key.
+            let _ = editor.write(|writer| {
+                for name in &names[..shown] {
+                    writer.write_str(name)?;
+                    writer.write_str("  ")?;
+                }
+                Ok(())
+            });
+            return;
+        }
+
+        // One candidate, now fully typed: show what can follow it, with argument
+        // syntax. `i2c` + TAB is not ambiguous -- it is a complete word AND a
+        // family, and the question at that point is what comes next.
+        let line = core::str::from_utf8(&self.line[..self.line_len]).unwrap_or("");
+        let mut rows = [("", ""); CANDIDATES];
+        let under = crate::shell::rows_under(line, &mut rows);
+        if under == 0 {
+            return;
+        }
+        let _ = editor.write(|writer| {
+            for (entry, summary) in &rows[..under.min(rows.len())] {
+                writer.write_str("\r\n  ")?;
+                writer.write_str(entry)?;
+                for _ in entry.len()..crate::shell::HELP_WIDTH {
+                    writer.write_str(" ")?;
+                }
+                writer.write_str(summary)?;
+            }
+            Ok(())
+        });
+    }
 }
+
+/// The shadowed line's capacity, matching the editor's own command buffer.
+const LINE: usize = 64;
 
 /// How long an idle console waits before printing the banner again.
 ///

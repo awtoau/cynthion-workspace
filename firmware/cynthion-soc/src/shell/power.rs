@@ -235,6 +235,18 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // individually plausible and jointly a lie, and there is nothing in them to
     // say so -- which is the same shape of failure as a stale bus select. The
     // age is the only thing on this screen that can contradict them.
+    // POWERED DOWN FIRST, because every number below it is meaningless when it
+    // is set -- the part is not converting. It was a row under `led`, which is
+    // where nobody reading a power table would look for it.
+    if let Some(board) = crate::target::BOARD {
+        if crate::gpio::Gpio::new(board.gpio).power_monitor_down() {
+            let _ = writeln!(
+                uart,
+                "  PWRDN asserted -- the part is powered down, readings below are stale"
+            );
+        }
+    }
+
     let rate = power::interval_ms();
     let _ = write!(uart, "power @{:02x}  poll ", power::ADDRESS);
     match rate {

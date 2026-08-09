@@ -92,19 +92,31 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             owner
         );
     }
+}
+
+/// `info button` -- the USER button, as a contact rather than as a verb.
+///
+/// It was two extra rows under `led`, along with the power monitor's power-down
+/// state. Neither is an LED, and a command that lists six LEDs and then two
+/// other things has stopped being about anything. The power-down state went to
+/// `pac1954 status`, next to the part it powers down.
+///
+/// **Open or closed, then what that means.** The pin is what the shell can
+/// actually see: `PIN_BUTTON` high is the contact closed. "Pressed" is an
+/// inference about a person, and reporting it alone leaves nothing to check the
+/// wiring against when the button is stuck.
+pub(crate) fn button_command(uart: &mut Uart) {
+    let board = match target::BOARD {
+        Some(board) => board,
+        None => return board_absent(uart),
+    };
+    let pins = gpio::Gpio::new(board.gpio);
+    let closed = pins.button();
     let _ = writeln!(
         uart,
-        "  button  {}",
-        if pins.button() { "pressed" } else { "released" }
-    );
-    let _ = writeln!(
-        uart,
-        "  power monitor {}",
-        if pins.power_monitor_down() {
-            "POWERED DOWN"
-        } else {
-            "running"
-        }
+        "  USER    {:6}  {}",
+        if closed { "closed" } else { "open" },
+        if closed { "pressed" } else { "released" }
     );
 }
 

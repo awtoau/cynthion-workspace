@@ -96,8 +96,9 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("info", "image, memory, boot, cpu, gateware"),
     ("info map", "every peripheral window, from the generated map"),
     ("info pmod", "connector pins: ball, resource, free or claimed"),
-    ("info ports", "the consoles: type, FIFO depth, and which answer"), 
-    ("led [n]", "the six LEDs"),
+    ("info ports", "the consoles: type, FIFO depth, and which answer"),
+    ("info button", "the USER button: open or closed"),
+    ("led [colour]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
     ("phy", "the USB PHYs"),
     ("phy status", "identity, line state and the data-line walk"),
@@ -260,6 +261,122 @@ pub(crate) fn second_word(entry: &str) -> &str {
     }
 }
 
+/// The words of a `HELP` entry, or of a typed line.
+///
+/// Empty pieces are dropped, so a double space or a trailing one never becomes a
+/// word that nothing can match.
+fn words(text: &str) -> impl Iterator<Item = &str> + Clone + '_ {
+    text.split(' ').filter(|word| !word.is_empty())
+}
+
+/// An entry with its aliases stripped: `help, ?` completes as `help`.
+fn entry_head(entry: &str) -> &str {
+    match entry.find(',') {
+        Some(at) => &entry[..at],
+        None => entry,
+    }
+}
+
+/// What can follow `line`, at whatever depth `line` has reached.
+///
+/// **One rule, no levels.** A `HELP` entry is a list of words; so is the typed
+/// line, whose last word may be partial. A row matches when every complete typed
+/// word equals the row's word in that position, and what is offered is the row's
+/// word at the partial position. The same code answers `po` with `power` and
+/// `i2c st` with `status`, and would answer a third level without being told
+/// about it.
+///
+/// Placeholders are not candidates: `<hex>` and `[bus]` are what a command
+/// TAKES, not words anyone types.
+///
+/// Returns how many matched, which can exceed `out.len()`; `out` holds the first
+/// of them.
+pub(crate) fn complete(line: &str, out: &mut [&'static str]) -> usize {
+    let typed = words(line).count();
+    let (depth, partial) = if line.ends_with(' ') || typed == 0 {
+        (typed, "")
+    } else {
+        (typed - 1, words(line).last().unwrap_or(""))
+    };
+
+    let mut found = 0;
+    for &(entry, _) in HELP {
+        let mut rest = words(entry_head(entry));
+        if !words(line).take(depth).all(|word| rest.next() == Some(word)) {
+            continue;
+        }
+        let Some(candidate) = rest.next() else {
+            continue;
+        };
+        if !candidate.starts_with(partial) {
+            continue;
+        }
+        // A placeholder is the end of what completion can say.
+        if matches!(candidate.as_bytes()[0], b'<' | b'[') {
+            continue;
+        }
+        // Several rows share a word -- `power alert`, `power rate` all offer
+        // `power` at depth 0. One entry each.
+        if out[..found.min(out.len())].contains(&candidate) {
+            continue;
+        }
+        if found < out.len() {
+            out[found] = candidate;
+        }
+        found += 1;
+    }
+    found
+}
+
+/// Every `HELP` row that extends `line` by at least one word, with its full
+/// argument syntax and summary.
+///
+/// The listing half of [`complete`], and matched the same way. `i2c` gives its
+/// three subcommand rows and not its own bare row -- the question at that point
+/// is what can follow, and the command itself cannot.
+pub(crate) fn rows_under(
+    line: &str,
+    out: &mut [(&'static str, &'static str)],
+) -> usize {
+    let depth = words(line).count();
+    let mut found = 0;
+    for &(entry, summary) in HELP {
+        let mut rest = words(entry_head(entry));
+        if !words(line).take(depth).all(|word| rest.next() == Some(word)) {
+            continue;
+        }
+        if rest.next().is_none() {
+            continue;
+        }
+        if found < out.len() {
+            out[found] = (entry, summary);
+        }
+        found += 1;
+    }
+    found
+}
+
+/// The longest prefix every name shares, as a slice of the first one.
+///
+/// What TAB can insert without choosing between candidates.
+pub(crate) fn shared_prefix(names: &[&'static str]) -> &'static str {
+    let Some(&first) = names.first() else {
+        return "";
+    };
+    let mut take = first.len();
+    for name in &names[1..] {
+        let common = first
+            .bytes()
+            .zip(name.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if common < take {
+            take = common;
+        }
+    }
+    &first[..take]
+}
+
 /// Dispatch one command line.
 ///
 /// `index` is which console this arrived on, needed by `load` so a transfer reads from the
@@ -353,6 +470,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             b"map" => hardware::map_command(uart),
             b"pmod" => hardware::pmod_command(uart),
             b"ports" => ports_command(uart),
+            b"button" => led::button_command(uart),
             _ => info::command(uart),
         },
         b"selftest" => selftest::command(uart, &devices.power),
