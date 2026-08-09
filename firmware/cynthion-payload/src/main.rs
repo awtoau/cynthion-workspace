@@ -44,10 +44,34 @@ const FLASH_BASE: usize = 0x1000_0000;
 struct Console;
 
 impl Console {
+    /// Spin turns to wait for THRE before dropping the byte.
+    ///
+    /// **This wait was unbounded**, and `cynthion-soc/src/uart.rs` records the
+    /// same construction costing a day: a console whose host stops draining
+    /// never releases THRE, and a firmware that waits for ever is a board silent
+    /// from reset with a healthy clock. This crate runs AFTER a staged image
+    /// boots, so a wedge here looks exactly like a bad image.
+    ///
+    /// Derived: one character at 115200 baud is 87 us, so THRE is set within
+    /// that of the previous byte. One turn is an uncached MMIO read, ~11.9
+    /// cycles, so 87 us at 60 MHz is about 440 turns. 20,000 is ~45x that --
+    /// generous because this crate has no timer and cannot measure, and a
+    /// dropped character is a worse failure here than a slow one.
+    ///
+    /// **Dropping the byte is the point.** Output is a diagnostic; the boot is
+    /// the job. Losing a character beats never reaching the image.
+    const THRE_LIMIT: u32 = 20_000;
+
     fn put(&mut self, byte: u8) {
         // SAFETY: fixed peripheral addresses from the SoC memory map, uncached region.
         unsafe {
-            while read_volatile(CONSOLE_LSR) & LSR_THRE == 0 {}
+            let mut spins = 0u32;
+            while read_volatile(CONSOLE_LSR) & LSR_THRE == 0 {
+                spins += 1;
+                if spins > Self::THRE_LIMIT {
+                    return;
+                }
+            }
             write_volatile(CONSOLE_THR, byte);
         }
     }

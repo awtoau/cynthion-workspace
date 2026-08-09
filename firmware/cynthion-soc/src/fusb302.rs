@@ -520,13 +520,27 @@ impl fmt::Display for Interrupts {
 ///     register, so the sweep is skipped entirely and both bands come back
 ///     `None`. Orientation then comes from `TOGSS`, which is that logic's answer.
 ///
-/// The measure block is given no explicit settling delay and does not need one:
-/// each write and the read after it are separate I2C transactions, three bytes
-/// and four bytes at the bus's 1 MHz (`I2C_SCL_HZ`, `gateware/soc/top.py`), so
-/// tens of microseconds pass between the select moving and `STATUS0` being
-/// sampled -- hundreds of microseconds before #269 raised the rate from
-/// 80 kHz. A delay here would be a number with no reason behind it sitting on
-/// top of one the bus already provides.
+/// The measure block is given no explicit settling delay, and **whether it needs
+/// one is unverified** (#295).
+///
+/// What the bus provides: each write and the read after it are separate I2C
+/// transactions, three and four bytes, so at 1 MHz (`I2C_SCL_HZ`) roughly tens
+/// of microseconds pass between the select moving and `STATUS0` being sampled.
+/// It was hundreds before #269 raised the rate from 80 kHz -- a 12.5x cut in the
+/// only thing standing in for a delay.
+///
+/// What the part requires: **the datasheet does not say.** It specifies no
+/// settling, response or acquisition time for the measure block; `MDAC` appears
+/// only as a voltage step size. So the original justification -- that hundreds
+/// of microseconds was ample -- was a comparison against nothing, and the cut to
+/// tens is neither safe nor unsafe on any evidence here.
+///
+/// **No delay is added, deliberately.** A number with no reason is exactly what
+/// this project's rules forbid, and inventing one would replace an unverified
+/// claim with an unverifiable one. The way to settle it is to measure: read the
+/// same CC band twice, once immediately after moving the select and once after a
+/// pause, and see whether they differ. If they never do at 1 MHz, the code is
+/// right and can say so with evidence.
 ///
 /// The read-only registers are unchanged in character: `DEVICE_ID`, `STATUS0`,
 /// `STATUS1A` and `CONTROL2` have no read side effect, so unlike [`clear`] this

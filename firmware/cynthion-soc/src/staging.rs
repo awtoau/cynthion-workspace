@@ -32,6 +32,7 @@ pub(crate) fn load(index: usize, uart: &mut Uart, len: u32) {
     let _ = writeln!(uart, "send {} bytes", len);
 
     let mut crc = hyperram::Crc32::new();
+    let mut dropped = 0u32;
     let mut received = 0u32;
     let mut pending: u32 = 0;
     let mut held: u32 = 0;
@@ -66,15 +67,33 @@ pub(crate) fn load(index: usize, uart: &mut Uart, len: u32) {
         pending = (pending >> 8) | ((byte as u32) << 24);
         held += 1;
         if held == 4 {
-            hyperram::write_pair(pending);
+            // A dropped pair leaves a HOLE in the image, and the failure would
+            // otherwise surface as a CRC mismatch at boot -- blaming the read,
+            // not the write that lost it. Counted here rather than in
+            // `hyperram.rs`: `cynthion-boot` includes that file by path and has
+            // no .bss zeroing, so it can hold no statics.
+            if !hyperram::write_pair(pending) {
+                dropped += 1;
+            }
             held = 0;
         }
     }
 
     // A length that is not a multiple of four still has to fill its final pair. The
     // unused bytes are outside `len`, so the bootloader never reads them.
-    if held != 0 {
-        hyperram::write_pair(pending >> (8 * (4 - held)));
+    if held != 0 && !hyperram::write_pair(pending >> (8 * (4 - held))) {
+        dropped += 1;
+    }
+
+    // Said BEFORE the header is written, so the report survives even if the
+    // reboot that follows takes the console with it.
+    if dropped > 0 {
+        let _ = writeln!(
+            uart,
+            "load: {} pair(s) TIMED OUT -- the image has holes and its CRC will \
+             not match. The HyperRAM controller did not answer.",
+            dropped
+        );
     }
 
     let crc = crc.finish();
