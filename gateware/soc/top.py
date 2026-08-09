@@ -402,6 +402,15 @@ FLASH_ILA_BASE = 0xf0000300
 # anywhere.
 HYPERRAM_BIST_BASE = 0xf0000800
 
+# Which CK rung is live, present only when HYPERRAM_BIST is set. 16 bytes: four
+# 32-bit registers, see `peripherals/hyperram_ck.py`.
+#
+# 0xa00 because the BIST window above runs 0x800..0x9ff, and 16-byte aligned
+# because the Wishbone decoder requires a window aligned to its own size -- a
+# misaligned one decodes to nothing and hangs the CPU on the first read, with no
+# error at elaboration (#226).
+HYPERRAM_CK_BASE = 0xf0000a00
+
 # The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
 #
 # Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
@@ -729,7 +738,19 @@ HYPERRAM_BIST = os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0")
 #
 # From the environment so that walking the ladder does not mean editing a
 # tracked file once per rung.
-HYPERRAM_BIST_CK_MHZ = float(os.environ.get("CYNTHION_HYPERRAM_CK_MHZ", "100"))
+#
+# COMMA-SEPARATED for a runtime-selectable rung -- `CYNTHION_HYPERRAM_CK_MHZ=100,120`
+# builds both into one bitstream and the CPU picks one through
+# `peripherals/hyperram_ck.py`. Two is the ceiling and the DQS path takes one;
+# `hyperram_clocks.py` argues both limits and refuses the rest.
+HYPERRAM_BIST_CK_RUNGS = [float(ck) for ck in
+                          os.environ.get("CYNTHION_HYPERRAM_CK_MHZ", "100").split(",")]
+
+# Rung 0, for everything that needs a single number. The BIST engine's timing
+# constants are derived from it, so a two-rung build gives the OTHER rung the
+# delays of this one -- longer in real time at a lower CK, which is the safe
+# direction, and the reason rung 0 should be the FASTEST of a pair.
+HYPERRAM_BIST_CK_MHZ = HYPERRAM_BIST_CK_RUNGS[0]
 
 # Which PHY the BIST variant measures. Its OWN choice, not `HYPERRAM_DQS`: that
 # flag is the shipping SoC's, and flipping it to measure something would change
@@ -1365,7 +1386,7 @@ class AwtoSoc(Elaboratable):
             # two CK per `hr` cycle, so `hr = ck / 2` there, and taking `ck_mhz`
             # here means a caller cannot get that factor of two wrong.
             m.submodules.hr_car = hr_car = HyperRAMDomains(
-                ck_mhz=HYPERRAM_BIST_CK_MHZ, dqs=HYPERRAM_BIST_DQS)
+                ck_mhz=HYPERRAM_BIST_CK_RUNGS, dqs=HYPERRAM_BIST_DQS)
             # `usb` rather than `clk_60MHz`: the SoC's own generator has already
             # requested that resource, and Amaranth allows one requester. `usb`
             # is the same 60 MHz -- the FPGA sources the ULPI clock from it --
@@ -1379,6 +1400,22 @@ class AwtoSoc(Elaboratable):
             m.submodules.hyper_bist_bridge = hyper_bist_bridge
             decoder.add(hyper_bist_bridge.wb_bus, addr=HYPERRAM_BIST_BASE,
                         name="hyperram_bist")
+
+            # Which CK rung is live, and what the rungs ARE. Present even with
+            # one rung: a driver then reads what it has instead of being built
+            # to know, and `rungs`/`rung0` answer the same way either way.
+            from peripherals.hyperram_ck import HyperRAMClockSelect
+
+            hyper_ck = HyperRAMClockSelect(ck_rungs=hr_car.ck_rungs)
+            m.submodules.hyper_ck = hyper_ck
+            m.d.comb += [
+                hr_car.sel.eq(hyper_ck.sel),
+                hyper_ck.locked.eq(hr_car.locked),
+            ]
+            hyper_ck_bridge = WishboneCSRBridge(hyper_ck.bus, data_width=32)
+            m.submodules.hyper_ck_bridge = hyper_ck_bridge
+            decoder.add(hyper_ck_bridge.wb_bus, addr=HYPERRAM_CK_BASE,
+                        name="hyperram_ck")
 
         # Divided clocks on PMOD A, so an instrument outside the die can say
         # what the die is running at. Off unless asked -- see CLOCK_MIRROR.
