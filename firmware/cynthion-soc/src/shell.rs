@@ -117,6 +117,16 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("info pmod", "connector pins: ball, resource, free or claimed"),
     ("info ports", "the consoles: type, FIFO depth, and which answer"),
     ("info button", "the USER button: open or closed"),
+    // AFTER the whole `info` family, not inside it. `list_all` walks runs of
+    // rows sharing a first word, so a row wedged between two `info` rows splits
+    // the family in two and the first half prints with no subcommands. The
+    // table being alphabetical is what keeps every family contiguous.
+    //
+    // ONE COMMAND, not a verb on every family: `init pac1954` is one arm and
+    // two rows; `pac1954 init` and its siblings would be one of each per
+    // family, in an image whose binding constraint is `.text`.
+    ("init", "establish every peripheral again, in order"),
+    ("init <peripheral>", "one of uart i2c pac1954 fusb302b"),
     ("led [colour]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
     ("pac1954", "the four PAC1954 channels"),
@@ -517,6 +527,10 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             b"button" => led::button_command(uart),
             _ => info::command(uart),
         },
+        // ESTABLISH, on demand. `_init()` is non-destructive by contract, which
+        // is what makes it safe to type on a board mid-experiment. See
+        // `src/init.rs`.
+        b"init" => crate::init::command(uart, rest, devices),
         b"selftest" => selftest::command(uart, &devices.power),
         // Registered on every target, unlike its neighbours below: it reads no
         // bus at all, so a boardless build renders the same tree with every leaf

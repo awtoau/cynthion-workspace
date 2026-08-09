@@ -1,9 +1,51 @@
-//! Peripheral bring-up, and the report it makes.
+//! Peripheral bring-up: the ORDER, and the SHAPE of what each step reports.
 //!
 //! Issue #315. **Only a power cycle resets the external chips** -- neither a CPU
 //! reset (`jr _reset_vector`) nor an FPGA reconfigure does -- so nothing may
 //! assume a part is at its power-on defaults, and firmware is what establishes
 //! the state instead.
+//!
+//! ## `_init()` establishes NON-DESTRUCTIVELY; a separate command destroys
+//!
+//! The rule this file exists to hold, and it applies to every part:
+//!
+//! | | runs | may destroy | called by |
+//! |---|---|---|---|
+//! | `<peripheral>_init()` | every boot, and on demand | **nothing** | [`bringup`], and `init` |
+//! | evidence gathered inside it | with it | nothing | itself, to learn what it is looking at |
+//! | `hyperram clear`, `pac1954 reset` | never automatically | **yes, and says so** | an operator |
+//!
+//! Rule 5 below makes `_init()` something people run casually, from the shell,
+//! on a board mid-experiment. That is only safe if it cannot lose anything. The
+//! PAC1954's `REFRESH` (`0x00`) on every 50 ms poll was the counter-example: a
+//! routine operation quietly resetting the accumulators, for as long as that
+//! code existed (#275/#276).
+//!
+//! ## The five rules
+//!
+//! 1. **Ordered.** CPU facilities, then the console, then the bus, then the
+//!    parts on it, then interrupt sources -- `fusb302b_init` must have cleared
+//!    both parts' interrupt registers before their PLIC sources are claimed.
+//! 2. **The UART is the exception**: it cannot log its own initialisation, so it
+//!    goes first and REPORTS afterwards, from the registers.
+//! 3. **Inside `#[init]`, before RTIC starts.** `devices` does not exist as a
+//!    shared resource until `#[init]` returns, so no task and no shell command
+//!    can run against a half-established board. The cost is that `#[init]`
+//!    cannot be preempted -- which is why every wait below is bounded, with a
+//!    stated derivation and a logged expiry (#295). A one-shot RTIC task would
+//!    buy preemptibility nothing needs and hand `#[idle]` the first turn of the
+//!    shell against uninitialised parts.
+//! 4. **Each step verifies**: writes, then reads back, then reports what it
+//!    read. An init that only writes is what let a HyperRAM `CR0` write go
+//!    nowhere for as long as that code existed.
+//! 5. **Idempotent and re-runnable**: `init`, or `init <peripheral>`.
+//!
+//! ## The steps are calls, not bodies
+//!
+//! Each `_init()` belongs to its driver, because the driver owns the constants
+//! that decide its verdict (#303: drivers are the API, and one that cannot
+//! initialise itself is not a complete one). What lives here is the order and
+//! the report shape.
 //!
 //! ## The boot report is RETAINED
 //!
@@ -25,8 +67,8 @@
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::log;
 use crate::uart::Uart;
+use crate::{bench, log, plic, power, sched, shell, target, timer, Devices};
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
@@ -35,7 +77,15 @@ use crate::uart::Uart;
 /// which is the property `src/events.rs`'s drop counter has.
 const RETAINED: usize = 1600;
 
-const REPORT_BYTES: usize = RETAINED;
+/// Room past the retained report for a line the SHELL asked for.
+///
+/// `init` typed by hand renders through the same one `writeln!` -- one format
+/// site instead of two, in an image where each costs a few hundred bytes -- but
+/// must not append to a report that describes the boot. So it formats above the
+/// retained prefix and commits nothing.
+const SCRATCH: usize = 160;
+
+const REPORT_BYTES: usize = RETAINED + SCRATCH;
 
 struct Retained(core::cell::UnsafeCell<[u8; REPORT_BYTES]>);
 
@@ -71,36 +121,58 @@ impl Write for Append {
     }
 }
 
-/// One line of the boot report: what came up, and what it came up AS.
-///
-/// **The detail is read back from what was configured, not restated as a
-/// literal.** A line that prints the number the code was written with reports
-/// the source, not the machine, and is exactly the kind of claim this project
-/// keeps having to withdraw.
-///
-/// `status` is a short verdict -- `ok`, `ABSENT`, `WARN`, `FAIL` -- and any
-/// explanation belongs in `detail`. It comes SECOND because
-/// `core::fmt::Arguments` ignores width and padding: a `{:52}` on the detail
-/// silently does nothing, while two `&str` fields pad properly and the verdicts
-/// form a column that can be scanned for the one that is not `ok`.
-///
-/// An absent peripheral prints `ABSENT` and stays in the list. A missing line
-/// reads as a subsystem nobody thought about; a present one reading `ABSENT`
-/// reads as a board without it, which is the truth on the emulator.
-pub(crate) fn line(uart: &mut Uart, what: &str, status: &str, detail: fmt::Arguments) {
-    // Formatted once, into the buffer, then the same bytes go at whoever is
-    // already listening. The stamp is captured HERE rather than at replay, for
-    // the reason `src/log.rs` gives: a line drained later must still report
-    // when it happened.
-    let start = USED.load(Ordering::Relaxed);
-    let mut append = Append { at: start, limit: RETAINED, lost: 0 };
-    let _ = writeln!(append, "{} init  {:9} {:7} {}", log::now(), what, status, detail);
-    USED.store(append.at, Ordering::Relaxed);
-    LOST.fetch_add(append.lost, Ordering::Relaxed);
-    // SAFETY: see `Retained`; the append above has finished with it.
-    let buffer: &[u8; REPORT_BYTES] = unsafe { &*REPORT.0.get() };
-    let fresh = &buffer[start..append.at];
-    let _ = uart.write_str(core::str::from_utf8(fresh).unwrap_or("?"));
+/// Where one step's line goes, and whether this is the boot sequence.
+struct Out<'a> {
+    uart: &'a mut Uart,
+    /// True for the boot sequence: retain the report, and perform the writes
+    /// that are only safe when nothing is using the peripheral yet.
+    boot: bool,
+}
+
+impl Out<'_> {
+    /// One line of the report: what came up, and what it came up AS.
+    ///
+    /// **The detail is read back from what was configured, not restated as a
+    /// literal.** A line that prints the number the code was written with
+    /// reports the source, not the machine, and is exactly the kind of claim
+    /// this project keeps having to withdraw.
+    ///
+    /// `status` is a short verdict -- `ok`, `ABSENT`, `WARN`, `FAIL` -- and any
+    /// explanation belongs in `detail`. It comes SECOND because
+    /// `core::fmt::Arguments` ignores width and padding: a `{:52}` on the detail
+    /// silently does nothing, while two `&str` fields pad properly and the
+    /// verdicts form a column that can be scanned for the one that is not `ok`.
+    ///
+    /// An absent peripheral prints `ABSENT` and stays in the list. A missing
+    /// line reads as a subsystem nobody thought about; a present one reading
+    /// `ABSENT` reads as a board without it, which is the truth on the emulator.
+    fn line(&mut self, what: &str, status: &str, detail: fmt::Arguments) {
+        // Formatted once, into the buffer, then the same bytes go at whoever is
+        // already listening. The stamp is captured HERE rather than at replay,
+        // for the reason `src/log.rs` gives: a line drained later must still
+        // report when it happened.
+        let (start, limit) = match self.boot {
+            true => (USED.load(Ordering::Relaxed), RETAINED),
+            false => (RETAINED, REPORT_BYTES),
+        };
+        let mut append = Append { at: start, limit, lost: 0 };
+        let _ = writeln!(
+            append,
+            "{} init  {:9} {:7} {}",
+            log::now(),
+            what,
+            status,
+            detail
+        );
+        if self.boot {
+            USED.store(append.at, Ordering::Relaxed);
+            LOST.fetch_add(append.lost, Ordering::Relaxed);
+        }
+        // SAFETY: see `Retained`; the append above has finished with it.
+        let buffer: &[u8; REPORT_BYTES] = unsafe { &*REPORT.0.get() };
+        let fresh = &buffer[start..append.at];
+        let _ = self.uart.write_str(core::str::from_utf8(fresh).unwrap_or("?"));
+    }
 }
 
 /// Print the retained boot report. Called on a console's first keypress, right
@@ -118,4 +190,202 @@ pub(crate) fn replay(uart: &mut Uart) {
     if lost != 0 {
         let _ = writeln!(uart, "init  report    WARN    {} bytes of it did not fit", lost);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The sequence
+// ---------------------------------------------------------------------------
+
+/// Everything on a bus or a pin, established in order and each one reported.
+///
+/// Called from `main::boot` with `boot: true`, before `#[init]` returns, and
+/// from the `init` command with `boot: false`.
+pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
+    let mut out = Out { uart: console, boot };
+    uart_init(&mut out);
+    i2c_init(&mut out, devices);
+    pac1954_init(&mut out, devices);
+    fusb302b_init(&mut out, devices);
+    facilities(&mut out);
+}
+
+/// One peripheral by name, for `init <peripheral>`.
+///
+/// Returns false for a name nothing here answers to, so the caller can say so
+/// rather than silently doing nothing.
+fn one(out: &mut Out, name: &[u8], devices: &mut Devices) -> bool {
+    match name {
+        b"uart" => uart_init(out),
+        b"i2c" => i2c_init(out, devices),
+        b"pac1954" => pac1954_init(out, devices),
+        b"fusb302b" => fusb302b_init(out, devices),
+        _ => return false,
+    }
+    true
+}
+
+/// `init` and `init <peripheral>`.
+pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    let name = shell::parse::trim(rest);
+    if name.is_empty() {
+        return bringup(uart, devices, false);
+    }
+    let mut out = Out { uart, boot: false };
+    if !one(&mut out, name, devices) {
+        let _ = writeln!(out.uart, "no such peripheral; try `help`");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// One step per part, named for the part
+// ---------------------------------------------------------------------------
+
+fn uart_init(out: &mut Out) {
+    if out.boot {
+        // Every port, not just the primary: an uninitialised 16550 has its
+        // FIFOs in whatever state the last boot left them, and a `j _start`
+        // reboot restarts the CPU without resetting the peripherals. A port
+        // left holding half a command line would run it as the first command
+        // of the new session (#239).
+        //
+        // Only at boot. Clearing a FIFO from the shell would discard the reply
+        // being written.
+        for &base in target::UART_BASES {
+            Uart::new(base).init();
+        }
+        crate::irq::claim_consoles();
+        // The banner is the first thing this image says, and reaching it is
+        // already a report on the boot: the bootloader ran, found nothing
+        // staged or nothing that checked out, and handed over to the image the
+        // bitstream placed. Here rather than in `main::boot`, because the step
+        // that establishes the console is what knows it can carry this.
+        shell::console::banner(out.uart);
+    }
+    out.line(
+        "uart",
+        "ok",
+        format_args!(
+            "{} port(s), rx through the irq ring, no divisor here",
+            target::UART_BASES.len()
+        ),
+    );
+}
+
+fn i2c_init(out: &mut Out, devices: &mut Devices) {
+    let Some(bus) = devices.bus.as_mut() else {
+        // Listed, not skipped: a boot report that omitted the parts on the bus
+        // would read as a boot that had not got to them yet.
+        for what in ["i2c", "pac1954", "fusb302b"] {
+            out.line(what, "ABSENT", format_args!("no i2c on this target"));
+        }
+        return;
+    };
+    bus.init();
+    let prescale = target::BOARD.map(|board| board.i2c_prescale).unwrap_or(0);
+    let scl_hz = target::TIME_HZ / (5 * (prescale as u32 + 1));
+    out.line(
+        "i2c",
+        "ok",
+        format_args!(
+            "{} Hz scl, prescale {} at {} Hz sync",
+            scl_hz, prescale, target::TIME_HZ
+        ),
+    );
+}
+
+fn pac1954_init(out: &mut Out, devices: &mut Devices) {
+    let Some(bus) = devices.bus.as_mut() else {
+        return;
+    };
+    // Uniform bipolar VSENSE: any port can source or sink through the
+    // bidirectional switch tree. A failed attempt is retried by the poller,
+    // and the result is REPORTED -- discarding it produced a board that came
+    // up looking identical and measured on whatever range the part reset to.
+    let configured = devices.power.configure(bus);
+    out.line(
+        "pac1954",
+        if configured.is_ok() { "ok" } else { "WARN" },
+        format_args!(
+            "4 channels, bipolar vsense, refresh every {} ms{}",
+            power::interval_ms(),
+            if configured.is_ok() { "" } else { " -- no answer; the poller retries" }
+        ),
+    );
+}
+
+fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
+    let Some(bus) = devices.bus.as_mut() else {
+        return;
+    };
+    devices.type_c.start(out.uart, bus);
+    // The sources are claimed HERE and not before: `start` clears both parts'
+    // read-to-clear interrupt registers, and enabling first would deliver a
+    // state change from the previous session, describing a cable that may no
+    // longer be there.
+    crate::irq::claim_type_c();
+    out.line(
+        "fusb302b",
+        "ok",
+        format_args!(
+            "{} controller(s), interrupt on state change",
+            target::TYPE_C_IRQS.len()
+        ),
+    );
+}
+
+/// The CPU's own facilities, which report rather than establish.
+///
+/// Not `_init()`s: `sched::init`, `timer::start` and `irq::init` ran in
+/// `main::boot` before any of this, because everything above needs a clock and
+/// a counter to be measured against.
+fn facilities(out: &mut Out) {
+    // WHICH sources, read back from the PLIC rather than counted from the lists
+    // that were walked. The mask is the hardware's answer, and it is the only
+    // thing here that can disagree with the code above -- `enabled 00000036`
+    // with bit 3 clear is how the masked I2C source was found (#246).
+    let enabled = plic::Plic::new(target::PLIC_BASE).enabled();
+    let i2c_masked =
+        target::BOARD.is_some() && enabled & (1 << cynthion_soc_pac::base::BOARD_I2C_IRQ) == 0;
+    out.line(
+        "plic",
+        if i2c_masked { "WARN" } else { "ok" },
+        format_args!(
+            "enabled {:08x}: {} console(s), {} type-c{}",
+            enabled,
+            target::UART_IRQS.len(),
+            target::TYPE_C_IRQS.len(),
+            if i2c_masked {
+                " -- i2c source MASKED, the bus is polled rather than woken (#246)"
+            } else {
+                ""
+            }
+        ),
+    );
+    out.line(
+        "timer",
+        if timer::running() { "ok" } else { "FAIL" },
+        format_args!(
+            "{} ms tick on mtimecmp, {} Hz counter",
+            timer::PERIOD_MS,
+            target::TIME_HZ
+        ),
+    );
+    let (fe, be) = bench::hpm::stalls();
+    out.line(
+        "hpm",
+        if fe == 0 && be == 0 { "ABSENT" } else { "ok" },
+        format_args!(
+            "4 counters selected: frontend/backend stalls, cache{}",
+            if fe == 0 && be == 0 { " -- read as hardwired zero here" } else { "" }
+        ),
+    );
+    out.line(
+        "sched",
+        "ok",
+        format_args!(
+            "{}, 1 task: power_refresh every {} ms",
+            sched::MODEL,
+            power::interval_ms()
+        ),
+    );
 }

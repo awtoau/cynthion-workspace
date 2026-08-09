@@ -105,8 +105,9 @@ mod fusb302;
 mod gpio;
 mod hyperram;
 mod info;
-// The boot report's retained half (#315): every `init` line kept and flushed on
-// the first received byte, because nothing is attached when they are printed.
+// THE peripheral bring-up contract (#315): one `<peripheral>_init()` per part,
+// ordered, verified, non-destructive and re-runnable. `boot` below runs the
+// CPU's own facilities and hands the board to it.
 mod init;
 mod irq;
 mod log;
@@ -208,13 +209,6 @@ pub(crate) fn primary_for(index: usize) -> Uart {
     Uart::new(target::UART_BASES[index.min(target::UART_BASES.len() - 1)])
 }
 
-/// One line of the boot report. See `init::line`, which retains it as well as
-/// printing it -- the board used to say nothing between the banner and the
-/// first power sample, and then said it to a console nobody had attached to.
-fn init_line(uart: &mut Uart, what: &str, status: &str, detail: core::fmt::Arguments) {
-    init::line(uart, what, status, detail);
-}
-
 /// Everything that happens before the first turn of `#[idle]`.
 ///
 /// Called from `rtic_app`'s `#[init]`. Factored out of the entry point for #245,
@@ -255,156 +249,20 @@ fn boot() -> Devices {
     // cannot deliver anything, which is what lets this come before the parts.
     irq::init();
 
-    // ---- 2. THE CONSOLE -------------------------------------------------
+    // ---- 2. THE BOARD ---------------------------------------------------
     //
-    // Ahead of every other peripheral, because it is the channel everything
-    // below reports on. A board that fails to bring up its console has no way
-    // to say so, so this is the one peripheral whose failure is silent by
-    // construction and the one that therefore goes first.
+    // One `<peripheral>_init()` per part, in `src/init.rs`, ordered so that the
+    // console comes first and every step after it can report what it did and
+    // what it read back. It banners on the way through, because only the step
+    // that establishes the console knows the console can carry it.
     //
-    // Every UART, not just the primary: an uninitialised 16550 has its FIFOs in
-    // whatever state the last boot left them, and on this SoC a `j _start`
-    // reboot restarts the CPU without resetting the peripherals. A port left
-    // holding half a command line would run it as the first command of the new
-    // session.
-    for &base in target::UART_BASES {
-        Uart::new(base).init();
-    }
-    irq::claim_consoles();
-
-    let mut console = primary();
-
-    // The banner is the first thing this image says, and reaching it is already the
-    // report on the boot: the bootloader ran, found nothing staged or nothing that
-    // checked out, and handed over to the image the bitstream placed. A staged image
-    // that verified would be printing its own banner here instead.
-    shell::console::banner(&mut console);
-
-    init_line(&mut console, "uart",
-              "ok",
-              format_args!("{} port(s), rx through the irq ring, no divisor here",
-                           target::UART_BASES.len()));
-
-    // ---- 3. THE PERIPHERALS ---------------------------------------------
-    //
-    // Parts on buses and pins. Each reports itself, and each claims its own
-    // interrupt source when it is ready to be interrupted rather than being
-    // enabled from a list somewhere else.
+    // It completes inside `#[init]` rather than becoming a task, and that IS
+    // the ordering guarantee: `devices` does not exist as a shared resource
+    // until `#[init]` returns, so nothing can run against a half-established
+    // board.
     let mut devices = Devices::new();
-
-    // The board's I2C controller, set up once rather than per command.
-    //
-    // `I2c::init` is idempotent, but it writes CTR and clears the interrupt
-    // flag, and the power monitor's poll runs twenty times a second --
-    // re-initialising a bus on that cadence would be a needless write to a
-    // peripheral three devices now share. The `i2c` scan command still calls it,
-    // because a scan is also how a wedged bus gets recovered.
-    if let Some(bus) = devices.bus.as_mut() {
-        bus.init();
-        // The SCL rate this build will actually clock, derived the way the
-        // controller derives it -- `f_SCL = f_sync / (5 * (PRER + 1))` -- from
-        // the prescale the gateware's own `prescale_for` produced and the clock
-        // it produced it for, rather than from `I2C_SCL_HZ`. The divider is an
-        // integer, so what comes out is what the bus gets and not what was
-        // asked for -- 1 MHz happens to land exactly at PRER 11, and the next
-        // rate somebody picks may not.
-        let scl_hz = target::BOARD
-            .map(|board| target::TIME_HZ / (5 * (board.i2c_prescale as u32 + 1)))
-            .unwrap_or(0);
-        init_line(&mut console, "i2c",
-                  "ok",
-                  format_args!("{} Hz scl, prescale {} at {} Hz sync",
-                               scl_hz,
-                               target::BOARD.map(|b| b.i2c_prescale).unwrap_or(0),
-                               target::TIME_HZ));
-
-        // Uniform bipolar VSENSE: any port can source or sink through the
-        // bidirectional switch tree. A failed write is retried by the poller.
-        //
-        // The result is REPORTED. It was discarded with `let _`, so a power
-        // monitor that never took its configuration produced a board that came
-        // up looking identical and measured on whatever range the part reset to
-        // -- and the poller's retry, which is the reason discarding it was
-        // defensible, is invisible from here either way.
-        let configured = devices.power.configure(bus);
-        init_line(&mut console, "pac1954",
-                  if configured.is_ok() { "ok" } else { "WARN" },
-                  format_args!("4 channels, bipolar vsense, refresh every {} ms{}",
-                               power::interval_ms(),
-                               if configured.is_ok() { "" }
-                               else { " -- no answer; the poller retries" }));
-
-        // Both Type-C controllers, configured so they interrupt on a state
-        // change rather than needing to be polled. AFTER the controller is set
-        // up, obviously, and BEFORE `irq::init()`, so that nothing is asserting
-        // when the source is first enabled -- `configure` clears the parts'
-        // interrupt registers on the way through for exactly that reason.
-        devices.type_c.start(&mut console, bus);
-        init_line(&mut console, "fusb302b",
-                  "ok",
-                  format_args!("{} controller(s), interrupt on state change",
-                               target::TYPE_C_IRQS.len()));
-    } else {
-        // Listed, not skipped. On the emulator there is no I2C and nothing on
-        // it, and a boot report that simply omitted them would read as a boot
-        // that had not got to them yet.
-        for what in ["i2c", "pac1954", "fusb302b"] {
-            init_line(&mut console, what, "ABSENT",
-                      format_args!("no i2c on this target"));
-        }
-    }
-
-    // Type-C claims its sources LAST, and only now.
-    //
-    // `type_c.start` above cleared both parts' interrupt registers. Enabling
-    // before that would deliver a state change from the previous session, and
-    // the report it produced would describe a cable that may no longer be there.
-    // This is the ordering constraint that used to force the whole interrupt
-    // controller to come up after the peripherals; splitting `irq::init` means
-    // only this one line has to wait.
-    irq::claim_type_c();
-
-    // WHICH sources, read back from the PLIC rather than counted from the lists
-    // that were walked. The mask is the hardware's answer, and it is the only
-    // thing here that can disagree with the code above.
-    //
-    // This line is why the report exists. `enabled 00000036` is bits 1, 2, 4 and
-    // 5 -- the two consoles and the two Type-C controllers -- and bit 3, the
-    // I2C transaction-complete source, is CLEAR. It is wired in
-    // `gateware/soc/top.py` and nothing claims it, so it has never asserted, and
-    // the power monitor spins on the bus instead of being woken by it. See #246.
-    {
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        let enabled = plic.enabled();
-        let i2c_masked = target::BOARD.is_some()
-            && enabled & (1 << cynthion_soc_pac::base::BOARD_I2C_IRQ) == 0;
-        init_line(&mut console, "plic",
-                  if i2c_masked { "WARN" } else { "ok" },
-                  format_args!("enabled {:08x}: {} console(s), {} type-c{}",
-                               enabled,
-                               target::UART_IRQS.len(),
-                               target::TYPE_C_IRQS.len(),
-                               if i2c_masked {
-                                   " -- i2c source MASKED, the bus is polled \
-                                    rather than woken (#246)"
-                               } else {
-                                   ""
-                               }));
-    }
-
-    init_line(&mut console, "timer", "ok",
-              format_args!("{} ms tick on mtimecmp, {} Hz counter",
-                           timer::PERIOD_MS, target::TIME_HZ));
-    let (fe, be) = bench::hpm::stalls();
-    init_line(&mut console, "hpm",
-              if fe == 0 && be == 0 { "ABSENT" } else { "ok" },
-              format_args!("4 counters selected: frontend/backend stalls, cache{}",
-                           if fe == 0 && be == 0 { " -- read as hardwired zero here" }
-                           else { "" }));
-    init_line(&mut console, "sched",
-              "ok",
-              format_args!("{}, {} task: power_refresh every {} ms",
-                           sched::MODEL, 1, power::interval_ms()));
+    let mut console = primary();
+    init::bringup(&mut console, &mut devices, true);
 
     devices
 }
