@@ -902,11 +902,28 @@ class HyperRAMCeiling(Elaboratable):
                 pass
 
         #
-        # The engine's state, so a stalled sweep says WHERE. The controller's own
-        # state was exposed alongside it briefly and is gone: Amaranth's FSM does
-        # not carry a readable `state` attribute here, and adding one broke
-        # `soc_hyperram_sim`. The engine state was what located the stall anyway.
+        # The engine's state, so a stalled sweep says WHERE.
         harness.add_read_only_register(REG_FSM_STATE, read=engine.state)
+
+        # The controller's HANDSHAKE, not its FSM state. Amaranth's FSM carries
+        # no readable `state` attribute here and adding one broke
+        # `soc_hyperram_sim`, so `REG_CTRL_STATE` sat DECLARED AND UNBOUND -- and
+        # an unbound address reads zero through the CSR transport, which is
+        # indistinguishable from "the controller is in state 0". It was read off
+        # the board as exactly that and used to rule out the controller, wrongly.
+        # A register that cannot answer must not answer plausibly.
+        #
+        # What goes here instead is the exit condition of READ_RECOVER, split
+        # into its two halves, because that is the state the engine parks in and
+        # `psram.idle & (recovery >= recovery_cycles)` is what it is waiting for.
+        # Reading the halves separately says which one is false, which the state
+        # number never could.
+        harness.add_read_only_register(
+            REG_CTRL_STATE,
+            read=Cat(psram.idle,                        # bit 0
+                     recovery >= recovery_cycles,       # bit 1
+                     start,                             # bit 2
+                     Const(0, 29)))
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it

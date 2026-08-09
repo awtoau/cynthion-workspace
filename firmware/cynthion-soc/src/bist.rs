@@ -73,8 +73,13 @@ pub mod reg {
     /// stalled. The engine's own comment: without it a hung sweep is a silent
     /// poll loop, and the cell index does not say which state.
     pub const FSM_STATE: usize = 28;
-    /// The HyperBus controller's own FSM state. Distinguishes "the engine never
-    /// asked" from "the controller never answered", which want different fixes.
+    /// The controller HANDSHAKE, as three bits: `idle`, `recovery elapsed`,
+    /// `start`. Not an FSM state -- see the engine, where the state number was
+    /// declared and never bound, so it read zero and looked like "state 0".
+    ///
+    /// These are the two halves of what `READ_RECOVER` waits on, which is the
+    /// state the engine parks in. Reading them separately says WHICH half is
+    /// false; a state number never could.
     pub const CTRL_STATE: usize = 29;
 }
 
@@ -317,11 +322,16 @@ impl Bist {
         let (engine_a, ctrl_a) = (self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE));
         let (engine_b, ctrl_b) = (self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE));
         let _ = writeln!(
-            uart, "  fsm     engine {} -> {} {}   controller {} -> {} {}",
+            uart, "  fsm     engine {} -> {} {}",
             engine_a, engine_b,
-            if engine_a == engine_b { "(parked)" } else { "(moving)" },
-            ctrl_a, ctrl_b,
-            if ctrl_a == ctrl_b { "(parked)" } else { "(moving)" });
+            if engine_a == engine_b { "(parked)" } else { "(moving)" });
+        // The two halves of READ_RECOVER's exit condition, named. Whichever is
+        // 0 is the one holding the engine there.
+        let _ = writeln!(
+            uart, "  ctrl    idle={} recovered={} start={}  (a=%{:03b} b=%{:03b})",
+            (ctrl_b & 1) as u8, ((ctrl_b >> 1) & 1) as u8, ((ctrl_b >> 2) & 1) as u8,
+            ctrl_a & 0b111, ctrl_b & 0b111);
+        let _ = (ctrl_a, ctrl_b);
     }
 
     /// What the engine says about itself, before anything is measured.
