@@ -214,8 +214,10 @@ Only once this behaves does the matrix mean anything.
 | `soc_probe` 6/6 | fabric is ours, CPU runs, gateware and firmware match |
 | Clocks measured, not declared | a dead PLL reports its intended rate from a constant |
 | BURSTDET settled | one harness wrong, or the two measure different things |
-| Known-good reference | `hyperram_stress.py` pattern is fixed but **not re-run** |
+| Known-good reference | **First one taken 2026-08-10**: non-DQS, CK 80, drive 3, phase 0, CR0 latency 2 and 6 pass on both fixed and variable, control fired 512/512. One run — see the repeatability caveat below. |
 | #204 | JTAG readback slips a bit below sync/TCK ~4 — every applet reads through it |
+| **#314** | **DQS edge clock ran on general fabric.** Two PLL sites, both Y49; ECLK consumers Y2–Y11; ~38 tiles apart, so no placement reaches it. `ECLKBRIDGECS` instantiated 2026-08-10, **not yet built**. No DQS number counts before it is. |
+| **Repeatability** | The engine wedges on some reconfigures: one 128-cell sweep clean, the next producing nothing, same bitstream. **A result is not a reference until it reproduces.** |
 | #215 | non-DQS controller vendored, tCSHI + latency — done 2026-08-07 |
 
 ## Open
@@ -288,6 +290,28 @@ run flat:
   three, even if both pass.
 - The edge of the surface is where the interesting failure is: characterise it
   rather than just recording where passing stopped.
+
+## What the rig itself got wrong, and why it matters to read results carefully
+
+Eight faults found on 2026-08-10, none a property of the part. The two that
+would have silently corrupted a matrix:
+
+- **The device was never configured.** `CONFIG_CR0` was reachable only from
+  `RESET`, which runs once at power-up before any firmware exists. ~160 device
+  configurations produced byte-identical results, because none was applied. An
+  axis that does *nothing* is indistinguishable from an axis that does not
+  *matter*, and the second reads as a finding.
+- **The DQS edge clock was on general fabric** (#314), announced by nextpnr as
+  `log_info` rather than a warning.
+
+Both were invisible in the output. That is the standing lesson: **almost every
+fault here was an instrument that could not report its own failure** — an
+unbound register reading zero, a `done` that could not assert, a config path
+never reached, plus three diagnostics that crashed formatting `None` instead of
+printing what they had found.
+
+Read a clean sweep with that in mind. `128 PASS` at one rung means *no axis
+discriminates there*, not *everything is good*.
 
 ## Why there are no old numbers here
 
