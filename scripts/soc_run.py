@@ -88,12 +88,12 @@ GATEWARE = ROOT / "gateware" / "soc" / "top.py"
 # rather than interleaved into `tmp/logs/dev.log`, which is the log about the
 # board.
 SYNTH_LOG = ROOT / "tmp" / "logs" / "synthesis.log"
-BITSTREAM = ROOT / "tmp" / "vexii_hello" / "build" / "top.bit"
+BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
 # The digest of the gateware sources the bitstream beside it was built from.
 # Written on a successful build, compared before every configure, and compared
 # again before synthesis so an unchanged tree does not resynthesise. See
 # `bitstream_is_stale`.
-GATEWARE_BUILT = ROOT / "tmp" / "vexii_hello" / "build" / "gateware-digest.txt"
+GATEWARE_BUILT = ROOT / "tmp" / "awto_soc" / "build" / "gateware-digest.txt"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 
@@ -687,7 +687,7 @@ def main():
         # build's. Reading the first would report an older attempt as if it
         # were current, which is the same class of mistake as a stale
         # bitstream.
-        timing = ROOT / "tmp" / "vexii_hello" / "build" / "top.tim"
+        timing = ROOT / "tmp" / "awto_soc" / "build" / "top.tim"
         frequencies = []
         if timing.exists():
             for line in timing.read_text().splitlines():
@@ -748,7 +748,7 @@ def main():
         # it would claim a bitstream that may not exist.
         GATEWARE_BUILT.write_text(gateware_digest() + "\n")
 
-        report = ROOT / "tmp" / "vexii_hello" / "build" / "top.rpt"
+        report = ROOT / "tmp" / "awto_soc" / "build" / "top.rpt"
         if report.exists():
             undriven = report.read_text().count("has no driver")
             emit(f"gateware built. undriven wires: {undriven}")

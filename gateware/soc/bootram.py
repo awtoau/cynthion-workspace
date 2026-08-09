@@ -117,7 +117,7 @@ HYPERRAM_TCK_MAX_NS = 100.0
 HYPERRAM_TCSM_MARGIN = 0.9
 
 # CK in MHz when the caller does not say. `HyperRAMPHY` emits one CK per `sync`
-# cycle, so for the non-DQS build this is `vexii_hello_soc.SYNC_MHZ` -- which
+# cycle, so for the non-DQS build this is `top.SYNC_MHZ` -- which
 # passes its own value in, because `riscv_clock_ladder.py` rewrites that constant
 # and a second copy here would drift silently. This default serves sims and
 # bring-up tops only.

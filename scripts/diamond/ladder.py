@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Run `vexii_hello_soc` through Diamond at a series of clock constraints and
+Run the SoC (`gateware/soc/top.py`) through Diamond at a series of clock constraints and
 compare against nextpnr on the same RTL.
 
 ## Why the question is worth asking
@@ -80,7 +80,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "diamond_riscv_ladder.log"
 RESULTS = ROOT / "tmp" / "diamond_riscv_ladder.json"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
-BUILD = ROOT / "tmp" / "vexii_hello" / "build"
+BUILD = ROOT / "tmp" / "awto_soc" / "build"
 WORK = ROOT / "tmp" / "diamond"
 
 sys.path.insert(0, str(ROOT / "scripts"))

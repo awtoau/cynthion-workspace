@@ -1,7 +1,7 @@
 /* QEMU `-M virt` memory map -- the counterpart to memory.x.
  *
  * memory.x is the hardware one (this image at 0x00000400, above the 1 KiB bootloader,
- * matching the block RAM in ecp5-test/riscv/vexii_hello_soc.py). This file exists
+ * matching the block RAM in gateware/soc/top.py). This file exists
  * because virt puts DRAM at 0x80000000 and nothing whatsoever at 0, so the same image
  * cannot be linked for both. Selected by scripts/soc_test.py, which passes
  *

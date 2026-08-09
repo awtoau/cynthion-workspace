@@ -635,7 +635,7 @@ host core does not touch it.
 
 ### 12.2 Does it fit
 
-Current SoC, `tmp/vexii_hello/build/top.tim` (2026-08-03T00:25, LFE5U-12F,
+Current SoC, `tmp/awto_soc/build/top.tim` (2026-08-03T00:25, LFE5U-12F,
 CABGA256, speed 8):
 
 | | now | + SIE | + SIE and enumerator |
@@ -680,13 +680,13 @@ combinationally cheap — which a CSR multiplexer is.
 ## 13. Where it attaches, and the collision with #120
 
 `target_phy` is the only candidate: `aux_phy` carries the CDC-ACM console
-(`vexii_hello_soc.py:958`) and `control_phy` is shared with Apollo. It is also
+(`gateware/soc/top.py`) and `control_phy` is shared with Apollo. It is also
 the port the ULPI register window of #120 sits on, and that is a hard conflict
 today, for a reason more basic than bus arbitration.
 
 ### 13.1 The conflict is ownership, not arbitration
 
-- `platform.request("target_phy")` may be called once. `vexii_hello_soc.py:1288-1298`
+- `platform.request("target_phy")` may be called once. `gateware/soc/top.py`
   already calls it and drives `clk`, `rst`, `stp`, `data.o`, `data.oe`
   combinationally from `UlpiRegisters`. There is no mux point.
 - `ulpi_window.py:250` hard-wires `data_oe = ~dir_i`, and the window waits for
@@ -762,7 +762,7 @@ worst cross-domain delay in the current build at 11.83 ns.
 
 Both idioms are already in the tree and proven: the four-phase toggle handshake
 at `ulpi_window.py:235-311`, and `StreamBuffer` wrapping `AsyncFIFOBuffered` at
-`gateware/soc/peripherals/stream_buffer.py:96`, in use at `vexii_hello_soc.py:988-991`.
+`gateware/soc/peripherals/stream_buffer.py:96`, in use at `gateware/soc/top.py`.
 
 Use the handshake for the transfer registers (a few crossings per transfer, so
 latency is free) and the async FIFO for the byte streams (where a per-byte
@@ -803,7 +803,7 @@ sitting behind the 8-bit `board` CSR decoder.
 | 0x15 | `IRQ_EN` | rw | `xfer_done`, `disconnect`, `sof` |
 | 0x16 | `IRQ_PEND` | r/w1c | same bits |
 
-PLIC source 6 (`Plic(sources=5)` → `6` at `vexii_hello_soc.py:650`; sources 1-5
+PLIC source 6 (`Plic(sources=5)` → `6` at `gateware/soc/top.py`; sources 1-5
 are taken, 6-31 are free). The PAC follows automatically —
 `scripts/soc_generate_pac.py` reads `decoder.bus.memory_map` and
 `interrupt_sources`, so `pac::base::USB_HOST` and `USB_HOST_IRQ` appear without
@@ -928,7 +928,7 @@ not Option C.
 
 **First step, before a line of the shim is written:** bump the GUH pin to
 `923c8490`, then build the `sie` configuration of `scripts/usb-host-core-area.py`
-*inside* `HelloSoC` and read the in-situ LUT count and `sync`/`usb` fmax. §12's
+*inside* `AwtoSoc` and read the in-situ LUT count and `sync`/`usb` fmax. §12's
 2080 LUT is a standalone figure at 9% occupancy; the number that decides the
 design is the one at 60%, and it costs one build to get. Run
 `scripts/soc_timing_sweep.py` alongside it, because a single placement is not
@@ -936,7 +936,7 @@ evidence on this design.
 
 Then, in order:
 
-1. **Mux `target_phy`.** Move the pad wiring at `vexii_hello_soc.py:1288-1298`
+1. **Mux `target_phy`.** Move the pad wiring at `gateware/soc/top.py`
    behind an owner select, or better, implement §13.2's `UTMITranslator` manual
    register access so `UlpiRegisters` becomes a client. This unblocks #120 and
    #125 as well as the host.
