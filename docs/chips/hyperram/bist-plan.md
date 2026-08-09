@@ -5,6 +5,8 @@
 
 How to characterise the W956A8 and get a number worth keeping.
 The part itself: [w956a8.md](w956a8.md).
+What nineteen other controllers do, and the bounds ours is missing:
+[controller-survey.md](controller-survey.md).
 
 The work: #230.
 
@@ -232,6 +234,10 @@ Only once this behaves does the matrix mean anything.
   dropped data.
 - Is the DQS one-word-late read a read-late or a write-early fault (#186)? A rig
   measuring a path with a known offset measures the offset.
+- `READ_DATA` is unbounded, so a run that drops one beat parks the controller
+  and the rig reports nothing (#316). Every cell below is measured through it.
+  No implementation surveyed calibrates the read window, so the phase axis has
+  no prior art to shortcut it — [controller-survey.md](controller-survey.md).
 
 ## The matrix
 
