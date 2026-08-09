@@ -15,7 +15,7 @@ use crate::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
 use crate::target::flash_word;
 use crate::{
-    bench, board, board_absent, gpio, sideband, vbus, clock, events, hardware,
+    bench, board, board_absent, led_cmd, sideband_cmd, vbus_cmd, clock, events, hardware,
     hr_cmd, i2c_cmd, info, log, memory, metrics, phy_cmd, power_cmd, reboot,
     sched, scratch_responds, staging, selftest, target, timer, typec, Devices,
 };
@@ -232,7 +232,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // reporting what it does not have -- which is what `scripts/soc_test.py`
         // drives. See `src/board.rs`.
         b"board" => board::tree(uart, &devices.power, &devices.type_c),
-        b"led" => gpio::command(uart, rest),
+        b"led" => led_cmd::command(uart, rest),
         b"i2c" => i2c_cmd::command(uart, rest, devices),
         b"power" => power_cmd::command(uart, rest, devices),
         b"phy" => phy_cmd::command(uart, trim(rest)),
@@ -243,7 +243,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
-        b"vbus" => vbus::command(uart, rest, devices),
+        b"vbus" => vbus_cmd::command(uart, rest, devices),
         // One record per payload tag, so the drain-time decoding of every tag is
         // exercised on the shipping build. A guard arm rather than a branch
         // inside the one below, so the two cases do not share an indent: this
@@ -303,7 +303,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 events::dropped()
             );
         }
-        b"sideband" => sideband::command(uart, rest),
+        b"sideband" => sideband_cmd::command(uart, rest),
         // The bring-up smoke test: does this CPU compute, can it reach flash,
         // does the clock formatter hold at its boundaries. Four lines, each `ok`
         // or `BAD`, against values that cannot be produced by accident.
