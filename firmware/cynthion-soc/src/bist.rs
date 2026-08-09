@@ -378,9 +378,18 @@ impl Bist {
 }
 
 /// Print one cell's row, and the evidence when it produced nothing.
+///
+/// `expected` is how many words the cell was ASKED to compare. A cell that
+/// compared fewer is not a pass: one sweep row read `words 17` of 512 and was
+/// scored PASS beside rows that compared all of them. The negative control
+/// guards against a comparator that never fired; nothing guarded against one
+/// that fired 3% of the time.
 fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 2],
-          verbose: bool) {
+          expected: u32, verbose: bool) {
+    let short = cell.words < expected || cell.control_words < expected;
     let verdict = match cell.verdict() {
+        Verdict::Pass if short => "NO RESULT -- short cell, fewer words than asked",
+        Verdict::Fail(_) if short => "fail (SHORT -- fewer words than asked)",
         Verdict::Pass => "PASS",
         Verdict::Fail(_) => "fail",
         // A timeout reaches NoResult by the same door as a control that did not
@@ -392,6 +401,10 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
             "NO RESULT -- engine never completed (timeout)",
         Verdict::NoResult => "NO RESULT -- control did not fire",
     };
+    // THE TIME, on every row. A sweep that takes under a second is a claim
+    // until each row carries its own stamp; then per-cell duration is in the
+    // data and "how quick" stops being something anyone has to ask.
+    let _ = write!(uart, "{}  ", crate::log::now());
     let _ = writeln!(
         uart, "{:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}",
         cell.axes.drive,
@@ -453,7 +466,7 @@ pub fn one(uart: &mut Uart, bist: &Bist, axes: Axes, passes: u32) {
     let _ = writeln!(uart, "{}", HEADING);
     bist.configure(&axes);
     let (cell, st, poll) = bist.cell(axes, passes);
-    report(uart, bist, &cell, st, poll, true);
+    report(uart, bist, &cell, st, poll, passes * BURST_WORDS, true);
 }
 
 /// The rig's own smoke test: four cells, one CK, four capture phases.
@@ -489,7 +502,7 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
             Verdict::Fail(_) => failed += 1,
             Verdict::NoResult => nothing += 1,
         }
-        report(uart, bist, &cell, st, poll, false);
+        report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false);
     }
 
     let _ = writeln!(uart, "  {} pass, {} fail, {} no result", passed, failed, nothing);
@@ -527,7 +540,7 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
             let (cell, st, poll) = bist.cell(axes, passes);
             let _ = write!(uart, "{:3}  {:4}  ", latency,
                            if fixed_latency { "fix" } else { "var" });
-            report(uart, bist, &cell, st, poll, false);
+            report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false);
         }
     }
     let _ = writeln!(uart, "  latency sweep complete");
@@ -559,7 +572,7 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
                                      readclksel);
                 }
                 let (cell, st, poll) = bist.cell(axes, passes);
-                report(uart, bist, &cell, st, poll, verbose);
+                report(uart, bist, &cell, st, poll, passes * BURST_WORDS, verbose);
             }
         }
     }
