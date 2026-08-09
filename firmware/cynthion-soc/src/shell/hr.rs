@@ -20,6 +20,9 @@ use crate::{bench, hyperram, memory};
 ///     hr bench    the same walk as `bench hyperram`
 ///     hr id       HyperBus has no identify
 pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
+    if rest.is_empty() {
+        return crate::shell::list_family(uart, "hyperram");
+    }
     match rest {
         b"status" => {
             let (locked, ready, seen, bursts) = bench::dqs_status();

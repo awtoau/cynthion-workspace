@@ -174,37 +174,30 @@ impl Help for Commands {
                 }
             }
 
+            // NAME ALONE in the first column; the subcommands go after the
+            // summary. `hyperram` has nine, and putting them beside the name
+            // pushed the column out and wrapped the line -- the alignment the
+            // column exists for was lost to the thing it was listing.
             writer.write_str(name)?;
-            let mut width = name.len();
+            for _ in name.len()..HELP_WIDTH {
+                writer.write_str(" ")?;
+            }
+            writer.write_str(summary)?;
+
             let mut first = true;
             for (row, _) in &HELP[index..end] {
                 let sub = crate::shell::second_word(row);
                 if sub.is_empty() {
                     continue;
                 }
-                writer.write_str(if first { " [" } else { "|" })?;
-                width += if first { 2 } else { 1 };
+                writer.write_str(if first { "  [" } else { "|" })?;
                 first = false;
                 writer.write_str(sub)?;
-                width += sub.len();
             }
             if !first {
                 writer.write_str("]")?;
-                width += 1;
             }
-
-            // A long family -- `hyperram` has nine subcommands -- outgrows the
-            // column. Wrapping to the next line keeps every summary in the same
-            // place; letting it run pushed one summary out of alignment and made
-            // the listing harder to scan than the thing it replaced.
-            if width >= HELP_WIDTH {
-                writer.writeln_str("")?;
-                width = 0;
-            }
-            for _ in width..HELP_WIDTH {
-                writer.write_str(" ")?;
-            }
-            writer.writeln_str(summary)?;
+            writer.writeln_str("")?;
 
             index = end;
         }

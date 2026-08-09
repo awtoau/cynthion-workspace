@@ -20,6 +20,10 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // 0x22 with the same identity byte -- so the bus is named on every call
     // below rather than selected once and remembered.
     let which = trim(rest);
+    if which.is_empty() {
+        return crate::shell::list_family(uart, "i2c");
+    }
+    let which: &[u8] = if which == b"status" { b"" } else { which };
 
     // `i2c soak <bus> <prescale> <reads>` -- find where the bus stops working.
     //

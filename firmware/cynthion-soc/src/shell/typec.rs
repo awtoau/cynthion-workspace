@@ -13,6 +13,10 @@ use crate::uart::Uart;
 /// `typec`, or `typec init` to configure both controllers again.
 pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus: &mut Bus) {
     let rest = trim(rest);
+    if rest.is_empty() {
+        return crate::shell::list_family(uart, "typec");
+    }
+    let rest: &[u8] = if rest == b"status" { b"" } else { rest };
     if rest == b"init" {
         controllers.start(uart, bus);
         return;

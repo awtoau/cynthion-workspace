@@ -766,11 +766,11 @@ def main():
         # would still name the command and tell the reader nothing.
         listing = [b"help, ?", b"check", b"info", b"selftest", b"ports",
                    b"irq", b"time", b"board", b"led", b"load", b"reset",
-                   b"rtic", b"map", b"pmod", b"sideband", b"typec",                    b"bram [read|bench]", b"cpu [stats|check|irq|log]", b"phy [status|reset]",
-                   b"flash [id|read|bench]", b"i2c [scan|soak]",
-                   b"power [status|floor|alert|rate|detect|limit|samples|bracket]",
-                   b"hyperram [status|read|sel|sweep|test|cross|ramp|bench|id]",
-                   b"vbus [off|input|control|both|charge]"]
+                   b"rtic", b"map", b"pmod", b"sideband", b"typec",                    b"[read|bench]", b"[stats|check|irq|log]", b"[status|reset]",
+                   b"[id|read|bench]", b"[status|scan|soak]",
+                   b"[status|floor|alert|rate|detect|limit|samples|bracket]",
+                   b"[status|read|sel|sweep|test|cross|ramp|bench|id]",
+                   b"[status|off|input|control|both|charge]"]
         command("help", listing, "`help` lists every command")
         command("?", listing, "`?` behaves as `help`")
 
@@ -799,7 +799,11 @@ def main():
         # a legitimate state. What it catches is the case worth catching: a
         # command that reaches for a device and gets nothing back.
         absent = b"no board peripherals on this target"
-        for name in ("led", "i2c", "power", "phy", "typec", "sideband"):
+        # The families answer their BARE form with a listing now, so the one that
+        # reaches for hardware is the `status` verb. `led` and `sideband` have no
+        # subcommands and still act on the bare word.
+        for name in ("led", "i2c status", "power status", "phy status",
+                     "typec status", "sideband"):
             if board:
                 mark = len(session.snapshot())
                 session.send(name.encode() + b"\r")
