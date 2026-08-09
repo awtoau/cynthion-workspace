@@ -291,20 +291,24 @@ fn pac1954_init(out: &mut Out, devices: &mut Devices) {
     let Some(bus) = devices.bus.as_mut() else {
         return;
     };
-    // Uniform bipolar VSENSE: any port can source or sink through the
-    // bidirectional switch tree. A failed attempt is retried by the poller,
-    // and the result is REPORTED -- discarding it produced a board that came
-    // up looking identical and measured on whatever range the part reset to.
-    let configured = devices.power.configure(bus);
-    out.line(
-        "pac1954",
-        if configured.is_ok() { "ok" } else { "WARN" },
-        format_args!(
-            "4 channels, bipolar vsense, refresh every {} ms{}",
-            power::interval_ms(),
-            if configured.is_ok() { "" } else { " -- no answer; the poller retries" }
+    match devices.power.init(bus) {
+        Ok(report) => out.line(
+            "pac1954",
+            if report.established() { "ok" } else { "WARN" },
+            format_args!(
+                "4 channels, fsr {:04x} ctrl {:04x} read back, refresh every {} ms{}",
+                report.fsr,
+                report.ctrl,
+                power::interval_ms(),
+                if report.established() { "" } else { " -- the part is not holding what it was given" }
+            ),
         ),
-    );
+        Err(error) => out.line(
+            "pac1954",
+            "WARN",
+            format_args!("{}; the poller retries", error.as_str()),
+        ),
+    }
 }
 
 fn fusb302b_init(out: &mut Out, devices: &mut Devices) {

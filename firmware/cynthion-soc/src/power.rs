@@ -115,6 +115,30 @@ const REG_CTRL: u8 = 0x01;
 /// `GPIO_ALERT2[1:0]`, bits 11-10. `00` makes the pin an ALERT output.
 const CTRL_GPIO_ALERT2_SHIFT: u32 = 10;
 
+/// What `pac1954_init` writes into CTRL: the part's own POR value.
+///
+/// `SAMPLE_MODE` 1024 SPS, `GPIO_ALERT2` a GPIO input, `SLOW_ALERT1` = SLOW
+/// (#273 -- that field held the converter at 8 SPS). Establishing it is the
+/// point: nothing power-cycles this part, so the alternative is inheriting
+/// whatever the last session left.
+const CTRL_ESTABLISHED: u16 = 0x0700;
+
+/// What [`Monitor::init`] read back out of the part.
+///
+/// The values, not a verdict on them, plus the one method that decides -- so
+/// the constants above stay private to the driver that knows what they mean,
+/// and the report has the numbers to print either way.
+pub struct Init {
+    pub fsr: u16,
+    pub ctrl: u16,
+}
+
+impl Init {
+    pub fn established(&self) -> bool {
+        self.fsr == FSR_BIPOLAR && self.ctrl == CTRL_ESTABLISHED
+    }
+}
+
 /// Which limits have fired. **Read-to-clear**, which is what services the level
 /// -- the pin is latched low until this is read, exactly like a FUSB302B.
 const REG_ALERT_STATUS: u8 = 0x26;
@@ -212,7 +236,10 @@ impl Limit {
 /// VSENSE range for all four channels. `0x55` selects bipolar +/-100 mV for
 /// each two-bit CFG_VSn field; the low byte leaves every VBUS range unipolar.
 const REG_NEG_PWR_FSR: u8 = 0x1d;
-const NEG_PWR_FSR_BIPOLAR: [u8; 2] = [0x55, 0x00];
+/// What [`Monitor::init`] establishes and reads back: bipolar VSENSE on all
+/// four channels, unipolar VBUS.
+const FSR_BIPOLAR: u16 = 0x5500;
+const NEG_PWR_FSR_BIPOLAR: [u8; 2] = FSR_BIPOLAR.to_be_bytes();
 
 /// VBUS1. VBUS1-4 are `0x07`-`0x0a` and VSENSE1-4 are `0x0b`-`0x0e`, so one
 /// 16-byte read from here covers every measurement this driver wants. The part
@@ -736,10 +763,43 @@ impl Monitor {
             }
         }
 
+        // CTRL, ESTABLISHED rather than inherited. Only a power cycle resets
+        // this part, so a boot that skipped it ran on the previous session's
+        // SAMPLE_MODE and ALERT2 pin function (#315).
+        //
+        // `alert_pin_enable` read-modify-writes bits 11-10 later, when there is
+        // a claimed source for the pin to feed; this sets the whole register to
+        // the POR value so the two cannot compound.
+        self.write16(bus, REG_CTRL, CTRL_ESTABLISHED)?;
+
         refresh(bus)?;
         self.configured = true;
         self.refresh_at = None;
         Ok(())
+    }
+
+    /// `pac1954_init()` -- establish, then read back from the part.
+    ///
+    /// Uniform bipolar VSENSE (any port can source or sink through the
+    /// bidirectional switch tree), the alert state cleared, every limit zeroed,
+    /// and `CTRL` established rather than inherited. Then both control
+    /// registers are read back: `configure` returning `Ok` means every write
+    /// was acknowledged, which is a claim about the BUS and not about the
+    /// REGISTER -- the difference that let a HyperRAM `CR0` write go nowhere
+    /// for as long as that code existed (#315).
+    ///
+    /// **Non-destructive.** No `REFRESH` (`0x00`), which would reset the
+    /// accumulators (#275/#276); the destructive verb is [`Monitor::reset`],
+    /// which pulls `PWRDN#` and loses them.
+    ///
+    /// Idempotent: every write is absolute, none is a read-modify-write, and a
+    /// failed attempt is retried by the poller.
+    pub fn init(&mut self, bus: &mut Bus) -> Result<Init, bus::Error> {
+        self.configure(bus)?;
+        Ok(Init {
+            fsr: self.read16(bus, REG_NEG_PWR_FSR)?,
+            ctrl: self.read16(bus, REG_CTRL)?,
+        })
     }
 
     /// One REFRESH cycle: fetch what the last one latched, and ask for the next.
