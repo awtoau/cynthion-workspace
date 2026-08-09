@@ -19,66 +19,61 @@
 //! | HyperRAM never answers               | jump           |
 //! | a good image, copied                 | jump           |
 //!
-//! There is no branch on the reason, no error code carried forward, no retry and no
-//! flag left behind for the image to interpret. A second failure path would be a bug in
-//! this file, not a feature of it.
+//! - No branch on the reason, no error code carried forward, no retry, no flag left
+//!   behind for the image to interpret.
+//! - A second failure path would be a bug in this file, not a feature of it.
 //!
 //! ## What "whatever is there" actually is
 //!
-//! The image region is block RAM, and block RAM survives a CPU reset. So the fallback is
-//! not "the bitstream's image" in general -- it is the region **as it stands**:
+//! - The image region is block RAM, which survives a CPU reset -- so the fallback is
+//!   the region **as it stands**, not "the bitstream's image" in general:
 //!
-//! | since the last FPGA configure | what a fallback runs        |
-//! |------------------------------|-----------------------------|
-//! | nothing was staged and copied| the bitstream's own image   |
-//! | an image was staged and copied| that image                 |
+//! | since the last FPGA configure  | what a fallback runs      |
+//! |---------------------------------|----------------------------|
+//! | nothing was staged and copied  | the bitstream's own image |
+//! | an image was staged and copied | that image                |
 //!
-//! Configuring the FPGA is what restores the bitstream's pair, because block RAM init is
-//! written by configuration and by nothing else. That makes the fallback impossible to
-//! be *absent* -- something always answers at the image origin, from power-on onwards --
-//! without making it always the same thing.
-//!
-//! It matters in one place. `scripts/soc_jtag_stage.py --clear` removes the header, but
-//! a board that has already copied an image keeps running it, because clearing the
-//! header does not put the old bytes back. Reconfiguring does, in about a second, and
-//! `--clear` says so.
-//!
-//! The alternative is a bootloader that keeps a pristine copy to restore from, which is
-//! a second image region and a policy about when to use it. That is the "clever" this
-//! file exists not to be.
+//! - Configuring the FPGA restores the bitstream's pair: block RAM init is written by
+//!   configuration and nothing else. Something always answers at the image origin from
+//!   power-on onwards, but it is not always the same thing.
+//! - Matters for `scripts/soc_jtag_stage.py --clear`: it removes the header, but a
+//!   board that already copied an image keeps running it -- clearing the header does
+//!   not restore the old bytes. Reconfiguring does, in about a second; `--clear` says
+//!   so.
+//! - The alternative -- a bootloader that keeps a pristine copy to restore from -- is a
+//!   second image region and a policy about when to use it. That is the "clever" this
+//!   file exists not to be.
 //!
 //! ## Two breadcrumbs, and no console
 //!
-//! There is no UART driver here. `core::fmt` is kilobytes and this whole image is under
-//! half of one, and a formatted message would describe a distinction the control flow
-//! deliberately does not make. What it leaves instead are two stores:
+//! - No UART driver here: `core::fmt` costs kilobytes, this image is under half of one,
+//!   and a formatted message would describe a distinction the control flow deliberately
+//!   does not make. Two stores instead:
 //!
-//! | breadcrumb        | where                       | read by                        |
-//! |-------------------|-----------------------------|--------------------------------|
-//! | status word       | `_boot_status`, block RAM   | the image (`info`), or gdb     |
-//! | sideband byte     | `BOARD_SIDEBAND` CSR        | Apollo, with no CPU of its own |
+//! | breadcrumb    | where                     | read by                        |
+//! |----------------|----------------------------|---------------------------------|
+//! | status word   | `_boot_status`, block RAM | the image (`info`), or gdb     |
+//! | sideband byte | `BOARD_SIDEBAND` CSR      | Apollo, with no CPU of its own |
 //!
-//! The sideband is the one that works when nothing else does: pin T6 reaches the Apollo
-//! microcontroller without USB, without a console and without JTAG, and it keeps
-//! reporting whatever was last written to it.
-//!
-//! Neither is a branch. `boot` computes a `Status` and `enter_image` stores it on the
-//! way past; the jump is unconditional and identical whatever the value is.
+//! - The sideband is what works when nothing else does: pin T6 reaches the Apollo
+//!   microcontroller without USB, console or JTAG, reporting whatever was last written.
+//! - Neither is a branch: `boot` computes a `Status`, `enter_image` stores it on the
+//!   way past; the jump is unconditional and identical whatever the value is.
 //!
 //! ## It does not manage the header
 //!
-//! A rejected image is left exactly as it was found. Clearing it is a decision with a
-//! policy behind it -- retry, or give up -- and policy belongs in the image;
-//! `scripts/soc_jtag_stage.py --clear` is where it lives.
+//! - A rejected image is left exactly as found. Clearing it is a policy decision
+//!   (retry, or give up) and policy belongs in the image: `scripts/soc_jtag_stage.py
+//!   --clear` is where it lives.
 //!
 //! ## No formatting, and nothing that wants an allocator
 //!
-//! There is not one `write!`, `unwrap`, `expect`, `assert!` or index in this file, and
-//! `nm` on the built image finds six symbols and no `core::fmt` at all. That is the
-//! single largest size decision here: the formatting machinery is measured in kilobytes
-//! and this whole image is 492 bytes. `panic_immediate_abort` would be the next lever
-//! and is moot -- there is no panic machinery left to remove, and this project builds
-//! on stable.
+//! - No `write!`, `unwrap`, `expect`, `assert!` or index anywhere in this file; `nm` on
+//!   the built image finds six symbols and no `core::fmt`.
+//! - Largest size decision here: formatting machinery costs kilobytes, this image is
+//!   492 bytes.
+//! - `panic_immediate_abort` would be the next lever and is moot -- no panic machinery
+//!   left to remove, and this project builds on stable.
 //!
 //! ## Measured size
 //!
@@ -93,8 +88,9 @@
 //! | `.rodata`, `.data`, `.bss` | 0, and `memory.x` asserts the last two |
 //! | **image total**  | **492** |
 //!
-//! 1 KiB is allocated. `./scripts/soc_boot_size.py` re-measures this and the profile
-//! ablations behind it; `Cargo.toml` holds what each setting is worth.
+//! 1 KiB is allocated. Re-measure with `./scripts/soc_boot_size.py` (also covers the
+//! profile ablations behind these numbers); `Cargo.toml` holds what each setting is
+//! worth.
 
 #![no_std]
 #![no_main]

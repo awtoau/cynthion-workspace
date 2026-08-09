@@ -1,96 +1,71 @@
-//! The I2C controller itself: bytes on wires, and nothing about which bus.
+//! I2C controller: bytes on wires, nothing about which bus.
 //!
-//! Drives `gateware/soc/peripherals/i2c_master.py`, which is the OpenCores I2C master
-//! register map. Nothing here is specific to what is on the bus except
-//! `pac195x`, at the bottom, which knows how to ask a Microchip PAC195x for its
-//! name.
-//!
-//! Private to [`crate::bus`], which is the one thing allowed to construct an
-//! [`I2c`] and which pairs every transfer here with a mux select. A driver that
-//! reached this module directly could start a transfer without saying which of
-//! the board's three buses it meant -- see the module comment there.
+//! - Drives `gateware/soc/peripherals/i2c_master.py` (OpenCores I2C master register
+//!   map). Nothing here is bus-specific except `pac195x` at the bottom, which knows
+//!   how to ask a Microchip PAC195x for its name.
+//! - Private to [`crate::bus`], the only thing allowed to construct an [`I2c`] and
+//!   pair every transfer with a mux select. A driver reaching this module directly
+//!   could start a transfer without saying which of the board's three buses it
+//!   meant -- see the module comment in `bus.rs`.
 //!
 //! ## Every wait is bounded
 //!
-//! A poll that can spin forever is indistinguishable from a dead core, and that
-//! confusion has cost real days in this tree (`uart.rs`, `hyperram.rs`). So
-//! `wait` gives up.
-//!
-//! The bound: at 80 kHz a byte and its acknowledge are nine bit periods, or
-//! 112 us, and the longest single command this driver issues -- START, byte,
-//! acknowledge, STOP -- is about twelve, so 150 us, which is 9000 cycles of a
-//! 60 MHz CPU. One turn of the poll loop is a handful of instructions plus an
-//! uncached bus read, so a few thousand turns would already cover it. 200_000 is
-//! two orders of magnitude of headroom, and is the same bound `Uart::put` uses
-//! for the same reason.
-//!
-//! What it is protecting against is not a slow bus. The bit engine's states are
-//! all a fixed number of slots long, so it cannot hang; this catches the case
-//! where the peripheral is not there at all, and turns "the shell stopped
-//! responding" into "i2c: timeout".
+//! - A poll that can spin forever is indistinguishable from a dead core -- has cost
+//!   real days in this tree (`uart.rs`, `hyperram.rs`). `wait` gives up.
+//! - Bound: `I2C_SCL_HZ` is 1 MHz (`gateware/soc/top.py`, Fast-mode Plus, #269), so a
+//!   byte + ack is nine bit periods = 9 us; the longest single command this driver
+//!   issues (START, byte, ack, STOP) is ~12 periods, ~12 us, ~720 cycles at 60 MHz.
+//!   One poll-loop turn is a handful of instructions plus an uncached bus read, so a
+//!   few thousand turns already cover it. `200_000` is ~278x the longest command --
+//!   far more headroom than intended when this bound was set against the bus's
+//!   earlier 80 kHz rate (then ~22x); same bound `Uart::put` uses, same reason.
+//! - Protects against the peripheral not being there at all, not a slow bus: the bit
+//!   engine's states are all a fixed number of slots long and cannot hang. Turns "the
+//!   shell stopped responding" into "i2c: timeout".
 //!
 //! ## The completion interrupt: enabled, and what it is for
 //!
-//! `CTR.IEN` is set and PLIC source 3 is claimed by [`I2c::init`]. Until #246 it
-//! was not: the source was wired in `gateware/soc/top.py`, `irq::init` enabled
-//! only the console and Type-C sources from a list held in that file, and the
-//! bit stayed clear at its reset value. `enabled 00000036` had bit 3 missing and
-//! nothing said so, which is why a peripheral now claims its own source rather
-//! than being remembered by a list somewhere else.
-//!
-//! **This driver still spins on `SR.TIP`.** The two are different bits and
-//! neither waits on the other: `TIP` is "a transfer is in progress" and is what
-//! says the command finished; `IF` is the completion flag and is what raises the
-//! line. A shell command reading a register has nothing else to do while it
-//! waits, so the spin is not the thing to remove first.
-//!
-//! What the interrupt gives today is EVIDENCE -- a source that fires and is
-//! counted, rather than one enabled and silent, which is what #246 asked for.
-//! What it enables next is the conversion that matters: under RTIC the REFRESH
-//! task holds `Devices` for the ~2 ms of a PAC1954 read, and a task that started
-//! a transfer, returned, and was pended again by this source would hold it for
-//! neither. That is #247, and it needs this bit set before it can be written.
+//! - `CTR.IEN` set, PLIC source 3 claimed by [`I2c::init`]. Until #246 it was not:
+//!   source was wired in `gateware/soc/top.py`, `irq::init` enabled only console and
+//!   Type-C from a list held in that file, bit stayed clear at reset. `enabled
+//!   00000036` had bit 3 missing with nothing saying so -- why a peripheral now
+//!   claims its own source instead of being remembered by a list elsewhere.
+//! - **This driver still spins on `SR.TIP`.** `TIP` ("transfer in progress") and `IF`
+//!   (completion flag, raises the line) are different bits, neither waits on the
+//!   other. A shell command reading a register has nothing else to do while it
+//!   waits, so the spin is not the thing to remove first.
+//! - Interrupt today gives EVIDENCE -- a source that fires and is counted rather than
+//!   enabled and silent, per #246. Enables the conversion that matters next: under
+//!   RTIC the REFRESH task holds `Devices` for ~2 ms per PAC1954 read; a task that
+//!   started a transfer, returned, and got re-pended by this source would hold it for
+//!   neither. That's #247, and needs this bit set first.
 //!
 //! ## `wfi` was tried here, and measured worse
 //!
-//! #247 item 2 is this wait, and the obvious conversion is to sleep on the
-//! completion interrupt instead of spinning: a PAC1954 measurement read is nine
-//! bytes at 80 kHz, so this loop burns roughly a millisecond of full-rate
-//! instruction fetch, twenty times a second.
-//!
-//! Measured on the board, matched windows of about 900 million cycles:
-//!
-//!     spin   busy 6.34%   ipc 0.171   worst turn 293,293 cycles
-//!     wfi    busy 7.03%   ipc 0.162   worst turn 463,184 cycles
-//!
-//! Worse on every figure. The reason is in the core rather than in the idea:
-//! **VexiiRiscv implements `WFI` as a trap** -- `TrapReason.WFI` in
-//! `EnvPlugin.scala:144` -- so each wake costs a pipeline flush and a refill
-//! through a 4 KiB I-cache. At this transaction length the flush costs more than
-//! the spin saves, and the spin is a tight loop that stays resident.
-//!
-//! It is recorded rather than deleted because #247 says "no better is a
-//! legitimate outcome for any individual peripheral and worth recording", and
-//! because the arithmetic changes with the transaction: a longer transfer, or a
-//! core where `wfi` is a clock gate rather than a trap, flips it.
-//!
-//! What WOULD pay is not sleeping through the wait but not being in it -- a task
-//! that issues a command, returns, and is pended again by this source. That
-//! needs the driver to become a state machine and it needs the caller to be able
-//! to be resumed, which is the rest of #247.
+//! - #247 item 2: sleep on the completion interrupt instead of spinning. Measured
+//!   and NOT adopted -- #266. Figures there predate the 1 MHz bus rate (#269).
+//! - Worse on every figure measured. Cause is architectural, not just timing:
+//!   **VexiiRiscv implements `WFI` as a trap** (`TrapReason.WFI`,
+//!   `EnvPlugin.scala:144`), so each wake costs a pipeline flush and a refill
+//!   through a 4 KiB I-cache -- at this transaction length the flush costs more
+//!   than the spin saves; the spin is a tight loop that stays resident.
+//! - Recorded, not deleted: #247 treats "no better" as a legitimate, worth-recording
+//!   outcome per peripheral, and the arithmetic flips for a longer transfer or a core
+//!   where `wfi` is a clock gate rather than a trap.
+//! - What WOULD pay: not sleeping through the wait but not being in it -- a task that
+//!   issues a command, returns, and is re-pended by this source. Needs the driver to
+//!   become a state machine and the caller to be resumable -- the rest of #247.
 //!
 //! ## The handler must clear it AT THE PERIPHERAL
 //!
-//! Source 3 is a LEVEL: `self.irq.eq(irq_flag & ien)` in
-//! `gateware/soc/peripherals/i2c_master.py`, and `irq_flag` is cleared only by
-//! writing `CR.IACK`. Completing it at the PLIC while the peripheral still
-//! asserts re-delivers it immediately, which is the livelock `irq.rs` documents.
-//!
-//! [`I2c::acknowledge_interrupt`] is one MMIO write, so unlike the FUSB302B --
-//! whose clear is three read-to-clear registers over I2C, about a millisecond --
-//! it is short enough to do in the handler. That is the whole difference between
-//! the two sources' treatment, and it is a fact about the clear rather than
-//! about the peripheral.
+//! - Source 3 is a LEVEL: `self.irq.eq(irq_flag & ien)` in
+//!   `gateware/soc/peripherals/i2c_master.py`; `irq_flag` clears only via `CR.IACK`.
+//!   Completing at the PLIC while the peripheral still asserts re-delivers it
+//!   immediately -- the livelock `irq.rs` documents.
+//! - [`I2c::acknowledge_interrupt`] is one MMIO write, so unlike the FUSB302B (three
+//!   read-to-clear registers over I2C, ~1 ms) it's short enough to do in the handler.
+//!   That's the whole difference between the two sources' treatment -- a fact about
+//!   the clear, not the peripheral.
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -132,10 +107,12 @@ const SR_RXACK: u8 = 0x80;
 /// a known weakness and it is kept, because the alternative was measured and was
 /// worse -- see "`wfi` was tried" below.
 ///
-/// It is generous by construction: a byte at 80 kHz is 110 us, and this is
-/// 200_000 turns of a loop whose body is one uncached MMIO read. Expiry means
-/// the controller is not there or SCL is being held down by something else, not
-/// that a transfer was slow.
+/// It is generous by construction: a byte at the bus's 1 MHz (`I2C_SCL_HZ`,
+/// `gateware/soc/top.py`) is ~9 us, and this is 200_000 turns of a loop whose body
+/// is one uncached MMIO read -- far more headroom than intended before the bus
+/// moved off its earlier 80 kHz rate (#269). Expiry means the controller is not
+/// there or SCL is being held down by something else, not that a transfer was
+/// slow.
 const WAIT_LIMIT: u32 = 200_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

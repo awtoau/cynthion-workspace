@@ -1,72 +1,66 @@
 //! The two FUSB302B Type-C controllers, and the one bus they take turns on.
 //!
-//! **Both answer to I2C address `0x22`**, which is why the board gives them
-//! separate pin-sets and why there is a mux at all: two devices at one fixed
-//! address cannot be told apart on one wire. So a transaction here is always
-//! two steps -- select the bus, then talk -- and the select is what stands in
-//! for an address. `docs/chips/fusb302b-type-c.md` has the part's register map;
-//! it is an external device, so its registers are not in the generated PAC.
+//! - **Both answer to I2C address `0x22`**, why the board gives them separate
+//!   pin-sets and why there's a mux at all: two devices at one fixed address
+//!   can't be told apart on one wire. A transaction here is always two steps --
+//!   select the bus, then talk -- the select stands in for an address.
+//!   `docs/chips/fusb302b-type-c.md` has the part's register map; external
+//!   device, so its registers are not in the generated PAC.
 //!
 //! ## What is configured, and what is deliberately not
 //!
-//! Enough for the controller to interrupt on a state change, and nothing that
-//! changes what the port presents to whatever is plugged into it:
+//! Enough for the controller to interrupt on a state change, nothing that
+//! changes what the port presents to whatever is plugged in:
 //!
-//!   * `POWER` -- bandgap and wake, the measure block, and the receiver. Not the
-//!     internal oscillator, which is only needed to *send* PD messages.
-//!   * `MASK`  -- unmask `I_BC_LVL` and `I_VBUSOK`, mask the rest.
-//!   * `MASKA`/`MASKB` -- everything masked. They carry PD and hard-reset
-//!     events, and nothing here acts on one yet; unmasking them would produce
-//!     interrupts with no handler, which on a shared level-sensitive line is a
-//!     storm rather than a curiosity.
-//!   * `SWITCHES0` -- `MEAS_CC1` only. [`state`] toggles the measure select to
-//!     `MEAS_CC2` and back to read the other band; that select routes a pin to
-//!     an internal comparator and drives nothing, so the port is unchanged
-//!     electrically either way.
-//!   * `CONTROL0` -- clear `INT_MASK`, which is what lets the `INT` pin assert
-//!     at all.
+//! - `POWER` -- bandgap, wake, measure block, receiver. Not the internal
+//!   oscillator, only needed to *send* PD messages.
+//! - `MASK` -- unmask `I_BC_LVL` and `I_VBUSOK`, mask the rest.
+//! - `MASKA`/`MASKB` -- everything masked. Carry PD and hard-reset events;
+//!   nothing here acts on one yet, and unmasking would produce interrupts with
+//!   no handler -- a storm, not a curiosity, on a shared level-sensitive line.
+//! - `SWITCHES0` -- `MEAS_CC1` only. [`state`] toggles the measure select to
+//!   `MEAS_CC2` and back to read the other band; that select routes a pin to an
+//!   internal comparator and drives nothing, so the port is unchanged
+//!   electrically either way.
+//! - `CONTROL0` -- clear `INT_MASK`, what lets the `INT` pin assert at all.
 //!
-//! **The CC pull-downs (`PDWN1`/`PDWN2`) are NOT enabled, and that is the one
-//! decision here worth arguing about.** They would give full attach detection,
-//! and they are the only bit in this sequence that changes the port
-//! electrically: presenting Rd tells a source this port is a sink. One of these
-//! two controllers is on AUX, which is the port carrying the USB console this
-//! firmware answers on -- so the failure mode of getting it wrong is losing the
-//! console, on a board whose Type-C CC lines have never been driven by anything
-//! in this tree. `MEAS_CC1` routes CC1 to the internal comparator and drives
-//! nothing, so `BC_LVL` still reports the voltage a source's Rp puts on CC and
-//! `VBUSOK` still reports power appearing and disappearing. That is a state
+//! **The CC pull-downs (`PDWN1`/`PDWN2`) are NOT enabled -- the one decision
+//! here worth arguing about.** They'd give full attach detection and are the
+//! only bit in this sequence that changes the port electrically: presenting Rd
+//! tells a source this port is a sink. One of these two controllers is on AUX,
+//! carrying the USB console this firmware answers on -- so getting it wrong
+//! loses the console, on a board whose Type-C CC lines have never been driven
+//! by anything in this tree. `MEAS_CC1` routes CC1 to the internal comparator
+//! and drives nothing, so `BC_LVL` still reports the voltage a source's Rp puts
+//! on CC and `VBUSOK` still reports power appearing/disappearing -- a state
 //! change on both ports, obtained without asserting anything onto a connector.
-//!
-//! Enabling the pull-downs is a one-line change with a known consequence, and
-//! this comment is what the next person should read before making it.
+//! Enabling the pull-downs is a one-line change with a known consequence; this
+//! comment is what the next person should read before making it.
 //!
 //! ## The interrupt, and why the handler does not touch this file
 //!
-//! **One PLIC source per `int` line**, not an OR of the two -- see
-//! `gateware/soc/peripherals/i2c_mux.py`, which says so where the sources are wired, and
-//! `docs/architecture.md` decision 8 for why. This comment used to claim the
-//! opposite, while citing the file that contradicts it.
-//!
-//! The distinction is not cosmetic. A SHARED level obliges whatever services it
-//! to clear *every* asserting device before the source is live again, or the line
-//! stays high, the interrupt re-fires immediately, and the CPU makes no progress
-//! -- a hang. One source per device removes that obligation rather than
-//! documenting it, and the PLIC had 27 spare sources, so sharing would have
-//! bought nothing.
-//!
-//! Each line is still a LEVEL, so the trap in `docs/chips/fusb302b-type-c.md`
-//! applies per port: a source whose device has not been read stays asserted.
-//!
-//! Clearing means reading the device's `INTERRUPT` registers, which is an I2C
-//! transaction of about a millisecond at 80 kHz over the same controller the
-//! foreground uses for the power monitor. Doing that inside a handler would be
-//! two things this firmware refuses: a long spin in interrupt context, and a
-//! second master on a peripheral with no lock. So the handler MASKS the source
-//! and records the event (`src/irq.rs`, `src/events.rs`), and [`service`] --
-//! called from the main loop -- clears every asserting device and re-enables it.
-//! The storm cannot happen because the source is off for the whole window in
-//! which the line is still asserted.
+//! - **One PLIC source per `int` line**, not an OR of the two -- see
+//!   `gateware/soc/peripherals/i2c_mux.py` (where the sources are wired) and
+//!   `docs/architecture.md` decision 8 (why). This comment used to claim the
+//!   opposite while citing the file that contradicts it.
+//! - Not cosmetic: a SHARED level obliges whatever services it to clear *every*
+//!   asserting device before the source is live again, or the line stays high,
+//!   the interrupt re-fires immediately, and the CPU makes no progress -- a
+//!   hang. One source per device removes the obligation rather than documenting
+//!   it; the PLIC had 27 spare sources, so sharing would have bought nothing.
+//! - Each line is still a LEVEL, so the trap in `docs/chips/fusb302b-type-c.md`
+//!   applies per port: a source whose device has not been read stays asserted.
+//! - Clearing means reading the device's `INTERRUPT` registers -- an I2C
+//!   transaction over the same controller the foreground uses for the power
+//!   monitor, ~80 us at the bus's current 1 MHz (`I2C_SCL_HZ`,
+//!   `gateware/soc/top.py`; was ~1 ms before #269 raised the rate from 80 kHz).
+//!   Doing that inside a handler would be two things this firmware refuses: a
+//!   long spin in interrupt context, and a second master on a peripheral with
+//!   no lock. So the handler MASKS the source and records the event
+//!   (`src/irq.rs`, `src/events.rs`), and [`service`] -- called from the main
+//!   loop -- clears every asserting device and re-enables it. The storm cannot
+//!   happen because the source is off for the whole window in which the line is
+//!   still asserted.
 
 use core::fmt;
 use core::fmt::Write as _;
@@ -528,9 +522,11 @@ impl fmt::Display for Interrupts {
 ///
 /// The measure block is given no explicit settling delay and does not need one:
 /// each write and the read after it are separate I2C transactions, three bytes
-/// and four bytes at 80 kHz, so several hundred microseconds pass between the
-/// select moving and `STATUS0` being sampled. A delay here would be a number with
-/// no reason behind it sitting on top of one the bus already provides.
+/// and four bytes at the bus's 1 MHz (`I2C_SCL_HZ`, `gateware/soc/top.py`), so
+/// tens of microseconds pass between the select moving and `STATUS0` being
+/// sampled -- hundreds of microseconds before #269 raised the rate from
+/// 80 kHz. A delay here would be a number with no reason behind it sitting on
+/// top of one the bus already provides.
 ///
 /// The read-only registers are unchanged in character: `DEVICE_ID`, `STATUS0`,
 /// `STATUS1A` and `CONTROL2` have no read side effect, so unlike [`clear`] this
@@ -540,8 +536,8 @@ impl fmt::Display for Interrupts {
 /// **The sweep is neither free nor invisible to the part.** It writes `SWITCHES0`
 /// three times, and moving the select changes what the comparator sees, which the
 /// FUSB302B reports as `I_BC_LVL` -- an interrupt caused entirely by looking. It
-/// also costs five I2C transactions on a bus shared with the power monitor at
-/// 80 kHz.
+/// also costs five I2C transactions on a bus shared with the power monitor, at
+/// the bus's current 1 MHz.
 ///
 /// Orientation only changes when a cable moves, so it is read on ATTACH and
 /// carried forward rather than re-derived every poll. Doing it per poll produced

@@ -2,78 +2,71 @@
 //!
 //! Three regions, measured with `mcycle` and `minstret` around a volatile walk:
 //!
-//!     region     where         cached          patterns
-//!     ---------  ------------  --------------  ---------------------
-//!     bram       a static      main=1 exe=1    read/write, seq/random
-//!     flash      0x10000000    main=1 exe=1    read only, seq/random
-//!     hyperram   CSR port      main=0, never   read/write, seq/random
+//! | region   | where      | cached          | patterns                |
+//! |----------|------------|-----------------|---------------------------|
+//! | bram     | a static   | main=1, exe=1   | read/write, seq/random   |
+//! | flash    | 0x10000000 | main=1, exe=1   | read only, seq/random    |
+//! | hyperram | CSR port   | main=0, never   | read/write, seq/random   |
 //!
 //! ## The ratio is the measurement
 //!
-//! The D-cache is 4 KiB: 64 sets, 1 way, 64-byte lines. Sets and ways come from
-//! `--lsu-l1-sets 64 --lsu-l1-ways 1` in `gateware/soc/cpu/cpu.py`; the
-//! line length is the bank memory in the generated core,
-//! `LsuL1Plugin_logic_banks_0_mem`, which is 1024 words -- 4 KiB over 64 sets is
-//! 64 bytes. The I-cache is the same shape.
+//! - D-cache and I-cache: 4 KiB, 64 sets, 1 way, 64-byte lines. From
+//!   `--lsu-l1-sets 64 --lsu-l1-ways 1` in `gateware/soc/cpu/cpu.py`; line
+//!   length is the bank memory in the generated core,
+//!   `LsuL1Plugin_logic_banks_0_mem`, 1024 words -- 4 KiB over 64 sets is 64
+//!   bytes.
+//! - Sequential walk: one refill per 16 words. Random walk over a working set
+//!   much larger than 4 KiB misses on nearly every access.
+//! - **The ratio between them is what proves the cache is doing anything.** A
+//!   flat result means either the cache is not working or the region is not
+//!   cached -- HyperRAM rows are the control, `main=0`, must be flat.
+//! - Each region walked at two sizes: smaller than the cache measures the
+//!   cache, larger measures the memory behind it -- the difference is the
+//!   evidence.
 //!
-//! So a sequential walk takes one refill per 16 words and a random walk over a
-//! working set much larger than 4 KiB misses on nearly every access. **The ratio
-//! between them is what proves the cache is doing anything.** A flat result means
-//! either the cache is not working or the region is not cached -- and the
-//! HyperRAM rows are the control, because that port is `main=0` and must be flat.
-//!
-//! Each region is walked at two sizes for the same reason: a working set smaller
-//! than 4 KiB measures the cache, a larger one measures the memory behind it, and
-//! the difference between the two is the evidence.
-//!
-//!     region     small    large    accesses seq / random   random misses
-//!     ---------  -------  -------  ---------------------   -------------
-//!     bram         2 KiB    8 KiB    4096 / 4096            ~50%
-//!     flash        2 KiB   16 KiB    4096 /  512            ~75%
-//!     hyperram     1 KiB    4 KiB    1024 / 1024            uncached
+//! | region   | small | large  | accesses seq / random | random misses |
+//! |----------|-------|--------|--------------------------|-----------------|
+//! | bram     | 2 KiB | 8 KiB  | 4096 / 4096             | ~50%            |
+//! | flash    | 2 KiB | 16 KiB | 4096 / 512              | ~75%            |
+//! | hyperram | 1 KiB | 4 KiB  | 1024 / 1024             | uncached        |
 //!
 //! ## Short on purpose
 //!
-//! The whole command is about 25 ms. Every comparison here is between numbers
-//! that differ by a factor, not by a per cent, so it converges in a few thousand
-//! accesses and running longer buys precision nobody is going to use. The sizes
-//! are set by what the cache is -- 64 sets -- rather than by a clock: the small
-//! set is half of it and the large sets are 2x to 4x, which is enough to be
-//! clearly outside.
-//!
-//! Each flash miss is a whole 64-byte line over a single-bit SPI bus, so the
-//! random flash walk is 512 accesses and still the longest case at a few
-//! milliseconds. Nothing here is averaged over repeats; a case that moved
-//! between runs would need to say so and spend more, and none does.
-//!
-//! Block RAM's large set is 8 KiB rather than tens of KiB because the buffer is
-//! `.bss` inside the 64 KiB the image already lives in; see `RAM_WORDS`.
+//! - Whole command ~25 ms. Every comparison here differs by a factor, not a per
+//!   cent, so it converges in a few thousand accesses; longer buys precision
+//!   nobody uses.
+//! - Sizes set by what the cache is -- 64 sets -- rather than a clock: the
+//!   small set is half of it, the large sets are 2x to 4x, enough to be
+//!   clearly outside.
+//! - Each flash miss is a whole 64-byte line over a single-bit SPI bus, so the
+//!   random flash walk (512 accesses) is still the longest case, a few ms.
+//!   Nothing here is averaged over repeats; a case that moved between runs
+//!   would need to say so and spend more, and none does.
+//! - Block RAM's large set is 8 KiB rather than tens of KiB because the buffer
+//!   is `.bss` inside the 64 KiB the image already lives in; see `RAM_WORDS`.
 //!
 //! ## What is done about the optimiser
 //!
-//! Every access is `read_volatile` or `write_volatile`, so none of them can be
-//! folded away, hoisted out of the loop or merged with its neighbour. Reads are
-//! accumulated into a checksum that is printed, so the load has a use even
-//! without the volatile. `bench` also verifies content rather than absence of
-//! error: block RAM and HyperRAM are filled with a known pattern and read back
-//! word for word, and flash is checked against the two values `check` uses.
-//!
-//! Instructions per access is printed beside cycles per access. That is what
-//! separates a stalled bus from slow code, and it is also how the two patterns
-//! are compared honestly: a random step is an xorshift, a sequential step is an
-//! increment, so the random loop retires more instructions per access and the
-//! column says by how much.
+//! - Every access is `read_volatile`/`write_volatile`: none can be folded away,
+//!   hoisted out of the loop or merged with its neighbour. Reads accumulate
+//!   into a printed checksum, so the load has a use even without the volatile.
+//! - `bench` verifies content, not absence of error: block RAM and HyperRAM
+//!   filled with a known pattern and read back word for word; flash checked
+//!   against the two values `check` uses.
+//! - Instructions per access printed beside cycles per access: separates a
+//!   stalled bus from slow code, and compares the two patterns honestly -- a
+//!   random step is an xorshift, a sequential step is an increment, so the
+//!   random loop retires more instructions per access and the column says by
+//!   how much.
 //!
 //! ## What this does not measure
 //!
-//! HyperRAM here is the CSR staging port, one 16-bit word per transaction with
-//! no FIFO and no burst -- not a memory-mapped region. Its numbers are the port's,
-//! not the part's, and no cache can apply to them. Making it a `main=1` region
-//! is #90 and is not done.
-//!
-//! The 1 ms tick and any console interrupt land inside the measured interval.
-//! At worst that is a few hundred cycles per millisecond against runs of tens of
-//! thousands, so it is under a per cent everywhere and is not corrected for.
+//! - HyperRAM here is the CSR staging port -- one 16-bit word per transaction,
+//!   no FIFO, no burst, not a memory-mapped region. Numbers are the port's, not
+//!   the part's; no cache applies. Making it a `main=1` region is #90, not done.
+//! - The 1 ms tick and any console interrupt land inside the measured interval:
+//!   at worst a few hundred cycles per ms against runs of tens of thousands,
+//!   under a per cent everywhere, not corrected for.
 
 use core::fmt::Write;
 use core::ptr::{read_volatile, write_volatile};

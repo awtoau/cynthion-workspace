@@ -91,36 +91,34 @@ if not VEXII.is_dir():
 GENERATE_FLAGS = [
     "--xlen", "32",
     "--with-rvm", "--with-rvc", "--with-rva", "--with-rdtime",
-    # 128 sets x 1 way x 64 B = 8 KiB each. `generate()` substitutes the sets
-    # from its `cache_sets` argument, so these two literals are the default
-    # rather than the last word -- `top.py`'s CACHE_SETS is. They are kept equal
-    # to it so no reader has to work out which number won.
+    # 128 sets x 1 way x 64 B = 8 KiB each. `generate()` substitutes sets from
+    # its `cache_sets` argument -- these two literals are the default, not the
+    # last word (`top.py`'s CACHE_SETS is); kept equal so no reader has to work
+    # out which number won.
     #
-    # ONE WAY IS A CHOICE THAT IS STILL OPEN, and an earlier version of this
-    # comment claimed it was forced. It is not. The claim was that
-    # `flash_cache_flush()` in `scripts/riscv_firmware.py` needs a direct-mapped
-    # cache, because it evicts by reading the cache's size at line stride. That
-    # is wrong twice over:
+    # ONE WAY IS STILL AN OPEN CHOICE, not forced. An earlier version of this
+    # comment claimed `flash_cache_flush()` (`scripts/riscv_firmware.py`) needed
+    # a direct-mapped cache, since it evicts by reading the cache's size at line
+    # stride. Wrong twice over:
+    #   * replacement policy is PLRU, not random (`FetchL1Plugin.scala:187`,
+    #     `Plru.scala`); a sweep of the FULL cache size touches every set
+    #     `wayCount` times with distinct tags, evicting every way under PLRU.
+    #     The flush already reads the full size, so it survives ways > 1.
+    #   * that flush is only in the GENERATED C test firmware -- the Rust
+    #     firmware uses a real `fence.i` (`firmware/cynthion-soc/src/main.rs`),
+    #     so the product never depended on the sweep at all.
     #
-    #   * the replacement policy is PLRU, not random (`FetchL1Plugin.scala:187`,
-    #     `Plru.scala`), and a sweep of the FULL cache size touches every set
-    #     `wayCount` times with distinct tags -- which evicts every way under
-    #     PLRU. The flush already reads the full size, so it survives ways > 1.
-    #   * that flush is only in the GENERATED C test firmware. The Rust firmware
-    #     uses a real `fence.i` (`firmware/cynthion-soc/src/main.rs`), so the
-    #     product never depended on the sweep at all.
+    # Real trade: conflict misses against Fmax and block RAM. RTIC doesn't
+    # context-switch (preempts on one stack), but each handler is still a
+    # separate instruction working set -- in a direct-mapped cache, two hot
+    # handlers colliding on an index evict each other regardless of cache size.
+    # Associativity fixes that; capacity doesn't. Against it: `bankCount =
+    # wayCount` (`FetchL1Plugin.scala:128`), so ways cost block RAM fast, and a
+    # way-select mux lands in the hit path at an Fmax the BTB already had to be
+    # relaxed to meet.
     #
-    # The real trade is conflict misses against Fmax and block RAM. RTIC does not
-    # context-switch -- it preempts on one stack -- but each handler is still a
-    # separate instruction working set, and in a direct-mapped cache two hot
-    # handlers that collide on an index evict each other no matter how large the
-    # cache is. Associativity fixes that; capacity does not. Against it,
-    # `bankCount = wayCount` (`FetchL1Plugin.scala:128`) so ways cost block RAM
-    # quickly, and a way-select mux lands in the hit path at an Fmax the BTB
-    # already had to be relaxed to meet.
-    #
-    # `scripts/soc_cache_sweep.py` measures that trade rather than arguing it.
-    # Note 3 ways does not exist: PLRU asserts `isPow2` on the way count.
+    # `scripts/soc_cache_sweep.py` measures the trade rather than arguing it.
+    # 3 ways does not exist: PLRU asserts `isPow2` on the way count.
     "--with-fetch-l1", "--fetch-l1-sets", "128", "--fetch-l1-ways", "1",
     "--with-lsu-l1", "--lsu-l1-sets", "128", "--lsu-l1-ways", "1",
     # All three are needed. A cached core still has an uncached LSU path --
@@ -130,63 +128,62 @@ GENERATE_FLAGS = [
     # LsuPlugin_logic_bus_* wires.
     "--fetch-wishbone", "--lsu-wishbone", "--lsu-l1-wishbone",
 
-    # HARDWARE PERFORMANCE COUNTERS, and they replace a night of inference.
+    # HARDWARE PERFORMANCE COUNTERS -- replace a night of inference.
     #
-    # Four `mhpmcounter`s plus `mcycle` and `minstret`, selected by writing an
-    # event id to the matching `mhpmevent`. VexiiRiscv's own list
-    # (`misc/Service.scala`) includes the two that matter here:
+    # Four `mhpmcounter`s plus `mcycle`/`minstret`, selected by writing an event
+    # id to the matching `mhpmevent`. VexiiRiscv's list (`misc/Service.scala`),
+    # the two that matter here:
     #
     #     0x04  STALLED_CYCLES_FRONTEND   waiting on INSTRUCTION fetch
     #     0x05  STALLED_CYCLES_BACKEND    waiting on DATA
     #     0x18  DCACHE_LOAD_ACCESS        loads that reached the D-cache
     #
-    # `bench` measured HyperRAM at 13.3 MB/s when the bus was doing 63.1, because
-    # the walk's own loop is fetched from flash and the CPU spent 79% of every
-    # cache line stalled on instruction fetch rather than on the memory under
-    # test. `STALLED_CYCLES_FRONTEND` states that in one number instead of
-    # requiring four gateware probes and four wrong theories to corner it.
+    # `bench` measured HyperRAM at 13.3 MB/s when the bus was doing 63.1: the
+    # walk's own loop is fetched from flash and the CPU spent 79% of every cache
+    # line stalled on instruction fetch, not on the memory under test.
+    # `STALLED_CYCLES_FRONTEND` states that in one number instead of four
+    # gateware probes and four wrong theories.
     #
-    # Four is `ParamSimple`'s own default for the configurations that enable
-    # them. The plugin keeps 8-bit registers per counter and flushes into the
-    # 64-bit CSR RAM on MSB set, precisely so this is cheap on an FPGA -- and
-    # `zicntr`/`zihpm` are added to the reported ISA, which `info` will show.
+    # Four is `ParamSimple`'s own default for configurations that enable them.
+    # Plugin keeps 8-bit registers per counter, flushes into the 64-bit CSR RAM
+    # on MSB set -- cheap on an FPGA. `zicntr`/`zihpm` added to the reported
+    # ISA, visible in `info`.
     "--performance-counters", "4",
 
-    # RISC-V debug module, reached through the ECP5's EXISTING JTAG chain.
+    # RISC-V debug module, through the ECP5's EXISTING JTAG chain.
     #
-    # --debug-jtag-instruction, not --debug-jtag-tap: the tap variant builds its own TAP
-    # needing four dedicated pins, and on this board JTAG belongs to Apollo, which uses
-    # it to configure the FPGA. The instruction variant hangs the debug module off a user
-    # instruction (ER1/ER2) in the chain that is already there -- the same mechanism
-    # LUNA's JTAGRegisterInterface uses -- so openocd and Apollo share one TAP.
+    # --debug-jtag-instruction, not --debug-jtag-tap: the tap variant builds its
+    # own TAP needing four dedicated pins, and JTAG belongs to Apollo here (FPGA
+    # configuration). The instruction variant hangs the debug module off a user
+    # instruction (ER1/ER2) already in the chain -- same mechanism LUNA's
+    # JTAGRegisterInterface uses -- so openocd and Apollo share one TAP.
     #
-    # This buys halt, step, register and memory inspection. Without it a CPU that stops
-    # printing is indistinguishable from a CPU that stopped running, which is exactly the
-    # ambiguity that has cost the most time on this project.
+    # Buys halt, step, register and memory inspection. Without it a CPU that
+    # stopped printing is indistinguishable from a CPU that stopped running --
+    # the ambiguity that has cost the most time on this project.
     "--debug-jtag-instruction",
 
     # Branch prediction: a branch target buffer.
     #
-    # Without one the core still has BranchPlugin and LearnPlugin, which resolve
-    # and record branches -- but nothing acts on the record, so every taken
-    # branch redirects the three-stage fetch and the pipeline refills. Measured
-    # at seven instructions in 28.77 cycles with every one hitting the I-cache
-    # (#140): four cycles an instruction with no memory in the way at all.
+    # Without one, BranchPlugin/LearnPlugin still resolve and record branches
+    # but nothing acts on the record, so every taken branch redirects the
+    # three-stage fetch and the pipeline refills. Measured at 7 instructions in
+    # 28.77 cycles with every one hitting the I-cache (#140): 4 cycles/
+    # instruction with no memory in the way at all.
     #
     # --with-btb is BtbPlugin at Param.scala's defaults: 512 sets, one chunk
     # (single issue), 16-bit hash, dual-port RAM.
     #
-    # --relaxed-btb is NOT optional here, and it is not a precaution. At the
-    # default jumpAt = 1 the BTB's block RAM read, its 16-bit hash compare, the
-    # hit decision and the fetch redirect are all one cycle, and nextpnr closes
-    # at 57.55 MHz -- a hard FAIL against the 60 MHz constraint, with the
-    # critical path starting at `BtbPlugin_logic_mem.0.0.DOA8`, 4.10 ns of
-    # clk-to-q before a single LUT. Relaxed moves the redirect to jumpAt = 2, so
-    # the compare gets a cycle of its own.
+    # --relaxed-btb is NOT optional, not a precaution: at default jumpAt = 1 the
+    # BTB's block RAM read, 16-bit hash compare, hit decision and fetch redirect
+    # are all one cycle, and nextpnr closes at 57.55 MHz -- a hard FAIL against
+    # the 60 MHz constraint, critical path starting at
+    # `BtbPlugin_logic_mem.0.0.DOA8`, 4.10 ns clk-to-q before a single LUT.
+    # Relaxed moves the redirect to jumpAt = 2, giving the compare its own
+    # cycle.
     #
-    # What that costs is one cycle on a correctly predicted branch instead of
-    # zero -- still far cheaper than the full refetch it replaces, which is what
-    # the bench numbers show.
+    # Cost: one cycle on a correctly predicted branch instead of zero -- far
+    # cheaper than the full refetch it replaces (bench numbers above).
     #
     # rasDepth follows --with-ras and is 0 without it, so these flags alone are
     # the BTB and nothing else.

@@ -21,42 +21,40 @@
 //! | the shell's prompt and its echo of a keypress | no    |
 //! | the reply to a typed command                | no      |
 //!
-//! The rule is whether a human asked for the line. **A log records what
-//! happened; a shell reply is half of a conversation the reader is already in**,
-//! and a timestamp on it is noise in a column they are trying to scan. It would
-//! also destroy the property that makes the column useful: every stamped line
-//! is an event, so the gaps between them are the intervals between events.
+//! - Rule: whether a human asked for the line. **A log records what happened; a
+//!   shell reply is half of a conversation the reader is already in**, and a
+//!   timestamp on it is noise in a column they're scanning. It would also
+//!   destroy what makes the column useful: every stamped line is an event, so
+//!   the gaps between them are the intervals between events.
 //!
 //! ## The timestamp is captured when an event is PUSHED
 //!
-//! An interrupt handler may not print (#122, and `src/events.rs`), so what it
-//! wants to say goes into a ring that normal context drains. If the ring entry
-//! were stamped at drain, **every deferred line would report when it was
-//! printed** -- which is exactly wrong for the events most worth timing: a
-//! Type-C state change, a console overrun, a fault. Those are the lines a reader
-//! is trying to correlate with something else, and the drain time correlates
-//! with nothing but the shell's own business.
-//!
-//! So `events::push` calls [`now`] and stores the result alongside the code and
-//! payload, and `events::report` formats [`Stamp`] from the stored value rather
-//! than from the clock. It also makes the drop counter more useful: a gap in the
-//! column shows where the lost lines were.
+//! - An interrupt handler may not print (#122, `src/events.rs`), so what it
+//!   wants to say goes into a ring that normal context drains. If the ring
+//!   entry were stamped at drain, **every deferred line would report when it
+//!   was printed** -- exactly wrong for the events most worth timing: a Type-C
+//!   state change, a console overrun, a fault. Those are the lines a reader is
+//!   correlating with something else, and drain time correlates with nothing
+//!   but the shell's own business.
+//! - `events::push` calls [`now`] and stores the result alongside the code and
+//!   payload; `events::report` formats [`Stamp`] from the stored value, not
+//!   from the clock. Also makes the drop counter more useful: a gap in the
+//!   column shows where the lost lines were.
 //!
 //! ## Integer only
 //!
-//! Division and modulo by 1000, no soft-float. This CPU is `rv32imac`; a `f32`
-//! divide would pull in a compiler-builtin routine and put it in a boot path, to
-//! render a number that is already an integer number of milliseconds.
-//! `src/power.rs` establishes the same approach for volts and milliamps.
+//! - Division and modulo by 1000, no soft-float. This CPU is `rv32imac`; an
+//!   `f32` divide would pull in a compiler-builtin routine and put it in a boot
+//!   path, to render a number that's already an integer number of
+//!   milliseconds. `src/power.rs` does the same for volts and milliamps.
 //!
 //! ## The column is stable before the counter runs
 //!
-//! Anything printed before `timer::start` -- the banner and everything the
-//! bootloader says -- is stamped `000000.000` rather than left unstamped. A
-//! column that begins partway down the output is harder to read than one that
-//! begins at zero, and a reader who sees the first few lines share a stamp
-//! learns something true: they happened before there was a clock to tell them
-//! apart.
+//! - Anything printed before `timer::start` (banner, bootloader output) is
+//!   stamped `000000.000` rather than left unstamped. A column beginning
+//!   partway down the output is harder to read than one beginning at zero, and
+//!   a reader who sees the first few lines share a stamp learns something
+//!   true: they happened before there was a clock to tell them apart.
 
 use core::fmt;
 

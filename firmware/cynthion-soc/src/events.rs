@@ -2,67 +2,55 @@
 //!
 //! [`push`] records a code, a 64-bit payload and the time in a ring; the main
 //! loop drains it with [`drain`] and formats there, on a console it owns.
-//!
-//! The time is captured by [`push`] and not by [`drain`], which is the one
-//! thing about this ring that is easy to get backwards -- see `src/log.rs`.
+//! **The time is captured by [`push`], not [`drain`]** -- easy to get backwards,
+//! see `src/log.rs`.
 //!
 //! ## A handler must never print
 //!
-//! `Uart::put` waits for `LSR.THRE`, so writing to a console from a handler
-//! blocks it for as long as the host takes to drain a FIFO. **On a
-//! level-sensitive shared source that is not a delay, it is a hang** -- the line
-//! is still asserted, the interrupt is retaken the moment the handler returns,
-//! and it presents as a dead CPU with a running clock. This project has mistaken
-//! that for dead gateware more than once.
-//!
-//! Formatting is deferred for a second reason: `core::fmt` is not cheap. A
-//! `writeln!` with two arguments is a dispatch through `Arguments`, a conversion
-//! per value and a call per fragment. A code and a payload is four stores.
+//! - `Uart::put` waits for `LSR.THRE` -- blocks for as long as the host takes to
+//!   drain a FIFO.
+//! - On a **level-sensitive shared source that is a hang, not a delay**: the line
+//!   stays asserted, the interrupt is retaken on return, and it presents as a dead
+//!   CPU with a running clock. Mistaken for dead gateware here more than once.
+//! - `core::fmt` is also not cheap: `writeln!` with two arguments is a dispatch
+//!   through `Arguments`, a conversion per value and a call per fragment. A code
+//!   and a payload is four stores.
 //!
 //! ## A record is two numbers, never a string
 //!
-//! A handler that formats runs `core::fmt` inside an interrupt. A handler that
-//! copies a string needs a bound, a length field and a truncation rule, and
-//! entries stop being the same size -- so the ring stops being a plain array.
-//! A code and one 64-bit value has none of that, and the tag in the code's top
-//! byte is what makes the value readable again at drain.
+//! A string needs a bound, a length field and a truncation rule, and entries stop
+//! being one size -- so the ring stops being a plain array. The tag in the code's
+//! top byte is what makes the value readable again at drain.
 //!
-//! | tag | payload                  | rendered as         |
-//! | --- | ------------------------ | ------------------- |
-//! | 0   | none                     | `(no payload)`      |
-//! | 1   | `u8`                     | `u8 a5`             |
-//! | 2   | `u16`                    | `u16 beef`          |
-//! | 3   | `u32`                    | `u32 deadbeef`      |
-//! | 4   | `u64`                    | `u64 0123456789ab…` |
-//! | 5   | `f32`                    | raw bits, see below |
-//! | 8   | `f64`                    | raw bits, see below |
-//! | 16  | 8 x `u8`                 | `bytes 00 11 22 …`  |
-//! | 17  | 8 ASCII characters       | `"cynthion"`        |
+//! | tag | payload            | rendered as         |
+//! | --- | ------------------ | ------------------- |
+//! | 0   | none               | `(no payload)`      |
+//! | 1   | `u8`               | `u8 a5`             |
+//! | 2   | `u16`              | `u16 beef`          |
+//! | 3   | `u32`              | `u32 deadbeef`      |
+//! | 4   | `u64`              | `u64 0123456789ab…` |
+//! | 5   | `f32`              | raw bits, see below |
+//! | 8   | `f64`              | raw bits, see below |
+//! | 16  | 8 x `u8`           | `bytes 00 11 22 …`  |
+//! | 17  | 8 ASCII characters | `"cynthion"`        |
 //!
-//! Tag 17 is what keeps the no-strings rule liveable: eight characters is a
-//! short identifier with no allocator, no length field and no truncation rule.
-//! Tags 16 and 17 read the value **big-endian** -- byte 0 is the top byte -- so
-//! the hex of the value and the characters run in the same direction.
-//!
-//! A value wider than its tag is not truncated silently: [`Payload`] prints the
-//! masked value and then the whole one, marked. The tag is a promise and a
-//! broken promise should be visible on the line that broke it.
+//! - Tag 17 makes the no-strings rule liveable: an 8-character identifier with no
+//!   allocator, length field or truncation rule.
+//! - Tags 16 and 17 read the value **big-endian** (byte 0 is the top byte), so hex
+//!   and characters run the same direction.
+//! - A value wider than its tag is **not** truncated silently: [`Payload`] prints
+//!   the masked value and then the whole one, marked.
 //!
 //! ## Float tags are reserved, not implemented
 //!
-//! This CPU is `rv32imac`: **no F extension**. Carrying tags 5 and 8 costs
-//! nothing -- they are 64 bits like everything else -- but *rendering* one means
-//! `core::fmt`'s float path and the compiler-builtins soft-float it calls, which
-//! is hundreds of bytes in an image that has 32 KiB of block RAM and a boot path
-//! that must fit beside it. `src/power.rs` avoids the same thing deliberately,
-//! with exact integer rationals for volts and milliamps.
-//!
-//! So the two tags exist and the drain prints their **raw bits** with a note
-//! saying why. Written down here rather than left as an absence, because an
-//! unimplemented arm that looks like an oversight is the trap: the next person
-//! adds the formatter, the image grows by a page, and nothing says it was a
-//! decision. If a float payload is ever genuinely wanted, the cheap answer is a
-//! fixed-point integer under tag 3 or 4.
+//! - This CPU is `rv32imac`: **no F extension**.
+//! - Carrying tags 5 and 8 is free (64 bits like the rest). *Rendering* one pulls
+//!   in `core::fmt`'s float path and compiler-builtins soft-float -- hundreds of
+//!   bytes. `src/power.rs` avoids the same thing with exact integer rationals.
+//! - So [`drain`] prints their **raw bits** with a note saying why.
+//! - Recorded because an unimplemented arm that looks like an oversight is the
+//!   trap: someone adds the formatter and the image grows by a page.
+//! - Want a float payload? Use fixed-point under tag 3 or 4.
 //!
 //! ## The code: a tag, a subsystem and a number
 //!
@@ -73,77 +61,63 @@
 //!            ^^^^    number     bits 15.. 0, which of their events
 //! ```
 //!
-//! Byte aligned so the hex reads directly, and built by [`code`] rather than
-//! written as a literal, so a code carries its own type declaration:
-//! `code(TAG_U8, SUB_TYPE_C, 1)` says what the payload is right where the event
-//! is named. Codes stay greppable -- a line reading `code 01.01.0001` leads to
-//! `SUB_TYPE_C` and to the one constant with number 1 -- instead of becoming
-//! magic numbers nobody can trace.
-//!
-//! | subsystem | who                                                   | const        |
-//! | --------- | ----------------------------------------------------- | ------------ |
-//! | 0x00      | the ring itself: its self-test, its own health         | [`SUB_RING`] |
+//! | subsystem | who                                                   | const          |
+//! | --------- | ----------------------------------------------------- | -------------- |
+//! | 0x00      | the ring itself: its self-test, its own health         | [`SUB_RING`]   |
 //! | 0x01      | Type-C, `src/typec.rs` and the handler in `src/irq.rs` | [`SUB_TYPE_C`] |
-//! | 0x02      | the consoles, `src/uart.rs`                            | reserved     |
-//! | 0x03      | the power rails, `src/power.rs`                        | reserved     |
+//! | 0x02      | the consoles, `src/uart.rs`                            | reserved       |
+//! | 0x03      | the power rails, `src/power.rs`                        | reserved       |
 //!
-//! A reserved row has no constant yet, deliberately: an unused `pub const` is
-//! something the next person has to decide whether to trust. The number is
-//! claimed here so it cannot be handed to something else; the constant appears
-//! with the first event that needs it.
-//!
-//! `src/uart.rs` discovers an overrun inside a handler and does NOT use this
-//! ring for it: an overrun repeats, and the useful report is "the line lost
-//! input, N times so far", which is a latched bitmap plus a counter rather than
-//! N records. Subsystem 0x02 is reserved for the one-shot console events that do
-//! belong here. A ring entry is for a thing that happened once, at a time worth
-//! knowing.
+//! - Byte aligned so the hex reads directly.
+//! - Built by [`code`], never written as a literal, so a code carries its own type
+//!   declaration: `code(TAG_U8, SUB_TYPE_C, 1)`. Keeps codes greppable -- `code
+//!   01.01.0001` leads to `SUB_TYPE_C` and the one constant numbered 1.
+//! - A reserved row has **no constant on purpose**: an unused `pub const` is
+//!   something the next person must decide whether to trust. The number is claimed
+//!   so it cannot be reused; the constant appears with the first event needing it.
+//! - `src/uart.rs` overruns deliberately do NOT use this ring: an overrun repeats,
+//!   and the useful report is "the line lost input, N times" -- a latched bitmap
+//!   plus a counter, not N records. A ring entry is for something that happened
+//!   once, at a time worth knowing.
 //!
 //! ## How the rule is enforced
 //!
-//!   * **Ownership.** `main` owns the `Uart` values and passes them down by
-//!     `&mut`; a handler is a free function with nothing to be handed one from.
-//!     No global `print!`, no logging singleton, no `static mut` in this crate.
-//!     `src/irq.rs` takes [`crate::uart::UartRx`], which has no transmit method
-//!     and no `core::fmt::Write`, so `write!` there does not compile.
-//!   * **Grep, for the rest.** Rust's privacy is per-module-tree, so a private
-//!     item in the crate root is nameable from every child module.
-//!     `scripts/soc_irq_log_check.py` fails any module containing a handler that
-//!     mentions `write!`, `writeln!`, `fmt::Write` or `Uart`. It is the `irqlog`
-//!     check in `scripts/check.py`.
-//!
-//! A rule with no alternative gets worked around rather than followed, which is
-//! why a handler CAN log -- it just cannot be what formats and transmits.
+//! - **Ownership.** `main` owns the `Uart` values and passes them by `&mut`; a
+//!   handler is a free function with nothing to hand it one. No global `print!`,
+//!   no logging singleton, no `static mut` in this crate. `src/irq.rs` takes
+//!   [`crate::uart::UartRx`], which has no transmit method and no
+//!   `core::fmt::Write`, so `write!` there does not compile.
+//! - **Grep, for the rest.** Rust privacy is per-module-tree, so a private item in
+//!   the crate root is nameable from every child module.
+//!   `scripts/soc_irq_log_check.py` fails any module whose handler mentions
+//!   `write!`, `writeln!`, `fmt::Write` or `Uart` -- the `irqlog` check in
+//!   `scripts/check.py`.
+//! - A handler CAN log; it just cannot be what formats and transmits. A rule with
+//!   no alternative gets worked around rather than followed.
 //!
 //! ## Wait-free, bounded, lossy on purpose
 //!
-//!   * [`push`] never spins and never waits. A full ring DROPS the record and
-//!     increments a counter: a storm must degrade to lost lines, not to a
-//!     stalled handler.
-//!   * **The drop count is reported** by the `irq` shell command and by
-//!     [`drain`] the first time it notices a loss, along with the time of the
-//!     first record lost -- so the gap in the timestamp column has a stated
-//!     start rather than being a silence a reader has to notice. A queue that
-//!     quietly discards under exactly the conditions you most want to see is
-//!     worse than no queue.
+//! - [`push`] never spins and never waits. A full ring DROPS the record and
+//!   increments a counter: a storm degrades to lost lines, not a stalled handler.
+//! - **The drop count is reported** by the `irq` command and by [`drain`] the first
+//!   time it notices, with the time of the first record lost -- so the gap in the
+//!   timestamp column has a stated start instead of being a silence to notice.
 //!
 //! ## One producer at a time, on one hart
 //!
-//! [`log_from_irq!`] is meant to be usable from ANY context -- a rule that works
-//! in half the program is a rule people learn to ignore -- and a push from normal
-//! context can be interrupted halfway by a push from a handler. So [`push`]
-//! clears `mstatus.MIE` for the length of the copy and restores it: three or four
-//! instructions, no loop, still wait-free.
+//! - [`log_from_irq!`] is usable from ANY context, so a push from normal context
+//!   can be interrupted mid-copy by a push from a handler.
+//! - [`push`] therefore clears `mstatus.MIE` for the length of the copy and
+//!   restores it: three or four instructions, no loop, still wait-free.
+//! - **In a handler this costs nothing**: hardware already cleared MIE on trap
+//!   entry and this firmware never sets it inside a handler, so the restore writes
+//!   back the zero it read.
+//! - A compare-exchange loop would be lock-free rather than wait-free, and would
+//!   still need the payload published separately.
 //!
-//! **In a handler this costs nothing and changes nothing**: the hardware already
-//! cleared MIE on trap entry and this firmware never sets it inside a handler, so
-//! the save/restore writes back the zero it read. A compare-exchange loop to
-//! reserve a slot would be lock-free rather than wait-free and would still need
-//! the payload published separately.
-//!
-//! Nothing here is target-specific. It is compiled unchanged for the FPGA and
-//! for QEMU, and `scripts/soc_test.py` exercises every tag, fill, wrap and drop
-//! counting through the `log` shell command.
+//! Nothing here is target-specific: compiled unchanged for the FPGA and QEMU, and
+//! `scripts/soc_test.py` exercises every tag, fill, wrap and drop count through the
+//! `log` shell command.
 
 use core::fmt;
 use core::fmt::Write;

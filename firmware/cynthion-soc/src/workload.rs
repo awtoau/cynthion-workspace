@@ -1,118 +1,109 @@
-//! A synthetic USB device-emulation load, shaped on moondancer's measured one.
+//! Synthetic USB device-emulation load, shaped on moondancer's measured workload.
 //!
-//! Issue #115's last comment rejects the baseline every earlier measurement
-//! used: an idle shell at 0.10-0.23% busy. This core is being built as a USB
-//! controller, and the workload that decides the concurrency question is device
-//! emulation -- bursty, latency-sensitive, arriving at the host's convenience.
-//! This module is that workload, as faithfully as a board-free build can make
-//! it, and section "How this differs" says exactly where it lies.
-//!
-//! Everything here is behind `--features workload` and nothing in `src/main.rs`
-//! reaches it without that feature, so the shipping image is unchanged.
+//! - Issue #115 rejected the old baseline (idle shell, 0.10-0.23% busy): the
+//!   workload that decides the concurrency question is device emulation --
+//!   bursty, latency-sensitive, host-paced. This module reproduces it as
+//!   faithfully as a board-free build allows; see "How this differs" below.
+//! - Behind `--features workload`; `src/main.rs` never reaches it without the
+//!   feature, so the shipping image is unchanged.
 //!
 //! ## What moondancer actually does per event
 //!
-//! moondancer is a workspace member of `greatscottgadgets/cynthion`, at
-//! `firmware/moondancer`, and not a repo of its own. Paths below are relative to
-//! that `firmware/` directory; the gateware ones are `greatscottgadgets/luna-soc`
-//! under `luna_soc/gateware/core/`. Neither is checked out in this tree, so every
-//! line number below was read from the mirror rather than copied from a summary.
-//!
-//! * **In the handler**, on `USB0_EP_CONTROL`: acknowledge, read the endpoint
+//! - moondancer: workspace member of `greatscottgadgets/cynthion`, at
+//!   `firmware/moondancer` (not its own repo). Paths below relative to that
+//!   `firmware/` dir. Gateware paths are `greatscottgadgets/luna-soc`, under
+//!   `luna_soc/gateware/core/`. Neither checked out in this tree -- line
+//!   numbers read from the mirror.
+//! - **In the handler**, on `USB0_EP_CONTROL`: acknowledge, read the endpoint
 //!   number, then drain the 8-byte setup FIFO **one byte at a time over MMIO**
 //!   -- `while ... have().bit() { buffer[n] = ...data().read().byte().bits() }`,
-//!   `lunasoc-hal/src/usb.rs:380-392` -- build a `SetupPacket` from it, and
-//!   enqueue an `InterruptEvent` into a **64-slot** `Queue`
+//!   `lunasoc-hal/src/usb.rs:380-392` -- build a `SetupPacket`, and enqueue an
+//!   `InterruptEvent` into a **64-slot** `Queue`
 //!   (`moondancer/src/bin/moondancer.rs:28`, handler at
 //!   `moondancer/src/util.rs:50-70`).
-//! * **A full queue is fatal.** `dispatch_event` drains it into the log and then
+//! - **A full queue is fatal**: `dispatch_event` drains it into the log, then
 //!   `loop { nop }` -- in interrupt context, forever
-//!   (`moondancer/src/bin/moondancer.rs:30-46`). The queue is an assertion, not
-//!   a buffer.
-//! * **In the main loop**, `Moondancer::dispatch_event`
-//!   (`moondancer/src/gcp/moondancer.rs:82`) copies the packet on, and anything
-//!   it cannot answer locally goes to the host over a second USB port. Each
+//!   (`moondancer/src/bin/moondancer.rs:30-46`). The queue is an assertion,
+//!   not a buffer.
+//! - **In the main loop**, `Moondancer::dispatch_event`
+//!   (`moondancer/src/gcp/moondancer.rs:82`) copies the packet on; anything it
+//!   cannot answer locally goes to the host over a second USB port. Each
 //!   command zeroes a **1 KiB** buffer (`LIBGREAT_MAX_COMMAND_SIZE = 1024`,
 //!   `libgreat/src/gcp.rs:15`) at `moondancer/src/bin/moondancer.rs:460`, and
 //!   the verbs zero their own at `gcp/moondancer.rs:560` and `:821` -- one to
-//!   three kilobytes of memset per command, independent of payload.
-//! * **On the write path**, `write_with_packet_size`
+//!   three KiB of memset per command, independent of payload.
+//! - **On the write path**, `write_with_packet_size`
 //!   (`lunasoc-hal/src/usb.rs:487`) pushes the response into the endpoint FIFO
 //!   with **one 8-bit MMIO store per byte**.
-//! * A 512-byte bulk payload is copied repeatedly between the FIFO, a
+//! - A 512-byte bulk payload is copied repeatedly between the FIFO, a
 //!   `rx_buffer` and the packet buffer (`gcp/moondancer.rs:147-162`) before it
 //!   reaches the 1 KiB response buffer.
-//!
-//! Upstream's own numbers, in comments beside the code that produced them:
-//! `moondancer/examples/bulk_speed_test.rs:390` reads 5.03 MB/s through the
-//! byte-at-a-time FIFO loop, `:394` reads 6.39 MB/s with no memory access
-//! behind it, and `:414-416` reads ~4.04 MB/s for the shape actually shipped.
-//! At 60 MHz, 5.03 MB/s is **11.9 cycles per MMIO byte store**, so a 512-byte
-//! packet is **~5,000-6,000 cycles, 85-100 us** -- about 80% of a 125 us
-//! high-speed microframe, which is why the part tops out near one packet per
-//! microframe.
+//! - Upstream's own measured numbers (comments beside the code that produced
+//!   them): `moondancer/examples/bulk_speed_test.rs:390` -- 5.03 MB/s through
+//!   the byte-at-a-time FIFO loop; `:394` -- 6.39 MB/s with no memory access
+//!   behind it; `:414-416` -- ~4.04 MB/s for the shape actually shipped. At
+//!   60 MHz, 5.03 MB/s is **11.9 cycles per MMIO byte store**, so a 512-byte
+//!   packet is **~5,000-6,000 cycles, 85-100 us** -- ~80% of a 125 us
+//!   high-speed microframe, hence the part topping out near one packet per
+//!   microframe.
 //!
 //! ## The deadline, which is not the one people assume
 //!
-//! **Packet level is soft.** luna-soc's IN endpoint NAKs every IN token while
-//! the CPU is still filling the FIFO -- *"We'll wait for it to do so, and NAK
-//! any packets that arrive"*, `usb2/ep_in.py:279-292` -- and the OUT endpoint
-//! NAKs when it is not primed (`nak_receives = token.is_out & ~ready_to_receive
-//! & ~stalled`, `usb2/ep_out.py:277`). USB 2.0 §8.5.3.3 makes that legitimate
-//! flow control, so a late CPU costs a retry, not a protocol error.
-//!
-//! **Transfer level is hard, and generous.** USB 2.0 §9.2.6.4: the first data
-//! packet of a control read within **500 ms**, the status stage within **50 ms**
-//! of the last data packet, and a request with no data stage complete within
-//! **50 ms**. §9.2.6.3: `SetAddress` complete within **50 ms**, then 2 ms of
-//! recovery. §9.2.6.1: 10 ms of reset recovery. Nothing in this firmware is
-//! anywhere near those.
-//!
-//! **There is exactly one hard, silent window, and it is in the gateware.** The
-//! control endpoint's setup FIFO is 8 bytes deep and is *cleared by the arrival
-//! of the next SETUP token* -- `clear_fifo = new_setup | reset_requested` at
-//! `usb2/ep_control.py:130`, feeding `ResetInserter(clear_fifo)` around a
-//! `depth=8` FIFO at `:135`. Miss it and the previous setup packet is destroyed
-//! with the host already ACKed, and the firmware reads zero bytes
-//! (`moondancer/src/util.rs:62-63`). That endpoint also cannot NAK: it *"always
-//! ACKs packets, and does not allow for any flow control; as a USB device must
-//! always be ready to accept control packets. [USB2.0: 8.6.1]"*,
-//! `ep_control.py:30-34`. So the deadline
-//! that matters is **one host control-transfer inter-arrival**: at high speed a
-//! short control transfer occupies about three microframes, so **~375 us**.
-//!
-//! That is the number this module measures against. It is three orders of
-//! magnitude tighter than §9.2.6.4 and three times looser than a microframe,
-//! and a model built against either of those is modelling the wrong thing.
+//! - **Packet level is soft.** luna-soc's IN endpoint NAKs every IN token
+//!   while the CPU is still filling the FIFO -- *"We'll wait for it to do so,
+//!   and NAK any packets that arrive"*, `usb2/ep_in.py:279-292` -- and the OUT
+//!   endpoint NAKs when not primed (`nak_receives = token.is_out &
+//!   ~ready_to_receive & ~stalled`, `usb2/ep_out.py:277`). USB 2.0 §8.5.3.3:
+//!   legitimate flow control, so a late CPU costs a retry, not a protocol
+//!   error.
+//! - **Transfer level is hard, and generous.** USB 2.0 §9.2.6.4: first data
+//!   packet of a control read within **500 ms**, status stage within **50 ms**
+//!   of the last data packet, no-data-stage request complete within **50 ms**.
+//!   §9.2.6.3: `SetAddress` complete within **50 ms**, then 2 ms recovery.
+//!   §9.2.6.1: 10 ms reset recovery. Nothing in this firmware is anywhere near
+//!   those.
+//! - **The one hard, silent window is in the gateware.** The control
+//!   endpoint's setup FIFO is 8 bytes deep and is *cleared by the arrival of
+//!   the next SETUP token* -- `clear_fifo = new_setup | reset_requested` at
+//!   `usb2/ep_control.py:130`, feeding `ResetInserter(clear_fifo)` around a
+//!   `depth=8` FIFO at `:135`. Miss it and the previous setup packet is
+//!   destroyed with the host already ACKed, and the firmware reads zero bytes
+//!   (`moondancer/src/util.rs:62-63`). That endpoint also cannot NAK -- it
+//!   *"always ACKs packets, and does not allow for any flow control; as a USB
+//!   device must always be ready to accept control packets. [USB2.0: 8.6.1]"*,
+//!   `ep_control.py:30-34`. So the deadline that matters is **one host
+//!   control-transfer inter-arrival**: at high speed a short control transfer
+//!   occupies ~3 microframes, so **~375 us**.
+//! - That is the number this module measures against -- three orders of
+//!   magnitude tighter than §9.2.6.4, three times looser than a microframe. A
+//!   model built against either of those instead is modelling the wrong thing.
 //!
 //! ## How this differs from the real workload
 //!
-//! Stated plainly, because none of it is hidden by the numbers:
-//!
-//! * **The arrival source is a 16550, not a USB device controller.** One
-//!   received byte is one USB event, through a real PLIC source into the real
-//!   handler. The bytes are injected by the 1 ms tick through local loopback
-//!   ([`tick`]) rather than by a host, which buys reproducibility -- the two
-//!   models under test see the identical arrival sequence -- and gives up the
-//!   host's own jitter. Arrivals are bursty at 1 ms granularity and not
-//!   microframe-aligned.
-//! * **The FIFO is the 16550's scratch register.** SCR is eight bits of MMIO
-//!   with no side effect of any kind, on the SoC and on QEMU's `virt` alike, so
-//!   a byte-at-a-time loop over it is a real bus transaction per byte -- which
-//!   is the property that makes moondancer's FIFO loop cost what it costs.
-//! * **No second USB port.** moondancer spends three to six interrupts on its
-//!   host link for every one on the port under test. That multiplier is left
-//!   out; it would make every figure here worse for the superloop, not better.
-//! * **The Type-C deferral stands in for the one long job.** On the board it is
-//!   a millisecond of I2C on a shared controller. Under QEMU there is no I2C, so
-//!   [`SERVICE_US`] is spun on the CLINT instead, and the source is `virt`'s
-//!   goldfish RTC alarm -- a second PLIC line that is level-sensitive, that the
-//!   handler cannot clear cheaply, and that the guest can schedule. That is the
-//!   same obligation shape as a FUSB302B.
-//! * **QEMU retires one instruction per cycle.** The board measures IPC 0.302 at
-//!   `opt-level = "z"`. Every instruction count here is real; every *cycle*
-//!   count is optimistic by about 3.3x, and cache behaviour is modelled
-//!   separately by `scripts/soc_icache_model.py` rather than measured.
+//! - **Arrival source is a 16550, not a USB device controller.** One received
+//!   byte is one USB event, through a real PLIC source into the real handler.
+//!   Bytes are injected by the 1 ms tick through local loopback ([`tick`])
+//!   rather than by a host -- buys reproducibility (both models under test see
+//!   the identical arrival sequence), gives up host jitter. Arrivals are
+//!   bursty at 1 ms granularity, not microframe-aligned.
+//! - **The FIFO is the 16550's scratch register.** SCR is eight bits of MMIO
+//!   with no side effect, on the SoC and on QEMU's `virt` alike, so a
+//!   byte-at-a-time loop over it is a real bus transaction per byte -- the
+//!   property that makes moondancer's FIFO loop cost what it costs.
+//! - **No second USB port.** moondancer spends three to six interrupts on its
+//!   host link for every one on the port under test; that multiplier is left
+//!   out, which makes every figure here worse for the superloop, not better.
+//! - **The Type-C deferral stands in for the one long job.** On the board:
+//!   a millisecond of I2C on a shared controller. Under QEMU there is no I2C,
+//!   so [`SERVICE_US`] is spun on the CLINT instead, sourced from `virt`'s
+//!   goldfish RTC alarm -- a second PLIC line, level-sensitive, cannot be
+//!   cleared cheaply by the handler, schedulable by the guest. Same obligation
+//!   shape as a FUSB302B.
+//! - **QEMU retires one instruction per cycle.** Board IPC measured at 0.302
+//!   for `opt-level = "z"` -- per `Cargo.toml`'s STALE-marked opt-level note
+//!   (#167). Every instruction count here is real; every *cycle* count is
+//!   optimistic by ~3.3x, and cache behaviour is modelled separately by
+//!   `scripts/soc_icache_model.py` rather than measured.
 
 use core::cell::UnsafeCell;
 use core::fmt::Write;
