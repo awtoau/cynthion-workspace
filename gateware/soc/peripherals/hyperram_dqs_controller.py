@@ -244,7 +244,11 @@ class HyperRAMDQSController(Elaboratable):
             current_address[0:3],
             Const(0, 13),
             current_address[3:32],
-            is_multipage,
+            # CA[45] = 1 whenever CA[46] is: 9.1 allows only linear single-word
+            # register access, and the burst type is meaningless for a register
+            # read. It was `is_multipage` alone, correct only because all four
+            # callers happen to pass `single_page=0`. (#320)
+            is_multipage | is_register,
             is_register,
             is_read
         ))

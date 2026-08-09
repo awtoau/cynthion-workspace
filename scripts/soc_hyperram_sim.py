@@ -507,7 +507,7 @@ async def beat(ctx, dut, model):
 
 async def run(ctx, dut, model, *, address, read, data=None,
               hold_final_word=True, hold_write=True, gap=None,
-              register_space=False, beats=1):
+              register_space=False, single_page=False, beats=1):
     """One transaction, driven the way a caller chooses to drive it.
 
     `hold_final_word` and `hold_write` are the two traps from
@@ -536,7 +536,7 @@ async def run(ctx, dut, model, *, address, read, data=None,
         await beat(ctx, dut, model)
 
     ctx.set(psram.register_space, 1 if register_space else 0)
-    ctx.set(psram.single_page, 0)
+    ctx.set(psram.single_page, 1 if single_page else 0)
     ctx.set(psram.address, address)
     ctx.set(psram.perform_write, 0 if read else 1)
     if data is not None:
@@ -820,7 +820,7 @@ async def beat16(ctx, dut, model):
 
 
 async def run16(ctx, dut, model, *, address, read, data=None, gap=0,
-                register_space=False, beats=1):
+                register_space=False, single_page=False, beats=1):
     """One transaction on the 16-bit controller, requested `gap` beats after idle.
 
     `gap` 0 is back-to-back: the request goes up on the first cycle the
@@ -835,7 +835,7 @@ async def run16(ctx, dut, model, *, address, read, data=None, gap=0,
         await beat16(ctx, dut, model)
 
     ctx.set(psram.register_space, 1 if register_space else 0)
-    ctx.set(psram.single_page, 0)
+    ctx.set(psram.single_page, 1 if single_page else 0)
     ctx.set(psram.address, address)
     ctx.set(psram.perform_write, 0 if read else 1)
     if data is not None:
@@ -1448,6 +1448,7 @@ class ModelHyperRAM16:
     def __init__(self, *, sync_mhz=NON_DQS_SYNC_MHZ, tcshi_ns=T_CSHI_NS,
                  deliver=None, rwds_stale=0, rwds_extra=0):
         self.commands = []
+        self.ca_words = []
         self.transaction_cycles = []
         # Read beats this device serves before going silent. See `ModelHyperRAM`.
         self.deliver = deliver
@@ -1534,6 +1535,7 @@ class ModelHyperRAM16:
                 self._address = ((((ca >> 16) & ((1 << 29) - 1)) << 3)
                                  | (ca & 0b111))
                 self.commands.append(self._address)
+                self.ca_words.append(ca)
                 # CA bit 47 is 1 for a read.
                 self._is_write = not ((ca >> 47) & 1)
                 # The device's data phase begins one CK after the protocol FSM
@@ -2332,6 +2334,60 @@ def section_ca_rwds(checks, emit):
          f"(long {long_count}, short {short_count})")
 
 
+def section_register_ca(checks, emit):
+    """15. CA[45] is 1 for register space whatever the caller asked for.
+
+    9.1: *"CA[45] must be 1 as only linear single word register writes are
+    supported."* It was `~single_page`, correct only because all four callers
+    happen to pass 0 -- an invariant held by callers and documented in none of
+    them. LiteX and Lattice both hardcode it. See #320.
+    """
+    emit("\n15. CA[45] for register space, against a caller that asks for wrapped\n")
+
+    async def register_write(ctx, dut, model):
+        await run16(ctx, dut, model, address=0, read=False, data=0x8f2f,
+                    register_space=True, single_page=True)
+
+    async def wrapped_memory(ctx, dut, model):
+        await run16(ctx, dut, model, address=TEST_ADDRESS, read=True,
+                    single_page=True)
+
+    # THE NEGATIVE CONTROL: upstream builds CA[45] from `single_page` alone, so
+    # the same request emits command byte 0x20 -- an unsupported register write,
+    # silently. If it did not, this check could not tell the two apart.
+    control = simulate16(register_write, upstream=True)
+    control_ca = control.ca_words[0] if control.ca_words else 0
+    checks.check("upstream emits CA[45]=0 for a single_page register write",
+                 not (control_ca >> 45) & 1,
+                 f"upstream command byte {control_ca >> 40:#04x}")
+
+    ours = simulate16(register_write)
+    ca = ours.ca_words[0] if ours.ca_words else 0
+    checks.check("ours forces CA[45]=1 there",
+                 bool((ca >> 45) & 1), f"command byte {ca >> 40:#04x}")
+    checks.check("...which is the datasheet's 0x60 for a register write",
+                 ca >> 40 == 0x60, f"{ca >> 40:#04x}, want 0x60")
+
+    memory = simulate16(wrapped_memory)
+    memory_ca = memory.ca_words[0] if memory.ca_words else 0
+    checks.check("a WRAPPED memory burst is left alone -- CA[45]=0",
+                 not (memory_ca >> 45) & 1,
+                 f"command byte {memory_ca >> 40:#04x}, so the fix forced a bit "
+                 f"it had no business touching")
+
+    async def register_write32(ctx, dut, model):
+        await run(ctx, dut, model, address=0, read=False, data=0x8f2f,
+                  register_space=True, single_page=True)
+
+    dqs = simulate(register_write32)
+    checks.check("the DQS controller forces it too",
+                 dqs.commands and dqs.commands[0]["linear"],
+                 f"{dqs.commands[0] if dqs.commands else 'no command decoded'}")
+
+    emit(f"        upstream {control_ca >> 40:#04x}, ours {ca >> 40:#04x}, "
+         f"wrapped memory {memory_ca >> 40:#04x}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="The HyperBus protocol layer, against a model of the part.")
@@ -2350,7 +2406,7 @@ def main():
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
                     section_clock_stop, section_escape, section_tcsm,
-                    section_ca_rwds):
+                    section_ca_rwds, section_register_ca):
         section(checks, emit)
 
     emit()
