@@ -515,6 +515,54 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
     });
 }
 
+/// The FULL runtime cross product: latency x fixed/var x drive x clock x phase.
+///
+/// 16 x 2 x 8 x 2 x 8 = 4,096 cells. At the measured ~2 ms per cell that is
+/// about 8 seconds, so there is no reason to sweep these axes SEPARATELY -- and
+/// sweeping them separately is what has been done until now, which cannot see an
+/// INTERACTION. Latency was swept at one phase and phase at one latency; if the
+/// two interact, every reading so far was blind to it.
+///
+/// Prints only rows that are not a clean PASS, plus a tally. 4,096 lines at
+/// 115200 baud is 40 seconds of console for a result that is one number.
+pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
+    if !gate(uart, bist) {
+        return;
+    }
+    let _ = writeln!(uart, "  4096 cells: latency x fix/var x drive x clock x phase");
+    let _ = writeln!(uart, "  printing only what is NOT a clean pass");
+    let _ = writeln!(uart, "lat  mode  {}", &HEADING[13..]);
+
+    let (mut pass, mut fail, mut none) = (0u32, 0u32, 0u32);
+    for latency in 0u8..16 {
+        for fixed_latency in [true, false] {
+            for drive in 0u8..8 {
+                for single_ended_clock in [false, true] {
+                    for readclksel in 0u8..8 {
+                        let axes = Axes { drive, single_ended_clock, readclksel,
+                                          latency, fixed_latency };
+                        bist.configure(&axes);
+                        let (cell, st, poll) = bist.cell(axes, passes);
+                        let short = cell.words < passes * BURST_WORDS;
+                        match cell.verdict() {
+                            Verdict::Pass if !short => { pass += 1; continue }
+                            Verdict::Pass => none += 1,
+                            Verdict::Fail(_) => fail += 1,
+                            Verdict::NoResult => none += 1,
+                        }
+                        let _ = write!(uart, "{:3}  {:4}  ", latency,
+                                       if fixed_latency { "fix" } else { "var" });
+                        report(uart, bist, &cell, st, poll, passes * BURST_WORDS,
+                               false);
+                    }
+                }
+            }
+        }
+    }
+    let _ = writeln!(uart, "  {} pass, {} fail, {} no result of 4096",
+                     pass, fail, none);
+}
+
 /// Sweep the part's LATENCY, which nothing has ever varied.
 ///
 /// `CR0[7:4]` is the initial latency code and `CR0[3]` selects fixed or

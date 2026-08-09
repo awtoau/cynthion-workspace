@@ -35,6 +35,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"" | b"status" => engine.describe(uart),
         b"smoke" => bist::smoke(uart, &engine, passes(args)),
         b"latency" => bist::latency(uart, &engine, passes(args)),
+        b"all" => bist::all(uart, &engine, passes(args)),
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
         b"cell" => match axes(args) {
