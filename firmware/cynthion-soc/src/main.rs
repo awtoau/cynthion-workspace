@@ -387,8 +387,30 @@ fn reboot() -> ! {
 ///
 /// Printing rather than silently spinning matters: a panicking CPU and a hung one look
 /// identical from the host, and that ambiguity has cost real time on this project.
+/// Open every VBUS switch. The first thing a panic does, before it prints.
+///
+/// A panicking CPU spins forever with whatever the VBUS register was last set
+/// to, and a CPU reset does not clear it -- so a board that panicked
+/// mid-`vbus control` goes on passing host power to an attached target with
+/// nothing running (#315). One store, and the gate is combinational, so all
+/// four open in the same cycle.
+///
+/// `#[inline(never)]`: inlined into the handler it costs kilobytes of `.text`
+/// and `.rodata`, because panic-formatting machinery elsewhere in the image
+/// stops being eliminated. Out of line it costs twenty bytes.
+#[inline(never)]
+#[cold]
+fn open_vbus_on_panic() {
+    if target::BOARD.is_some() {
+        vbus::open_all();
+    }
+}
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // POWER FIRST, before anything is printed.
+    open_vbus_on_panic();
+
     // A fresh handle rather than the one that panicked: taking it by value cannot
     // deadlock, and a `Uart` is nothing but an address so constructing one costs nothing.
     //
