@@ -70,6 +70,11 @@ HYPERRAM_CTRL_DRIVE = os.getenv("CYNTHION_HYPERRAM_CTRL_DRIVE", "4")
 # ahead of FPGA CK drive. #311.
 HYPERRAM_DQ_HYSTERESIS = os.getenv("CYNTHION_HYPERRAM_HYSTERESIS", "OFF")
 
+# Stated, not inherited: nextpnr master emits PULLMODE only when the attribute is
+# present, so a toolchain bump would flip this bus from NONE to the Trellis
+# default DOWN while it floats through turnaround. #311.
+HYPERRAM_DQ_PULLMODE = os.getenv("CYNTHION_HYPERRAM_PULLMODE", "NONE")
+
 
 class CynthionPlatformRev1D4(CynthionPlatform):
     """ Board description for Cynthion r1.4 """
@@ -250,10 +255,12 @@ class CynthionPlatformRev1D4(CynthionPlatform):
                             SLEWRATE="FAST")),
             Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io"),
                       Attrs(DRIVE=HYPERRAM_DQ_DRIVE,
-                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS)),
+                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS,
+                            PULLMODE=HYPERRAM_DQ_PULLMODE)),
             Subsignal("rwds",  Pins( "D1", dir="io"),
                       Attrs(DRIVE=HYPERRAM_DQ_DRIVE,
-                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS)),
+                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS,
+                            PULLMODE=HYPERRAM_DQ_PULLMODE)),
             # SLOW, against the resource-level FAST: neither carries data, and
             # CS# is PIOB of the same row-2 pad group as CK/CK# with its edge
             # landing at burst start, on the CK edges the read is timed against.
