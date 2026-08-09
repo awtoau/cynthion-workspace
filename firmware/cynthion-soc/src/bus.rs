@@ -211,6 +211,27 @@ impl Bus {
         self.mux.base()
     }
 
+    /// Reprogram the bit rate, for finding where the bus stops working.
+    ///
+    /// **This exists because the rate ceiling cannot be computed.** It depends
+    /// on SDA's rise time, which depends on bus capacitance, which is a
+    /// property of the copper and is not in any datasheet. The arithmetic can
+    /// say a rate is out of spec; only the board can say whether it works.
+    ///
+    /// `I2c::init` writes PRER with the core disabled, which is the datasheet's
+    /// requirement -- the bit engine's slot timer reloads from it, so changing
+    /// it under a running transfer moves an edge that has already been set up.
+    /// Going through `init` rather than poking the register is what keeps that
+    /// true.
+    ///
+    /// A rate that does not work does not announce itself. The failure is a
+    /// device that answers MOST of the time, so anything using this must soak
+    /// rather than probe once.
+    pub fn set_prescale(&mut self, prescale: u16) {
+        self.prescale = prescale;
+        self.i2c.init(prescale);
+    }
+
     pub fn prescale(&self) -> u16 {
         self.prescale
     }

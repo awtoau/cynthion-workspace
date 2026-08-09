@@ -85,7 +85,20 @@ use crate::uart::Uart;
 pub const ADDRESS: u8 = 0x10;
 
 /// Send Byte: latch VBUS, VSENSE and the accumulators together.
-const REG_REFRESH: u8 = 0x00;
+/// `REFRESH_V`, and NOT `REFRESH` (`0x00`).
+///
+/// DS20006539B, register table: `REFRESH_V (1FH)` -- "Refreshes VBUS and VSENSE
+/// data only". Section 5.1 puts it plainly: `REFRESH` reads accumulator data
+/// **and resets the accumulators**; `REFRESH_V` reads voltage, current and power
+/// **without** resetting them.
+///
+/// This driver reads VBUS and VSENSE and never touches an accumulator. It sent
+/// `REFRESH` anyway, twenty times a second, since it was written -- so the
+/// accumulators and the accumulator count were wiped before they could
+/// accumulate anything, and the part's true-average-power feature could never
+/// have been used. Nothing was broken, because nothing read them; nothing COULD
+/// read them, and the reason was one byte. #275.
+const REG_REFRESH_V: u8 = 0x1f;
 
 /// VSENSE range for all four channels. `0x55` selects bipolar +/-100 mV for
 /// each two-bit CFG_VSn field; the low byte leaves every VBUS range unipolar.
@@ -214,9 +227,24 @@ fn current_ua(raw: u16) -> i32 {
     }
 }
 
+/// Is a REFRESH_V outstanding, waiting for its 1 ms before the read?
+///
+/// Read by `rtic_app::tick`, which releases the task again on the very next
+/// tick when this is true. A `static` because the tick handler has no `Monitor`
+/// -- the one that matters is inside a shared resource it must not lock.
+///
+/// One writer (the task) and one reader (the tick), on one hart, so relaxed is
+/// enough for the reason `src/metrics.rs` sets out at length.
+static REFRESH_PENDING: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn refresh_pending() -> bool {
+    REFRESH_PENDING.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// The sole call site for the PAC1954's multi-transaction REFRESH cycle.
 fn refresh(bus: &mut Bus) -> Result<(), bus::Error> {
-    bus.send_byte(BUS_POWER_MONITOR, ADDRESS, REG_REFRESH)
+    bus.send_byte(BUS_POWER_MONITOR, ADDRESS, REG_REFRESH_V)
 }
 
 /// What the monitor decided about one channel this poll.
@@ -243,6 +271,19 @@ pub struct Monitor {
     /// Set only after all four VSENSE channels were programmed bipolar and a
     /// REFRESH activated the new range.
     configured: bool,
+    /// Has a REFRESH_V been sent whose data has not been read yet?
+    ///
+    /// The whole of the two-dispatch cycle (#275). `service` sends the command
+    /// and returns; the tick releases it again 1 ms later and it reads. The
+    /// datasheet asks for exactly that gap -- "stable within 1 ms", and a
+    /// command inside the window "ignored and NACKed" -- and the tick period
+    /// happens to be the same 1 ms, so the second dispatch lands where the part
+    /// wants it rather than where a timer was tuned to.
+    ///
+    /// It replaces reading the PREVIOUS cycle's latch fifty milliseconds later,
+    /// which respected the window by a wide margin and made every reading one
+    /// whole interval stale.
+    refreshing: bool,
     /// When the last REFRESH was issued, or `None` before the first one.
     ///
     /// Two jobs, and they are the same fact. It is the timestamp the NEXT poll's
@@ -286,6 +327,7 @@ impl Monitor {
             floor: [DEFAULT_FLOOR_UA; 4],
             live: false,
             configured: false,
+            refreshing: false,
             refresh_at: None,
             sample: None,
             failures: 0,
@@ -354,47 +396,48 @@ impl Monitor {
         if !self.configured {
             self.configure(bus)?;
             // The first set after changing range can reflect the prior active
-            // configuration. Discard it; the normal cycle below issues the
-            // second REFRESH whose result is decoded as signed.
+            // configuration. Discard it; the cycle below issues the REFRESH_V
+            // whose result is decoded as signed.
             return Ok(None);
         }
-        // READ FIRST, THEN REFRESH -- and that order is the whole trick.
+
+        // ---- dispatch A: ask, and return ---------------------------------
         //
-        // The datasheet (DS20006539B 5.2) says the readable registers "will be
-        // stable within 1 ms from sending the REFRESH command". Reading inside
-        // that window is not merely early: this part answers its address and
-        // then NACKs the register pointer, which is what "no acknowledge
-        // (register pointer)" meant when this driver did REFRESH-then-read.
+        // A Send Byte and nothing else -- about 30 us at 1 MHz. The task holds
+        // `Devices` for that and hands it back, where the old single-shot
+        // transaction held it for the whole ~2 ms.
+        if !self.refreshing {
+            self.phase = "refresh";
+            refresh(bus)?;
+            // AFTER the Send Byte returns, not before: the part latches when it
+            // receives the command.
+            self.refresh_at = Some(clock::now());
+            self.refreshing = true;
+            REFRESH_PENDING.store(true, core::sync::atomic::Ordering::Relaxed);
+            return Ok(None);
+        }
+
+        // ---- dispatch B: read what it latched -----------------------------
         //
-        // Waiting 1 ms would work and would cost a millisecond of spinning
-        // inside a poll that runs twenty times a second. Reading the sample the
-        // PREVIOUS poll asked for costs nothing and gives 50 ms of margin
-        // instead of zero. Every sample set is still internally coherent -- all
-        // eight registers were latched by one REFRESH -- it is simply one
-        // interval old, which is exactly what a 50 ms poll means anyway.
+        // One 16-byte auto-incremented read, ~170 us at 1 MHz, covering VBUS1-4
+        // and VSENSE1-4. One transaction, so nothing can arrive from two
+        // different sample instants.
         //
-        // The consequence to know about: the very first read after reset
-        // returns whatever the registers hold before any REFRESH has been
-        // issued. That read is discarded below, and the same fact is what makes
-        // the age reported by `power` meaningful.
+        // Cleared BEFORE the read rather than after it. A bus error here must
+        // not leave the cycle stuck waiting for data that is never coming --
+        // the next dispatch should issue a fresh REFRESH_V, which is also how
+        // the part recovers from a NACK.
+        self.refreshing = false;
+        REFRESH_PENDING.store(false, core::sync::atomic::Ordering::Relaxed);
         self.phase = "read";
         let mut raw = [0u8; MEASUREMENT_BYTES];
         bus.read_registers(BUS_POWER_MONITOR, ADDRESS, REG_VBUS1, &mut raw)?;
 
-        // WHEN these bytes were measured: the previous REFRESH, read out before
-        // this pass overwrites it. A sample timestamped with the read that
-        // fetched it would claim to be one interval younger than it is, which is
-        // the sort of small consistent lie nothing ever notices.
+        // WHEN these bytes were measured: the REFRESH_V one dispatch ago, which
+        // is 1 ms rather than the 50 ms the previous arrangement carried. A
+        // sample timestamped with the read that fetched it would understate its
+        // own age, which is the sort of small consistent lie nothing notices.
         let latched = self.refresh_at;
-
-        // Ask for the next set. One transaction, all four channels, so nothing
-        // can arrive from two different sample instants.
-        self.phase = "refresh";
-        refresh(bus)?;
-        // After the Send Byte returns, not before it: the part latches when it
-        // receives the command, and the transfer is ~0.2 ms of the 50 ms
-        // interval either way.
-        self.refresh_at = Some(clock::now());
 
         let mut readings = [Reading {
             bus_mv: 0,

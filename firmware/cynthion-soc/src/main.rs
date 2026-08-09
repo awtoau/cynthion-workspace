@@ -641,6 +641,7 @@ const HELP: &[(&str, &str)] = &[
     ("hr <cmd>", "hyperram: see `hr`"),
     ("hyperram read <hex>", "one word over the staging port"),
     ("i2c [bus]", "scan a bus behind the mux"),
+    ("i2c soak <bus> <prer> <n>", "hammer one bus at one rate, count failures"),
     ("info", "image, memory, boot, cpu, gateware"),
     ("irq", "interrupt counts, per source"),
     ("led [n]", "the six LEDs"),
@@ -1313,12 +1314,30 @@ fn board_i2c(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // 0x22 with the same identity byte -- so the bus is named on every call
     // below rather than selected once and remembered.
     let which = trim(rest);
+
+    // `i2c soak <bus> <prescale> <reads>` -- find where the bus stops working.
+    //
+    // **The rate ceiling cannot be computed.** It depends on SDA's rise time,
+    // which depends on bus capacitance, which is a property of the copper and
+    // is in no datasheet. Arithmetic can say a rate is out of spec; only the
+    // board can say whether it works. So this sweeps and counts.
+    //
+    // It reads the device's IDENTITY every pass, not its address. An address
+    // ACK is one bit and a marginal bus gets it right by luck; an identity is
+    // sixteen bits that have to be exactly right, from a register read with a
+    // repeated START in the middle -- which is the part of the protocol with
+    // the tightest setup interval.
+    if let Some(args) = which.strip_prefix(b"soak").map(trim) {
+        return i2c_soak(uart, args, devices);
+    }
+
     let (bus_select, label) = match which {
         b"" | b"power" => (bus::BUS_POWER_MONITOR, "power_monitor"),
         b"target" => (bus::BUS_TARGET_C, "target_type_c"),
         b"aux" => (bus::BUS_AUX_C, "aux_type_c"),
         _ => {
             let _ = writeln!(uart, "usage: i2c [power|target|aux]");
+            let _ = writeln!(uart, "       i2c soak <power|target|aux> <prescale> <reads>");
             return;
         }
     };
@@ -1774,6 +1793,100 @@ fn board_phy_reset(uart: &mut Uart, phy: &ulpi::Ulpi) {
             let _ = writeln!(uart, "  scratch read    {}", error.as_str());
         }
     }
+}
+
+/// `i2c soak <bus> <prescale> <reads>` -- hammer one bus at one rate and count.
+///
+/// The answer to "will it run faster", obtained rather than derived. Restores
+/// the build's own prescale before returning, whatever happens, so a failed
+/// experiment does not leave the board on a rate that half works.
+fn i2c_soak(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
+    let mut field = args.split(|&b| b == b' ').filter(|f| !f.is_empty());
+    let (bus_select, label) = match field.next() {
+        Some(b"power") => (bus::BUS_POWER_MONITOR, "power_monitor"),
+        Some(b"target") => (bus::BUS_TARGET_C, "target_type_c"),
+        Some(b"aux") => (bus::BUS_AUX_C, "aux_type_c"),
+        _ => {
+            let _ = writeln!(uart, "usage: i2c soak <power|target|aux> <prescale> <reads>");
+            return;
+        }
+    };
+    let prescale = match field.next().and_then(parse_decimal) {
+        Some(value) => value as u16,
+        None => {
+            let _ = writeln!(uart, "usage: i2c soak <power|target|aux> <prescale> <reads>");
+            return;
+        }
+    };
+    let reads = field.next().and_then(parse_decimal).unwrap_or(1000);
+
+    let bus = match devices.bus.as_mut() {
+        Some(bus) => bus,
+        None => return board_absent(uart),
+    };
+    let restore = bus.prescale();
+
+    // f_SCL = f_sync / (5 * (PRER + 1)), the formula the bit engine implements.
+    let scl_hz = target::TIME_HZ / (5 * (prescale as u32 + 1));
+    let _ = writeln!(
+        uart,
+        "i2c soak  {} at prescale {} = {} Hz scl, {} reads",
+        label, prescale, scl_hz, reads
+    );
+
+    bus.set_prescale(prescale);
+
+    let address = if bus_select == bus::BUS_POWER_MONITOR { 0x10 } else { 0x22 };
+    // The register whose value we know: the PAC1954's manufacturer id, and the
+    // FUSB302B's device id. A read that returns the RIGHT value is the check; a
+    // read that merely completes proves nothing about timing.
+    let register = if bus_select == bus::BUS_POWER_MONITOR { 0xfe } else { 0x01 };
+
+    let mut expected: Option<u8> = None;
+    let mut errors = 0u32;
+    let mut wrong = 0u32;
+    let mut done = 0u32;
+    for _ in 0..reads {
+        let mut byte = [0u8; 1];
+        match bus.read_registers(bus_select, address, register, &mut byte) {
+            Ok(()) => {
+                match expected {
+                    // The first successful read defines the answer, so this
+                    // needs no table of device ids and works on any register.
+                    None => expected = Some(byte[0]),
+                    Some(want) if byte[0] != want => wrong += 1,
+                    Some(_) => {}
+                }
+            }
+            Err(_) => errors += 1,
+        }
+        done += 1;
+    }
+
+    bus.set_prescale(restore);
+
+    let _ = writeln!(
+        uart,
+        "  {} reads  {} bus errors  {} wrong values  expected {:02x}",
+        done,
+        errors,
+        wrong,
+        expected.unwrap_or(0)
+    );
+    // The verdict, stated rather than left to be inferred from two zeroes.
+    // ONE failure in a thousand is a failure: this is the rate at which a
+    // marginal bus works, and "mostly" is the signature it presents with.
+    let _ = writeln!(
+        uart,
+        "  {} at {} Hz -- prescale restored to {}",
+        if errors == 0 && wrong == 0 && expected.is_some() {
+            "CLEAN"
+        } else {
+            "FAILED"
+        },
+        scl_hz,
+        restore
+    );
 }
 
 /// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.
