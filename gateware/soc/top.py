@@ -68,6 +68,7 @@ as a literal.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -386,6 +387,21 @@ HYPERRAM_PROBE_BASE = 0xf0000280
 # The logic analyser's registers, in the same uncached CSR region.
 FLASH_ILA_BASE = 0xf0000300
 
+# The HyperRAM BIST engine's register window, present only when HYPERRAM_BIST is
+# set. 512 bytes: the engine addresses its registers by number, and each number
+# maps to a 32-bit CSR twice -- a parameter at 4*n and a result at 0x100 + 4*n,
+# see `peripherals/bist_csr.py`. Adding a register in the gateware therefore
+# does not move the others.
+#
+# Deliberately the SAME numbering the JTAG applet uses. Two rigs sharing it is
+# what lets a number from one be compared with a number from the other (#226).
+#
+# 0x700 because the board block at BOARD_BASE runs 0x600..0x680 -- a fact worth
+# getting from the elaborated design rather than by reading this list, since
+# BOARD_BASE's extent is the sum of its sub-peripherals and is not written down
+# anywhere.
+HYPERRAM_BIST_BASE = 0xf0000700
+
 # The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
 #
 # Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
@@ -655,6 +671,61 @@ HYPERRAM_DQS = False
 # swept at runtime via `hr sel` bits 5:4 rather than guessed. Turn this on to
 # run that sweep; leave it off otherwise.
 HYPERRAM_CLOCK_STOP = False
+
+# Take the HyperRAM OFF the Wishbone and hand it to a BIST engine the CPU
+# commands instead. See #226.
+#
+# Every HyperRAM figure this project has recorded was taken with at least one
+# broken instrument -- five overlapping faults fixed between 5 and 7 August 2026,
+# so nothing measured before then discriminates. This build exists to
+# re-establish those numbers from zero with none of it in the path: no
+# JTAGRegisterInterface (#204), and no decoder, cache, arbiter or
+# RegisteredResponse bubble between the engine and the part. The unfinished SoC
+# DQS write path (#186, #212) is therefore not in the way, so the matrix can be
+# produced without fixing it first.
+#
+# **A measurement variant, not the shipping SoC.** With this set the CPU cannot
+# address the HyperRAM at all, and BootRAM goes too: it requests the same `ram`
+# resource, and Amaranth allows one requester.
+#
+# `docs/chips/hyperram/bist-plan.md` asks for a mux instead -- one requester,
+# a CSR choosing who drives, everything else still built and idle -- on the
+# grounds that an unbootable bitstream is what made the last attempt
+# undebuggable. Overruled deliberately: exclusive first, mux later (#226).
+#
+# From the environment rather than an edited literal, so that building the
+# variant does not dirty the tree. A literal meant every build of it started
+# with a modified `top.py`, which is a state that gets committed by accident
+# exactly once and then ships.
+#
+#     CYNTHION_HYPERRAM_BIST=1 ./scripts/soc_run.py
+#
+# The firmware side builds against the SHIPPING PAC -- see
+# `firmware/cynthion-soc/src/bist.rs`, which addresses the peripheral by a
+# hand-written constant that `tests/test_bist_constants.py` holds to this file.
+# So do not regenerate the PAC with this set: the committed one is the shipping
+# variant's, and `soc_generate_pac.py --check` calling the BIST map stale is
+# that fact rather than a defect.
+HYPERRAM_BIST = os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0")
+
+# Device CK for the BIST variant, in MHz. Independent of SYNC_MHZ -- that
+# independence is the point of the variant, and `hyperram_clocks.py` refuses a
+# value the second PLL cannot reach rather than silently rounding to one it can.
+#
+# From the environment so that walking the ladder does not mean editing a
+# tracked file once per rung.
+HYPERRAM_BIST_CK_MHZ = float(os.environ.get("CYNTHION_HYPERRAM_CK_MHZ", "100"))
+
+# Which PHY the BIST variant measures. Its OWN choice, not `HYPERRAM_DQS`: that
+# flag is the shipping SoC's, and flipping it to measure something would change
+# the product as a side effect of taking a reading.
+#
+# It also decides how hard the fabric works. On the non-DQS path `hr` IS CK, so
+# the engine's logic has to close at the device rate; on the DQS path `hr` is
+# CK/2 and `hr_fast` carries the gearing, so the same logic reaches twice the CK.
+# Defaults to DQS -- the path under investigation, and the one whose fabric
+# leaves headroom. Set CYNTHION_HYPERRAM_BIST_DQS=0 to measure the other.
+HYPERRAM_BIST_DQS = os.environ.get("CYNTHION_HYPERRAM_BIST_DQS", "1") not in ("", "0")
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
@@ -1164,73 +1235,119 @@ class AwtoSoc(Elaboratable):
         # This is what makes a firmware change cost seconds instead of a ~60 s
         # resynthesis: the image goes into HyperRAM and a resident bootloader copies
         # it into block RAM. See gateware/soc/bootram.py.
-        from bootram import BootRAM
-
-        # `sustained` is left at its default of False, and that is a decision
-        # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
-        # after every acknowledgement, so the CPU delivers a 32-bit beat every
-        # three cycles where a held-open HyperBus transaction consumes two words
-        # -- one per CK, with no way to stall it. Coalescing under that deficit
-        # wrote 48 words for a 32-word line and transposed every odd beat, which
-        # is the fault `hr cross` reports and section 9 of
-        # `scripts/soc_hyperram_sim.py` reproduces.
+        # Under HYPERRAM_BIST the engine owns the part outright: both it and
+        # `BootRAM` call `platform.request("ram")`, and a resource can only be
+        # requested once. So the staging port, the memory window and the
+        # transaction counters all go with it.
         #
-        # `clock_stop` (Active Clock Stop, `ClockStopPHY`) is what would let
-        # `sustained` be true. Section 11 of that same file has it returning
-        # 16/16 both ways in one transaction; it has never been on silicon, and
-        # the read half of it depends on a round-trip latency the model does not
-        # represent. Both stay off until a board run says otherwise.
-        #
-        # `ck_mhz` is passed rather than duplicated. The tCSM burst cap is a TIME
-        # limit expressed in words, so it has to know CK: `HyperRAMPHY` emits one
-        # CK per `sync` cycle, `HyperRAMDQSPHY` gears off `fast` at twice that.
-        # `riscv_clock_ladder.py` rewrites `SYNC_MHZ` here, and a second copy of
-        # the number inside `vexii_bootram` would drift the first time it did.
-        #
-        # `car.actual_sync_mhz`, NOT `SYNC_MHZ`. The first is what the PLL
-        # dividers produce; the second is what was asked for, and they are equal
-        # today only because `solve_pll` refuses anything but an exact match. A
-        # tCSM cap derived from the request would be wrong by the rounding ratio
-        # the day that changes, and a burst cap that is too long is a device
-        # specification violated rather than a number that looks odd.
-        m.submodules.bootram = bootram = BootRAM(
-            dqs=HYPERRAM_DQS,
-            ck_mhz=(2 * car.actual_sync_mhz if HYPERRAM_DQS
-                    else car.actual_sync_mhz),
-            clock_stop=HYPERRAM_CLOCK_STOP, sustained=HYPERRAM_CLOCK_STOP)
-        bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
-        m.submodules.bootram_bridge = bootram_bridge
-        decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
+        # The cost is that this variant CANNOT BOOT FROM HYPERRAM -- the
+        # bootloader's staged-image path is exactly what is being removed. Its
+        # firmware is baked into block RAM at elaboration instead, which is the
+        # right trade for a measurement bitstream: it is rebuilt whenever what it
+        # measures changes.
+        if not HYPERRAM_BIST:
+            from bootram import BootRAM
 
-        # This extra decoder window is the timing risk in #90: its address compare is
-        # on the path that needed RegisteredResponse to recover Fmax. Simulation can
-        # establish protocol and data integrity; only a build can measure the margin.
-        decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
+            # `sustained` is left at its default of False, and that is a decision
+            # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
+            # after every acknowledgement, so the CPU delivers a 32-bit beat every
+            # three cycles where a held-open HyperBus transaction consumes two words
+            # -- one per CK, with no way to stall it. Coalescing under that deficit
+            # wrote 48 words for a 32-word line and transposed every odd beat, which
+            # is the fault `hr cross` reports and section 9 of
+            # `scripts/soc_hyperram_sim.py` reproduces.
+            #
+            # `clock_stop` (Active Clock Stop, `ClockStopPHY`) is what would let
+            # `sustained` be true. Section 11 of that same file has it returning
+            # 16/16 both ways in one transaction; it has never been on silicon, and
+            # the read half of it depends on a round-trip latency the model does not
+            # represent. Both stay off until a board run says otherwise.
+            #
+            # `ck_mhz` is passed rather than duplicated. The tCSM burst cap is a TIME
+            # limit expressed in words, so it has to know CK: `HyperRAMPHY` emits one
+            # CK per `sync` cycle, `HyperRAMDQSPHY` gears off `fast` at twice that.
+            # `riscv_clock_ladder.py` rewrites `SYNC_MHZ` here, and a second copy of
+            # the number inside `vexii_bootram` would drift the first time it did.
+            #
+            # `car.actual_sync_mhz`, NOT `SYNC_MHZ`. The first is what the PLL
+            # dividers produce; the second is what was asked for, and they are equal
+            # today only because `solve_pll` refuses anything but an exact match. A
+            # tCSM cap derived from the request would be wrong by the rounding ratio
+            # the day that changes, and a burst cap that is too long is a device
+            # specification violated rather than a number that looks odd.
+            m.submodules.bootram = bootram = BootRAM(
+                dqs=HYPERRAM_DQS,
+                ck_mhz=(2 * car.actual_sync_mhz if HYPERRAM_DQS
+                        else car.actual_sync_mhz),
+                clock_stop=HYPERRAM_CLOCK_STOP, sustained=HYPERRAM_CLOCK_STOP)
+            bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
+            m.submodules.bootram_bridge = bootram_bridge
+            decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
 
-        # The HyperRAM transaction counters (#173). Inputs only, taken from
-        # signals `BootRAM` already computes, so this cannot alter the timing of
-        # the thing it measures.
-        m.submodules.hyper_probe = hyper_probe = HyperRAMProbe()
-        m.d.comb += [
-            hyper_probe.start_transfer.eq(bootram.probe_start),
-            hyper_probe.beat.eq(bootram.probe_beat),
-            hyper_probe.is_burst.eq(bootram.probe_burst),
-            hyper_probe.word.eq(bootram.probe_word),
-            hyper_probe.busy.eq(bootram.probe_busy),
-            hyper_probe.want.eq(bootram.probe_want),
-            hyper_probe.arming.eq(bootram.probe_arming),
-            hyper_probe.cyc.eq(bootram.probe_cyc),
-            hyper_probe.dll_locked.eq(bootram.probe_dll_locked),
-            hyper_probe.dll_ready.eq(bootram.probe_dll_ready),
-            hyper_probe.burstdet.eq(bootram.probe_burstdet),
-            hyper_probe.stall.eq(bootram.probe_stall),
-            bootram.readclksel.eq(hyper_probe.sel),
-            bootram.read_stall_cycles.eq(hyper_probe.sel[4:6]),
-        ]
-        hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
-        m.submodules.hyper_probe_bridge = hyper_probe_bridge
-        decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
-                    name="hyperram_probe")
+            # This extra decoder window is the timing risk in #90: its address compare is
+            # on the path that needed RegisteredResponse to recover Fmax. Simulation can
+            # establish protocol and data integrity; only a build can measure the margin.
+            decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
+
+            # The HyperRAM transaction counters (#173). Inputs only, taken from
+            # signals `BootRAM` already computes, so this cannot alter the timing of
+            # the thing it measures.
+            m.submodules.hyper_probe = hyper_probe = HyperRAMProbe()
+            m.d.comb += [
+                hyper_probe.start_transfer.eq(bootram.probe_start),
+                hyper_probe.beat.eq(bootram.probe_beat),
+                hyper_probe.is_burst.eq(bootram.probe_burst),
+                hyper_probe.word.eq(bootram.probe_word),
+                hyper_probe.busy.eq(bootram.probe_busy),
+                hyper_probe.want.eq(bootram.probe_want),
+                hyper_probe.arming.eq(bootram.probe_arming),
+                hyper_probe.cyc.eq(bootram.probe_cyc),
+                hyper_probe.dll_locked.eq(bootram.probe_dll_locked),
+                hyper_probe.dll_ready.eq(bootram.probe_dll_ready),
+                hyper_probe.burstdet.eq(bootram.probe_burstdet),
+                hyper_probe.stall.eq(bootram.probe_stall),
+                bootram.readclksel.eq(hyper_probe.sel),
+                bootram.read_stall_cycles.eq(hyper_probe.sel[4:6]),
+            ]
+            hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
+            m.submodules.hyper_probe_bridge = hyper_probe_bridge
+            decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
+                        name="hyperram_probe")
+
+        # The BIST engine, when the HyperRAM has been taken off the bus. It runs
+        # in `hr` off the second PLL, so device CK is not the CPU clock and a
+        # ladder rung stops dragging the console divisor and the CLINT tick with
+        # it. `scripts/soc_bist_transport_sim.py` is where the CPU's read of an
+        # engine-driven register is shown to survive unequal clocks -- in 1.4 s,
+        # against three failures on the retired branch that each cost a ~90 s
+        # synthesis and a reconfigure to diagnose.
+        if HYPERRAM_BIST:
+            from hyperram_clocks import HyperRAMDomains
+            from peripherals.hyperram_bist import HyperRAMBist
+
+            # The second PLL, and the reason this variant exists. `hr` is the
+            # engine's clock and `hr_fast` its ECLK; neither is `sync`, so a CK
+            # rung can be chosen without moving the CPU, the console divisor or
+            # the CLINT tick.
+            #
+            # The DEVICE number goes in, not the fabric one: the DQS PHY emits
+            # two CK per `hr` cycle, so `hr = ck / 2` there, and taking `ck_mhz`
+            # here means a caller cannot get that factor of two wrong.
+            m.submodules.hr_car = hr_car = HyperRAMDomains(
+                ck_mhz=HYPERRAM_BIST_CK_MHZ, dqs=HYPERRAM_BIST_DQS)
+            # `usb` rather than `clk_60MHz`: the SoC's own generator has already
+            # requested that resource, and Amaranth allows one requester. `usb`
+            # is the same 60 MHz -- the FPGA sources the ULPI clock from it --
+            # so the two PLLs see the same rate, if not the same net.
+            m.d.comb += hr_car.clki.eq(ClockSignal("usb"))
+
+            hyper_bist = HyperRAMBist(ck_mhz=HYPERRAM_BIST_CK_MHZ,
+                                      dqs=HYPERRAM_BIST_DQS)
+            m.submodules.hyper_bist = hyper_bist
+            hyper_bist_bridge = WishboneCSRBridge(hyper_bist.bus, data_width=32)
+            m.submodules.hyper_bist_bridge = hyper_bist_bridge
+            decoder.add(hyper_bist_bridge.wb_bus, addr=HYPERRAM_BIST_BASE,
+                        name="hyperram_bist")
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #
@@ -1246,13 +1363,22 @@ class AwtoSoc(Elaboratable):
             stager.shift.eq(user_jtag.shift),
             user_jtag.tdo1.eq(stager.tdo),
 
-            bootram.jtag_req.eq(stager.req),
-            bootram.jtag_addr.eq(stager.addr),
-            bootram.jtag_data.eq(stager.data),
-            stager.ack.eq(bootram.jtag_ack),
-
             cpu.ext_reset.eq(stager.cpu_reset),
         ]
+
+        # The staged-image path needs somewhere to stage TO, and under
+        # HYPERRAM_BIST there is no BootRAM -- the engine owns the part.
+        #
+        # `stager.ack` is left unconnected rather than tied high, so a host that
+        # tries to stage against this variant stalls visibly instead of being
+        # told a write landed that went nowhere.
+        if not HYPERRAM_BIST:
+            m.d.comb += [
+                bootram.jtag_req.eq(stager.req),
+                bootram.jtag_addr.eq(stager.addr),
+                bootram.jtag_data.eq(stager.data),
+                stager.ack.eq(bootram.jtag_ack),
+            ]
 
         # The machine external interrupt, from the PLIC.
         #
