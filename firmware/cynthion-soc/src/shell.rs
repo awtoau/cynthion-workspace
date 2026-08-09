@@ -108,6 +108,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("hyperram ramp [w]", "verify a 0-255 byte ramp; `w` writes it first"),
     ("hyperram bench", "the same walk as `bench hyperram`"),
     ("hyperram id", "HyperBus has no identify"),
+    ("hyperram clear", "DESTRUCTIVE: invalidates any staged image"),
     ("i2c", "the three I2C buses behind the mux"),
     ("i2c status", "the controller: base, prescale, selected bus"),
     ("i2c scan [bus]", "scan a bus behind the mux"),

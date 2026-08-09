@@ -194,6 +194,26 @@ const CANARY: u32 = 0x4852_5057; // "HRPW"
 #[cfg(feature = "image")]
 const ROUND_TRIP: [u32; 2] = [0x5aa5_0f0f, 0xa55a_f0f0];
 
+/// `hyperram clear` -- **DESTRUCTIVE**, and never called by [`init`].
+///
+/// It invalidates any staged image: the magic goes, so the bootloader falls
+/// through to whatever the bitstream placed, and the canary goes with it, so
+/// the next [`init`] reports the array as unestablished rather than trusting
+/// contents this deliberately abandoned.
+///
+/// **What it cannot do here, and says rather than claiming otherwise**: assert
+/// `RESET#`. That pin is tied de-asserted in the shipping SoC
+/// (`gateware/soc/bootram.py:706,723`), so the full hardware reset -- `tRP`
+/// 200 ns low, `tRPH` 400 ns before CS# -- has no path from firmware at all. It
+/// would destroy the array outright (§11.3.6), which is exactly why it belongs
+/// behind an operator's command and not behind an init.
+#[cfg(feature = "image")]
+pub fn clear() {
+    invalidate();
+    write_u32(CANARY_WORD, 0);
+    write_u32(STAMP_WORD, 0);
+}
+
 // The power-state half: the CS# wake ladder (#315).
 //
 // `image` only, and the feature exists for one reason: this file is compiled
