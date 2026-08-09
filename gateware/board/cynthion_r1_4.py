@@ -64,6 +64,12 @@ HYPERRAM_DQ_DRIVE = os.getenv("CYNTHION_HYPERRAM_DQ_DRIVE", "8")
 # CS# and RESET# are static during a burst, so drive buys nothing there.
 HYPERRAM_CTRL_DRIVE = os.getenv("CYNTHION_HYPERRAM_CTRL_DRIVE", "4")
 
+# OFF, against nextpnr's forced ON for every single-ended input/bidir pin (the
+# Trellis default is OFF). Schmitt thresholds skew rise against fall on the exact
+# pins the read captures, and nothing has ever varied it. A first-class axis
+# ahead of FPGA CK drive. #311.
+HYPERRAM_DQ_HYSTERESIS = os.getenv("CYNTHION_HYPERRAM_HYSTERESIS", "OFF")
+
 
 class CynthionPlatformRev1D4(CynthionPlatform):
     """ Board description for Cynthion r1.4 """
@@ -243,9 +249,11 @@ class CynthionPlatformRev1D4(CynthionPlatform):
                       Attrs(IO_TYPE="LVCMOS33D", DRIVE=HYPERRAM_CK_DRIVE,
                             SLEWRATE="FAST")),
             Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io"),
-                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE)),
+                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE,
+                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS)),
             Subsignal("rwds",  Pins( "D1", dir="io"),
-                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE)),
+                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE,
+                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS)),
             # SLOW, against the resource-level FAST: neither carries data, and
             # CS# is PIOB of the same row-2 pad group as CK/CK# with its edge
             # landing at burst start, on the CK edges the read is timed against.
