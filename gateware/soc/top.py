@@ -660,7 +660,25 @@ HYPERRAM_CLOCK_STOP = False
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
 # firmware, and a geometry reported from a different number than the one the
 # core was generated with would be worse than not reporting it.
-CACHE_SETS = 64
+#
+# 128 sets x 1 way x 64 B line = 8 KiB per cache. Doubled from 64 because the
+# spare block RAM has no better claim on it: the matched superloop-vs-RTIC runs
+# in `docs/rtic.md` (#245) measured the RTIC dispatcher's
+# +1,700 B of `.text` moving frontend stalls from 44/1000 cycles to 452/1000
+# through the 4 KiB I-cache, while `.bss` uses 9,728 bytes of a 63 KiB RAM whose
+# remainder is all stack slack. Code size costs real cycles on this design; data
+# size does not.
+#
+# Sets rather than ways, and that is a correctness constraint rather than a
+# preference. `flash_cache_flush()` in `scripts/riscv_firmware.py` displaces the
+# D-cache by reading its size linearly, which is only guaranteed while the cache
+# is DIRECT-MAPPED -- with two ways, a pseudo-LRU replacement policy decides what
+# survives and the flush stops being a proof. Doubling the sets keeps every line
+# uniquely addressed by its index, so the existing flush stays correct by
+# construction, and it leaves the cache hit path -- one tag compare, no way-select
+# mux -- timing-identical, which matters at a 90 MHz ceiling the BTB already had
+# to be relaxed to meet.
+CACHE_SETS = 128
 
 
 class HelloSoC(Elaboratable):
@@ -729,7 +747,12 @@ class HelloSoC(Elaboratable):
             f"base={HYPERRAM_BASE:08x},size={HYPERRAM_SIZE:08x},main=1,exe=1",
         ]
 
-        cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=64, regions=regions)
+        # CACHE_SETS, not a literal: `gateware_id.py` reports this same constant
+        # to the firmware, so a literal here would let the core and the geometry
+        # it advertises drift apart silently. They did not, but only because both
+        # happened to be 64.
+        cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
+                         regions=regions)
         m.submodules.cpu = cpu
 
         # The die's one `JTAGG`, and both taps off it.

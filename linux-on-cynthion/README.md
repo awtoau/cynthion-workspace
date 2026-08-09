@@ -43,7 +43,7 @@ defective. Use these, not `62_generate_exhaustive_profile_matrix.py`:
 | `scripts/riscv_core_wrapper.py` | Synthesisable top: block RAM on both buses, one-cycle latency with a real ready handshake |
 | `scripts/riscv_sweep_report.py` | Resolves results against the config JSON by profile name; XLEN and ISA base get their own columns |
 
-Cache size is the axis that matters: the 12F has 56 DP16KD blocks (112 KiB)
+Cache size is the axis that matters: the die has 56 DP16KD blocks (112 KiB)
 shared between CPU, firmware, and USB buffers, so 16 KiB is swept to find the
 block-RAM wall by measurement.
 

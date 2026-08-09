@@ -91,8 +91,18 @@ if not VEXII.is_dir():
 GENERATE_FLAGS = [
     "--xlen", "32",
     "--with-rvm", "--with-rvc", "--with-rva", "--with-rdtime",
-    "--with-fetch-l1", "--fetch-l1-sets", "64", "--fetch-l1-ways", "1",
-    "--with-lsu-l1", "--lsu-l1-sets", "64", "--lsu-l1-ways", "1",
+    # 128 sets x 1 way x 64 B = 8 KiB each. `generate()` substitutes the sets
+    # from its `cache_sets` argument, so these two literals are the default
+    # rather than the last word -- `top.py`'s CACHE_SETS is. They are kept equal
+    # to it so no reader has to work out which number won.
+    #
+    # ONE WAY IS LOAD-BEARING, not a default nobody revisited: `flash_cache_flush()`
+    # in `scripts/riscv_firmware.py` evicts the D-cache by reading its size at
+    # line stride, which reaches every set exactly once only while the cache is
+    # direct-mapped. Add a way and a replacement policy decides what survives --
+    # the flush keeps running and stops proving anything.
+    "--with-fetch-l1", "--fetch-l1-sets", "128", "--fetch-l1-ways", "1",
+    "--with-lsu-l1", "--lsu-l1-sets", "128", "--lsu-l1-ways", "1",
     # All three are needed. A cached core still has an uncached LSU path --
     # that is how it reaches I/O regions, and peripherals live in one -- so it
     # appears as its own top-level bus. Omitting --lsu-wishbone leaves it
@@ -172,7 +182,7 @@ DEFAULT_REGIONS = [
 ]
 
 
-def generate(reset_addr, cache_sets=64, output=None, regions=None):
+def generate(reset_addr, cache_sets=128, output=None, regions=None):
     """Run the Scala generator and return the path to the Verilog.
 
     Regenerating is a few seconds, so this is called at elaboration rather than
@@ -231,7 +241,7 @@ class VexiiRiscv(wiring.Component):
     byteorder  = "little"
     data_width = 32
 
-    def __init__(self, *, reset_addr=0x00000000, cache_sets=64,
+    def __init__(self, *, reset_addr=0x00000000, cache_sets=128,
                  regions=None):
         self._reset_addr = reset_addr
         self._cache_sets = cache_sets

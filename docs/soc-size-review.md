@@ -26,7 +26,7 @@ they were taken under; what to *do* about any of them is an issue. See
 **Fabric size is LUTs and flip-flops.** The design has room: 58% of the LUT4 and
 30% of the DFF on a die that is a 25F wearing a 12F's marking.
 
-**Firmware size is SPEED.** The I-cache is 4 KiB, direct-mapped, one way.
+**Firmware size is SPEED.** The I-cache is 8 KiB, direct-mapped, one way.
 `firmware/cynthion-soc/Cargo.toml` records `opt-level` `z` → `3` growing `.text`
 79% and costing **5.4x the IPC**, and
 [`rtic.md`](rtic.md) measures the

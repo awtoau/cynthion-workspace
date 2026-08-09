@@ -60,8 +60,8 @@ FLASH_SCK_PERIOD = 2
 FLASH_SPEED_BYTES = 4096
 FLASH_USE_FAST_READ = 0
 
-# How many payload bytes to mirror into block RAM for inspection. The ECP5-12F
-# has 56 DP16KD blocks and this design used none of them, so 1 KiB is free.
+# How many payload bytes to mirror into block RAM for inspection. The die has 56
+# DP16KD blocks and this design used none of them, so 1 KiB is free.
 CAPTURE_DEPTH = 1024
 
 # Register 0 is reserved by JTAGRegisterInterface for size auto-negotiation.
