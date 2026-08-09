@@ -20,7 +20,8 @@ The HyperRAM stops being memory the SoC addresses and becomes **a peripheral the
 SoC commands**. The CPU writes the axis values, starts a pass, polls, reads the
 counters and prints a row. That removes three defect classes by construction:
 
-  * no `JTAGRegisterInterface` anywhere in the measurement path (#204);
+  * no host in the measurement loop -- the CPU commands the pass and prints
+    per cell, at ~2 ms each;
   * no Wishbone decoder, cache, arbiter or `RegisteredResponse` bubble between
     the engine and the part -- so the unfinished SoC DQS write path (#186, #212)
     is not in the way and the matrix can be produced without fixing it first;

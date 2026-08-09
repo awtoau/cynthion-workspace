@@ -64,9 +64,10 @@ class BISTHarness(Elaboratable):
         without the engine knowing: it only ever calls `add_register` and
         `add_read_only_register` on this harness.
 
-        That matters because JTAG is where three of this project's measurement
-        failures came from (#204), the sharpest being a readback that slips a
-        bit below a `sync`/TCK ratio of about four.
+        The JTAG transport is `jtag_registers.py`, clocked by TCK throughout;
+        #204's ratio-dependent readback was luna's and was replaced on
+        2026-08-07. A CSR transport is a choice about what ELSE is in the path
+        -- decoder, cache, arbiter (#226) -- not about JTAG being unsafe.
         """
         if not 1 <= width <= 32:
             raise ValueError("BIST comparator width must be in 1..32")

@@ -6,13 +6,14 @@
 """
 `BISTHarness`'s two register methods, backed by `amaranth_soc` CSR.
 
-## Why not JTAG
+## Why CSR rather than JTAG
 
-`JTAGRegisterInterface` has produced three separate failures in the measurement
-path (#204), the sharpest being that its readback slips a bit below a `sync`/TCK
-ratio of about four -- so a value read back over it is not necessarily the value
-the gateware holds. Every HyperRAM number this project has recorded came through
-it.
+NOT because JTAG slips. #204 was luna's transport, replaced by
+`gateware/probes/jtag_registers.py` -- TCK-clocked, so no `sync`/TCK ratio
+enters, and `jtck` closes at 295.68 MHz against a 20 MHz constraint.
+
+CSR is here so the CPU sweeps the matrix inside one bitstream and prints per
+cell (#226), at ~2 ms per cell. Host-driven register pokes cannot do that.
 
 `BISTHarness` never touches the transport directly: it holds one, and
 `HyperRAMCeiling` calls `add_register` / `add_read_only_register` on the harness.

@@ -694,7 +694,7 @@ HYPERRAM_CLOCK_STOP = False
 # broken instrument -- five overlapping faults fixed between 5 and 7 August 2026,
 # so nothing measured before then discriminates. This build exists to
 # re-establish those numbers from zero with none of it in the path: no
-# JTAGRegisterInterface (#204), and no decoder, cache, arbiter or
+# decoder, cache, arbiter or
 # RegisteredResponse bubble between the engine and the part. The unfinished SoC
 # DQS write path (#186, #212) is therefore not in the way, so the matrix can be
 # produced without fixing it first.

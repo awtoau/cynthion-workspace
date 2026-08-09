@@ -215,7 +215,7 @@ Only once this behaves does the matrix mean anything.
 | Clocks measured, not declared | a dead PLL reports its intended rate from a constant |
 | BURSTDET settled | one harness wrong, or the two measure different things |
 | Known-good reference | **First one taken 2026-08-10**: non-DQS, CK 80, drive 3, phase 0, CR0 latency 2 and 6 pass on both fixed and variable, control fired 512/512. One run — see the repeatability caveat below. |
-| #204 | JTAG readback slips a bit below sync/TCK ~4 — every applet reads through it |
+| #204 | **cleared 2026-08-07** — `jtag_registers.py` is TCK-clocked, so no ratio applies; `jtck` closes at 295.68 MHz. The fault was luna's, not JTAG's. |
 | **#314** | **DQS edge clock ran on general fabric.** Two PLL sites, both Y49; ECLK consumers Y2–Y11; ~38 tiles apart, so no placement reaches it. `ECLKBRIDGECS` instantiated 2026-08-10, **not yet built**. No DQS number counts before it is. |
 | **Repeatability** | The engine wedges on some reconfigures: one 128-cell sweep clean, the next producing nothing, same bitstream. **A result is not a reference until it reproduces.** |
 | #215 | non-DQS controller vendored, tCSHI + latency — done 2026-08-07 |
