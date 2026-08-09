@@ -239,6 +239,33 @@ pub fn open_all() {
     write(0);
 }
 
+/// What [`init`] read back. Zero is every switch open; nothing else is.
+pub struct Init {
+    pub state: u8,
+}
+
+impl Init {
+    pub fn established(&self) -> bool {
+        self.state == 0
+    }
+}
+
+/// `vbus_init()` -- open every switch, and read the register back.
+///
+/// **This cuts power to anything attached to TARGET**, which is correct at boot
+/// and is why it is not in any health-check path.
+///
+/// It is needed because a CPU reset is narrower than it looks. A reconfigure
+/// clears this register; `jr _reset_vector` does not, so `vbus control` then
+/// `load` or `reset` leaves a switch closed across the whole of the next boot,
+/// unopened and unreported (#315).
+///
+/// The read back is the only evidence the write landed.
+pub fn init() -> Init {
+    open_all();
+    Init { state: read() }
+}
+
 /// The raw register, for `board` and `vbus` to report.
 pub fn state() -> u8 {
     read()

@@ -37,13 +37,18 @@ correct counter values and dropped characters" once they differed -- a
 continuous crossing is where that lives, and there is no continuous crossing
 here.
 
-## The dividers are configuration-time
+## The dividers are configuration-time; the SELECTION is not
 
 `qspi_gateware.py` records that the ECP5's PLL output dividers "are programmed
 during configuration and are not writable afterwards", and that a hand-built
 `EHXPLLL` did not behave as documented -- `CLKOS_DIV=2` measured 480 MHz where
-240 was asked for. So CK is per-bitstream: one build per rung, and every
-runtime axis swept inside it.
+240 was asked for.
+
+So the FREQUENCIES are per-bitstream. Which one is live is not: `DCSC` picks
+between two PLL outputs of the same VCO at run time, glitchlessly, so on the
+non-DQS path CK joins the runtime cross product instead of gating it. Two rungs
+per build, `MAX_RUNGS`, and the DQS path is fixed at one -- both limits are
+silicon and are argued where they are enforced.
 """
 
 from amaranth import ClockDomain, ClockSignal, Elaboratable, Instance, Module, Signal
@@ -299,6 +304,14 @@ class HyperRAMDomains(Elaboratable):
         # default constraint and reported PASS.
         self.clki = Signal()
 
+        # WHICH RUNG IS LIVE. A level, not a pulse: `DCSC` does the handoff and
+        # is glitchless with both clocks running, which they always are here --
+        # both are outputs of the same locked VCO.
+        #
+        # Present even with one rung, so a caller does not have to know how many
+        # there are; it is then ignored rather than absent.
+        self.sel = Signal(range(max(len(self.ck_rungs), 2)))
+
     def _unreachable(self, input_mhz):
         """Why the ladder rung asked for does not exist, and what does nearby."""
         rungs = ", ".join(f"{ck:g}" for ck in self.ck_rungs)
@@ -317,9 +330,18 @@ class HyperRAMDomains(Elaboratable):
         if self.dqs:
             m.domains.hr_fast = ClockDomain()
 
-        clk_hr = Signal()
+        # One net per rung, straight off the PLL, plus the net the domain
+        # actually runs on. With one rung they are the same wire.
+        clk_rung = [Signal(name=f"clk_hr_rung{index}")
+                    for index in range(len(self.rung_divs))]
+        clk_hr = clk_rung[0] if len(clk_rung) == 1 else Signal(name="clk_hr")
         clk_hr_fast = Signal()
         locked_raw = Signal()
+
+        # CLKOS is rung 1 on the non-DQS path and `hr_fast` on the DQS one.
+        # Never both: the DQS path has one rung, for the reason in `__init__`.
+        clkos_div = self.clkos_div if self.dqs else (
+            self.rung_divs[1] if len(self.rung_divs) > 1 else None)
 
         m.submodules.pll = Instance(
             "EHXPLLL",
@@ -338,23 +360,51 @@ class HyperRAMDomains(Elaboratable):
             p_CLKOP_CPHASE=self.clkop_div - 1,
             p_CLKOP_FPHASE=0,
             **({"p_CLKOS_ENABLE": "ENABLED",
-                "p_CLKOS_DIV": self.clkos_div,
-                "p_CLKOS_CPHASE": self.clkos_div - 1,
-                "p_CLKOS_FPHASE": 0} if self.dqs else {}),
+                "p_CLKOS_DIV": clkos_div,
+                "p_CLKOS_CPHASE": clkos_div - 1,
+                "p_CLKOS_FPHASE": 0} if clkos_div else {}),
             i_CLKI=self.clki,
             # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` closes the loop through the
             # CLKOP output, so leaving CLKFB undriven opens it: the PLL never
             # locks and anything gated on `locked` is held for ever. The design
             # still configures and still builds, which is why this cost a
             # bisect the first time -- see `clocks.py`.
-            i_CLKFB=clk_hr,
+            i_CLKFB=clk_rung[0],
             i_RST=0, i_STDBY=0, i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
-            o_CLKOP=clk_hr,
-            **({"o_CLKOS": clk_hr_fast} if self.dqs else {}),
+            o_CLKOP=clk_rung[0],
+            **({"o_CLKOS": clk_hr_fast} if self.dqs else
+               {"o_CLKOS": clk_rung[1]} if len(clk_rung) > 1 else {}),
             o_LOCK=locked_raw,
         )
+
+        if len(clk_rung) > 1:
+            # THE RUNG SELECTOR, and the reason CK stops being a rebuild.
+            #
+            # `DCSC` is the ECP5's glitchless clock mux: it completes the cycle
+            # in flight before handing over, so a `sel` write cannot produce a
+            # runt on a running domain. SEL0/SEL1 are one-hot from one bit, so
+            # the illegal both-high state is unreachable and the both-low state
+            # -- which stops the clock -- cannot be typed by accident.
+            #
+            # `MODESEL=0` with `DCSMODE="POS"`: both inputs are outputs of the
+            # same locked VCO and are always running, which is the case that
+            # mode is for.
+            #
+            # DCSOUT reaches the PRIMARY clock network only (`G_DCSOUT_DCS*` ->
+            # `G_*PCLK*`), never the edge-clock mux. That is what confines this
+            # to the non-DQS path -- see `__init__`.
+            m.submodules.ck_mux = Instance(
+                "DCSC",
+                p_DCSMODE="POS",
+                i_CLK0=clk_rung[0],
+                i_CLK1=clk_rung[1],
+                i_SEL0=~self.sel[0],
+                i_SEL1=self.sel[0],
+                i_MODESEL=0,
+                o_DCSOUT=clk_hr,
+            )
 
         m.d.comb += ClockSignal("hr").eq(clk_hr)
         if self.dqs:

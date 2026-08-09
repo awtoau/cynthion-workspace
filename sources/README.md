@@ -29,9 +29,9 @@ in `../docs/chips/hyperram/w956a8.md`.
 These datasheets were still worth fetching: they are what settled it, and the 128 Mbit
 one is the control that let the dual-die hypothesis be tested and dropped.
 
-### The 10-page Winbond PDF is ABRIDGED, and it cost real work
+### A 10-page Winbond PDF is in circulation and is ABRIDGED (both local copies are now full)
 
-The copy fetched first is **10 pages**. The full document is **45**. Everything
+The copy fetched first was **10 pages**. The full document is **45**. Everything
 about timing behaviour is in the missing 35 -- including **section 10.2.2 Active
 Clock Stop** and Figure 13, on printed page 27, which is what says whether CK may
 legally be halted mid-burst. A question about stalling the data phase could not
@@ -58,7 +58,7 @@ but they are **not** the part on the board.
 
 | file | part | source |
 |---|---|---|
-| `Winbond-W956A8MBYA-64Mbit-HyperRAM.pdf` | **ABRIDGED, 10 pp** -- rev A01-002 (Nov 2019). Superseded by the entry below; see the warning. | `https://xonstorage.z8.web.core.windows.net/pdf/winbond_w956d8mbya6i_apr22_xonlink.pdf` |
+| `Winbond-W956A8MBYA-64Mbit-HyperRAM.pdf` | rev A01-002, **47 pp -- complete** (re-fetched; the earlier 10 pp abridged copy is gone). Superseded by A01-006 below, but keep it: **A01-002 section 2 is the only order table that still lists the board's `W956A8MBYA6I` / `W956D8MBYA6I` 166 MHz parts.** | `https://xonstorage.z8.web.core.windows.net/pdf/winbond_w956d8mbya6i_apr22_xonlink.pdf` |
 | `W956x8MBYA_A01-006.pdf` | **W956D8MBYA / W956A8MBYA, rev A01-006 (2022-07-29), 45 pp -- the full document** | `https://xonstorage.z8.web.core.windows.net/pdf/winbond_w956d8mbya6i_apr22_xonlink.pdf` |
 | `Winbond-W956D8MBY-128Mbit-HyperRAM.pdf` | W957D8MFYA / W957A8MFYA, 128 Mbit, rev A01-004 (Aug 2022), 45 pp | `https://media.digikey.com/pdf/Data%20Sheets/Winbond%20PDFs/W957x8MFYA_Rev_A01-004_8-4-22.pdf` |
 
@@ -86,6 +86,26 @@ worth stating: a future build of this board cannot buy the 6I and must take the
 
 `../docs/chips/hyperram/w956a8.md` previously said *"Section 2 of the datasheet
 lists both"*. It does not, and that is corrected there.
+
+#### CR0[7:4] Initial Latency is a SPARSE encoding -- only 5 of 16 codes are legal
+
+**Table 8, printed p. 21** (A01-006; same table in A01-002 and in the 128 Mbit
+`W957D8MFYA`, so it is family-wide, not part-number specific):
+
+| CR0[7:4] | latency | max frequency |
+|---|---|---|
+| `0000b` | 5 clocks | 133 MHz |
+| `0001b` | 6 clocks | 166 MHz |
+| `0010b` | 7 clocks | 200 MHz (**default**) |
+| `0011b`..`1101b` (3..13) | **Reserved** | -- |
+| `1110b` | 3 clocks | 83 MHz |
+| `1111b` | 4 clocks | 100 MHz |
+
+- Encoding is `clocks = 5 + sext4(code)`; the two short latencies live at the top of the range.
+- "Max frequency" is an upper bound on that code, not a requirement -- **more latency is always safe at a lower clock.**
+- POR default CR0 = **`0x8F2F`** (`[15]=1`, `[14:12]=000`, `[11:8]=1111`, `[7:4]=0010`, `[3]=1`, `[2]=1`, `[1:0]=11`).
+- `tACC` = 35/36/37.5/40 ns at 200/166/133/100 MHz (**Table 21, p. 37**) -- exactly `clocks x tCK` for the codes above.
+- **Drive strength `000b` and `100b` are both 34 ohms** (Table 8) -- an 8-code sweep has only 7 distinct impedances.
 
 #### What they settled: `0x1000` is the Manufacturer Information Register
 

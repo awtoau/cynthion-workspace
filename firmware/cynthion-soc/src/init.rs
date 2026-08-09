@@ -68,7 +68,7 @@ use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::uart::Uart;
-use crate::{bench, log, plic, power, sched, shell, target, timer, Devices};
+use crate::{bench, log, plic, power, sched, shell, target, timer, vbus, Devices};
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
@@ -206,6 +206,7 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     i2c_init(&mut out, devices);
     pac1954_init(&mut out, devices);
     fusb302b_init(&mut out, devices);
+    vbus_init(&mut out);
     facilities(&mut out);
 }
 
@@ -219,6 +220,7 @@ fn one(out: &mut Out, name: &[u8], devices: &mut Devices) -> bool {
         b"i2c" => i2c_init(out, devices),
         b"pac1954" => pac1954_init(out, devices),
         b"fusb302b" => fusb302b_init(out, devices),
+        b"vbus" => vbus_init(out),
         _ => return false,
     }
     true
@@ -326,6 +328,22 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
             "{} controller(s), sw_res then interrupt on state change{}",
             report.ports,
             if report.configured { "" } else { " -- a port did not answer" }
+        ),
+    );
+}
+
+fn vbus_init(out: &mut Out) {
+    if target::BOARD.is_none() {
+        return out.line("vbus", "ABSENT", format_args!("no vbus register on this target"));
+    }
+    let report = vbus::init();
+    out.line(
+        "vbus",
+        if report.established() { "ok" } else { "FAIL" },
+        format_args!(
+            "all four switches open, register reads {:02x}{}",
+            report.state,
+            if report.established() { "" } else { " -- a switch did not open" }
         ),
     );
 }
