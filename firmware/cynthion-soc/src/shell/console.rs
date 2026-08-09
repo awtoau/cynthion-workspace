@@ -127,6 +127,20 @@ impl Shell {
             banner(uart);
         }
 
+        // DEL IS A BACKSPACE HERE. The crate matches `0x08` only, and `0x7f` is
+        // >= 0x20 so it falls through to "printable" and gets INSERTED -- typing
+        // backspace put a DEL character in the command line.
+        //
+        // Which byte a terminal sends is the terminal's choice, not the user's:
+        // xterm and most Linux terminals send `0x7f`, a VT100 and this project's
+        // own `scripts/tio_user.py` pass through whatever the tty gives them.
+        // Measured on the board: `0x08` produced `ESC[D ESC[P`, `0x7f` echoed
+        // itself and left the character standing.
+        //
+        // Translated before `process_byte` rather than patched in the crate, so
+        // the crate stays a dependency rather than a fork.
+        let byte = if byte == 0x7f { 0x08 } else { byte };
+
         // The line editor owns everything from here: echo, backspace, TAB
         // completion over `HELP`, and the history ring on the arrow keys.
         // A completed line reaches `shell::run` through `Dispatch` -- the crate
