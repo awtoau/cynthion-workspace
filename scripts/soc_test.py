@@ -714,20 +714,24 @@ def main():
                                  REPLY_S, at) is not None,
                   "the second banner line did not follow the first")
 
-            # --- the idle re-banner --------------------------------------
-            # Must come before anything is sent: the first keypress latches
-            # `spoken` and the shell never re-announces again. This is the
-            # board's reported symptom -- one banner at boot and then silence
-            # forever -- so it is worth an assertion even though it costs a
-            # couple of seconds.
+            # --- the idle console says NOTHING -----------------------------
+            # Must come before anything is sent: the banner waits for the first
+            # keypress, so this is the only window in which the assertion means
+            # anything.
+            #
+            # The inverse of what this used to check. It re-banered every 2 s so
+            # an attaching terminal would not have missed the first one, and
+            # that is a transmission with nobody there -- console 1's TX shares
+            # a net with JTAG TMS, so it had to be restricted to console 0.
+            # Nothing is unbidden now. See `target::NEVER_SPEAKS_FIRST`.
             again = session.expect(banner, IDLE_S, at + len(banner))
-            check("the shell re-announces itself while idle", again is not None,
-                  f"no second banner within {IDLE_S}s of the first.\n"
-                  "The poll loop stopped turning, or `spoken` latched with "
-                  "nothing\n"
-                  "typed. An idle shell that never speaks cannot be told apart "
-                  "from a\n"
-                  "dead one.\n"
+            check("an idle console transmits nothing", again is None,
+                  f"a second banner arrived within {IDLE_S}s of the first.\n"
+                  "The firmware must not speak until spoken to: the second "
+                  "console's TX\n"
+                  "pin is JTAG TMS, and an unbidden transmission on it is bus "
+                  "contention\n"
+                  "with whatever Apollo is doing.\n"
                   f"received: {show(session.snapshot()[at:]) or '(nothing)'}")
 
         # --- Enter produces a prompt ----------------------------------------
@@ -1667,7 +1671,18 @@ def main():
             # rather than `> 0` because it survives the window halving --
             # halving preserves the ratio exactly -- and because a split
             # that charged everything to busy would also pass `> 0`.
-            check("work moves the busy fraction", busy > idle[1],
+            # BUSY CYCLES, not the busy fraction. The fraction is a cumulative
+            # average since boot, and an idle console now costs nothing at all
+            # -- the banner stopped reprinting every 2 s -- so the denominator
+            # grows between the two readings faster than 20 ms of work raises
+            # the numerator, and the average FALLS while real work was done.
+            # Measured: 0.09% -> 0.06% over a 950 M cycle window.
+            #
+            # The absolute figure has no such problem: work is monotonic, so a
+            # command that spends 20 ms busy must leave more busy cycles behind
+            # than it found.
+            check("work moves the busy cycle count",
+                  window * busy > idle[0] * idle[1],
                   f"busy was {idle[1] / 100:.2f}% and is "
                   f"{busy / 100:.2f}% after a command that spends 20 ms\n"
                   "inside the firmware in a single turn. Nothing is "
