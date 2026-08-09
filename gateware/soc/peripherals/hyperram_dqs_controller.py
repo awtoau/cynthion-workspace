@@ -53,7 +53,7 @@ belongs in the PHY, where LiteDRAM's ECP5 equivalent puts `BitSlip(4)`. See #186
 
 import math
 
-from amaranth import (Cat, ClockSignal, Const, Elaboratable, Instance, Module,
+from amaranth import (Cat, ClockSignal, Const, Elaboratable, Instance, Module, Mux,
                       Record, ResetSignal, Signal)
 from amaranth.hdl.rec import DIR_FANIN, DIR_FANOUT
 from amaranth.lib.cdc import FFSynchronizer
@@ -246,7 +246,21 @@ class HyperRAMDQSController(Elaboratable):
             with m.State('SHIFT_COMMAND1'):
                 # Output the remaining 32 bits of our command.
                 m.d.sync += [
-                    self.phy.dq.o.eq(Cat(Const(0, 16), ca[0:16])),
+                    # THE SPARE TWO BYTES ARE THE REGISTER DATA WORD.
+                    #
+                    # The 4:1 beat carries four bytes and the CA is six, so this
+                    # second beat is CA[15:0] plus two spare. A register write
+                    # has ZERO initial latency (datasheet 9.2), so whatever sits
+                    # there IS the word written -- and it was Const(0, 16).
+                    #
+                    # Every DQS register write therefore wrote 0x0000, and
+                    # CR0[15]=0 is DEEP POWER DOWN (Table 10). The part went
+                    # silent, the next read returned nothing, and the unbounded
+                    # READ_DATA hung on it. The wedge and the writes that
+                    # "changed nothing" were one event, not two. See #226.
+                    self.phy.dq.o.eq(Cat(Mux(is_register & ~is_read,
+                                             self.write_data[0:16], 0),
+                                         ca[0:16])),
                     self.phy.dq.e.eq(1),
                 ]
 
@@ -314,7 +328,18 @@ class HyperRAMDQSController(Elaboratable):
 
                 # If we just finished a register write, we're done -- there's no need for recovery.
                 with m.If(is_register):
-                    m.next = 'IDLE'
+                    # THROUGH RECOVERY, not straight to IDLE. Going to IDLE
+                    # asserts `idle` in the same cycle the data word is still
+                    # being clocked out, one cycle before CS# drops -- so
+                    # back-to-back register writes with `start_transfer` held
+                    # never raise CS# at all, and tCSHI is violated outright.
+                    #
+                    # Callers escape today only by accident: their *_WAIT states
+                    # happen not to drive `start_transfer`, leaving exactly ONE
+                    # cycle of CS# high -- 10.0 ns at 100 MHz, 6.06 ns at 165 --
+                    # which is tCSHI minimum with zero margin, held by a property
+                    # of the caller's state count rather than by this FSM.
+                    m.next = 'RECOVERY'
 
                 with m.Elif(self.final_word):
                     # Straight to RECOVERY, and a WRITE_FLUSH state added here was

@@ -352,7 +352,18 @@ class HyperRAMController(Elaboratable):
 
                 # If we just finished a register write, we're done -- there's no need for recovery.
                 with m.If(is_register):
-                    m.next = 'IDLE'
+                    # THROUGH RECOVERY, not straight to IDLE. Going to IDLE
+                    # asserts `idle` in the same cycle the data word is still
+                    # being clocked out, one cycle before CS# drops -- so
+                    # back-to-back register writes with `start_transfer` held
+                    # never raise CS# at all, and tCSHI is violated outright.
+                    #
+                    # Callers escape today only by accident: their *_WAIT states
+                    # happen not to drive `start_transfer`, leaving exactly ONE
+                    # cycle of CS# high -- 10.0 ns at 100 MHz, 6.06 ns at 165 --
+                    # which is tCSHI minimum with zero margin, held by a property
+                    # of the caller's state count rather than by this FSM.
+                    m.next = 'RECOVERY'
 
                 with m.Elif(self.final_word):
                     m.next = 'RECOVERY'
