@@ -328,6 +328,20 @@ pub fn command(uart: &mut Uart) {
         build::PROFILE
     );
 
+    // WHICH LINE EDITOR IS RUNNING, and it is not cosmetic.
+    //
+    // "TAB does not complete" has two causes that look identical from a
+    // terminal: the firmware has no completion, or the terminal is eating the
+    // key before it reaches the wire. A build that cannot say which editor it
+    // carries leaves the reader guessing between them -- the same shape as a
+    // transcript that does not say what produced it.
+    let _ = writeln!(
+        uart,
+        "shell    {}  {}",
+        crate::shell::console::EDITOR,
+        crate::shell::console::EDITOR_KEYS
+    );
+
     // One row per section, each carrying the window it is actually in.
     //
     // A table rather than a line of prose per section: four rows share one format

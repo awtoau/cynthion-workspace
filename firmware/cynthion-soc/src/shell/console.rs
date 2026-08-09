@@ -157,3 +157,15 @@ impl Shell {
 /// and the QEMU suite reported the shell as silent.
 pub(crate) const BANNER_INTERVAL_MS: u32 = 2_000;
 
+/// Which line editor this build carries, for `info`.
+///
+/// Swapping the editor must move this string with it. A board that reports the
+/// editor it does not have is worse than one that reports nothing.
+pub(crate) const EDITOR: &str = "embedded-cli 0.2.1";
+
+/// What it responds to, so "TAB does nothing" can be told apart from "TAB never
+/// arrived". Every one of these needs a RAW terminal: in canonical mode the tty
+/// handles TAB itself and buffers the line until Enter, so none of them reach
+/// the board.
+pub(crate) const EDITOR_KEYS: &str = "TAB completes, up/down history, raw tty needed";
+
