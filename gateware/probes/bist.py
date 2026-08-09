@@ -20,6 +20,7 @@ look like a new protocol. ``addresses`` says where this common contract lands.
 from dataclasses import dataclass
 
 from amaranth import Cat, Const, Elaboratable, Module, Mux, Signal
+from amaranth.lib.cdc import FFSynchronizer
 from jtag_registers import JTAGRegisterInterface
 
 
@@ -171,9 +172,26 @@ class BISTHarness(Elaboratable):
                 read=Cat(self.busy, self.done_sticky, self.error, negative,
                          self.status_extra))
 
+            # SYNCHRONISED before the edge detect, not edge-detected raw.
+            #
+            # `control` is written by whatever drives the transport and read
+            # here in this harness's domain. For the JTAG applet those are the
+            # same domain and this is two flops of harmless delay. For the SoC
+            # rig they are NOT: the CPU writes in `sync` and the engine runs in
+            # `hr` off a second PLL, so a bare level crossing can be sampled
+            # mid-transition.
+            #
+            # Observed as an INTERMITTENT lost `go`: one cell in four came back
+            # NO RESULT with the engine parked in HALTED and the controller
+            # idle, while its neighbours ran. An intermittent fault in a
+            # measurement rig is worse than a consistent one -- it survives a
+            # retry and lands in the matrix as a hole.
+            go_level = Signal()
+            m.submodules.go_sync = FFSynchronizer(control[0], go_level)
+
             previous_go = Signal()
-            m.d.sync += previous_go.eq(control[0])
-            m.d.comb += [command_go.eq(control[0] & ~previous_go),
+            m.d.sync += previous_go.eq(go_level)
+            m.d.comb += [command_go.eq(go_level & ~previous_go),
                          negative.eq(control[1])]
 
         m.d.comb += self.go.eq(command_go)
