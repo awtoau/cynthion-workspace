@@ -969,7 +969,24 @@ class HyperRAMCeiling(Elaboratable):
                 with m.If(harness.go):
                     m.d.sync += [passes.eq(0), index.eq(0), recovery.eq(0),
                                  stall.eq(0), bad_seen.eq(0), base.eq(0)]
-                    m.next = "WRITE_START"
+                    # THROUGH THE CONFIG STATES when an apply bit is set.
+                    #
+                    # `CONFIG_CR0` was reachable only from RESET, which runs once
+                    # at power-up -- microseconds in, while `device_cr0` is still
+                    # zero from CSR reset. The host writes CR0 long afterwards
+                    # and then writes GO, so the part was NEVER configured: every
+                    # measurement ran at its power-on default.
+                    #
+                    # It is invisible in the results because it makes them
+                    # PERFECT: 16 latency codes x fixed/variable produced 32
+                    # byte-identical rows, and 8 drive codes x 2 clock modes x 8
+                    # phases produced 128 rows with the same first mismatch. An
+                    # axis that does nothing looks like an axis that does not
+                    # matter (#226).
+                    with m.If(device_cr0[16] | device_cr1[16]):
+                        m.next = "CONFIG_CR0"
+                    with m.Else():
+                        m.next = "WRITE_START"
 
         #
         # The engine's state, so a stalled sweep says WHERE.
