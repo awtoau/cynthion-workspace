@@ -434,6 +434,17 @@ pub fn waiting() -> usize {
     (head + RING - tail) % RING
 }
 
+/// Would [`drain`] print anything?
+///
+/// Both of the things drain can say: a waiting record, and a loss that has not
+/// been announced yet. It exists because wrapping the drain in the editor's
+/// line-restore costs an erase and a reprinted prompt whether or not there is
+/// anything to erase it for, and the drain runs on every turn of `#[idle]`. See
+/// `main::housekeeping`.
+pub fn pending() -> bool {
+    waiting() > 0 || DROPPED.load(Ordering::Relaxed) != REPORTED.load(Ordering::Relaxed)
+}
+
 /// Push [`TAG_SAMPLES`] -- one record per payload tag. Returns how many fit.
 ///
 /// Driven by `log tags` in the shell, and through the same [`push`] a handler

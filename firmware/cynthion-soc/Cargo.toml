@@ -37,6 +37,31 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 # this crate has today, and that is the whole graph doubling for one feature.
 rtic = { version = "2.3", features = ["riscv-clint-backend"] }
 
+# The console's LINE EDITOR, and nothing else (#171). Dispatch stays ours:
+# `shell::run` is the only command dispatcher and the crate never sees the
+# command table. See `src/shell/editor.rs`.
+#
+# `default-features = false` because two of the four defaults are dead weight
+# here:
+#
+# - `macros` is the derive that turns a command enum into a parser. We do not
+#   use it -- 36 commands with hand-written argument grammars are not going to
+#   be re-expressed as `#[derive(Command)]` structs -- and it is a proc-macro
+#   dependency that would be compiled for nothing.
+# - `help` makes the crate intercept `help`, `-h` and `--help` before the
+#   processor sees them and render them from a `Help` impl. Ours is one arm of
+#   `shell::run` printing `shell::HELP`, which is the table `scripts/soc_test.py`
+#   asserts against; a second renderer would be a second listing to keep true.
+#
+# What is left is what #171 asked for: `autocomplete` (TAB) and `history`.
+embedded-cli = { version = "0.2.1", default-features = false, features = [
+    "autocomplete",
+    "history",
+] }
+# The byte sink the crate writes through. `src/uart.rs` implements
+# `core::fmt::Write`; this is the same 16550 behind `embedded_io::Write`.
+embedded-io = "0.6"
+
 # Build the same shell against QEMU's `-M virt` instead of the FPGA.
 #
 # Off by default, and it must stay that way: the hardware image is the product, and a
@@ -221,6 +246,20 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 debug = true         # kept -- costs nothing in the binary, and .elf is what gets read
+
+# Required, not preferred, since #171 put `embedded-cli` in the graph.
+#
+# Cargo's default for a release profile is `panic = "unwind"`, and rustc only
+# lets that pass while nothing actually needs a landing pad. This crate's own
+# code never did; the editor's does, and the build stops with "unwinding panics
+# are not supported without std" and no span to blame.
+#
+# It is also the only strategy that means anything here. `src/main.rs`'s
+# `#[panic_handler]` prints and then loops forever -- there is no unwinder in the
+# image, no `std`, and nothing above a panic that could catch one. So this
+# declares what was already true, and it does not change what the firmware does
+# when it panics.
+panic = "abort"
 
 # Declared explicitly, because cargo auto-discovers `src/bin/*.rs` and builds
 # them all otherwise -- which put `model_embassy.rs` into the default build with

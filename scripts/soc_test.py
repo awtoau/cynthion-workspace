@@ -745,11 +745,26 @@ def main():
             session.send(text.encode() + b"\r")
             # Each needle's whole LINE, so a check that parses past its needle
             # is not reading one still on the wire.
-            missing = [n for n in needles
-                       if expect_line(session, n, REPLY_S, mark) is None]
+            found = [expect_line(session, n, REPLY_S, mark) for n in needles]
+            missing = [n for n, at in zip(needles, found) if at is None]
             # And then the prompt: the needles say the reply STARTED, this says
             # the handler has finished and `reply` is all of it.
-            session.expect(PROMPT, REPLY_S, mark)
+            #
+            # Searched from AFTER the last needle, not from `mark`, and that
+            # matters since #171 gave the shell a line-restoring editor. An
+            # asynchronous line -- `events::drain` on a console someone is
+            # typing at -- now erases the input line, prints, and reprints the
+            # prompt, so the console emits a prompt that no command produced and
+            # it is byte-identical to one that did. From `mark`, the first such
+            # prompt ended the reply early: `time` returned before its `cost`
+            # line and the tick-duration check read a truncated reply.
+            #
+            # The needles are the reply's own content, so a prompt after the
+            # last of them is the one that terminates it. With a needle missing
+            # there is nothing to search from and `mark` is the honest floor --
+            # the check is failing anyway, and the reply is for reading.
+            floor = max([at for at in found if at is not None], default=mark)
+            session.expect(PROMPT, REPLY_S, floor)
             reply = session.snapshot()[mark:]
             check(name, not missing,
                   f"sent: {text!r}\n"
@@ -1870,9 +1885,22 @@ def main():
               ran is not None and b"unknown command" not in reply,
               "sent: 'helpX' BS CR\n"
               f"received: {show(reply) or '(nothing)'}")
+        # CSI D then CSI P -- cursor one column left, then delete the character
+        # under it -- and NOT `BS SP BS`, since #171 made `embedded-cli` the line
+        # editor. The two do the same thing to the display; they differ because
+        # the crate's editor supports a cursor in the middle of the line, where
+        # `BS SP BS` only ever erases the last character and would leave a hole
+        # anywhere else.
+        #
+        # Still asserted, and still asserted as a PAIR with the check above: what
+        # this suite has to catch is the screen and the buffer disagreeing about
+        # what the command is, and the failure mode is unchanged -- a buffer edit
+        # with no screen edit, or the reverse. Only the bytes that spell "erase"
+        # moved.
         check("backspace erases on screen too",
-              b"\x08 \x08" in reply,
-              "expected the destructive-backspace sequence BS SP BS to be echoed\n"
+              b"\x1b[D\x1b[P" in reply,
+              "expected the editor's erase, CSI D (cursor back) + CSI P "
+              "(delete char), to be echoed\n"
               f"received: {show(reply) or '(nothing)'}")
 
         # Backspace on an empty line must be a no-op, not an underflow. `len` is a
@@ -1883,6 +1911,111 @@ def main():
         check("backspace at an empty prompt does not corrupt the shell",
               session.expect(b"help, ?", REPLY_S, mark) is not None,
               "the shell stopped responding after backspacing past the start\n"
+              f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+
+        # --- TAB completion ---------------------------------------------------
+        # #171's whole reason for adopting a line-editor crate. The candidates
+        # come from `shell::HELP`'s first column -- the same table `help` prints
+        # and the same one this suite asserts above -- so a command that
+        # completes but is not listed cannot happen.
+        #
+        # Asserted on the ECHO, not on what runs: completion is a thing the shell
+        # puts on screen before Enter, and checking the command afterwards would
+        # pass just as well if TAB did nothing and the user had typed it all.
+        #
+        # Draining the listing above before marking is load-bearing, and it is
+        # the reason this check is trustworthy at all. The previous check returns
+        # on the FIRST line of the `help` listing while the rest is still
+        # arriving, so a mark taken straight afterwards has `power [floor]`
+        # landing after it -- and the completion check then passed against the
+        # OLD editor, which completes nothing. A new check's first run is the
+        # control; this one failed it and these three lines are the fix.
+        #
+        # `vbus <cmd>` is the last row of `shell::HELP`, so its line ending is
+        # the end of the listing, and the prompt after that is the shell going
+        # quiet. Waiting for the prompt from `mark` alone is not enough: the
+        # prompt of the PREVIOUS listing is also after `mark`, and matching it
+        # returns while this listing is still streaming.
+        tail = expect_line(session, b"vbus <cmd>", REPLY_S, mark)
+        session.expect(PROMPT, REPLY_S, tail if tail is not None else mark)
+        mark = len(session.snapshot())
+        session.send(b"pow\t")
+        completed = session.expect(b"power", REPLY_S, mark)
+        check("TAB completes a unique prefix",
+              completed is not None
+              and session.snapshot()[mark:].startswith(b"power"),
+              "sent: 'pow' TAB, expected the shell to echo the rest of "
+              "`power`\n"
+              "All six `power ...` rows in the listing share that word, so it "
+              "is the\n"
+              "longest common completion and TAB should supply it.\n"
+              f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+
+        # Ambiguity adds NOTHING, rather than guessing at the first match.
+        # `phy`, `pmod`, `ports` and `power` share only the `p` already typed, so
+        # a shell that completed here would be picking one for you.
+        #
+        # Driven to a command that is definitely unknown so the assertion is on
+        # what the shell DID, not on the absence of bytes within a timeout: if
+        # TAB had completed anything, `p` alone would not be what ran.
+        # Eight backspaces to clear five characters: `power` is what is on the
+        # line if TAB worked and `pow` is what is there if it did not, and
+        # backspace at an empty prompt is a no-op -- checked two checks above.
+        # A count that assumed one of the two would leave a stray letter in
+        # front of the next command on whichever build it guessed wrong about.
+        session.send(b"\x08" * 8)
+        mark = len(session.snapshot())
+        session.send(b"p\t\r")
+        check("TAB completes nothing when the prefix is ambiguous",
+              expect_line(session, b"unknown command", REPLY_S, mark) is not None,
+              "sent: 'p' TAB CR. `phy`, `pmod`, `ports` and `power` all start\n"
+              "with it, so nothing should have been added and `p` should have\n"
+              "reached the dispatcher unchanged.\n"
+              f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+
+        # --- history ------------------------------------------------------------
+        # The other thing #171 bought. Up-arrow is CSI A, which the old editor
+        # dropped along with every other escape sequence.
+        command("pmod", [b"pmod"], "`pmod` answers, so there is a line to recall")
+        mark = len(session.snapshot())
+        session.send(b"\x1b[A")
+        recalled = session.expect(b"pmod", REPLY_S, mark)
+        check("up-arrow recalls the previous line",
+              recalled is not None,
+              "sent: CSI A after running `pmod`, expected the shell to redraw\n"
+              "the line with `pmod` on it.\n"
+              f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+        # And leave the line clean for whatever runs next.
+        session.send(b"\r")
+        session.expect(PROMPT, REPLY_S, mark)
+
+        # --- the line restore ---------------------------------------------------
+        # An asynchronous line must not be printed over whatever is on the input
+        # line. `events::drain` runs from `#[idle]`, on the console someone is
+        # typing at, and it used to print wherever the cursor happened to be:
+        # `power alert fir` + a log record + the rest of the typing, with no way
+        # to tell afterwards which characters were still in the buffer.
+        #
+        # `log 20` is the deterministic way to make it happen: the records are
+        # pushed while the command runs and NOTHING drains until it returns, so
+        # the drain is guaranteed to be an interjection rather than part of a
+        # reply. What must appear is the erase, CSI 2K, ahead of the records --
+        # and then a prompt after them, which is the line being put back.
+        mark = len(session.snapshot())
+        command("log 5", [b"log pushed 5 of 5"], "`log 5` fills the ring")
+        drained = expect_line(session, b"log test 4", REPLY_S, mark)
+        erased = session.snapshot()[mark:].find(b"\x1b[2K")
+        check("an asynchronous line erases the input line before printing",
+              drained is not None and erased != -1,
+              "the drained records were printed without the editor's CSI 2K\n"
+              "erase in front of them, so a half-typed command would still be\n"
+              "on the line they landed on.\n"
+              f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
+        check("and puts the prompt back afterwards",
+              drained is not None
+              and session.expect(PROMPT, REPLY_S, drained) is not None,
+              "no prompt followed the drained records. The line was erased and\n"
+              "never restored, which is worse than not erasing it.\n"
               f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
 
         # --- line endings -----------------------------------------------------

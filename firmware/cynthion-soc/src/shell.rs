@@ -13,6 +13,7 @@
 //! `.text` win would come from, and `.text` is this design's binding constraint.
 //! That is a measurement, not a move, and is deliberately not done here.
 
+pub(crate) mod editor;
 pub(crate) mod hardware;
 pub(crate) mod hr;
 pub(crate) mod i2c;
@@ -109,6 +110,46 @@ const _: () = {
     let mut i = 0;
     while i < HELP.len() {
         assert!(HELP[i].0.len() < HELP_WIDTH, "HELP_WIDTH is too small");
+        i += 1;
+    }
+};
+
+/// The command NAME in a `HELP` entry: everything before the argument syntax.
+///
+/// `HELP`'s first column is what a person reads, so it carries more than the
+/// word that is typed -- `bram read <hex>`, `power [floor]`, `help, ?`. TAB
+/// completion needs the typed word, and taking it from here rather than from a
+/// second list is what stops the two drifting.
+///
+/// The stop is the first byte that is not a lowercase letter or a digit, which
+/// covers all three shapes above and is the whole vocabulary of command words
+/// this shell has. `const` because the caller is a per-keystroke loop over the
+/// table and the split is a fact about a constant.
+pub(crate) const fn name_of(entry: &str) -> &str {
+    let bytes = entry.as_bytes();
+    let mut end = 0;
+    while end < bytes.len() {
+        let byte = bytes[end];
+        if !(byte.is_ascii_lowercase() || byte.is_ascii_digit()) {
+            break;
+        }
+        end += 1;
+    }
+    // SAFETY: `end` is a byte index at an ASCII boundary in an all-ASCII
+    // prefix, so the split cannot land inside a multi-byte character. The
+    // assertion below proves the table is ASCII at build time.
+    unsafe { core::str::from_utf8_unchecked(bytes.split_at(end).0) }
+}
+
+// Every name completes to something, and every entry is ASCII. A `HELP` row
+// whose first column started with a space or an uppercase letter would complete
+// to the empty string -- TAB would silently do nothing for that command and
+// nothing would say so.
+const _: () = {
+    let mut i = 0;
+    while i < HELP.len() {
+        assert!(!name_of(HELP[i].0).is_empty(), "a HELP entry has no command word");
+        assert!(HELP[i].0.is_ascii(), "HELP is assumed ASCII by name_of");
         i += 1;
     }
 };
