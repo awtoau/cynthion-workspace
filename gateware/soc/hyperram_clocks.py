@@ -70,7 +70,10 @@ def solve_hr_pll(hr_mhz, input_mhz=60.0, with_fast=True, tolerance=0.001):
     Unlike the SoC's generator this solves for no `usb`, because this PLL drives
     nothing that enumerates. That is the whole reason it is a second PLL.
 
-    Returns (vco, clki_div, clkfb_div, clkop_div, clkos2_div) or None.
+    Returns (vco, clki_div, clkfb_div, clkop_div, clkos_div) or None.
+
+    `hr_fast` is CLKOS, not CLKOS2: only CLKOP and CLKOS reach the ECP5's
+    edge-clock input mux. See `elaborate`.
     """
     for clki_div in range(1, 8):
         for clkfb_div in range(1, 81):
@@ -86,8 +89,8 @@ def solve_hr_pll(hr_mhz, input_mhz=60.0, with_fast=True, tolerance=0.001):
                 # failing to build.
                 if with_fast and clkop_div % 2:
                     continue
-                clkos2 = clkop_div // 2 if with_fast else None
-                return (vco, clki_div, clkfb_div, clkop_div, clkos2)
+                clkos = clkop_div // 2 if with_fast else None
+                return (vco, clki_div, clkfb_div, clkop_div, clkos)
     return None
 
 
@@ -187,7 +190,7 @@ class HyperRAMDomains(Elaboratable):
                 f"Reachable nearby: {reachable_ck(ck_mhz - 20, ck_mhz + 20, dqs)}")
 
         (self.vco_mhz, self.clki_div, self.clkfb_div,
-         self.clkop_div, self.clkos2_div) = solved
+         self.clkop_div, self.clkos_div) = solved
         self.input_mhz = input_mhz
 
         # Held low until the PLL locks, so the engine cannot start a transaction
@@ -220,6 +223,7 @@ class HyperRAMDomains(Elaboratable):
             "EHXPLLL",
             a_ICP_CURRENT="12", a_LPF_RESISTOR="8", a_MFG_ENABLE_FILTEROPAMP="1",
             a_MFG_GMCREF_SEL="2",
+            **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.dqs else {}),
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
             p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
@@ -231,10 +235,10 @@ class HyperRAMDomains(Elaboratable):
             p_CLKOP_DIV=self.clkop_div,
             p_CLKOP_CPHASE=self.clkop_div - 1,
             p_CLKOP_FPHASE=0,
-            **({"p_CLKOS2_ENABLE": "ENABLED",
-                "p_CLKOS2_DIV": self.clkos2_div,
-                "p_CLKOS2_CPHASE": self.clkos2_div - 1,
-                "p_CLKOS2_FPHASE": 0} if self.dqs else {}),
+            **({"p_CLKOS_ENABLE": "ENABLED",
+                "p_CLKOS_DIV": self.clkos_div,
+                "p_CLKOS_CPHASE": self.clkos_div - 1,
+                "p_CLKOS_FPHASE": 0} if self.dqs else {}),
             i_CLKI=self.clki,
             # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` closes the loop through the
             # CLKOP output, so leaving CLKFB undriven opens it: the PLL never
@@ -246,39 +250,30 @@ class HyperRAMDomains(Elaboratable):
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
             o_CLKOP=clk_hr,
-            **({"o_CLKOS2": clk_hr_fast} if self.dqs else {}),
+            **({"o_CLKOS": clk_hr_fast} if self.dqs else {}),
             o_LOCK=locked_raw,
         )
 
         m.d.comb += ClockSignal("hr").eq(clk_hr)
         if self.dqs:
-            # THROUGH AN ECLKBRIDGECS, and it is not optional on this die.
+            # CLKOS, NOT CLKOS2 -- the edge clock network cannot see CLKOS2.
             #
-            # `hr_fast` is the edge clock for the DQS PHY's ODDRX2F gearing and
-            # DQSBUFM capture -- it IS the timing reference the capture-phase
-            # axis is measured against.
+            # `hr_fast` is the ECLK for the DQS PHY's ODDRX2F gearing and
+            # DQSBUFM capture, so it must reach the bank's edge-clock spine on
+            # dedicated routing, not fabric. The bank ECLK input mux
+            # (`W2_ECLKI0` / `W2_JECLKI1` in the ECP5 `ECLK_L` tile) takes only
+            # `G_J{LL,UL}CPLL0CLK{OP,OS}`, the four `G_JPCLKT*` clock pins, and
+            # the two `*QECLKCIB*` fabric taps. CLKOS2/CLKOS3 exist only on the
+            # primary clock network, so an ECLK sourced from CLKOS2 can only
+            # arrive through the fabric tap -- which nextpnr refuses on the
+            # dedicated pass and then falls back to general routing with
+            # unconstrained skew. See #314.
             #
-            # The ECP5-25F has exactly TWO PLL sites, both at Y49: EHXPLL_LL
-            # (X2) and EHXPLL_LR (X70), the top corners. Every HyperRAM ECLK
-            # consumer is at Y2-Y11, bottom-left. That is ~38 tiles, past the
-            # bank's dedicated edge-clock spine, and there is nowhere else to
-            # put the PLL -- so no placement can reach it and moving the PLL is
-            # not an available fix. Diamond hits the same wall; it is the die.
-            #
-            # Without the bridge nextpnr falls back to general routing and says
-            # so as log_info, not a warning. Every HYPERRAM_BIST bitstream built
-            # before this did that silently, with skew nobody constrained, on a
-            # rig whose measurement is skew. See #314.
-            #
-            # CLK1/SEL tied off: this is a die-crossing bridge here, not a clock
-            # multiplexer. The second input exists for glitchless switching,
-            # which nothing here wants.
-            bridged = Signal()
-            m.submodules.hr_fast_bridge = Instance(
-                "ECLKBRIDGECS",
-                i_CLK0=clk_hr_fast, i_CLK1=0, i_SEL=0,
-                o_ECSOUT=bridged)
-            m.d.comb += ClockSignal("hr_fast").eq(bridged)
+            # No ECLKBRIDGECS: its CLK0/CLK1 are hardwired to those same two
+            # input muxes, so it bridges banks, not distance, and cannot rescue
+            # a source the mux does not accept. The lower-left PLL feeds bank 7
+            # directly -- there is no die to cross.
+            m.d.comb += ClockSignal("hr_fast").eq(clk_hr_fast)
 
         # TELL THE PLACER WHAT THESE RUN AT.
         #
