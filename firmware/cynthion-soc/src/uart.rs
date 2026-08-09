@@ -102,7 +102,15 @@ pub const IER_ERBFI: u8 = 1 << 0;
 /// is belt and braces; a wrong value here looks exactly like "the firmware
 /// produces no output", which is the failure this whole layer exists to
 /// distinguish from a real one.
-const LCR_8N1: u8 = 0x03;
+pub const LCR_8N1: u8 = 0x03;
+
+/// IIR bits 7:6, set only when the FIFOs are enabled AND usable.
+///
+/// The same probe Linux's `autoconfig` makes: it separates a 16550A from a
+/// 16550 whose FIFO was broken and from a 16450 with none. FCR is write-only
+/// and IIR shares its address, so this is the only way to read back what
+/// [`Uart::init`] established.
+pub const IIR_FIFO_OK: u8 = 0xc0;
 
 /// Enable the FIFOs and clear both of them.
 ///
@@ -262,6 +270,25 @@ impl Uart {
             write_volatile(self.reg(IER), 0);
             write_volatile(self.reg(LCR), LCR_8N1);
             write_volatile(self.reg(FCR), FCR_ENABLE_AND_CLEAR);
+        }
+    }
+
+    /// What the peripheral says it is configured as: LCR, IIR, IER.
+    ///
+    /// Read back rather than restated, so [`init`] reports the machine instead
+    /// of the constants above it. FCR is write-only and IIR shares its address,
+    /// so the FIFO state comes from IIR bits 7:6.
+    pub fn settings(&self) -> (u8, u8, u8) {
+        // SAFETY: three reads of read-only or read/write registers, none of
+        // which pops the receive FIFO or clears anything. IIR's read DOES
+        // acknowledge a transmit-empty interrupt, which this driver never
+        // enables -- see `IER_ERBFI`.
+        unsafe {
+            (
+                read_volatile(self.reg(LCR)),
+                read_volatile(self.reg(FCR)),
+                read_volatile(self.reg(IER)),
+            )
         }
     }
 
@@ -430,4 +457,47 @@ impl core::fmt::Write for Uart {
         }
         Ok(())
     }
+}
+
+/// What `uart_init()` established and read back.
+pub struct Init {
+    pub ports: usize,
+    pub lcr: u8,
+    pub iir: u8,
+    pub ier: u8,
+}
+
+impl Init {
+    /// 8N1 with DLAB clear, and FIFOs that are enabled and usable.
+    pub fn established(&self) -> bool {
+        self.lcr == LCR_8N1 && self.iir & IIR_FIFO_OK == IIR_FIFO_OK
+    }
+}
+
+/// `uart_init()` -- every console, and the one report nothing else can make.
+///
+/// The console is the channel every other `_init()` reports on, so it goes
+/// first and is the one peripheral whose failure is silent by construction.
+/// It cannot log its own initialisation; it can only report afterwards, from
+/// the registers rather than from the constants above.
+///
+/// **`establish` is destructive to the FIFOs by design, and only at boot.** A
+/// `j _start` reboot restarts the CPU and not the peripherals, so a port left
+/// holding half a command line would run it as the first command of the new
+/// session (#239). Doing that from the shell would discard the reply being
+/// written, so a re-run reads back and touches nothing.
+///
+/// Every port, not just the primary: an uninitialised 16550 has its FIFOs in
+/// whatever state the last boot left them.
+pub fn init(establish: bool) -> Init {
+    if establish {
+        for &base in target::UART_BASES {
+            Uart::new(base).init();
+        }
+        // The peripheral claims its own PLIC sources, rather than being
+        // remembered by a list in a file that is not its driver (#264).
+        crate::irq::claim_consoles();
+    }
+    let (lcr, iir, ier) = Uart::new(target::UART_BASES[0]).settings();
+    Init { ports: target::UART_BASES.len(), lcr, iir, ier }
 }

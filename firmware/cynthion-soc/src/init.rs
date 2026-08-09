@@ -241,19 +241,8 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 // ---------------------------------------------------------------------------
 
 fn uart_init(out: &mut Out) {
+    let report = crate::uart::init(out.boot);
     if out.boot {
-        // Every port, not just the primary: an uninitialised 16550 has its
-        // FIFOs in whatever state the last boot left them, and a `j _start`
-        // reboot restarts the CPU without resetting the peripherals. A port
-        // left holding half a command line would run it as the first command
-        // of the new session (#239).
-        //
-        // Only at boot. Clearing a FIFO from the shell would discard the reply
-        // being written.
-        for &base in target::UART_BASES {
-            Uart::new(base).init();
-        }
-        crate::irq::claim_consoles();
         // The banner is the first thing this image says, and reaching it is
         // already a report on the boot: the bootloader ran, found nothing
         // staged or nothing that checked out, and handed over to the image the
@@ -263,10 +252,14 @@ fn uart_init(out: &mut Out) {
     }
     out.line(
         "uart",
-        "ok",
+        if report.established() { "ok" } else { "WARN" },
         format_args!(
-            "{} port(s), rx through the irq ring, no divisor here",
-            target::UART_BASES.len()
+            "{} port(s), lcr {:02x} iir {:02x} ier {:02x} read back, rx through the irq ring{}",
+            report.ports,
+            report.lcr,
+            report.iir,
+            report.ier,
+            if report.established() { "" } else { " -- not 8N1 with usable FIFOs" }
         ),
     );
 }
