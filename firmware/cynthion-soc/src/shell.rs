@@ -13,6 +13,7 @@
 //! `.text` win would come from, and `.text` is this design's binding constraint.
 //! That is a measurement, not a move, and is deliberately not done here.
 
+pub(crate) mod bist;
 pub(crate) mod console;
 pub(crate) mod cpu;
 pub(crate) mod editor;
@@ -68,6 +69,12 @@ use crate::{
 /// site; the padding is done by hand below for the same reason the rest of this
 /// firmware avoids it.
 pub(crate) const HELP: &[(&str, &str)] = &[
+    ("bist", "the HyperRAM BIST engine, off the Wishbone"),
+    ("bist status", "is the engine there, and what was it built as"),
+    ("bist smoke", "four cells: can the rig both pass and detect a fault"),
+    ("bist cell <d> <clk> <sel>", "one cell, by hand"),
+    ("bist sweep [passes]", "drive x clock x readclksel, a row per cell"),
+    ("bist trace [passes]", "the sweep, narrating each cell before it runs"),
     ("board", "every connector, rail and controller"),
     ("bram", "block RAM at address zero"),
     ("bram info", "base and size, from the generated map"),
@@ -515,6 +522,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // bus at all, so a boardless build renders the same tree with every leaf
         // reporting what it does not have -- which is what `scripts/soc_test.py`
         // drives. See `src/board.rs`.
+        b"bist" => bist::command(uart, rest),
         b"board" => board::tree(uart, &devices.power, &devices.type_c),
         b"led" => led::command(uart, rest),
         b"i2c" => i2c::command(uart, rest, devices),

@@ -86,6 +86,11 @@ use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
 mod bench;
+// The HyperRAM BIST engine's driver (#226). Built into every image rather than
+// `#[cfg]`-gated: `Bist::present` reads the engine's ident and refuses to
+// measure without it, so a shipping image says "this bitstream has no engine"
+// where a gated one could not say anything at all.
+mod bist;
 mod board;
 mod bus;
 mod clock;
