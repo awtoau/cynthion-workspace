@@ -164,7 +164,8 @@ nothing was wrong.
 
 Stated once, because it is a property of the machine rather than of any runtime.
 
-The I-cache is **4 KiB, direct-mapped, one way**. Measured over both traces with
+The I-cache is **8 KiB, 64 sets x 2 ways** (it was 4 KiB direct-mapped when this
+was measured — #283, #292). Measured over both traces with
 `scripts/soc_icache_model.py`, 200 events:
 
 | | `workload_bare` | `workload_rtic` |

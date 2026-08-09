@@ -173,7 +173,8 @@ versions behind on both**: `riscv = "0.10"`, `riscv-rt = "0.11"`, plus
 "1.68"`. It is built by the `rust` check in `scripts/check.py`.
 
 Release profiles are measured, not conventional — `opt-level = "z"` is chosen for
-**speed**, because the 4 KiB direct-mapped I-cache dominates. The tables and
+**speed**, because the I-cache dominates (4 KiB direct-mapped when measured;
+now 8 KiB 2-way, so re-measure — #167). The tables and
 their reasoning are in the `[profile.release]` comments of each `Cargo.toml`;
 re-measure with `./dev.py optlevel` if the cache geometry changes.
 
