@@ -74,6 +74,16 @@ from amaranth import Cat, Const, Elaboratable, Module, Signal
 # at any sync above 100 MHz, which is why it cannot be left to chance.
 T_CSHI_NS = 10.0
 
+# tCSM, the longest CS# may stay Low: 4 us, W956A8 rev A01-006 Table 24, and
+# section 10 makes it the HOST's obligation. Overrunning it drops a refresh, with
+# no error at the transaction that caused it.
+T_CSM_NS = 4000.0
+
+# How much of tCSM one transaction may spend. The rest covers the PLL landing off
+# `sync_mhz` and cycle counts that are counted states, not measured gaps. Same
+# figure as `bootram.HYPERRAM_TCSM_MARGIN`.
+T_CSM_MARGIN = 0.9
+
 
 class HyperRAMController(Elaboratable):
     """ Gateware interface to HyperRAM series self-refreshing DRAM chips.
@@ -97,6 +107,8 @@ class HyperRAMController(Elaboratable):
         O: write_ready      -- Strobe that indicates `write_data` has been latched and is ready for new data
         O: state[4]         -- Which FSM state, indexed into `STATES`. `idle` alone says
                                a stuck controller is stuck; this says where.
+        O: timed_out        -- Sticky: the watchdog ended the last transaction, not the
+                               caller. Cleared by the next `start_transfer`.
     """
 
     LOW_LATENCY_CLOCKS  = 7
@@ -135,6 +147,24 @@ class HyperRAMController(Elaboratable):
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
 
+        # CS#-Low cycles before the first data beat: LATCH_RWDS, three command
+        # words, and HANDLE_LATENCY, which runs one cycle per remaining count plus
+        # the zero cycle.
+        self._data_entry_cycles = 4 + self.HIGH_LATENCY_CLOCKS - 1
+
+        # WATCHDOG on READ_DATA/WRITE_DATA, whose only exit was a device beat
+        # meeting `final_word` -- 7 of 8 beats hung for ever (#316). Waits for the
+        # caller to end the burst; bounded by tCSM because the burst length is the
+        # caller's and tCSM is its only ceiling. 0.9 is a margin BELOW a limit the
+        # part imposes, not 1.25x above an expected duration. Less two cycles: the
+        # exit into RECOVERY leaves CS# Low for two more. Expiry sets `timed_out`.
+        self._burst_cycles = int(T_CSM_NS * T_CSM_MARGIN * sync_mhz / 1000.0) - 2
+        if self._burst_cycles <= self._data_entry_cycles:
+            raise ValueError(
+                f"tCSM allows {self._burst_cycles} cycles at sync {sync_mhz} MHz, "
+                f"which does not cover {self._data_entry_cycles} cycles of command "
+                f"and latency: no transaction could complete inside tCSM")
+
         #
         # I/O port.
         #
@@ -155,6 +185,10 @@ class HyperRAMController(Elaboratable):
         # Fixed at 4 bits, not `range(len(STATES))`: a caller's register field must
         # not move when a state is added.
         self.state            = Signal(4)
+        # Sticky, cleared by the next `start_transfer`: this transaction was ended
+        # by the watchdog rather than by the caller. Tells a device fault from a
+        # controller fault without a bus trace.
+        self.timed_out        = Signal()
 
         # Data signals.
         self.read_data        = Signal(16)
@@ -234,6 +268,18 @@ class HyperRAMController(Elaboratable):
         # text match got two of them at the wrong indentation.
         m.d.sync += recovery_remaining.eq(self._recovery_cycles)
 
+        # Armed while CS# is High: loaded before the data phase rather than at each
+        # of the three edges into it, as pulp does (`hyperbus_phy.sv:308`). Counts
+        # `sync` cycles and not beats -- tCSM is wall-clock, so a stopped CK still
+        # spends it. (#316)
+        burst_remaining = Signal(range(self._burst_cycles + 1))
+        burst_expired   = Signal()
+        m.d.comb += burst_expired.eq(burst_remaining == 0)
+        with m.If(~self.phy.cs):
+            m.d.sync += burst_remaining.eq(self._burst_cycles)
+        with m.Elif(~burst_expired):
+            m.d.sync += burst_remaining.eq(burst_remaining - 1)
+
         with m.FSM() as fsm:
 
             # IDLE state: waits for a transaction request
@@ -252,6 +298,7 @@ class HyperRAMController(Elaboratable):
                         is_multipage        .eq(~self.single_page),
                         current_address     .eq(self.address),
                         self.phy.dq.o       .eq(0),
+                        self.timed_out      .eq(0),
                     ]
 
                 with m.Else():
@@ -355,6 +402,12 @@ class HyperRAMController(Elaboratable):
                     with m.If(self.final_word):
                         m.next = 'RECOVERY'
 
+                # THE ESCAPE (#316). Both branches above need a device beat, so
+                # until this the state had no exit a silent device could reach.
+                with m.If(burst_expired):
+                    m.d.sync += self.timed_out.eq(1)
+                    m.next = 'RECOVERY'
+
             # WRITE_DATA -- write a word to the PSRAM
             with m.State("WRITE_DATA"):
                 m.d.sync += [
@@ -381,6 +434,12 @@ class HyperRAMController(Elaboratable):
                     m.next = 'RECOVERY'
 
                 with m.Elif(self.final_word):
+                    m.next = 'RECOVERY'
+
+                # A caller that stops asserting `final_word` holds CS# Low for
+                # ever, and the device counts that against tCSM. Same exit (#316).
+                with m.If(burst_expired):
+                    m.d.sync += self.timed_out.eq(1)
                     m.next = 'RECOVERY'
 
 
