@@ -1017,15 +1017,32 @@ def configure_and_read(args, emit):
             # afterwards left a silent 13 s hole between `configured` and the
             # first console line, and a hole in a log reads as a hang.
             #
-            # 12 s because the banner, the Type-C lines and the first power
-            # sample are all emitted within about a second of reset, and the
-            # remaining margin is for a board that is slow to enumerate. It is a
-            # display timeout: expiry means "nothing more arrived", which is
-            # information, not a failure.
-            CONSOLE_READ_SECONDS = 12
-            emit(f"reading the console for up to {CONSOLE_READ_SECONDS} s, "
-                 f"or until 400 bytes arrive -- a quiet board waits the "
-                 f"full {CONSOLE_READ_SECONDS} s")
+            # **Waits for**: whatever the board says of its own accord after a
+            # reset.
+            #
+            # **Expected duration**: the banner is ON DEMAND -- it is held in the
+            # log ring and flushed on the first received byte -- so the board
+            # normally says NOTHING here. What does arrive, when it arrives, is
+            # emitted within about a second of reset. Enumeration is ~0.5 s.
+            #
+            # **Multiplier**: 2 s, about 1.3x the ~1.5 s worst case. It was 12 s,
+            # chosen when the banner printed unprompted; with an on-demand banner
+            # that is ten seconds of waiting for a board that is designed to be
+            # quiet, on every single run. A wait that always expires teaches
+            # people to ignore it.
+            #
+            # **On expiry**: prints how long it waited and that nothing came,
+            # which for this board is the ordinary case rather than a fault. A CR
+            # is sent first precisely so there IS something to read -- passively
+            # waiting on a silent-by-design console measures nothing.
+            CONSOLE_READ_SECONDS = 2
+            emit(f"poking the console and reading for up to "
+                 f"{CONSOLE_READ_SECONDS} s (the banner is on demand, so a CR "
+                 f"is sent first)")
+            try:
+                sock.sendall(b"\r")
+            except OSError:
+                pass
             sock.settimeout(CONSOLE_READ_SECONDS)
             buf = b""
             while len(buf) < 400:
@@ -1037,6 +1054,9 @@ def configure_and_read(args, emit):
                 except OSError:
                     break
             sock.close()
+            if not buf:
+                emit(f"  nothing in {CONSOLE_READ_SECONDS} s, not even to a CR "
+                     f"-- the shell is not answering")
             emit("--- console (via the service on 9000) ---")
             emit(buf.decode("ascii", "replace").strip()[:500])
         else:
