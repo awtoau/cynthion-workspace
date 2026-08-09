@@ -465,6 +465,15 @@ pub fn take_type_c() -> u32 {
     PENDING_TYPE_C.swap(0, Ordering::Acquire)
 }
 
+/// Is a Type-C interrupt waiting to be serviced?
+///
+/// A peek, where [`take_type_c`] is a swap, so asking does not consume the
+/// deferral. `main::housekeeping` uses it to decide whether servicing is worth
+/// wrapping in the editor's line restore -- see `Shell::interject`.
+pub fn type_c_pending() -> bool {
+    PENDING_TYPE_C.load(Ordering::Relaxed) != 0
+}
+
 /// Re-enable one port's source, after that device has been cleared.
 ///
 /// Called by normal context and only there, per port, because the mask is per

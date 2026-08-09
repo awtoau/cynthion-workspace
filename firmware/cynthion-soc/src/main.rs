@@ -202,6 +202,12 @@ impl Devices {
     }
 }
 
+/// What the shell prompts with, in one place.
+///
+/// `&'static str` because `embedded_cli`'s `Cli` stores the prompt and reprints
+/// it on every line restore, and it will not take anything shorter-lived.
+pub const PROMPT: &str = "> ";
+
 /// One console's line editor and its idle state.
 ///
 /// Per-console rather than global: `spoken` latching on one port must not silence the
@@ -209,8 +215,18 @@ impl Devices {
 /// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
 /// generated signatures too.
 pub struct Shell {
-    line: [u8; 64],
-    len: usize,
+    /// `embedded_cli`'s editor, holding this console's line buffer, its history
+    /// and its cursor. See `src/shell/editor.rs`.
+    ///
+    /// `Option` because building one WRITES -- `Cli::from_builder` prints the
+    /// prompt and offers no way to suppress it -- and console 1's TX pin is JTAG
+    /// TMS. So it is built at the first moment a prompt is wanted, which on
+    /// console 0 is the first idle re-banner and on console 1 is the first
+    /// keypress, and never on a schedule. See `target::ANNOUNCING`.
+    ///
+    /// `None` is also the whole of `const NEW`, which is what lets
+    /// `[Shell::NEW; MAX_CONSOLES]` stay a constant.
+    editor: Option<shell::editor::Editor>,
     /// Set by the first keypress. From then on the prompt is on screen and reprinting
     /// the banner would fight the line being edited.
     spoken: bool,
@@ -230,11 +246,68 @@ pub struct Shell {
 
 impl Shell {
     const NEW: Shell = Shell {
-        line: [0u8; 64],
-        len: 0,
+        editor: None,
         spoken: false,
         last_banner: None,
     };
+
+    /// Put the prompt on screen, building the editor if this is the first one.
+    ///
+    /// Two paths, because the editor prints the prompt exactly once -- when it is
+    /// built -- and the idle re-banner needs one every two seconds. Writing it
+    /// directly afterwards is correct rather than a shortcut: `announce` only
+    /// runs while `spoken` is false, so the editor's line is empty and there is
+    /// nothing on screen for the two to disagree about.
+    fn prompt(&mut self, index: usize, uart: &mut Uart) {
+        match self.editor {
+            Some(_) => {
+                let _ = uart.write_str(PROMPT);
+            }
+            None => self.editor = shell::editor::build(index),
+        }
+    }
+
+    /// Say something asynchronous without eating a half-typed command line.
+    ///
+    /// This is the reason the crate is worth having beyond TAB (#171). A record
+    /// drained from `events` used to print wherever the cursor happened to be,
+    /// leaving `power alert fir> power ale` on screen and no way to tell which
+    /// characters were still in the buffer. `Cli::write` erases the line first
+    /// and reprints prompt and partial input after, so the line is exactly where
+    /// it was.
+    ///
+    /// `f` writes through its own `Uart` rather than through the crate's writer,
+    /// because everything that speaks here -- `events::drain`, `report_errors`,
+    /// the Type-C service -- takes `&mut Uart` and formats with `core::fmt`.
+    /// Both handles are the same 16550 and neither buffers, so the bytes land in
+    /// the order the calls are made. What is lost is the crate's `is_dirty`
+    /// tracking, which would have inserted a newline before the restored prompt;
+    /// every caller here ends its output with one already.
+    ///
+    /// **Only call this when there is something to print.** With nothing to say
+    /// it still costs the erase sequence and a reprinted prompt, on every turn of
+    /// `#[idle]`, which is thousands of times a second.
+    ///
+    /// `&mut dyn FnMut` and not `impl FnOnce`, which is worth about 1.4 KB of
+    /// `.text` -- measured. Generic, it monomorphised `Cli::write` once per call
+    /// site and there are three; through a trait object there is one copy, and
+    /// the indirect call it costs happens only when something is actually being
+    /// said.
+    fn interject(&mut self, index: usize, f: &mut dyn FnMut(&mut Uart)) {
+        let mut uart = Uart::new(target::UART_BASES[index]);
+        match self.editor.as_mut() {
+            Some(editor) => {
+                let _ = editor.write(|_| {
+                    f(&mut uart);
+                    Ok(())
+                });
+            }
+            // Nothing typed yet on this console, so there is no line to protect
+            // and no prompt to restore. Printing straight out is what the shell
+            // did before the editor existed.
+            None => f(&mut uart),
+        }
+    }
 
     /// Handle at most one byte from `uart`, or count one turn of idleness.
     ///
@@ -271,7 +344,7 @@ impl Shell {
                         // for them. See `src/metrics.rs`.
                         metrics::busy();
                         banner(uart);
-                        let _ = write!(uart, "> ");
+                        self.prompt(index, uart);
                     }
                 }
                 return;
@@ -280,43 +353,24 @@ impl Shell {
         // First keypress: stop re-announcing, the user is here.
         self.spoken = true;
 
-        match byte {
-            // Enter. Both, because terminals disagree about which they send.
-            b'\r' | b'\n' => {
-                let _ = write!(uart, "\n");
-                if self.len > 0 {
-                    let len = self.len;
-                    // Copied out before dispatch so `run` may borrow the uart mutably
-                    // while the line it was given stays valid.
-                    let mut line = [0u8; 64];
-                    line[..len].copy_from_slice(&self.line[..len]);
-                    self.len = 0;
-                    shell::run(index, uart, &line[..len], devices);
-                }
-                let _ = write!(uart, "> ");
-            }
-            // Backspace and delete. Erase on screen as well as in the buffer, or the
-            // display and the buffer disagree about what the command is.
-            0x08 | 0x7f => {
-                if self.len > 0 {
-                    self.len -= 1;
-                    let _ = write!(uart, "\x08 \x08");
-                }
-            }
-            // Printable ASCII only. Echo, since the device gets raw bytes and nothing
-            // else will show what was typed.
-            0x20..=0x7e => {
-                if self.len < self.line.len() {
-                    self.line[self.len] = byte;
-                    self.len += 1;
-                    uart.put(byte);
-                }
-            }
-            // Everything else -- stray control codes, terminal escape sequences -- is
-            // dropped. Echoing or reporting them is worse than silence: an escape
-            // sequence would be replayed at the terminal, and a chatty default turns a
-            // stuck RX FIFO into an unstoppable wall of text.
-            _ => {}
+        // Built here on a console that never announces, which is the ONLY place
+        // console 1 may start transmitting: a key was pressed, so the line is not
+        // unbidden. See `target::ANNOUNCING`.
+        if self.editor.is_none() {
+            self.editor = shell::editor::build(index);
+        }
+
+        // Echo, backspace, TAB, history, cursor movement and the escape-sequence
+        // decoding all happen inside here. What comes back out is a completed
+        // line, and only through `editor::Dispatch`, which calls `shell::run`.
+        //
+        // `uart` is not passed in: the editor holds its own handle on the same
+        // 16550 and the dispatcher makes a third. See `shell::editor::Console`.
+        if let Some(editor) = self.editor.as_mut() {
+            let _ = editor.process_byte::<shell::editor::Commands, _>(
+                byte,
+                &mut shell::editor::Dispatch { index, devices },
+            );
         }
     }
 }
@@ -554,12 +608,24 @@ fn boot() -> Devices {
 /// Shared by both dispatchers (#245). It takes the console rather than making
 /// one, because under RTIC the caller is holding a lock and the borrow is what
 /// says so.
-fn housekeeping(console: &mut Uart, devices: &mut Devices) {
+///
+/// It takes the SHELLS as well, because everything below prints without being
+/// asked to and the person at the terminal may be halfway through a command
+/// line. `Shell::interject` erases that line, prints, and puts it back. The
+/// predicates in front of each call are what stop the erase happening thousands
+/// of times a second with nothing to erase for -- see `events::pending`.
+///
+/// It is the PRIMARY console's shell, on the primary console, because that is
+/// where all three of these report: console 1's transmit pin is JTAG TMS. See
+/// `target::ANNOUNCING`.
+fn housekeeping(shells: &mut [Shell; MAX_CONSOLES], console: &mut Uart, devices: &mut Devices) {
     // Anything an interrupt handler wanted to say. Formatted and
     // transmitted HERE, in normal context, on a console this loop owns --
     // which is the entire arrangement: a handler cannot reach a `Uart`, and
     // `events::drain` cannot be called without one. See `src/events.rs`.
-    events::drain(console);
+    if events::pending() {
+        shells[0].interject(0, &mut events::drain);
+    }
 
     // Anything a console has LOST, on the same terms and for the same
     // reason: the read of LSR that discovers an overrun happens inside the
@@ -567,14 +633,28 @@ fn housekeeping(console: &mut Uart, devices: &mut Devices) {
     // `src/uart.rs` until here. A console that drops input silently is the
     // failure this board keeps meeting; this is where it stops being
     // silent.
-    uart::report_errors(console);
+    if uart::errors_pending() {
+        shells[0].interject(0, &mut uart::report_errors);
+    }
 
     // A deferred Type-C interrupt, if one is waiting. Every pass rather than
     // on a timer: the source is MASKED between the handler and here, so the
     // only latency is one turn of this loop and nothing is lost while it
     // takes. See `src/typec.rs`.
+    //
+    // `service` gets the line restore, `poll` does not, and that is a limit
+    // worth stating rather than hiding. `service` prints only when a deferred
+    // interrupt is waiting and `irq::type_c_pending` says so for the price of
+    // one load. `poll` prints only on a fault EDGE, which nothing outside
+    // `typec` can see; wrapping it would mean erasing and reprinting the line
+    // every `FAULT_POLL_MS` whether a fault changed or not. So a VBUS fault
+    // appearing while a command is half typed still lands on the typed line, and
+    // that is the one asynchronous line here that does.
     if let Some(bus) = devices.bus.as_mut() {
-        devices.type_c.service(console, bus);
+        if irq::type_c_pending() {
+            let type_c = &mut devices.type_c;
+            shells[0].interject(0, &mut |uart| type_c.service(uart, bus));
+        }
         devices.type_c.poll(console, bus);
     }
 }
