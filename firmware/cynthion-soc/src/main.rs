@@ -552,7 +552,19 @@ fn panic(info: &PanicInfo) -> ! {
     // line printed before things went wrong, which is the one worth having. LCR resets to
     // 0 on both targets, so DLAB is clear and THR is reachable without any setup.
     let mut uart = primary();
-    let _ = writeln!(uart, "\n*** PANIC: {}", info);
+    // LOCATION, not the whole `PanicInfo`. What resolves the ambiguity this
+    // handler exists for -- a panicking CPU against a hung one -- is that a line
+    // appeared at all, and then where. The message payload costs the formatting
+    // machinery; `file:line:col` is a `&str` and two integers.
+    match info.location() {
+        Some(at) => {
+            let _ = writeln!(uart, "\n*** PANIC at {}:{}:{}",
+                             at.file(), at.line(), at.column());
+        }
+        None => {
+            let _ = writeln!(uart, "\n*** PANIC, location unknown");
+        }
+    }
     loop {}
 }
 
