@@ -162,14 +162,34 @@ fn rails(uart: &mut Uart, report: &mut Report, monitor: &Monitor) {
                 format_args!("no PAC1954 sample yet"),
             );
         }
+        // AN OLD SAMPLE IS ONLY A FAULT IF SOMETHING WAS SUPPOSED TO REFRESH IT.
+        //
+        // The poll is off by default (#286) -- the ALERT does the watching now --
+        // so on a healthy board the sample ages without bound and this reported
+        // `rail FAIL` on hardware with nothing wrong with it. `pac1954 status`
+        // already draws this distinction and this did not.
+        //
+        // Skip, not pass: with the poll off there is no fresh reading to judge
+        // the rails against, and counting that as a pass would make the summary
+        // claim more than it knows.
+        (Age::Older, Some(_)) if power::interval_ms() == power::RATE_OFF => {
+            return report.item(
+                uart,
+                "rail",
+                Outcome::Skip,
+                format_args!("poll is off; `pac1954 rate 50` to check the rails"),
+            );
+        }
         (Age::Older, Some(_)) => {
             return report.item(
                 uart,
                 "rail",
                 Outcome::Fail,
                 format_args!(
-                    "PAC1954 sample is over {} s old",
-                    power::AGE_LIMIT_MS / 1000
+                    "PAC1954 sample is over {} s old with the poll running \
+                     every {} ms -- the poller has stopped",
+                    power::AGE_LIMIT_MS / 1000,
+                    power::interval_ms()
                 ),
             );
         }
