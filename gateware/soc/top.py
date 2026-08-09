@@ -685,6 +685,27 @@ HYPERRAM_CLOCK_STOP = False
 # in the hit path.
 #
 # 3 ways is not an option: SpinalHDL's PLRU asserts `isPow2` on the way count.
+#
+# MEASURED, by `scripts/soc_cache_sweep.py`, on 56 blocks -- AND THE 128x2 ROW
+# DID NOT REPRODUCE, so the sweep is not yet trustworthy:
+#
+#     128x1   8 KiB direct   48 BRAM   builds, 102 checks pass on the board
+#      64x2   8 KiB 2-way    50 BRAM   sweep only, not rebuilt
+#     128x2  16 KiB 2-way    52 BRAM   sweep said this and placed
+#     128x2  16 KiB 2-way    58 BRAM   REBUILT: does not place
+#      32x4   8 KiB 4-way    58 BRAM   does not place
+#
+# 4 ways is out of blocks either way: 58 on a die with 56, nextpnr failing on
+# `BtbPlugin_logic_mem` with "no BELs remaining". `bankCount = wayCount`, so each
+# way brings its own bank, tag memory and wider PLRU state. And 3 ways does not
+# exist: SpinalHDL's PLRU asserts `isPow2`.
+#
+# ONE WAY STAYS until that 52-vs-58 is explained. The netlist for the failing
+# build was checked and really does have two ways (`FetchL1Plugin_logic_ways_0`
+# and `_1`), so it is not a case of the geometry not being applied -- which makes
+# it worse, not better: two builds of the same geometry disagreed by 6 blocks on
+# a figure that is supposed to be deterministic. Adopting a geometry on the
+# favourable half of that would be adopting a number, not a result. See #287.
 CACHE_SETS = 128
 CACHE_WAYS = 1
 

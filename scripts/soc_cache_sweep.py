@@ -118,14 +118,20 @@ def build_once(sets, ways):
     # drift the constants exist to prevent.
     top = ROOT / "gateware" / "soc" / "top.py"
     original = top.read_text()
-    patched = re.sub(r"^CACHE_SETS = \d+", f"CACHE_SETS = {sets}",
-                     original, count=1, flags=re.M)
-    patched = re.sub(r"^CACHE_WAYS = \d+", f"CACHE_WAYS = {ways}",
-                     patched, count=1, flags=re.M)
-    if patched == original:
+    patched, set_hits = re.subn(r"^CACHE_SETS = \d+", f"CACHE_SETS = {sets}",
+                                original, count=1, flags=re.M)
+    patched, way_hits = re.subn(r"^CACHE_WAYS = \d+", f"CACHE_WAYS = {ways}",
+                                patched, count=1, flags=re.M)
+    # Count the MATCHES, not whether the text changed. Comparing the text called
+    # the one geometry already present in the tree a failure -- `patched ==
+    # original` is exactly what a correct no-op substitution produces, so the
+    # baseline row was the one row the sweep always dropped.
+    missing = [name for name, hits in (("CACHE_SETS", set_hits),
+                                       ("CACHE_WAYS", way_hits)) if not hits]
+    if missing:
         return {"sets": sets, "ways": ways, "ok": False,
-                "why": "neither CACHE_SETS nor CACHE_WAYS was substituted in "
-                       "top.py -- the constants have been renamed"}
+                "why": f"{' and '.join(missing)} not found in top.py at the "
+                       f"start of a line -- renamed or moved"}
 
     # Captured rather than streamed through `devlog.spawn`, because the Fmax and
     # metrics lines have to be parsed out of it. The full text still reaches a

@@ -86,15 +86,57 @@ relieved nothing measurable. Doubling the caches attacks the number
 Timing held: `clk` closes at **78.04 MHz** against a 60 MHz constraint, and the
 USB domain at 90.30 MHz.
 
-**Sets, not ways.** `flash_cache_flush()` in
-[`../../../scripts/riscv_firmware.py`](../../../scripts/riscv_firmware.py)
-displaces the D-cache by reading its size at line stride, which touches every
-set exactly once *only while the cache is direct-mapped*. A second way puts a
-replacement policy in charge of what survives and the flush stops being a proof
-— while still running, still passing, and proving nothing. Doubling the sets
-keeps it correct by construction, and leaves the hit path free of a way-select
-mux, which matters against an Fmax ceiling the BTB already had to be relaxed to
-meet.
+### Sets or ways — measured, and four ways is simply out of blocks
+
+An earlier version of this section said sets rather than ways was forced, because
+`flash_cache_flush()` needs a direct-mapped cache. **That was wrong**, in the
+direction that made the easy choice look mandatory. The replacement policy is
+PLRU rather than random, so a sweep of the full cache size still evicts every
+way; and that flush is only in the generated C test firmware, while the Rust
+firmware uses a real `fence.i`. The axis was never closed.
+
+[`../../../scripts/soc_cache_sweep.py`](../../../scripts/soc_cache_sweep.py)
+was built to settle it. **Its table did not survive a rebuild, so nothing below
+is concluded from it yet** — see #287:
+
+| run | geometry | per cache | BRAM | outcome |
+|---|---|---|---|---|
+| baseline | 128×1 | 8 KiB direct | **48** | builds, 102 checks pass on the board |
+| sweep | 64×2 | 8 KiB 2-way | 50 | not rebuilt |
+| sweep | 128×2 | 16 KiB 2-way | **52** | placed |
+| **rebuild** | **128×2** | 16 KiB 2-way | **58** | **does not place** |
+| sweep | 32×4 | 8 KiB 4-way | 58 | does not place |
+
+**Four ways is out of blocks on any reading** — 58 on a die with 56, nextpnr
+failing on `BtbPlugin_logic_mem` with "no BELs remaining". `bankCount = wayCount`,
+so each way brings its own bank, its own tag memory and a wider PLRU state. Three
+ways does not exist at all: SpinalHDL's PLRU asserts `isPow2` on the way count.
+
+**128×2 was briefly adopted and reverted.** It dominates 128×1 on paper — same
+sets plus a way, so hit rate cannot get worse — and the 52-block row said it fit.
+The rebuild says 58 and fails to place. The failing build's netlist was checked
+and really does have two ways, so the geometry was applied; two builds of one
+design simply disagreed by six blocks on a figure that is meant to be
+deterministic. Picking the favourable half of that is picking a number, not a
+result, so **one way stays** until a geometry reproduces twice.
+
+**Fmax never entered into it and could not have.** 64×2 closed at 65.95 MHz and
+128×2 at 76.86, while 128×1 alone measured 78.04 and 67.76 across two builds of
+the identical design. The placement spread is wider than the differences between
+geometries.
+
+### What none of this measures
+
+What a geometry *buys*. Synthesis reports cost; hit rate and stalls need
+`STALLED_CYCLES_FRONTEND` read on hardware under a workload that preempts, and
+the only such measurement is in [`../../rtic.md`](../../rtic.md), which predates
+every geometry above.
+
+Two cheaper levers were identified alongside it and may beat it outright, since
+both *remove* work rather than spending block RAM to absorb it: grouping the hot
+path so ~6.2 KB of handler code stops colliding with itself (#284), and backing
+off the 50 ms REFRESH poll now that the ALERT does its job (#285) — that poll's
+task is 2,292 bytes of the hot set, running at 20 Hz.
 
 ## Files
 
