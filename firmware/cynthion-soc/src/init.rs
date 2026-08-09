@@ -273,15 +273,16 @@ fn i2c_init(out: &mut Out, devices: &mut Devices) {
         }
         return;
     };
-    bus.init();
-    let prescale = target::BOARD.map(|board| board.i2c_prescale).unwrap_or(0);
-    let scl_hz = target::TIME_HZ / (5 * (prescale as u32 + 1));
+    let report = bus.init();
     out.line(
         "i2c",
-        "ok",
+        if report.established() { "ok" } else { "FAIL" },
         format_args!(
-            "{} Hz scl, prescale {} at {} Hz sync",
-            scl_hz, prescale, target::TIME_HZ
+            "{} Hz scl, prer {} read back at {} Hz sync, bus released with 9 clocks + stop{}",
+            report.scl_hz,
+            report.prescale,
+            target::TIME_HZ,
+            if report.established() { "" } else { " -- the core did not take the prescale" }
         ),
     );
 }

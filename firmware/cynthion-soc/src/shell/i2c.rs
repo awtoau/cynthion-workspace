@@ -58,7 +58,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     };
     // A scan is also how a wedged controller gets recovered, which is why this
     // one command re-initialises. Nothing else does; see `Bus::init`.
-    bus.init();
+    let _ = bus.init();
 
     let _ = writeln!(
         uart,

@@ -97,6 +97,20 @@ pub use mux::{
 use i2c::I2c;
 use mux::Mux;
 
+/// What [`Bus::init`] established and read back.
+pub struct Init {
+    /// PRER as the controller holds it, not as the build asked for it.
+    pub prescale: u16,
+    pub wanted: u16,
+    pub scl_hz: u32,
+}
+
+impl Init {
+    pub fn established(&self) -> bool {
+        self.prescale == self.wanted
+    }
+}
+
 /// The board's I2C controller and the mux that points it at a bus.
 ///
 /// Constructed once, in `Devices`, and passed by `&mut` to whoever is using it.
@@ -120,14 +134,35 @@ impl Bus {
         }
     }
 
-    /// Set the prescale and enable the controller. Idempotent.
+    /// `i2c_init()` -- the CONTROLLER and the WIRE, which are two resets.
     ///
-    /// Called once at boot, and again by the `i2c` scan command -- a scan is also
-    /// how a wedged bus gets recovered, and re-initialising is what unwedges it.
-    /// Not called per transaction: it writes CTR and clears the completion flag,
+    /// Idempotent, and re-runnable: called at boot, and again by the `i2c` scan
+    /// command, because a scan is also how a wedged bus gets recovered. Not
+    /// called per transaction -- it writes CTR and clears the completion flag,
     /// and the power monitor's poll runs twenty times a second.
-    pub fn init(&mut self) {
+    ///
+    /// **`I2c::init` resets the controller; `I2c::recover` resets the bus.**
+    /// Only the first existed. A slave left mid-transaction by a CPU reset --
+    /// which resets neither the peripheral nor the parts on it -- goes on
+    /// holding SDA low regardless of what is written to CTR, and nine clocks
+    /// plus a STOP is what releases it. Unconditional because it is harmless on
+    /// a healthy bus and because a recovery path that only runs when something
+    /// is already broken is a path nothing exercises.
+    ///
+    /// Non-destructive: no device is addressed and nothing is written to one.
+    pub fn init(&mut self) -> Init {
         self.i2c.init(self.prescale);
+        self.i2c.recover();
+        let prescale = self.i2c.prescale();
+        Init {
+            prescale,
+            wanted: self.prescale,
+            // Derived the way the CONTROLLER derives it, from the prescale it
+            // is actually holding: `f_SCL = f_sync / (5 * (PRER + 1))`. The
+            // divider is an integer, so this is what the bus gets rather than
+            // what was asked for.
+            scl_hz: crate::target::TIME_HZ / (5 * (prescale as u32 + 1)),
+        }
     }
 
     /// Does anything answer at this seven-bit address, on this bus?
