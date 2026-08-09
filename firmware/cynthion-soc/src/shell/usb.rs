@@ -6,7 +6,7 @@
 //! what a cable plugs into and what a person is actually asking about:
 //!
 //!     usb aux            everything about AUX -- rail, switch, cc, phy
-//!     usb target_c off   open its switch and stop its interrupts
+//!     usb target_c disable   make it inert -- no power, no ALERT, no PD
 //!
 //! **The inverse index of `board`.** `board` walks the tree once and shows every
 //! port shallowly; this shows one port completely. Same drivers, same numbers,
@@ -48,8 +48,11 @@ const PORTS: [(&str, Option<Port>, Option<vbus::Source>, &str); 4] = [
 /// `usb`, `usb <port>`, `usb <port> status|off`.
 pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let rest = trim(rest);
+    // The bare word lists the family from `HELP`, as every other family does.
+    // A second list here would be a second copy of the port names, and the one
+    // in `HELP` is what TAB completes against.
     if rest.is_empty() {
-        return list(uart);
+        return crate::shell::list_family(uart, "usb");
     }
 
     let (name, verb) = match rest.iter().position(|&b| b == b' ') {
@@ -60,7 +63,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let Some(index) = PORTS.iter().position(|(port, ..)| port.as_bytes() == name)
     else {
         let _ = writeln!(uart, "no port of that name; they are:");
-        return list(uart);
+        return crate::shell::list_family(uart, "usb");
     };
 
     match verb {
@@ -68,7 +71,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         verb => match VERBS.iter().find(|(name, ..)| name.as_bytes() == verb) {
             Some((name, what, missing)) => planned(uart, index, name, what, missing),
             None => {
-                let _ = writeln!(uart, "usage: usb {} [status|off|on|device|host|reset]",
+                let _ = writeln!(uart, "usage: usb {} [status|disable|enable|device|host|reset]",
                                  PORTS[index].0);
             }
         },
@@ -85,10 +88,15 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 /// first version opened EVERY VBUS switch, because there is no per-switch open
 /// in the driver -- so a command scoped to one port silently cut the other two.
 const VERBS: [(&str, &str, &str); 5] = [
-    ("off", "stop this port sourcing, and stop it interrupting",
-     "no per-switch open in `vbus.rs`, and no Type-C interrupt mask"),
-    ("on", "source the board from this port",
-     "`vbus.rs` refuses combinations by policy; a per-port form needs that policy"),
+    // DISABLED, not "off". Off is an action and says nothing about what is
+    // still live; disabled is a state, and the state wanted here is inert --
+    // the port draws nothing, sources nothing, raises no ALERT and answers no
+    // PD. Three separate mechanisms, and "off" reads as only the first.
+    ("disable", "inert: no power in or out, no ALERT, no PD response",
+     "three gaps -- no per-switch open in `vbus.rs`, no per-channel limit \
+disarm in `power.rs`, no write path to the FUSB302B's SWITCHES0/POWER"),
+    ("enable", "the inverse: rail live, ALERT armed, CC pulls attached",
+     "same three, and `vbus.rs` refuses source combinations by policy"),
     ("device", "put this port in device mode",
      "no role control -- the ULPI window is read-only in this SoC"),
     ("host", "put this port in host mode",
@@ -106,26 +114,6 @@ fn planned(uart: &mut Uart, index: usize, verb: &str, what: &str, missing: &str)
     let _ = writeln!(uart, "usb {} {} -- NOT IMPLEMENTED", PORTS[index].0, verb);
     let _ = writeln!(uart, "  intent    {}", what);
     let _ = writeln!(uart, "  blocked   {}", missing);
-}
-
-/// The four ports and what each one is for.
-fn list(uart: &mut Uart) {
-    for (name, controller, source, what) in PORTS {
-        let _ = writeln!(
-            uart,
-            "  {:9} {}{}",
-            name,
-            what,
-            match (controller, source) {
-                (Some(_), Some(_)) => "",
-                (None, Some(_)) => "",
-                // Nothing to switch and nothing to negotiate: the only thing
-                // this port has is a rail, and saying so here saves a reader
-                // asking it for a switch that does not exist.
-                _ => "  [rail only]",
-            }
-        );
-    }
 }
 
 /// Everything this SoC can see about one port.
