@@ -68,7 +68,9 @@ use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::uart::Uart;
-use crate::{bench, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices};
+use crate::{
+    bench, hyperram, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices,
+};
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
@@ -206,6 +208,7 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     i2c_init(&mut out, devices);
     pac1954_init(&mut out, devices);
     fusb302b_init(&mut out, devices);
+    hyperram_init(&mut out);
     w25q32_init(&mut out);
     usb3343_init(&mut out);
     vbus_init(&mut out);
@@ -222,6 +225,7 @@ fn one(out: &mut Out, name: &[u8], devices: &mut Devices) -> bool {
         b"i2c" => i2c_init(out, devices),
         b"pac1954" => pac1954_init(out, devices),
         b"fusb302b" => fusb302b_init(out, devices),
+        b"hyperram" => hyperram_init(out),
         b"w25q32" | b"flash" => w25q32_init(out),
         b"usb3343" => usb3343_init(out),
         b"vbus" => vbus_init(out),
@@ -332,6 +336,19 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
             "{} controller(s), sw_res then interrupt on state change{}",
             report.ports,
             if report.configured { "" } else { " -- a port did not answer" }
+        ),
+    );
+}
+
+fn hyperram_init(out: &mut Out) {
+    let report = hyperram::init();
+    out.line(
+        "hyperram",
+        if report.alive { "ok" } else { "FAIL" },
+        format_args!(
+            "{} CS# pulse(s), round trip {}",
+            report.pulses,
+            if report.alive { "ok" } else { "NEVER -- the part is not answering" }
         ),
     );
 }

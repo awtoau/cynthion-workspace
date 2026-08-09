@@ -26,6 +26,13 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 # is what keeps the `cfg` a known one and the build warning-clean.
 qemu = []
 
+# Declared and never enabled, for the same reason `qemu` above is: `src/hyperram.rs`
+# is the shell's file, compiled into this crate as a module, and its power-state half
+# -- the CS# wake ladder and the power-loss canary (#315) -- reaches for a clock and a
+# console this crate does not have. Declaring the feature is what keeps the `cfg` a
+# known one and the build warning-clean.
+image = []
+
 # The HyperRAM BIST measurement variant (#226), matching `HYPERRAM_BIST` in
 # `gateware/soc/top.py`.
 #

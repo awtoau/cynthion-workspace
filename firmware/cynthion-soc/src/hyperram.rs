@@ -170,6 +170,91 @@ pub fn staged() -> Result<(u32, u32), Reject> {
     Ok((length, read_u32(HDR_CRC)))
 }
 
+/// A word of the spare header space, for a round trip that proves the path.
+///
+/// `IMAGE_WORD` is 16 and the header itself uses 0, 2 and 4, so everything
+/// written here is untouched by a staged image and untouched by the bootloader.
+#[cfg(feature = "image")]
+const SCRATCH_WORD: u32 = 10;
+
+/// Two patterns, not one: a single value could match a port returning the last
+/// thing it saw, and these are complements, so a stuck lane fails one of them.
+#[cfg(feature = "image")]
+const ROUND_TRIP: [u32; 2] = [0x5aa5_0f0f, 0xa55a_f0f0];
+
+// The power-state half: the CS# wake ladder (#315).
+//
+// `image` only, and the feature exists for one reason: this file is compiled
+// into `firmware/cynthion-boot` as well, and that crate has no clock to derive
+// `tEXTDPD` from and 492 bytes to live in. See `Cargo.toml`.
+#[cfg(feature = "image")]
+use crate::clock;
+
+/// CS# pulses the wake ladder will spend before giving up.
+///
+/// **Waits for**: the part to leave Deep Power Down or Hybrid Sleep.
+/// **Expected duration, and where it comes from**: W956A8MBYA A01-006 -- one
+/// CS# low-then-high is the documented DPD exit (`tCSDPD` 200 ns..3 us) and CS#
+/// low alone clears Hybrid Sleep, after which `tEXTDPD` <= 150 us must pass
+/// before the next transaction. One pulse should do it.
+/// **Multiplier**: four, so one pulse landing across a refresh is not the whole
+/// answer; the whole ladder failing costs 4 x 150 us = 600 us.
+/// **On expiry**: `alive` is false, the report says so and names the pulse
+/// count, and nothing downstream treats the part as established.
+#[cfg(feature = "image")]
+const WAKE_PULSES: u32 = 4;
+
+/// `tEXTDPD`: the settling time after CS# rises out of Deep Power Down.
+#[cfg(feature = "image")]
+const EXIT_US: u32 = 150;
+
+/// What [`init`] found.
+#[cfg(feature = "image")]
+pub struct Init {
+    /// CS# pulses spent before the part answered, or [`WAKE_PULSES`].
+    pub pulses: u32,
+    /// The round trip worked, so the path and the part are both there.
+    pub alive: bool,
+}
+
+/// `hyperram_init()` -- wake it and prove the path. **It never asserts
+/// `RESET#`.**
+///
+/// §11.3.6: *"The host system should assume DRAM array data is lost after
+/// hardware reset"*, and the staging path deliberately depends on contents
+/// surviving a CPU reset -- which is the whole reason HyperRAM is in it. So the
+/// ladder is the non-destructive one: a CS# low-then-high edge, which is the
+/// documented Deep Power Down exit, which Hybrid Sleep clears itself on, and
+/// which preserves contents. One staging transaction is one CS# pulse.
+///
+/// A DQS build wrote `CR0 = 0x0000` on every register write, and `CR0[15] = 0`
+/// is Deep Power Down. Every subsequent reconfigure left the part asleep,
+/// because nothing power-cycles it and no path asserts `RESET#` (#226).
+///
+/// Non-destructive: everything written is spare header space above the CRC and
+/// below `IMAGE_WORD`, so a staged image is untouched. Idempotent: the same
+/// scratch word, the same two patterns, every time.
+#[cfg(feature = "image")]
+pub fn init() -> Init {
+    let mut pulses = 0;
+    let mut alive = false;
+    while pulses < WAKE_PULSES {
+        pulses += 1;
+        // The transaction IS the pulse, and its result is not used: a part in
+        // Deep Power Down answers nothing, which is the state being left.
+        let _ = read_u32(SCRATCH_WORD);
+        clock::wait(clock::micros(EXIT_US));
+        alive = ROUND_TRIP.iter().all(|&pattern| {
+            write_u32(SCRATCH_WORD, pattern);
+            read_u32(SCRATCH_WORD) == pattern
+        });
+        if alive {
+            break;
+        }
+    }
+    Init { pulses, alive }
+}
+
 use backend::seek;
 pub use backend::{read_pair, write_pair};
 

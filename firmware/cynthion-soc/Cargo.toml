@@ -52,6 +52,19 @@ embedded-io = "0.6"
 # without that linker script links .text into the flash window, where virt has no
 # memory, and produces an image that traps on the first fetch.
 [features]
+# THE ONLY FEATURE HERE THAT IS ON BY DEFAULT, and it separates two crates
+# rather than two builds of this one.
+#
+# `src/hyperram.rs` is compiled into `firmware/cynthion-boot` as well, by
+# `#[path]`, so that the header layout, the magic, the length bound and the CRC
+# polynomial are the same on both sides by construction rather than by review.
+# That crate has no clock, no console and 492 bytes to live in. `hyperram::init`
+# -- the CS# wake ladder and the power-loss canary (#315) -- derives `tEXTDPD`
+# from `crate::clock` and belongs next to the register access it drives, so it
+# is gated on a feature this crate enables and the bootloader only declares.
+default = ["image"]
+image = []
+
 qemu = []
 
 # The concurrency-model skeletons that produced the table in
