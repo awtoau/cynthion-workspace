@@ -5,7 +5,8 @@
 use core::fmt::Write;
 
 use crate::uart::Uart;
-use crate::{board_absent, target, ulpi};
+use crate::shell::console::board_absent;
+use crate::{ target, ulpi};
 
 /// `phy` -- identity and state of the USB3343 on TARGET.
 ///

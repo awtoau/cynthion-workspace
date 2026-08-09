@@ -5,7 +5,8 @@ use core::fmt::Write;
 use crate::shell::parse::{parse_hex, trim};
 use crate::uart::Uart;
 use crate::sideband::*;
-use crate::{board_absent, target};
+use crate::shell::console::board_absent;
+use crate::{ target};
 
 /// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.
 pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {

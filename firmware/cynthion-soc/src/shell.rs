@@ -13,6 +13,9 @@
 //! `.text` win would come from, and `.text` is this design's binding constraint.
 //! That is a measurement, not a move, and is deliberately not done here.
 
+pub(crate) mod console;
+
+pub(crate) use console::board_absent;
 pub(crate) mod hardware;
 pub(crate) mod hr;
 pub(crate) mod i2c;
@@ -32,7 +35,7 @@ use self::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
 use crate::target::flash_word;
 use crate::{
-    bench, board, board_absent, clock, events, info, log, metrics,
+    bench, board, clock, events, info, log, metrics,
     reboot, sched, scratch_responds, selftest, staging, target, timer,
     Devices,
 };

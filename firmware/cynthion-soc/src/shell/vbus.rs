@@ -6,7 +6,8 @@ use core::fmt::Write;
 use crate::shell::parse::{parse_decimal, trim};
 use crate::uart::Uart;
 use crate::vbus::*;
-use crate::{board_absent, fusb302, Devices};
+use crate::shell::console::board_absent;
+use crate::{ fusb302, Devices};
 
 /// `vbus` -- pass host power through to a target, or report the switches.
 ///

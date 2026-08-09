@@ -31,7 +31,7 @@
 use core::fmt::Write;
 
 use crate::uart::Uart;
-use crate::{board_absent, fusb302, Devices};
+use crate::{fusb302, Devices};
 
 use crate::power;
 

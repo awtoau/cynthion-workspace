@@ -6,7 +6,8 @@ use core::fmt::Write;
 
 use crate::shell::parse::{parse_decimal, trim};
 use crate::uart::Uart;
-use crate::{board_absent, bus, target, Devices};
+use crate::shell::console::board_absent;
+use crate::{bus, target, Devices};
 
 /// Scan the power monitor's I2C bus and identify what is on it.
 ///

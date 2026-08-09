@@ -130,7 +130,8 @@ mod app {
     use super::device;
     use crate::clock::{self, Instant};
     use crate::sched;
-    use crate::{metrics, timer, Devices, Shell, MAX_CONSOLES};
+    use crate::shell::console::Shell;
+    use crate::{metrics, timer, Devices, MAX_CONSOLES};
 
     /// The board, and every driver's state. ONE of these, shared between the
     /// task and `#[idle]`.
@@ -317,7 +318,7 @@ mod app {
                 .lock(|devices| crate::housekeeping(&mut console, devices));
             cx.shared
                 .devices
-                .lock(|devices| crate::consoles(cx.local.shells, devices));
+                .lock(|devices| crate::shell::console::consoles(cx.local.shells, devices));
         }
     }
 

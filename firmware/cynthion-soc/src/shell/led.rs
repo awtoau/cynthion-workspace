@@ -12,7 +12,8 @@ use core::fmt::Write;
 use crate::gpio::{self, Led};
 use crate::shell::parse::trim;
 use crate::uart::Uart;
-use crate::{board_absent, target};
+use crate::shell::console::board_absent;
+use crate::{ target};
 
 /// Every LED, in board order, for a shell that wants to list them.
 pub(crate) const LEDS: [(Led, &str); 6] = [

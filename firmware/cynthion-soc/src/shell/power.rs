@@ -12,7 +12,8 @@ use crate::shell::parse::{
     as_str, parse_decimal, parse_limit, parse_port, parse_signed, trim, FixedWriter,
 };
 use crate::uart::Uart;
-use crate::{board_absent, clock, power, Devices};
+use crate::shell::console::board_absent;
+use crate::{ clock, power, Devices};
 
 /// `power`, or `power floor <port> <mA>`.
 ///

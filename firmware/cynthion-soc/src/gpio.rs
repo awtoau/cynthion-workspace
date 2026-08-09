@@ -47,7 +47,7 @@
 use core::fmt::Write;
 
 use crate::uart::Uart;
-use crate::{board_absent, target};
+use crate::target;
 
 use core::ptr::{read_volatile, write_volatile};
 
