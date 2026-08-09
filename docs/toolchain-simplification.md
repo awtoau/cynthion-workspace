@@ -378,7 +378,7 @@ python3 scripts/platform_vendor_compare.py   # → tmp/logs/platform_vendor_comp
 
 ### What still imports `cynthion`, and why that is correct
 
-Nothing in `gateware/` does, except `riscv/vexii_hello_soc.py`, which was left
+Nothing in `gateware/` does, except `soc/top.py`, which was left
 alone only because another investigation owned it at the time; its change is the
 same one-line import swap.
 

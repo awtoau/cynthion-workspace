@@ -12,7 +12,7 @@ same everything except that `FlashILA`, `FlashPinProbe` and `HyperRAMProbe`
 elaborate to nothing.
 
 **It edits no tracked file.** The three classes are replaced on their modules
-before `vexii_hello_soc` is imported, by subclasses that keep every port and
+before `top` is imported, by subclasses that keep every port and
 every CSR register -- so the memory map, the generated PAC and the firmware's
 addresses are all unchanged -- and whose `elaborate` returns an empty module.
 What that removes is the counters, the edge detectors, the capture memory and
@@ -66,7 +66,7 @@ def build(stub, build_dir):
     """Build the SoC in a subprocess, optionally with instrumentation stubbed.
 
     A subprocess because the monkey-patch has to happen before
-    `vexii_hello_soc` is imported, and a module imported once in this process
+    `top` is imported, and a module imported once in this process
     would be reused for the second build.
     """
     script = f"""
@@ -126,13 +126,13 @@ if STUB:
     vexii_flash.FlashPinProbe = _Probe
     hyperram_probe.HyperRAMProbe = _Hyper
 
-import top as vexii_hello_soc
+import top as soc_top
 from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
 # The block RAM initialiser does not affect the fabric this measures, and the
 # shipping build puts no firmware there anyway.
 CynthionPlatformRev1D4().build(
-    vexii_hello_soc.HelloSoC(firmware=[0] * (vexii_hello_soc.RAM_SIZE // 4)),
+    soc_top.AwtoSoc(firmware=[0] * (soc_top.RAM_SIZE // 4)),
     do_program=False, build_dir={str(build_dir)!r})
 """
     proc = subprocess.run([sys.executable, "-c", script],

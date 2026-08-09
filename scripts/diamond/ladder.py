@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Run `vexii_hello_soc` through Diamond at a series of clock constraints and
+Run the SoC (`gateware/soc/top.py`) through Diamond at a series of clock constraints and
 compare against nextpnr on the same RTL.
 
 ## Why the question is worth asking
