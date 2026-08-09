@@ -1,5 +1,8 @@
 # HyperRAM BIST plan
 
+> **Audit 2026-08-10: [2026-08-10-audit.md](2026-08-10-audit.md)** — six faults
+> found in our own instruments, three fixed. No measurement of the part is valid.
+
 How to characterise the W956A8 and get a number worth keeping.
 The part itself: [w956a8.md](w956a8.md).
 
