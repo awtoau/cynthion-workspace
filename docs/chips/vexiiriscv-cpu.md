@@ -12,14 +12,14 @@ somewhere they can be found.
 
 Structure and rules: [`../plans/performance-sections.md`](../plans/performance-sections.md).
 
-**Almost every ceiling on this page is the fabric's, not the core's.** A soft CPU
-has no datasheet; what it can do is set by the parameters it was generated with
-and by what nextpnr can place. Keeping those two apart is most of the value here.
-
-Everything below is in **cycles and IPC**, which do not move when `SYNC_MHZ`
-does. `SYNC_MHZ` has been 30, 72, 30 and 60 in the last week
-(`git log -p gateware/soc/top.py`), so any MB/s figure is only meaningful with
-its clock attached, and cycle counts are the durable form.
+- **Almost every ceiling on this page is the fabric's, not the core's.** A soft
+  CPU has no datasheet; what it can do is set by the parameters it was
+  generated with and by what nextpnr can place. Keeping those two apart is
+  most of the value here.
+- Everything below is in **cycles and IPC**, which do not move when `SYNC_MHZ`
+  does. `SYNC_MHZ` has been 30, 72, 30 and 60 in the last week
+  (`git log -p gateware/soc/top.py`), so any MB/s figure is only meaningful
+  with its clock attached; cycle counts are the durable form.
 
 ### 1. Theoretical maximum — the core's own parameters
 

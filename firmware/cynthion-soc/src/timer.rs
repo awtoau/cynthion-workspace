@@ -1,85 +1,83 @@
 //! The periodic tick, and the millisecond count every log line is stamped from.
 //!
-//! A CLINT raises the machine timer interrupt while `mtime >= mtimecmp`. The
-//! handler adds one period to `mtimecmp` and returns; that is the whole tick.
-//!
-//! Standard rather than bespoke, for the same reason `src/plic.rs` is: RTIC and
-//! Zephyr both drive a RISC-V tick this way and neither will drive a custom
-//! timer without a port being written. QEMU's `-M virt` has a real
-//! CLINT, so this file is compiled unchanged for both targets and
-//! `scripts/soc_test.py` exercises the tick that ships. Only `CLINT_BASE` and
-//! `TIME_HZ` differ, and both live in `src/target.rs`.
+//! - A CLINT raises the machine timer interrupt while `mtime >= mtimecmp`. The
+//!   handler adds one period to `mtimecmp` and returns -- the whole tick.
+//! - Standard rather than bespoke, same reason as `src/plic.rs`: RTIC and Zephyr
+//!   both drive a RISC-V tick this way and neither drives a custom timer without
+//!   a port being written. QEMU's `-M virt` has a real CLINT, so this file
+//!   compiles unchanged for both targets and `scripts/soc_test.py` exercises the
+//!   tick that ships. Only `CLINT_BASE` and `TIME_HZ` differ, both in
+//!   `src/target.rs`.
 //!
 //! ## Add the period; never reload from now
 //!
-//! `mtimecmp += PERIOD`, not `mtimecmp = mtime + PERIOD`. Reloading from the
-//! current counter adds the interrupt latency to every period, so the tick runs
-//! slow by however long the handler took to start -- a drift that is
-//! proportional to system load and therefore worst exactly when a timestamp
-//! matters. Adding puts the deadlines on an absolute grid: a late handler
-//! shortens the next interval instead of stretching the sequence.
-//!
-//! The counter is 64 bits. There is no wrap to reason about at either target's
-//! rate: 9700 years at 60 MHz.
+//! - `mtimecmp += PERIOD`, not `mtimecmp = mtime + PERIOD`. Reloading from the
+//!   current counter adds interrupt latency to every period -- drift proportional
+//!   to system load, worst exactly when a timestamp matters. Adding puts
+//!   deadlines on an absolute grid: a late handler shortens the next interval
+//!   instead of stretching the sequence.
+//! - Counter is 64 bits, no wrap to reason about at either target's rate: 9700
+//!   years at 60 MHz.
 //!
 //! ## 1 ms
 //!
-//! [`PERIOD_MS`], and adjustable. Not 1 us -- a million interrupts a second to
-//! gain resolution that a read of the 60 MHz counter already has. `rdtime`
-//! (`src/clock.rs`) is for measuring how long something took; this is for
-//! deciding when something should happen, and a millisecond is the finest grain
-//! anything in this firmware schedules on.
+//! - [`PERIOD_MS`], adjustable. Not 1 us -- a million interrupts a second to gain
+//!   resolution a read of the 60 MHz counter already has. `rdtime`
+//!   (`src/clock.rs`) measures how long something took; this decides when
+//!   something should happen. A millisecond is the finest grain anything in this
+//!   firmware schedules on.
 //!
 //! ## Registers
 //!
 //! Byte offsets from `target::CLINT_BASE`, the SiFive/QEMU layout:
 //!
-//!     0x0000  msip          RW  hart 0's machine software interrupt
-//!     0x4000  mtimecmp_lo   RW  the deadline, low half
-//!     0x4004  mtimecmp_hi   RW  high half
-//!     0xbff8  mtime_lo      R   the counter, low half
-//!     0xbffc  mtime_hi      R   high half
+//! | offset   | name          | access | what               |
+//! |----------|---------------|--------|---------------------|
+//! | `0x0000` | `msip`        | RW     | hart 0's machine software interrupt |
+//! | `0x4000` | `mtimecmp_lo` | RW     | deadline, low half  |
+//! | `0x4004` | `mtimecmp_hi` | RW     | high half           |
+//! | `0xbff8` | `mtime_lo`    | R      | counter, low half   |
+//! | `0xbffc` | `mtime_hi`    | R      | high half           |
 //!
-//! **No read here changes any state.** There is no acknowledge register and
-//! nothing to tabulate; the only way to lower the interrupt is to move the
-//! deadline, which is what the handler does.
+//! - **No read here changes any state.** No acknowledge register, nothing to
+//!   tabulate; only way to lower the interrupt is to move the deadline, which is
+//!   what the handler does.
 //!
 //! ## Writing a 64-bit deadline from a 32-bit machine
 //!
-//! Two stores cannot be atomic, and the intermediate value is briefly a real
-//! deadline the comparator will act on. Raising the low half first can make
-//! `mtimecmp` momentarily smaller than `mtime` and fire an interrupt that was
-//! never scheduled. So [`set_mtimecmp`] uses the standard three-store sequence:
+//! - Two stores cannot be atomic, and the intermediate value is briefly a real
+//!   deadline the comparator acts on. Raising the low half first can make
+//!   `mtimecmp` momentarily smaller than `mtime` and fire an unscheduled
+//!   interrupt. [`set_mtimecmp`] uses the standard three-store sequence:
 //!
-//!     1. mtimecmp_lo = 0xffffffff   -- "never", whatever the high half is
-//!     2. mtimecmp_hi = new high
-//!     3. mtimecmp_lo = new low
+//!   1. `mtimecmp_lo = 0xffffffff` -- "never", whatever the high half is
+//!   2. `mtimecmp_hi = new high`
+//!   3. `mtimecmp_lo = new low`
 //!
-//! Step 1 is what makes step 2 safe: with the low half at all ones the pair can
-//! only be in the future, so no combination of old high and new high can match.
+//! - Step 1 makes step 2 safe: with the low half at all ones the pair can only
+//!   be in the future, so no combination of old high and new high can match.
 //!
 //! ## What it costs
 //!
-//! The handler is bounded and short: two 32-bit loads of `mtimecmp`, a 64-bit
-//! add, the three stores above, and two counter increments. It reads the `time`
-//! CSR twice more to record its own duration -- a `csrr` is a register read, not
-//! a bus transaction, so the instrumentation is about two cycles and stays in
-//! the shipping build.
-//!
-//! This is the first unconditional periodic load in the system, so the `time`
-//! shell command reports it: `cost` is the worst handler duration seen, and
-//! `late` is the worst gap between a deadline and the handler starting. Both are
-//! in counter ticks, both are the maximum since boot, and a `late` that grows
-//! without bound is the failure that matters -- it means something is holding
-//! interrupts off for longer than a period.
+//! - Handler is bounded and short: two 32-bit loads of `mtimecmp`, a 64-bit add,
+//!   the three stores above, two counter increments. Reads the `time` CSR twice
+//!   more to record its own duration -- a `csrr` is a register read, not a bus
+//!   transaction, so instrumentation is ~2 cycles and stays in the shipping
+//!   build.
+//! - First unconditional periodic load in the system, so the `time` shell
+//!   command reports it: `cost` is the worst handler duration seen, `late` is
+//!   the worst gap between a deadline and the handler starting. Both in counter
+//!   ticks, both max since boot. A `late` that grows without bound is the
+//!   failure that matters -- something holding interrupts off longer than a
+//!   period.
 //!
 //! ## Nothing here may print
 //!
-//! [`tick`] is an interrupt handler, so the rule in `src/events.rs` applies: no
-//! `Uart`, no `write!`, no `core::fmt`. It reports through counters this module
-//! exposes, which normal context reads. `scripts/soc_irq_log_check.py` checks
-//! that this file cannot reach a console, and it is why the timestamp formatting
-//! lives in `src/log.rs` rather than here.
+//! - [`tick`] is an interrupt handler, so the rule in `src/events.rs` applies:
+//!   no `Uart`, no `write!`, no `core::fmt`. Reports through counters this
+//!   module exposes, read by normal context. `scripts/soc_irq_log_check.py`
+//!   checks this file cannot reach a console -- why timestamp formatting lives
+//!   in `src/log.rs`, not here.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 

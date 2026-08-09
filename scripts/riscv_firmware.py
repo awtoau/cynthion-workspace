@@ -89,25 +89,24 @@ ILA_DEPTH = 1024
 # The offset the firmware reads twice, and benchmarks. Read only -- the write
 # tests use FLASH_SCRATCH below.
 #
-# Choosing this took three tries, and the two rejected values are worth
-# recording because the mistake is easy to repeat. Both were CORRECT data, and
-# both were useless as test values:
+# Took three tries. The two rejected values are worth recording -- the mistake
+# is easy to repeat -- both CORRECT data, both useless as test values:
 #
-#   0x300000  erased flash, reads ffffffff -- which is also what a floating bus
-#             returns when nothing drives it. The first run here was briefly
-#             misread as a flash fault on exactly that basis.
+#   0x300000  erased flash, reads ffffffff -- also what a floating bus returns
+#             when nothing drives it. First run here was briefly misread as a
+#             flash fault on exactly that basis.
 #   0x020000  reads 00000000 on this board, because the bitstream actually
-#             stored in flash is shorter than the one built locally. That is
-#             also what a bus with nothing driving it at all returns.
+#             stored in flash is shorter than the one built locally -- also
+#             what a bus with nothing driving it at all returns.
 #
 # A test whose passing value is identical to a likely failure value cannot
 # distinguish success from failure.
 #
 # 0x40 is inside the bitstream header and reads 2a558800 -- varied in all four
-# bytes, stable, and not confusable with either degenerate pattern. Confirmed
+# bytes, stable, not confusable with either degenerate pattern. Confirmed
 # independently with `apollo flash-read --offset 0 --length 256`, indexed to
-# 0x40, because flash-read requires a page-aligned offset and silently writes
-# an empty file for one that is not.
+# 0x40 (flash-read requires a page-aligned offset and silently writes an empty
+# file for one that isn't).
 FLASH_TEST_OFFSET = 0x00000040
 
 # The 4 KiB sector the write and erase tests own outright.
@@ -733,28 +732,27 @@ static inline void ila_dump(const char *label) {{
 /* Displace every D-cache line, so a following memory-mapped read reaches the
    flash rather than returning a line cached before the flash changed.
 
-   VexiiRiscv is built here with --lsu-l1-sets 128 --lsu-l1-ways 1 and a 64-byte
-   line, so the data cache is 128 * 1 * 64 = 8192 bytes, direct-mapped. Reading
-   8 KiB of DISTINCT addresses at line stride therefore touches every set once
-   and evicts whatever was in it.
-
-   THE 8192 BELOW IS NOT FREE TO DRIFT. It is `CACHE_SETS * 64` from
-   `gateware/soc/top.py`, and it is only correct because the cache is
-   direct-mapped -- one way, so a linear sweep at line stride hits every set
-   exactly once and nothing chooses which line survives. Under-read it and the
-   flush silently stops flushing: the loop still runs, the test still passes,
-   and it proves nothing, because the lines it failed to reach are precisely
-   the stale ones it exists to evict. If `CACHE_SETS` changes, change this.
-   If the cache ever gains a second way, this routine is invalid outright --
-   a replacement policy, not the index, then decides what is evicted.
-
-   This is a workaround, and the proper fix is named so nobody has to rediscover
-   it: VexiiRiscv can be generated with Zicbom (--with-rvZcbm) for `cbo.inval`,
-   which invalidates a line directly. This SoC is not built with it, and turning
-   on an untested CPU extension to support a test is the wrong order of work.
-
-   The reads come from a region far from FLASH_SCRATCH so the displacement
-   itself does not populate the lines being tested. */
+   - Built here with --lsu-l1-sets 128 --lsu-l1-ways 1 and a 64-byte line, so
+     the data cache is 128 * 1 * 64 = 8192 bytes, direct-mapped. Reading 8 KiB
+     of DISTINCT addresses at line stride touches every set once and evicts
+     whatever was in it.
+   - THE 8192 BELOW IS NOT FREE TO DRIFT: it is `CACHE_SETS * 64` from
+     `gateware/soc/top.py`, and it is only correct because the cache is
+     direct-mapped -- one way, so a linear sweep at line stride hits every set
+     exactly once and nothing chooses which line survives. Under-read it and
+     the flush silently stops flushing: the loop still runs, the test still
+     passes, and proves nothing, because the lines it failed to reach are
+     precisely the stale ones it exists to evict. If `CACHE_SETS` changes,
+     change this. If the cache ever gains a second way, this routine is
+     invalid outright -- a replacement policy, not the index, then decides
+     what is evicted. (`gateware/soc/cpu/cpu.py`'s GENERATE_FLAGS comment
+     disputes this last claim under PLRU; not reconciled here -- see #287.)
+   - Workaround; proper fix named so nobody rediscovers it: VexiiRiscv can be
+     generated with Zicbom (--with-rvZcbm) for `cbo.inval`, invalidating a
+     line directly. This SoC is not built with it, and turning on an untested
+     CPU extension to support a test is the wrong order of work.
+   - Reads come from a region far from FLASH_SCRATCH so the displacement
+     itself does not populate the lines being tested. */
 static inline void flash_cache_flush(void) {{
     for (unsigned int i = 0; i < 8192; i += 64) {{
         (void)*(volatile unsigned int *)(FLASH_BASE + FLASH_FLUSH_REGION + i);

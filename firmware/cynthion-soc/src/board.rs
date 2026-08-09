@@ -8,49 +8,47 @@
 //!
 //! ## It reads no bus
 //!
-//! Every number here is one a poller or an interrupt already cached, and each
-//! branch carries the age of its own. That is the rule from issue #123 applied to
-//! the command most likely to break it: this one touches every device on the
-//! board, so a live sweep would be a dozen I2C transactions issued against a
-//! controller whose REFRESH cycle has exactly one owner.
+//! - Every number here is one a poller or an interrupt already cached, each
+//!   branch carrying its own age -- rule from #123 applied to the command most
+//!   likely to break it: touches every device on the board, so a live sweep
+//!   would be a dozen I2C transactions against a controller whose REFRESH
+//!   cycle has exactly one owner.
 //!
-//! | value                        | where it comes from                       | age |
-//! |------------------------------|-------------------------------------------|-----|
-//! | rail volts and milliamps     | `power::Monitor::poll`, every 50 ms       | yes |
-//! | device id, vbus, cc          | `typec::Controllers`, boot and interrupts | yes |
-//! | TARGET phy identity, linestate | the ULPI window, read here             | live |
-//! | which parts each port has    | how the board is built                    | n/a |
+//! | value                          | where it comes from                       | age  |
+//! |----------------------------------|----------------------------------------------|--------|
+//! | rail volts and milliamps       | `power::Monitor::poll`, every 50 ms       | yes  |
+//! | device id, vbus, cc            | `typec::Controllers`, boot and interrupts | yes  |
+//! | TARGET phy identity, linestate | the ULPI window, read here                | live |
+//! | which parts each port has      | how the board is built                    | n/a  |
 //!
-//! **The two ages mean opposite things, which is why the tree says which is
-//! which.** The rails are POLLED, so an old sample means the poller stopped. The
-//! controllers INTERRUPT on a change, so an old confirmation means nothing has
-//! changed -- a value hours old is still current.
-//!
-//! The one live read is TARGET's ULPI window, because "is the PHY there now" is
-//! the one question a cache cannot answer. It is safe where a live I2C read would
-//! not be: it is not the shared bus, the window has one user (issue #125 is about
-//! AUX and CONTROL, whose PHYs belong to a USB stack and have no window here at
-//! all), and the gateware bounds the transaction at 68 us.
+//! - **The two ages mean opposite things, which is why the tree says which is
+//!   which.** Rails are POLLED, so an old sample means the poller stopped.
+//!   Controllers INTERRUPT on a change, so an old confirmation means nothing
+//!   has changed -- a value hours old is still current.
+//! - The one live read is TARGET's ULPI window: "is the PHY there now" is the
+//!   one question a cache can't answer. Safe where a live I2C read would not
+//!   be -- not the shared bus, the window has one user (#125 covers AUX and
+//!   CONTROL, whose PHYs belong to a USB stack with no window here), and the
+//!   gateware bounds the transaction at 68 us.
 //!
 //! ## Absent is not zero
 //!
-//! An unplugged rail measures 0.76-0.92 mA of ADC offset and an absent PHY does
-//! not read as zeros, so neither is ever printed as a number:
-//!
-//!   * below [`VSAFE0_MV`] the rail is `--` and `off`, with the millivolts it
+//! - An unplugged rail measures 0.76-0.92 mA of ADC offset; an absent PHY
+//!   doesn't read as zeros. Neither is ever printed as a number:
+//!   - below [`VSAFE0_MV`] the rail is `--` and `off`, with the millivolts it
 //!     actually measured in brackets
-//!   * below that port's own floor the current is `--` and `no load`
-//!   * a PHY that never releases `dir` prints the gateware's timeout
-//!   * a value nothing has cached prints `--` and says so, never a zero nobody
+//!   - below that port's own floor the current is `--` and `no load`
+//!   - a PHY that never releases `dir` prints the gateware's timeout
+//!   - a value nothing has cached prints `--` and says so, never a zero nobody
 //!     measured
 //!
 //! ## CONTROL is not a third copy of the same port
 //!
-//! It has a Type-C connector and no FUSB302B -- the board fits those to AUX and
-//! TARGET only -- so its VBUS and CC are not visible from this CPU at all, and
-//! its PHY belongs to Apollo. Its branch is a row shorter than the others and
-//! says why, rather than leaving three identical-looking headings with two of the
-//! values missing.
+//! - Has a Type-C connector and no FUSB302B (board fits those to AUX and
+//!   TARGET only), so its VBUS and CC are not visible from this CPU at all,
+//!   and its PHY belongs to Apollo. Its branch is a row shorter and says why,
+//!   rather than leaving three identical-looking headings with two values
+//!   missing.
 
 use core::fmt::Write;
 

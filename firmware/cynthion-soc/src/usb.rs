@@ -47,16 +47,16 @@
 //!
 //! ## What was adapted, and why
 //!
-//! * **No `log`.** smolusb calls `error!`/`warn!`/`trace!` throughout. This
+//! - **No `log`.** smolusb calls `error!`/`warn!`/`trace!` throughout; this
 //!   firmware has no logging crate and a handler here may not print at all
 //!   (`scripts/soc_irq_log_check.py`), so each call site became a counter in
-//!   [`Trace`], which idle prints. Nothing is silently dropped.
-//! * **Slices, not iterators.** smolusb's `write_requested` takes an
+//!   [`Trace`], printed by idle. Nothing silently dropped.
+//! - **Slices, not iterators.** smolusb's `write_requested` takes an
 //!   `Iterator<Item = u8>` because its descriptors are `zerocopy` views over
-//!   packed structs. Byte tables need no view, so the trait takes `&[u8]`. Same
-//!   truncation rule, same return value.
-//! * **No Microsoft OS 1.0 branch, no string table indirection.** Both are
-//!   descriptor content rather than control flow.
+//!   packed structs. Byte tables need no view, so the trait takes `&[u8]` --
+//!   same truncation rule, same return value.
+//! - **No Microsoft OS 1.0 branch, no string table indirection.** Both are
+//!   descriptor content, not control flow.
 
 use core::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
 

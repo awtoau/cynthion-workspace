@@ -1,73 +1,68 @@
 //! The PAC1954-1 power monitor: four rails, polled, reported when they change.
 //!
-//! The part is a four-channel bus-voltage and shunt-current monitor at I2C
-//! `0x10` on the `power_monitor` bus. The conversion arithmetic and the channel
-//! map already existed in Python (`gateware/probes/power_monitor/registers.py`, driven
-//! over JTAG by `scripts/power_probe.py`); this is the same thing where the CPU
-//! can reach it, which is what makes continuous monitoring possible -- the JTAG
-//! path needs an Apollo debug session and therefore cannot run while anything
-//! else is using the debugger.
+//! - Four-channel bus-voltage and shunt-current monitor at I2C `0x10` on the
+//!   `power_monitor` bus. Conversion arithmetic and channel map already existed
+//!   in Python (`gateware/probes/power_monitor/registers.py`, driven over JTAG
+//!   by `scripts/power_probe.py`); this is the same thing where the CPU can
+//!   reach it -- what makes continuous monitoring possible, since the JTAG path
+//!   needs an Apollo debug session and cannot run while anything else uses the
+//!   debugger.
 //!
 //! ## Every sample set comes from one instant
 //!
-//! `REFRESH` (a Send Byte to register `0x00`) latches VBUS, VSENSE and the
-//! accumulators for all four channels together. Without it the eight measurement
-//! registers hold whatever each was last latched at, so channel 1's voltage and
-//! channel 4's current can be milliseconds apart -- and the failure is invisible,
-//! because every individual number is plausible. Reading all eight in ONE
-//! auto-incremented transaction is the other half of that guarantee: it makes it
-//! impossible for a REFRESH to land halfway through a sample set.
-//!
-//! **Each poll reads the set the PREVIOUS poll asked for, then asks for the
-//! next.** That is not an optimisation; it is what the part requires. The
-//! registers "will be stable within 1 ms from sending the REFRESH command"
-//! (DS20006539B 5.2), and reading inside that window does not return stale data
-//! -- it returns *no* data: the part acknowledges its address and then NACKs the
-//! register pointer. This driver did REFRESH-then-read first and the console
-//! filled with `no acknowledge (register pointer)`. Reading last poll's sample
-//! turns a zero-millisecond margin into a fifty-millisecond one at no cost.
+//! - `REFRESH` (Send Byte to register `0x00`) latches VBUS, VSENSE and the
+//!   accumulators for all four channels together. Without it the eight
+//!   measurement registers hold whatever each was last latched at -- channel 1's
+//!   voltage and channel 4's current can be milliseconds apart, invisibly,
+//!   because every individual number is plausible.
+//! - Reading all eight in ONE auto-incremented transaction is the other half of
+//!   the guarantee: makes it impossible for a REFRESH to land halfway through a
+//!   sample set.
+//! - **Each poll reads the set the PREVIOUS poll asked for, then asks for the
+//!   next.** Not an optimisation -- the part requires it. Registers "will be
+//!   stable within 1 ms from sending the REFRESH command" (DS20006539B 5.2);
+//!   reading inside that window returns *no* data, not stale data: the part
+//!   acknowledges its address then NACKs the register pointer. (This driver did
+//!   REFRESH-then-read first and the console filled with `no acknowledge
+//!   (register pointer)`.) Reading last poll's sample turns a 0 ms margin into a
+//!   50 ms one at no cost.
 //!
 //! ## One owner of the REFRESH cycle
 //!
-//! REFRESH-then-read is a protocol that spans two transactions with a window in
-//! the middle, and [`Monitor::service`] owns it. Nothing else in this firmware
-//! may read the part: the transaction is private to this module and `service` is
-//! its only caller, so there is no second REFRESH to collide with the first.
-//!
-//! **Who calls `service` is the concurrency model and nothing else** (#245).
-//! The default build is the superloop and reaches it through [`Monitor::poll`],
-//! which is the interval check at the top of the main loop; `--features rtic`
-//! deletes that function and reaches the same body from a periodic task the 1 ms
-//! tick releases. One owner either way, and the same 32 bytes of state, which is
-//! what makes the jitter figures the `rtic` command prints comparable.
-//!
-//! **Nothing else may read this part.** A second reader lands inside the 1 ms REFRESH
-//! window and reports a bus fault on a working bus. Full argument, including the measured
-//! collision rate: `docs/architecture.md#20-multi-transaction-device-protocols`.
-//!
-//! Staleness is the cost, and staleness is the kind of wrongness that looks right. So:
-//!
-//!   * the sample carries the instant of the REFRESH that **latched** it, not the read
-//!     that fetched it -- the read is one interval later, so timestamping it would
-//!     understate age by a full poll
-//!   * `power` prints that age, so a stopped poller reads as a number climbing past
-//!     50 ms rather than as four plausible voltages
+//! - REFRESH-then-read spans two transactions with a window in the middle;
+//!   [`Monitor::service`] owns it. Nothing else may read the part: private to
+//!   this module, `service` is its only caller, so no second REFRESH to collide
+//!   with the first.
+//! - **Who calls `service` is the concurrency model and nothing else** (#245).
+//!   Default build (superloop) reaches it through [`Monitor::poll`], the
+//!   interval check at the top of the main loop; `--features rtic` deletes that
+//!   function and reaches the same body from a periodic task the 1 ms tick
+//!   releases. One owner either way, same 32 bytes of state -- what makes the
+//!   jitter figures the `rtic` command prints comparable.
+//! - **Nothing else may read this part.** A second reader lands inside the 1 ms
+//!   REFRESH window and reports a bus fault on a working bus. Full argument,
+//!   including the measured collision rate:
+//!   `docs/architecture.md#20-multi-transaction-device-protocols`.
+//! - Staleness is the cost, and it's the kind of wrongness that looks right:
+//!   - sample carries the instant of the REFRESH that **latched** it, not the
+//!     read that fetched it -- the read is one interval later, so timestamping
+//!     it would understate age by a full poll
+//!   - `power` prints that age, so a stopped poller reads as a number climbing
+//!     past 50 ms rather than as four plausible voltages
 //!
 //! ## What gets printed, and what does not
 //!
-//! A poll every 50 ms is twenty lines a second per channel if every sample is
-//! reported, which is not a log -- it is a wall of text that hides the one line
-//! that mattered. So a sample is only announced when it differs from the last
-//! ANNOUNCED value by at least [`CHANGE_UA`], and each port has a floor below
-//! which it is called disconnected and says nothing at all. The measured ADC
-//! offset on an unplugged rail is 0.76-0.92 mA (see
-//! `docs/chips/pac1954-power-monitor.md`), and without a floor that noise walks
-//! across a threshold and emits events from a port with nothing plugged into it.
-//!
-//! Comparing against the last *announced* value rather than the last sample is
-//! deliberate. Against the last sample, a rail ramping at 90 mA per poll would
-//! never announce anything however far it travelled; against the last announced
-//! value, every 100 mA of travel produces exactly one line.
+//! - A poll every 50 ms is 20 lines/second per channel if every sample is
+//!   reported -- not a log, a wall of text hiding the one line that mattered.
+//!   Sample only announced when it differs from the last ANNOUNCED value by at
+//!   least [`CHANGE_UA`]; each port has a floor below which it's called
+//!   disconnected and says nothing. Measured ADC offset on an unplugged rail:
+//!   0.76-0.92 mA (`docs/chips/pac1954-power-monitor.md`) -- without a floor,
+//!   that noise walks across a threshold and emits events from an empty port.
+//! - Comparing against the last *announced* value, not the last sample,
+//!   deliberately: against the last sample a rail ramping at 90 mA/poll would
+//!   never announce anything however far it travelled; against the last
+//!   announced value, every 100 mA of travel produces exactly one line.
 
 use core::fmt::Write;
 
@@ -277,10 +272,11 @@ pub const DEFAULT_FLOOR_UA: u32 = 10_000;
 ///
 /// 50 ms, from the issue. It is fast enough that a plug event is reported while
 /// the person who caused it is still watching, and slow enough to be free: one
-/// poll is a 1-byte write plus a 19-byte read at 80 kHz, about 2.3 ms of bus
-/// time, so the bus is idle 95% of the time and the shell never waits behind it.
-/// The part's own conversion rate is 1024 SPS, so 20 Hz is not asking for values
-/// it has not produced.
+/// poll is a 1-byte write plus a 19-byte read, ~0.18 ms of bus time at the
+/// bus's current 1 MHz (`I2C_SCL_HZ`, `gateware/soc/top.py`; was ~2.3 ms before
+/// #269 raised the rate from 80 kHz), so the bus is idle >99% of the time and
+/// the shell never waits behind it. The part's own conversion rate is 1024 SPS,
+/// so 20 Hz is not asking for values it has not produced.
 pub const INTERVAL_MS: u32 = 50;
 
 /// Past this, the sample's age is reported as a bound and not as a number.

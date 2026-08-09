@@ -1,71 +1,64 @@
 //! The one I2C controller, the mux in front of it, and the rule that there is
 //! only ever one of each.
 //!
-//! The board has THREE physically separate I2C buses and ONE controller to drive
-//! them, because both FUSB302Bs answer to address `0x22` and cannot be told apart
-//! on one wire (`gateware/soc/peripherals/i2c_mux.py`). A register in the mux says which
-//! pin-set the controller is wired to, and nothing in a reply says which bus it
-//! came from -- both Type-C controllers even return the same identity byte,
-//! `0x91`. So a stale select does not produce an error. It produces a plausible
-//! answer from the wrong chip, which is the class of fault that is found months
-//! later or not at all.
+//! - Board has THREE physically separate I2C buses, ONE controller to drive
+//!   them: both FUSB302Bs answer to address `0x22` and can't be told apart on
+//!   one wire (`gateware/soc/peripherals/i2c_mux.py`). A mux register says
+//!   which pin-set the controller is wired to; nothing in a reply says which
+//!   bus it came from -- both Type-C controllers even return the same identity
+//!   byte, `0x91`. A stale select produces a plausible answer from the wrong
+//!   chip, not an error -- the class of fault found months later or not at all.
 //!
 //! ## The select is a parameter, not a mode
 //!
-//! Every method here that moves a byte takes the bus as its first argument and
-//! writes the select itself, immediately before the transfer. There is no
-//! `select()` on this type, so "talk to a device without saying which bus" is not
-//! a sentence this API can form -- the omission that would cause the fault above
-//! is not available to make. One uncached byte store against a transfer of
-//! milliseconds: caching it would save nothing and would create a second copy of
-//! the truth.
-//!
-//! The gateware holds a select change until the controller is idle, so this
-//! cannot move the bus underneath a transfer even if it were called at the wrong
-//! moment.
+//! - Every method here that moves a byte takes the bus as its first argument
+//!   and writes the select itself, immediately before the transfer. No
+//!   `select()` on this type, so "talk to a device without saying which bus"
+//!   isn't a sentence this API can form. One uncached byte store against a
+//!   transfer of milliseconds: caching it would save nothing and create a
+//!   second copy of the truth.
+//! - Gateware holds a select change until the controller is idle, so this
+//!   can't move the bus underneath a transfer even called at the wrong moment.
 //!
 //! ## One owner, enforced rather than agreed
 //!
-//! `i2c` and `mux` are PRIVATE submodules. `Bus` is the only thing in this
-//! firmware that can construct an [`i2c::I2c`] or a [`mux::Mux`], so a second
-//! driver holding its own handle to the same controller is not a mistake anyone
-//! can make here; it does not compile. Everything a caller needs -- the error
-//! type, the bus numbers, the PAC195x identity registers -- is re-exported below,
-//! so nothing pays for that in convenience.
+//! - `i2c` and `mux` are PRIVATE submodules. `Bus` is the only thing that can
+//!   construct an [`i2c::I2c`] or a [`mux::Mux`], so a second driver holding
+//!   its own handle to the same controller does not compile. Error type, bus
+//!   numbers, PAC195x identity registers all re-exported below, so nothing
+//!   pays for that in convenience.
+//! - Devices go one step further: a part whose protocol spans more than one
+//!   transaction has exactly one owner, everybody else reads what that owner
+//!   cached:
 //!
-//! Devices go one step further: a part whose protocol spans more than one
-//! transaction has exactly one owner, and everybody else reads what that owner
-//! cached.
+//! | device   | protocol spanning transactions           | its one owner          |
+//! |----------|--------------------------------------------|--------------------------|
+//! | PAC1954  | REFRESH, then read what it latched          | `power::Monitor::poll` |
+//! | FUSB302B | configure; read all three INTERRUPT regs    | `typec::Controllers`   |
 //!
-//! | device  | protocol spanning transactions          | its one owner              |
-//! |---------|-----------------------------------------|----------------------------|
-//! | PAC1954 | REFRESH, then read what it latched      | `power::Monitor::poll`     |
-//! | FUSB302B| configure; read all three INTERRUPT regs| `typec::Controllers`       |
-//!
-//! That is what issue #123 is about. The PAC1954 is unavailable for 1 ms after a
-//! REFRESH and answers a read inside that window by acknowledging its address and
-//! then NACKing the register pointer, so a second caller reading the part on its
-//! own account collides with the poller's window about 2% of the time. With one
-//! owner the collision is not rare, it is impossible.
+//! - Issue #123: the PAC1954 is unavailable for 1 ms after a REFRESH and
+//!   answers a read inside that window by acknowledging its address then
+//!   NACKing the register pointer, so a second caller reading the part on its
+//!   own account collides with the poller's window ~2% of the time (1 ms in a
+//!   50 ms poll interval). With one owner the collision is impossible, not
+//!   rare.
 //!
 //! ## `&mut self`, and why there is no lock
 //!
-//! Every transaction takes `&mut self`, so the compiler proves that only one
-//! caller has the bus at a time, at no cost in code.
-//!
-//! There is deliberately no mutex and no critical section. Nothing in this
-//! firmware performs I2C from interrupt context and that is a design rule, not an
-//! accident: the Type-C handler MASKS its source and defers its ~1 ms of I2C to
-//! the main loop (`src/irq.rs`, `src/typec.rs`), precisely so that a long spin
-//! never happens inside a handler. A lock added today would guard against a
-//! preemption that cannot occur, and would say -- in the code, permanently --
-//! that this system has concurrent bus users when it does not. That is a worse
-//! lie than no lock at all.
-//!
-//! What the shape here buys instead is that the day something does want the bus
-//! from a handler, the change is a critical section inside these four methods --
-//! one place, which already holds exclusive access -- rather than an audit of
-//! every call site to find who else might be mid-transfer.
+//! - Every transaction takes `&mut self`, so the compiler proves only one
+//!   caller has the bus at a time, at no cost in code.
+//! - Deliberately no mutex, no critical section. Nothing in this firmware
+//!   performs I2C from interrupt context, by design: the Type-C handler MASKS
+//!   its source and defers its I2C (now ~80 us at the bus's 1 MHz, was ~1 ms at
+//!   the earlier 80 kHz, #269) to the main loop (`src/irq.rs`, `src/typec.rs`),
+//!   precisely so a long spin never happens inside a handler. A lock added
+//!   today would guard against a preemption that cannot occur, and would say --
+//!   in the code, permanently -- that this system has concurrent bus users
+//!   when it does not. A worse lie than no lock at all.
+//! - What the shape here buys instead: the day something does want the bus
+//!   from a handler, the change is a critical section inside these four
+//!   methods -- one place, already holding exclusive access -- rather than an
+//!   audit of every call site to find who else might be mid-transfer.
 
 mod i2c;
 mod mux;

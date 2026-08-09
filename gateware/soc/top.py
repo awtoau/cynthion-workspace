@@ -656,33 +656,31 @@ HYPERRAM_DQS = False
 # run that sweep; leave it off otherwise.
 HYPERRAM_CLOCK_STOP = False
 
-# Sets in each of the two L1 caches, one way each. A constant rather than a
-# literal at the instantiation because `peripherals/gateware_id.py` reports it to the
-# firmware, and a geometry reported from a different number than the one the
-# core was generated with would be worse than not reporting it.
+# Sets in each of the two L1 caches, one way each. Constant rather than a
+# literal at the instantiation: `peripherals/gateware_id.py` reports this to
+# firmware, and a geometry reported as a different number than what the core
+# was generated with would be worse than not reporting it.
 #
-# 128 sets x 1 way x 64 B line = 8 KiB per cache. Doubled from 64 because the
-# spare block RAM has no better claim on it: the matched superloop-vs-RTIC runs
-# in `docs/rtic.md` (#245) measured the RTIC dispatcher's
-# +1,700 B of `.text` moving frontend stalls from 44/1000 cycles to 452/1000
-# through the 4 KiB I-cache, while `.bss` uses 9,728 bytes of a 63 KiB RAM whose
-# remainder is all stack slack. Code size costs real cycles on this design; data
-# size does not.
+# 128 sets x 1 way x 64 B line = 8 KiB per cache. Doubled from 64: spare block
+# RAM has no better claim on it. `docs/rtic.md` (#245)'s matched
+# superloop-vs-RTIC runs measured the RTIC dispatcher's +1,700 B of `.text`
+# moving frontend stalls from 44/1000 cycles to 452/1000 through the 4 KiB
+# I-cache, while `.bss` uses 9,728 bytes of a 63 KiB RAM whose remainder is all
+# stack slack. Code size costs real cycles here; data size doesn't.
 #
-# Sets rather than ways -- and an earlier version of this comment called that a
-# correctness constraint, which was wrong. It claimed `flash_cache_flush()` needs
-# a direct-mapped cache. The replacement policy is PLRU rather than random, so a
-# sweep of the full cache size still evicts every way; and that flush is only in
-# the generated C test firmware, while the Rust firmware uses a real `fence.i`.
-# See `cpu/cpu.py`'s GENERATE_FLAGS for the full correction.
+# Sets rather than ways. An earlier version of this comment called that a
+# correctness constraint (claimed `flash_cache_flush()` needs a direct-mapped
+# cache) -- wrong: replacement policy is PLRU, not random, so a sweep of the
+# full cache size still evicts every way, and that flush is only in the
+# generated C test firmware while the Rust firmware uses a real `fence.i`.
+# Full correction: `cpu/cpu.py`'s GENERATE_FLAGS.
 #
-# So the axis is open, and it is being measured rather than argued:
-# `scripts/soc_cache_sweep.py` builds each geometry and reports what it costs.
-# The case for ways is that RTIC's handlers are separate instruction working sets
-# that preempt each other, and two hot ones colliding on an index evict each
-# other however large a direct-mapped cache is. The case against is that
-# `bankCount = wayCount`, so ways cost block RAM fast, and a way-select mux lands
-# in the hit path.
+# Axis is open, measured rather than argued: `scripts/soc_cache_sweep.py`
+# builds each geometry and reports what it costs. Case for ways: RTIC's
+# handlers are separate instruction working sets that preempt each other, and
+# two hot ones colliding on an index evict each other however large a
+# direct-mapped cache is. Case against: `bankCount = wayCount`, so ways cost
+# block RAM fast, and a way-select mux lands in the hit path.
 #
 # 3 ways is not an option: SpinalHDL's PLRU asserts `isPow2` on the way count.
 #
@@ -696,16 +694,16 @@ HYPERRAM_CLOCK_STOP = False
 #      32x4   8 KiB 4-way    58 BRAM   does not place
 #
 # 4 ways is out of blocks either way: 58 on a die with 56, nextpnr failing on
-# `BtbPlugin_logic_mem` with "no BELs remaining". `bankCount = wayCount`, so each
-# way brings its own bank, tag memory and wider PLRU state. And 3 ways does not
-# exist: SpinalHDL's PLRU asserts `isPow2`.
+# `BtbPlugin_logic_mem` with "no BELs remaining" (`bankCount = wayCount`, so
+# each way brings its own bank, tag memory and wider PLRU state). 3 ways still
+# does not exist.
 #
-# ONE WAY STAYS until that 52-vs-58 is explained. The netlist for the failing
-# build was checked and really does have two ways (`FetchL1Plugin_logic_ways_0`
-# and `_1`), so it is not a case of the geometry not being applied -- which makes
-# it worse, not better: two builds of the same geometry disagreed by 6 blocks on
-# a figure that is supposed to be deterministic. Adopting a geometry on the
-# favourable half of that would be adopting a number, not a result. See #287.
+# ONE WAY STAYS until that 52-vs-58 is explained. The failing build's netlist
+# was checked and really does have two ways (`FetchL1Plugin_logic_ways_0` and
+# `_1`) -- not unapplied geometry, which makes it worse: two builds of the same
+# geometry disagreed by 6 blocks on a figure that's supposed to be
+# deterministic. Adopting the favourable half of that would be adopting a
+# number, not a result. See #287.
 CACHE_SETS = 128
 CACHE_WAYS = 1
 

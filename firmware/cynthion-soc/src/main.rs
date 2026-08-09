@@ -2,90 +2,81 @@
 //!
 //! ## This is an image, not the resident half
 //!
-//! `firmware/cynthion-boot` owns 0x0 and is what the CPU's reset vector points at: 492
-//! bytes that read a staged image out of HyperRAM, check its CRC, copy it here and
-//! jump. This crate is what it jumps to -- one of the two images the bitstream carries,
-//! and replaceable in seconds by staging another over it.
-//!
-//! What follows from that: this file may grow. It is not the thing that has to survive
-//! a bad load, so a new command costs space in the 63 KiB image region rather than in
-//! the resident one. `load` stages and calls `reboot()`; nothing here copies an image
-//! into place, because this code is executing from where an image lands.
-//!
-//! `riscv-rt` provides the entry and the trap vector, and there is no HAL crate
-//! under that. The drivers here are small enough to read in one sitting, and the addresses
-//! they use are generated from the gateware into `cynthion_soc_pac` and checked by the
-//! `socmap` step of `scripts/check.py` -- so a HAL would sit between this firmware and a
-//! memory map it already has from the machine that defines it. A console is
-//! `core::fmt::Write` over a standard 16550 in `src/uart.rs`, about six lines, and that is
-//! what makes `writeln!` work.
+//! - `firmware/cynthion-boot` owns 0x0, the CPU's reset vector: 492 bytes that read a
+//!   staged image out of HyperRAM, check its CRC, copy it here and jump. This crate is
+//!   what it jumps to -- one of the two images the bitstream carries, replaceable in
+//!   seconds by staging another over it.
+//! - This file may grow: it does not have to survive a bad load, so a new command costs
+//!   space in the 63 KiB image region, not the resident one. `load` stages and calls
+//!   `reboot()`; nothing here copies an image into place, since this code is already
+//!   executing from where an image lands.
+//! - `riscv-rt` provides entry and trap vector; no HAL crate under that. Drivers here
+//!   are small enough to read in one sitting; addresses are generated from the gateware
+//!   into `cynthion_soc_pac` and checked by the `socmap` step of `scripts/check.py` -- a
+//!   HAL would sit between this firmware and a memory map it already has from the
+//!   machine that defines it. Console is `core::fmt::Write` over a standard 16550 in
+//!   `src/uart.rs`, ~6 lines, which is what makes `writeln!` work.
 //!
 //! ## One bus, one owner per device
 //!
-//! The board's parts hang off one I2C controller behind a three-way mux, and `src/bus.rs`
-//! owns both. It is the only module that can construct a controller, every transfer names
-//! the bus it wants, and each device whose protocol spans transactions has exactly one
-//! driver running it: `power::Monitor::poll` for the PAC1954's REFRESH cycle,
-//! `typec::Controllers` for the FUSB302Bs' read-to-clear interrupt registers. Commands
-//! report what those drivers cached rather than reading the parts on their own account --
-//! `power` prints a sample and its age and touches nothing. `Devices` below holds the one
-//! `Bus` and lends it out by `&mut`; see `src/bus.rs` for why that is structure and not a
-//! lock.
+//! - Board's parts hang off one I2C controller behind a three-way mux; `src/bus.rs`
+//!   owns both. Only module that can construct a controller; every transfer names the
+//!   bus it wants; each device whose protocol spans transactions has exactly one driver
+//!   running it -- `power::Monitor::poll` for the PAC1954's REFRESH cycle,
+//!   `typec::Controllers` for the FUSB302Bs' read-to-clear interrupt registers.
+//! - Commands report what those drivers cached, not the parts directly: `power` prints
+//!   a sample and its age, touches nothing. `Devices` below holds the one `Bus` and
+//!   lends it by `&mut`; see `src/bus.rs` for why that's structure, not a lock.
 //!
 //! ## Two targets, one shell, one driver
 //!
-//! This file is compiled unchanged for the FPGA and for QEMU, and so is `src/uart.rs`:
+//! This file and `src/uart.rs` compile unchanged for FPGA and QEMU:
 //!
-//!     default          -> src/target.rs + memory.x       (image at 0x0000_0400)
-//!     --features qemu  -> src/target.rs + memory-qemu.x  (image at 0x8000_0000)
+//! | build              | uses                          | image at      |
+//! |--------------------|--------------------------------|---------------|
+//! | default            | `src/target.rs` + `memory.x`   | `0x0000_0400` |
+//! | `--features qemu`  | `src/target.rs` + `memory-qemu.x` | `0x8000_0000` |
 //!
-//! One console driver serves both targets. The SoC's console peripheral
-//! (`gateware/soc/peripherals/uart16550.py`) and QEMU's `-M virt` are both a standard NS16550A, so
-//! `src/uart.rs` drives each unchanged and the whole difference is base addresses, a
-//! flash stand-in and a linker script.
-//!
-//! `scripts/soc_test.py` builds the QEMU variant, drives this shell over a pipe and
-//! asserts what it says; `scripts/soc_run.py` will not configure the board until those
-//! assertions pass. The value of that gate depends entirely on the two builds sharing
-//! source, so resist the urge to `#[cfg]` anything below this line -- put the difference
-//! in `src/target.rs` instead.
+//! - One console driver serves both: the SoC's console peripheral
+//!   (`gateware/soc/peripherals/uart16550.py`) and QEMU's `-M virt` are both a standard
+//!   NS16550A, so `src/uart.rs` drives each unchanged -- the whole difference is base
+//!   addresses, a flash stand-in and a linker script.
+//! - `scripts/soc_test.py` builds the QEMU variant, drives this shell over a pipe and
+//!   asserts what it says; `scripts/soc_run.py` won't configure the board until those
+//!   assertions pass. That gate's value depends on the two builds sharing source --
+//!   resist `#[cfg]` below this line, put the difference in `src/target.rs`.
 //!
 //! ## One dispatcher
 //!
-//! `#[rtic::app]` in `src/rtic_app.rs`, and it emits this firmware's
-//! `#[no_mangle] fn main`. There is no `#[entry]` in this file.
-//!
-//! There used to be two, chosen at compile time, with a superloop shipping and
-//! RTIC behind a feature. That arrangement existed to make the comparison in
-//! #245 possible with exactly one variable in it; the comparison was made on
-//! hardware, the decision followed, and keeping the losing path afterwards would
-//! be a dead branch nobody dares touch. `docs/rtic.md` holds the measurements.
-//!
-//! What is left in this file is everything below the dispatcher and it is
-//! unchanged: `boot`, `housekeeping`, `consoles`, `Devices`, `Shell`, `run` and
-//! every command. `#[idle]` calls the same three functions in the same order the
-//! superloop's `loop {}` did.
+//! - `#[rtic::app]` in `src/rtic_app.rs` emits this firmware's `#[no_mangle] fn main`.
+//!   No `#[entry]` in this file.
+//! - Used to be two, chosen at compile time (superloop shipping, RTIC behind a
+//!   feature), to make the #245 comparison possible with exactly one variable. Decided
+//!   on hardware; losing path removed rather than kept as a dead branch nobody dares
+//!   touch. Measurements: `docs/rtic.md`.
+//! - Everything below the dispatcher is unchanged: `boot`, `housekeeping`, `consoles`,
+//!   `Devices`, `Shell`, `run` and every command. `#[idle]` calls the same three
+//!   functions in the same order the superloop's `loop {}` did.
 //!
 //! ## More than one console
 //!
-//! The shell is not a singleton and neither is the console. `Shell` holds one line
-//! editor's worth of state, and the main loop runs one per UART in `target::UART_BASES`,
-//! taking a byte from each in turn. Two people on two ports get two independent prompts; a
-//! command typed on one replies on that one. The only asymmetry is index 0, which is the
-//! port the boot banner and any panic go to, because those happen before or outside any
-//! prompt.
+//! - Shell is not a singleton, neither is the console: `Shell` holds one line editor's
+//!   worth of state, main loop runs one per UART in `target::UART_BASES`, taking a byte
+//!   from each in turn. Two people on two ports get two independent prompts; a command
+//!   typed on one replies on that one.
+//! - Only asymmetry: index 0 is where the boot banner and any panic go, since those
+//!   happen before or outside any prompt.
 //!
 //! ## Received bytes arrive by interrupt, not by polling
 //!
-//! Each UART raises a PLIC source when a byte lands; the handler in `src/irq.rs` moves it
-//! into a per-console ring, and the loop below takes bytes out with `irq::pop`. The shell
-//! reads identically from a user's point of view -- what changed is that the byte was
-//! already collected before the loop asked for it, so a console that is busy printing no
-//! longer has to be back at `uart.get()` in time.
-//!
-//! Transmit is still a bounded spin in `Uart::put`, deliberately. See `IER_ERBFI` in
-//! `src/uart.rs` for why enabling the transmit-empty interrupt on this peripheral would be
-//! a storm rather than a service.
+//! - Each UART raises a PLIC source when a byte lands; the handler in `src/irq.rs`
+//!   moves it into a per-console ring; the loop below takes bytes out with `irq::pop`.
+//!   Shell reads identically from a user's point of view -- what changed is the byte
+//!   was already collected before the loop asked, so a console busy printing no longer
+//!   has to be back at `uart.get()` in time.
+//! - Transmit is still a bounded spin in `Uart::put`, deliberately -- see `IER_ERBFI`
+//!   in `src/uart.rs` for why enabling the transmit-empty interrupt on this peripheral
+//!   would be a storm, not a service.
 
 #![no_std]
 #![no_main]
