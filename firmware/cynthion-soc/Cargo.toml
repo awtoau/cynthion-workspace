@@ -213,20 +213,12 @@ path = "src/bin/usb_bare.rs"
 required-features = ["usbport"]
 
 [profile.release]
-# "z" for SPEED, not size. Measured on the board (`./dev.py optlevel`, #167):
+# "z" for SPEED, not size: bigger code thrashes the I-cache, and `.text` is
+# fetched from SPI flash so every miss is a full quad-SPI transaction.
+# Counter-intuitively `-O3` was the SLOWEST. Numbers in #167.
 #
-#     level   .text     ipc   flash seq   flash rnd
-#     z       36160   0.302     9.63 MB/s   0.66
-#     s       43348   0.171    11.11        0.68
-#     3       64576   0.056    11.57        0.65
-#
-# 79% more code costs 5.4x the IPC. It is the I-cache, not the link: 4 KiB,
-# direct-mapped, one way, against 36 KB of `.text`, and every miss is a full
-# quad-SPI transaction. Note flash throughput RISES as the code grows -- the link
-# got faster while the CPU got five times slower, so what changed is how often it
-# has to go there.
-#
-# Re-measure if the cache geometry changes (#110).
+# STALE: measured against a 4 KiB I-cache and 36 KB of `.text`. Both have since
+# moved -- cache is 8 KiB, `.text` is ~56 KB -- so re-run `./dev.py optlevel`.
 opt-level = "z"
 lto = true
 codegen-units = 1
