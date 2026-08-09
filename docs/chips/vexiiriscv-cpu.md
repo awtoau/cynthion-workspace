@@ -27,8 +27,8 @@ its clock attached, and cycle counts are the durable form.
 |---|---|---|
 | issue width | 1 lane, 1 decoder, in order | `GENERATE_FLAGS`, `ParamSimple` defaults |
 | **IPC ceiling** | **1.00** | one lane retires at most one instruction per cycle |
-| I-cache | 4 KiB — 64 sets × **1 way** × 64 B line | `--fetch-l1-sets 64 --fetch-l1-ways 1` |
-| D-cache | 4 KiB — 64 sets × **1 way** × 64 B line | `--lsu-l1-sets 64 --lsu-l1-ways 1` |
+| I-cache | 8 KiB — 128 sets × **1 way** × 64 B line | `--fetch-l1-sets 128 --fetch-l1-ways 1` |
+| D-cache | 8 KiB — 128 sets × **1 way** × 64 B line | `--lsu-l1-sets 128 --lsu-l1-ways 1` |
 | line length | 64 B | `LsuL1Plugin_logic_banks_0_mem` in the generated Verilog is 1024 words; 4 KiB over 64 sets |
 | D-cache hit | 1 cycle by construction | block RAM is single-cycle on this part |
 | BTB | 512 sets, 1 chunk, 16-bit hash | `--with-btb` at `Param.scala` defaults |

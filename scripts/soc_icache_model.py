@@ -26,7 +26,7 @@ touches, and the order blocks executed in.
     ./scripts/soc_icache_model.py --from-symbol tmp/logs/trace-preempt.log
 
 Geometry from `gateware/soc/cpu/cpu.py`'s `GENERATE_FLAGS`:
-`--fetch-l1-sets 64 --fetch-l1-ways 1`, 4 KiB total, so a 64-byte line.
+`--fetch-l1-sets 128 --fetch-l1-ways 1`, 8 KiB total, so a 64-byte line.
 
 Output is mirrored to ./tmp/logs/soc_icache_model.log.
 """

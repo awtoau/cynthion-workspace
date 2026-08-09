@@ -1,7 +1,8 @@
-# Block RAM on the ECP5-12F: who actually uses it
+# Block RAM on the ECP5: who actually uses it
 
-The `LFE5U-12F` has 56 `DP16KD` blocks, 112 KiB. Whether that is tight depends
-entirely on what the design is, and the split is sharper than expected.
+The budget is **56 `DP16KD` blocks, 112 KiB** — the die's, settled in
+[`lfe5u-12f.md`](lfe5u-12f.md). Whether that is tight depends entirely on what
+the design is, and the split is sharper than expected.
 
 ## Measured
 
@@ -43,16 +44,56 @@ because 64 KiB of firmware is assumed to sit in block RAM alongside it.
 ## The consequence
 
 The block RAM ceiling constrains **CPU designs with block-RAM firmware**, not
-the device generally. Two ways out, neither yet tried:
+the device generally. This section used to name two ways out as untried. One of
+them has since been taken: **`.text` and `.rodata` execute in place from flash**
+through `SPIFlashMemoryMap`, and the block RAM behind them was freed exactly as
+predicted. Putting firmware in HyperRAM remains untried and is now unnecessary.
 
-- execute in place from flash (`SPIFlashMemoryMap` exists in luna_soc and is
-  memory-mapped), or
-- put firmware in HyperRAM.
+The trade named here was right, and it is the one this design now lives with:
+flash fetch costs many cycles against block RAM's one, which is what the
+instruction cache exists to hide — and when the cache is too small to hide it,
+the stall is measurable rather than theoretical. #274 found the RTIC
+dispatcher's extra 1,700 bytes of `.text` moving frontend stalls from 44 cycles
+per 1,000 to **452 per 1,000** through a 4 KiB direct-mapped I-cache.
 
-Either frees roughly 26 blocks, which is more than the entire analyzer uses and
-enough to make 16 KiB caches affordable. The trade is fetch latency: HyperRAM
-costs 20-26 cycles per transaction against a single cycle for block RAM, which
-is exactly what an instruction cache exists to hide.
+### How the 56 are spent now
+
+Measured, both sides, from `./dev.py metrics report`:
+
+| consumer | before | after | |
+|---|---|---|---|
+| main block RAM, the writable region | 32 | 32 | 64 KiB at address 0 |
+| CPU I-cache | 2 | **5** | 4 KiB → 8 KiB |
+| CPU D-cache | 4 | **5** | 4 KiB → 8 KiB |
+| USB buffers | 3 | 3 | |
+| CPU BTB | 2 | 2 | |
+| ILA | 1 | 1 | |
+| **total** | 44 | **48** | of 56 |
+| **spare** | 12 | **8** | 16 KiB |
+
+Doubling both caches cost **4 blocks, not the 6 a naive 4→8 KiB sum predicts** —
+the caches were not storing only data, and the tag and status RAM did not double
+with them.
+
+The spare went to the caches rather than to RAM, and the firmware's own section
+sizes are the reason: `.bss` is 9,728 bytes and `.data` is zero, so of the 63 KiB
+RAM region about 11 KiB is live and **the entire remainder is stack slack** —
+`.stack` is simply "whatever is left". Growing RAM would have enlarged slack and
+relieved nothing measurable. Doubling the caches attacks the number #274
+actually measured.
+
+Timing held: `clk` closes at **78.04 MHz** against a 60 MHz constraint, and the
+USB domain at 90.30 MHz.
+
+**Sets, not ways.** `flash_cache_flush()` in
+[`../../../scripts/riscv_firmware.py`](../../../scripts/riscv_firmware.py)
+displaces the D-cache by reading its size at line stride, which touches every
+set exactly once *only while the cache is direct-mapped*. A second way puts a
+replacement policy in charge of what survives and the flush stops being a proof
+— while still running, still passing, and proving nothing. Doubling the sets
+keeps it correct by construction, and leaves the hit path free of a way-select
+mux, which matters against an Fmax ceiling the BTB already had to be relaxed to
+meet.
 
 ## Files
 

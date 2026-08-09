@@ -266,9 +266,10 @@ FLASH_H = """
    below is derived from this constant and nothing else. */
 #define FLASH_SCRATCH {flash_scratch:#x}u
 
-/* Where flash_cache_flush() reads from: 1 MiB in, a whole 4 KiB clear of both
+/* Where flash_cache_flush() reads from: 1 MiB in, a whole 8 KiB clear of both
    FLASH_SCRATCH and the bitstream, so displacing the cache never pulls in the
-   lines under test. Read only. */
+   lines under test. 8 KiB, not 4, since the D-cache doubled -- the flush sweeps
+   the cache's full size from here, and this window has to cover it. Read only. */
 #define FLASH_FLUSH_REGION 0x00100000u
 
 /* SPIController register map. Byte offsets from luna_soc's csr.Builder layout
@@ -732,10 +733,20 @@ static inline void ila_dump(const char *label) {{
 /* Displace every D-cache line, so a following memory-mapped read reaches the
    flash rather than returning a line cached before the flash changed.
 
-   VexiiRiscv is built here with --lsu-l1-sets 64 --lsu-l1-ways 1 and a 64-byte
-   line, so the data cache is 64 * 1 * 64 = 4096 bytes, direct-mapped. Reading
-   4 KiB of DISTINCT addresses at line stride therefore touches every set once
+   VexiiRiscv is built here with --lsu-l1-sets 128 --lsu-l1-ways 1 and a 64-byte
+   line, so the data cache is 128 * 1 * 64 = 8192 bytes, direct-mapped. Reading
+   8 KiB of DISTINCT addresses at line stride therefore touches every set once
    and evicts whatever was in it.
+
+   THE 8192 BELOW IS NOT FREE TO DRIFT. It is `CACHE_SETS * 64` from
+   `gateware/soc/top.py`, and it is only correct because the cache is
+   direct-mapped -- one way, so a linear sweep at line stride hits every set
+   exactly once and nothing chooses which line survives. Under-read it and the
+   flush silently stops flushing: the loop still runs, the test still passes,
+   and it proves nothing, because the lines it failed to reach are precisely
+   the stale ones it exists to evict. If `CACHE_SETS` changes, change this.
+   If the cache ever gains a second way, this routine is invalid outright --
+   a replacement policy, not the index, then decides what is evicted.
 
    This is a workaround, and the proper fix is named so nobody has to rediscover
    it: VexiiRiscv can be generated with Zicbom (--with-rvZcbm) for `cbo.inval`,
@@ -745,7 +756,7 @@ static inline void ila_dump(const char *label) {{
    The reads come from a region far from FLASH_SCRATCH so the displacement
    itself does not populate the lines being tested. */
 static inline void flash_cache_flush(void) {{
-    for (unsigned int i = 0; i < 4096; i += 64) {{
+    for (unsigned int i = 0; i < 8192; i += 64) {{
         (void)*(volatile unsigned int *)(FLASH_BASE + FLASH_FLUSH_REGION + i);
     }}
 }}

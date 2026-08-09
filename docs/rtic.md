@@ -178,7 +178,8 @@ QEMU build's addresses and has no prefetch.
 
 **The solutions, which is the only part still open:**
 
-1. **Grow the cache.** The die is a 25F and the SoC is sized for a 12F — #110.
+1. **Grow the cache — done.** Both L1s went from 64 sets to 128, 4 KiB to 8 KiB,
+   spending spare block RAM that had no better claim on it (#110).
    This is the direct fix and the one that makes the question go away. It costs
    block RAM, which is at 79% after the BTB
    ([`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)), so it is a real
