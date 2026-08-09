@@ -393,7 +393,7 @@ pub fn command(uart: &mut Uart) {
     let _ = writeln!(
         uart,
         "poll     every {} ms  polls {}  worst gap {} ms",
-        power::INTERVAL_MS,
+        power::interval_ms(),
         POLLS.load(RELAXED),
         clock::to_millis(WORST_GAP.load(RELAXED))
     );

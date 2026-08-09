@@ -467,7 +467,7 @@ fn boot() -> Devices {
         init_line(&mut console, "pac1954",
                   if configured.is_ok() { "ok" } else { "WARN" },
                   format_args!("4 channels, bipolar vsense, refresh every {} ms{}",
-                               power::INTERVAL_MS,
+                               power::interval_ms(),
                                if configured.is_ok() { "" }
                                else { " -- no answer; the poller retries" }));
 
@@ -541,7 +541,7 @@ fn boot() -> Devices {
     init_line(&mut console, "sched",
               "ok",
               format_args!("{}, {} task: power_refresh every {} ms",
-                           sched::MODEL, 1, power::INTERVAL_MS));
+                           sched::MODEL, 1, power::interval_ms()));
 
     devices
 }
@@ -623,7 +623,7 @@ const HELP: &[(&str, &str)] = &[
     ("bram read <hex>", "one word of block RAM"),
     (
         "check",
-        "arithmetic the compiler could have folded, at runtime",
+        "smoke test: CPU add/multiply, flash reads, time format",
     ),
     ("cpu stats", "cycles, instructions, busy fraction"),
     ("flash id", "the first flash word, and the size"),
@@ -1124,11 +1124,21 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             );
         }
         b"sideband" => board_sideband(uart, rest),
+        // The bring-up smoke test: does this CPU compute, can it reach flash,
+        // does the clock formatter hold at its boundaries. Four lines, each `ok`
+        // or `BAD`, against values that cannot be produced by accident.
+        //
+        // Distinct from `selftest`, which asks the PERIPHERALS whether they are
+        // healthy. This asks whether the core and the flash window work at all,
+        // and it is the thing to run first when a board is behaving strangely --
+        // every other command's output is only worth reading if this passes.
         b"check" => {
             let a: u32 = 0x1234_5678;
             let b: u32 = 0x9abc_def0;
-            // SAFETY: our own stack slots; volatile defeats constant folding, so this
-            // measures the CPU rather than the compiler.
+            // SAFETY: our own stack slots. `read_volatile` is what makes this a
+            // measurement of the CPU: without it the compiler folds both
+            // operations at build time and the command proves nothing about the
+            // silicon it is running on.
             let (a, b) = unsafe { (read_volatile(&a), read_volatile(&b)) };
             let sum = a.wrapping_add(b);
             let prod = a.wrapping_mul(3);
@@ -1444,12 +1454,92 @@ fn board_i2c(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 /// channel order is not the port order anyone would guess (channel 1 is
 /// TARGET_A), and "channel 3" in a bug report means nothing to the person
 /// holding the board.
+/// `power rate [<ms>|off]` -- how often the rails are sampled (#286).
+///
+/// Reports the rate, the measured cost of one cycle, and whether the two are
+/// compatible. A rate the poll cannot achieve would free-run and the transcript
+/// would claim a rate that is not happening.
+///
+/// **The ALERT does not depend on this.** Limits are compared against every
+/// sample inside the part, so excursions are reported with the poll off.
+fn power_rate_command(uart: &mut Uart, arg: &[u8]) {
+    if !arg.is_empty() {
+        let asked = if arg == b"off" {
+            Some(power::RATE_OFF)
+        } else {
+            parse_decimal(arg)
+        };
+        let Some(asked) = asked else {
+            let _ = writeln!(
+                uart,
+                "usage: power rate [<ms>|off]   min {} ms",
+                power::MIN_INTERVAL_MS
+            );
+            return;
+        };
+        // Report what was ACTUALLY set when it differs from what was asked. A
+        // clamp nobody is told about is a transcript claiming a rate that is
+        // not running.
+        let set = power::set_interval_ms(asked);
+        if set != asked {
+            let _ = writeln!(
+                uart,
+                "clamped {} -> {} ms: the part samples at 1024 SPS (976 us), so \
+                 nothing faster exists to read",
+                asked, set
+            );
+        }
+    }
+
+    let rate = power::interval_ms();
+    match rate {
+        power::RATE_OFF => {
+            let _ = writeln!(
+                uart,
+                "rate     off      the ALERT still reports excursions -- it \
+                 compares every sample in the part"
+            );
+        }
+        ms => {
+            let _ = writeln!(uart, "rate     {} ms", ms);
+        }
+    }
+
+    let (worst, last) = power::cycle_ticks();
+    if worst == 0 {
+        let _ = writeln!(uart, "cycle    not yet measured  needs one poll");
+    } else {
+        let _ = writeln!(
+            uart,
+            "cycle    worst {} us  last {} us   the I2C of ONE dispatch",
+            clock::to_micros(worst),
+            clock::to_micros(last),
+        );
+        // A cycle is TWO dispatches with the part's 1 ms settling between them
+        // (DS20006539B 5.2), so a complete measurement can never take less than
+        // 1 ms however fast the bus is. That, not the I2C above, is what bounds
+        // the rate.
+        let worst_us = clock::to_micros(worst);
+        if rate != power::RATE_OFF && rate == power::MIN_INTERVAL_MS {
+            let _ = writeln!(
+                uart,
+                "         at {} ms the cycle is back-to-back: 1 ms settling \
+                 plus {} us of bus, no idle",
+                rate, worst_us
+            );
+        }
+    }
+}
+
 fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if devices.bus.is_none() {
         return board_absent(uart);
     }
 
     let rest = trim(rest);
+    if rest.starts_with(b"rate") {
+        return power_rate_command(uart, trim(&rest[b"rate".len()..]));
+    }
     if rest.starts_with(b"floor") {
         let rest = trim(&rest[b"floor".len()..]);
         let (name, value) = match rest.iter().position(|&b| b == b' ') {
@@ -1501,26 +1591,44 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // individually plausible and jointly a lie, and there is nothing in them to
     // say so -- which is the same shape of failure as a stale bus select. The
     // age is the only thing on this screen that can contradict them.
-    let _ = write!(
-        uart,
-        "power @{:02x}  poll {} ms  change {} mA  ",
-        power::ADDRESS,
-        power::INTERVAL_MS,
-        power::CHANGE_UA / 1000
-    );
-    match devices.power.age() {
-        power::Age::Millis(ms) => {
+    let rate = power::interval_ms();
+    let _ = write!(uart, "power @{:02x}  poll ", power::ADDRESS);
+    match rate {
+        power::RATE_OFF => {
+            let _ = write!(uart, "off");
+        }
+        ms => {
+            let _ = write!(uart, "{} ms", ms);
+        }
+    }
+    let _ = write!(uart, "  change {} mA  ", power::CHANGE_UA / 1000);
+
+    // An age that keeps growing is a FAULT when the poll is running and the
+    // expected state when it is off. Saying which costs one branch and stops an
+    // off poll reading as a stuck one -- the reading below is simply the last
+    // one taken, and that is a different statement from "the poller died".
+    match (devices.power.age(), rate) {
+        (power::Age::Millis(ms), power::RATE_OFF) => {
+            let _ = writeln!(uart, "last sample {} ms ago (poll off)", ms);
+        }
+        (power::Age::Millis(ms), _) => {
             let _ = writeln!(uart, "sampled {} ms ago", ms);
         }
-        power::Age::Older => {
+        (power::Age::Older, power::RATE_OFF) => {
             let _ = writeln!(
                 uart,
-                "sampled OVER {} s ago -- the poll has \
-                                    stopped",
+                "last sample over {} s ago -- expected, the poll is off",
                 power::AGE_LIMIT_MS / 1000
             );
         }
-        power::Age::Never => {
+        (power::Age::Older, _) => {
+            let _ = writeln!(
+                uart,
+                "sampled OVER {} s ago -- the poll has stopped",
+                power::AGE_LIMIT_MS / 1000
+            );
+        }
+        (power::Age::Never, _) => {
             let _ = writeln!(uart, "NO SAMPLE YET");
         }
     }
@@ -1553,8 +1661,9 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // and a misaligned table is read wrong rather than read as broken.
     let _ = writeln!(
         uart,
-        "  {:9}  {:>6} {:>7} {:>7}   {:>6} {:>7} {:>7}  {:>4}  {:>4}  {:>4}  {:>6}",
-        "port", "volts", "uv", "ov", "amps", "uc", "oc", "dbnc", "armd", "fird", "floor"
+        "  {:9}  {:>6} {:>7} {:>7}   {:>6} {:>7} {:>7}  {:>8}  {:>5}  {:>5}  {:>6}",
+        "port", "volts", "uv", "ov", "amps", "uc", "oc", "debounce", "armed",
+        "fired", "floor"
     );
 
     let sample = devices.power.latest();
@@ -1580,10 +1689,13 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         .enumerate()
         {
             let raw = devices.power.alert_limit_cached(*limit, channel);
+            // `limit_code_to_mv`, not `bus_mv`: limit registers are two's
+            // complement at 976.6 uV/code, the VBUS measurement is unipolar at
+            // 488.3. This column showed every voltage threshold at half.
             let value = if limit.is_current() {
                 power::current_ua(raw) / 1000
             } else {
-                power::bus_mv(raw) as i32
+                power::limit_code_to_mv(raw)
             };
             let text = &mut cell[slot];
             if raw == 0 {
@@ -1654,12 +1766,12 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         }
         let _ = writeln!(
             uart,
-            " {:>7} {:>7}  {:>4}  {}{}{}{}  {}{}{}{}  {:>2}.{:03}",
+            " {:>7} {:>7}  {:>8}  {:>5}  {:>5}  {:>2}.{:03}",
             as_str(&cell[2]),
             as_str(&cell[3]),
             samples,
-            armed[0] as char, armed[1] as char, armed[2] as char, armed[3] as char,
-            hit[0] as char, hit[1] as char, hit[2] as char, hit[3] as char,
+            as_str(&armed),
+            as_str(&hit),
             floor / 1_000_000,
             (floor / 1000) % 1000
         );
@@ -1673,11 +1785,18 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             devices.power.phase()
         );
     }
+    let _ = writeln!(uart);
     let _ = writeln!(
         uart,
-        "  volts and amps; armed/fired columns are uv ov uc oc; `--` a limit \
-         nobody set"
+        "  uv ov        under- and over-VOLTAGE limits, in volts\n\
+         \x20 uc oc        under- and over-CURRENT limits, in amps\n\
+         \x20 debounce     consecutive out-of-range samples before ALERT asserts \
+         (1, 4, 8 or 16)\n\
+         \x20 armed/fired  one flag per limit\n\
+         \x20 floor        below this current a port reads as disconnected\n\
+         \x20 `--`         no limit set"
     );
+    let _ = writeln!(uart);
 
     if devices.power.failures > 0 {
         let _ = writeln!(
@@ -2228,10 +2347,18 @@ fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "limit: {}", error.as_str());
             return;
         }
-        // What was ACTUALLY programmed, read back and converted. The scale is
-        // 152.588 uA or 488.3 uV per code, so a request rarely lands exactly --
-        // and a threshold rounded silently and echoed as the requested value is
-        // the lie this read-back exists to prevent.
+        // What was ACTUALLY programmed, read back and converted. A request
+        // rarely lands exactly, and a threshold rounded silently and echoed as
+        // the requested value is the lie this read-back exists to prevent.
+        //
+        // `limit_code_to_mv`, NOT `bus_mv`. The limit registers are two's
+        // complement at 976.6 uV/code; the VBUS measurement is unipolar at
+        // 488.3. Converting a limit with the measurement scale reported every
+        // voltage threshold at HALF what was programmed -- the write above says
+        // "they differ by two" and this line used the other one. The limit was
+        // correct in the part throughout; only the echo was wrong, which is the
+        // worst shape for it: it looks exactly like the scale bug that was fixed
+        // in #270 and sends the reader back to already-correct code.
         let back = monitor.alert_limit(bus, limit, channel).unwrap_or(0);
         let _ = writeln!(
             uart,
@@ -2241,7 +2368,7 @@ fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             if limit.is_current() {
                 power::current_ua(back) / 1000
             } else {
-                power::bus_mv(back) as i32
+                power::limit_code_to_mv(back)
             },
             if limit.is_current() { "mA" } else { "mV" },
             value,

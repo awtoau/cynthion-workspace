@@ -66,31 +66,60 @@ use crate::uart::{self, Uart};
 pub const MODEL: &str = "rtic";
 
 /// The PAC1954's REFRESH cycle: `power::Monitor::service`, every
-/// [`power::INTERVAL_MS`].
+/// [`power::interval_ms`].
 pub const POWER: usize = 0;
+
+/// The limit ALERT: `power::Monitor::service_alert`, released by the pin (#285).
+///
+/// Aperiodic. It used to be serviced INSIDE the REFRESH cycle, which made alert
+/// latency equal to the poll period -- so backing the poll off would have made
+/// excursions slower to report, and #286 wants it off by default.
+pub const POWER_ALERT: usize = 1;
 
 /// How many tasks this module accounts for.
 ///
-/// One. The power monitor was the first peripheral onto RTIC, chosen because it
-/// already measured its own jitter, and it is still the only one: the consoles
-/// are the machine-external handler filling a ring, which is a hardware priority
-/// above every SLIC source and is not a task. #247 sweeps the rest.
-const TASKS: usize = 1;
+/// The consoles are not one: the machine-external handler fills a ring at
+/// hardware priority, above every SLIC source. #247 sweeps the rest.
+const TASKS: usize = 2;
 
 /// What each task is, for the report. Parallel to the ids above.
 struct Task {
     name: &'static str,
-    /// The period it is supposed to run at, in milliseconds.
-    period_ms: u32,
     /// Its RTIC priority.
     priority: u8,
+    /// Periodic tasks have a period to be judged against; aperiodic ones do not,
+    /// and the gap and lateness lines are meaningless for them -- "late" needs a
+    /// time it was DUE, and an alert is due when the pin says so.
+    periodic: bool,
 }
 
-const TABLE: [Task; TASKS] = [Task {
-    name: "power_refresh",
-    period_ms: power::INTERVAL_MS,
-    priority: POWER_PRIORITY,
-}];
+const TABLE: [Task; TASKS] = [
+    Task {
+        name: "power_refresh",
+        priority: POWER_PRIORITY,
+        periodic: true,
+    },
+    Task {
+        name: "power_alert",
+        priority: POWER_ALERT_PRIORITY,
+        periodic: false,
+    },
+];
+
+/// The period a task is asked to hold, or `None` if it is aperiodic.
+///
+/// A function rather than a field, because the REFRESH period is settable at
+/// runtime (#286) and a `const` table would report the value it was compiled
+/// with.
+fn period_ms(task: usize) -> Option<u32> {
+    match task {
+        POWER => match power::interval_ms() {
+            power::RATE_OFF => None,
+            ms => Some(ms),
+        },
+        _ => None,
+    }
+}
 
 /// The RTIC priority the power task runs at.
 ///
@@ -103,6 +132,18 @@ const TABLE: [Task; TASKS] = [Task {
 /// Here rather than in `src/rtic_app.rs` so that this module can report it
 /// without depending on the app, which depends on this module.
 pub const POWER_PRIORITY: u8 = 1;
+
+/// The RTIC priority the ALERT task runs at.
+///
+/// 2, ABOVE the REFRESH task. An excursion is the one thing on this peripheral
+/// that is time-critical: the part latches it and the rail may already be back
+/// in range, so the report is all there is.
+///
+/// It cannot corrupt a REFRESH cycle in progress. Both tasks use `devices`, so
+/// RTIC's ceiling for that resource is 2, and the REFRESH task's `lock` raises
+/// the threshold to 2 for as long as it holds it -- the alert waits for the
+/// cycle rather than preempting into a half-finished I2C transaction.
+pub const POWER_ALERT_PRIORITY: u8 = 2;
 
 /// How many times each task has run.
 static RUNS: [AtomicU32; TASKS] = [const { AtomicU32::new(0) }; TASKS];
@@ -327,15 +368,20 @@ pub fn command(uart: &mut Uart) {
         let worst = WORST_LATE[index].load(RELAXED);
         let total = TOTAL_LATE[index].load(RELAXED);
 
-        let _ = write!(
-            uart,
-            "task     {} prio {} period {} ms  runs {}  pends {}",
-            task.name,
-            task.priority,
-            task.period_ms,
-            runs,
-            releases
-        );
+        let period = period_ms(index);
+        let _ = write!(uart, "task     {} prio {} ", task.name, task.priority);
+        match (task.periodic, period) {
+            (false, _) => {
+                let _ = write!(uart, "aperiodic       ");
+            }
+            (true, None) => {
+                let _ = write!(uart, "period OFF      ");
+            }
+            (true, Some(ms)) => {
+                let _ = write!(uart, "period {} ms  ", ms);
+            }
+        }
+        let _ = write!(uart, "runs {}  pends {}", runs, releases);
         // `pends` above `runs` is a task being released again before it got to
         // run, which the SLIC coalesces into one dispatch. Equal is healthy.
         if releases != runs {
@@ -378,24 +424,41 @@ pub fn command(uart: &mut Uart) {
         // catastrophically fast poller rather than as an absent measurement.
         // Same defect as the lateness measured from a zero instant, one line
         // over.
-        if polls < 2 {
-            let _ = writeln!(
-                uart,
-                "  gap    not yet measured  asked {} ms   needs two runs, has \
-                 {}",
-                task.period_ms, polls
-            );
-        } else {
-            let achieved = clock::to_millis(worst_gap);
-            let _ = writeln!(
-                uart,
-                "  gap    worst {} ms  asked {} ms  {:+} ms   the INTERVAL \
-                 between runs, over {} of them",
-                achieved,
-                task.period_ms,
-                achieved as i32 - task.period_ms as i32,
-                polls
-            );
+        // Only a periodic task has a gap worth judging. An alert arrives when
+        // the pin says so, and an interval between two of them measures the
+        // rails, not the dispatcher.
+        match period {
+            None => {
+                let _ = writeln!(
+                    uart,
+                    "  gap    n/a   released by {}",
+                    if task.periodic {
+                        "nothing -- the poll is OFF"
+                    } else {
+                        "the ALERT pin, not a period"
+                    }
+                );
+            }
+            Some(asked) if polls < 2 => {
+                let _ = writeln!(
+                    uart,
+                    "  gap    not yet measured  asked {} ms   needs two runs, \
+                     has {}",
+                    asked, polls
+                );
+            }
+            Some(asked) => {
+                let achieved = clock::to_millis(worst_gap);
+                let _ = writeln!(
+                    uart,
+                    "  gap    worst {} ms  asked {} ms  {:+} ms   the INTERVAL \
+                     between runs, over {} of them",
+                    achieved,
+                    asked,
+                    achieved as i32 - asked as i32,
+                    polls
+                );
+            }
         }
 
         // Ticks last, because they are what was measured and microseconds are

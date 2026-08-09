@@ -117,7 +117,7 @@ pub mod device {
 /// handler, which is exactly right: the release must not be decided by the loop
 /// it exists to be independent of. That was the defect in the poll -- a turn that
 /// ran long moved the next REFRESH with it.
-pub use app::tick;
+pub use app::{pend_power_alert, tick};
 
 // `device = device`, a bare name, and it has to be: riscv-slic's generated
 // `pub mod slic` says `use super::device;` -- so the argument names something
@@ -216,14 +216,24 @@ mod app {
             return;
         }
 
-        if since < crate::power::INTERVAL_MS {
+        // The rate is runtime-settable, and OFF is a supported setting (#286).
+        // An off poll costs one relaxed load per tick and releases nothing;
+        // excursions are still reported, because the ALERT is a comparison
+        // inside the part against every sample and does not depend on this.
+        let interval = crate::power::interval_ms();
+        if interval == crate::power::RATE_OFF || since < interval {
             SINCE_MS.store(since, Ordering::Relaxed);
             return;
         }
         // Subtract the period rather than storing zero, so a tick that arrives
         // late does not shorten the following interval. The same argument
         // `src/timer.rs` makes about `mtimecmp`, one level up.
-        SINCE_MS.store(since - crate::power::INTERVAL_MS, Ordering::Relaxed);
+        //
+        // `saturating_sub`, because the interval can now SHRINK at runtime: a
+        // rate moved from 1000 ms to 1 ms leaves `since` far past the new
+        // period, and the wrapped result would be a ~49-day wait for the next
+        // release.
+        SINCE_MS.store(since.saturating_sub(interval), Ordering::Relaxed);
 
         RELEASED_AT.store(Instant::ZERO.elapsed(clock::now()), Ordering::Relaxed);
         sched::pended(sched::POWER);
@@ -319,6 +329,44 @@ mod app {
             let bus = devices.bus.as_mut();
             devices.power.service(&mut console, bus);
         });
+    }
+
+    /// The limit ALERT, released by the pin rather than by a period (#285).
+    ///
+    /// Servicing used to happen INSIDE the REFRESH cycle, so alert latency was
+    /// the poll period -- and #286 wants that period settable, and off by
+    /// default. Reporting an excursion up to a second late, or never, is not a
+    /// property the alert should inherit from an unrelated setting.
+    ///
+    /// The handler cannot do this itself: clearing `ALERT_STATUS` is an I2C
+    /// transaction and `devices` is a shared resource it has no `Context` to
+    /// lock. So the handler masks the source and pends this, which runs in
+    /// normal context and can.
+    ///
+    /// Priority 2, above the REFRESH task. It cannot preempt a cycle in
+    /// progress: both use `devices`, so RTIC's ceiling for that resource is 2
+    /// and the REFRESH task's `lock` holds the threshold there until it is done.
+    #[task(binds = PowerAlert, priority = 2, shared = [devices])]
+    fn power_alert(mut cx: power_alert::Context) {
+        sched::released(sched::POWER_ALERT, 0);
+
+        let mut console = crate::primary();
+        cx.shared.devices.lock(|devices| {
+            if let Some(bus) = devices.bus.as_mut() {
+                devices.power.service_alert(&mut console, bus);
+            }
+        });
+    }
+
+    const _: () = assert!(sched::POWER_ALERT_PRIORITY == 2);
+
+    /// Release the ALERT task. Called from the machine-external handler.
+    ///
+    /// One MMIO store to `msip`, which is what makes it legal there -- the rule
+    /// is `src/events.rs`'s and applies for the same reason.
+    pub fn pend_power_alert() {
+        sched::pended(sched::POWER_ALERT);
+        rtic::export::pend(slic::SoftwareInterrupt::PowerAlert);
     }
 
     // THE PRIORITY THE TASK ABOVE RUNS AT is written as a literal, because
