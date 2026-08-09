@@ -1436,11 +1436,16 @@ def cmd_report(args) -> int:
     current = builds[0]
     prev = builds[1] if len(builds) > 1 else None
 
+    # Same configuration AND the same router flags. `config_hash` covers the
+    # gateware knobs only, so without the second clause a run with
+    # `--parallel-refine` pools into the same fmax distribution as one without
+    # it -- two populations reported as one.
     same = fetch(conn, "SELECT * FROM builds WHERE target = :target AND "
-                       "config_hash = :config AND status = 'ok' "
+                       "config_hash = :config AND status = 'ok' AND "
+                       "nextpnr_opts = :opts "
                        "ORDER BY id DESC LIMIT :window",
                  {"target": args.target, "config": current["config_hash"],
-                  "window": args.window})
+                  "opts": current.get("nextpnr_opts"), "window": args.window})
     best_rows = fetch(conn, "SELECT * FROM builds WHERE target = :target AND "
                             "status = 'ok' AND comb IS NOT NULL "
                             "ORDER BY comb ASC LIMIT 1", {"target": args.target})
@@ -1471,10 +1476,18 @@ def cmd_report(args) -> int:
          f"{current.get('build_seconds') or 0:.0f} s   "
          f"nextpnr {current.get('nextpnr_version')}, "
          f"yosys {current.get('yosys_version')}")
+    # The place-and-route flags, on the page rather than only in the column.
+    # `--parallel-refine` and `--router router2` move fmax, so a report that
+    # does not say which ran invites exactly the comparison the docstring at
+    # the top of this file says cannot be made honestly.
+    emit(f"pnr {current.get('nextpnr_opts')}   on {current.get('host')}")
     emit("=" * 78)
 
     emit("")
-    emit("AREA                current    vs prev     vs best    vs branch point")
+    # `fill` is the share of the device, recorded since the first row and shown
+    # by nothing until now. 15279 COMB is not a number anybody can judge; 62% of
+    # the part is, and DP16KD at 89% is the fact that decides the next feature.
+    emit("AREA                current  fill     vs prev     vs best    vs branch point")
     for key, label in (("comb", "TRELLIS_COMB"), ("lut4", "LUT4 (pre-pack)"),
                        ("ff", "TRELLIS_FF"), ("bram", "DP16KD"),
                        ("dsp", "MULT18X18D"), ("io", "TRELLIS_IO"),
@@ -1482,7 +1495,11 @@ def cmd_report(args) -> int:
         value = current.get(key)
         if value is None:
             continue
+        pct = current.get(f"{key}_pct")
+        if pct is None and key == "lut4" and current.get("prepack_lut4s_of"):
+            pct = 100.0 * value / current["prepack_lut4s_of"]
         emit(f"  {label:<18}{value:>8}"
+             f"{(f'{pct:.0f}%' if pct is not None else ''):>6}"
              f"{delta(value, col(prev, key)):<12}"
              f"{delta(value, col(best, key)):<11}"
              f"{delta(value, col(bp, key))}")
@@ -1530,7 +1547,7 @@ def cmd_report(args) -> int:
 
     emit("")
     emit(f"DISTRIBUTION over the {len(same)} build(s) sharing config "
-         f"{current['config_hash']}")
+         f"{current['config_hash']} and the same pnr flags")
     if len(same) < 2:
         emit("  ONE build. There is no distribution yet, and the fmax above is")
         emit("  a property of this placement rather than of the design -- which")
@@ -1559,6 +1576,26 @@ def cmd_report(args) -> int:
                      f"{s['median']:>8.0f} {s['mean']:>8.0f} {s['sd']:>6.1f} "
                      f"{s['max']:>8.0f}")
 
+    # The LUT4 counterpart of the block RAM breakdown below, from nextpnr's own
+    # pre-pack table. "Area went up" is unactionable; "carry chains went up" is
+    # a place to look.
+    emit("")
+    emit("WHERE THE LUT4s WENT (pre-pack)")
+    lut_total = current.get("prepack_lut4s") or 0
+    for key, label in (("prepack_logic_luts", "logic"),
+                       ("prepack_carry_luts", "carry"),
+                       ("prepack_ram_luts", "distributed RAM"),
+                       ("prepack_ramw_luts", "RAMW")):
+        value = current.get(key)
+        if value is None:
+            continue
+        share = 100.0 * value / lut_total if lut_total else 0.0
+        emit(f"  {label:<38}{value:>6} ({share:4.1f}%)"
+             f"{delta(value, col(prev, key))}")
+    if lut_total:
+        emit(f"  {'total':<38}{lut_total:>6} "
+             f"of {current.get('prepack_lut4s_of')}")
+
     emit("")
     emit("WHERE THE BLOCK RAM WENT")
     total = current.get("bram") or 0
@@ -1569,6 +1606,30 @@ def cmd_report(args) -> int:
     if current.get("bram_placed") is not None:
         emit(f"  placed config reports {current['bram_placed']} EBR in DP16KD "
              f"mode against {total} in the netlist")
+
+    # WHICH KNOB MOVED. A column per feature is what the docstring promises
+    # makes "which change cost the fmax" a query instead of a bisect -- but the
+    # report showed only the 16-character hash, which says two builds differ and
+    # not how. Keys come from `gateware_config()` so a flag added today appears
+    # here today.
+    emit("")
+    emit("CONFIGURATION")
+    try:
+        keys = sorted(gateware_config())
+    except Exception as exc:                                   # noqa: BLE001
+        keys = []
+        emit(f"  cannot read the current configuration: {exc}")
+    for other, label in ((prev, "previous build"), (bp, "branch point")):
+        if other is None or not keys:
+            continue
+        changed = [(k, other.get(k), current.get(k)) for k in keys
+                   if k in current and current.get(k) != other.get(k)]
+        if not changed:
+            emit(f"  identical to the {label}")
+            continue
+        emit(f"  vs the {label}:")
+        for name, was, now in changed:
+            emit(f"    {name:<30} {was} -> {now}")
 
     conn.close()
     return 0
@@ -1740,7 +1801,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--window", type=int, default=DISTRIBUTION_WINDOW)
     p.set_defaults(fn=cmd_report)
 
-    p = sub.add_parser("graph", help="trend SVGs into tmp/build-metrics/")
+    p = sub.add_parser("graph", help="trend SVGs into reports/trends.html")
     p.add_argument("--target", default=DEFAULT_TARGET)
     p.set_defaults(fn=cmd_graph)
 
