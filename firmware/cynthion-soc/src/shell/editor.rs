@@ -104,6 +104,8 @@ impl Autocomplete for Commands {
         // `power`/`ports`' shared prefix rather than guessing one of them.
         // `HELP`'s first column carries argument syntax (`power limit <k> ...`),
         // so only the leading word is a candidate.
+        let (count, _) = candidates(typed);
+
         let mut common: Option<&str> = None;
         for (entry, _) in HELP {
             let name = entry.split(' ').next().unwrap_or(entry);
@@ -121,6 +123,15 @@ impl Autocomplete for Commands {
                     &prefix[..take]
                 }
             });
+        }
+
+        // AMBIGUOUS COMPLETIONS ARE PARTIAL, and saying so is what stops a space
+        // being appended. Without it `po` + TAB left `po ` -- the space ends the
+        // word, so typing `wer` next gives command `po` with argument `wer`
+        // rather than `power`. `merge_autocompletion` treats a completion as
+        // finished unless told otherwise.
+        if count > 1 {
+            autocompletion.mark_partial();
         }
 
         if let Some(name) = common {
@@ -228,4 +239,32 @@ impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
         let _ = cli;
         Ok(())
     }
+}
+
+/// Candidates for `typed`, and whether more than one matched.
+///
+/// The crate's `Autocomplete` hook has no writer, so an ambiguous TAB can only
+/// merge a prefix -- it cannot say WHY nothing more was added. `po` completing
+/// to `po` looks identical to a broken key. Listing is done at the call site
+/// instead, through `Cli::write`, which erases the line, prints, and restores
+/// the prompt and whatever was half-typed.
+pub fn candidates(typed: &str) -> (usize, [&'static str; 8]) {
+    let mut found = [""; 8];
+    let mut count = 0;
+    for (entry, _) in HELP {
+        let name = entry.split(' ').next().unwrap_or(entry);
+        if !name.starts_with(typed) {
+            continue;
+        }
+        // The table has several rows per family -- `power`, `power alert`,
+        // `power rate` -- and they share a first word. One entry each.
+        if found[..count.min(found.len())].contains(&name) {
+            continue;
+        }
+        if count < found.len() {
+            found[count] = name;
+        }
+        count += 1;
+    }
+    (count, found)
 }

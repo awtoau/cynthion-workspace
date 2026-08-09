@@ -10,7 +10,7 @@ use core::fmt::Write;
 
 use crate::clock::{self, Instant};
 use crate::uart::Uart;
-use crate::shell::editor::{editor, Commands, Dispatch, Editor};
+use crate::shell::editor::{candidates, editor, Commands, Dispatch, Editor};
 use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 
 /// One console's line editor and its idle state.
@@ -20,6 +20,19 @@ use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 /// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
 /// generated signatures too.
 pub struct Shell {
+    /// The first word being typed, shadowed.
+    ///
+    /// `Cli` owns the line and exposes no accessor, and the crate's
+    /// `Autocomplete` hook has no writer -- so listing candidates on an
+    /// ambiguous TAB needs the prefix tracked here. Only the FIRST word, because
+    /// only command names complete.
+    ///
+    /// It can drift: recalling a line from history replaces the input without a
+    /// printable byte passing through here. Cleared on anything that could
+    /// desynchronise it, so a stale list is never shown -- TAB after a recall
+    /// lists nothing rather than something wrong.
+    word: [u8; 16],
+    word_len: usize,
     /// The line editor, built on first keypress.
     ///
     /// `Option<Option<..>>`: the outer is "not built yet", the inner is "could
@@ -80,6 +93,8 @@ pub(crate) fn board_absent(uart: &mut Uart) {
 
 impl Shell {
     pub(crate) const NEW: Shell = Shell {
+        word: [0u8; 16],
+        word_len: 0,
         editor: None,
         spoken: false,
         last_banner: None,
@@ -139,8 +154,40 @@ impl Shell {
             // written to the console. Nothing useful is left to say on it.
             None => return,
         };
+        // Track the first word so an ambiguous TAB can say what it matched.
+        match byte {
+            b' ' | b'\r' | b'\n' | 0x03 | 0x1b => self.word_len = 0,
+            0x08 | 0x7f => {
+                self.word_len = self.word_len.saturating_sub(1);
+            }
+            0x20..=0x7e => {
+                if self.word_len < self.word.len() {
+                    self.word[self.word_len] = byte;
+                    self.word_len += 1;
+                }
+            }
+            _ => {}
+        }
+
         let mut dispatch = Dispatch { index, devices };
         let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
+
+        // TAB with more than one match: list them. The crate has already merged
+        // the common prefix, so this explains why nothing more was added --
+        // otherwise `po` completing to `po` is indistinguishable from a dead key.
+        if byte == b'\t' && self.word_len > 0 {
+            let typed = core::str::from_utf8(&self.word[..self.word_len]).unwrap_or("");
+            let (count, names) = candidates(typed);
+            if count > 1 {
+                let _ = editor.write(|writer| {
+                    for name in names.iter().take(count.min(names.len())) {
+                        writer.write_str(name)?;
+                        writer.write_str("  ")?;
+                    }
+                    Ok(())
+                });
+            }
+        }
     }
 }
 
