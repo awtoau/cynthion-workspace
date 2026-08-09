@@ -665,29 +665,13 @@ impl Monitor {
             &NEG_PWR_FSR_BIPOLAR,
         )?;
 
-        // RESET THE ALERT STATE, because the part outlives the firmware.
+        // Clear the alert state: it survives a firmware reload, so a fresh boot
+        // inherited the previous session's arming and thresholds.
         //
-        // Nothing here is cleared by a firmware reload -- only a power cycle or
-        // an explicit write. So a fresh boot inherited whatever the previous
-        // session left, and the report could not say so.
+        // Established, not read back. A stale arm with a zero threshold trips
+        // permanently (OV) or never (UV), and reading back would preserve it.
         //
-        // Two symptoms, both seen:
-        //
-        //   * an `armed` flag beside a threshold reading `--`: a limit armed
-        //     with a ZERO threshold. A zero over-voltage trips permanently, a
-        //     zero under-voltage never trips.
-        //   * the reverse -- a real threshold in the part that the table shows
-        //     as `--`, because the firmware's cache starts empty and only a
-        //     write fills it. The display under-reported the part.
-        //
-        // Reading them back at boot instead would fix the second symptom and
-        // leave the first, and it would make a fresh boot's behaviour depend on
-        // a session nobody remembers. The firmware owns this part's state, so
-        // configure establishes it rather than discovering it.
-        //
-        // Costs 18 register writes, once, on a bus that is otherwise idle.
-        // `power alert on` re-arms whatever has a threshold, so a deliberate
-        // configuration is one command away.
+        // 18 writes, once. `power alert on` re-arms whatever has a threshold.
         self.write24(bus, REG_ALERT_ENABLE, 0)?;
         self.alert_enable = 0;
         self.write24(bus, REG_GPIO_ALERT2, 0)?;
