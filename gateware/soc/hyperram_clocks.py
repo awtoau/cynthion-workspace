@@ -273,12 +273,26 @@ class HyperRAMDomains(Elaboratable):
             # CLK1/SEL tied off: this is a die-crossing bridge here, not a clock
             # multiplexer. The second input exists for glitchless switching,
             # which nothing here wants.
+            # TWO primitives in series, and they do different jobs.
+            #
+            # ECLKBRIDGECS crosses the die: it is the only path from a top-corner
+            # PLL to a bottom-edge bank, and it placed at X0/Y25 as expected.
+            # But its output cannot drive the bank's ECLK input directly --
+            # `Failed to route arc ... ECSOUT_ECLKBRIDGECS1 to JECLK0` -- because
+            # the SPINE is driven by ECLKSYNCB, which is also what gives a
+            # clean stop/start.
             bridged = Signal()
             m.submodules.hr_fast_bridge = Instance(
                 "ECLKBRIDGECS",
                 i_CLK0=clk_hr_fast, i_CLK1=0, i_SEL=0,
                 o_ECSOUT=bridged)
-            m.d.comb += ClockSignal("hr_fast").eq(bridged)
+            # STOP tied low: nothing here gates the edge clock, and a gated ECLK
+            # during a measurement would be indistinguishable from a part that
+            # stopped answering.
+            synced = Signal()
+            m.submodules.hr_fast_sync = Instance(
+                "ECLKSYNCB", i_ECLKI=bridged, i_STOP=0, o_ECLKO=synced)
+            m.d.comb += ClockSignal("hr_fast").eq(synced)
 
         # TELL THE PLACER WHAT THESE RUN AT.
         #
