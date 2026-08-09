@@ -27,8 +27,8 @@ its clock attached, and cycle counts are the durable form.
 |---|---|---|
 | issue width | 1 lane, 1 decoder, in order | `GENERATE_FLAGS`, `ParamSimple` defaults |
 | **IPC ceiling** | **1.00** | one lane retires at most one instruction per cycle |
-| I-cache | 8 KiB — 128 sets × **1 way** × 64 B line | `--fetch-l1-sets 128 --fetch-l1-ways 1` |
-| D-cache | 8 KiB — 128 sets × **1 way** × 64 B line | `--lsu-l1-sets 128 --lsu-l1-ways 1` |
+| I-cache | 8 KiB — 64 sets × **2 ways** × 64 B line | `--fetch-l1-sets 64 --fetch-l1-ways 2` |
+| D-cache | 8 KiB — 64 sets × **2 ways** × 64 B line | `--lsu-l1-sets 64 --lsu-l1-ways 2` |
 | line length | 64 B | `LsuL1Plugin_logic_banks_0_mem` in the generated Verilog is 1024 words; 4 KiB over 64 sets |
 | D-cache hit | 1 cycle by construction | block RAM is single-cycle on this part |
 | BTB | 512 sets, 1 chunk, 16-bit hash | `--with-btb` at `Param.scala` defaults |
@@ -78,10 +78,17 @@ So the remaining code-size levers are not ISA ones. They are `core::fmt` (whose
 `Display` impl), and `run` at **23,258 bytes** — the largest function in the
 firmware by an order of magnitude.
 
-**One way is the number that matters.** Both caches are direct-mapped, so any two
-lines 4 KiB apart evict each other unconditionally — no associativity to absorb
-it, and no policy to tune. That is not a corner case; it is what 36 KB of `.text`
-does against a 4 KiB I-cache all day.
+**Two ways, since #292.** Both caches were direct-mapped, where two lines sharing
+an index evict each other unconditionally — no associativity to absorb it, no
+policy to tune. That is the conflict-miss case, and it is what RTIC's preempting
+handlers hit: each is its own instruction working set, and a bigger cache does
+not help two that collide.
+
+- 2 ways, PLRU replacement, so a colliding pair can both stay resident
+- 4 ways does not fit — 58 blocks on a 56-block die
+- 3 ways does not exist — SpinalHDL's PLRU asserts `isPow2`
+- capacity is not the lever here: 8 KiB direct-mapped (#283) preceded this and
+  addressed the wrong failure mode
 
 At `sync` = 60 MHz an IPC of 1.00 would be **60 MIPS**. Nothing here approaches
 it, and section 3 says by how much.

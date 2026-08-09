@@ -25,7 +25,7 @@ the SoC.
 | | what | provenance | detail |
 |---|---|---|---|
 | CPU | VexiiRiscv, RV32IMAC + `rdtime` | generated | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
-| caches | I and D, 64 sets × 1 way × 64 B = 4 KiB each | generated | same — cached is forced by atomics |
+| caches | I and D, 64 sets × 2 ways × 64 B = 8 KiB each | generated | same — cached is forced by atomics |
 | buses | three Wishbone masters: `ibus`, `dbus` cached, `iobus` uncached | generated | same |
 | branch prediction | `BtbPlugin`, 512 sets, relaxed | generated | same |
 | clocks | `SocClocks` ([`gateware/soc/clocks.py`](../gateware/soc/clocks.py)) | written | [`soc-clocking.md`](soc-clocking.md) |
