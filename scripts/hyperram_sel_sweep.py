@@ -66,7 +66,7 @@ LINE = re.compile(
 def measure(sel):
     """Set the capture register, run the line check, return (good, want, got)."""
     done = subprocess.run(
-        [sys.executable, str(SHELL), f"hr sel {sel:02x}", "hr cross"],
+        [sys.executable, str(SHELL), f"hyperram sel {sel:02x}", "hyperram cross"],
         capture_output=True, text=True,
     )
     found = LINE.search(done.stdout)

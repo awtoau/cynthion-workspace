@@ -146,15 +146,62 @@ impl Help for Commands {
         HELP.len()
     }
 
+    /// ONE LINE PER FAMILY.
+    ///
+    /// **The crate calls this, not `shell::help`.** `help` and `?` are handled
+    /// inside `embedded-cli`, so the collapsing has to live here -- it was in
+    /// `shell::help` first, which is now unreachable for those two words and was
+    /// silently doing nothing.
     fn list_commands<W: IoWrite<Error = E>, E: embedded_io::Error>(
         writer: &mut embedded_cli::writer::Writer<'_, W, E>,
     ) -> Result<(), E> {
-        for (name, summary) in HELP {
+        let mut index = 0;
+        while index < HELP.len() {
+            let (entry, mut summary) = HELP[index];
+            let name = crate::shell::first_word(entry);
+
+            let mut end = index;
+            while end < HELP.len() && crate::shell::first_word(HELP[end].0) == name {
+                end += 1;
+            }
+
+            // The family's own summary -- the bare row -- not its first
+            // subcommand's.
+            for (row, text) in &HELP[index..end] {
+                if crate::shell::second_word(row).is_empty() {
+                    summary = text;
+                    break;
+                }
+            }
+
             writer.write_str(name)?;
-            for _ in name.len()..HELP_WIDTH {
+            let mut width = name.len();
+            let mut first = true;
+            for (row, _) in &HELP[index..end] {
+                let sub = crate::shell::second_word(row);
+                if sub.is_empty() {
+                    continue;
+                }
+                writer.write_str(if first { " [" } else { "|" })?;
+                width += if first { 2 } else { 1 };
+                first = false;
+                writer.write_str(sub)?;
+                width += sub.len();
+            }
+            if !first {
+                writer.write_str("]")?;
+                width += 1;
+            }
+
+            if width >= HELP_WIDTH {
+                writer.write_str(" ")?;
+            }
+            for _ in width..HELP_WIDTH {
                 writer.write_str(" ")?;
             }
             writer.writeln_str(summary)?;
+
+            index = end;
         }
         Ok(())
     }
@@ -248,8 +295,8 @@ impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
 /// to `po` looks identical to a broken key. Listing is done at the call site
 /// instead, through `Cli::write`, which erases the line, prints, and restores
 /// the prompt and whatever was half-typed.
-pub fn candidates(typed: &str) -> (usize, [&'static str; 8]) {
-    let mut found = [""; 8];
+pub fn candidates(typed: &str) -> (usize, [&'static str; 12]) {
+    let mut found = [""; 12];
     let mut count = 0;
     for (entry, _) in HELP {
         let name = entry.split(' ').next().unwrap_or(entry);
@@ -263,6 +310,28 @@ pub fn candidates(typed: &str) -> (usize, [&'static str; 8]) {
         }
         if count < found.len() {
             found[count] = name;
+        }
+        count += 1;
+    }
+    (count, found)
+}
+
+/// Every `HELP` row whose first word is exactly `name`, with its argument
+/// syntax and summary.
+///
+/// `power` matches one command name, so it is not ambiguous and
+/// [`candidates`] finds nothing to choose between -- but the family has seven
+/// rows, and TAB should show them. This is the second level: a word that IS a
+/// command, and also a prefix of a family.
+pub fn family(name: &str) -> (usize, [(&'static str, &'static str); 12]) {
+    let mut found = [("", ""); 12];
+    let mut count = 0;
+    for (entry, summary) in HELP {
+        if entry.split(' ').next() != Some(name) {
+            continue;
+        }
+        if count < found.len() {
+            found[count] = (entry, summary);
         }
         count += 1;
     }

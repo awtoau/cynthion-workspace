@@ -757,15 +757,21 @@ def main():
                   f"received in {REPLY_S}s: {show(reply) or '(nothing)'}")
             return reply
 
-        # Spelled as a user would type them, because that is what the listing
-        # is for: `flash id` and `bram read <hex>` are one command each, not a
-        # region column beside a verb column.
-        listing = [b"help, ?", b"flash id", b"flash read <hex>",
-                   b"bram read <hex>", b"hyperram read <hex>", b"check",
-                   b"info", b"selftest", b"ports", b"irq", b"time", b"cpu stats",
-                   b"bench [region]", b"log [n|tags]", b"board", b"led",
-                   b"i2c", b"power", b"phy", b"typec", b"sideband",
-                   b"load <hex>", b"reset", b"rtic"]
+        # ONE LINE PER FAMILY, since the root listing collapsed: `flash [id|read]`
+        # rather than a row each for `flash id` and `flash read <hex>`. The detail
+        # is a TAB away, and forty-odd rows was a wall rather than an index.
+        #
+        # The bracket contents are asserted for the families that have them,
+        # because that IS the index -- a family line that lost its subcommands
+        # would still name the command and tell the reader nothing.
+        listing = [b"help, ?", b"check", b"info", b"selftest", b"ports",
+                   b"irq", b"time", b"board", b"led", b"load", b"reset",
+                   b"rtic", b"map", b"pmod", b"sideband", b"typec", b"bench",
+                   b"bram [read]", b"cpu [stats]", b"phy [reset]",
+                   b"flash [id|read]", b"i2c [scan|soak]",
+                   b"power [floor|alert|rate|detect|limit|samples|bracket]",
+                   b"hyperram [status|read|sel|sweep|test|cross|ramp|bench|id]",
+                   b"vbus [off|input|control|both|charge]"]
         command("help", listing, "`help` lists every command")
         command("?", listing, "`?` behaves as `help`")
 

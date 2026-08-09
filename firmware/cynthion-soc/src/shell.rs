@@ -67,12 +67,27 @@ pub(crate) const HELP: &[(&str, &str)] = &[
         "smoke test: CPU add/multiply, flash reads, time format",
     ),
     ("cpu stats", "cycles, instructions, busy fraction"),
+    ("flash", "the memory-mapped W25Q32 config flash"),
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
     ("help, ?", "this list"),
-    ("hr <cmd>", "hyperram: see `hr`"),
+    // HR AND VBUS HAD ONE ROW EACH -- `hr <cmd>`, "see `hr`" -- with their real
+    // subcommands living in a usage string inside the command. That was survivable
+    // while `help` was the only reader. It is not now: this table IS the
+    // completion source, so a subcommand missing from here cannot be TAB-completed
+    // and cannot be discovered without running the command wrongly first.
+    ("hyperram", "the 8 MiB HyperRAM, and its read window"),
+    ("hyperram status", "the DQS read path's self-report"),
     ("hyperram read <hex>", "one word over the staging port"),
-    ("i2c [bus]", "scan a bus behind the mux"),
+    ("hyperram sel <n>", "READCLKSEL: 2:0 tap, 3 phase, 5:4 read stall"),
+    ("hyperram sweep", "try every READCLKSEL and say which read correctly"),
+    ("hyperram test", "round-trip one word through the staging port"),
+    ("hyperram cross", "do the window and the staging port agree?"),
+    ("hyperram ramp [w]", "verify a 0-255 byte ramp; `w` writes it first"),
+    ("hyperram bench", "the same walk as `bench hyperram`"),
+    ("hyperram id", "HyperBus has no identify"),
+    ("i2c", "the three I2C buses behind the mux"),
+    ("i2c scan [bus]", "scan a bus behind the mux"),
     ("i2c soak <bus> <prer> <n>", "hammer one bus at one rate, count failures"),
     ("info", "image, memory, boot, cpu, gateware"),
     ("irq", "interrupt counts, per source"),
@@ -84,7 +99,8 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("phy reset", "pulse TARGET's RESETB, and prove it reached"),
     ("pmod", "connector pins: ball, resource, free or claimed"),
     ("ports", "which UARTs answer"),
-    ("power [floor]", "the four PAC1954 channels"),
+    ("power", "the four PAC1954 channels"),
+    ("power floor <port> <mA>", "the current below which a port reads absent"),
     ("power alert", "the limit ALERTs: armed, routed, fired"),
     ("power rate [ms|off]", "how often the rails are sampled"),
     ("power detect [on|off]", "plug detection via the ALERT, not the poll"),
@@ -97,7 +113,12 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("sideband", "the sideband link"),
     ("time", "uptime, from mtime"),
     ("typec [port]", "the FUSB302B controllers"),
-    ("vbus <cmd>", "the VBUS distribution switches"),
+    ("vbus", "the VBUS distribution switches"),
+    ("vbus off", "open every switch"),
+    ("vbus input", "source from the input connector"),
+    ("vbus control", "source from CONTROL"),
+    ("vbus both", "source from both"),
+    ("vbus charge [1.5|3]", "advertise a host current on TARGET"),
 ];
 
 /// Width of the first column. One more than the longest entry above, so every
@@ -119,17 +140,118 @@ const _: () = {
 };
 
 pub(crate) fn help(uart: &mut Uart) {
-    for (name, summary) in HELP {
+    // ONE LINE PER FAMILY, not per row. `power` alone has seven rows, `hyperram`
+    // nine, and a root listing of forty-odd lines is a wall rather than an index.
+    //
+    //     power [floor|alert|rate|detail|limit|samples|bracket]  the four ...
+    //
+    // The detail is one TAB away -- `power` + TAB lists the rows in full -- so
+    // this answers "what is there", and that answers "how do I call it".
+    let mut index = 0;
+    while index < HELP.len() {
+        let (entry, mut summary) = HELP[index];
+        let name = first_word(entry);
+
+        // How many rows share this first word, and where the family ends.
+        let mut end = index;
+        while end < HELP.len() && first_word(HELP[end].0) == name {
+            end += 1;
+        }
+
+        // THE FAMILY'S OWN summary, not its first subcommand's. Taking the first
+        // row described `hyperram` as "the DQS read path's self-report", which is
+        // `hyperram status` -- a true sentence about the wrong thing, which is
+        // the worst kind of wrong in an index.
+        //
+        // The bare row is the one with no keyword after the name. Every family
+        // has one; the two that did not (`flash`, `hyperram`) were given one
+        // rather than having a summary invented here.
+        for (row, text) in &HELP[index..end] {
+            if second_word(row).is_empty() {
+                summary = text;
+                break;
+            }
+        }
+
         let _ = uart.write_str("  ");
         let _ = uart.write_str(name);
+        let mut width = name.len();
+
+        // Subcommands in brackets, second word only. A row that is just the bare
+        // command contributes nothing -- `power` is not a subcommand of itself.
+        let mut first = true;
+        for (row, _) in &HELP[index..end] {
+            let sub = second_word(row);
+            if sub.is_empty() {
+                continue;
+            }
+            let _ = uart.write_str(if first { " [" } else { "|" });
+            width += if first { 2 } else { 1 };
+            first = false;
+            let _ = uart.write_str(sub);
+            width += sub.len();
+        }
+        if !first {
+            let _ = uart.write_str("]");
+            width += 1;
+        }
+
         // Pad by hand. `write!("{:w$}")` instantiates core::fmt's fill-and-align
         // path, which is several hundred bytes of code for one call site in an
         // image that has spent this session fighting for block RAM.
-        for _ in name.len()..HELP_WIDTH {
+        //
+        // A family line can outgrow the column; one space then, rather than none,
+        // so the summary never touches the name.
+        if width >= HELP_WIDTH {
+            let _ = uart.write_str(" ");
+        }
+        for _ in width..HELP_WIDTH {
             let _ = uart.write_str(" ");
         }
         let _ = uart.write_str(summary);
         let _ = uart.write_str("\n");
+
+        index = end;
+    }
+}
+
+/// The command name: everything before the first space.
+pub(crate) fn first_word(entry: &str) -> &str {
+    // An alias row -- `help, ?` -- is ONE entry, not a family. Splitting it at
+    // the space printed `help,` and lost the `?`, so the listing no longer named
+    // the second way to ask for it.
+    if entry.as_bytes().contains(&b',') {
+        return entry;
+    }
+    match entry.find(' ') {
+        Some(at) => &entry[..at],
+        None => entry,
+    }
+}
+
+/// The subcommand: the second word, empty if there is none or if it is an
+/// argument placeholder rather than a keyword.
+///
+/// `power alert` gives `alert`; `power floor <port> <mA>` gives `floor`;
+/// `bench [region]` and `led [n]` give nothing, because a bracketed or angled
+/// token is what the command TAKES, not a word you type.
+pub(crate) fn second_word(entry: &str) -> &str {
+    // `help, ?` is two ALIASES, not a command and a subcommand. Without this it
+    // renders as `help, [?]`, which reads as a subcommand nobody can type.
+    if entry.as_bytes().contains(&b',') {
+        return "";
+    }
+    let rest = match entry.find(' ') {
+        Some(at) => &entry[at + 1..],
+        None => return "",
+    };
+    let word = match rest.find(' ') {
+        Some(at) => &rest[..at],
+        None => rest,
+    };
+    match word.as_bytes().first() {
+        Some(b'<') | Some(b'[') | None => "",
+        _ => word,
     }
 }
 

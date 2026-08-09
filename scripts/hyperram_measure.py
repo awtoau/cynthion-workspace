@@ -55,12 +55,12 @@ from soc_test import BoardSession  # noqa: E402
 # the prompt is echoed on connect and by every prior command, so matching it
 # reads the wrong one and returns before the output exists.
 CHECKS = [
-    ("hr cross", ("hyperram ports agree", "hyperram ports DISAGREE")),
-    ("hr test", ("hyperram write+read ok", "round-trip BAD")),
+    ("hyperram cross", ("hyperram ports agree", "hyperram ports DISAGREE")),
+    ("hyperram test", ("hyperram write+read ok", "round-trip BAD")),
 ]
 
 BENCHES = [
-    ("hr bench", ("MB/s", "did not answer")),
+    ("hyperram bench", ("MB/s", "did not answer")),
     ("cpu stats", ("busy", "ipc")),
 ]
 

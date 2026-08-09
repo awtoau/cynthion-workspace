@@ -89,7 +89,7 @@ def main():
     emit("")
     emit("verifying through the READ path only (`hr ramp`, no write):")
     done = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "soc_shell.py"), "hr ramp"],
+        [sys.executable, str(ROOT / "scripts" / "soc_shell.py"), "hyperram ramp"],
         capture_output=True, text=True,
     )
     for line in done.stdout.splitlines():

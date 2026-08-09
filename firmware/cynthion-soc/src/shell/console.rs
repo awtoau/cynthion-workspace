@@ -10,7 +10,7 @@ use core::fmt::Write;
 
 use crate::clock::{self, Instant};
 use crate::uart::Uart;
-use crate::shell::editor::{candidates, editor, Commands, Dispatch, Editor};
+use crate::shell::editor::{candidates, editor, family, Commands, Dispatch, Editor};
 use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 
 /// One console's line editor and its idle state.
@@ -178,11 +178,29 @@ impl Shell {
         if byte == b'\t' && self.word_len > 0 {
             let typed = core::str::from_utf8(&self.word[..self.word_len]).unwrap_or("");
             let (count, names) = candidates(typed);
+            let (kin, rows) = family(typed);
             if count > 1 {
+                // Ambiguous prefix: the command names to choose between.
                 let _ = editor.write(|writer| {
                     for name in names.iter().take(count.min(names.len())) {
                         writer.write_str(name)?;
                         writer.write_str("  ")?;
+                    }
+                    Ok(())
+                });
+            } else if kin > 1 {
+                // A complete command that is also a family -- `power`, `flash`,
+                // `bench`. One row each, with its argument syntax, because the
+                // question at this point is "what can follow it", not "which
+                // command did I mean".
+                let _ = editor.write(|writer| {
+                    for (entry, summary) in rows.iter().take(kin.min(rows.len())) {
+                        writer.write_str("\r\n  ")?;
+                        writer.write_str(entry)?;
+                        for _ in entry.len()..crate::shell::HELP_WIDTH {
+                            writer.write_str(" ")?;
+                        }
+                        writer.write_str(summary)?;
                     }
                     Ok(())
                 });
