@@ -93,6 +93,8 @@ pub const BOARD_I2C_MUX_SIZE: usize = 0x00000002;
 pub const BOARD_I2C_MUX_TARGET_IRQ: u32 = 4;
 /// PLIC source number wired to BOARD_I2C_MUX_AUX.
 pub const BOARD_I2C_MUX_AUX_IRQ: u32 = 5;
+/// PLIC source number wired to BOARD_I2C_MUX_POWER_ALERT.
+pub const BOARD_I2C_MUX_POWER_ALERT_IRQ: u32 = 6;
 
 /// board/vbus: 2 registers at 0xf0000624
 pub const BOARD_VBUS: usize = 0xf0000624;
@@ -109,7 +111,7 @@ pub const BOARD_CLOCKS: usize = 0xf0000660;
 /// Size of the BOARD_CLOCKS window, in bytes.
 pub const BOARD_CLOCKS_SIZE: usize = 0x00000010;
 
-/// plic: 9 registers at 0xf0400000
+/// plic: 10 registers at 0xf0400000
 pub const PLIC: usize = 0xf0400000;
 /// Size of the PLIC window, in bytes.
 pub const PLIC_SIZE: usize = 0x00400000;

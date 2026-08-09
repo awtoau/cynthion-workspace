@@ -477,6 +477,24 @@ IRQ_I2C = 3
 IRQ_TYPE_C_TARGET = 4
 IRQ_TYPE_C_AUX = 5
 
+# The PAC1954's ALERT, on GPIO/ALERT2 -- ECP5 ball D6, U1 pin 15, pulled up by
+# R86 (10k). #270.
+#
+# **Active low, and LATCHED low.** DS20006539B section 5.16: "Alerts will cause
+# the ALERT pin to be asserted low and latched low." The only exception is the
+# conversion-complete alert, which is a 5 us pulse and is NOT what this source
+# carries -- that one is #278 and needs an edge latch this does not have.
+#
+# So it is a level, like the two Type-C sources above and unlike nothing else on
+# this board, and it clears the same way: a read of the device's status register
+# over I2C, in normal context, because the clear is a bus transaction and not a
+# register write. `defer_type_c` in `src/irq.rs` is the pattern.
+#
+# The pin is `dir="io"` in the platform because the part can also drive it as a
+# GPIO output. It is an input here and `oe` stays 0; R86 is what holds it high
+# when nothing is asserting, which is what an open-drain ALERT requires.
+IRQ_POWER_ALERT = 6
+
 # Capture depth, in samples of the sync clock.
 #
 # 32 SCK edges at divisor 0 is 64 sync cycles of clocking, plus the FSM
@@ -847,13 +865,17 @@ class HelloSoC(Elaboratable):
         m.submodules.board_bridge = board_bridge
         decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
 
-        m.submodules.plic = plic = Plic(sources=5)
+        m.submodules.plic = plic = Plic(sources=6)
         m.d.comb += [
             plic.sources[IRQ_CONSOLE].eq(console.irq),
             plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
             plic.sources[IRQ_I2C].eq(i2c.irq),
             plic.sources[IRQ_TYPE_C_TARGET].eq(i2c_mux.target_irq),
             plic.sources[IRQ_TYPE_C_AUX].eq(i2c_mux.aux_irq),
+            # IRQ_POWER_ALERT is wired where `power_monitor` is requested, some
+            # way below. A resource may be requested once, and this block runs
+            # before that request -- so the source is driven there rather than
+            # the resource being requested early to suit this list.
         ]
 
         # The same five lines, keyed by the decoder window each peripheral lives
@@ -877,8 +899,16 @@ class HelloSoC(Elaboratable):
             "console":       IRQ_CONSOLE,
             "apollo_uart":   IRQ_APOLLO,
             "board_i2c":     IRQ_I2C,
-            "board_i2c_mux": {"TARGET": IRQ_TYPE_C_TARGET,
-                              "AUX":    IRQ_TYPE_C_AUX},
+            # All three muxed devices' interrupt lines, on the mux window.
+            #
+            # The PAC1954's ALERT belongs here for the same reason the two
+            # FUSB302B lines do: it is a pin on a device behind this mux, it has
+            # no CSR window of its own, and servicing it means selecting that
+            # device's segment. A source has to name a window that exists -- the
+            # generator checks -- and this is the window whose driver clears it.
+            "board_i2c_mux": {"TARGET":      IRQ_TYPE_C_TARGET,
+                              "AUX":         IRQ_TYPE_C_AUX,
+                              "POWER_ALERT": IRQ_POWER_ALERT},
         }
 
         plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
@@ -1625,6 +1655,19 @@ class HelloSoC(Elaboratable):
             power_monitor.slow.o.eq(0),
             power_monitor.slow.oe.eq(1),
         ]
+
+        # The ALERT, into the PLIC (#270). Wired here rather than with the other
+        # five sources because a resource may be requested once and that block
+        # runs before this line.
+        #
+        # INVERTED: the pad is active low -- "asserted low and latched low",
+        # DS20006539B section 5.16 -- and the PLIC wants a high level.
+        #
+        # `gpio` stays an input: `oe` is left at its default 0, and R86 (10k to
+        # +3V3) holds the line high when nothing is asserting, which is what an
+        # open-drain ALERT needs. The part drives it low and nothing here ever
+        # drives it at all.
+        m.d.comb += plic.sources[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)
         m.d.comb += power_monitor.pwrdn.o.eq(
             board_gpio.pins[GPIO_PWRDN].o & board_gpio.pins[GPIO_PWRDN].oe)
         m.d.comb += board_gpio.pins[GPIO_PWRDN].i.eq(power_monitor.pwrdn.o)

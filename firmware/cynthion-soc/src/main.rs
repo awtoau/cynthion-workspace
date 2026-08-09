@@ -653,6 +653,10 @@ const HELP: &[(&str, &str)] = &[
     ("pmod", "connector pins: ball, resource, free or claimed"),
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
+    ("power alert", "the limit ALERTs: armed, routed, fired"),
+    ("power limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
+    ("power samples <k> <port> <n>", "consecutive samples before it asserts"),
+    ("power bracket <port> <mA> <mV>", "limits around the present reading"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),
@@ -1487,8 +1491,16 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
                 return;
             }
         }
+    } else if rest.starts_with(b"alert") || rest.starts_with(b"limit")
+        || rest.starts_with(b"samples") || rest.starts_with(b"bracket")
+    {
+        return power_alert_command(uart, rest, devices);
     } else if !rest.is_empty() {
         let _ = writeln!(uart, "usage: power [floor <port> <mA>]");
+        let _ = writeln!(uart, "       power alert [on|off]");
+        let _ = writeln!(uart, "       power limit <ov|oc|uv|uc> <port> <mV|mA>");
+        let _ = writeln!(uart, "       power samples <ov|oc|uv|uc> <port> <1|4|8|16>");
+        let _ = writeln!(uart, "       power bracket <port> <+/-mA> <+/-mV>");
         return;
     }
 
@@ -1522,44 +1534,160 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         }
     }
 
-    match devices.power.latest() {
-        Some(sample) => {
-            for channel in 0..4 {
-                let floor = devices.power.floor(channel);
-                // A space, not a stamp: this is the reply to a typed command.
-                // The indent it produces is the one the rows always had.
-                power::report(
+    // ONE row per port, with the reading and every setting that governs it.
+    //
+    // The measurement, its four limits, the debounce, the floor and whether the
+    // alert is armed all describe the same port, and they used to be in three
+    // places: `power` for the reading, a second block for the floor, and
+    // `power alert` for the limits. A reader asking "what is aux doing and what
+    // will it tell me about" had to hold three tables in their head.
+    //
+    // Limits are read FROM THE PART. `ALERT_STATUS` deliberately is not -- it is
+    // read-to-clear and belongs to the service path, so `fired` comes from what
+    // that path recorded. Reading it here is the defect this table was built
+    // after.
+    // NO BUS. `power` prints what the poller and the setters recorded, which is
+    // the #123 rule and what `soc_i2c_owner_sim.py` asserts: a second reader
+    // lands inside the 1 ms window after a refresh and reports a fault on a
+    // working bus. The limits are still the part's -- they are written by the
+    // code that programs them, including the auto-backoff -- they are simply
+    // not fetched by a display command.
+    //
+    // `power alert` is the authoritative view and does read the part.
+    let enabled = devices.power.alert_enable_cached();
+    let fired = devices.power.alert_history();
+
+    // The header uses the SAME width specifiers as the rows below. Written out
+    // by hand it drifted by one column the first time a field changed width,
+    // and a misaligned table is read wrong rather than read as broken.
+    let _ = writeln!(
+        uart,
+        "  {:9}  {:>6} {:>7} {:>7}   {:>6} {:>7} {:>7}  {:>4}  {:>4}  {:>4}  {:>6}",
+        "port", "volts", "uv", "ov", "amps", "uc", "oc", "dbnc", "armd", "fird", "floor"
+    );
+
+    let sample = devices.power.latest();
+    for channel in 0..4 {
+        let floor = devices.power.floor(channel);
+
+        // Each limit, as the part holds it. A zero limit is not a threshold
+        // anybody set -- it is the POR value -- so it prints as `--` rather than
+        // as `0.000`, which would read as a limit of zero volts.
+        let mut cell = [[0u8; 9]; 4];
+        let mut armed = [b'-'; 4];
+        let mut hit = [b'-'; 4];
+        // Under before over, so each pair reads low-to-high like the range it
+        // describes. The flag columns below index into this order and the
+        // header names it, so the three cannot disagree.
+        for (slot, limit) in [
+            power::Limit::UnderVoltage,
+            power::Limit::OverVoltage,
+            power::Limit::UnderCurrent,
+            power::Limit::OverCurrent,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let raw = devices.power.alert_limit_cached(*limit, channel);
+            let value = if limit.is_current() {
+                power::current_ua(raw) / 1000
+            } else {
+                power::bus_mv(raw) as i32
+            };
+            let text = &mut cell[slot];
+            if raw == 0 {
+                text[..2].copy_from_slice(b"--");
+            } else {
+                let mut buffer = FixedWriter::new(text);
+                let _ = write!(
+                    buffer,
+                    "{}{}.{:03}",
+                    if value < 0 { "-" } else { "" },
+                    (value / 1000).abs(),
+                    (value % 1000).unsigned_abs()
+                );
+            }
+            // POSITIONAL, not initials. The first letter of each limit name
+            // gives `o u o u` for ov/uv/oc/uc, which says nothing about which
+            // slot is which -- the header already fixes the order, so a slot
+            // only has to say yes or no.
+            let bit = limit.bit(channel);
+            if enabled & bit != 0 {
+                armed[slot] = b'*';
+            }
+            if fired & bit != 0 {
+                hit[slot] = b'!';
+            }
+        }
+
+        // The debounce, which is per limit but is one value in practice. Shown
+        // as the OV one with a `*` when the four disagree, rather than four more
+        // columns for a number nobody sets differently per limit.
+        let samples = devices
+            .power
+            .alert_samples_cached(power::Limit::UnderVoltage, channel);
+
+        match sample {
+            Some(sample) => {
+                let reading = sample.readings[channel];
+                // AMPS, because the header says amps. `current_ua / 1000` is
+                // milliamps and printing it under an "amps" heading is a
+                // thousandfold error that looks like a plausible current.
+                let magnitude = reading.current_ua.unsigned_abs();
+                let _ = write!(
                     uart,
-                    &" ",
-                    channel,
-                    &sample.readings[channel],
-                    sample.readings[channel].current_ua.unsigned_abs() >= floor,
+                    "  {:9}  {:2}.{:03} {:>7} {:>7}   {}{}.{:03}",
+                    power::PORTS[channel],
+                    reading.bus_mv / 1000,
+                    reading.bus_mv % 1000,
+                    as_str(&cell[0]),
+                    as_str(&cell[1]),
+                    if reading.current_ua < 0 { "-" } else { " " },
+                    // ROUNDED, not truncated. -762 uA truncates to `-0.000`,
+                    // which is a minus sign in front of nothing and reads as a
+                    // formatting bug rather than as a current below the
+                    // display's resolution.
+                    (magnitude + 500) / 1_000_000,
+                    (((magnitude + 500) / 1000) % 1000),
+                );
+            }
+            None => {
+                let _ = write!(
+                    uart,
+                    "  {:9}      -- {:>7} {:>7}       --",
+                    power::PORTS[channel],
+                    as_str(&cell[0]),
+                    as_str(&cell[1])
                 );
             }
         }
-        // No rails printed, rather than zeros or dashes. Two polls after reset
-        // there is genuinely nothing to say -- one to issue a REFRESH and one to
-        // read what it latched -- and inventing a row per channel would put four
-        // measurements on screen that were never measured.
-        None => {
-            let _ = writeln!(
-                uart,
-                "  the 50 ms poll has not completed one yet; \
-                                    last phase {}",
-                devices.power.phase()
-            );
-        }
-    }
-
-    for channel in 0..4 {
         let _ = writeln!(
             uart,
-            "  {:8} floor {}.{:03} mA",
-            power::PORTS[channel],
-            devices.power.floor(channel) / 1000,
-            devices.power.floor(channel) % 1000
+            " {:>7} {:>7}  {:>4}  {}{}{}{}  {}{}{}{}  {:>2}.{:03}",
+            as_str(&cell[2]),
+            as_str(&cell[3]),
+            samples,
+            armed[0] as char, armed[1] as char, armed[2] as char, armed[3] as char,
+            hit[0] as char, hit[1] as char, hit[2] as char, hit[3] as char,
+            floor / 1_000_000,
+            (floor / 1000) % 1000
         );
     }
+    if sample.is_none() {
+        // Two polls after reset there is genuinely nothing to say -- one to
+        // issue a REFRESH_V and one to read what it latched.
+        let _ = writeln!(
+            uart,
+            "  no sample yet; last phase {}",
+            devices.power.phase()
+        );
+    }
+    let _ = writeln!(
+        uart,
+        "  volts and amps; armed/fired columns are uv ov uc oc; `--` a limit \
+         nobody set"
+    );
+
     if devices.power.failures > 0 {
         let _ = writeln!(
             uart,
@@ -1887,6 +2015,345 @@ fn i2c_soak(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
         scl_hz,
         restore
     );
+}
+
+/// Format into a fixed byte buffer, so a column can be right-aligned without an
+/// allocator.
+///
+/// `no_std` with no heap: `{:>7}` needs something with a known width, and there
+/// is no `String` to build one in. Eight bytes covers `-99.999`, and anything
+/// longer is truncated rather than panicking -- a clipped cell in a status table
+/// is a display fault, and a panic in the shell is the board.
+struct FixedWriter<'a> {
+    buffer: &'a mut [u8],
+    used: usize,
+}
+
+impl<'a> FixedWriter<'a> {
+    fn new(buffer: &'a mut [u8]) -> Self {
+        buffer.fill(0);
+        FixedWriter { buffer, used: 0 }
+    }
+}
+
+impl core::fmt::Write for FixedWriter<'_> {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for &byte in text.as_bytes() {
+            if self.used >= self.buffer.len() {
+                break;
+            }
+            self.buffer[self.used] = byte;
+            self.used += 1;
+        }
+        Ok(())
+    }
+}
+
+/// A NUL-padded cell as a `&str`, for `{:>7}`.
+fn as_str(cell: &[u8]) -> &str {
+    let end = cell.iter().position(|&b| b == 0).unwrap_or(cell.len());
+    core::str::from_utf8(&cell[..end]).unwrap_or("?")
+}
+
+/// A decimal that may be negative. `parse_decimal` is unsigned, and a current
+/// limit can legitimately be below zero -- the VBUS switch tree is
+/// bidirectional, so a port can sink and its VSENSE code is signed.
+fn parse_signed(text: &[u8]) -> Option<i32> {
+    match text.split_first() {
+        Some((b'-', rest)) => parse_decimal(rest).map(|v| -(v as i32)),
+        _ => parse_decimal(text).map(|v| v as i32),
+    }
+}
+
+/// Which limit a word names, or `None`.
+fn parse_limit(name: &[u8]) -> Option<power::Limit> {
+    power::Limit::ALL.iter().copied().find(|l| l.name().as_bytes() == name)
+}
+
+/// A port name to a PAC channel index. Named rather than numbered because
+/// channel order is NOT connector order on this part -- channel 1 is TARGET_A,
+/// not CONTROL -- and a bare index invites exactly that mistake.
+fn parse_port(name: &[u8]) -> Option<usize> {
+    power::PORTS.iter().position(|&p| p.as_bytes() == name)
+}
+
+/// `power alert`, `power limit`, `power samples`, `power bracket` -- the ALERT
+/// configuration, all of it settable and readable from here (#270).
+///
+/// **These are not firmware constants, deliberately.** The right thresholds are
+/// not knowable in advance: whether 3.5 A trips on a real device, or a bracket
+/// sits inside the ADC noise, is found by trying it. A constant means a rebuild
+/// and a reflash per attempt, and a number nobody is sure about stays unchanged.
+///
+/// Every read comes FROM THE PART. `power limit` prints what the device holds,
+/// not what firmware last wrote -- the difference between "the write was issued"
+/// and "the write took", which matters here because a limit written while alerts
+/// are enabled is a write whose effect is not what was asked for.
+fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    // Split borrow: the bus and the monitor are separate fields of `Devices`,
+    // and the setters below write the monitor's cache while using the bus. An
+    // immutable alias to the monitor beside a mutable bus does not compile, and
+    // should not -- the cache is state this command changes.
+    let Devices { bus, power: monitor, .. } = devices;
+    let bus = match bus.as_mut() {
+        Some(bus) => bus,
+        None => return board_absent(uart),
+    };
+
+    let mut field = rest.split(|&b| b == b' ').filter(|f| !f.is_empty());
+    let verb = field.next().unwrap_or(b"");
+
+    // ---- power alert [on|off] -------------------------------------------
+    if verb == b"alert" {
+        let arg = field.next();
+
+        if arg == Some(b"clear".as_slice()) {
+            devices.power.alert_forget();
+            let _ = writeln!(uart, "alert history cleared");
+            return;
+        }
+
+        if arg == Some(b"on".as_slice()) || arg == Some(b"off".as_slice()) {
+            let want_on = arg == Some(b"on".as_slice());
+            if want_on {
+                if let Err(error) = monitor.alert_pin_enable(bus) {
+                    let _ = writeln!(uart, "alert pin: {}", error.as_str());
+                    return;
+                }
+            }
+            // Arm only the limits that have actually been SET.
+            //
+            // Arming all sixteen would arm the twelve still at their POR zero,
+            // and a zero limit is not "no limit" -- it is a threshold every
+            // rail is permanently on the wrong side of. The first version did
+            // that and produced `target_a oc limit 0 mA now 1 mA over by`, which
+            // is a true statement about a limit nobody set.
+            //
+            // Disarming, by contrast, disarms everything: turning it off should
+            // not depend on what happens to be configured.
+            let mut count = 0;
+            for limit in power::Limit::ALL {
+                for channel in 0..4 {
+                    let configured = monitor
+                        .alert_limit(bus, limit, channel)
+                        .map(|raw| raw != 0)
+                        .unwrap_or(false);
+                    let on = want_on && configured;
+                    if want_on && !configured {
+                        // Explicitly disarm it, so `power alert on` after a
+                        // limit is cleared does not leave a stale arm behind.
+                        let _ = monitor.alert_arm(bus, limit, channel, false);
+                        continue;
+                    }
+                    if let Err(error) = monitor.alert_arm(bus, limit, channel, on) {
+                        let _ = writeln!(uart, "alert {}: {}", limit.name(), error.as_str());
+                        return;
+                    }
+                    if on {
+                        count += 1;
+                    }
+                }
+            }
+            if want_on {
+                let _ = writeln!(
+                    uart,
+                    "alerts armed: {} limit(s) with a threshold set",
+                    count
+                );
+                if count == 0 {
+                    let _ = writeln!(
+                        uart,
+                        "  nothing to arm -- set one with `power limit` or \
+                         `power bracket` first"
+                    );
+                }
+            } else {
+                let _ = writeln!(uart, "alerts disarmed");
+            }
+            return;
+        }
+
+        // Bare `power alert`: the whole picture.
+        //
+        // `enable` and `routed` are read from the part -- they are plain R/W
+        // registers and reading them costs nothing. **`ALERT_STATUS` is NOT**,
+        // because it is read-to-clear and belongs to the service path. Reading
+        // it here stole events from the handler and made the alert look
+        // intermittent; `alert_history` is what the service path recorded.
+        let (enabled, routed) = match (monitor.alert_enabled(bus), monitor.alert_routed(bus)) {
+            (Ok(e), Ok(r)) => (e, r),
+            _ => {
+                let _ = writeln!(uart, "alert: the monitor did not answer");
+                return;
+            }
+        };
+        let fired = monitor.alert_history();
+        let _ = writeln!(
+            uart,
+            "alert  enable {:06x}  routed {:06x}  fired {:06x}  (since boot)",
+            enabled, routed, fired
+        );
+        // No per-port table here. `power` shows every limit, its debounce and
+        // whether it is armed, one row per port -- repeating it under a second
+        // command is two places to read the same thing and two places for it to
+        // go stale.
+        //
+        // What this command adds is the RAW masks and the authoritative read:
+        // `power` shows the cache, this reads `ALERT_ENABLE` and `GPIO_ALERT2`
+        // from the part, so the two disagreeing is itself the finding.
+        let _ = writeln!(
+            uart,
+            "  bit order, high to low: oc1-4 uc1-4  ov1-4 uv1-4  op1-4 accovf acccount cc"
+        );
+        let _ = writeln!(uart, "  `power` has the per-port limits; this is the raw state");
+        let _ = writeln!(uart, "  power alert clear   forget what has fired");
+        let _ = writeln!(uart, "  power alert on|off  arm every limit that has a threshold");
+        return;
+    }
+
+    // ---- power limit <kind> <port> <value> --------------------------------
+    if verb == b"limit" {
+        let (limit, channel, value) = match (
+            field.next().and_then(parse_limit),
+            field.next().and_then(parse_port),
+            field.next().and_then(parse_signed),
+        ) {
+            (Some(l), Some(c), Some(v)) => (l, c, v),
+            _ => {
+                let _ = writeln!(
+                    uart,
+                    "usage: power limit <ov|oc|uv|uc> <port> <mV|mA>"
+                );
+                return;
+            }
+        };
+        let raw = if limit.is_current() {
+            power::ua_to_code(value.saturating_mul(1000))
+        } else {
+            // The LIMIT scale, not the measurement scale -- they differ by two.
+            power::mv_to_limit_code(value)
+        };
+        if let Err(error) = monitor.alert_set_limit(bus, limit, channel, raw) {
+            let _ = writeln!(uart, "limit: {}", error.as_str());
+            return;
+        }
+        // What was ACTUALLY programmed, read back and converted. The scale is
+        // 152.588 uA or 488.3 uV per code, so a request rarely lands exactly --
+        // and a threshold rounded silently and echoed as the requested value is
+        // the lie this read-back exists to prevent.
+        let back = monitor.alert_limit(bus, limit, channel).unwrap_or(0);
+        let _ = writeln!(
+            uart,
+            "{} {} = {} {} (asked {}, code {:04x})",
+            limit.name(),
+            power::PORTS[channel],
+            if limit.is_current() {
+                power::current_ua(back) / 1000
+            } else {
+                power::bus_mv(back) as i32
+            },
+            if limit.is_current() { "mA" } else { "mV" },
+            value,
+            back
+        );
+        return;
+    }
+
+    // ---- power samples <kind> <port> <n> ----------------------------------
+    if verb == b"samples" {
+        let (limit, channel, want) = match (
+            field.next().and_then(parse_limit),
+            field.next().and_then(parse_port),
+            field.next().and_then(parse_decimal),
+        ) {
+            (Some(l), Some(c), Some(n)) => (l, c, n),
+            _ => {
+                let _ = writeln!(
+                    uart,
+                    "usage: power samples <ov|oc|uv|uc> <port> <1|4|8|16>"
+                );
+                return;
+            }
+        };
+        match monitor.alert_set_nsamples(bus, limit, channel, want) {
+            Ok(actual) => {
+                let _ = writeln!(
+                    uart,
+                    "{} {} samples = {} (asked {}), {} ms at 1024 SPS",
+                    limit.name(),
+                    power::PORTS[channel],
+                    actual,
+                    want,
+                    actual * 1000 / 1024
+                );
+            }
+            Err(error) => {
+                let _ = writeln!(uart, "samples: {}", error.as_str());
+            }
+        }
+        return;
+    }
+
+    // ---- power bracket <port> <+/-mA> <+/-mV> -----------------------------
+    //
+    // The change detector. The part has no "value changed" alert; a tight
+    // bracket around the present reading IS one, and this is the command that
+    // makes finding the noise floor a matter of typing rather than rebuilding.
+    if verb == b"bracket" {
+        let (channel, d_ma, d_mv) = match (
+            field.next().and_then(parse_port),
+            field.next().and_then(parse_decimal),
+            field.next().and_then(parse_decimal),
+        ) {
+            (Some(c), Some(a), Some(v)) => (c, a as i32, v as i32),
+            _ => {
+                let _ = writeln!(uart, "usage: power bracket <port> <+/-mA> <+/-mV>");
+                return;
+            }
+        };
+        let sample = match monitor.latest() {
+            Some(sample) => sample,
+            None => {
+                let _ = writeln!(uart, "bracket: no sample yet");
+                return;
+            }
+        };
+        let reading = sample.readings[channel];
+        let ma = reading.current_ua / 1000;
+        let mv = reading.bus_mv as i32;
+
+        let plan = [
+            (power::Limit::OverCurrent, power::ua_to_code((ma + d_ma) * 1000)),
+            (power::Limit::UnderCurrent, power::ua_to_code((ma - d_ma) * 1000)),
+            (power::Limit::OverVoltage, power::mv_to_limit_code(mv + d_mv)),
+            (power::Limit::UnderVoltage, power::mv_to_limit_code(mv - d_mv)),
+        ];
+        for (limit, raw) in plan {
+            if monitor.alert_set_limit(bus, limit, channel, raw).is_err()
+                || monitor.alert_set_nsamples(bus, limit, channel, 1).is_err()
+                || monitor.alert_arm(bus, limit, channel, true).is_err()
+            {
+                let _ = writeln!(uart, "bracket: the monitor did not answer");
+                return;
+            }
+        }
+        if let Err(error) = monitor.alert_pin_enable(bus) {
+            let _ = writeln!(uart, "alert pin: {}", error.as_str());
+            return;
+        }
+        let _ = writeln!(
+            uart,
+            "bracket {}  current {}..{} mA  voltage {}..{} mV  samples 1",
+            power::PORTS[channel],
+            ma - d_ma,
+            ma + d_ma,
+            mv - d_mv,
+            mv + d_mv
+        );
+        let _ = writeln!(uart, "  any excursion asserts ALERT on src {}",
+                         cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ);
+        return;
+    }
 }
 
 /// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.

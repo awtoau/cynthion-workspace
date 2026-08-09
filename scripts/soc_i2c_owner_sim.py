@@ -764,7 +764,25 @@ def run_firmware_checks(checks, root):
     # not have to look like one from the call site -- the version this replaced
     # reached the bus as `devices.power.read(&bus, &selector)` -- so forbidding
     # `read_registers` here would have passed against the code that had the bug.
-    READS_ONLY = {"latest", "age", "floor", "set_floor", "phase", "failures"}
+    # An ALLOWLIST, and it has to be: this check cannot see inside a method, so
+    # it trusts that everything named here reads `Monitor`'s own fields and no
+    # bus. Adding a name is asserting that, and the assertion is what the check
+    # is worth.
+    #
+    # The `*_cached` accessors return the alert limits, debounce and enable mask
+    # as the SETTERS recorded them -- `alert_set_limit`, `alert_set_nsamples`
+    # and `alert_arm` write the cache while they write the part, and the
+    # auto-backoff goes through the same setters. So `power` shows the part's
+    # values without fetching them, which is the same arrangement `latest` has
+    # for the measurement.
+    #
+    # `power alert` is the authoritative view and DOES read the part. It is a
+    # different command for that reason, and it is not covered here.
+    READS_ONLY = {
+        "latest", "age", "floor", "set_floor", "phase", "failures",
+        "alert_limit_cached", "alert_samples_cached", "alert_enable_cached",
+        "alert_history",
+    }
     body = re.search(r"fn board_power\(.*?\n\}", main, re.S)
     body = body.group(0) if body else ""
     asked = set(re.findall(r"\.power\.(\w+)", body))
