@@ -22,10 +22,9 @@
 use core::fmt::Write;
 
 use crate::fusb302::Port;
-use crate::shell::console::board_absent;
 use crate::shell::parse::trim;
 use crate::uart::Uart;
-use crate::{power, target, typec::Controllers, vbus, Devices};
+use crate::{target, typec::Controllers, vbus, Devices};
 
 /// The four rails, in `power::PORTS` order, and what each one is.
 ///
@@ -66,11 +65,47 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 
     match verb {
         b"" | b"status" => status(uart, index, devices),
-        b"off" => off(uart, index, devices),
-        _ => {
-            let _ = writeln!(uart, "usage: usb {} [status|off]", PORTS[index].0);
-        }
+        verb => match VERBS.iter().find(|(name, ..)| name.as_bytes() == verb) {
+            Some((name, what, missing)) => planned(uart, index, name, what, missing),
+            None => {
+                let _ = writeln!(uart, "usage: usb {} [status|off|on|device|host|reset]",
+                                 PORTS[index].0);
+            }
+        },
     }
+}
+
+/// The verbs that are NOT built yet, and what each one is waiting on.
+///
+/// Registered rather than omitted, and each says which driver gap blocks it.
+/// A verb that is missing from the table is indistinguishable from one that was
+/// never planned, and `usage:` lines are where intent goes to be forgotten.
+///
+/// **None of them touch hardware.** A half-done `off` is worse than none: the
+/// first version opened EVERY VBUS switch, because there is no per-switch open
+/// in the driver -- so a command scoped to one port silently cut the other two.
+const VERBS: [(&str, &str, &str); 5] = [
+    ("off", "stop this port sourcing, and stop it interrupting",
+     "no per-switch open in `vbus.rs`, and no Type-C interrupt mask"),
+    ("on", "source the board from this port",
+     "`vbus.rs` refuses combinations by policy; a per-port form needs that policy"),
+    ("device", "put this port in device mode",
+     "no role control -- the ULPI window is read-only in this SoC"),
+    ("host", "put this port in host mode",
+     "no role control -- the ULPI window is read-only in this SoC"),
+    ("reset", "pulse this port's PHY reset",
+     "only TARGET has a RESETB this SoC drives; see `usb3343 reset`"),
+];
+
+/// A verb that exists in the vocabulary and not yet in the firmware.
+///
+/// It names the gap. "not implemented" tells a reader to go and find out what
+/// is missing; this tells them, so the next person to pick it up starts from the
+/// driver rather than from the shell.
+fn planned(uart: &mut Uart, index: usize, verb: &str, what: &str, missing: &str) {
+    let _ = writeln!(uart, "usb {} {} -- NOT IMPLEMENTED", PORTS[index].0, verb);
+    let _ = writeln!(uart, "  intent    {}", what);
+    let _ = writeln!(uart, "  blocked   {}", missing);
 }
 
 /// The four ports and what each one is for.
@@ -205,42 +240,3 @@ fn cable(uart: &mut Uart, port: Port, type_c: &Controllers) {
     let _ = writeln!(uart, "  ({}, cc {})", state.cc(), state.orientation().name());
 }
 
-/// `usb <port> off` -- stop this port sourcing, and stop it interrupting.
-///
-/// Two separate things a reader would otherwise do in two commands, and the
-/// second is the one that gets forgotten: a port whose switch is open still
-/// raises a Type-C interrupt on every cable event, so "off" that only opened the
-/// switch would leave the log filling from a port nobody is using.
-fn off(uart: &mut Uart, index: usize, devices: &mut Devices) {
-    let (name, controller, source, _) = PORTS[index];
-    if devices.bus.is_none() {
-        return board_absent(uart);
-    }
-
-    match source {
-        Some(source) if vbus::is_closed(source) => {
-            // OPEN ALL, then reclose the others. There is no per-switch open in
-            // the driver, and inventing one here would put the switch policy in
-            // two places -- `vbus.rs` refuses combinations this cannot know
-            // about (#305).
-            let _ = writeln!(uart, "  switch    opening; use `vbus` to restore a source");
-            vbus::open_all();
-        }
-        Some(_) => {
-            let _ = writeln!(uart, "  switch    already open");
-        }
-        None => {
-            let _ = writeln!(uart, "  switch    none on this port");
-        }
-    }
-
-    match controller {
-        Some(_) => {
-            let _ = writeln!(uart, "  events    still armed -- masking is not implemented");
-        }
-        None => {
-            let _ = writeln!(uart, "  events    none; this port has no controller");
-        }
-    }
-    let _ = writeln!(uart, "{} is no longer sourcing the board", name);
-}
