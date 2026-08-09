@@ -270,6 +270,17 @@ pub fn polled() {
 /// says what interval the REFRESH cycle is actually running at; the lateness
 /// says how long it waited after it was due. A dispatcher can fix the second
 /// without moving the first.
+/// Forget the poll statistics.
+///
+/// Called when the sampling rate changes. The gap is measured against a period,
+/// so a rate change makes every prior sample describe a different experiment --
+/// the same reason a cache change voids an IPC figure. Keeping them would mix
+/// two periods into one "worst gap" and the number would describe neither.
+pub fn forget_polls() {
+    POLLS.store(0, RELAXED);
+    WORST_GAP.store(0, RELAXED);
+}
+
 pub fn poll_stats() -> (u32, u32) {
     (POLLS.load(RELAXED), WORST_GAP.load(RELAXED))
 }

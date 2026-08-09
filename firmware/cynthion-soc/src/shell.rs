@@ -83,6 +83,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("power [floor]", "the four PAC1954 channels"),
     ("power alert", "the limit ALERTs: armed, routed, fired"),
     ("power rate [ms|off]", "how often the rails are sampled"),
+    ("power detect [on|off]", "plug detection via the ALERT, not the poll"),
     ("power limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
     ("power samples <k> <port> <n>", "consecutive samples before it asserts"),
     ("power bracket <port> <mA> <mV>", "limits around the present reading"),

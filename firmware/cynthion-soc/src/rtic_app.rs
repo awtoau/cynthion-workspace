@@ -220,8 +220,28 @@ mod app {
         // An off poll costs one relaxed load per tick and releases nothing;
         // excursions are still reported, because the ALERT is a comparison
         // inside the part against every sample and does not depend on this.
+        // One cycle at boot even with the poll off, so `power` has something to
+        // show. Without it the table would read NO SAMPLE YET for ever and an
+        // idle board would look like a dead one.
         let interval = crate::power::interval_ms();
-        if interval == crate::power::RATE_OFF || since < interval {
+
+        // While OFF, nothing is being timed, so nothing accumulates. Storing
+        // `since` here instead left a backlog that turning the poll on then
+        // drained as a burst -- five releases a millisecond apart, and a "worst
+        // gap" of 20 ms against a 50 ms period, which reads as a broken tick.
+        if interval == crate::power::RATE_OFF && crate::power::primed() {
+            SINCE_MS.store(0, Ordering::Relaxed);
+            return;
+        }
+
+        if !crate::power::primed() {
+            SINCE_MS.store(since, Ordering::Relaxed);
+            RELEASED_AT.store(Instant::ZERO.elapsed(clock::now()), Ordering::Relaxed);
+            sched::pended(sched::POWER);
+            rtic::export::pend(slic::SoftwareInterrupt::PowerRefresh);
+            return;
+        }
+        if since < interval {
             SINCE_MS.store(since, Ordering::Relaxed);
             return;
         }

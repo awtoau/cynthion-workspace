@@ -297,8 +297,29 @@ pub const RATE_OFF: u32 = 0;
 pub const MIN_INTERVAL_MS: u32 = 1;
 
 /// How often the rails are sampled. `RATE_OFF` disables the poll.
+///
+/// **OFF by default.** The ALERT reports excursions on its own -- it compares
+/// every sample inside the part, at 1024 SPS, which no poll rate can match -- so
+/// a 20 Hz poll was doing work nothing needed. `power rate 50` turns it back on
+/// for watching a rail move.
+///
+/// What is lost while it is off: the change-threshold log lines, and connection
+/// state, which is still derived from the poll. Arming a current limit as the
+/// plug detector moves that into the part and is #285 step 3, unwritten.
 static INTERVAL_MS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(DEFAULT_INTERVAL_MS);
+    core::sync::atomic::AtomicU32::new(RATE_OFF);
+
+/// Has one cycle completed since boot?
+///
+/// With the poll off nothing would ever start one, so `power` would print NO
+/// SAMPLE YET for ever and the board would look dead rather than idle. The tick
+/// releases the task until this is set, which costs exactly one cycle.
+static PRIMED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn primed() -> bool {
+    PRIMED.load(core::sync::atomic::Ordering::Relaxed)
+}
 
 pub fn interval_ms() -> u32 {
     INTERVAL_MS.load(core::sync::atomic::Ordering::Relaxed)
@@ -317,6 +338,9 @@ pub fn set_interval_ms(ms: u32) -> u32 {
         ms.max(MIN_INTERVAL_MS)
     };
     INTERVAL_MS.store(ms, core::sync::atomic::Ordering::Relaxed);
+    // The gap statistics were measured against the old period and describe a
+    // different experiment now.
+    crate::metrics::forget_polls();
     ms
 }
 
@@ -537,6 +561,8 @@ pub struct Monitor {
     alert_limits: [[u16; 4]; 4],
     alert_samples: [[u8; 4]; 4],
     alert_enable: u32,
+    /// Plug detection armed -- see `detect_arm`.
+    detect: bool,
     /// Every limit bit that has fired since boot, accumulated.
     ///
     /// **`ALERT_STATUS` is read-to-clear and belongs to the service path.** A
@@ -612,6 +638,7 @@ impl Monitor {
             alert_limits: [[0; 4]; 4],
             alert_samples: [[1; 4]; 4],
             alert_enable: 0,
+            detect: false,
             alert_fired: 0,
             refreshing: false,
             refresh_at: None,
@@ -879,6 +906,58 @@ impl Monitor {
     /// `raw` is a device code, not milliamps. The caller converts, because the
     /// scale differs between a current limit and a voltage one and this function
     /// should not have to know which.
+    /// Arm the ALERT as a plug detector on `channel` (#285 step 3).
+    ///
+    /// The poll is off by default now, and connection state was derived from it,
+    /// so plug events would simply stop being noticed. This moves the detection
+    /// into the part, where the comparison happens against every sample at 1024
+    /// SPS -- **faster than the 50 ms poll ever was**, not a degraded substitute.
+    ///
+    /// One limit armed per channel at a time, alternating with the state:
+    ///
+    ///     disconnected  ->  OC at the floor   fires when current rises  = plugged
+    ///     connected     ->  UC at the floor   fires when current falls  = unplugged
+    ///
+    /// So a port consumes only the limit for the direction it can currently move
+    /// in, and the other stays free.
+    ///
+    /// **It does take that limit.** A protection threshold set on the same
+    /// direction and channel would be overwritten, which is why this is opt-in
+    /// (`power detect on`) rather than armed at boot.
+    pub fn detect_arm(&mut self, bus: &mut Bus, channel: usize) -> Result<(), bus::Error> {
+        let connected = matches!(self.state[channel], Some(State::Connected(_)));
+        let (arm, disarm) = if connected {
+            (Limit::UnderCurrent, Limit::OverCurrent)
+        } else {
+            (Limit::OverCurrent, Limit::UnderCurrent)
+        };
+        let floor = ua_to_code(self.floor[channel] as i32);
+        self.alert_set_limit(bus, arm, channel, floor)?;
+        self.alert_arm(bus, arm, channel, true)?;
+        self.alert_arm(bus, disarm, channel, false)?;
+        Ok(())
+    }
+
+    /// Is the plug detector armed on any channel?
+    pub fn detecting(&self) -> bool {
+        self.detect
+    }
+
+    /// Turn the plug detector on or off for every channel.
+    pub fn detect_set(&mut self, bus: &mut Bus, on: bool) -> Result<(), bus::Error> {
+        self.detect = on;
+        for channel in 0..4 {
+            if on {
+                self.detect_arm(bus, channel)?;
+            } else {
+                for limit in [Limit::OverCurrent, Limit::UnderCurrent] {
+                    self.alert_arm(bus, limit, channel, false)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn alert_set_limit(
         &mut self,
         bus: &mut Bus,
@@ -1027,8 +1106,13 @@ impl Monitor {
             return;
         }
         let mut moved_any = false;
+        // Hoisted out of the match arm: the plug detector below needs to know
+        // which bits fired, and ALERT_STATUS is read-to-clear -- reading it a
+        // second time would return nothing and lose the event.
+        let mut fired_bits = 0u32;
         match self.alert_service(bus) {
             Ok(fired) => {
+                fired_bits = fired;
                 // Recorded before anything else, because this is the only read
                 // of it that will ever happen -- the register is empty now.
                 self.alert_fired |= fired;
@@ -1185,6 +1269,39 @@ impl Monitor {
         if moved_any {
             let _ = self.alert_service(bus);
         }
+
+        // Plug detection: flip the port's state and re-arm the other direction.
+        //
+        // Which limit fired IS the answer -- OC at the floor can only mean the
+        // current rose through it, UC can only mean it fell. So no sample is
+        // needed to decide, which matters because with the poll off there is no
+        // sample to consult.
+        //
+        // The reading is not known, only the crossing, so `Connected` carries the
+        // floor rather than a measurement. `power rate <ms>` is how you get a
+        // number; this says a port changed.
+        if self.detect {
+            for channel in 0..4 {
+                let plugged = fired_bits & Limit::OverCurrent.bit(channel) != 0;
+                let unplugged = fired_bits & Limit::UnderCurrent.bit(channel) != 0;
+                if !plugged && !unplugged {
+                    continue;
+                }
+                self.state[channel] = Some(if plugged {
+                    State::Connected(self.floor[channel] as i32)
+                } else {
+                    State::Disconnected
+                });
+                crate::log!(
+                    uart,
+                    "power: {} {}",
+                    PORTS[channel],
+                    if plugged { "connected" } else { "disconnected" }
+                );
+                let _ = self.detect_arm(bus, channel);
+            }
+        }
+
         crate::irq::resume_power_alert();
     }
 
@@ -1226,7 +1343,15 @@ impl Monitor {
         // catch in seconds instead of a reconfigure finding it in minutes.
         let bus = match bus {
             Some(bus) => bus,
-            None => return,
+            None => {
+                // PRIMED even with no monitor, or the tick pends this task every
+                // millisecond for ever chasing a first sample that cannot exist.
+                // Under QEMU that produced 2,060 polls with a 20 ms worst gap
+                // against a 50 ms period -- the scheduler looked broken and was
+                // doing exactly what it was told.
+                PRIMED.store(true, core::sync::atomic::Ordering::Relaxed);
+                return;
+            }
         };
 
         // The ALERT is NOT serviced here any more. It has its own task, released
@@ -1284,6 +1409,7 @@ impl Monitor {
         // about what is worth a console line; `power` asks a different question
         // and must get the answer whether or not this sample was newsworthy.
         self.sample = Some(sample);
+        PRIMED.store(true, core::sync::atomic::Ordering::Relaxed);
         let readings = sample.readings;
 
         for channel in 0..4 {
