@@ -38,8 +38,9 @@ and `rung1 = 0`, so a driver reads the same registers either way and finds out
 what it has rather than being built to know.
 """
 
-from amaranth import Module
+from amaranth import Module, Signal
 from amaranth.lib import wiring
+from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out, connect, flipped
 from amaranth_soc import csr
 
@@ -94,14 +95,19 @@ class HyperRAMClockSelect(wiring.Component):
         rungs = self._ck_rungs
         khz = [round(ck * 1000) for ck in rungs]
 
+        # `locked` is synchronised into `hr` by `HyperRAMDomains` and read here
+        # in `sync`, so it crosses a second time. Two FFs rather than a raw
+        # sample: `hr` is 60..200 MHz against a 50 MHz CPU, the two PLLs share
+        # no phase relationship, and a metastable status bit is exactly the kind
+        # of once-in-a-while wrong answer this rig cannot afford to chase.
+        locked_sync = Signal()
+        m.submodules.locked_cdc = FFSynchronizer(self.locked, locked_sync)
+
         m.d.comb += [
             self.sel.eq(self._ctrl.f.sel.data),
             self._ctrl.f.reserved.r_data.eq(0),
 
-            # `locked` arrives already synchronised into `hr` by
-            # `HyperRAMDomains`, and is read here in `sync`. A status bit read
-            # one CPU cycle late is not a hazard; a FIFO for it would be.
-            self._status.f.locked.r_data.eq(self.locked),
+            self._status.f.locked.r_data.eq(locked_sync),
             self._status.f.reserved.r_data.eq(0),
             self._status.f.rungs.r_data.eq(len(rungs)),
             self._status.f.pad.r_data.eq(0),
