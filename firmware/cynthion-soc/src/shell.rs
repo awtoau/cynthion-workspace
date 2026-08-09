@@ -7,11 +7,11 @@
 //!
 //! Moved out of `main.rs` unchanged (#296).
 //!
-//! `run` is 23 KB in one function -- the largest in the binary by an order of
-//! magnitude -- because it is 74 string comparisons in one match. Splitting
-//! dispatch per family so a command pulls in only its own code is where a
-//! `.text` win would come from, and `.text` is this design's binding constraint.
-//! That is a measurement, not a move, and is deliberately not done here.
+//! Dispatch is [`COMMANDS`], a table of fn pointers, and NOT a match. A match
+//! arm whose body is the only call site of `family::command` gets that whole
+//! function welded into `run` by LTO; nine of them were, and `run` reached
+//! 26,936 bytes -- 26% of `.text` -- with the linker's `--gc-sections` left one
+//! section to work with (#309).
 
 pub(crate) mod console;
 pub(crate) mod cpu;
@@ -400,10 +400,142 @@ pub(crate) fn shared_prefix(names: &[&'static str]) -> &'static str {
     &first[..take]
 }
 
-/// Dispatch one command line.
+/// One command: the console it arrived on, the sink, the argument, the board.
 ///
-/// `index` is which console this arrived on, needed by `load` so a transfer reads from the
-/// right receive ring.
+/// `index` is only wanted by `load`, which reads the transfer from that
+/// console's receive ring, but it is in the signature for every command because
+/// a table needs one shape.
+pub(crate) type Command = fn(usize, &mut Uart, &[u8], &mut Devices);
+
+/// Every command name and the function behind it.
+///
+/// # Why a table and not a match
+///
+/// Under LTO a match arm is a call site, and `family::command` had exactly one
+/// of them each, so the inliner welded nine whole command implementations into
+/// `run`: 26,936 bytes in one function, 26% of `.text`, and one section for
+/// `--gc-sections` to consider (#309). **A call through a fn pointer cannot be
+/// inlined through**, so each entry below keeps its own symbol and its own
+/// section.
+///
+/// It is also DATA. #303's binary front end walks this rather than
+/// reimplementing dispatch -- the drivers are the API, and this table is the
+/// list of things one front end offers over them.
+///
+/// # Aliases
+///
+/// `pac1954`/`power`, `usb3343`/`phy`, `fusb302b`/`typec` are two rows sharing a
+/// function. THE PART NUMBER IS THE COMMAND -- the datasheet is what anyone
+/// debugging has open, and `pac1954 limit` and DS20006539B use the same word for
+/// the same register. The generic spelling still dispatches, because it is in
+/// every script and issue written so far, but it is not in `HELP`, so it does
+/// not complete and is not offered.
+///
+/// # Order
+///
+/// Alphabetical by the first row of each family, which is also `HELP`'s order.
+/// The lookup is a linear scan of 24 entries at human typing speed.
+const COMMANDS: &[(&[u8], Command)] = &[
+    // Reads no bus at all, so a boardless build renders the same tree with
+    // every leaf reporting what it does not have -- which is what
+    // `scripts/soc_test.py` drives. See `src/board.rs`.
+    (b"board", |_, uart, _, dev| {
+        board::tree(uart, &dev.power, &dev.type_c)
+    }),
+    (b"bram", |_, uart, rest, _| {
+        self::memory::command(uart, crate::memory::Region::Bram, rest)
+    }),
+    (b"cpu", cpu_command),
+    (b"flash", |_, uart, rest, _| {
+        self::memory::command(uart, crate::memory::Region::Flash, rest)
+    }),
+    (b"fusb302b", typec_command),
+    (b"help", |_, uart, _, _| help(uart)),
+    (b"?", |_, uart, _, _| help(uart)),
+    (b"hr", |_, uart, rest, _| hr::command(uart, trim(rest))),
+    (b"hyperram", |_, uart, rest, _| {
+        self::memory::command(uart, crate::memory::Region::Hyperram, rest)
+    }),
+    (b"i2c", |_, uart, rest, dev| i2c::command(uart, rest, dev)),
+    (b"info", info_command),
+    (b"led", |_, uart, rest, _| led::command(uart, rest)),
+    (b"load", load_command),
+    (b"pac1954", |_, uart, rest, dev| power::command(uart, rest, dev)),
+    (b"power", |_, uart, rest, dev| power::command(uart, rest, dev)),
+    (b"reset", |_, uart, _, _| {
+        let _ = writeln!(uart, "restarting");
+        reboot();
+    }),
+    // Which dispatcher this image was built with, and what it is achieving: the
+    // #115 comparison, on the shipping firmware rather than on a synthetic
+    // workload. See `src/sched.rs`.
+    (b"rtic", |_, uart, _, _| sched::command(uart)),
+    (b"selftest", |_, uart, _, dev| {
+        selftest::command(uart, &dev.power)
+    }),
+    (b"sideband", |_, uart, rest, _| sideband::command(uart, rest)),
+    (b"time", time_command),
+    (b"typec", typec_command),
+    (b"usb", usb_command),
+    (b"usb3343", |_, uart, rest, _| phy::command(uart, trim(rest))),
+    (b"phy", |_, uart, rest, _| phy::command(uart, trim(rest))),
+    (b"vbus", |_, uart, rest, dev| vbus::command(uart, rest, dev)),
+    // NOT IN `HELP`, deliberately: it takes the same three region words
+    // `bram`/`flash`/`hyperram` already accept as `<region> bench`, and is kept
+    // because every script and issue written so far spells it this way.
+    (b"bench", |_, uart, rest, _| bench::command(uart, trim(rest))),
+];
+
+/// Every `HELP` row names a command that dispatches.
+///
+/// The two lists were independent, and drift between them is what #171 kept
+/// meeting: `vbus` and `hrtest` dispatched and were unlisted, and a listed row
+/// that does not dispatch is worse -- it is discoverable, completable, and dead.
+/// Only this direction is checked; the reverse would fail on the aliases and on
+/// `bench`, which are dispatchable on purpose and unlisted on purpose.
+const _: () = {
+    let mut i = 0;
+    while i < HELP.len() {
+        assert!(
+            dispatches(HELP[i].0),
+            "a HELP row names a command that is not in COMMANDS"
+        );
+        i += 1;
+    }
+};
+
+/// Is this `HELP` entry's first word a name in [`COMMANDS`]?
+const fn dispatches(entry: &str) -> bool {
+    let mut i = 0;
+    while i < COMMANDS.len() {
+        if heads(entry, COMMANDS[i].0) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Does `entry` begin with the whole word `name`?
+///
+/// Written without slicing because `const` evaluation is where it runs, and the
+/// word ends at a space (`hyperram sweep`) or at a comma (`help, ?`).
+const fn heads(entry: &str, name: &[u8]) -> bool {
+    let bytes = entry.as_bytes();
+    if bytes.len() < name.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < name.len() {
+        if bytes[i] != name[i] {
+            return false;
+        }
+        i += 1;
+    }
+    bytes.len() == name.len() || bytes[name.len()] == b' ' || bytes[name.len()] == b','
+}
+
+/// Dispatch one command line.
 pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
     // Split off the first word; the rest is the argument.
     let (cmd, rest) = match line.iter().position(|&b| b == b' ') {
@@ -411,171 +543,145 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         None => (line, &line[..0]),
     };
 
-    match cmd {
-        b"help" | b"?" => help(uart),
-        // Which dispatcher this image was built with, and what it is achieving:
-        // the #115 comparison, on the shipping firmware rather than on a
-        // synthetic workload. See `src/sched.rs`.
-        b"rtic" => sched::command(uart),
-        // NO RTC ON THIS BOARD. `time set <epoch>` is a person telling it, and a
-        // reset loses it -- which is why the prompt falls back to the uptime
-        // stamp rather than showing a date it cannot support.
-        b"time" if trim(rest).starts_with(b"set") => {
-            match parse_decimal(trim(&trim(rest)[b"set".len()..])) {
-                Some(epoch) => {
-                    log::set_wall(epoch);
-                    let _ = writeln!(
-                        uart,
-                        "  wall    {} UTC  from the host; a reset loses it",
-                        log::Clock(epoch)
-                    );
-                }
-                None => {
-                    let _ = writeln!(uart, "usage: time set <unix seconds>");
-                }
-            }
+    for &(name, command) in COMMANDS {
+        if name == cmd {
+            return command(index, uart, rest, devices);
         }
-        b"time" => {
-            // The tick, and the evidence that it is a tick rather than a
-            // counter someone reads.
-            //
-            // `uptime` comes from the tick handler's own count; `counter` comes
-            // from `rdtime`, which nothing periodic touches. **The two are
-            // independent measurements of the same interval**, so agreement is
-            // the whole assertion: a tick that stopped, or that is firing at
-            // the wrong rate, shows up as the two diverging, and nothing else
-            // in this shell can distinguish those from a slow clock.
-            //
-            // `cost` is the worst time the handler has ever spent, `late` the
-            // worst gap between a deadline and the handler starting, both in
-            // counter ticks and both since boot. See `src/timer.rs`; `late`
-            // growing without bound is the failure worth watching for, because
-            // it means something is holding interrupts off for longer than a
-            // period.
-            let (ticks, cost, late) = timer::stats();
-
-            // The whole 64-bit counter, in hex, and NOT converted to
-            // milliseconds here.
-            //
-            // Converting would be a 64-bit divide by a value only known at run
-            // time, and on rv32 that is a call to `__udivdi3` -- 912 bytes of
-            // compiler-builtins, measured, which is the difference between this
-            // firmware fitting in its 32 KiB half of block RAM and not. The
-            // reader that needs milliseconds is `scripts/soc_test.py`, which has
-            // `at {} Hz` on the same line and a language where the division is
-            // free.
-            //
-            // The low word alone would have divided in one instruction and
-            // wrapped every 71.6 s at 60 MHz (see `src/clock.rs`), which is
-            // shorter than the intervals this line exists to be compared over.
-            let mtime = timer::mtime();
-            let _ = writeln!(
-                uart,
-                "  uptime  {}  ticks {}  period {} ms  {}",
-                log::now(),
-                ticks,
-                timer::PERIOD_MS,
-                if timer::running() {
-                    "running"
-                } else {
-                    "STOPPED"
-                }
-            );
-            let _ = writeln!(
-                uart,
-                "  clint   @{:08x}  mtime {:08x}:{:08x} at {} Hz",
-                target::CLINT_BASE,
-                (mtime >> 32) as u32,
-                mtime as u32,
-                target::TIME_HZ
-            );
-            let _ = writeln!(
-                uart,
-                "  cost    worst {} ticks  late worst {} ticks",
-                cost, late
-            );
-        }
-        b"cpu" if trim(rest) == b"log" || trim(rest).starts_with(b"log ") => {
-            let arg = trim(&trim(rest)[b"log".len()..]);
-            log_command(index, uart, arg, devices)
-        }
-        b"cpu" => cpu::command(uart, trim(rest)),
-        #[cfg(feature = "workload")]
-        b"usb" => workload::command(uart, trim(rest)),
-        b"bench" => bench::command(uart, trim(rest)),
-        b"info" => match trim(rest) {
-            b"map" => hardware::map_command(uart),
-            b"pmod" => hardware::pmod_command(uart),
-            b"ports" => ports_command(uart),
-            b"button" => led::button_command(uart),
-            _ => info::command(uart),
-        },
-        b"selftest" => selftest::command(uart, &devices.power),
-        // Registered on every target, unlike its neighbours below: it reads no
-        // bus at all, so a boardless build renders the same tree with every leaf
-        // reporting what it does not have -- which is what `scripts/soc_test.py`
-        // drives. See `src/board.rs`.
-        b"board" => board::tree(uart, &devices.power, &devices.type_c),
-        b"led" => led::command(uart, rest),
-        b"i2c" => i2c::command(uart, rest, devices),
-        // THE PART NUMBER IS THE COMMAND. `power`, `phy` and `typec` named a
-        // function; the board has one specific part doing each, and the
-        // datasheet is what anyone debugging it has open. `pac1954 limit` and
-        // DS20006539B use the same word for the same register.
-        //
-        // The generic spelling still dispatches -- it is in every script and
-        // every issue written so far -- but it is not in `HELP`, so it does not
-        // complete and is not offered. One name to learn, one name that works.
-        b"pac1954" | b"power" => power::command(uart, rest, devices),
-        b"usb" => usb::command(uart, rest, devices),
-        b"usb3343" | b"phy" => phy::command(uart, trim(rest)),
-        // Split here rather than inside the command, because "there is no board"
-        // is a fact about this build and not about the Type-C controllers. The
-        // command then takes a `&mut Bus` it can use unconditionally.
-        b"fusb302b" | b"typec" => match devices.bus.as_mut() {
-            Some(bus) => self::typec::command(uart, rest, &mut devices.type_c, bus),
-            None => board_absent(uart),
-        },
-        b"vbus" => vbus::command(uart, rest, devices),
-        // One record per payload tag, so the drain-time decoding of every tag is
-        // exercised on the shipping build. A guard arm rather than a branch
-        // inside the one below, so the two cases do not share an indent: this
-        // file is merged from several branches at once.
-        //
-        // The codes and the sample values live in `src/events.rs`, next to the
-        // renderer they test; this arm only names the command.
-        b"sideband" => sideband::command(uart, rest),
-        // The bring-up smoke test: does this CPU compute, can it reach flash,
-        // does the clock formatter hold at its boundaries. Four lines, each `ok`
-        // or `BAD`, against values that cannot be produced by accident.
-        //
-        // Distinct from `selftest`, which asks the PERIPHERALS whether they are
-        // healthy. This asks whether the core and the flash window work at all,
-        // and it is the thing to run first when a board is behaving strangely --
-        // every other command's output is only worth reading if this passes.
-        b"load" => match parse_hex(rest) {
-            Some(len) => staging::load(index, uart, len),
-            None => {
-                let _ = writeln!(uart, "usage: load <hex byte count>");
-            }
-        },
-        b"hr" => hr::command(uart, trim(rest)),
-        b"reset" => {
-            let _ = writeln!(uart, "restarting");
-            reboot();
-        }
-        // `bram`, `flash` and `hyperram` are dispatched by asking the module that
-        // owns the region names, rather than by three arms here. Naming them in
-        // this match as well would make it a second list of the same memories, and
-        // `src/bench.rs` -- which takes the same three words -- would then have a
-        // third. One `parse` and this arm is the whole vocabulary.
-        _ => match crate::memory::Region::parse(cmd) {
-            Some(region) => self::memory::command(uart, region, rest),
-            None => {
-                let _ = writeln!(uart, "unknown command; try `help`");
-            }
-        },
     }
+    let _ = writeln!(uart, "unknown command; try `help`");
+}
+
+/// `usb` -- the ports, or the #115 synthetic load when that feature is on.
+///
+/// Two functions and not a branch, because the workload build is meant to
+/// compile none of the shell's USB view and vice versa.
+#[cfg(not(feature = "workload"))]
+fn usb_command(_: usize, uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    usb::command(uart, rest, devices)
+}
+
+#[cfg(feature = "workload")]
+fn usb_command(_: usize, uart: &mut Uart, rest: &[u8], _: &mut Devices) {
+    crate::workload::command(uart, trim(rest))
+}
+
+/// `fusb302b` / `typec` -- the Type-C controllers.
+///
+/// The "there is no board" split is here rather than inside the command, because
+/// it is a fact about this build and not about the controllers. The command then
+/// takes a `&mut Bus` it can use unconditionally.
+fn typec_command(_: usize, uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    match devices.bus.as_mut() {
+        Some(bus) => self::typec::command(uart, rest, &mut devices.type_c, bus),
+        None => board_absent(uart),
+    }
+}
+
+/// `cpu` -- the core, or its deferred event ring.
+fn cpu_command(index: usize, uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    let rest = trim(rest);
+    if rest == b"log" || rest.starts_with(b"log ") {
+        return log_command(index, uart, trim(&rest[b"log".len()..]), devices);
+    }
+    cpu::command(uart, rest)
+}
+
+/// `info` -- this build and this board, or one window onto it.
+fn info_command(_: usize, uart: &mut Uart, rest: &[u8], _: &mut Devices) {
+    match trim(rest) {
+        b"map" => hardware::map_command(uart),
+        b"pmod" => hardware::pmod_command(uart),
+        b"ports" => ports_command(uart),
+        b"button" => led::button_command(uart),
+        _ => info::command(uart),
+    }
+}
+
+/// `load <hex>` -- stage that many bytes from this console, then boot them.
+fn load_command(index: usize, uart: &mut Uart, rest: &[u8], _: &mut Devices) {
+    match parse_hex(rest) {
+        Some(len) => staging::load(index, uart, len),
+        None => {
+            let _ = writeln!(uart, "usage: load <hex byte count>");
+        }
+    }
+}
+
+/// `time` -- uptime and the tick's evidence, or `time set <epoch>`.
+///
+/// NO RTC ON THIS BOARD. `time set` is a person telling it, and a reset loses it
+/// -- which is why the prompt falls back to the uptime stamp rather than showing
+/// a date it cannot support.
+fn time_command(_: usize, uart: &mut Uart, rest: &[u8], _: &mut Devices) {
+    let rest = trim(rest);
+    if rest.starts_with(b"set") {
+        match parse_decimal(trim(&rest[b"set".len()..])) {
+            Some(epoch) => {
+                log::set_wall(epoch);
+                let _ = writeln!(
+                    uart,
+                    "  wall    {} UTC  from the host; a reset loses it",
+                    log::Clock(epoch)
+                );
+            }
+            None => {
+                let _ = writeln!(uart, "usage: time set <unix seconds>");
+            }
+        }
+        return;
+    }
+
+    // The tick, and the evidence that it is a tick rather than a counter
+    // someone reads.
+    //
+    // `uptime` comes from the tick handler's own count; `mtime` comes from
+    // `rdtime`, which nothing periodic touches. **The two are independent
+    // measurements of the same interval**, so agreement is the whole assertion:
+    // a tick that stopped, or that is firing at the wrong rate, shows up as the
+    // two diverging, and nothing else in this shell can distinguish those from a
+    // slow clock.
+    //
+    // `cost` is the worst time the handler has ever spent, `late` the worst gap
+    // between a deadline and the handler starting, both in counter ticks and
+    // both since boot. See `src/timer.rs`; `late` growing without bound is the
+    // failure worth watching for, because it means something is holding
+    // interrupts off for longer than a period.
+    let (ticks, cost, late) = timer::stats();
+
+    // The whole 64-bit counter, in hex, and NOT converted to milliseconds here.
+    //
+    // Converting would be a 64-bit divide by a value only known at run time, and
+    // on rv32 that is a call to `__udivdi3` -- 912 bytes of compiler-builtins,
+    // measured, which is the difference between this firmware fitting in its
+    // 32 KiB half of block RAM and not. The reader that needs milliseconds is
+    // `scripts/soc_test.py`, which has `at {} Hz` on the same line and a
+    // language where the division is free.
+    //
+    // The low word alone would have divided in one instruction and wrapped every
+    // 71.6 s at 60 MHz (see `src/clock.rs`), which is shorter than the intervals
+    // this line exists to be compared over.
+    let mtime = timer::mtime();
+    let _ = writeln!(
+        uart,
+        "  uptime  {}  ticks {}  period {} ms  {}",
+        log::now(),
+        ticks,
+        timer::PERIOD_MS,
+        if timer::running() { "running" } else { "STOPPED" }
+    );
+    let _ = writeln!(
+        uart,
+        "  clint   @{:08x}  mtime {:08x}:{:08x} at {} Hz",
+        target::CLINT_BASE,
+        (mtime >> 32) as u32,
+        mtime as u32,
+        target::TIME_HZ
+    );
+    let _ = writeln!(
+        uart,
+        "  cost    worst {} ticks  late worst {} ticks",
+        cost, late
+    );
 }
 
 
