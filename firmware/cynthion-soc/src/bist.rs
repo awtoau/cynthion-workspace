@@ -126,6 +126,14 @@ pub struct Axes {
     pub single_ended_clock: bool,
     /// `READCLKSEL` 0..=7, which shifts the DQSBUFM read pulse by T/4 a step.
     pub readclksel: u8,
+    /// `CR0[7:4]`, the part's initial latency code, and `CR0[3]` fixed/variable.
+    ///
+    /// **The axis most likely to explain a one-word slip.** A read that starts
+    /// one clock early or late lands one device word off, and no capture phase
+    /// can correct that -- it is not a timing margin, it is an off-by-one. Left
+    /// at the power-on 0010b/fixed for every measurement so far.
+    pub latency: u8,
+    pub fixed_latency: bool,
 }
 
 /// What one cell produced, with the evidence that it means anything.
@@ -226,8 +234,14 @@ impl Bist {
         // configuration. The gateware sweep once left it clear and swept a
         // drive axis that therefore did nothing -- eight rows that should have
         // been identical, and were not.
-        self.write(reg::DEVICE_CR0,
-                   (1 << 16) | 0x8f2f | ((axes.drive as u32 & 0x7) << 12));
+        // CR0, built from the axes rather than from a magic constant. 0x8F2F was
+        // the power-on value with only the drive field replaced, which silently
+        // pinned latency to 0010b/fixed for every reading taken so far.
+        let cr0 = (0x8f2f & !0x70f0u32)
+            | ((axes.drive as u32 & 0x7) << 12)
+            | ((axes.latency as u32 & 0xf) << 4)
+            | (if axes.fixed_latency { 1 << 3 } else { 0 });
+        self.write(reg::DEVICE_CR0, (1 << 16) | cr0);
         self.write(reg::DEVICE_CR1,
                    (1 << 16) | if axes.single_ended_clock { 0xffc1 } else { 0xff81 });
     }
@@ -466,7 +480,8 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
 
     let (mut passed, mut failed, mut nothing) = (0u32, 0u32, 0u32);
     for readclksel in 0u8..4 {
-        let axes = Axes { drive: 3, single_ended_clock: false, readclksel };
+        let axes = Axes { drive: 3, single_ended_clock: false, readclksel,
+                                latency: 2, fixed_latency: true };
         bist.configure(&axes);
         let (cell, st, poll) = bist.cell(axes, passes);
         match cell.verdict() {
@@ -487,6 +502,37 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
     });
 }
 
+/// Sweep the part's LATENCY, which nothing has ever varied.
+///
+/// `CR0[7:4]` is the initial latency code and `CR0[3]` selects fixed or
+/// variable. Every reading this project has taken used the power-on 0010b with
+/// fixed latency, because the CR0 write hardcoded 0x8F2F and replaced only the
+/// drive field.
+///
+/// A read that starts one clock early or late lands ONE DEVICE WORD off, which
+/// is what the compare pairs have been showing -- the same value rotated by 16
+/// bits. That is not a timing margin and no capture phase corrects it, which is
+/// why a 128-cell sweep of phase, drive and clock mode failed in every cell.
+pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
+    if !gate(uart, bist) {
+        return;
+    }
+    let _ = writeln!(uart, "  CR0[7:4] latency code x fixed/variable, at drive 3 sel 0");
+    let _ = writeln!(uart, "lat  mode  {}", &HEADING[13..]);
+    for latency in 0u8..16 {
+        for fixed_latency in [true, false] {
+            let axes = Axes { drive: 3, single_ended_clock: false, readclksel: 0,
+                              latency, fixed_latency };
+            bist.configure(&axes);
+            let (cell, st, poll) = bist.cell(axes, passes);
+            let _ = write!(uart, "{:3}  {:4}  ", latency,
+                           if fixed_latency { "fix" } else { "var" });
+            report(uart, bist, &cell, st, poll, false);
+        }
+    }
+    let _ = writeln!(uart, "  latency sweep complete");
+}
+
 /// Sweep drive x clock x readclksel and print a row per cell.
 ///
 /// Printed as it goes rather than collected: the gateware sweep died at cell 0
@@ -502,7 +548,7 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
     for drive in 0u8..8 {
         for single_ended_clock in [false, true] {
             for readclksel in 0u8..8 {
-                let axes = Axes { drive, single_ended_clock, readclksel };
+                let axes = Axes { drive, single_ended_clock, readclksel, latency: 2, fixed_latency: true };
                 bist.configure(&axes);
                 // BEFORE the pass, so a cell that never returns is named by the
                 // last line printed rather than leaving a blank terminal.
@@ -543,7 +589,8 @@ mod tests {
     use super::*;
 
     fn axes() -> Axes {
-        Axes { drive: 0, single_ended_clock: false, readclksel: 0 }
+        Axes { drive: 0, single_ended_clock: false, readclksel: 0,
+               latency: 2, fixed_latency: true }
     }
 
     fn cell(errors: u32, words: u32, control_errors: u32, control_words: u32) -> Cell {

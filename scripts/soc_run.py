@@ -167,11 +167,34 @@ def firmware_in_bitstream(build_dir, emit):
 # what is elaborated without changing a byte of source, so they are part of the
 # bitstream's identity -- see `gateware_digest`. Anything added to `top.py` as an
 # `os.environ.get` that alters the design belongs here.
+# Each entry is (name, default), and the digest hashes the RESOLVED value.
+#
+# Hashing the raw environment string was wrong: unset and set-to-the-default
+# produce identical gateware but different digests, so an ordinary run after a
+# sweep resynthesised for no reason -- and, worse, refused a `--firmware-only`
+# load as STALE when the bitstream was in fact correct.
+#
+# The defaults must match `top.py`'s. They are duplicated here rather than
+# imported because importing `top` pulls in the whole Amaranth elaboration just
+# to read three strings.
 VARIANT_ENV = (
-    "CYNTHION_HYPERRAM_BIST",
-    "CYNTHION_HYPERRAM_CK_MHZ",
-    "CYNTHION_HYPERRAM_BIST_DQS",
+    ("CYNTHION_HYPERRAM_BIST", ""),
+    ("CYNTHION_HYPERRAM_CK_MHZ", "100"),
+    ("CYNTHION_HYPERRAM_BIST_DQS", "1"),
 )
+
+
+def variant_settings():
+    """The variant selection as `top.py` will resolve it, normalised."""
+    out = []
+    for name, default in VARIANT_ENV:
+        value = os.environ.get(name, default) or default
+        # `top.py` treats "" and "0" alike for the two flags, so normalise them
+        # to one spelling; otherwise `=0` and unset hash differently.
+        if name != "CYNTHION_HYPERRAM_CK_MHZ" and value in ("", "0"):
+            value = "0"
+        out.append(f"{name}={value}")
+    return out
 
 
 def gateware_digest():
@@ -213,8 +236,8 @@ def gateware_digest():
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True)
     digest.update(head.stdout.strip().encode())
-    for name in VARIANT_ENV:
-        digest.update(f"{name}={os.environ.get(name, '')}".encode())
+    for setting in variant_settings():
+        digest.update(setting.encode())
     return digest.hexdigest()[:16]
 
 

@@ -34,6 +34,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     match word {
         b"" | b"status" => engine.describe(uart),
         b"smoke" => bist::smoke(uart, &engine, passes(args)),
+        b"latency" => bist::latency(uart, &engine, passes(args)),
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
         b"cell" => match axes(args) {
@@ -63,6 +64,9 @@ fn axes(args: &[u8]) -> Option<Axes> {
     let drive = parse_decimal(words.next()?)?;
     let clock = words.next()?;
     let readclksel = parse_decimal(words.next()?)?;
+    // Latency is optional: omitted means the power-on 0010b/fixed, which is what
+    // every reading before this used.
+    let latency = words.next().and_then(parse_decimal).unwrap_or(2);
     if drive > 7 || readclksel > 7 {
         return None;
     }
@@ -75,5 +79,7 @@ fn axes(args: &[u8]) -> Option<Axes> {
         drive: drive as u8,
         single_ended_clock,
         readclksel: readclksel as u8,
+        latency: latency as u8,
+        fixed_latency: true,
     })
 }
