@@ -210,6 +210,13 @@ pub fn report_errors(uart: &mut Uart) {
 /// may materialise one wherever it needs to speak without threading a handle
 /// through every function. That is what lets the panic handler print without
 /// borrowing the console that panicked.
+/// The 16550's FIFO depth, in bytes.
+///
+/// 16 is the 16550A's, and it is what "write a whole FIFO without looking again"
+/// already assumes -- named here so `info ports` reports the number the driver
+/// acts on rather than one written down twice.
+pub const FIFO_DEPTH: usize = 16;
+
 #[derive(Clone, Copy)]
 pub struct Uart {
     base: usize,

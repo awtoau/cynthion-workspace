@@ -766,9 +766,9 @@ def main():
         # would still name the command and tell the reader nothing.
         listing = [b"help, ?", b"check", b"info", b"selftest", b"ports",
                    b"irq", b"time", b"board", b"led", b"load", b"reset",
-                   b"rtic", b"map", b"pmod", b"sideband", b"typec",                    b"bram [read|bench]", b"cpu [stats|check|irq]", b"phy [reset]",
+                   b"rtic", b"map", b"pmod", b"sideband", b"typec",                    b"bram [read|bench]", b"cpu [stats|check|irq|log]", b"phy [status|reset]",
                    b"flash [id|read|bench]", b"i2c [scan|soak]",
-                   b"power [floor|alert|rate|detect|limit|samples|bracket]",
+                   b"power [status|floor|alert|rate|detect|limit|samples|bracket]",
                    b"hyperram [status|read|sel|sweep|test|cross|ramp|bench|id]",
                    b"vbus [off|input|control|both|charge]"]
         command("help", listing, "`help` lists every command")
@@ -1100,7 +1100,7 @@ def main():
         # Waiting for the LAST record is what makes the read deterministic:
         # `log test 9` cannot arrive before the nine before it.
         mark = len(session.snapshot())
-        command("log 10", [b"log pushed 10 of 10"],
+        command("cpu log 10", [b"log pushed 10 of 10"],
                 "ten records fit in the deferred log")
         drained = expect_line(session, b"log test 9", REPLY_S, mark)
         check("the main loop drains the log and formats it",
@@ -1143,7 +1143,7 @@ def main():
               f"`events::drain`\n"
               f"rather than stored by `events::push`.")
 
-        command("log 10", [b"log pushed 10 of 10"],
+        command("cpu log 10", [b"log pushed 10 of 10"],
                 "and ten more fit after the ring has wrapped")
 
         # Drop counting: 20 at once cannot fit, and the ones that do not must
@@ -1199,7 +1199,7 @@ def main():
                   "non-zero cumulative drop count.\n"
                   f"received: {show(reply) or '(nothing)'}")
         else:
-            command("log 20", [b"log pushed 15 of 20", b"dropped 5"],
+            command("cpu log 20", [b"log pushed 15 of 20", b"dropped 5"],
                     "an overfull log drops the excess and counts it")
         check("the drop is reported on the console, not only on request",
               session.expect(b"event(s) LOST", REPLY_S, mark) is not None,
@@ -1235,7 +1235,7 @@ def main():
         # reply: it is the LAST of the nine pushed, and the reply is printed
         # before the main loop drains any of them, so its arrival is what
         # says all nine were formatted.
-        reply = command("log tags",
+        reply = command("cpu log tags",
                         [b"log pushed 10 tag samples", b"declared 16 bits"],
                         "one record per payload tag fits and is drained")
 
@@ -1493,7 +1493,7 @@ def main():
         # is INDEPENDENT of the tick. So the interval is real, it is measured
         # by something the tick does not drive, and the harness spends no
         # wall-clock budget on it beyond the command's own round trip.
-        command("log 20", [b"log pushed 15 of 20"],
+        command("cpu log 20", [b"log pushed 15 of 20"],
                 "an overfull log drops the excess and counts it, again")
         second, reply = tick_state("`time` still answers after the interval")
 
@@ -1618,7 +1618,7 @@ def main():
         # idle shell. The same command the tick's drift assertion uses, for
         # the same reason: the interval is real and the harness spends no
         # wall-clock budget on it.
-        command("log 20", [b"log pushed 15 of 20"],
+        command("cpu log 20", [b"log pushed 15 of 20"],
                 "an overfull log drops the excess and counts it, once more")
         stats, reply = stats_state("`stats` answers again after a busy turn")
 

@@ -29,6 +29,9 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     };
     let phy = ulpi::Ulpi::new(board.ulpi);
 
+    if rest.is_empty() {
+        return crate::shell::list_family(uart, "phy");
+    }
     if rest == b"reset" {
         return board_phy_reset(uart, &phy);
     }

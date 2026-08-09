@@ -172,6 +172,15 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         return board_absent(uart);
     }
 
+    // `power` bare lists the family; `power status` is the reading. The table
+    // used to be what a bare `power` printed, which made it the only family
+    // whose bare form did work rather than describing itself.
+    if rest.is_empty() {
+        return crate::shell::list_family(uart, "power");
+    }
+    // `status` falls through to the table below, which is where it already
+    // lived -- it was simply reached by typing nothing.
+    let rest: &[u8] = if rest == b"status" { b"" } else { rest };
     if rest.starts_with(b"detect") {
         return detect_command(uart, trim(&rest[b"detect".len()..]), devices);
     }

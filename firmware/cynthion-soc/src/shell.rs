@@ -64,14 +64,11 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("bram", "the 64 KiB block RAM at address zero"),
     ("bram read <hex>", "one word of block RAM"),
     ("bram bench", "time a walk over block RAM"),
-    (
-        "check",
-        "smoke test: CPU add/multiply, flash reads, time format",
-    ),
     ("cpu", "the core: what it is doing and whether it still computes"),
     ("cpu stats", "cycles, instructions, busy fraction"),
     ("cpu check", "smoke test: add/multiply, flash reads, time format"),
     ("cpu irq", "interrupt counts, per source"),
+    ("cpu log [n|tags]", "the deferred event ring the handlers push to"),
     ("flash", "the memory-mapped W25Q32 config flash"),
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
@@ -98,13 +95,14 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("info", "image, memory, boot, cpu, gateware"),
     ("info map", "every peripheral window, from the generated map"),
     ("info pmod", "connector pins: ball, resource, free or claimed"),
+    ("info ports", "the consoles: type, FIFO depth, and which answer"), 
     ("led [n]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
-    ("log [n|tags]", "the deferred event log"),
     ("phy", "the USB PHYs"),
+    ("phy status", "identity, line state and the data-line walk"),
     ("phy reset", "pulse TARGET's RESETB, and prove it reached"),
-    ("ports", "which UARTs answer"),
     ("power", "the four PAC1954 channels"),
+    ("power status", "the reading, the limits and the floors"),
     ("power floor <port> <mA>", "the current below which a port reads absent"),
     ("power alert", "the limit ALERTs: armed, routed, fired"),
     ("power rate [ms|off]", "how often the rails are sampled"),
@@ -273,23 +271,6 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
 
     match cmd {
         b"help" | b"?" => help(uart),
-        b"ports" => {
-            // Answers "is the second UART actually there" without a bitstream rebuild.
-            // SCR is eight bits of scratch that do nothing else, so writing a pattern
-            // and reading it back distinguishes a peripheral that exists from an address
-            // that decodes to nothing -- which on this bus returns zeros rather than
-            // faulting, and so is otherwise invisible.
-            for (index, &base) in target::UART_BASES.iter().enumerate() {
-                let present = scratch_responds(base);
-                let _ = writeln!(
-                    uart,
-                    "  {} {:08x} {}",
-                    index,
-                    base,
-                    if present { "ok" } else { "NO RESPONSE" }
-                );
-            }
-        }
         // Which dispatcher this image was built with, and what it is achieving:
         // the #115 comparison, on the shipping firmware rather than on a
         // synthetic workload. See `src/sched.rs`.
@@ -358,6 +339,10 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // command family here now does: the thing being asked about is named
         // first, so `flash read`, `hyperram read` and `cpu stats` all read the
         // same way. A bare `stats` did not say what it was counting.
+        b"cpu" if trim(rest) == b"log" || trim(rest).starts_with(b"log ") => {
+            let arg = trim(&trim(rest)[b"log".len()..]);
+            log_command(index, uart, arg, devices)
+        }
         b"cpu" => cpu::command(uart, trim(rest)),
         #[cfg(feature = "workload")]
         b"usb" => workload::command(uart, trim(rest)),
@@ -365,6 +350,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         b"info" => match trim(rest) {
             b"map" => hardware::map_command(uart),
             b"pmod" => hardware::pmod_command(uart),
+            b"ports" => ports_command(uart),
             _ => info::command(uart),
         },
         b"selftest" => selftest::command(uart, &devices.power),
@@ -392,7 +378,78 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         //
         // The codes and the sample values live in `src/events.rs`, next to the
         // renderer they test; this arm only names the command.
-        b"log" if rest == b"tags" => {
+        b"sideband" => sideband::command(uart, rest),
+        // The bring-up smoke test: does this CPU compute, can it reach flash,
+        // does the clock formatter hold at its boundaries. Four lines, each `ok`
+        // or `BAD`, against values that cannot be produced by accident.
+        //
+        // Distinct from `selftest`, which asks the PERIPHERALS whether they are
+        // healthy. This asks whether the core and the flash window work at all,
+        // and it is the thing to run first when a board is behaving strangely --
+        // every other command's output is only worth reading if this passes.
+        b"load" => match parse_hex(rest) {
+            Some(len) => staging::load(index, uart, len),
+            None => {
+                let _ = writeln!(uart, "usage: load <hex byte count>");
+            }
+        },
+        b"hr" => hr::command(uart, trim(rest)),
+        b"reset" => {
+            let _ = writeln!(uart, "restarting");
+            reboot();
+        }
+        // `bram`, `flash` and `hyperram` are dispatched by asking the module that
+        // owns the region names, rather than by three arms here. Naming them in
+        // this match as well would make it a second list of the same memories, and
+        // `src/bench.rs` -- which takes the same three words -- would then have a
+        // third. One `parse` and this arm is the whole vocabulary.
+        _ => match crate::memory::Region::parse(cmd) {
+            Some(region) => self::memory::command(uart, region, rest),
+            None => {
+                let _ = writeln!(uart, "unknown command; try `help`");
+            }
+        },
+    }
+}
+
+
+/// `info ports` -- what the consoles ARE, not merely whether they answer.
+///
+/// The type and the FIFO depth are DERIVED, not typed in here. `IIR` bits 7:6
+/// report whether the FIFOs are enabled and usable, which is what distinguishes
+/// a 16550A from a 16550 whose FIFO was broken and from a plain 16450 with none
+/// -- the same probe Linux's `autoconfig` uses. `scratch_responds` already
+/// answers "is anything there"; this answers "what is it".
+fn ports_command(uart: &mut Uart) {
+    let _ = writeln!(
+        uart,
+        "  {} console(s), {} bytes of FIFO each when enabled",
+        target::UART_BASES.len(),
+        crate::uart::FIFO_DEPTH
+    );
+
+            // Answers "is the second UART actually there" without a bitstream rebuild.
+            // SCR is eight bits of scratch that do nothing else, so writing a pattern
+            // and reading it back distinguishes a peripheral that exists from an address
+            // that decodes to nothing -- which on this bus returns zeros rather than
+            // faulting, and so is otherwise invisible.
+            for (index, &base) in target::UART_BASES.iter().enumerate() {
+                let present = scratch_responds(base);
+                let _ = writeln!(
+                    uart,
+                    "  {} {:08x} {}",
+                    index,
+                    base,
+                    if present { "ok" } else { "NO RESPONSE" }
+                );
+            }
+        }
+
+/// `cpu log [n|tags]` -- the deferred event ring the interrupt handlers push to.
+fn log_command(index: usize, uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    let _ = (index, devices);
+    if rest == b"tags" {
+
             let pushed = events::push_tag_samples();
             let _ = writeln!(
                 uart,
@@ -401,8 +458,9 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 events::waiting(),
                 events::dropped()
             );
-        }
-        b"log" => {
+                return;
+    }
+
             // Pushes through the SAME `events::push` an interrupt handler uses,
             // from normal context, which is exactly what makes it a test of the
             // ring rather than of a copy of it: `push` clears `mstatus.MIE` for
@@ -444,37 +502,22 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 events::dropped()
             );
         }
-        b"sideband" => sideband::command(uart, rest),
-        // The bring-up smoke test: does this CPU compute, can it reach flash,
-        // does the clock formatter hold at its boundaries. Four lines, each `ok`
-        // or `BAD`, against values that cannot be produced by accident.
-        //
-        // Distinct from `selftest`, which asks the PERIPHERALS whether they are
-        // healthy. This asks whether the core and the flash window work at all,
-        // and it is the thing to run first when a board is behaving strangely --
-        // every other command's output is only worth reading if this passes.
-        b"load" => match parse_hex(rest) {
-            Some(len) => staging::load(index, uart, len),
-            None => {
-                let _ = writeln!(uart, "usage: load <hex byte count>");
-            }
-        },
-        b"hr" => hr::command(uart, trim(rest)),
-        b"reset" => {
-            let _ = writeln!(uart, "restarting");
-            reboot();
+
+/// Print every `HELP` row in a family, for a bare command that has subcommands.
+///
+/// The same rows `<name>` + TAB shows. A bare command that does nothing but
+/// describe itself is better than one that guesses which subcommand was meant.
+pub(crate) fn list_family(uart: &mut Uart, name: &str) {
+    for (entry, summary) in HELP {
+        if first_word(entry) != name {
+            continue;
         }
-        // `bram`, `flash` and `hyperram` are dispatched by asking the module that
-        // owns the region names, rather than by three arms here. Naming them in
-        // this match as well would make it a second list of the same memories, and
-        // `src/bench.rs` -- which takes the same three words -- would then have a
-        // third. One `parse` and this arm is the whole vocabulary.
-        _ => match crate::memory::Region::parse(cmd) {
-            Some(region) => self::memory::command(uart, region, rest),
-            None => {
-                let _ = writeln!(uart, "unknown command; try `help`");
-            }
-        },
+        let _ = uart.write_str("  ");
+        let _ = uart.write_str(entry);
+        for _ in entry.len()..HELP_WIDTH {
+            let _ = uart.write_str(" ");
+        }
+        let _ = uart.write_str(summary);
+        let _ = uart.write_str("\n");
     }
 }
-
