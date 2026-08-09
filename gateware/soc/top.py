@@ -1915,7 +1915,7 @@ def main():
     # packaged platform has no such dependency.
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
-    build_dir = ROOT / "tmp" / "vexii_hello" / "build"
+    build_dir = ROOT / "tmp" / "awto_soc" / "build"
 
     # No `**ecppack_opts()` here, and it was tried: `CynthionPlatformRev1D4`
     # passes its own `ecppack_opts` in `toolchain_prepare`

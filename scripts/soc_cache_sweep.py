@@ -74,7 +74,7 @@ RESULTS = ROOT / "tmp" / "soc_cache_sweep.json"
 
 # The stamp `soc_run` uses to decide synthesis can be skipped. Deleted before
 # every build here -- see `build_once`, and #287 for what happened without it.
-DIGEST = ROOT / "tmp" / "vexii_hello" / "build" / "gateware-digest.txt"
+DIGEST = ROOT / "tmp" / "awto_soc" / "build" / "gateware-digest.txt"
 
 # sets x ways. 8 KiB is the geometry on `main`; the others hold the size roughly
 # constant and move the associativity, which is the comparison that matters.

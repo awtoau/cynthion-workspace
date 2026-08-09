@@ -635,7 +635,7 @@ host core does not touch it.
 
 ### 12.2 Does it fit
 
-Current SoC, `tmp/vexii_hello/build/top.tim` (2026-08-03T00:25, LFE5U-12F,
+Current SoC, `tmp/awto_soc/build/top.tim` (2026-08-03T00:25, LFE5U-12F,
 CABGA256, speed 8):
 
 | | now | + SIE | + SIE and enumerator |

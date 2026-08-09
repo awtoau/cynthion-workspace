@@ -87,7 +87,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "tmp" / "vexii_hello" / "build"
+BUILD = ROOT / "tmp" / "awto_soc" / "build"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))

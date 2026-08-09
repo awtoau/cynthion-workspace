@@ -50,7 +50,7 @@ def emit_from_rtlil(il_path, outdir, yosys="yosys", extra_v=()):
     struct = outdir / "structural.v"
 
     # Some designs instantiate a pre-generated core as a separate Verilog file
-    # rather than elaborating it -- vexii_hello does this with VexiiRiscv.v,
+    # rather than elaborating it -- the SoC does this with VexiiRiscv.v,
     # and its Amaranth-generated top.ys reads that file before the RTLIL.
     # Without it, synthesis stops with
     #   ERROR: Module `\VexiiRiscv' ... is not part of the design.

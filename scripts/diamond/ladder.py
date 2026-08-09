@@ -80,7 +80,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "diamond_riscv_ladder.log"
 RESULTS = ROOT / "tmp" / "diamond_riscv_ladder.json"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
-BUILD = ROOT / "tmp" / "vexii_hello" / "build"
+BUILD = ROOT / "tmp" / "awto_soc" / "build"
 WORK = ROOT / "tmp" / "diamond"
 
 sys.path.insert(0, str(ROOT / "scripts"))

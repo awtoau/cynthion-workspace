@@ -425,7 +425,7 @@ obvious next one.
     python3 -c "import sys; sys.path.insert(0,'gateware/soc'); \
                 import cpu.cpu; print(vexii_cpu.generate(0))"
 
-The emitted `VexiiRiscv.v` is also left in `tmp/vexii_hello/build/` after any SoC
+The emitted `VexiiRiscv.v` is also left in `tmp/awto_soc/build/` after any SoC
 build, which is where the net names in a nextpnr critical path resolve to.
 
 ## Scripts
