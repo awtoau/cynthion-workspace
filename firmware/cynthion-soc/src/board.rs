@@ -167,7 +167,7 @@ pub fn tree(uart: &mut Uart, power: &power::Monitor, type_c: &Controllers) {
     // The key to the two ages above. Without it both read as staleness, and only
     // one of them is.
     let _ = uart.write_str(
-        "ages   rails are POLLED, so an old sample means the poller stopped;\n\
+        "legend rails are POLLED, so an old sample means the poller stopped;\n\
          \x20      controllers INTERRUPT, so an old one means nothing changed.\n",
     );
 }
