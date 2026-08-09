@@ -771,9 +771,9 @@ def main():
         listing = [b"help, ?", b"info", b"selftest", b"time", b"board",
                    b"led", b"load", b"reset", b"rtic", b"sideband",
                    b"fusb302b", b"pac1954", b"usb3343",
-                   b"[read|bench]", b"[stats|check|irq|log]",
+                   b"[info|read|bench]", b"[stats|check|irq|log]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
-                   b"[id|read|bench]", b"[status|scan|soak]",
+                   b"[info|id|read|bench]", b"[status|scan|soak]",
                    b"[status|floor|alert|rate|detect|limit|samples|bracket]",
                    b"[status|read|sel|sweep|test|cross|ramp|bench|id]",
                    b"[status|off|input|control|both|charge]"]

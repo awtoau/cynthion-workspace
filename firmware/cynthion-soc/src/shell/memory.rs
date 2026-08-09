@@ -47,7 +47,15 @@ fn info(uart: &mut Uart, region: Region) {
             let _ = write!(uart, "  {:9} @{:08x}  ", region.name(), base);
         }
         None => {
-            let _ = write!(uart, "  {:9} via the CSR staging port  ", region.name());
+            let _ = write!(
+                uart,
+                "  {:9} {}  ",
+                region.name(),
+                match region {
+                    Region::Hyperram => "via the CSR staging port",
+                    _ => "no window on this target",
+                }
+            );
         }
     }
     if bytes >= 1024 * 1024 {

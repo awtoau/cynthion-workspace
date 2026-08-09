@@ -100,7 +100,12 @@ impl Region {
     pub(crate) fn base(self) -> Option<usize> {
         match self {
             Region::Bram => Some(0),
-            Region::Flash => Some(target::FLASH_BASE),
+            // From `FLASH_WINDOW` rather than `FLASH_BASE`, which exists only on
+            // the target that has one -- naming the constant broke the QEMU
+            // build outright (d58f224). `None` here is the truth on `virt`:
+            // there is no flash window, and `target::flash_word` answers from a
+            // stand-in with no address to report.
+            Region::Flash => target::FLASH_WINDOW.map(|(base, _)| base),
             Region::Hyperram => None,
         }
     }

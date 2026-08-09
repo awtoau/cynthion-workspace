@@ -742,6 +742,22 @@ HYPERRAM_BIST_CK_MHZ = float(os.environ.get("CYNTHION_HYPERRAM_CK_MHZ", "100"))
 # leaves headroom. Set CYNTHION_HYPERRAM_BIST_DQS=0 to measure the other.
 HYPERRAM_BIST_DQS = os.environ.get("CYNTHION_HYPERRAM_BIST_DQS", "1") not in ("", "0")
 
+# Divided copies of the clocks on PMOD A, for a scope. See #294 and
+# `peripherals/clock_mirror.py`.
+#
+# OFF by default: the pins are general-purpose and a shipping SoC should not
+# spend them, and the mirror puts a fabric register in every domain it copies --
+# on `hr_fast` that pulls an edge clock onto the primary network as well, which
+# is the resource #314 was about.
+#
+#     CYNTHION_CLOCK_MIRROR=1 ./scripts/soc_run.py
+CLOCK_MIRROR = os.environ.get("CYNTHION_CLOCK_MIRROR", "") not in ("", "0")
+
+# /4. LVCMOS33 output is rated 150 MHz and `hr_fast` is the device CK on the DQS
+# path, so the raw net is out of spec on the pad above 150. /4 puts every source
+# in 15..50 MHz across the swept range. Powers of two only.
+CLOCK_MIRROR_DIV = int(os.environ.get("CYNTHION_CLOCK_MIRROR_DIV", "4"))
+
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
 # firmware, and a geometry reported from a different number than the one the
@@ -1363,6 +1379,28 @@ class AwtoSoc(Elaboratable):
             m.submodules.hyper_bist_bridge = hyper_bist_bridge
             decoder.add(hyper_bist_bridge.wb_bus, addr=HYPERRAM_BIST_BASE,
                         name="hyperram_bist")
+
+        # Divided clocks on PMOD A, so an instrument outside the die can say
+        # what the die is running at. Off unless asked -- see CLOCK_MIRROR.
+        #
+        # `hr`/`hr_fast` exist only in the BIST variant, so the list is built
+        # from what the design actually has rather than from a fixed table that
+        # would elaborate against a domain that is not there.
+        if CLOCK_MIRROR:
+            from peripherals.clock_mirror import ClockMirror
+
+            mirrored = ["sync", "usb"]
+            if HYPERRAM_BIST:
+                mirrored.append("hr")
+                if HYPERRAM_BIST_DQS:
+                    mirrored.append("hr_fast")
+
+            # `dir="-"` and the buffer inside the mirror: requesting the
+            # resource at all is what costs the pins, so a build with the mirror
+            # off must not reach this line.
+            m.submodules.clock_mirror = ClockMirror(
+                pads=platform.request("user_pmod", 0, dir="-"),
+                domains=mirrored, divisor=CLOCK_MIRROR_DIV)
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #
