@@ -317,7 +317,7 @@ pub fn discharge() {
 /// stack is whatever is left above `.bss`, and a chatty command in this firmware
 /// is paid for in stack depth -- see the ASSERT in `memory.x`, which exists
 /// because this exact command overran it.
-pub(crate) fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // `trim(rest)`, not `core::str::from_utf8(rest).unwrap_or("").trim()`.
     //
     // This was the only place in the firmware that touched `core::str`, and it

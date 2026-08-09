@@ -13,7 +13,7 @@ use crate::{board_absent, bus, target, Devices};
 /// The scan covers 0x08..0x77 because 0x00..0x07 and 0x78..0x7f are reserved by
 /// the I2C specification for general call, ten-bit addressing and the like --
 /// probing them can put a device into a mode nobody asked for.
-pub(crate) fn board_i2c(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // Which of the three buses. There is one controller and three pin-sets, and
     // nothing in a reply says which bus it came from -- both FUSB302Bs answer
     // 0x22 with the same identity byte -- so the bus is named on every call

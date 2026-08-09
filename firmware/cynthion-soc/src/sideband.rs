@@ -91,7 +91,7 @@ impl Sideband {
     }
 }
 /// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.
-pub(crate) fn board_sideband(uart: &mut Uart, rest: &[u8]) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
         None => return board_absent(uart),

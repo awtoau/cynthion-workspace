@@ -107,7 +107,7 @@ pub(crate) fn power_rate_command(uart: &mut Uart, arg: &[u8]) {
     }
 }
 
-pub(crate) fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if devices.bus.is_none() {
         return board_absent(uart);
     }

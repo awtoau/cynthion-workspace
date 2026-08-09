@@ -16,8 +16,8 @@ use crate::uart::Uart;
 use crate::target::flash_word;
 use crate::{
     bench, board, board_absent, gpio, sideband, vbus, clock, events, hardware,
-    hr_cmd, i2c_cmd, info, load, log, memory, metrics, phy_cmd, power_cmd, reboot,
-    sched, scratch_responds, selftest, target, timer, typec, Devices,
+    hr_cmd, i2c_cmd, info, log, memory, metrics, phy_cmd, power_cmd, reboot,
+    sched, scratch_responds, staging, selftest, target, timer, typec, Devices,
 };
 
 /// Every command, with its argument syntax and what it does.
@@ -232,10 +232,10 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // reporting what it does not have -- which is what `scripts/soc_test.py`
         // drives. See `src/board.rs`.
         b"board" => board::tree(uart, &devices.power, &devices.type_c),
-        b"led" => gpio::board_led(uart, rest),
-        b"i2c" => i2c_cmd::board_i2c(uart, rest, devices),
-        b"power" => power_cmd::board_power(uart, rest, devices),
-        b"phy" => phy_cmd::board_phy(uart, trim(rest)),
+        b"led" => gpio::command(uart, rest),
+        b"i2c" => i2c_cmd::command(uart, rest, devices),
+        b"power" => power_cmd::command(uart, rest, devices),
+        b"phy" => phy_cmd::command(uart, trim(rest)),
         // Split here rather than inside the command, because "there is no board"
         // is a fact about this build and not about the Type-C controllers. The
         // command then takes a `&mut Bus` it can use unconditionally.
@@ -243,7 +243,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
-        b"vbus" => vbus::vbus_command(uart, rest, devices),
+        b"vbus" => vbus::command(uart, rest, devices),
         // One record per payload tag, so the drain-time decoding of every tag is
         // exercised on the shipping build. A guard arm rather than a branch
         // inside the one below, so the two cases do not share an indent: this
@@ -303,7 +303,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 events::dropped()
             );
         }
-        b"sideband" => sideband::board_sideband(uart, rest),
+        b"sideband" => sideband::command(uart, rest),
         // The bring-up smoke test: does this CPU compute, can it reach flash,
         // does the clock formatter hold at its boundaries. Four lines, each `ok`
         // or `BAD`, against values that cannot be produced by accident.
@@ -378,12 +378,12 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             let _ = writeln!(uart);
         }
         b"load" => match parse_hex(rest) {
-            Some(len) => load(index, uart, len),
+            Some(len) => staging::load(index, uart, len),
             None => {
                 let _ = writeln!(uart, "usage: load <hex byte count>");
             }
         },
-        b"hr" => hr_cmd::hyperram_command(uart, trim(rest)),
+        b"hr" => hr_cmd::command(uart, trim(rest)),
         b"reset" => {
             let _ = writeln!(uart, "restarting");
             reboot();

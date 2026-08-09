@@ -249,7 +249,7 @@ impl Gpio {
 ///
 /// Colours only -- see the module comment in `src/gpio.rs` for why an index is
 /// not accepted here.
-pub(crate) fn board_led(uart: &mut Uart, rest: &[u8]) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
         None => return board_absent(uart),

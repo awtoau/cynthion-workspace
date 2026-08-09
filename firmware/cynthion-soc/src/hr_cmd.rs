@@ -19,7 +19,7 @@ use crate::{bench, hyperram, memory};
 ///     hr cross    do the window and the staging port agree?
 ///     hr bench    the same walk as `bench hyperram`
 ///     hr id       HyperBus has no identify
-pub(crate) fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     match rest {
         b"status" => {
             let (locked, ready, seen, bursts) = bench::dqs_status();
