@@ -1,95 +1,78 @@
 //! Where the cycles go: busy against idle, instructions retired, and the
 //! interval the power poll is actually achieving.
 //!
-//! Three sources, all free:
+//! Three free sources: `mcycle`/`minstret` sampled once per main-loop turn, a
+//! flag any module sets to say that turn did something, and `rdtime` at the
+//! moment `power::Monitor::poll` decides to run.
 //!
-//!   * `mcycle` and `minstret`, sampled once per turn of the main loop
-//!   * a flag any module sets to say that turn did something
-//!   * `rdtime` at the moment `power::Monitor::poll` decides to run
-//!
-//!     what                 from                              printed as
-//!     -------------------  --------------------------------  --------------
-//!     busy fraction        mcycle, split by the flag          `busy N.NN%`
-//!     ipc                  minstret / mcycle                  `ipc 0.NNN`
-//!     mean turn            window cycles / window turns       cycles
-//!     worst turn           max of one turn's cycles           cycles
-//!     poll gap             rdtime between consecutive polls   ms
+//! | what        | from                              | printed as     |
+//! |-------------|------------------------------------|-----------------|
+//! | busy fraction | mcycle, split by the flag        | `busy N.NN%`    |
+//! | ipc         | minstret / mcycle                  | `ipc 0.NNN`     |
+//! | mean turn   | window cycles / window turns       | cycles          |
+//! | worst turn  | max of one turn's cycles           | cycles          |
+//! | poll gap    | rdtime between consecutive polls   | ms              |
 //!
 //! ## "% CPU" here means useful work against spinning
 //!
-//! There is no scheduler and nothing is ever descheduled, so a utilisation
-//! figure taken the usual way reads 100% forever. The split that means something
-//! is whether a turn of the main loop did anything or only asked: a turn is
-//! **busy** if [`busy`] was called during it, and **idle** otherwise. The idle
-//! turns are the ones that polled `irq::pop`, found nothing, and came back.
-//!
-//! Marked busy by, and only by:
-//!
-//!     irq::pop              a byte reached the shell
-//!     power::Monitor::poll  the 50 ms interval elapsed (via `polled`)
-//!     events::drain         a deferred record was printed
-//!     typec::service        a controller was cleared
-//!     uart::report_errors   a lost byte was reported
-//!
-//! **The 1 ms tick is deliberately not one of them.** Its cycles land in the
-//! idle column, because the question this figure exists to answer is whether an
-//! RTOS would fit -- and an RTOS brings its own tick. The amount is not
-//! unaccounted for: `time` prints the handler's worst cost and its rate.
-//!
-//! Cycles spent in the machine external handler ARE counted busy, one turn
-//! later: the handler fills a ring, the turn that follows takes the byte out
-//! through `irq::pop`, and attribution happens at the next [`turn`] over the
-//! whole preceding interval.
+//! - No scheduler, nothing ever descheduled, so a usual-style utilisation figure
+//!   reads 100% forever. Split that matters: did a main-loop turn do anything or
+//!   only ask? **busy** if [`busy`] was called during it, **idle** otherwise. Idle
+//!   turns polled `irq::pop`, found nothing, came back.
+//! - Marked busy by, and only by: `irq::pop` (a byte reached the shell),
+//!   `power::Monitor::poll` (the 50 ms interval elapsed, via `polled`),
+//!   `events::drain` (a deferred record printed), `typec::service` (a controller
+//!   cleared), `uart::report_errors` (a lost byte reported).
+//! - **The 1 ms tick is deliberately excluded.** Its cycles land in the idle
+//!   column: the question this figure answers is whether an RTOS would fit, and
+//!   an RTOS brings its own tick. Not unaccounted for -- `time` prints the
+//!   handler's worst cost and its rate.
+//! - Cycles spent in the machine external handler ARE counted busy, one turn
+//!   later: handler fills a ring, next turn drains it via `irq::pop`, and
+//!   attribution happens at the next [`turn`] over the whole preceding interval.
 //!
 //! ## A window, so the arithmetic stays 32 bits
 //!
-//! `busy`, `cycles`, `instret` and `turns` accumulate together and are halved
-//! together when the cycle count reaches [`HALVE_AT`]. Halving preserves every
-//! ratio exactly at the instant it happens, so what is reported is a lifetime
-//! figure that weights the recent past more -- with a time constant of about 18
-//! seconds at 60 MHz.
-//!
-//! The alternative was a 64-bit accumulator and a 64-bit divide, which on rv32
-//! is a call to `__udivdi3`: 912 bytes of compiler-builtins, measured, and the
-//! reason `time` prints a raw `mtime` rather than milliseconds. A window makes
-//! every divide here a single `divu`.
+//! - `busy`, `cycles`, `instret` and `turns` accumulate together, halved together
+//!   when the cycle count reaches [`HALVE_AT`]. Halving preserves every ratio
+//!   exactly at the instant it happens -- reported figure is a lifetime figure
+//!   weighting the recent past more, time constant ~18 s at 60 MHz.
+//! - Alternative was a 64-bit accumulator + 64-bit divide -- on rv32 a call to
+//!   `__udivdi3`, 912 bytes of compiler-builtins (measured) -- also why `time`
+//!   prints a raw `mtime` rather than milliseconds. A window makes every divide
+//!   here a single `divu`.
 //!
 //! ## Collection does not distort what it measures
 //!
-//! Per turn: two `csrr`s, one subtraction each, one branch and four stores. A
-//! `csrr` is a register read and not a bus transaction. Formatting -- which is
-//! the expensive part, and the thing that would swamp the measurement if it ran
-//! every turn -- happens once, in [`command`], when someone types `stats`.
-//!
-//! That command's own cost is charged busy, which is correct: it was typed.
+//! - Per turn: two `csrr`s (register reads, not bus transactions), one
+//!   subtraction each, one branch, four stores.
+//! - Formatting -- the expensive part, would swamp the measurement if it ran
+//!   every turn -- happens once, in [`command`], when someone types `stats`.
+//!   That command's own cost is charged busy, correctly: it was typed.
 //!
 //! ## These CSRs exist on this core, checked rather than assumed
 //!
-//! `mcycle` (0xb00), `minstret` (0xb02) and their high halves are decoded by the
-//! generated core -- `COMB_CSR_PerformanceCounterPlugin_logic_csrFilter` in
-//! `VexiiRiscv.v` -- because `--with-rdtime` in `gateware/soc/cpu/cpu.py`
-//! adds `zicntr`, and `zicntr` is what instantiates `PerformanceCounterPlugin`.
-//! One flag gates `rdtime` and these together, so `info`'s `NO RDTIME` line is
-//! the warning for both. An undecoded CSR read traps rather than reading zero.
-//!
-//! **`mhpmcounter3..6` and `mhpmevent3..6` are REAL, and this comment used to say
-//! they were not.** `gateware/soc/cpu/cpu.py:123` passes
-//! `--performance-counters 4`, so the plugin allocates four counters with
-//! writable event selectors rather than the WARL-zero dummies it produces at
-//! `additionalCounterCount = 0`. The stale claim survived the flag being added
-//! (#173) and is corrected here because it was the reason nothing outside
-//! `src/bench.rs` read one.
-//!
-//! What they cost is timing, not space: the design stopped closing at 72 MHz
-//! when they were added, which is why `SYNC_MHZ` is 60. `src/bench.rs` owns the
-//! event ids and the selector writes; `src/sched.rs` reads
-//! `STALLED_CYCLES_FRONTEND` and `STALLED_CYCLES_BACKEND` through it for the
-//! `rtic` command, which is the #115 comparison this module's `busy` fraction
-//! cannot make on its own -- a turn can be busy and stalled at the same time.
-//!
-//! Only the low 32 bits are read, for the reason `src/clock.rs` gives for
-//! `rdtime`: a 64-bit read on rv32 is a retry loop, and every interval here is
-//! shorter than the 71.6 s the low word takes to wrap at 60 MHz.
+//! - `mcycle` (0xb00), `minstret` (0xb02) and their high halves decoded by the
+//!   generated core (`COMB_CSR_PerformanceCounterPlugin_logic_csrFilter` in
+//!   `VexiiRiscv.v`) because `--with-rdtime` in `gateware/soc/cpu/cpu.py` adds
+//!   `zicntr`, which instantiates `PerformanceCounterPlugin`. One flag gates
+//!   `rdtime` and these together, so `info`'s `NO RDTIME` line warns for both. An
+//!   undecoded CSR read traps rather than reading zero.
+//! - **`mhpmcounter3..6` and `mhpmevent3..6` are REAL** (this comment used to say
+//!   otherwise). `gateware/soc/cpu/cpu.py:123` passes `--performance-counters 4`,
+//!   so the plugin allocates four counters with writable event selectors, not the
+//!   WARL-zero dummies from `additionalCounterCount = 0`. Stale claim survived
+//!   the flag being added (#173); corrected here because it was the reason
+//!   nothing outside `src/bench.rs` read one.
+//! - Cost is timing, not space: design stopped closing at 72 MHz when they were
+//!   added, hence `SYNC_MHZ = 60`. `src/bench.rs` owns event ids and selector
+//!   writes; `src/sched.rs` reads `STALLED_CYCLES_FRONTEND` and
+//!   `STALLED_CYCLES_BACKEND` through it for the `rtic` command -- the #115
+//!   comparison this module's `busy` fraction cannot make alone, since a turn can
+//!   be busy and stalled at the same time.
+//! - Only the low 32 bits are read (same reason as `src/clock.rs` for `rdtime`):
+//!   a 64-bit read on rv32 is a retry loop, and every interval here is shorter
+//!   than the 71.6 s the low word takes to wrap at 60 MHz.
 
 use core::fmt::Write;
 use core::sync::atomic::{AtomicU32, Ordering};

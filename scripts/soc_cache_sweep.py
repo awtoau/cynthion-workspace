@@ -16,47 +16,45 @@ Output is mirrored to ./tmp/logs/soc_cache_sweep.log, and the raw rows land in
 ## The question this exists to settle
 
 Whether to spend spare block RAM on **capacity** (more sets) or on
-**associativity** (more ways).
+**associativity** (more ways). They fix different problems:
 
-They fix different problems, and the distinction is the whole point:
+  * a **capacity** miss is a working set larger than the cache -- more sets
+    help.
+  * a **conflict** miss is two hot lines whose addresses land on the same
+    index. In a direct-mapped cache they evict each other *no matter how big
+    the cache is*. Only associativity helps.
 
-  * a **capacity** miss is a working set larger than the cache. More sets help.
-  * a **conflict** miss is two hot lines whose addresses land on the same index.
-    In a direct-mapped cache they evict each other *no matter how big the cache
-    is*. Only associativity helps.
-
-This SoC runs RTIC. RTIC does not context-switch -- it preempts on a single
-stack under a stack-resource policy, so there are no thread contexts to save --
-but each handler is still its own instruction working set, and they interleave.
-The tick handler, the I2C handler, the console handlers and the idle shell are
-distinct streams of code, and the more of them there are the more likely two hot
-ones collide on an index. That is a conflict-miss profile, which argues for ways.
-
-Arguing for sets: `bankCount = wayCount` (`FetchL1Plugin.scala:128`), so each way
-is its own bank of DP16KDs on top of its own tag and PLRU memory -- ways cost
-block RAM faster than sets do, and there are only 8 blocks spare. And a way needs
-a way-select mux in the cache hit path, at an Fmax the BTB already had to be
-`--relaxed-btb` to meet.
-
-Neither argument settles it. Measuring does.
+- This SoC runs RTIC, which doesn't context-switch (preempts on a single
+  stack under a stack-resource policy -- no thread contexts to save), but
+  each handler is still its own instruction working set and they interleave:
+  tick, I2C, console handlers and idle shell are distinct code streams, and
+  more of them means more likely two hot ones collide on an index -- a
+  conflict-miss profile, arguing for ways.
+- Arguing for sets: `bankCount = wayCount` (`FetchL1Plugin.scala:128`), so
+  each way is its own bank of DP16KDs on top of its own tag and PLRU memory
+  -- ways cost block RAM faster than sets do, and there are only 8 blocks
+  spare. A way also needs a way-select mux in the cache hit path, at an Fmax
+  the BTB already had to be `--relaxed-btb` to meet.
+- Neither argument settles it. Measuring does.
 
 ## Reading the output, and the trap in it
 
-**Fmax from a single build is not a property of the design.** Two builds of the
-identical 128x1 geometry closed `clk` at 78.04 and 67.76 MHz -- a spread wider
-than most of the differences this sweep is looking for. `--repeat` exists because
-of that: with one build per geometry, the ranking is placement noise wearing a
-result's clothes. Block RAM and cell counts ARE deterministic and can be trusted
-from a single build.
+- **Fmax from a single build is not a property of the design.** Two builds
+  of the identical 128x1 geometry closed `clk` at 78.04 and 67.76 MHz -- a
+  spread wider than most of the differences this sweep is looking for.
+  `--repeat` exists because of that: with one build per geometry, the
+  ranking is placement noise wearing a result's clothes. Block RAM and cell
+  counts ARE deterministic and can be trusted from a single build.
 
 ## What this does NOT measure
 
-Cache hit rate, stalls, or IPC -- none of which synthesis can tell you. This
-reports what each geometry COSTS. What it BUYS needs the frontend-stall counter
-read on hardware under a workload that actually preempts; `docs/rtic.md` has the
-only such measurement so far, and it predates every geometry here.
-
-A geometry that is cheaper in block RAM and closes timing is not thereby better.
+- Cache hit rate, stalls or IPC -- none of which synthesis can tell you.
+  This reports what each geometry COSTS. What it BUYS needs the
+  frontend-stall counter read on hardware under a workload that actually
+  preempts; `docs/rtic.md` has the only such measurement so far, and it
+  predates every geometry here.
+- A geometry that is cheaper in block RAM and closes timing is not thereby
+  better.
 """
 
 import argparse

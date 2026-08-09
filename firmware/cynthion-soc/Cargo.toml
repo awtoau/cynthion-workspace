@@ -82,25 +82,24 @@ workload = []
 # nothing to measure.
 preempt = ["workload"]
 
-# `rtic` USED TO BE A FEATURE. It is not one any more (#245).
+# `rtic` USED TO BE A FEATURE. Not one any more (#245).
 #
-# `#[rtic::app]` in `src/rtic_app.rs` is THE dispatcher: the shell has no other
+# `#[rtic::app]` in `src/rtic_app.rs` is THE dispatcher: shell has no other
 # entry point, the PAC1954's REFRESH cycle is a periodic task the 1 ms tick
-# releases, and there is no superloop to fall back to. The feature existed so
-# that the two could be compared with exactly one variable between them; the
-# comparison ran on hardware, the decision followed, and a losing path kept
-# afterwards is a dead branch nobody dares touch.
+# releases, no superloop to fall back to. The feature existed to compare the
+# two with exactly one variable between them; comparison ran on hardware,
+# decision followed, and a losing path kept afterwards is a dead branch nobody
+# dares touch.
 #
 # `riscv/critical-section-single-hart` moves to `[dependencies]` with it:
-# riscv-slic's generated code calls `critical_section::with` and nothing links
-# without an implementation. It rode on the feature because registering one
-# globally is not something a build that did not use RTIC should do, and every
-# build uses RTIC now.
+# riscv-slic's generated code calls `critical_section::with`, nothing links
+# without an implementation. Rode on the feature because registering one
+# globally isn't something a non-RTIC build should do -- every build uses RTIC
+# now.
 #
-# The other `rtic*` features below are unaffected. They gate the #115
-# measurement spikes -- separate binaries under `src/bin/` that are not the
-# shell -- and those remain off by default for the reason `qemu` above is off:
-# the hardware image is the product.
+# Other `rtic*` features below are unaffected: they gate the #115 measurement
+# spikes (separate binaries under `src/bin/`, not the shell), off by default
+# for the reason `qemu` above is off -- the hardware image is the product.
 
 # The non-RTIC half of the USB port (#115): moondancer's control-transfer path
 # in moondancer's own shape, a superloop over an event queue.
@@ -174,25 +173,24 @@ rticspin = ["rticwl"]
 rticmono = ["riscv/critical-section-single-hart",
             "dep:rtic-monotonics", "dep:rtic-time", "dep:fugit"]
 
-# The spike, as a second binary. STILL a second binary after #245, for a reason
-# that changed: it is no longer the only way to have RTIC here, it is the
-# smallest one. Two tasks that count and a PLIC front end, so its `.text` is the
-# RTIC runtime plus almost nothing -- which is what makes
-# `scripts/rtic_probe.py`'s size figure mean something. `src/rtic_app.rs` runs
-# the whole shell and cannot answer that question.
+# The #245 spike, kept as a second binary -- for a changed reason: no longer
+# the only way to have RTIC here, but the smallest one. Two tasks that count
+# and a PLIC front end, so its `.text` is the RTIC runtime plus almost nothing,
+# which is what makes `scripts/rtic_probe.py`'s size figure mean something;
+# `src/rtic_app.rs` runs the whole shell and can't answer that question. Also
+# the standing answer to "does RTIC accept this machine at all" and where a
+# bring-up problem gets isolated.
 #
-# `#[rtic::app]` emits its own `#[no_mangle] fn main`, so it cannot coexist with
-# riscv-rt's `#[entry]` in one binary. #245 took the other horn of that: a
-# `#[cfg(not(feature = "rtic"))]` on the shell's entry point. What made it cheap
-# was factoring the loop body out first -- `boot`, `housekeeping` and `consoles`
+# `#[rtic::app]` emits its own `#[no_mangle] fn main`, so it can't coexist with
+# riscv-rt's `#[entry]` in one binary. #245 took the other horn: a
+# `#[cfg(not(feature = "rtic"))]` on the shell's entry point, made cheap by
+# factoring the loop body out first -- `boot`, `housekeeping` and `consoles`
 # are shared, so nothing is dead code under either setting.
 #
-# `required-features` means cargo skips the target entirely when the feature is
-# off, so the default build does not compile, link or lint it.
-# The #245 spike, kept. It is the standing answer to "does RTIC accept this
-# machine at all", it is far smaller than the shell, and it is where a bring-up
-# problem gets isolated. `rticspike` gates it so a default `cargo build` still
-# produces the shell and nothing else.
+# `required-features` means cargo skips the target entirely when the feature
+# is off, so the default build doesn't compile, link or lint it -- `rticspike`
+# gates it so a default `cargo build` still produces the shell and nothing
+# else.
 [[bin]]
 name = "cynthion-soc-rtic"
 path = "src/bin/rtic.rs"
@@ -213,20 +211,12 @@ path = "src/bin/usb_bare.rs"
 required-features = ["usbport"]
 
 [profile.release]
-# "z" for SPEED, not size. Measured on the board (`./dev.py optlevel`, #167):
+# "z" for SPEED, not size: bigger code thrashes the I-cache, and `.text` is
+# fetched from SPI flash so every miss is a full quad-SPI transaction.
+# Counter-intuitively `-O3` was the SLOWEST. Numbers in #167.
 #
-#     level   .text     ipc   flash seq   flash rnd
-#     z       36160   0.302     9.63 MB/s   0.66
-#     s       43348   0.171    11.11        0.68
-#     3       64576   0.056    11.57        0.65
-#
-# 79% more code costs 5.4x the IPC. It is the I-cache, not the link: 4 KiB,
-# direct-mapped, one way, against 36 KB of `.text`, and every miss is a full
-# quad-SPI transaction. Note flash throughput RISES as the code grows -- the link
-# got faster while the CPU got five times slower, so what changed is how often it
-# has to go there.
-#
-# Re-measure if the cache geometry changes (#110).
+# STALE: measured against a 4 KiB I-cache and 36 KB of `.text`. Both have since
+# moved -- cache is 8 KiB, `.text` is ~56 KB -- so re-run `./dev.py optlevel`.
 opt-level = "z"
 lto = true
 codegen-units = 1

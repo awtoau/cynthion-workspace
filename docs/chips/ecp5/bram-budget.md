@@ -22,40 +22,37 @@ All three build and produce bitstreams. **Facedancer must be built with
 
 ## Capture work barely touches block RAM
 
-The analyzer buffers into HyperRAM through `HyperRAMPacketFIFO` and keeps only
-small block RAM FIFOs around it: `out_fifo_depth=128` on the way out, and a
-4-deep async FIFO for the crossing into the `usb` domain. With HyperRAM
-streaming at 220 MB/s and USB capped at 48.5 MB/s, there is no reason to spend
-block RAM on bulk buffering — the memory behind it is 4.5x faster than the link
-draining it.
-
-So for the work this device is built for, block RAM is close to free.
+- Analyzer buffers into HyperRAM through `HyperRAMPacketFIFO`, keeps only
+  small block RAM FIFOs around it: `out_fifo_depth=128` on the way out, a
+  4-deep async FIFO for the crossing into the `usb` domain.
+- HyperRAM streams at 220 MB/s, USB caps at 48.5 MB/s -- no reason to spend
+  block RAM on bulk buffering when the memory behind it is 4.5x faster than
+  the link draining it.
+- For the work this device is built for, block RAM is close to free.
 
 ## What consumes it is firmware, not buffers
 
-Both heavy designs are soft-CPU systems, and in both the block RAM is program
-memory rather than buffering: 64 KiB of firmware for the CPU to execute from is
-32 blocks before anything else is allocated.
-
-That is worth separating from the caches. In the RISC-V sweep a configuration
-with 16 KiB caches reached 32/56 blocks, which reads as "nearly full" only
-because 64 KiB of firmware is assumed to sit in block RAM alongside it.
+- Both heavy designs are soft-CPU systems where block RAM is program memory,
+  not buffering: 64 KiB of firmware for the CPU to execute from is 32 blocks
+  before anything else is allocated.
+- Worth separating from the caches: in the RISC-V sweep a configuration with
+  16 KiB caches reached 32/56 blocks, which reads as "nearly full" only
+  because 64 KiB of firmware is assumed to sit in block RAM alongside it.
 
 ## The consequence
 
-The block RAM ceiling constrains **CPU designs with block-RAM firmware**, not
-the device generally. This section used to name two ways out as untried. One of
-them has since been taken: **`.text` and `.rodata` execute in place from flash**
-through `SPIFlashMemoryMap`, and the block RAM behind them was freed exactly as
-predicted. Putting firmware in HyperRAM remains untried and is now unnecessary.
-
-The trade named here was right, and it is the one this design now lives with:
-flash fetch costs many cycles against block RAM's one, which is what the
-instruction cache exists to hide — and when the cache is too small to hide it,
-the stall is measurable rather than theoretical. The matched superloop-vs-RTIC
-runs in [`../../rtic.md`](../../rtic.md) (#245) found the RTIC
-dispatcher's extra 1,700 bytes of `.text` moving frontend stalls from 44 cycles
-per 1,000 to **452 per 1,000** through a 4 KiB direct-mapped I-cache.
+- Block RAM ceiling constrains **CPU designs with block-RAM firmware**, not
+  the device generally. This section used to name two ways out as untried.
+  One has since been taken: **`.text` and `.rodata` execute in place from
+  flash** through `SPIFlashMemoryMap`, block RAM behind them freed exactly as
+  predicted. Putting firmware in HyperRAM remains untried and now unnecessary.
+- The trade named here was right, and is the one this design now lives with:
+  flash fetch costs many cycles against block RAM's one, which the
+  instruction cache exists to hide -- and when the cache is too small to hide
+  it, the stall is measurable, not theoretical. The matched superloop-vs-RTIC
+  runs in [`../../rtic.md`](../../rtic.md) (#245) found the RTIC dispatcher's
+  extra 1,700 bytes of `.text` moving frontend stalls from 44 cycles per
+  1,000 to **452 per 1,000** through a 4 KiB direct-mapped I-cache.
 
 ### How the 56 are spent now
 
