@@ -54,15 +54,32 @@ class BISTHarness(Elaboratable):
     STATUS_NEGATIVE = 1 << 3
 
     def __init__(self, *, applet_id, addresses, width=32,
-                 negative_control=False, simulate=False):
+                 negative_control=False, simulate=False, transport=None):
+        """`transport` is what carries the register window.
+
+        None and `simulate=False` gives `JTAGRegisterInterface`, which is what
+        every applet built so far uses. Passing one instead -- a
+        `BistCsrTransport`, say -- puts the same window on the CPU's CSR bus
+        without the engine knowing: it only ever calls `add_register` and
+        `add_read_only_register` on this harness.
+
+        That matters because JTAG is where three of this project's measurement
+        failures came from (#204), the sharpest being a readback that slips a
+        bit below a `sync`/TCK ratio of about four.
+        """
         if not 1 <= width <= 32:
             raise ValueError("BIST comparator width must be in 1..32")
+        if transport is not None and simulate:
+            raise ValueError(
+                "simulate=True means no transport at all; passing one as well "
+                "is a contradiction rather than a preference")
 
         self.applet_id = applet_id
         self.addresses = addresses
         self.width = width
         self.negative_control_init = negative_control
         self.simulate = simulate
+        self._transport = transport
 
         # Application side.
         self.busy = Signal()
@@ -92,7 +109,12 @@ class BISTHarness(Elaboratable):
         self.last_actual = Signal(width)
         self.last_golden = Signal(width)
 
+        # Whether this harness OWNS the transport, and therefore elaborates it.
+        # True for the JTAG one it builds itself; false for one handed in, which
+        # the caller elaborates in the caller's own domain. See `elaborate`.
+        self._owns_registers = transport is None
         self.registers = (None if simulate else
+                          transport if transport is not None else
                           JTAGRegisterInterface(default_read_value=0xDEADBEEF))
 
     def add_read_only_register(self, address, *, read):
@@ -124,7 +146,16 @@ class BISTHarness(Elaboratable):
                          negative.eq(self.sim_negative)]
         else:
             registers = self.registers
-            m.submodules.registers = registers
+            # Added here ONLY when this harness created it. An externally
+            # supplied transport belongs to whoever built it, and that matters
+            # for more than tidiness: the SoC rig wraps this engine in a
+            # DomainRenamer to move it to `hr`, and anything elaborated inside
+            # that is renamed with it. A CSR bridge dragged into `hr` while the
+            # CPU stays in `sync` never completes its handshake, so the FIRST
+            # register read stalls the bus and the shell hangs with nothing
+            # printed -- which reads as a lock-up rather than a clocking fault.
+            if self._owns_registers:
+                m.submodules.registers = registers
 
             control = Signal(32, init=(self.CONTROL_NEGATIVE
                                        if self.negative_control_init else 0))

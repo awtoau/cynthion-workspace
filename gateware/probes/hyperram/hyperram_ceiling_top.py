@@ -321,10 +321,40 @@ class HyperRAMCeiling(Elaboratable):
     """Write a burst, read it back, verify, repeat -- and count what disagrees."""
 
     def __init__(self, *, sync_mhz=100.0, dqs=True, burst_words=BURST_WORDS,
-                 negative_control=False):
+                 negative_control=False, transport=None, own_clocks=True,
+                 own_leds=True, own_dtr=True):
+        """The four `own_*`/`transport` arguments exist so this can be EMBEDDED.
+
+        Defaults reproduce the standalone JTAG applet exactly. Passing a
+        transport puts the same register window on another bus -- the CPU's CSR
+        bus, via `BistCsrTransport` -- without the engine knowing, since it only
+        ever calls `add_register` / `add_read_only_register` on the harness.
+        The `own_*` flags say the enclosing design already has that resource.
+
+        None of them changes what is measured. That is the point: the
+        comparator, the negative control and the sweep FSM are the same logic
+        either way, so a number from the embedded rig and a number from the
+        applet are comparable.
+        """
         self.sync_mhz = sync_mhz
         self.dqs = dqs
         self.burst_words = burst_words
+        self._transport = transport
+        # `own_clocks=False` says the caller has already made the domain, which
+        # is what an SoC that pins its own `sync` does.
+        self._own_clocks = own_clocks
+        # A top-level applet owns the board; an embedded engine owns nothing it
+        # was not handed. `platform.request` is not idempotent, so an embedded
+        # copy asking for `led` fights the SoC's own GPIO for it and the build
+        # dies on "Resource led#0 has already been requested" -- a failure that
+        # names the resource and not the reason.
+        self._own_leds = own_leds
+        # The ECP5 has exactly ONE DTR, and two instantiations do not fail at
+        # elaboration: they fail in the placer as "no BELs remaining to
+        # implement cell type 'DTR'", which names neither design that wanted it.
+        # Die temperature is a property of the chip, not of the engine, so an
+        # embedded copy reads it from `gateware_id` and REG_DIE reads zero here.
+        self._own_dtr = own_dtr
 
         # The negative control. Reads are checked against the COMPLEMENT of what
         # was written, which the part cannot return, so a working detector must
@@ -373,8 +403,9 @@ class HyperRAMCeiling(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz,
-                                          with_fast=self.dqs)
+        if self._own_clocks:
+            m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz,
+                                              with_fast=self.dqs)
 
         harness = BISTHarness(
             applet_id=APPLET_ID,
@@ -382,7 +413,8 @@ class HyperRAMCeiling(Elaboratable):
                 ident=REG_ID, control=REG_CONTROL, status=REG_STATUS,
                 checks=REG_WORDS, errors=REG_ERRORS,
                 actual=REG_ACTUAL, golden=REG_GOLDEN),
-            width=self.word_bits, negative_control=self.negative_control)
+            width=self.word_bits, negative_control=self.negative_control,
+            transport=self._transport)
         m.submodules.harness = harness
 
         # DQSBUFM has eight phase selections. Keeping this in a JTAG parameter
@@ -880,15 +912,16 @@ class HyperRAMCeiling(Elaboratable):
         # Die temperature. DTROUT[7] is the valid flag; sampling without it
         # latches a mid-conversion value that looks like a temperature.
         #
-        dtr_counter = Signal(DTR_PERIOD_BITS)
-        m.d.sync += dtr_counter.eq(dtr_counter + 1)
-        dtr_bits = [Signal(name=f"dtr{i}") for i in range(8)]
-        m.submodules.dtr = Instance(
-            "DTR", i_STARTPULSE=(dtr_counter == 0),
-            **{f"o_DTROUT{i}": bit for i, bit in enumerate(dtr_bits)})
         die = Signal(8)
-        with m.If(dtr_bits[7]):
-            m.d.sync += die.eq(Cat(*dtr_bits))
+        if self._own_dtr:
+            dtr_counter = Signal(DTR_PERIOD_BITS)
+            m.d.sync += dtr_counter.eq(dtr_counter + 1)
+            dtr_bits = [Signal(name=f"dtr{i}") for i in range(8)]
+            m.submodules.dtr = Instance(
+                "DTR", i_STARTPULSE=(dtr_counter == 0),
+                **{f"o_DTROUT{i}": bit for i, bit in enumerate(dtr_bits)})
+            with m.If(dtr_bits[7]):
+                m.d.sync += die.eq(Cat(*dtr_bits))
 
         m.d.comb += [
             harness.busy.eq(1),
@@ -921,7 +954,7 @@ class HyperRAMCeiling(Elaboratable):
         # LEDs. Not the evidence -- the registers are -- but a board that shows
         # nothing is indistinguishable from a board that is not configured.
         #
-        if platform is not None:
+        if platform is not None and self._own_leds:
             leds = [platform.request("led", n, dir="o") for n in range(6)]
             m.d.comb += [
                 leds[0].o.eq(~dll_locked),                    # red:    no DLL
