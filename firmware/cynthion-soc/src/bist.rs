@@ -403,6 +403,25 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
     if stalled {
         bist.describe_fsm(uart);
     }
+    // THE FIRST MISMATCH, with its index and both values. One bad word in a
+    // million and a million bad words are different faults, and *how* it is
+    // wrong separates a one-word slip from a dead lane from noise. The pattern
+    // is invertible by construction, so a value decodes back to the address it
+    // belongs to.
+    if cell.errors != 0 {
+        let (index, got, want) = (bist.read(reg::BAD_INDEX),
+                                  bist.read(reg::BAD_GOT),
+                                  bist.read(reg::BAD_WANT));
+        let _ = writeln!(uart, "      first bad: index {:#x}  got {:#010x}  \
+                                want {:#010x}", index, got, want);
+        // A 16-bit rotation is one DEVICE word of slip, which is #186 rather
+        // than a timing margin -- and no capture phase can correct it.
+        let rotated = got.rotate_left(16);
+        if rotated == want || got == want.rotate_left(16) {
+            let _ = writeln!(uart, "      ^ that is the SAME word rotated by 16 \
+                                    bits: one device word of slip, not a phase");
+        }
+    }
     if verbose {
         bist.describe_status(uart, "real   ", st[0]);
         bist.describe_status(uart, "control", st[1]);
