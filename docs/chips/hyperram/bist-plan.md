@@ -73,7 +73,37 @@ rate:
 - If the estimate is hours, that is the signal to cut an axis or go coarse
   first — before spending them.
 
+## Built, and where it is
+
+The rig is on `main`, off by default:
+
+    CYNTHION_HYPERRAM_BIST=1 ./scripts/soc_run.py
+
+| | |
+|---|---|
+| engine | `gateware/probes/hyperram/hyperram_ceiling_top.py` — unchanged, shared with the JTAG applet |
+| transport | `gateware/soc/peripherals/bist_csr.py` — CSR, parameters at +0x000, results at +0x100 |
+| peripheral | `gateware/soc/peripherals/hyperram_bist.py` — engine in `hr`, bridge in `sync` |
+| driver | `firmware/cynthion-soc/src/bist.rs` |
+| commands | `bist status｜smoke｜cell｜sweep｜trace` |
+
+Gates, both in seconds — the point is knowing in seconds whether the rig works:
+
+| | | |
+|---|---|---|
+| `scripts/soc_bist_transport_sim.py` | 1.7 s | can the CPU read an engine-driven register across the domain boundary |
+| `tests/test_bist_constants.py` | 0.01 s | gateware/firmware agree on base, window, burst, register numbers |
+| `bist smoke` | seconds, on the board | four cells: can the rig both pass **and** detect a fault |
+
+Both simulation gates are confirmed to FAIL on the corresponding known-bad, not
+merely to pass.
+
 ## Isolation: the engine must not displace anything
+
+> **SUPERSEDED for the first build.** Exclusive pins were chosen deliberately —
+> get a number out of a measurement-only bitstream first, then do the mux. The
+> requirement below stands as the target, and the failure chain it describes is
+> still what makes an unbootable bitstream expensive to debug. See #226.
 
 **Hard requirement: adding the test engine must not remove a single thing the
 SoC has today.** Not the HyperRAM window, not BootRAM, not the staging path, not
@@ -209,12 +239,26 @@ Only once this behaves does the matrix mean anything.
 | Read-window phase | 0–1 | 2 | yes, CSR |
 | Device drive strength | CR0[14:12], 0–7 | 8 | yes, register write |
 | Clock mode | CR1[6] differential / single-ended | 2 | yes, register write |
-| FPGA pin drive | ECP5 `DRIVE` 4/8/12/16 mA | 4 | **no — bitstream** |
+| FPGA pin drive | ECP5 `DRIVE` 4/8/12/16 mA | 4 | no — but **patchable**, see below |
+
+### FPGA pin attributes are bitstream bits, not a rebuild
+
+`DRIVE`, `PULLMODE`, `SLEWRATE`, `HYSTERESIS` and `OPENDRAIN` are `.config_enum`
+entries in the Trellis PIO tile database — a handful of configuration frame bits
+each, e.g. `PIOA.DRIVE` encoding 4/8/12/16 across `F4B1..F8B1`. No fabric-visible
+register, so a running design cannot change them; but a **built** bitstream can
+be patched and reconfigured with no resynthesis, the same trick
+`scripts/bram_patch.py` uses for block RAM.
+
+So the axis costs ~1 s per setting, not ~90 s, and four attributes that were
+never in the matrix become affordable. Starting values and the open electrical
+questions: **#311**.
 
 Full cross product is **51 × 8 × 2 × 8 × 2 × 4 = 104,448 cells**, so it is not
 run flat:
 
-- FPGA drive is the outer loop — 4 builds, each sweeping everything runtime.
+- FPGA drive is the outer loop — 4 bitstream patches, each sweeping everything
+  runtime. Patches, not builds, per the section above.
 - Inner sweep per build is 51 × 8 × 2 × 8 × 2 = **26,112 cells**.
 - Coarse-then-fine: walk CK in 10 MHz steps first, then refine around the edge.
 - Drive and clock mode are likely separable — hold them while finding the CK/phase
