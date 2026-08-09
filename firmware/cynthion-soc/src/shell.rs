@@ -1,4 +1,9 @@
-//! The command table and the dispatcher.
+//! The shell: the command table, the dispatcher, and every command.
+//!
+//! ALL of it lives under `shell/`, so dropping the text shell is deleting a
+//! directory and one `mod` line. That is the point of the boundary (#303): the
+//! drivers are an API, this is one front end over it, and a binary command
+//! stream from the host is meant to be another.
 //!
 //! Moved out of `main.rs` unchanged (#296).
 //!
@@ -8,16 +13,31 @@
 //! `.text` win would come from, and `.text` is this design's binding constraint.
 //! That is a measurement, not a move, and is deliberately not done here.
 
+pub(crate) mod console;
+
+pub(crate) use console::board_absent;
+pub(crate) mod hardware;
+pub(crate) mod hr;
+pub(crate) mod i2c;
+pub(crate) mod led;
+pub(crate) mod memory;
+pub(crate) mod parse;
+pub(crate) mod phy;
+pub(crate) mod power;
+pub(crate) mod sideband;
+pub(crate) mod typec;
+pub(crate) mod vbus;
+
 use core::fmt::Write;
 use core::ptr::read_volatile;
 
-use crate::parse::{parse_decimal, parse_hex, trim};
+use self::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
 use crate::target::flash_word;
 use crate::{
-    bench, board, board_absent, board_led, board_sideband, clock, events, hardware,
-    hr_cmd, i2c_cmd, info, load, log, memory, metrics, phy_cmd, power_cmd, reboot,
-    sched, scratch_responds, selftest, target, timer, typec, vbus_command, Devices,
+    bench, board, clock, events, info, log, metrics,
+    reboot, sched, scratch_responds, selftest, staging, target, timer,
+    Devices,
 };
 
 /// Every command, with its argument syntax and what it does.
@@ -65,6 +85,8 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
     ("power alert", "the limit ALERTs: armed, routed, fired"),
+    ("power rate [ms|off]", "how often the rails are sampled"),
+    ("power detect [on|off]", "plug detection via the ALERT, not the poll"),
     ("power limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
     ("power samples <k> <port> <n>", "consecutive samples before it asserts"),
     ("power bracket <port> <mA> <mV>", "limits around the present reading"),
@@ -79,7 +101,21 @@ pub(crate) const HELP: &[(&str, &str)] = &[
 
 /// Width of the first column. One more than the longest entry above, so every
 /// description starts in the same place and none of them touch the name.
-pub(crate) const HELP_WIDTH: usize = 20;
+///
+/// It said 20 while the longest entry was 30, so the four longest names ran
+/// straight into their descriptions: `power limit <k> <port> <n>ov/oc/uv/uc
+/// threshold`. The padding loop is `name.len()..HELP_WIDTH`, which is simply
+/// empty when the name is longer -- no panic, no warning, just a missing space.
+/// The assert below is what makes the comment true rather than aspirational.
+pub(crate) const HELP_WIDTH: usize = 31;
+
+const _: () = {
+    let mut i = 0;
+    while i < HELP.len() {
+        assert!(HELP[i].0.len() < HELP_WIDTH, "HELP_WIDTH is too small");
+        i += 1;
+    }
+};
 
 pub(crate) fn help(uart: &mut Uart) {
     for (name, summary) in HELP {
@@ -232,18 +268,18 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // reporting what it does not have -- which is what `scripts/soc_test.py`
         // drives. See `src/board.rs`.
         b"board" => board::tree(uart, &devices.power, &devices.type_c),
-        b"led" => board_led(uart, rest),
-        b"i2c" => i2c_cmd::board_i2c(uart, rest, devices),
-        b"power" => power_cmd::board_power(uart, rest, devices),
-        b"phy" => phy_cmd::board_phy(uart, trim(rest)),
+        b"led" => led::command(uart, rest),
+        b"i2c" => i2c::command(uart, rest, devices),
+        b"power" => power::command(uart, rest, devices),
+        b"phy" => phy::command(uart, trim(rest)),
         // Split here rather than inside the command, because "there is no board"
         // is a fact about this build and not about the Type-C controllers. The
         // command then takes a `&mut Bus` it can use unconditionally.
         b"typec" => match devices.bus.as_mut() {
-            Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
+            Some(bus) => self::typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
-        b"vbus" => vbus_command(uart, rest, devices),
+        b"vbus" => vbus::command(uart, rest, devices),
         // One record per payload tag, so the drain-time decoding of every tag is
         // exercised on the shipping build. A guard arm rather than a branch
         // inside the one below, so the two cases do not share an indent: this
@@ -303,7 +339,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 events::dropped()
             );
         }
-        b"sideband" => board_sideband(uart, rest),
+        b"sideband" => sideband::command(uart, rest),
         // The bring-up smoke test: does this CPU compute, can it reach flash,
         // does the clock formatter hold at its boundaries. Four lines, each `ok`
         // or `BAD`, against values that cannot be produced by accident.
@@ -378,12 +414,12 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             let _ = writeln!(uart);
         }
         b"load" => match parse_hex(rest) {
-            Some(len) => load(index, uart, len),
+            Some(len) => staging::load(index, uart, len),
             None => {
                 let _ = writeln!(uart, "usage: load <hex byte count>");
             }
         },
-        b"hr" => hr_cmd::hyperram_command(uart, trim(rest)),
+        b"hr" => hr::command(uart, trim(rest)),
         b"reset" => {
             let _ = writeln!(uart, "restarting");
             reboot();
@@ -393,8 +429,8 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // this match as well would make it a second list of the same memories, and
         // `src/bench.rs` -- which takes the same three words -- would then have a
         // third. One `parse` and this arm is the whole vocabulary.
-        _ => match memory::Region::parse(cmd) {
-            Some(region) => memory::command(uart, region, rest),
+        _ => match crate::memory::Region::parse(cmd) {
+            Some(region) => self::memory::command(uart, region, rest),
             None => {
                 let _ = writeln!(uart, "unknown command; try `help`");
             }

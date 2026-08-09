@@ -5,7 +5,8 @@
 use core::fmt::Write;
 
 use crate::uart::Uart;
-use crate::{board_absent, target, ulpi};
+use crate::shell::console::board_absent;
+use crate::{ target, ulpi};
 
 /// `phy` -- identity and state of the USB3343 on TARGET.
 ///
@@ -21,7 +22,7 @@ use crate::{board_absent, target, ulpi};
 /// A PHY that is not there does not read as zeros -- it never releases `dir`,
 /// so the gateware's 68 us timeout fires and this says so, which is a different
 /// message from "answered, wrongly".
-pub(crate) fn board_phy(uart: &mut Uart, rest: &[u8]) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
         None => return board_absent(uart),

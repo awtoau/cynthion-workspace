@@ -98,20 +98,14 @@ mod dispatch;
 mod events;
 mod fusb302;
 mod gpio;
-mod hardware;
-mod hr_cmd;
 mod hyperram;
-mod i2c_cmd;
 mod info;
 mod irq;
 mod log;
 mod memory;
 mod metrics;
-mod parse;
-mod phy_cmd;
 mod plic;
 mod power;
-mod power_cmd;
 mod power_rails;
 // THE dispatcher. `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`,
 // so there is no `#[entry]` anywhere in this file and no second loop for one to
@@ -119,6 +113,7 @@ mod power_rails;
 mod rtic_app;
 mod sched;
 mod selftest;
+mod staging;
 mod shell;
 mod sideband;
 mod target;
@@ -131,26 +126,10 @@ mod vbus;
 mod workload;
 
 use bus::Bus;
-use parse::{
-    as_str, parse_decimal, parse_hex, parse_limit, parse_port, parse_signed, trim,
-    FixedWriter,
-};
 use clock::Instant;
 use target::flash_word;
 use uart::Uart;
 
-/// How long an idle console waits before printing the banner again.
-///
-/// Two seconds: slow enough to read, fast enough that attaching to a quiet board
-/// does not feel like attaching to a dead one. A shell that only prints on input
-/// is indistinguishable from one that has stopped -- there is nothing to see
-/// until you type, and no reason to believe typing will work.
-///
-/// Milliseconds, measured against `rdtime`, and NOT a count of loop turns. It
-/// was a count, and a turn is not a unit of time: under `--features rtic` a turn
-/// costs about four times as much, so the same number took four times as long
-/// and the QEMU suite reported the shell as silent.
-const BANNER_INTERVAL_MS: u32 = 2_000;
 
 /// The most consoles this build will run shells for.
 ///
@@ -211,124 +190,7 @@ impl Devices {
     }
 }
 
-/// One console's line editor and its idle state.
-///
-/// Per-console rather than global: `spoken` latching on one port must not silence the
-/// re-banner on another, and two half-typed command lines must not share a buffer.
-/// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
-/// generated signatures too.
-pub struct Shell {
-    line: [u8; 64],
-    len: usize,
-    /// Set by the first keypress. From then on the prompt is on screen and reprinting
-    /// the banner would fight the line being edited.
-    spoken: bool,
-    /// When the banner was last printed. `None` until the first idle poll, which
-    /// is what stops the first one measuring against a zero instant -- the same
-    /// origin defect the scheduler had.
-    ///
-    /// A TIMESTAMP, not a turn count. This was `idle: u32`, compared against
-    /// 12,000,000 turns and described as "~2 s at 60 MHz". A turn is not a unit
-    /// of time: under `--features rtic` `#[idle]` takes two SLIC locks per pass
-    /// and each turn costs about four times as much, so the same count took
-    /// about eight seconds and the shell looked silent. It also scaled with the
-    /// number of consoles and with `SYNC_MHZ`, neither of which has anything to
-    /// do with how long a person waits before deciding a board is dead.
-    last_banner: Option<Instant>,
-}
 
-impl Shell {
-    const NEW: Shell = Shell {
-        line: [0u8; 64],
-        len: 0,
-        spoken: false,
-        last_banner: None,
-    };
-
-    /// Handle at most one byte from `uart`, or count one turn of idleness.
-    ///
-    /// `announce` re-prints the banner and prompt periodically while nothing has been
-    /// typed. Printing them once is invisible: the CPU starts the moment the FPGA is
-    /// configured and the host takes about half a second to enumerate and bind a tty, so
-    /// a terminal attaching afterwards has already missed everything. Worse, an idle
-    /// shell that only prints on input is indistinguishable from a dead one -- there is
-    /// nothing to see until you type, and no reason to believe typing will work.
-    ///
-    /// It is off for every console but the first, because on this board the second one's
-    /// TX pin is shared with JTAG TMS and an unbidden transmission is bus contention.
-    /// See `target::ANNOUNCING`.
-    /// `index` selects this console's receive ring in `src/irq.rs`, and is also what
-    /// `load` needs to know which port a transfer is arriving on. It is the index into
-    /// `target::UART_BASES`, so it is the same number everywhere.
-    fn poll(&mut self, index: usize, uart: &mut Uart, announce: bool, devices: &mut Devices) {
-        // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
-        // for everything this function ECHOES; only the receive direction moved.
-        let byte = match irq::pop(index) {
-            Some(byte) => byte,
-            None => {
-                if announce && !self.spoken {
-                    let now = clock::now();
-                    let last = *self.last_banner.get_or_insert(now);
-                    // 2 s, measured. Slow enough to read, fast enough that
-                    // attaching does not feel dead -- and now the SAME 2 s under
-                    // both dispatchers, at any `SYNC_MHZ`, with any number of
-                    // consoles, because it is a duration rather than a count of
-                    // something whose cost varies.
-                    if last.elapsed(now) >= clock::millis(BANNER_INTERVAL_MS) {
-                        self.last_banner = Some(now);
-                        // Two lines printed is work, even though nobody asked
-                        // for them. See `src/metrics.rs`.
-                        metrics::busy();
-                        banner(uart);
-                        let _ = write!(uart, "> ");
-                    }
-                }
-                return;
-            }
-        };
-        // First keypress: stop re-announcing, the user is here.
-        self.spoken = true;
-
-        match byte {
-            // Enter. Both, because terminals disagree about which they send.
-            b'\r' | b'\n' => {
-                let _ = write!(uart, "\n");
-                if self.len > 0 {
-                    let len = self.len;
-                    // Copied out before dispatch so `run` may borrow the uart mutably
-                    // while the line it was given stays valid.
-                    let mut line = [0u8; 64];
-                    line[..len].copy_from_slice(&self.line[..len]);
-                    self.len = 0;
-                    shell::run(index, uart, &line[..len], devices);
-                }
-                let _ = write!(uart, "> ");
-            }
-            // Backspace and delete. Erase on screen as well as in the buffer, or the
-            // display and the buffer disagree about what the command is.
-            0x08 | 0x7f => {
-                if self.len > 0 {
-                    self.len -= 1;
-                    let _ = write!(uart, "\x08 \x08");
-                }
-            }
-            // Printable ASCII only. Echo, since the device gets raw bytes and nothing
-            // else will show what was typed.
-            0x20..=0x7e => {
-                if self.len < self.line.len() {
-                    self.line[self.len] = byte;
-                    self.len += 1;
-                    uart.put(byte);
-                }
-            }
-            // Everything else -- stray control codes, terminal escape sequences -- is
-            // dropped. Echoing or reporting them is worse than silence: an escape
-            // sequence would be replayed at the terminal, and a chatty default turns a
-            // stuck RX FIFO into an unstoppable wall of text.
-            _ => {}
-        }
-    }
-}
 
 /// The console the banner, the bootloader and any panic speak on.
 fn primary() -> Uart {
@@ -426,7 +288,7 @@ fn boot() -> Devices {
     // report on the boot: the bootloader ran, found nothing staged or nothing that
     // checked out, and handed over to the image the bitstream placed. A staged image
     // that verified would be printing its own banner here instead.
-    banner(&mut console);
+    shell::console::banner(&mut console);
 
     init_line(&mut console, "uart",
               "ok",
@@ -588,121 +450,6 @@ fn housekeeping(console: &mut Uart, devices: &mut Devices) {
     }
 }
 
-/// The loop body's console half: one byte from each shell, round-robin.
-///
-/// Fair by construction and with no arbitration to get wrong: a console that is
-/// being pasted into cannot starve the others, because it still only gets one
-/// byte per turn.
-///
-/// Bytes come from the interrupt handler's rings, not from LSR, so the byte is
-/// already collected before this asks for it -- a console busy printing cannot
-/// miss one. What the caller still decides is how much of one console's input is
-/// handled before the other's, which is a fairness property worth keeping.
-fn consoles(shells: &mut [Shell; MAX_CONSOLES], devices: &mut Devices) {
-    for (index, &base) in target::UART_BASES.iter().enumerate() {
-        let mut uart = Uart::new(base);
-        shells[index].poll(index, &mut uart, index < target::ANNOUNCING, devices);
-    }
-}
-
-fn banner(uart: &mut Uart) {
-    let _ = write!(uart, "\n");
-    crate::log!(uart, "Cynthion RISC-V SoC - Rust firmware");
-    crate::log!(uart, "type `help` or `?` for commands");
-}
-
-
-
-
-
-
-
-
-/// What `led`, `i2c` and `sideband` say when there is no board under them.
-///
-/// The QEMU build has `target::BOARD == None`. Reporting that is better than
-/// hiding the commands: `scripts/soc_test.py` then still checks that they are
-/// registered and spelled the same as the help text, and a person who typed one
-/// on the wrong target gets told which target they are on rather than
-/// `unknown command`. See the comment on `target::BOARD`.
-fn board_absent(uart: &mut Uart) {
-    let _ = writeln!(uart, "no board peripherals on this target");
-}
-
-/// `led`, `led <colour>`, `led <colour> on|off|fabric`.
-///
-/// Colours only -- see the module comment in `src/gpio.rs` for why an index is
-/// not accepted here.
-fn board_led(uart: &mut Uart, rest: &[u8]) {
-    let board = match target::BOARD {
-        Some(board) => board,
-        None => return board_absent(uart),
-    };
-    let pins = gpio::Gpio::new(board.gpio);
-
-    // Split the argument into a colour and an optional state.
-    let rest = trim(rest);
-    let (name, state) = match rest.iter().position(|&b| b == b' ') {
-        Some(i) => (&rest[..i], trim(&rest[i + 1..])),
-        None => (rest, &rest[..0]),
-    };
-
-    if !name.is_empty() {
-        let led = match gpio::led_by_name(name) {
-            Some(led) => led,
-            None => {
-                let _ = writeln!(
-                    uart,
-                    "no LED of that colour; they are red, \
-                                        orange, yellow, green, blue, violet"
-                );
-                return;
-            }
-        };
-        match state {
-            b"on" => pins.set_led(led, true),
-            b"off" => pins.set_led(led, false),
-            b"fabric" => pins.release_led(led),
-            b"" => {}
-            _ => {
-                let _ = writeln!(uart, "usage: led <colour> [on|off|fabric]");
-                return;
-            }
-        }
-    }
-
-    // Always list afterwards, so a command that set something shows the result
-    // rather than reporting success and leaving the state to be guessed at.
-    // This is the only way to confirm an LED from a terminal: nobody reading
-    // this output can see the board.
-    for (led, colour) in gpio::LEDS {
-        let owner = match pins.led_owner(led) {
-            gpio::Owner::Cpu => "cpu",
-            gpio::Owner::Fabric => "fabric",
-        };
-        let _ = writeln!(
-            uart,
-            "  {:7} {:3}  driven by {}",
-            colour,
-            if pins.led_lit(led) { "on" } else { "off" },
-            owner
-        );
-    }
-    let _ = writeln!(
-        uart,
-        "  button  {}",
-        if pins.button() { "pressed" } else { "released" }
-    );
-    let _ = writeln!(
-        uart,
-        "  power monitor {}",
-        if pins.power_monitor_down() {
-            "POWERED DOWN"
-        } else {
-            "running"
-        }
-    );
-}
 
 
 
@@ -717,90 +464,17 @@ fn board_led(uart: &mut Uart, rest: &[u8]) {
 
 
 
-/// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.
-fn board_sideband(uart: &mut Uart, rest: &[u8]) {
-    let board = match target::BOARD {
-        Some(board) => board,
-        None => return board_absent(uart),
-    };
-    let link = sideband::Sideband::new(board.sideband);
 
-    let rest = trim(rest);
-    if !rest.is_empty() {
-        // Split on the first space: the control register, then optionally the
-        // byte a PING returns. Two arguments rather than two commands because
-        // they are read back together and are usually set together.
-        let split = rest.iter().position(|&byte| byte == b' ');
-        let (first, second) = match split {
-            Some(at) => (&rest[..at], trim(&rest[at + 1..])),
-            None => (rest, &b""[..]),
-        };
-        match (parse_hex(first), second.is_empty()) {
-            (Some(value), true) => link.write(value as u8),
-            (Some(value), false) => match parse_hex(second) {
-                Some(message) => {
-                    link.write(value as u8);
-                    link.set_message(message as u8);
-                }
-                None => return sideband_usage(uart),
-            },
-            (None, _) => return sideband_usage(uart),
-        }
-    }
 
-    let value = link.read();
-    let _ = writeln!(uart, "sideband @{:08x} ctrl {:02x}", board.sideband, value);
-    if value & sideband::OWN != 0 {
-        let _ = writeln!(
-            uart,
-            "  reporting state {} events {} error {} \
-                                reconfigured {}",
-            value & sideband::STATE_MASK,
-            (value & sideband::EVENTS != 0) as u8,
-            (value & sideband::ERROR != 0) as u8,
-            (value & sideband::RECONFIGURED != 0) as u8
-        );
-    } else {
-        // Do NOT decode the payload bits here. With OWN clear they are stored
-        // and ignored, and printing them under a heading that reads like a
-        // report would say the link is announcing something it is not -- which
-        // is the one lie a diagnostic for a debug link must not tell.
-        let _ = writeln!(
-            uart,
-            "  reporting the fabric's own state; these bits \
-                                are stored and unused"
-        );
-    }
-    // Printed either way: neither the port request nor the byte channel is part
-    // of the payload, so OWN says nothing about them.
-    let _ = writeln!(
-        uart,
-        "  CONTROL port {}",
-        if value & sideband::ADVERTISE != 0 {
-            "REQUESTED"
-        } else {
-            "not requested"
-        }
-    );
-    let (received, count) = link.received();
-    let _ = writeln!(
-        uart,
-        "  message out {:02x}, in {:02x} after {} byte(s)",
-        link.message(),
-        received,
-        count
-    );
-}
 
-fn sideband_usage(uart: &mut Uart) {
-    let _ = writeln!(uart, "usage: sideband [ctrl [tx]]");
-    let _ = writeln!(
-        uart,
-        "  ctrl bit 7 takes the link from the fabric, \
-                            bit 5 asks for the CONTROL port"
-    );
-    let _ = writeln!(uart, "  tx   the byte a PING returns");
-}
+
+
+
+
+
+
+
+
 
 
 /// Does the 16550 at `base` have a working scratch register?
@@ -858,85 +532,6 @@ fn reboot() -> ! {
     }
 }
 
-/// Receive `len` bytes over the console and stage them in HyperRAM, then reboot.
-///
-/// The bytes arrive over the USB bulk OUT endpoint -- the same transport `apollo
-/// flash-write` uses, and about four orders of magnitude faster than a JTAG register
-/// interface, which `scripts/soc_jtag_stage.py --benchmark` measures at 28 ms per 16-bit
-/// word. That is a property of poking a control-plane register per word, not of JTAG:
-/// the streaming sink in `gateware/soc/bus/jtag_stage.py` moves 32 KiB over the same wire
-/// in 85 ms, and unlike this path it needs no running CPU.
-///
-/// They go to HyperRAM rather than straight into the image region because the next step
-/// is a reboot, and a reboot is exactly what block RAM does not survive intact: the
-/// shell doing the receiving is executing from it. HyperRAM is external and keeps its
-/// contents across a CPU reset.
-fn load(index: usize, uart: &mut Uart, len: u32) {
-    if len == 0 || len > hyperram::MAX_IMAGE {
-        let _ = writeln!(uart, "length must be 1..{:x}", hyperram::MAX_IMAGE);
-        return;
-    }
-
-    let _ = writeln!(uart, "send {} bytes", len);
-
-    let mut crc = hyperram::Crc32::new();
-    let mut received = 0u32;
-    let mut pending: u32 = 0;
-    let mut held: u32 = 0;
-
-    // Seek once; the gateware auto-increments, so the inner loop is one store per word.
-    hyperram::seek_image();
-
-    while received < len {
-        // Blocking on THIS console, and only this one: once the sender has started there
-        // is nothing else to do, and returning to the prompt mid-transfer would interpret
-        // the image as commands. The other consoles' shells are not run for the duration,
-        // which is correct -- a transfer in flight is not a moment to run a command.
-        //
-        // Their interrupts still fire and still fill their rings; the handler does not
-        // know or care that this loop is running. That is a change for the better: on the
-        // polled version, anything typed on the other port during a transfer was lost to
-        // a 16-byte FIFO overrun. Here it waits.
-        //
-        // This must read the ring rather than the UART. The handler has already taken the
-        // byte out of the 16550's FIFO, so `uart.get()` would spin forever on an LSR.DR
-        // that the handler keeps clearing -- a `load` that hangs with the data arriving
-        // perfectly.
-        let byte = match irq::pop(index) {
-            Some(b) => b,
-            None => continue,
-        };
-        crc.push(byte);
-        received += 1;
-
-        // The staging port moves a 32-bit pair, so bytes are grouped four at a time,
-        // little-endian.
-        pending = (pending >> 8) | ((byte as u32) << 24);
-        held += 1;
-        if held == 4 {
-            hyperram::write_pair(pending);
-            held = 0;
-        }
-    }
-
-    // A length that is not a multiple of four still has to fill its final pair. The
-    // unused bytes are outside `len`, so the bootloader never reads them.
-    if held != 0 {
-        hyperram::write_pair(pending >> (8 * (4 - held)));
-    }
-
-    let crc = crc.finish();
-    hyperram::write_header(len, crc);
-    let _ = writeln!(
-        uart,
-        "staged {} bytes, crc {:08x}; rebooting",
-        received, crc
-    );
-
-    // The bootloader takes it from here: it re-reads these bytes, checks this CRC
-    // against what HyperRAM actually gives back, and jumps.
-    reboot();
-}
 
 
 
@@ -958,114 +553,4 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-/// `vbus` -- pass host power through to a target, or report the switches.
-///
-/// Terse on purpose. Every string here is `.rodata` in a 63 KiB image whose
-/// stack is whatever is left above `.bss`, and a chatty command in this firmware
-/// is paid for in stack depth -- see the ASSERT in `memory.x`, which exists
-/// because this exact command overran it.
-fn vbus_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
-    // `trim(rest)`, not `core::str::from_utf8(rest).unwrap_or("").trim()`.
-    //
-    // This was the only place in the firmware that touched `core::str`, and it
-    // cost 1,152 bytes of `.text` and 256 of `.rodata`: UTF-8 validation,
-    // `<str>::trim`, and the Unicode whitespace table `<str>::trim` consults --
-    // to compare four ASCII words on a line the 16550 delivered as bytes.
-    // `crate::trim` is 88 bytes and is what every other command already uses.
-    let argument = trim(rest);
 
-    if argument.is_empty() {
-        // `in c/a` is the INPUT register, and it reaches no pin.
-        // `top.py` deliberately does not request
-        // `control_vbus_in_en`/`aux_vbus_in_en` -- nothing here has a reason to
-        // command a power input closed, and hardware overvoltage protection
-        // (D17, a 5.6 V zener) backs that. So the register reads back whatever
-        // was last written to it and drives nothing.
-        //
-        // Printed as `(nc)` because printing it bare made the shell able to lie
-        // about power: `in c1 a0` reads as the board's input state and is not.
-        let (control_in, aux_in) = vbus::inputs();
-        let _ = writeln!(
-            uart,
-            "vbus {:02x}  c{} a{} t{}  in c{} a{} (nc)",
-            vbus::state(),
-            vbus::is_closed(vbus::Source::Control) as u8,
-            vbus::is_closed(vbus::Source::Aux) as u8,
-            vbus::is_closed(vbus::Source::TargetC) as u8,
-            control_in as u8,
-            aux_in as u8
-        );
-        return;
-    }
-    if argument == b"off" {
-        vbus::open_all();
-        if let Some(bus) = devices.bus.as_mut() {
-            let _ = fusb302::configure(bus, fusb302::Port::Target);
-        }
-        let _ = writeln!(uart, "open");
-        return;
-    }
-    let charge = match argument {
-        b"charge" => Some(fusb302::HostCurrent::Default),
-        b"charge 1.5" => Some(fusb302::HostCurrent::A1_5),
-        b"charge 3" => Some(fusb302::HostCurrent::A3),
-        _ => None,
-    };
-    if let Some(current) = charge {
-        let bus = match devices.bus.as_mut() {
-            Some(bus) => bus,
-            None => return board_absent(uart),
-        };
-        if fusb302::source_target(bus, current).is_err() {
-            let _ = writeln!(uart, "?");
-            return;
-        }
-        match vbus::charge_target_c(&devices.power) {
-            Ok(mv) => {
-                let _ = writeln!(uart, "on {} mV", mv);
-            }
-            Err(error) => {
-                let _ = fusb302::configure(bus, fusb302::Port::Target);
-                vbus_refusal(uart, error);
-            }
-        }
-        return;
-    }
-    if let Some(which) = argument.strip_prefix(b"input").map(trim) {
-        let ok = match which {
-            b"control" => vbus::prefer_control(&devices.power),
-            b"both" => {
-                vbus::allow_all_inputs();
-                true
-            }
-            _ => false,
-        };
-        let _ = writeln!(uart, "input {}", if ok { "set" } else { "no" });
-        return;
-    }
-    match vbus::Source::parse(argument) {
-        None => {
-            let _ = writeln!(uart, "?");
-        }
-        Some(source) => match vbus::close(source, &devices.power) {
-            Ok(mv) => {
-                let _ = writeln!(uart, "on {} mV", mv);
-            }
-            Err(error) => vbus_refusal(uart, error),
-        },
-    }
-}
-
-fn vbus_refusal(uart: &mut Uart, refusal: vbus::Refusal) {
-    match refusal {
-        vbus::Refusal::TooHigh(mv) => {
-            let _ = writeln!(uart, "no: {} mV high", mv);
-        }
-        vbus::Refusal::TooLow(mv) => {
-            let _ = writeln!(uart, "no: {} mV low", mv);
-        }
-        vbus::Refusal::Stale => {
-            let _ = writeln!(uart, "no: stale");
-        }
-    }
-}

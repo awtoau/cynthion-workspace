@@ -8,11 +8,12 @@
 
 use core::fmt::Write;
 
-use crate::parse::{
+use crate::shell::parse::{
     as_str, parse_decimal, parse_limit, parse_port, parse_signed, trim, FixedWriter,
 };
 use crate::uart::Uart;
-use crate::{board_absent, clock, power, Devices};
+use crate::shell::console::board_absent;
+use crate::{ clock, power, Devices};
 
 /// `power`, or `power floor <port> <mA>`.
 ///
@@ -30,6 +31,54 @@ use crate::{board_absent, clock, power, Devices};
 /// channel order is not the port order anyone would guess (channel 1 is
 /// TARGET_A), and "channel 3" in a bug report means nothing to the person
 /// holding the board.
+/// `power detect [on|off]` -- plug detection in the part, not in the poll (#285).
+///
+/// The poll is off by default (#286), and connection state used to come from it.
+/// This arms a current limit at the floor instead, so the part reports a crossing
+/// against every sample at 1024 SPS -- faster than the 50 ms poll it replaces.
+///
+/// Takes one current limit per port, in whichever direction the port can move,
+/// which is why it is opt-in: a protection threshold on the same direction and
+/// channel would be overwritten.
+fn detect_command(uart: &mut Uart, arg: &[u8], devices: &mut Devices) {
+    let Some(bus) = devices.bus.as_mut() else {
+        return board_absent(uart);
+    };
+    match arg {
+        b"on" | b"off" => {
+            let on = arg == b"on";
+            if on {
+                if let Err(error) = devices.power.alert_pin_enable(bus) {
+                    let _ = writeln!(uart, "detect: {}", error.as_str());
+                    return;
+                }
+            }
+            if let Err(error) = devices.power.detect_set(bus, on) {
+                let _ = writeln!(uart, "detect: {}", error.as_str());
+                return;
+            }
+        }
+        b"" => {}
+        _ => {
+            let _ = writeln!(uart, "usage: power detect [on|off]");
+            return;
+        }
+    }
+    if devices.power.detecting() {
+        let _ = writeln!(
+            uart,
+            "detect   on   a current limit at each port's floor; the part \
+             compares every sample"
+        );
+    } else {
+        let _ = writeln!(
+            uart,
+            "detect   off  connect and disconnect are noticed only while the \
+             poll runs"
+        );
+    }
+}
+
 /// `power rate [<ms>|off]` -- how often the rails are sampled (#286).
 ///
 /// Reports the rate, the measured cost of one cycle, and whether the two are
@@ -38,7 +87,7 @@ use crate::{board_absent, clock, power, Devices};
 ///
 /// **The ALERT does not depend on this.** Limits are compared against every
 /// sample inside the part, so excursions are reported with the poll off.
-pub(crate) fn power_rate_command(uart: &mut Uart, arg: &[u8]) {
+pub(crate) fn rate_command(uart: &mut Uart, arg: &[u8]) {
     if !arg.is_empty() {
         let asked = if arg == b"off" {
             Some(power::RATE_OFF)
@@ -107,14 +156,24 @@ pub(crate) fn power_rate_command(uart: &mut Uart, arg: &[u8]) {
     }
 }
 
-pub(crate) fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    let rest = trim(rest);
+
+    // BEFORE the board check, deliberately. The rate is a property of the tick,
+    // not of the bus: `rtic_app::tick` reads it whether or not a monitor answers,
+    // and the scheduler checks in `soc_test.py` run under QEMU where there is no
+    // board at all. Behind the guard it returned "no board peripherals" on a
+    // target whose scheduler was running perfectly.
+    if rest.starts_with(b"rate") {
+        return rate_command(uart, trim(&rest[b"rate".len()..]));
+    }
+
     if devices.bus.is_none() {
         return board_absent(uart);
     }
 
-    let rest = trim(rest);
-    if rest.starts_with(b"rate") {
-        return power_rate_command(uart, trim(&rest[b"rate".len()..]));
+    if rest.starts_with(b"detect") {
+        return detect_command(uart, trim(&rest[b"detect".len()..]), devices);
     }
     if rest.starts_with(b"floor") {
         let rest = trim(&rest[b"floor".len()..]);

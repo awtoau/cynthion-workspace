@@ -28,6 +28,11 @@
 //! `docs/hardware.md` collects these; the primary ones are GSG's Cynthion
 //! Hardware Design Update and mossmann in greatscottgadgets/cynthion#184.
 
+use core::fmt::Write;
+
+use crate::uart::Uart;
+use crate::{fusb302, Devices};
+
 use crate::power;
 
 /// Bit positions, matching `gateware/soc/peripherals/vbus_csr.py` and upstream's
@@ -305,3 +310,5 @@ pub fn charge_target_c(monitor: &power::Monitor) -> Result<u32, Refusal> {
 pub fn discharge() {
     write((1 << BIT_ENABLE) | (1 << BIT_DISCHARGE));
 }
+
+

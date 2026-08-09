@@ -44,6 +44,11 @@
 //! A driver that writes only the low byte of Mode has written nothing at all,
 //! and the symptom is an LED command that returns cleanly and does nothing.
 
+use core::fmt::Write;
+
+use crate::uart::Uart;
+use crate::target;
+
 use core::ptr::{read_volatile, write_volatile};
 
 /// Mode: two bits per pin, low byte first. 0b00 input-only, 0b01 push-pull.
@@ -73,23 +78,7 @@ pub enum Led {
     Violet = 5,
 }
 
-/// Every LED, in board order, for a shell that wants to list them.
-pub const LEDS: [(Led, &str); 6] = [
-    (Led::Red, "red"),
-    (Led::Orange, "orange"),
-    (Led::Yellow, "yellow"),
-    (Led::Green, "green"),
-    (Led::Blue, "blue"),
-    (Led::Violet, "violet"),
-];
 
-/// Parse a colour name. Returns `None` for anything else, including an index --
-/// accepting "3" here would undo the whole point of naming them.
-pub fn led_by_name(name: &[u8]) -> Option<Led> {
-    LEDS.iter()
-        .find(|(_, text)| text.as_bytes() == name)
-        .map(|(led, _)| *led)
-}
 
 /// The power monitor's PWRDN, active low at the pad. A 1 here powers the
 /// PAC1954 DOWN, so leaving this pin released is what keeps the I2C bus useful.
@@ -239,3 +228,4 @@ impl Gpio {
         self.owner(PIN_PWRDN) == Owner::Cpu && self.output() & (1 << PIN_PWRDN) != 0
     }
 }
+

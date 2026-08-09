@@ -5,7 +5,7 @@
 
 use core::fmt::Write;
 
-use crate::parse::{parse_hex, trim};
+use crate::shell::parse::{parse_hex, trim};
 use crate::uart::Uart;
 use crate::{bench, hyperram, memory};
 
@@ -19,7 +19,7 @@ use crate::{bench, hyperram, memory};
 ///     hr cross    do the window and the staging port agree?
 ///     hr bench    the same walk as `bench hyperram`
 ///     hr id       HyperBus has no identify
-pub(crate) fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
+pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     match rest {
         b"status" => {
             let (locked, ready, seen, bursts) = bench::dqs_status();
@@ -94,8 +94,8 @@ pub(crate) fn hyperram_command(uart: &mut Uart, rest: &[u8]) {
             }
         }
         b"bench" => bench::command(uart, b"hyperram"),
-        b"id" => memory::command(uart, memory::Region::Hyperram, b"id"),
-        _ if rest.starts_with(b"read") => memory::command(uart, memory::Region::Hyperram, rest),
+        b"id" => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, b"id"),
+        _ if rest.starts_with(b"read") => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, rest),
         _ if rest.starts_with(b"sel") => match parse_hex(trim(&rest[3..])) {
             Some(n) if n < 16 => {
                 bench::set_readclksel(n as u8);
