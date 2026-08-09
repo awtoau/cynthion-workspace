@@ -588,7 +588,22 @@ FLASH_DIVISOR = 0
 #     124.77 MHz -- so it caps sync whenever FLASH_PHY_FAST or HYPERRAM_DQS is on
 # `usb` is the A8 oscillator, so the PHY does not constrain this.
 # 60 is a rung with margin. The real ceiling is unmeasured.
-SYNC_MHZ = 60
+SYNC_MHZ = 50 if os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0") else 60
+# 50 for the BIST variant ONLY, and it is what makes the rig usable.
+#
+# That build adds a second PLL, a fourth clock domain and the engine, and it
+# stopped closing: `clk` came back 60.45, 59.89 and 58.49 MHz against a 60 MHz
+# constraint on three successive builds, so the image could not be loaded at all
+# and retrying was a coin flip costing ~130 s a throw. At 50 the same build
+# achieves 68.12 MHz -- 36% margin -- and the 4,096-cell sweep it unblocked runs
+# in 3.5 s.
+#
+# The shipping SoC stays at 60. A measurement bitstream's CPU clock is not a
+# product decision: nothing in the rig is timed against it, because the engine
+# runs in `hr` off its own PLL precisely so that CK and the CPU are independent.
+#
+# `--relaxed-btb` (jumpAt = 2) is already on and is NOT the remaining limit --
+# see `cpu/cpu.py`, where it was added for exactly this symptom at 57.55 MHz.
 
 # The flash domain is this multiple of `sync`, and the pair is ONE decision.
 #
