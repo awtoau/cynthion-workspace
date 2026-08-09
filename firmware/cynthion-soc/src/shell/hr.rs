@@ -94,8 +94,8 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             }
         }
         b"bench" => bench::command(uart, b"hyperram"),
-        b"id" => memory::command(uart, memory::Region::Hyperram, b"id"),
-        _ if rest.starts_with(b"read") => memory::command(uart, memory::Region::Hyperram, rest),
+        b"id" => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, b"id"),
+        _ if rest.starts_with(b"read") => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, rest),
         _ if rest.starts_with(b"sel") => match parse_hex(trim(&rest[3..])) {
             Some(n) if n < 16 => {
                 bench::set_readclksel(n as u8);

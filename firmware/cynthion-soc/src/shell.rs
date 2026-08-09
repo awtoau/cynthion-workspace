@@ -17,10 +17,12 @@ pub(crate) mod hardware;
 pub(crate) mod hr;
 pub(crate) mod i2c;
 pub(crate) mod led;
+pub(crate) mod memory;
 pub(crate) mod parse;
 pub(crate) mod phy;
 pub(crate) mod power;
 pub(crate) mod sideband;
+pub(crate) mod typec;
 pub(crate) mod vbus;
 
 use core::fmt::Write;
@@ -30,8 +32,8 @@ use self::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
 use crate::target::flash_word;
 use crate::{
-    bench, board, board_absent, clock, events, info, log, memory, metrics,
-    reboot, sched, scratch_responds, selftest, staging, target, timer, typec,
+    bench, board, board_absent, clock, events, info, log, metrics,
+    reboot, sched, scratch_responds, selftest, staging, target, timer,
     Devices,
 };
 
@@ -255,7 +257,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // is a fact about this build and not about the Type-C controllers. The
         // command then takes a `&mut Bus` it can use unconditionally.
         b"typec" => match devices.bus.as_mut() {
-            Some(bus) => typec::command(uart, rest, &mut devices.type_c, bus),
+            Some(bus) => self::typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },
         b"vbus" => vbus::command(uart, rest, devices),
@@ -408,8 +410,8 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // this match as well would make it a second list of the same memories, and
         // `src/bench.rs` -- which takes the same three words -- would then have a
         // third. One `parse` and this arm is the whole vocabulary.
-        _ => match memory::Region::parse(cmd) {
-            Some(region) => memory::command(uart, region, rest),
+        _ => match crate::memory::Region::parse(cmd) {
+            Some(region) => self::memory::command(uart, region, rest),
             None => {
                 let _ = writeln!(uart, "unknown command; try `help`");
             }
