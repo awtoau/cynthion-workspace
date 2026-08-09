@@ -55,7 +55,7 @@ from devlog import emit, log  # noqa: E402
 BUILD_ROOT = ROOT / "tmp" / "usb-host-area"
 RESULTS = BUILD_ROOT / "area-results.json"
 
-# The part, for the percentages.
+# The die, for the percentages. See docs/chips/ecp5/lfe5u-12f.md.
 TOTAL_LUT, TOTAL_BRAM = 24288, 56
 
 # A high-speed bulk packet is 512 bytes and the TX FIFO has to hold a whole one,
@@ -159,7 +159,7 @@ def main():
     args = parser.parse_args()
 
     emit("USB host engine area on Cynthion r1.4 "
-         f"(LFE5U-12F: {TOTAL_LUT} LUT / {TOTAL_BRAM} BRAM)")
+         f"(25F die: {TOTAL_LUT} LUT / {TOTAL_BRAM} BRAM)")
     results = [measure(config) for config in args.configs]
 
     base = next((r for r in results if r["config"] == "baseline" and r["ok"]), None)
