@@ -91,6 +91,25 @@ pub const fn millis(millis: u32) -> u32 {
     ((target::TIME_HZ as u64 * millis as u64) / 1000) as u32
 }
 
+/// Ticks in `micros` microseconds, at this target's counter rate.
+///
+/// [`millis`] cannot express the intervals a datasheet states in microseconds
+/// -- the HyperRAM's `tEXTDPD` is 150 us, and `millis(1)` is nearly seven times
+/// it. Same `u64` multiply-first for the same overflow reason.
+pub const fn micros(micros: u32) -> u32 {
+    ((target::TIME_HZ as u64 * micros as u64) / 1_000_000) as u32
+}
+
+/// Busy-wait `ticks`, measured on the counter rather than counted in turns.
+///
+/// A loop count measures the loop; this measures the clock, so an interval a
+/// datasheet states survives a compiler that unrolls differently. Bounded by
+/// construction: the counter always advances.
+pub fn wait(ticks: u32) {
+    let at = now();
+    while at.elapsed(now()) < ticks {}
+}
+
 /// The other direction: how many milliseconds `ticks` is, on this target.
 ///
 /// For reporting an interval that was measured rather than chosen -- the age of

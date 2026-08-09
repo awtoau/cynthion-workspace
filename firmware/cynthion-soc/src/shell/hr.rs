@@ -96,6 +96,11 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
                 let _ = writeln!(uart, "hyperram ports DISAGREE");
             }
         }
+        // THE DESTRUCTIVE VERB, and it is never called by `hyperram_init`.
+        // Separating the two is the rule: an init that quietly destroyed data
+        // would be a data-loss bug waiting for the first person who ran it
+        // expecting a health check. See `src/init.rs`.
+        b"clear" => crate::init::hyperram_clear(uart),
         b"bench" => bench::command(uart, b"hyperram"),
         b"id" => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, b"id"),
         _ if rest.starts_with(b"read") => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, rest),

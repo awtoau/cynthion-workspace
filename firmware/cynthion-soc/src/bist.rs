@@ -115,6 +115,11 @@ pub const APPLET_ID: u32 = 0x4852_4331;
 /// derived from it, so the two must agree.
 const BURST_WORDS: u32 = 128;
 
+/// `CR0[15]`: 1 is normal operation, 0 is Deep Power Down. Forced set.
+const CR0_FULL_POWER: u32 = 1 << 15;
+/// `CR1[5]`: 1 is Hybrid Sleep. Forced clear.
+const CR1_HYBRID_SLEEP: u32 = 1 << 5;
+
 /// Where the BIST peripheral sits, matching `HYPERRAM_BIST_BASE` in
 /// `gateware/soc/top.py`.
 ///
@@ -250,9 +255,16 @@ impl Bist {
             | ((axes.drive as u32 & 0x7) << 12)
             | ((axes.latency as u32 & 0xf) << 4)
             | (if axes.fixed_latency { 1 << 3 } else { 0 });
-        self.write(reg::DEVICE_CR0, (1 << 16) | cr0);
-        self.write(reg::DEVICE_CR1,
-                   (1 << 16) | if axes.single_ended_clock { 0xffc1 } else { 0xff81 });
+        // FULL POWER MODE, forced, wherever CR0/CR1 are assembled. `CR0[15]=0`
+        // is Deep Power Down and `CR1[5]=1` is Hybrid Sleep, and a part put
+        // into either survives every reconfigure -- nothing on this board
+        // power-cycles it. A DQS build wrote `CR0 = 0x0000` for exactly this
+        // reason and the wedge outlived the code that caused it (#226, #315).
+        // Masked here rather than trusted to the base constant, so no sweep and
+        // no partial word can reach either state.
+        self.write(reg::DEVICE_CR0, (1 << 16) | cr0 | CR0_FULL_POWER);
+        let cr1 = if axes.single_ended_clock { 0xffc1 } else { 0xff81 };
+        self.write(reg::DEVICE_CR1, (1 << 16) | (cr1 & !CR1_HYBRID_SLEEP));
     }
 
     /// How many poll spins one pass of `passes` bursts may legitimately take.

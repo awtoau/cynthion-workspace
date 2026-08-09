@@ -102,7 +102,15 @@ pub const IER_ERBFI: u8 = 1 << 0;
 /// is belt and braces; a wrong value here looks exactly like "the firmware
 /// produces no output", which is the failure this whole layer exists to
 /// distinguish from a real one.
-const LCR_8N1: u8 = 0x03;
+pub const LCR_8N1: u8 = 0x03;
+
+/// IIR bits 7:6, set only when the FIFOs are enabled AND usable.
+///
+/// The same probe Linux's `autoconfig` makes: it separates a 16550A from a
+/// 16550 whose FIFO was broken and from a 16450 with none. FCR is write-only
+/// and IIR shares its address, so this is the only way to read back what
+/// [`Uart::init`] established.
+pub const IIR_FIFO_OK: u8 = 0xc0;
 
 /// Enable the FIFOs and clear both of them.
 ///
@@ -262,6 +270,25 @@ impl Uart {
             write_volatile(self.reg(IER), 0);
             write_volatile(self.reg(LCR), LCR_8N1);
             write_volatile(self.reg(FCR), FCR_ENABLE_AND_CLEAR);
+        }
+    }
+
+    /// What the peripheral says it is configured as: LCR, IIR, IER.
+    ///
+    /// Read back rather than restated, so `uart_init` reports the machine
+    /// instead of the constants above it. FCR is write-only and IIR shares its
+    /// address, so the FIFO state comes from IIR bits 7:6.
+    pub fn settings(&self) -> (u8, u8, u8) {
+        // SAFETY: three reads of read-only or read/write registers, none of
+        // which pops the receive FIFO or clears anything. IIR's read DOES
+        // acknowledge a transmit-empty interrupt, which this driver never
+        // enables -- see `IER_ERBFI`.
+        unsafe {
+            (
+                read_volatile(self.reg(LCR)),
+                read_volatile(self.reg(FCR)),
+                read_volatile(self.reg(IER)),
+            )
         }
     }
 

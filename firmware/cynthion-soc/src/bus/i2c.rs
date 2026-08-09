@@ -200,6 +200,39 @@ impl I2c {
         crate::irq::claim(cynthion_soc_pac::base::BOARD_I2C_IRQ, 1);
     }
 
+    /// PRER as the core holds it, low byte first.
+    ///
+    /// The rate a boot report quotes has to come from here and not from the
+    /// prescale the build was written with: the two disagree exactly when
+    /// something went wrong, which is the case worth reporting.
+    pub fn prescale(&self) -> u16 {
+        // SAFETY: two reads of read/write CSRs, neither with a side effect.
+        unsafe {
+            (read_volatile(self.reg(PRER_LO)) as u16)
+                | ((read_volatile(self.reg(PRER_HI)) as u16) << 8)
+        }
+    }
+
+    /// Release a slave that is holding SDA low, and return the bus to idle.
+    ///
+    /// **`init` resets the CONTROLLER; this resets the BUS.** A slave that lost
+    /// its master mid-byte goes on driving SDA until it has clocked the rest of
+    /// that byte out, and no write to CTR moves a wire. `scl` is `dir="o"`
+    /// push-pull (`gateware/soc/top.py`), so the master owns the clock outright
+    /// and can do this unilaterally.
+    ///
+    /// Nine clocks: eight data plus the acknowledge slot, which is the longest
+    /// a slave can still be holding for. Then a STOP, which is what any slave
+    /// listening treats as the end of a transaction.
+    ///
+    /// Harmless on a healthy bus, which is why it is unconditional at init: no
+    /// START goes out in front of it, so nothing is addressed and no slave acts
+    /// on either command. ~10 us at 1 MHz.
+    pub fn recover(&self) {
+        let _ = self.command(CR_RD | CR_ACK);
+        let _ = self.command(CR_STO);
+    }
+
     fn status(&self) -> u8 {
         // SAFETY: a read of SR, which is a wire from flags and has no side
         // effect. In particular it does not clear IF -- that needs a write.

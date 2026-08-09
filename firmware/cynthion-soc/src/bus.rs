@@ -130,6 +130,17 @@ impl Bus {
         self.i2c.init(self.prescale);
     }
 
+    /// PRER as the controller holds it, for a report that means the machine.
+    pub fn prescale_readback(&self) -> u16 {
+        self.i2c.prescale()
+    }
+
+    /// Nine clocks and a STOP: release a slave holding SDA low. See
+    /// [`i2c::I2c::recover`] for why [`Bus::init`] cannot do this.
+    pub fn recover(&mut self) {
+        self.i2c.recover();
+    }
+
     /// Does anything answer at this seven-bit address, on this bus?
     pub fn probe(&mut self, bus: u8, address: u8) -> Result<bool, Error> {
         self.mux.select(bus);

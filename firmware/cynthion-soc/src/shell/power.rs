@@ -184,6 +184,12 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if rest.starts_with(b"detect") {
         return detect_command(uart, trim(&rest[b"detect".len()..]), devices);
     }
+    // THE DESTRUCTIVE VERB. `PWRDN#` is this part's only hardware reset and it
+    // loses the accumulators; `init pac1954` is the non-destructive one. See
+    // `src/init.rs`.
+    if rest == b"reset" {
+        return crate::init::pac1954_reset(uart, devices);
+    }
     if rest.starts_with(b"floor") {
         let rest = trim(&rest[b"floor".len()..]);
         let (name, value) = match rest.iter().position(|&b| b == b' ') {

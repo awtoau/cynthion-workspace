@@ -108,11 +108,17 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("hyperram ramp [w]", "verify a 0-255 byte ramp; `w` writes it first"),
     ("hyperram bench", "the same walk as `bench hyperram`"),
     ("hyperram id", "HyperBus has no identify"),
+    ("hyperram clear", "DESTRUCTIVE: invalidates any staged image"),
     ("i2c", "the three I2C buses behind the mux"),
     ("i2c status", "the controller: base, prescale, selected bus"),
     ("i2c scan [bus]", "scan a bus behind the mux"),
     ("i2c soak <bus> <prer> <n>", "hammer one bus at one rate, count failures"),
     ("info", "this build and this board"),
+    // ONE COMMAND, not a verb on every family. `init pac1954` costs one arm and
+    // one table row; `pac1954 init` and its seven siblings cost eight of each,
+    // in an image whose binding constraint is `.text`.
+    ("init", "establish every peripheral again, in order"),
+    ("init <peripheral>", "just this one: uart i2c pac1954 fusb302b hyperram w25q32 usb3343 vbus"),
     ("info map", "every peripheral window, from the generated map"),
     ("info pmod", "connector pins: ball, resource, free or claimed"),
     ("info ports", "the consoles: type, FIFO depth, and which answer"),
@@ -128,6 +134,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("pac1954 limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
     ("pac1954 samples <k> <port> <n>", "consecutive samples before it asserts"),
     ("pac1954 bracket <port> <mA> <mV>", "limits around the present reading"),
+    ("pac1954 reset", "DESTRUCTIVE: PWRDN#, which loses the accumulators"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),
@@ -517,6 +524,11 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             b"button" => led::button_command(uart),
             _ => info::command(uart),
         },
+        // ESTABLISH, on demand. `_init()` is non-destructive by contract, which
+        // is what makes it safe to type on a board mid-experiment; the verbs
+        // that destroy are `hyperram clear` and `pac1954 reset` and are named
+        // as such. See `src/init.rs`.
+        b"init" => crate::init::command(uart, rest, devices),
         b"selftest" => selftest::command(uart, &devices.power),
         // Registered on every target, unlike its neighbours below: it reads no
         // bus at all, so a boardless build renders the same tree with every leaf

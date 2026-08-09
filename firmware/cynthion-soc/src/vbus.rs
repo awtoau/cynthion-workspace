@@ -239,6 +239,23 @@ pub fn open_all() {
     write(0);
 }
 
+/// `vbus_init()`: open every switch, and read the register back.
+///
+/// **This cuts power to anything attached to TARGET**, which is correct at
+/// boot and is why it is not in any health-check path.
+///
+/// It is needed because a CPU reset is narrower than it looks. A reconfigure
+/// clears this register; `jr _reset_vector` does not, so `vbus control` then
+/// `load` or `reset` leaves a switch closed across the whole of the next boot,
+/// unopened and unreported (#315).
+///
+/// Returns the register as it reads back, which is zero on success and is the
+/// only evidence that the write landed.
+pub fn init() -> u8 {
+    open_all();
+    read()
+}
+
 /// The raw register, for `board` and `vbus` to report.
 pub fn state() -> u8 {
     read()

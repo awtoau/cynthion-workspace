@@ -134,6 +134,11 @@ impl Shell {
             // them was one keystroke. See `src/metrics.rs`.
             metrics::busy();
             banner(uart);
+            // AND THE BOOT REPORT, which was transmitted before any tty was
+            // bound and to console 0 only. It is retained rather than reprinted
+            // -- each line carries the time it was pushed, not the time it is
+            // being read. See `src/init.rs`.
+            crate::init::replay(uart);
         }
 
         // DEL IS A BACKSPACE HERE. The crate matches `0x08` only, and `0x7f` is
