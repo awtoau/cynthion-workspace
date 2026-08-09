@@ -94,6 +94,11 @@
 
 #![no_std]
 #![no_main]
+// Under `hyperram-bist` the staging probe is compiled out, so everything it fed
+// -- most `Status` variants, the CRC pass, the flash-resident check -- has no
+// caller left. That is the feature taking effect, not an oversight: the image
+// drops from ~500 bytes to a jump.
+#![cfg_attr(feature = "hyperram-bist", allow(dead_code))]
 
 use core::panic::PanicInfo;
 use core::ptr::write_volatile;
@@ -240,6 +245,14 @@ fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
 /// at roughly 8 ms for 32 KiB at 60 MHz, so the largest image this will accept costs
 /// about 16 ms more than a single pass would.
 fn boot() -> ! {
+    // No staging RAM in the BIST variant -- the engine owns the part. Reading
+    // the header would trap on the FIRST load, since the window is absent from
+    // the decoder rather than merely unresponsive, so the probe is skipped and
+    // the jump below happens exactly as it does on every other path.
+    #[cfg(feature = "hyperram-bist")]
+    let status = Status::NoMagic;
+
+    #[cfg(not(feature = "hyperram-bist"))]
     let status = match hyperram::staged() {
         Err(hyperram::Reject::NoMagic) => Status::NoMagic,
         Err(hyperram::Reject::Length) => Status::Length,

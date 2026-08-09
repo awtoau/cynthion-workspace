@@ -163,6 +163,17 @@ def firmware_in_bitstream(build_dir, emit):
     return b"".join(word.to_bytes(4, "little") for word in words)
 
 
+# Environment variables `gateware/soc/top.py` reads at import time. They change
+# what is elaborated without changing a byte of source, so they are part of the
+# bitstream's identity -- see `gateware_digest`. Anything added to `top.py` as an
+# `os.environ.get` that alters the design belongs here.
+VARIANT_ENV = (
+    "CYNTHION_HYPERRAM_BIST",
+    "CYNTHION_HYPERRAM_CK_MHZ",
+    "CYNTHION_HYPERRAM_BIST_DQS",
+)
+
+
 def gateware_digest():
     """A hash of everything that determines the bitstream's content.
 
@@ -180,6 +191,19 @@ def gateware_digest():
     So a commit costs a resynthesis. The saving is on the case that was actually
     wasting the time: uncommitted iteration, and branch switches that rewrite
     mtimes without changing a byte.
+
+    **The variant environment is in here too, and for a sharper reason.** The
+    BIST build (#226) is selected by `CYNTHION_HYPERRAM_BIST` rather than by
+    editing a file, so two completely different bitstreams -- one with the
+    HyperRAM on the bus, one with the engine owning the pins -- hash identically
+    from their sources. Without these, switching variants SKIPS SYNTHESIS and
+    configures the board with the other one, while printing "the bitstream was
+    built from these exact sources".
+
+    That is not a slow build, it is a wrong board: a shipping build reloaded to
+    act as a control silently reconfigured with the measurement bitstream, and
+    the control it was supposed to provide was worthless. Any variable that
+    changes what `top.py` elaborates belongs on this list.
     """
     import hashlib
     digest = hashlib.sha256()
@@ -189,6 +213,8 @@ def gateware_digest():
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True)
     digest.update(head.stdout.strip().encode())
+    for name in VARIANT_ENV:
+        digest.update(f"{name}={os.environ.get(name, '')}".encode())
     return digest.hexdigest()[:16]
 
 
@@ -567,7 +593,18 @@ def main():
         # The bootloader, unless this is the C path -- that generator emits an
         # image linked for 0 and has no bootloader to sit under it.
         if not args.c_firmware:
-            result = run(["cargo", "build", "--release"], cwd=BOOT_CRATE)
+            # The BIST variant's bootloader must NOT probe for a staged image:
+            # that window is absent from the decoder, not merely unresponsive,
+            # and VexiiRiscv traps an access to an address in no declared
+            # region. The trap lands on the first load, before any of the
+            # bootloader's own fallbacks can run, so the board is silent from
+            # reset with no banner and no console.
+            boot_cmd = ["cargo", "build", "--release"]
+            if os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0"):
+                boot_cmd += ["--features", "hyperram-bist"]
+                emit("bootloader: staging probe COMPILED OUT (BIST variant has "
+                     "no BootRAM to probe)")
+            result = run(boot_cmd, cwd=BOOT_CRATE)
             if result.returncode != 0:
                 emit("bootloader build failed:")
                 emit((result.stderr or result.stdout).strip()[-900:])
