@@ -774,14 +774,12 @@ def main():
                    b"[info|read|bench]", b"[stats|check|irq|log]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
                    b"[info|id|read|bench]", b"[status|scan|soak]",
-                   # `reset` is the DESTRUCTIVE verb, asserted for the reason
-                   # `hyperram clear` is below.
+                   # `reset` and `clear` are the DESTRUCTIVE verbs (#315),
+                   # asserted here so a rename cannot quietly drop the one word
+                   # that separates each from its `init`.
                    b"[status|floor|alert|rate|detect|limit|samples|bracket|reset]",
-                   # `clear` is a DESTRUCTIVE verb (#315), asserted here so a rename
-                   # cannot quietly drop the one thing separating it from `init`.
-                   # `clear` is the DESTRUCTIVE verb (#315), asserted here so a
-                   # rename cannot quietly drop the one thing that separates it
-                   # from `init`. `info` was missing from this row already.
+                   # `clear` is the other one, and `info` was missing from this
+                   # row already.
                    b"[info|status|read|sel|sweep|test|cross|ramp|bench|id|clear]",
                    b"[status|off|input|control|both|charge]"]
         command("help", listing, "`help` lists every command")
