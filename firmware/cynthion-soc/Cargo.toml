@@ -36,6 +36,8 @@ cynthion-soc-pac = { path = "../cynthion-soc-pac" }
 # symbols of their own, so they coexist -- but it is 16 packages against the 14
 # this crate has today, and that is the whole graph doubling for one feature.
 rtic = { version = "2.3", features = ["riscv-clint-backend"] }
+embedded-cli = { version = "0.2.1", features = ["autocomplete", "history", "help"] }
+embedded-io = "0.6"
 
 # Build the same shell against QEMU's `-M virt` instead of the FPGA.
 #

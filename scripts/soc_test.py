@@ -1890,9 +1890,15 @@ def main():
               ran is not None and b"unknown command" not in reply,
               "sent: 'helpX' BS CR\n"
               f"received: {show(reply) or '(nothing)'}")
+        # Either erase is correct, and which one appears is the editor's choice:
+        # the hand-rolled one wrote BS SP BS; `embedded-cli` writes CURSOR_BACK
+        # then DELETE_CHAR. The assertion is that SOMETHING erased -- a buffer
+        # edit with no screen edit leaves the display disagreeing with the
+        # command, which is the fault this catches either way.
+        erased = b"\x08 \x08" in reply or (b"\x1b[D" in reply and b"\x1b[P" in reply)
         check("backspace erases on screen too",
-              b"\x08 \x08" in reply,
-              "expected the destructive-backspace sequence BS SP BS to be echoed\n"
+              erased,
+              "expected a destructive backspace -- BS SP BS, or CSI D then CSI P\n"
               f"received: {show(reply) or '(nothing)'}")
 
         # Backspace on an empty line must be a no-op, not an underflow. `len` is a

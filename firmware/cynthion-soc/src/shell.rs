@@ -14,6 +14,7 @@
 //! That is a measurement, not a move, and is deliberately not done here.
 
 pub(crate) mod console;
+pub(crate) mod editor;
 
 pub(crate) use console::board_absent;
 pub(crate) mod hardware;

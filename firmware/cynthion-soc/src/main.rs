@@ -197,6 +197,11 @@ fn primary() -> Uart {
     Uart::new(target::UART_BASES[0])
 }
 
+/// A handle on console `index`. `Uart` is one `usize`, so this is free.
+pub(crate) fn primary_for(index: usize) -> Uart {
+    Uart::new(target::UART_BASES[index.min(target::UART_BASES.len() - 1)])
+}
+
 /// One line of the boot report: what came up, and what it came up AS.
 ///
 /// The board used to say nothing between the banner and the first power sample.

@@ -10,6 +10,7 @@ use core::fmt::Write;
 
 use crate::clock::{self, Instant};
 use crate::uart::Uart;
+use crate::shell::editor::{editor, Commands, Dispatch, Editor};
 use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 
 /// One console's line editor and its idle state.
@@ -19,8 +20,13 @@ use crate::{irq, metrics, target, Devices, MAX_CONSOLES};
 /// `pub` for the reason [`Devices`] is: RTIC's `#[local]` resources land in
 /// generated signatures too.
 pub struct Shell {
-    line: [u8; 64],
-    len: usize,
+    /// The line editor, built on first keypress.
+    ///
+    /// `Option<Option<..>>`: the outer is "not built yet", the inner is "could
+    /// not be built". `Shell::NEW` is a `const` used to fill an array, and a
+    /// `Cli` needs a writer and two buffers, so it cannot be made in const
+    /// context.
+    editor: Option<Option<Editor>>,
     /// Set by the first keypress. From then on the prompt is on screen and reprinting
     /// the banner would fight the line being edited.
     spoken: bool,
@@ -74,8 +80,7 @@ pub(crate) fn board_absent(uart: &mut Uart) {
 
 impl Shell {
     pub(crate) const NEW: Shell = Shell {
-        line: [0u8; 64],
-        len: 0,
+        editor: None,
         spoken: false,
         last_banner: None,
     };
@@ -124,44 +129,18 @@ impl Shell {
         // First keypress: stop re-announcing, the user is here.
         self.spoken = true;
 
-        match byte {
-            // Enter. Both, because terminals disagree about which they send.
-            b'\r' | b'\n' => {
-                let _ = write!(uart, "\n");
-                if self.len > 0 {
-                    let len = self.len;
-                    // Copied out before dispatch so `run` may borrow the uart mutably
-                    // while the line it was given stays valid.
-                    let mut line = [0u8; 64];
-                    line[..len].copy_from_slice(&self.line[..len]);
-                    self.len = 0;
-                    crate::shell::run(index, uart, &line[..len], devices);
-                }
-                let _ = write!(uart, "> ");
-            }
-            // Backspace and delete. Erase on screen as well as in the buffer, or the
-            // display and the buffer disagree about what the command is.
-            0x08 | 0x7f => {
-                if self.len > 0 {
-                    self.len -= 1;
-                    let _ = write!(uart, "\x08 \x08");
-                }
-            }
-            // Printable ASCII only. Echo, since the device gets raw bytes and nothing
-            // else will show what was typed.
-            0x20..=0x7e => {
-                if self.len < self.line.len() {
-                    self.line[self.len] = byte;
-                    self.len += 1;
-                    uart.put(byte);
-                }
-            }
-            // Everything else -- stray control codes, terminal escape sequences -- is
-            // dropped. Echoing or reporting them is worse than silence: an escape
-            // sequence would be replayed at the terminal, and a chatty default turns a
-            // stuck RX FIFO into an unstoppable wall of text.
-            _ => {}
-        }
+        // The line editor owns everything from here: echo, backspace, TAB
+        // completion over `HELP`, and the history ring on the arrow keys.
+        // A completed line reaches `shell::run` through `Dispatch` -- the crate
+        // edits, this firmware still dispatches (#171, #303).
+        let editor = match self.editor.get_or_insert_with(|| editor(crate::primary_for(index))) {
+            Some(editor) => editor,
+            // A CLI that could not be built means its buffers could not be
+            // written to the console. Nothing useful is left to say on it.
+            None => return,
+        };
+        let mut dispatch = Dispatch { index, devices };
+        let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
     }
 }
 
