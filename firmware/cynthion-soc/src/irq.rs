@@ -234,6 +234,8 @@ fn machine_external() {
             defer_type_c(&plic, source, port);
         } else if is_i2c(source) {
             service_i2c();
+        } else if is_power_alert(source) {
+            defer_power_alert(&plic, source);
         }
         // The #115 workload's stand-in for a Type-C controller: a second
         // level-sensitive source whose service is too long for a handler. Same
@@ -254,6 +256,72 @@ fn machine_external() {
     // `src/dispatch.rs` for why `mepc` has to be saved around that.
     #[cfg(feature = "preempt")]
     crate::dispatch::run();
+}
+
+/// Is this the PAC1954's limit ALERT?
+fn is_power_alert(source: u32) -> bool {
+    target::BOARD.is_some()
+        && source == cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ
+}
+
+/// The PAC1954's ALERT, handled by NOT handling it here.
+///
+/// **The same treatment as a Type-C line, and for the same reason.** Clearing
+/// this means reading `ALERT_STATUS` over I2C -- a three-byte register read at
+/// the far end of a mux, on the single controller the REFRESH cycle is also
+/// using. Doing that in a handler would be a long spin inside an interrupt AND
+/// a second master on a peripheral with one owner, either of which is worse
+/// than the problem.
+///
+/// Contrast `service_i2c` twenty lines up, which clears IN the handler. That is
+/// not an inconsistency: its clear is a single MMIO store that moves nothing on
+/// the wire. The rule is about how long the clear takes, and these two are the
+/// two answers it has.
+///
+/// The line is level and LATCHED low (DS20006539B section 5.16), so masking is
+/// safe: the PLIC keeps its pending bit and nothing is lost. `power::service`
+/// in normal context reads the status register -- which clears it at the part --
+/// and calls `resume_power_alert`.
+///
+/// Complete BEFORE disabling, never the other way round. The PLIC ignores a
+/// completion for a source the context is not enabled for, so disabling first
+/// throws the completion away and gates the source off permanently. That cost
+/// this board one interrupt per port per boot when the Type-C sources were
+/// wired, and the comment on `defer_type_c` is the full account.
+fn defer_power_alert(plic: &Plic, source: u32) {
+    plic.complete(source);
+    plic.disable(source);
+    POWER_ALERT_INTERRUPTS.fetch_add(1, Ordering::Relaxed);
+    // Release: the mask must be visible before the flag that publishes it.
+    PENDING_POWER_ALERT.store(1, Ordering::Release);
+}
+
+/// Deferrals recorded, for `irq` and `power alert`.
+static POWER_ALERT_INTERRUPTS: AtomicU32 = AtomicU32::new(0);
+
+/// Set by the handler, taken by normal context.
+static PENDING_POWER_ALERT: AtomicU32 = AtomicU32::new(0);
+
+/// Has the ALERT fired since this was last asked? Clears on read.
+pub fn take_power_alert() -> bool {
+    PENDING_POWER_ALERT.swap(0, Ordering::Acquire) != 0
+}
+
+pub fn power_alert_interrupts() -> u32 {
+    POWER_ALERT_INTERRUPTS.load(Ordering::Relaxed)
+}
+
+/// Re-enable the ALERT source, after the part has been cleared.
+///
+/// Normal context only. If the part is still asserting when this runs the
+/// interrupt fires again immediately -- which is correct, the condition has not
+/// gone away -- and the deferral repeats rather than spinning, because the
+/// handler masks again on the way in.
+pub fn resume_power_alert() {
+    if target::BOARD.is_some() {
+        Plic::new(target::PLIC_BASE)
+            .enable(cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ);
+    }
 }
 
 /// Is this the I2C controller's completion source?

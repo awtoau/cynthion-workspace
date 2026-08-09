@@ -145,14 +145,14 @@ impl core::fmt::Debug for BoardClocks {
 }
 #[doc = "board/clocks: 2 registers at 0xf0000660"]
 pub mod board_clocks;
-#[doc = "plic: 9 registers at 0xf0400000"]
+#[doc = "plic: 10 registers at 0xf0400000"]
 pub type Plic = crate::Periph<plic::RegisterBlock, 0xf040_0000>;
 impl core::fmt::Debug for Plic {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("Plic").finish()
     }
 }
-#[doc = "plic: 9 registers at 0xf0400000"]
+#[doc = "plic: 10 registers at 0xf0400000"]
 pub mod plic;
 #[doc = "clint: 5 registers at 0xf0800000"]
 pub type Clint = crate::Periph<clint::RegisterBlock, 0xf080_0000>;

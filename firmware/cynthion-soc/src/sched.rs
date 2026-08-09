@@ -262,6 +262,21 @@ pub fn sources(uart: &mut Uart) {
         let _ = board;
     }
 
+    // The PAC1954's limit ALERT. Printed at zero too: zero after a bracket has
+    // been armed means the pin is not reaching the PLIC, the part is not
+    // asserting, or the source is masked -- three faults that look identical
+    // without a number. #270.
+    if target::BOARD.is_some() {
+        let count = irq::power_alert_interrupts();
+        let _ = writeln!(
+            uart,
+            "  power alert   src {} irqs {}{}",
+            cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
+            count,
+            if count == 0 { "  -- never fired" } else { "" }
+        );
+    }
+
     // The Type-C sources, one per FUSB302B rather than one for both.
     //
     // Separately visible is half the point of giving them a source each: a

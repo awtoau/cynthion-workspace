@@ -100,6 +100,119 @@ pub const ADDRESS: u8 = 0x10;
 /// read them, and the reason was one byte. #275.
 const REG_REFRESH_V: u8 = 0x1f;
 
+// ---- the limit ALERT (#270) -----------------------------------------------
+//
+// Five limit types, all per channel, all with a hardware debounce, and all three
+// control registers share ONE 24-bit layout:
+//
+//     bit 23..16   CH1OC CH2OC CH3OC CH4OC  CH1UC CH2UC CH3UC CH4UC
+//     bit 15..8    CH1OV CH2OV CH3OV CH4OV  CH1UV CH2UV CH3UV CH4UV
+//     bit  7..0    CH1OP CH2OP CH3OP CH4OP  ACC_OVF ACC_COUNT ALERT_CC --
+//
+// `ALERT_STATUS` reports, `GPIO_ALERT2` routes to the pin, `ALERT_ENABLE` is the
+// master. One bit-position function serves all three.
+
+/// Control. Read-modify-written, never written blind: bits 9-8 are
+/// `SLOW_ALERT1`, and #273 established that field is load-bearing -- it was
+/// holding the converter at 8 SPS. POR is `0x0700`: `SAMPLE_MODE` 1024 SPS,
+/// `GPIO_ALERT2` = GPIO input, `SLOW_ALERT1` = SLOW.
+const REG_CTRL: u8 = 0x01;
+/// `GPIO_ALERT2[1:0]`, bits 11-10. `00` makes the pin an ALERT output.
+const CTRL_GPIO_ALERT2_SHIFT: u32 = 10;
+
+/// Which limits have fired. **Read-to-clear**, which is what services the level
+/// -- the pin is latched low until this is read, exactly like a FUSB302B.
+const REG_ALERT_STATUS: u8 = 0x26;
+/// Which limits are routed to the GPIO/ALERT2 pin.
+const REG_GPIO_ALERT2: u8 = 0x28;
+/// Which limits are armed at all. Cleared before any limit is written and
+/// restored after -- register 7-29: "Disable ALERTs in Register 7-34 before
+/// changing the value to avoid false triggers."
+const REG_ALERT_ENABLE: u8 = 0x49;
+
+/// Per-channel limit registers. Channel `n` (0-3) is `base + n`.
+const REG_OC_LIMIT: u8 = 0x30;
+const REG_UC_LIMIT: u8 = 0x34;
+const REG_OV_LIMIT: u8 = 0x3c;
+const REG_UV_LIMIT: u8 = 0x40;
+
+/// Consecutive samples over the limit before the ALERT asserts, two bits per
+/// channel, one register per limit type. `00`=1, `01`=4, `10`=8, `11`=16 -- at
+/// 1024 SPS that is 0.98, 3.9, 7.8 or 15.6 ms of SUSTAINED excursion.
+///
+/// This is what makes a tight bracket usable: a device's inrush is milliseconds,
+/// so 16 samples is a fault rather than an event.
+const REG_OC_NSAMPLES: u8 = 0x44;
+const REG_UC_NSAMPLES: u8 = 0x45;
+const REG_OV_NSAMPLES: u8 = 0x47;
+const REG_UV_NSAMPLES: u8 = 0x48;
+
+/// The five limit kinds, in the order their bits appear in the 24-bit word.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Limit {
+    OverCurrent,
+    UnderCurrent,
+    OverVoltage,
+    UnderVoltage,
+}
+
+impl Limit {
+    /// The bit for `channel` (0-3) in `ALERT_STATUS`, `GPIO_ALERT2` and
+    /// `ALERT_ENABLE` -- one function, because all three share a layout. CH1 is
+    /// the HIGH bit of each group, so the channel index subtracts.
+    pub fn bit(self, channel: usize) -> u32 {
+        let top = match self {
+            Limit::OverCurrent => 23,
+            Limit::UnderCurrent => 19,
+            Limit::OverVoltage => 15,
+            Limit::UnderVoltage => 11,
+        };
+        1 << (top - channel as u32)
+    }
+
+    pub fn limit_register(self, channel: usize) -> u8 {
+        let base = match self {
+            Limit::OverCurrent => REG_OC_LIMIT,
+            Limit::UnderCurrent => REG_UC_LIMIT,
+            Limit::OverVoltage => REG_OV_LIMIT,
+            Limit::UnderVoltage => REG_UV_LIMIT,
+        };
+        base + channel as u8
+    }
+
+    pub fn nsamples_register(self) -> u8 {
+        match self {
+            Limit::OverCurrent => REG_OC_NSAMPLES,
+            Limit::UnderCurrent => REG_UC_NSAMPLES,
+            Limit::OverVoltage => REG_OV_NSAMPLES,
+            Limit::UnderVoltage => REG_UV_NSAMPLES,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Limit::OverCurrent => "oc",
+            Limit::UnderCurrent => "uc",
+            Limit::OverVoltage => "ov",
+            Limit::UnderVoltage => "uv",
+        }
+    }
+
+    /// Is this a current limit? Current limits are compared against VSENSE and
+    /// voltage limits against VBUS, and the two have different scales -- getting
+    /// it wrong programs a threshold 320 times off.
+    pub fn is_current(self) -> bool {
+        matches!(self, Limit::OverCurrent | Limit::UnderCurrent)
+    }
+
+    pub const ALL: [Limit; 4] = [
+        Limit::OverCurrent,
+        Limit::UnderCurrent,
+        Limit::OverVoltage,
+        Limit::UnderVoltage,
+    ];
+}
+
 /// VSENSE range for all four channels. `0x55` selects bipolar +/-100 mV for
 /// each two-bit CFG_VSn field; the low byte leaves every VBUS range unipolar.
 const REG_NEG_PWR_FSR: u8 = 0x1d;
@@ -131,6 +244,24 @@ pub const PORTS: [&str; 4] = ["target_a", "target_c", "aux", "control"];
 /// specification, so this is "something was plugged in or started up", not
 /// "something twitched".
 pub const CHANGE_UA: u32 = 100_000;
+
+/// How far past the observed excursion a tripped limit is moved, in millivolts.
+///
+/// **A limit that trips and stays where it is, storms.** The condition is still
+/// true on the next conversion, so it re-asserts, and the board spends its time
+/// servicing one event -- measured at 88% CPU with a bracket inside the ADC
+/// noise, with the periodic task 53 ms late on a 50 ms period.
+///
+/// So a trip moves the threshold past what it saw. The next alert is then a
+/// LARGER excursion than the last, which turns a storm into a sequence of
+/// "new worst" reports and converges on its own.
+///
+/// 500 mV: bigger than any noise or ripple this board shows, small enough that
+/// a real fault still produces several steps rather than one.
+pub const ALERT_BACKOFF_MV: i32 = 500;
+
+/// The same, in milliamps.
+pub const ALERT_BACKOFF_MA: i32 = 500;
 
 /// Below this, a port is reported as disconnected and says nothing.
 ///
@@ -206,7 +337,30 @@ pub enum Age {
 ///
 /// VBUS stays unipolar when VSENSE changes to bipolar; the low byte written to
 /// `NEG_PWR_FSR` is zero.
-fn bus_mv(raw: u16) -> u32 {
+/// Millivolts to a VBUS code. The inverse of [`bus_mv`], and it has to stay so:
+/// a limit programmed on a different scale from the measurement is a threshold
+/// that trips at the wrong value and looks correct in the register.
+///
+/// Saturates rather than wrapping. A request above full scale becomes a limit
+/// that cannot trip, which is wrong but obvious; a wrapped one becomes a limit
+/// that trips constantly and looks deliberate.
+pub fn mv_to_code(millivolts: u32) -> u16 {
+    let code = (millivolts as u64 * 256) / 125;
+    code.min(u16::MAX as u64) as u16
+}
+
+/// Microamps to a VSENSE code, signed. The inverse of [`current_ua`].
+///
+/// The limits are compared against the same signed VSENSE the measurement
+/// reads, so a negative limit is meaningful -- the switch tree is bidirectional
+/// and a port can sink.
+pub fn ua_to_code(microamps: i32) -> u16 {
+    let magnitude = ((microamps.unsigned_abs() as u64) << 9) / 78125;
+    let magnitude = magnitude.min(i16::MAX as u64) as i16;
+    (if microamps < 0 { -magnitude } else { magnitude }) as u16
+}
+
+pub fn bus_mv(raw: u16) -> u32 {
     raw as u32 * 125 / 256
 }
 
@@ -217,7 +371,7 @@ fn bus_mv(raw: u16) -> u32 {
 /// LSB. Magnitude-first arithmetic keeps equal positive and negative codes
 /// symmetric. The nominal full-scale range remains -5 A to +5 A; +/-50 mV
 /// FSR/2 is the separate +/-2.5 A mode and is not selected here.
-fn current_ua(raw: u16) -> i32 {
+pub fn current_ua(raw: u16) -> i32 {
     let code = raw as i16 as i32;
     let magnitude = ((code.unsigned_abs() as u64 * 78125) >> 9) as i32;
     if code < 0 {
@@ -457,6 +611,346 @@ impl Monitor {
         Ok(latched.map(|latched| Sample { readings, latched }))
     }
 
+
+    // ---- the limit ALERT (#270) -------------------------------------------
+
+    /// Read a 24-bit register. The part sends them big-endian, like every
+    /// other multi-byte register here.
+    fn read24(&self, bus: &mut Bus, register: u8) -> Result<u32, bus::Error> {
+        let mut raw = [0u8; 3];
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, register, &mut raw)?;
+        Ok(((raw[0] as u32) << 16) | ((raw[1] as u32) << 8) | raw[2] as u32)
+    }
+
+    fn write24(&self, bus: &mut Bus, register: u8, value: u32) -> Result<(), bus::Error> {
+        let raw = [(value >> 16) as u8, (value >> 8) as u8, value as u8];
+        bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &raw)
+    }
+
+    fn read16(&self, bus: &mut Bus, register: u8) -> Result<u16, bus::Error> {
+        let mut raw = [0u8; 2];
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, register, &mut raw)?;
+        Ok(u16::from_be_bytes(raw))
+    }
+
+    fn write16(&self, bus: &mut Bus, register: u8, value: u16) -> Result<(), bus::Error> {
+        bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &value.to_be_bytes())
+    }
+
+    /// Make GPIO/ALERT2 an ALERT pin, without disturbing anything else in CTRL.
+    ///
+    /// **Read-modify-write, never a blind write.** Bits 9-8 are `SLOW_ALERT1`
+    /// and #273 established that field is load-bearing: it selects the SLOW
+    /// function, and losing it would put the converter back to 8 SPS. Bits 15-12
+    /// are `SAMPLE_MODE`, whose POR default is the 1024 SPS we want. This
+    /// touches bits 11-10 and nothing else.
+    ///
+    /// Changes to `CTRL` take effect on the next refresh, which the poll issues
+    /// 50 ms later at the latest.
+    pub fn alert_pin_enable(&self, bus: &mut Bus) -> Result<(), bus::Error> {
+        let ctrl = self.read16(bus, REG_CTRL)?;
+        let wanted = ctrl & !(0b11 << CTRL_GPIO_ALERT2_SHIFT);
+        if wanted != ctrl {
+            self.write16(bus, REG_CTRL, wanted)?;
+        }
+
+        // The peripheral claims its own PLIC source, rather than being
+        // remembered by a list in a file that is not its driver. That is the
+        // rule #264 established after the I2C source spent the life of the
+        // project wired and masked because nobody added it to a third list.
+        //
+        // Here rather than in `configure`: the source is only meaningful once
+        // the pin is an ALERT pin, and claiming it before that would enable a
+        // source whose pad is still a GPIO input floating on a pull-up.
+        crate::irq::claim(
+            cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
+            1,
+        );
+        Ok(())
+    }
+
+    /// Everything currently armed, routed and fired.
+    ///
+    /// Read back FROM THE PART rather than from any cached idea of it. That is
+    /// the difference between "the write was issued" and "the write took", and
+    /// this part gives a specific reason to care: a limit written while alerts
+    /// are enabled is a write whose effect is not what the caller intended.
+    ///
+    /// `ALERT_STATUS` is read-to-clear, so this CLEARS whatever it reports --
+    /// which is exactly what services the latched pin, and why it is not called
+    /// from anywhere that merely wants to look.
+    pub fn alert_service(&self, bus: &mut Bus) -> Result<u32, bus::Error> {
+        self.read24(bus, REG_ALERT_STATUS)
+    }
+
+    pub fn alert_enabled(&self, bus: &mut Bus) -> Result<u32, bus::Error> {
+        self.read24(bus, REG_ALERT_ENABLE)
+    }
+
+    pub fn alert_routed(&self, bus: &mut Bus) -> Result<u32, bus::Error> {
+        self.read24(bus, REG_GPIO_ALERT2)
+    }
+
+    /// Set one limit, with the disable-write-restore the datasheet requires.
+    ///
+    /// Register 7-29: "Disable ALERTs in Register 7-34 before changing the value
+    /// to avoid false triggers." So the ordering is this function's problem and
+    /// not the caller's -- `power limit oc aux 3500` is safe to type at any
+    /// moment, and cannot leave alerts disabled if the write fails, because the
+    /// restore runs on the error path too.
+    ///
+    /// `raw` is a device code, not milliamps. The caller converts, because the
+    /// scale differs between a current limit and a voltage one and this function
+    /// should not have to know which.
+    pub fn alert_set_limit(
+        &self,
+        bus: &mut Bus,
+        limit: Limit,
+        channel: usize,
+        raw: u16,
+    ) -> Result<(), bus::Error> {
+        let enabled = self.read24(bus, REG_ALERT_ENABLE)?;
+        self.write24(bus, REG_ALERT_ENABLE, 0)?;
+        let result = self.write16(bus, limit.limit_register(channel), raw);
+        // Restored whatever happened above. An early return here would leave
+        // the part with every alert disabled and nothing saying so.
+        let restored = self.write24(bus, REG_ALERT_ENABLE, enabled);
+        result.and(restored)
+    }
+
+    /// Arm one limit on one channel, and route it to the pin.
+    ///
+    /// Both registers, because they are separate gates and the datasheet is
+    /// explicit that routing without enabling does nothing: "ALERTs must be
+    /// enabled in Register 7-34 before you can route them to a pin."
+    pub fn alert_arm(
+        &self,
+        bus: &mut Bus,
+        limit: Limit,
+        channel: usize,
+        on: bool,
+    ) -> Result<(), bus::Error> {
+        let bit = limit.bit(channel);
+        for register in [REG_ALERT_ENABLE, REG_GPIO_ALERT2] {
+            let current = self.read24(bus, register)?;
+            let wanted = if on { current | bit } else { current & !bit };
+            if wanted != current {
+                self.write24(bus, register, wanted)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Consecutive samples over the limit before it asserts: 1, 4, 8 or 16.
+    ///
+    /// Two bits per channel, CH1 highest, one register per limit type. Anything
+    /// that is not one of the four is rounded DOWN to the next legal value --
+    /// more sensitive rather than less, because this is a detector and a
+    /// detector that is quietly less sensitive than asked for is the failure
+    /// this whole issue is about.
+    pub fn alert_set_nsamples(
+        &self,
+        bus: &mut Bus,
+        limit: Limit,
+        channel: usize,
+        samples: u32,
+    ) -> Result<u32, bus::Error> {
+        let code: u16 = match samples {
+            0..=3 => 0,
+            4..=7 => 1,
+            8..=15 => 2,
+            _ => 3,
+        };
+        let shift = 6 - 2 * channel as u32;
+        let register = limit.nsamples_register();
+        let mut raw = [0u8; 1];
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, register, &mut raw)?;
+        let wanted = (raw[0] as u16 & !(0b11 << shift)) | (code << shift);
+        bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &[wanted as u8])?;
+        Ok(match code {
+            0 => 1,
+            1 => 4,
+            2 => 8,
+            _ => 16,
+        })
+    }
+
+    pub fn alert_nsamples(
+        &self,
+        bus: &mut Bus,
+        limit: Limit,
+        channel: usize,
+    ) -> Result<u32, bus::Error> {
+        let mut raw = [0u8; 1];
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, limit.nsamples_register(), &mut raw)?;
+        Ok(match (raw[0] >> (6 - 2 * channel)) & 0b11 {
+            0 => 1,
+            1 => 4,
+            2 => 8,
+            _ => 16,
+        })
+    }
+
+    /// Read one limit register back as a device code.
+    pub fn alert_limit(
+        &self,
+        bus: &mut Bus,
+        limit: Limit,
+        channel: usize,
+    ) -> Result<u16, bus::Error> {
+        self.read16(bus, limit.limit_register(channel))
+    }
+
+    /// Clear the ALERT at the part, say what fired, and re-arm the source.
+    ///
+    /// Normal context, called from [`Monitor::service`] when the handler has
+    /// deferred one. The read of `ALERT_STATUS` is what drops the latched pin --
+    /// the register is read-to-clear -- so the order is: read, report, re-enable.
+    ///
+    /// **Re-enabled even when the read fails.** A bus error here would otherwise
+    /// leave the source masked for the rest of the session, which is a silence
+    /// indistinguishable from a rail that never left its limits again. If the
+    /// part is still asserting, the interrupt fires again immediately and this
+    /// repeats -- which is correct, there is still a condition.
+    fn service_alert(&mut self, uart: &mut Uart, bus: &mut Bus) {
+        match self.alert_service(bus) {
+            Ok(fired) => {
+                // WHAT tripped, WHAT the limit was, and WHAT the rail is doing
+                // -- not merely that something happened.
+                //
+                // "oc on aux" is a notification. It has to be reproduced before
+                // it means anything, and reproducing an excursion that has
+                // already passed is exactly the thing that cannot be done. The
+                // limit comes from the part, the reading from the last sample,
+                // and the excursion is the subtraction.
+                for limit in Limit::ALL {
+                    for channel in 0..4 {
+                        if fired & limit.bit(channel) == 0 {
+                            continue;
+                        }
+                        let threshold = self
+                            .alert_limit(bus, limit, channel)
+                            .map(|raw| {
+                                if limit.is_current() {
+                                    current_ua(raw) / 1000
+                                } else {
+                                    bus_mv(raw) as i32
+                                }
+                            })
+                            .unwrap_or(0);
+                        // The rail as of the last REFRESH, which is at most one
+                        // interval old. NOT the value at the instant the limit
+                        // tripped -- the part does not keep that, and by the
+                        // time normal context runs the excursion may be over.
+                        // Saying "now" rather than implying "then" is the whole
+                        // point; a report that quietly claims to be the trigger
+                        // sample would be the plausible-wrong-answer failure
+                        // this firmware keeps removing.
+                        let now = self.sample.map(|sample| {
+                            let reading = sample.readings[channel];
+                            if limit.is_current() {
+                                reading.current_ua / 1000
+                            } else {
+                                reading.bus_mv as i32
+                            }
+                        });
+                        // Volts and amps, formatted the way the `power` table
+                        // formats them. A limit reported in millivolts beside a
+                        // reading reported in volts is two units for one
+                        // quantity, and the reader has to convert to compare
+                        // the two numbers the line exists to compare.
+                        let over = matches!(limit, Limit::OverCurrent | Limit::OverVoltage);
+                        let step = if limit.is_current() {
+                            ALERT_BACKOFF_MA
+                        } else {
+                            ALERT_BACKOFF_MV
+                        };
+
+                        let (moved, excursion) = match now {
+                            // Seen out of range: step past the value itself, so
+                            // one move clears any size of excursion.
+                            Some(now) if (over && now > threshold) || (!over && now < threshold) => {
+                                (if over { now + step } else { now - step },
+                                 Some(if over { now - threshold } else { threshold - now }))
+                            }
+                            // Latched, but back in range by the time normal
+                            // context looked. **This must still move**, and the
+                            // first version did not -- which is why the log
+                            // filled with `back in range` at 9000 a second. The
+                            // excursion is unknown, so step from the threshold
+                            // rather than from the reading. It takes more steps
+                            // and it converges.
+                            _ => (if over { threshold + step } else { threshold - step }, None),
+                        };
+
+                        let raw = if limit.is_current() {
+                            ua_to_code(moved.saturating_mul(1000))
+                        } else {
+                            mv_to_code(moved.max(0) as u32)
+                        };
+                        let rearmed = self.alert_set_limit(bus, limit, channel, raw).is_ok();
+                        let settled = if rearmed { moved } else { threshold };
+
+                        if limit.is_current() {
+                            match excursion {
+                                Some(by) => crate::log!(
+                                    uart,
+                                    "power: {} {} {}.{:03} A, saw {}.{:03} A -- {} by {}.{:03} A, limit -> {}.{:03}",
+                                    PORTS[channel], limit.name(),
+                                    threshold / 1000, (threshold % 1000).unsigned_abs(),
+                                    now.unwrap_or(0) / 1000, (now.unwrap_or(0) % 1000).unsigned_abs(),
+                                    if over { "over" } else { "under" },
+                                    by / 1000, (by % 1000).unsigned_abs(),
+                                    settled / 1000, (settled % 1000).unsigned_abs()
+                                ),
+                                None => crate::log!(
+                                    uart,
+                                    "power: {} {} {}.{:03} A tripped, back in range -- limit -> {}.{:03}",
+                                    PORTS[channel], limit.name(),
+                                    threshold / 1000, (threshold % 1000).unsigned_abs(),
+                                    settled / 1000, (settled % 1000).unsigned_abs()
+                                ),
+                            }
+                        } else {
+                            match excursion {
+                                Some(by) => crate::log!(
+                                    uart,
+                                    "power: {} {} {}.{:03} V, saw {}.{:03} V -- {} by {}.{:03} V, limit -> {}.{:03}",
+                                    PORTS[channel], limit.name(),
+                                    threshold / 1000, (threshold % 1000).unsigned_abs(),
+                                    now.unwrap_or(0) / 1000, (now.unwrap_or(0) % 1000).unsigned_abs(),
+                                    if over { "over" } else { "under" },
+                                    by / 1000, (by % 1000).unsigned_abs(),
+                                    settled / 1000, (settled % 1000).unsigned_abs()
+                                ),
+                                None => crate::log!(
+                                    uart,
+                                    "power: {} {} {}.{:03} V tripped, back in range -- limit -> {}.{:03}",
+                                    PORTS[channel], limit.name(),
+                                    threshold / 1000, (threshold % 1000).unsigned_abs(),
+                                    settled / 1000, (settled % 1000).unsigned_abs()
+                                ),
+                            }
+                        }
+                    }
+                }
+                if fired == 0 {
+                    // The pin asserted and the status word says nothing did it.
+                    // Worth a line: it means the alert came from a source this
+                    // firmware has not armed -- an accumulator overflow, or the
+                    // conversion-complete pulse (#278) -- or that something else
+                    // read the register first, which would be a second owner.
+                    crate::log!(uart, "power: alert with an empty status word");
+                }
+            }
+            Err(error) => {
+                self.failures = self.failures.saturating_add(1);
+                crate::log!(uart, "power: alert unreadable: {}", error.as_str());
+            }
+        }
+        crate::irq::resume_power_alert();
+    }
+
     /// One REFRESH cycle: the work, with no decision about when.
     ///
     /// **The sole owner of the PAC1954's REFRESH cycle.** Everything else asks
@@ -497,6 +991,15 @@ impl Monitor {
             Some(bus) => bus,
             None => return,
         };
+
+        // The deferred ALERT, cleared here because clearing it is a bus
+        // transaction and the handler may not make one. Before the REFRESH
+        // cycle below rather than after: an alert says a rail left its bracket,
+        // and the reading that follows is the one somebody will want to look at
+        // next to the report.
+        if crate::irq::take_power_alert() {
+            self.service_alert(uart, bus);
+        }
 
         let sample = match self.transfer(bus) {
             Ok(sample) => sample,

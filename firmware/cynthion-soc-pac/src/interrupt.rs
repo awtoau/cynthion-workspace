@@ -12,6 +12,8 @@ pub enum Interrupt {
     BOARD_I2C_MUX_TARGET = 4,
     #[doc = "5 - BOARD_I2C_MUX_AUX"]
     BOARD_I2C_MUX_AUX = 5,
+    #[doc = "6 - BOARD_I2C_MUX_POWER_ALERT"]
+    BOARD_I2C_MUX_POWER_ALERT = 6,
 }
 #[doc = r" TryFromInterruptError"]
 #[derive(Debug, Copy, Clone)]
@@ -26,6 +28,7 @@ impl Interrupt {
             3 => Ok(Interrupt::BOARD_I2C),
             4 => Ok(Interrupt::BOARD_I2C_MUX_TARGET),
             5 => Ok(Interrupt::BOARD_I2C_MUX_AUX),
+            6 => Ok(Interrupt::BOARD_I2C_MUX_POWER_ALERT),
             _ => Err(TryFromInterruptError(())),
         }
     }

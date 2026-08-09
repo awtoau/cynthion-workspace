@@ -653,6 +653,10 @@ const HELP: &[(&str, &str)] = &[
     ("pmod", "connector pins: ball, resource, free or claimed"),
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
+    ("power alert", "the limit ALERTs: armed, routed, fired"),
+    ("power limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
+    ("power samples <k> <port> <n>", "consecutive samples before it asserts"),
+    ("power bracket <port> <mA> <mV>", "limits around the present reading"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),
@@ -1487,8 +1491,16 @@ fn board_power(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
                 return;
             }
         }
+    } else if rest.starts_with(b"alert") || rest.starts_with(b"limit")
+        || rest.starts_with(b"samples") || rest.starts_with(b"bracket")
+    {
+        return power_alert_command(uart, rest, devices);
     } else if !rest.is_empty() {
         let _ = writeln!(uart, "usage: power [floor <port> <mA>]");
+        let _ = writeln!(uart, "       power alert [on|off]");
+        let _ = writeln!(uart, "       power limit <ov|oc|uv|uc> <port> <mV|mA>");
+        let _ = writeln!(uart, "       power samples <ov|oc|uv|uc> <port> <1|4|8|16>");
+        let _ = writeln!(uart, "       power bracket <port> <+/-mA> <+/-mV>");
         return;
     }
 
@@ -1887,6 +1899,301 @@ fn i2c_soak(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
         scl_hz,
         restore
     );
+}
+
+/// A decimal that may be negative. `parse_decimal` is unsigned, and a current
+/// limit can legitimately be below zero -- the VBUS switch tree is
+/// bidirectional, so a port can sink and its VSENSE code is signed.
+fn parse_signed(text: &[u8]) -> Option<i32> {
+    match text.split_first() {
+        Some((b'-', rest)) => parse_decimal(rest).map(|v| -(v as i32)),
+        _ => parse_decimal(text).map(|v| v as i32),
+    }
+}
+
+/// Which limit a word names, or `None`.
+fn parse_limit(name: &[u8]) -> Option<power::Limit> {
+    power::Limit::ALL.iter().copied().find(|l| l.name().as_bytes() == name)
+}
+
+/// A port name to a PAC channel index. Named rather than numbered because
+/// channel order is NOT connector order on this part -- channel 1 is TARGET_A,
+/// not CONTROL -- and a bare index invites exactly that mistake.
+fn parse_port(name: &[u8]) -> Option<usize> {
+    power::PORTS.iter().position(|&p| p.as_bytes() == name)
+}
+
+/// `power alert`, `power limit`, `power samples`, `power bracket` -- the ALERT
+/// configuration, all of it settable and readable from here (#270).
+///
+/// **These are not firmware constants, deliberately.** The right thresholds are
+/// not knowable in advance: whether 3.5 A trips on a real device, or a bracket
+/// sits inside the ADC noise, is found by trying it. A constant means a rebuild
+/// and a reflash per attempt, and a number nobody is sure about stays unchanged.
+///
+/// Every read comes FROM THE PART. `power limit` prints what the device holds,
+/// not what firmware last wrote -- the difference between "the write was issued"
+/// and "the write took", which matters here because a limit written while alerts
+/// are enabled is a write whose effect is not what was asked for.
+fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
+    let bus = match devices.bus.as_mut() {
+        Some(bus) => bus,
+        None => return board_absent(uart),
+    };
+    let monitor = &devices.power;
+
+    let mut field = rest.split(|&b| b == b' ').filter(|f| !f.is_empty());
+    let verb = field.next().unwrap_or(b"");
+
+    // ---- power alert [on|off] -------------------------------------------
+    if verb == b"alert" {
+        let arg = field.next();
+
+        if arg == Some(b"on".as_slice()) || arg == Some(b"off".as_slice()) {
+            let want_on = arg == Some(b"on".as_slice());
+            if want_on {
+                if let Err(error) = monitor.alert_pin_enable(bus) {
+                    let _ = writeln!(uart, "alert pin: {}", error.as_str());
+                    return;
+                }
+            }
+            // Arm only the limits that have actually been SET.
+            //
+            // Arming all sixteen would arm the twelve still at their POR zero,
+            // and a zero limit is not "no limit" -- it is a threshold every
+            // rail is permanently on the wrong side of. The first version did
+            // that and produced `target_a oc limit 0 mA now 1 mA over by`, which
+            // is a true statement about a limit nobody set.
+            //
+            // Disarming, by contrast, disarms everything: turning it off should
+            // not depend on what happens to be configured.
+            let mut count = 0;
+            for limit in power::Limit::ALL {
+                for channel in 0..4 {
+                    let configured = monitor
+                        .alert_limit(bus, limit, channel)
+                        .map(|raw| raw != 0)
+                        .unwrap_or(false);
+                    let on = want_on && configured;
+                    if want_on && !configured {
+                        // Explicitly disarm it, so `power alert on` after a
+                        // limit is cleared does not leave a stale arm behind.
+                        let _ = monitor.alert_arm(bus, limit, channel, false);
+                        continue;
+                    }
+                    if let Err(error) = monitor.alert_arm(bus, limit, channel, on) {
+                        let _ = writeln!(uart, "alert {}: {}", limit.name(), error.as_str());
+                        return;
+                    }
+                    if on {
+                        count += 1;
+                    }
+                }
+            }
+            if want_on {
+                let _ = writeln!(
+                    uart,
+                    "alerts armed: {} limit(s) with a threshold set",
+                    count
+                );
+                if count == 0 {
+                    let _ = writeln!(
+                        uart,
+                        "  nothing to arm -- set one with `power limit` or \
+                         `power bracket` first"
+                    );
+                }
+            } else {
+                let _ = writeln!(uart, "alerts disarmed");
+            }
+            return;
+        }
+
+        // Bare `power alert`: the whole picture, read back from the part.
+        let (enabled, routed, fired) = match (
+            monitor.alert_enabled(bus),
+            monitor.alert_routed(bus),
+            monitor.alert_service(bus),
+        ) {
+            (Ok(e), Ok(r), Ok(f)) => (e, r, f),
+            _ => {
+                let _ = writeln!(uart, "alert: the monitor did not answer");
+                return;
+            }
+        };
+        let _ = writeln!(
+            uart,
+            "alert  enable {:06x}  routed {:06x}  fired {:06x}  (read-to-clear)",
+            enabled, routed, fired
+        );
+        let _ = writeln!(uart, "  limit  port       value      samples  armed  fired");
+        for limit in power::Limit::ALL {
+            for channel in 0..4 {
+                let bit = limit.bit(channel);
+                let raw = monitor.alert_limit(bus, limit, channel).unwrap_or(0);
+                let samples = monitor.alert_nsamples(bus, limit, channel).unwrap_or(0);
+                let _ = writeln!(
+                    uart,
+                    "  {:5}  {:9}  {:9}  {:7}  {:5}  {}",
+                    limit.name(),
+                    power::PORTS[channel],
+                    if limit.is_current() {
+                        power::current_ua(raw) / 1000
+                    } else {
+                        power::bus_mv(raw) as i32
+                    },
+                    samples,
+                    if enabled & bit != 0 { "yes" } else { "no" },
+                    if fired & bit != 0 { "YES" } else { "" }
+                );
+            }
+        }
+        let _ = writeln!(uart, "  current in mA, voltage in mV");
+        return;
+    }
+
+    // ---- power limit <kind> <port> <value> --------------------------------
+    if verb == b"limit" {
+        let (limit, channel, value) = match (
+            field.next().and_then(parse_limit),
+            field.next().and_then(parse_port),
+            field.next().and_then(parse_signed),
+        ) {
+            (Some(l), Some(c), Some(v)) => (l, c, v),
+            _ => {
+                let _ = writeln!(
+                    uart,
+                    "usage: power limit <ov|oc|uv|uc> <port> <mV|mA>"
+                );
+                return;
+            }
+        };
+        let raw = if limit.is_current() {
+            power::ua_to_code(value.saturating_mul(1000))
+        } else {
+            power::mv_to_code(value.max(0) as u32)
+        };
+        if let Err(error) = monitor.alert_set_limit(bus, limit, channel, raw) {
+            let _ = writeln!(uart, "limit: {}", error.as_str());
+            return;
+        }
+        // What was ACTUALLY programmed, read back and converted. The scale is
+        // 152.588 uA or 488.3 uV per code, so a request rarely lands exactly --
+        // and a threshold rounded silently and echoed as the requested value is
+        // the lie this read-back exists to prevent.
+        let back = monitor.alert_limit(bus, limit, channel).unwrap_or(0);
+        let _ = writeln!(
+            uart,
+            "{} {} = {} {} (asked {}, code {:04x})",
+            limit.name(),
+            power::PORTS[channel],
+            if limit.is_current() {
+                power::current_ua(back) / 1000
+            } else {
+                power::bus_mv(back) as i32
+            },
+            if limit.is_current() { "mA" } else { "mV" },
+            value,
+            back
+        );
+        return;
+    }
+
+    // ---- power samples <kind> <port> <n> ----------------------------------
+    if verb == b"samples" {
+        let (limit, channel, want) = match (
+            field.next().and_then(parse_limit),
+            field.next().and_then(parse_port),
+            field.next().and_then(parse_decimal),
+        ) {
+            (Some(l), Some(c), Some(n)) => (l, c, n),
+            _ => {
+                let _ = writeln!(
+                    uart,
+                    "usage: power samples <ov|oc|uv|uc> <port> <1|4|8|16>"
+                );
+                return;
+            }
+        };
+        match monitor.alert_set_nsamples(bus, limit, channel, want) {
+            Ok(actual) => {
+                let _ = writeln!(
+                    uart,
+                    "{} {} samples = {} (asked {}), {} ms at 1024 SPS",
+                    limit.name(),
+                    power::PORTS[channel],
+                    actual,
+                    want,
+                    actual * 1000 / 1024
+                );
+            }
+            Err(error) => {
+                let _ = writeln!(uart, "samples: {}", error.as_str());
+            }
+        }
+        return;
+    }
+
+    // ---- power bracket <port> <+/-mA> <+/-mV> -----------------------------
+    //
+    // The change detector. The part has no "value changed" alert; a tight
+    // bracket around the present reading IS one, and this is the command that
+    // makes finding the noise floor a matter of typing rather than rebuilding.
+    if verb == b"bracket" {
+        let (channel, d_ma, d_mv) = match (
+            field.next().and_then(parse_port),
+            field.next().and_then(parse_decimal),
+            field.next().and_then(parse_decimal),
+        ) {
+            (Some(c), Some(a), Some(v)) => (c, a as i32, v as i32),
+            _ => {
+                let _ = writeln!(uart, "usage: power bracket <port> <+/-mA> <+/-mV>");
+                return;
+            }
+        };
+        let sample = match monitor.latest() {
+            Some(sample) => sample,
+            None => {
+                let _ = writeln!(uart, "bracket: no sample yet");
+                return;
+            }
+        };
+        let reading = sample.readings[channel];
+        let ma = reading.current_ua / 1000;
+        let mv = reading.bus_mv as i32;
+
+        let plan = [
+            (power::Limit::OverCurrent, power::ua_to_code((ma + d_ma) * 1000)),
+            (power::Limit::UnderCurrent, power::ua_to_code((ma - d_ma) * 1000)),
+            (power::Limit::OverVoltage, power::mv_to_code((mv + d_mv).max(0) as u32)),
+            (power::Limit::UnderVoltage, power::mv_to_code((mv - d_mv).max(0) as u32)),
+        ];
+        for (limit, raw) in plan {
+            if monitor.alert_set_limit(bus, limit, channel, raw).is_err()
+                || monitor.alert_set_nsamples(bus, limit, channel, 1).is_err()
+                || monitor.alert_arm(bus, limit, channel, true).is_err()
+            {
+                let _ = writeln!(uart, "bracket: the monitor did not answer");
+                return;
+            }
+        }
+        if let Err(error) = monitor.alert_pin_enable(bus) {
+            let _ = writeln!(uart, "alert pin: {}", error.as_str());
+            return;
+        }
+        let _ = writeln!(
+            uart,
+            "bracket {}  current {}..{} mA  voltage {}..{} mV  samples 1",
+            power::PORTS[channel],
+            ma - d_ma,
+            ma + d_ma,
+            mv - d_mv,
+            mv + d_mv
+        );
+        let _ = writeln!(uart, "  any excursion asserts ALERT on src {}",
+                         cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ);
+        return;
+    }
 }
 
 /// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.

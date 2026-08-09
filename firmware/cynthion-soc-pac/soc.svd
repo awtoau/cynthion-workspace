@@ -1748,6 +1748,10 @@
         <name>BOARD_I2C_MUX_AUX</name>
         <value>5</value>
       </interrupt>
+      <interrupt>
+        <name>BOARD_I2C_MUX_POWER_ALERT</name>
+        <value>6</value>
+      </interrupt>
       <registers>
         <register>
           <name>SELECT</name>
@@ -2093,7 +2097,7 @@
     </peripheral>
     <peripheral>
       <name>PLIC</name>
-      <description>plic: 9 registers at 0xf0400000</description>
+      <description>plic: 10 registers at 0xf0400000</description>
       <baseAddress>0xF0400000</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -2192,8 +2196,26 @@
           </fields>
         </register>
         <register>
+          <name>PRIORITY6</name>
+          <description>PLIC.PRIORITY6, 3 bits at +0x18</description>
+          <addressOffset>0x18</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7</resetMask>
+          <fields>
+            <field>
+              <name>LEVEL</name>
+              <description>level [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
           <name>PENDING</name>
-          <description>PLIC.PENDING, 6 bits at +0x1000</description>
+          <description>PLIC.PENDING, 7 bits at +0x1000</description>
           <addressOffset>0x1000</addressOffset>
           <size>8</size>
           <access>read-only</access>
@@ -2202,27 +2224,27 @@
           <fields>
             <field>
               <name>BITS</name>
-              <description>bits [5:0]</description>
+              <description>bits [6:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>6</bitWidth>
+              <bitWidth>7</bitWidth>
               <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
           <name>ENABLE</name>
-          <description>PLIC.ENABLE, 6 bits at +0x2000</description>
+          <description>PLIC.ENABLE, 7 bits at +0x2000</description>
           <addressOffset>0x2000</addressOffset>
           <size>8</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0x3F</resetMask>
+          <resetMask>0x7F</resetMask>
           <fields>
             <field>
               <name>BITS</name>
-              <description>bits [5:0]</description>
+              <description>bits [6:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>6</bitWidth>
+              <bitWidth>7</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
