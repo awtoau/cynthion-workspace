@@ -129,8 +129,16 @@ def main():
                         help="passes per cell (default 8 = 1024 words)")
     parser.add_argument("--retries", type=int, default=2,
                         help="build retries per rung when timing fails (#306)")
-    parser.add_argument("--budget", type=float, default=180.0,
-                        help="seconds to wait for one 128-cell sweep")
+    # **Waits for**: the shell's prompt after a 128-cell sweep.
+    # **Expected**: MEASURED at under 1 second on the board -- the engine runs a
+    #   cell in microseconds and the console is the slow part.
+    # **Multiplier**: 3x. `read_until_prompt` returns on the prompt rather than
+    #   on a duration, so this only bites when nothing comes back.
+    # **On expiry**: the rung records zero cells, which is how a wedged engine
+    #   is reported. It was 150 s -- 150x the worst case -- so a wedged rung sat
+    #   there for two and a half minutes to learn that nothing had arrived.
+    parser.add_argument("--budget", type=float, default=3.0,
+                        help="seconds to wait for one 128-cell sweep (it takes <1)")
     args = parser.parse_args()
 
     rungs = args.ck if args.ck else reachable_ck(100, 200, dqs=True)
