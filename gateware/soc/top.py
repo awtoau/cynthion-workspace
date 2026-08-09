@@ -662,7 +662,8 @@ HYPERRAM_CLOCK_STOP = False
 # core was generated with would be worse than not reporting it.
 #
 # 128 sets x 1 way x 64 B line = 8 KiB per cache. Doubled from 64 because the
-# spare block RAM has no better claim on it: #274 measured the RTIC dispatcher's
+# spare block RAM has no better claim on it: the matched superloop-vs-RTIC runs
+# in `docs/rtic.md` (#245) measured the RTIC dispatcher's
 # +1,700 B of `.text` moving frontend stalls from 44/1000 cycles to 452/1000
 # through the 4 KiB I-cache, while `.bss` uses 9,728 bytes of a 63 KiB RAM whose
 # remainder is all stack slack. Code size costs real cycles on this design; data

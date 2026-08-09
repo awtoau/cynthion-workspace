@@ -52,7 +52,8 @@ predicted. Putting firmware in HyperRAM remains untried and is now unnecessary.
 The trade named here was right, and it is the one this design now lives with:
 flash fetch costs many cycles against block RAM's one, which is what the
 instruction cache exists to hide — and when the cache is too small to hide it,
-the stall is measurable rather than theoretical. #274 found the RTIC
+the stall is measurable rather than theoretical. The matched superloop-vs-RTIC
+runs in [`../../rtic.md`](../../rtic.md) (#245) found the RTIC
 dispatcher's extra 1,700 bytes of `.text` moving frontend stalls from 44 cycles
 per 1,000 to **452 per 1,000** through a 4 KiB direct-mapped I-cache.
 
@@ -79,8 +80,8 @@ The spare went to the caches rather than to RAM, and the firmware's own section
 sizes are the reason: `.bss` is 9,728 bytes and `.data` is zero, so of the 63 KiB
 RAM region about 11 KiB is live and **the entire remainder is stack slack** —
 `.stack` is simply "whatever is left". Growing RAM would have enlarged slack and
-relieved nothing measurable. Doubling the caches attacks the number #274
-actually measured.
+relieved nothing measurable. Doubling the caches attacks the number
+[`../../rtic.md`](../../rtic.md) actually measured.
 
 Timing held: `clk` closes at **78.04 MHz** against a 60 MHz constraint, and the
 USB domain at 90.30 MHz.
