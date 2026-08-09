@@ -105,6 +105,9 @@ mod fusb302;
 mod gpio;
 mod hyperram;
 mod info;
+// The boot report's retained half (#315): every `init` line kept and flushed on
+// the first received byte, because nothing is attached when they are printed.
+mod init;
 mod irq;
 mod log;
 mod memory;
@@ -205,32 +208,11 @@ pub(crate) fn primary_for(index: usize) -> Uart {
     Uart::new(target::UART_BASES[index.min(target::UART_BASES.len() - 1)])
 }
 
-/// One line of the boot report: what came up, and what it came up AS.
-///
-/// The board used to say nothing between the banner and the first power sample.
-/// Everything in `boot` either worked silently or failed silently, so the two
-/// were the same picture -- and a peripheral that is configured wrongly looks
-/// exactly like one that is configured rightly until something downstream
-/// misbehaves and gets blamed instead. The masked I2C interrupt sat in this
-/// firmware for months and would have been one line here.
-///
-/// **The detail is read back from what was configured, not restated as a
-/// literal.** A line that prints the number the code was written with reports
-/// the source, not the machine, and is exactly the kind of claim this project
-/// keeps having to withdraw.
-///
-/// `status` is a short verdict -- `ok`, `ABSENT`, `WARN`, `FAIL` -- and any
-/// explanation belongs in `detail`. It comes SECOND, before the detail, because
-/// `core::fmt::Arguments` ignores width and padding: a `{:52}` on the detail
-/// silently does nothing and the column never lines up. Two `&str` fields pad
-/// properly, so the verdicts form a column that can be scanned for the one that
-/// is not `ok`.
-///
-/// An absent peripheral prints `ABSENT` and stays in the list. A missing line
-/// reads as a subsystem nobody thought about; a present one reading `ABSENT`
-/// reads as a board without it, which is the truth on the emulator.
+/// One line of the boot report. See `init::line`, which retains it as well as
+/// printing it -- the board used to say nothing between the banner and the
+/// first power sample, and then said it to a console nobody had attached to.
 fn init_line(uart: &mut Uart, what: &str, status: &str, detail: core::fmt::Arguments) {
-    let _ = writeln!(uart, "init  {:9} {:7} {}", what, status, detail);
+    init::line(uart, what, status, detail);
 }
 
 /// Everything that happens before the first turn of `#[idle]`.
