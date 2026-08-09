@@ -217,6 +217,20 @@ impl Gpio {
         self.input() & (1 << PIN_BUTTON) != 0
     }
 
+    /// Drive the power monitor's `PWRDN#`, or hand the pin back.
+    ///
+    /// **Destructive, and the part's only hardware reset**: it loses the
+    /// accumulators and every register. Reachable from firmware since the pin
+    /// was wired and never written until #315; the one caller is
+    /// `init::pac1954_reset`, which is an operator's command and nothing else.
+    ///
+    /// Releasing hands the pin back to the fabric, whose reset state makes it a
+    /// no-op -- which is what keeps the PAC1954 available to the I2C bus.
+    pub fn power_monitor_down_set(&self, down: bool) {
+        self.write_pin(PIN_PWRDN, down);
+        self.set_owner(PIN_PWRDN, if down { Owner::Cpu } else { Owner::Fabric });
+    }
+
     /// Whether the CPU has forced the power monitor into power-down.
     ///
     /// False out of reset and false unless something here asks for it, which is

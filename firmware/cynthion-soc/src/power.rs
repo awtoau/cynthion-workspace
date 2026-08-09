@@ -802,6 +802,32 @@ impl Monitor {
         })
     }
 
+    /// `pac1954 reset` -- **DESTRUCTIVE**, and this part's only hardware reset.
+    ///
+    /// It loses the accumulators, which are the only thing that can see an
+    /// event between two 50 ms samples, and every register with them. There is
+    /// no soft reset on a PAC1954; `PWRDN#` (D5) is it, and it has been
+    /// reachable from firmware through the GPIO block the whole time without
+    /// ever being written (#315).
+    ///
+    /// Never called by [`Monitor::init`]. It re-establishes on the way out,
+    /// because a reset part is at defaults and nothing else would.
+    ///
+    /// **Waits for**: the part to drop out of and come back into operation.
+    /// **Expected duration**: a supply pin settles in microseconds, and the
+    /// converter's first sample at 1024 SPS takes 0.98 ms.
+    /// **Multiplier**: 1 ms each way, ~1.02x the conversion and far past the
+    /// settle. **On expiry**: neither can expire -- both are counted on the
+    /// free-running `time` counter, which always advances.
+    pub fn reset(&mut self, gpio: &crate::gpio::Gpio, bus: &mut Bus) -> Result<Init, bus::Error> {
+        gpio.power_monitor_down_set(true);
+        crate::clock::wait(crate::clock::millis(1));
+        gpio.power_monitor_down_set(false);
+        crate::clock::wait(crate::clock::millis(1));
+        self.configured = false;
+        self.init(bus)
+    }
+
     /// One REFRESH cycle: fetch what the last one latched, and ask for the next.
     ///
     /// PRIVATE, and `poll` is its only caller. That is the fix for issue #123

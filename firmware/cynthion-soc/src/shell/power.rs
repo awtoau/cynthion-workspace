@@ -13,7 +13,7 @@ use crate::shell::parse::{
 };
 use crate::uart::Uart;
 use crate::shell::console::board_absent;
-use crate::{ clock, power, Devices};
+use crate::{ clock, power, target, Devices};
 
 /// `power`, or `power floor <port> <mA>`.
 ///
@@ -183,6 +183,12 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let rest: &[u8] = if rest == b"status" { b"" } else { rest };
     if rest.starts_with(b"detect") {
         return detect_command(uart, trim(&rest[b"detect".len()..]), devices);
+    }
+    // THE DESTRUCTIVE VERB. `PWRDN#` is this part's only hardware reset and it
+    // loses the accumulators; `init pac1954` is the non-destructive one. See
+    // `power::Monitor::reset`.
+    if rest == b"reset" {
+        return pac1954_reset(uart, devices);
     }
     if rest.starts_with(b"floor") {
         let rest = trim(&rest[b"floor".len()..]);
@@ -750,3 +756,35 @@ pub(crate) fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut De
     }
 }
 
+
+/// `pac1954 reset` -- **DESTRUCTIVE**, and deliberately its own command.
+///
+/// `PWRDN#` is this part's only hardware reset and it loses the accumulators,
+/// which are the only thing that can see an event between two 50 ms samples.
+/// `init pac1954` is the non-destructive establishment; this is what you reach
+/// for when the part is genuinely wedged, and making it a separate verb is what
+/// makes it safe to have at all. See `power::Monitor::reset`.
+fn pac1954_reset(uart: &mut Uart, devices: &mut Devices) {
+    let Some(board) = target::BOARD else {
+        return board_absent(uart);
+    };
+    let gpio = crate::gpio::Gpio::new(board.gpio);
+    let Some(bus) = devices.bus.as_mut() else {
+        return board_absent(uart);
+    };
+    let _ = writeln!(uart, "pac1954 reset: PWRDN#, so the accumulators are lost");
+    match devices.power.reset(&gpio, bus) {
+        Ok(report) => {
+            let _ = writeln!(
+                uart,
+                "  re-established: fsr {:04x} ctrl {:04x} read back  {}",
+                report.fsr,
+                report.ctrl,
+                if report.established() { "ok" } else { "NOT WHAT IT WAS GIVEN" }
+            );
+        }
+        Err(error) => {
+            let _ = writeln!(uart, "  did not come back: {}", error.as_str());
+        }
+    }
+}

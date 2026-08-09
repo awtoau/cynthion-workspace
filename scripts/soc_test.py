@@ -774,7 +774,9 @@ def main():
                    b"[info|read|bench]", b"[stats|check|irq|log]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
                    b"[info|id|read|bench]", b"[status|scan|soak]",
-                   b"[status|floor|alert|rate|detect|limit|samples|bracket]",
+                   # `reset` is the DESTRUCTIVE verb, asserted for the reason
+                   # `hyperram clear` is below.
+                   b"[status|floor|alert|rate|detect|limit|samples|bracket|reset]",
                    # `clear` is a DESTRUCTIVE verb (#315), asserted here so a rename
                    # cannot quietly drop the one thing separating it from `init`.
                    # `clear` is the DESTRUCTIVE verb (#315), asserted here so a
