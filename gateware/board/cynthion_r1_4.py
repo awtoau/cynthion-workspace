@@ -236,17 +236,23 @@ class CynthionPlatformRev1D4(CynthionPlatform):
         # for anything they do not name. Direction decides where DRIVE matters --
         # CK always, DQ/RWDS on writes only, CS#/RESET# never. #311.
         Resource("ram", 0,
-            # DRIVE is mirrored onto CK# by nextpnr, unlike SLEWRATE. #311.
+            # CK# runs at SLEWRATE=SLOW whatever this says: Amaranth emits an LPF
+            # entry for `port.p` only, and nextpnr writes SLEWRATE to the named
+            # PIO and never to the pair's other half. DRIVE *is* mirrored. #311.
             Subsignal("clk",   DiffPairs("C3", "D3", dir="o"),
-                      Attrs(IO_TYPE="LVCMOS33D", DRIVE=HYPERRAM_CK_DRIVE)),
+                      Attrs(IO_TYPE="LVCMOS33D", DRIVE=HYPERRAM_CK_DRIVE,
+                            SLEWRATE="FAST")),
             Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io"),
                       Attrs(DRIVE=HYPERRAM_DQ_DRIVE)),
             Subsignal("rwds",  Pins( "D1", dir="io"),
                       Attrs(DRIVE=HYPERRAM_DQ_DRIVE)),
+            # SLOW, against the resource-level FAST: neither carries data, and
+            # CS# is PIOB of the same row-2 pad group as CK/CK# with its edge
+            # landing at burst start, on the CK edges the read is timed against.
             Subsignal("cs",    PinsN("B2", dir="o"),
-                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE)),
+                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE, SLEWRATE="SLOW")),
             Subsignal("reset", PinsN("C1", dir="o"),
-                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE)),
+                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE, SLEWRATE="SLOW")),
             Attrs(IO_TYPE="LVCMOS33", SLEWRATE="FAST")
         ),
 
