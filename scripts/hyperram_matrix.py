@@ -154,12 +154,22 @@ def main():
             if not ok:
                 emit(f"  SKIPPED: no bitstream at CK {ck:g}")
                 continue
-            emit(f"  built in {attempts} attempt(s), clk {fmax:.2f} MHz -- sweeping")
+            # `fmax` is None when synthesis was SKIPPED -- the digest matched, so
+            # the bitstream was already correct and nextpnr printed no timing
+            # line. That is a valid outcome, not a missing measurement, and
+            # formatting None with `:.2f` raised four frames up. Same defect as
+            # the one in soc_generate_pac.py's cross-check: a diagnostic that
+            # crashes instead of reporting.
+            emit(f"  built in {attempts} attempt(s), "
+                 + (f"clk {fmax:.2f} MHz" if fmax is not None
+                    else "synthesis skipped, bitstream already current")
+                 + " -- sweeping")
 
             rows, text = sweep(args.passes, args.budget)
             (ROOT / "tmp" / "logs" / f"matrix-sweep-ck{ck:g}.txt").write_text(text)
             for row in rows:
-                writer.writerow(dict(row, ck_mhz=ck, fmax_mhz=fmax,
+                writer.writerow(dict(row, ck_mhz=ck,
+                                     fmax_mhz="" if fmax is None else fmax,
                                      build_attempts=attempts))
             handle.flush()
 

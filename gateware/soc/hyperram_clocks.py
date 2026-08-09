@@ -198,7 +198,34 @@ class HyperRAMDomains(Elaboratable):
 
         m.d.comb += ClockSignal("hr").eq(clk_hr)
         if self.dqs:
-            m.d.comb += ClockSignal("hr_fast").eq(clk_hr_fast)
+            # THROUGH AN ECLKBRIDGECS, and it is not optional on this die.
+            #
+            # `hr_fast` is the edge clock for the DQS PHY's ODDRX2F gearing and
+            # DQSBUFM capture -- it IS the timing reference the capture-phase
+            # axis is measured against.
+            #
+            # The ECP5-25F has exactly TWO PLL sites, both at Y49: EHXPLL_LL
+            # (X2) and EHXPLL_LR (X70), the top corners. Every HyperRAM ECLK
+            # consumer is at Y2-Y11, bottom-left. That is ~38 tiles, past the
+            # bank's dedicated edge-clock spine, and there is nowhere else to
+            # put the PLL -- so no placement can reach it and moving the PLL is
+            # not an available fix. Diamond hits the same wall; it is the die.
+            #
+            # Without the bridge nextpnr falls back to general routing and says
+            # so as log_info, not a warning. Every HYPERRAM_BIST bitstream built
+            # before this did that silently, with skew nobody constrained, on a
+            # rig whose measurement is skew. See #314.
+            #
+            # CLK1/SEL tied off: this is a die-crossing bridge here, not a clock
+            # multiplexer. The second input exists for glitchless switching,
+            # which nothing here wants.
+            bridged = Signal()
+            m.submodules.hr_fast_bridge = Instance(
+                "ECLKBRIDGECS",
+                p_CLK0_DIV="1", p_CLK1_DIV="1",
+                i_CLK0=clk_hr_fast, i_CLK1=0, i_SEL=0,
+                o_ECSOUT=bridged)
+            m.d.comb += ClockSignal("hr_fast").eq(bridged)
 
         # TELL THE PLACER WHAT THESE RUN AT.
         #
