@@ -325,6 +325,8 @@ class ModelHyperRAM:
         self.incomplete = 0
         self.durations = []
         self.timed_out = None
+        self.burst_beats = None
+        self.beats_taken = 0
 
         self._state = "idle"
         self._ca_bytes = []
@@ -333,6 +335,12 @@ class ModelHyperRAM:
         self._read = True
         self._prev_cs = 0
         self._cs_high_beats = 10**6  # nothing before the first transaction
+        # tCSM, counted where it is spent rather than at the end of a transaction,
+        # so a device left selected for ever is counted once rather than never.
+        self._tcsm_beats = int(T_CSM_NS * SYNC_MHZ / 1000.0)
+        self._cs_low_beats = 0
+        self.cs_low_max = 0
+        self.tcsm_violations = 0
 
     def _decode(self):
         ca = 0
@@ -354,6 +362,14 @@ class ModelHyperRAM:
     def step(self, *, cs, dq_o, dq_e, clk_en):
         """One `sync` beat. Returns (dq_i, datavalid, burstdet)."""
         dq_i, datavalid, burstdet = 0, 0, 0
+
+        if cs:
+            self._cs_low_beats += 1
+            self.cs_low_max = max(self.cs_low_max, self._cs_low_beats)
+            if self._cs_low_beats == self._tcsm_beats + 1:
+                self.tcsm_violations += 1
+        else:
+            self._cs_low_beats = 0
 
         if not cs:
             # CS# high. Count how long, so the next transaction can be judged
@@ -551,8 +567,12 @@ async def run(ctx, dut, model, *, address, read, data=None,
 
     model.incomplete += not finished
     model.durations.append(cycles)
+    # Beats the CONTROLLER took, which is not what the device clocked out: the
+    # cycle RECOVERY needs to stop CK emits one more word that nobody consumes.
+    model.beats_taken = moved
     model.timed_out = (ctx.get(psram.timed_out)
                        if hasattr(psram, "timed_out") else None)
+    model.burst_beats = getattr(psram, "_burst_beats", None)
 
     ctx.set(psram.final_word, 0)
     ctx.set(psram.perform_write, 0)
@@ -835,8 +855,12 @@ async def run16(ctx, dut, model, *, address, read, data=None, gap=0,
 
     model.incomplete += not finished
     model.durations.append(cycles)
+    # Beats the CONTROLLER took, which is not what the device clocked out: the
+    # cycle RECOVERY needs to stop CK emits one more word that nobody consumes.
+    model.beats_taken = moved
     model.timed_out = (ctx.get(psram.timed_out)
                        if hasattr(psram, "timed_out") else None)
+    model.burst_beats = getattr(psram, "_burst_beats", None)
 
     ctx.set(psram.final_word, 0)
     ctx.set(psram.perform_write, 0)
@@ -1431,6 +1455,8 @@ class ModelHyperRAM16:
         self.incomplete = 0
         self.durations = []
         self.timed_out = None
+        self.burst_beats = None
+        self.beats_taken = 0
         # Whole cycles of CS# high tCSHI needs at this clock, rounded up -- the
         # same arithmetic the controller does, done independently of it. Two at
         # 192 MHz.
@@ -1440,6 +1466,12 @@ class ModelHyperRAM16:
         # existed.
         self._cs_high_cycles = 10**6
         self.cshi_violations = 0
+        # tCSM, counted where it is spent rather than at the end of a transaction,
+        # so a device left selected for ever is counted once rather than never.
+        self._tcsm_cycles = int(T_CSM_NS * sync_mhz / 1000.0)
+        self._cs_low_cycles = 0
+        self.cs_low_max = 0
+        self.tcsm_violations = 0
         self._state = "idle"
         self._ca = []
         self._latency = 0
@@ -1455,6 +1487,14 @@ class ModelHyperRAM16:
 
     def step(self, *, cs, clk_en, dq_o, dq_e):
         dq_i, rwds_i = 0, 0
+
+        if cs:
+            self._cs_low_cycles += 1
+            self.cs_low_max = max(self.cs_low_max, self._cs_low_cycles)
+            if self._cs_low_cycles == self._tcsm_cycles + 1:
+                self.tcsm_violations += 1
+        else:
+            self._cs_low_cycles = 0
 
         if cs and not self._previous_cs:
             # CS# just fell. Judged here, before anything about the command is
@@ -2161,6 +2201,62 @@ def section_escape(checks, emit):
          f"{short.durations[0]}; 8 of 8 returns in {whole.durations[0]}")
 
 
+def section_tcsm(checks, emit):
+    """13. CS# Low never exceeds tCSM, measured rather than argued.
+
+    The part allows 4 us and section 10 makes it the host's obligation; nothing in
+    this file had ever counted it. Exceeding it drops a refresh, which is silent
+    corruption somewhere else, so a violation cannot be found by reading data
+    back. See #317.
+    """
+    emit("\n13. tCSM: how long CS# is held Low\n")
+
+    async def endless_read(ctx, dut, model):
+        await run16(ctx, dut, model, address=TEST_ADDRESS, read=True, beats=0)
+
+    # THE NEGATIVE CONTROL: a device that keeps answering and a caller that never
+    # ends the burst. Upstream holds CS# Low until the harness gives up.
+    control = simulate16(endless_read, upstream=True)
+    checks.check("upstream holds CS# Low past tCSM on a burst nobody ends",
+                 control.tcsm_violations > 0,
+                 f"CS# Low at most {control.cs_low_max} cycles, under the "
+                 f"{control._tcsm_cycles}-cycle limit, so this detector is blind")
+
+    chopped = simulate16(endless_read)
+    checks.check("ours chops it, and CS# never passes tCSM",
+                 chopped.tcsm_violations == 0,
+                 f"{chopped.tcsm_violations} violations, CS# Low up to "
+                 f"{chopped.cs_low_max} cycles")
+    cap = chopped.burst_beats
+    checks.check("...at the word cap exactly, not one beat past it",
+                 chopped.beats_taken == cap,
+                 f"took {chopped.beats_taken} beats against a cap of {cap}")
+    checks.check("...and the caller is told the controller ended it",
+                 chopped.timed_out == 1, f"timed_out={chopped.timed_out}")
+
+    # And a silent device, where the watchdog rather than the word cap ends it.
+    silent = simulate16(
+        lambda ctx, dut, model: run16(ctx, dut, model, address=TEST_ADDRESS,
+                                      read=True),
+        deliver=0)
+    checks.check("a silent device does not hold CS# past tCSM either",
+                 silent.tcsm_violations == 0,
+                 f"CS# Low up to {silent.cs_low_max} cycles")
+
+    dqs = simulate(
+        lambda ctx, dut, model: run(ctx, dut, model, address=TEST_ADDRESS,
+                                    read=True, beats=0))
+    checks.check("the DQS controller keeps tCSM on the same shape",
+                 dqs.tcsm_violations == 0,
+                 f"CS# Low up to {dqs.cs_low_max} beats")
+
+    emit(f"        tCSM {T_CSM_NS:g} ns is {chopped._tcsm_cycles} cycles at "
+         f"{NON_DQS_SYNC_MHZ:g} MHz; upstream reached {control.cs_low_max}, "
+         f"ours {chopped.cs_low_max}")
+    emit(f"        word cap {cap} beats, taken {chopped.beats_taken}; the device "
+         f"clocked out {chopped.read_beats}, the extra one on the RECOVERY cycle")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="The HyperBus protocol layer, against a model of the part.")
@@ -2178,7 +2274,7 @@ def main():
                     section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
-                    section_clock_stop, section_escape):
+                    section_clock_stop, section_escape, section_tcsm):
         section(checks, emit)
 
     emit()

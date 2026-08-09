@@ -165,6 +165,13 @@ class HyperRAMController(Elaboratable):
                 f"which does not cover {self._data_entry_cycles} cycles of command "
                 f"and latency: no transaction could complete inside tCSM")
 
+        # The same budget in BEATS, one cycle ahead of the watchdog, so a burst
+        # nobody ends is chopped on a whole word -- the clock-inversion path
+        # assembles one out of two cycles. Reaching this means the device kept up;
+        # the watchdog behind it means it stopped. Callers keep their own cap
+        # (`bootram.hyperram_max_burst_words`) and never reach this. (#317)
+        self._burst_beats = self._burst_cycles - self._data_entry_cycles
+
         #
         # I/O port.
         #
@@ -273,12 +280,19 @@ class HyperRAMController(Elaboratable):
         # `sync` cycles and not beats -- tCSM is wall-clock, so a stopped CK still
         # spends it. (#316)
         burst_remaining = Signal(range(self._burst_cycles + 1))
+        beats_remaining = Signal(range(self._burst_beats + 1))
         burst_expired   = Signal()
-        m.d.comb += burst_expired.eq(burst_remaining == 0)
+        beat_cap        = Signal()
+        m.d.comb += [burst_expired.eq(burst_remaining == 0),
+                     beat_cap.eq(beats_remaining <= 1)]
         with m.If(~self.phy.cs):
-            m.d.sync += burst_remaining.eq(self._burst_cycles)
-        with m.Elif(~burst_expired):
-            m.d.sync += burst_remaining.eq(burst_remaining - 1)
+            m.d.sync += [burst_remaining.eq(self._burst_cycles),
+                         beats_remaining.eq(self._burst_beats)]
+        with m.Else():
+            with m.If(~burst_expired):
+                m.d.sync += burst_remaining.eq(burst_remaining - 1)
+            with m.If((self.read_ready | self.write_ready) & ~beat_cap):
+                m.d.sync += beats_remaining.eq(beats_remaining - 1)
 
         with m.FSM() as fsm:
 
@@ -402,9 +416,10 @@ class HyperRAMController(Elaboratable):
                     with m.If(self.final_word):
                         m.next = 'RECOVERY'
 
-                # THE ESCAPE (#316). Both branches above need a device beat, so
-                # until this the state had no exit a silent device could reach.
-                with m.If(burst_expired):
+                # The escape (#316) and the tCSM chop (#317), one exit: both
+                # branches above need a device beat, and neither bounds how long a
+                # live device may be held selected.
+                with m.If(burst_expired | (self.read_ready & beat_cap)):
                     m.d.sync += self.timed_out.eq(1)
                     m.next = 'RECOVERY'
 
@@ -436,31 +451,17 @@ class HyperRAMController(Elaboratable):
                 with m.Elif(self.final_word):
                     m.next = 'RECOVERY'
 
-                # A caller that stops asserting `final_word` holds CS# Low for
-                # ever, and the device counts that against tCSM. Same exit (#316).
-                with m.If(burst_expired):
+                # Same exit (#316, #317). `write_ready` is high on every cycle
+                # here, so the word cap and the cycle count run together.
+                with m.If(burst_expired | beat_cap):
                     m.d.sync += self.timed_out.eq(1)
                     m.next = 'RECOVERY'
 
 
-            # RECOVERY state: hold CS# high for tCSHI before the next transaction.
-            #
-            # Upstream carries `# TODO: implement recovery` here and returns to IDLE
-            # unconditionally, so CS# can be re-asserted on the very next cycle. The
-            # W956A8 wants 10 ns of CS# high between transactions, which is more than
-            # one `sync` cycle above 100 MHz -- and this path clocks CK from `sync`,
-            # so at the 120 MHz `stress` and `fifo` run, a cycle is 8.3 ns.
-            #
-            # `recovery_cycles` is computed from the caller's `sync_mhz`, so the count
-            # follows the clock instead of being a constant that silently stops being
-            # enough. Nothing here relies on the FSM above happening to take extra
-            # cycles to come back around.
-            #
-            # Upstream already deasserts CS# here, unlike the DQS controller, which
-            # only stopped the clock -- so the only thing missing was the wait. Both
-            # halves are needed: counting cycles without deasserting CS# holds the
-            # state and not the gap, and that arrangement is what the negative control
-            # in `soc_hyperram_sim.py` section 4 caught on the DQS side.
+            # RECOVERY: CS# High for tCSHI. Deasserting and counting are both
+            # needed -- counting alone holds the state, not the gap. tCSHI is a
+            # TIME, so `_recovery_cycles` follows `sync_mhz` rather than being a
+            # constant that silently stops being enough. See #316's sim section 4.
             with m.State('RECOVERY'):
                 m.d.sync += [
                     self.phy.cs     .eq(0),
