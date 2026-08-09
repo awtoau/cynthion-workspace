@@ -98,21 +98,14 @@ mod dispatch;
 mod events;
 mod fusb302;
 mod gpio;
-mod hardware;
-mod hr_cmd;
 mod hyperram;
-mod i2c_cmd;
 mod info;
 mod irq;
 mod log;
-mod led_cmd;
 mod memory;
 mod metrics;
-mod parse;
-mod phy_cmd;
 mod plic;
 mod power;
-mod power_cmd;
 mod power_rails;
 // THE dispatcher. `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`,
 // so there is no `#[entry]` anywhere in this file and no second loop for one to
@@ -120,9 +113,7 @@ mod power_rails;
 mod rtic_app;
 mod sched;
 mod selftest;
-mod sideband_cmd;
 mod staging;
-mod vbus_cmd;
 mod shell;
 mod sideband;
 mod target;
@@ -135,10 +126,6 @@ mod vbus;
 mod workload;
 
 use bus::Bus;
-use parse::{
-    as_str, parse_decimal, parse_hex, parse_limit, parse_port, parse_signed, trim,
-    FixedWriter,
-};
 use clock::Instant;
 use target::flash_word;
 use uart::Uart;

@@ -10,7 +10,7 @@
 use core::fmt::Write;
 
 use crate::gpio::{self, Led};
-use crate::parse::trim;
+use crate::shell::parse::trim;
 use crate::uart::Uart;
 use crate::{board_absent, target};
 

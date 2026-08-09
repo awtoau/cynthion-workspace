@@ -4,7 +4,7 @@
 
 use core::fmt::Write;
 
-use crate::parse::{parse_decimal, trim};
+use crate::shell::parse::{parse_decimal, trim};
 use crate::uart::Uart;
 use crate::{board_absent, bus, target, Devices};
 

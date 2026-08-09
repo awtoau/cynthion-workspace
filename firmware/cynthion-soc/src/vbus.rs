@@ -30,7 +30,6 @@
 
 use core::fmt::Write;
 
-use crate::parse::{parse_decimal, trim};
 use crate::uart::Uart;
 use crate::{board_absent, fusb302, Devices};
 

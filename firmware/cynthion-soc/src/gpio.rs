@@ -46,7 +46,6 @@
 
 use core::fmt::Write;
 
-use crate::parse::trim;
 use crate::uart::Uart;
 use crate::{board_absent, target};
 

@@ -148,9 +148,9 @@ impl Region {
 
 /// `flash id`, and `bram|flash|hyperram read <hex>`.
 pub fn command(uart: &mut Uart, region: Region, rest: &[u8]) {
-    let rest = crate::trim(rest);
+    let rest = crate::shell::parse::trim(rest);
     let (verb, arg) = match rest.iter().position(|&b| b == b' ') {
-        Some(i) => (&rest[..i], crate::trim(&rest[i + 1..])),
+        Some(i) => (&rest[..i], crate::shell::parse::trim(&rest[i + 1..])),
         None => (rest, &rest[..0]),
     };
 
@@ -163,7 +163,7 @@ pub fn command(uart: &mut Uart, region: Region, rest: &[u8]) {
 
 /// One word, from whichever region was named. One parser, one bound, one line out.
 fn read(uart: &mut Uart, region: Region, arg: &[u8]) {
-    let Some(offset) = crate::parse_hex(arg) else {
+    let Some(offset) = crate::shell::parse::parse_hex(arg) else {
         return usage(uart, region);
     };
 

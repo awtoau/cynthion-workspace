@@ -5,7 +5,7 @@
 
 use core::fmt::Write;
 
-use crate::parse::{parse_hex, trim};
+use crate::shell::parse::{parse_hex, trim};
 use crate::uart::Uart;
 use crate::{bench, hyperram, memory};
 

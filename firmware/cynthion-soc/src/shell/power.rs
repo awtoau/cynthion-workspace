@@ -8,7 +8,7 @@
 
 use core::fmt::Write;
 
-use crate::parse::{
+use crate::shell::parse::{
     as_str, parse_decimal, parse_limit, parse_port, parse_signed, trim, FixedWriter,
 };
 use crate::uart::Uart;

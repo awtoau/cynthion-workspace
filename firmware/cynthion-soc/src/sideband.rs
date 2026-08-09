@@ -18,7 +18,6 @@
 
 use core::fmt::Write;
 
-use crate::parse::{parse_hex, trim};
 use crate::uart::Uart;
 use crate::{board_absent, target};
 

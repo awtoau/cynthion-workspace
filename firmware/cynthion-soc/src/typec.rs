@@ -327,7 +327,7 @@ fn index(port: Port) -> usize {
 
 /// `typec`, or `typec init` to configure both controllers again.
 pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus: &mut Bus) {
-    let rest = crate::trim(rest);
+    let rest = crate::shell::parse::trim(rest);
     if rest == b"init" {
         controllers.start(uart, bus);
         return;
