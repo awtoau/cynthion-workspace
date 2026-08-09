@@ -82,6 +82,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("ports", "which UARTs answer"),
     ("power [floor]", "the four PAC1954 channels"),
     ("power alert", "the limit ALERTs: armed, routed, fired"),
+    ("power rate [ms|off]", "how often the rails are sampled"),
     ("power limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
     ("power samples <k> <port> <n>", "consecutive samples before it asserts"),
     ("power bracket <port> <mA> <mV>", "limits around the present reading"),
@@ -96,7 +97,21 @@ pub(crate) const HELP: &[(&str, &str)] = &[
 
 /// Width of the first column. One more than the longest entry above, so every
 /// description starts in the same place and none of them touch the name.
-pub(crate) const HELP_WIDTH: usize = 20;
+///
+/// It said 20 while the longest entry was 30, so the four longest names ran
+/// straight into their descriptions: `power limit <k> <port> <n>ov/oc/uv/uc
+/// threshold`. The padding loop is `name.len()..HELP_WIDTH`, which is simply
+/// empty when the name is longer -- no panic, no warning, just a missing space.
+/// The assert below is what makes the comment true rather than aspirational.
+pub(crate) const HELP_WIDTH: usize = 31;
+
+const _: () = {
+    let mut i = 0;
+    while i < HELP.len() {
+        assert!(HELP[i].0.len() < HELP_WIDTH, "HELP_WIDTH is too small");
+        i += 1;
+    }
+};
 
 pub(crate) fn help(uart: &mut Uart) {
     for (name, summary) in HELP {
