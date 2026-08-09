@@ -48,6 +48,7 @@ worse than one that says it did.
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -239,6 +240,43 @@ def gateware_digest():
     for setting in variant_settings():
         digest.update(setting.encode())
     return digest.hexdigest()[:16]
+
+
+# Where built bitstreams are kept, keyed by the gateware digest.
+#
+# Every CK rung is a bitstream, and ~20 were built and thrown away in one
+# session because the build directory holds exactly one. Re-visiting a rung then
+# costs another ~130 s of synthesis for a file that already existed.
+#
+# The digest already identifies a bitstream exactly -- sources, HEAD and the
+# variant environment -- so it is the natural key. A hit is a copy; a miss is a
+# build.
+BITCACHE = ROOT / "tmp" / "bitcache"
+
+
+def bitcache_take(digest, emit):
+    """Restore a previously built bitstream for this digest. True on a hit."""
+    have = BITCACHE / digest
+    if not (have / "top.bit").exists():
+        return False
+    for item in have.iterdir():
+        shutil.copy2(item, BITSTREAM.parent / item.name)
+    emit(f"bitstream CACHED: reused {digest} from "
+         f"{have.relative_to(ROOT)} -- no synthesis")
+    return True
+
+
+def bitcache_put(digest, emit):
+    """Keep this bitstream, so the same rung never synthesises twice."""
+    have = BITCACHE / digest
+    have.mkdir(parents=True, exist_ok=True)
+    kept = 0
+    for name in ("top.bit", "top.svf", "firmware.hex", "gateware-digest.txt"):
+        source = BITSTREAM.parent / name
+        if source.exists():
+            shutil.copy2(source, have / name)
+            kept += 1
+    emit(f"bitstream cached as {digest} ({kept} files)")
 
 
 def bitstream_is_stale(emit):
@@ -717,6 +755,13 @@ def main():
         want_gateware = gateware_digest()
         have_gateware = (GATEWARE_BUILT.read_text().strip()
                          if GATEWARE_BUILT.exists() else None)
+        # A rung built before is a FILE COPY, not a synthesis. The CK values are
+        # solved arithmetic -- `reachable_ck` enumerates them -- so each one is a
+        # bitstream that only ever needs building once. Without this, revisiting
+        # a rung cost another ~130 s for a file that had already existed and been
+        # overwritten.
+        if have_gateware != want_gateware and bitcache_take(want_gateware, emit):
+            have_gateware = want_gateware
         if BITSTREAM.exists() and have_gateware == want_gateware:
             emit(f"synthesis SKIPPED: the bitstream was built from these exact "
                  f"sources ({want_gateware})")
@@ -823,6 +868,7 @@ def main():
         # Recorded only now, after the build has returned zero. Written before
         # it would claim a bitstream that may not exist.
         GATEWARE_BUILT.write_text(gateware_digest() + "\n")
+        bitcache_put(gateware_digest(), emit)
 
         report = ROOT / "tmp" / "awto_soc" / "build" / "top.rpt"
         if report.exists():
