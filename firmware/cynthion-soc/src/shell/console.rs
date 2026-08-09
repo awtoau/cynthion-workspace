@@ -36,6 +36,12 @@ pub struct Shell {
     /// lists nothing rather than something wrong.
     line: [u8; LINE],
     line_len: usize,
+    /// Where the cursor sits in `line`. Every synthesised key is bounded by it.
+    cursor: usize,
+    /// ANSI decoder state: 0 none, 1 saw ESC, 2 inside CSI.
+    esc: u8,
+    /// First CSI parameter byte, which is all `ESC[3~` and friends need.
+    param: u8,
     /// Anything entered since the last Enter.
     typed: bool,
     /// The line editor, built on first keypress.
@@ -89,6 +95,9 @@ impl Shell {
     pub(crate) const NEW: Shell = Shell {
         line: [0u8; LINE],
         line_len: 0,
+        cursor: 0,
+        esc: 0,
+        param: 0,
         typed: false,
         editor: None,
         spoken: false,
@@ -141,6 +150,11 @@ impl Shell {
         // the crate stays a dependency rather than a fork.
         let byte = if byte == 0x7f { 0x08 } else { byte };
 
+        // BEFORE the editor is borrowed: `decode` takes `&mut self`, and the
+        // borrow of `self.editor` below is live for the rest of the function.
+        // Field accesses stay disjoint; a method call does not.
+        let key = self.decode(byte);
+
         // The line editor owns everything from here: echo, backspace, TAB
         // completion over `HELP`, and the history ring on the arrow keys.
         // A completed line reaches `shell::run` through `Dispatch` -- the crate
@@ -175,18 +189,46 @@ impl Shell {
             _ => self.typed,
         };
 
-        // Shadow the line. Space is now KEPT -- it is what separates one level
-        // from the next, and clearing on it was the whole `i2c st` defect.
-        match byte {
-            b'\r' | b'\n' | 0x03 | 0x1b => self.line_len = 0,
-            0x08 | 0x7f => {
-                self.line_len = self.line_len.saturating_sub(1);
-            }
-            0x20..=0x7e => {
+        // ESCAPE SEQUENCES ARE NOT TEXT, and the shadow used to treat them as
+        // text. `0x1b` cleared it and then `[` and `C` were pushed as
+        // printable, so a right-arrow left `[C` in the completion buffer. It
+        // only ever looked harmless because no command starts with `[`.
+        //
+        // The state machine also gives the sequences a name, which is what
+        // [`Self::key`] needs to add the keys the crate has no `ControlInput`
+        // for.
+        // Track the cursor as well as the text. Everything below is built out
+        // of the crate's three primitives -- Backward, Forward, Backspace --
+        // and each needs to know how far it can go before it starts eating the
+        // wrong characters.
+        match key {
+            Key::Text(byte) => {
                 if self.line_len < self.line.len() {
-                    self.line[self.line_len] = byte;
+                    self.line.copy_within(self.cursor..self.line_len, self.cursor + 1);
+                    self.line[self.cursor] = byte;
                     self.line_len += 1;
+                    self.cursor += 1;
                 }
+            }
+            Key::Backspace => {
+                if self.cursor > 0 {
+                    self.line.copy_within(self.cursor..self.line_len, self.cursor - 1);
+                    self.line_len -= 1;
+                    self.cursor -= 1;
+                }
+            }
+            Key::Left => self.cursor = self.cursor.saturating_sub(1),
+            Key::Right => {
+                if self.cursor < self.line_len {
+                    self.cursor += 1;
+                }
+            }
+            // A recall replaces the line without a byte passing through here,
+            // so the shadow cannot be kept true. Cleared rather than left
+            // stale: TAB then offers nothing instead of something wrong.
+            Key::Enter | Key::Abort | Key::History => {
+                self.line_len = 0;
+                self.cursor = 0;
             }
             _ => {}
         }
@@ -194,8 +236,136 @@ impl Shell {
         let mut dispatch = Dispatch { index, devices };
         let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
 
-        if byte == b'\t' {
+        // KEYS THE CRATE HAS NO INPUT FOR, spelled with the ones it does.
+        //
+        // `embedded-cli`'s `process_csi` matches only A/B/C/D, so Delete, Home
+        // and End arrive as nothing at all, and the readline control characters
+        // are below 0x20 and fall through its `_ => None`. Rather than fork the
+        // crate, each is expanded here into a run of Forward, Backward and
+        // Backspace and fed back through `process_byte` -- the crate's own
+        // input path, so its buffer, cursor and echo stay its business.
+        //
+        // Every count is bounded by the tracked cursor, which is what stops a
+        // Delete at end-of-line becoming a Backspace over the previous
+        // character -- the failure a naive Forward-then-Backspace has.
+        match key {
+            Key::Delete => {
+                if self.cursor < self.line_len {
+                    self.replay(index, devices, RIGHT, 1);
+                    self.replay(index, devices, &[0x08], 1);
+                }
+            }
+            Key::Home => {
+                let n = self.cursor;
+                self.replay(index, devices, LEFT, n);
+            }
+            Key::End => {
+                let n = self.line_len - self.cursor;
+                self.replay(index, devices, RIGHT, n);
+            }
+            // To end of line: walk right, then rub out what was walked over.
+            Key::KillToEnd => {
+                let n = self.line_len - self.cursor;
+                self.replay(index, devices, RIGHT, n);
+                self.replay(index, devices, &[0x08], n);
+            }
+            Key::KillToStart => {
+                let n = self.cursor;
+                self.replay(index, devices, &[0x08], n);
+            }
+            // One word back: the run of spaces under the cursor, then the run
+            // of non-spaces before it. Same rule as readline's `unix-word-rubout`.
+            Key::KillWord => {
+                let mut n = 0;
+                while self.cursor > n && self.line[self.cursor - n - 1] == b' ' {
+                    n += 1;
+                }
+                while self.cursor > n && self.line[self.cursor - n - 1] != b' ' {
+                    n += 1;
+                }
+                self.replay(index, devices, &[0x08], n);
+            }
+            _ => {}
+        }
+
+        if key == Key::Tab {
             self.tab(index, devices);
+        }
+    }
+
+    /// One byte in, one key out, tracking ANSI escape sequences across calls.
+    ///
+    /// A byte at a time because that is how they arrive -- one per poll, from
+    /// the interrupt handler's ring -- so the sequence has to be remembered
+    /// between calls rather than parsed from a buffer.
+    ///
+    /// CSI is `ESC [`, then parameter bytes `0x30..=0x3f`, then a final byte
+    /// `0x40..=0x7e`. Only the parameter's first digit is kept: every sequence
+    /// this cares about is one digit (`3~` delete, `1~`/`7~` home, `4~`/`8~`
+    /// end), and keeping more would need a buffer for no gain.
+    fn decode(&mut self, byte: u8) -> Key {
+        match self.esc {
+            // Not in a sequence.
+            0 => match byte {
+                0x1b => {
+                    self.esc = 1;
+                    Key::None
+                }
+                0x01 => Key::Home,        // Ctrl-A
+                0x03 => Key::Abort,       // Ctrl-C
+                0x05 => Key::End,         // Ctrl-E
+                0x08 => Key::Backspace,
+                0x09 => Key::Tab,
+                0x0b => Key::KillToEnd,   // Ctrl-K
+                0x0d | 0x0a => Key::Enter,
+                0x15 => Key::KillToStart, // Ctrl-U
+                0x17 => Key::KillWord,    // Ctrl-W
+                0x20..=0x7e => Key::Text(byte),
+                _ => Key::None,
+            },
+            // Saw ESC. Anything but `[` is a lone escape or something this does
+            // not speak; drop back rather than swallow the next key.
+            1 => {
+                self.esc = if byte == b'[' { 2 } else { 0 };
+                self.param = 0;
+                Key::None
+            }
+            // Inside CSI.
+            _ => {
+                if (0x30..=0x3f).contains(&byte) {
+                    if self.param == 0 {
+                        self.param = byte;
+                    }
+                    return Key::None;
+                }
+                self.esc = 0;
+                match (byte, self.param) {
+                    (b'A', _) | (b'B', _) => Key::History,
+                    (b'C', _) => Key::Right,
+                    (b'D', _) => Key::Left,
+                    (b'H', _) | (b'~', b'1') | (b'~', b'7') => Key::Home,
+                    (b'F', _) | (b'~', b'4') | (b'~', b'8') => Key::End,
+                    (b'~', b'3') => Key::Delete,
+                    _ => Key::None,
+                }
+            }
+        }
+    }
+
+    /// Feed `sequence` to the crate `count` times.
+    ///
+    /// The shadow is NOT updated here: the caller has already moved it to where
+    /// the replay will leave the crate, and doing it twice would double every
+    /// move.
+    fn replay(&mut self, index: usize, devices: &mut Devices, sequence: &[u8], count: usize) {
+        let Some(Some(editor)) = self.editor.as_mut() else {
+            return;
+        };
+        for _ in 0..count {
+            for &byte in sequence {
+                let mut dispatch = Dispatch { index, devices };
+                let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
+            }
         }
     }
 
@@ -292,6 +462,34 @@ impl Shell {
 
 /// The shadowed line's capacity, matching the editor's own command buffer.
 const LINE: usize = 64;
+
+/// What one byte turned out to mean.
+///
+/// `embedded-cli` has its own `ControlInput`, and it covers backspace, enter,
+/// tab and the four arrows. This covers those PLUS the ones it does not decode,
+/// so there is one place that knows what a keystroke was.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Key {
+    Text(u8),
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+    KillToEnd,
+    KillToStart,
+    KillWord,
+    History,
+    Enter,
+    Abort,
+    Tab,
+    None,
+}
+
+/// The two sequences this module sends back into the crate.
+const LEFT: &[u8] = b"\x1b[D";
+const RIGHT: &[u8] = b"\x1b[C";
 
 /// What each console calls itself in its prompt.
 ///
