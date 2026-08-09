@@ -180,6 +180,21 @@ class HyperRAMController(Elaboratable):
                 f"which does not cover {self._data_entry_cycles} cycles of command "
                 f"and latency: no transaction could complete inside tCSM")
 
+        # THE tCSM CHOP (#317): the same budget, counted in BEATS rather than
+        # cycles, so the burst ends one cycle before the watchdog would.
+        #
+        # Two counters on one budget rather than two budgets. The beat cap is what
+        # ends a burst the caller forgot to end, and it can only be counted in
+        # beats: `READ_DATA` assembles a word out of two cycles on the
+        # clock-inversion path, so an exit taken on a cycle boundary can land
+        # inside one. Reaching it means the device kept up and the burst was too
+        # long for tCSM; the watchdog behind it firing means the device stopped.
+        #
+        # `bootram.hyperram_max_burst_words` caps a Wishbone burst from the same
+        # tCSM figure and lands within a couple of words of this, so a caller that
+        # respects its own cap never reaches this one.
+        self._burst_beats = self._burst_cycles - self._data_entry_cycles
+
         #
         # I/O port.
         #
@@ -294,12 +309,19 @@ class HyperRAMController(Elaboratable):
         # association` holds its counter across an Active Clock Stop, but that one
         # measures silence on RWDS, which is a different quantity from this one.
         burst_remaining = Signal(range(self._burst_cycles + 1))
+        beats_remaining = Signal(range(self._burst_beats + 1))
         burst_expired   = Signal()
-        m.d.comb += burst_expired.eq(burst_remaining == 0)
+        beat_cap        = Signal()
+        m.d.comb += [burst_expired.eq(burst_remaining == 0),
+                     beat_cap.eq(beats_remaining == 0)]
         with m.If(~self.phy.cs):
-            m.d.sync += burst_remaining.eq(self._burst_cycles)
-        with m.Elif(~burst_expired):
-            m.d.sync += burst_remaining.eq(burst_remaining - 1)
+            m.d.sync += [burst_remaining.eq(self._burst_cycles),
+                         beats_remaining.eq(self._burst_beats)]
+        with m.Else():
+            with m.If(~burst_expired):
+                m.d.sync += burst_remaining.eq(burst_remaining - 1)
+            with m.If((self.read_ready | self.write_ready) & ~beat_cap):
+                m.d.sync += beats_remaining.eq(beats_remaining - 1)
 
         with m.FSM() as fsm:
 
@@ -423,9 +445,11 @@ class HyperRAMController(Elaboratable):
                     with m.If(self.final_word):
                         m.next = 'RECOVERY'
 
-                # THE ESCAPE (#316). Both branches above need a device beat, so
-                # until this the state had no exit a silent device could reach.
-                with m.If(burst_expired):
+                # THE ESCAPE (#316) and the tCSM chop (#317), one exit. Both
+                # branches above need a device beat, so until this the state had
+                # no exit a silent device could reach -- and nothing bounded the
+                # burst a live one could hold CS# Low for.
+                with m.If(burst_expired | (self.read_ready & beat_cap)):
                     m.d.sync += self.timed_out.eq(1)
                     m.next = 'RECOVERY'
 
@@ -458,8 +482,10 @@ class HyperRAMController(Elaboratable):
                     m.next = 'RECOVERY'
 
                 # A caller that stops asserting `final_word` holds CS# Low for
-                # ever, and the device counts that against tCSM. Same exit (#316).
-                with m.If(burst_expired):
+                # ever, and the device counts that against tCSM. Same exit
+                # (#316, #317); `write_ready` is high on every cycle here, so the
+                # word cap and the cycle count run together.
+                with m.If(burst_expired | beat_cap):
                     m.d.sync += self.timed_out.eq(1)
                     m.next = 'RECOVERY'
 

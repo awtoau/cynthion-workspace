@@ -327,6 +327,14 @@ class ModelHyperRAM:
         self._read = True
         self._prev_cs = 0
         self._cs_high_beats = 10**6  # nothing before the first transaction
+        # tCSM, from the DATASHEET and not from the controller's budget: 4 us of
+        # CS# Low, whatever margin the controller chooses to keep inside it. A
+        # violation is counted where it happens rather than at the end of the
+        # transaction, so a device left selected for ever is counted once.
+        self._tcsm_beats = int(T_CSM_NS * SYNC_MHZ / 1000.0)
+        self._cs_low_beats = 0
+        self.cs_low_max = 0
+        self.tcsm_violations = 0
 
     def _decode(self):
         ca = 0
