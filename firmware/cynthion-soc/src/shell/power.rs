@@ -60,7 +60,7 @@ fn detect_command(uart: &mut Uart, arg: &[u8], devices: &mut Devices) {
         }
         b"" => {}
         _ => {
-            let _ = writeln!(uart, "usage: power detect [on|off]");
+            let _ = writeln!(uart, "usage: pac1954 detect [on|off]");
             return;
         }
     }
@@ -97,7 +97,7 @@ pub(crate) fn rate_command(uart: &mut Uart, arg: &[u8]) {
         let Some(asked) = asked else {
             let _ = writeln!(
                 uart,
-                "usage: power rate [<ms>|off]   min {} ms",
+                "usage: pac1954 rate [<ms>|off]   min {} ms",
                 power::MIN_INTERVAL_MS
             );
             return;
@@ -176,7 +176,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // used to be what a bare `power` printed, which made it the only family
     // whose bare form did work rather than describing itself.
     if rest.is_empty() {
-        return crate::shell::list_family(uart, "power");
+        return crate::shell::list_family(uart, "pac1954");
     }
     // `status` falls through to the table below, which is where it already
     // lived -- it was simply reached by typing nothing.
@@ -210,7 +210,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             _ => {
                 let _ = writeln!(
                     uart,
-                    "usage: power floor <port> <mA>  \
+                    "usage: pac1954 floor <port> <mA>  \
                                         (0..5000)"
                 );
                 return;
@@ -221,7 +221,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     {
         return power_alert_command(uart, rest, devices);
     } else if !rest.is_empty() {
-        let _ = writeln!(uart, "usage: power [floor <port> <mA>]");
+        let _ = writeln!(uart, "usage: pac1954 [floor <port> <mA>]");
         let _ = writeln!(uart, "       power alert [on|off]");
         let _ = writeln!(uart, "       power limit <ov|oc|uv|uc> <port> <mV|mA>");
         let _ = writeln!(uart, "       power samples <ov|oc|uv|uc> <port> <1|4|8|16>");
@@ -608,7 +608,7 @@ pub(crate) fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut De
             _ => {
                 let _ = writeln!(
                     uart,
-                    "usage: power limit <ov|oc|uv|uc> <port> <mV|mA>"
+                    "usage: pac1954 limit <ov|oc|uv|uc> <port> <mV|mA>"
                 );
                 return;
             }
@@ -664,7 +664,7 @@ pub(crate) fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut De
             _ => {
                 let _ = writeln!(
                     uart,
-                    "usage: power samples <ov|oc|uv|uc> <port> <1|4|8|16>"
+                    "usage: pac1954 samples <ov|oc|uv|uc> <port> <1|4|8|16>"
                 );
                 return;
             }
@@ -701,7 +701,7 @@ pub(crate) fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut De
         ) {
             (Some(c), Some(a), Some(v)) => (c, a as i32, v as i32),
             _ => {
-                let _ = writeln!(uart, "usage: power bracket <port> <+/-mA> <+/-mV>");
+                let _ = writeln!(uart, "usage: pac1954 bracket <port> <+/-mA> <+/-mV>");
                 return;
             }
         };

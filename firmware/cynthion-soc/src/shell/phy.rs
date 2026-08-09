@@ -30,7 +30,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let phy = ulpi::Ulpi::new(board.ulpi);
 
     if rest.is_empty() {
-        return crate::shell::list_family(uart, "phy");
+        return crate::shell::list_family(uart, "usb3343");
     }
     if rest == b"reset" {
         return board_phy_reset(uart, &phy);

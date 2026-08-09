@@ -55,6 +55,15 @@ use crate::{
 /// **Kept in alphabetical order**, which is the order it prints -- sorting at
 /// runtime would cost code to save nothing, since the table is a constant.
 ///
+/// # `<device> <verb>`, and a bare verb is not a command
+///
+/// The device is named first and the verb qualifies it: `cpu stats`, `flash
+/// read`, `hyperram bench`, `pac1954 limit`. A bare `stats`, `check`, `irq`,
+/// `map` or `bench` does not say what it is about, and two of them wanted the
+/// same word. **One-level entries are board-wide actions only** -- `reset`,
+/// `board`, `selftest`, `time`, `load`, `help` -- never a verb belonging to a
+/// device.
+///
 /// Two columns, and the first is padded to `HELP_WIDTH` so no name runs into its
 /// description. `{:w$}` would pull in `core::fmt`'s width machinery for one call
 /// site; the padding is done by hand below for the same reason the rest of this
@@ -73,6 +82,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
     ("flash bench", "time a walk over the flash window"),
+    ("fusb302b [port]", "the FUSB302B controllers"),
     ("help, ?", "this list"),
     // HR AND VBUS HAD ONE ROW EACH -- `hr <cmd>`, "see `hr`" -- with their real
     // subcommands living in a usage string inside the command. That was survivable
@@ -100,24 +110,23 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("info button", "the USER button: open or closed"),
     ("led [colour]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
-    ("phy", "the USB PHYs"),
-    ("phy status", "identity, line state and the data-line walk"),
-    ("phy reset", "pulse TARGET's RESETB, and prove it reached"),
-    ("power", "the four PAC1954 channels"),
-    ("power status", "the reading, the limits and the floors"),
-    ("power floor <port> <mA>", "the current below which a port reads absent"),
-    ("power alert", "the limit ALERTs: armed, routed, fired"),
-    ("power rate [ms|off]", "how often the rails are sampled"),
-    ("power detect [on|off]", "plug detection via the ALERT, not the poll"),
-    ("power limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
-    ("power samples <k> <port> <n>", "consecutive samples before it asserts"),
-    ("power bracket <port> <mA> <mV>", "limits around the present reading"),
+    ("pac1954", "the four PAC1954 channels"),
+    ("pac1954 status", "the reading, the limits and the floors"),
+    ("pac1954 floor <port> <mA>", "the current below which a port reads absent"),
+    ("pac1954 alert", "the limit ALERTs: armed, routed, fired"),
+    ("pac1954 rate [ms|off]", "how often the rails are sampled"),
+    ("pac1954 detect [on|off]", "plug detection via the ALERT, not the poll"),
+    ("pac1954 limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
+    ("pac1954 samples <k> <port> <n>", "consecutive samples before it asserts"),
+    ("pac1954 bracket <port> <mA> <mV>", "limits around the present reading"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),
-    ("sideband", "the sideband link"),
+    ("sideband", "FPGA_ADV: one-wire UART to the SAMD11, on T6"),
     ("time", "uptime, from mtime"),
-    ("typec [port]", "the FUSB302B controllers"),
+    ("usb3343", "the USB PHYs"),
+    ("usb3343 status", "identity, line state and the data-line walk"),
+    ("usb3343 reset", "pulse TARGET's RESETB, and prove it reached"),
     ("vbus", "the VBUS distribution switches"),
     ("vbus status", "which switches are closed, and what is sourcing"),
     ("vbus off", "open every switch"),
@@ -135,7 +144,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
 /// threshold`. The padding loop is `name.len()..HELP_WIDTH`, which is simply
 /// empty when the name is longer -- no panic, no warning, just a missing space.
 /// The assert below is what makes the comment true rather than aspirational.
-pub(crate) const HELP_WIDTH: usize = 31;
+pub(crate) const HELP_WIDTH: usize = 33;
 
 const _: () = {
     let mut i = 0;
@@ -145,14 +154,31 @@ const _: () = {
     }
 };
 
+/// `help` and `?`, for any caller that is not the line editor.
+///
+/// The editor intercepts both words and never reaches `run`, so this is what
+/// #303's binary front end and any editor-less console get. It renders through
+/// [`list_all`] rather than repeating it -- there were two copies, and the one
+/// the crate never called was the one still being maintained.
 pub(crate) fn help(uart: &mut Uart) {
-    // ONE LINE PER FAMILY, not per row. `power` alone has seven rows, `hyperram`
-    // nine, and a root listing of forty-odd lines is a wall rather than an index.
-    //
-    //     power [floor|alert|rate|detail|limit|samples|bracket]  the four ...
-    //
-    // The detail is one TAB away -- `power` + TAB lists the rows in full -- so
-    // this answers "what is there", and that answers "how do I call it".
+    list_all(&mut |text| {
+        let _ = uart.write_str(text);
+    });
+}
+
+/// The root listing: ONE LINE PER FAMILY, not per row.
+///
+/// `pac1954` alone has seven rows and `hyperram` nine, so a listing per row is a
+/// wall rather than an index. The detail is one TAB away.
+///
+/// Name alone in the first column, subcommands after the summary: `hyperram`'s
+/// nine beside the name pushed the column out and wrapped the line, losing the
+/// alignment the column exists for to the thing it was listing.
+///
+/// `out` rather than a writer, because the two callers have incompatible ones --
+/// `Uart` and the crate's `Writer` -- and both translate `\n` to CRLF
+/// themselves. One implementation, two sinks.
+pub(crate) fn list_all(out: &mut dyn FnMut(&str)) {
     let mut index = 0;
     while index < HELP.len() {
         let (entry, mut summary) = HELP[index];
@@ -179,43 +205,32 @@ pub(crate) fn help(uart: &mut Uart) {
             }
         }
 
-        let _ = uart.write_str("  ");
-        let _ = uart.write_str(name);
-        let mut width = name.len();
+        // Pad by hand. `write!("{:w$}")` instantiates core::fmt's fill-and-align
+        // path, which is several hundred bytes of code for one call site in an
+        // image that has spent this session fighting for block RAM.
+        out(name);
+        for _ in name.len()..HELP_WIDTH {
+            out(" ");
+        }
+        out(summary);
 
-        // Subcommands in brackets, second word only. A row that is just the bare
-        // command contributes nothing -- `power` is not a subcommand of itself.
+        // Subcommands after the summary, second word only. A row that is just
+        // the bare command contributes nothing -- `pac1954` is not a subcommand
+        // of itself.
         let mut first = true;
         for (row, _) in &HELP[index..end] {
             let sub = second_word(row);
             if sub.is_empty() {
                 continue;
             }
-            let _ = uart.write_str(if first { " [" } else { "|" });
-            width += if first { 2 } else { 1 };
+            out(if first { "  [" } else { "|" });
             first = false;
-            let _ = uart.write_str(sub);
-            width += sub.len();
+            out(sub);
         }
         if !first {
-            let _ = uart.write_str("]");
-            width += 1;
+            out("]");
         }
-
-        // Pad by hand. `write!("{:w$}")` instantiates core::fmt's fill-and-align
-        // path, which is several hundred bytes of code for one call site in an
-        // image that has spent this session fighting for block RAM.
-        //
-        // A family line can outgrow the column; one space then, rather than none,
-        // so the summary never touches the name.
-        if width >= HELP_WIDTH {
-            let _ = uart.write_str(" ");
-        }
-        for _ in width..HELP_WIDTH {
-            let _ = uart.write_str(" ");
-        }
-        let _ = uart.write_str(summary);
-        let _ = uart.write_str("\n");
+        out("\n");
 
         index = end;
     }
@@ -454,10 +469,6 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 cost, late
             );
         }
-        // `cpu stats` rather than a bare `stats`, matching what every other
-        // command family here now does: the thing being asked about is named
-        // first, so `flash read`, `hyperram read` and `cpu stats` all read the
-        // same way. A bare `stats` did not say what it was counting.
         b"cpu" if trim(rest) == b"log" || trim(rest).starts_with(b"log ") => {
             let arg = trim(&trim(rest)[b"log".len()..]);
             log_command(index, uart, arg, devices)
@@ -481,12 +492,20 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         b"board" => board::tree(uart, &devices.power, &devices.type_c),
         b"led" => led::command(uart, rest),
         b"i2c" => i2c::command(uart, rest, devices),
-        b"power" => power::command(uart, rest, devices),
-        b"phy" => phy::command(uart, trim(rest)),
+        // THE PART NUMBER IS THE COMMAND. `power`, `phy` and `typec` named a
+        // function; the board has one specific part doing each, and the
+        // datasheet is what anyone debugging it has open. `pac1954 limit` and
+        // DS20006539B use the same word for the same register.
+        //
+        // The generic spelling still dispatches -- it is in every script and
+        // every issue written so far -- but it is not in `HELP`, so it does not
+        // complete and is not offered. One name to learn, one name that works.
+        b"pac1954" | b"power" => power::command(uart, rest, devices),
+        b"usb3343" | b"phy" => phy::command(uart, trim(rest)),
         // Split here rather than inside the command, because "there is no board"
         // is a fact about this build and not about the Type-C controllers. The
         // command then takes a `&mut Bus` it can use unconditionally.
-        b"typec" => match devices.bus.as_mut() {
+        b"fusb302b" | b"typec" => match devices.bus.as_mut() {
             Some(bus) => self::typec::command(uart, rest, &mut devices.type_c, bus),
             None => board_absent(uart),
         },

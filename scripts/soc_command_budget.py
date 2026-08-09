@@ -77,13 +77,14 @@ MULTIPLIER = 1.25
 # changes a limit -- a calibration run that altered the thing it measures would
 # be the instrument reporting its own load.
 COMMANDS = [
-    "help", "?", "info", "time", "cpu stats", "rtic", "irq", "log",
-    "map", "pmod", "ports", "board", "phy", "vbus", "typec",
-    "power", "power alert", "power rate", "i2c", "hr", "sideband",
-    "flash id", "bram id", "hyperram id",
+    "help", "?", "info", "time", "rtic", "board", "selftest", "sideband",
+    "cpu stats", "cpu check", "cpu irq", "cpu log",
+    "info map", "info pmod", "info ports", "info button",
+    "usb3343 status", "vbus status", "fusb302b", "i2c status",
+    "pac1954 status", "pac1954 alert", "pac1954 rate",
+    "hyperram status", "flash id", "hyperram id",
     "bram read 0", "flash read 0",
     "bram bench", "flash bench",
-    "selftest", "check",
 ]
 
 

@@ -141,53 +141,20 @@ impl Help for Commands {
     fn list_commands<W: IoWrite<Error = E>, E: embedded_io::Error>(
         writer: &mut embedded_cli::writer::Writer<'_, W, E>,
     ) -> Result<(), E> {
-        let mut index = 0;
-        while index < HELP.len() {
-            let (entry, mut summary) = HELP[index];
-            let name = crate::shell::first_word(entry);
-
-            let mut end = index;
-            while end < HELP.len() && crate::shell::first_word(HELP[end].0) == name {
-                end += 1;
-            }
-
-            // The family's own summary -- the bare row -- not its first
-            // subcommand's.
-            for (row, text) in &HELP[index..end] {
-                if crate::shell::second_word(row).is_empty() {
-                    summary = text;
-                    break;
+        // `Writer::write_str` splits on `\n` and emits CRLF, the same as `Uart`
+        // does, so one renderer serves both sinks.
+        let mut failed = None;
+        crate::shell::list_all(&mut |text| {
+            if failed.is_none() {
+                if let Err(error) = writer.write_str(text) {
+                    failed = Some(error);
                 }
             }
-
-            // NAME ALONE in the first column; the subcommands go after the
-            // summary. `hyperram` has nine, and putting them beside the name
-            // pushed the column out and wrapped the line -- the alignment the
-            // column exists for was lost to the thing it was listing.
-            writer.write_str(name)?;
-            for _ in name.len()..HELP_WIDTH {
-                writer.write_str(" ")?;
-            }
-            writer.write_str(summary)?;
-
-            let mut first = true;
-            for (row, _) in &HELP[index..end] {
-                let sub = crate::shell::second_word(row);
-                if sub.is_empty() {
-                    continue;
-                }
-                writer.write_str(if first { "  [" } else { "|" })?;
-                first = false;
-                writer.write_str(sub)?;
-            }
-            if !first {
-                writer.write_str("]")?;
-            }
-            writer.writeln_str("")?;
-
-            index = end;
+        });
+        match failed {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     fn command_help<

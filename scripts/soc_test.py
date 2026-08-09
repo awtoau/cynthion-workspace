@@ -764,9 +764,11 @@ def main():
         # The bracket contents are asserted for the families that have them,
         # because that IS the index -- a family line that lost its subcommands
         # would still name the command and tell the reader nothing.
-        listing = [b"help, ?", b"check", b"info", b"selftest", b"ports",
-                   b"irq", b"time", b"board", b"led", b"load", b"reset",
-                   b"rtic", b"map", b"pmod", b"sideband", b"typec",                    b"[read|bench]", b"[stats|check|irq|log]", b"[status|reset]",
+        listing = [b"help, ?", b"info", b"selftest", b"time", b"board",
+                   b"led", b"load", b"reset", b"rtic", b"sideband",
+                   b"fusb302b", b"pac1954", b"usb3343",
+                   b"[read|bench]", b"[stats|check|irq|log]",
+                   b"[map|pmod|ports|button]", b"[status|reset]",
                    b"[id|read|bench]", b"[status|scan|soak]",
                    b"[status|floor|alert|rate|detect|limit|samples|bracket]",
                    b"[status|read|sel|sweep|test|cross|ramp|bench|id]",
@@ -802,8 +804,8 @@ def main():
         # The families answer their BARE form with a listing now, so the one that
         # reaches for hardware is the `status` verb. `led` and `sideband` have no
         # subcommands and still act on the bare word.
-        for name in ("led", "i2c status", "power status", "phy status",
-                     "typec status", "sideband"):
+        for name in ("led", "info button", "i2c status", "pac1954 status",
+                     "usb3343 status", "fusb302b status", "sideband"):
             if board:
                 mark = len(session.snapshot())
                 session.send(name.encode() + b"\r")
@@ -822,8 +824,8 @@ def main():
         if not board:
             command("led green on", [absent],
                     "`led` with arguments reaches the same handler")
-            command("power floor aux 25", [absent],
-                    "`power floor` parses its arguments on a boardless target")
+            command("pac1954 floor aux 25", [absent],
+                    "`pac1954 floor` parses its arguments on a boardless target")
             command("i2c target", [absent],
                     "`i2c` takes a bus name on a boardless target too")
 
@@ -1384,7 +1386,7 @@ def main():
         # evidence the tick releases a periodic task on time, and an assertion
         # relaxed until it passes is not evidence of anything. What they test is
         # unchanged; only the setup is explicit now.
-        command("power rate 50", [b"rate     50 ms"],
+        command("pac1954 rate 50", [b"rate     50 ms"],
                 "the poll can be turned on, for the timing checks below")
 
         reply = command("rtic",

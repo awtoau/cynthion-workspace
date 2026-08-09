@@ -14,7 +14,7 @@ use crate::uart::Uart;
 pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus: &mut Bus) {
     let rest = trim(rest);
     if rest.is_empty() {
-        return crate::shell::list_family(uart, "typec");
+        return crate::shell::list_family(uart, "fusb302b");
     }
     let rest: &[u8] = if rest == b"status" { b"" } else { rest };
     if rest == b"init" {
@@ -22,7 +22,7 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus:
         return;
     }
     if !rest.is_empty() {
-        let _ = writeln!(uart, "usage: typec [init]");
+        let _ = writeln!(uart, "usage: fusb302b [port] [init]");
         return;
     }
 
