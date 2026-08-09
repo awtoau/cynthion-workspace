@@ -68,7 +68,7 @@ use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::uart::Uart;
-use crate::{bench, log, plic, power, sched, shell, target, timer, vbus, Devices};
+use crate::{bench, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices};
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
@@ -206,6 +206,7 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     i2c_init(&mut out, devices);
     pac1954_init(&mut out, devices);
     fusb302b_init(&mut out, devices);
+    usb3343_init(&mut out);
     vbus_init(&mut out);
     facilities(&mut out);
 }
@@ -220,6 +221,7 @@ fn one(out: &mut Out, name: &[u8], devices: &mut Devices) -> bool {
         b"i2c" => i2c_init(out, devices),
         b"pac1954" => pac1954_init(out, devices),
         b"fusb302b" => fusb302b_init(out, devices),
+        b"usb3343" => usb3343_init(out),
         b"vbus" => vbus_init(out),
         _ => return false,
     }
@@ -330,6 +332,29 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
             if report.configured { "" } else { " -- a port did not answer" }
         ),
     );
+}
+
+fn usb3343_init(out: &mut Out) {
+    let Some(board) = target::BOARD else {
+        return out.line("usb3343", "ABSENT", format_args!("no ulpi window on this target"));
+    };
+    match ulpi::Ulpi::new(board.ulpi).init() {
+        Ok(phy) => {
+            let identified =
+                phy.vendor == ulpi::usb3343::VENDOR_ID && phy.product == ulpi::usb3343::PRODUCT_ID;
+            out.line(
+                "usb3343",
+                if identified && phy.reached { "ok" } else { "WARN" },
+                format_args!(
+                    "target: vendor {:04x} product {:04x}, resetb {}; aux and control have no CSR",
+                    phy.vendor,
+                    phy.product,
+                    if phy.reached { "reached the pad" } else { "DID NOT REACH THE PAD (#241)" }
+                ),
+            );
+        }
+        Err(error) => out.line("usb3343", "WARN", format_args!("target: {}", error.as_str())),
+    }
 }
 
 fn vbus_init(out: &mut Out) {

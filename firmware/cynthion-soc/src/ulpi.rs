@@ -88,6 +88,14 @@ impl Error {
     }
 }
 
+/// What [`Ulpi::init`] found. See it for why `reached` is the field that
+/// matters.
+pub struct Init {
+    pub reached: bool,
+    pub vendor: u16,
+    pub product: u16,
+}
+
 /// The ULPI register window at a fixed base address.
 #[derive(Clone, Copy)]
 pub struct Ulpi {
@@ -160,6 +168,40 @@ impl Ulpi {
             write_volatile(self.reg(CONTROL), CONTROL_WRITE);
         }
         self.settle()
+    }
+
+    /// Two consecutive registers as one little-endian value: vendor, product.
+    fn read16(&self, address: u8) -> Result<u16, Error> {
+        Ok(self.read(address)? as u16 | ((self.read(address + 1)? as u16) << 8))
+    }
+
+    /// `usb3343_init()` -- establish TARGET's PHY, and prove the pad moved.
+    ///
+    /// The reset IS the establishment here: every ULPI register goes back to
+    /// its default and nothing in this firmware configures any of them
+    /// afterwards, so there is nothing to re-apply. TARGET only -- AUX carries
+    /// the console a reply travels over and CONTROL is Apollo's; the gateware
+    /// wires this bit to TARGET's pad alone.
+    ///
+    /// `reached` is the load-bearing field. A PHY answers its identity whether
+    /// or not RESETB is connected, because its own power-on reset ran at cold
+    /// boot -- which is how both driven reset pads stayed tied de-asserted
+    /// through #236 with nothing saying so. The marker is what distinguishes
+    /// them: USB334x rev 1.2 §5.6.2 resets the registers, and Table 7.1 gives
+    /// Scratch's default as `00h`.
+    pub fn init(&self) -> Result<Init, Error> {
+        const MARKER: u8 = 0x5a;
+        self.write(usb3343::REG_SCRATCH, MARKER)?;
+        // A PHY that never took the marker reads 00 afterwards whatever the
+        // reset did, so without this the whole check is vacuous.
+        let took = self.read(usb3343::REG_SCRATCH)? == MARKER;
+        self.reset_phy()?;
+        let cleared = self.read(usb3343::REG_SCRATCH)? == 0x00;
+        Ok(Init {
+            reached: took && cleared,
+            vendor: self.read16(usb3343::REG_VENDOR_ID_LOW)?,
+            product: self.read16(usb3343::REG_PRODUCT_ID_LOW)?,
+        })
     }
 
     /// Pulse the TARGET PHY's RESETB and wait out its preparation time.
