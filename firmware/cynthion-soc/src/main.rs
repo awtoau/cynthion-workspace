@@ -632,7 +632,7 @@ const HELP: &[(&str, &str)] = &[
     ("bram read <hex>", "one word of block RAM"),
     (
         "check",
-        "arithmetic the compiler could have folded, at runtime",
+        "smoke test: CPU add/multiply, flash reads, time format",
     ),
     ("cpu stats", "cycles, instructions, busy fraction"),
     ("flash id", "the first flash word, and the size"),
@@ -1133,11 +1133,21 @@ fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devices) {
             );
         }
         b"sideband" => board_sideband(uart, rest),
+        // The bring-up smoke test: does this CPU compute, can it reach flash,
+        // does the clock formatter hold at its boundaries. Four lines, each `ok`
+        // or `BAD`, against values that cannot be produced by accident.
+        //
+        // Distinct from `selftest`, which asks the PERIPHERALS whether they are
+        // healthy. This asks whether the core and the flash window work at all,
+        // and it is the thing to run first when a board is behaving strangely --
+        // every other command's output is only worth reading if this passes.
         b"check" => {
             let a: u32 = 0x1234_5678;
             let b: u32 = 0x9abc_def0;
-            // SAFETY: our own stack slots; volatile defeats constant folding, so this
-            // measures the CPU rather than the compiler.
+            // SAFETY: our own stack slots. `read_volatile` is what makes this a
+            // measurement of the CPU: without it the compiler folds both
+            // operations at build time and the command proves nothing about the
+            // silicon it is running on.
             let (a, b) = unsafe { (read_volatile(&a), read_volatile(&b)) };
             let sum = a.wrapping_add(b);
             let prod = a.wrapping_mul(3);
