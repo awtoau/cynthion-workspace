@@ -51,14 +51,14 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let _ = writeln!(uart, "ulpi  @{:08x}  target_phy", board.ulpi);
     let _ = writeln!(uart, "  register         at  value");
 
-    let vendor_low = read(uart, "vendor id low", ulpi::usb3343::REG_VENDOR_ID_LOW);
-    let vendor_high = read(uart, "vendor id high", ulpi::usb3343::REG_VENDOR_ID_LOW + 1);
-    let product_low = read(uart, "product id low", ulpi::usb3343::REG_PRODUCT_ID_LOW);
-    let product_high = read(
-        uart,
-        "product id high",
-        ulpi::usb3343::REG_PRODUCT_ID_LOW + 1,
-    );
+    // Read but NOT printed one line each. The four bytes only mean anything
+    // assembled, and the `vendor ... product ... USB3343 ok` line below says it
+    // in the form a reader wants. Four rows of hex were four chances to read a
+    // byte and conclude something about a 16-bit value.
+    let vendor_low = phy.read(ulpi::usb3343::REG_VENDOR_ID_LOW).ok();
+    let vendor_high = phy.read(ulpi::usb3343::REG_VENDOR_ID_LOW + 1).ok();
+    let product_low = phy.read(ulpi::usb3343::REG_PRODUCT_ID_LOW).ok();
+    let product_high = phy.read(ulpi::usb3343::REG_PRODUCT_ID_LOW + 1).ok();
     read(
         uart,
         "function control",

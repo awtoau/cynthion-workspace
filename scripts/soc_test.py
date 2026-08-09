@@ -766,9 +766,8 @@ def main():
         # would still name the command and tell the reader nothing.
         listing = [b"help, ?", b"check", b"info", b"selftest", b"ports",
                    b"irq", b"time", b"board", b"led", b"load", b"reset",
-                   b"rtic", b"map", b"pmod", b"sideband", b"typec", b"bench",
-                   b"bram [read]", b"cpu [stats]", b"phy [reset]",
-                   b"flash [id|read]", b"i2c [scan|soak]",
+                   b"rtic", b"map", b"pmod", b"sideband", b"typec",                    b"bram [read|bench]", b"cpu [stats|check|irq]", b"phy [reset]",
+                   b"flash [id|read|bench]", b"i2c [scan|soak]",
                    b"power [floor|alert|rate|detect|limit|samples|bracket]",
                    b"hyperram [status|read|sel|sweep|test|cross|ramp|bench|id]",
                    b"vbus [off|input|control|both|charge]"]
@@ -855,7 +854,7 @@ def main():
         # this target those come from the stand-in in src/target.rs -- virt has
         # no flash, and its UART sits at the address the SoC's flash window uses.
         # Asserting them would be asserting the stub.
-        command("check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
+        command("cpu check", [b"sum   acf13568 ok", b"prod  369d0368 ok"],
                 "`check` computes 0x12345678*3 == 0x369d0368")
 
         # The timestamp format, at the seven values `check` formats.
@@ -880,7 +879,7 @@ def main():
         # comparing in firmware cost a `core::fmt` sink and seven `&str`s to
         # compare against, and this build has 32 KiB for everything. Same
         # reason `sum` and `prod` above are asserted here.
-        command("check",
+        command("cpu check",
                 [b"stamp 000000.000 000000.001 000000.999 000001.000 "
                  b"000061.000 999999.999 000000.000"],
                 "the timestamp format is right at zero, at a carry, and past "
@@ -1307,7 +1306,7 @@ def main():
         # from the device tree; the SoC puts its own at 0xf0400000. Asserting
         # QEMU's numbers against the board would be asserting that the board is
         # QEMU.
-        reply = command("irq",
+        reply = command("cpu irq",
                         [b"plic  @f0400000", b"log  waiting"] if board
                         else [b"plic  @0c000000", b"src 10", b"log  waiting"],
                         "`irq` finds the PLIC and names the console's source")
@@ -1775,12 +1774,12 @@ def main():
         # It CANNOT say anything about speed. `virt` has no D-cache to prove
         # live and `flash_word` is a two-value stand-in rather than an SPI
         # part. Timing evidence is the board's.
-        command("bench bram",
+        command("bram bench",
                 [b"region", b"cycles/acc", b"bram", b"read seq",
                  b"read rnd", b"write seq", b"write rnd",
                  b"0 words wrong"],
                 "`bench bram` walks block RAM and the pattern survives it")
-        command("bench flash", [b"flash", b"read seq", b"read rnd", b"ok"],
+        command("flash bench", [b"flash", b"read seq", b"read rnd", b"ok"],
                 "`bench flash` reads the window and checks known content")
 
         # The HyperRAM answer here is the REFUSAL, and asserting it is worth
@@ -1797,14 +1796,19 @@ def main():
         # worth having on real silicon: the walk completes and the pattern
         # survives it. Measured 0.79-1.03 MB/s with 0 words wrong over 8 KiB.
         if board:
-            command("bench hyperram", [b"words wrong"],
-                    "`bench hyperram` walks the part and checks the pattern")
+            command("hyperram bench", [b"words wrong"],
+                    "`hyperram bench` walks the part and checks the pattern")
         else:
-            command("bench hyperram", [b"hyperram did not answer"],
-                    "`bench hyperram` refuses a port that does not answer "
+            command("hyperram bench", [b"hyperram did not answer"],
+                    "`hyperram bench` refuses a port that does not answer "
                     "instead of spinning on it")
-        command("bench frobnicate", [b"usage: bench"],
-                "`bench` with an unknown region says how to call it")
+        # `bench` is device-major now -- `hyperram bench`, not `bench hyperram`
+        # -- so an unknown REGION is an unknown command, and an unknown VERB on a
+        # real region is what the usage line answers.
+        command("frobnicate bench", [b"unknown command"],
+                "an unknown region is an unknown command")
+        command("hyperram frobnicate", [b"usage: hyperram"],
+                "an unknown verb on a real region says how to call it")
 
         # --- one word out of one memory ---------------------------------------
         # `flash id`, and `read <hex>` on each of the three regions (#161).

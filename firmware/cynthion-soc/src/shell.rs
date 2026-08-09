@@ -14,6 +14,7 @@
 //! That is a measurement, not a move, and is deliberately not done here.
 
 pub(crate) mod console;
+pub(crate) mod cpu;
 pub(crate) mod editor;
 
 pub(crate) use console::board_absent;
@@ -59,17 +60,22 @@ use crate::{
 /// site; the padding is done by hand below for the same reason the rest of this
 /// firmware avoids it.
 pub(crate) const HELP: &[(&str, &str)] = &[
-    ("bench [region]", "time bram, flash or hyperram"),
     ("board", "every connector, rail and controller"),
+    ("bram", "the 64 KiB block RAM at address zero"),
     ("bram read <hex>", "one word of block RAM"),
+    ("bram bench", "time a walk over block RAM"),
     (
         "check",
         "smoke test: CPU add/multiply, flash reads, time format",
     ),
+    ("cpu", "the core: what it is doing and whether it still computes"),
     ("cpu stats", "cycles, instructions, busy fraction"),
+    ("cpu check", "smoke test: add/multiply, flash reads, time format"),
+    ("cpu irq", "interrupt counts, per source"),
     ("flash", "the memory-mapped W25Q32 config flash"),
     ("flash id", "the first flash word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
+    ("flash bench", "time a walk over the flash window"),
     ("help, ?", "this list"),
     // HR AND VBUS HAD ONE ROW EACH -- `hr <cmd>`, "see `hr`" -- with their real
     // subcommands living in a usage string inside the command. That was survivable
@@ -90,14 +96,13 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("i2c scan [bus]", "scan a bus behind the mux"),
     ("i2c soak <bus> <prer> <n>", "hammer one bus at one rate, count failures"),
     ("info", "image, memory, boot, cpu, gateware"),
-    ("irq", "interrupt counts, per source"),
+    ("info map", "every peripheral window, from the generated map"),
+    ("info pmod", "connector pins: ball, resource, free or claimed"),
     ("led [n]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
     ("log [n|tags]", "the deferred event log"),
-    ("map", "every peripheral window, from the generated map"),
     ("phy", "the USB PHYs"),
     ("phy reset", "pulse TARGET's RESETB, and prove it reached"),
-    ("pmod", "connector pins: ball, resource, free or claimed"),
     ("ports", "which UARTs answer"),
     ("power", "the four PAC1954 channels"),
     ("power floor <port> <mA>", "the current below which a port reads absent"),
@@ -285,23 +290,6 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
                 );
             }
         }
-        b"irq" => {
-            // The evidence that this shell is interrupt-driven and not quietly polling.
-            //
-            // A count that climbs as you type is the whole proof: the byte reached the
-            // handler, the handler reached the ring, and the shell reached the ring. If
-            // the interrupt path were broken there would be nothing to read here and no
-            // prompt to type it at, so the useful failure is the subtler one -- a count
-            // that stays at zero for the *other* console, or `pending` stuck with a bit
-            // set, which is a claim that was never completed.
-            //
-            // The PLIC block itself is rendered by `src/sched.rs`, because the
-            // `rtic` command prints the same counters and two renderers would
-            // eventually answer the same question in two formats that could not
-            // be diffed.
-            sched::sources(uart);
-            sched::log_health(uart);
-        }
         // Which dispatcher this image was built with, and what it is achieving:
         // the #115 comparison, on the shipping firmware rather than on a
         // synthetic workload. See `src/sched.rs`.
@@ -370,21 +358,15 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // command family here now does: the thing being asked about is named
         // first, so `flash read`, `hyperram read` and `cpu stats` all read the
         // same way. A bare `stats` did not say what it was counting.
-        b"map" => hardware::map_command(uart),
-        b"pmod" => hardware::pmod_command(uart),
-        b"cpu" => match trim(rest) {
-            b"stats" => metrics::command(uart),
-            b"" => {
-                let _ = uart.write_str("usage: cpu stats\n");
-            }
-            _ => {
-                let _ = uart.write_str("unknown: try `cpu stats`\n");
-            }
-        },
+        b"cpu" => cpu::command(uart, trim(rest)),
         #[cfg(feature = "workload")]
         b"usb" => workload::command(uart, trim(rest)),
         b"bench" => bench::command(uart, trim(rest)),
-        b"info" => info::command(uart),
+        b"info" => match trim(rest) {
+            b"map" => hardware::map_command(uart),
+            b"pmod" => hardware::pmod_command(uart),
+            _ => info::command(uart),
+        },
         b"selftest" => selftest::command(uart, &devices.power),
         // Registered on every target, unlike its neighbours below: it reads no
         // bus at all, so a boardless build renders the same tree with every leaf
@@ -471,71 +453,6 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // healthy. This asks whether the core and the flash window work at all,
         // and it is the thing to run first when a board is behaving strangely --
         // every other command's output is only worth reading if this passes.
-        b"check" => {
-            let a: u32 = 0x1234_5678;
-            let b: u32 = 0x9abc_def0;
-            // SAFETY: our own stack slots. `read_volatile` is what makes this a
-            // measurement of the CPU: without it the compiler folds both
-            // operations at build time and the command proves nothing about the
-            // silicon it is running on.
-            let (a, b) = unsafe { (read_volatile(&a), read_volatile(&b)) };
-            let sum = a.wrapping_add(b);
-            let prod = a.wrapping_mul(3);
-            let f0 = flash_word(0);
-            let f40 = flash_word(0x40);
-
-            let _ = writeln!(
-                uart,
-                "sum   {:08x} {}",
-                sum,
-                if sum == 0xacf1_3568 { "ok" } else { "BAD" }
-            );
-            let _ = writeln!(
-                uart,
-                "prod  {:08x} {}",
-                prod,
-                if prod == 0x369d_0368 { "ok" } else { "BAD" }
-            );
-            let _ = writeln!(
-                uart,
-                "@0    {:08x} {}",
-                f0,
-                if f0 == 0x6150_00ff { "ok" } else { "BAD" }
-            );
-            let _ = writeln!(
-                uart,
-                "@40   {:08x} {}",
-                f40,
-                if f40 == 0x2a55_8800 { "ok" } else { "BAD" }
-            );
-
-            // The timestamp format, at the values where it can go wrong.
-            //
-            //   0              zero pads to the full width, not "0.0"
-            //   1              the milliseconds field pads, not "000000.1"
-            //   999            the last value before a carry into seconds
-            //   1_000          the carry itself
-            //   61_000         two digits of seconds, still six columns wide
-            //   999_999_999    the largest the six-digit field can hold
-            //   1_000_000_000  one past it -- wraps the column, does not widen it
-            //
-            // The last is the one worth having: without the modulo in
-            // `log::Stamp`, a machine up for 11.57 days starts printing a
-            // seven-digit field and every line after it is misaligned.
-            //
-            // PRINTED rather than compared here, and `scripts/soc_test.py` holds
-            // the expected string. Comparing in firmware needed a `core::fmt`
-            // sink over a byte slice and seven `&str`s to check against, and
-            // this build has 32 KiB for everything -- the same reason the `sum`
-            // and `prod` values above are asserted by the test rather than by
-            // the shell. What the firmware must supply is the bytes its own
-            // formatter produces, and that is exactly what this is.
-            let _ = write!(uart, "stamp");
-            for millis in [0u32, 1, 999, 1_000, 61_000, 999_999_999, 1_000_000_000] {
-                let _ = write!(uart, " {}", log::Stamp::at(millis));
-            }
-            let _ = writeln!(uart);
-        }
         b"load" => match parse_hex(rest) {
             Some(len) => staging::load(index, uart, len),
             None => {

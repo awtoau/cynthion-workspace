@@ -20,6 +20,11 @@ pub fn command(uart: &mut Uart, region: Region, rest: &[u8]) {
     match verb {
         b"read" => read(uart, region, arg),
         b"id" => id(uart, region),
+        // DEVICE-MAJOR. `bench bram` was a verb-major name over a device-major
+        // reality: every other thing you can do to a memory is spelled
+        // `<region> <verb>`, and `hyperram bench` already existed as an alias.
+        // One shape, so the help listing and TAB tell the same story.
+        b"bench" => crate::bench::command(uart, region.name().as_bytes()),
         _ => usage(uart, region),
     }
 }

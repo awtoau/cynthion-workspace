@@ -82,7 +82,7 @@ COMMANDS = [
     "power", "power alert", "power rate", "i2c", "hr", "sideband",
     "flash id", "bram id", "hyperram id",
     "bram read 0", "flash read 0",
-    "bench bram", "bench flash",
+    "bram bench", "flash bench",
     "selftest", "check",
 ]
 

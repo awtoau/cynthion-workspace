@@ -132,9 +132,9 @@ def measure(console, emit):
     """IPC and the two flash rates, from the running board."""
     # Something for the window to cover. An idle shell is under 1% busy, so an
     # IPC taken over silence is a measurement of the poll loop.
-    console.ask("bench flash", 8.0)
+    console.ask("flash bench", 8.0)
     stats = console.ask("cpu stats", 3.0)
-    bench = console.ask("bench flash", 8.0)
+    bench = console.ask("flash bench", 8.0)
 
     ipc = re.search(r"ipc\s+([\d.]+)", stats)
     busy = re.search(r"busy\s+([\d.]+)%", stats)

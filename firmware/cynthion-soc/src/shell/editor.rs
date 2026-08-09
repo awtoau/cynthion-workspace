@@ -193,8 +193,13 @@ impl Help for Commands {
                 width += 1;
             }
 
+            // A long family -- `hyperram` has nine subcommands -- outgrows the
+            // column. Wrapping to the next line keeps every summary in the same
+            // place; letting it run pushed one summary out of alignment and made
+            // the listing harder to scan than the thing it replaced.
             if width >= HELP_WIDTH {
-                writer.write_str(" ")?;
+                writer.writeln_str("")?;
+                width = 0;
             }
             for _ in width..HELP_WIDTH {
                 writer.write_str(" ")?;
