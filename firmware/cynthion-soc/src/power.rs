@@ -425,6 +425,22 @@ pub struct Monitor {
     /// Set only after all four VSENSE channels were programmed bipolar and a
     /// REFRESH activated the new range.
     configured: bool,
+    /// Every limit bit that has fired since boot, accumulated.
+    ///
+    /// **`ALERT_STATUS` is read-to-clear and belongs to the service path.** A
+    /// command that reads it to display it STEALS the event from the handler --
+    /// which is the same one-owner rule the REFRESH cycle lives under, and I
+    /// broke it with `power alert`.
+    ///
+    /// The symptom was an alert that fired intermittently for no reason: an OV
+    /// limit swept 1000, 1500, 2000, 2500, 3000 mV against a 5.13 V rail
+    /// reported fired, fired, NOT, fired, NOT. Identical conditions, different
+    /// answers, because the command and the 20 Hz service loop were racing for
+    /// a register that empties on the first read. It looked like OV was broken.
+    /// OV was never broken.
+    ///
+    /// So the service path records here, and the command reports THIS.
+    alert_fired: u32,
     /// Has a REFRESH_V been sent whose data has not been read yet?
     ///
     /// The whole of the two-dispatch cycle (#275). `service` sends the command
@@ -481,6 +497,7 @@ impl Monitor {
             floor: [DEFAULT_FLOOR_UA; 4],
             live: false,
             configured: false,
+            alert_fired: 0,
             refreshing: false,
             refresh_at: None,
             sample: None,
@@ -683,6 +700,20 @@ impl Monitor {
         self.read24(bus, REG_ALERT_STATUS)
     }
 
+    /// Every limit that has fired since boot, as the service path recorded it.
+    ///
+    /// Reads no bus. This is what a display command asks; `alert_service` is
+    /// what the service path calls, and calling it from anywhere else empties
+    /// the register underneath the handler.
+    pub fn alert_history(&self) -> u32 {
+        self.alert_fired
+    }
+
+    /// Forget what has fired, so the next report is about what happens next.
+    pub fn alert_forget(&mut self) {
+        self.alert_fired = 0;
+    }
+
     pub fn alert_enabled(&self, bus: &mut Bus) -> Result<u32, bus::Error> {
         self.read24(bus, REG_ALERT_ENABLE)
     }
@@ -766,7 +797,23 @@ impl Monitor {
         let mut raw = [0u8; 1];
         bus.read_registers(BUS_POWER_MONITOR, ADDRESS, register, &mut raw)?;
         let wanted = (raw[0] as u16 & !(0b11 << shift)) | (code << shift);
-        bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &[wanted as u8])?;
+
+        // Disable-write-restore, the same as `alert_set_limit`, and it was
+        // MISSING here. Register 7-29 carries the warning on the Nsamples
+        // register itself -- "Disable ALERTs in Register 7-34 before changing
+        // the value to avoid false triggers" -- and this wrote it live.
+        //
+        // Found while chasing an OV limit that would not fire. It fires; the
+        // sequence that appeared to prove otherwise had set the sample count
+        // immediately before, with alerts enabled. Whether that is the whole
+        // explanation is not established, but writing a debounce underneath a
+        // live comparator is a defect on its own terms.
+        let enabled = self.read24(bus, REG_ALERT_ENABLE)?;
+        self.write24(bus, REG_ALERT_ENABLE, 0)?;
+        let result =
+            bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &[wanted as u8]);
+        let restored = self.write24(bus, REG_ALERT_ENABLE, enabled);
+        result.and(restored)?;
         Ok(match code {
             0 => 1,
             1 => 4,
@@ -815,6 +862,9 @@ impl Monitor {
     fn service_alert(&mut self, uart: &mut Uart, bus: &mut Bus) {
         match self.alert_service(bus) {
             Ok(fired) => {
+                // Recorded before anything else, because this is the only read
+                // of it that will ever happen -- the register is empty now.
+                self.alert_fired |= fired;
                 // WHAT tripped, WHAT the limit was, and WHAT the rail is doing
                 // -- not merely that something happened.
                 //

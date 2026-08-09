@@ -1949,6 +1949,12 @@ fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if verb == b"alert" {
         let arg = field.next();
 
+        if arg == Some(b"clear".as_slice()) {
+            devices.power.alert_forget();
+            let _ = writeln!(uart, "alert history cleared");
+            return;
+        }
+
         if arg == Some(b"on".as_slice()) || arg == Some(b"off".as_slice()) {
             let want_on = arg == Some(b"on".as_slice());
             if want_on {
@@ -2009,46 +2015,69 @@ fn power_alert_command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             return;
         }
 
-        // Bare `power alert`: the whole picture, read back from the part.
-        let (enabled, routed, fired) = match (
-            monitor.alert_enabled(bus),
-            monitor.alert_routed(bus),
-            monitor.alert_service(bus),
-        ) {
-            (Ok(e), Ok(r), Ok(f)) => (e, r, f),
+        // Bare `power alert`: the whole picture.
+        //
+        // `enable` and `routed` are read from the part -- they are plain R/W
+        // registers and reading them costs nothing. **`ALERT_STATUS` is NOT**,
+        // because it is read-to-clear and belongs to the service path. Reading
+        // it here stole events from the handler and made the alert look
+        // intermittent; `alert_history` is what the service path recorded.
+        let (enabled, routed) = match (monitor.alert_enabled(bus), monitor.alert_routed(bus)) {
+            (Ok(e), Ok(r)) => (e, r),
             _ => {
                 let _ = writeln!(uart, "alert: the monitor did not answer");
                 return;
             }
         };
+        let fired = monitor.alert_history();
         let _ = writeln!(
             uart,
-            "alert  enable {:06x}  routed {:06x}  fired {:06x}  (read-to-clear)",
+            "alert  enable {:06x}  routed {:06x}  fired {:06x}  (since boot)",
             enabled, routed, fired
         );
-        let _ = writeln!(uart, "  limit  port       value      samples  armed  fired");
-        for limit in power::Limit::ALL {
-            for channel in 0..4 {
+        let _ = writeln!(uart, "  port       limit   value      samples  armed  fired");
+        // BY PORT, then by limit. A reader asks "what is aux doing", not "what
+        // are all four over-current limits" -- the four lines about one port
+        // belong together, and the previous order scattered them.
+        for channel in 0..4 {
+            for limit in [
+                power::Limit::UnderVoltage,
+                power::Limit::OverVoltage,
+                power::Limit::UnderCurrent,
+                power::Limit::OverCurrent,
+            ] {
                 let bit = limit.bit(channel);
                 let raw = monitor.alert_limit(bus, limit, channel).unwrap_or(0);
                 let samples = monitor.alert_nsamples(bus, limit, channel).unwrap_or(0);
+                let value = if limit.is_current() {
+                    power::current_ua(raw) / 1000
+                } else {
+                    power::bus_mv(raw) as i32
+                };
                 let _ = writeln!(
                     uart,
-                    "  {:5}  {:9}  {:9}  {:7}  {:5}  {}",
-                    limit.name(),
-                    power::PORTS[channel],
-                    if limit.is_current() {
-                        power::current_ua(raw) / 1000
+                    "  {:9}  {:5}   {}{}.{:03}  {:7}  {:5}  {}",
+                    if limit == power::Limit::UnderVoltage {
+                        power::PORTS[channel]
                     } else {
-                        power::bus_mv(raw) as i32
+                        ""
                     },
+                    limit.name(),
+                    // The sign, explicitly. `value / 1000` is 0 for anything
+                    // between -999 and 0, so -334 mA printed as `0.334` -- a
+                    // current limit with its direction silently removed, which
+                    // for a bidirectional switch tree is the wrong number
+                    // rather than a cosmetic one.
+                    if value < 0 { "-" } else { "" },
+                    (value / 1000).abs(),
+                    (value % 1000).unsigned_abs(),
                     samples,
                     if enabled & bit != 0 { "yes" } else { "no" },
                     if fired & bit != 0 { "YES" } else { "" }
                 );
             }
         }
-        let _ = writeln!(uart, "  current in mA, voltage in mV");
+        let _ = writeln!(uart, "  volts and amps; `power alert clear` forgets what fired");
         return;
     }
 
