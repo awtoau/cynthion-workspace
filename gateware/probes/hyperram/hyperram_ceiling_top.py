@@ -648,6 +648,21 @@ class HyperRAMCeiling(Elaboratable):
         # even if the pass after it succeeds.
         stalled = Signal()
 
+        # DID THE RUN FINISH. `harness.done` used to be an expression over
+        # leftover signal values --
+        #
+        #     psram.idle & (recovery >= recovery_cycles)
+        #                & (index == burst_words - 1)
+        #
+        # -- and the transition into HALTED clears `recovery` to 0, so a run that
+        # COMPLETED could never assert it. Read off the board as `idle=1
+        # recovered=0` with the engine sitting in HALTED and the CPU polling for
+        # a `done` that was unreachable by construction (#226).
+        #
+        # A state means "I finished", so say that, and set it where the FSM
+        # decides it has finished rather than inferring it afterwards.
+        finished = Signal()
+
         # A register-space write, when the configuration phase is running. It
         # steals the controller's inputs for one short transaction and leaves
         # every other part of the datapath alone.
@@ -880,6 +895,7 @@ class HyperRAMCeiling(Elaboratable):
                                      sweep_pending.eq(0)]
                         m.next = "SWEEP_CELL"
                     with m.Elif((pass_limit != 0) & (passes + 1 >= pass_limit)):
+                        m.d.sync += finished.eq(1)
                         m.next = "HALTED"
                     with m.Else():
                         m.next = "WRITE_START"
@@ -914,7 +930,8 @@ class HyperRAMCeiling(Elaboratable):
                 ]
                 m.d.sync += sweep_cell.eq(sweep_cell + 1)
                 with m.If(sweep_cell + 1 >= SWEEP_CELLS):
-                    m.d.sync += [sweep_done.eq(1), sweeping.eq(0)]
+                    m.d.sync += [sweep_done.eq(1), sweeping.eq(0),
+                                 finished.eq(1)]
                     m.next = "HALTED"
                 with m.Else():
                     m.next = "SWEEP_CELL"
@@ -939,7 +956,20 @@ class HyperRAMCeiling(Elaboratable):
             # HALTED -- the bounded run is over. Nothing is driven, the counters
             # hold, and the host reads them at its leisure.
             with m.State("HALTED"):
-                pass
+                # NOT terminal. `go` starts a fresh run.
+                #
+                # It used to be `pass`, so an engine that completed one run could
+                # never be asked for another -- and the negative control is
+                # ALWAYS a second run, which means no cell could ever produce a
+                # verdict however well the first pass went (#226).
+                #
+                # Back to WRITE_START rather than RESET: RESET waits out a 2**16
+                # cycle heartbeat for tRP/tRPH, which is right once per
+                # configuration and wrong once per pass.
+                with m.If(harness.go):
+                    m.d.sync += [passes.eq(0), index.eq(0), recovery.eq(0),
+                                 stall.eq(0), bad_seen.eq(0), base.eq(0)]
+                    m.next = "WRITE_START"
 
         #
         # The engine's state, so a stalled sweep says WHERE.
@@ -981,10 +1011,16 @@ class HyperRAMCeiling(Elaboratable):
             with m.If(dtr_bits[7]):
                 m.d.sync += die.eq(Cat(*dtr_bits))
 
+        # A new command clears the finished flag. Placed after the FSM so that a
+        # `go` arriving in the same cycle as a completion wins: Amaranth takes
+        # the last assignment in a domain, and "the host asked for a new run" is
+        # the more recent fact.
+        with m.If(harness.go):
+            m.d.sync += finished.eq(0)
+
         m.d.comb += [
             harness.busy.eq(1),
-            harness.done.eq(psram.idle & (recovery >= recovery_cycles)
-                            & (index == self.burst_words - 1)),
+            harness.done.eq(finished),
             harness.check.eq(psram.read_ready),
             harness.actual.eq(psram.read_data),
             harness.golden.eq(expected),
