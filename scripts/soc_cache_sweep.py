@@ -74,6 +74,10 @@ from devlog import emit  # noqa: E402
 LOG = ROOT / "tmp" / "logs" / "soc_cache_sweep.log"
 RESULTS = ROOT / "tmp" / "soc_cache_sweep.json"
 
+# The stamp `soc_run` uses to decide synthesis can be skipped. Deleted before
+# every build here -- see `build_once`, and #287 for what happened without it.
+DIGEST = ROOT / "tmp" / "vexii_hello" / "build" / "gateware-digest.txt"
+
 # sets x ways. 8 KiB is the geometry on `main`; the others hold the size roughly
 # constant and move the associativity, which is the comparison that matters.
 #
@@ -140,6 +144,25 @@ def build_once(sets, ways):
     per_build = LOG.with_name(f"soc_cache_sweep-{sets}x{ways}.log")
     try:
         top.write_text(patched)
+        # FORCE SYNTHESIS, and this is not an optimisation to skip.
+        #
+        # `soc_run.gateware_digest()` hashes the gateware sources and git HEAD,
+        # and skips synthesis when the built bitstream already matches. That is
+        # right for ordinary iteration and CATASTROPHIC here: it makes a sweep
+        # report numbers for a bitstream it did not build.
+        #
+        # It already happened. The first sweep's 64x2 row logged "synthesis
+        # SKIPPED: the bitstream was built from these exact sources" and then
+        # published "50 BRAM" -- some previous build's figure, presented in a
+        # results table as a measurement of 64x2.
+        #
+        # It is worse under `--repeat`. The second build of a geometry has
+        # byte-identical sources and the same HEAD, so its digest ALWAYS matches
+        # the first. Every repeat would skip synthesis and echo the first run's
+        # numbers -- and the sweep would report perfect reproducibility as
+        # evidence, which is the exact opposite of what --repeat is for.
+        if DIGEST.exists():
+            DIGEST.unlink()
         result = subprocess.run(
             [sys.executable, str(ROOT / "dev.py"), "build"],
             cwd=ROOT, capture_output=True, text=True, check=False)
@@ -158,6 +181,20 @@ def build_once(sets, ways):
             emit(f"    {line}")
         return {"sets": sets, "ways": ways, "ok": False,
                 "why": f"build failed rc={result.returncode}",
+                "log": str(per_build)}
+
+    # BELT AND BRACES. Deleting the digest above should make this impossible, but
+    # a row that was never synthesised is indistinguishable from a real one in
+    # the output -- it has a build number, cell counts and a BRAM figure, all
+    # belonging to some earlier bitstream. That is precisely how a stale "50
+    # BRAM" reached a published table (#287). Refuse the row rather than trust
+    # that the deletion worked.
+    if "synthesis SKIPPED" in output:
+        emit(f"  REFUSED: synthesis was skipped, so the metrics belong to some "
+             f"other bitstream -- not to {sets}x{ways}")
+        return {"sets": sets, "ways": ways, "ok": False,
+                "why": "synthesis was SKIPPED -- the digest matched a previous "
+                       "build, so any numbers here describe that one",
                 "log": str(per_build)}
 
     row = {"sets": sets, "ways": ways, "ok": True,

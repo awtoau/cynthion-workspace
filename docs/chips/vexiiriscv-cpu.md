@@ -34,6 +34,49 @@ its clock attached, and cycle counts are the durable form.
 | BTB | 512 sets, 1 chunk, 16-bit hash | `--with-btb` at `Param.scala` defaults |
 | return stack | **0** entries — `rasDepth` follows `--with-ras`, which is absent | `cpu.py` |
 | perf counters | `mhpmcounter3..6` + `mcycle`/`minstret` | `--performance-counters 4` |
+| **compressed instructions** | **on, and 50.1% of `.text`** | `--with-rvc`, and `riscv32imac` — see below |
+
+### Compressed instructions are already on, and already paid for
+
+Both halves are in place and neither needs changing: the core is generated with
+`--with-rvc`, and the firmware target is **`riscv32imac`** — the `c` there *is*
+the compressed extension. The board agrees: `misa 40001105`, bit 2 set, reported
+by `info` as `rv32imac`.
+
+Measured over the release binary, counting 16- against 32-bit encodings:
+
+| | |
+|---|---|
+| 16-bit (compressed) instructions | 9,417 |
+| 32-bit instructions | 9,383 |
+| **compressed share** | **50.1%** |
+| `.text` as built | 56,366 B |
+| `.text` with no compression | 75,200 B |
+| **saved** | **18,834 B — 25% smaller** |
+
+That matters more here than on most targets, because **`.text` is this design's
+binding constraint** rather than RAM: code is fetched from SPI flash through an
+8 KiB I-cache, and `docs/rtic.md` measured 1,700 extra bytes of `.text` moving
+frontend stalls from 44 per 1,000 cycles to 452. Compression is worth ~18.8 KB
+against exactly that pressure.
+
+**There is no further compressed extension available**, and this is worth
+recording so it is not re-investigated:
+
+- VexiiRiscv has no `Zca`/`Zcb`/`Zcmp`/`Zcmt`. Its only `Zc`-looking flag is
+  `--with-rvZcbm`, which is **Zicbom** — cache-block management, a naming
+  coincidence rather than a code-size extension.
+- `rustc` 1.97 exposes only `c` as a target feature for
+  `riscv32imac-unknown-none-elf`; there are no `zc*` features to enable.
+
+`--with-rvZcbm` is still worth knowing about for an unrelated reason: it provides
+`cbo.inval`, which `scripts/riscv_firmware.py` names as the proper replacement
+for its read-the-whole-cache flush hack.
+
+So the remaining code-size levers are not ISA ones. They are `core::fmt` (whose
+`Formatter::pad`, `pad_integral` and `write` together are ~1.8 KB before any
+`Display` impl), and `run` at **23,258 bytes** — the largest function in the
+firmware by an order of magnitude.
 
 **One way is the number that matters.** Both caches are direct-mapped, so any two
 lines 4 KiB apart evict each other unconditionally — no associativity to absorb
