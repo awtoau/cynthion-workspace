@@ -83,10 +83,21 @@ class HyperRAMDQSController(Elaboratable):
         O: idle             -- High whenever the transmitter is idle (and thus we can start a new piece of data.)
         O: read_ready       -- Strobe that indicates when new data is ready for reading
         O: write_ready      -- Strobe that indicates `write_data` has been latched and is ready for new data
+        O: state[4]         -- Which FSM state, indexed into `STATES`. `idle` alone says
+                               a stuck controller is stuck; this says where.
     """
 
     LOW_LATENCY_CLOCKS  = 3
     HIGH_LATENCY_CLOCKS = 5
+
+    # The FSM encoding, which is what `state` reports. Amaranth numbers a state
+    # when it is first NAMED, not where it is defined -- `WRITE_DATA` is 4 because
+    # `SHIFT_COMMAND1` jumps to it before `HANDLE_LATENCY` exists. `elaborate`
+    # checks this list against `fsm.encoding` and fails the build if the two drift,
+    # so a rig decoding `state` decodes something verified rather than assumed.
+    # See #318.
+    STATES = ("IDLE", "LATCH_RWDS", "SHIFT_COMMAND0", "SHIFT_COMMAND1",
+              "WRITE_DATA", "HANDLE_LATENCY", "READ_DATA", "RECOVERY")
 
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
                  fixed_latency=True, tcshi_ns=T_CSHI_NS):
@@ -127,6 +138,9 @@ class HyperRAMDQSController(Elaboratable):
         self.idle             = Signal()
         self.read_ready       = Signal()
         self.write_ready      = Signal()
+        # Fixed at 4 bits, not `range(len(STATES))`: a caller's register field must
+        # not move when a state is added.
+        self.state            = Signal(4)
 
         # Data signals.
         self.read_data        = Signal(32)
@@ -380,7 +394,11 @@ class HyperRAMDQSController(Elaboratable):
                 with m.If(recovery_remaining == 0):
                     m.next = 'IDLE'
 
-
+        if tuple(fsm.encoding) != self.STATES or len(self.STATES) > 16:
+            raise ValueError(
+                f"STATES does not describe this FSM: declared {self.STATES}, "
+                f"elaborated {tuple(fsm.encoding)}")
+        m.d.comb += self.state.eq(fsm.state)
 
         return m
 
