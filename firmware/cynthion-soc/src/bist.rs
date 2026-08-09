@@ -101,7 +101,7 @@ const BURST_WORDS: u32 = 128;
 /// variant's map, which would leave the shipping image checking itself against a
 /// map it does not have. `tests/test_bist_constants.py` asserts this equals the
 /// gateware's, so the two cannot drift silently.
-pub const BASE: usize = 0xf000_0700;
+pub const BASE: usize = 0xf000_0800;
 
 /// What one cell of the matrix was run with.
 #[derive(Clone, Copy, PartialEq, Eq)]

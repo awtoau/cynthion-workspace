@@ -400,7 +400,7 @@ FLASH_ILA_BASE = 0xf0000300
 # getting from the elaborated design rather than by reading this list, since
 # BOARD_BASE's extent is the sum of its sub-peripherals and is not written down
 # anywhere.
-HYPERRAM_BIST_BASE = 0xf0000700
+HYPERRAM_BIST_BASE = 0xf0000800
 
 # The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
 #

@@ -92,6 +92,30 @@ def test_result_window_clears_the_parameter_window():
         f"but the result window starts at 0x{window:x}")
 
 
+def test_peripheral_base_is_aligned_to_its_window():
+    """The base must be a multiple of the window size, or the decoder misses it.
+
+    The window is `RESULT_WINDOW` of parameters plus the same again of results,
+    so 0x200 for the default `addr_width`. A Wishbone decoder compares the high
+    address bits; a base that is not a multiple of its own size means the compare
+    can never match, no `ack` is ever returned, and **the CPU stalls forever on
+    the first register read** -- which on this board is a shell that is dead to
+    every byte after `bist status`, with nothing printed to say why.
+
+    0xf0000700 was exactly that: 0x200 wide, placed at 3.5 x 0x200. It elaborated,
+    it synthesised, it configured, and it hung.
+    """
+    base = _grab(TOP, r"^HYPERRAM_BIST_BASE\s*=\s*(0x[0-9a-fA-F_]+)")
+    window = _grab(TRANSPORT, r"^\s*RESULT_WINDOW\s*=\s*(0x[0-9a-fA-F_]+)")
+    size = 2 * window
+    assert base % size == 0, (
+        f"0x{base:08x} is not a multiple of the 0x{size:x}-byte window: the "
+        f"decoder's address compare cannot match it, so no access is ever "
+        f"acknowledged and the CPU hangs on the first read. Nearest aligned "
+        f"bases are 0x{base - base % size:08x} and "
+        f"0x{base - base % size + size:08x}")
+
+
 def test_burst_words_agrees():
     """The firmware's poll bound is derived from the engine's burst length.
 

@@ -62,6 +62,7 @@ from amaranth import (ClockDomain, DomainRenamer, Elaboratable,  # noqa: E402
 from amaranth.lib.wiring import connect, flipped  # noqa: E402
 from amaranth.hdl import Fragment  # noqa: E402
 from amaranth.sim import Simulator  # noqa: E402
+from amaranth_soc.csr.wishbone import WishboneCSRBridge  # noqa: E402
 from cynthion.gateware.platform.cynthion_r1_4 import (  # noqa: E402
     CynthionPlatformRev1D4)
 
@@ -150,6 +151,86 @@ class TransportBeforeEngine(HyperRAMBist):
             self._engine)
         connect(m, flipped(self.bus), self._transport.bus)
         return m
+
+
+class OverWishbone(Elaboratable):
+    """The peripheral as `top.py` actually instantiates it: behind a bridge.
+
+    This is the layer the board hangs in, and the layer the CSR-only fixture
+    above cannot see. `amaranth_soc`'s CSR bus has no acknowledge -- a read
+    presents an address and samples data a fixed number of cycles later -- so a
+    CSR-level testbench cannot express "the access never completed". Wishbone
+    can: `ack` either arrives or it does not, and the CPU stalls on exactly that.
+
+    `bist status` hangs the shell dead on hardware. Reproducing it here turns a
+    ~2 minute build-and-load into a second.
+    """
+
+    def __init__(self, hr_mhz):
+        self.dut = HyperRAMBist(ck_mhz=2 * hr_mhz, dqs=True)
+        self.bridge = WishboneCSRBridge(self.dut.bus, data_width=32)
+
+    def elaborate(self, platform):
+        m = Module()
+        m.domains.sync = ClockDomain()
+        m.domains.hr = ClockDomain()
+        m.domains.hr_fast = ClockDomain()
+        m.submodules.dut = self.dut
+        m.submodules.bridge = self.bridge
+        return m
+
+
+async def wishbone_read(ctx, wb, word_address, limit):
+    """One Wishbone read, bounded. Returns (data, cycles) or (None, limit).
+
+    **Waits for**: `ack`, which the CPU's load waits on with no bound at all --
+    a stalled access is a stalled CPU and that is what the board does.
+
+    **Bound**: `limit` cycles. A CSR bridge answers a 32-bit register in a
+    handful; anything past a few dozen is not slow, it is never. Expiry returns
+    None rather than looping, so the failure is a reported result instead of a
+    simulation that hangs the way the board did.
+    """
+    ctx.set(wb.adr, word_address)
+    ctx.set(wb.cyc, 1)
+    ctx.set(wb.stb, 1)
+    ctx.set(wb.we, 0)
+    ctx.set(wb.sel, 0b1111)
+    for cycle in range(limit):
+        await ctx.tick("sync")
+        if ctx.get(wb.ack):
+            data = ctx.get(wb.dat_r)
+            ctx.set(wb.cyc, 0)
+            ctx.set(wb.stb, 0)
+            return data, cycle + 1
+    ctx.set(wb.cyc, 0)
+    ctx.set(wb.stb, 0)
+    return None, limit
+
+
+def read_over_wishbone(number, *, window, hr_mhz=None, limit=64):
+    """Read an engine register the way the CPU does, and say if `ack` came."""
+    hr_mhz = HR_MHZ if hr_mhz is None else hr_mhz
+    fixture = OverWishbone(hr_mhz)
+    sim = Simulator(Fragment.get(fixture, CynthionPlatformRev1D4()))
+    sim.add_clock(1e-6 / SYNC_MHZ, domain="sync")
+    sim.add_clock(1e-6 / hr_mhz, domain="hr")
+    sim.add_clock(1e-6 / (2 * hr_mhz), domain="hr_fast")
+
+    got = {}
+
+    async def testbench(ctx):
+        for _ in range(8):
+            await ctx.tick("sync")
+        # The bridge is 32-bit, so it addresses in WORDS: the CSR byte address
+        # divided by four.
+        byte_address = window + 4 * number
+        got["value"], got["cycles"] = await wishbone_read(
+            ctx, fixture.bridge.wb_bus, byte_address // 4, limit)
+
+    sim.add_testbench(testbench)
+    sim.run()
+    return got.get("value"), got.get("cycles")
 
 
 async def read32(ctx, bus, byte_address):
@@ -255,6 +336,25 @@ def main() -> int:
         "nothing -- the alternative reads zero everywhere, which is what a "
         "passing cell looks like",
         bound_nothing)
+
+    # -- the layer the board actually hangs in -------------------------------
+    emit("")
+    emit("  the same read again, but over Wishbone -- how the CPU issues it:")
+
+    value, cycles = read_over_wishbone(REG_ID, window=result_window)
+    checks.check(
+        f"the bridge ACKNOWLEDGES a read of the ident"
+        + (f" (in {cycles} cycles)" if value is not None else
+           f" -- NO ACK in {cycles} cycles, which is what stalls the CPU dead")
+        + (f", value {value:#010x}" if value is not None else ""),
+        value is not None)
+
+    if value is not None:
+        checks.check(
+            f"and the value that arrives over Wishbone is the ident: got "
+            f"{value:#010x}, want {APPLET_ID:#010x} -- an ack carrying the "
+            f"wrong word is worse than no ack, because it looks like a result",
+            value == APPLET_ID)
 
     return checks.summary()
 
