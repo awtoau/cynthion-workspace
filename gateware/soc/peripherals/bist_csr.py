@@ -124,13 +124,23 @@ class BistCsrTransport(wiring.Component):
     #: `tests/test_bist_constants.py` asserts the two agree.
     RESULT_WINDOW = 0x100
 
-    def __init__(self, *, addr_width=8, engine_domain="hr"):
-        # `addr_width` is the ENGINE's, i.e. how many registers it can name. The
-        # bus is one bit wider because each one appears in both windows.
+    def __init__(self, *, addr_width=7, engine_domain="hr"):
+        # `addr_width` is the ENGINE's, i.e. how many registers it can name.
+        #
+        # 7 gives 32 registers, and the engine's highest number is 29
+        # (`REG_CTRL_STATE`). 8 gave 64, which is not free: each parameter is a
+        # 32-bit RW field, so the unused half cost 1,024 flops and widened the
+        # read mux on the CPU's own CSR path. The BIST variant closed at 60.50
+        # and 56.21 MHz on successive builds against a 60 MHz constraint --
+        # marginal enough that about half of builds failed timing outright.
         self._addr_width = addr_width
         self._engine_domain = engine_domain
         self._count = (1 << addr_width) // 4
-        self._bus_addr_width = addr_width + 1
+        # Sized to COVER both windows, not derived from `addr_width`. The result
+        # window is at a fixed offset the firmware also knows, so shrinking the
+        # register count must not move it -- `addr_width + 1` would have put the
+        # results at or past the end of the bus the moment `addr_width` dropped.
+        self._bus_addr_width = (self.RESULT_WINDOW + 4 * self._count - 1).bit_length()
         self._params = {}
         self._results = {}
 

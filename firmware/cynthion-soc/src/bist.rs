@@ -64,9 +64,18 @@ pub mod reg {
     pub const BAD_WANT: usize = 14;
     pub const CONTROL: usize = 15;
     pub const READCLKSEL: usize = 16;
+    pub const ACTUAL: usize = 17;
+    pub const GOLDEN: usize = 18;
     pub const DEVICE_CR0: usize = 19;
     pub const DEVICE_CR1: usize = 20;
     pub const PASS_LIMIT: usize = 21;
+    /// The engine FSM's state, so a stall says WHERE rather than only that it
+    /// stalled. The engine's own comment: without it a hung sweep is a silent
+    /// poll loop, and the cell index does not say which state.
+    pub const FSM_STATE: usize = 28;
+    /// The HyperBus controller's own FSM state. Distinguishes "the engine never
+    /// asked" from "the controller never answered", which want different fixes.
+    pub const CTRL_STATE: usize = 29;
 }
 
 /// `REG_CONTROL` bits, from `BISTHarness`.
@@ -298,6 +307,23 @@ impl Bist {
             (st & status::NEGATIVE != 0) as u8);
     }
 
+    /// The two FSM states, which is where a stall actually is.
+    ///
+    /// Read TWICE with the second read after the first, so a state that is
+    /// moving can be told from one that is parked. A single sample cannot
+    /// distinguish "wedged in state 3" from "cycling through state 3", and those
+    /// want opposite investigations.
+    pub fn describe_fsm(&self, uart: &mut Uart) {
+        let (engine_a, ctrl_a) = (self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE));
+        let (engine_b, ctrl_b) = (self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE));
+        let _ = writeln!(
+            uart, "  fsm     engine {} -> {} {}   controller {} -> {} {}",
+            engine_a, engine_b,
+            if engine_a == engine_b { "(parked)" } else { "(moving)" },
+            ctrl_a, ctrl_b,
+            if ctrl_a == ctrl_b { "(parked)" } else { "(moving)" });
+    }
+
     /// What the engine says about itself, before anything is measured.
     pub fn describe(&self, uart: &mut Uart) {
         let _ = writeln!(uart, "  id      {:#010x} {}", self.read(reg::ID),
@@ -305,6 +331,16 @@ impl Bist {
         let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}",
                          self.read(reg::CLOCK), self.read(reg::CONFIG));
         self.describe_status(uart, "at rest", self.read(reg::STATUS));
+        self.describe_fsm(uart);
+        // Counters the engine drives from `hr`. If `hr` is not running at all,
+        // every one of these is frozen -- which is the first thing to rule out,
+        // because `clock` above is a constant baked in at elaboration and says
+        // nothing about whether the PLL locked.
+        let _ = writeln!(uart, "  cycles  write {}  read {}  words {}  errors {}",
+                         self.read(reg::WRITE_CYCLES), self.read(reg::READ_CYCLES),
+                         self.read(reg::WORDS), self.read(reg::ERRORS));
+        let _ = writeln!(uart, "  compare actual {:#010x}  golden {:#010x}",
+                         self.read(reg::ACTUAL), self.read(reg::GOLDEN));
     }
 }
 
@@ -332,13 +368,21 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
 
     // A silent expiry is worse than no bound at all: say which half, what the
     // limit was and how far it got.
+    let mut stalled = false;
     for (label, p) in [("real", poll[0]), ("control", poll[1])] {
         if let Poll::TimedOut { limit, spins } = p {
             let _ = writeln!(
                 uart, "      {} pass TIMED OUT after {} spins, limit {} \
                        -- engine never raised done",
                 label, spins, limit);
+            stalled = true;
         }
+    }
+    // WHERE it stalled, not merely that it did. A parked engine state and a
+    // parked controller state are different faults: the first says the engine
+    // never asked for a transaction, the second says it asked and got no answer.
+    if stalled {
+        bist.describe_fsm(uart);
     }
     if verbose {
         bist.describe_status(uart, "real   ", st[0]);

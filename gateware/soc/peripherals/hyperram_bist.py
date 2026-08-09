@@ -83,7 +83,7 @@ class HyperRAMBist(wiring.Component):
     """
 
     def __init__(self, *, ck_mhz, dqs=True, negative_control=False,
-                 addr_width=8, domain="hr"):
+                 addr_width=7, domain="hr"):
         self.ck_mhz = ck_mhz
         self.dqs = dqs
         self.negative_control = negative_control
@@ -120,11 +120,14 @@ class HyperRAMBist(wiring.Component):
             transport=self._transport, own_clocks=False, own_leds=False,
             own_dtr=False)
 
-        # One bit wider than the engine's: parameters and results occupy two
-        # windows, so every engine register has two bus addresses. See
-        # `BistCsrTransport`.
+        # Taken FROM the transport rather than recomputed. The bus has to span
+        # both windows, and the result window sits at a fixed offset the firmware
+        # also knows -- so its width is not a function of `addr_width` alone, and
+        # a second derivation here would disagree the moment either moved.
         super().__init__({
-            "bus": In(csr.Signature(addr_width=addr_width + 1, data_width=8)),
+            "bus": In(csr.Signature(
+                addr_width=self._transport.bus.signature.addr_width,
+                data_width=8)),
         })
         # The transport builds its whole window at construction, so the map is
         # available immediately and no finalize step exists to be forgotten.
