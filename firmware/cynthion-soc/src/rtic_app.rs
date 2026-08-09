@@ -192,6 +192,30 @@ mod app {
     /// what make it visible rather than silent.
     pub fn tick() {
         let since = SINCE_MS.load(Ordering::Relaxed) + timer::PERIOD_MS;
+
+        // A PAC1954 cycle is TWO dispatches, not one, and the gap between them
+        // is what the datasheet asks for (#275).
+        //
+        //     t = 0      REFRESH_V   latch the most recent conversion
+        //     t = 1 ms   read        the registers are stable by now
+        //
+        // DS20006539B section 5.2: the readable registers "will be stable
+        // within 1 ms from sending the REFRESH command", and a command inside
+        // that window "will be ignored and NACKed". So the second dispatch is
+        // released on the very next tick, which is exactly the 1 ms the part
+        // wants -- the tick period and the part's settling time happen to be
+        // the same number, and `PERIOD_MS` is asserted against it below.
+        //
+        // The alternative the driver used to run was to read the PREVIOUS
+        // cycle's latch 50 ms later. That respected the window by a wide margin
+        // and made every reading one whole interval stale.
+        if crate::power::refresh_pending() {
+            SINCE_MS.store(since, Ordering::Relaxed);
+            sched::pended(sched::POWER);
+            rtic::export::pend(slic::SoftwareInterrupt::PowerRefresh);
+            return;
+        }
+
         if since < crate::power::INTERVAL_MS {
             SINCE_MS.store(since, Ordering::Relaxed);
             return;
