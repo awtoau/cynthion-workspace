@@ -122,6 +122,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("selftest", "run every self-check"),
     ("sideband", "FPGA_ADV: one-wire UART to the SAMD11, on T6"),
     ("time", "uptime, from mtime"),
+    ("time set <epoch>", "tell the board the wall clock; no RTC, lost on reset"),
     ("usb3343", "the USB PHYs"),
     ("usb3343 status", "identity, line state and the data-line walk"),
     ("usb3343 reset", "pulse TARGET's RESETB, and prove it reached"),
@@ -407,6 +408,24 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // the #115 comparison, on the shipping firmware rather than on a
         // synthetic workload. See `src/sched.rs`.
         b"rtic" => sched::command(uart),
+        // NO RTC ON THIS BOARD. `time set <epoch>` is a person telling it, and a
+        // reset loses it -- which is why the prompt falls back to the uptime
+        // stamp rather than showing a date it cannot support.
+        b"time" if trim(rest).starts_with(b"set") => {
+            match parse_decimal(trim(&trim(rest)[b"set".len()..])) {
+                Some(epoch) => {
+                    log::set_wall(epoch);
+                    let _ = writeln!(
+                        uart,
+                        "  wall    {} UTC  from the host; a reset loses it",
+                        log::Clock(epoch)
+                    );
+                }
+                None => {
+                    let _ = writeln!(uart, "usage: time set <unix seconds>");
+                }
+            }
+        }
         b"time" => {
             // The tick, and the evidence that it is a tick rather than a
             // counter someone reads.

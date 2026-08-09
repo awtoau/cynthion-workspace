@@ -144,6 +144,10 @@ impl Shell {
         // a person is most likely to be asking what there is. `typed` tracks
         // whether anything was entered since the last Enter, because the word
         // shadow clears on a space and cannot answer this.
+        // Restamp before the crate prints the next prompt.
+        if byte == b'\r' || byte == b'\n' {
+            refresh_prompt(index, editor);
+        }
         if (byte == b'\r' || byte == b'\n') && !self.typed {
             let _ = editor.write(|writer| {
                 use crate::shell::editor::Commands;
@@ -274,6 +278,75 @@ impl Shell {
 
 /// The shadowed line's capacity, matching the editor's own command buffer.
 const LINE: usize = 64;
+
+/// What each console calls itself in its prompt.
+///
+/// The index is the index into `target::UART_BASES`, so `aux` is the USB CDC-ACM
+/// node and `apollo` is the port on the shared JTAG pins. Naming the port in the
+/// prompt is the point: two terminals open on one board otherwise look
+/// identical, and only one of them may be spoken to first.
+const PORT_NAMES: [&str; MAX_CONSOLES] = ["aux", "apollo", "?", "?"];
+
+/// Longest prompt: `HH:MM:SS.mmm apollo> ` is 21.
+const PROMPT_LEN: usize = 24;
+
+/// Per-console prompt text, rebuilt before each new prompt.
+///
+/// **`Cli::set_prompt` takes `&'static str`**, so the buffer has to outlive
+/// every borrow the crate keeps of it -- which a `static` does and a field of
+/// `Shell` does not. One per console, because the two carry different names and
+/// are edited independently.
+///
+/// `UnsafeCell` rather than `static mut`: the 2024 edition rejects references to
+/// `static mut`, and this needs a `&'static str` into the buffer. Sound here for
+/// a reason worth stating -- `Shell::poll` is the only writer, it runs in normal
+/// context on one core, and index `i` is only ever touched by console `i`.
+struct Prompts(core::cell::UnsafeCell<[[u8; PROMPT_LEN]; MAX_CONSOLES]>);
+
+// SAFETY: see the comment above -- single core, single writer per slot.
+unsafe impl Sync for Prompts {}
+
+static PROMPTS: Prompts = Prompts(core::cell::UnsafeCell::new(
+    [[0u8; PROMPT_LEN]; MAX_CONSOLES],
+));
+
+/// Rebuild this console's prompt around the time now.
+///
+/// `HH:MM:SS.mmm aux> ` once `time set` has been used, and the same uptime
+/// stamp the log column carries until then -- so a prompt and a log line can be
+/// read against each other without converting anything.
+///
+/// Called when Enter arrives, which is the moment before the crate prints the
+/// next prompt. The line being submitted is redrawn once with the fresh stamp,
+/// so what is on screen is the time the command was entered.
+fn refresh_prompt(index: usize, editor: &mut Editor) {
+    use crate::shell::parse::FixedWriter;
+
+    // SAFETY: single core, normal context, and slot `index` belongs to this
+    // console alone.
+    let slot = unsafe { &mut (*PROMPTS.0.get())[index] };
+    let mut out = FixedWriter::new(slot);
+    let millis = crate::timer::millis();
+    match crate::log::wall() {
+        Some(seconds) => {
+            let _ = write!(out, "{}.{:03} ", crate::log::Clock(seconds), millis % 1000);
+        }
+        None => {
+            let _ = write!(out, "{} ", crate::log::now());
+        }
+    }
+    let _ = write!(out, "{}> ", PORT_NAMES[index]);
+
+    // SAFETY: the buffer is `static`, so this borrow is genuinely `'static`;
+    // `FixedWriter` zeroes first and only ever writes ASCII, so the prefix up to
+    // the first NUL is valid UTF-8.
+    let text: &'static str = unsafe {
+        let slot = &(*PROMPTS.0.get())[index];
+        let end = slot.iter().position(|&b| b == 0).unwrap_or(slot.len());
+        core::str::from_utf8_unchecked(&slot[..end])
+    };
+    let _ = editor.set_prompt(text);
+}
 
 /// Which line editor this build carries, for `info`.
 ///

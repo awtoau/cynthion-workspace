@@ -57,6 +57,7 @@
 //!   true: they happened before there was a clock to tell them apart.
 
 use core::fmt;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::timer;
 
@@ -107,6 +108,48 @@ impl fmt::Display for Stamp {
 /// The time now, for a line about to be printed or an event about to be pushed.
 pub fn now() -> Stamp {
     Stamp(timer::millis())
+}
+
+/// Wall-clock seconds at boot, or zero when nobody has told the board the time.
+///
+/// **There is no RTC on this board and this does not invent one.** `time set`
+/// writes it, a reset loses it, and the shell says so rather than presenting an
+/// uptime as a date.
+///
+/// Zero is "unset" rather than an `Option<u32>`: the prompt reads this on every
+/// Enter, and one relaxed load is the whole cost.
+static WALL_AT_BOOT: AtomicU32 = AtomicU32::new(0);
+
+/// Tell the board what time it is, in Unix seconds.
+///
+/// Stored as the epoch AT BOOT, not the epoch now, so uptime remains the only
+/// thing counting and the two cannot drift apart.
+pub fn set_wall(epoch: u32) {
+    WALL_AT_BOOT.store(epoch.saturating_sub(timer::millis() / 1000), Ordering::Relaxed);
+}
+
+/// Unix seconds now, or `None` if nobody has said.
+pub fn wall() -> Option<u32> {
+    match WALL_AT_BOOT.load(Ordering::Relaxed) {
+        0 => None,
+        at_boot => Some(at_boot + timer::millis() / 1000),
+    }
+}
+
+/// The time of day, as `HH:MM:SS`, from a Unix second count.
+///
+/// Seconds within the day only -- no date. Getting to a date needs the civil
+/// calendar, and getting to a LOCAL date needs a timezone this board has no way
+/// to learn. This is `% 86400` and three `u32` divides, which is what the prompt
+/// can afford; `src/shell.rs`'s `time` command explains what a 64-bit divide
+/// costs on rv32.
+pub struct Clock(pub u32);
+
+impl fmt::Display for Clock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let day = self.0 % 86_400;
+        write!(f, "{:02}:{:02}:{:02}", day / 3600, (day / 60) % 60, day % 60)
+    }
 }
 
 /// Write one log line, stamped with the time now.
