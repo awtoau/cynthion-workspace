@@ -28,6 +28,7 @@ pub(crate) mod phy;
 pub(crate) mod power;
 pub(crate) mod sideband;
 pub(crate) mod typec;
+pub(crate) mod usb;
 pub(crate) mod vbus;
 
 use core::fmt::Write;
@@ -71,7 +72,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("bram", "the 64 KiB block RAM at address zero"),
     ("bram read <hex>", "one word of block RAM"),
     ("bram bench", "time a walk over block RAM"),
-    ("cpu", "the core: what it is doing and whether it still computes"),
+    ("cpu", "the RISC-V core"),
     ("cpu stats", "cycles, instructions, busy fraction"),
     ("cpu check", "smoke test: add/multiply, flash reads, time format"),
     ("cpu irq", "interrupt counts, per source"),
@@ -123,10 +124,13 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("sideband", "FPGA_ADV: one-wire UART to the SAMD11, on T6"),
     ("time", "uptime, from mtime"),
     ("time set <epoch>", "tell the board the wall clock; no RTC, lost on reset"),
+    ("usb", "the four ports, each as one thing"),
+    ("usb <port>", "rail, switch, cable and phy for one port"),
+    ("usb <port> off", "stop it sourcing the board"),
     ("usb3343", "the USB PHYs"),
     ("usb3343 status", "identity, line state and the data-line walk"),
     ("usb3343 reset", "pulse TARGET's RESETB, and prove it reached"),
-    ("vbus", "the VBUS distribution switches"),
+    ("vbus", "the VBUS switches"),
     ("vbus status", "which switches are closed, and what is sourcing"),
     ("vbus off", "open every switch"),
     ("vbus input", "source from the input connector"),
@@ -518,6 +522,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // every issue written so far -- but it is not in `HELP`, so it does not
         // complete and is not offered. One name to learn, one name that works.
         b"pac1954" | b"power" => power::command(uart, rest, devices),
+        b"usb" => usb::command(uart, rest, devices),
         b"usb3343" | b"phy" => phy::command(uart, trim(rest)),
         // Split here rather than inside the command, because "there is no board"
         // is a fact about this build and not about the Type-C controllers. The
