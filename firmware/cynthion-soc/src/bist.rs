@@ -81,6 +81,15 @@ pub mod reg {
     /// state the engine parks in. Reading them separately says WHICH half is
     /// false; a state number never could.
     pub const CTRL_STATE: usize = 29;
+    /// CR0 AS THE PART REPORTS IT, read back after configuring.
+    ///
+    /// The one register that can say whether a configuration write landed. Until
+    /// this existed the engine only ever WROTE the part's registers, so a write
+    /// that went nowhere was indistinguishable from one that worked -- and a
+    /// latency sweep passed on codes 2 and 6 where the datasheet says 0, 1, 2
+    /// and 15 are legal and 3..13 are RESERVED. 2 is the power-on default and 6
+    /// is that default with one bit flipped.
+    pub const DEVICE_READBACK: usize = 30;
 }
 
 /// `REG_CONTROL` bits, from `BISTHarness`.
@@ -364,6 +373,19 @@ impl Bist {
         let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}",
                          self.read(reg::CLOCK), self.read(reg::CONFIG));
         self.describe_status(uart, "at rest", self.read(reg::STATUS));
+        // WHAT THE PART SAYS, against what it was told. Datasheet default is
+        // 0x8F2F: latency code 2 (7 clocks), fixed, drive 34 ohms.
+        let back = self.read(reg::DEVICE_READBACK) & 0xffff;
+        let _ = writeln!(
+            uart, "  CR0     part reports {:#06x}  latency code {} {}  drive {}",
+            back, (back >> 4) & 0xf,
+            if back & 8 != 0 { "fixed" } else { "variable" },
+            (back >> 12) & 0x7);
+        if back == 0 || back == 0xffff {
+            let _ = writeln!(uart,
+                "  CR0     READBACK IS {:#06x} -- the register read path is not \
+                 working, so nothing here says the write landed", back);
+        }
         self.describe_fsm(uart);
         // Counters the engine drives from `hr`. If `hr` is not running at all,
         // every one of these is frozen -- which is the first thing to rule out,

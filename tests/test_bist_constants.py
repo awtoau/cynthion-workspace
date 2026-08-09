@@ -144,7 +144,8 @@ def test_register_numbers_are_the_engines_own():
     firmware = FIRMWARE.read_text()
     for name in ("ID", "STATUS", "ERRORS", "WORDS", "CONTROL", "READCLKSEL",
                  "DEVICE_CR0", "DEVICE_CR1", "PASS_LIMIT", "ACTUAL", "GOLDEN",
-                 "FSM_STATE", "CTRL_STATE", "WRITE_CYCLES", "READ_CYCLES"):
+                 "FSM_STATE", "CTRL_STATE", "WRITE_CYCLES", "READ_CYCLES",
+                 "DEVICE_READBACK"):
         want = _grab(ENGINE, rf"^REG_{name}\s*=\s*(\d+)") if f"REG_{name}" in engine \
             else None
         assert want is not None, f"the engine no longer defines REG_{name}"

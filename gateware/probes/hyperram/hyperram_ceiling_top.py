@@ -128,6 +128,9 @@ REG_SWEEP_DATA  = 25
 # to report the cell index -- and the cell index still does not say which state.
 REG_FSM_STATE   = 28
 REG_CTRL_STATE  = 29   # the HyperBus controller's own FSM state
+# CR0 AS THE PART REPORTS IT, not as the host asked for it. The one
+# register that can say whether a configuration write landed.
+REG_DEVICE_READBACK = 30
 
 # Combinations the sweep walks: capture phase 0-7 against CR0 drive code 0-7.
 SWEEP_PHASES = 8
@@ -648,6 +651,10 @@ class HyperRAMCeiling(Elaboratable):
         # even if the pass after it succeeds.
         stalled = Signal()
 
+        # What the PART says CR0 is, read back after configuring it.
+        device_readback = Signal(32)
+        readback_started = Signal()
+
         # DID THE RUN FINISH. `harness.done` used to be an expression over
         # leftover signal values --
         #
@@ -783,7 +790,31 @@ class HyperRAMCeiling(Elaboratable):
                              config_address.eq(CR1_ADDRESS),
                              config_data.eq(device_cr1[:16])]
                 with m.If(psram.idle):
+                    m.next = "CONFIG_VERIFY"
+
+            # READ CR0 BACK. The engine only ever WROTE the part's registers --
+            # every state that set `configuring` also set `writing` -- so a write
+            # that never landed was indistinguishable from one that did.
+            #
+            # That is not hypothetical. A latency sweep passed on codes 2 and 6
+            # only, where the datasheet says 0, 1, 2 and 15 are legal and 3..13
+            # are RESERVED. 2 is the power-on default and 6 is the default with
+            # one bit flipped, which is the signature of the write not landing at
+            # all. CR1[6] selecting a differential clock and CR0[3] selecting
+            # variable latency likewise changed nothing, and both must.
+            #
+            # A register READ is `configuring` WITHOUT `writing`. Its result goes
+            # to REG_DEVICE_READBACK so the CPU can compare it against what it
+            # asked for, which turns "did the configuration apply" from an
+            # inference about behaviour into a measurement.
+            with m.State("CONFIG_VERIFY"):
+                m.d.comb += [configuring.eq(1), last.eq(1),
+                             config_address.eq(CR0_ADDRESS)]
+                with m.If(psram.read_ready):
+                    m.d.sync += device_readback.eq(psram.read_data)
+                with m.If(psram.idle & readback_started):
                     m.next = "WRITE_START"
+                m.d.sync += readback_started.eq(1)
 
             with m.State("WRITE_START"):
                 # `writing` high in the SAME cycle as `start`, not one after it.
@@ -991,6 +1022,8 @@ class HyperRAMCeiling(Elaboratable):
         #
         # The engine's state, so a stalled sweep says WHERE.
         harness.add_read_only_register(REG_FSM_STATE, read=engine.state)
+        harness.add_read_only_register(REG_DEVICE_READBACK,
+                                       read=device_readback)
 
         # The controller's HANDSHAKE, not its FSM state. Amaranth's FSM carries
         # no readable `state` attribute here and adding one broke
