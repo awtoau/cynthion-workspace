@@ -273,15 +273,76 @@ pub const ALERT_BACKOFF_MA: i32 = 500;
 /// port with a deliberately tiny load is a legitimate thing to want to watch.
 pub const DEFAULT_FLOOR_UA: u32 = 10_000;
 
-/// How often the rails are sampled.
+/// Default sampling period, in milliseconds. Runtime-settable -- see
+/// [`set_interval_ms`].
+pub const DEFAULT_INTERVAL_MS: u32 = 50;
+
+/// [`set_interval_ms`] takes this to mean "do not poll at all".
 ///
-/// 50 ms, from the issue. It is fast enough that a plug event is reported while
-/// the person who caused it is still watching, and slow enough to be free: one
-/// poll is a 1-byte write plus a 19-byte read at 80 kHz, about 2.3 ms of bus
-/// time, so the bus is idle 95% of the time and the shell never waits behind it.
-/// The part's own conversion rate is 1024 SPS, so 20 Hz is not asking for values
-/// it has not produced.
-pub const INTERVAL_MS: u32 = 50;
+/// Not merely a very long period: the tick short-circuits on it, so an off poll
+/// costs nothing per tick. Excursions are still reported -- the ALERT is a
+/// hardware comparison against every sample inside the part and does not depend
+/// on this at all (#285).
+pub const RATE_OFF: u32 = 0;
+
+/// The floor a rate may be set to, in milliseconds.
+///
+/// The PAC1954 samples at 1024 SPS in normal mode -- **976 us** -- and 1024 is
+/// the fastest of its 8/64/256/1024 options. So 1 ms collects one fresh sample
+/// per poll and nothing faster exists to collect; below this the same sample is
+/// read twice and only bus time is spent.
+///
+/// A spike shorter than 976 us is not sampled by the part at all, so NO poll
+/// rate finds one. The ALERT is the only thing that sees between samples.
+pub const MIN_INTERVAL_MS: u32 = 1;
+
+/// How often the rails are sampled. `RATE_OFF` disables the poll.
+static INTERVAL_MS: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(DEFAULT_INTERVAL_MS);
+
+pub fn interval_ms() -> u32 {
+    INTERVAL_MS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Set the sampling period. Clamped to [`MIN_INTERVAL_MS`]; returns what was set.
+///
+/// Clamped rather than refused, and it says so at the call site: a rate the poll
+/// cannot honour would free-run, and a transcript reporting a rate that is not
+/// being achieved is the plausible-wrong-answer failure this driver keeps
+/// removing.
+pub fn set_interval_ms(ms: u32) -> u32 {
+    let ms = if ms == RATE_OFF {
+        RATE_OFF
+    } else {
+        ms.max(MIN_INTERVAL_MS)
+    };
+    INTERVAL_MS.store(ms, core::sync::atomic::Ordering::Relaxed);
+    ms
+}
+
+/// Longest and most recent complete REFRESH cycle, in timer ticks.
+///
+/// The question `sched` could not answer: it measures the GAP between polls,
+/// never the DURATION of one, so whether a requested rate is achievable was
+/// unknown. A rate faster than one cycle cannot be honoured however it is
+/// configured.
+static WORST_CYCLE: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+static LAST_CYCLE: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+
+/// `(worst, last)` complete cycle, in ticks. Zero until one has completed.
+pub fn cycle_ticks() -> (u32, u32) {
+    (
+        WORST_CYCLE.load(core::sync::atomic::Ordering::Relaxed),
+        LAST_CYCLE.load(core::sync::atomic::Ordering::Relaxed),
+    )
+}
+
+fn record_cycle(ticks: u32) {
+    LAST_CYCLE.store(ticks, core::sync::atomic::Ordering::Relaxed);
+    WORST_CYCLE.fetch_max(ticks, core::sync::atomic::Ordering::Relaxed);
+}
 
 /// Past this, the sample's age is reported as a bound and not as a number.
 ///
@@ -934,7 +995,19 @@ impl Monitor {
     /// indistinguishable from a rail that never left its limits again. If the
     /// part is still asserting, the interrupt fires again immediately and this
     /// repeats -- which is correct, there is still a condition.
-    fn service_alert(&mut self, uart: &mut Uart, bus: &mut Bus) {
+    /// Service a latched ALERT: report what tripped, move the limit, re-enable.
+    ///
+    /// The body of `rtic_app::power_alert`, released by the pin. Public because
+    /// the task is in another module; there is exactly one caller.
+    ///
+    /// Returns early unless the handler actually deferred one. RTIC dispatches
+    /// on a bit, so a coalesced release can arrive with nothing to do, and
+    /// reading `ALERT_STATUS` speculatively would be a bus transaction that
+    /// CLEARS the register -- consuming the next real event.
+    pub fn service_alert(&mut self, uart: &mut Uart, bus: &mut Bus) {
+        if !crate::irq::take_power_alert() {
+            return;
+        }
         let mut moved_any = false;
         match self.alert_service(bus) {
             Ok(fired) => {
@@ -1138,16 +1211,23 @@ impl Monitor {
             None => return,
         };
 
-        // The deferred ALERT, cleared here because clearing it is a bus
-        // transaction and the handler may not make one. Before the REFRESH
-        // cycle below rather than after: an alert says a rail left its bracket,
-        // and the reading that follows is the one somebody will want to look at
-        // next to the report.
-        if crate::irq::take_power_alert() {
-            self.service_alert(uart, bus);
-        }
+        // The ALERT is NOT serviced here any more. It has its own task, released
+        // by the pin (#285) -- see `rtic_app::power_alert`. Servicing it inside
+        // this cycle made alert latency equal to the poll period, which #286
+        // makes settable and defaults to off.
 
-        let sample = match self.transfer(bus) {
+        // How long one dispatch's bus work actually takes -- the number that
+        // decides whether a requested rate is achievable (#286). `sched`
+        // measures the GAP between polls and never the DURATION of one, so
+        // until now nothing could say.
+        //
+        // Around `transfer` only: the clock read and the metrics above happen on
+        // every target, and the question is what the I2C costs.
+        let started = clock::now();
+        let outcome = self.transfer(bus);
+        record_cycle(started.elapsed(clock::now()));
+
+        let sample = match outcome {
             Ok(sample) => sample,
             Err(error) => {
                 self.failures = self.failures.saturating_add(1);

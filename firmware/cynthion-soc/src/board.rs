@@ -129,7 +129,7 @@ pub fn tree(uart: &mut Uart, power: &power::Monitor, type_c: &Controllers) {
         "power  pac1954 @{:02x} on the power bus, polled every \
                             {} ms  [{}]",
         power::ADDRESS,
-        power::INTERVAL_MS,
+        power::interval_ms(),
         Since("sampled", power.age())
     );
 

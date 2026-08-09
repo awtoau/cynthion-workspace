@@ -294,6 +294,10 @@ fn defer_power_alert(plic: &Plic, source: u32) {
     POWER_ALERT_INTERRUPTS.fetch_add(1, Ordering::Relaxed);
     // Release: the mask must be visible before the flag that publishes it.
     PENDING_POWER_ALERT.store(1, Ordering::Release);
+    // Release the task that can actually clear the part. One MMIO store to
+    // `msip`; the flag above stays because `power alert` reports it and because
+    // the task reads it to distinguish a real release from a spurious dispatch.
+    crate::rtic_app::pend_power_alert();
 }
 
 /// Deferrals recorded, for `irq` and `power alert`.
