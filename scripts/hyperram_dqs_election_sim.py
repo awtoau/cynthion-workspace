@@ -47,9 +47,11 @@ same two defects end to end against the device model.
 `--controls` rewrites a line of the controller out and re-runs every check
 against the mutant, requiring the named check to fail:
 
-    gate    `| self.fixed_latency` off the election  -> check 1 must fail
+    gate    the `fixed_latency` gate off the sample     -> check 1 must fail
+    deaf    the sample tied low                         -> check 2 must fail
     short   the short branch back to the class constant -> check 3 must fail
-    window  the sample back into the CA states       -> check 5 must fail
+    anybit  the RWDS word read one bit deep             -> check 4 must fail
+    window  the sample back into the CA states          -> check 5 must fail
 
 If a mutation changes nothing, the check it belongs to cannot fail and proves
 nothing; the run exits non-zero.
@@ -88,21 +90,23 @@ CK_PER_CYCLE = 2
 # rewrites to try in order, so one control spans the fix that changed the line.
 ELECTION_BEFORE = ("with m.If(extra_latency | self.phy.rwds.i.any()\n"
                    "                              | self.fixed_latency):")
+RWDS_ASKS = ("rwds_asks.eq(sample_now & ~self.fixed_latency\n"
+             "                         & self.phy.rwds.i.any()),")
 MUTATIONS = {
     "gate": {
         "check": 1,
-        "why": "`| self.fixed_latency` off the election -- upstream's dead branch",
-        "edits": [("with m.If(extra_latency | rwds_asks | self.fixed_latency):",
-                   "with m.If(extra_latency | rwds_asks):"),
+        "why": "the `fixed_latency` gate off the sample -- RWDS can reach `fix`",
+        "edits": [(RWDS_ASKS,
+                   "rwds_asks.eq(sample_now & self.phy.rwds.i.any()),"),
                   (ELECTION_BEFORE,
                    "with m.If(extra_latency | self.phy.rwds.i.any()):")],
     },
-    "always": {
+    "deaf": {
         "check": 2,
-        "why": "the long count forced, as upstream's `extra_latency | 1` had it",
-        "edits": [("with m.If(extra_latency | rwds_asks | self.fixed_latency):",
-                   "with m.If(extra_latency | rwds_asks | 1):"),
-                  (ELECTION_BEFORE,
+        "why": "the sample tied low -- the election hears nothing",
+        "edits": [(RWDS_ASKS, "rwds_asks.eq(0),"),
+                  ("with m.If(extra_latency | self.phy.rwds.i.any()\n"
+                   "                              | self.fixed_latency):",
                    "with m.If(extra_latency | self.phy.rwds.i.any() | 1):")],
     },
     "short": {
