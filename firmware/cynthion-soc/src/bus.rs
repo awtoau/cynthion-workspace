@@ -99,12 +99,42 @@ pub use mux::{
 use i2c::I2c;
 use mux::Mux;
 
+/// What the bus is aimed at. `f_SCL = f_sync / (5 * (PRER + 1))`.
+pub const I2C_SCL_HZ: u32 = 1_000_000;
+/// Sync cycles per bit period, the bit engine's own arithmetic.
+const CYCLES_PER_PERIOD: u32 = 5;
+
+/// PRER for `scl_hz` at `sync_hz`, rounded so the rate never OVERSHOOTS.
+///
+/// Mirrors `prescale_for` in `gateware/soc/peripherals/i2c_master.py`.
+pub fn prescale_for(sync_hz: u32, scl_hz: u32) -> u16 {
+    let divisor = CYCLES_PER_PERIOD * scl_hz;
+    (sync_hz.div_ceil(divisor).max(1) - 1) as u16
+}
+
+/// The sync clock to size the prescale from, and whether it was COUNTED.
+///
+/// `target::TIME_HZ` is what the build assumed; the clock monitor counts what
+/// the silicon does, against the one oscillator that cannot be wrong. The two
+/// disagree on any variant that moved `SYNC_MHZ` -- the BIST build runs 50 MHz
+/// against a constant of 60, so a prescale derived from the constant sets
+/// 833 kHz and reports it as 1 MHz (#272).
+pub fn sync_hz() -> (u32, bool) {
+    match crate::clock::measured() {
+        Some(m) if m.locked && m.khz != 0 => (m.khz * 1000, true),
+        _ => (crate::target::TIME_HZ, false),
+    }
+}
+
 /// What [`Bus::init`] established and read back.
 pub struct Init {
     /// PRER as the controller holds it, not as the build asked for it.
     pub prescale: u16,
     pub wanted: u16,
     pub scl_hz: u32,
+    /// The sync clock the prescale was derived from, and its source.
+    pub sync_hz: u32,
+    pub sync_measured: bool,
 }
 
 impl Init {
@@ -153,6 +183,11 @@ impl Bus {
     ///
     /// Non-destructive: no device is addressed and nothing is written to one.
     pub fn init(&mut self) -> Init {
+        // Re-derived on every call, so a boot that ran before the clock
+        // monitor's first window still picks the counted rate on the next
+        // `init i2c` rather than keeping the build's guess for ever.
+        let (sync_hz, sync_measured) = sync_hz();
+        self.prescale = prescale_for(sync_hz, I2C_SCL_HZ);
         self.i2c.init(self.prescale);
         self.i2c.recover();
         let prescale = self.i2c.prescale();
@@ -163,7 +198,9 @@ impl Bus {
             // is actually holding: `f_SCL = f_sync / (5 * (PRER + 1))`. The
             // divider is an integer, so this is what the bus gets rather than
             // what was asked for.
-            scl_hz: crate::target::TIME_HZ / (5 * (prescale as u32 + 1)),
+            scl_hz: sync_hz / (CYCLES_PER_PERIOD * (prescale as u32 + 1)),
+            sync_hz,
+            sync_measured,
         }
     }
 
