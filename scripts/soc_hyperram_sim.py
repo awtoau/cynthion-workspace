@@ -159,10 +159,11 @@ from bus.wishbone_pipe import RegisteredResponse
 SYNC_MHZ = 120.0
 SYNC_HZ = SYNC_MHZ * 1e6
 
-# tCSHI, CS# high between transactions, W956A8. Ten nanoseconds is longer than
-# one 120 MHz cycle, which is why back-to-back transactions violate it at the
-# rate this part is actually run at.
-T_CSHI_NS = 10.0
+# tCSHI, CS# high between transactions, for the grade FITTED: a `6I` = T166,
+# where Winbond's own `Config-AC.v` gives 6 ns. Ten was the T100 column and is
+# what this file asked for until #341. Restated here rather than imported, for
+# the reason `T_CSM_NS` gives below.
+T_CSHI_NS = 6.0
 
 # tCSM, the longest CS# may stay Low, W956A8 rev A01-006 Table 24: 4 us on every
 # speed bin. Stated HERE from the datasheet rather than imported from the
@@ -335,6 +336,12 @@ class ModelHyperRAM:
         self._read = True
         self._prev_cs = 0
         self._cs_high_beats = 10**6  # nothing before the first transaction
+        # The SHORTEST CS#-high gap this run saw, in `sync` cycles. Counting
+        # violations alone stops discriminating as soon as tCSHI falls under one
+        # cycle -- at T166's 6 ns and sync 120 it does, and upstream's no-recovery
+        # controller then passes the same check ours does. The gap itself
+        # separates them at every clock. (#341)
+        self.cs_high_min = None
         # tCSM, counted where it is spent rather than at the end of a transaction,
         # so a device left selected for ever is counted once rather than never.
         self._tcsm_beats = int(T_CSM_NS * SYNC_MHZ / 1000.0)
@@ -389,6 +396,9 @@ class ModelHyperRAM:
             required = -(-T_CSHI_NS * SYNC_MHZ // 1000)
             if self._cs_high_beats < max(1, int(required)):
                 self.cshi_violations += 1
+            if self._cs_high_beats < 10**6:
+                self.cs_high_min = min(self.cs_high_min or 10**6,
+                                       self._cs_high_beats)
             self._cs_high_beats = 0
             self._state = "command"
             self._ca_bytes = []
@@ -747,28 +757,44 @@ def section_recovery(checks, emit):
         await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
         await run(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
 
-    # THE NEGATIVE CONTROL, and it is the whole value of this section. A model
-    # that could not detect a violation would pass the positive check silently,
-    # so upstream's controller is run through the same harness to prove the
-    # detector fires.
+    # THE NEGATIVE CONTROL, and it is the whole value of this section. Upstream's
+    # controller is run through the same harness to prove the detector fires.
+    #
+    # It is the GAP and not the violation count: with tCSHI at T166's 6 ns and
+    # sync 120, one cycle (8.33 ns) already clears it, so upstream's `# TODO:
+    # implement recovery` scores zero violations too. The instrument stopped
+    # discriminating the moment the requirement moved -- exactly the shape #341
+    # is about, one level up. Upstream leaves the ONE cycle its caller's state
+    # count happens to give; ours leaves what the counter was told to. (#341)
     control = simulate(back_to_back, upstream=True)
-    checks.check("upstream's controller VIOLATES tCSHI back-to-back",
-                 control.cshi_violations > 0,
-                 "no violation seen from upstream either, so this harness "
-                 "cannot tell the two apart and the check below proves nothing")
+    checks.check("upstream's controller leaves ONE cycle and nothing more",
+                 control.cs_high_min == 1,
+                 f"{control.cs_high_min} cycles -- if upstream already held a gap "
+                 f"this harness cannot tell the two apart")
 
     model = simulate(back_to_back)
     check_completed(checks, model, "back-to-back DQS reads")
+    required = max(1, int(-(-T_CSHI_NS * SYNC_MHZ // 1000)))
     checks.check("the vendored controller keeps tCSHI with NO gap from the master",
                  model.cshi_violations == 0,
                  f"{model.cshi_violations} violations -- the RECOVERY counter is "
                  f"not holding CS# high long enough")
+    checks.check("...and the gap is the count RECOVERY was given",
+                 model.cs_high_min == required,
+                 f"{model.cs_high_min} cycles against {required}")
+    # At sync 120 the two agree, because T166's 6 ns is under one cycle there and
+    # upstream's accidental single cycle already clears it. The gap only separates
+    # them above 166.7 MHz. What separates them at EVERY clock is that ours moves
+    # when `recovery_cycles` is driven and upstream has nothing to drive --
+    # measured in `scripts/hyperram_timing_levers_sim.py`. (#341)
+    if required == 1:
+        emit("        at this clock tCSHI is under one cycle, so upstream's "
+             "accident clears it too -- the lever sweep is the discriminator")
 
-    required = max(1, int(-(-T_CSHI_NS * SYNC_MHZ // 1000)))
     emit(f"        tCSHI {T_CSHI_NS:g} ns at {SYNC_MHZ:g} MHz is "
          f"{required} whole cycle(s), counted inside the controller")
-    emit(f"        upstream: {control.cshi_violations} violations, "
-         f"vendored: {model.cshi_violations}")
+    emit(f"        shortest gap -- upstream: {control.cs_high_min} cycle(s), "
+         f"vendored: {model.cs_high_min}")
 
 
 class NonDQSProtocolHarness(Elaboratable):
@@ -1005,7 +1031,7 @@ def section_as_built(checks, emit):
         await run(ctx, dut, model, address=TEST_ADDRESS + 2, read=True, gap=0)
 
     model = simulate(back_to_back, **built)
-    # Also reported: at sync 60 the count is ceil(10 ns x 60 MHz / 1000) = 1
+    # Also reported: at sync 60 the count is ceil(6 ns x 60 MHz / 1000) = 1
     # cycle, and one cycle there is 16.7 ns, comfortably over tCSHI. A violation
     # anyway means the count is right and the HOLD is off by a cycle -- the same
     # shape as the first RECOVERY attempt, which counted without deasserting CS#.

@@ -54,10 +54,12 @@ sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from amaranth.hdl import Fragment                            # noqa: E402,F401
 from amaranth.sim import Simulator                           # noqa: E402
-from luna.gateware.interface.psram import HyperBusPHY        # noqa: E402
+from luna.gateware.interface.psram import (HyperBusDQSPHY,  # noqa: E402
+                                          HyperBusPHY)
 
 from peripherals import hyperram_controller as hc            # noqa: E402
 from peripherals.hyperram_controller import HyperRAMController  # noqa: E402
+from peripherals.hyperram_dqs_controller import HyperRAMDQSController  # noqa: E402
 
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_timing_levers_sim.log"
 
@@ -86,6 +88,9 @@ GRADE_LATENCY_TABLE = (
 # four times the largest any clock this board runs produces, so a lever that is
 # wired but ignored shows up as a flat line rather than as a near miss.
 RECOVERY_SWEEP = (1, 2, 3, 5, 8)
+
+# The clock the SoC runs the DQS path at. `soc_hyperram_sim.SYNC_MHZ`.
+DQS_SYNC_MHZ = 120.0
 
 # Watchdog bounds to sweep. Small enough that expiry is reached in tens of
 # cycles rather than the ~700 the tCSM default takes at 192 MHz, and spread so a
@@ -126,6 +131,19 @@ class Harness:
         self.phy = HyperBusPHY()
         self.ctl = HyperRAMController(phy=self.phy, sync_mhz=sync_mhz,
                                       phy_round_trip_cycles=0, **kwargs)
+
+
+class DQSHarness:
+    """The DQS twin, whose record is 32 bits wide and whose cycle is 2 CK.
+
+    Built from `HyperRAMDQSPHY`'s record rather than a PHY: nothing here reaches
+    a pin, and the PHY carries ECP5 primitives Amaranth's simulator cannot run.
+    """
+
+    def __init__(self, *, sync_mhz: float, **kwargs):
+        self.phy = HyperBusDQSPHY()
+        self.ctl = HyperRAMDQSController(phy=self.phy, sync_mhz=sync_mhz,
+                                         **kwargs)
 
 
 def probe(sync_mhz: float, **kwargs):
@@ -172,14 +190,15 @@ async def _drive_levers(ctx, ctl, levers: dict):
             ctx.set(signal, value)
 
 
-def measure_recovery_gap(sync_mhz: float, *, levers: dict, ctor: dict) -> int | None:
+def measure_recovery_gap(sync_mhz: float, *, levers: dict, ctor: dict,
+                         harness=Harness) -> int | None:
     """Sync cycles CS# stays High between two back-to-back register writes.
 
     Register writes are used because they need no device: SHIFT_COMMAND2 goes
     straight to WRITE_DATA and WRITE_DATA to RECOVERY. Returns None if the
     second transaction never started inside the bound.
     """
-    dut = Harness(sync_mhz=sync_mhz, **ctor)
+    dut = harness(sync_mhz=sync_mhz, **ctor)
     limit = recovery_bound(max([1, *levers.values()]))
     result: dict = {}
 
@@ -307,6 +326,39 @@ def section_tcshi_lever(checks: Checks, sync_mhz: float) -> None:
                  str(gaps))
     checks.check("...and the sweep moves it at all",
                  len(set(gaps.values())) == len(RECOVERY_SWEEP), str(gaps))
+
+
+def section_dqs_twin(checks: Checks, sync_mhz: float) -> None:
+    """1b. The same three levers on the DQS twin. #341 asks for both.
+
+    The clock the SoC runs the DQS path at is 120 MHz, where T166's 6 ns tCSHI
+    is under one cycle -- so `soc_hyperram_sim.py` section 4 can no longer tell
+    this controller from upstream's `# TODO: implement recovery` by the gap
+    alone. The sweep is what separates them: ours moves, upstream has nothing to
+    drive.
+    """
+    log.info("\n1b. The DQS twin's levers, sync %.0f MHz\n", DQS_SYNC_MHZ)
+
+    ctl = DQSHarness(sync_mhz=DQS_SYNC_MHZ).ctl
+    Fragment.get(ctl, None)
+    for name in ("recovery_cycles", "burst_cycles", "burst_beats",
+                 "latency_below_trwr"):
+        checks.check(f"the DQS controller has `{name}`",
+                     lever(ctl, name) is not None,
+                     why="the twin keeps a constant the non-DQS path made a lever, "
+                         "so a comparison of the two paths compares instruments")
+
+    if lever(ctl, "recovery_cycles") is None:
+        return
+    ctor = {"max_recovery_cycles": max(RECOVERY_SWEEP)}
+    gaps = {n: measure_recovery_gap(DQS_SYNC_MHZ, levers={"recovery_cycles": n},
+                                    ctor=ctor, harness=DQSHarness)
+            for n in RECOVERY_SWEEP}
+    log.info("        gap in cycles per recovery_cycles: %s", gaps)
+    # Same n+1 as the non-DQS twin, and the same derivation: RECOVERY runs n+1
+    # cycles and drives CS# High from its second, IDLE holds it for one more.
+    checks.check("the DQS CS#-high gap follows the input, n+1 cycles at every n",
+                 all(gaps[n] == n + 1 for n in RECOVERY_SWEEP), str(gaps))
 
 
 def section_tcshi_value(checks: Checks) -> None:
@@ -449,6 +501,7 @@ def main() -> int:
     checks = Checks()
 
     section_tcshi_lever(checks, args.sync_mhz)
+    section_dqs_twin(checks, args.sync_mhz)
     section_tcshi_value(checks)
     section_watchdog_lever(checks, args.sync_mhz)
     section_latency_table(checks)
