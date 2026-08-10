@@ -32,7 +32,30 @@ module hyperram_model #(
     // measured at exactly 100 CS# assertions apart whether the transaction is one
     // word (210 ns) or 128 (1480 ns). A real part refreshes on a wall clock, so
     // this cadence exercises the path, it does not predict a rate. (#338, #342)
-    parameter integer REFRESH_EVERY = 100
+    parameter integer REFRESH_EVERY = 100,
+    // FAULT INJECTION. 0 is the part; anything else is a device deliberately
+    // misbehaving, so the controller's response to it can be checked. See
+    // docs/chips/hyperram/sim-audit.md and #346.
+    //
+    // What RWDS does over the CA period:
+    //   0  the part -- float for tDSV, then the CR0[3] | refresh answer
+    //   1  stuck High      2  stuck Low      3  never driven at all
+    // 1-3 hold from CS# falling with no tDSV, because a fault is held and not
+    // timed. Mode 3 is the float a controller sampling before tDSV reads, which
+    // is the prime suspect in #338; modes 1 and 2 are a device whose answer
+    // contradicts what it then serves.
+    parameter integer CA_RWDS_FAULT = 0,
+    // Read words this device serves before going silent, counted per transaction.
+    // -1 is a part, which always answers. 0 never answers at all, which is the
+    // shape of the board's wedge and the case `READ_DATA` had no exit from; N
+    // stops mid-burst, and 7-of-8 is how the unbounded state was proven (#316).
+    // Silent means DQ and RWDS both released: no strobe, so nothing clocks in.
+    parameter integer DELIVER_WORDS = -1,
+    // 1 = take the register write off the bus and then ignore it. The CR0/CR1
+    // verify path only means anything against a device that can refuse: with a
+    // model that always accepts, a controller which never issued the write and
+    // one whose write was dropped read back the same value. (#346)
+    parameter integer REFUSE_REG_WRITE = 0
 ) (
     inout  wire [7:0] adq,
     input  wire       clk,
@@ -66,6 +89,8 @@ module hyperram_model #(
   // Refresh, as the vendor model does it: a transaction counter, not a clock.
   integer    xact_count = 0;
   reg        take_long  = 1'b0;
+
+  integer    served;            // read words served this transaction
 
   reg  [7:0] write_high;
   reg [15:0] rd_word;
@@ -172,6 +197,7 @@ module hyperram_model #(
     beat       = 16'd0;
     ca         = 48'h0;
     write_done = 1'b0;
+    served     = 0;
     t_cs_fall  = $realtime;
     xact_count = xact_count + 1;
     // Decided at CS# falling, before tDSV, and held for the whole transaction --
@@ -187,9 +213,14 @@ module hyperram_model #(
   // Fixed latency always asks; variable latency asks only when a refresh is due.
   always @(negedge csb) begin
     rwds_oe = 1'b0;
-    #(T_DSV_NS);
-    if (!csb) begin
-      rwds_out = cr0[3] | take_long;
+    if (CA_RWDS_FAULT == 0) begin
+      #(T_DSV_NS);
+      if (!csb) begin
+        rwds_out = cr0[3] | take_long;
+        rwds_oe  = 1'b1;
+      end
+    end else if (CA_RWDS_FAULT != 3) begin
+      rwds_out = (CA_RWDS_FAULT == 1);
       rwds_oe  = 1'b1;
     end
   end
@@ -235,11 +266,18 @@ module hyperram_model #(
       end else if (beat < first_data_beat(is_register && !is_read) +
                           (is_read ? 16'd1 : 16'd0)) begin
         rwds_out = 1'b0;                // latency period: the request is answered
+        if (is_read) rwds_oe = 1'b1;    // CA_RWDS_FAULT covers the CA and no more
       end else begin
         // A read starts one edge later than a write at the same latency -- the
         // device has to turn the bus around. Measured against the vendor model:
         // 28 edges to the strobe at 14 CK fixed, 14 at 7 CK variable.
-        if (is_read) begin
+        if (is_read && DELIVER_WORDS >= 0 && served >= DELIVER_WORDS) begin
+          // The device has stopped answering. Both lines released, so there is no
+          // strobe and the address does not advance -- what a part in Deep Power
+          // Down looks like from here. (#316, #346)
+          dq_oe   = 1'b0;
+          rwds_oe = 1'b0;
+        end else if (is_read) begin
           dq_oe    = 1'b1;
           rwds_oe  = 1'b1;
           rd_word  = read_word(word_addr);   // Icarus will not part-select a call
@@ -250,6 +288,7 @@ module hyperram_model #(
           end else begin
             dq_out   = rd_word[7:0];
             rwds_out = 1'b0;
+            served   = served + 1;
             // registers repeat; memory advances, inside the group while wrapped.
             // Hybrid leaves the group after exactly one pass and continues
             // linearly from the group end -- measured on the vendor model, which
@@ -274,7 +313,11 @@ module hyperram_model #(
           else begin
             // RWDS low = write this byte. Register space has no mask.
             if (is_register) begin
-              write_register(word_addr, {write_high, adq});
+              if (REFUSE_REG_WRITE)
+                $display("%m: register write to 0x%h of %h REFUSED (fault injection)",
+                         word_addr, {write_high, adq});
+              else
+                write_register(word_addr, {write_high, adq});
               // Register writes are a single word. The host may hold CS# low for
               // another edge or two on the way to raising it, and without this the
               // idle bus lands as a second write of z -- which reads back as a
