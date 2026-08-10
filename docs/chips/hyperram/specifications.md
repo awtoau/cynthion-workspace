@@ -86,6 +86,15 @@ Measurable on this board with the PAC1954 (#82, #84) if the rail is separable.
 | `CR1[1:0]` legal values | **`01b` only** on this part *(AN 2025 §6.5.7)* |
 | tCSM, above 85 °C | 1 µs *(model, `` `define LA_85C ``)* |
 
+**Every CS# cap in this design is derived from the 4 µs figure alone** —
+`T_CSM_NS` in [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py)
+and [`hyperram_controller.py`](../../../gateware/soc/peripherals/hyperram_controller.py),
+`HYPERRAM_TCSM_NS` in [`bootram.py`](../../../gateware/soc/bootram.py). Above 85 °C
+they are 4× too loose, and a sustained matrix sweep is the workload that heats the
+die. The boot report's `die` line names the regime the reading puts the part in
+(`firmware/cynthion-soc/src/init.rs`); no gateware path chops a burst on
+temperature, so a hot part is reported and not corrected.
+
 The 4 µs is derived, not arbitrary: 64 ms / 8192 rows = 7.8 µs per row, **halved**
 so a maximum-length access starting immediately before a refresh cannot make the
 device miss one entirely. The datasheet says so in as many words, and the vendor's
