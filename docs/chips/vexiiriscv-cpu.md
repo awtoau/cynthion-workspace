@@ -425,8 +425,18 @@ obvious next one.
     python3 -c "import sys; sys.path.insert(0,'gateware/soc'); \
                 import cpu.cpu; print(vexii_cpu.generate(0))"
 
-The emitted `VexiiRiscv.v` is also left in `tmp/awto_soc/build/` after any SoC
-build, which is where the net names in a nextpnr critical path resolve to.
+The emitted `VexiiRiscv.v` is also left in `tmp/awto_soc/build/<variant>/` after
+any SoC build, which is where the net names in a nextpnr critical path resolve to.
+
+- The generator itself writes `repos/vexiiriscv/VexiiRiscv.v` — one path shared by
+  every build, because SpinalHDL's target directory is the process cwd and sbt's
+  cwd must be the project root.
+- So `generate()` holds an exclusive lock (`tmp/vexii-generate.lock`) across the
+  run **and** the copy to the caller's `output=`. Concurrent builds without it
+  read a half-written 1.2 MB file, or a valid one from another configuration
+  (#306, #351).
+- `top.py` always passes `output=`; a bare `generate(0)` still returns the shared
+  path, which is correct only for a one-off.
 
 ## Scripts
 
