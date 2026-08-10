@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+#
+# One command that says whether the HyperRAM rig is trustworthy. #226.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""The whole BIST gate, in order, with one exit code.
+
+    ./scripts/hyperram_verify.py                  # the gate
+    ./scripts/hyperram_verify.py --quick          # skip the 4096-cell matrix
+    ./scripts/hyperram_verify.py --label post-334 # names the saved matrix runs
+
+## Why this exists
+
+The steps below were being run by hand, in a different combination each time, as
+each fix landed. That is how a step gets skipped without anyone noticing -- and
+this rig's entire history is instruments that could not report their own failure.
+A gate that is retyped every time is one of those.
+
+Order matters and is not arbitrary:
+
+1. **presence** -- the applet id. A peripheral that is not there reads as zeroes,
+   and zero errors from a peripheral that does not exist is the most flattering
+   wrong answer available.
+2. **axis liveness** -- does each configuration axis reach the part? Run BEFORE
+   any sweep, because "no effect" and "not connected" produce identical data, and
+   a sweep over a dead axis produces rows that mean nothing (#334, #335).
+3. **latency at every CK rung** -- the pass set, per rung (#331, #313).
+4. **the matrix, twice** -- and DIFFED. A cell that passes once is not a cell
+   that passes; two identical runs that disagree have found a marginal cell,
+   which a single run scores as a verdict (#311's workflow too).
+
+Each step's own script stays runnable on its own -- this composes them, it does
+not replace them.
+
+Exit code is the answer: 0 gate passed, 1 a step failed, 2 could not run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+LOG = ROOT / "tmp" / "logs" / "hyperram-verify.log"
+
+
+def emit(line=""):
+    print(line, flush=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as handle:
+        handle.write(line + "\n")
+
+
+def step(name, argv, *, needed=True):
+    """Run one step. Returns (ok, output); a failing step does not stop the gate.
+
+    The gate reports EVERY step rather than stopping at the first failure: which
+    combination fails is the diagnosis, and stopping early hides it. `needed`
+    marks the ones whose failure makes later results meaningless.
+    """
+    emit(f"\n=== {name}")
+    emit(f"    {' '.join(argv)}")
+    try:
+        done = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
+    except OSError as exc:
+        emit(f"    COULD NOT RUN: {exc}")
+        return None, ""
+    for line in done.stdout.splitlines():
+        emit(f"    {line}")
+    if done.returncode != 0:
+        emit(f"    exit {done.returncode}"
+             + ("  -- everything after this is unreliable" if needed else ""))
+    return done.returncode == 0, done.stdout
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quick", action="store_true",
+                        help="skip the 4096-cell matrix, which is the slow part")
+    parser.add_argument("--label", default="verify",
+                        help="names the saved matrix runs")
+    parser.add_argument("--passes", type=int, default=8)
+    args = parser.parse_args()
+
+    py = sys.executable
+    s = ROOT / "scripts"
+    results = {}
+
+    # 1-2. Liveness first. It also proves the link and the applet id, so a board
+    # that is not answering fails here rather than halfway through a sweep.
+    results["axis liveness"] = step(
+        "axis liveness -- does each axis reach the part?",
+        [py, str(s / "hyperram_axis_liveness.py")])[0]
+
+    # 3. The latency pass set at every rung this bitstream carries.
+    results["latency per CK rung"] = step(
+        "latency, at every CK rung",
+        [py, str(s / "hyperram_ck_sweep.py"), "--passes", str(args.passes)])[0]
+
+    # 4. The matrix, twice, diffed.
+    if args.quick:
+        emit("\n=== matrix SKIPPED (--quick)")
+        emit("    so nothing here says a cell is stable, only that it passed once")
+    else:
+        results["matrix, twice, diffed"] = step(
+            "the 4096-cell matrix, twice, diffed",
+            [py, str(s / "hyperram_matrix_diff.py"), "--label", args.label,
+             "--passes", str(args.passes), "--repeat", "2"])[0]
+
+    emit("\n" + "=" * 60)
+    for name, ok in results.items():
+        emit(f"  {'PASS' if ok else 'FAIL' if ok is False else '????'}  {name}")
+
+    if any(ok is None for ok in results.values()):
+        emit("\nA step could not run, so the gate has no verdict.")
+        return 2
+    if not all(results.values()):
+        emit("\nGATE FAILED. Read the failing step above rather than re-running "
+             "the whole thing -- each script is runnable on its own.")
+        return 1
+    emit("\nGATE PASSED. Every axis reaches the part, the latency set is the "
+         "same at every rung, and no cell moved between two identical runs.")
+    emit("\nThis says the RIG is trustworthy. It says nothing about the part's "
+         "limits: the non-DQS path is 1:1 geared, so CK is a fabric clock capped "
+         "near 94 MHz against a part rated 166.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

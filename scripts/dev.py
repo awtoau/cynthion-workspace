@@ -70,6 +70,13 @@ def script(name: str) -> str:
 # the script offered, the mode was added to that script.
 # ---------------------------------------------------------------------------
 STEPS: dict[str, tuple[str, list[str], bool]] = {
+    # THE HyperRAM GATE. Liveness, then latency per CK rung, then the matrix
+    # twice and diffed -- in that order, because a sweep over an axis that does
+    # not reach the part produces rows that mean nothing (#334, #335). Needs a
+    # BIST bitstream on the board.
+    "hyperram-verify": ("verify the HyperRAM BIST rig end to end (needs the board)",
+                 [PY, script("hyperram_verify.py")], True),
+
     # No board needed: builds firmware, bootloader and gateware, compares the
     # bitstream against the firmware just built, then stops.
     "build": ("build firmware, bootloader and gateware (no hardware touched)",
