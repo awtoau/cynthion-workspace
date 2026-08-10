@@ -134,15 +134,21 @@ carries both, so neither alone is the complete set of rules for stopping the clo
 
 Where we stand against each:
 
-- **Park CK low — already satisfied.** `clk_en = 0` feeds `ODDRX2F` `D0..D3` all
-  zero (`gateware/soc/peripherals/hyperram_dqs_phy.py:288`), so CK parks LOW. Not
-  a coincidence to rely on silently; it is now a stated requirement.
-- **Do not stop during register access — a latent exposure.** `clk_en.eq(0)` in
-  `CS_SETUP` is before the CA and is ordinary HyperBus, not a mid-transaction
-  stop. The exposure is the coalescing master that stops the clock *mid*
-  transaction (`sim-audit.md` §11 `section_clock_stop`), which shares the FSM with
-  register access. Latent only because coalescing is off for correctness (#185) —
-  the "wakes when a build flag moves" class of #240.
+- **Park CK low — satisfied, and now CHECKED.**
+  [`scripts/hyperram_ck_park_check.py`](../../../scripts/hyperram_ck_park_check.py)
+  finds each PHY's CK gearing by probing every ODDR with `clk_en` all-ones, then
+  requires all phases zero with `clk_en = 0`. Both PHYs pass; `--mutate` parks
+  phase 0 High and both then fail, which is what says the check can fail at all.
+  It was true by construction and one refactor from being lost.
+- **Do not stop during register access — closed.** `HyperRAMController` exports
+  `register_active` and `ClockStopPHY.hold` ignores `stall` while it is High
+  ([#340](https://github.com/awtoau/cynthion-workspace/issues/340)).
+  `soc_hyperram_sim.py` §11b drives a master that stalls on every cycle CS# is
+  Low: before, a register write lost 4 clocks and a register read 689 and ended
+  in the tCSM watchdog; after, both lose none. Memory still loses 17, which is
+  the control that says `stall` is still connected.
+  `clk_en.eq(0)` in `CS_SETUP` is before the CA and is ordinary HyperBus, not a
+  mid-transaction stop.
 - Scale check before anyone treats this as a power feature: `ICC6` 5 mA typ /
   8 mA max against 8 mA typ / 30 mA max active — a clock gate worth ~3 mA typ
   ([`specifications.md`](specifications.md)).
