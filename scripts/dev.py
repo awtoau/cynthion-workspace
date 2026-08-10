@@ -391,6 +391,22 @@ def cmd_audit(extra: list[str]) -> int:
     return run_tool([PY, script("audit_scripts.py")], extra)
 
 
+@command("is THIS checkout buildable? (submodules, pins, vendor models)",
+         kind="meta")
+def cmd_worktree_check(extra: list[str]) -> int:
+    """Non-zero on anything a build would trip over. Run it in a fresh worktree
+    before wondering why sbt found an empty directory (#365)."""
+    return run_tool([PY, script("worktree_setup.py"), "check"], extra)
+
+
+@command("make a fresh git worktree buildable: submodules, shared not copied",
+         args="[--prune]", kind="action")
+def cmd_worktree_setup(extra: list[str]) -> int:
+    """Checks out each submodule as a linked worktree of the superproject's own
+    object store, so 30 worktrees cost 30 file trees and one history (#365)."""
+    return run_tool([PY, script("worktree_setup.py"), "setup"], extra)
+
+
 @command("reformat the Rust crates in place", kind="step")
 def cmd_fmt(_extra: list[str]) -> int:
     return cargo_fmt(check=False)
