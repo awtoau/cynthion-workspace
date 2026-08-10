@@ -58,10 +58,12 @@ Two flags, neither documented by Winbond:
 - **`-sv`** — the protected region is SystemVerilog. Verilog-2001 mode fails with
   *"syntax error in protected region"*, which reads like a decryption failure and
   is not one.
-- **`+define+T166`** (or `T85`/`T100`/`T104`/`T133`/`T200`/`T250`) —
+- **`+define+T166`** (or `T100`/`T133`/`T200`/`T250` — **those five only**) —
   `Config-AC.v`'s AC-parameter block is an `ifdef` chain over the grades **with no
   default branch**. No grade, no timing parameters, and every identifier in the
-  protected region comes up undefined.
+  protected region comes up undefined. `T85` and `T104` exist in the `tCK` chain
+  but have no AC block, so they fail exactly like no grade at all
+  ([`config-ac.md`](config-ac.md)).
 
 ### What is plaintext, and what is not
 

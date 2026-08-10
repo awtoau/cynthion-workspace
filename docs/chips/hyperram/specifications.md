@@ -85,6 +85,11 @@ Measurable on this board with the PAC1954 (#82, #84) if the rail is separable.
 | **tCSM** (max CS# low) | **4 µs**, `CR1[1:0] = 01b` |
 | `CR1[1:0]` legal values | **`01b` only** on this part *(AN 2025 §6.5.7)* |
 | tCSM, above 85 °C | 1 µs *(model, `` `define LA_85C ``)* |
+| CR1 at POR, above 85 °C | `0xffc2`, i.e. `CR1[1:0]` = `10b` *(model, same define)* |
+
+`` `define LA_85C `` moves **both** together, which makes `CR1[1:0]` a candidate
+in-band read of which tCSM applies — untested on the board, and the model does not
+say whether silicon changes it at temperature. [`config-ac.md`](config-ac.md).
 
 **Every CS# cap in this design is derived from the 4 µs figure alone** —
 `T_CSM_NS` in [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py)
@@ -148,7 +153,12 @@ falls: the valid window is squeezed from both ends, not just shortened.
 | `0000b` | 5 | 133 MHz |
 | `0001b` | 6 | 166 MHz |
 | `0010b` | 7 | 200 MHz **(POR default)**, and 250 MHz *(AN 2025)* |
-| `0011b`–`1101b` | reserved | — |
+| `0011b`–`1101b` | reserved *(datasheet)* | — |
+
+**The model names two more.** `Config-AC.v` defines `0011b` = LC8 and `0100b` = LC9,
+which the datasheet marks reserved — and `clocks = 5 + sext4(code)` holds for all
+seven ([`config-ac.md`](config-ac.md)). Neither is needed here; LC7 is already the
+minimum at any clock this board runs.
 
 `CR0[3] = 1` (POR) doubles the count — 7 becomes 14 CK before data. More latency
 is always safe at a lower clock; the frequencies are ceilings on the code, not
