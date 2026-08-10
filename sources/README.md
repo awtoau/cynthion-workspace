@@ -221,9 +221,26 @@ answers the questions the datasheet leaves to "refer to the datasheet".
 | file | pages | what it is | source |
 |---|---|---|---|
 | `Winbond-AN-HyperRAM-20250528.pdf` | **53** | **Winbond HyperRAM Application Note, rev P01, 2025-05-28** — the whole family compared generation by generation. The most useful single document about this part after the datasheet | `/resource-files/Winbond HyperRAM Application Note_20250528.pdf` |
-| `Winbond-AN-HyperRAM-Burst-Operation.pdf` | 4 | *Burst Wrapped Operation*, rev P01, 2023-09 — tCSM as a host obligation, and the wrapped-burst address sequences | `/resource-files/Application note for Burst Operation of Winbond HyperRAM_0926.pdf` |
-| `Winbond-AN-pSRAM-data-cycling-effect-20220221.pdf` | 4 | *Data Cycling Effect in pSRAM*, rev P01-001 — the DRAM-cell disturb mechanism behind the refresh scheme, with tREF vs temperature | `/resource-files/DA01-0009A1.pdf` |
+| `Winbond-AN-HyperRAM-Burst-Operation.pdf` | 4 | *Burst Wrapped Operation*, rev P01, 2023-09-25 — tCSM as a host obligation, and the wrapped-burst address sequences | `/resource-files/Application note for Burst Operation of Winbond HyperRAM_0926.pdf` |
+| `Winbond-AN-pSRAM-data-cycling-effect-20220221.pdf` | 4 | *Data Cycling Effect in pSRAM*, rev P01-001, 2020-05-19 (the `20220221` in the filename is the portal's posting date, **not** the revision) — the DRAM-cell disturb mechanism behind the refresh scheme, with tREF vs temperature | `/resource-files/DA01-0009A1.pdf` |
 | `Winbond-AN-SDP-DDP-128Mb-x8-HyperRAM.pdf` | 6 | *SDP and DDP implementation for 128Mb x8*, rev A01, 2019-11-15 — the die-select bit and what changes for a dual-die part | `/resource-files/DA01-CAA104.3A1.pdf` |
+
+#### Telling a good copy from a bad one
+
+The 10-page abridged datasheet (above) is the reason this table exists: a short PDF
+saves without error and reads as the part lacking a feature. Check **both** the page
+count and the marker string — the marker is deliberately on a late page, so a
+truncated copy fails it even when the page count is not checked.
+
+| file | pages | md5 | marker string, and where it lives |
+|---|---|---|---|
+| `Winbond-AN-HyperRAM-20250528.pdf` | 53 | `909cc96afbd4b4f23a06922a21a4d0a7` | `recommended not to stop the clock during register access` — §7.2.2, **p. 46**. Two more, earlier: `0010b - 7 Clock Latency @ 250MHz Max Frequency` (§6.4.9, p. 36) and `will have no effect on the CR1 Bit[6]` (§6.5.5.3, p. 41) |
+| `Winbond-AN-HyperRAM-Burst-Operation.pdf` | 4 | `c17bad64e416bbbdf63845a943b740bf` | `2023-09-25` in the revision history — **p. 4**. Body marker: `tCSM will be equal to the maximum distributed refresh interval` (§2, p. 1) |
+| `Winbond-AN-pSRAM-data-cycling-effect-20220221.pdf` | 4 | `0e97d1cf761504fbc0146ddd065cdcf9` | `P01-001` + `2020.5.19` in the revision history — **p. 4**. Body marker: `When temperature over 85 degrees, the tREF is 20.5ms` (§2, p. 2) |
+| `Winbond-AN-SDP-DDP-128Mb-x8-HyperRAM.pdf` | 6 | `50d51f40e7537da2123b0ca40639cb8d` | `01100 b – 13 Row address bits` — §4.9, **p. 5** (note the en-dash, and the space before it). Body marker: `Burst reads and writes are not allowed crossing die boundaries` (§4.2, p. 3) |
+
+All four md5s verified 2026-08-10 against an independent second fetch through the
+same route — byte-identical, so the URLs are stable and serve the same file.
 
 **What the 2025 app note settles** — four open questions in
 `../docs/chips/hyperram/w956a8.md`:
@@ -239,12 +256,18 @@ answers the questions the datasheet leaves to "refer to the datasheet".
   unremarked" for option 5.
 - **§6.5.7: CR1[1:0] has exactly one legal value on our part** — `01b` = 4 µs tCSM.
   `10b` (1 µs) is legal only on the 256 Mb and later parts, `00b`/`11b` reserved
-  everywhere. Shortening tCSM is not an option we have.
+  everywhere. Shortening tCSM is not an option we have, and §6.5.3 note 1 says the
+  field is **read only** anyway.
 - **§7.2.2 Active Clock Stop** is entered automatically at tACC + 30 ns of stable
   clock, read data stays latched and driven, and resumes on a toggling clock — but
-  *"must not be used in violation of the tCSM limit"* and *"not recommended … during
-  register access"*. The second clause is new; the abridged 10-page copy could not
-  answer even the first.
+  *"must not be used in violation of the tCSM limit"* and *"it is recommended not to
+  stop the clock during register access"*. That last sentence **replaces**, rather
+  than adds to, the datasheet's §10.2.2 *"recommended to stop the clock when it is in
+  Low state"* — see [`../docs/chips/hyperram/app-notes.md`](../docs/chips/hyperram/app-notes.md).
+
+Full readings, with the places the four documents contradict each other and the
+datasheet, are in
+[`../docs/chips/hyperram/app-notes.md`](../docs/chips/hyperram/app-notes.md).
 
 ### Vendor models — the Verilog one is encrypted, the HSPICE and IBIS are not
 
