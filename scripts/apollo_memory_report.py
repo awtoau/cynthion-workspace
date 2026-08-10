@@ -12,24 +12,35 @@ readable instead of requiring three `arm-none-eabi-*` invocations and arithmetic
 
 **It is measurable at all because Apollo links no heap.** There is no `malloc`,
 `free`, `_sbrk` or `.heap` section in the binary, so RAM is entirely static:
-`.data` + `.bss` + a fixed `.stack` reservation, all known at link time. Nothing
-here is an estimate except the stack headroom, which is called out as such.
+initialised data, `.bss`, and a fixed `.stack` reservation, all known at link
+time.
+
+## Totals come from `apollo_budget_check.py`
+
+Not recomputed here. Both scripts reported the same wrong figures for the same
+reason (#199) -- summing sections by *name*, on a link whose initialised data
+sits in a section called `.relocate`. One accounting, counted by address, used by
+both.
+
+Symbols are attributed the same way: an address is looked up in the section
+table, rather than trusting `nm`'s letter. `nm --size-sort` is deliberately not
+used -- it invents a size for linker-script symbols that have none, which put
+`_etext` in this report at 536,855,336 bytes and pushed `.bss` past 100% of
+itself.
 
 ## What it will not tell you
 
-**The stack high-water mark.** `.stack` is a 1024-byte *reservation*, not a
-measurement, and nothing here can see how much of it is used -- that needs the
-region filled with a pattern at reset and read back after exercising the deep
-paths (issue #74). Until then, free RAM is headroom over an unmeasured figure
-rather than spare capacity, which is why "give the leftover to a buffer" is
-unsafe.
+**The stack high-water mark.** `.stack` is a *reservation*; the measurement comes
+from `stack_probe.c` on hardware (#74) and is passed to `apollo_budget_check.py`
+with `--stack-measured`. This part has no MPU, so an overflow corrupts `.bss`
+silently rather than faulting.
 
 **Worst-case stack depth statically.** `-fstack-usage` looks like the answer and
 is not: the firmware is built `-flto=auto -flto-partition=one`, so LTO inlines
 across translation units and per-function frame sizes stop matching the frames in
 the final binary. The numbers come out individually plausible and collectively
-wrong. Disabling LTO to get them is worse -- it reclaims 2968 bytes on a part that
-is otherwise 568 bytes from its ceiling.
+wrong. Disabling LTO to get them is worse -- LTO is load-bearing for the flash
+budget, see #73.
 
     ./scripts/apollo_memory_report.py
     ./scripts/apollo_memory_report.py --board cynthion --top 20
@@ -44,58 +55,36 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import apollo_budget_check  # noqa: E402
 import arm_binutils_resolve  # noqa: E402
 from devlog import emit  # noqa: E402
 
 APOLLO = ROOT / "repos" / "apollo"
-
-# From the d11 linker script. Flash is 16 KB total with the first 2 KB reserved
-# for the saturn-v bootloader, leaving 14 KB for the application.
-ROM_BYTES = 14 * 1024
-RAM_BYTES = 4 * 1024
 
 # Anything at or above this is worth a second look on a 4 KB part: it is 1/64th
 # of all RAM in a single object.
 NOTABLE_BYTES = 64
 
 
-def sections(elf):
-    """Section sizes, from `size -A`."""
-    output = subprocess.run([arm_binutils_resolve.tool("size"), "-A", str(elf)],
-                            capture_output=True, text=True).stdout
-    found = {}
-    for line in output.splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[0].startswith("."):
-            try:
-                found[parts[0]] = int(parts[1])
-            except ValueError:
-                continue
-    return found
+def symbols(elf, sections):
+    """(name, size, kind, section) per sized object, from `nm -S`.
 
-
-def symbols(elf):
-    """(name, size, kind, section) per object, from `nm -S`.
-
-    Note the linkage letter is what LTO produced, not what the source said. A
-    lowercase 'b' means file-local *in the final binary*; the declaration may
-    well be global, with LTO having demoted it because nothing outside the
-    translation unit turned out to use it. Reading linkage off this table alone
-    misreports the source, which is worth knowing before concluding anything
-    about who can see what.
+    Attributed to a section by address. The linkage letter is what LTO produced,
+    not what the source said -- a lowercase 'b' means file-local *in the final
+    binary*, which LTO may have demoted from a global declaration.
     """
-    output = subprocess.run([arm_binutils_resolve.tool("nm"), "-S", "--size-sort", str(elf)],
+    output = subprocess.run([arm_binutils_resolve.tool("nm"), "-S", str(elf)],
                             capture_output=True, text=True).stdout
     found = []
     for line in output.splitlines():
         match = re.match(r"^([0-9a-f]+)\s+([0-9a-f]+)\s+(\S)\s+(\S+)", line)
         if not match:
             continue
-        _addr, size, kind, name = match.groups()
-        region = {"b": ".bss", "B": ".bss", "d": ".data", "D": ".data",
-                  "t": ".text", "T": ".text", "r": ".rodata",
-                  "R": ".rodata"}.get(kind)
-        found.append((name, int(size, 16), kind, region))
+        addr, size, kind, name = match.groups()
+        addr, size = int(addr, 16), int(size, 16)
+        region = next((s["name"] for s in sections
+                       if s["vma"] <= addr < s["vma"] + s["size"]), None)
+        found.append((name, size, kind, region))
     return found
 
 
@@ -142,44 +131,51 @@ def main():
     arm_binutils_resolve.report(emit, "size", "nm")
     emit()
 
-    found = sections(elf)
-    text = found.get(".text", 0)
-    data = found.get(".data", 0)
-    bss = found.get(".bss", 0)
-    stack = found.get(".stack", 0)
+    try:
+        book = apollo_budget_check.account(elf)
+    except (FileNotFoundError, ValueError) as problem:
+        print(f"cannot account for {elf}: {problem}")
+        return 1
 
-    rom_used = text + data
-    ram_used = data + bss + stack
+    rom_bytes, ram_bytes = book["rom"][1], book["ram"][1]
+    rom_used, ram_used = book["rom_used"], book["ram_used"]
+    bss = next((s["size"] for s in book["sections"] if s["name"] == ".bss"), 0)
+    stack = next((s["size"] for s in book["sections"] if s["name"] == ".stack"), 0)
 
-    emit(f"  flash  {bar(rom_used, ROM_BYTES)} {rom_used:>6} / {ROM_BYTES} "
-         f"= {100 * rom_used / ROM_BYTES:.2f}%")
-    emit(f"         .text {text}  .data {data}")
+    emit(f"  flash  {bar(rom_used, rom_bytes)} {rom_used:>6} / {rom_bytes} "
+         f"= {100 * rom_used / rom_bytes:.2f}%")
+    emit("         " + "  ".join(f"{s['name']} {s['size']}"
+                                 for s in book["flash"]))
     emit()
-    emit(f"  RAM    {bar(ram_used, RAM_BYTES)} {ram_used:>6} / {RAM_BYTES} "
-         f"= {100 * ram_used / RAM_BYTES:.2f}%")
-    emit(f"         .data {data}  .bss {bss}  .stack {stack} (reservation)")
-    emit()
-
-    free = RAM_BYTES - ram_used
-    emit(f"  {free} bytes unallocated, against a {stack}-byte stack "
-         f"reservation that is UNMEASURED (#74).")
-    emit("  That is headroom over a guess, not spare capacity -- and this "
-         "part has no MPU,")
-    emit("  so an overflow corrupts .bss silently instead of faulting.")
+    emit(f"  RAM    {bar(ram_used, ram_bytes)} {ram_used:>6} / {ram_bytes} "
+         f"= {100 * ram_used / ram_bytes:.2f}%")
+    emit("         " + "  ".join(
+        f"{s['name']} {s['size']}" + (" (reservation)" if s["name"] == ".stack"
+                                      else "")
+        for s in book["inram"]))
     emit()
 
-    objects = symbols(elf)
+    free = ram_bytes - ram_used
+    emit(f"  {free} bytes unallocated, above a {stack}-byte stack reservation "
+         f"measured at 344 (#74).")
+    emit("  This part has no MPU, so an overflow corrupts .bss silently "
+         "instead of faulting.")
+    emit()
 
-    for region, label in ((".bss", "RAM (.bss)"), (".data", "RAM (.data)"),
-                          (".text", "flash (.text)")):
-        chosen = [o for o in objects if o[3] == region]
-        chosen.sort(key=lambda o: -o[1])
+    objects = symbols(elf, book["sections"])
+    ram_sections = [s["name"] for s in book["inram"]]
+
+    for region in ram_sections + [s["name"] for s in book["flash"]
+                                  if s["name"] not in ram_sections]:
+        chosen = sorted((o for o in objects if o[3] == region),
+                        key=lambda o: -o[1])
         if not chosen:
             continue
-        emit(f"  largest in {label}:")
+        where = "RAM" if region in ram_sections else "flash"
+        emit(f"  largest in {where} ({region}):")
         for name, size, kind, _ in chosen[:args.top]:
             linkage = "global" if kind.isupper() else "local"
-            flag = "  <-- notable" if (region != ".text"
+            flag = "  <-- notable" if (where == "RAM"
                                        and size >= NOTABLE_BYTES) else ""
             emit(f"    {size:>6}  {linkage:<6} {name[:44]}{flag}")
         emit()
@@ -189,7 +185,7 @@ def main():
     # table cannot show.
     big = [(n, s) for n, s, _, r in objects
            if r == ".bss" and s >= NOTABLE_BYTES]
-    if big:
+    if big and bss:
         total = sum(s for _, s in big)
         emit(f"  {len(big)} .bss objects of {NOTABLE_BYTES}+ bytes account "
              f"for {total} of {bss} ({100 * total / bss:.0f}%).")
@@ -198,7 +194,6 @@ def main():
         emit("  that are provably exclusive can share one allocation. See "
              "#103 and #63.")
         emit()
-
 
     return 0
 

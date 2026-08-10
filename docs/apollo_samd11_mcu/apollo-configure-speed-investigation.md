@@ -27,9 +27,12 @@ title should not assert.
 
 **713.9 -> 322.2 ms at 1024-byte chunks: 2.22x against the stock release**, on the
 122880-byte fixed payload, measured on a direct USB port. Shipped as `6520707`
-(`awtoau/awto-apollo`), flash 94.92% and RAM 84.77% of a 14 KB / 4 KB part, both under
-ceilings that were never raised. Verified on hardware: IDCODE `0x21111043`, configure
-`rc=0`, `check.py` 6 passed.
+(`awtoau/awto-apollo`), on a 14 KB / 4 KB part, with the ceilings never raised.
+Verified on hardware: IDCODE `0x21111043`, configure `rc=0`, `check.py` 6 passed.
+
+The flash and RAM percentages once quoted here were the pre-#199 figures, which
+omitted `.relocate` and read as under both ceilings when both were over. Current
+numbers: `docs/chips/samd11-apollo.md` § Memory budget.
 
 Where the 391.7 ms came from, largest first:
 

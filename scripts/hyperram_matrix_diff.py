@@ -151,7 +151,15 @@ def pin_provenance(bitstream, build_dir):
         return None, None
     path = Path(bitstream).resolve()
     data = path.read_bytes()
-    identity = {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(),
+    # REPO-RELATIVE, because `results/**` is tracked and this repo is public:
+    # the absolute form named one account, one disk and one agent worktree in
+    # every record, and `scripts/private_path_check.py` is red on all of them.
+    # The sha256 is the identity; the path is only where it was found.
+    try:
+        where = str(path.relative_to(ROOT))
+    except ValueError:
+        where = path.name
+    identity = {"path": where, "sha256": hashlib.sha256(data).hexdigest(),
                 "bytes": len(data)}
     pins = hyperram_pin_patch.pin_state_of_bitstream(build_dir, path)
     emit(f"  bitstream {path.name}  sha256 {identity['sha256'][:12]}  "

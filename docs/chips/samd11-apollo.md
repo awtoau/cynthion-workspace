@@ -135,15 +135,21 @@ being told something untrue.
 
 ## Memory budget — the binding constraint on this board
 
-| | measured | of | |
-|---|---|---|---|
-| flash | **13,608 B** | 14,336 B | **94.92%** |
-| RAM | **3,472 B** | 4,096 B | **84.77%** |
-| `.text` / `.data` / `.bss` / stack | 13,608 / 0 / 2,768 / 704 | | |
-| stack high-water mark | **344 B** of 704 reserved | | |
+| | measured | of | | ceiling |
+|---|---|---|---|---|
+| flash | **13,688 B** | 14,336 B | **95.48%** | 95% — **over by 69 B** |
+| RAM | **3,552 B** | 4,096 B | **86.72%** | 85% — **over by 71 B** |
+| `.text` / `.relocate` / `.bss` / stack | 13,608 / 80 / 2,768 / 704 | | | |
+| stack high-water mark | **344 B** of 704 reserved | | | |
 
-`tmp/logs/apollo_budget_check.log`, 2026-08-02. Checked by
-`scripts/apollo_budget_check.py` (`ROM_CEILING = 0.95`).
+`arm-none-eabi-gcc` 15.2.0, `APOLLO_BOARD=cynthion` at apollo `90c8b7b6`,
+2026-08-10. Checked by `scripts/apollo_budget_check.py`; `firmware.bin` is
+13,688 bytes, which is the same number arrived at independently.
+
+**There is no `.data`.** The linker script routes `*(.data .data.*)` into
+`.relocate` — VMA in RAM, LMA in flash — so it costs 80 bytes of each. The
+figures above superseded a check that summed by section name and reported
+94.92% / 84.77%, both under their ceilings, while both were over (#199).
 
 **14 KB, not 16.** The part has 16 KiB of flash; `BOOTLOADER_SIZE := 0x800`
 reserves 2 KiB at the bottom for the Saturn-V DFU bootloader, leaving
@@ -161,8 +167,8 @@ exists: weak-alias vector tables plus `-flto` can silently resolve interrupt
 vectors to `Dummy_Handler`. The script checks the linked ELF's vector slots. That
 is a silent failure — the firmware links, flashes and mostly works.
 
-Reports: `scripts/apollo_memory_report.py`, `apollo_rom_sizing.py`,
-`apollo_stack_measure.py`.
+Reports: `scripts/apollo_memory_report.py`. (`apollo_rom_sizing.py` and
+`apollo_stack_measure.py` are retired to `debris/scripts/`.)
 
 ## Pin sharing — PA10, PA11, PA14, PA15 are shared three ways
 
@@ -301,8 +307,9 @@ generated PAC covers the *FPGA's* registers, not this part's — see
 | | |
 |---|---|
 | `scripts/apollo_budget_check.py` | flash/RAM against the ceiling |
-| `scripts/apollo_memory_report.py`, `apollo_rom_sizing.py`, `apollo_stack_measure.py` | where the bytes go |
-| `scripts/verify_vectors.py` | the LTO vector-table guard |
+| `scripts/apollo_memory_report.py` | where the bytes go |
+| `scripts/apollo_budget_levers.py` | what each way back under budget costs, built not estimated |
+| `scripts/verify_vectors.py` | the LTO vector-table guard; in `check.py` since #199 |
 | `scripts/apollo_reflash.py` | reflash over DFU |
 | [`../apollo_samd11_mcu/`](../apollo_samd11_mcu/) | code review, race conditions, DFU buffers, serial architecture, the configure-speed investigation |
 
