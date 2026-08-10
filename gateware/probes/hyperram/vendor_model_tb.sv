@@ -361,6 +361,35 @@ module tb;
     end
   endtask
 
+  // NEGATIVE CONTROL: the host waits the LONG count while the device takes the
+  // short one, and starts capturing there.
+  //
+  // That is the shape of #338's failure and it is the ONLY direction that loses
+  // data. The other way round is harmless -- a host that starts looking early
+  // just idles until the device begins, and reads the burst correctly but late.
+  // Taking 2L against the device's L starts the capture L clocks INTO the burst,
+  // so every word is off by L and the whole burst is lost. The controller's
+  // branch is an OR (`extra_latency | rwds.i.any() | fixed_latency`), so one
+  // spurious RWDS high during the CA is enough to force it.
+  task read_burst_late(input [31:0] word_addr, input integer n, input integer l);
+    integer k;
+    reg [15:0] w;
+    begin
+      burst_bad = 0;
+      drive_ca(ca(CMD_MEM_READ, word_addr));
+      // HANDLE_LATENCY, run for 2L. `drive_ca` returns half a clock past the last
+      // CA rising edge, so 2 x 2L - 1 edges lands on the 2L data edge.
+      repeat (2 * 2 * l - 1) @(clk);
+      #0.5;
+      for (k = 0; k < n; k = k + 1) begin
+        w[15:8] = adq; @(clk); #0.5;
+        w[7:0]  = adq; @(clk); #0.5;
+        if (w !== ramp(word_addr + k)) burst_bad = burst_bad + 1;
+      end
+      bus_idle;
+    end
+  endtask
+
   // CR0 with the latency field and CR0[3] set, everything else at POR.
   task set_latency(input [3:0] code, input fixed);
     begin
@@ -644,6 +673,17 @@ module tb;
     end
     $display("[tb] variable-latency bursts: %0d of %0d took 2L, %0d returned bad words",
              burst_long, BURST_HUNT_N, burst_wrong);
+
+    // The failure itself: same burst, same device, host waits 2L instead of L.
+    read_burst_late(BURST_BASE, BURST_WORDS, 7);
+    $display("[tb] host waited 2L against the device's L: %0d of %0d words wrong",
+             burst_bad, BURST_WORDS);
+    if (burst_bad >= BURST_WORDS / 2)
+      $display("[tb] PASS the long count against a short-latency device loses the burst");
+    else begin
+      $display("[tb] FAIL the negative control did not lose the burst -- it is not testing anything");
+      errors = errors + 1;
+    end
 
     set_latency(4'd2, 1'b1);              // back to POR before the tCSM section
 

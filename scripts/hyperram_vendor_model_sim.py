@@ -93,6 +93,10 @@ REQUIRED_MARKERS = (
     "PASS fix L=7 latency 14 CK",
     "PASS var L=7 latency 7 CK",
     "PASS var write = 2004",
+    # The negative control, and the only direction that loses data: a host on the
+    # long count against a device on the short one starts capturing L clocks into
+    # the burst. Both models lose all 128 words; the board loses 121-128 (#338).
+    "PASS the long count against a short-latency device loses the burst",
 )
 TCSM_MARKER = "tCSM violation"
 
