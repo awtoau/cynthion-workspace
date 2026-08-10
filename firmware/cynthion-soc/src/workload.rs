@@ -588,7 +588,10 @@ pub mod source {
     /// Start provoking the deferred job.
     pub fn start() {
         let plic = crate::plic::Plic::new(target::PLIC_BASE);
-        plic.set_priority(SOURCE, 1);
+        // The table's level for the source this borrows -- TARGET on the board,
+        // a stand-in for it under QEMU. A number here would silently demote a
+        // real source for the length of the run.
+        plic.set_priority(SOURCE, crate::irq::priority::TYPE_C);
         plic.complete(SOURCE);
         arm();
         plic.enable(SOURCE);
