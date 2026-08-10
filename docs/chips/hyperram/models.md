@@ -130,6 +130,17 @@ a correct part never misbehaves. Three parameters, each defaulting to the part �
 | `CA_RWDS_FAULT` | `0` | `1` RWDS stuck High, `2` stuck Low, `3` never driven over the CA — [#338](https://github.com/awtoau/cynthion-workspace/issues/338) |
 | `REFUSE_REG_WRITE` | `0` | `1` takes the register write and drops it — the CR0/CR1 verify path |
 
+### And it judges the two CS# bounds
+
+`T_CSM_NS` and `T_CSHI_NS` (6 ns, the fitted T166 column), each reported as an
+`ERROR ... violation` line on the CS# edge that ends the interval. These are the
+**only** judge of either bound now: `soc_hyperram_sim.py` used to judge them
+against its own copy of the number, which is what
+[#346](https://github.com/awtoau/cynthion-workspace/issues/346) closed. Both are
+proved by deliberate violation — tCSM in `vendor_model_tb.sv`, tCSHI in
+`fault_model_tb.sv` — and both runners require the line, so a monitor that stops
+detecting fails rather than reads as coverage.
+
 `fault_model_tb.sv` runs one Icarus job per knob and asserts the bus changes in
 the one way its name promises. A held fault has no tDSV, which is what separates
 `111111` from the part's `zz1111`. Nothing holds this testbench honest against
