@@ -175,10 +175,16 @@ APPLY_BIT = 1 << 16
 LATENCY_CLOCKS_BY_CODE = {14: 3, 15: 4, 0: 5, 1: 6, 2: 7}
 CR0_POWER_ON_LATENCY_CODE = (CR0_POWER_ON >> 4) & 0xF
 
-# The non-DQS controller counts HALF-clocks: its shipped constant of 14 aligns
-# with the power-on code's 7 CK, measured on the board 2026-08-10. So the count
-# the controller needs is twice the datasheet's clocks, and the mapping
-# reproduces the old default rather than replacing it. (#331)
+# The datasheet's FIXED-LATENCY DOUBLING, not a half-clock counter.
+#
+# CR0[3]=1 selects fixed latency, where the part waits 2 x the initial-latency
+# code on every transaction. The non-DQS PHY is 2:1 geared, so one controller
+# cycle IS one CK, and the shipped 14 is 2 x the power-on code's 7 -- confirmed
+# on the board 2026-08-10. `LOW_LATENCY_CLOCKS = 7` is the same L undoubled,
+# which is the variable-latency branch. (#331)
+#
+# It is 2 for the DQS path too, but the DQS controller's cycle is 2 CK, so its
+# count is `L - 1` rather than `2 * L`. See `HyperRAMDQSController`. (#314)
 CONTROLLER_CYCLES_PER_CLOCK = 2
 REG_ACTUAL      = 17
 REG_GOLDEN      = 18
@@ -237,7 +243,11 @@ def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
     `JTAGRegisterInterface` runs in `sync` plus a local JTCK domain -- so the
     constraint does not apply and the ladder gets 61 rungs instead of 3.
 
-    Returns (vco, clki_div, clkfb_div, clkop_div, clkos2_div) or None.
+    Returns (vco, clki_div, clkfb_div, clkop_div, clkos_div) or None.
+
+    `fast` is CLKOS, not CLKOS2: only CLKOP and CLKOS reach the bank edge-clock
+    input mux, and `fast` is the DQS PHY's ECLK. See `HyperRAMClocks.elaborate`
+    and #314.
     """
     # CLKI_DIV stops at 6, not 7. The ECP5's phase detector has a 10 MHz
     # minimum (FPGA-DS-02012 Table 3.23), and 60/7 = 8.57 MHz is under it --
@@ -258,8 +268,8 @@ def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
                 # failing to build.
                 if fast_ratio is not None and clkop_div % fast_ratio:
                     continue
-                clkos2 = None if fast_ratio is None else clkop_div // fast_ratio
-                return (vco, clki_div, clkfb_div, clkop_div, clkos2)
+                clkos = None if fast_ratio is None else clkop_div // fast_ratio
+                return (vco, clki_div, clkfb_div, clkop_div, clkos)
     return None
 
 
@@ -288,8 +298,8 @@ class HyperRAMClocks(Elaboratable):
                 + (" with fast at twice it" if with_fast else "")
                 + f"; VCO must land in {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz")
         (self.vco_mhz, self.clki_div, self.clkfb_div,
-         self.clkop_div, self.clkos2_div) = solved
-        self.fast_mhz = None if not with_fast else self.vco_mhz / self.clkos2_div
+         self.clkop_div, self.clkos_div) = solved
+        self.fast_mhz = None if not with_fast else self.vco_mhz / self.clkos_div
 
     def elaborate(self, platform):
         m = Module()
@@ -306,7 +316,18 @@ class HyperRAMClocks(Elaboratable):
             i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_STDBY=0, i_PLLWAKESYNC=0, i_RST=0, i_ENCLKOP=0,
-            o_CLKOP=clk_sync, o_CLKOS2=clk_fast, o_LOCK=locked,
+            # CLKOS, NOT CLKOS2 -- the edge-clock network cannot see CLKOS2.
+            #
+            # `fast` is the ECLK for `HyperRAMDQSPHY`'s ODDRX2F gearing and its
+            # DQSBUFM capture, so it must reach bank 7's edge-clock spine on
+            # dedicated routing. Each bank ECLK input mux takes exactly ten
+            # sources -- `G_J{LL,UL}CPLL0CLK{OP,OS}`, the four `G_JPCLKT{6,7}{0,1}`
+            # clock pins and two `*QECLKCIB*` fabric taps (`ECLK_L` tile,
+            # `tiledata/ECLK_L/bits.db`). CLKOS2/CLKOS3 are on the primary clock
+            # network only, so an ECLK from CLKOS2 can arrive ONLY through the
+            # fabric tap -- which nextpnr takes, with skew nobody bounded, and
+            # announces as `log_info` rather than a warning. #314
+            o_CLKOP=clk_sync, o_CLKOS=clk_fast, o_LOCK=locked,
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
             p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
@@ -315,11 +336,18 @@ class HyperRAMClocks(Elaboratable):
             p_FEEDBK_PATH="CLKOP",
             p_CLKOP_ENABLE="ENABLED", p_CLKOP_DIV=self.clkop_div,
             p_CLKOP_CPHASE=self.clkop_div - 1, p_CLKOP_FPHASE=0,
-            p_CLKOS2_ENABLE="ENABLED" if self.with_fast else "DISABLED",
-            p_CLKOS2_DIV=self.clkos2_div or 1,
-            p_CLKOS2_CPHASE=(self.clkos2_div or 1) - 1, p_CLKOS2_FPHASE=0,
+            p_CLKOS_ENABLE="ENABLED" if self.with_fast else "DISABLED",
+            p_CLKOS_DIV=self.clkos_div or 1,
+            p_CLKOS_CPHASE=(self.clkos_div or 1) - 1, p_CLKOS_FPHASE=0,
             a_ICP_CURRENT="12", a_LPF_RESISTOR="8",
             a_MFG_ENABLE_FILTEROPAMP="1", a_MFG_GMCREF_SEL="2",
+            # PINNED, and only when there is an edge clock to lose. The HyperRAM
+            # DQ/RWDS pads are all bank 7 (`iodb.json`, CABGA256), and PLL0_LL at
+            # `MIB_R50C2` is the die's ONLY left-hand PLL -- the 25F tilegrid has
+            # PLL0_LL, PLL1_LR, PLL0_LR and no UL site, so the mux's
+            # `G_JULCPLL0CLK*` entries are unreachable here. A placer that puts
+            # this PLL on the right drops `fast` back onto fabric with no error.
+            **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.with_fast else {}),
         )
 
         # Both domains held in reset until lock: a domain clocked by an unlocked
@@ -572,8 +600,9 @@ class HyperRAMCeiling(Elaboratable):
             # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
             # and left the controller's own wait welded, so only the one code
             # matching it could align and the other fifteen failed whatever the
-            # part did. The DQS path keeps its constant: its gearing gives no
-            # integral relation to Table 8, and #314 voids its results anyway.
+            # part did. The DQS path keeps its constant -- not for want of a
+            # relation (it is `L - 1`, exact for every code) but because #314
+            # voids its results until it is rebuilt on a real edge clock.
             effective_cr0 = Signal(16)
             m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0,
                                              device_cr0[:16]))
