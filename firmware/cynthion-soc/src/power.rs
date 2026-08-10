@@ -946,7 +946,7 @@ impl Monitor {
         // source whose pad is still a GPIO input floating on a pull-up.
         crate::irq::claim(
             cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
-            1,
+            crate::irq::priority::POWER_ALERT,
         );
         Ok(())
     }
