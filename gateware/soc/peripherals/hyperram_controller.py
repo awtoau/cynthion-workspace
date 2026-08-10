@@ -84,9 +84,29 @@ import math
 
 from amaranth import Cat, Const, Elaboratable, Module, Mux, Signal
 
-# CS# high between transactions, from the W956A8 datasheet. Longer than one cycle
-# at any sync above 100 MHz, which is why it cannot be left to chance.
-T_CSHI_NS = 10.0
+# Winbond's own AC parameters per speed grade, from `Config-AC.v`. tACC and tRWR
+# are ONE number under two names at every grade. `docs/chips/hyperram/config-ac.md`.
+#   grade: (tCK, tCSHI, tACC == tRWR), all ns
+GRADE_AC_NS = {
+    "T100": (10.0, 10.0, 40.0),
+    "T133": (7.5, 7.5, 37.5),
+    "T166": (6.0, 6.0, 36.0),
+    "T200": (5.0, 6.0, 35.0),
+    "T250": (4.0, 6.0, 28.0),
+}
+
+# The part on this board: a `6I` -- packaged, 3.0 V, 166 MHz. T250 is the KGD
+# block and does not describe a packaged part.
+FITTED_GRADE = "T166"
+
+# CS# high between transactions. Was 10.0, which is the T100 column applied to a
+# T166 part: safe, and a recovery cycle per transaction at sync 166. (#341)
+T_CSHI_NS = GRADE_AC_NS[FITTED_GRADE][1]
+
+# tRWR, the recovery a transaction following a write observes, measured from CS#
+# falling to first data -- not a CS#-high gap. Equal to tACC, and the reason the
+# minimum latency code exists. Implemented as `min_latency_clocks`. (#341)
+T_RWR_NS = GRADE_AC_NS[FITTED_GRADE][2]
 
 # tCSM, the longest CS# may stay Low: 4 us, W956A8 rev A01-006 Table 24, and
 # section 10 makes it the HOST's obligation. Overrunning it drops a refresh, with
@@ -104,6 +124,17 @@ T_CSM_MARGIN = 0.9
 # `scripts/hyperram_phy_rwds_sim.py`. The RWDS sample instant is derived from this,
 # so a harness with a different PHY -- or none -- must say so. (#338)
 PHY_ROUND_TRIP_CYCLES = 4
+
+
+def min_latency_code(ck_mhz, t_acc_ns=T_RWR_NS):
+    """Smallest legal CR0[7:4] latency code at this CK, in CK cycles. (#341)
+
+    `ceil(tACC / tCK)` reproduces the datasheet's minimum-code-per-frequency
+    column at all five grades, so the table is a derived quantity rather than a
+    lookup -- and this answers at frequencies nobody tabulated. tRWR == tACC, so
+    the same number covers both.
+    """
+    return max(1, math.ceil(t_acc_ns * ck_mhz / 1000.0))
 
 
 def min_read_latency_clocks(phy_round_trip_cycles=PHY_ROUND_TRIP_CYCLES):
@@ -158,7 +189,8 @@ class HyperRAMController(Elaboratable):
 
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
                  max_latency_clocks=None, fixed_latency=True,
-                 tcshi_ns=T_CSHI_NS,
+                 tcshi_ns=T_CSHI_NS, trwr_ns=T_RWR_NS,
+                 max_recovery_cycles=None,
                  phy_round_trip_cycles=PHY_ROUND_TRIP_CYCLES):
         """
         Parameters:
@@ -176,7 +208,14 @@ class HyperRAMController(Elaboratable):
                                    Defaults to `high_latency_clocks`, i.e. a fixed count.
             fixed_latency       -- True when the part takes the long latency on every
                                    transaction, which is what CR0 = 0x8f2f selects.
-            tcshi_ns            -- CS# high between transactions, in ns.
+            tcshi_ns            -- CS# high between transactions, in ns. RESET value
+                                   of `recovery_cycles`.
+            trwr_ns             -- tRWR/tACC, in ns. RESET value of
+                                   `min_latency_clocks`, the floor `latency_below_trwr`
+                                   reports against.
+            max_recovery_cycles -- Ceiling for `recovery_cycles`, which sizes it.
+                                   Defaults to the count `tcshi_ns` gives, i.e. a
+                                   lever that can only shorten the gap.
             phy_round_trip_cycles -- Sync cycles between this FSM emitting a signal
                                    and the device's answer to it arriving back. Sets
                                    WHEN the extra-latency RWDS sample is taken; see
@@ -216,6 +255,12 @@ class HyperRAMController(Elaboratable):
         # Rounded UP, and at least one: a gap shorter than tCSHI is the violation this
         # exists to prevent, so the rounding may only ever be generous.
         self._recovery_cycles = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
+        self._max_recovery_cycles = max(self._recovery_cycles,
+                                        max_recovery_cycles or 0)
+        # The floor tRWR/tACC puts under the latency, in CK. Reported, never
+        # enforced: the DEVICE waits what CR0[7:4] says, so a controller that
+        # silently waited longer would miss the data rather than fix anything.
+        self._min_latency_clocks = min_latency_code(sync_mhz, trwr_ns)
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
         # The ceiling `latency_clocks` may be driven to, which sizes it and which
@@ -297,6 +342,32 @@ class HyperRAMController(Elaboratable):
         # axis whose consumer holds a constant. (#331, #338)
         self.low_latency_clocks = Signal(range(0, self._max_latency_clocks + 1),
                                          reset=self.LOW_LATENCY_CLOCKS)
+        # tCSHI, in whole sync cycles, as RECOVERY will count it. Reset is the
+        # `tcshi_ns` arithmetic, so an undriven caller is unchanged; drive it to
+        # sweep the one parameter that binds hardest as CK rises. The gap CS# is
+        # actually High is this plus one -- RECOVERY drives CS# from its second
+        # cycle and IDLE holds it for one more.
+        #
+        # It was `self._recovery_cycles`, a constant, and so was unfalsifiable: the
+        # audit's "T_CSHI_NS = 10.0 is right" was a datasheet reading with no way to
+        # measure it. (#341)
+        self.recovery_cycles  = Signal(range(0, self._max_recovery_cycles + 1),
+                                       reset=self._recovery_cycles)
+        # The floor tRWR puts under the initial latency, in CK: `ceil(tRWR/tCK)`,
+        # which is also the datasheet's minimum CR0[7:4] at this CK because
+        # tRWR == tACC. Only `latency_below_trwr` reads it. (#341)
+        self.min_latency_clocks = Signal(range(0, self._max_latency_clocks + 1),
+                                         reset=min(self._min_latency_clocks,
+                                                   self._max_latency_clocks))
+        # The tCSM watchdog bound and the same budget in beats. Their ceiling IS
+        # the tCSM arithmetic, so the lever can only ever SHORTEN the leash --
+        # the RISC-V may test the watchdog, and cannot use it to overrun tCSM.
+        # Safety limits rather than tuning, but making them settable is what lets
+        # tCSM behaviour be tested rather than assumed. (#341)
+        self.burst_cycles     = Signal(range(0, self._burst_cycles + 1),
+                                       reset=self._burst_cycles)
+        self.burst_beats      = Signal(range(0, self._burst_beats + 1),
+                                       reset=self._burst_beats)
 
         # Status signals.
         self.idle             = Signal()
@@ -314,6 +385,15 @@ class HyperRAMController(Elaboratable):
         # per cell, which is the measurement #338 asks for and which no register
         # currently reports. Always 0 under `fixed_latency`, where nothing is asked.
         self.extra_latency    = Signal()
+        # The configured latency does not cover tRWR/tACC at this CK, so the
+        # CR0[7:4] the part is set to is illegal here. Combinational over the
+        # configuration, not per transaction: under fixed latency the count is
+        # always `latency_clocks`, and under variable the SHORT branch is the one
+        # that can be taken, so that is the binding one.
+        #
+        # tRWR was implemented nowhere and covered only by LC7 spending 7 CK --
+        # an accident, and one that goes if the code drops. (#341)
+        self.latency_below_trwr = Signal()
 
         # Data signals.
         self.read_data        = Signal(16)
@@ -323,7 +403,12 @@ class HyperRAMController(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        recovery_remaining = Signal(range(self._recovery_cycles + 1))
+        recovery_remaining = Signal(range(self._max_recovery_cycles + 1))
+
+        m.d.comb += self.latency_below_trwr.eq(
+            Mux(self.fixed_latency,
+                self.latency_clocks < self.min_latency_clocks,
+                self.low_latency_clocks < self.min_latency_clocks))
 
         #
         # Latched control/addressing signals.
@@ -422,7 +507,7 @@ class HyperRAMController(Elaboratable):
         # Arming at each `m.next = 'RECOVERY'` instead needs every transition to
         # remember to do it -- there are three, and a patch that added the line by
         # text match got two of them at the wrong indentation.
-        m.d.sync += recovery_remaining.eq(self._recovery_cycles)
+        m.d.sync += recovery_remaining.eq(self.recovery_cycles)
 
         # Armed while CS# is High: loaded before the data phase rather than at each
         # of the three edges into it, as pulp does (`hyperbus_phy.sv:308`). Counts
@@ -435,8 +520,8 @@ class HyperRAMController(Elaboratable):
         m.d.comb += [burst_expired.eq(burst_remaining == 0),
                      beat_cap.eq(beats_remaining <= 1)]
         with m.If(~self.phy.cs):
-            m.d.sync += [burst_remaining.eq(self._burst_cycles),
-                         beats_remaining.eq(self._burst_beats)]
+            m.d.sync += [burst_remaining.eq(self.burst_cycles),
+                         beats_remaining.eq(self.burst_beats)]
         with m.Else():
             with m.If(~burst_expired):
                 m.d.sync += burst_remaining.eq(burst_remaining - 1)

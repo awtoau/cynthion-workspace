@@ -102,13 +102,16 @@ class Checks:
         self.passed = 0
         self.failed: list[str] = []
 
-    def check(self, what: str, ok: bool, detail: str = "") -> bool:
+    def check(self, what: str, ok: bool, detail: str = "", why: str = "") -> bool:
+        """`detail` is the observed value and is always shown; `why` is what the
+        failure would mean and is shown only when it happens."""
         if ok:
             self.passed += 1
             log.info("  PASS  %s%s", what, f"   ({detail})" if detail else "")
         else:
-            self.failed.append(f"{what}{f' -- {detail}' if detail else ''}")
-            log.error("  FAIL  %s%s", what, f"   ({detail})" if detail else "")
+            note = "; ".join(x for x in (detail, why) if x)
+            self.failed.append(f"{what}{f' -- {note}' if note else ''}")
+            log.error("  FAIL  %s%s", what, f"   ({note})" if note else "")
         return ok
 
 
@@ -286,7 +289,7 @@ def section_tcshi_lever(checks: Checks, sync_mhz: float) -> None:
     ctl = probe(sync_mhz)
     if not checks.check("the controller has a `recovery_cycles` input",
                         lever(ctl, "recovery_cycles") is not None,
-                        "tCSHI is baked at elaboration, so it cannot be swept "
+                        why="tCSHI is baked at elaboration, so it cannot be swept "
                         "and its value is a claim nothing tests"):
         return
 
@@ -328,8 +331,9 @@ def section_tcshi_value(checks: Checks) -> None:
         # than that is a recovery cycle spent on every transaction for nothing.
         checks.check(f"sync {sync_mhz:g}: ...without spending a cycle on nothing",
                      gap <= required + 1,
-                     f"{gap} cycles where {required + 1} covers {FITTED_TCSHI_NS:g} "
-                     f"ns; 10 ns is Winbond's T100 figure and this part is T166")
+                     f"{gap} cycles where {required + 1} covers "
+                     f"{FITTED_TCSHI_NS:g} ns",
+                     why="10 ns is Winbond's T100 figure and this part is T166")
 
 
 def section_watchdog_lever(checks: Checks, sync_mhz: float) -> None:
@@ -339,7 +343,7 @@ def section_watchdog_lever(checks: Checks, sync_mhz: float) -> None:
     ctl = probe(sync_mhz)
     if not checks.check("the controller has a `burst_cycles` input",
                         lever(ctl, "burst_cycles") is not None,
-                        "the tCSM bound is baked, so tCSM behaviour is assumed "
+                        why="the tCSM bound is baked, so tCSM behaviour is assumed "
                         "rather than tested"):
         return
 
@@ -366,7 +370,7 @@ def section_latency_table(checks: Checks) -> None:
     derive = getattr(hc, "min_latency_code", None)
     if not checks.check("the controller module derives a minimum latency code",
                         callable(derive),
-                        "the code table is a lookup, so a frequency nobody "
+                        why="the code table is a lookup, so a frequency nobody "
                         "tabulated has no answer"):
         return
 
@@ -394,7 +398,7 @@ def section_trwr(checks: Checks, sync_mhz: float) -> None:
     ctl = probe(sync_mhz)
     if not checks.check("the controller reports a latency below the tRWR floor",
                         lever(ctl, "latency_below_trwr") is not None,
-                        "tRWR is implemented nowhere; LC7 covers it by accident, "
+                        why="tRWR is implemented nowhere; LC7 covers it by accident, "
                         "and the cover goes if the code drops"):
         return
     if not checks.check("...against a floor it computes itself",
