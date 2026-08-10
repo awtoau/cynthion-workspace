@@ -619,6 +619,11 @@ class HyperRAMCeiling(Elaboratable):
                     m.d.comb += psram.latency_clocks.eq(
                         CONTROLLER_CYCLES_PER_CLOCK
                         * LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE])
+            # The SHORT branch, taken when the part declines the extra latency:
+            # 1L against the fixed path's 2L, so half. Derived from the same code
+            # rather than left a constant, which is what limited `var` to codes
+            # 2 and 6 (#338).
+            m.d.comb += psram.low_latency_clocks.eq(psram.latency_clocks >> 1)
 
         # Device word address. The controller advances internally within a burst,
         # so only the start address is issued; it steps by `burst_words` scaled to

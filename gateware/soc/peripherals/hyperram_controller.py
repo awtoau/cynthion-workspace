@@ -213,6 +213,19 @@ class HyperRAMController(Elaboratable):
         # respond, so every `var` cell failed. Same defect as the latency count
         # above, same fix. (#338)
         self.fixed_latency    = Signal(reset=int(fixed_latency))
+        # The count for the SHORT branch, when the part declines the extra
+        # latency. Fixed latency is 2L and variable is 1L, so this is half
+        # `latency_clocks` -- but it is an input rather than a derivation because
+        # the derivation is the datasheet's, not the silicon's, and this rig
+        # exists to test that kind of claim.
+        #
+        # It was `LOW_LATENCY_CLOCKS = 7`, a class constant, which is why `var`
+        # passed only at codes 2 and 6 once the branch became reachable: the part
+        # elected the short latency and the controller waited a number that had
+        # nothing to do with the code. Third instance of one defect -- a swept
+        # axis whose consumer holds a constant. (#331, #338)
+        self.low_latency_clocks = Signal(range(0, self._max_latency_clocks + 1),
+                                         reset=self.LOW_LATENCY_CLOCKS)
 
         # Status signals.
         self.idle             = Signal()
@@ -414,7 +427,9 @@ class HyperRAMController(Elaboratable):
                             Mux(self.latency_clocks >= 2,
                                 self.latency_clocks - 2, 0))
                     with m.Else():
-                        m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS-2)
+                        m.d.sync += latency_clocks_remaining.eq(
+                            Mux(self.low_latency_clocks >= 2,
+                                self.low_latency_clocks - 2, 0))
 
 
             # HANDLE_LATENCY -- applies clock cycles until our latency period is over.
