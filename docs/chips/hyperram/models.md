@@ -143,8 +143,8 @@ the controller work.
 | **fixed vs variable latency (`CR0[3]`)** | yes | yes | **28 vs 14 edges, to the edge** — see below |
 | **deep power down + RESET# recovery** | yes | yes | `CR0[15] = 0`, device silent until RESET# |
 | deliberate tCSM violation | yes | yes | fires at exactly 4 us |
-| wrapped / hybrid burst (`CR0[2]`) | **not exercised** | no | |
-| refresh collision forcing 2x latency | **not exercised** | no | vendor only — the twin has no refresh |
+| **wrapped / hybrid burst (`CR0[2]`)** | yes | yes | **hybrid confirmed** — see below |
+| **refresh collision forcing 2x latency** | yes | no | vendor only — the twin has no refresh |
 | hybrid sleep, software reset | **not exercised** | no | vendor only |
 
 The twin's fidelity is bounded by this table, not by the encryption. Every row
@@ -169,6 +169,31 @@ wrongly while still passing every fixed-latency test.
 
 The twin never asks for extra latency because it has no refresh. The vendor model
 does, which is why a refresh-collision case has to run against the vendor.
+
+### Hybrid burst leaves the group; it does not circle it
+
+An 18-word wrapped read starting 13 words into a 16-word group, with `CR0[2] = 0`:
+
+    100d 100e 100f 1000 1001 1002 ... [16] = 1010  [17] = 1011
+
+So the group is covered once — critical word first, wrapping at the boundary —
+and then the burst **continues linearly into the next group** rather than going
+round again. That is what makes it useful for a cache line: the line arrives
+critical-word-first and the stream keeps going, which is option 3 in
+[`w956a8.md`](w956a8.md). `CR0[2] = 1` selects legacy wrap, which does circle.
+
+Group size is `CR0[1:0]`: 128 / 64 / 16 / 32 bytes for `00`/`01`/`10`/`11`, and
+the POR `11b` is 32 bytes = 16 words.
+
+### Latency varies transaction to transaction, and here is how often
+
+Under variable latency the device asks for 2x only when a refresh is due. Over
+200 back-to-back reads at 100 MHz against the vendor model, **2 were given the
+extra latency** — about 1%. Rare enough that a controller which mishandles it
+passes casual testing, and certain enough that it will happen in service.
+
+The twin has no refresh and never asks, so this case runs against the vendor
+model only (`+define+VENDOR_ONLY`).
 
 ### Deep power down is one bad register write away
 

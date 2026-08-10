@@ -79,6 +79,8 @@ REQUIRED_MARKERS = (
     # for -- and the RWDS level during CA is the half that #338 turns on.
     "fixed    strobe at 28 edges, RWDS during CA = 1",
     "variable strobe at 14 edges, RWDS during CA = 0",
+    "PASS wrapped burst wraps to the group start",
+    "PASS hybrid burst: leaves the group after one pass",
     "PASS device is silent in deep power down",
     "PASS CR0 after reset recovery = 8f2f",
 )
@@ -230,7 +232,7 @@ def main() -> int:
     if (WORKDIR / "work").exists():
         shutil.rmtree(WORKDIR / "work")
     run("vlib", [str(questa_bin("vlib")), "work"], env)
-    run("vlog", [str(questa_bin("vlog")), "-sv", f"+define+{args.grade}",
+    run("vlog", [str(questa_bin("vlog")), "-sv", f"+define+{args.grade}", "+define+VENDOR_ONLY",
                  model.name, TESTBENCH.name], env)
     out = run("vsim", [str(questa_bin("vsim")), "-c", "-voptargs=+acc", "tb",
                        "-do", "run -all; quit -f"], env)

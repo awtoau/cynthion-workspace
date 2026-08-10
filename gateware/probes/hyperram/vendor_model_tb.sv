@@ -21,6 +21,7 @@ module tb;
   localparam [7:0] CMD_MEM_WRITE = 8'h20;
   localparam [7:0] CMD_REG_READ  = 8'hE0;
   localparam [7:0] CMD_REG_WRITE = 8'h60;
+  localparam [7:0] CMD_MEM_READ_WRAP = 8'h80;   // CA[45] = 0 -> wrapped burst
 
   // Register space word addresses, as the datasheet's own map gives them.
   localparam [31:0] ADDR_ID0 = 32'h0000_0000;
@@ -62,6 +63,8 @@ module tb;
   reg        ca_rwds_high;      // did the device request extra latency during CA?
   integer    strobe_edges;      // edges from the end of CA to the first read strobe
   integer    fixed_edges, var_edges;
+  reg [15:0] burst [0:31];
+  integer    extra;
 
   // A HyperBus CA: command in [47:40], A[31:3] in [44:16], A[2:0] in [2:0].
   function [47:0] ca(input [7:0] cmd, input [31:0] word_addr);
@@ -189,6 +192,40 @@ module tb;
     end
   endtask
 
+  // A burst read: hunt the strobe once, then take `n` words back to back. Returns
+  // them in `burst`, which is where a wrap shows up as an address sequence rather
+  // than as a single wrong word.
+  task read_burst(input [7:0] cmd, input [31:0] word_addr, input integer n);
+    integer w;
+    begin
+      drive_ca(ca(cmd, word_addr));
+      capture_word(burst[0]);
+      for (w = 1; w < n; w = w + 1) begin
+        @(clk); #0.5; burst[w][15:8] = adq;
+        @(clk); #0.5; burst[w][7:0]  = adq;
+      end
+      bus_idle;
+    end
+  endtask
+
+  // Linear burst write of `n` words, RWDS held low so every byte commits.
+  task write_burst(input [31:0] word_addr, input [15:0] first, input integer n);
+    integer w;
+    begin
+      drive_ca(ca(CMD_MEM_WRITE, word_addr));
+      repeat (LATENCY_CK - 1) @(posedge clk);
+      adq_oe   = 1'b1;
+      rwds_oe  = 1'b1;
+      rwds_drv = 1'b0;
+      for (w = 0; w < n; w = w + 1) begin
+        @(negedge clk); #1; adq_drv = (first + w) >> 8;
+        @(posedge clk); #1; adq_drv = (first + w);
+      end
+      @(negedge clk); #1; adq_oe = 1'b0; rwds_oe = 1'b0;
+      bus_idle;
+    end
+  endtask
+
   task check(input [255:0] what, input [15:0] observed, input [15:0] expected);
     begin
       if (observed === expected)
@@ -292,6 +329,70 @@ module tb;
     bus_idle;
     read_register(ADDR_CR0, got);
     check("CR0 after reset recovery", got, 16'h8f2f);
+
+    // CR0[2] = 0 enables wrapped bursts; CA[45] = 0 asks for one. With a 32-byte
+    // (16-word) group, a wrapped read from the middle of a group runs to the end
+    // and comes back to the start -- which is what makes it useful for a cache
+    // line, and what option 3 in w956a8.md is about.
+    $display("[tb] === wrapped burst ===");
+    write_burst(32'h00_0100, 16'h1000, 32);        // 0x1000..0x101f at 0x100..0x11f,
+                                                   // two groups, so a burst that leaves
+                                                   // the first one has known data to read
+    read_burst(CMD_MEM_READ, 32'h00_0100, 4);
+    $display("[tb] linear  from 0x100: %h %h %h %h",
+             burst[0], burst[1], burst[2], burst[3]);
+    if (burst[0] === 16'h1000 && burst[1] === 16'h1001 &&
+        burst[2] === 16'h1002 && burst[3] === 16'h1003)
+      $display("[tb] PASS linear burst advances");
+    else begin
+      $display("[tb] FAIL linear burst did not advance"); errors = errors + 1;
+    end
+
+    write_register(ADDR_CR0, 16'h8f2b);            // CR0[2] = 0 -> wrapped enabled
+    read_register(ADDR_CR0, got);  check("CR0 wrapped enabled", got, 16'h8f2b);
+    // 18 words from 13 words into a 16-word group: 3 to the group end, 13 back
+    // round, and then word 16 says which kind of wrap this is. Legacy returns to
+    // the start address and goes round again; hybrid leaves the group and
+    // continues linearly. That is the distinction option 3 in w956a8.md needs.
+    read_burst(CMD_MEM_READ_WRAP, 32'h00_010d, 18);
+    $display("[tb] wrapped from 0x10d: %h %h %h %h %h %h ... [16]=%h [17]=%h",
+             burst[0], burst[1], burst[2], burst[3], burst[4], burst[5],
+             burst[16], burst[17]);
+    if (burst[0] === 16'h100d && burst[2] === 16'h100f && burst[3] === 16'h1000)
+      $display("[tb] PASS wrapped burst wraps to the group start");
+    else begin
+      $display("[tb] FAIL wrapped burst did not wrap at the group boundary");
+      errors = errors + 1;
+    end
+    if (burst[16] === 16'h1010)
+      $display("[tb] PASS hybrid burst: leaves the group after one pass");
+    else if (burst[16] === 16'h100d)
+      $display("[tb] PASS legacy burst: stays in the group");
+    else
+      $display("[tb] NOTE word 16 is %h -- neither hybrid nor legacy", burst[16]);
+    write_register(ADDR_CR0, 16'h8f2f);            // back to the POR default
+
+`ifdef VENDOR_ONLY
+    // Under variable latency the device asks for 2x only when a refresh is due,
+    // so the latency changes transaction to transaction. The twin has no refresh
+    // and cannot show this; the vendor model can, and it is the case a correct
+    // controller has to survive.
+    $display("[tb] === refresh collisions under variable latency ===");
+    write_register(ADDR_CR0, 16'h8f27);            // variable
+    extra = 0;
+    for (i = 0; i < 200; i = i + 1) begin
+      read_memory(32'h00_0100, got);
+      if (ca_rwds_high) extra = extra + 1;
+    end
+    $display("[tb] %0d of 200 reads were given the extra latency", extra);
+    if (extra > 0 && extra < 200)
+      $display("[tb] PASS latency varies transaction to transaction");
+    else begin
+      $display("[tb] FAIL extra latency was %0d of 200 -- not varying", extra);
+      errors = errors + 1;
+    end
+    write_register(ADDR_CR0, 16'h8f2f);
+`endif
 
     // tCSM is 4 us. At 100 MHz that is 400 CK, so hold CS# low for 500 and see
     // what the model says. This is the check #317 added to our controller.

@@ -48,6 +48,8 @@ module hyperram_model #(
   reg        is_read, is_register;
 
   reg        dpd;               // CR0[15] = 0; only RESET# gets out
+  reg        wrapping, hybrid;
+  reg [21:0] wrap_mask, wrap_base, wrap_count;
   reg  [7:0] write_high;
   reg [15:0] rd_word;
   reg        write_done;
@@ -178,6 +180,20 @@ module hyperram_model #(
           is_read     = ca[47];         // 1 = read
           is_register = ca[46];         // AS: 1 = register space, 0 = memory array
           word_addr   = {ca[44:16], ca[2:0]} & (MEM_WORDS - 1);
+          // CA[45] = 0 asks for a wrapped burst. Group size is CR0[1:0]:
+          // 128/64/16/32 bytes = 64/32/8/16 words, POR 11b = 32 bytes. Legacy
+          // wrap stays inside the group for ever; hybrid (CR0[2] = 0) leaves it
+          // after one pass. This models the first pass through the group.
+          wrapping    = !ca[45];
+          hybrid      = !cr0[2];        // 0 = hybrid, 1 = legacy
+          wrap_count  = 22'd0;
+          case (cr0[1:0])
+            2'b00:   wrap_mask = 22'd63;
+            2'b01:   wrap_mask = 22'd31;
+            2'b10:   wrap_mask = 22'd7;
+            default: wrap_mask = 22'd15;
+          endcase
+          wrap_base   = {ca[44:16], ca[2:0]} & ~wrap_mask;
           rwds_out    = 1'b0;
           if (is_register && !is_read) rwds_oe = 1'b0;   // host owns RWDS on a register write
         end
@@ -197,7 +213,22 @@ module hyperram_model #(
           end else begin
             dq_out   = rd_word[7:0];
             rwds_out = 1'b0;
-            if (!is_register) word_addr = word_addr + 1'b1;  // registers repeat, memory advances
+            // registers repeat; memory advances, inside the group while wrapped.
+            // Hybrid leaves the group after exactly one pass and continues
+            // linearly from the group end -- measured on the vendor model, which
+            // returns 0x1010 as word 16 of an 18-word wrapped read at 0x10d.
+            // Legacy (CR0[2] = 1) stays in the group instead.
+            if (!is_register) begin
+              if (wrapping) begin
+                wrap_count = wrap_count + 1'b1;
+                if (hybrid && wrap_count > wrap_mask) begin
+                  wrapping  = 1'b0;
+                  word_addr = wrap_base + wrap_mask + 1'b1;
+                end else
+                  word_addr = wrap_base | ((word_addr + 1'b1) & wrap_mask);
+              end else
+                word_addr = word_addr + 1'b1;
+            end
           end
         end else if (!write_done) begin
           rwds_oe = 1'b0;
