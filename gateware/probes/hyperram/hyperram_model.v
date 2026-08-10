@@ -21,12 +21,11 @@ module hyperram_model #(
     parameter [15:0] CR1_RESET = 16'hffc1,   // single-ended CK, 4 us tCSM
     parameter real   T_VCS_NS  = 150_000.0,  // power-on to ready
     parameter real   T_CSM_NS  = 4_000.0,    // max CS# low, CR1[1:0] = 01b
-    // Minimum CS# HIGH between transactions. 10 ns is the T100 column, the
-    // strictest of the five, so a controller that clears it clears every grade
-    // (T166 is 6 ns). Only place this part fact is judged; the Python models
-    // used to judge it against their own copy. docs/chips/hyperram/config-ac.md,
-    // #341, #346.
-    parameter real   T_CSHI_NS = 10.0,
+    // Minimum CS# HIGH between transactions, at the grade FITTED: a `6I` = T166,
+    // where Config-AC.v gives 6 ns. Ten was the T100 column, and #341 took it out
+    // of both controllers. The ONLY place this part fact is judged -- the Python
+    // models used to judge it against their own copy of it. (#341, #346)
+    parameter real   T_CSHI_NS = 6.0,
     // CS# low to RWDS valid. Not a timing check -- it decides WHICH CA edge
     // carries the extra-latency request, and a controller sampling earlier than
     // this samples a float. 12 ns at T166 / 3.0 V, Config-AC.v. (#338, #342)

@@ -148,6 +148,9 @@ DEFECT_CASES = (
      "CA-FIELD FAIL memory write command byte"),
     ("CA[46], the address space, flipped", ["+ca_defect=3"], {},
      "CA-FIELD FAIL memory write command byte"),
+    # 25 ns, not a round number: the controller leaves a 30 ns gap at 100 MHz and
+    # tCSHI is 6 ns at T166, so 24 leaves exactly 6 and does not violate, 25 does.
+    # Measured 2026-08-10; the run fails loudly if it stops firing.
     ("CS# released 25 ns late, eating the gap", ["+cs_hold_ns=25"], {},
      "ERROR tCSHI violation"),
     ("CS# held Low past tCSM on a burst nobody ends",
