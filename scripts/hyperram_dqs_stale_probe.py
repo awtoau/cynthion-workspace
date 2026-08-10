@@ -74,8 +74,12 @@ def expected_cr0(drive, latency, fixed):
 
 
 class Board:
-    def __init__(self):
-        self.link = soc_shell.Link.open(None)
+    def __init__(self, node=None):
+        # `node` bypasses the forwarding service on port 9000. Worth having:
+        # the service survives a reconfigure that its serial handle does not,
+        # and every read then returns EMPTY -- which reads as a board that
+        # booted and hung, not as a link that is no longer connected to it.
+        self.link = soc_shell.Link.open(node)
         self.transcript = []
         # The first prompt after a configure is the banner's, so an unprimed
         # link returns before its own reply.
@@ -189,6 +193,9 @@ def main():
                     help="run `bist latency` and tabulate every row's leaked "
                          "word against the CR1 value that cell wrote")
     ap.add_argument("--passes", type=int, default=1)
+    ap.add_argument("--node", default=None,
+                    help="serial device, bypassing the forwarding "
+                         "service on port 9000")
     args = ap.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -197,7 +204,7 @@ def main():
         handlers=[logging.StreamHandler(), logging.FileHandler(LOG, mode="w")])
     log = logging.getLogger()
 
-    board = Board()
+    board = Board(args.node)
     try:
         rung = board.send("bist ck", 8)
         found = re.search(r"rung\s+\d+\s+([\d.]+)\s+MHz", rung)

@@ -586,6 +586,16 @@ class HyperRAMCeiling(Elaboratable):
         dll_ready = Signal(reset=1)
         burstdet = Signal()
 
+        # CR0 AS IT WILL BE, for BOTH paths. Hoisted out of the branches on
+        # purpose: this used to live inside the non-DQS `else`, so the DQS build
+        # never drove `latency_clocks` or `fixed_latency` at all and both sat at
+        # their reset values while `Bist::configure` reprogrammed the PART on
+        # every cell. 32 latency cells then returned byte-identical rows -- the
+        # same defect #331 fixed on the other path, and every DQS latency row
+        # ever recorded is void because of it. See #354.
+        effective_cr0 = Signal(16)
+        m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0, device_cr0[:16]))
+
         if self.dqs:
             from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
             from peripherals.hyperram_dqs_controller import HyperRAMDQSController
@@ -601,6 +611,27 @@ class HyperRAMCeiling(Elaboratable):
                          dll_ready.eq(phy.dll_ready)]
             reset_assert = phy.phy.reset
             m.d.comb += burstdet.eq(phy.phy.burstdet)
+
+            # THE SAME SWEEP, IN THIS PATH'S UNITS. `HANDLE_LATENCY` runs
+            # `latency_clocks + 1` cycles and one cycle is 2 CK at 4:1 gearing,
+            # so the wait is `2 x (n + 1)` CK; the part's fixed latency is
+            # `2 x L`, giving `n = L - 1`. That is the relation line 194 already
+            # records and the reason the shipped constant is 6 for the power-on
+            # L of 7 -- it was right, it was simply never driven.
+            m.d.comb += psram.fixed_latency.eq(effective_cr0[3])
+            with m.Switch(effective_cr0[4:8]):
+                for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
+                    with m.Case(code):
+                        m.d.comb += psram.latency_clocks.eq(clocks - 1)
+                with m.Default():
+                    m.d.comb += psram.latency_clocks.eq(
+                        LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE] - 1)
+            # NO `low_latency_clocks` here, and it is not an oversight. The DQS
+            # controller carries `LOW_LATENCY_CLOCKS` as a class constant with no
+            # input, and `hyperram_dqs_controller.py` is #338's. So a `var` cell
+            # whose device declines the extra latency runs on that constant and
+            # cannot be steered from here -- and `L / 2` is not a whole cycle for
+            # odd L anyway, which is that controller's own recorded limit.
         else:
             bus = platform.request("ram")
             # NO PHASE INPUT, and none available: no DQSBUFM, so `readclksel`
@@ -617,12 +648,7 @@ class HyperRAMCeiling(Elaboratable):
             # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
             # and left the controller's own wait welded, so only the one code
             # matching it could align and the other fifteen failed whatever the
-            # part did. The DQS path keeps its constant -- not for want of a
-            # relation (it is `L - 1`, exact for every code) but because #314
-            # voids its results until it is rebuilt on a real edge clock.
-            effective_cr0 = Signal(16)
-            m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0,
-                                             device_cr0[:16]))
+            # part did.
             # CR0[3] too, or the controller stays welded to fixed latency while
             # the sweep moves the part into variable -- which failed every `var`
             # cell of 4096 (#338).
