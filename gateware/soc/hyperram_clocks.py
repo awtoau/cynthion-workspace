@@ -421,10 +421,12 @@ class HyperRAMDomains(Elaboratable):
             # dedicated pass and then falls back to general routing with
             # unconstrained skew. See #314.
             #
-            # No ECLKBRIDGECS: its `W2_CLKI0`/`W2_CLKI1` take `G_BANK{6,7}ECLK*`
-            # -- edge clocks that already exist -- so it bridges banks, not
-            # distance, and cannot rescue a source the input mux above rejects.
-            # The lower-left PLL feeds bank 7 directly; there is no die to cross.
+            # No ECLKBRIDGECS. Its bel pins are hardwired to the outputs of two
+            # input muxes -- `.fixed_conn W2_JCLK0_ECLKBRIDGECS1 W2_JECLKI1` and
+            # `W2_JCLK1_ECLKBRIDGECS1 S1W2_JECLKI1` in the same `bits.db` -- so
+            # it sits DOWNSTREAM of the list above and cannot rescue a source
+            # that list rejects. The lower-left PLL feeds bank 7 directly; there
+            # is no die to cross. `ECLKBRIDGECS: 0/2` is the success criterion.
             m.d.comb += ClockSignal("hr_fast").eq(clk_hr_fast)
 
         # TELL THE PLACER WHAT THESE RUN AT.
