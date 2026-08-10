@@ -981,6 +981,31 @@ def main():
               f"git says the tree is {expected.decode()}.\n"
               f"image line: {show(image_line) or '(none)'}")
 
+        # THE IMAGE UNDER TEST IS THIS COMMIT'S, asserted rather than assumed.
+        #
+        # Nothing above says which build answered. A stale ELF passes every
+        # check except the ones naming a command it predates, and then reports
+        # `unknown command` -- eight failures reading as a firmware regression
+        # when the firmware was never built (#377). `.git/HEAD` is a rerun
+        # trigger in build.rs, so the hash is trustworthy where the dirty flag
+        # is not.
+        #
+        # QEMU only, and only when this run did the building: `--board` drives
+        # whatever is flashed, and `--no-build` says in its name that the image
+        # is somebody else's.
+        if not board and not args.no_build:
+            head = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"],
+                                  cwd=ROOT, capture_output=True, text=True)
+            head = head.stdout.strip().encode()
+            check("the image under test was built from this commit",
+                  bool(head) and head in image_line,
+                  f"HEAD is {head.decode() or '(no git)'} and the image says "
+                  f"otherwise.\n"
+                  "The suite is driving a build that is not this tree's, so "
+                  "every failure\n"
+                  "below names a defect in whatever that image was.\n"
+                  f"image line: {show(image_line) or '(none)'}")
+
         check("`info` reports a block RAM budget",
               b" free of " in reply and b"text " in reply,
               "the memory line must give the sections and what is left of\n"
