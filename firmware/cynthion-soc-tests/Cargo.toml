@@ -1,0 +1,9 @@
+[package]
+name = "cynthion-soc-tests"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Host harness that runs cynthion-soc's pure-logic unit tests (#337)"
+publish = false
+
+[dependencies]
