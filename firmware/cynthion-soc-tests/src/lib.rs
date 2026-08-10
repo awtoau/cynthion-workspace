@@ -25,6 +25,9 @@
 #[path = "../../cynthion-soc/src/bist/pure.rs"]
 pub mod bist_pure;
 
+#[path = "../../cynthion-soc/src/log/format.rs"]
+pub mod log_format;
+
 #[path = "../../cynthion-soc/src/power_rails.rs"]
 pub mod power_rails;
 

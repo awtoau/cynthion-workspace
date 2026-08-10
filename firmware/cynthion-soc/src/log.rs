@@ -56,58 +56,19 @@
 //!   a reader who sees the first few lines share a stamp learns something
 //!   true: they happened before there was a clock to tell them apart.
 
-use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::timer;
 
-/// Seconds the six-digit field can show before it repeats: 11.57 days.
-///
-/// The counter behind it wraps at 49.7 days (see `MILLIS` in `src/timer.rs`), so
-/// this is what wraps first and it is the only wrap a reader will ever meet.
-const SECONDS_SPAN: u32 = 1_000_000;
+/// The two fixed-width formatters, host-testable because nothing in them reads
+/// a clock (#337).
+mod format;
 
-/// A millisecond count, formatted as `ssssss.mmm`.
-///
-/// Constructed from a stored value by `src/events.rs` and from the clock by
-/// [`now`]. Holding the number rather than formatting eagerly is what lets a
-/// deferred entry carry the time it was pushed at.
-#[derive(Clone, Copy)]
-pub struct Stamp(u32);
-
-impl Stamp {
-    /// A stamp on a millisecond count taken earlier.
-    pub const fn at(millis: u32) -> Stamp {
-        Stamp(millis)
-    }
-
-    /// The raw millisecond count, for `src/events.rs` to store.
-    pub const fn millis(&self) -> u32 {
-        self.0
-    }
-}
-
-impl fmt::Display for Stamp {
-    /// Exactly ten characters, always.
-    ///
-    /// `{:06}` and `{:03}` rather than arithmetic on the digits: the width and
-    /// the zero padding are the whole point, and a hand-rolled version is one
-    /// more place for a line to come out ragged. The modulo is what keeps the
-    /// seconds field six digits after 11.57 days rather than pushing the column
-    /// sideways.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:06}.{:03}",
-            (self.0 / 1000) % SECONDS_SPAN,
-            self.0 % 1000
-        )
-    }
-}
+pub use format::{Clock, Stamp};
 
 /// The time now, for a line about to be printed or an event about to be pushed.
 pub fn now() -> Stamp {
-    Stamp(timer::millis())
+    Stamp::at(timer::millis())
 }
 
 /// Wall-clock seconds at boot, or zero when nobody has told the board the time.
@@ -133,22 +94,6 @@ pub fn wall() -> Option<u32> {
     match WALL_AT_BOOT.load(Ordering::Relaxed) {
         0 => None,
         at_boot => Some(at_boot + timer::millis() / 1000),
-    }
-}
-
-/// The time of day, as `HH:MM:SS`, from a Unix second count.
-///
-/// Seconds within the day only -- no date. Getting to a date needs the civil
-/// calendar, and getting to a LOCAL date needs a timezone this board has no way
-/// to learn. This is `% 86400` and three `u32` divides, which is what the prompt
-/// can afford; `src/shell.rs`'s `time` command explains what a 64-bit divide
-/// costs on rv32.
-pub struct Clock(pub u32);
-
-impl fmt::Display for Clock {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let day = self.0 % 86_400;
-        write!(f, "{:02}:{:02}:{:02}", day / 3600, (day / 60) % 60, day % 60)
     }
 }
 
