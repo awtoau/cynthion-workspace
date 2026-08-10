@@ -127,7 +127,7 @@ GATEWARE_BUILT = BUILD / "gateware-digest.txt"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, spawn  # noqa: E402
-from fast_build_env import NEXTPNR_OPTS  # noqa: E402
+from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
 
 # The recorder every build goes through. Area, timing and the full configuration
 # land in Postgres from one unconditional call below, so there is no way to
@@ -835,6 +835,9 @@ def main():
         # shell command rather than a bare exec.
         build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
                  f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
+                 # Inherited too, but stated here so the log line carries the whole
+                 # toolchain contract. It is correctness, not speed -- see #306.
+                 f'YOSYS_MAX_THREADS="{YOSYS_MAX_THREADS}" '
                  f'python3.15t {GATEWARE} --build --firmware {firmware} '
                  f'--bootloader {BOOT_BIN}')
         # SKIP IT ENTIRELY when the sources have not changed.

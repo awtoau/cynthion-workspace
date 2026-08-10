@@ -50,6 +50,20 @@ Note it caps itself at 16 threads regardless of what `--threads` says, and 8 giv
 the same result. **31 cores are not the binding constraint** -- this design is too small to
 use them. Do not expect more cores to help.
 
+## Why yosys is pinned to one thread
+
+`YOSYS_MAX_THREADS=1`, and this one is correctness rather than speed. Measured
+2026-08-10 on one `top.il` of the shipping SoC, 12 runs each (#306):
+
+    yosys as installed      2 aborts in 12, and 1 run wrote a DIFFERENT netlist
+                            (11496 against 11733 LUT4) -- no error either way
+    YOSYS_MAX_THREADS=1     12 of 12 identical, same top.json digest
+
+Solo wall clock is the same to within noise (72/71 s against 69/74 s), so the
+threads were buying nothing here. The failure mode is what matters: a run that
+silently synthesises a different netlist is a bitstream nobody knows is
+different.
+
 ## The synthesis flag, and why it is NOT enabled by default
 
 `synth_ecp5 -run :check` skips `autoname`, which profiling showed is **27.9% of yosys
@@ -81,8 +95,16 @@ import sys
 #   --router router2    recovers the Fmax that --parallel-refine alone gives up
 NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
 
+# yosys runs SINGLE-THREADED here, and it is not a performance decision.
+#
+# Its threads are unsound on this design: 12 runs of one `top.il` gave 2 aborts
+# and one silently DIFFERENT netlist; the same 12 with this set gave 12 identical
+# ones, at the same wall clock. Evidence and the mechanism are in #306.
+YOSYS_MAX_THREADS = "1"
+
 OVERRIDES = {
     "AMARANTH_nextpnr_opts": NEXTPNR_OPTS,
+    "YOSYS_MAX_THREADS": YOSYS_MAX_THREADS,
 }
 
 
