@@ -131,6 +131,13 @@ REG_CTRL_STATE  = 29   # the HyperBus controller's own FSM state
 # CR0 AS THE PART REPORTS IT, not as the host asked for it. The one
 # register that can say whether a configuration write landed.
 REG_DEVICE_READBACK = 30
+# CR1 AS THE PART REPORTS IT. Winbond's application note (rev P01, s6.5.5) makes
+# this a CAPABILITY probe, not only a liveness check: on a part that does not
+# support a differential clock, "write CR1 Bit[6] to 0 will have no effect on the
+# CR1 Bit[6]". So the readback answers whether the mode took. Without it the
+# dif/se axis reported "no effect" across all 4096 cells with nothing showing the
+# axis had moved -- indistinguishable from an unapplied write. (#334, #336)
+REG_DEVICE_READBACK_CR1 = 31
 
 # Combinations the sweep walks: capture phase 0-7 against CR0 drive code 0-7.
 SWEEP_PHASES = 8
@@ -721,6 +728,7 @@ class HyperRAMCeiling(Elaboratable):
 
         # What the PART says CR0 is, read back after configuring it.
         device_readback = Signal(32)
+        device_readback_cr1 = Signal(32)
 
 
         # DID THE RUN FINISH. `harness.done` used to be an expression over
@@ -883,6 +891,25 @@ class HyperRAMCeiling(Elaboratable):
                              config_address.eq(CR0_ADDRESS)]
                 with m.If(psram.read_ready):
                     m.d.sync += device_readback.eq(psram.read_data)
+                with m.If(psram.idle):
+                    m.next = "CONFIG_VERIFY_CR1"
+
+            # READ CR1 BACK, the same handshake against the other register.
+            # CR1[6] is the clock mode and the part is allowed to IGNORE a write
+            # it does not support, so this is the only way to tell "the axis has
+            # no effect" from "the axis never moved". (#334)
+            with m.State("CONFIG_VERIFY_CR1"):
+                m.d.comb += [configuring.eq(1), last.eq(1),
+                             config_address.eq(CR1_ADDRESS),
+                             start.eq(psram.idle)]
+                with m.If(~psram.idle):
+                    m.next = "CONFIG_VERIFY_CR1_WAIT"
+
+            with m.State("CONFIG_VERIFY_CR1_WAIT"):
+                m.d.comb += [configuring.eq(1), last.eq(1),
+                             config_address.eq(CR1_ADDRESS)]
+                with m.If(psram.read_ready):
+                    m.d.sync += device_readback_cr1.eq(psram.read_data)
                 with m.If(psram.idle):
                     m.next = "WRITE_START"
 
@@ -1094,6 +1121,8 @@ class HyperRAMCeiling(Elaboratable):
         harness.add_read_only_register(REG_FSM_STATE, read=engine.state)
         harness.add_read_only_register(REG_DEVICE_READBACK,
                                        read=device_readback)
+        harness.add_read_only_register(REG_DEVICE_READBACK_CR1,
+                                       read=device_readback_cr1)
 
         # The controller's HANDSHAKE, not its FSM state. Amaranth's FSM carries
         # no readable `state` attribute here and adding one broke

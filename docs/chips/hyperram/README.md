@@ -7,6 +7,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
 | [bist-plan.md](bist-plan.md) | **the method** — what to measure, the matrix, and the rule that makes a result admissible |
 | [survey.md](survey.md) | **everyone else** — nineteen open HyperBus controllers in RTL, the software and SoC drivers above them, and the simulation models |
+| [models.md](models.md) | **the part without the board** — Winbond's own model, the open twin, and the testbench that holds them equal |
 | [2026-08-10-audit.md](2026-08-10-audit.md) | **our own faults** — six found, three fixed, and why no measurement survives |
 
 ## Read the plan before trusting a number

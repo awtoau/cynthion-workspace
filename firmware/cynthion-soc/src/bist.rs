@@ -90,6 +90,12 @@ pub mod reg {
     /// and 15 are legal and 3..13 are RESERVED. 2 is the power-on default and 6
     /// is that default with one bit flipped.
     pub const DEVICE_READBACK: usize = 30;
+    /// CR1 as the part reports it. Winbond's application note (rev P01, s6.5.5):
+    /// a part without differential-clock support silently DISCARDS a write to
+    /// `CR1[6]`, so the readback is a capability probe and not only a liveness
+    /// check. Without it "the dif/se axis has no effect" and "the dif/se axis
+    /// never moved" are the same measurement. (#334, #336)
+    pub const DEVICE_READBACK_CR1: usize = 31;
 }
 
 /// `REG_CONTROL` bits, from `BISTHarness`.
@@ -470,6 +476,22 @@ impl Bist {
             back, (back >> 4) & 0xf,
             if back & 8 != 0 { "fixed" } else { "variable" },
             (back >> 12) & 0x7);
+        // CR1[6] IS A CAPABILITY, not a setting. The vendor's application note
+        // (rev P01, s6.5.5) says a part without differential-clock support
+        // silently discards a write to this bit -- so the readback is the only
+        // thing that separates "the axis has no effect" from "the axis never
+        // moved", which are the same measurement without it (#334, #336).
+        let cr1 = self.read(reg::DEVICE_READBACK_CR1) & 0xffff;
+        let _ = writeln!(
+            uart, "  CR1     part reports {:#06x}  clock {}  hybrid sleep {}",
+            cr1,
+            if cr1 & (1 << 6) != 0 { "single-ended" } else { "differential" },
+            if cr1 & (1 << 5) != 0 { "ON -- the part is asleep" } else { "off" });
+        if cr1 == 0 || cr1 == 0xffff {
+            let _ = writeln!(uart,
+                "  CR1     READBACK IS {:#06x} -- so the dif/se axis cannot be \
+                 judged in either direction", cr1);
+        }
         if back == 0 || back == 0xffff {
             let _ = writeln!(uart,
                 "  CR0     READBACK IS {:#06x} -- the register read path is not \

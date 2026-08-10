@@ -398,90 +398,16 @@ option 4 in [`w956a8.md`](w956a8.md).
 | [GVSoC `hyperram`](https://github.com/gvsoc/gvsoc-core/blob/main/models/devices/hyperbus/hyperram.py) | Python wrapper over C++ | Apache-2.0 | models an S27KS0641; the behaviour is in `hyperram_impl`, not the Python |
 | Winbond `W956X8MBY_verilog_p.zip` | SystemVerilog, encrypted | Winbond | **the golden model** — full register space, timing checks, DPD/hybrid-sleep/reset states. Runs under Diamond's Questa; see below |
 
-## The vendor model runs — Diamond ships the key that decrypts it
+## The vendor model runs, and it is the only one with a register space
 
-`W956A8MBYA.modelsim.vp` carries one key block and only one:
+nafarr, sergz72 and GVSoC all stop at the array and the CA — none answers a
+register read with plausible contents. Winbond's does, and **Diamond 3.14 bundles
+the Questa build that holds the key it is encrypted to**, so it runs here.
 
-    `pragma protect data_method  = "aes128-cbc"
-    `pragma protect key_keyowner = "Mentor Graphics Corporation"
-    `pragma protect key_keyname  = "MGC-VERIF-SIM-RSA-1"
-
-Icarus, Verilator, cocotb, GHDL and Yosys can never read that, and neither can Aldec
-Active-HDL — a different vendor key. The siblings `W956A8MBYA.vcs.vp` and `.nc.vp`
-are the Synopsys and Cadence builds of the same model.
-
-**Diamond 3.14 bundles Questa Sim Lattice OEM Edition, a Siemens build, which holds
-the key.** Run it with `scripts/hyperram_vendor_model_sim.py`; the whole thing takes
-under a second.
-
-Two flags are needed and Winbond documents neither:
-
-- **`-sv`.** The protected region is SystemVerilog. In Verilog-2001 mode vlog stops
-  with *"syntax error in protected region"*, which reads like a decryption failure
-  and is not one.
-- **`+define+T166`** (or `T85`/`T100`/`T104`/`T133`/`T200`/`T250`). `Config-AC.v`'s
-  AC-parameter block is an `ifdef` chain over the grades **with no default branch**,
-  so with no grade defined it declares no timing parameters at all and every
-  identifier in the protected region is undefined.
-
-### What it reports, and why that matters
-
-At power-up, unprompted:
-
-    ==>ID_REG0     : (0x0c86)      ==>CONFIG_REG0 : (0x8f2f)
-    ==>ID_REG1     : (0x0001)      ==>CONFIG_REG1 : (0xffc1)
-    Manufacturer: Winbond (4'b0110)   col addr bits: 9   row addr bits: 13
-    hyperbus X8 mode / Power supply 3V Device / Single Die mode -- 64Mb
-    DIE0 address: 'h3F_FFFF ~ 'h00_0000
-
-**Every one of those matches the board.** A register read driven over the bus returns
-`0c 86` after exactly 14 CK, with the model narrating its own decode — *"The decode
-command: Read Register ID0"*, *"Latency type: 1 (fixed), Latency code: 7, Latency
-count: 14"*. So the values in [`w956a8.md`](w956a8.md) now have a second,
-independent source that is not the board and not the datasheet prose.
-
-`scripts/hyperram_vendor_model_sim.py` asserts all four registers plus the bus read
-and exits non-zero on a mismatch, so it is a regression rather than a demo. The
-testbench is `gateware/probes/hyperram/vendor_model_tb.sv`.
-
-**It was the only model that implements the register space.** nafarr, sergz72 and
-GVSoC all model the array and the CA and none answers a register read with plausible
-contents. So we wrote one — see below.
-
-### Encryption stops us reading it; it does not stop us checking against it
-
-`gateware/probes/hyperram/hyperram_model.v` is an open twin in plain Verilog that
-Icarus, Verilator and cocotb all run. It is not a translation of the vendor model —
-nobody has seen that source — it is written to the datasheet and then **held to the
-vendor model's behaviour by sharing one testbench**. `vendor_model_tb.sv`
-instantiates whatever `` `DUT_MODULE `` names, so:
-
-    scripts/hyperram_vendor_model_sim.py                # runs both, requires them to agree
-    scripts/hyperram_vendor_model_sim.py --sim icarus   # open twin only, no Diamond needed
-
-Both report the same eight passes and the same deliberate tCSM violation. That is
-the answer to "we cannot decrypt it": you do not need the source, you need the
-behaviour, and the behaviour is observable.
-
-**Three bugs the shared testbench caught in one sitting**, each of which would have
-read as a hardware fault on the board:
-
-- **RWDS is driven high during CA** — the extra-latency request, not the read
-  strobe. A controller that hunts for the strobe from CS# low latches onto it and
-  samples a tristate bus.
-- **A register write must present its first data byte on the very next edge after
-  the CA.** One edge late and the device latches the idle bus as the high byte,
-  which lands `CR0[15] = 0` and puts the part into **deep power down** — after
-  which every later transaction fails for a reason that has nothing to do with the
-  code that caused it.
-- **A write byte commits on RWDS strictly low, not merely "not high".** A host that
-  releases RWDS with its data leaves it floating, and treating that as unmasked
-  stores `z` into the next address — surfacing much later as a corrupt word nowhere
-  near the transaction that wrote it.
-
-The twin covers protocol and contents. It is **not** a timing model: setup/hold,
-tRWR, tRP and the power-state machine stay the vendor's job, which is why the pair
-is the deliverable rather than either one alone.
+That model, the open twin written against it, how to run either, and the three
+protocol facts the pairing established are [`models.md`](models.md). The short
+version for this page: encryption stops us reading the source, not checking the
+behaviour, so the row above is a usable reference model rather than a dead end.
 
 **The plaintext half is worth having independently.** `Config-AC.v` ships unencrypted
 in the same zip with the full AC parameter set per grade, including a **250 MHz**
