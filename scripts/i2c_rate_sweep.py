@@ -53,9 +53,10 @@ LADDER = [11, 5, 3, 2, 1, 0]
 BUSES = ["power", "target", "aux"]
 
 # What each bus's device is known to answer, so a self-consistent wrong value
-# cannot pass. PAC1954 manufacturer id 0xfe; FUSB302B device id 0x01, whose
-# value is a revision and so is only checked for consistency.
-KNOWN = {"power": 0x54}
+# cannot pass: PAC1954 manufacturer id, and the FUSB302B device id both report
+# on the rungs that work. 0xff is the signature this catches -- an undriven bus
+# reads all-ones, stably, and `soak` alone calls that CLEAN.
+KNOWN = {"power": 0x54, "target": 0x91, "aux": 0x91}
 
 RESULT = re.compile(
     r"(\d+) reads\s+(\d+) bus errors\s+(\d+) wrong values\s+expected ([0-9a-f]{2})")
