@@ -80,6 +80,8 @@ from luna.gateware.interface.psram import HyperRAMPHY
 
 from peripherals import hyperram_controller
 from peripherals.hyperram_controller import HyperRAMController
+from peripherals.hyperram_dqs_controller import (
+    low_latency_clocks as dqs_low_latency_clocks)
 
 from bist import BISTAddresses, BISTHarness
 
@@ -621,20 +623,27 @@ class HyperRAMCeiling(Elaboratable):
             # `2 x L`, giving `n = L - 1`. That is the relation line 194 already
             # records and the reason the shipped constant is 6 for the power-on
             # L of 7 -- it was right, it was simply never driven.
+            # BOTH counts, from the same code. The short one was a class
+            # constant nothing here could drive, so a `var` cell whose device
+            # declined the extra latency waited 8 CK at every code and no code
+            # was right. `low_latency_clocks()` holds the rounding an odd L
+            # forces on the 4:1 gearing. (#380)
             m.d.comb += psram.fixed_latency.eq(effective_cr0[3])
             with m.Switch(effective_cr0[4:8]):
                 for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
                     with m.Case(code):
-                        m.d.comb += psram.latency_clocks.eq(clocks - 1)
+                        m.d.comb += [
+                            psram.latency_clocks.eq(clocks - 1),
+                            psram.low_latency_clocks.eq(
+                                dqs_low_latency_clocks(clocks)),
+                        ]
                 with m.Default():
-                    m.d.comb += psram.latency_clocks.eq(
-                        LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE] - 1)
-            # NO `low_latency_clocks` here, and it is not an oversight. The DQS
-            # controller carries `LOW_LATENCY_CLOCKS` as a class constant with no
-            # input, and `hyperram_dqs_controller.py` is #338's. So a `var` cell
-            # whose device declines the extra latency runs on that constant and
-            # cannot be steered from here -- and `L / 2` is not a whole cycle for
-            # odd L anyway, which is that controller's own recorded limit.
+                    power_on = LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE]
+                    m.d.comb += [
+                        psram.latency_clocks.eq(power_on - 1),
+                        psram.low_latency_clocks.eq(
+                            dqs_low_latency_clocks(power_on)),
+                    ]
         else:
             bus = platform.request("ram")
             # NO PHASE INPUT, and none available: no DQSBUFM, so `readclksel`

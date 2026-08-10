@@ -142,9 +142,10 @@ def check_units(log):
     return bad
 
 
-# The two controller inputs that decide when a read is sampled. Both must be
-# driven on BOTH paths; one branch driving them is the whole of #354.
-REQUIRED = ("latency_clocks", "fixed_latency")
+# The controller inputs that decide when a read is sampled. All must be driven on
+# BOTH paths; one branch driving them is the whole of #354 -- and of #380, where
+# the DQS branch drove two of the three and said so in a comment.
+REQUIRED = ("latency_clocks", "fixed_latency", "low_latency_clocks")
 
 
 def driven_in(branch):

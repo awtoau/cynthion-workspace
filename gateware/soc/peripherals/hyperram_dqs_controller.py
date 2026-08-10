@@ -66,6 +66,18 @@ from . import hyperram_controller
 T_CSHI_NS = hyperram_controller.T_CSHI_NS
 T_RWR_NS = hyperram_controller.T_RWR_NS
 
+
+def low_latency_clocks(latency_ck):
+    """`low_latency_clocks` for a device that DECLINES the extra latency. (#380)
+
+    It serves after L CK and `HANDLE_LATENCY` waits `2 x n + 2`, so only EVEN
+    waits exist here and an odd L cannot be met -- a real limit of the 4:1
+    gearing. Rounded DOWN: a wait past the first data word loses it, which is
+    #381's `128 - L` shape, while a short one enters READ_DATA before the strobe.
+    """
+    return max(0, latency_ck // 2 - 1)
+
+
 # tCSM, the longest CS# may stay Low: 4 us, W956A8 rev A01-006 Table 24, and
 # section 10 makes it the HOST's obligation. Overrunning it drops a refresh, with
 # no error at the transaction that caused it.
@@ -107,9 +119,9 @@ class HyperRAMDQSController(Elaboratable):
     # `HIGH_LATENCY_CLOCKS` with `bootram.HYPERRAM_LATENCY_CLOCKS`. 5 is `L - 1`
     # for L = 6; this part powers up at L = 7 and wants 6.
     #
-    # LOW is the variable-latency branch (1 x L CK), which is dead while
-    # `fixed_latency` is True -- and cannot be exact for an odd L anyway, since
-    # L / 2 is not a whole cycle. Only the doubled count divides evenly.
+    # LOW is only the RESET value of `low_latency_clocks` now. It was a class
+    # constant with no input, so the short branch waited 8 CK at every latency
+    # code and no code was right. See `low_latency_clocks`. (#380)
     LOW_LATENCY_CLOCKS  = 3
     HIGH_LATENCY_CLOCKS = 5
 
@@ -212,6 +224,13 @@ class HyperRAMDQSController(Elaboratable):
         # CR0[3] as the part is set to; see the non-DQS controller. Was
         # `int(self._fixed_latency)`, which made the variable path dead (#338).
         self.fixed_latency    = Signal(reset=int(fixed_latency))
+        # The count for the SHORT branch, when the part declines the extra
+        # latency. An input rather than a derivation for the reason the non-DQS
+        # twin gives: the derivation is the datasheet's, not the silicon's.
+        # `low_latency_clocks()` is what a caller should drive it with. (#380)
+        self.low_latency_clocks = Signal(
+            range(0, self._max_latency_clocks + 1),
+            reset=min(self.LOW_LATENCY_CLOCKS, self._max_latency_clocks))
         # The same three levers the non-DQS twin grew, same reasons, same reset
         # values. `recovery_cycles` is tCSHI in whole `sync` cycles; the burst
         # bounds are the tCSM watchdog and can only be shortened. (#341)
@@ -254,8 +273,14 @@ class HyperRAMDQSController(Elaboratable):
 
         recovery_remaining = Signal(range(self._max_recovery_cycles + 1))
 
+        # Under `var` the SHORT branch is the one that can be taken, so it is the
+        # binding count -- the same reading the non-DQS twin makes. It reported
+        # against the long count in both modes while the short one was a constant
+        # nothing could reach. (#341, #380)
         m.d.comb += self.latency_below_trwr.eq(
-            (2 * self.latency_clocks + 2) < self.min_latency_clocks)
+            Mux(self.fixed_latency,
+                (2 * self.latency_clocks + 2) < self.min_latency_clocks,
+                (2 * self.low_latency_clocks + 2) < self.min_latency_clocks))
 
         #
         # Latched control/addressing signals.
@@ -433,7 +458,7 @@ class HyperRAMDQSController(Elaboratable):
                               | self.fixed_latency):
                         m.d.sync += latency_clocks_remaining.eq(self.latency_clocks)
                     with m.Else():
-                        m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS)
+                        m.d.sync += latency_clocks_remaining.eq(self.low_latency_clocks)
 
 
             # HANDLE_LATENCY -- applies clock cycles until our latency period is over.
