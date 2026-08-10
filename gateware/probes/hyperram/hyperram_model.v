@@ -20,7 +20,11 @@ module hyperram_model #(
     parameter [15:0] CR0_RESET = 16'h8f2f,   // 7-clock fixed latency, 34 ohm, 32-byte wrap
     parameter [15:0] CR1_RESET = 16'hffc1,   // single-ended CK, 4 us tCSM
     parameter real   T_VCS_NS  = 150_000.0,  // power-on to ready
-    parameter real   T_CSM_NS  = 4_000.0     // max CS# low, CR1[1:0] = 01b
+    parameter real   T_CSM_NS  = 4_000.0,    // max CS# low, CR1[1:0] = 01b
+    // CS# low to RWDS valid. Not a timing check -- it decides WHICH CA edge
+    // carries the extra-latency request, and a controller sampling earlier than
+    // this samples a float. 12 ns at T166 / 3.0 V, Config-AC.v. (#338, #342)
+    parameter real   T_DSV_NS  = 12.0
 ) (
     inout  wire [7:0] adq,
     input  wire       clk,
@@ -69,7 +73,7 @@ module hyperram_model #(
     reg [7:0] base;
     begin
       code = cr0_v[7:4];
-      base = (code >= 4'd14) ? (8'd5 + {4'hF, code} - 8'd16) : (8'd5 + code);
+      base = (code >= 4'd14) ? (code - 4'd11) : (code + 4'd5);
       latency_ck = cr0_v[3] ? (base * 2) : base;
     end
   endfunction
@@ -154,6 +158,23 @@ module hyperram_model #(
     t_cs_fall  = $realtime;
   end
 
+  // The extra-latency request. RWDS over the CA period is the ONLY thing that
+  // says 1x or 2x with CR0[3] = 0 -- and it is not driven until tDSV, so the
+  // first CA edge or two carry a float, not an answer. The vendor model shows
+  // `zz1111` for fixed and `zz0000` for variable at 100 MHz.
+  //
+  // This model has no refresh, so with CR0[3] = 0 it never asks for the extra
+  // latency. A refresh collision is the one case that makes a variable-latency
+  // transaction take 2L, and it stays the vendor model's alone. (#338, #342)
+  always @(negedge csb) begin
+    rwds_oe = 1'b0;
+    #(T_DSV_NS);
+    if (!csb) begin
+      rwds_out = cr0[3];
+      rwds_oe  = 1'b1;
+    end
+  end
+
   always @(posedge csb) begin
     dq_oe   = 1'b0;
     rwds_oe = 1'b0;
@@ -166,16 +187,9 @@ module hyperram_model #(
   always @(posedge clk or negedge clk) begin
     if (!csb && ready && resetb && !dpd) begin
       if (beat < 16'd6) begin
-        // Command-Address, most significant byte first.
+        // Command-Address, most significant byte first. RWDS is driven by the
+        // tDSV block above and stays put for the whole CA -- it is the request.
         ca = {ca[39:0], adq};
-        rwds_oe  = 1'b1;
-        // RWDS during CA is the extra-latency request, and it only carries
-        // information under variable latency: with CR0[3] = 1 the answer is
-        // always 2x and the device says so every time. Variable and no refresh
-        // pending means 1x -- this model has no refresh, so it never asks for
-        // more. Vendor model, measured: fixed 28 edges to the strobe with RWDS
-        // high, variable 14 edges with RWDS low.
-        rwds_out = cr0[3];
         if (beat == 16'd5) begin
           is_read     = ca[47];         // 1 = read
           is_register = ca[46];         // AS: 1 = register space, 0 = memory array
@@ -194,11 +208,15 @@ module hyperram_model #(
             default: wrap_mask = 22'd15;
           endcase
           wrap_base   = {ca[44:16], ca[2:0]} & ~wrap_mask;
-          rwds_out    = 1'b0;
-          if (is_register && !is_read) rwds_oe = 1'b0;   // host owns RWDS on a register write
+          // The request is NOT withdrawn here -- it stands for the whole CA, which
+          // is what the vendor model shows (`zz1111` / `zz0000` across the six CA
+          // edges). It is dropped in the latency branch below.
+          if (!is_read) rwds_oe = 1'b0;   // on any write the HOST owns RWDS from here
         end
-      end else if (beat >= first_data_beat(is_register && !is_read) +
-                           (is_read ? 16'd1 : 16'd0)) begin
+      end else if (beat < first_data_beat(is_register && !is_read) +
+                          (is_read ? 16'd1 : 16'd0)) begin
+        rwds_out = 1'b0;                // latency period: the request is answered
+      end else begin
         // A read starts one edge later than a write at the same latency -- the
         // device has to turn the bus around. Measured against the vendor model:
         // 28 edges to the strobe at 14 CK fixed, 14 at 7 CK variable.
