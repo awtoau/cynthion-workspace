@@ -21,6 +21,11 @@ module hyperram_model #(
     parameter [15:0] CR1_RESET = 16'hffc1,   // single-ended CK, 4 us tCSM
     parameter real   T_VCS_NS  = 150_000.0,  // power-on to ready
     parameter real   T_CSM_NS  = 4_000.0,    // max CS# low, CR1[1:0] = 01b
+    // Minimum CS# HIGH between transactions, at the grade FITTED: a `6I` = T166,
+    // where Config-AC.v gives 6 ns. Ten was the T100 column, and #341 took it out
+    // of both controllers. The ONLY place this part fact is judged -- the Python
+    // models used to judge it against their own copy of it. (#341, #346)
+    parameter real   T_CSHI_NS = 6.0,
     // CS# low to RWDS valid. Not a timing check -- it decides WHICH CA edge
     // carries the extra-latency request, and a controller sampling earlier than
     // this samples a float. 12 ns at T166 / 3.0 V, Config-AC.v. (#338, #342)
@@ -74,6 +79,9 @@ module hyperram_model #(
 
   reg        ready = 1'b0;
   realtime   t_cs_fall;
+  // Last CS# rise. Starts far in the past so the first transaction of a run is
+  // not judged against a gap that never existed.
+  realtime   t_cs_rise = -1.0e9;
 
   // Transaction state. `beat` counts clock edges from CS# falling; the CA occupies
   // the first six, one byte per edge.
@@ -223,6 +231,9 @@ module hyperram_model #(
     write_done = 1'b0;
     served     = 0;
     t_cs_fall  = $realtime;
+    if (($realtime - t_cs_rise) < T_CSHI_NS)
+      $display("%m: ERROR tCSHI violation. The CE HIGH period is %0.3f ns, it should be larger than %0.3f ns",
+               $realtime - t_cs_rise, T_CSHI_NS);
     xact_count = xact_count + 1;
     // Decided at CS# falling, before tDSV, and held for the whole transaction --
     // the device cannot change its mind once the CA has been answered.
@@ -250,8 +261,9 @@ module hyperram_model #(
   end
 
   always @(posedge csb) begin
-    dq_oe   = 1'b0;
-    rwds_oe = 1'b0;
+    dq_oe     = 1'b0;
+    rwds_oe   = 1'b0;
+    t_cs_rise = $realtime;
     if (($realtime - t_cs_fall) > T_CSM_NS)
       $display("%m: ERROR tCSM violation. The CE LOW period is %0.3f ns, it should be smaller than %0.3f ns",
                $realtime - t_cs_fall, T_CSM_NS);

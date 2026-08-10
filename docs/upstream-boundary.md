@@ -174,9 +174,10 @@ measurement a comparison of two different instruments (#215, split out of #208).
   keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers now
   hold it, counted from the caller's `sync_mhz` so it follows the clock. It used to be
   held outside the controller by `hyperram_ceiling_top.py` and by nothing at all in
-  `bootram.py`. `scripts/soc_hyperram_sim.py` sections 4 and 4b assert that upstream's
-  controller violates it back-to-back and that ours does not — the negative control is
-  upstream's own class, through the same harness.
+  `bootram.py`. Whether the gap clears tCSHI is judged by
+  `hyperram_model.v` in `controller_model_tb.sv`, with `+cs_hold_ns=25` as the defect
+  run that proves the monitor fires (#346). `scripts/soc_hyperram_sim.py` §4 and §4b
+  keep the caller-side half: the gap ours leaves against upstream's, measured.
 - `with m.If(extra_latency | 1)` makes the low-latency branch dead, which #90 reports as
   costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
   reads `0x8f2f`, which selects *fixed* latency, so the device takes the long count every

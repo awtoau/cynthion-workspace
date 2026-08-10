@@ -264,6 +264,15 @@ module tb;
     read_register(ADDR_CR0, got);
     $display("[fault] cr0 after write = %h", got);
 
+    // DELIBERATE tCSHI VIOLATION, the same way vendor_model_tb.sv proves the tCSM
+    // monitor is alive: CS# up and down again inside half a CK, 5 ns against the
+    // 10 ns minimum. Its absence means the detector the tCSHI checks moved onto
+    // has stopped detecting. (#346)
+    @(negedge clk); #1; csb = 1'b0;
+    @(posedge clk); #1; csb = 1'b1;
+    @(negedge clk); #1; csb = 1'b0;
+    bus_idle;
+
     $display("[fault] === done ===");
     $finish;
   end

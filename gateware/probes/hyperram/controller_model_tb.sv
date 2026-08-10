@@ -24,12 +24,20 @@
 //   the CK-Low half, i.e. high byte captured by the CK rising edge.
 //   IDDRX1F(Q0->dq.i[i+8], Q1->dq.i[i]) -> the same mapping coming back.
 //
-// Five cases: register space, memory, then CR0[7:4] swept in fixed latency, in
-// variable latency, and in variable latency with the extra-latency request masked
-// away (case 5 -- the short branch, otherwise unreachable against this model).
+// Six cases: register space, memory, the CA fields, then CR0[7:4] swept in fixed
+// latency and in variable latency. `+stim` selects the two reduced stimuli that
+// need a misbehaving device: a burst nobody ends, and a CA the device never answers.
 //
 // `+trace` prints one line per CS#-Low cycle, `+dump` writes a VCD, and `+skew=N`
 // is the negative control described at `skew` below.
+//
+// DEFECT INJECTION, between the controller and the device -- `+cs_hold_ns`,
+// `+ca_defect`, `+rwds_float`. Nothing about the controller changes; what the
+// device SEES does. Each check moved here off `soc_hyperram_sim.py` has one, and a
+// defect run that passes means the check has stopped discriminating. (#346)
+//
+// `+stim=N` selects the stimulus: 0 the whole matrix, 1 the unended burst, 2 one
+// variable-latency case against a device that never drives RWDS over the CA.
 //
 // Driven by scripts/hyperram_model_sim.py, which passes LAT_W, TCK_NS and
 // RECOVER_LIMIT to match the controller it elaborated.
@@ -60,6 +68,15 @@
 // it. 0 never elects (the variable SHORT branch), 1 always does (the LONG one).
 `ifndef REFRESH_EVERY
   `define REFRESH_EVERY 100
+`endif
+
+// The device's fault knobs, passed straight to `hyperram_model.v`. Defaults are
+// the part: RWDS answered after tDSV, every read word served.
+`ifndef CA_RWDS_FAULT
+  `define CA_RWDS_FAULT 0
+`endif
+`ifndef DELIVER_WORDS
+  `define DELIVER_WORDS -1
 `endif
 
 // Edges between a write's first data beat and a read's at the same latency.
@@ -168,12 +185,30 @@ module tb;
   );
 
   //
+  // DEFECT INJECTION. Set from plusargs in the stimulus block; 0 is the wire as
+  // built. See the header.
+  //
+  // `cs_hold_ns` is in NANOSECONDS, not cycles: the gap the controller leaves is
+  // three cycles here, so a whole-cycle knob either changes nothing or swallows the
+  // gap entirely and the device never sees CS# rise at all.
+  integer cs_hold_ns = 0;   // how late CS# is released, in ns
+  integer ca_defect  = 0;   // 1 drops address bit 20, 2 flips CA[45], 3 flips CA[46]
+  integer rwds_float = 0;   // what the receiver makes of an undriven RWDS
+  integer stim       = 0;
+
+  //
   // The ideal 2:1 gearbox. See the header for what it does and does not model.
   //
   // Held High while the controller is in reset. Without it the model sees CS# fall
   // at time 0 from the DUT's uninitialised output and reports a 200 us tCSM
   // violation before any transaction has happened.
-  wire csb = rst ? 1'b1 : ~cs;
+  // CS# asserts on time and is RELEASED `cs_hold_ns` late, so the gap shrinks
+  // without the two transactions merging. A continuous assign rather than an
+  // always block: it settles from x on its own at power-up.
+  wire cs_released;
+  assign #(cs_hold_ns) cs_released = ~cs;
+  wire cs_ext = cs | ~cs_released;
+  wire csb = rst ? 1'b1 : ~cs_ext;
   reg  resetb = 1'b1;
   reg  VCC = 1'b0;
   wire VSS = 1'b0;
@@ -184,8 +219,23 @@ module tb;
   wire ck;
   assign #(CK_DELAY) ck = ck_raw;
 
+  // Which 16-bit word of the CA is on the wire, counted from CS# rather than from
+  // an FSM state name, so `+ca_defect` corrupts the byte it says it does. Word 0
+  // carries CA[47:32], which is where the command byte and address bit 20 live.
+  integer ca_word = 0;
+  always @(posedge clk) begin
+    if (!cs)                       ca_word <= 0;
+    else if (dq_e && ca_word < 3)  ca_word <= ca_word + 1;
+  end
+
+  wire [15:0] dq_o_x =
+      (ca_defect == 0 || ca_word != 0 || !dq_e) ? dq_o :
+      (ca_defect == 1) ? dq_o ^ 16'h0002 :   // CA[33] = address bit 20
+      (ca_defect == 2) ? dq_o ^ 16'h2000 :   // CA[45], the burst type
+                         dq_o ^ 16'h4000;    // CA[46], the address space
+
   // ODDRX1F(D0=dq.o[15:8], D1=dq.o[7:0]).
-  wire [7:0] adq_drv  = clk ? dq_o[15:8] : dq_o[7:0];
+  wire [7:0] adq_drv  = clk ? dq_o_x[15:8] : dq_o_x[7:0];
   wire       rwds_drv = clk ? rwds_o[1]  : rwds_o[0];
 
   wire [7:0] adq  = dq_e   ? adq_drv  : 8'hzz;
@@ -200,14 +250,24 @@ module tb;
   reg [7:0] s_pos_dq = 8'h0, s_neg_dq = 8'h0;
   reg       s_pos_rwds = 1'b0, s_neg_rwds = 1'b0;
 
-  always @(posedge ck_s) begin s_pos_dq <= adq; s_pos_rwds <= rwds; end
-  always @(negedge ck_s) begin s_neg_dq <= adq; s_neg_rwds <= rwds; end
+  // An undriven RWDS reaches a real input buffer as SOME level, not as `z`, and
+  // which one is not ours to choose. `+rwds_float=1` is the pull-up case, and it
+  // is #338's suspect: a controller sampling before tDSV then reads a request the
+  // device never made.
+  wire rwds_rx = (rwds === 1'bz) ? rwds_float[0] : rwds;
+
+  always @(posedge ck_s) begin s_pos_dq <= adq; s_pos_rwds <= rwds_rx; end
+  always @(negedge ck_s) begin s_neg_dq <= adq; s_neg_rwds <= rwds_rx; end
   always @(posedge clk) begin
     dq_i   <= {s_pos_dq, s_neg_dq};
     rwds_i <= {s_pos_rwds, s_neg_rwds};
   end
 
-  hyperram_model #(.REFRESH_EVERY(`REFRESH_EVERY)) model (
+  // The device's own fault knobs, so a controller can be pointed at a device that
+  // misbehaves rather than at a Python model of one. Defaults are the part.
+  hyperram_model #(.REFRESH_EVERY(`REFRESH_EVERY),
+                   .CA_RWDS_FAULT(`CA_RWDS_FAULT),
+                   .DELIVER_WORDS(`DELIVER_WORDS)) model (
     .adq(adq), .clk(ck), .clk_n(~ck), .csb(csb),
     .rwds(rwds), .VCC(VCC), .VSS(VSS), .resetb(resetb)
   );
@@ -249,6 +309,11 @@ module tb;
   integer    first_beat   = -1;
   reg [1:0]  strobe_rwds  = 2'b00;
   reg [15:0] read_words [0:31];
+
+  // What `run_burst` asks for on `single_page`. Only case 2b moves it: CA[45] is
+  // forced for register space whatever the caller asks, and left alone for a
+  // wrapped memory burst. (#320)
+  reg        force_single_page = 1'b0;
 
   // Address-derived, and the varying half is the HIGH byte: consecutive words share
   // a[15:8], so a byte-order slip shows as a constant where the pattern should move,
@@ -351,6 +416,20 @@ module tb;
     end
   endtask
 
+  // The CA fields, graded on what the INDEPENDENT model captured or did with them
+  // rather than on a second hand-written decoder. Its own line prefix, so a defect
+  // run can be required to fail here and nowhere else. (#346)
+  task ca_field(input [8*56-1:0] what, input [15:0] observed, input [15:0] expected);
+    begin
+      checks = checks + 1;
+      if (observed === expected) $display("[tb] CA-FIELD PASS %0s = %h", what, observed);
+      else begin
+        $display("[tb] CA-FIELD FAIL %0s = %h, expected %h", what, observed, expected);
+        errors = errors + 1;
+      end
+    end
+  endtask
+
   //
   // Transactions.
   //
@@ -377,7 +456,7 @@ module tb;
       address        = addr;
       register_space = reg_space;
       perform_write  = is_write;
-      single_page    = 1'b0;
+      single_page    = force_single_page;
       burst_base     = addr;
       burst_target   = nwords;
       burst_reg      = reg_space;
@@ -405,6 +484,45 @@ module tb;
       end
       wait_idle;
       burst_active = 1'b0;
+    end
+  endtask
+
+  // A read the caller never ends. tCSM is the only ceiling on a burst length the
+  // caller chooses, so the controller's own word cap has to chop it -- and the
+  // device, which is the thing that owns tCSM, has to agree that it did. The
+  // model prints `ERROR tCSM violation` if CS# stayed Low too long; the driver
+  // requires that line's ABSENCE here and its presence under `+cs_hold_ns`. (#317, #346)
+  task run_unended_read(input [31:0] addr);
+    integer n;
+    begin
+      wait_idle;
+      @(negedge clk);
+      address        = addr;
+      register_space = 1'b0;
+      perform_write  = 1'b0;
+      single_page    = 1'b0;
+      burst_base     = addr;
+      burst_target   = 1000000;      // `final_word` never rises
+      burst_reg      = 1'b0;
+      burst_count    = 0;
+      saw_beat       = 1'b0;
+      burst_active   = 1'b1;
+      start_transfer = 1'b1;
+      @(negedge clk);
+      start_transfer = 1'b0;
+
+      n = 0;
+      while (!idle && n < RECOVER_LIMIT) begin @(posedge clk); n = n + 1; end
+      burst_active = 1'b0;
+      checks = checks + 1;
+      if (idle && timed_out)
+        $display("[tb] PASS the controller ended a burst nobody ended: %0d words in %0d cycles, timed_out=1",
+                 burst_count, n);
+      else begin
+        $display("[tb] UNENDED FAIL still in state %0d after %0d cycles (idle=%0d timed_out=%0d, %0d words)",
+                 state, n, idle, timed_out, burst_count);
+        errors = errors + 1;
+      end
     end
   endtask
 
@@ -548,6 +666,25 @@ module tb;
     end
   endtask
 
+  // The reduced stimuli. Each needs a device the main matrix cannot run against --
+  // one that never answers, or one that never drives RWDS over the CA -- so it runs
+  // alone rather than as another case. Selected by `+stim`. (#346)
+  task run_stim(input integer which);
+    begin
+      if (which == 1) begin
+        $display("[tb] === case 6: a burst nobody ends, against the device's tCSM ===");
+        run_unended_read(32'h0000_4000);
+      end else if (which == 2) begin
+        $display("[tb] === case 7: variable latency, device never drives RWDS over the CA ===");
+        latency_case(2, 1'b0, 32'h0003_0000);
+        restore_por;
+      end else begin
+        $display("[tb] FAIL unknown +stim=%0d", which);
+        errors = errors + 1;
+      end
+    end
+  endtask
+
   //
   // Stimulus.
   //
@@ -559,6 +696,15 @@ module tb;
     if ($value$plusargs("skew=%d", skew))
       $display("[tb] NEGATIVE CONTROL: the controller is told to wait %0d CK more than it is graded against",
                skew);
+    if (!$value$plusargs("cs_hold_ns=%d", cs_hold_ns)) cs_hold_ns = 0;
+    if (!$value$plusargs("ca_defect=%d", ca_defect))   ca_defect  = 0;
+    if (!$value$plusargs("rwds_float=%d", rwds_float)) rwds_float = 0;
+    if (!$value$plusargs("stim=%d", stim))             stim       = 0;
+    if (cs_hold_ns || ca_defect || rwds_float)
+      $display("[tb] DEFECT: cs_hold_ns=%0d ca_defect=%0d rwds_float=%0d -- this run is REQUIRED to fail",
+               cs_hold_ns, ca_defect, rwds_float);
+    $display("[tb] stim=%0d CA_RWDS_FAULT=%0d DELIVER_WORDS=%0d",
+             stim, `CA_RWDS_FAULT, `DELIVER_WORDS);
 
     $display("[tb] === power-up ===");
     VCC = 1'b1;
@@ -570,6 +716,16 @@ module tb;
     repeat (4) @(posedge clk);
     rst = 1'b0;
     repeat (4) @(posedge clk);
+
+    if (stim != 0) begin
+      run_stim(stim);
+      // The device reports tCSM and tCSHI on the CS# EDGE, so the run may not end
+      // while `+cs_hold_ns` still has CS# Low: the violation would go unreported
+      // and the defect run would look clean.
+      #(cs_hold_ns + 8 * TCK);
+      $display("[tb] === done, %0d checks, %0d failures ===", checks, errors);
+      $finish;
+    end
 
     //
     // CASE 1 -- register space, against the model's own CR0/CR1 state.
@@ -651,6 +807,41 @@ module tb;
       $display("[tb] FAIL the top-address write also landed at 0 -- CA address truncated");
       errors = errors + 1;
     end
+
+    //
+    // CASE 2b -- the CA fields, graded on the independent model's own capture and
+    // on what it DID with them. `soc_hyperram_sim.py` asserted these against a
+    // second hand-written decoder in the same file as the first; both could be
+    // wrong together, which is the whole of #346.
+    //
+    $display("[tb] === case 2b: CA fields ===");
+    // Bits set in the high, middle and low thirds: an address that is dropped,
+    // shifted or truncated anywhere decodes to something else.
+    a = 32'h0035_a1c7;
+    model.memory[22'h00_0000] = 16'h0000;
+    run_burst(a, 1'b0, 1'b1, 1, 16'h0);
+    ca_field("memory write command byte", {8'h00, model.ca[47:40]}, 16'h0020);
+    ca_field("memory write landed where it was addressed",
+             model.memory[a[21:0]], pattern(a));
+    ca_field("...and not at a truncated address", model.memory[22'h00_0000], 16'h0000);
+    run_burst(a, 1'b0, 1'b0, 1, 16'h0);
+    ca_field("memory read command byte", {8'h00, model.ca[47:40]}, 16'h00a0);
+    ca_field("mem[0x35a1c7] read back", read_words[0], pattern(a));
+    run_burst(ADDR_ID0, 1'b1, 1'b0, 1, 16'h0);
+    ca_field("register read command byte", {8'h00, model.ca[47:40]}, 16'h00e0);
+
+    // CA[45] is forced for register space whatever the caller asks (9.1: only
+    // linear single-word register writes exist) and left alone for a wrapped
+    // memory burst. Both with `single_page` asserted, which is the case that told
+    // upstream's `~single_page` apart from ours. (#320)
+    force_single_page = 1'b1;
+    run_burst(ADDR_CR0, 1'b1, 1'b1, 1, 16'h8f2f);
+    ca_field("register write command byte, single_page asked for",
+             {8'h00, model.ca[47:40]}, 16'h0060);
+    run_burst(32'h0000_3000, 1'b0, 1'b0, 1, 16'h0);
+    ca_field("wrapped memory read command byte",
+             {8'h00, model.ca[47:40]}, 16'h0080);
+    force_single_page = 1'b0;
 
     //
     // CASE 3 -- fixed latency at every code the board sweeps.

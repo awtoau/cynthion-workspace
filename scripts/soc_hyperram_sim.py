@@ -3,8 +3,7 @@
 # The HyperBus protocol layer, against a model of the part. See awtoau/cynthion-workspace#92, #90.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""
-Checks the DQS controller and the way this workspace drives it.
+"""The CONTROLLER and the SoC above it, against a deliberately unfaithful device.
 
     python3 scripts/soc_hyperram_sim.py
     python3 scripts/soc_hyperram_sim.py -v          # every bus beat
@@ -12,20 +11,34 @@ Checks the DQS controller and the way this workspace drives it.
 Exit status 0 if every check passes. Output goes to the terminal and to
 `tmp/logs/dev.log`.
 
-## What this can and cannot decide
+## THE SPLIT: nothing here may assert a fact about the PART
 
-**It checks the protocol layer.** `HyperRAMDQSInterface` talks to a Python model
-of a W956A8 that reacts only to what appears on the `HyperBusDQSPHY` record --
-chip select, the gearing, the data bytes -- and decodes the command the way the
-HyperBus specification says a device does. A model written in Amaranth against
-the same idea of the bus would agree with the controller whether or not either
-was right.
+`ModelHyperRAM` and `ModelHyperRAM16` were written from the same datasheet
+reading as the controller they check, so on any protocol question the two can be
+wrong together and every check still passes. Every such assertion left this file
+under #346. What is left is what only a Python model can do:
+
+* **fault injection** -- `deliver`, a caller that drops `final_word`, one that
+  never ends a burst. A faithful model cannot test a controller's response to an
+  unfaithful device, and a correct part never misbehaves.
+* **the SoC ABOVE the controller** -- the Wishbone window, the arbiter, cache-line
+  refill, coalescing, the clock-stop path. `hyperram_model.v` models the chip;
+  none of those questions are about the chip.
+
+So a check here may claim things about the CONTROLLER and about the SoC, and it
+may MEASURE the bus. It may not JUDGE the bus against a datasheet number. The
+part's own bounds -- tCSHI, tCSM, the CA encoding, the latency count, the word
+order -- are judged in `gateware/probes/hyperram/controller_model_tb.sv` against
+`hyperram_model.v`, which is held equal to Winbond's encrypted model over
+`vendor_model_tb.sv`.
+
+**A new conformance check belongs there, not here.**
+`scripts/hyperram_model_sim.py` runs it and carries a defect run for each, so a
+check that stops discriminating fails instead of reading as coverage.
 
 **It cannot check DQS timing, and nothing here pretends to.** `DQSBUFM`,
 `IDDRX2DQA` and `DDRDLLA` have no simulation model; the read strobe's alignment
-is the property #92 is about and it is decided on silicon. What this establishes
-is everything that must already be correct before a timing result means
-anything -- if the command bytes are wrong, a clean read is a coincidence.
+is the property #92 is about and it is decided on silicon.
 
 The pin-group question, which is the other half of #92, is answered from the
 device database by `scripts/hyperram_dqs_pins.py` and is not repeated here.
@@ -36,82 +49,70 @@ Every section drives the same controller and the same model twice: once the way
 this workspace does it, and once the way that was tried first. A check that only
 shows the fix passing is a check that would have passed before the fix.
 
-  1. **The command bytes.** The address the device decodes, against the address
-     asked for -- and the same capture read with the 16-bit `HyperBusPHY` layout,
-     which is the documented trap: it comes back looking bit-shifted rather than
-     wrong, so it reads as a timing fault.
+  1. **One command per request.** That a request produces exactly one CS#
+     assertion, and that it completes. What the CA CONTAINS is case 2b of
+     `controller_model_tb.sv`.
 
-  2. **Latency.** The part's CR0 reads `0x8f2f`, which is fixed latency: the
-     device takes the long count on every transaction and RWDS during the
-     command tells you nothing. So a controller that honoured RWDS and took the
-     short count would sample inside the latency window. Upstream's
-     `extra_latency | 1` -- flagged in #90 as a defect -- is checked here to be
-     the RIGHT behaviour for this part as configured, and the short-count variant
-     is checked to fail.
+  2. **Upstream's forced long branch.** `extra_latency | 1`, in source. The
+     latency COUNT is swept at six codes in both modes by the bridge, which
+     grades the controller's first data beat against the device's own decode.
 
   3. **Held, not pulsed.** `final_word` and `perform_write`/`write_data` must
      stay asserted for the whole transfer (`docs/upstream-boundary.md`). The
      pulsed drivers are run against the model and asserted to produce the wrong
      bus behaviour -- which is the point: they produce plausible wrong answers,
-     not failures.
+     not failures. Caller-side faults, so they stay.
 
-  4. **The gap between transactions.** `HyperRAMDQSInterface`'s `RECOVERY` state
-     carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
-     in the controller keeps CS# high for tCSHI. The model counts it and
-     complains; back-to-back transactions are asserted to violate it and the
-     bring-up design's counter is asserted to fix it.
+  4. **The gap between transactions, MEASURED.** `HyperRAMDQSInterface`'s
+     `RECOVERY` state carries `# TODO: implement recovery`, so nothing in
+     upstream keeps CS# high. The two controllers are compared against each
+     other; whether the gap clears tCSHI is the device's judgement, and
+     `hyperram_model.v` makes it.
 
- 4b. **The same gap, on the non-DQS controller.** That path carries the CPU's
-     memory and four of the harnesses, and it is the baseline every DQS
-     comparison is read against -- so the same fix, with luna's
-     `HyperRAMInterface` through the same harness as the negative control.
+ 4b. **The same gap on the non-DQS controller**, and through the SoC's window:
+     the master above may not shorten what the protocol layer leaves.
 
   5. **Structural, against the PHY source.** The three reasons upstream's PHY
-     cannot be instantiated on r1.4, asserted rather than described, so that a
-     later edit which reintroduces one is caught here.
+     cannot be instantiated on r1.4, asserted rather than described.
+
+ 5b. **`latency_clocks` is a live input.** Counted on `HANDLE_LATENCY`
+     occupancy, not on `read_ready`: a strobe measures the MODEL's latency
+     rather than the controller's, which is the whole of #331.
 
   6. **Wishbone memory window.** The real port is delayed before grant, then
      exercised with reads, full writes, and partial writes. A pulsed request is
-     run against the same delayed grant and asserted to fail, so the held-request
-     check is known to discriminate.
+     run against the same delayed grant and asserted to fail.
 
   7. **Shared engine.** The real three-master state machine drives a controllable
-     interface for a two-word read and write. The checks sample the controls on
-     every data beat and through recovery.
+     interface for a two-word read and write.
 
-  8. **Cache-line burst.** The real Wishbone window and non-DQS protocol engine
-     read sixteen 32-bit beats. Incrementing CTI produces one CS# assertion;
-     classic CTI is the pre-change negative control and produces sixteen. The
-     master here supplies a beat every two cycles, which is what coalescing
-     requires and what no master in this SoC does -- so this measures the
-     coalescing logic, not the board.
+  8. **Cache-line burst.** Incrementing CTI produces one CS# assertion; classic
+     CTI is the pre-change negative control and produces sixteen.
 
   9. **Cache-line WRITE, through the SoC's real bus path.** `RegisteredResponse`
-     in front of the window, which is the arrangement the board has and the one
-     sections 6-8 leave out. Coalescing under that master is asserted to
-     reproduce `hr cross`'s exact line -- `8/16 correct, bad 1010101010101010`,
-     `want 200f0e0d got 0e0d200f` -- and the shipping window to write all
-     sixteen beats into exactly 32 device words.
+     in front of the window, which is the arrangement the board has. Coalescing
+     under that master is asserted to reproduce `hr cross`'s exact line --
+     `8/16 correct, bad 1010101010101010`, `want 200f0e0d got 0e0d200f`.
+
+ 9b. **As built.** The one combination this repository synthesises.
 
  10. **The same fault on reads.** `hr cross` writes and reads through one path,
      so the two skews cancel and a total read fault showed as a half write
      fault. Checked separately against pre-filled memory.
 
+ 11. **Active Clock Stop, and coalescing turned back on.** Section 9 stays
+     exactly where it is as the negative control, and this section runs two
+     more: the gate removed, and the gate level-aligned rather than
+     write-aligned, which is worse than no gate at all.
+
  12. **Every transaction ENDS.** A device that never answers, one that answers 7
      of the 8 beats asked for, and a consumer that stops asking -- on both
      controllers, and on upstream's two as the negative control, which hang in
-     all three. Until #316 this file had no such check anywhere: `run`/`run16`
-     ran out of loop and the section carried on, so a green run said nothing
-     about whether the controller could come back. Every transaction driven
-     through those helpers is now judged against `completion_bound`.
+     all three. Every transaction driven through `run`/`run16` is judged against
+     `completion_bound`.
 
- 11. **Active Clock Stop, and coalescing turned back on.** The same harness and
-     the same assertions as 9 and 10, with the PHY record split so the
-     controller and the device see different `clk_en` and the device waits out
-     the master's bubble. Section 9 stays exactly where it is as the negative
-     control, and this section runs two more: the gate removed, and the gate
-     present but level-aligned rather than write-aligned, which is worse than
-     no gate at all. See `docs/soc-memory-bus.md` 5 for the datasheet.
+ 13. **How long CS# stays Low.** Ours against upstream's, and against the
+     controller's own burst budget. tCSM itself is the device's to judge.
 """
 
 import argparse
@@ -137,7 +138,8 @@ from amaranth.sim import Simulator
 from amaranth_soc import wishbone
 
 from peripherals.hyperram_dqs_controller import HyperRAMDQSController
-from peripherals.hyperram_controller import HyperRAMController
+from peripherals.hyperram_controller import (HyperRAMController,
+                                             min_read_latency_clocks)
 # Upstream's two controllers are imported for ONE purpose: to be the negative
 # control. Sections 4 and 4b run them through the same harness as ours, so
 # "the vendored controller keeps tCSHI" is a claim with something behind it.
@@ -153,70 +155,25 @@ from bootram import (BootRAM, ClockStopPHY, HYPERRAM_CK_MHZ,
 from bus.wishbone_pipe import RegisteredResponse
 
 
-# `sync`. Only the ratio to the device matters here, since nothing in this file
-# measures a real duration -- the one timing parameter that is checked, tCSHI, is
-# converted from nanoseconds using this.
+# `sync`. Only the ratio to the device matters here: nothing in this file measures
+# a real duration, and since #346 nothing judges one either.
 SYNC_MHZ = 120.0
 SYNC_HZ = SYNC_MHZ * 1e6
 
-# tCSHI, CS# high between transactions, for the grade FITTED: a `6I` = T166,
-# where Winbond's own `Config-AC.v` gives 6 ns. Ten was the T100 column and is
-# what this file asked for until #341. Restated here rather than imported, for
-# the reason `T_CSM_NS` gives below.
-T_CSHI_NS = 6.0
+# tCSHI is NOT restated here any more. Its only use was judging the gap, and the
+# judge is `hyperram_model.v` -- which carries the T166 6 ns from the same
+# `Config-AC.v` column #341 put in the controllers. What is left here is the
+# controller's own `_recovery_cycles`, read off the controller.
 
-# tCSM, the longest CS# may stay Low, W956A8 rev A01-006 Table 24: 4 us on every
-# speed bin. Stated HERE from the datasheet rather than imported from the
-# controller, for the same reason `T_CSHI_NS` is: a bound taken from the thing
-# under test agrees with it by construction and can never catch it being wrong.
+# tCSM, the longest CS# may stay Low, W956A8 rev A01-006 Table 24. Used for ONE
+# thing: `completion_bound`, the harness's own give-up limit. It is not a
+# judgement -- `hyperram_model.v` is what says whether the bus honoured it.
 T_CSM_NS = 4000.0
 
-# The DQS record moves 32 bits per `sync` cycle -- eight lines, four device
-# edges -- where the non-DQS record moves 16. Section 1 rereads its own capture
-# at the narrower width to show what that trap looks like.
-DQS_BEAT_BITS = 32
-
-# The part is configured for FIXED latency: CR0 reads `0x8f2f` and bit 3 selects
-# it. So the device takes the same latency on every transaction and RWDS during
-# the command period says nothing about this one. That is the fact section 2
-# rests on, and it comes from `docs/chips/hyperram/w956a8.md`, which decoded it
-# from a register the board actually returned.
-FIXED_LATENCY = True
-
-# The model's latency window, in beats, taken from the controller's OWN long
-# count rather than from the datasheet.
-#
-# THIS IS DELIBERATE AND IT LIMITS WHAT SECTION 2 CAN CLAIM. The absolute
-# latency is whatever CR0 sets, and nothing in this workspace has measured the
-# number of clocks the part waits -- only that the arrangement works on hardware.
-# A number invented here and then "verified" against a controller would be a
-# check on arithmetic done twice, not on the part.
-#
-# So the model agrees with the controller on the count by construction, and
-# section 2 checks the two things that do not depend on it: that the branch is
-# unconditional, and that the short count falls inside the window. The data
-# sections then exercise byte-level correctness with the latency neutralised.
-# The DEVICE's fixed latency, in CK, read off CR0 rather than off the controller.
-#
-# CR0 = 0x8f2f: bits [7:4] = 0010b, which table 10 reads as 7 clocks, and bit 3
-# selects FIXED latency, so the part takes 2 x 7 = 14 CK on every transaction.
-# `docs/chips/hyperram/w956a8.md` carries the field table.
-#
-# This is stated separately from `latency_beats()` ON PURPOSE. That function
-# returns the number of beats the CONTROLLER waits, so a model built on it agrees
-# with the controller by construction and cannot detect the two disagreeing --
-# which is the whole shape of #186. Two numbers that are allowed to differ are
-# the minimum needed to notice that they do.
-DEVICE_FIXED_LATENCY_CK = 14
-
-# CK per `sync` cycle on the DQS path: the fabric runs at CK/2 with 4:1 gearing.
-DQS_CK_PER_SYNC = 2
-
-# `sync` for every non-DQS section. It was a bare `1 / 192e6` at four `add_clock`
-# calls and nowhere else; the controller now needs the figure too, to turn tCSHI
-# into a cycle count, so the two must come from the same place or the sim would
-# be judging a controller built for one clock against a model running another.
-# On this path `HyperRAMPHY` emits one CK per `sync` cycle, so it is also CK.
+# `sync` for every non-DQS section. The controller needs the figure too, to turn
+# tCSHI into a cycle count, so the two must come from the same place or the sim
+# would be judging a controller built for one clock against a model running
+# another. On this path `HyperRAMPHY` emits one CK per `sync` cycle, so it is CK.
 NON_DQS_SYNC_MHZ = 192.0
 
 
@@ -267,23 +224,6 @@ def _upstream_source():
     return Path(psram_module.__file__).read_text()
 
 
-def encode_ca(address, *, read, register_space=False, linear=True):
-    """The 48-bit HyperBus command-address word, from the specification.
-
-    Written here from the spec rather than imported from the controller, because
-    the controller is the thing under test. Bit 47 is R/W#, 46 selects the
-    register space, 45 the burst type, 44:16 carry address[31:3] and 2:0 carry
-    address[2:0]; everything else is reserved and zero.
-    """
-    ca = 0
-    ca |= (1 if read else 0) << 47
-    ca |= (1 if register_space else 0) << 46
-    ca |= (1 if linear else 0) << 45
-    ca |= ((address >> 3) & ((1 << 29) - 1)) << 16
-    ca |= address & 0b111
-    return ca
-
-
 class ModelHyperRAM:
     """A W956A8 as seen from the `HyperBusDQSPHY` record.
 
@@ -319,7 +259,6 @@ class ModelHyperRAM:
         self.commands = []          # one dict per decoded command
         self.written = []           # (address, 32-bit value) in order
         self.read_beats = 0
-        self.cshi_violations = 0
         self.trace = []
         # Transactions that never brought `idle` back inside `completion_bound`,
         # and what `timed_out` read at the end of the last one.
@@ -336,18 +275,14 @@ class ModelHyperRAM:
         self._read = True
         self._prev_cs = 0
         self._cs_high_beats = 10**6  # nothing before the first transaction
-        # The SHORTEST CS#-high gap this run saw, in `sync` cycles. Counting
-        # violations alone stops discriminating as soon as tCSHI falls under one
-        # cycle -- at T166's 6 ns and sync 120 it does, and upstream's no-recovery
-        # controller then passes the same check ours does. The gap itself
-        # separates them at every clock. (#341)
+        # The SHORTEST CS#-high gap this run saw, in `sync` cycles. MEASURED, not
+        # judged: counting violations stops discriminating as soon as tCSHI falls
+        # under one cycle -- at T166's 6 ns and sync 120 it does, and upstream's
+        # no-recovery controller then passes the same check ours does. Whether a
+        # gap clears the part's bound is `hyperram_model.v`'s answer. (#341, #346)
         self.cs_high_min = None
-        # tCSM, counted where it is spent rather than at the end of a transaction,
-        # so a device left selected for ever is counted once rather than never.
-        self._tcsm_beats = int(T_CSM_NS * SYNC_MHZ / 1000.0)
         self._cs_low_beats = 0
         self.cs_low_max = 0
-        self.tcsm_violations = 0
 
     def _decode(self):
         ca = 0
@@ -373,8 +308,6 @@ class ModelHyperRAM:
         if cs:
             self._cs_low_beats += 1
             self.cs_low_max = max(self.cs_low_max, self._cs_low_beats)
-            if self._cs_low_beats == self._tcsm_beats + 1:
-                self.tcsm_violations += 1
         else:
             self._cs_low_beats = 0
 
@@ -390,12 +323,8 @@ class ModelHyperRAM:
             return dq_i, datavalid, burstdet
 
         if not self._prev_cs:
-            # CS# just fell: a new transaction. This is the only place the gap is
-            # judged, and it is judged before anything about the command is
-            # known -- a violation is a violation whatever the command was.
-            required = -(-T_CSHI_NS * SYNC_MHZ // 1000)
-            if self._cs_high_beats < max(1, int(required)):
-                self.cshi_violations += 1
+            # CS# just fell: a new transaction. The gap it followed is recorded
+            # here, before anything about the command is known.
             if self._cs_high_beats < 10**6:
                 self.cs_high_min = min(self.cs_high_min or 10**6,
                                        self._cs_high_beats)
@@ -629,79 +558,34 @@ def section_command(checks, emit):
         return
     command = model.commands[0]
 
-    checks.check("the device decodes the address that was asked for",
-                 command["address"] == TEST_ADDRESS,
-                 f"asked {TEST_ADDRESS:#010x}, decoded {command['address']:#010x}")
-    checks.check("it decodes as a read", command["read"] is True)
-    checks.check("it decodes as memory, not register space",
-                 command["register_space"] is False)
-    checks.check("it decodes as a linear burst", command["linear"] is True)
-    checks.check("the command matches the specification's encoding",
-                 command["ca"] == encode_ca(TEST_ADDRESS, read=True),
-                 f"got {command['ca']:#014x}, "
-                 f"spec {encode_ca(TEST_ADDRESS, read=True):#014x}")
-
-    # The wrong arrangement: the same bytes, read as if the record were the
-    # 16-bit `HyperBusPHY`. Half the bytes are dropped, so the address that comes
-    # out is a shifted, plausible-looking value rather than an obvious error --
-    # which is why this trap reads as a sampling fault.
-    ca_16 = 0
-    for byte in [b for i, b in enumerate(model.commands[0]["ca"].to_bytes(6, "big"))
-                 if i % 2 == 0]:
-        ca_16 = (ca_16 << 8) | byte
-    address_16 = ((ca_16 >> 16) & ((1 << 29) - 1)) << 3
-    checks.check("reading the same capture 16 bits wide gives a WRONG address",
-                 address_16 != TEST_ADDRESS,
-                 f"16-bit reading gave {address_16:#010x}, which happens to be right")
-    emit(f"        32-bit: {TEST_ADDRESS:#010x}   16-bit reading: {address_16:#010x}")
+    emit(f"        one command, decoded at {command['address']:#010x}")
+    # WHAT THE CA CONTAINS is not asserted here any more: address, R/W#, address
+    # space and burst type were graded against `encode_ca`, a second decoder in
+    # this same file. They are case 2b of `controller_model_tb.sv`, where the
+    # reference is a model held equal to Winbond's own. (#346)
 
 
 def section_latency(checks, emit):
-    """2. Fixed latency, and why upstream's forced branch is right here."""
-    emit("\n2. Latency, against a part configured for FIXED latency\n")
-
-    controller_high = HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS
-    controller_low = HyperRAMDQSInterface.LOW_LATENCY_CLOCKS
-    checks.check("the controller's two latency counts differ",
-                 controller_high != controller_low,
-                 f"high {controller_high}, low {controller_low}")
+    """2. Why upstream's forced long branch is right for this part."""
+    emit("\n2. The forced long branch, in upstream's source\n")
 
     async def body(ctx, dut, model):
         await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
 
-    model = simulate(body)
-    check_completed(checks, model, "the fixed-latency read")
-    checks.check("a read against the fixed-latency model returns data",
-                 model.read_beats > 0, f"{model.read_beats} beats")
-    controller_ck = latency_beats() * DQS_CK_PER_SYNC
-    emit(f"        controller waits {latency_beats()} beats = {controller_ck} CK; "
-         f"CR0 says the device takes {DEVICE_FIXED_LATENCY_CK} CK")
-    if controller_ck != DEVICE_FIXED_LATENCY_CK:
-        emit(f"        THEY DISAGREE by {DEVICE_FIXED_LATENCY_CK - controller_ck} CK. "
-             f"Not asserted: HIGH_LATENCY_CLOCKS = 4 demonstrably worked on")
-        emit(f"        silicon (36,153 BURSTDET, real register values), so a model")
-        emit(f"        that failed it would be the thing that is wrong. The gap is")
-        emit(f"        recorded here until it is reconciled -- see #186.")
+    check_completed(checks, simulate(body), "the fixed-latency read")
 
-    checks.check("the read raises BURSTDET, so DQS is what found the data",
-                 model.read_beats > 0,
-                 "no beat, so nothing asserted the strobe-found flag")
-
-    # The wrong arrangement: the short count. The device is configured for fixed
-    # latency, so it is still in its latency window when a short-count controller
-    # starts sampling -- the read lands on nothing.
-    window = model._latency_beats()
-    short = controller_low + 1
-    checks.check("the SHORT count would sample inside the latency window",
-                 short < window,
-                 f"short count {short} beats, window {window}")
+    # The latency COUNT is not asserted here. It was checked against a model whose
+    # latency is `latency_beats()` -- the controller's own constant -- so it could
+    # not fail for a part reason. `controller_model_tb.sv` sweeps CR0[7:4] at six
+    # codes in both modes and grades the controller's first data beat against the
+    # device's own decode; `--negative-control` proves a 1 CK error is caught.
     checks.check("upstream forces the long branch unconditionally",
                  "extra_latency | 1" in _upstream_source())
     emit(f"        CR0 0x8f2f selects FIXED latency, so the device takes the")
     emit(f"        long count every time and RWDS says nothing about it.")
     emit(f"        `extra_latency | 1` is therefore CORRECT for this part as")
     emit(f"        configured; the #90 defect only pays after CR0 is set to")
-    emit(f"        variable latency, which is a change to make and measure.")
+    emit(f"        variable latency, which is what #338 measures.")
 
 
 def section_held(checks, emit):
@@ -746,8 +630,15 @@ def section_held(checks, emit):
 
 
 def section_recovery(checks, emit):
-    """4. The gap between transactions, which the controller does not keep."""
-    emit("\n4. tCSHI, the gap the controller's RECOVERY state does not keep\n")
+    """4. The gap between transactions, on the DQS controller.
+
+    MEASURED here and judged elsewhere. Whether a gap clears tCSHI is a fact about
+    the part, and the Python model used to judge it against a copy of the same
+    number the controller was handed. `hyperram_model.v` carries the monitor now;
+    what is left is the comparison between the two controllers, which needs no
+    datasheet number at all. (#346)
+    """
+    emit("\n4. The gap the DQS controller's RECOVERY state leaves\n")
 
     checks.check("upstream's RECOVERY state is still a TODO",
                  "# TODO: implement recovery" in _upstream_source(),
@@ -758,14 +649,13 @@ def section_recovery(checks, emit):
         await run(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
 
     # THE NEGATIVE CONTROL, and it is the whole value of this section. Upstream's
-    # controller is run through the same harness to prove the detector fires.
+    # controller is run through the same harness to prove the gap separates them.
     #
-    # It is the GAP and not the violation count: with tCSHI at T166's 6 ns and
-    # sync 120, one cycle (8.33 ns) already clears it, so upstream's `# TODO:
-    # implement recovery` scores zero violations too. The instrument stopped
-    # discriminating the moment the requirement moved -- exactly the shape #341
-    # is about, one level up. Upstream leaves the ONE cycle its caller's state
-    # count happens to give; ours leaves what the counter was told to. (#341)
+    # It is the GAP and not a violation count: with tCSHI at T166's 6 ns and sync
+    # 120, one cycle (8.33 ns) already clears it, so upstream's `# TODO: implement
+    # recovery` would score zero violations too. Upstream leaves the ONE cycle its
+    # caller's state count happens to give; ours leaves what the counter was told
+    # to. (#341)
     control = simulate(back_to_back, upstream=True)
     checks.check("upstream's controller leaves ONE cycle and nothing more",
                  control.cs_high_min == 1,
@@ -774,27 +664,37 @@ def section_recovery(checks, emit):
 
     model = simulate(back_to_back)
     check_completed(checks, model, "back-to-back DQS reads")
-    required = max(1, int(-(-T_CSHI_NS * SYNC_MHZ // 1000)))
-    checks.check("the vendored controller keeps tCSHI with NO gap from the master",
-                 model.cshi_violations == 0,
-                 f"{model.cshi_violations} violations -- the RECOVERY counter is "
-                 f"not holding CS# high long enough")
+    # The controller's own count, read off the controller. Whether that count is
+    # long enough for the PART is `hyperram_model.v`'s tCSHI monitor, exercised on
+    # the non-DQS controller in `controller_model_tb.sv` with `+cs_hold_ns` as the
+    # control that proves it fires. (#346)
+    required = model_recovery_cycles(HyperRAMDQSController, HyperBusDQSPHY,
+                                     SYNC_MHZ)
     checks.check("...and the gap is the count RECOVERY was given",
                  model.cs_high_min == required,
                  f"{model.cs_high_min} cycles against {required}")
     # At sync 120 the two agree, because T166's 6 ns is under one cycle there and
-    # upstream's accidental single cycle already clears it. The gap only separates
-    # them above 166.7 MHz. What separates them at EVERY clock is that ours moves
-    # when `recovery_cycles` is driven and upstream has nothing to drive --
-    # measured in `scripts/hyperram_timing_levers_sim.py`. (#341)
+    # upstream's accidental single cycle already clears it. What separates them at
+    # EVERY clock is that ours moves when `recovery_cycles` is driven and upstream
+    # has nothing to drive -- `scripts/hyperram_timing_levers_sim.py`. (#341)
     if required == 1:
         emit("        at this clock tCSHI is under one cycle, so upstream's "
              "accident clears it too -- the lever sweep is the discriminator")
 
-    emit(f"        tCSHI {T_CSHI_NS:g} ns at {SYNC_MHZ:g} MHz is "
-         f"{required} whole cycle(s), counted inside the controller")
     emit(f"        shortest gap -- upstream: {control.cs_high_min} cycle(s), "
-         f"vendored: {model.cs_high_min}")
+         f"vendored: {model.cs_high_min}, its own count {required}")
+
+
+def model_recovery_cycles(controller, phy, sync_mhz):
+    """Cycles of CS# high a controller says it holds, off the controller itself.
+
+    Not from a tCSHI restated here: the part's requirement is the twin's to judge
+    since #346, and what this file may still ask is whether the controller left
+    the gap it computed.
+    """
+    built = controller(phy=phy(), sync_mhz=sync_mhz)
+    Fragment.get(built, None)          # only its arithmetic is wanted; mark it used
+    return built._recovery_cycles
 
 
 class NonDQSProtocolHarness(Elaboratable):
@@ -945,57 +845,54 @@ def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None,
 def section_recovery_non_dqs(checks, emit):
     """4b. The same gap on the non-DQS controller, which is what the SoC ships.
 
-    Section 4 checks the DQS controller. This path carries the CPU's memory, the
-    firmware staging buffer and four of the harnesses, and it was still running
-    upstream's `RECOVERY` until the controller was vendored -- so every non-DQS
-    number ever recorded here, including the baseline the DQS results are read
-    against, was taken with the gap unheld.
+    Whether the gap clears tCSHI is judged in `controller_model_tb.sv`, against
+    `hyperram_model.v`'s own monitor and with `+cs_hold_ns=25` as the control that
+    proves it fires. What stays here is the SoC-layer question no device model can
+    answer: whether the window ABOVE the controller shortens what the protocol
+    layer leaves. (#346)
     """
-    emit("\n4b. tCSHI on the non-DQS controller -- the path the SoC ships\n")
+    emit("\n4b. The gap on the non-DQS controller, and through the window\n")
 
     async def back_to_back(ctx, dut, model):
         await run16(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
         await run16(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
 
-    # THE NEGATIVE CONTROL. Same harness, same model, luna's controller: if this
-    # does not fire, the detector is broken and the check below means nothing.
     control = simulate16(back_to_back, upstream=True)
-    checks.check("upstream's non-DQS controller VIOLATES tCSHI back-to-back",
-                 control.cshi_violations > 0,
-                 "no violation from upstream either, so this harness cannot "
-                 "tell the two apart and the check below proves nothing")
+    required = model_recovery_cycles(HyperRAMController, HyperBusPHY,
+                                     NON_DQS_SYNC_MHZ)
+    checks.check("upstream's non-DQS controller leaves LESS than the count needs",
+                 control.cs_high_min is not None and control.cs_high_min < required,
+                 f"upstream left {control.cs_high_min} cycles against a count of "
+                 f"{required}, so this harness cannot tell the two apart")
     checks.check("...and it is the GAP that differs, not the transaction count",
                  len(control.commands) == 2,
                  f"{len(control.commands)} commands from the control")
 
     model = simulate16(back_to_back)
     check_completed(checks, model, "back-to-back non-DQS reads")
-    checks.check("the vendored controller keeps tCSHI with NO gap from the master",
-                 model.cshi_violations == 0,
-                 f"{model.cshi_violations} violations -- the RECOVERY counter is "
-                 f"not holding CS# high long enough")
+    checks.check("the vendored controller leaves its whole count, unaided",
+                 model.cs_high_min is not None and model.cs_high_min >= required,
+                 f"{model.cs_high_min} cycles against a count of {required}, "
+                 f"upstream's {control.cs_high_min}")
     checks.check("...and still issues both transactions",
                  len(model.commands) == 2,
                  f"{len(model.commands)} commands")
-    checks.check("...at the addresses asked for",
-                 model.commands == [TEST_ADDRESS, TEST_ADDRESS + 1],
-                 f"decoded {[hex(a) for a in model.commands]}")
 
-    # The window and the engine in the path, which is sections 8-11's harness and
-    # the SoC's own arrangement. A gap the protocol layer holds must survive the
-    # thing above it asking for the next line immediately.
+    # THE SoC-LAYER CLAIM. The window asks for the next line the moment the last
+    # one acknowledges, and it may not shorten the gap the protocol layer leaves.
+    # Compared against the protocol layer's own figure, so no datasheet number
+    # enters it.
     refill_model, _ = simulate_line_refill(incrementing=False)
-    checks.check("sixteen classic transactions through the window keep it too",
-                 refill_model.cshi_violations == 0,
-                 f"{refill_model.cshi_violations} violations across "
+    checks.check("sixteen classic transactions through the window keep the same gap",
+                 refill_model.cs_high_min is not None
+                 and refill_model.cs_high_min >= model.cs_high_min,
+                 f"{refill_model.cs_high_min} cycles through the window against "
+                 f"{model.cs_high_min} at the protocol layer, across "
                  f"{len(refill_model.commands)} transactions")
 
-    required = max(1, math.ceil(T_CSHI_NS * NON_DQS_SYNC_MHZ / 1000.0))
-    emit(f"        tCSHI {T_CSHI_NS:g} ns at {NON_DQS_SYNC_MHZ:g} MHz is "
-         f"{required} whole cycle(s), counted inside the controller")
-    emit(f"        upstream: {control.cshi_violations} violations, "
-         f"vendored: {model.cshi_violations}, "
-         f"through the window: {refill_model.cshi_violations}")
+    emit(f"        shortest CS#-high gap, in cycles: upstream {control.cs_high_min}, "
+         f"vendored {model.cs_high_min}, through the window "
+         f"{refill_model.cs_high_min}; the count is {required}")
 
 
 def section_as_built(checks, emit):
@@ -1026,20 +923,12 @@ def section_as_built(checks, emit):
     model = simulate(one_write, **built)
     wrote = dict(model.written)
     landed = wrote.get(TEST_ADDRESS) == TEST_DATA
-    # REPORTED, not asserted, and this is the interesting line in the file.
-    #
-    # The controller is given 4 while the model still takes its latency from
-    # luna's class constant of 5, so it presents data one beat after the
-    # controller stops listening and NOTHING lands. That is a faithful model of a
-    # controller/device latency mismatch -- and the board, built at 4, currently
-    # reports `burstdet NEVER` with every read returning the timeout sentinel.
-    #
-    # It is not asserted because the model's device latency has not been
-    # reconciled with the real part: silicon ran 4 successfully earlier today.
-    # Until DEVICE_FIXED_LATENCY_CK and this model agree, a failure here cannot
-    # be attributed to the design rather than to the model. See #186.
-    emit(f"        as-built write lands: {landed}"
-         f"{'' if landed else '  <-- REPRODUCES the dead board, cause unconfirmed'}")
+    # REPORTED, not asserted: the controller is given 4 while the model keeps
+    # luna's 5, which is a latency MISMATCH and not a fact about either side.
+    # Where the part serves its first beat is `hyperram_dqs_model_sim.py --stage
+    # probe`, measured on the twin and on Winbond's model at every code.
+    emit(f"        as-built write lands: {landed} "
+         f"(controller 4, model {latency_beats()} -- a mismatch, not a verdict)")
 
     async def one_read(ctx, dut, model):
         await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
@@ -1055,109 +944,18 @@ def section_as_built(checks, emit):
         await run(ctx, dut, model, address=TEST_ADDRESS + 2, read=True, gap=0)
 
     model = simulate(back_to_back, **built)
-    # Also reported: at sync 60 the count is ceil(6 ns x 60 MHz / 1000) = 1
-    # cycle, and one cycle there is 16.7 ns, comfortably over tCSHI. A violation
-    # anyway means the count is right and the HOLD is off by a cycle -- the same
-    # shape as the first RECOVERY attempt, which counted without deasserting CS#.
-    emit(f"        as-built tCSHI violations: {model.cshi_violations} "
-         f"(sync 120 gives 0; investigate before trusting the lower clock)")
+    emit(f"        as-built shortest CS#-high gap: {model.cs_high_min} beats "
+         f"at sync 60 MHz")
     emit(f"        HYPERRAM_LATENCY_CLOCKS = {HYPERRAM_LATENCY_CLOCKS}, "
-         f"sync 60 MHz, tCSHI {T_CSHI_NS:g} ns")
+         f"sync 60 MHz")
 
 
-def section_dqs_write_order(checks, emit):
-    """7b. Which 16-bit word of a DQS write reaches the device FIRST.
-
-    THE TEST NOTHING HERE HAD. Section 3 writes through the controller directly,
-    and section 9 writes through the window on the NON-DQS engine. `BootRAM` in
-    DQS mode -- the combination the board builds -- was never given real data,
-    so `swap_halves` has never been checked in the direction that matters.
-
-    It cannot be checked on the board either: `hr reg` reads registers, and
-    register space returns the SAME value in both halves of a paired fetch, so a
-    half-swap is invisible to it. That is why five correct register reads did not
-    prove the read ordering, and why the write ordering had to come here.
-
-    HyperBus sends the LOWER-addressed word first, and little-endian puts the low
-    half at the lower address. So the first word on the wire must be the low half
-    of what the CPU wrote.
-    """
-    emit("\n7b. DQS write: which half reaches the device first\n")
-
-    phy = HyperBusDQSPHY()
-    # The AS-BUILT latency, not luna's. At luna's 5 the transaction never
-    # completes and this section reports nothing about ordering -- which is the
-    # first thing it did, and is the same defect section 9b reports.
-    from bootram import HYPERRAM_LATENCY_CLOCKS
-    controller = HyperRAMDQSController(
-        phy=phy, sync_mhz=SYNC_MHZ,
-        high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
-    dut = BootRAM(interface=controller, dqs=True)
-    # The DEVICE's latency, from CR0, not the controller's count.
-    model = ModelHyperRAM(
-        latency=DEVICE_FIXED_LATENCY_CK // DQS_CK_PER_SYNC)
-
-    value = 0xa5c3_1234          # halves: low 0x1234, high 0xa5c3
-    address = 0x40               # even, as every owner now presents
-
-    class _Bus:
-        """`beat` wants something with `.phy`; the controller carries the record."""
-        phy = controller.phy
-
-    bus = _Bus()
-
-    async def testbench(ctx):
-        # The JTAG staging port is the simplest 32-bit writer into the arbiter:
-        # plain signals, no CSR bus to sequence.
-        ctx.set(dut.jtag_addr, address)
-        ctx.set(dut.jtag_data, value)
-        ctx.set(dut.jtag_req, 1)
-        acked = False
-        for _ in range(CYCLE_LIMIT):
-            await beat(ctx, bus, model)
-            if ctx.get(dut.jtag_ack):
-                acked = True
-                break
-        ctx.set(dut.jtag_req, 0)
-        # Let the transaction close: the last word is written on the way out.
-        for _ in range(40):
-            await beat(ctx, bus, model)
-        if not acked:
-            emit("        jtag_ack never arrived -- the write did not complete")
-
-    sim = Simulator(Fragment.get(dut, None))
-    sim.add_clock(1 / (SYNC_MHZ * 1e6))
-
-    # The model is stepped from the TESTBENCH, not a process: `beat` both reads
-    # the bus and drives what the device returns, and only a testbench may set
-    # signals in Amaranth's async simulator.
-    sim.add_testbench(testbench)
-    sim.run()
-
-    wrote = dict(model.written)
-    first = wrote.get(address)
-    second = wrote.get(address + 1)
-    # REPORTED, and the harness is INCOMPLETE: `jtag_ack` does not arrive, so
-    # nothing reaches the model and the ordering question is still unanswered.
-    # That is a defect in this section, not a finding about the design -- the
-    # staging port is driven here by hand and something in the handshake or the
-    # reset is not being satisfied. Asserting it would fail every build over a
-    # test that does not work yet.
-    #
-    # What it is FOR, once it drives the port: HyperBus sends the lower-addressed
-    # word first and little-endian puts the low half at the lower address, so the
-    # first word on the wire must be `value & 0xffff`. If the device holds the
-    # halves the other way round, `swap_halves` is inverted for writes -- and no
-    # test on the board can tell, because `hr reg` reads register space, which
-    # returns the same value in both halves of a paired fetch.
-    emit(f"        wrote {value:#010x} at word {address:#x}; device holds {wrote}")
-    emit(f"        low half {value & 0xffff:#06x} -> word {address:#x}: "
-         f"{first if first is None else hex(first)}")
-    emit(f"        high half {value >> 16:#06x} -> word {address + 1:#x}: "
-         f"{second if second is None else hex(second)}")
-    if first is None:
-        emit("        HARNESS INCOMPLETE -- nothing reached the device, so this")
-        emit("        says nothing about ordering yet. See the comment above.")
+# 7b, "which 16-bit word of a DQS write reaches the device FIRST", was HERE and
+# asserted nothing: its harness never got `jtag_ack`, so nothing reached the model
+# and the section printed a report about an empty capture. It read as coverage.
+# The question is answered by `hyperram_dqs_model_sim.py --stage order`, against
+# the twin and Winbond's model, with a deliberately rewired run required to fail.
+# (#206, #346)
 
 
 def latency_cycles_held(*, latency=None, max_latency_clocks=14):
@@ -1224,55 +1022,27 @@ def section_latency_input(checks, emit):
                      for a, b in zip(steps, steps[1:])),
                  f"not one-for-one: {taken}")
 
-    # A count below 2 underflows the counter unless it is clamped, and a counter
-    # that wrapped waits ~2^n cycles -- a hang, not a short read.
-    checks.check("a count below 2 is clamped rather than wrapped",
-                 latency_cycles_held(latency=0) is not None
-                 and latency_cycles_held(latency=0) <= taken[6],
-                 "latency 0 did not complete, so the counter wrapped")
+    # The floor is `phy_round_trip_cycles + 3`, not 2: below it READ_DATA begins
+    # while the device's RWDS fall is still in flight and latches it as a strobe
+    # over a tristate bus. #353 derived it twice, from a burst and from the AC
+    # parameters. The check here used to say "below 2", which the floor refutes.
+    floor = min_read_latency_clocks(0)
+    at_floor = latency_cycles_held(latency=floor)
+    checks.check("a count under the read floor is clamped up to it, not wrapped",
+                 at_floor is not None and latency_cycles_held(latency=0) == at_floor,
+                 f"latency 0 held {latency_cycles_held(latency=0)} cycles, the "
+                 f"floor of {floor} holds {at_floor} -- a counter that wrapped "
+                 f"waits ~2^n cycles, which is a hang and not a short read")
 
-    # `fixed_latency` was ORed into the branch condition as a Python int, so the
-    # VARIABLE path was dead whenever the constructor said True -- the sweep moved
-    # the part and the controller could not follow, and every `var` cell of 4096
-    # failed. It must now be a signal the caller can drive. (#338)
-    held = HyperRAMController.STATES.index("HANDLE_LATENCY")
-
-    def held_with(fixed):
-        counted = []
-
-        async def body(ctx, dut, model):
-            psram = dut.psram
-            ctx.set(psram.fixed_latency, 1 if fixed else 0)
-            ctx.set(psram.address, 0x100)
-            ctx.set(psram.perform_write, 0)
-            ctx.set(psram.final_word, 1)
-            ctx.set(psram.start_transfer, 1)
-            await ctx.tick()
-            ctx.set(psram.start_transfer, 0)
-            cycles, entered = 0, False
-            for _ in range(completion_bound(dut.sync_mhz)):
-                if ctx.get(psram.state) == held:
-                    cycles, entered = cycles + 1, True
-                elif entered:
-                    break
-                await beat16(ctx, dut, model)
-            counted.append(cycles if entered else None)
-
-        simulate16(body, max_latency_clocks=14)
-        return counted[0]
-
-    # The model holds RWDS low through the CA, so `var` must take the SHORT count.
-    # Identical numbers here mean the branch is still welded.
-    fixed_held, var_held = held_with(True), held_with(False)
-    emit(f"     HANDLE_LATENCY cycles: fixed {fixed_held}, variable {var_held}\n")
+    # `fixed_latency` reaching the variable branch is not asserted here any more.
+    # It rested on `ModelHyperRAM16` holding RWDS low through the CA, which is not
+    # what the part does -- the twin drives it from `CR0[3] | refresh` after a
+    # 12 ns tDSV float. `controller_model_tb.sv` sweeps both modes at six codes
+    # against that device, and `+rwds_float=1` is the control. (#338, #346)
     checks.check("`fixed_latency` is an input, not a compile-time constant",
                  hasattr(HyperRAMController(phy=HyperBusPHY(), sync_mhz=60.0),
                          "fixed_latency"),
                  "no `fixed_latency` signal on the controller")
-    checks.check("driving `fixed_latency` low reaches the variable branch",
-                 fixed_held != var_held,
-                 f"both took {fixed_held} cycles -- the variable path is still "
-                 "dead, so a sweep of CR0[3] moves the part and not the controller")
 
 
 def section_structural(checks, emit):
@@ -1619,20 +1389,13 @@ class NonDQSHarness(Elaboratable):
 class ModelHyperRAM16:
     """A 16-bit fixed-latency read model, observed only through HyperBus."""
 
-    def __init__(self, *, sync_mhz=NON_DQS_SYNC_MHZ, tcshi_ns=T_CSHI_NS,
-                 deliver=None, rwds_stale=0, rwds_extra=0):
+    def __init__(self, *, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None):
         self.commands = []
         self.ca_words = []
         self.transaction_cycles = []
         # Read beats this device serves before going silent. See `ModelHyperRAM`.
         self.deliver = deliver
         self.read_beats = 0
-        # RWDS during the CA is the device asking for extra latency, and it is
-        # valid tDSV AFTER CS# falls -- so on the falling cycle itself the line
-        # still holds `rwds_stale`, whatever the last transaction left. That gap
-        # is the whole of #321.
-        self.rwds_stale = rwds_stale
-        self.rwds_extra = rwds_extra
         # Transactions that never brought `idle` back inside `completion_bound`,
         # and what `timed_out` read at the end of the last one.
         self.incomplete = 0
@@ -1640,21 +1403,13 @@ class ModelHyperRAM16:
         self.timed_out = None
         self.burst_beats = None
         self.beats_taken = 0
-        # Whole cycles of CS# high tCSHI needs at this clock, rounded up -- the
-        # same arithmetic the controller does, done independently of it. Two at
-        # 192 MHz.
-        self._cshi_required = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
-        # How many cycles CS# has been high. Starts far past the requirement so
-        # the first transaction of a run is not judged against a gap that never
-        # existed.
-        self._cs_high_cycles = 10**6
-        self.cshi_violations = 0
-        # tCSM, counted where it is spent rather than at the end of a transaction,
-        # so a device left selected for ever is counted once rather than never.
-        self._tcsm_cycles = int(T_CSM_NS * sync_mhz / 1000.0)
+        # MEASURED, not judged: the shortest gap between transactions and the
+        # longest CS#-Low run, in cycles. Whether either clears the part's bound
+        # is `hyperram_model.v`'s answer, not this file's. (#346)
+        self._cs_high_cycles = 10**6      # nothing before the first transaction
+        self.cs_high_min = None
         self._cs_low_cycles = 0
         self.cs_low_max = 0
-        self.tcsm_violations = 0
         self._state = "idle"
         self._ca = []
         self._latency = 0
@@ -1674,17 +1429,15 @@ class ModelHyperRAM16:
         if cs:
             self._cs_low_cycles += 1
             self.cs_low_max = max(self.cs_low_max, self._cs_low_cycles)
-            if self._cs_low_cycles == self._tcsm_cycles + 1:
-                self.tcsm_violations += 1
         else:
             self._cs_low_cycles = 0
 
         if cs and not self._previous_cs:
-            # CS# just fell. Judged here, before anything about the command is
-            # known, and against the model's own cycle count rather than against
-            # anything the controller reports.
-            if self._cs_high_cycles < self._cshi_required:
-                self.cshi_violations += 1
+            # CS# just fell. The gap it followed is recorded here, before anything
+            # about the command is known.
+            if self._cs_high_cycles < 10**6:
+                self.cs_high_min = (self._cs_high_cycles if self.cs_high_min is None
+                                    else min(self.cs_high_min, self._cs_high_cycles))
             self._cs_high_cycles = 0
             self._state = "command"
             self._ca = []
@@ -1774,12 +1527,6 @@ class ModelHyperRAM16:
             # Driving 0b10 here regardless of `clk_en` was a model defect on its
             # own account: it asserted a read strobe on a clock edge that never
             # happened, and it only went unnoticed because nothing gated CK.
-
-        if self._state == "command":
-            # The CA window: the answer once tDSV has passed, the leftover level
-            # on the cycle CS# falls. See `rwds_stale` above.
-            rwds_i = (self.rwds_extra if self._cs_low_cycles > 1
-                      else self.rwds_stale)
 
         return dq_i, rwds_i
 
@@ -2095,22 +1842,14 @@ def section_line_refill(checks, emit):
                  classic["data"] == burst["data"],
                  f"classic {len(classic['data'])}, burst {len(burst['data'])}")
 
-    # 17 CK of overhead per transaction, and it is counted off the controller's
-    # states rather than fitted: 3 command words + 13 `HANDLE_LATENCY` +
-    # 1 `RECOVERY`, with `CS_SETUP` before CK starts. So a transaction is
-    # 17 + words -- 49 for a 32-word line, 19 each for sixteen 2-word transfers.
-    #
-    # These read 51 and 336 until the model's data phase was corrected: it
-    # entered two cycles late, reads tolerated it because RWDS gates the
-    # controller's sampling, and the extra two showed up in every total. NOT the
-    # same quantity as the 19 CK in `docs/soc-memory-bus.md`, which is a
-    # board measurement of the DQS engine at 4:1 gearing.
+    # The CK totals are REPORTED. Asserting 49 and 304 was asserting the
+    # controller's own `HIGH_LATENCY_CLOCKS` back at it -- the model's data phase
+    # is `HIGH_LATENCY_CLOCKS - 2` by construction, so both numbers move together
+    # and the check reports an agreement it built in. Where the data phase starts
+    # is graded in `controller_model_tb.sv` against the device's own decode, at
+    # six codes in both latency modes. (#346)
     burst_cycles = sum(burst_model.transaction_cycles)
     classic_cycles = sum(classic_model.transaction_cycles)
-    checks.check("one line occupies 49 CK with command and fixed latency",
-                 burst_cycles == 49, f"measured {burst_cycles} CK")
-    checks.check("sixteen classic transfers occupy 304 CK",
-                 classic_cycles == 304, f"measured {classic_cycles} CK")
     # The cap guards tCSM, which is a TIME, so it has to be checked at the clock
     # the design runs -- not at the 192 MHz the old literal 748 was written for.
     # That number was 12.5 us at CK 60, over three times the limit it exists to
@@ -2479,14 +2218,14 @@ def section_escape(checks, emit):
 
 
 def section_tcsm(checks, emit):
-    """13. CS# Low never exceeds tCSM, measured rather than argued.
+    """13. How long CS# is held Low, ours against upstream's.
 
-    The part allows 4 us and section 10 makes it the host's obligation; nothing in
-    this file had ever counted it. Exceeding it drops a refresh, which is silent
-    corruption somewhere else, so a violation cannot be found by reading data
-    back. See #317.
+    tCSM is a part fact and `hyperram_model.v` is what judges it -- an unended
+    burst runs there under `+stim=1`, with `+cs_hold_ns=1000` as the control that
+    proves its monitor fires. What stays here is the caller-side half: a caller
+    that never ends a burst, and the controller's own word cap chopping it. (#317)
     """
-    emit("\n13. tCSM: how long CS# is held Low\n")
+    emit("\n13. CS# Low on a burst nobody ends\n")
 
     async def endless_read(ctx, dut, model):
         await run16(ctx, dut, model, address=TEST_ADDRESS, read=True, beats=0)
@@ -2494,181 +2233,71 @@ def section_tcsm(checks, emit):
     # THE NEGATIVE CONTROL: a device that keeps answering and a caller that never
     # ends the burst. Upstream holds CS# Low until the harness gives up.
     control = simulate16(endless_read, upstream=True)
-    checks.check("upstream holds CS# Low past tCSM on a burst nobody ends",
-                 control.tcsm_violations > 0,
-                 f"CS# Low at most {control.cs_low_max} cycles, under the "
-                 f"{control._tcsm_cycles}-cycle limit, so this detector is blind")
-
     chopped = simulate16(endless_read)
-    checks.check("ours chops it, and CS# never passes tCSM",
-                 chopped.tcsm_violations == 0,
-                 f"{chopped.tcsm_violations} violations, CS# Low up to "
-                 f"{chopped.cs_low_max} cycles")
-    cap = chopped.burst_beats
+    budget = chopped.burst_beats
+    checks.check("upstream holds CS# Low until the harness gives up",
+                 control.cs_low_max > chopped.cs_low_max,
+                 f"upstream {control.cs_low_max} cycles, ours "
+                 f"{chopped.cs_low_max} -- so this harness cannot tell the two "
+                 f"apart and the checks below prove nothing")
+    checks.check("ours chops it inside the budget the controller computed",
+                 chopped.cs_low_max <= completion_bound(NON_DQS_SYNC_MHZ),
+                 f"CS# Low up to {chopped.cs_low_max} cycles")
     checks.check("...at the word cap exactly, not one beat past it",
-                 chopped.beats_taken == cap,
-                 f"took {chopped.beats_taken} beats against a cap of {cap}")
+                 chopped.beats_taken == budget,
+                 f"took {chopped.beats_taken} beats against a cap of {budget}")
     checks.check("...and the caller is told the controller ended it",
                  chopped.timed_out == 1, f"timed_out={chopped.timed_out}")
-
-    # And a silent device, where the watchdog rather than the word cap ends it.
-    silent = simulate16(
-        lambda ctx, dut, model: run16(ctx, dut, model, address=TEST_ADDRESS,
-                                      read=True),
-        deliver=0)
-    checks.check("a silent device does not hold CS# past tCSM either",
-                 silent.tcsm_violations == 0,
-                 f"CS# Low up to {silent.cs_low_max} cycles")
 
     dqs = simulate(
         lambda ctx, dut, model: run(ctx, dut, model, address=TEST_ADDRESS,
                                     read=True, beats=0))
-    checks.check("the DQS controller keeps tCSM on the same shape",
-                 dqs.tcsm_violations == 0,
+    checks.check("the DQS controller chops the same shape",
+                 dqs.cs_low_max <= completion_bound(SYNC_MHZ),
                  f"CS# Low up to {dqs.cs_low_max} beats")
 
-    emit(f"        tCSM {T_CSM_NS:g} ns is {chopped._tcsm_cycles} cycles at "
-         f"{NON_DQS_SYNC_MHZ:g} MHz; upstream reached {control.cs_low_max}, "
-         f"ours {chopped.cs_low_max}")
-    emit(f"        word cap {cap} beats, taken {chopped.beats_taken}; the device "
+    emit(f"        CS# Low, longest run: upstream {control.cs_low_max} cycles, "
+         f"ours {chopped.cs_low_max}, DQS {dqs.cs_low_max} beats")
+    emit(f"        word cap {budget} beats, taken {chopped.beats_taken}; the device "
          f"clocked out {chopped.read_beats}, the extra one on the RECOVERY cycle")
 
 
-def section_ca_rwds(checks, emit):
-    """14. The extra-latency bit comes from the CA, not from before it.
-
-    The device answers on RWDS *during* the CA, tDSV after CS# falls. Sampling on
-    the falling cycle -- which `LATCH_RWDS` did -- reads the level the previous
-    transaction left. Dormant while `fixed_latency=True` forces the long count,
-    and live the moment #319 clears `CR0[3]`, so it is run here with the fixed
-    branch off. The DQS controller takes the identical change; its model has no
-    RWDS path to drive. See #321.
-    """
-    emit("\n14. The extra-latency sample, taken inside the CA\n")
-
-    latency_state = HyperRAMController.STATES.index("HANDLE_LATENCY")
-
-    def latency_cycles(*, stale, extra):
-        """Cycles spent in HANDLE_LATENCY, which is the choice the sample made."""
-        dut = NonDQSProtocolHarness(fixed_latency=False)
-        model = ModelHyperRAM16(rwds_stale=stale, rwds_extra=extra)
-        counted = 0
-
-        async def testbench(ctx):
-            nonlocal counted
-            psram = dut.psram
-            ctx.set(psram.address, TEST_ADDRESS)
-            ctx.set(psram.final_word, 1)
-            ctx.set(psram.start_transfer, 1)
-            await ctx.tick()
-            ctx.set(psram.start_transfer, 0)
-            for _ in range(completion_bound(NON_DQS_SYNC_MHZ)):
-                counted += ctx.get(psram.state) == latency_state
-                await beat16(ctx, dut, model)
-                if ctx.get(psram.idle):
-                    break
-
-        sim = Simulator(Fragment.get(dut, None))
-        sim.add_clock(1 / (NON_DQS_SYNC_MHZ * 1e6), domain="sync")
-        sim.add_testbench(testbench)
-        sim.run()
-        return counted
-
-    long_count = HyperRAMController.HIGH_LATENCY_CLOCKS - 1
-    short_count = HyperRAMController.LOW_LATENCY_CLOCKS - 1
-
-    asked = latency_cycles(stale=0, extra=1)
-    checks.check("RWDS raised mid-CA takes the LONG latency",
-                 asked == long_count, f"{asked} cycles, want {long_count}")
-
-    stale = latency_cycles(stale=1, extra=0)
-    checks.check("a level left over from before the CA does NOT extend it",
-                 stale == short_count,
-                 f"{stale} cycles, want {short_count} -- the sample came from "
-                 f"before the device answered")
-
-    checks.check("...and the two choices are distinguishable at all",
-                 long_count != short_count,
-                 f"long {long_count}, short {short_count}")
-
-    emit(f"        mid-CA high: {asked} cycles   stale high: {stale} cycles   "
-         f"(long {long_count}, short {short_count})")
-
-
-def section_register_ca(checks, emit):
-    """15. CA[45] is 1 for register space whatever the caller asked for.
-
-    9.1: *"CA[45] must be 1 as only linear single word register writes are
-    supported."* It was `~single_page`, correct only because all four callers
-    happen to pass 0 -- an invariant held by callers and documented in none of
-    them. LiteX and Lattice both hardcode it. See #320.
-    """
-    emit("\n15. CA[45] for register space, against a caller that asks for wrapped\n")
-
-    async def register_write(ctx, dut, model):
-        await run16(ctx, dut, model, address=0, read=False, data=0x8f2f,
-                    register_space=True, single_page=True)
-
-    async def wrapped_memory(ctx, dut, model):
-        await run16(ctx, dut, model, address=TEST_ADDRESS, read=True,
-                    single_page=True)
-
-    # THE NEGATIVE CONTROL: upstream builds CA[45] from `single_page` alone, so
-    # the same request emits command byte 0x20 -- an unsupported register write,
-    # silently. If it did not, this check could not tell the two apart.
-    control = simulate16(register_write, upstream=True)
-    control_ca = control.ca_words[0] if control.ca_words else 0
-    checks.check("upstream emits CA[45]=0 for a single_page register write",
-                 not (control_ca >> 45) & 1,
-                 f"upstream command byte {control_ca >> 40:#04x}")
-
-    ours = simulate16(register_write)
-    ca = ours.ca_words[0] if ours.ca_words else 0
-    checks.check("ours forces CA[45]=1 there",
-                 bool((ca >> 45) & 1), f"command byte {ca >> 40:#04x}")
-    checks.check("...which is the datasheet's 0x60 for a register write",
-                 ca >> 40 == 0x60, f"{ca >> 40:#04x}, want 0x60")
-
-    memory = simulate16(wrapped_memory)
-    memory_ca = memory.ca_words[0] if memory.ca_words else 0
-    checks.check("a WRAPPED memory burst is left alone -- CA[45]=0",
-                 not (memory_ca >> 45) & 1,
-                 f"command byte {memory_ca >> 40:#04x}, so the fix forced a bit "
-                 f"it had no business touching")
-
-    async def register_write32(ctx, dut, model):
-        await run(ctx, dut, model, address=0, read=False, data=0x8f2f,
-                  register_space=True, single_page=True)
-
-    dqs = simulate(register_write32)
-    checks.check("the DQS controller forces it too",
-                 dqs.commands and dqs.commands[0]["linear"],
-                 f"{dqs.commands[0] if dqs.commands else 'no command decoded'}")
-
-    emit(f"        upstream {control_ca >> 40:#04x}, ours {ca >> 40:#04x}, "
-         f"wrapped memory {memory_ca >> 40:#04x}")
+# 14, the extra-latency sample taken inside the CA, and 15, CA[45] forced for
+# register space, were HERE. Both are facts about the part:
+#
+#   * 14 rested on `ModelHyperRAM16` splitting stale from answered at a
+#     hand-chosen one-cycle tDSV driven as a hard 0 or 1. The part floats RWDS for
+#     12 ns and then answers; a controller sampling early reads a float, which no
+#     Python model here can express. `controller_model_tb.sv` `+stim=2` runs it
+#     against a device that never drives RWDS, with `+rwds_float=1` as the
+#     control. (#321, #338)
+#   * 15's five checks are the command byte, and case 2b grades all of them off
+#     the independent model's own capture: 0x60 forced for a single_page register
+#     write, 0x80 left alone for a wrapped memory burst. (#320)
+#
+# (#346)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="The HyperBus protocol layer, against a model of the part.")
+        description="The controller and the SoC above it, against a model that "
+                    "is deliberately allowed to misbehave.")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print every bus beat")
     args = parser.parse_args()
 
-    emit("HyperRAM: the protocol layer, against a model of the W956A8")
-    emit("timing of the DQS strobe is NOT checked here -- see the docstring")
+    emit("HyperRAM: the controller and the SoC above it, against an unfaithful model")
+    emit("no fact about the PART is asserted here -- see the docstring, and #346")
 
     checks = Checks(emit)
     for section in (section_command, section_latency, section_held,
-                    section_as_built, section_dqs_write_order,
+                    section_as_built,
                     section_recovery, section_recovery_non_dqs,
                     section_latency_input, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
                     section_clock_stop, section_register_clock_stop,
-                    section_escape, section_tcsm,
-                    section_ca_rwds, section_register_ca):
+                    section_escape, section_tcsm):
         section(checks, emit)
 
     emit()
