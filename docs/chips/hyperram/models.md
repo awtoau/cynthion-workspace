@@ -21,6 +21,8 @@ drive strength, the 200 MHz failure.
     scripts/hyperram_vendor_model_sim.py                 # both, and they must agree
     scripts/hyperram_vendor_model_sim.py --sim icarus    # open twin only, no Diamond needed
     scripts/hyperram_vendor_model_sim.py --grade T250    # the grade the datasheet has no column for
+    scripts/hyperram_vendor_model_sim.py --hunt 2048     # more variable-latency transactions
+    scripts/hyperram_vendor_model_sim.py --bursts 256    # more 128-word bursts
     scripts/hyperram_vendor_model_sim.py --keep          # leave tmp/hyperram-vendor-model for vsim -gui
 
 Exit code is the result: every marker present, zero testbench failures, and the
@@ -98,12 +100,13 @@ of 250, and **`tCSM` = 4000 ns below 85 °C / 1000 ns above** behind
 nobody can read — and kept honest by the shared testbench.
 
 **Models:** the 8 MiB array, CA decode, register space with POR values, the
-CR0[7:4] sparse latency encoding and CR0[3] doubling, RWDS as read strobe and as
-write mask, linear bursts, and a tCSM check.
+CR0[7:4] sparse latency encoding and CR0[3] doubling, RWDS as extra-latency
+request (tri-stated until tDSV) and as read strobe and write mask, linear bursts,
+a refresh-forced 2x election, and a tCSM check.
 
-**Does not model:** setup/hold, tRWR, tRP/tRPH, refresh collisions, DPD, hybrid
-sleep, wrapped and hybrid bursts, or anything analogue. Those stay the vendor
-model's job — which is why the pair is the deliverable, not either one alone.
+**Does not model:** setup/hold, tRWR, tRP/tRPH, DPD, hybrid sleep, wrapped and
+hybrid bursts, or anything analogue. Those stay the vendor model's job — which is
+why the pair is the deliverable, not either one alone.
 
 One number in it is calibrated rather than derived: the data phase starts
 `4 + 2 × latency_ck` edges after CS# falls, where the arithmetic suggests
@@ -132,6 +135,31 @@ the controller work.
    stores `z` into the next address, surfacing later as corruption nowhere near
    the transaction that wrote it.
 
+## Variable latency, and the 2x election
+
+Added for #338. All five latency codes, both modes, both models.
+
+- **The delivered latency is exactly L variable / 2L fixed, at every code.** 2L is
+  even for every legal L (3..7), so the controller's `latency_clocks >> 1` is
+  exact — that arithmetic is not the #338 defect.
+- **tDSV = 12 ns** (`Config-AC.v`, T166 / 3.0 V). RWDS is **not driven** until then,
+  so at 100 MHz the first two CA edges carry a float. Both models print
+  `zz1111` (asking for 2L) or `zz0000` (declining). **The first CA edge is not an
+  answer**, and a controller that samples there samples nothing.
+- **The refresh election.** The vendor model raises RWDS over the CA on a
+  variable-latency transaction when a refresh is due, and delivers 2L. Every word
+  still arrives correctly, because RWDS says so before the data.
+- **The vendor model's refresh is counted in TRANSACTIONS, not time** — 100 CS#
+  assertions apart whether each is one word (21.07 us for 100) or 128 words
+  (148.07 us for 100). A real part refreshes on a wall clock. The twin copies the
+  vendor's cadence (`REFRESH_EVERY`, default 100), so **neither model predicts the
+  rate a board will see**; they exercise the path.
+- **Only one direction loses data.** Host on 2L against a device on L starts
+  capturing L clocks into the burst: 128 of 128 words wrong, in both models — the
+  shape of #338's 121-128. Host on L against a device on 2L just idles and reads
+  the burst correctly; every fixed-latency read in this testbench does exactly
+  that, hunting RWDS from the end of the CA.
+
 ## Coverage today
 
 | case | vendor | twin | note |
@@ -141,10 +169,13 @@ the controller work.
 | CR1 write + read-back | yes | yes | **CR1[6] = 0 differential is accepted and reads back 0** |
 | memory write + read, low and top word | yes | yes | `0x3fffff` confirms 8 MiB |
 | deliberate tCSM violation | yes | yes | fires at exactly 4 us |
-| variable latency (`CR0[3] = 0`) | **not exercised** | partial | the next thing to add |
+| variable latency, all five codes, read and write | yes | yes | latency measured, not assumed |
+| RWDS over the CA, all six edges | yes | yes | `zz1111` / `zz0000`; tDSV is why the first two are `z` |
+| refresh collision forcing 2x latency | yes | yes | twin's cadence copies the vendor's, and neither is a clock |
+| 128-word bursts, the BIST's geometry | yes | yes | |
 | wrapped / hybrid burst | **not exercised** | no | |
-| refresh collision forcing 2x latency | **not exercised** | no | vendor only |
 | DPD, hybrid sleep, software reset | **not exercised** | no | vendor only |
+| setup/hold, tRWR, tRP | n/a | no | vendor checks them; the twin is not a timing model |
 
 The twin's fidelity is bounded by this table, not by the encryption. Every row
 added to the testbench is a row the twin has to get right.
