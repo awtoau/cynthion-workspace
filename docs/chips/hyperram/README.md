@@ -12,6 +12,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 | [models.md](models.md) | **the part without the board** — Winbond's own model, the open twin, and the testbench that holds them equal |
 | [sim-audit.md](sim-audit.md) | **what the Python sim actually asserts** — all 143 checks classified, and what a retirement would cost |
 | [2026-08-10-audit.md](2026-08-10-audit.md) | **our own faults** — six found, three fixed, and why no measurement survives |
+| [pin-attributes.md](pin-attributes.md) | **the FPGA's own pads** — what DRIVE/SLEW/PULL/HYSTERESIS are set to, why they patch in 3 s, and why neither operating point can resolve them |
 
 ## Read the plan before trusting a number
 
