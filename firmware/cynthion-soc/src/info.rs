@@ -179,6 +179,18 @@ pub mod gateware {
         }
     }
 
+    /// The junction temperature at which the HyperRAM's tCSM collapses.
+    ///
+    /// Winbond's own `Config-AC.v` (`sources/README.md`, and
+    /// `docs/chips/hyperram/models.md`) switches tCSM on `` `define LA_85C ``:
+    /// **4000 ns below 85 C, 1000 ns above**. Both controllers derive their CS#
+    /// cap from the 4000 ns figure alone -- `T_CSM_NS` in
+    /// `gateware/soc/peripherals/hyperram_dqs_controller.py` and
+    /// `hyperram_controller.py`, `HYPERRAM_TCSM_NS` in `gateware/soc/bootram.py`
+    /// -- so above this the cap is four times too loose and nothing else on the
+    /// board would say so.
+    pub const TCSM_KNEE_C: u32 = 85;
+
     /// This build has a DTR at all. Zero from a design without one and zero
     /// from a conversion that never completed would otherwise read the same.
     pub const DIE_PRESENT: u32 = 1 << 8;
@@ -555,37 +567,25 @@ pub fn command(uart: &mut Uart) {
             // A PLL with its feedback unconnected reported `sync 30000000` from
             // the constant while `sync` was not oscillating at all, and finding
             // that cost a bisect across two rebuilds.
-            {
-                use cynthion_soc_pac::board_clocks::offset as clocks;
-                let base = cynthion_soc_pac::base::BOARD_CLOCKS;
-                // SAFETY: the generated base and offsets for a CSR peripheral
-                // this SoC always builds.
-                let khz = unsafe {
-                    core::ptr::read_volatile((base + clocks::SYNC_KHZ) as *const u32)
-                };
-                let status = unsafe {
-                    core::ptr::read_volatile((base + clocks::STATUS) as *const u32)
-                };
-                let locked = status & 1 != 0;
-                let valid = status & 2 != 0;
-
-                if !valid {
+            //
+            // One reader, in `src/clock.rs`, shared with the `clocks` line of
+            // the boot report -- two copies of a CSR decode is two things to
+            // keep in step with the gateware.
+            match crate::clock::measured() {
+                None => {
                     let _ = writeln!(uart,
                         "         clocks: NO MEASUREMENT YET (window incomplete)");
-                } else {
+                }
+                Some(measured) => {
                     let _ = writeln!(uart,
                         "         measured sync {} kHz, pll {}",
-                        khz, if locked { "locked" } else { "UNLOCKED" });
-                    // 1% either way. The window quantises to about 0.003%, so
-                    // anything near this is a real disagreement rather than
-                    // measurement noise.
-                    let declared_khz = id.sync_hz / 1000;
-                    let slack = declared_khz / 100;
-                    if khz + slack < declared_khz || khz > declared_khz + slack {
+                        measured.khz,
+                        if measured.locked { "locked" } else { "UNLOCKED" });
+                    if !within_one_percent(measured.khz, id.sync_hz / 1000) {
                         let _ = writeln!(uart,
                             "         CLOCK MISMATCH: gateware declares {} kHz, \
                              the fabric counts {}",
-                            declared_khz, khz);
+                            id.sync_hz / 1000, measured.khz);
                     }
                 }
             }
@@ -616,6 +616,17 @@ pub fn command(uart: &mut Uart) {
             }
         }
     }
+}
+
+/// Is a counted frequency the declared one, within 1%?
+///
+/// The monitor's window quantises to about 0.003%, so anything outside 1% is a
+/// real disagreement and not measurement noise. Here rather than at each caller:
+/// `info` and the boot report must draw the line in the same place, or a board
+/// passes one and fails the other.
+pub fn within_one_percent(measured_khz: u32, declared_khz: u32) -> bool {
+    let slack = declared_khz / 100;
+    measured_khz + slack >= declared_khz && measured_khz <= declared_khz + slack
 }
 
 /// The `misa` extension bits the gateware says the core was generated with.
