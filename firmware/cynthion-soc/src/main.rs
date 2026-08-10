@@ -78,11 +78,12 @@
 //!   in `src/uart.rs` for why enabling the transmit-empty interrupt on this peripheral
 //!   would be a storm, not a service.
 
-// Gated so the crate can be built for the HOST under `cargo test`. std supplies
-// its own `main` and `panic_impl`, and a duplicate lang item is a hard error --
-// which is why the `mod tests` blocks in this crate had never once run (#337).
-#![cfg_attr(not(test), no_std)]
-#![cfg_attr(not(test), no_main)]
+// UNCONDITIONAL. `cargo test` cannot build this crate for the host whatever the
+// lang items say -- `src/selftest.rs` is RISC-V asm, which does not assemble for
+// x86. The unit tests live in `firmware/cynthion-soc-tests`, which includes the
+// pure modules and leaves this half alone (#337).
+#![no_std]
+#![no_main]
 // Under `hyperram-bist` the whole HyperRAM surface -- `hr`, `load`, the
 // `hyperram` region, the staging CRC -- is compiled out, so its helpers have no
 // caller left. That is the feature taking effect, not an oversight; the shell
@@ -415,7 +416,6 @@ fn open_vbus_on_panic() {
     }
 }
 
-#[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     // POWER FIRST, before anything is printed.
