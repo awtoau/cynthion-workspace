@@ -54,6 +54,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
 TESTBENCH = ROOT / "gateware" / "probes" / "hyperram" / "vendor_model_tb.sv"
+FAULT_TB = ROOT / "gateware" / "probes" / "hyperram" / "fault_model_tb.sv"
 OPEN_MODEL = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_model.v"
 WORKDIR = ROOT / "tmp" / "hyperram-vendor-model"
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_vendor_model_sim.log"
@@ -123,6 +124,34 @@ ELECTION_RE = re.compile(r"variable-latency elections: (\d+) short, (\d+) long, 
 # entirely on that unknown. On expiry we log which step, its limit and its elapsed
 # time, and exit non-zero -- a hung vsim otherwise looks like a slow one.
 STEP_TIMEOUT_S = 10
+
+# FAULT INJECTION, open model only -- the vendor model has no such parameters.
+# One Icarus run per knob setting, each asserted to change the bus in the ONE way
+# its name promises. The control run is first and must be indistinguishable from
+# the part; a knob that changes the bus with every parameter at its default has
+# broken the model rather than faulted it. See docs/chips/hyperram/sim-audit.md.
+#
+# `zz1111` is the part: RWDS floats for tDSV and then answers. A held fault has no
+# tDSV, so it reads on every CA edge -- which is what makes the two cases
+# distinguishable at all, and what #338 is about.
+FAULT_CASES = (
+    ("control", {}, (
+        "ca rwds = zz1111, strobe at 28 edges, id0 = 0c86",
+        "mem[0x000100] = 1234",
+    )),
+    ("rwds stuck High", {"FAULT_CA_RWDS": 1}, (
+        "ca rwds = 111111",
+        "id0 = 0c86",
+    )),
+    ("rwds stuck Low", {"FAULT_CA_RWDS": 2}, (
+        "ca rwds = 000000",
+        "id0 = 0c86",
+    )),
+    ("rwds never driven", {"FAULT_CA_RWDS": 3}, (
+        "ca rwds = zzzzzz",
+        "id0 = 0c86",
+    )),
+)
 
 
 log = logging.getLogger("vendor-model")
@@ -238,11 +267,42 @@ def run_open(grade: str, hunt: int, bursts: int) -> int:
     return check_output(run("vvp", ["vvp", "tb.vvp"], env), "open")
 
 
+def run_faults() -> list[str]:
+    """The twin told to misbehave, one Icarus run per knob."""
+    for tool in ("iverilog", "vvp"):
+        if shutil.which(tool) is None:
+            raise SystemExit(f"{tool} not on PATH -- needed for the fault runs")
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy(FAULT_TB, WORKDIR / FAULT_TB.name)
+    shutil.copy(OPEN_MODEL, WORKDIR / OPEN_MODEL.name)
+    env = dict(os.environ)
+
+    failures = []
+    for name, defines, expected in FAULT_CASES:
+        target = f"fault-{name.replace(' ', '-')}.vvp"
+        argv = ["iverilog", "-g2012"]
+        argv += [f"-D{key}={value}" for key, value in defines.items()]
+        argv += ["-o", target, FAULT_TB.name, OPEN_MODEL.name]
+        run("iverilog", argv, env)
+        out = run("vvp", ["vvp", target], env)
+        missing = [marker for marker in expected if marker not in out]
+        if missing:
+            for marker in missing:
+                failures.append(f"fault[{name}]: missing {marker!r}")
+            for line in out.splitlines():
+                if "[fault]" in line:
+                    log.error("  [fault:%s] %s", name, line.split("] ", 1)[-1])
+        else:
+            log.info("  [fault] %s: %s", name, expected[0])
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--sim", default="both", choices=("questa", "icarus", "both"),
-                    help="questa runs the vendor model, icarus runs the open twin, "
-                         "both runs each and requires them to agree (default)")
+    ap.add_argument("--sim", default="both", choices=("questa", "icarus", "both", "fault"),
+                    help="questa runs the vendor model, icarus runs the open twin and "
+                         "its fault knobs, both runs each and requires them to agree "
+                         "(default), fault runs the knobs alone")
     ap.add_argument("--grade", default="T166", choices=GRADES,
                     help="AC parameter set from Config-AC.v (default: T166, the 6I on this board)")
     ap.add_argument("--part", default="W956A8MBYA",
@@ -263,12 +323,17 @@ def main() -> int:
     if not args.keep and WORKDIR.exists():
         shutil.rmtree(WORKDIR)
 
-    if args.sim == "icarus":
-        failures = run_open(args.grade, args.hunt, args.bursts)
+    if args.sim in ("icarus", "fault"):
+        failures = [] if args.sim == "fault" else run_open(args.grade, args.hunt,
+                                                           args.bursts)
+        failures += run_faults()
         for f in failures:
             log.error("FAIL %s", f)
-        if not failures:
-            log.info("PASS -- the open model passes the shared testbench under Icarus")
+        if not failures and args.sim == "fault":
+            log.info("PASS -- every fault knob changes the bus in the one way it claims")
+        elif not failures:
+            log.info("PASS -- the open model passes the shared testbench under Icarus, "
+                     "and every fault knob does what its name says")
         if not args.keep:
             shutil.rmtree(WORKDIR, ignore_errors=True)
         return 1 if failures else 0
@@ -290,6 +355,7 @@ def main() -> int:
     failures = check_output(out, "vendor")
     if args.sim == "both":
         failures += run_open(args.grade, args.hunt, args.bursts)
+        failures += run_faults()
     if failures:
         for f in failures:
             log.error("FAIL %s", f)

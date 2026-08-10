@@ -32,7 +32,19 @@ module hyperram_model #(
     // measured at exactly 100 CS# assertions apart whether the transaction is one
     // word (210 ns) or 128 (1480 ns). A real part refreshes on a wall clock, so
     // this cadence exercises the path, it does not predict a rate. (#338, #342)
-    parameter integer REFRESH_EVERY = 100
+    parameter integer REFRESH_EVERY = 100,
+    // FAULT INJECTION. 0 is the part; anything else is a device deliberately
+    // misbehaving, so the controller's response to it can be checked. See
+    // docs/chips/hyperram/sim-audit.md and #346.
+    //
+    // What RWDS does over the CA period:
+    //   0  the part -- float for tDSV, then the CR0[3] | refresh answer
+    //   1  stuck High      2  stuck Low      3  never driven at all
+    // 1-3 hold from CS# falling with no tDSV, because a fault is held and not
+    // timed. Mode 3 is the float a controller sampling before tDSV reads, which
+    // is the prime suspect in #338; modes 1 and 2 are a device whose answer
+    // contradicts what it then serves.
+    parameter integer CA_RWDS_FAULT = 0
 ) (
     inout  wire [7:0] adq,
     input  wire       clk,
@@ -187,9 +199,14 @@ module hyperram_model #(
   // Fixed latency always asks; variable latency asks only when a refresh is due.
   always @(negedge csb) begin
     rwds_oe = 1'b0;
-    #(T_DSV_NS);
-    if (!csb) begin
-      rwds_out = cr0[3] | take_long;
+    if (CA_RWDS_FAULT == 0) begin
+      #(T_DSV_NS);
+      if (!csb) begin
+        rwds_out = cr0[3] | take_long;
+        rwds_oe  = 1'b1;
+      end
+    end else if (CA_RWDS_FAULT != 3) begin
+      rwds_out = (CA_RWDS_FAULT == 1);
       rwds_oe  = 1'b1;
     end
   end
@@ -235,6 +252,7 @@ module hyperram_model #(
       end else if (beat < first_data_beat(is_register && !is_read) +
                           (is_read ? 16'd1 : 16'd0)) begin
         rwds_out = 1'b0;                // latency period: the request is answered
+        if (is_read) rwds_oe = 1'b1;    // CA_RWDS_FAULT covers the CA and no more
       end else begin
         // A read starts one edge later than a write at the same latency -- the
         // device has to turn the bus around. Measured against the vendor model:
