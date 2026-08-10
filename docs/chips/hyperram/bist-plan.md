@@ -252,6 +252,26 @@ Only once this behaves does the matrix mean anything.
 | Clock mode | CR1[6] differential / single-ended | 2 | yes, register write |
 | FPGA pin drive | ECP5 `DRIVE` 4/8/12/16 mA | 4 | no — but **patchable**, see below |
 
+### PLL dynamic phase shift is NOT a capture-phase axis (#228)
+
+The lever exists and works — `gateware/soc/peripherals/pll_phase.py`, `bist phase`
+— but on both PHYs as built it cannot move the read window:
+
+- One clock launches CK **and** captures the returning data. non-DQS: `ODDRX1F`
+  and `IDDRX1F` both on `hr` (CLKOP). DQS: `ODDRX2DQSB`, `ODDRX2DQA` and
+  `DQSBUFM`/`IDDRX2DQA` all on `hr_fast` (CLKOS).
+- Shift it by δ and launch, pad CK, the device's reply and the capture edge all
+  move by δ. The external delay is unchanged, so the margin is unchanged. Exactly
+  common-mode.
+- non-DQS has no lever at all: `hr` is CLKOP, and CLKOP is `FEEDBK_PATH`, so
+  shifting it moves every *other* output instead.
+- A live axis needs the capture clock on a **different** PLL output from CK's. The
+  DQS path has no room (bank ECLK mux takes CLKOP/CLKOS only, both spoken for);
+  the non-DQS PHY has spare outputs but would need CK moved onto one.
+
+So the axis is a PHY change, not a clocking change. `READCLKSEL` remains the only
+runtime capture knob, and it only becomes live on DQS (#343).
+
 ### FPGA pin attributes are bitstream bits, not a rebuild
 
 `DRIVE`, `PULLMODE`, `SLEWRATE`, `HYSTERESIS` and `OPENDRAIN` are `.config_enum`
