@@ -60,6 +60,38 @@ gh api repos/greatscottgadgets/<repo>/compare/<upstream-sha>...<fork-sha> \
   -q '.status, .ahead_by, .behind_by'
 ```
 
+## Worktrees
+
+`git worktree add` populates NO submodules, so a fresh worktree cannot build:
+`repos/vexiiriscv` empty means the CPU cannot be regenerated at all.
+
+```bash
+./dev.py worktree-check     # is THIS checkout buildable? non-zero if not
+./dev.py worktree-setup     # make it so
+```
+
+- Eleven submodules, not four — `repos/vexiiriscv/build.sbt` takes
+  `ext/SpinalHDL` as a `ProjectRef`, so setup recurses.
+- Each is checked out as a **linked git worktree of the superproject's own**
+  `.git/modules/<name>`. Objects are shared; only files cost disk (127 MB here
+  against 396 MB of shared history). Never copy a submodule tree into a
+  worktree — that is what nearly put 225 MB into a commit (#365).
+- Each submodule gets its own HEAD and index, so two worktrees can hold
+  different pins. A shared `modules/` checkout cannot.
+- No network: the pins are already in the shared object store.
+
+`sources/**` is gitignored and so has no pin to check out.
+`scripts/shared_paths.py:resolve_shared()` is the one rule for finding it —
+env override, this checkout, then the main checkout behind it.
+
+### `repos/apollo`'s pin is on no remote
+
+Pin `90c8b7b6` exists in the superproject's object store and nowhere else;
+`git fetch` of it answers `upload-pack: not our ref`. `git submodule update`
+cannot repair a checkout that lacks it and a fresh clone cannot build. Worktrees
+are unaffected because they share the store rather than fetching.
+`worktree-check` reports it as a standing warning. Fix is to push it: #373.
+
 ## Notes
 
 - `cynthion` is the fork that carries local work; it is intentionally **ahead**
