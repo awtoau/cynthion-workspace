@@ -43,6 +43,11 @@ variable latency, which is a change to make deliberately and measure.
 `HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, which
 is what `hyperram_latency.py` used to exist for.
 
+**The variable-latency path is now driveable and reads the request where it is.**
+`low_latency_clocks` is an input, not a class constant that matched no latency
+code (#380), and the RWDS sample is a counted cycle rather than the two CA states,
+which read pin cycles before CS# had fallen (#381).
+
 ## What is NOT fixed here
 
 The read path still has no bitslip. `IDDRX2DQA` feeds the data path directly, and
@@ -99,9 +104,8 @@ def low_latency_clocks(latency_ck):
     It serves after L CK and `HANDLE_LATENCY` waits `2 x n + 2`, so only EVEN
     waits exist here and an odd L cannot be met -- a real limit of the 4:1
     gearing. Rounded DOWN, which enters READ_DATA early rather than late; late
-    loses the first word outright and is #381's `128 - L` shape. Neither
-    rounding is right at an odd L and the read is rotated either way (#186);
-    measured both ways in #380.
+    loses the first word outright. At an odd L the read comes back rotated
+    whatever is waited -- #399, where the rounding is still open.
     """
     return max(0, latency_ck // 2 - 1)
 
