@@ -40,6 +40,8 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
         b"ck" => ck(uart, args),
+        b"phase" => phase(uart, args),
+        b"mirror" => mirror(uart),
         b"cell" => match axes(args) {
             Some(axes) => bist::one(uart, &engine, axes, DEFAULT_PASSES),
             None => {
@@ -92,6 +94,103 @@ fn ck(uart: &mut Uart, args: &[u8]) {
     // the one condition under which every number above is meaningless.
     if !ck.locked() {
         let _ = writeln!(uart, "  PLL NOT LOCKED -- no measurement here means anything");
+    }
+}
+
+/// `bist phase [clkos|clkos2|clkos3|clkop [[-]steps]]` -- move the PLL's phase.
+///
+/// With no argument it reports. With an output it steps that output by `steps`,
+/// negative for backward, and reports after each step so a sweep is readable as
+/// it runs rather than only at the end.
+///
+/// **`clkop` is the feedback output of this PLL.** Shifting it does not move
+/// CLKOP; the loop corrects it and everything else moves instead. Allowed, and
+/// named, because finding that out should not cost a rebuild.
+fn phase(uart: &mut Uart, args: &[u8]) {
+    // SAFETY: `bist::PHASE_BASE` is the shifter's CSR base.
+    let phase = unsafe { bist::Phase::new(bist::PHASE_BASE) };
+    if !phase.present() {
+        let _ = writeln!(uart, "phase: no shifter in this bitstream");
+        return;
+    }
+
+    let mut words = args.split(|&b| b == b' ').filter(|w| !w.is_empty());
+    if let Some(name) = words.next() {
+        let sel = match bist::PHASESEL.iter().find(|(n, _)| n.as_bytes() == name) {
+            Some(&(_, sel)) => sel,
+            None => {
+                let _ = writeln!(uart, "usage: bist phase [clkos|clkos2|clkos3|clkop [[-]steps]]");
+                return;
+            }
+        };
+        // The sign is split off here rather than through `parse_signed`, which
+        // returned `None` for `-3` on the board and left the verb silently
+        // taking zero steps -- a lever that reports success and does nothing is
+        // the exact failure this pair of issues is about.
+        let (back, digits) = match words.next() {
+            // `back 3` as well as `-3`. Two spellings because a sign that is
+            // dropped somewhere in the parse looks exactly like a step the PLL
+            // refused, and one of the two had to be able to tell them apart.
+            Some(word) if word == b"back" => (true, words.next().unwrap_or(&[])),
+            Some(word) if !word.is_empty() && word[0] == b'-' => (true, &word[1..]),
+            Some(word) => (false, word),
+            None => (false, &b""[..]),
+        };
+        let count = parse_decimal(digits).unwrap_or(0);
+        phase.select(sel, back);
+        for _ in 0..count {
+            if !phase.step(sel, back) {
+                let _ = writeln!(uart, "phase: step did not complete -- busy stuck");
+                break;
+            }
+        }
+    }
+
+    let _ = writeln!(
+        uart,
+        "  steps {}  of {} per rotation  level {}  count {}  {}{}",
+        phase.steps(),
+        phase.rotation(),
+        phase.level() as u32,
+        phase.count(),
+        if phase.backward() { "backward" } else { "forward" },
+        if phase.has_probe() { "" } else { "  (NO PROBE -- level means nothing)" }
+    );
+    if !phase.locked() {
+        let _ = writeln!(uart, "  PLL NOT LOCKED -- the phase moved something it should not have");
+    }
+}
+
+/// `bist mirror` -- which clock is on which PMOD A pad, and divided by what.
+fn mirror(uart: &mut Uart) {
+    // SAFETY: `bist::MIRROR_BASE` is the mirror map's CSR base.
+    let mirror = unsafe { bist::Mirror::new(bist::MIRROR_BASE) };
+    let pads = mirror.pads();
+    if pads == 0 {
+        let _ = writeln!(uart, "mirror: no clocks on the PMOD pins in this bitstream");
+        return;
+    }
+    let _ = writeln!(uart, "  PMOD A, each source divided by {}", mirror.divisor());
+    for index in 0..pads as usize {
+        match mirror.source(index) {
+            Some(name) => {
+                let _ = writeln!(
+                    uart,
+                    "  pin {:>2}  ball {:<4} {}",
+                    bist::PMOD_A_PINS[index],
+                    bist::PMOD_A_BALLS[index],
+                    name
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    uart,
+                    "  pin {:>2}  ball {:<4} driven low",
+                    bist::PMOD_A_PINS[index],
+                    bist::PMOD_A_BALLS[index]
+                );
+            }
+        }
     }
 }
 

@@ -199,6 +199,179 @@ impl Ck {
     }
 }
 
+/// The PLL phase shifter's CSR base, same literal-not-PAC reasoning as `BASE`.
+/// Mirrors `PLL_PHASE_BASE` in `gateware/soc/top.py`.
+pub const PHASE_BASE: usize = 0xf000_0a10;
+
+/// The clock mirror's pad map, mirroring `CLOCK_MIRROR_BASE` in `top.py`.
+pub const MIRROR_BASE: usize = 0xf000_0a20;
+
+/// `PHASESEL`, and it is NOT natural binary. Diamond's `PLL_Options_XO2.htm`.
+///
+/// `CLKOP` is at 3, which is where a driver counting from zero arrives last --
+/// and it is the one output that must not be shifted, because it is this PLL's
+/// feedback path. The shell takes names, not this number.
+pub const PHASESEL: [(&str, u32); 4] =
+    [("clkos", 0), ("clkos2", 1), ("clkos3", 2), ("clkop", 3)];
+
+/// Polls allowed for a step pulse to finish.
+///
+/// The pulse is four `sync` cycles, 66 ns at 60 MHz. One poll is a Wishbone CSR
+/// read -- several `sync` cycles on its own -- so `busy` must be clear by the
+/// second poll. 8 is about 4x that, and on expiry the caller says so rather than
+/// counting a step the PLL may not have taken.
+const STEP_POLLS: u32 = 8;
+
+/// Move `EHXPLLL`'s output phase at run time. See #228.
+///
+/// One step is 1/8 of a VCO period; `rotation()` is how many make 360 degrees of
+/// the probe output, read from the gateware rather than worked out here -- it is
+/// a function of the dividers this bitstream was built with.
+pub struct Phase {
+    base: usize,
+}
+
+impl Phase {
+    /// # Safety
+    /// `base` must be the phase shifter's CSR base.
+    pub const unsafe fn new(base: usize) -> Self {
+        Self { base }
+    }
+
+    fn read(&self, offset: usize) -> u32 {
+        // SAFETY: `offset` is one of the four registers the map defines.
+        unsafe { core::ptr::read_volatile((self.base + offset) as *const u32) }
+    }
+
+    fn write(&self, value: u32) {
+        // SAFETY: `ctrl` is the one writable register, at the base.
+        unsafe { core::ptr::write_volatile(self.base as *mut u32, value) }
+    }
+
+    /// Steps per 360 degrees of the probe clock. Zero means no shifter here --
+    /// an absent window reads as zeroes, and zero is not a legal rotation.
+    pub fn rotation(&self) -> u32 {
+        (self.read(0x04) >> 8) & 0xFFF
+    }
+
+    /// The direction the shaper latched, which is a different claim from "the
+    /// CPU wrote a 1" -- and the reading that separated a dropped shell argument
+    /// from a PLL that ignores PHASEDIR (#347).
+    pub fn backward(&self) -> bool {
+        self.read(0x04) & (1 << 4) != 0
+    }
+
+    pub fn present(&self) -> bool {
+        self.rotation() != 0
+    }
+
+    pub fn locked(&self) -> bool {
+        self.read(0x04) & (1 << 1) != 0
+    }
+
+    /// The probe's raw sample. Constant for a given phase; it flips when a step
+    /// walks the sample point across an edge.
+    pub fn level(&self) -> bool {
+        self.read(0x04) & (1 << 2) != 0
+    }
+
+    pub fn has_probe(&self) -> bool {
+        self.read(0x04) & (1 << 3) != 0
+    }
+
+    /// Probe highs in the last window. 0 or the full window either side of a
+    /// crossing; anything between is the metastable band, which is the reading
+    /// that says WHERE the edge is.
+    pub fn count(&self) -> u32 {
+        self.read(0x08)
+    }
+
+    /// Net steps applied since configuration, signed.
+    pub fn steps(&self) -> i32 {
+        self.read(0x0c) as i32
+    }
+
+    /// `step` is 1 forward, 2 backward, 0 for none. The direction rides the
+    /// strobe rather than sitting in a stored bit beside it, so a driver cannot
+    /// hand the shaper the previous direction by writing both in one store.
+    fn ctrl(&self, sel: u32, step: u32) -> u32 {
+        (sel & 3) | ((step & 3) << 2)
+    }
+
+    /// Point the shifter at one output, without stepping.
+    pub fn select(&self, sel: u32, _back: bool) {
+        self.write(self.ctrl(sel, 0));
+    }
+
+    /// One step. `false` means `busy` never cleared, so the step is not counted
+    /// as taken.
+    pub fn step(&self, sel: u32, back: bool) -> bool {
+        self.write(self.ctrl(sel, if back { 2 } else { 1 }));
+        for _ in 0..STEP_POLLS {
+            if self.read(0x04) & 1 == 0 {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Which clock is on which PMOD pad, as the bitstream reports it. See #294.
+///
+/// Read rather than assumed: the mirror's domain list is built in `top.py` from
+/// what the variant actually has, so a firmware table would be right until
+/// someone added a domain.
+pub struct Mirror {
+    base: usize,
+}
+
+/// `SOURCE_CODES` in `gateware/soc/peripherals/clock_mirror.py`, in code order
+/// from 1. `tests/test_bist_constants.py` holds the two equal.
+pub const MIRROR_SOURCES: [&str; 5] = ["sync", "usb", "hr", "hr_fast", "hr_probe"];
+
+/// PMOD A, in pin order, from the r1.4 platform's `Connector("pmod", 0, ...)`.
+/// Nothing else on the die claims these balls; the only contention is whatever
+/// is plugged into the header.
+pub const PMOD_A_BALLS: [&str; 8] = ["C9", "B9", "D11", "C12", "C8", "D8", "D9", "C10"];
+
+/// PMOD A pin numbers, which skip 5 and 6 -- those are ground and 3V3.
+pub const PMOD_A_PINS: [u8; 8] = [1, 2, 3, 4, 7, 8, 9, 10];
+
+impl Mirror {
+    /// # Safety
+    /// `base` must be the mirror map's CSR base.
+    pub const unsafe fn new(base: usize) -> Self {
+        Self { base }
+    }
+
+    fn read(&self, offset: usize) -> u32 {
+        // SAFETY: `offset` is one of the two registers the map defines.
+        unsafe { core::ptr::read_volatile((self.base + offset) as *const u32) }
+    }
+
+    /// How many pads are driven. Zero means no mirror in this bitstream, which
+    /// is also what an absent window reads as -- and both mean the same thing to
+    /// anyone holding a probe.
+    pub fn pads(&self) -> u32 {
+        (self.read(0x04) >> 8) & 0xFF
+    }
+
+    /// What the pad is divided by, so a number on a scope can be scaled back.
+    pub fn divisor(&self) -> u32 {
+        self.read(0x04) & 0xFF
+    }
+
+    /// The source on pad `index`, or `None` if it is not driven.
+    pub fn source(&self, index: usize) -> Option<&'static str> {
+        let code = (self.read(0x00) >> (4 * index)) & 0xF;
+        if code == 0 {
+            None
+        } else {
+            MIRROR_SOURCES.get(code as usize - 1).copied()
+        }
+    }
+}
+
 /// What one cell of the matrix was run with.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Axes {
