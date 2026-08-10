@@ -50,28 +50,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import hyperram_matrix_diff as matrix  # noqa: E402
 import hyperram_pin_patch as pins  # noqa: E402
+import soc_confirm  # noqa: E402
 
 LOG = ROOT / "tmp" / "logs" / "hyperram-pin-axis.log"
-
-CLI = Path("repos") / "apollo" / "apollo_fpga" / "commands" / "cli.py"
-
-
-def apollo_cli():
-    """Apollo's CLI, which a git worktree does not have a copy of.
-
-    Submodules live in the main working tree only, so an agent running from
-    `.claude/worktrees/...` finds no `repos/` at all. `--git-common-dir` names the
-    shared `.git`, whose parent is that main tree.
-    """
-    if (ROOT / CLI).exists():
-        return ROOT / CLI
-    common = subprocess.run(("git", "rev-parse", "--path-format=absolute",
-                             "--git-common-dir"), cwd=ROOT,
-                            capture_output=True, text=True, check=True)
-    main = Path(common.stdout.strip()).parent / CLI
-    if not main.exists():
-        raise SystemExit(f"no apollo CLI at {ROOT / CLI} or {main}")
-    return main
 
 
 def emit(line=""):
@@ -102,61 +83,45 @@ def patch(build_dir, label, assignments):
     return out
 
 
-# Apollo must take the shared JTAG bus off the running design before it can
-# configure. When the design still holds it the part ID reads back `ffffffff` and
-# the attempt fails outright; an immediate retry succeeds, so this is contention
-# and not a dead board. Three attempts, each a full handshake of about a second.
-CONFIGURE_TRIES = 3
+def carries_rung(rung):
+    """Does the design that answered carry the CK rung asked for?
 
-
-def alive(rung):
-    """Does the configured design answer, and does it carry the rung asked for?
-
-    **A zero exit from `apollo configure` is not a running design.** Once, an
-    attempt that failed with "bitstream provides data past the device's SRAM
-    array" was followed by a retry that returned zero and left the FPGA blank --
-    no console, no USB. The next thing to touch the board would have called that
-    a pin attribute killing the design, which is precisely the misattribution
-    this whole rig exists to avoid.
-
-    So the gate is the board's own answer, not the programmer's exit code.
+    Identity, not liveness -- `soc_confirm` has already proved something is
+    running. A board answering with a different rung is a wrong bitstream, which
+    is not a case a retry improves.
     """
     try:
         board = matrix.Board()
-    except Exception as failure:                        # no tty yet, or no design
-        emit(f"  post-configure check: no console ({failure})")
+    except Exception as failure:
+        emit(f"  rung check: no console ({failure})")
         return False
     try:
-        # Asked twice. The banner is held in the log ring and flushed on the first
-        # received byte, so it interleaves with the first command's echo and the
-        # shell answers "unknown command" to a perfectly good line. One repeat is
-        # enough -- the ring is drained by then -- and the alternative is scoring
-        # a live board dead.
+        # Asked twice: the banner is flushed on the first received byte and
+        # interleaves with the first command's echo, so the shell answers
+        # "unknown command" to a perfectly good line.
         for _ in range(2):
-            text = board.send(f"bist ck {rung}", 4)
-            if matrix.RUNG.findall(text):
+            if matrix.RUNG.findall(board.send(f"bist ck {rung}", 4)):
                 return True
     finally:
         board.close()
-    emit("  post-configure check: console answers but reports no CK rung")
     return False
 
 
 def configure(bitstream, rung):
-    for attempt in range(1, CONFIGURE_TRIES + 1):
-        result = subprocess.run([sys.executable, str(apollo_cli()), "configure",
-                                 str(bitstream)], capture_output=True, text=True)
-        if result.returncode != 0:
-            emit(f"  configure attempt {attempt}/{CONFIGURE_TRIES} failed: "
-                 + (result.stderr or result.stdout).strip().splitlines()[-1][:160])
-            continue
-        if alive(rung):
-            emit(f"  configured {bitstream.name}, board answers"
-                 + (f" (attempt {attempt})" if attempt > 1 else ""))
-            return
-        emit(f"  configure attempt {attempt}/{CONFIGURE_TRIES} returned 0 but the "
-             f"board did not come up")
-    raise SystemExit(f"configure failed {CONFIGURE_TRIES} times for {bitstream}")
+    """Load the point's bitstream and prove the design is running.
+
+    The liveness gate used to live here, added after this rig was bitten by a
+    configure that returned zero over a blank FPGA. It is `soc_confirm` now
+    (#360), so every path gets it and each cause is named rather than reported
+    as "the board did not come up".
+    """
+    if soc_confirm.configure_and_confirm(bitstream) != 0:
+        raise SystemExit(f"no design running after configuring {bitstream}")
+    if not carries_rung(rung):
+        raise SystemExit(
+            f"the design answers but reports no CK rung {rung}: the bitstream on "
+            f"the board is not {bitstream.name}")
+    emit(f"  configured {bitstream.name}, board answers on rung {rung}")
 
 
 def main():

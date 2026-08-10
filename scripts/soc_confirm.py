@@ -78,7 +78,25 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, log  # noqa: E402
 
-APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
+CLI = Path("repos") / "apollo" / "apollo_fpga" / "commands" / "cli.py"
+
+
+def apollo_cli():
+    """Apollo's CLI, which a git worktree may not have a copy of.
+
+    Submodules live in the main working tree only, so a run from
+    `.claude/worktrees/...` can find no `repos/` at all. `--git-common-dir` names
+    the shared `.git`, whose parent is that tree.
+    """
+    if (ROOT / CLI).exists():
+        return ROOT / CLI
+    common = subprocess.run(("git", "rev-parse", "--path-format=absolute",
+                             "--git-common-dir"), cwd=ROOT,
+                            capture_output=True, text=True, check=True)
+    main = Path(common.stdout.strip()).parent / CLI
+    if not main.exists():
+        raise SystemExit(f"no apollo CLI at {ROOT / CLI} or {main}")
+    return main
 
 VENDOR_ID = 0x1d50
 # Apollo on CONTROL. `gateware/usb_ids.py` reserves it and owns every other number.
@@ -480,7 +498,7 @@ def configure_and_confirm(bitstream, *, tries=3, node=None):
 
     for attempt in range(1, tries + 1):
         result = run_bounded(
-            [sys.executable, str(APOLLO_CLI), "configure", str(bitstream)],
+            [sys.executable, str(apollo_cli()), "configure", str(bitstream)],
             family="run:apollo-configure", cwd=ROOT, merge_stderr=True)
         if result is None or result.returncode != 0:
             tail = ((result.stdout or "") if result else "").strip().splitlines()
