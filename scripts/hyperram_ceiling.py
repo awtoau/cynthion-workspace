@@ -70,11 +70,6 @@ from hyperram.hyperram_ceiling_top import (  # noqa: E402
     REG_READ_CYCLES, REG_STATUS, REG_WORDS,
     REG_WRITE_CYCLES, solve_pll)
 
-CONFIGURE = [sys.executable,
-             str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands"
-                 / "cli.py"),
-             "configure"]
-
 # The ladder, in device CK. Starts at 120 -- the rate the non-DQS path is
 # already verified at, so the sweep begins from a known-good rung rather than
 # from a guess -- and every rung is reachable by BOTH paths (non-DQS needs
@@ -301,11 +296,14 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
         emit(f"  {tag}: no bitstream")
         return result
 
-    configured = subprocess.run(CONFIGURE + [str(bitstream)], cwd=ROOT,
-                                capture_output=True, text=True)
-    if configured.returncode != 0:
+    # `expect="design"`: the engine is read over JTAG registers, so DONE is the
+    # confirmation. A rung scored dead because the FPGA was left blank is a rung
+    # attributed to the clock it was testing (#360).
+    import soc_confirm
+
+    if soc_confirm.configure_and_confirm(bitstream, expect="design") != 0:
         result["verdict"] = "configure failed"
-        result["detail"] = (configured.stderr or "").strip()[-200:]
+        result["detail"] = "no design running; the verdict above names why"
         emit(f"  {tag}: configure FAILED -- {result['detail']}")
         return result
 

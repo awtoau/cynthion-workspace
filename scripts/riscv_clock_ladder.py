@@ -122,12 +122,16 @@ def build():
 
 
 def configure():
-    result = subprocess.run(
-        [sys.executable,
-         str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"),
-         "configure", str(BITSTREAM)],
-        cwd=ROOT, capture_output=True, text=True)
-    return result.returncode == 0
+    """Load this rung's bitstream and confirm a design is running.
+
+    `expect="console"`: `verify()` below reads the banner and the ticks, and the
+    first received byte flushes the banner -- so the console is required to
+    enumerate but is not prompted. A rung marked FAIL because the FPGA was left
+    blank is a rung attributed to its frequency (#360).
+    """
+    import soc_confirm
+
+    return soc_confirm.configure_and_confirm(BITSTREAM, expect="console") == 0
 
 
 def verify():

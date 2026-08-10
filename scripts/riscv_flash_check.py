@@ -211,15 +211,12 @@ def configure():
         return False
 
     emit(f"configuring {BITSTREAM}")
-    result = subprocess.run(
-        [sys.executable, str(APOLLO_CLI), "configure", str(BITSTREAM)],
-        capture_output=True, text=True, cwd=str(ROOT))
-    for line in (result.stdout + result.stderr).strip().splitlines():
-        emit(f"    {line}")
-    if result.returncode != 0:
-        emit("configure failed")
-        return False
-    return True
+    # `expect="console"`: the console must ENUMERATE, and is not prompted. This
+    # script reads the banner itself and the first received byte flushes it, so
+    # a prompt here would eat the transcript it is about to capture (#360).
+    import soc_confirm
+
+    return soc_confirm.configure_and_confirm(BITSTREAM, expect="console") == 0
 
 
 def wait_for_console():

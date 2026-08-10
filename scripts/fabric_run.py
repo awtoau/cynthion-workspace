@@ -63,7 +63,6 @@ part rather than a hard defect. This test cannot currently tell those apart.
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -83,13 +82,6 @@ from fabric.fabric_gateware import (APPLET_ID, BLOCKS, DIE_PRESENT, ROUND_BITS,
                                     REG_SIGNATURE, REG_ROUNDS, REG_STATUS,
                                     REG_GOLDEN, REG_MISMATCHES, SYNC_MHZ)
 
-# The volatile configuration path. `configure` writes SRAM; `flash` would write
-# the board's boot gateware, which this script must never do.
-CONFIGURE = [sys.executable,
-             str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands"
-                 / "cli.py"),
-             "configure"]
-
 
 def die_note(value):
     """Describe REG_DIE, without pretending an uncalibrated code is degrees.
@@ -106,19 +98,19 @@ def die_note(value):
 
 
 def load(bitstream, emit):
-    """Configure the FPGA over JTAG, into SRAM. Returns True on success."""
+    """Configure the FPGA over JTAG, into SRAM. Returns True on success.
+
+    `expect="design"`: this applet is read over JTAG registers and presents no
+    console, so the part's DONE bit is the confirmation -- a zero exit from
+    `apollo configure` is not one (#360).
+    """
     if not bitstream.exists():
         emit(f"no bitstream at {bitstream} -- run scripts/fabric_build.py")
         return False
     emit(f"loading {bitstream} into SRAM (volatile; a power cycle undoes it)")
-    result = subprocess.run(CONFIGURE + [str(bitstream)], cwd=ROOT,
-                            capture_output=True, text=True)
-    for line in ((result.stdout or "") + (result.stderr or "")).splitlines():
-        emit(f"  {line}")
-    if result.returncode != 0:
-        emit("configure failed")
-        return False
-    return True
+    import soc_confirm
+
+    return soc_confirm.configure_and_confirm(bitstream, expect="design") == 0
 
 
 def main():

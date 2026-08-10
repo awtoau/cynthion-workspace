@@ -280,8 +280,10 @@ def check(verbose: bool = False) -> int:
              f"({'shared' if shared else 'OWN COPY'})")
 
         if sub.mod.exists() and not on_any_remote(sub.mod, sub.pin):
-            warnings.append(f"{sub.label}: pin {sub.pin[:8]} is on no remote -- "
-                            f"fine here, fatal for a fresh clone (#365)")
+            warnings.append(
+                f"{sub.label}: pin {sub.pin[:8]} is on no remote -- fine here, "
+                f"fatal for a fresh clone (#373). Fix it with "
+                f"`./dev.py pin-publish --push {sub.label}`")
 
     model = resolve_shared(ROOT, VENDOR_MODEL)
     label = str(VENDOR_MODEL.parent)

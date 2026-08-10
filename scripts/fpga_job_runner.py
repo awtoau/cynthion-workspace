@@ -284,8 +284,16 @@ def expectation_env(base, job_dir, bitstream, control, expectation):
 
 
 def configure(bitstream, output):
-    argv = [sys.executable, str(APOLLO_CLI), "configure", str(bitstream)]
-    return run_command(argv, output)
+    """Load a bitstream and confirm a design is running. Returns 0 on success.
+
+    `expect="design"`: this is the restore path and the bitstream can be
+    anything, so the part's DONE bit is the confirmation that generalises. A
+    restore that leaves the FPGA blank is the next session's mystery (#360).
+    """
+    import soc_confirm
+
+    output.say(f"$ configure_and_confirm {display_path(bitstream)}")
+    return soc_confirm.configure_and_confirm(bitstream, expect="design")
 
 
 def run_job(job_dir, completed, output):
