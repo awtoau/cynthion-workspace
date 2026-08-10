@@ -13,6 +13,7 @@
 //                   3 never driven -- the float a controller may sample early
 //   FAULT_DELIVER   read words served before the device goes silent, -1 = all.
 //                   0 is a device that never answers, N one that stops mid-burst
+//   FAULT_REFUSE_REG 1 = register writes are taken off the bus and ignored
 //
 // ICARUS ONLY, and NOT the shared testbench. The vendor model has no such
 // parameters, so there is nothing to hold this one honest against; what holds it
@@ -30,6 +31,9 @@
 `ifndef FAULT_DELIVER
   `define FAULT_DELIVER -1
 `endif
+`ifndef FAULT_REFUSE_REG
+  `define FAULT_REFUSE_REG 0
+`endif
 
 module tb;
 
@@ -38,8 +42,10 @@ module tb;
   localparam [7:0] CMD_MEM_READ  = 8'hA0;
   localparam [7:0] CMD_MEM_WRITE = 8'h20;
   localparam [7:0] CMD_REG_READ  = 8'hE0;
+  localparam [7:0] CMD_REG_WRITE = 8'h60;
 
   localparam [31:0] ADDR_ID0 = 32'h0000_0000;
+  localparam [31:0] ADDR_CR0 = 32'h0000_0800;
 
   // CR0[3] = 1 fixed, CR0[7:4] = 7 -> 2 x 7 = 14 CK before data. POR, untouched
   // here: the knobs are the only thing this file varies.
@@ -62,7 +68,8 @@ module tb;
 
   hyperram_model #(
     .CA_RWDS_FAULT(`FAULT_CA_RWDS),
-    .DELIVER_WORDS(`FAULT_DELIVER)
+    .DELIVER_WORDS(`FAULT_DELIVER),
+    .REFUSE_REG_WRITE(`FAULT_REFUSE_REG)
   ) dut (
     .adq(adq), .clk(clk), .clk_n(clk_n), .csb(csb),
     .rwds(rwds), .VCC(VCC), .VSS(VSS), .resetb(resetb)
@@ -160,6 +167,21 @@ module tb;
     end
   endtask
 
+  // A register write takes no latency -- the first data byte goes on the very
+  // next edge after the CA -- and the host must NOT drive RWDS. One edge late
+  // lands CR0[15] = 0 and puts the part into deep power down.
+  task write_register(input [31:0] addr, input [15:0] word);
+    begin
+      drive_ca(ca(CMD_REG_WRITE, addr));
+      adq_oe  = 1'b1;
+      rwds_oe = 1'b0;
+      adq_drv = word[15:8];
+      @(posedge clk); #1; adq_drv = word[7:0];
+      @(negedge clk); #1; adq_oe = 1'b0;
+      bus_idle;
+    end
+  endtask
+
   // A memory write takes the same latency as a read and has no strobe to
   // self-align on, so the host counts it. Same body as vendor_model_tb.sv's.
   task write_memory(input [31:0] word_addr, input [15:0] word);
@@ -213,8 +235,8 @@ module tb;
     resetb = 1'b0; #1_000; resetb = 1'b1; #2_000;
     bus_idle;
 
-    $display("[fault] knobs: CA_RWDS=%0d DELIVER=%0d",
-             `FAULT_CA_RWDS, `FAULT_DELIVER);
+    $display("[fault] knobs: CA_RWDS=%0d DELIVER=%0d REFUSE_REG=%0d",
+             `FAULT_CA_RWDS, `FAULT_DELIVER, `FAULT_REFUSE_REG);
 
     // A register read is the shortest transaction that shows the CA period and
     // then a strobe, so one of them answers both questions the knob raises: what
@@ -234,6 +256,13 @@ module tb;
       write_memory(32'h00_0200 + w, 16'h2000 + w[15:0]);
     read_burst_served(32'h00_0200, 8, arrived);
     $display("[fault] burst served %0d of 8", arrived);
+
+    // CR0[14:12] drive strength 000 -> 010, everything else held. The read-back
+    // is the only thing that says whether the write took, which is why refusing
+    // it has to be a device the controller can be pointed at.
+    write_register(ADDR_CR0, 16'haf2f);
+    read_register(ADDR_CR0, got);
+    $display("[fault] cr0 after write = %h", got);
 
     $display("[fault] === done ===");
     $finish;

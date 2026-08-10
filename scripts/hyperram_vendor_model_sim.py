@@ -139,6 +139,7 @@ FAULT_CASES = (
         "ca rwds = zz1111, strobe at 28 edges, id0 = 0c86",
         "mem[0x000100] = 1234",
         "burst served 8 of 8",
+        "cr0 after write = af2f",
     )),
     ("rwds stuck High", {"FAULT_CA_RWDS": 1}, (
         "ca rwds = 111111",
@@ -162,6 +163,13 @@ FAULT_CASES = (
     ("device stops after 3 words", {"FAULT_DELIVER": 3}, (
         "id0 = 0c86",
         "burst served 3 of 8",
+    )),
+    # The CR0/CR1 verify path. Against a device that always accepts, a controller
+    # that never issued the write and one whose write was dropped read back the
+    # same value -- so the check only discriminates against this.
+    ("register write refused", {"FAULT_REFUSE_REG": 1}, (
+        "REFUSED (fault injection)",
+        "cr0 after write = 8f2f",
     )),
 )
 

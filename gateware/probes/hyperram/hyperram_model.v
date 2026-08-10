@@ -50,7 +50,12 @@ module hyperram_model #(
     // shape of the board's wedge and the case `READ_DATA` had no exit from; N
     // stops mid-burst, and 7-of-8 is how the unbounded state was proven (#316).
     // Silent means DQ and RWDS both released: no strobe, so nothing clocks in.
-    parameter integer DELIVER_WORDS = -1
+    parameter integer DELIVER_WORDS = -1,
+    // 1 = take the register write off the bus and then ignore it. The CR0/CR1
+    // verify path only means anything against a device that can refuse: with a
+    // model that always accepts, a controller which never issued the write and
+    // one whose write was dropped read back the same value. (#346)
+    parameter integer REFUSE_REG_WRITE = 0
 ) (
     inout  wire [7:0] adq,
     input  wire       clk,
@@ -308,7 +313,11 @@ module hyperram_model #(
           else begin
             // RWDS low = write this byte. Register space has no mask.
             if (is_register) begin
-              write_register(word_addr, {write_high, adq});
+              if (REFUSE_REG_WRITE)
+                $display("%m: register write to 0x%h of %h REFUSED (fault injection)",
+                         word_addr, {write_high, adq});
+              else
+                write_register(word_addr, {write_high, adq});
               // Register writes are a single word. The host may hold CS# low for
               // another edge or two on the way to raising it, and without this the
               // idle bus lands as a second write of z -- which reads back as a
