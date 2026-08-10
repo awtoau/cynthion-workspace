@@ -181,6 +181,25 @@ def head_of(work: Path) -> str:
     return out(["rev-parse", "HEAD"], work) if (work / ".git").exists() else ""
 
 
+def shares_objects(sub: Sub) -> bool:
+    """True if the checkout reads its objects from the superproject's store.
+
+    Compared as resolved paths, not as text: the main checkout's submodule
+    `.git` holds a RELATIVE gitdir, a linked worktree's an absolute one, and a
+    string match calls the main checkout an "own copy" of itself.
+    """
+    marker = sub.work / ".git"
+    if not marker.is_file():
+        return False                     # a real .git directory IS a own copy
+    gitdir = Path(marker.read_text().partition("gitdir:")[2].strip())
+    if not gitdir.is_absolute():
+        gitdir = (sub.work / gitdir)
+    try:
+        return sub.mod.resolve() in (gitdir.resolve(), *gitdir.resolve().parents)
+    except OSError:
+        return False
+
+
 def has_commit(mod: Path, sha: str) -> bool:
     return git(["--git-dir", str(mod), "cat-file", "-e", f"{sha}^{{commit}}"]).returncode == 0
 
@@ -252,8 +271,7 @@ def check(verbose: bool = False) -> int:
 
         # Sharing rather than copying is the property that makes 30 worktrees
         # affordable, so it is checked rather than assumed.
-        marker = sub.work / ".git"
-        shared = marker.is_file() and str(sub.mod) in marker.read_text()
+        shared = shares_objects(sub)
         if not shared and is_linked_worktree():
             warnings.append(f"{sub.label}: not sharing {sub.mod} -- this checkout "
                             f"has its own copy of the objects")
