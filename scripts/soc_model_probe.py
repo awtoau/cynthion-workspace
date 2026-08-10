@@ -45,7 +45,9 @@ BUILDS = [
     ("shell (the product)", "cynthion-soc", []),
     ("bare: riscv-rt only", "model-bare", ["models"]),
     ("cooperative", "model-coop", ["models"]),
-    ("RTIC 2.3", "cynthion-soc-rtic", ["rtic"]),
+    # `rticspike`, not `rtic`: the `rtic` feature went with #245, and it is what
+    # `[[bin]] cynthion-soc-rtic` names in `required-features` (#387).
+    ("RTIC 2.3", "cynthion-soc-rtic", ["rticspike"]),
     ("Embassy 0.10", "model-embassy", ["embassy"]),
     ("coop + 3 jobs, 1 mtimecmp", "model-coop-swqueue", ["models"]),
     ("coop + 3 jobs, 3 timers", "model-coop-hwtimer", ["models"]),

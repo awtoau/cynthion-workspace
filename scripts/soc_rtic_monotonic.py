@@ -117,10 +117,16 @@ def main() -> int:
     devlog.emit("\n## run")
     session = Session(elves[True])
     try:
-        if session.expect(b"CLINT monotonic on RTIC", BOOT_S) is None:
+        banner = b"CLINT monotonic on RTIC"
+        at = session.expect(banner, BOOT_S)
+        if at is None:
             devlog.log("the guest never printed its banner", "ERROR")
             return 1
-        mark = len(session.snapshot())
+        # THE BANNER'S OFFSET, not the buffer length. The drain thread reads in
+        # bursts, so a run that finishes fast has its whole transcript in the
+        # buffer before the banner is looked for -- and a mark past the report
+        # waits out RUN_S and calls a finished guest a hang (#387).
+        mark = at + len(banner)
         # "  clock" is the last line the report prints.
         if session.expect(b"  clock ", RUN_S, mark) is None:
             devlog.log("the run never reported -- see the transcript", "ERROR")

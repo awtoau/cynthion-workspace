@@ -725,14 +725,24 @@ def run_firmware_checks(checks, root):
     power = strip_comments(source(root, "power.rs"))
     main = strip_comments(source(root, "main.rs"))
     bus = strip_comments(source(root, "bus.rs"))
-    files = {path.name: strip_comments(path.read_text())
+    # KEYED BY PATH, not by basename. Eight names appear twice -- `power.rs`,
+    # `bist.rs`, `i2c.rs` and five more exist as both a driver in `src/` and a
+    # command in `src/shell/` -- and a basename map silently kept whichever
+    # sorted last. The REFRESH check then read the shell's `power.rs`, found no
+    # call at all, and reported an EMPTY list of call sites as a violation.
+    files = {str(path.relative_to(root)): strip_comments(path.read_text())
              for path in sorted(root.rglob("*.rs"))}
+    command = strip_comments(source(root, "shell/power.rs"))
 
     checks.check(
         "the firmware source is where this expects it",
-        bool(power) and bool(main),
-        f"no power.rs / main.rs under {root}. A structural check that reads "
-        f"nothing passes forever; it must say so instead.")
+        bool(power) and bool(main) and bool(command)
+        and len(files) == len(list(root.rglob("*.rs"))),
+        f"no power.rs / main.rs / shell/power.rs under {root}, or the file map "
+        f"lost an entry ({len(files)} of "
+        f"{len(list(root.rglob('*.rs')))}). A structural check that reads "
+        f"nothing, or reads half the tree, passes forever; it must say so "
+        f"instead.")
 
     # One call site for REFRESH. Anything else is a second owner of the cycle,
     # whatever it is called and however careful it is.
@@ -783,7 +793,10 @@ def run_firmware_checks(checks, root):
         "alert_limit_cached", "alert_samples_cached", "alert_enable_cached",
         "alert_history",
     }
-    body = re.search(r"fn board_power\(.*?\n\}", main, re.S)
+    # `board_power` in main.rs until the shell was split into `src/shell/`;
+    # the command is `shell/power.rs::command` now. The old name matched
+    # nothing and the check failed on an empty body rather than on a bus call.
+    body = re.search(r"pub\(crate\) fn command\(.*?\n\}", command, re.S)
     body = body.group(0) if body else ""
     asked = set(re.findall(r"\.power\.(\w+)", body))
     touches = re.findall(r"\b(?:read_registers|send_byte|write_register|probe|"
@@ -791,7 +804,7 @@ def run_firmware_checks(checks, root):
     checks.check(
         "the `power` command reaches no bus",
         bool(body) and not touches and asked <= READS_ONLY,
-        f"board_power calls {touches!r} and asks the monitor for "
+        f"shell/power.rs::command calls {touches!r} and asks the monitor for "
         f"{sorted(asked - READS_ONLY)!r} beyond what a reader may. It must print "
         f"`Monitor::latest`: a command that reads the part on its own account is "
         f"the caller that collides with the poll's REFRESH window, and the 2 ms "
@@ -801,9 +814,10 @@ def run_firmware_checks(checks, root):
     # plausible data, which is worse than the collision it replaced.
     checks.check(
         "the command prints how old the cached sample is",
-        "power::Age::" in main and "sampled" in main
+        "power::Age::" in command and "sampled" in command
         and "pub fn age(" in power,
-        "board_power must print `Monitor::age`. Without it a poll that has "
+        "shell/power.rs::command must print `Monitor::age`. Without it a poll "
+        "that has "
         "stopped shows four plausible voltages and nothing to contradict them.")
 
     # Nothing waits and retries any more.
@@ -827,9 +841,12 @@ def run_firmware_checks(checks, root):
             f"name its bus and write it: a stale select is answered, not "
             f"refused, by a part that looks exactly like the intended one.")
 
+    # THE I2C MUX's select, not any method spelled `select`. A bare
+    # `\.select\(` matched `ck.select(want)` in shell/bist.rs -- the HyperRAM
+    # CK ladder rung, which touches no bus and has nothing to do with #123.
     elsewhere = sorted(name for name, text in files.items()
                        if name not in ("bus.rs", "mux.rs")
-                       and re.search(r"\.select\(", text))
+                       and re.search(r"\bmux\.select\(|\bMux::select\(", text))
     checks.check(
         "nothing outside the bus module selects a bus",
         elsewhere == [],

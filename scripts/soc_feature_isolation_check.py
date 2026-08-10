@@ -190,7 +190,19 @@ def text_fingerprint(elf):
     Reordering is invisible; an added, removed or altered instruction is not.
 
     Returns `(size, count, digest)`, or None if the tools are missing.
+    `normalised_lines` returns the lines behind it, so a mismatch can be
+    diffed rather than guessed at.
     """
+    made = normalised_lines(elf)
+    if made is None:
+        return None
+    size, lines = made
+    digest = hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest()
+    return size, len(lines), digest
+
+
+def normalised_lines(elf):
+    """`(text_size, lines)` -- the disassembly with the metadata taken out."""
     objdump = shutil.which("llvm-objdump")
     size_tool = shutil.which("llvm-size")
     if objdump is None or size_tool is None:
@@ -228,6 +240,19 @@ def text_fingerprint(elf):
         # and `jalr ra` both become `jalr ra`. The symbol annotation that
         # follows says which function is being called, and that is compared.
         line = re.sub(r"0xADDR\(([a-z][a-z0-9]*)\)", r"\1", line)
+        # WHICH CRATE INSTANTIATED A SHARED GENERIC. In a v0 symbol the
+        # TRAILING `Cs<hash>_<crate>` names the instantiating crate, and LLVM
+        # moves it: `RangeInclusive<u8>::contains` lands in `embedded_cli` on
+        # one build and in `cynthion_soc` on the next. Same code, same `.text`
+        # size, same instruction count, and it was the whole of three
+        # `CHANGES the shell's code` failures -- one of them for `rticspike`,
+        # which is declared `[]` and cannot add an instruction (#386).
+        #
+        # Last, so the addresses are already folded. Lazy, so the name stops at
+        # the `0xADDR` an annotated branch target carries. The LEADING
+        # `CsHASH_4core` is the defining crate and is left alone.
+        line = re.sub(r"CsHASH_\d+[A-Za-z_][A-Za-z0-9_]*?(?=(?:0xADDR)?[>:])",
+                      "CsHASH_INSTANTIATOR", line)
         line = line.strip()
         if line:
             lines.append(line)
@@ -236,9 +261,7 @@ def text_fingerprint(elf):
                            capture_output=True, text=True).stdout
     match = re.search(r"^\.text\s+(\d+)", sizes, re.MULTILINE)
     size = int(match.group(1)) if match else -1
-
-    digest = hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest()
-    return size, len(lines), digest
+    return size, lines
 
 
 def build_shell(features):

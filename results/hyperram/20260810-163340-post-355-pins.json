@@ -54,7 +54,7 @@
   },
   "bitstream": {
     "bytes": 490860,
-    "path": "/mnt/2tb/git/cynthion-workspace/.claude/worktrees/agent-ac9e87e3314c38c40/tmp/awto_soc/build/bist1-ck120-dqs1-mirror0-mirrordiv4/top.bit",
+    "path": "tmp/awto_soc/build/bist1-ck120-dqs1-mirror0-mirrordiv4/top.bit",
     "sha256": "abcc279a95c615dcbd80d42835b10bfccbfbe45bf15ad02e2786f93b43d6bed9"
   },
   "board": {

@@ -9,7 +9,7 @@ no cloud runners and no GitHub Actions.
     ./scripts/check.py                 # every check
     ./scripts/check.py rust python     # only the named checks
     ./scripts/check.py --list          # what is available
-    ./scripts/check.py --fast          # skip any check marked slow (none are)
+    ./scripts/check.py --fast          # skip any check marked slow (featureiso)
     ./scripts/check.py --parallel      # run independent checks concurrently
 
 Exit status is 0 only if every selected check passed, so this works
@@ -249,6 +249,21 @@ def build_checks() -> List[Check]:
             ],
         ),
         Check(
+            name="featureiso",
+            description="no spike feature reaches the shipping shell",
+            skip_reason=_need("llvm-objdump"),
+            slow=True,
+            steps=[
+                # In no gate at all until now, and red on main the whole time
+                # (#386). The three failures were the fingerprint, not the
+                # features: one was `rticspike`, declared `[]`.
+                #
+                # `slow`: ~10 shell builds. `--fast` skips it; the gate does
+                # not, because a check nothing runs goes red again unwatched.
+                Step([PYTHON, "scripts/soc_feature_isolation_check.py"], ROOT),
+            ],
+        ),
+        Check(
             name="socmap",
             description="the committed SVD still matches the SoC's memory map",
             steps=[
@@ -305,6 +320,34 @@ def build_checks() -> List[Check]:
     ]
 
 
+def unprepared_submodule(cwd: Path) -> Optional[str]:
+    """`cwd` sits in a submodule this checkout has not populated, or None.
+
+    `git worktree add` populates no submodule, so `repos/**` is a tree of
+    directories that EXIST and are empty. Every step inside one then fails on a
+    missing Makefile or Cargo.toml, which reads exactly like broken code -- the
+    same red, the same log shape, a different problem (#365, #375).
+
+    Not a skip: `./dev.py worktree-setup` fixes it in a second, and a check
+    that quietly passes because it never ran is what this file exists to stop.
+    """
+    fix = "run `./dev.py worktree-setup`"
+    try:
+        inside = cwd.resolve().relative_to(REPOS.resolve())
+    except ValueError:
+        return None
+    top = REPOS / inside.parts[0]
+    if not (top / ".git").exists():
+        return (f"{top.relative_to(ROOT)} is not checked out: this worktree "
+                f"has no submodules. Not a code failure -- {fix}.")
+    # Nested submodules (apollo/lib/tinyusb) leave an empty directory of their
+    # own under a parent that IS checked out.
+    if cwd.is_dir() and not any(cwd.iterdir()):
+        return (f"{cwd.relative_to(ROOT)} is empty: a nested submodule this "
+                f"worktree has not populated. Not a code failure -- {fix}.")
+    return None
+
+
 def run_check(check: Check, logger, verbose: bool) -> Result:
     """Run one check, capturing output to tmp/logs/check-<name>.log."""
     skip = check.skip_reason() if check.skip_reason else None
@@ -329,6 +372,14 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
                 return Result(check.name, ok=False,
                               seconds=time.monotonic() - started,
                               detail=msg, failed_cmd=printable)
+
+            unprepared = unprepared_submodule(step.cwd)
+            if unprepared:
+                log_file.write(unprepared + "\n")
+                logger.error("%s: %s", check.name, unprepared)
+                return Result(check.name, ok=False,
+                              seconds=time.monotonic() - started,
+                              detail=unprepared, failed_cmd=printable)
 
             # Bounded by what this check has actually taken before, not
             # unbounded. This is the whole local gate: a wedged nextpnr or cargo
