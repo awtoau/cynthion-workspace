@@ -7,15 +7,30 @@
 One write steps `EHXPLLL`'s dynamic phase shifter, and one read says it moved.
 
     +0  ctrl    RW  bits 1:0  sel        which output (see PHASESEL below)
-                    bit 2     dir        0 forward/lagging, 1 backward
-                    bit 3     step       W1, one step per write
+                    bits 3:2  step       W, 1 steps forward, 2 backward
     +4  status  RO  bit 0     busy       a step pulse is in flight
                     bit 1     locked     the HyperRAM PLL says it is locked
                     bit 2     level      the probe's raw sample
                     bit 3     probe      this build HAS a probe clock
-                    bits 15:4 rotation   steps per 360 degrees of the probe
+                    bit 4     dir        the direction the PLL is being given
+                    bits 19:8 rotation   steps per 360 degrees of the probe
     +8  count   RO            probe highs in the last window, of WINDOW
     +c  steps   RO            net steps applied, two's complement
+
+## The direction rides the strobe
+
+`dir` began as an ordinary `RW` bit next to the `W` step strobe, which has a real
+hazard in it: both live in byte 0, so a driver that sets direction and strobe in
+ONE store gives the shaper the previous direction. It worked only because the
+driver wrote them separately, which is a convention no register enforces.
+
+Carrying the direction in the strobe's own data removes the ordering question --
+there is nothing to set early. `status.dir` reports what the shaper latched,
+which is a different claim from "the CPU wrote a 1" and is the one that matters.
+
+The bug that led here was NOT this register: `bist phase clkos2 -3` never reached
+the CSR at all, because the shell dropped the sign (#347). Recorded so the next
+reader does not go looking for a CSR fault that was never there.
 
 ## What one step is
 
@@ -47,10 +62,11 @@ each way against a 10 ns requirement at the slowest reachable VCO (4 cycles of
 400 MHz) -- 3.3x, and the margin is spent because the CPU cannot tell the
 difference: a step costs two register writes either way.
 
-`sel` and `dir` come from `ctrl`, written by an earlier store. The gap between
-two CPU stores is hundreds of nanoseconds, so the 5 ns setup is met by the bus,
-not by a counter -- and `busy` refuses a step while one is in flight rather than
-letting a second write move `sel` mid-pulse.
+The pulse therefore runs in three parts of `PULSE_CYCLES` each: **setup** with
+PHASESTEP low while `sel` and the latched direction settle, **high**, then
+**low** again for the hold after the falling edge the PLL acts on. 33 ns of
+setup against 5 ns asked for. `busy` refuses a second step while one is in
+flight, so nothing can move `sel` mid-pulse.
 
 ## The probe, and why a lever needs one
 
@@ -135,8 +151,7 @@ class PLLPhase(wiring.Component):
 
         self._ctrl = csr.Register({
             "sel":      csr.Field(csr.action.RW, 2),
-            "dir":      csr.Field(csr.action.RW, 1),
-            "step":     csr.Field(csr.action.W, 1),
+            "step":     csr.Field(csr.action.W, 2),
             "reserved": csr.Field(csr.action.R, 28),
         }, access="rw")
         self._status = csr.Register({
@@ -144,8 +159,10 @@ class PLLPhase(wiring.Component):
             "locked":   csr.Field(csr.action.R, 1),
             "level":    csr.Field(csr.action.R, 1),
             "probe":    csr.Field(csr.action.R, 1),
+            "dir":      csr.Field(csr.action.R, 1),
+            "pad0":     csr.Field(csr.action.R, 3),
             "rotation": csr.Field(csr.action.R, 12),
-            "pad":      csr.Field(csr.action.R, 16),
+            "pad":      csr.Field(csr.action.R, 12),
         }, access="r")
         self._count = csr.Register({"value": csr.Field(csr.action.R, 32)},
                                    access="r")
@@ -179,26 +196,38 @@ class PLLPhase(wiring.Component):
         # PULSE_CYCLES, and `busy` for both. The falling edge in the middle is
         # what the PLL acts on, so the SECOND half is not slack -- it is the
         # hold time after the event.
-        timer = Signal(range(2 * PULSE_CYCLES + 1))
+        timer = Signal(range(3 * PULSE_CYCLES + 1))
         busy = Signal()
         steps = Signal(32)
+        direction = Signal()
 
         m.d.comb += busy.eq(timer != 0)
         with m.If(busy):
             m.d.sync += timer.eq(timer - 1)
-        with m.Elif(self._ctrl.f.step.w_stb & self._ctrl.f.step.w_data):
+        with m.Elif(self._ctrl.f.step.w_stb & self._ctrl.f.step.w_data.any()):
+            # Counted where the pulse is ISSUED, so `steps` cannot claim a step
+            # the PLL was never asked for.
+            #
+            # Two branches, not `steps + (1 - 2*dir)`. The mixed-sign expression
+            # is legal Amaranth and reads as though it obviously works, which is
+            # the reason to spell it out on a counter a sweep navigates by.
             m.d.sync += [
-                timer.eq(2 * PULSE_CYCLES),
-                # Counted where the pulse is ISSUED, so `steps` cannot claim a
-                # step the PLL was never asked for.
-                steps.eq(steps + (1 - 2 * self._ctrl.f.dir.data)),
+                timer.eq(3 * PULSE_CYCLES),
+                direction.eq(self._ctrl.f.step.w_data[1]),
             ]
+            with m.If(self._ctrl.f.step.w_data[1]):
+                m.d.sync += steps.eq(steps - 1)
+            with m.Else():
+                m.d.sync += steps.eq(steps + 1)
 
         m.d.comb += [
             self.phase_sel.eq(self._ctrl.f.sel.data),
-            self.phase_dir.eq(self._ctrl.f.dir.data),
-            # High for the first half of the window, low for the second.
-            self.phase_step.eq(timer > PULSE_CYCLES),
+            self.phase_dir.eq(direction),
+            # Low, high, low: the middle third is the pulse, the first is the
+            # setup `sel` and `direction` need, the last is the hold after the
+            # falling edge the PLL acts on.
+            self.phase_step.eq((timer > PULSE_CYCLES)
+                               & (timer <= 2 * PULSE_CYCLES)),
         ]
 
         # -- the probe --------------------------------------------------------
@@ -226,6 +255,8 @@ class PLLPhase(wiring.Component):
             self._status.f.locked.r_data.eq(locked_sync),
             self._status.f.level.r_data.eq(level),
             self._status.f.probe.r_data.eq(int(self._has_probe)),
+            self._status.f.dir.r_data.eq(direction),
+            self._status.f.pad0.r_data.eq(0),
             self._status.f.rotation.r_data.eq(self._rotation),
             self._status.f.pad.r_data.eq(0),
             self._count.f.value.r_data.eq(latched),

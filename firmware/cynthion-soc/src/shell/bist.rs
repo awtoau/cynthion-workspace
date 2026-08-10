@@ -128,7 +128,11 @@ fn phase(uart: &mut Uart, args: &[u8]) {
         // taking zero steps -- a lever that reports success and does nothing is
         // the exact failure this pair of issues is about.
         let (back, digits) = match words.next() {
-            Some([b'-', rest @ ..]) => (true, rest),
+            // `back 3` as well as `-3`. Two spellings because a sign that is
+            // dropped somewhere in the parse looks exactly like a step the PLL
+            // refused, and one of the two had to be able to tell them apart.
+            Some(word) if word == b"back" => (true, words.next().unwrap_or(&[])),
+            Some(word) if !word.is_empty() && word[0] == b'-' => (true, &word[1..]),
             Some(word) => (false, word),
             None => (false, &b""[..]),
         };
@@ -144,11 +148,12 @@ fn phase(uart: &mut Uart, args: &[u8]) {
 
     let _ = writeln!(
         uart,
-        "  steps {}  of {} per rotation  level {}  count {}{}",
+        "  steps {}  of {} per rotation  level {}  count {}  {}{}",
         phase.steps(),
         phase.rotation(),
         phase.level() as u32,
         phase.count(),
+        if phase.backward() { "backward" } else { "forward" },
         if phase.has_probe() { "" } else { "  (NO PROBE -- level means nothing)" }
     );
     if !phase.locked() {

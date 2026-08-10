@@ -251,7 +251,14 @@ impl Phase {
     /// Steps per 360 degrees of the probe clock. Zero means no shifter here --
     /// an absent window reads as zeroes, and zero is not a legal rotation.
     pub fn rotation(&self) -> u32 {
-        (self.read(0x04) >> 4) & 0xFFF
+        (self.read(0x04) >> 8) & 0xFFF
+    }
+
+    /// The direction the shaper latched, which is a different claim from "the
+    /// CPU wrote a 1" -- and the reading that separated a dropped shell argument
+    /// from a PLL that ignores PHASEDIR (#347).
+    pub fn backward(&self) -> bool {
+        self.read(0x04) & (1 << 4) != 0
     }
 
     pub fn present(&self) -> bool {
@@ -284,21 +291,22 @@ impl Phase {
         self.read(0x0c) as i32
     }
 
-    fn ctrl(&self, sel: u32, back: bool, step: bool) -> u32 {
-        (sel & 3) | ((back as u32) << 2) | ((step as u32) << 3)
+    /// `step` is 1 forward, 2 backward, 0 for none. The direction rides the
+    /// strobe rather than sitting in a stored bit beside it, so a driver cannot
+    /// hand the shaper the previous direction by writing both in one store.
+    fn ctrl(&self, sel: u32, step: u32) -> u32 {
+        (sel & 3) | ((step & 3) << 2)
     }
 
-    /// Point the shifter at one output. Separate from `step` on purpose: the PLL
-    /// needs `PHASESEL`/`PHASEDIR` stable before `PHASESTEP` moves, and two CPU
-    /// stores are hundreds of nanoseconds apart against a 5 ns requirement.
-    pub fn select(&self, sel: u32, back: bool) {
-        self.write(self.ctrl(sel, back, false));
+    /// Point the shifter at one output, without stepping.
+    pub fn select(&self, sel: u32, _back: bool) {
+        self.write(self.ctrl(sel, 0));
     }
 
     /// One step. `false` means `busy` never cleared, so the step is not counted
     /// as taken.
     pub fn step(&self, sel: u32, back: bool) -> bool {
-        self.write(self.ctrl(sel, back, true));
+        self.write(self.ctrl(sel, if back { 2 } else { 1 }));
         for _ in 0..STEP_POLLS {
             if self.read(0x04) & 1 == 0 {
                 return true;
