@@ -367,7 +367,21 @@ mod app {
     #[idle(local = [console])]
     fn idle(cx: idle::Context) -> ! {
         let console = cx.local.console;
+        // Bounded, and derivable because this run is timer-driven: the periodic
+        // task takes PERIODS_WANTED x PERIOD_US = 500 ms, so 1.25x is the wait.
+        // Unbounded, a monotonic that stops leaves a board that never reports
+        // and never returns to the shell -- silence that reads as a dead CPU.
+        let deadline = mono::Mono::now()
+            + <mono::Mono as Monotonic>::Duration::from_ticks(
+                (target::TIME_HZ as u64 * PERIODS_WANTED as u64
+                 * PERIOD_US as u64 * 5) / (1_000_000 * 4),
+            );
         while DONE.load(Ordering::Acquire) == 0 {
+            if mono::Mono::now() > deadline {
+                console.timed_out(PERIODS.load(Ordering::Relaxed), PERIODS_WANTED,
+                                  PERIODS_WANTED * PERIOD_US * 5 / 4 / 1_000);
+                break;
+            }
             core::hint::spin_loop();
         }
 

@@ -69,6 +69,18 @@ impl Console {
         );
     }
 
+    /// A run that did not finish inside its own schedule. Names the wait, the
+    /// limit and how far it got: a bound that expires silently turns a stopped
+    /// monotonic into a board that simply never reports (#295).
+    pub fn timed_out(&mut self, got: u32, want: u32, limit_ms: u32) {
+        let _ = writeln!(
+            self.0,
+            "TIMEOUT: {} of {} periods after {} ms (1.25x the schedule); \
+             the monotonic stopped advancing",
+            got, want, limit_ms
+        );
+    }
+
     /// What RTIC's `#[shared]` resource holds, beside what the PLIC did.
     pub fn shared(&mut self, events: u32, defers: u32) {
         let _ = writeln!(
