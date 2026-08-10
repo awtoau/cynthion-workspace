@@ -15,22 +15,23 @@ Both are reachable as `./dev.py worktree-check` and `./dev.py worktree-setup`.
 
 ## What breaks in a worktree
 
-- `git worktree add` does NOT populate submodules, and four of them are needed.
-  `repos/vexiiriscv` empty means the CPU cannot be regenerated at all.
+- `git worktree add` populates NO submodules, and eleven are needed -- four at
+  the top plus their own. `repos/vexiiriscv` empty means the CPU cannot be
+  regenerated at all, and `repos/vexiiriscv` without `ext/SpinalHDL` is the same
+  failure one level down: `build.sbt` takes it as a `ProjectRef`.
 - `repos/apollo`'s recorded pin is a commit that exists in NO remote. It is in
   the superproject's own `modules/repos/apollo` object store and nowhere else,
   so `git submodule update` cannot repair a worktree and cannot ever fix a fresh
-  clone. This names that rather than surfacing git's "not our ref".
+  clone. This names that rather than surfacing git's "not our ref". See #373.
 - `sources/**` is gitignored, so a worktree carries no vendor models.
 
 ## How it is fixed: share, never copy
 
 Each submodule is materialised as a LINKED GIT WORKTREE of the superproject's
-own `.git/modules/repos/<name>` -- the same object store the main checkout uses.
-Only the checked-out files cost disk; the history (395 MB across the four) is
-shared. Copying the trees instead, which is what has been improvised so far,
-costs that per worktree and has already come one commit away from landing a
-225 MB directory in git.
+own `.git/modules/<path>` -- the same object store the main checkout uses. Only
+the checked-out files cost disk. Copying the trees instead, which is what has
+been improvised so far, costs the history per worktree and has already come one
+commit away from landing a 225 MB directory in git.
 
 A linked worktree also gives the submodule its OWN HEAD and index, so two
 worktrees can sit on different pins without fighting -- which a shared
