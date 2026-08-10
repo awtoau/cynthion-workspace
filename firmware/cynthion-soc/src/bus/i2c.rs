@@ -211,8 +211,9 @@ impl I2c {
         // is the FUSB302B rule applied to a second peripheral -- clear whatever
         // the previous session left asserting, then enable delivery.
         self.acknowledge_interrupt();
-        crate::irq::claim(cynthion_soc_pac::base::BOARD_I2C_IRQ,
-                          crate::irq::priority::I2C);
+        crate::plic::Plic::new(crate::target::PLIC_BASE)
+            .claim_source(cynthion_soc_pac::base::BOARD_I2C_IRQ,
+                          crate::plic::priority::I2C);
     }
 
     /// PRER as the core holds it, low byte first.

@@ -42,6 +42,11 @@ use core::fmt::Write;
 #[cfg_attr(feature = "hyperram-bist", allow(unused_imports))]
 use self::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
+// The `usb` arm below. Moved here from `src/main.rs` by #296, where the module
+// was in scope because that file declares it; nothing built the shell with this
+// feature on, so it went unnoticed until #362 built every feature set.
+#[cfg(feature = "workload")]
+use crate::workload;
 #[cfg_attr(feature = "hyperram-bist", allow(unused_imports))]
 use crate::{
     bench, board, clock, events, info, log,

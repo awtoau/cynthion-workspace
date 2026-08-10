@@ -255,8 +255,8 @@ fn boot() -> Devices {
 
     // The interrupt CONTROLLER, and no source. Each peripheral claims its own
     // below, once it is in a state where an interrupt from it would mean
-    // something -- see `irq::claim`. Enabling delivery with nothing enabled
-    // cannot deliver anything, which is what lets this come before the parts.
+    // something -- see `Plic::claim_source`. Enabling delivery with nothing
+    // enabled cannot deliver anything, which lets this come before the parts.
     irq::init();
 
     // ---- 2. THE BOARD ---------------------------------------------------

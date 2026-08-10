@@ -262,7 +262,7 @@ pub fn released(task: usize, late: u32) {
 /// never complete it, killing the console from a diagnostic command. See
 /// `Plic::claim`.
 ///
-/// `pri` is read back from the PLIC, not from `irq::priority`. A level that is
+/// `pri` is read back from the PLIC, not from `plic::priority`. A level that is
 /// not what the table says is a claim order that is not what the table says, and
 /// nothing else on this console could show it. #344.
 pub fn sources(uart: &mut Uart) {

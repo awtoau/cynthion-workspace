@@ -110,7 +110,7 @@ Do not add workflow files back. If something needs automating, extend
 | Check | What |
 |-------|------|
 | `rust` | `cargo check` + `make clippy` for moondancer (riscv32imac) |
-| `socfw` | `cynthion-soc`'s unit tests on this machine, then its target build |
+| `socfw` | `cynthion-soc`'s unit tests on this machine, then all 12 target builds |
 | `apollo` | SAMD11 firmware build + size report |
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
@@ -123,6 +123,13 @@ Do not add workflow files back. If something needs automating, extend
 `no_std`/`no_main` with RISC-V asm and cannot be built for this machine. One of
 those tests walks the firmware's source and fails if a `#[cfg(test)]` module is
 not included, so coverage cannot be lost by deleting a line (#337).
+
+It then runs `scripts/soc_bin_matrix.py`, which builds every `[[bin]]` the crate
+declares in the features that binary declares. `required-features` makes cargo
+skip a target entirely when the feature is off, so a plain `cargo check` says
+nothing about eleven of the twelve — and both RTIC binaries and the workload
+control sat broken on `main` for a day (#362). The target list is read from
+`Cargo.toml`, so a new binary is covered when it is declared.
 
 The whole set runs in well under a second. There was a `gateware` check that
 elaborated the upstream USB analyzer top out of `repos/cynthion` for

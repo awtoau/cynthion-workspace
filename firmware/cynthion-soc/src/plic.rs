@@ -22,11 +22,55 @@
 //!
 //! ## What is deliberately not here
 //!
-//! No interrupt vector table, no handler registration, no priority scheme. The
-//! PLIC is a mux with a mask; what to do about a source belongs to the code that
-//! owns the source. See `src/irq.rs`.
+//! No interrupt vector table and no handler registration. The PLIC is a mux with
+//! a mask; what to DO about a source belongs to the code that owns the source.
+//! See `src/irq.rs`.
+//!
+//! The [`priority`] table below is the exception, and it moved here from
+//! `src/irq.rs` in #362. It is arbitration -- the one thing this mux decides --
+//! and irq.rs is the shell's handler, which no `src/bin/` dispatcher can
+//! include. A table in a file only one of four roots can reach is a table the
+//! other three have to copy, and `src/workload.rs` was already blocked on it.
 
 use core::ptr::{read_volatile, write_volatile};
+
+/// What each source's lateness costs, as a PLIC level. 1..7; 0 never interrupts.
+///
+/// Ranked by the cost of being late, not by how important the peripheral is: a
+/// source with a bounded hardware FIFO and a short drain window outranks one
+/// where lateness is merely annoying.
+///
+/// * The only place a level is written. `scripts/soc_plic_sim.py` holds the same
+///   numbers, checks every claim site resolves to one of them, and programs a
+///   real PLIC with them to assert the resulting claim order. #344.
+/// * **Levels 5-7 are held free** for the capture path (#125) and HyperRAM
+///   (#324). That is why the consoles sit at 3 rather than at the top.
+/// * **Priority is not preemption.** One context, and `irq::machine_external`
+///   runs its whole claim loop with `mstatus.MIE` off, so a level only decides
+///   which source is claimed first among those pending at the same instant. It
+///   cannot interrupt a handler already running; short handlers bound that.
+/// * Nothing here can starve anything: every source is either drained, cleared
+///   by one MMIO write, or masked by its handler, so none can hold the arbiter.
+pub mod priority {
+    /// The PAC1954's latched ALERT -- over-voltage or over-current.
+    ///
+    /// Above the consoles because it is a hardware fault; below the capture path
+    /// because the load switch protects itself and firmware is only reporting.
+    pub const POWER_ALERT: u32 = 4;
+
+    /// Both 16550s. A 16-byte FIFO, so an overrun costs a keystroke or a log
+    /// byte and is recoverable. `CONSOLE` is the lower source number, so it
+    /// takes the tie against `APOLLO` -- see `gateware/soc/top.py`.
+    pub const CONSOLE: u32 = 3;
+
+    /// The FUSB302Bs. PD timers are milliseconds, and the handler defers the
+    /// clear to task context anyway, so delivery latency is not the bound.
+    pub const TYPE_C: u32 = 2;
+
+    /// Completion only, cleared by one MMIO write, and `command()` polls
+    /// `SR.TIP` regardless. Entirely latency-tolerant.
+    pub const I2C: u32 = 1;
+}
 
 /// Per-source priority registers, one 32-bit word each, indexed by source.
 /// Source 0 does not exist, so its word is reserved and never touched.
@@ -196,6 +240,32 @@ impl Plic {
         } else {
             Some(source)
         }
+    }
+
+    /// A peripheral claims its source, now that it is ready to be interrupted.
+    ///
+    /// Called by the peripheral's own bring-up, not from a list elsewhere. The
+    /// order matters and it is the peripheral that knows it: the FUSB302Bs must
+    /// have had their interrupt registers cleared first, or the first thing
+    /// delivered is a plug event from the previous session.
+    ///
+    /// `priority` comes from the [`priority`] module and from nowhere else: a
+    /// level written as a bare number is a ranking nothing can check, and that
+    /// is how every source on this board came to be claimed at 1 -- with the
+    /// order decided by wiring rather than by the table. Equal levels still
+    /// leave the PLIC's tie-break to decide, which is lowest source first.
+    pub fn claim_source(&self, source: u32, priority: u32) {
+        self.set_priority(source, priority);
+        self.enable(source);
+
+        // Release any claim left in flight by a `j _start` reboot. The CPU
+        // restarts; the PLIC does not. A source claimed by the previous session
+        // and never completed stays gated forever, and the symptom is a console
+        // that enumerates, banners, and then ignores every keystroke.
+        //
+        // Harmless when there is nothing to release: completing a source that
+        // was not claimed clears a bit that was already clear.
+        self.complete(source);
     }
 
     /// Tell the PLIC the handler is finished with `source`.

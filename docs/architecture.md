@@ -39,14 +39,14 @@ the SoC.
 | concurrency | RTIC 2.3, `riscv-clint-backend` | upstream | [`rtic.md`](rtic.md) |
 | monotonic | CLINT-backed, ~60 lines | written | same — `rtic-monotonics` has no CLINT backend |
 | logging from handlers | deferred ring | written | #122, #124 |
-| source ranking | levels 4/3/2/1, 5–7 held free | written | [`irq.rs`](../firmware/cynthion-soc/src/irq.rs)'s `priority`, #344 |
+| source ranking | levels 4/3/2/1, 5–7 held free | written | [`plic.rs`](../firmware/cynthion-soc/src/plic.rs)'s `priority`, #344 |
 
 `src/irq.rs`'s PLIC claim loop survives RTIC adoption, with the SLIC in series
 behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 
 ### Sources are ranked by the cost of being late
 
-- Not by how important the peripheral is. `irq::priority` is the only place a
+- Not by how important the peripheral is. `plic::priority` is the only place a
   level is written, with the reasoning beside each number.
 - Today: `POWER_ALERT` 4, the two consoles 3, Type-C 2, I2C 1. **5–7 are held
   free** for the capture path (#125) and HyperRAM (#324), which is why the

@@ -146,6 +146,17 @@ def build_checks() -> List[Check]:
                 # it before: the `rust` check above is moondancer, in
                 # repos/cynthion, which is upstream's firmware and not ours.
                 Step(["cargo", "check", "--release"], soc_fw),
+                # ...and the line above still says nothing about ELEVEN of the
+                # twelve targets: `required-features` makes cargo skip a target
+                # entirely when the feature is off, so a default `check` never
+                # compiles a byte of it. Both RTIC binaries and the workload
+                # control were broken on `main` for a day, by two edits to
+                # shared modules, with nothing positioned to notice (#362).
+                #
+                # Feature sets, not just binaries: `rticmono` and `rticwl` are
+                # the only consumers of the RTIC path, which is where #115, #247
+                # and #259 all land.
+                Step([PYTHON, "scripts/soc_bin_matrix.py"], ROOT),
             ],
         ),
         Check(
