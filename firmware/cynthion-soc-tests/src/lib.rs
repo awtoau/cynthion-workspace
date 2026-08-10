@@ -25,6 +25,9 @@
 #[path = "../../cynthion-soc/src/bist/pure.rs"]
 pub mod bist_pure;
 
+#[path = "../../cynthion-soc/src/clock/hz.rs"]
+pub mod clock_hz;
+
 #[path = "../../cynthion-soc/src/log/format.rs"]
 pub mod log_format;
 
