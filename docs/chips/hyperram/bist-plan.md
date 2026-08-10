@@ -151,7 +151,9 @@ Before the matrix, prove the process. This is a test **of the rig**, not of the
 part.
 
 - **256 bytes** — 128 16-bit words. Milliseconds to run.
-- **Four cells**, one CK, four capture phases. Everything else held.
+- **Four cells**, one CK, four values of an axis that is WIRED on this build —
+  capture phase on a DQS build, latency code on a non-DQS one (#343). Four
+  repeats can only meet the criteria below by being marginal.
 - **Data derived from the address**, so a displacement is read off the dump
   rather than inferred. Byte at offset `i` encodes `i`.
 
@@ -246,11 +248,25 @@ Only once this behaves does the matrix mean anything.
 | axis | values | count | runtime? |
 |---|---|---|---|
 | CK frequency | every even MHz 100–200 that the PLL reaches with `hr_fast = 2·hr` | **51** | needs `DCSC` (#228) |
-| READCLKSEL tap | 0–7 | 8 | yes, CSR |
+| READCLKSEL tap | 0–7 | 8 | yes, CSR — **DQS builds only** |
 | Read-window phase | 0–1 | 2 | yes, CSR |
 | Device drive strength | CR0[14:12], 0–7 | 8 | yes, register write |
 | Clock mode | CR1[6] differential / single-ended | 2 | yes, register write |
 | FPGA pin drive | ECP5 `DRIVE` 4/8/12/16 mA | 4 | no — but **patchable**, see below |
+
+**READCLKSEL is a DQSBUFM input, so it exists only where a DQSBUFM does.**
+`HyperRAMPHY` (non-DQS) captures on `IDDRX1F` clocked by `sync` and takes no
+phase argument; `hyperram_ceiling_top.py` passes the register to the PHY inside
+`if self.dqs:` and nowhere else. On a non-DQS build the CSR is written and read
+by nothing, so the 4096-cell matrix is **512 configurations run 8 times**
+([#343](https://github.com/awtoau/cynthion-workspace/issues/343)).
+
+- `./scripts/hyperram_axis_wiring.py` decides this from the elaborated design,
+  needs no board, and is the only thing that can: `READCLKSEL` reaches the FPGA,
+  not the part, so there is no read-back for `hyperram_axis_liveness.py` to use.
+- `drive` (CR0[14:12]) and `clk` (CR1[6]) are wired on both builds — they reach
+  the part through the engine's `CONFIG_CR0`/`CONFIG_CR1` writes, and the CR0/CR1
+  read-back proves whether the part stored them.
 
 ### FPGA pin attributes are bitstream bits, not a rebuild
 

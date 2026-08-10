@@ -69,6 +69,8 @@ LOG = ROOT / "tmp" / "logs" / "hyperram-matrix-diff.log"
 ROW = re.compile(r"^\s*(\d+)\s+(fix|var)\s+\S+\s+(\d+)\s+(dif|se)\s+(\d+)"
                  r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(PASS|fail)", re.M)
 SUMMARY = re.compile(r"(\d+)\s+pass,\s*(\d+)\s+fail,\s*(\d+)\s+no result of\s*(\d+)")
+# `bist all` prints this only when its cell count overstates what it varied.
+REPEATS = re.compile(r"(\d+)\s+DISTINCT configurations x (\d+) repeats")
 RUNG = re.compile(r"^\s*rung\s+(\d+)\s+([\d.]+)\s+MHz(\s+<- live)?", re.M)
 
 
@@ -188,6 +190,19 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
 
     spread = axis_spread(cells)
     live = liveness(spread)
+
+    # STRUCTURE BEATS SPREAD. `liveness` reads the failure set, and a flat one is
+    # equally consistent with "no effect" and "not connected". The engine says
+    # which it is: on a non-DQS build `sel` is read by nothing (#343), so it is
+    # dead here however the failures happened to fall.
+    repeats = REPEATS.search(text)
+    distinct, per_config = (int(repeats.group(1)), int(repeats.group(2))) \
+        if repeats else (total, 1)
+    if per_config > 1:
+        live["sel"] = False
+        emit(f"  {distinct} DISTINCT configurations x {per_config} repeats -- "
+             "`sel` is UNWIRED on this build, not merely inert")
+
     dead = [axis for axis, moving in live.items() if not moving]
     if dead:
         emit(f"  INERT AXES: {', '.join(dead)} -- the failures fall evenly across "
@@ -202,6 +217,10 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
         "rung": rung,
         "rungs": rungs,
         "passes_per_cell": passes,
+        # What the run MEASURED, against the cells it printed. Equal on a DQS
+        # build; 512 x 8 on a non-DQS one (#343).
+        "distinct_configurations": distinct,
+        "repeats_per_configuration": per_config,
         # The electrical state this run was taken at. `null` means unrecorded,
         # NOT "the defaults" -- see `pin_provenance`.
         "bitstream": identity,
@@ -271,6 +290,11 @@ def diff(first, second):
     # An inert axis on either side makes "nothing moved" meaningless: the rig,
     # not the pins, is what did not move.
     for name, run in (("A", a), ("B", b)):
+        per_config = run.get("repeats_per_configuration") or 1
+        if per_config > 1:
+            emit(f"  {name} measured {run['distinct_configurations']} distinct "
+                 f"configurations, each {per_config} times -- its cell count is "
+                 f"{per_config}x what it varied (#343)")
         dead = [axis for axis, moving in (run.get("axes_live") or {}).items()
                 if not moving]
         if dead:

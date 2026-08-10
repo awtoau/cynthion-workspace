@@ -140,6 +140,8 @@ REG_DEVICE_READBACK = 30
 REG_DEVICE_READBACK_CR1 = 31
 
 # Combinations the sweep walks: capture phase 0-7 against CR0 drive code 0-7.
+# Phase reaches the PHY only on a DQS build, so a non-DQS sweep is 8 distinct
+# cells run 8 times. See #343.
 SWEEP_PHASES = 8
 SWEEP_DRIVES = 8
 SWEEP_CELLS = SWEEP_PHASES * SWEEP_DRIVES
@@ -470,6 +472,10 @@ class HyperRAMCeiling(Elaboratable):
         # DQSBUFM has eight phase selections. Keeping this in a JTAG parameter
         # is what lets one configured design ask whether BURSTDET identifies a
         # useful phase rather than rebuilding the same experiment eight times.
+        #
+        # DQS BUILDS ONLY. `HyperRAMPHY` captures on `IDDRX1F` clocked by `sync`
+        # and has no phase input, so this register is read by nothing there and
+        # every `sel` row is a repeat. Held by `tests/test_hyperram_axis_wiring.py` (#343).
         readclksel = Signal(3, init=0b010)
         harness.add_register(REG_READCLKSEL, value_signal=readclksel)
 
@@ -597,6 +603,10 @@ class HyperRAMCeiling(Elaboratable):
             m.d.comb += burstdet.eq(phy.phy.burstdet)
         else:
             bus = platform.request("ram")
+            # NO PHASE INPUT, and none available: no DQSBUFM, so `readclksel`
+            # and `sweep_phase` reach nothing on this path (#343). Wiring one
+            # would mean driving the DQ `DELAYF` taps, which luna leaves at a
+            # hardcoded `DEL_VALUE` with a TODO.
             m.submodules.phy = phy = HyperRAMPHY(bus=bus)
             m.submodules.psram = psram = HyperRAMController(
                 phy=phy.phy, sync_mhz=self.sync_mhz)

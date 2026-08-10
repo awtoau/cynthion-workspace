@@ -21,11 +21,14 @@ Order matters and is not arbitrary:
 1. **presence** -- the applet id. A peripheral that is not there reads as zeroes,
    and zero errors from a peripheral that does not exist is the most flattering
    wrong answer available.
-2. **axis liveness** -- does each configuration axis reach the part? Run BEFORE
+2. **axis wiring** -- does each axis reach anything in the GATEWARE? No board,
+   and it answers for `sel`, which no board test can: `READCLKSEL` has no
+   read-back (#343).
+3. **axis liveness** -- does each configuration axis reach the part? Run BEFORE
    any sweep, because "no effect" and "not connected" produce identical data, and
    a sweep over a dead axis produces rows that mean nothing (#334, #335).
-3. **latency at every CK rung** -- the pass set, per rung (#331, #313).
-4. **the matrix, twice** -- and DIFFED. A cell that passes once is not a cell
+4. **latency at every CK rung** -- the pass set, per rung (#331, #313).
+5. **the matrix, twice** -- and DIFFED. A cell that passes once is not a cell
    that passes; two identical runs that disagree have found a marginal cell,
    which a single run scores as a verdict (#311's workflow too).
 
@@ -108,7 +111,13 @@ def main():
         "the controller against our own model -- fault injection and the SoC above it",
         [py, str(s / "soc_hyperram_sim.py")])[0]
 
-    # 1-2. Liveness first. It also proves the link and the applet id, so a board
+    # 2. Wiring, still without a board. `sel` has no device read-back, so this is
+    # the ONLY thing that can tell a dead capture-phase axis from an inert one.
+    results["axis wiring"] = step(
+        "axis wiring -- does each axis reach anything in the gateware?",
+        [py, str(s / "hyperram_axis_wiring.py")])[0]
+
+    # 1-3. Liveness next. It also proves the link and the applet id, so a board
     # that is not answering fails here rather than halfway through a sweep.
     results["axis liveness"] = step(
         "axis liveness -- does each axis reach the part?",

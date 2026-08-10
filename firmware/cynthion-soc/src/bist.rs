@@ -121,6 +121,9 @@ pub const APPLET_ID: u32 = 0x4852_4331;
 /// derived from it, so the two must agree.
 const BURST_WORDS: u32 = 128;
 
+/// Values the `sel` axis walks. Live only on a DQS build -- see [`Bist::distinct`].
+const SEL_VALUES: u32 = 8;
+
 /// `CR0[15]`: 1 is normal operation, 0 is Deep Power Down. Forced set.
 const CR0_FULL_POWER: u32 = 1 << 15;
 /// `CR1[5]`: 1 is Hybrid Sleep. Forced clear.
@@ -308,6 +311,31 @@ impl Bist {
         self.read(reg::ID) == APPLET_ID
     }
 
+    /// Which PHY this bitstream carries. `REG_CONFIG` bit 0 in the engine.
+    pub fn dqs(&self) -> bool {
+        self.read(reg::CONFIG) & 1 != 0
+    }
+
+    /// How many of `cells` are DISTINCT configurations, and the repeat count.
+    ///
+    /// `readclksel` reaches the PHY only on a DQS build; on a non-DQS one the
+    /// register is written and read by nothing, so eight consecutive cells are
+    /// one configuration measured eight times (#343). Proven from the elaborated
+    /// design by `scripts/hyperram_axis_wiring.py`, not from a flat result set.
+    pub fn distinct(&self, cells: u32) -> (u32, u32) {
+        if self.dqs() { (cells, 1) } else { (cells / SEL_VALUES, SEL_VALUES) }
+    }
+
+    /// The line every sweep prints when its cell count overstates what it varied.
+    fn say_repeats(&self, uart: &mut Uart, cells: u32) {
+        let (distinct, repeats) = self.distinct(cells);
+        if repeats > 1 {
+            let _ = writeln!(
+                uart, "  {} DISTINCT configurations x {} repeats: `sel` reaches \
+                       nothing without the DQS PHY (#343)", distinct, repeats);
+        }
+    }
+
     /// CR0 for these axes, as a pure function so the masks can be tested.
     ///
     /// Every field the sweep varies must be CLEARED before it is set, or the
@@ -465,8 +493,10 @@ impl Bist {
     pub fn describe(&self, uart: &mut Uart) {
         let _ = writeln!(uart, "  id      {:#010x} {}", self.read(reg::ID),
                          if self.present() { "HRC1" } else { "NOT THE ENGINE" });
-        let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}",
-                         self.read(reg::CLOCK), self.read(reg::CONFIG));
+        let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}  {}",
+                         self.read(reg::CLOCK), self.read(reg::CONFIG),
+                         if self.dqs() { "DQS PHY" }
+                         else { "non-DQS PHY -- `sel` reaches nothing (#343)" });
         self.describe_status(uart, "at rest", self.read(reg::STATUS));
 
         // NOTHING IS LATCHED UNTIL A CELL HAS RUN.
@@ -643,7 +673,7 @@ pub fn one(uart: &mut Uart, bist: &Bist, axes: Axes, passes: u32) {
     report(uart, bist, &cell, st, poll, passes * BURST_WORDS, true);
 }
 
-/// The rig's own smoke test: four cells, one CK, four capture phases.
+/// The rig's own smoke test: four cells, one CK, four values of a LIVE axis.
 ///
 /// From `docs/chips/hyperram/bist-plan.md`, and it is a test **of the rig**, not
 /// of the part. The result that validates it is NOT four passes:
@@ -660,21 +690,35 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    let _ = writeln!(uart, "  four cells, one drive, four capture phases.");
+    // FOUR CELLS THAT DIFFER. The capture phase reaches nothing without the DQS
+    // PHY (#343), so there the four cells walk the latency code instead: 2 and 6
+    // pass on this part, 0 and 15 are legal and fail. Four repeats can only meet
+    // this test's criterion by being marginal, which made it unfalsifiable.
+    let dqs = bist.dqs();
+    let values: [u8; 4] = if dqs { [0, 1, 2, 3] } else { [2, 6, 0, 15] };
+    let _ = writeln!(uart, "  four cells, one drive, four {}.",
+                     if dqs { "capture phases" } else { "latency codes" });
     let _ = writeln!(uart, "  wanted: at least one PASS *and* at least one fail.");
     let _ = writeln!(uart, "  four passes means the rig cannot see a fault.");
-    let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
+    let _ = writeln!(uart, "{}{}{}{}", if dqs { "" } else { "lat  " },
+                     STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
 
     let (mut passed, mut failed, mut nothing) = (0u32, 0u32, 0u32);
-    for readclksel in 0u8..4 {
-        let axes = Axes { drive: 3, single_ended_clock: false, readclksel,
-                                latency: 2, fixed_latency: true };
+    for value in values {
+        let axes = Axes {
+            drive: 3, single_ended_clock: false, fixed_latency: true,
+            readclksel: if dqs { value } else { 0 },
+            latency: if dqs { 2 } else { value },
+        };
         bist.configure(&axes);
         let (cell, st, poll) = bist.cell(axes, passes);
         match cell.verdict() {
             Verdict::Pass => passed += 1,
             Verdict::Fail(_) => failed += 1,
             Verdict::NoResult => nothing += 1,
+        }
+        if !dqs {
+            let _ = write!(uart, "{:3}  ", axes.latency);
         }
         report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false);
     }
@@ -704,6 +748,7 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
         return;
     }
     let _ = writeln!(uart, "  4096 cells: latency x fix/var x drive x clock x phase");
+    bist.say_repeats(uart, 4096);
     let _ = writeln!(uart, "  printing only what is NOT a clean pass");
     let _ = writeln!(uart, "lat  mode  {}{}{}",
                      STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
@@ -736,6 +781,9 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
     }
     let _ = writeln!(uart, "  {} pass, {} fail, {} no result of 4096",
                      pass, fail, none);
+    // AFTER the summary the host parses, and repeated: a tally of 4096 read
+    // without this line overstates what was measured by eight times.
+    bist.say_repeats(uart, 4096);
 }
 
 /// Sweep the part's LATENCY, which nothing has ever varied.
@@ -780,6 +828,7 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
         return;
     }
     let _ = writeln!(uart, "  {} passes per cell, 128 cells", passes);
+    bist.say_repeats(uart, 128);
     let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
 
     for drive in 0u8..8 {
