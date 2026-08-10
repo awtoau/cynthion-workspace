@@ -16,6 +16,8 @@
 //! Per console, not global: two half-typed lines must not share a buffer.
 
 use embedded_cli::cli::{Cli, CliBuilder, CliHandle};
+use core::fmt::Write;
+
 use embedded_cli::command::RawCommand;
 use embedded_cli::service::{Autocomplete, CommandProcessor, Help, ProcessError};
 use embedded_cli::autocomplete::{Autocompletion, Request};
@@ -204,6 +206,9 @@ pub fn editor(uart: Uart) -> Option<Editor> {
 pub struct Dispatch<'a> {
     pub index: usize,
     pub devices: &'a mut crate::Devices,
+    /// The line as typed, or empty on a history recall. Preferred over the
+    /// crate's tokens, which cannot represent a negative number (#347).
+    pub typed: &'a [u8],
 }
 
 impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
@@ -217,13 +222,24 @@ impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
         // reason: the command owns the screen until it returns.
         let mut uart = crate::primary_for(self.index);
         let mut line = [0u8; COMMAND_LEN];
-        // NOT RUN if a token was lost. A command missing an argument it was
-        // given is #347: `bist phase clkos2 -3` stepped zero times and reported
-        // success. See `shell/rejoin.rs`.
-        match rejoin(raw.name(), raw.args().args(), &mut line) {
-            Ok(len) => crate::shell::run(self.index, &mut uart, &line[..len], self.devices),
-            Err(fault) => {
-                let _ = writeln!(uart, "{}", explain(fault));
+
+        // THE TYPED LINE FIRST, because it is the only lossless source. `-250`
+        // never survives `ArgList` -- it becomes three `Err(NonAsciiShortOption)`
+        // carrying no character, so no reconstruction can recover it (#347).
+        if !self.typed.is_empty() {
+            let len = self.typed.len().min(line.len());
+            line[..len].copy_from_slice(&self.typed[..len]);
+            crate::shell::run(self.index, &mut uart, &line[..len], self.devices);
+        } else {
+            // History recall has no typed line, so the tokens are all there is.
+            // NOT RUN if one was lost: a command missing an argument it was
+            // given reported success and stepped zero times. `rejoin` refuses
+            // and names the spelling that works.
+            match rejoin(raw.name(), raw.args().args(), &mut line) {
+                Ok(len) => crate::shell::run(self.index, &mut uart, &line[..len], self.devices),
+                Err(fault) => {
+                    let _ = writeln!(uart, "{}", explain(fault));
+                }
             }
         }
         let _ = cli;

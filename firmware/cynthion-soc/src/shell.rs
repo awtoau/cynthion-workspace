@@ -164,7 +164,6 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("vbus", "the VBUS switches"),
     ("vbus status", "which switches are closed, and what is sourcing"),
     ("vbus off", "open every switch"),
-    ("vbus input", "source from the input connector"),
     ("vbus control", "source from CONTROL"),
     ("vbus both", "source from both"),
     ("vbus charge [1.5|3]", "advertise a host current on TARGET"),

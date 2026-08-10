@@ -88,7 +88,9 @@ pub fn acknowledge_i2c_interrupt() {
     }
 }
 
-pub use i2c::{pac195x, Error};
+// `last_timeout` is a pure read of a record, so it does not breach the rule that
+// only this module may reach the controller: it starts no transfer.
+pub use i2c::{last_timeout, pac195x, Error};
 pub use mux::{
     BUS_AUX_C, BUS_POWER_MONITOR, BUS_TARGET_C, LINE_AUX_FAULT, LINE_AUX_INT, LINE_TARGET_FAULT,
     LINE_TARGET_INT,

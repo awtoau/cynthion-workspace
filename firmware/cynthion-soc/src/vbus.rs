@@ -126,70 +126,11 @@ const FLOOR_MV: u32 = 4_400;
 /// the monitor has stopped rather than merely jittered.
 const MAX_AGE_MS: u32 = 200;
 
-/// The `input` register: which ports are permitted to power the board.
-const INPUT_OFFSET: usize = 0x01;
-const INPUT_CONTROL: u8 = 1 << 0;
-const INPUT_AUX: u8 = 1 << 1;
-
-fn read_input() -> u8 {
-    // SAFETY: fixed peripheral address, `main=0` region.
-    unsafe {
-        core::ptr::read_volatile((cynthion_soc_pac::base::BOARD_VBUS + INPUT_OFFSET) as *const u8)
-    }
-}
-
-fn write_input(value: u8) {
-    // SAFETY: as above.
-    unsafe {
-        core::ptr::write_volatile(
-            (cynthion_soc_pac::base::BOARD_VBUS + INPUT_OFFSET) as *mut u8,
-            value,
-        )
-    };
-}
-
-/// Which inputs are currently permitted, as (control, aux).
-pub fn inputs() -> (bool, bool) {
-    let value = read_input();
-    (value & INPUT_CONTROL != 0, value & INPUT_AUX != 0)
-}
-
-/// Narrow the board's supply to CONTROL alone, if CONTROL is actually supplying.
-///
-/// **CONTROL powers the instrument; every other port is a device under test.**
-/// Drawing the board's own supply from AUX means the thing being measured is
-/// also the thing keeping the measurer alive, which is the wrong shape -- and it
-/// silently splits the load, so neither port's current means what it appears to.
-/// Observed on this board before this existed: 167 mA on AUX against 37 mA on
-/// CONTROL, sharing a ~205 mA draw that nobody had chosen to split.
-///
-/// **The gateware cannot default to this**, and that is deliberate. A reset state
-/// with AUX cut would brick a board powered from AUX alone: the FPGA would drop
-/// its own supply the moment it configured, lose configuration, release the pins,
-/// and start again. So the permissive state is the one that cannot fail, and the
-/// policy is applied here, once CONTROL has been *measured* to be live.
-///
-/// Returns whether the narrowing happened. A false means CONTROL was not
-/// supplying and both inputs were left on, which is the safe answer rather than
-/// a failure.
-pub fn prefer_control(monitor: &power::Monitor) -> bool {
-    let sample = match monitor.latest() {
-        Some(sample) => sample,
-        None => return false,
-    };
-    // Channel 3 is CONTROL -- see `Source::channel` for why the order is not the
-    // intuitive one.
-    if sample.readings[3].bus_mv < FLOOR_MV {
-        return false;
-    }
-    write_input(INPUT_CONTROL);
-    true
-}
-
-/// Permit both inputs again.
-pub fn allow_all_inputs() {
-    write_input(INPUT_CONTROL | INPUT_AUX);
-}
+// INPUT SELECTION IS GONE, and it never worked. `control_vbus_in_en` (K13) and
+// `aux_vbus_in_en` (L13) reach no pin: neither appears among the 126 `LOCATE`
+// lines of the shipping design's own constraint file. `prefer_control`,
+// `allow_all_inputs` and `vbus input` all wrote a scratch register and returned
+// success. The load split they claimed to fix is an open question again (#305).
 
 /// Why a close was refused.
 pub enum Refusal {

@@ -230,6 +230,10 @@ def build_checks() -> List[Check]:
                 #
                 # Imports only; no board, no toolchain, well under a second.
                 Step([PYTHON, "scripts/amaranth_soc_check.py"], ROOT),
+                # An undriven output port elaborates, places and routes without
+                # a word, which is how `VbusControl`'s two input-enable ports
+                # drove no pad for as long as they existed (#305).
+                Step([PYTHON, "scripts/check_ports_connected.py"], ROOT),
             ],
         ),
         Check(

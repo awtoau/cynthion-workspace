@@ -12,16 +12,14 @@
 //!
 //! - A poll that can spin forever is indistinguishable from a dead core -- has cost
 //!   real days in this tree (`uart.rs`, `hyperram.rs`). `wait` gives up.
-//! - Bound: `I2C_SCL_HZ` is 1 MHz (`gateware/soc/top.py`, Fast-mode Plus, #269), so a
-//!   byte + ack is nine bit periods = 9 us; the longest single command this driver
-//!   issues (START, byte, ack, STOP) is ~12 periods, ~12 us, ~720 cycles at 60 MHz.
-//!   One poll-loop turn is a handful of instructions plus an uncached bus read, so a
-//!   few thousand turns already cover it. `200_000` is ~278x the longest command --
-//!   far more headroom than intended when this bound was set against the bus's
-//!   earlier 80 kHz rate (then ~22x); same bound `Uart::put` uses, same reason.
+//! - Bound: [`I2c::wait_limit`], derived per command from the prescale the core
+//!   actually holds. Was a flat `200_000` -- ~278x the longest command, which is a
+//!   hang with a number attached rather than a safety factor (#355).
 //! - Protects against the peripheral not being there at all, not a slow bus: the bit
 //!   engine's states are all a fixed number of slots long and cannot hang. Turns "the
 //!   shell stopped responding" into "i2c: timeout".
+//! - `Uart::put` still carries the old flat `200_000` with the same stated reason. Not
+//!   fixed here; it belongs to the tree-wide timeout audit, #295.
 //!
 //! ## The completion interrupt: enabled, and what it is for
 //!
@@ -40,21 +38,11 @@
 //!   started a transfer, returned, and got re-pended by this source would hold it for
 //!   neither. That's #247, and needs this bit set first.
 //!
-//! ## `wfi` was tried here, and measured worse
+//! ## `wfi` was tried here and rejected -- #266
 //!
-//! - #247 item 2: sleep on the completion interrupt instead of spinning. Measured
-//!   and NOT adopted -- #266. Figures there predate the 1 MHz bus rate (#269).
-//! - Worse on every figure measured. Cause is architectural, not just timing:
-//!   **VexiiRiscv implements `WFI` as a trap** (`TrapReason.WFI`,
-//!   `EnvPlugin.scala:144`), so each wake costs a pipeline flush and a refill
-//!   through a 4 KiB I-cache -- at this transaction length the flush costs more
-//!   than the spin saves; the spin is a tight loop that stays resident.
-//! - Recorded, not deleted: #247 treats "no better" as a legitimate, worth-recording
-//!   outcome per peripheral, and the arithmetic flips for a longer transfer or a core
-//!   where `wfi` is a clock gate rather than a trap.
-//! - What WOULD pay: not sleeping through the wait but not being in it -- a task that
-//!   issues a command, returns, and is re-pended by this source. Needs the driver to
-//!   become a state machine and the caller to be resumable -- the rest of #247.
+//! - VexiiRiscv implements `WFI` as a trap (`TrapReason.WFI`, `EnvPlugin.scala:144`),
+//!   so each wake costs a pipeline flush and an I-cache refill; the spin does not.
+//! - What WOULD pay is not being in the wait at all: a resumable driver, #247.
 //!
 //! ## The handler must clear it AT THE PERIPHERAL
 //!
@@ -68,6 +56,7 @@
 //!   the clear, not the peripheral.
 
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 const PRER_LO: usize = 0;
 const PRER_HI: usize = 1;
@@ -96,24 +85,48 @@ const CR_ACK: u8 = 0x08;
 const CR_IACK: u8 = 0x01;
 
 const SR_TIP: u8 = 0x02;
+/// A START has gone out and no STOP has followed it yet.
+const SR_BUSY: u8 = 0x40;
 const SR_AL: u8 = 0x20;
 /// The acknowledge the slave sent. Zero means it acknowledged.
 const SR_RXACK: u8 = 0x80;
 
-/// Turns of the spin before this driver gives up on the bus.
-///
-/// A count of iterations, which is a bound in instruction issue rate rather than
-/// in time and therefore means something different on a different clock. That is
-/// a known weakness and it is kept, because the alternative was measured and was
-/// worse -- see "`wfi` was tried" below.
-///
-/// It is generous by construction: a byte at the bus's 1 MHz (`I2C_SCL_HZ`,
-/// `gateware/soc/top.py`) is ~9 us, and this is 200_000 turns of a loop whose body
-/// is one uncached MMIO read -- far more headroom than intended before the bus
-/// moved off its earlier 80 kHz rate (#269). Expiry means the controller is not
-/// there or SCL is being held down by something else, not that a transfer was
-/// slow.
-const WAIT_LIMIT: u32 = 200_000;
+/// The longest single command in bit periods: START, eight bits, ack, STOP.
+const LONGEST_COMMAND_PERIODS: u32 = 12;
+/// Sync cycles per bit period, `f_SCL = f_sync / (5 * (PRER + 1))`.
+const CYCLES_PER_PERIOD: u32 = 5;
+/// Cycles of the tightest possible turn of the spin in [`I2c::command`]: an
+/// uncached MMIO load, a mask, a compare and a branch. Assumed low on purpose --
+/// a faster loop needs MORE turns to cover the same wait.
+const CYCLES_PER_TURN: u32 = 5;
+
+/// The last expiry, for `i2c status` to name. A silent expiry is worse than no
+/// timeout, and this driver has no console handle to log from -- so it records
+/// rather than prints, and something with a `Uart` reads it back.
+static TIMEOUT_COMMAND: AtomicU32 = AtomicU32::new(NO_TIMEOUT);
+static TIMEOUT_LIMIT: AtomicU32 = AtomicU32::new(0);
+static TIMEOUT_TURNS: AtomicU32 = AtomicU32::new(0);
+/// No command byte can be this, so it cannot be confused with a real record.
+const NO_TIMEOUT: u32 = u32::MAX;
+
+fn record_timeout(command: u8, limit: u32, turns: u32) {
+    TIMEOUT_LIMIT.store(limit, Ordering::Relaxed);
+    TIMEOUT_TURNS.store(turns, Ordering::Relaxed);
+    // Last, so a reader that sees a command byte sees the other two settled.
+    TIMEOUT_COMMAND.store(command as u32, Ordering::Relaxed);
+}
+
+/// The command byte, the limit it exceeded and the turns it spent, or `None`.
+pub fn last_timeout() -> Option<(u8, u32, u32)> {
+    match TIMEOUT_COMMAND.load(Ordering::Relaxed) {
+        NO_TIMEOUT => None,
+        command => Some((
+            command as u8,
+            TIMEOUT_LIMIT.load(Ordering::Relaxed),
+            TIMEOUT_TURNS.load(Ordering::Relaxed),
+        )),
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -226,12 +239,13 @@ impl I2c {
     /// a slave can still be holding for. Then a STOP, which is what any slave
     /// listening treats as the end of a transaction.
     ///
-    /// Harmless on a healthy bus, which is why it is unconditional at init: no
-    /// START goes out in front of it, so nothing is addressed and no slave acts
-    /// on either command. ~10 us at 1 MHz.
+    /// ONE command, not two. A bare `CR_STO` is issued from IDLE, where SCL is
+    /// high, and the engine's STOP state drops SCL and pulls SDA low in the same
+    /// slot -- so SDA can fall on a high clock, which is a START (#355). Folding
+    /// the STOP into the read reaches the STOP state from RACK, where SCL is
+    /// already low. ~10 us at 1 MHz.
     pub fn recover(&self) {
-        let _ = self.command(CR_RD | CR_ACK);
-        let _ = self.command(CR_STO);
+        let _ = self.command(CR_RD | CR_ACK | CR_STO);
     }
 
     fn status(&self) -> u8 {
@@ -240,8 +254,31 @@ impl I2c {
         unsafe { read_volatile(self.reg(CMD_STATUS)) }
     }
 
+    /// Turns of the spin in [`I2c::command`] before the bus is given up on.
+    ///
+    /// - **Waits for** one bit-engine command to drop `SR.TIP`.
+    /// - **Expected worst case** is the longest command this driver issues, 12 bit
+    ///   periods, each `5 * (PRER + 1)` sync cycles -- the engine's own arithmetic,
+    ///   read from the prescale the core holds rather than from the rate the build
+    ///   was written with. 720 cycles at the configured prescale of 11.
+    /// - **Multiplier 1.25x**, over a turn assumed as short as [`CYCLES_PER_TURN`]:
+    ///   180 turns at prescale 11, against 200_000 before (#355).
+    /// - **On expiry** [`I2c::command`] records the command byte, this limit and the
+    ///   turns spent, and returns [`Error::Timeout`]. `i2c status` prints the record.
+    ///
+    /// Invariant to the sync clock: the CPU and SCL both derive from it, so a slower
+    /// part makes the wait longer and the turns proportionally slower. It is the
+    /// PRESCALE that moves this, which is why `i2c soak` cannot outrun it.
+    fn wait_limit(&self) -> u32 {
+        let cycles = LONGEST_COMMAND_PERIODS * CYCLES_PER_PERIOD
+            * (self.prescale() as u32 + 1);
+        // x1.25 over cycles/CYCLES_PER_TURN, folded: 5 turns per 4 cycles.
+        cycles / CYCLES_PER_TURN * 5 / 4
+    }
+
     /// Issue one command and wait for it to finish. Returns SR.
     fn command(&self, command: u8) -> Result<u8, Error> {
+        let limit = self.wait_limit();
         // SAFETY: a write to CR, the peripheral's one side-effecting address.
         unsafe { write_volatile(self.reg(CMD_STATUS), command) };
 
@@ -255,7 +292,8 @@ impl I2c {
                 return Ok(status);
             }
             waits += 1;
-            if waits > WAIT_LIMIT {
+            if waits > limit {
+                record_timeout(command, limit, waits);
                 return Err(Error::Timeout);
             }
         }
@@ -278,8 +316,15 @@ impl I2c {
     /// START and its STOP leaves the peripheral holding SCL low and every
     /// subsequent probe fails -- so one absent device would make the rest of a
     /// scan look absent too, which is exactly the wrong answer to give.
+    ///
+    /// Conditional on BUSY: with no START outstanding there is nothing to
+    /// release, and a STOP issued from IDLE puts a START on the wire instead
+    /// (#355). Every error path called this, so the recovery cost the next
+    /// transfer on that bus.
     fn release(&self) {
-        let _ = self.command(CR_STO);
+        if self.status() & SR_BUSY != 0 {
+            let _ = self.command(CR_STO);
+        }
     }
 
     /// Does anything answer at this seven-bit address?

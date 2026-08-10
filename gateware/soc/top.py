@@ -1892,11 +1892,11 @@ class AwtoSoc(Elaboratable):
         # because `VbusControl.enable` clears -- see vbus_csr.py for why the gate
         # is combinational rather than a latched copy.
         #
-        # `control_vbus_in_en` and `aux_vbus_in_en` are deliberately NOT
-        # requested. They are the board's own input shutoff on the two ports that
-        # power it, backed by hardware overvoltage protection above 5.5 V (D17, a
-        # 5.6 V zener). Nothing in this SoC has a reason to command a power input
-        # closed, and an undriven output is one this design cannot get wrong.
+        # `control_vbus_in_en` (K13) and `aux_vbus_in_en` (L13) are deliberately
+        # NOT requested: hardware overvoltage protection above 5.5 V (D17, a
+        # 5.6 V zener) already does that job. `VbusControl` no longer has ports
+        # for them, so this is now a fact about the board rather than two
+        # dangling outputs (#305).
         m.d.comb += [
             platform.request("target_c_vbus_en", 0).o
                 .eq(vbus_ctrl.target_c_vbus_en),

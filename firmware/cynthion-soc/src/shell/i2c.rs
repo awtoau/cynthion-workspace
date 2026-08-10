@@ -70,6 +70,16 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         label
     );
 
+    // An expiry that nobody can see is worse than no bound at all, and the
+    // driver has no console handle to log from -- so it records and this prints.
+    if let Some((command, limit, turns)) = bus::last_timeout() {
+        let _ = writeln!(
+            uart,
+            "  last timeout: command {:02x}, {} turns against a limit of {}",
+            command, turns, limit
+        );
+    }
+
     let mut found = [0u8; 8];
     let mut count = 0usize;
     for address in 0x08u8..=0x77 {
