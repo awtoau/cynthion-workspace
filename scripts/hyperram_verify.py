@@ -93,7 +93,16 @@ def main():
     parser.add_argument("--label", default="verify",
                         help="names the saved matrix runs")
     parser.add_argument("--passes", type=int, default=8)
+    parser.add_argument("--bitstream", type=Path, default=BITSTREAM,
+                        help="the .bit that was configured. Defaults to this "
+                             "SHELL's variant, which is not the board's unless "
+                             "the same CYNTHION_* variables are set")
     args = parser.parse_args()
+
+    # WHICH VARIANT THIS SHELL RESOLVED, before any step runs. `variant.slug()`
+    # reads the environment, so a gate run without the board's `CYNTHION_*`
+    # variables silently names a different build's directory (#311).
+    emit(f"variant {variant.slug()} -> {args.bitstream}")
 
     py = sys.executable
     s = ROOT / "scripts"
@@ -143,11 +152,13 @@ def main():
     else:
         matrix = [py, str(s / "hyperram_matrix_diff.py"), "--label", args.label,
                   "--passes", str(args.passes), "--repeat", "2"]
-        if BITSTREAM.exists():
-            matrix += ["--bitstream", str(BITSTREAM)]
+        if args.bitstream.exists():
+            matrix += ["--bitstream", str(args.bitstream),
+                       "--build-dir", str(args.bitstream.parent)]
         else:
-            emit(f"\n    NO BITSTREAM at {BITSTREAM.relative_to(ROOT)} -- the "
-                 "matrix runs below will record `pins: null` (#311)")
+            emit(f"\n    NO BITSTREAM at {args.bitstream} -- the matrix runs "
+                 "below will record `pins: null`. Set the board's CYNTHION_* "
+                 "variables, or pass --bitstream (#311)")
         results["matrix, twice, diffed"] = step(
             "the 4096-cell matrix, twice, diffed", matrix)[0]
 
