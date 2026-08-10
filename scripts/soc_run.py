@@ -976,6 +976,23 @@ def main():
         else:
             emit("gateware built")
 
+        # DID THE EDGE CLOCK TAKE THE DEDICATED PATH? #314.
+        #
+        # A fabric-routed ECLK is announced by nextpnr as `log_info` and by
+        # nothing else, so it survived months of builds. It is the timing
+        # reference the DQS capture phase is measured against, and it fails the
+        # BUILD here rather than the measurement six steps later.
+        #
+        # Vacuous on a design with no edge clock, which the shipping SoC is.
+        import soc_eclk_check
+
+        eclk_ok, eclk_lines = soc_eclk_check.audit(BUILD)
+        for line in eclk_lines[1:]:
+            emit("  " + line.strip())
+        if not eclk_ok:
+            emit("*** the edge clock is on general fabric -- see #314")
+            return 1
+
         # THE CHECK THIS SCRIPT EXISTED WITHOUT, and which cost most of a day.
         #
         # Three separate times the board ran firmware that was not the firmware
