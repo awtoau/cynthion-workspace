@@ -138,6 +138,13 @@ from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
 import build_metrics  # noqa: E402
 
 
+# The QEMU shell gate's own runtime: 104 checks, 157 s measured 2026-08-10 on
+# this machine. `spawn` is given 1.25x that as a floor and this machine's own
+# history above it. Expiry kills QEMU and names the gate, the limit and the
+# elapsed -- see #295 for the workings.
+QEMU_GATE_SECONDS = 157.0
+
+
 def synthesis_floor():
     """Seconds a gateware build may take, given how many are in flight.
 
@@ -619,9 +626,14 @@ def main():
         # gate that always ran the default build would pass while a feature build
         # went to the board unexamined, which is the same shape as a stale
         # bitstream: the check is real and it is about something else.
+        # Bounded, because a wedged QEMU is a gate that never opens and looks
+        # like a slow one. The bound is this machine's own history for the gate,
+        # never below 1.25x the slowest observed run (#295).
+        gate_bound, _reason = limit_for("spawn:soc_test.py",
+                                        floor=1.25 * QEMU_GATE_SECONDS)
         rc = spawn([sys.executable, str(ROOT / "scripts" / "soc_test.py")]
                    + (["--features", args.features] if args.features else []),
-                   cwd=ROOT)
+                   cwd=ROOT, bound_seconds=gate_bound)
         if rc != 0:
             emit("shell tests FAILED -- not configuring the board.")
             emit("The same shell logic misbehaves under QEMU, so a reconfigure")
