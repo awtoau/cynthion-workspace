@@ -785,14 +785,15 @@ class NonDQSProtocolHarness(Elaboratable):
     """
 
     def __init__(self, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ,
-                 fixed_latency=True):
+                 fixed_latency=True, max_latency_clocks=None):
         self.phy = HyperBusPHY()
         self.sync_mhz = sync_mhz
         if upstream:
             self.psram = HyperRAMInterface(phy=self.phy)
         else:
-            self.psram = HyperRAMController(phy=self.phy, sync_mhz=sync_mhz,
-                                            fixed_latency=fixed_latency)
+            self.psram = HyperRAMController(
+                phy=self.phy, sync_mhz=sync_mhz, fixed_latency=fixed_latency,
+                max_latency_clocks=max_latency_clocks)
 
     def elaborate(self, platform):
         m = Module()
@@ -869,9 +870,11 @@ async def run16(ctx, dut, model, *, address, read, data=None, gap=0,
     ctx.set(psram.register_space, 0)
 
 
-def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None):
+def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None,
+               max_latency_clocks=None):
     """Run `body(ctx, dut, model)` on the 16-bit path and return the model."""
-    dut = NonDQSProtocolHarness(upstream=upstream, sync_mhz=sync_mhz)
+    dut = NonDQSProtocolHarness(upstream=upstream, sync_mhz=sync_mhz,
+                                max_latency_clocks=max_latency_clocks)
     model = ModelHyperRAM16(sync_mhz=sync_mhz, deliver=deliver)
 
     async def testbench(ctx):
@@ -1100,6 +1103,78 @@ def section_dqs_write_order(checks, emit):
     if first is None:
         emit("        HARNESS INCOMPLETE -- nothing reached the device, so this")
         emit("        says nothing about ordering yet. See the comment above.")
+
+
+def latency_cycles_held(*, latency=None, max_latency_clocks=14):
+    """Cycles the non-DQS controller spends in HANDLE_LATENCY on one read.
+
+    `latency=None` leaves `latency_clocks` undriven, which must reproduce the
+    build that shipped before the input existed.
+
+    Counted on the FSM state, NOT on `read_ready`: the model serves data on its
+    own schedule, so a strobe measures the model's latency rather than the
+    controller's. That distinction is the whole of #331 -- two sides that were
+    never separately observable.
+    """
+    held = HyperRAMController.STATES.index("HANDLE_LATENCY")
+    counted = []
+
+    async def body(ctx, dut, model):
+        psram = dut.psram
+        if latency is not None:
+            ctx.set(psram.latency_clocks, latency)
+        ctx.set(psram.address, 0x100)
+        ctx.set(psram.perform_write, 0)
+        ctx.set(psram.final_word, 1)
+        ctx.set(psram.start_transfer, 1)
+        await ctx.tick()
+        ctx.set(psram.start_transfer, 0)
+
+        cycles, entered = 0, False
+        for _ in range(completion_bound(dut.sync_mhz)):
+            if ctx.get(psram.state) == held:
+                cycles, entered = cycles + 1, True
+            elif entered:
+                break
+            await beat16(ctx, dut, model)
+        counted.append(cycles if entered else None)
+
+    simulate16(body, max_latency_clocks=max_latency_clocks)
+    return counted[0]
+
+
+def section_latency_input(checks, emit):
+    """5b. `latency_clocks` is a live input, and optional. See #331."""
+    emit("\n5b. Runtime latency: the controller moves with the part, or nothing does\n")
+
+    default = latency_cycles_held(latency=None)
+    checks.check("an undriven `latency_clocks` still reaches the data body",
+                 default is not None,
+                 "the controller never entered HANDLE_LATENCY")
+    checks.check("undriven matches the build-time constant exactly",
+                 default == latency_cycles_held(latency=HyperRAMController.HIGH_LATENCY_CLOCKS),
+                 f"undriven took {default} cycles, driving 14 took a different count -- "
+                 "the input changed behaviour that was supposed to be unchanged")
+
+    # THE CHECK THIS SECTION EXISTS FOR. Before #331 every one of these returned
+    # the same number, which is why `bist latency` could only ever pass one code.
+    taken = {n: latency_cycles_held(latency=n) for n in (6, 8, 10, 12, 14)}
+    emit(f"     cycles held in HANDLE_LATENCY: {taken}\n")
+    checks.check("each latency setting waits a different number of cycles",
+                 len(set(taken.values())) == len(taken),
+                 f"settings collapsed onto the same wait: {taken}")
+    steps = sorted(taken)
+    checks.check("the wait tracks the setting one for one",
+                 all(taken[b] - taken[a] == b - a
+                     for a, b in zip(steps, steps[1:])),
+                 f"not one-for-one: {taken}")
+
+    # A count below 2 underflows the counter unless it is clamped, and a counter
+    # that wrapped waits ~2^n cycles -- a hang, not a short read.
+    checks.check("a count below 2 is clamped rather than wrapped",
+                 latency_cycles_held(latency=0) is not None
+                 and latency_cycles_held(latency=0) <= taken[6],
+                 "latency 0 did not complete, so the counter wrapped")
 
 
 def section_structural(checks, emit):
@@ -2402,7 +2477,7 @@ def main():
     for section in (section_command, section_latency, section_held,
                     section_as_built, section_dqs_write_order,
                     section_recovery, section_recovery_non_dqs,
-                    section_structural, section_wishbone,
+                    section_latency_input, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
                     section_clock_stop, section_escape, section_tcsm,
