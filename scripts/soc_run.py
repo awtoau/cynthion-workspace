@@ -1127,6 +1127,18 @@ def configure_and_read(args, emit):
             emit(f"no bitstream at {BITSTREAM.relative_to(ROOT)}")
             return 1
 
+        # `--build-only` STOPS HERE, and it did not.
+        #
+        # Every caller of this reached it having decided the bitstream is
+        # current, and one of those paths is "synthesis skipped, nothing to do" --
+        # which then tried to configure a board that `--build-only` promises not
+        # to touch. Silent while a board was attached; a failed `configure` in a
+        # fan-out where there is none (#351), which is how it was found.
+        if args.build_only:
+            emit(f"bitstream is current: {BITSTREAM.relative_to(ROOT)}")
+            emit("  --build-only: nothing configured, nothing written")
+            return 0
+
         # Nothing reaches the board past this point without the gateware on it
         # being the gateware in the tree.
         if bitstream_is_stale(emit):

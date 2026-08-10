@@ -28,6 +28,15 @@ when a build waits on them:
 
 Synthesis, which is the whole cost, is not.
 
+## Re-running the same set retries only what failed
+
+`soc_run.py` skips synthesis when the digest beside a bitstream matches the tree,
+so a second run of the same specs costs seconds per rung that already built. That
+is the answer to a spurious failure -- and there is one to be spurious about:
+yosys asserts in `rtlil.cc` occasionally, and `yosys_rerun_probe.py` shows the
+same inputs then passing (#306). Nothing here retries automatically: a build that
+fails twice is a build that is failing.
+
 ## What it does NOT do
 
 Nothing here touches the board, so nothing here measures anything. It produces
