@@ -394,7 +394,7 @@ check that distinguishes a document from a login page:
 | `334x.pdf` | USB3343 PHY |
 | `Vishay-SiA483ADJ-P-Channel-30V-MOSFET.pdf` | SiA483ADJ — the VBUS pass MOSFET, Q1/Q2/Q4/Q5/Q6/Q7 (`https://www.vishay.com/docs/77080/sia483adj.pdf`) |
 | `SiTime-SiT1602-MEMS-oscillator.pdf` | SiT1602B, **rev 1.08, 1 Jan 2023, 18 pp** — Y1, the board's only oscillator (`https://www.sitime.com/datasheet/SiT1602`) |
-| `S9c76cb8ac7dc4b77b5edfe7984049618q.pdf` | unidentified — rename when someone works out what it is |
+| `S9c76cb8ac7dc4b77b5edfe7984049618q.pdf` | **identified 2026-08-10: not a datasheet.** A 2-page EU "PRODUCT MANUAL" compliance sheet for the **Colorlight-i5** ECP5 board (Yiwu Muse Electronic Technology), i.e. an AliExpress listing attachment. Nothing to do with Cynthion — delete it unless someone wants the i5 board's serials |
 
 ### What the SiT1602 settled: the part number decodes, and it is ±50 ppm
 
