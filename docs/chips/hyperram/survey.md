@@ -396,9 +396,9 @@ option 4 in [`w956a8.md`](w956a8.md).
 | [nafarr `W956A8MBYA.scala`](https://github.com/aesc-silicon/elements-nafarr/blob/main/hardware/scala/nafarr/memory/hyperbus/sim/W956A8MBYA.scala) | SpinalHDL | CERN-OHL-W-2.0 | data path only — 8 MB array, CA decode, RWDS write mask. **No register space, no ID0/CR0, no tCSM, no refresh.** Latency is a hardcoded cycle count tuned to their own PHY (`writeLatency = 14`, and 104 in the non-DDR variant) |
 | [`sergz72/FPGA` `hyperram_emulator.v`](https://github.com/sergz72/FPGA/blob/master/common/hyperram_emulator.v) | Verilog | — | open, synthesisable, usable with Icarus/Verilator |
 | [GVSoC `hyperram`](https://github.com/gvsoc/gvsoc-core/blob/main/models/devices/hyperbus/hyperram.py) | Python wrapper over C++ | Apache-2.0 | models an S27KS0641; the behaviour is in `hyperram_impl`, not the Python |
-| Winbond `W956X8MBY_verilog_p.zip` | Verilog | Winbond | encrypted, and **Diamond can read it** — see below |
+| Winbond `W956X8MBY_verilog_p.zip` | SystemVerilog, encrypted | Winbond | **the golden model** — full register space, timing checks, DPD/hybrid-sleep/reset states. Runs under Diamond's Questa; see below |
 
-## The vendor model is encrypted to Mentor's key, and Diamond ships that key
+## The vendor model runs — Diamond ships the key that decrypts it
 
 `W956A8MBYA.modelsim.vp` carries one key block and only one:
 
@@ -406,33 +406,53 @@ option 4 in [`w956a8.md`](w956a8.md).
     `pragma protect key_keyowner = "Mentor Graphics Corporation"
     `pragma protect key_keyname  = "MGC-VERIF-SIM-RSA-1"
 
-So Icarus, Verilator, cocotb, GHDL and Yosys can never read it — and neither can
-Aldec Active-HDL, which holds a different vendor key. The siblings
-`W956A8MBYA.vcs.vp` and `.nc.vp` are the Synopsys and Cadence builds.
+Icarus, Verilator, cocotb, GHDL and Yosys can never read that, and neither can Aldec
+Active-HDL — a different vendor key. The siblings `W956A8MBYA.vcs.vp` and `.nc.vp`
+are the Synopsys and Cadence builds of the same model.
 
-**Diamond 3.14 bundles Questa Sim Lattice OEM Edition, which is a Siemens build and
-therefore holds that key.** Tested 2026-08-10 with `questasim/bin/vlog` 2024.2:
-the errors it returns name identifiers *inside* the protected region (redacted to
-`<protected>`), which is a decrypted-and-parsed failure, not a refusal to decrypt.
-So the "useless in the open flow" reading is wrong for anyone with Diamond installed.
+**Diamond 3.14 bundles Questa Sim Lattice OEM Edition, a Siemens build, which holds
+the key.** Run it with `scripts/hyperram_vendor_model_sim.py`; the whole thing takes
+under a second.
 
-**It does not compile out of the box.** The plaintext header shows the model
-`` `include``s `Config-AC.v` from inside the module and expects `PKG`/`DIE0` defines
-set at the top; every attempt so far ends with unresolved identifiers at the
-`data_block` line. Winbond ships no instructions beyond a two-line "file structure"
-note. Getting it to elaborate is unfinished work, and it is worth finishing: it is
-the only model that implements the register space.
+Two flags are needed and Winbond documents neither:
 
-**The plaintext half is worth having regardless.** `Config-AC.v` ships unencrypted in
-the same zip with the full AC parameter set per grade, including a **250 MHz** block
-the datasheet has no column for, plus `tCSM` = 4000 ns below 85 °C / 1000 ns above and
-a `` `define LA_85C `` to switch it. Filed at `sources/models/`, documented in
-[`../../../sources/README.md`](../../../sources/README.md).
+- **`-sv`.** The protected region is SystemVerilog. In Verilog-2001 mode vlog stops
+  with *"syntax error in protected region"*, which reads like a decryption failure
+  and is not one.
+- **`+define+T166`** (or `T85`/`T100`/`T104`/`T133`/`T200`/`T250`). `Config-AC.v`'s
+  AC-parameter block is an `ifdef` chain over the grades **with no default branch**,
+  so with no grade defined it declares no timing parameters at all and every
+  identifier in the protected region is undefined.
 
-**No open model implements the register space.** nafarr, sergz72 and GVSoC all model
-the array and the CA; none answers a register read with plausible ID0/CR0 contents.
-Until the Winbond model elaborates, anything that exercises `hyperram_identify.py` in
-simulation has to be written here.
+### What it reports, and why that matters
+
+At power-up, unprompted:
+
+    ==>ID_REG0     : (0x0c86)      ==>CONFIG_REG0 : (0x8f2f)
+    ==>ID_REG1     : (0x0001)      ==>CONFIG_REG1 : (0xffc1)
+    Manufacturer: Winbond (4'b0110)   col addr bits: 9   row addr bits: 13
+    hyperbus X8 mode / Power supply 3V Device / Single Die mode -- 64Mb
+    DIE0 address: 'h3F_FFFF ~ 'h00_0000
+
+**Every one of those matches the board.** A register read driven over the bus returns
+`0c 86` after exactly 14 CK, with the model narrating its own decode — *"The decode
+command: Read Register ID0"*, *"Latency type: 1 (fixed), Latency code: 7, Latency
+count: 14"*. So the values in [`w956a8.md`](w956a8.md) now have a second,
+independent source that is not the board and not the datasheet prose.
+
+`scripts/hyperram_vendor_model_sim.py` asserts all four registers plus the bus read
+and exits non-zero on a mismatch, so it is a regression rather than a demo. The
+testbench is `gateware/probes/hyperram/vendor_model_tb.sv`.
+
+**This is the only model that implements the register space.** nafarr, sergz72 and
+GVSoC all model the array and the CA and none answers a register read with plausible
+contents, so anything that exercises `hyperram_identify.py` in simulation has to run
+against this one.
+
+**The plaintext half is worth having independently.** `Config-AC.v` ships unencrypted
+in the same zip with the full AC parameter set per grade, including a **250 MHz**
+block the datasheet has no column for, plus `tCSM` = 4000 ns below 85 °C / 1000 ns
+above and a `` `define LA_85C `` to switch it.
 
 # What is worth taking, from all three parts
 
