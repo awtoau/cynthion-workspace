@@ -363,18 +363,37 @@ From
 | **tCSHI** | 4 | **NO** |
 | **tCK maximum (stall bound)** | 1 | **NO** |
 
-## Knobs the twin needs
+## Knobs on the twin
 
-Only the device-side faults, and there are three, not four:
+Only the device-side faults, and there are three, not four. All three landed on
+[`hyperram_model.v`](../../../gateware/probes/hyperram/hyperram_model.v); each
+defaults to the part, so the shared testbench is unchanged.
 
-| knob | checks it carries | state today |
-|---|---|---|
-| **stop after N beats** (`N = 0` is "never answer") | 15 | absent |
-| **RWDS held high / low / floating over the CA** | 2 | partly — tDSV float is modelled as *correct behaviour*; a knob to hold it wrong is absent |
-| **refuse a register write** | **0** | absent — and **nothing in `soc_hyperram_sim.py` uses it.** #346 lists it as a port; it is a new capability |
+| parameter | default | fault | checks it carries |
+|---|---|---|---|
+| `DELIVER_WORDS` | `-1` | `0` never answers, `N` stops after N words | 15 |
+| `CA_RWDS_FAULT` | `0` | `1` stuck High, `2` stuck Low, `3` never driven | 2 |
+| `REFUSE_REG_WRITE` | `0` | `1` takes the write and drops it | **0 — a new capability, not a port** |
 
-`deliver` is one knob, not two: "never answer" is `deliver=0`, which is how the
-file already writes it.
+`DELIVER_WORDS` is one knob, not two: "never answer" is `0`, which is how
+`soc_hyperram_sim.py` already writes it.
+
+Proved by [`fault_model_tb.sv`](../../../gateware/probes/hyperram/fault_model_tb.sv),
+Icarus-only — the vendor model has no such parameters, so what holds it honest is
+that the same model still passes `vendor_model_tb.sv` with every knob at 0:
+
+    scripts/hyperram_vendor_model_sim.py --sim fault
+
+| run | bus |
+|---|---|
+| control | `ca rwds = zz1111`, strobe at 28 edges, `id0 = 0c86`, 8 of 8 words, `cr0 = af2f` |
+| `CA_RWDS_FAULT=1/2/3` | `111111` / `000000` / `zzzzzz` |
+| `DELIVER_WORDS=0` | `id0 = zzzz`, 0 of 8 words |
+| `DELIVER_WORDS=3` | 3 of 8 words |
+| `REFUSE_REG_WRITE=1` | `cr0 after write = 8f2f` |
+
+A held fault has no tDSV — that is what makes `111111` distinguishable from the
+part's `zz1111`, and it is the float #338 suspects.
 
 The remaining 12 fault-injection checks are **caller-side** and no model knob can
 carry them.
@@ -414,7 +433,8 @@ Five assertions and one dead section. Everything else moves or stays.
    `ba64439` — but it is a Verilog testbench, not a path from the Amaranth SoC
    harnesses. The 29 integration checks that use the Python model as an array
    still have nowhere to go.
-2. Port the three device-side knobs to the twin, one commit each.
+2. **Done** — the three device-side knobs are on the twin, one commit each, with
+   `--sim fault` as the regression.
 3. Delete only what this audit lists as deletable, plus what the bridge has
    demonstrably taken over.
 4. `soc_hyperram_sim.py` keeps I, X, S and the caller-side F — 99 assertions on

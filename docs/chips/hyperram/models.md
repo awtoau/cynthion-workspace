@@ -14,12 +14,14 @@ drive strength, the 200 MHz failure.
 | `sources/models/W956X8MBY_verilog_p.zip` | **Winbond's own model.** Vendor IP, gitignored, fetched by the route in [`../../../sources/README.md`](../../../sources/README.md) |
 | [`../../../gateware/probes/hyperram/hyperram_model.v`](../../../gateware/probes/hyperram/hyperram_model.v) | **the open twin.** Plain Verilog; Icarus, Verilator, cocotb |
 | [`../../../gateware/probes/hyperram/vendor_model_tb.sv`](../../../gateware/probes/hyperram/vendor_model_tb.sv) | the shared testbench; instantiates whichever `` `DUT_MODULE `` names |
+| [`../../../gateware/probes/hyperram/fault_model_tb.sv`](../../../gateware/probes/hyperram/fault_model_tb.sv) | the twin told to MISBEHAVE; Icarus only, the vendor model has no knobs |
 | [`../../../scripts/hyperram_vendor_model_sim.py`](../../../scripts/hyperram_vendor_model_sim.py) | the runner, and the regression |
 
 ## Running it
 
     scripts/hyperram_vendor_model_sim.py                 # both, and they must agree
     scripts/hyperram_vendor_model_sim.py --sim icarus    # open twin only, no Diamond needed
+    scripts/hyperram_vendor_model_sim.py --sim fault     # the fault knobs alone
     scripts/hyperram_vendor_model_sim.py --grade T250    # the grade the datasheet has no column for
     scripts/hyperram_vendor_model_sim.py --hunt 2048     # more variable-latency transactions
     scripts/hyperram_vendor_model_sim.py --bursts 256    # more 128-word bursts
@@ -112,6 +114,25 @@ the deliverable rather than either one alone.
 The refresh cadence is a **transaction counter**, not a clock, because that is
 what the vendor model does — see below. It makes the 2x path reachable; it does
 not predict how often a board will meet one.
+
+### It can also be told to LIE
+
+A faithful model cannot test a controller's response to an unfaithful device, and
+a correct part never misbehaves. Three parameters, each defaulting to the part —
+[#346](https://github.com/awtoau/cynthion-workspace/issues/346),
+[`sim-audit.md`](sim-audit.md):
+
+| parameter | default | fault |
+|---|---|---|
+| `DELIVER_WORDS` | `-1` | `0` never answers, `N` stops after N read words — the read watchdog, [#316](https://github.com/awtoau/cynthion-workspace/issues/316) |
+| `CA_RWDS_FAULT` | `0` | `1` RWDS stuck High, `2` stuck Low, `3` never driven over the CA — [#338](https://github.com/awtoau/cynthion-workspace/issues/338) |
+| `REFUSE_REG_WRITE` | `0` | `1` takes the register write and drops it — the CR0/CR1 verify path |
+
+`fault_model_tb.sv` runs one Icarus job per knob and asserts the bus changes in
+the one way its name promises. A held fault has no tDSV, which is what separates
+`111111` from the part's `zz1111`. Nothing holds this testbench honest against
+Winbond; what does is that the same model still passes `vendor_model_tb.sv` with
+every knob at its default.
 
 One number in it is calibrated rather than derived: the data phase starts
 `4 + 2 × latency_ck` edges after CS# falls, where the arithmetic suggests
