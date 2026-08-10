@@ -239,7 +239,15 @@ IDLE_S = 8.0
 # The shell writes "> " after the handler returns. The CRLF in front of it is
 # load-bearing: `help` prints `bram read <hex>     one word of block RAM`, and a
 # bare "> " matches inside that line.
-PROMPT = b"\r\n> "
+#
+# A PATTERN, because the prompt carries a stamp and the console's name --
+# `000006.008 aux> `, built by `refresh_prompt` in
+# firmware/cynthion-soc/src/shell/console.rs. The literal `\r\n> ` this used to
+# be stopped matching when the stamp landed, and a sentinel that never matches
+# is not a slow check, it is no check: every `command()` sat out its whole
+# REPLY_S budget and then returned as if the handler had finished. Measured
+# with `scripts/soc_test_flake_probe.py prompt` (#363).
+PROMPT = re.compile(rb"\r\n[0-9:.]+ [a-z?]+> ")
 
 
 def wait_for_bytes(session, needle, budget, since):
@@ -253,11 +261,19 @@ def wait_for_bytes(session, needle, budget, since):
     `Condition.wait` returns on the notify, so a satisfied assertion is noticed
     as soon as the byte that satisfies it lands, and a thread that is not woken
     costs nothing at all.
+
+    `needle` is a bytes to find, or a compiled bytes pattern to search for. The
+    pattern form exists for `PROMPT`, which carries a timestamp -- see there.
     """
     deadline = time.monotonic() + budget
+    search = getattr(needle, "search", None)
     with session.cond:
         while True:
-            found = session.buf.find(needle, since)
+            if search is not None:
+                match = search(session.buf, since)
+                found = match.start() if match else -1
+            else:
+                found = session.buf.find(needle, since)
             if found >= 0:
                 return found
             # After the scan, not before: the last bytes a dying process wrote
@@ -753,11 +769,16 @@ def main():
                        if expect_line(session, n, REPLY_S, mark) is None]
             # And then the prompt: the needles say the reply STARTED, this says
             # the handler has finished and `reply` is all of it.
-            session.expect(PROMPT, REPLY_S, mark)
+            #
+            # ASSERTED, not merely waited for. The return used to be discarded,
+            # so a handler that never came back read exactly like one that did.
+            prompt = session.expect(PROMPT, REPLY_S, mark)
             reply = session.snapshot()[mark:]
-            check(name, not missing,
+            check(name, not missing and prompt is not None,
                   f"sent: {text!r}\n"
                   f"missing: {missing}\n"
+                  f"prompt: {'yes' if prompt is not None else 'NO PROMPT -- '
+                             'the handler did not return inside the budget'}\n"
                   f"received in {REPLY_S}s: {show(reply) or '(nothing)'}")
             return reply
 
