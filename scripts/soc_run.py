@@ -1221,19 +1221,31 @@ def configure_and_read(args, emit):
         # the flash write two steps earlier. Here, the old image runs until the
         # new bitstream is ready and the gap is a couple of seconds.
         #
+        # THE BOARD HAS TO BE THERE, checked before the flash write rather than
+        # discovered by it. Refusing when it is absent is this script's own
+        # confirmed-good behaviour (#360); `soc_confirm.precheck` is that same
+        # rule where every path can reach it, and it also names the case where
+        # the board is on the bus but its CONTROL cable is not.
+        import soc_confirm
+
+        blocked = soc_confirm.precheck()
+        if blocked is not None:
+            emit(f"REFUSING to configure [{blocked.name}]: {blocked.headline}")
+            for line in blocked.lines:
+                emit(line)
+            return 1
+
         # After the staleness check, so a run that is going to refuse to
         # configure does not destroy the working image on its way to refusing.
         if not write_rodata_flash(args, emit):
             return 1
 
-        result = run([sys.executable,
-                      str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"),
-                      "configure", str(BITSTREAM)])
-        if result.returncode != 0:
-            emit("configure failed:")
-            emit((result.stderr or result.stdout).strip()[-400:])
+        # CONFIGURE AND CONFIRM, never configure alone. A zero exit from
+        # `apollo configure` is not a running design -- four sessions in one day
+        # were spent on that, each blaming the change under test (#360). This
+        # retries the retryable causes and names the rest.
+        if soc_confirm.configure_and_confirm(BITSTREAM) != 0:
             return 1
-        emit("configured")
 
         if args.no_read:
             return 0
