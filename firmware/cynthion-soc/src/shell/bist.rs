@@ -38,6 +38,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"all" => bist::all(uart, &engine, passes(args)),
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
+        b"ck" => ck(uart, args),
         b"cell" => match axes(args) {
             Some(axes) => bist::one(uart, &engine, axes, DEFAULT_PASSES),
             None => {
@@ -45,6 +46,46 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             }
         },
         _ => crate::shell::list_family(uart, "bist"),
+    }
+}
+
+/// `bist ck [0|1]` -- report the rungs this bitstream carries, or select one.
+///
+/// Reports in MHz with three decimals: the reachable rungs include 85.7143 and
+/// 94.2857, and a sweep exists to tell those apart from their neighbours (#333).
+fn ck(uart: &mut Uart, args: &[u8]) {
+    // SAFETY: `bist::CK_BASE` is the selector's CSR base.
+    let ck = unsafe { bist::Ck::new(bist::CK_BASE) };
+    let rungs = ck.rungs();
+    if rungs == 0 {
+        let _ = writeln!(uart, "ck: no selector in this bitstream");
+        return;
+    }
+
+    if let Some(want) = parse_decimal(args) {
+        if want >= rungs {
+            let _ = writeln!(uart, "ck: this bitstream carries {} rung(s)", rungs);
+            return;
+        }
+        ck.select(want);
+    }
+
+    let live = ck.selected();
+    for rung in 0..rungs {
+        let khz = ck.khz(rung);
+        let _ = writeln!(
+            uart,
+            "  rung {} {:>4}.{:03} MHz{}",
+            rung,
+            khz / 1000,
+            khz % 1000,
+            if rung == live { "  <- live" } else { "" }
+        );
+    }
+    // Both rungs come off one VCO, so a lost lock is not per-rung -- but it is
+    // the one condition under which every number above is meaningless.
+    if !ck.locked() {
+        let _ = writeln!(uart, "  PLL NOT LOCKED -- no measurement here means anything");
     }
 }
 

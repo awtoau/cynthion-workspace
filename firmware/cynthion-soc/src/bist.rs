@@ -131,6 +131,68 @@ const CR1_HYBRID_SLEEP: u32 = 1 << 5;
 /// gateware's, so the two cannot drift silently.
 pub const BASE: usize = 0xf000_0800;
 
+/// The CK rung selector's CSR base, and the same literal-not-PAC reasoning as
+/// `BASE` above. Mirrors `HYPERRAM_CK_BASE` in `gateware/soc/top.py`.
+pub const CK_BASE: usize = 0xf000_0a00;
+
+/// Which HyperRAM CK a two-rung bitstream drives. See #228, #313.
+///
+/// The gateware has exposed this since `HyperRAMClockSelect` landed; nothing on
+/// the CPU could reach it, so a two-rung build could only ever be measured at
+/// rung 0 and the second rung was dead weight in the bitstream.
+///
+/// Register map is `gateware/soc/peripherals/hyperram_ck.py`: `ctrl.sel` at
+/// +0x00, `status.locked`/`status.rungs` at +0x04, the two rung frequencies in
+/// kHz at +0x08 and +0x0c. kHz because every reachable rung is a whole number of
+/// them, so nothing rounds.
+pub struct Ck {
+    base: usize,
+}
+
+impl Ck {
+    /// # Safety
+    /// `base` must be the CK selector's CSR base.
+    pub const unsafe fn new(base: usize) -> Self {
+        Self { base }
+    }
+
+    fn read(&self, offset: usize) -> u32 {
+        // SAFETY: `offset` is one of the four registers the map defines.
+        unsafe { core::ptr::read_volatile((self.base + offset) as *const u32) }
+    }
+
+    /// How many rungs this bitstream carries. 1 or 2 -- `DCSC` is a 2:1 mux and
+    /// the two DCS bels do not cascade, so 2 is the silicon's limit, not ours.
+    pub fn rungs(&self) -> u32 {
+        (self.read(0x04) >> 4) & 0xF
+    }
+
+    /// Is the PLL locked? Both rungs are outputs of one VCO, so this covers both.
+    pub fn locked(&self) -> bool {
+        self.read(0x04) & 1 != 0
+    }
+
+    /// Which rung is live.
+    pub fn selected(&self) -> u32 {
+        self.read(0x00) & 1
+    }
+
+    /// This rung's CK in kHz. Rung 1 reads 0 on a one-rung build.
+    pub fn khz(&self, rung: u32) -> u32 {
+        self.read(if rung == 0 { 0x08 } else { 0x0c })
+    }
+
+    /// Select a rung. Glitchless in `DCSC` with both clocks running, and no
+    /// settling wait is needed -- see the peripheral's own docs for why the
+    /// engine does not have to be idle across the change.
+    pub fn select(&self, rung: u32) {
+        // SAFETY: `ctrl` is a writable register at the base.
+        unsafe {
+            core::ptr::write_volatile(self.base as *mut u32, rung & 1);
+        }
+    }
+}
+
 /// What one cell of the matrix was run with.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Axes {
