@@ -61,6 +61,19 @@ strobe over a tristate bus. The LONG count is floored at
 `HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, so
 the count can be swept without a source edit, as it can on the DQS side.
 
+**Every timing parameter is a runtime input.** `latency_clocks`,
+`low_latency_clocks`, `fixed_latency`, `recovery_cycles`, `burst_cycles`,
+`burst_beats` and `min_latency_clocks` are `Signal`s reset to the build-time
+value, so an undriven caller is unchanged and yosys folds them away. Three
+separate defects were one habit -- a swept axis whose consumer held a constant
+(#331, #338), and the audit's "`T_CSHI_NS = 10.0` is right" was a datasheet
+reading of the wrong grade's column with no way to measure it. (#341)
+
+**And a register access says so.** `register_active` is High while a register
+transaction holds CS# Low; anything gating CK beneath this controller must hold
+off while it is, because the 2025 app note replaces the datasheet's clock-stop
+sentence with "recommended not to stop the clock during register access". (#340)
+
 ## What is NOT changed here
 
 Everything else is upstream's, deliberately:
