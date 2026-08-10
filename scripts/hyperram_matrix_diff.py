@@ -23,6 +23,16 @@ The same mechanism carries the #311 workflow: patch one pin attribute into a
 BUILT bitstream (`hyperram_pin_patch.py`), reconfigure, rerun, diff. Cells that
 move are that attribute's effect, isolated -- no rebuild, no confounded axes.
 
+## Why `--bitstream` is not optional in practice
+
+A pin-attribute run and its control are the SAME commit, the same firmware and
+the same CK -- everything this file used to record is identical between them, and
+the one thing that differs was written nowhere. `--bitstream` unpacks the file
+that was configured and stores what its HyperRAM PIOs are actually set to, so a
+saved run says which electrical settings produced it. Without it the run is
+saved with `pins: null` and a warning, because an unattributable measurement
+should be visibly unattributable rather than quietly indistinguishable.
+
 ## Why these are committed
 
 They are MEASUREMENTS, not derived artifacts: recreating one needs the board, a
@@ -37,6 +47,7 @@ Runs go to `results/hyperram/<YYYYMMDD-HHMMSS>-<label>.json`; the console log to
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -47,6 +58,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import hyperram_pin_patch  # noqa: E402
 import soc_shell  # noqa: E402
 
 RESULTS = ROOT / "results" / "hyperram"
@@ -89,8 +101,61 @@ class Board:
         self.link.close()
 
 
-def record(label, passes, rung):
+AXES = ("lat", "mode", "drive", "clk", "sel")
+
+
+def axis_spread(cells):
+    """How the failures fall across each axis: `{axis: {value: count}}`.
+
+    **A matrix whose failures are spread perfectly evenly over `sel` is not
+    measuring a read window.** `sel` is the capture phase; if every phase scores
+    the same, nothing is being captured and the verdict comes from somewhere
+    other than the data path.
+
+    That is not hypothetical. A whole sweep of pin patches was recorded against a
+    build whose pass set was uniform 112/112 across `sel`, `drive` and `clk` --
+    and whose failure set was IDENTICAL at 80 MHz and at 90 MHz. Every point
+    scored "no effect", which was true of the rig and said nothing about the
+    pins. Recorded per run so the next such corpus is visibly void on its face
+    rather than after a day of it (#311).
+    """
+    spread = {axis: {} for axis in AXES}
+    for key in cells:
+        for axis, value in zip(AXES, key.split(",")):
+            spread[axis][value] = spread[axis].get(value, 0) + 1
+    return spread
+
+
+def liveness(spread):
+    """Which axes influenced the outcome, and which are flat. `{axis: bool}`."""
+    return {axis: len(set(counts.values())) > 1 for axis, counts in spread.items()}
+
+
+def pin_provenance(bitstream, build_dir):
+    """What the configured bitstream sets the HyperRAM PIOs to, plus its identity.
+
+    Read from the `.bit` rather than from the patch command that produced it: the
+    file that reached the board is the only thing that cannot be out of step with
+    what the board ran.
+    """
+    if bitstream is None:
+        emit("  WARNING: no --bitstream, so this run does NOT record what the "
+             "HyperRAM pins were set to. It cannot be compared against a pin "
+             "patch. (#311)")
+        return None, None
+    path = Path(bitstream).resolve()
+    data = path.read_bytes()
+    identity = {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data)}
+    pins = hyperram_pin_patch.pin_state_of_bitstream(build_dir, path)
+    emit(f"  bitstream {path.name}  sha256 {identity['sha256'][:12]}  "
+         f"{len(pins)} PIOs recorded")
+    return identity, pins
+
+
+def record(label, passes, rung, bitstream=None, build_dir=None):
     """One matrix run, with everything needed to judge it later."""
+    identity, pins = pin_provenance(bitstream, build_dir or hyperram_pin_patch.BUILD)
     board = Board()
     try:
         ck = board.send(f"bist ck {rung}", 4)
@@ -121,6 +186,13 @@ def record(label, passes, rung):
         emit(f"  WARNING: {failed} failures summarised but {len(cells)} parsed. "
              "Saving anyway; the diff will be wrong by the difference.")
 
+    spread = axis_spread(cells)
+    live = liveness(spread)
+    dead = [axis for axis, moving in live.items() if not moving]
+    if dead:
+        emit(f"  INERT AXES: {', '.join(dead)} -- the failures fall evenly across "
+             f"every value, so this run measured nothing on {'them' if len(dead) > 1 else 'it'}")
+
     run = {
         "recorded": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "label": label,
@@ -130,6 +202,13 @@ def record(label, passes, rung):
         "rung": rung,
         "rungs": rungs,
         "passes_per_cell": passes,
+        # The electrical state this run was taken at. `null` means unrecorded,
+        # NOT "the defaults" -- see `pin_provenance`.
+        "bitstream": identity,
+        "pins": pins,
+        # Whether this matrix measured anything at all -- see `axis_spread`.
+        "axis_fail_counts": spread,
+        "axes_live": live,
         "summary": {"pass": passed, "fail": failed,
                     "no_result": noresult, "total": total},
         # Failing cells only. A cell absent from here passed, which is why the
@@ -151,6 +230,33 @@ def load(path):
     return json.loads(Path(path).read_text())
 
 
+def pin_delta(a, b):
+    """Print how the two runs' HyperRAM pin settings differ, or that nobody knows.
+
+    This is the line that decides what a moved cell MEANS. Same pins -> the noise
+    floor. One attribute apart -> that attribute's effect. Unrecorded -> neither,
+    and it says so.
+    """
+    pa, pb = a.get("pins"), b.get("pins")
+    if pa is None or pb is None:
+        emit("\n  PINS UNRECORDED on " + ("A" if pa is None else "") +
+             ("B" if pb is None else "") + " -- a moved cell here cannot be "
+             "attributed to an attribute OR to noise")
+        return
+    moved = []
+    for key in sorted(set(pa) | set(pb)):
+        one, two = pa.get(key, {}), pb.get(key, {})
+        for attr in sorted(set(one) | set(two)):
+            if one.get(attr) != two.get(attr):
+                moved.append(f"    {key} {attr}: {one.get(attr)} -> {two.get(attr)}")
+    if not moved:
+        emit("\n  pins IDENTICAL between these runs (the noise-floor case)")
+    else:
+        emit(f"\n  {len(moved)} pin setting(s) differ:")
+        for line in moved:
+            emit(line)
+
+
 def diff(first, second):
     a, b = load(first), load(second)
     emit(f"\nA  {Path(first).name}")
@@ -159,6 +265,17 @@ def diff(first, second):
     emit(f"B  {Path(second).name}")
     emit(f"   {b['recorded']}  CK {b['ck_mhz']} MHz  {b['passes_per_cell']} passes"
          f"  commit {(b['commit'] or '?')[:8]}{'  DIRTY' if b['dirty'] else ''}")
+
+    pin_delta(a, b)
+
+    # An inert axis on either side makes "nothing moved" meaningless: the rig,
+    # not the pins, is what did not move.
+    for name, run in (("A", a), ("B", b)):
+        dead = [axis for axis, moving in (run.get("axes_live") or {}).items()
+                if not moving]
+        if dead:
+            emit(f"  {name} has INERT axes ({', '.join(dead)}) -- an unchanged "
+                 f"failure set here is not evidence about anything")
 
     if a["ck_mhz"] != b["ck_mhz"] or a["passes_per_cell"] != b["passes_per_cell"]:
         emit("\n  NOTE: these runs differ in CK or pass count, so a moved cell is "
@@ -196,6 +313,12 @@ def main():
     parser.add_argument("--diff", nargs="*", metavar="FILE",
                         help="diff two saved runs, or the last two if given none")
     parser.add_argument("--list", action="store_true", help="list saved runs")
+    parser.add_argument("--bitstream", type=Path, default=None,
+                        help="the .bit that was configured; its HyperRAM pin "
+                             "settings are unpacked and stored with the run")
+    parser.add_argument("--build-dir", type=Path,
+                        default=hyperram_pin_patch.BUILD,
+                        help="the build the bitstream came from, for its LPF")
     args = parser.parse_args()
 
     saved = sorted(RESULTS.glob("*.json")) if RESULTS.exists() else []
@@ -213,7 +336,8 @@ def main():
             raise SystemExit(f"need two runs to diff; found {len(pair)}")
         return 1 if diff(*pair) else 0
 
-    written = [record(args.label, args.passes, args.rung)
+    written = [record(args.label, args.passes, args.rung,
+                      args.bitstream, args.build_dir)
                for _ in range(args.repeat)]
     if len(written) > 1:
         moved = 0

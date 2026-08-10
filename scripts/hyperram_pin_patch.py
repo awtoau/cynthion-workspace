@@ -102,7 +102,10 @@ PIO_TILE_TYPES = {
 # Amaranth emits no entry for it.
 PAIR = {"PIOA": "PIOB", "PIOC": "PIOD"}
 
-ASSIGN_RE = re.compile(r"^(\w+)\.([A-Z_0-9]+)=(\S+)$")
+# Greedy first group, so the split is at the LAST dot: `clk.p.DRIVE=4` names the
+# group `clk.p`. A bare group is both halves of a differential pair; `.p` is the
+# half the LPF names and `.n` is its partner.
+ASSIGN_RE = re.compile(r"^(\S+)\.([A-Z_0-9]+)=(\S+)$")
 LOCATE_RE = re.compile(r'^LOCATE COMP "([^"]+)" SITE "([^"]+)";', re.M)
 IOBUF_RE = re.compile(r'^IOBUF PORT "([^"]+)"([^;]*);', re.M)
 
@@ -309,6 +312,60 @@ def config_delta(before_text, after_text):
     return out
 
 
+ATTRS = ("BASE_TYPE", "DRIVE", "PULLMODE", "SLEWRATE", "HYSTERESIS")
+
+
+def pin_state(build_dir, config_text=None, resource="ram_0"):
+    """What one resource's pins are set to, as `{key: {attr: value}}`.
+
+    `key` is `<group>/<net>/<ball>/<pio>`; a differential partner is marked with a
+    trailing `#`. `config_text` defaults to the build's own `top.config`; pass an
+    unpacked bitstream's config to describe THAT bitstream instead.
+
+    Importable so a measurement can record the pin state of the bitstream it was
+    taken on -- see `hyperram_matrix_diff.py`. Nothing else in the rig knows what
+    the pins were, and a result whose electrical settings are unrecorded is not a
+    measurement of anything (#311).
+    """
+    build_dir = Path(build_dir).resolve()
+    device, package = build_target(build_dir)
+    iodb = json.loads((DB / device / "iodb.json").read_text())["packages"][package]
+    grid = json.loads((DB / device / "tilegrid.json").read_text())
+    positions = [re.search(r"R(\d+)C(\d+):", name) for name in grid]
+    height = max(int(m.group(1)) for m in positions if m) + 1
+    width = max(int(m.group(2)) for m in positions if m) + 1
+
+    if config_text is None:
+        config_text = (build_dir / "top.config").read_text()
+    tiles = parse_tiles(config_text)
+
+    lpf = (build_dir / "top.lpf").read_text()
+    placed = resolve(lpf_pins(lpf, resource), iodb, grid, width, height)
+    out = {}
+    for group, entries in placed.items():
+        for net, ball, tile, pio, partner in entries:
+            state = current(tiles, [(tile, pio)], ATTRS)
+            out[f"{group}/{net}/{ball}/{pio}{'#' if partner else ''}"] = {
+                "tile": tile, **{k: state[(tile, pio, k)] for k in ATTRS}}
+    return out
+
+
+def pin_state_of_bitstream(build_dir, bitstream, resource="ram_0", scratch=None):
+    """`pin_state` for a PACKED bitstream -- what the board will actually run.
+
+    The build's `top.config` describes the build; after a patch the two disagree,
+    and it is the `.bit` that gets configured. So this unpacks the file that is
+    about to reach the FPGA rather than trusting a name or a sidecar.
+    """
+    scratch = Path(scratch or OUT) / "pinstate.unpacked.config"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    result = run_trellis(["ecpunpack", str(Path(bitstream).resolve()), str(scratch)],
+                         scratch.parent)
+    if result.returncode != 0:
+        raise Refuse("ecpunpack failed:\n" + (result.stderr or result.stdout)[-600:])
+    return pin_state(build_dir, scratch.read_text(), resource)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -316,6 +373,8 @@ def main():
     parser.add_argument("assignments", nargs="*", metavar="GROUP.ATTR=VALUE",
                         help="e.g. ck.DRIVE=16 dq.HYSTERESIS=OFF; GROUP is a "
                              "subsignal of the resource, or `all`")
+    # Absolute, always: `ecppack` runs with the build directory as its cwd, so a
+    # relative `--build-dir` resolves against itself and the input file vanishes.
     parser.add_argument("--build-dir", type=Path, default=BUILD)
     parser.add_argument("--resource", default="ram_0",
                         help="the LPF net prefix to patch")
@@ -324,7 +383,12 @@ def main():
                              "tmp/pinpatch/<assignments>.bit")
     parser.add_argument("--show", action="store_true",
                         help="print what the built bitstream says and stop")
+    parser.add_argument("--repack", action="store_true",
+                        help="pack the config UNCHANGED to --out. The control for "
+                             "a patched point: same packer, same config, so the "
+                             "only difference from a patch is the PIO bits")
     args = parser.parse_args()
+    args.build_dir = args.build_dir.resolve()
 
     device, package = build_target(args.build_dir)
     iodb = json.loads((DB / device / "iodb.json").read_text())["packages"][package]
@@ -355,6 +419,15 @@ def main():
             shown = "  ".join(f"{k}={state[(tile, pio, k)]}" for k in keys[1:])
             emit(f"  {group:6s} {net:22s} {ball:3s} {tile:18s} {pio}"
                  f"{'#' if partner else ' '} {shown}")
+    if args.repack:
+        out_bit = (args.out.resolve() if args.out else OUT / "repack.bit")
+        out_bit.parent.mkdir(parents=True, exist_ok=True)
+        result = run_trellis(ecppack_command(args.build_dir, config_path, out_bit),
+                             args.build_dir)
+        if result.returncode != 0:
+            raise Refuse("ecppack failed:\n" + (result.stderr or result.stdout)[-600:])
+        emit(f"\nrepacked unchanged -> {rel(out_bit)} ({out_bit.stat().st_size} bytes)")
+        return 0
     if args.show or not args.assignments:
         return 0
 
@@ -364,10 +437,16 @@ def main():
         if not match:
             raise Refuse(f"expected GROUP.ATTR=VALUE, got {assignment!r}")
         group, key, value = match.groups()
-        targets = ([e for entries in placed.values() for e in entries]
-                   if group == "all" else placed.get(group))
+        base, _, half = group.rpartition(".")
+        if half in ("p", "n") and base:
+            targets = [e for e in placed.get(base, []) if e[4] == (half == "n")]
+        else:
+            base, half = group, ""
+            targets = ([e for entries in placed.values() for e in entries]
+                       if group == "all" else placed.get(group))
         if not targets:
-            raise Refuse(f"no group {group!r}; have {sorted(placed)} or `all`")
+            raise Refuse(f"no group {group!r}; have {sorted(placed)}, `all`, or a "
+                         f"`.p`/`.n` half of a differential group")
         for _, _, tile, pio, _ in targets:
             kind = tile.partition(":")[2]
             legal, _default = enum_spec(kind, f"{pio}.{key}")
@@ -389,6 +468,7 @@ def main():
     emit(f"\nconfig delta ({rel(out_config)}):")
     for tile, was, now in config_delta(config_text, patched_text):
         emit(f"  {tile:20s} {'-' + was if was else '+' + now}")
+
 
     # The baseline is a REPACK of the config this patch was derived from, not the
     # build's `top.bit`. A build whose nextpnr missed timing writes the config and
@@ -414,6 +494,31 @@ def main():
                      f"not what was asked for")
     emit(f"round trip: {len({t for t, _, _ in changes})} targeted tiles differ "
          f"in the packed bitstream, and no other tile does")
+
+    # DRIVE, HYSTERESIS and BASE_TYPE share config bits, and the collision is
+    # invisible in the `.config` -- symbolic there, merged only once packed. So
+    # this compares the two UNPACKED bitstreams, which is where a patch that
+    # changed the pad's IO standard shows up.
+    #
+    # It is a rename, not damage, in every case measured so far: a hysteresis-off
+    # bidir pad decodes as an output pad, `clk.DRIVE=4` decodes as SSTL15D_II, and
+    # the board runs and passes the same cells on both. Printed rather than
+    # refused for that reason -- but printed, because the day one of these does
+    # break a pad the line will already be in the log (#311).
+    before_pins = pin_state(args.build_dir,
+                            (OUT / "before.unpacked.config").read_text(),
+                            args.resource)
+    after_pins = pin_state(args.build_dir,
+                           (OUT / "after.unpacked.config").read_text(),
+                           args.resource)
+    drift = [(name, before_pins[name]["BASE_TYPE"], after_pins[name]["BASE_TYPE"])
+             for name in before_pins
+             if before_pins[name]["BASE_TYPE"] != after_pins[name]["BASE_TYPE"]]
+    for name, was, now in drift:
+        emit(f"  BASE_TYPE MOVED  {name}: {was} -> {now}")
+    if drift:
+        emit(f"  {len(drift)} pad(s) changed IO standard as a side effect of this "
+             f"patch. Check that is what you meant before configuring.")
     return 0
 
 
