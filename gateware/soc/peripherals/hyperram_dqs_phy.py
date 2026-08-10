@@ -58,8 +58,8 @@ difference is that reprogramming CR0 to variable latency now changes behaviour
 instead of being ignored.
 """
 
-from amaranth import (Cat, ClockSignal, Elaboratable, Instance, Module, Mux,
-                      ResetSignal, Signal)
+from amaranth import (Cat, ClockSignal, Const, Elaboratable, Instance, Module,
+                      Mux, ResetSignal, Signal, Value)
 
 from luna.gateware.interface.psram import HyperBusDQSPHY
 
@@ -83,6 +83,20 @@ DEL_MODE_ALIGNED_X2 = "DQS_ALIGNED_X2"
 # rather than nanoseconds.
 DDRDLL_SETTLE_CYCLES = 8
 
+# PAUSE either side of a READCLKSEL change, in `sync` cycles.
+#
+# Lattice FPGA-TN-02035-1.3 s6.2.4 p.36: "When any of READCLKSEL2/1/0 is changed
+# at any time after a system reset, the PAUSE input to DQSBUFM must be asserted
+# before 4T of the change and remain asserted for another 4T after the change to
+# avoid glitches and malfunction." Figure 6.7 states it a second time on the port
+# itself: "can be changed only during PAUSE assertion".
+#
+# T is one memory clock. This PHY emits 2 CK per `sync` cycle at 4:1 gearing, so
+# 4T is 2 `sync` cycles; 4 is double that. It is spent once per change of an axis
+# a human or a sweep moves, never inside a burst, so generosity is free here in a
+# way it is not for a timeout.
+READCLKSEL_PAUSE_CYCLES = 4
+
 
 def _pad(port, index, value):
     """`value`, in the polarity this pad wants, from the resource's own `invert`.
@@ -94,6 +108,89 @@ def _pad(port, index, value):
     statement of the same fact that can drift from it.
     """
     return ~value if port.invert[index] else value
+
+
+def _value(source, width):
+    """`source` as exactly `width` bits, whether it arrived as an int or a Value.
+
+    Both callers pass a Value -- a CSR slice, or a `Mux` over a sweep -- and the
+    constructor defaults are ints. Normalising once means the tap logic has one
+    shape rather than two.
+    """
+    if isinstance(source, int):
+        return Const(source & ((1 << width) - 1), width)
+    return Value.cast(source)[0:width]
+
+
+class ReadClkSelWindow(Elaboratable):
+    """Move DQSBUFM's read tap only while PAUSE is asserted and the bus is idle.
+
+    Lattice FPGA-TN-02035-1.3 s6.2.4 p.36, and again on the port in Figure 6.7:
+    READCLKSEL may be changed **only during PAUSE assertion**, with PAUSE held 4T
+    before and 4T after. Both callers move the tap at run time -- a CSR write in
+    `bootram.py`, a `Mux` over the sweep index in `hyperram_ceiling_top.py` -- so
+    without this the rule is violated by every sweep. #349.
+
+    Separate from `HyperRAMDQSPHY` so it can be simulated: pysim cannot elaborate
+    a module carrying `Instance`, and this is the only part with a sequence to
+    get wrong. `scripts/hyperram_dqs_pause_sim.py` is the check.
+
+    Ports
+    -----
+    want : Signal(4), in
+        Bits 2:0 READCLKSEL, bit 3 the read window's half-cycle phase.
+    idle : Signal, in
+        The HyperBus is not selected and no read window is open. PAUSE stops
+        DQSW/DQSR90, so a change taken mid-burst corrupts the burst in flight.
+    ready : Signal, in
+        The DDRDLL settle sequence has finished. Its own PAUSE is asserted until
+        then and the two must not overlap ambiguously.
+    applied : Signal(4), out
+        What DQSBUFM is wired to. Lags `want` by one window.
+    pause : Signal, out
+        OR this into DQSBUFM's PAUSE.
+    """
+
+    def __init__(self, *, cycles=READCLKSEL_PAUSE_CYCLES):
+        self.cycles = cycles
+        self.want = Signal(4)
+        self.idle = Signal()
+        self.ready = Signal()
+        self.applied = Signal(4)
+        self.pause = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+        settle = Signal(range(self.cycles + 1))
+
+        with m.FSM(name="readclksel"):
+            # `applied` starts at 0 rather than at the constructor default, so
+            # the FIRST tap is applied through a window like every later one --
+            # there is no start-up path that reaches DQSBUFM unpaused.
+            with m.State("HOLD"):
+                with m.If((self.want != self.applied) & self.idle & self.ready):
+                    m.d.sync += settle.eq(0)
+                    m.next = "PAUSE_BEFORE"
+
+            # The count is a MINIMUM and idle is a precondition, so a burst that
+            # starts inside the window (the caller ignoring `sel_settling`) holds
+            # the change off rather than taking it mid-burst. PAUSE stays
+            # asserted meanwhile, which is the safe direction.
+            with m.State("PAUSE_BEFORE"):
+                m.d.comb += self.pause.eq(1)
+                with m.If(settle != self.cycles):
+                    m.d.sync += settle.eq(settle + 1)
+                with m.Elif(self.idle):
+                    m.d.sync += [self.applied.eq(self.want), settle.eq(0)]
+                    m.next = "PAUSE_AFTER"
+
+            with m.State("PAUSE_AFTER"):
+                m.d.comb += self.pause.eq(1)
+                m.d.sync += settle.eq(settle + 1)
+                with m.If(settle == self.cycles):
+                    m.next = "HOLD"
+
+        return m
 
 
 class HyperRAMDQSPHY(Elaboratable):
@@ -124,6 +221,17 @@ class HyperRAMDQSPHY(Elaboratable):
     dll_ready : Signal
         The settle sequence has finished and PAUSE is released. No transaction
         should be issued before this.
+    sel_applied : Signal(4)
+        What DQSBUFM is actually seeing: bits 2:0 READCLKSEL, bit 3 the read
+        window's half-cycle phase. NOT the same as the value written -- a change
+        is held off until the bus is idle and then applied inside a PAUSE window
+        (see `READCLKSEL_PAUSE_CYCLES`), so a rig that reads back the commanded
+        value learns nothing about which phase the last burst was captured at.
+        `readclksel` has no readback in any register map today, which is why
+        `hyperram_dqs_evidence.py` has to argue the axis is live behaviourally.
+    sel_settling : Signal
+        The update window is open: PAUSE is asserted and the tap is moving. A
+        transaction issued now is not a measurement of either tap.
     """
 
     def __init__(self, *, bus, readclksel=0b010, read_phase=0):
@@ -147,6 +255,8 @@ class HyperRAMDQSPHY(Elaboratable):
         self.phy = HyperBusDQSPHY()
         self.dll_locked = Signal()
         self.dll_ready = Signal()
+        self.sel_applied = Signal(4)
+        self.sel_settling = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -155,6 +265,9 @@ class HyperRAMDQSPHY(Elaboratable):
         # delay code is only valid once it has locked, and the IOLOGIC has to be
         # held in PAUSE until the code has been copied into it.
         pause = Signal()
+        pause_dll = Signal()
+        pause_sel = Signal()
+        m.d.comb += pause.eq(pause_dll | pause_sel)
         freeze = Signal()
         lock = Signal()
         uddcntln = Signal()
@@ -163,7 +276,7 @@ class HyperRAMDQSPHY(Elaboratable):
 
         with m.FSM(name="ddrdll"):
             with m.State("INIT"):
-                m.d.sync += [pause.eq(1), freeze.eq(0), uddcntln.eq(0)]
+                m.d.sync += [pause_dll.eq(1), freeze.eq(0), uddcntln.eq(0)]
                 with m.If(lock):
                     m.d.sync += [freeze.eq(1), counter.eq(0)]
                     m.next = "FREEZE"
@@ -180,7 +293,7 @@ class HyperRAMDQSPHY(Elaboratable):
 
             with m.State("UPDATED"):
                 with m.If(counter == DDRDLL_SETTLE_CYCLES):
-                    m.d.sync += [pause.eq(0), counter.eq(0)]
+                    m.d.sync += [pause_dll.eq(0), counter.eq(0)]
                     m.next = "READY"
 
             with m.State("READY"):
@@ -202,13 +315,44 @@ class HyperRAMDQSPHY(Elaboratable):
         readptr = Signal(3)
         writeptr = Signal(3)
 
+        # THE TAP MOVES ONLY INSIDE A PAUSE WINDOW, AND ONLY WHEN THE BUS IS IDLE.
+        #
+        # `readclksel` and `read_phase` are RUNTIME axes on both callers -- a CSR
+        # write in `bootram.py`, and `Mux(sweeping, sweep_phase, ...)` in
+        # `hyperram_ceiling_top.py`. Lattice permits neither to move without
+        # PAUSE, and says so twice: FPGA-TN-02035-1.3 s6.2.4 p.36 ("the PAUSE
+        # input to DQSBUFM must be asserted before 4T of the change and remain
+        # asserted for another 4T after the change to avoid glitches and
+        # malfunction") and again on the port in Figure 6.7 ("can be changed only
+        # during PAUSE assertion"). Every sweep this rig has run violated it.
+        #
+        # Idle as well as paused, because PAUSE stops DQSW/DQSR90: opening the
+        # window mid-burst corrupts the transaction in flight rather than the
+        # next one. `phy.cs` high is SELECTED (the pad is `PinsN`).
+        #
+        # `sel_applied` is what DQSBUFM sees, which is not what was written until
+        # the window has closed. See #349.
+        m.submodules.tap = tap = ReadClkSelWindow()
+        applied = tap.applied
+        m.d.comb += [
+            tap.want.eq(Cat(_value(self.readclksel, 3),
+                            _value(self.read_phase, 1))),
+            # `phy.cs` HIGH is selected -- the pad is `PinsN`, so the inversion
+            # is at the buffer and not here.
+            tap.idle.eq(~self.phy.cs & (self.phy.read == 0)),
+            tap.ready.eq(self.dll_ready),
+            pause_sel.eq(tap.pause),
+            self.sel_applied.eq(applied),
+            self.sel_settling.eq(tap.pause),
+        ]
+
         # READ0/READ1 are the two half-cycles of the read window. Delaying it by
         # one half-cycle is `READ0 = the previous cycle's second half`.
         read_delayed = Signal(2)
         read_window = Signal(2)
         m.d.sync += read_delayed.eq(self.phy.read)
         m.d.comb += read_window.eq(
-            Mux(self.read_phase,
+            Mux(applied[3],
                 Cat(read_delayed[1], self.phy.read[0]),
                 self.phy.read))
 
@@ -248,12 +392,13 @@ class HyperRAMDQSPHY(Elaboratable):
                 i_READ1=read_window[1],
 
                 # Which of the read clock's phases samples the incoming burst.
-                # Upstream's 0b010, kept: BURSTDET is what tells you whether it
-                # is right, and it is brought out below so a sweep can find out
-                # on hardware rather than here.
-                i_READCLKSEL0=self.readclksel[0] if hasattr(self.readclksel, "shape") else (self.readclksel >> 0) & 1,
-                i_READCLKSEL1=self.readclksel[1] if hasattr(self.readclksel, "shape") else (self.readclksel >> 1) & 1,
-                i_READCLKSEL2=self.readclksel[2] if hasattr(self.readclksel, "shape") else (self.readclksel >> 2) & 1,
+                # Upstream's 0b010 by default; BURSTDET is what tells you whether
+                # it is right, and it is brought out below so a sweep can find
+                # out on hardware rather than here. Driven from `applied`, never
+                # from the caller's value directly -- see the window above.
+                i_READCLKSEL0=applied[0],
+                i_READCLKSEL1=applied[1],
+                i_READCLKSEL2=applied[2],
 
                 i_RDLOADN=0,
                 i_RDMOVE=0,

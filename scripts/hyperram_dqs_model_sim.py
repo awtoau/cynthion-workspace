@@ -54,6 +54,7 @@ PROBES = ROOT / "gateware" / "probes" / "hyperram"
 PROBE_TB = PROBES / "dqs_latency_probe_tb.sv"
 CTRL_TB = PROBES / "dqs_model_tb.sv"
 ORDER_TB = PROBES / "dqs_order_tb.sv"
+CONFIG_TB = PROBES / "dqs_config_tb.sv"
 OPEN_MODEL = PROBES / "hyperram_model.v"
 MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
 
@@ -276,15 +277,99 @@ def stage_order(extra: list[str]) -> list[str]:
     return run("vvp(order)", ["vvp", "order.vvp"] + extra, WORKDIR).splitlines()
 
 
+def build_config() -> None:
+    need("iverilog", "vvp")
+    ctl = elaborate_controller()
+    run("iverilog(config)", ["iverilog", "-g2012", "-DDUT_MODULE=hyperram_model",
+                             "-o", "config.vvp", str(CONFIG_TB), str(OPEN_MODEL),
+                             ctl.name], WORKDIR)
+
+
+def stage_config(extra: list[str]) -> list[str]:
+    return run("vvp(config)", ["vvp", "config.vvp"] + extra, WORKDIR).splitlines()
+
+
+# tCSHI, W956A8 rev A01-006 Table 24. The testbench measures the real gap; this
+# is what it is judged against.
+T_CSHI_NS = 10.0
+
+
+def verdict_config(rows: list[dict]) -> list[str]:
+    """Did a DATA burst address register space, and what did it return?
+
+    Two mechanisms produce the board's `0xffc1ffc1`, and they want opposite
+    fixes: the transaction addressed register space (a CA fault, or a CS# that
+    never rose), or it addressed memory and the read path handed back the last
+    word it captured. The device model decodes the CA itself, so the first is
+    settled by asking the DEVICE.
+    """
+    bad: list[str] = []
+    log.info("--- #349: which space did each transaction address ---")
+    control_caught = 0
+    stale = []
+    last_reg_read = {}
+    for row in rows:
+        tag, dv = row.get("txn", ""), row.get("dv", "?")
+        if tag == "rd_cr1":
+            last_reg_read[dv] = row.get("got")
+        elif tag == "mem_rd" and row.get("got") == last_reg_read.get(dv):
+            stale.append((dv, row.get("got")))
+    for row in rows:
+        tag = row.get("txn", "")
+        dev_reg = row.get("dev_register", "x")
+        forced = row.get("space") == "1" and tag.startswith("mem")
+        note = ""
+        if tag.startswith("mem"):
+            if dev_reg == "1" and not forced:
+                note = "  <-- DATA BURST DECODED AS REGISTER SPACE"
+                bad.append(f"{tag}: the device decoded a data burst as register "
+                           f"space (served {row.get('served')})")
+            elif dev_reg == "1" and forced:
+                control_caught += 1
+                note = "  (control: register space forced, and seen)"
+        if row.get("hung") == "1":
+            bad.append(f"{tag}: the controller never returned to idle")
+        try:
+            gap = float(row.get("csh_ns", "-1"))
+        except ValueError:
+            gap = -1.0
+        if 0.0 <= gap < T_CSHI_NS:
+            note += f"  <-- CS# High only {gap:g} ns, tCSHI is {T_CSHI_NS:g}"
+            bad.append(f"{tag}: CS# High {gap:g} ns, under tCSHI {T_CSHI_NS:g} ns")
+        log.info("  dv=%s %-7s asked space %s, DEVICE decoded register=%s "
+                 "read=%s served %-6s got %s  CS# high %s ns%s",
+                 row.get("dv"), tag, row.get("space"), dev_reg,
+                 row.get("dev_read"), row.get("served"), row.get("got"),
+                 row.get("csh_ns"), note)
+
+    if rows and not control_caught:
+        bad.append("the register-space CONTROL was not caught: a data burst "
+                   "issued with `register_space` forced high was not seen as "
+                   "register space, so this stage cannot exonerate the CA")
+
+    # THE FINGERPRINT. A memory read returning the LAST REGISTER READ's word,
+    # with the CA correctly naming memory space, is the board's symptom without
+    # any leak in the CA -- the read path handed back a word it did not capture.
+    if stale:
+        log.info("  a memory read returned the CR1 read's own word at dv=%s: %s",
+                 ",".join(sorted({d for d, _ in stale})),
+                 ",".join(sorted({g for _, g in stale})))
+        log.info("  the CA named MEMORY in every one of them, so this is not a "
+                 "register-space leak -- it is a read that returned what the "
+                 "data registers were still holding")
+    return bad
+
+
 def report(lines: list[str], tag: str) -> list[dict]:
     """The measurement lines, wherever the simulator put its own prefix."""
     rows = []
     for line in lines:
         text = line.lstrip("# ").rstrip()
-        if text.startswith(("[probe]", "[dqs]", "[edge]", "[order]")):
+        if text.startswith(("[probe]", "[dqs]", "[edge]", "[order]", "[cfg]")):
             log.info("%-6s %s", tag, text)
         if (text.startswith("[probe] cr0=") or text.startswith("[dqs] code=")
-                or text.startswith("[order] test=")):
+                or text.startswith("[order] test=")
+                or text.startswith("[cfg] txn=")):
             rows.append(dict(kv.split("=", 1) for kv in text.split()[1:] if "=" in kv))
     return rows
 
@@ -528,7 +613,8 @@ def verdict_order(rows: list[dict]) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--stage", default="both",
-                    choices=("probe", "controller", "order", "both", "all"))
+                    choices=("probe", "controller", "order", "config",
+                             "both", "all"))
     ap.add_argument("--sim", default="icarus", choices=("icarus", "questa", "both"),
                     help="which device model the probe stage runs against")
     ap.add_argument("--grade", default="T166")
@@ -598,6 +684,29 @@ def main() -> int:
             if not rows:
                 failures.append(f"controller stage produced no measurement at {extra}")
             verdict_controller(rows)
+
+    if args.stage in ("config", "all"):
+        log.info("=== the engine's CONFIG path, then a data burst (#349) ===")
+        build_config()
+        dq, ck, phs, slip = shim(args, ORDER_SHIM)
+        extra = [f"+dq_pipe={dq}", f"+ck_pipe={ck}",
+                 f"+dq_ph={phs}", f"+rd_slip={slip}"]
+        if args.verbose_edges:
+            extra.append("+verbose=1")
+        # BOTH handshakes. `dv_from_read=0` is the generous one and settles
+        # whether the CA ever names register space; `=1` is DQSBUFM's shape --
+        # DATAVALID from the READ window rather than from data arriving -- and is
+        # the only setting in which a read can hand back a word it did not
+        # capture. The comparison between them IS the result.
+        rows = []
+        for dv in (0, 1):
+            log.info("--- DATAVALID from %s ---",
+                     "the device driving DQ (generous)" if dv == 0
+                     else "the controller's READ window (DQSBUFM's shape)")
+            rows += report(stage_config(extra + [f"+dv_from_read={dv}"]), "cfg")
+        if not rows:
+            failures.append("config stage produced no measurement")
+        failures += verdict_config(rows)
 
     if args.stage in ("order", "all"):
         log.info("=== byte and word order through the 32-bit path (#206) ===")
