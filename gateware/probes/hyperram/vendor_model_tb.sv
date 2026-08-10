@@ -138,7 +138,7 @@ module tb;
 
   // Register writes take no latency: the data follows the CA immediately, and the
   // host must NOT drive RWDS (the datasheet is explicit, and two open cores get
-  // this wrong -- see docs/chips/hyperram/survey.md).
+  // this wrong -- see docs/chips/hyperram/models.md).
   task write_register(input [31:0] addr, input [15:0] word);
     begin
       drive_ca(ca(CMD_REG_WRITE, addr));

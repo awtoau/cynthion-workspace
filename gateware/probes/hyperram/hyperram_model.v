@@ -10,7 +10,7 @@
 // the vendor's job; this covers protocol and contents, which is what the register
 // path and the BIST need. Divergence found so far: none over the shared testbench.
 //
-// See docs/chips/hyperram/survey.md.
+// See docs/chips/hyperram/models.md.
 // SPDX-License-Identifier: BSD-3-Clause
 `timescale 1ns/1ps
 
