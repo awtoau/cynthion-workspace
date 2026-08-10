@@ -588,7 +588,20 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
     }
 }
 
-const HEADING: &str = "drive  clk  sel   errors     words   control  verdict";
+/// Column headings, composed rather than sliced.
+///
+/// Two things the old single-string version got wrong. `report` prints
+/// `log::now()` and two spaces BEFORE the first field, so a heading without the
+/// same indent puts every column 12 characters out. And the latency variants
+/// built their heading as `&HEADING[13..]`, which cuts mid-word and produced a
+/// stray `el` in `lat  mode  el   errors`.
+///
+/// Widths must match `report`'s format string exactly: `{:5}  {:3}  {:3}` then
+/// three `{:8}` counts. Integers right-align, `&str` left-aligns, which is why
+/// `clk` sits left and everything numeric sits right.
+const STAMP_PAD: &str = "            ";
+const HEADING_AXES: &str = "drive  clk  sel";
+const HEADING_COUNTS: &str = "    errors     words   control  verdict";
 
 /// One cell, by hand. The unit a sweep is made of, so nothing is exercised in a
 /// sweep that was not first exercised alone.
@@ -596,7 +609,7 @@ pub fn one(uart: &mut Uart, bist: &Bist, axes: Axes, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    let _ = writeln!(uart, "{}", HEADING);
+    let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
     bist.configure(&axes);
     let (cell, st, poll) = bist.cell(axes, passes);
     report(uart, bist, &cell, st, poll, passes * BURST_WORDS, true);
@@ -622,7 +635,7 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
     let _ = writeln!(uart, "  four cells, one drive, four capture phases.");
     let _ = writeln!(uart, "  wanted: at least one PASS *and* at least one fail.");
     let _ = writeln!(uart, "  four passes means the rig cannot see a fault.");
-    let _ = writeln!(uart, "{}", HEADING);
+    let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
 
     let (mut passed, mut failed, mut nothing) = (0u32, 0u32, 0u32);
     for readclksel in 0u8..4 {
@@ -664,7 +677,8 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
     }
     let _ = writeln!(uart, "  4096 cells: latency x fix/var x drive x clock x phase");
     let _ = writeln!(uart, "  printing only what is NOT a clean pass");
-    let _ = writeln!(uart, "lat  mode  {}", &HEADING[13..]);
+    let _ = writeln!(uart, "lat  mode  {}{}{}",
+                     STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
 
     let (mut pass, mut fail, mut none) = (0u32, 0u32, 0u32);
     for latency in 0u8..16 {
@@ -712,7 +726,8 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
         return;
     }
     let _ = writeln!(uart, "  CR0[7:4] latency code x fixed/variable, at drive 3 sel 0");
-    let _ = writeln!(uart, "lat  mode  {}", &HEADING[13..]);
+    let _ = writeln!(uart, "lat  mode  {}{}{}",
+                     STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
     for latency in 0u8..16 {
         for fixed_latency in [true, false] {
             let axes = Axes { drive: 3, single_ended_clock: false, readclksel: 0,
@@ -737,7 +752,7 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
         return;
     }
     let _ = writeln!(uart, "  {} passes per cell, 128 cells", passes);
-    let _ = writeln!(uart, "{}", HEADING);
+    let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
 
     for drive in 0u8..8 {
         for single_ended_clock in [false, true] {
