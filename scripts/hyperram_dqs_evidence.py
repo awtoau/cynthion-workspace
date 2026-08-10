@@ -141,10 +141,16 @@ def cell(board, drive, clock, sel, latency, mode):
 
 def soak(board, log, ck_reported):
     """Does the read path survive its own sweep? Probe, sweep, probe again."""
-    # The probe is one cell plus its CR0 readback. Both must be right: a cell
-    # can read clean while the register path is slipped and the reverse, and
-    # only the pair says the path is whole.
+    # The probe is one cell plus its CR0 readback. All three of errors, WORDS
+    # and CR0 must be right:
+    #   * zero errors over a short cell is the rig's oldest flattering answer --
+    #     one sweep row scored PASS on 17 words of 512 (#226), and the first
+    #     version of this probe repeated it, calling `0 of 111` intact;
+    #   * a cell can read clean while the REGISTER path is slipped, and the
+    #     reverse, so neither alone says the read path is whole.
     probe_axes = (0, "se", 2, 0, "fix")
+    # 64 passes x 128 burst words, both fixed in the firmware.
+    FULL = 8192
 
     def probe(tag):
         got = cell(board, probe_axes[0], probe_axes[1], probe_axes[2],
@@ -152,9 +158,11 @@ def soak(board, log, ck_reported):
         back = CR0_BACK.search(board.send("bist status"))
         cr0 = int(back.group(1), 0) if back else -1
         want = expected_cr0(probe_axes[0], probe_axes[3], probe_axes[4] == "fix")
-        whole = got["errors"] == 0 and cr0 == want
-        log.info("  %-34s errors %6d of %d  CR0 %#06x want %#06x  %s",
+        short = got["words"] < FULL
+        whole = got["errors"] == 0 and cr0 == want and not short
+        log.info("  %-34s errors %6d of %-6d CR0 %#06x want %#06x  %s",
                  tag, got["errors"], got["words"], cr0, want,
+                 "SHORT -- no result" if short else
                  "INTACT" if whole else "SLIPPED")
         return whole
 
