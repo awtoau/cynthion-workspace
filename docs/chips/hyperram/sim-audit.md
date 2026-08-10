@@ -1,441 +1,254 @@
 # `soc_hyperram_sim.py`, check by check
 
-Every assertion in
-[`../../../scripts/soc_hyperram_sim.py`](../../../scripts/soc_hyperram_sim.py)
-classified, so
-[#346](https://github.com/awtoau/cynthion-workspace/issues/346) can be executed
-without guessing what a deletion costs.
+Every assertion classified, and the classification is CHECKED:
+[`../../../scripts/hyperram_sim_census.py`](../../../scripts/hyperram_sim_census.py)
+reads the table below against the file and fails if an assertion is missing from
+it, if a `caller` row has vanished, or if a `device`/`redundant`/`wrong` row is
+asserted again. An assertion with no home is what made the first attempt at
+[#346](https://github.com/awtoau/cynthion-workspace/issues/346) useless.
 
-Baseline: **143 assertions, all passing**, at `ba64439`. Classified from the
-assertion expressions, not from the section titles — three checks say one thing
-in their label and test another, and that is the fault
-[#346](https://github.com/awtoau/cynthion-workspace/issues/346) was opened over.
+Baseline: **146 assertions** at `d154ff9`. Now **122**, of which 7 are new.
 
-## Classes
+## The four classes
 
-| class | meaning | where it can live |
+| class | meaning | what happened |
 |---|---|---|
-| **C** conformance | asserts a fact about the PART | must be independent of the controller — twin or vendor model |
-| **F** fault injection | device or caller misbehaves; the CONTROLLER must survive | device-side → twin knob; caller-side → the driving testbench |
-| **I** integration | the SoC ABOVE the controller — window, arbiter, refill, clock stop | stays in Amaranth; 25 of 54 need no device at all |
-| **X** controller | the controller alone, under a FAITHFUL device | stays, wherever a faithful device is available |
-| **S** structural | a grep or `hasattr` over source text; no simulation | stays; belongs in a source lint |
-| **0** tautological | cannot fail for the reason its label gives | delete or repair |
-
-**`X` and `S` are findings, not decoration.** #346's three-way split has no home
-for 33 of the 143 assertions. They are neither part-facts nor
-misbehaviour nor SoC-layer: they are the controller's own arithmetic and the
-vendored-vs-upstream source diff. Retiring the Python model on the strength of a
-conformance/fault/integration split alone would strand them.
-
-## Counts
-
-| class | checks | share |
-|---|---|---|
-| **I** integration | 54 | 38% |
-| **F** fault injection | 29 | 20% |
-| **C** conformance | 25 | 17% |
-| **X** controller | 24 | 17% |
-| **S** structural | 9 | 6% |
-| **0** tautological | 2 | 1% |
-
-### The 25 conformance checks, by what they rest on
-
-| rests on | checks | verdict |
-|---|---|---|
-| the twin + vendor pair already establishes it | **12** | re-point via the bridge, then delete here |
-| the CONTROLLER's own latency constant | **3** | **circular — cannot fail for a part reason.** Delete |
-| a datasheet number, arithmetic only, no model | **6** | keep — nothing to be circular with |
-| tCSHI, detected by the Python model, twin silent | **4** | **the twin has no tCSHI check.** Port the check, not the model |
-
-### The 29 fault-injection checks, by whose fault it is
-
-| side | checks | knob | moves to |
-|---|---|---|---|
-| device never answers (`deliver=0`) | 8 | `deliver` | twin |
-| device stops after N beats (`deliver=7`/`8`) | 7 | `deliver` | twin |
-| device's RWDS over the CA (`rwds_stale`/`rwds_extra`) | 2 | RWDS level | twin |
-| **caller** drops `final_word` / `perform_write`, or never ends the burst | **12** | `run`/`run16` arguments | **the driving testbench, NOT the model** |
-
-**Twelve of the twenty-nine are caller-side.** They inject nothing into the
-device; they misdrive the controller. No knob on `hyperram_model.v` can carry
-them — they need a testbench that can be told to misbehave, which is
-[`controller_model_tb.sv`](../../../gateware/probes/hyperram/controller_model_tb.sv)'s
-burst engine or a cocotb driver. Listed in #346's plan as if they were model
-capabilities; they are not.
-
----
-
-## 1. `section_command` — the command the device decodes
-
-| check | class | note |
-|---|---|---|
-| the command read: every transaction returned to IDLE | X | liveness, faithful device |
-| one command was issued | X | one CS# assertion per request |
-| the device decodes the address that was asked for | C | twin: **yes** (bridge case 2, top-address) |
-| it decodes as a read | C | CA[47]; twin: **yes** |
-| it decodes as memory, not register space | C | CA[46]; twin: **yes** |
-| it decodes as a linear burst | C | CA[45]; twin: **yes** |
-| the command matches the specification's encoding | C | full 48-bit CA against `encode_ca`; twin: **yes** |
-| reading the same capture 16 bits wide gives a WRONG address | **0** | see below |
-
-**The 16-bit check cannot fail.** It takes every other byte of the captured CA,
-rebuilds an address and asserts it differs from `TEST_ADDRESS` — a property of
-the constant, with neither controller nor device in the loop. Documentation of a
-trap, written as an assertion.
-
-Circularity: `encode_ca` and `ModelHyperRAM._decode` are both written in this
-file from one reading of the spec. The five C rows pass if that reading and the
-controller are wrong together — which is exactly #346's complaint, and exactly
-what the vendor model settles.
-
-## 2. `section_latency` — fixed latency
-
-| check | class | note |
-|---|---|---|
-| the controller's two latency counts differ | X | luna class constants |
-| the fixed-latency read: every transaction returned to IDLE | X | |
-| a read against the fixed-latency model returns data | X | **label says latency, assertion is `read_beats > 0`** |
-| the read raises BURSTDET, so DQS is what found the data | **0** | **same predicate as the row above.** `burstdet` is never read |
-| the SHORT count would sample inside the latency window | **C, circular** | `window` IS the controller's own long count — see below |
-| upstream forces the long branch unconditionally | S | grep for `extra_latency \| 1` |
-
-**Section 5b's pathology, still present here.** The model's latency is
-`latency_beats()`, the controller's own count; the file says so in its own
-comment. So "the short count falls inside the window" compares
-`LOW_LATENCY_CLOCKS + 1` against `HIGH_LATENCY_CLOCKS + 1` — two constants from
-one class. It cannot fail unless luna edits its constants, and it claims a fact
-about the part.
-
-The twin answers the real question and the bridge already asks it:
-`controller_model_tb.sv` sweeps `CR0[7:4]` in fixed and in variable latency and
-checks the controller's first data beat against the model's own decode.
-
-## 3. `section_held` — held, not pulsed
-
-| check | class | note |
-|---|---|---|
-| held: the word arrives at the address asked for | X | good arrangement |
-| pulsed `perform_write`/`write_data`: the device does NOT get it | **F, caller** | `hold_write=False` |
-| pulsed `final_word`: the burst does not end where it was meant to | **F, caller** | `hold_final_word=False` |
-| pulsed `final_word`: every transaction returned to IDLE | **F, caller** | liveness under a caller that dropped the only signal that could end it |
-
-Three caller-side faults. The device is faithful throughout.
-
-## 4. `section_recovery` — tCSHI, DQS
-
-| check | class | note |
-|---|---|---|
-| upstream's RECOVERY state is still a TODO | S | grep |
-| upstream's controller VIOLATES tCSHI back-to-back | C | negative control; **twin: no tCSHI check** |
-| back-to-back DQS reads: every transaction returned to IDLE | X | |
-| the vendored controller keeps tCSHI with NO gap from the master | C | **twin: no tCSHI check** |
-
-`T_CSHI_NS = 10.0` is stated in this file from the datasheet and confirmed by
-nothing. `hyperram_model.v` checks tCSM and not tCSHI, so re-pointing these
-means **adding a tCSHI check to the twin**, where the vendor model can contradict
-it.
-
-## 4b. `section_recovery_non_dqs` — tCSHI, the shipped path
-
-| check | class | note |
-|---|---|---|
-| upstream's non-DQS controller VIOLATES tCSHI back-to-back | C | twin: no |
-| ...and it is the GAP that differs, not the transaction count | X | |
-| back-to-back non-DQS reads: every transaction returned to IDLE | X | |
-| the vendored controller keeps tCSHI with NO gap from the master | C | twin: no |
-| ...and still issues both transactions | X | |
-| ...at the addresses asked for | C | CA decode; twin: **yes** |
-| sixteen classic transactions through the window keep it too | I | window in the path |
-
-## 9b. `section_as_built` — the configuration that synthesises
-
-| check | class | note |
-|---|---|---|
-| as built: every transaction returned to IDLE | X | |
-| as built: a read issues a command the device decodes | X | |
-
-The interesting result here — whether the as-built write lands — is **emitted,
-not asserted**, because the model's device latency has never been reconciled with
-the part. That reconciliation is what the twin is for.
-
-## 7b. `section_dqs_write_order` — **zero assertions**
-
-The section runs, prints, and checks nothing: `jtag_ack` never arrives, so
-nothing reaches the model. Its question — which 16-bit half of a DQS write hits
-the wire first — is a conformance question the twin and vendor already answer at
-the device end; the controller end needs the bridge.
-
-**Counts as coverage in the section list and is not.**
-
-## 5b. `section_latency_input` — `latency_clocks` is live (#331, #338)
-
-| check | class | note |
-|---|---|---|
-| an undriven `latency_clocks` still reaches the data body | X | FSM occupancy, no device data |
-| undriven matches the build-time constant exactly | X | |
-| each latency setting waits a different number of cycles | X | the corrected 5b: counts `HANDLE_LATENCY`, not `read_ready` |
-| the wait tracks the setting one for one | X | |
-| a count below 2 is clamped rather than wrapped | X | |
-| `fixed_latency` is an input, not a compile-time constant | S | `hasattr` |
-| driving `fixed_latency` low reaches the variable branch | X | **rests on a model behaviour the twin contradicts** |
-
-The last row works because `ModelHyperRAM16` holds RWDS **low** through the CA by
-default. The twin now drives RWDS from `CR0[3] | take_long` after a 12 ns tDSV
-float, so under fixed latency the real part holds it **high**. The Python model
-has no CR0 at all and cannot follow — the check is still sound as a controller
-check, but its device is not the part.
-
-## 5. `section_structural` — 6 checks, all S
-
-Six greps over `hyperram_dqs_phy.py` and luna's `psram.py`. No simulation, no
-model, nothing to re-point. They belong in a source lint and are unaffected by
-any of this.
-
-## 6. `section_wishbone` — 13 checks, all I
-
-`HyperRAMWishbone` alone. **No device model in the harness at all.** Delayed
-grant, address doubling, little-endian pairing, partial-store read-merge-write,
-the tCSM-safe burst cap. Untouched by #346.
-
-## 7. `section_shared_engine` — 12 checks, all I
-
-`BootRAM` against `ControlledInterface`, a bare signal surface. **No device model
-at all.** Untouched by #346.
-
-## 8. `section_line_refill` — CTI coalescing
-
-| check | class | note |
-|---|---|---|
-| a 16-beat incrementing burst issues ONE HyperBus transaction | I | |
-| the pre-change classic arrangement issues SIXTEEN transactions | I | negative control |
-| the coalesced refill returns all sixteen Wishbone beats | I | |
-| the classic negative control returns the same sixteen beats | I | |
-| one line occupies 49 CK with command and fixed latency | **C, circular** | see below |
-| sixteen classic transfers occupy 304 CK | **C, circular** | see below |
-| the cap at CK 60 fits in tCSM | C | arithmetic on `T_CSM`, no model |
-| the cap at CK 60 with clock stop fits in tCSM | C | |
-| the cap at CK 192 fits in tCSM | C | |
-| the cap at CK 192 with clock stop fits in tCSM | C | |
-| the old fixed 748-word cap would NOT have fitted at this CK | C | negative control, arithmetic |
-| a 64-byte line is well inside the cap | I | |
-
-**49 and 304 CK are the controller's own latency, measured back.**
-`ModelHyperRAM16._latency = HyperRAMController.HIGH_LATENCY_CLOCKS - 2` — the
-file's own comment says "count from the same value the controller loads, so the
-two agree by construction". Change the controller's constant and both numbers
-move together; the check reports agreement it built in. The five cap rows are
-different: they are arithmetic against a datasheet number with no model in the
-loop, so there is nothing for them to be circular with.
-
-## 9. `section_line_write` — a line through the SoC's real bus path
-
-| check | class | note |
-|---|---|---|
-| a single 32-bit write stores exactly two device words | I | |
-| ...at the doubled address, low half first | C | word order; twin: **yes** |
-| coalescing across a bubbling master reproduces the BOARD | I | 8/16, `1010101010101010` |
-| ...with the board's first bad beat, halves transposed | I | |
-| ...and 48 device words written for a 32-word line | I | |
-| the shipping window writes all sixteen beats correctly | I | |
-| a 64-byte line touches 32 device words and not one more | I | |
-| every word lands at the address the beat asked for | I | |
-| one HyperBus transaction per beat, since none may be held open | I | |
-
-The model is a **bookkeeping device** here — an address-indexed dict that records
-what landed. It is not answering a protocol question, and the twin would serve
-the same role if the harness could reach it.
-
-## 10. `section_line_read_bubble` — 2 checks, both I
-
-The same fault on reads, against pre-filled memory.
-
-## 11. `section_clock_stop` — Active Clock Stop
-
-| check | class | note |
-|---|---|---|
-| a coalesced line write is correct once CK can stop | I | |
-| ...in 32 device words, not the ungated 48 | I | |
-| ...at the address each beat asked for | I | |
-| the line is ONE transaction per direction, not sixteen | I | |
-| the gated line costs no extra CK, and a read saves one | I | `[48, 48]`; **the CK total carries the controller's latency constant** |
-| a coalesced line read returns all sixteen beats | I | |
-| ...in one transaction | I | |
-| every withheld clock fell inside the device's data phase | I | **"data phase" boundary is the controller's own count** |
-| one withheld clock per beat, 15 writing and 16 reading | I | |
-| the same run without the gate still reproduces the board | I | negative control |
-| gating CK level with the word stall corrupts EVERY beat | I | wrong arrangement, worse than no gate |
-| ...and does not even touch 32 device words | I | |
-| the stall bound is inside rev A01-006's 100 ns tCK maximum | C | arithmetic; twin does not model a tCK maximum |
-| ...and the bubble it has to cover is one cycle, well inside it | I | |
-
-Two rows carry a circular component without being conformance claims: the `48`
-CK totals and the "data phase" boundary both come from
-`HIGH_LATENCY_CLOCKS - 2`. The *claims* are about the gate, so they survive; the
-*numbers* would change with the controller.
-
-## 12. `section_escape` — every transaction ENDS (#316)
-
-23 checks. **The most valuable section in the file, and the one #346 is about.**
-
-| group | checks | class | knob |
-|---|---|---|---|
-| upstream never returns from a silent device (non-DQS, DQS) | 2 | F device | `deliver=0` |
-| upstream never returns from 7-of-8 | 1 | F device | `deliver=7` |
-| upstream's WRITE_DATA never returns from a stalled consumer (non-DQS, DQS) | 2 | F caller | `beats=0` |
-| ours: silent device ends, and `timed_out` says the watchdog did it | 4 | F device | `deliver=0` |
-| ours: 7 of 8 ends, took 7 beats, flagged | 3 | F device | `deliver=7` |
-| ours: 8 of 8 ends unflagged, and sooner than the watchdog | 3 | F device | `deliver=8`, the control |
-| ours: stalled consumer ends, flagged (non-DQS, DQS) | 3 | F caller | `beats=0` |
-| register read against a silent device ends | 1 | F device | `deliver=0` |
-| register write ends on its own, unflagged (non-DQS, DQS) | 4 | X | faithful device |
-
-Device-side 14, caller-side 5, controller 4.
-
-The negative controls are load-bearing: upstream's controllers are run through
-the same harness and **required to hang**. Any replacement must keep them, or the
-positive checks prove nothing — the same rule
-[`bist-plan.md`](bist-plan.md) states.
-
-## 13. `section_tcsm` — CS# Low never exceeds tCSM (#317)
-
-| check | class | note |
-|---|---|---|
-| upstream holds CS# Low past tCSM on a burst nobody ends | F caller | negative control; part fact tCSM, twin: **yes** |
-| ours chops it, and CS# never passes tCSM | F caller | |
-| ...at the word cap exactly, not one beat past it | X | |
-| ...and the caller is told the controller ended it | F caller | |
-| a silent device does not hold CS# past tCSM either | F device | `deliver=0` |
-| the DQS controller keeps tCSM on the same shape | F caller | |
-
-tCSM is the one part parameter in this file the twin *does* check — it prints an
-`ERROR tCSM violation` past 4 us, matched to the vendor model.
-
-## 14. `section_ca_rwds` — the extra-latency sample (#321, #338)
-
-| check | class | note |
-|---|---|---|
-| RWDS raised mid-CA takes the LONG latency | F device | `rwds_extra=1` |
-| a level left over from before the CA does NOT extend it | F device | `rwds_stale=1` — **the #338 case** |
-| ...and the two choices are distinguishable at all | X | constants differ |
-
-**This is the section #338 needs and the model is weakest at.** The Python model
-splits stale from answered at `_cs_low_cycles > 1` — a hand-chosen tDSV of one
-cycle, driven as a hard 0 or 1, never floating. The twin now models the real
-thing: RWDS **tri-stated for `T_DSV_NS = 12 ns`** after CS# falls, then driven
-from `CR0[3] | take_long`. A controller that samples inside that window reads
-`z`, and the Python model cannot express `z` at all.
-
-`ModelHyperRAM` — the DQS model — **has no RWDS path whatsoever**, so the DQS
-controller's extra-latency sampling is checked nowhere.
-
-## 15. `section_register_ca` — CA[45] for register space (#320)
-
-Five checks, **all C**, and all covered by the twin:
-
-| check | twin |
+| **caller** | about the CONTROLLER or the SoC above it -- fault injection, the Wishbone window, the arbiter, coalescing, clock stop | stays |
+| **device** | asserts a fact about the PART | moved to [`controller_model_tb.sv`](../../../gateware/probes/hyperram/controller_model_tb.sv) against [`hyperram_model.v`](../../../gateware/probes/hyperram/hyperram_model.v), and deleted here |
+| **redundant** | already checked where the reference is independent | deleted |
+| **wrong** | encodes a belief since refuted | deleted |
+
+| class | count |
 |---|---|
-| upstream emits CA[45]=0 for a single_page register write | negative control |
-| ours forces CA[45]=1 there | yes |
-| ...which is the datasheet's 0x60 for a register write | yes — `CMD_REG_WRITE = 8'h60` |
-| a WRAPPED memory burst is left alone -- CA[45]=0 | yes — `CMD_MEM_READ_WRAP = 8'h80` |
-| the DQS controller forces it too | yes |
+| caller | **115** kept, plus **7** written to replace the caller-side half of what moved |
+| device | **19** |
+| redundant | **11** |
+| wrong | **1** |
+| | **146** |
 
----
+`caller` is not a residue. It is what the Python model is *for*: it can be told
+to lie, and it sees the layers between the chip and the CPU. A faithful device
+model can do neither.
 
-## What the twin already covers
+## Where the 19 moved, and the defect each still fails on
 
-From
-[`vendor_model_tb.sv`](../../../gateware/probes/hyperram/vendor_model_tb.sv)
-(the device alone, held equal to Winbond's model) and
-[`controller_model_tb.sv`](../../../gateware/probes/hyperram/controller_model_tb.sv)
-(our controller in front of it):
+Every moved check has a defect run in
+[`hyperram_model_sim.py`](../../../scripts/hyperram_model_sim.py), injected on the
+wire BETWEEN the controller and the device so the controller is untouched. The
+run is required to produce the named line; a clean defect run exits non-zero.
 
-| conformance question | checks here | twin |
-|---|---|---|
-| CA field positions, address / R‑W / space / burst type | 6 | **yes** — bridge cases 1 and 2, plus the top-address truncation case |
-| CA[45] forced for register space, `0x60` / `0x80` command bytes | 5 | **yes** |
-| word order — low half at the lower address | 1 | **yes** — bridge case 2 burst write and read-back |
-| latency count against `CR0[7:4]`, fixed and variable | 1 (circular) | **yes** — bridge cases 3, 4 and 5 sweep it |
-| tCSM | via §13 | **yes** — `ERROR tCSM violation` at 4 us |
-| RWDS over the CA, tDSV, the extra-latency request | 2 | **yes, and better** — real tri-state |
-| refresh-forced 2x election under variable latency | none | **yes**, both models since `916ca3f` |
-| **tCSHI** | 4 | **NO** |
-| **tCK maximum (stall bound)** | 1 | **NO** |
-
-## Knobs on the twin
-
-Only the device-side faults, and there are three, not four. All three landed on
-[`hyperram_model.v`](../../../gateware/probes/hyperram/hyperram_model.v); each
-defaults to the part, so the shared testbench is unchanged.
-
-| parameter | default | fault | checks it carries |
+| moved check | now | defect | what it prints |
 |---|---|---|---|
-| `DELIVER_WORDS` | `-1` | `0` never answers, `N` stops after N words | 15 |
-| `CA_RWDS_FAULT` | `0` | `1` stuck High, `2` stuck Low, `3` never driven | 2 |
-| `REFUSE_REG_WRITE` | `0` | `1` takes the write and drops it | **0 — a new capability, not a port** |
+| the five CA fields (§1) | case 2b, on the model's own capture and array | `+ca_defect=1` address bit 20 | `CA-FIELD FAIL memory write landed where it was addressed` |
+| | | `+ca_defect=2` CA[45] | `CA-FIELD FAIL memory write command byte` |
+| | | `+ca_defect=3` CA[46] | `CA-FIELD FAIL memory write command byte` |
+| tCSHI, both controllers (§4, §4b) | `T_CSHI_NS` monitor on the twin | `+cs_hold_ns=25` | `ERROR tCSHI violation` |
+| tCSM (§13) | the twin's existing tCSM monitor, `+stim=1` | `+cs_hold_ns=1000` | `ERROR tCSM violation` |
+| the RWDS-over-CA sample (§14) | `+stim=2 -DCA_RWDS_FAULT=3` | `+rwds_float=1` | `DATA FAIL var code 2` |
+| CA[45] for register space (§15) | case 2b, command bytes 0x60 and 0x80 | `+ca_defect=2` | `CA-FIELD FAIL` |
 
-`DELIVER_WORDS` is one knob, not two: "never answer" is `0`, which is how
-`soc_hyperram_sim.py` already writes it.
+Calibration, measured 2026-08-10: the controller leaves a **30 ns** gap at 100 MHz
+and tCSHI is **6 ns** at T166, so `+cs_hold_ns=24` leaves exactly 6 ns and does
+NOT violate, 25 does. The knob is in nanoseconds for that reason -- a whole-cycle
+knob either changes nothing or swallows the gap entirely, and then the device
+never sees CS# rise and the monitor cannot fire at all. That was the first
+version, and it exited 0 having proved nothing.
 
-Proved by [`fault_model_tb.sv`](../../../gateware/probes/hyperram/fault_model_tb.sv),
-Icarus-only — the vendor model has no such parameters, so what holds it honest is
-that the same model still passes `vendor_model_tb.sv` with every knob at 0:
+## The one that was wrong
 
-    scripts/hyperram_vendor_model_sim.py --sim fault
+`a count below 2 is clamped rather than wrapped` (§5b). The read latency floor is
+**`R + 3`**, not 2 -- derived twice on 2026-08-10, once from a simulated burst
+([#353](https://github.com/awtoau/cynthion-workspace/issues/353)) and once from
+Winbond's AC parameters ([`config-ac.md`](config-ac.md)). Below it `READ_DATA`
+begins while the device's RWDS fall is still in flight and latches it as a read
+strobe over a tristate bus.
 
-| run | bus |
-|---|---|
-| control | `ca rwds = zz1111`, strobe at 27 edges, `id0 = 0c86`, 8 of 8 words, `cr0 = af2f` |
-| `CA_RWDS_FAULT=1/2/3` | `111111` / `000000` / `zzzzzz` |
-| `DELIVER_WORDS=0` | `id0 = zzzz`, 0 of 8 words |
-| `DELIVER_WORDS=3` | 3 of 8 words |
-| `REFUSE_REG_WRITE=1` | `cr0 after write = 8f2f` |
+Replaced by a check that compares `latency_clocks = 0` against the floor itself,
+which fails if the floor is 2.
 
-A held fault has no tDSV — that is what makes `111111` distinguishable from the
-part's `zz1111`, and it is the float #338 suspects.
+## Section 7b asserted nothing
 
-The remaining 12 fault-injection checks are **caller-side** and no model knob can
-carry them.
+`section_dqs_write_order` ran, printed, and checked nothing: `jtag_ack` never
+arrived, so nothing reached the model and it reported on an empty capture. It
+counted as coverage in the section list. Deleted; the question -- which 16-bit
+half of a DQS write reaches the device first -- is
+`hyperram_dqs_model_sim.py --stage order`'s, against the twin and Winbond's model,
+with a deliberately rewired run required to fail.
 
-## What cannot be deleted, and why
+## What no longer has an independent judge
 
-| group | checks | reason |
-|---|---|---|
-| integration with no device model at all (§6, §7) | 25 | nothing to re-point; #346 does not reach them |
-| integration through `ModelHyperRAM16` as a bookkeeping array (§4b, §8–§11) | 29 | the twin could serve, but these harnesses are Amaranth + Wishbone and the twin is Verilog. **This is the whole cost of retirement** |
-| controller-only (X) | 24 | need a faithful device or none; no part fact claimed |
-| structural (S) | 9 | source greps |
-| caller-side fault injection (F caller) | 12 | belongs to the driving testbench |
+* **The DQS controller's tCSHI and tCSM.** `controller_model_tb.sv` drives the
+  non-DQS controller. Both controllers do the same `_recovery_cycles` arithmetic,
+  so the NUMBER is judged; the DQS FSM holding it is not.
+  [#371](https://github.com/awtoau/cynthion-workspace/issues/371).
+* **tCK maximum**, the stall bound in §11. Arithmetic against a documented
+  number, with no model that has a tCK maximum to contradict it.
 
-**99 of 143 assertions have no route to `hyperram_model.v` as it stands**, and 54
-of those need an Amaranth-side device of some kind. `ModelHyperRAM16` is not
-merely a conformance liability; it is the memory array 29 SoC-layer checks read
-their results out of.
+## The table
 
-## Deletable today, on this audit alone
+| section | assertion | class | where it lives now |
+|---|---|---|---|
+| `section_as_built` | [completed] as built | caller | stays |
+| `section_as_built` | as built: a read issues a command the device decodes | caller | stays |
+| `section_clock_stop` | a coalesced line write is correct once CK can stop | caller | stays |
+| `section_clock_stop` | ...in 32 device words, not the ungated 48 | caller | stays |
+| `section_clock_stop` | ...at the address each beat asked for | caller | stays |
+| `section_clock_stop` | the line is ONE transaction per direction, not sixteen | caller | stays |
+| `section_clock_stop` | the gated line costs no extra CK, and a read saves one | caller | stays |
+| `section_clock_stop` | a coalesced line read returns all sixteen beats | caller | stays |
+| `section_clock_stop` | ...in one transaction | caller | stays |
+| `section_clock_stop` | every withheld clock fell inside the device's data phase | caller | stays |
+| `section_clock_stop` | one withheld clock per beat, 15 writing and 16 reading | caller | stays |
+| `section_clock_stop` | the same run without the gate still reproduces the board | caller | stays |
+| `section_clock_stop` | gating CK level with the word stall corrupts EVERY beat | caller | stays |
+| `section_clock_stop` | ...and does not even touch 32 device words | caller | stays |
+| `section_clock_stop` | the stall bound is inside rev A01-006's 100 ns tCK maximum | caller | stays |
+| `section_clock_stop` | ...and the bubble it has to cover is one cycle, well inside it | caller | stays |
+| `section_command` | [completed] the command read | caller | stays |
+| `section_command` | one command was issued | caller | stays |
+| `section_escape` | upstream's non-DQS READ_DATA never returns from a silent device | caller | stays |
+| `section_escape` | ...nor from a device that delivers 7 of the 8 beats asked for | caller | stays |
+| `section_escape` | ...and upstream's WRITE_DATA never returns from a stalled consumer | caller | stays |
+| `section_escape` | [completed] non-DQS, silent device | caller | stays |
+| `section_escape` | ...and `timed_out` says the watchdog ended it, not the caller | caller | stays |
+| `section_escape` | [completed] non-DQS, 7 of 8 beats | caller | stays |
+| `section_escape` | ...having taken the 7 beats the device did deliver | caller | stays |
+| `section_escape` | ...and flagged the transaction | caller | stays |
+| `section_escape` | [completed] non-DQS, 8 of 8 beats | caller | stays |
+| `section_escape` | 8 of 8 ends on `final_word`, with NOTHING flagged | caller | stays |
+| `section_escape` | ...and ends sooner than the watchdog would have | caller | stays |
+| `section_escape` | [completed] non-DQS, consumer that stops asking | caller | stays |
+| `section_escape` | ...a write nobody ends is flagged too | caller | stays |
+| `section_escape` | [completed] non-DQS register write | caller | stays |
+| `section_escape` | ...and a register write ends on its own, unflagged | caller | stays |
+| `section_escape` | [completed] non-DQS register read, silent device | caller | stays |
+| `section_escape` | upstream's DQS READ_DATA never returns from a silent device | caller | stays |
+| `section_escape` | ...nor its WRITE_DATA from a stalled consumer | caller | stays |
+| `section_escape` | [completed] DQS, silent device | caller | stays |
+| `section_escape` | ...and the DQS controller flags it | caller | stays |
+| `section_escape` | [completed] DQS, consumer that stops asking | caller | stays |
+| `section_escape` | [completed] DQS register write | caller | stays |
+| `section_escape` | ...unflagged, since the caller's own path ended it | caller | stays |
+| `section_held` | held: the word arrives at the address asked for | caller | stays |
+| `section_held` | pulsed `perform_write`/`write_data`: the device does NOT get it | caller | stays |
+| `section_held` | pulsed `final_word`: the burst does not end where it was meant to | caller | stays |
+| `section_held` | [completed] pulsed `final_word` | caller | stays |
+| `section_latency` | [completed] the fixed-latency read | caller | stays |
+| `section_latency` | upstream forces the long branch unconditionally | caller | stays |
+| `section_latency_input` | an undriven `latency_clocks` still reaches the data body | caller | stays |
+| `section_latency_input` | undriven matches the build-time constant exactly | caller | stays |
+| `section_latency_input` | each latency setting waits a different number of cycles | caller | stays |
+| `section_latency_input` | the wait tracks the setting one for one | caller | stays |
+| `section_latency_input` | a count under the read floor is clamped up to it, not wrapped | caller | stays |
+| `section_latency_input` | `fixed_latency` is an input, not a compile-time constant | caller | stays |
+| `section_line_read_bubble` | coalescing across a bubbling master also corrupts READS | caller | stays |
+| `section_line_read_bubble` | the shipping window returns all sixteen beats | caller | stays |
+| `section_line_refill` | a 16-beat incrementing burst issues ONE HyperBus transaction | caller | stays |
+| `section_line_refill` | the pre-change classic arrangement issues SIXTEEN transactions | caller | stays |
+| `section_line_refill` | the coalesced refill returns all sixteen Wishbone beats | caller | stays |
+| `section_line_refill` | the classic negative control returns the same sixteen beats | caller | stays |
+| `section_line_refill` | <f-string> | caller | stays |
+| `section_line_refill` | the old fixed 748-word cap would NOT have fitted at this CK | caller | stays |
+| `section_line_refill` | a 64-byte line is well inside the cap | caller | stays |
+| `section_line_write` | a single 32-bit write stores exactly two device words | caller | stays |
+| `section_line_write` | ...at the doubled address, low half first | caller | stays |
+| `section_line_write` | coalescing across a bubbling master reproduces the BOARD | caller | stays |
+| `section_line_write` | ...with the board's first bad beat, halves transposed | caller | stays |
+| `section_line_write` | ...and 48 device words written for a 32-word line | caller | stays |
+| `section_line_write` | the shipping window writes all sixteen beats correctly | caller | stays |
+| `section_line_write` | a 64-byte line touches 32 device words and not one more | caller | stays |
+| `section_line_write` | every word lands at the address the beat asked for | caller | stays |
+| `section_line_write` | one HyperBus transaction per beat, since none may be held open | caller | stays |
+| `section_recovery` | upstream's RECOVERY state is still a TODO | caller | stays |
+| `section_recovery` | upstream's controller leaves ONE cycle and nothing more | caller | stays |
+| `section_recovery` | [completed] back-to-back DQS reads | caller | stays |
+| `section_recovery` | ...and the gap is the count RECOVERY was given | caller | stays |
+| `section_recovery_non_dqs` | upstream's non-DQS controller leaves LESS than the count needs | caller | stays |
+| `section_recovery_non_dqs` | ...and it is the GAP that differs, not the transaction count | caller | stays |
+| `section_recovery_non_dqs` | [completed] back-to-back non-DQS reads | caller | stays |
+| `section_recovery_non_dqs` | the vendored controller leaves its whole count, unaided | caller | stays |
+| `section_recovery_non_dqs` | ...and still issues both transactions | caller | stays |
+| `section_recovery_non_dqs` | sixteen classic transactions through the window keep the same gap | caller | stays |
+| `section_register_clock_stop` | the same stall DOES withhold clocks from a memory access | caller | stays |
+| `section_register_clock_stop` | a register WRITE keeps its clock under a stalling master | caller | stays |
+| `section_register_clock_stop` | a register READ keeps its clock under a stalling master | caller | stays |
+| `section_register_clock_stop` | ...and both register transactions still complete | caller | stays |
+| `section_register_clock_stop` | ...by serving the transaction, not by the tCSM watchdog | caller | stays |
+| `section_shared_engine` | the shared engine starts a Wishbone read | caller | stays |
+| `section_shared_engine` | a read starts at the doubled address with final_word low | caller | stays |
+| `section_shared_engine` | final_word is low for the first read word | caller | stays |
+| `section_shared_engine` | final_word rises for the second read word | caller | stays |
+| `section_shared_engine` | final_word stays high through read recovery | caller | stays |
+| `section_shared_engine` | the shared engine returns both read words | caller | stays |
+| `section_shared_engine` | the shared engine starts a Wishbone write | caller | stays |
+| `section_shared_engine` | write controls begin held on the low half | caller | stays |
+| `section_shared_engine` | write controls remain held for the first word | caller | stays |
+| `section_shared_engine` | the second word carries the upper half and final_word | caller | stays |
+| `section_shared_engine` | write controls stay held through recovery | caller | stays |
+| `section_shared_engine` | the write acknowledges after both words | caller | stays |
+| `section_structural` | upstream assigns bus.clk as a single net | caller | stays |
+| `section_structural` | ours drives the differential clock's TRUE pin only | caller | stays |
+| `section_structural` | ours drives RESET#, which upstream leaves floating | caller | stays |
+| `section_structural` | ours takes the polarity from the resource, not from a literal | caller | stays |
+| `section_structural` | ours needs the `fast` domain, and says so | caller | stays |
+| `section_structural` | ours keeps upstream's controller rather than copying it | caller | stays |
+| `section_tcsm` | upstream holds CS# Low until the harness gives up | caller | stays |
+| `section_tcsm` | ours chops it inside the budget the controller computed | caller | stays |
+| `section_tcsm` | ...at the word cap exactly, not one beat past it | caller | stays |
+| `section_tcsm` | ...and the caller is told the controller ended it | caller | stays |
+| `section_tcsm` | the DQS controller chops the same shape | caller | stays |
+| `section_wishbone` | pulsing a request before a delayed grant completes NOTHING | caller | stays |
+| `section_wishbone` | the real port holds its request until the delayed grant | caller | stays |
+| `section_wishbone` | Wishbone word addresses become 16-bit HyperRAM addresses | caller | stays |
+| `section_wishbone` | a Wishbone read reaches the controller as a read | caller | stays |
+| `section_wishbone` | two 16-bit words return one little-endian 32-bit word | caller | stays |
+| `section_wishbone` | a full store stays a write and holds all 32 data bits | caller | stays |
+| `section_wishbone` | a full store acknowledges after its second word | caller | stays |
+| `section_wishbone` | a partial store starts with a read | caller | stays |
+| `section_wishbone` | a partial store changes to a write after the merge | caller | stays |
+| `section_wishbone` | inactive byte lanes survive the partial-store merge | caller | stays |
+| `section_wishbone` | the read half of a partial store does not acknowledge early | caller | stays |
+| `section_wishbone` | the write half of a partial store completes the request | caller | stays |
+| `section_wishbone` | a missing EOB is forced closed at the tCSM-safe cap | caller | stays |
+| `section_ca_rwds` | a level left over from before the CA does NOT extend it | device | `+stim=2 -DCA_RWDS_FAULT=3`, control `+rwds_float=1` |
+| `section_command` | the device decodes the address that was asked for | device | case 2b of `controller_model_tb.sv`, at 0x35a1c7 |
+| `section_command` | it decodes as a read | device | case 2b of `controller_model_tb.sv`, command byte 0x20 / 0xa0 |
+| `section_command` | it decodes as memory, not register space | device | case 2b of `controller_model_tb.sv`, 0xa0 against 0xe0 |
+| `section_command` | it decodes as a linear burst | device | case 2b of `controller_model_tb.sv`, 0xa0 against 0x80 |
+| `section_command` | the command matches the specification's encoding | device | case 2b of `controller_model_tb.sv`, all four bytes |
+| `section_recovery` | the vendored controller keeps tCSHI with NO gap from the master | device | `hyperram_model.v`'s tCSHI monitor, `+cs_hold_ns=25` |
+| `section_recovery_non_dqs` | upstream's non-DQS controller VIOLATES tCSHI back-to-back | device | `hyperram_model.v`'s tCSHI monitor, `+cs_hold_ns=25` |
+| `section_recovery_non_dqs` | the vendored controller keeps tCSHI with NO gap from the master | device | `hyperram_model.v`'s tCSHI monitor, `+cs_hold_ns=25` |
+| `section_recovery_non_dqs` | sixteen classic transactions through the window keep it too | device | the judgement to the twin; the gap comparison stays, re-based |
+| `section_register_ca` | upstream emits CA[45]=0 for a single_page register write | device | case 2b of `controller_model_tb.sv`, 0x60 |
+| `section_register_ca` | ours forces CA[45]=1 there | device | case 2b of `controller_model_tb.sv`, 0x60 |
+| `section_register_ca` | ...which is the datasheet's 0x60 for a register write | device | case 2b of `controller_model_tb.sv`, 0x60 |
+| `section_register_ca` | a WRAPPED memory burst is left alone -- CA[45]=0 | device | case 2b of `controller_model_tb.sv`, 0x80 |
+| `section_register_ca` | the DQS controller forces it too | device | case 2b of `controller_model_tb.sv`; the DQS path is #371 |
+| `section_tcsm` | upstream holds CS# Low past tCSM on a burst nobody ends | device | `hyperram_model.v`'s tCSM monitor, `+stim=1 +cs_hold_ns=1000` |
+| `section_tcsm` | ours chops it, and CS# never passes tCSM | device | `hyperram_model.v`'s tCSM monitor, `+stim=1` |
+| `section_tcsm` | a silent device does not hold CS# past tCSM either | device | `+stim=1 -DDELIVER_WORDS=0`, tCSM judged by the device |
+| `section_tcsm` | the DQS controller keeps tCSM on the same shape | device | the judgement to the twin; the budget comparison stays, re-based |
+| `section_ca_rwds` | RWDS raised mid-CA takes the LONG latency | redundant | case 4 with `REFRESH_EVERY=1`, the device asking for real |
+| `section_ca_rwds` | ...and the two choices are distinguishable at all | redundant | guard for the two rows above; the sweep prints both counts |
+| `section_command` | reading the same capture 16 bits wide gives a WRONG address | redundant | cannot fail -- a property of `TEST_ADDRESS`; case 2b of `controller_model_tb.sv` |
+| `section_latency` | the controller's two latency counts differ | redundant | `controller_model_tb.sv` cases 3 and 4, six codes each |
+| `section_latency` | a read against the fixed-latency model returns data | redundant | the DATA checks of cases 3 and 4 |
+| `section_latency` | the read raises BURSTDET, so DQS is what found the data | redundant | same predicate as the row above; `burstdet` is never read |
+| `section_latency` | the SHORT count would sample inside the latency window | redundant | CTRL-BEAT, and `--negative-control` proves 1 CK is caught |
+| `section_latency_input` | driving `fixed_latency` low reaches the variable branch | redundant | cases 3 and 4 sweep both modes against the twin |
+| `section_line_refill` | one line occupies 49 CK with command and fixed latency | redundant | circular on `HIGH_LATENCY_CLOCKS`; CTRL-BEAT grades the beat |
+| `section_line_refill` | sixteen classic transfers occupy 304 CK | redundant | circular on `HIGH_LATENCY_CLOCKS`; CTRL-BEAT grades the beat |
+| `section_recovery_non_dqs` | ...at the addresses asked for | redundant | case 2b of `controller_model_tb.sv` and case 2 |
+| `section_latency_input` | a count below 2 is clamped rather than wrapped | wrong | the read floor is `R + 3`, not 2 (#353, #372) -- replaced |
 
-| what | checks | why |
-|---|---|---|
-| the 16-bit re-read of the CA capture (§1) | 1 | tautological |
-| "the read raises BURSTDET" (§2) | 1 | duplicate predicate; `burstdet` is never read |
-| "the SHORT count would sample inside the latency window" (§2) | 1 | circular on the controller's own constant |
-| the 49 CK / 304 CK totals (§8) | 2 | circular on the controller's own constant |
-| `section_dqs_write_order` (§7b) | 0 | asserts nothing; reads as coverage |
+## Running it
 
-Five assertions and one dead section. Everything else moves or stays.
+    scripts/hyperram_sim_census.py            # the table against the file
+    scripts/hyperram_sim_census.py --list     # print the classification
 
-## Sequencing, unchanged from #346
-
-1. The bridge exists —
-   [`controller_model_tb.sv`](../../../gateware/probes/hyperram/controller_model_tb.sv)
-   + [`hyperram_model_sim.py`](../../../scripts/hyperram_model_sim.py), merged at
-   `ba64439` — but it is a Verilog testbench, not a path from the Amaranth SoC
-   harnesses. The 29 integration checks that use the Python model as an array
-   still have nowhere to go.
-2. **Done** — the three device-side knobs are on the twin, one commit each, with
-   `--sim fault` as the regression.
-3. Delete only what this audit lists as deletable, plus what the bridge has
-   demonstrably taken over.
-4. `soc_hyperram_sim.py` keeps I, X, S and the caller-side F — 99 assertions on
-   today's count.
+    scripts/soc_hyperram_sim.py                        # 122 checks, caller-side
+    scripts/hyperram_model_sim.py                      # the moved ones + 6 defect runs
+    scripts/hyperram_model_sim.py --negative-control   # 1 CK of latency error
+    scripts/hyperram_vendor_model_sim.py --sim icarus  # the twin against the vendor tb
+    scripts/hyperram_dqs_model_sim.py --stage all      # the DQS path
