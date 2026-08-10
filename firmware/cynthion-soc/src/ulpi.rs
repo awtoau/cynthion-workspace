@@ -28,6 +28,8 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
+use crate::clock;
+
 /// The 6-bit ULPI register address to act on.
 const ADDRESS: usize = 0;
 /// Byte to write; on read, the byte the last transaction returned.
@@ -46,29 +48,34 @@ const STATUS_BUSY: u8 = 1 << 0;
 const STATUS_TIMEOUT: u8 = 1 << 1;
 const STATUS_RESETTING: u8 = 1 << 2;
 
-/// Turns of the poll loop before this driver gives up on the peripheral.
+/// How long to wait for the window to go idle, in microseconds.
 ///
-/// The gateware's own bound is 4096 cycles of the 60 MHz ULPI clock, 68 us, and
-/// it always toggles the acknowledge on expiry -- so `busy` cannot stay set for
-/// longer than that plus a domain crossing. One turn of the loop below is an
-/// uncached CSR read, which is a handful of CPU cycles at minimum, so 10_000
-/// turns covers 68 us with two orders of magnitude to spare. Reaching it means
-/// the peripheral is not there at all, which is a bitstream/firmware mismatch
-/// rather than a PHY problem, and this is what makes the two distinguishable.
-const SPINS: u32 = 10_000;
+/// Waits for: `busy` to clear on one PHY register transaction. Expected: the
+/// gateware's own bound, `TIMEOUT_CYCLES = 4096` of the 60 MHz ULPI clock
+/// (`gateware/soc/peripherals/ulpi_window.py`) = 68.3 us, and it always toggles
+/// the acknowledge on expiry -- so `busy` cannot stay set longer than that plus
+/// a domain crossing. 86 us is 1.25x. On expiry: `Error::NoPeripheral`, meaning
+/// the window is not at this address -- a bitstream/firmware mismatch rather
+/// than a PHY fault, which is what makes the two distinguishable.
+///
+/// **Microseconds, not turns** (#295). This was 10_000 turns: 29x expected if a
+/// turn is the ~11.9 cycles an uncached read costs, and 2.4x if a turn is one
+/// cycle -- so the same constant meant either, depending on the build. A tick
+/// deadline means what it says on every build, which is the same argument
+/// `clock::wait` already makes for datasheet intervals.
+const SETTLE_US: u32 = 86;
 
-/// Turns of the poll loop while a PHY reset runs.
+/// How long to wait for a PHY reset, in microseconds.
 ///
-/// A separate bound from `SPINS`, and it has to be: the reset sequence is
-/// 128 + 72000 cycles of the 60 MHz ULPI clock -- 1.202 ms -- which is four
-/// orders of magnitude longer than a register transaction. Polled against
-/// `SPINS` a perfectly good reset would be reported as an absent peripheral.
+/// Waits for: `STATUS.resetting` to clear. Expected: `PHY_PAD_RESET_CYCLES +
+/// PHY_PREP_CYCLES` = 128 + 72_000 cycles of the 60 MHz ULPI clock
+/// (`gateware/soc/clocks.py`, from USB334x rev 1.2 §5.6.2 and Table 4.3) =
+/// 1.2021 ms. 1503 us is 1.25x. On expiry: `Error::NoPeripheral`, as above.
 ///
-/// One turn is an uncached CSR read, which is several CPU cycles at the very
-/// least, so at the highest clock this SoC has ever been built at (130 MHz)
-/// 1.202 ms is under 160_000 cycles and this covers it several times over.
-/// Reaching it means the peripheral is not there, same as `SPINS`.
-const RESET_SPINS: u32 = 2_000_000;
+/// A separate bound from [`SETTLE_US`] and it has to be -- a reset is four
+/// orders of magnitude longer than a register transaction, so polled against
+/// that one a perfectly good reset reads as an absent peripheral.
+const RESET_US: u32 = 1_503;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -121,7 +128,8 @@ impl Ulpi {
 
     /// Wait for the window to go idle, then report whether the PHY answered.
     fn settle(&self) -> Result<(), Error> {
-        let mut spins = 0u32;
+        let started = clock::now();
+        let limit = clock::micros(SETTLE_US);
         loop {
             let status = self.status();
             if status & STATUS_BUSY == 0 {
@@ -130,8 +138,7 @@ impl Ulpi {
                 }
                 return Ok(());
             }
-            spins += 1;
-            if spins > SPINS {
+            if started.elapsed(clock::now()) > limit {
                 return Err(Error::NoPeripheral);
             }
         }
@@ -227,13 +234,13 @@ impl Ulpi {
         unsafe {
             write_volatile(self.reg(CONTROL), CONTROL_PHY_RESET);
         }
-        let mut spins = 0u32;
+        let started = clock::now();
+        let limit = clock::micros(RESET_US);
         loop {
             if self.status() & STATUS_RESETTING == 0 {
                 return Ok(());
             }
-            spins += 1;
-            if spins > RESET_SPINS {
+            if started.elapsed(clock::now()) > limit {
                 return Err(Error::NoPeripheral);
             }
         }
