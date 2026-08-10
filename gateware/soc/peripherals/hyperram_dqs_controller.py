@@ -193,6 +193,9 @@ class HyperRAMDQSController(Elaboratable):
         # with the part's CR0[7:4] (#331).
         self.latency_clocks   = Signal(range(0, self._max_latency_clocks + 1),
                                        reset=self.HIGH_LATENCY_CLOCKS)
+        # CR0[3] as the part is set to; see the non-DQS controller. Was
+        # `int(self._fixed_latency)`, which made the variable path dead (#338).
+        self.fixed_latency    = Signal(reset=int(fixed_latency))
 
         # Status signals.
         self.idle             = Signal()
@@ -389,7 +392,7 @@ class HyperRAMDQSController(Elaboratable):
                     # which is #319's sweep. The decision is taken at the end of
                     # the CA, so a later RWDS change cannot erase it. (#321)
                     with m.If(extra_latency | self.phy.rwds.i.any()
-                              | int(self._fixed_latency)):
+                              | self.fixed_latency):
                         m.d.sync += latency_clocks_remaining.eq(self.latency_clocks)
                     with m.Else():
                         m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS)

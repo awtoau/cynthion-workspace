@@ -1176,6 +1176,49 @@ def section_latency_input(checks, emit):
                  and latency_cycles_held(latency=0) <= taken[6],
                  "latency 0 did not complete, so the counter wrapped")
 
+    # `fixed_latency` was ORed into the branch condition as a Python int, so the
+    # VARIABLE path was dead whenever the constructor said True -- the sweep moved
+    # the part and the controller could not follow, and every `var` cell of 4096
+    # failed. It must now be a signal the caller can drive. (#338)
+    held = HyperRAMController.STATES.index("HANDLE_LATENCY")
+
+    def held_with(fixed):
+        counted = []
+
+        async def body(ctx, dut, model):
+            psram = dut.psram
+            ctx.set(psram.fixed_latency, 1 if fixed else 0)
+            ctx.set(psram.address, 0x100)
+            ctx.set(psram.perform_write, 0)
+            ctx.set(psram.final_word, 1)
+            ctx.set(psram.start_transfer, 1)
+            await ctx.tick()
+            ctx.set(psram.start_transfer, 0)
+            cycles, entered = 0, False
+            for _ in range(completion_bound(dut.sync_mhz)):
+                if ctx.get(psram.state) == held:
+                    cycles, entered = cycles + 1, True
+                elif entered:
+                    break
+                await beat16(ctx, dut, model)
+            counted.append(cycles if entered else None)
+
+        simulate16(body, max_latency_clocks=14)
+        return counted[0]
+
+    # The model holds RWDS low through the CA, so `var` must take the SHORT count.
+    # Identical numbers here mean the branch is still welded.
+    fixed_held, var_held = held_with(True), held_with(False)
+    emit(f"     HANDLE_LATENCY cycles: fixed {fixed_held}, variable {var_held}\n")
+    checks.check("`fixed_latency` is an input, not a compile-time constant",
+                 hasattr(HyperRAMController(phy=HyperBusPHY(), sync_mhz=60.0),
+                         "fixed_latency"),
+                 "no `fixed_latency` signal on the controller")
+    checks.check("driving `fixed_latency` low reaches the variable branch",
+                 fixed_held != var_held,
+                 f"both took {fixed_held} cycles -- the variable path is still "
+                 "dead, so a sweep of CR0[3] moves the part and not the controller")
+
 
 def section_structural(checks, emit):
     """5. The reasons upstream's PHY cannot be instantiated here."""

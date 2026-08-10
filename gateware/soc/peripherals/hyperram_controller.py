@@ -202,6 +202,17 @@ class HyperRAMController(Elaboratable):
         # can never pass more than a single code (#331).
         self.latency_clocks   = Signal(range(0, self._max_latency_clocks + 1),
                                        reset=self.HIGH_LATENCY_CLOCKS)
+        # CR0[3] AS THE PART IS SET TO, so the controller follows the part rather
+        # than being welded to one mode. High takes the long count on every
+        # transaction; low honours the RWDS sample. Reset is the build-time value,
+        # so an undriven caller is unchanged.
+        #
+        # This was `int(self._fixed_latency)` ORed into the branch condition, which
+        # made the variable path DEAD whenever the constructor said True -- the
+        # sweep moved the PART into variable mode and left the controller unable to
+        # respond, so every `var` cell failed. Same defect as the latency count
+        # above, same fix. (#338)
+        self.fixed_latency    = Signal(reset=int(fixed_latency))
 
         # Status signals.
         self.idle             = Signal()
@@ -395,7 +406,7 @@ class HyperRAMController(Elaboratable):
                     # which is #319's sweep. The decision is taken at the end of
                     # the CA, so a later RWDS change cannot erase it. (#321)
                     with m.If(extra_latency | self.phy.rwds.i.any()
-                              | int(self._fixed_latency)):
+                              | self.fixed_latency):
                         # Clamped: the two cycles come off HANDLE_LATENCY's own
                         # entry and exit, so a count below 2 would wrap the
                         # counter and wait ~2^n cycles instead of none.

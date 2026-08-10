@@ -606,6 +606,10 @@ class HyperRAMCeiling(Elaboratable):
             effective_cr0 = Signal(16)
             m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0,
                                              device_cr0[:16]))
+            # CR0[3] too, or the controller stays welded to fixed latency while
+            # the sweep moves the part into variable -- which failed every `var`
+            # cell of 4096 (#338).
+            m.d.comb += psram.fixed_latency.eq(effective_cr0[3])
             with m.Switch(effective_cr0[4:8]):
                 for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
                     with m.Case(code):
