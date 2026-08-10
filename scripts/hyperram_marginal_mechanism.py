@@ -25,18 +25,22 @@ that #338's and #353's fixes landed in. On that path
 
 - `latency_clocks = L - 1`, and `HANDLE_LATENCY` waits `2 x latency_clocks + 2`
   CK, so the LONG wait is `2L` CK.
-- the SHORT wait is `LOW_LATENCY_CLOCKS = 3`, a CLASS CONSTANT with no input
-  (`hyperram_dqs_controller.py:113`, and `hyperram_ceiling_top.py:629` says so
-  in as many words), so the SHORT wait is `2 x 3 + 2 = 8` CK at EVERY code.
+- the SHORT wait is `--short-wait`, and it is a property of the BITSTREAM:
+
+  `legacy`  `LOW_LATENCY_CLOCKS = 3`, a class constant with no input, so 8 CK at
+            EVERY code. Every run in `results/hyperram/` was taken on this.
+  `tracked` `low_latency_clocks` driven from CR0[7:4], `2 x (L // 2)` CK. #380.
 
 `L` per code is `LATENCY_CLOCKS_BY_CODE`; codes with no entry take the power-on
 code's L, which is what the `Default` arm drives.
 
-**Hence the discriminator.** `2L == 8` at `L = 4`, i.e. latency code 15. At code
-15 the two branches wait the same number of CK, so the controller's RWDS
-election cannot change the timing of the read. A marginal cell at code 15 is
-therefore evidence for a DEVICE-side per-transaction event; a marginal cell at a
-code where `2L != 8` is consistent with either side.
+**Hence the discriminator, and it exists only under `legacy`.** `2L == 8` at
+`L = 4`, i.e. latency code 15, where the two branches wait the same number of CK
+and the controller's RWDS election cannot change the timing of the read. A
+marginal cell there is evidence for a DEVICE-side per-transaction event; one at
+a code where `2L != 8` is consistent with either side. Under `tracked` the short
+wait is `L` rounded down and the long one `2L`, which differ at every code -- so
+a `tracked` corpus has no free control and this discriminator is gone.
 
 ## Null hypotheses, stated before the numbers
 
@@ -68,8 +72,11 @@ AXES = ("lat", "mode", "drive", "clk", "sel")
 # the `Default` arm, which is code 2 -> 7.
 LATENCY_CLOCKS_BY_CODE = {14: 3, 15: 4, 0: 5, 1: 6, 2: 7}
 POWER_ON_LATENCY_CODE = 2
-# `hyperram_dqs_controller.py:113`, times two plus two -- see the module docstring.
-DQS_SHORT_WAIT_CK = 2 * 3 + 2
+# The SHORT wait in CK, per bitstream generation -- see the module docstring.
+# `legacy` is the class constant, `tracked` is #380's `2 x (L // 2)`.
+SHORT_WAIT_CK = {"legacy": lambda L: 2 * 3 + 2,
+                 "tracked": lambda L: 2 * (L // 2)}
+short_wait = SHORT_WAIT_CK["legacy"]
 
 log = logging.getLogger("hyperram-marginal-mechanism")
 
@@ -94,7 +101,8 @@ def election_matters(code):
     False means the controller's RWDS election cannot change this cell's read
     timing at all, so anything marginal there came from the device.
     """
-    return 2 * latency_ck(code) != DQS_SHORT_WAIT_CK
+    L = latency_ck(code)
+    return 2 * L != short_wait(L)
 
 
 def load(path):
@@ -198,14 +206,13 @@ def report_election(moved):
             continue
         code = int(axis_of(key, "lat"))
         (matters if election_matters(code) else irrelevant).append((key, code))
-    log.info("    election CAN change the wait (2L != %d CK): %d cell(s)",
-             DQS_SHORT_WAIT_CK, len(matters))
-    log.info("    election CANNOT change the wait (2L == %d CK, code 15): "
-             "%d cell(s)", DQS_SHORT_WAIT_CK, len(irrelevant))
+    log.info("    election CAN change the wait: %d cell(s)", len(matters))
+    log.info("    election CANNOT change the wait (both branches equal): "
+             "%d cell(s)", len(irrelevant))
     for key, code in irrelevant:
+        L = latency_ck(code)
         log.info("      %s  L=%d, both branches wait %d CK -- the DEVICE moved "
-                 "this one, not the election", key, latency_ck(code),
-                 DQS_SHORT_WAIT_CK)
+                 "this one, not the election", key, L, short_wait(L))
     return matters, irrelevant
 
 
@@ -344,14 +351,23 @@ def self_test():
             len(verdict) == 0 and len(count) == 1,
             f"verdict={len(verdict)} count={len(count)}")
 
-    # 3. The election arithmetic. Code 15 is L=4, so both branches wait 8 CK and
-    #    the RWDS election is a no-op there; every other code must differ.
-    require("code 15 (L=4) makes the two branches identical",
+    # 3. The election arithmetic. Under `legacy` code 15 is L=4, so both branches
+    #    wait 8 CK and the RWDS election is a no-op there; every other code must
+    #    differ. Under `tracked` (#380) no code is a no-op, so the free control
+    #    is gone -- a corpus read in the wrong mode would invent one.
+    global short_wait
+    short_wait = SHORT_WAIT_CK["legacy"]
+    require("legacy: code 15 (L=4) makes the two branches identical",
             not election_matters(15), f"2L={2 * latency_ck(15)} CK")
     others = [c for c in range(16) if c != 15]
-    require("every other code has branches that differ",
+    require("legacy: every other code has branches that differ",
             all(election_matters(c) for c in others),
             f"{sum(election_matters(c) for c in others)} of {len(others)}")
+    short_wait = SHORT_WAIT_CK["tracked"]
+    require("tracked: NO code makes the two branches identical",
+            all(election_matters(c) for c in range(16)),
+            f"{sum(election_matters(c) for c in range(16))} of 16")
+    short_wait = SHORT_WAIT_CK["legacy"]
     # A reserved code must inherit the power-on L, not silently read as 0.
     require("a reserved code takes the power-on L", latency_ck(7) == 7,
             f"L={latency_ck(7)}")
@@ -388,9 +404,20 @@ def main():
     parser.add_argument("--self-test", action="store_true",
                         help="show each check failing on the defect it exists "
                              "for, and exit")
+    parser.add_argument("--short-wait", default="legacy",
+                        choices=sorted(SHORT_WAIT_CK),
+                        help="which bitstream generation the runs came from; "
+                             "`legacy` is every run in results/hyperram/ "
+                             "(default), `tracked` is #380's build")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     setup_logging(args.verbose)
+
+    global short_wait
+    short_wait = SHORT_WAIT_CK[args.short_wait]
+    log.info("short wait: %s -- %s", args.short_wait,
+             "8 CK at every code, a class constant" if args.short_wait == "legacy"
+             else "2 x (L // 2) CK, driven from CR0[7:4] (#380)")
 
     if args.self_test:
         return 1 if self_test() else 0
