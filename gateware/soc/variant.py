@@ -38,7 +38,11 @@ first's bitstream as "built from these exact sources".
 `bist0-ck100-dqs1-mirror0-mirrordiv4` -- one `tag` + value per entry, in table
 order. Legible from `ls` and stable: a rung's directory has the same name every
 time it is built, which is what makes revisiting one a cache hit rather than a
-resynthesis. Nothing prunes them; see `scripts/soc_build_fanout.py --prune`.
+resynthesis.
+
+Nothing prunes them automatically. `scripts/clean_tmp.py --before <date>` is the
+sweeper, and it moves rather than deletes; `scripts/soc_build_fanout.py` reports
+what a run cost on disk.
 """
 
 import os

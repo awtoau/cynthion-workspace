@@ -82,6 +82,12 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
     "build": ("build firmware, bootloader and gateware (no hardware touched)",
               [PY, script("soc_run.py"), "--build-only"], True),
 
+    # N builds at once, one per variant. Also no board: a CK ladder is one
+    # bitstream per rung, and since #351 every artifact of a build lives under
+    # its own directory, so the rungs are concurrent rather than sequential.
+    "build-many": ("build several variants concurrently (no hardware touched)",
+                   [PY, script("soc_build_fanout.py")], True),
+
     # The QEMU shell gate. Seconds, and it is what makes a bad build cheap to
     # find: the alternative is a ~60 s synthesis and a reconfigure.
     "test": ("boot the firmware under QEMU and assert what its shell says",
