@@ -33,6 +33,10 @@ s6.5.5) says a part without differential-clock support silently DISCARDS the
 write, so a readback that does not follow the command is the part refusing the
 mode -- and every `dif`/`se` row ever taken is then void, not merely inert.
 
+`sel` has NO read-back and never will: `READCLKSEL` goes to the FPGA's DQSBUFM,
+not to the part. Nothing here can judge it, so it is reported from the engine's
+own PHY flag and settled properly by `hyperram_axis_wiring.py` (#343).
+
 Transcript -> `tmp/logs/hyperram-axis-liveness.txt`.
 """
 
@@ -55,6 +59,8 @@ TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-axis-liveness.txt"
 # does nothing.
 READBACK = re.compile(r"CR0\s+part reports\s+(0x[0-9a-fA-F]+)")
 READBACK_CR1 = re.compile(r"CR1\s+part reports\s+(0x[0-9a-fA-F]+)")
+# `bist status` names the PHY, which is what decides whether `sel` is wired.
+NON_DQS = re.compile(r"non-DQS PHY")
 
 # CR0 fields, Table 8 rev A01-006 p.21.
 FIELDS = {
@@ -149,16 +155,30 @@ def main():
             cr1_live = True
             print("  LIVE -- the part stored the mode it was commanded")
 
+        # `sel` from the ENGINE, because the part cannot answer for it. A
+        # non-DQS build reads `READCLKSEL` nowhere, so its every row is a repeat
+        # of its neighbour rather than a phase that made no difference (#343).
+        sel_unwired = bool(NON_DQS.search(board.send("bist status")))
+        print("\nREADCLKSEL  capture phase")
+        if sel_unwired:
+            print("  UNWIRED -- this is a non-DQS build and nothing in the "
+                  "gateware reads the register. Every `sel` row is a REPEAT.")
+        else:
+            print("  no read-back exists for it in either build; "
+                  "`hyperram_axis_wiring.py` shows it reaching the PHY here")
+
         print("\nsummary")
         for field, live in verdicts.items():
             print(f"  {field:20s} {'live' if live else 'NOT PROVEN'}")
         print(f"  {'CR1[6] clock mode':20s} "
               f"{'live' if cr1_live else 'NOT PROVEN'}")
+        print(f"  {'sel READCLKSEL':20s} "
+              f"{'UNWIRED -- rows are repeats' if sel_unwired else 'not judged here'}")
         verdicts["CR1[6] clock mode"] = bool(cr1_live)
 
-        if not all(verdicts.values()):
-            print("\nAny sweep row varying a NOT PROVEN field carries no "
-                  "information, in either direction.")
+        if not all(verdicts.values()) or sel_unwired:
+            print("\nAny sweep row varying a NOT PROVEN or UNWIRED field carries "
+                  "no information, in either direction.")
     finally:
         board.close()
         print(f"\ntranscript -> {TRANSCRIPT.relative_to(ROOT)}")
