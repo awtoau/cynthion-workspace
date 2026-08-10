@@ -145,8 +145,16 @@ class ControllerTop(Elaboratable):
 
     def __init__(self, *, sync_mhz: float, max_latency_clocks: int):
         self.phy = HyperBusPHY()
+        # The testbench's shim is IDEAL going out -- `csb`, CK and DQ all come off
+        # the record combinationally -- but its RWDS capture is clocked by CK, which
+        # does not start until two cycles after CS# falls, so the CA answer reaches
+        # the controller no earlier than cycle 5. Upstream's `HyperRAMPHY` samples on
+        # the FABRIC clock instead and is 3 out plus 1 back, a round trip of 4.
+        # `scripts/hyperram_phy_rwds_sim.py` is where the 4 is measured and where the
+        # real PHY is exercised. (#338)
         self.ctl = HyperRAMController(phy=self.phy, sync_mhz=sync_mhz,
-                                      max_latency_clocks=max_latency_clocks)
+                                      max_latency_clocks=max_latency_clocks,
+                                      phy_round_trip_cycles=3)
 
         # Control in.
         self.start_transfer     = Signal()
