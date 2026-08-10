@@ -65,15 +65,11 @@ SOC_RUN = ROOT / "scripts" / "soc_run.py"
 
 # How long one build may take before it is killed and reported.
 #
-# Measured 2026-08-10 on this machine (31 cores, LFE5U-12F, `--build-only`):
-# firmware and bootloader ~30 s when cargo has nothing to do, the CPU generator
-# ~40 s, synthesis 52-155 s. Worst case for one build alone is therefore ~230 s.
-# The first two are held under locks, so with `jobs` builds in flight the last
-# one waits behind (jobs - 1) of them: ~70 s each.
-#
-# 1.25x that bound. On expiry the child is killed and the row says which variant,
-# what the limit was and how long it had run -- a build that overruns names
-# itself in the log rather than looking like a hang.
+# Waits on: firmware, the CPU generator and synthesis, for one variant.
+# One build alone is ~230 s worst case, and each other build in flight adds ~70 s
+# of lock wait to the last one -- both measured, and the workings are in #351.
+# 1.25x that. On expiry the child is killed and the row names the variant, the
+# limit and the elapsed, so an overrun cannot look like a hang.
 BASE_SECONDS = 230
 LOCKED_SECONDS = 70
 
