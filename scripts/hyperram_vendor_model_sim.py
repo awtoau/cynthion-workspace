@@ -94,11 +94,18 @@ REQUIRED_MARKERS = (
     "PASS differential clock accepted",
     "PASS mem[0x000000] = dead",
     "PASS mem[0x3fffff] = 5aa5",
-    # Latency is checked as an exact edge count, not just "shorter". Both models
-    # must agree to the edge, or the twin has drifted from the part it stands in
-    # for -- and the RWDS level during CA is the half that #338 turns on.
-    "fixed    strobe at 28 edges, RWDS during CA = 1",
-    "variable strobe at 14 edges, RWDS during CA = 0",
+    # The RWDS level during CA is the half of the latency question #338 turns
+    # on, so it stays here. The exact edge count does NOT: this testbench finds
+    # it by hunting for the strobe, and the hunt burns a different number of
+    # edges on the two models even where both drive data and strobe on the same
+    # edge -- so a single expected string cannot match both, and pinning one
+    # made a correct fix to the twin look like a regression.
+    #
+    # dqs_latency_probe_tb.sv measures the data edge directly, on both models,
+    # over the whole sparse code table. That is where an exact count belongs;
+    # scripts/hyperram_dqs_model_sim.py --stage probe runs it.
+    "RWDS during CA = 1",
+    "RWDS during CA = 0",
     "PASS wrapped burst wraps to the group start",
     "PASS hybrid burst: leaves the group after one pass",
     "PASS device is silent in deep power down",
@@ -155,7 +162,11 @@ STEP_TIMEOUT_S = 10
 # distinguishable at all, and what #338 is about.
 FAULT_CASES = (
     ("control", {}, (
-        "ca rwds = zz1111, strobe at 28 edges, id0 = 0c86",
+        # 27, not 28: the twin used to delay reads one edge past the vendor and
+        # this row pinned that. dqs_latency_probe_tb.sv caught it at every
+        # latency code, and the twin now drives data on the same edge the part
+        # does. See the note on the strobe hunt above.
+        "ca rwds = zz1111, strobe at 27 edges, id0 = 0c86",
         "mem[0x000100] = 1234",
         "burst served 8 of 8",
         "cr0 after write = af2f",

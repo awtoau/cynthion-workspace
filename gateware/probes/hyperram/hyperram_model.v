@@ -263,14 +263,16 @@ module hyperram_model #(
           // edges). It is dropped in the latency branch below.
           if (!is_read) rwds_oe = 1'b0;   // on any write the HOST owns RWDS from here
         end
-      end else if (beat < first_data_beat(is_register && !is_read) +
-                          (is_read ? 16'd1 : 16'd0)) begin
+      end else if (beat < first_data_beat(is_register && !is_read)) begin
         rwds_out = 1'b0;                // latency period: the request is answered
         if (is_read) rwds_oe = 1'b1;    // CA_RWDS_FAULT covers the CA and no more
       end else begin
-        // A read starts one edge later than a write at the same latency -- the
-        // device has to turn the bus around. Measured against the vendor model:
-        // 28 edges to the strobe at 14 CK fixed, 14 at 7 CK variable.
+        // Reads and writes start at the SAME edge. An earlier version delayed
+        // reads by one, "measured against the vendor model" -- but that was
+        // measured by hunting for the RWDS strobe, and the two models drive RWDS
+        // through the latency differently, so the hunt agreed while the DQ edge
+        // did not. dqs_latency_probe_tb.sv measures the DQ edge directly on both
+        // models and caught it at every latency code.
         if (is_read && DELIVER_WORDS >= 0 && served >= DELIVER_WORDS) begin
           // The device has stopped answering. Both lines released, so there is no
           // strobe and the address does not advance -- what a part in Deep Power
@@ -282,7 +284,7 @@ module hyperram_model #(
           rwds_oe  = 1'b1;
           rd_word  = read_word(word_addr);   // Icarus will not part-select a call
           // Even data beats carry the high byte and raise the strobe.
-          if (!((beat - first_data_beat(1'b0) - 16'd1) & 1)) begin
+          if (!((beat - first_data_beat(1'b0)) & 1)) begin
             dq_out   = rd_word[15:8];
             rwds_out = 1'b1;
           end else begin
