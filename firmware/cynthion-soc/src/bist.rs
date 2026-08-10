@@ -468,34 +468,62 @@ impl Bist {
         let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}",
                          self.read(reg::CLOCK), self.read(reg::CONFIG));
         self.describe_status(uart, "at rest", self.read(reg::STATUS));
-        // WHAT THE PART SAYS, against what it was told. Datasheet default is
-        // 0x8F2F: latency code 2 (7 clocks), fixed, drive 34 ohms.
-        let back = self.read(reg::DEVICE_READBACK) & 0xffff;
-        let _ = writeln!(
-            uart, "  CR0     part reports {:#06x}  latency code {} {}  drive {}",
-            back, (back >> 4) & 0xf,
-            if back & 8 != 0 { "fixed" } else { "variable" },
-            (back >> 12) & 0x7);
-        // CR1[6] IS A CAPABILITY, not a setting. The vendor's application note
-        // (rev P01, s6.5.5) says a part without differential-clock support
-        // silently discards a write to this bit -- so the readback is the only
-        // thing that separates "the axis has no effect" from "the axis never
-        // moved", which are the same measurement without it (#334, #336).
-        let cr1 = self.read(reg::DEVICE_READBACK_CR1) & 0xffff;
-        let _ = writeln!(
-            uart, "  CR1     part reports {:#06x}  clock {}  hybrid sleep {}",
-            cr1,
-            if cr1 & (1 << 6) != 0 { "single-ended" } else { "differential" },
-            if cr1 & (1 << 5) != 0 { "ON -- the part is asleep" } else { "off" });
-        if cr1 == 0 || cr1 == 0xffff {
+
+        // NOTHING IS LATCHED UNTIL A CELL HAS RUN.
+        //
+        // `CONFIG_VERIFY` in `hyperram_ceiling_top.py` is what reads CR0 and
+        // CR1 back off the part, and only a commanded run reaches it. On a cold
+        // board both registers hold their reset value -- 0x0000 -- and the
+        // block below used to decode that into `latency code 0 variable
+        // drive 0` and then attribute it to a broken register read path. Both
+        // are claims about a part nothing has spoken to.
+        //
+        // The discriminator is the ENGINE's `write_cycles`, not a flag this
+        // firmware keeps: it is only ever incremented, never cleared, and its
+        // first increment is `WRITE_START`, which every run reaches through the
+        // config path. So it stays right across a reconfigure this firmware did
+        // not initiate, which a session flag would not.
+        //
+        // What it cannot separate: a sweep driven from the gateware leaves the
+        // host's apply bits clear, and `CONFIG_CR1` then jumps straight to
+        // `WRITE_START` without verifying -- the counter advances with nothing
+        // latched. `configure` below always sets both apply bits, so reaching
+        // that state needs a sweep started by something other than this shell.
+        let write_cycles = self.read(reg::WRITE_CYCLES);
+        if write_cycles == 0 {
             let _ = writeln!(uart,
-                "  CR1     READBACK IS {:#06x} -- so the dif/se axis cannot be \
-                 judged in either direction", cr1);
-        }
-        if back == 0 || back == 0xffff {
-            let _ = writeln!(uart,
-                "  CR0     READBACK IS {:#06x} -- the register read path is not \
-                 working, so nothing here says the write landed", back);
+                "  CR0/CR1 NOT LATCHED -- no cell has run since this bitstream \
+                 was configured, so nothing has been read back off the part");
+        } else {
+            // WHAT THE PART SAYS, against what it was told. Datasheet default is
+            // 0x8F2F: latency code 2 (7 clocks), fixed, drive 34 ohms.
+            let back = self.read(reg::DEVICE_READBACK) & 0xffff;
+            let _ = writeln!(
+                uart, "  CR0     part reports {:#06x}  latency code {} {}  drive {}",
+                back, (back >> 4) & 0xf,
+                if back & 8 != 0 { "fixed" } else { "variable" },
+                (back >> 12) & 0x7);
+            // CR1[6] IS A CAPABILITY, not a setting. The vendor's application note
+            // (rev P01, s6.5.5) says a part without differential-clock support
+            // silently discards a write to this bit -- so the readback is the only
+            // thing that separates "the axis has no effect" from "the axis never
+            // moved", which are the same measurement without it (#334, #336).
+            let cr1 = self.read(reg::DEVICE_READBACK_CR1) & 0xffff;
+            let _ = writeln!(
+                uart, "  CR1     part reports {:#06x}  clock {}  hybrid sleep {}",
+                cr1,
+                if cr1 & (1 << 6) != 0 { "single-ended" } else { "differential" },
+                if cr1 & (1 << 5) != 0 { "ON -- the part is asleep" } else { "off" });
+            if cr1 == 0 || cr1 == 0xffff {
+                let _ = writeln!(uart,
+                    "  CR1     READBACK IS {:#06x} -- so the dif/se axis cannot be \
+                     judged in either direction", cr1);
+            }
+            if back == 0 || back == 0xffff {
+                let _ = writeln!(uart,
+                    "  CR0     READBACK IS {:#06x} after a run -- the register read \
+                     path is not working, so nothing here says the write landed", back);
+            }
         }
         self.describe_fsm(uart);
         // Counters the engine drives from `hr`. If `hr` is not running at all,
@@ -503,7 +531,7 @@ impl Bist {
         // because `clock` above is a constant baked in at elaboration and says
         // nothing about whether the PLL locked.
         let _ = writeln!(uart, "  cycles  write {}  read {}  words {}  errors {}",
-                         self.read(reg::WRITE_CYCLES), self.read(reg::READ_CYCLES),
+                         write_cycles, self.read(reg::READ_CYCLES),
                          self.read(reg::WORDS), self.read(reg::ERRORS));
         let _ = writeln!(uart, "  compare actual {:#010x}  golden {:#010x}",
                          self.read(reg::ACTUAL), self.read(reg::GOLDEN));

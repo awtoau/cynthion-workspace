@@ -100,6 +100,14 @@ fn main() {
     let target = env::var("TARGET").unwrap_or_else(|_| "unknown".into());
     let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".into());
 
+    // The OPTIMISATION LEVEL, which `PROFILE` does not carry.
+    //
+    // `release` is a profile name, not a setting: `scripts/opt_level_sweep.py`
+    // builds `-O0` through `-Oz` all under it, and the Cargo.toml figure has a
+    // STALE note on it. Cargo hands the build script the level it actually
+    // passed, so this is the one in the binary rather than the one in the file.
+    let opt = env::var("OPT_LEVEL").unwrap_or_else(|_| "unknown".into());
+
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("build_info.rs");
     fs::write(
         &out,
@@ -113,7 +121,9 @@ fn main() {
          pub const BUILT: &str = {built:?};\n\
          pub const RUSTC: &str = {rustc:?};\n\
          pub const TARGET: &str = {target:?};\n\
-         pub const PROFILE: &str = {profile:?};\n"
+         pub const PROFILE: &str = {profile:?};\n\
+         /// `-C opt-level`, as cargo passed it. See the note in build.rs.\n\
+         pub const OPT_LEVEL: &str = {opt:?};\n"
         ),
     )
     .unwrap();

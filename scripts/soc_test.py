@@ -933,6 +933,15 @@ def main():
               "distinguish this image from one built for another target.\n"
               f"received: {show(reply) or '(nothing)'}")
 
+        # And the optimisation level, which the profile name does not carry.
+        # `opt_level_sweep.py` builds -O0 through -Oz all under `release`, and
+        # a size or speed figure taken from an image that cannot say which one
+        # it is has nothing to attach itself to.
+        check("`info` names the optimisation level, not just the profile",
+              b"release -O" in reply,
+              "the tools line carried a profile name and no level.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
         # The dirty flag, against git rather than against itself. A hash
         # with no dirty flag beside it is a claim nobody can check, which is
         # worse than no hash at all.
@@ -1089,6 +1098,58 @@ def main():
               "transaction. It must read caches only: it touches every\n"
               "device on the board, so a live sweep is the single most\n"
               "likely thing to land inside the PAC1954's REFRESH window.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
+        # --- the boot report, re-run -------------------------------------------
+        #
+        # `init` with no argument runs the same sequence `main::boot` runs, so
+        # the lines asserted here are the lines the boot report carries. The
+        # boot report itself is replayed on a console's first keypress, which
+        # this harness has already consumed by the time it can assert anything.
+        #
+        # The three lines below are the ones that were added because a
+        # constant restated is not evidence. Each has a verdict that can be
+        # `FAIL`, and asserting the verdict rather than the presence of the
+        # line is what makes these checks able to fail.
+        reply = command("init", [b"isa", b"clocks", b"die"],
+                        "`init` re-runs the boot sequence and reports the "
+                        "CPU, the clocks and the die")
+
+        # EXECUTED, not claimed. `misa` on the board's core reads `rv32im`
+        # however it was generated, so the only account worth having is the
+        # instructions running. Under QEMU there is no gateware word to gate
+        # on and every class the compiler emitted for is run.
+        check("the instruction classes the image was compiled with run",
+              b"isa" in reply and b"lr/sc and amo" in reply
+              and b"riscv32imac" in reply and b"isa       FAIL" not in reply,
+              "the `isa` line did not report the compiled-for classes as\n"
+              "executed. A `FAIL` here is either a core generated without an\n"
+              "extension this image uses -- every one of those instructions\n"
+              "traps -- or a class that returned the wrong answer.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
+        # MEASURED against declared. Absent under QEMU, which has no clock
+        # monitor; on the board it must agree with `target::TIME_HZ` within
+        # 1% and the PLL must say it locked.
+        check("sync is counted, not declared" if board
+              else "a target with no clock monitor says so",
+              (b"clocks    ok" in reply and b"counted at" in reply) if board
+              else b"clocks    ABSENT" in reply,
+              "the `clocks` line did not carry a counted frequency. A PLL\n"
+              "with its feedback unconnected reported 30 MHz from a constant\n"
+              "while `sync` was not oscillating at all.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
+        # The die, and the one thing on this board that turns on it: tCSM is
+        # 4000 ns below 85 C and 1000 ns above, and every CS# cap here is
+        # derived from 4000 ns. A `WARN` is a real reading above the knee.
+        check("the die reports a temperature and the tCSM regime" if board
+              else "a target with no DTR says so",
+              (b"dtr code" in reply and b"tCSM" in reply) if board
+              else b"die       ABSENT" in reply,
+              "the `die` line did not carry a reading and the tCSM figure it\n"
+              "implies. Above 85 C the CS# caps in this design are 4x too\n"
+              "loose and nothing else on the board would say so.\n"
               f"received: {show(reply) or '(nothing)'}")
 
         # --- the deferred interrupt log ----------------------------------------

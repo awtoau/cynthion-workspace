@@ -247,158 +247,186 @@ fn rail_result(uart: &mut Uart, report: &mut Report, rail: Rail, measured_mv: u3
     );
 }
 
+/// The instruction-class proofs, with no console attached.
+///
+/// `init::isa` runs these at boot and this file runs them from `selftest`, so
+/// there is ONE copy of each sequence. A second copy would be two things to keep
+/// correct, and the boot line's whole value is that it exercises what `selftest`
+/// exercises without anyone having to type it.
+pub(crate) mod classes {
+    use super::opaque;
+
+    /// The base integer set, on values the compiler cannot see.
+    pub fn alu() -> bool {
+        let a = opaque(0x1234_5678);
+        let b = opaque(0x9abc_def0);
+        let mut ok = a.wrapping_add(b) == 0xacf1_3568;
+        ok &= a.wrapping_sub(b) == 0x7777_7788;
+        ok &= (a ^ b) == 0x8888_8888;
+        ok &= (a & b) == 0x1234_5670;
+        ok &= (a | b) == 0x9abc_def8;
+        ok &= (a << 5) == 0x468a_cf00;
+        ok &= (a >> 5) == 0x0091_a2b3;
+        // Arithmetic versus logical shift: the one the compiler picks by the
+        // type, and the one an `sra` that was wired as `srl` would get wrong.
+        ok &= ((b as i32) >> 4) == -0x6543_211;
+        ok &= (b >> 4) == 0x09ab_cdef;
+        ok & ((a < b) && ((a as i32) > (b as i32)))
+    }
+
+    /// `M`: the multiply and divide unit, including the signed corners.
+    pub fn muldiv() -> bool {
+        let a = opaque(0x1234_5678);
+        let b = opaque(0x9abc_def0);
+        let mut ok = a.wrapping_mul(3) == 0x369d_0368;
+        // The high half is a separate instruction from the low half, and a core
+        // that returned the low half for both would pass every test that only
+        // multiplies small numbers.
+        ok &= (((a as u64) * (b as u64)) >> 32) as u32 == 0x0b00_ea4e;
+        ok &= ((a as i32 as i64 * b as i32 as i64) >> 32) as u32 == 0xf8cc_93d6;
+        ok &= a / opaque(1000) == 305_419;
+        ok &= a % opaque(1000) == 896;
+        // Signed division truncates toward zero in RISC-V, so this is -7 and not
+        // -8, and the remainder takes the dividend's sign.
+        ok &= (opaque((-50i32) as u32) as i32) / (opaque(7) as i32) == -7;
+        ok &= (opaque((-50i32) as u32) as i32) % (opaque(7) as i32) == -1;
+        // Division by zero is defined rather than trapping: all-ones for the
+        // quotient, the dividend for the remainder.
+        let (quotient, remainder): (u32, u32);
+        // SAFETY: two arithmetic instructions on registers.
+        unsafe {
+            core::arch::asm!("divu {q}, {a}, {z}", "remu {r}, {a}, {z}",
+                             a = in(reg) a, z = in(reg) opaque(0),
+                             q = out(reg) quotient, r = out(reg) remainder,
+                             options(nomem, nostack));
+        }
+        ok & (quotient == 0xffff_ffff && remainder == a)
+    }
+
+    /// `C`: the value three compressed instructions produce, and the bytes they
+    /// occupied.
+    ///
+    /// The result alone would not settle it -- the assembler could have emitted
+    /// the 32-bit forms and the answer would be the same. The length is computed
+    /// by the assembler from what it actually emitted, and it is what says the
+    /// encodings were two bytes each.
+    pub fn compressed() -> (u32, u32) {
+        let value: u32;
+        let length: u32;
+        // SAFETY: arithmetic on registers the compiler allocated for us. `c.li`,
+        // `c.addi` and `c.slli` are CI-format and take any register but x0,
+        // which `out(reg)` never gives.
+        unsafe {
+            core::arch::asm!(
+                ".option push",
+                ".option rvc",         // explicit c.* mnemonics need it enabled
+                "1:",
+                "c.li {v}, 5",
+                "c.addi {v}, 3",
+                "c.slli {v}, 4",
+                "2:",
+                ".option pop",
+                "li {l}, 2b - 1b",
+                v = out(reg) value,
+                l = out(reg) length,
+                options(nomem, nostack));
+        }
+        (value, length)
+    }
+
+    /// `A`: a reservation pair and three read-modify-write forms.
+    pub fn atomics() -> bool {
+        let mut cell: u32 = 0;
+        let address = &mut cell as *mut u32;
+        let mut ok = true;
+
+        // lr/sc, with retries. A reservation is broken by anything that
+        // intervenes, and interrupts are live here -- a console byte landing
+        // between the pair is a legitimate failure of that attempt and not of
+        // the CPU. Each attempt is four instructions; eight consecutive
+        // interrupts inside that window is not a sequence this machine
+        // produces, so a run that never succeeds is a real fault.
+        let mut stored = false;
+        for _ in 0..8 {
+            let (old, status): (u32, u32);
+            // SAFETY: `cell` is our own stack slot, word aligned, in cacheable
+            // block RAM -- which is where lr/sc are defined to work on this
+            // core.
+            unsafe {
+                core::arch::asm!(
+                    "lr.w {old}, ({p})",
+                    "sc.w {st}, {new}, ({p})",
+                    p = in(reg) address, new = in(reg) 0x5a5a_5a5au32,
+                    old = out(reg) old, st = out(reg) status,
+                    options(nostack));
+            }
+            if status == 0 {
+                ok &= old == 0 && cell == 0x5a5a_5a5a;
+                stored = true;
+                break;
+            }
+        }
+        ok &= stored;
+
+        // SAFETY: as above.
+        let swapped: u32;
+        let added: u32;
+        let ored: u32;
+        unsafe {
+            core::arch::asm!("amoswap.w {out}, {new}, ({p})",
+                             p = in(reg) address, new = in(reg) 0x0000_00f0u32,
+                             out = out(reg) swapped, options(nostack));
+            core::arch::asm!("amoadd.w {out}, {add}, ({p})",
+                             p = in(reg) address, add = in(reg) 0x0000_000fu32,
+                             out = out(reg) added, options(nostack));
+            core::arch::asm!("amoor.w {out}, {bits}, ({p})",
+                             p = in(reg) address, bits = in(reg) 0x0000_ff00u32,
+                             out = out(reg) ored, options(nostack));
+        }
+        // Each returns the value it replaced, which is the property that makes
+        // an amo an atomic rather than a store.
+        ok &= swapped == 0x5a5a_5a5a && added == 0x0000_00f0 && ored == 0x0000_00ff;
+        ok & (cell == 0x0000_ffff)
+    }
+}
+
 /// The base integer set, on values the compiler cannot see.
 fn alu(uart: &mut Uart, report: &mut Report) {
-    let a = opaque(0x1234_5678);
-    let b = opaque(0x9abc_def0);
-    let mut ok = a.wrapping_add(b) == 0xacf1_3568;
-    ok &= a.wrapping_sub(b) == 0x7777_7788;
-    ok &= (a ^ b) == 0x8888_8888;
-    ok &= (a & b) == 0x1234_5670;
-    ok &= (a | b) == 0x9abc_def8;
-    ok &= (a << 5) == 0x468a_cf00;
-    ok &= (a >> 5) == 0x0091_a2b3;
-    // Arithmetic versus logical shift: the one the compiler picks by the type,
-    // and the one an `sra` that was wired as `srl` would get wrong.
-    ok &= ((b as i32) >> 4) == -0x6543_211;
-    ok &= (b >> 4) == 0x09ab_cdef;
-    ok &= (a < b) && ((a as i32) > (b as i32));
     report.ok(
         uart,
         "alu",
-        ok,
+        classes::alu(),
         format_args!("add sub and or xor shift compare, signed and not"),
     );
 }
 
 /// `M`: the multiply and divide unit, including the signed corners.
 fn muldiv(uart: &mut Uart, report: &mut Report) {
-    let a = opaque(0x1234_5678);
-    let b = opaque(0x9abc_def0);
-    let mut ok = a.wrapping_mul(3) == 0x369d_0368;
-    // The high half is a separate instruction from the low half, and a core
-    // that returned the low half for both would pass every test that only
-    // multiplies small numbers.
-    ok &= (((a as u64) * (b as u64)) >> 32) as u32 == 0x0b00_ea4e;
-    ok &= ((a as i32 as i64 * b as i32 as i64) >> 32) as u32 == 0xf8cc_93d6;
-    ok &= a / opaque(1000) == 305_419;
-    ok &= a % opaque(1000) == 896;
-    // Signed division truncates toward zero in RISC-V, so this is -7 and not
-    // -8, and the remainder takes the dividend's sign.
-    ok &= (opaque((-50i32) as u32) as i32) / (opaque(7) as i32) == -7;
-    ok &= (opaque((-50i32) as u32) as i32) % (opaque(7) as i32) == -1;
-    // Division by zero is defined rather than trapping: all-ones for the
-    // quotient, the dividend for the remainder.
-    let (quotient, remainder): (u32, u32);
-    // SAFETY: two arithmetic instructions on registers.
-    unsafe {
-        core::arch::asm!("divu {q}, {a}, {z}", "remu {r}, {a}, {z}",
-                         a = in(reg) a, z = in(reg) opaque(0),
-                         q = out(reg) quotient, r = out(reg) remainder,
-                         options(nomem, nostack));
-    }
-    ok &= quotient == 0xffff_ffff && remainder == a;
     report.ok(
         uart,
         "muldiv",
-        ok,
+        classes::muldiv(),
         format_args!("mul mulh div rem, signed and by zero (M)"),
     );
 }
 
 /// `C`: three compressed instructions, and the six bytes they occupy.
-///
-/// The result alone would not settle it -- the assembler could have emitted the
-/// 32-bit forms and the answer would be the same. The label difference is what
-/// says the encodings were two bytes each, and it is computed by the assembler
-/// from the instructions it actually emitted.
 fn compressed(uart: &mut Uart, report: &mut Report) {
-    let value: u32;
-    let length: u32;
-    // SAFETY: arithmetic on registers the compiler allocated for us. `c.li`,
-    // `c.addi` and `c.slli` are CI-format and take any register but x0, which
-    // `out(reg)` never gives.
-    unsafe {
-        core::arch::asm!(
-            ".option push",
-            ".option rvc",         // explicit c.* mnemonics need it enabled
-            "1:",
-            "c.li {v}, 5",
-            "c.addi {v}, 3",
-            "c.slli {v}, 4",
-            "2:",
-            ".option pop",
-            "li {l}, 2b - 1b",
-            v = out(reg) value,
-            l = out(reg) length,
-            options(nomem, nostack));
-    }
-    let ok = value == 128 && length == 6;
+    let (value, length) = classes::compressed();
     report.ok(
         uart,
         "comp",
-        ok,
+        value == 128 && length == 6,
         format_args!("(5+3)<<4 = {} in {} bytes (C)", value, length),
     );
 }
 
 /// `A`: a reservation pair and three read-modify-write forms.
 fn atomics(uart: &mut Uart, report: &mut Report) {
-    let mut cell: u32 = 0;
-    let address = &mut cell as *mut u32;
-    let mut ok = true;
-
-    // lr/sc, with retries. A reservation is broken by anything that intervenes,
-    // and interrupts are live here -- a console byte landing between the pair
-    // is a legitimate failure of that attempt and not of the CPU. Each attempt
-    // is four instructions; eight consecutive interrupts inside that window is
-    // not a sequence this machine produces, so a run that never succeeds is a
-    // real fault.
-    let mut stored = false;
-    for _ in 0..8 {
-        let (old, status): (u32, u32);
-        // SAFETY: `cell` is our own stack slot, word aligned, in cacheable
-        // block RAM -- which is where lr/sc are defined to work on this core.
-        unsafe {
-            core::arch::asm!(
-                "lr.w {old}, ({p})",
-                "sc.w {st}, {new}, ({p})",
-                p = in(reg) address, new = in(reg) 0x5a5a_5a5au32,
-                old = out(reg) old, st = out(reg) status,
-                options(nostack));
-        }
-        if status == 0 {
-            ok &= old == 0 && cell == 0x5a5a_5a5a;
-            stored = true;
-            break;
-        }
-    }
-    ok &= stored;
-
-    // SAFETY: as above.
-    let swapped: u32;
-    let added: u32;
-    let ored: u32;
-    unsafe {
-        core::arch::asm!("amoswap.w {out}, {new}, ({p})",
-                         p = in(reg) address, new = in(reg) 0x0000_00f0u32,
-                         out = out(reg) swapped, options(nostack));
-        core::arch::asm!("amoadd.w {out}, {add}, ({p})",
-                         p = in(reg) address, add = in(reg) 0x0000_000fu32,
-                         out = out(reg) added, options(nostack));
-        core::arch::asm!("amoor.w {out}, {bits}, ({p})",
-                         p = in(reg) address, bits = in(reg) 0x0000_ff00u32,
-                         out = out(reg) ored, options(nostack));
-    }
-    // Each returns the value it replaced, which is the property that makes an
-    // amo an atomic rather than a store.
-    ok &= swapped == 0x5a5a_5a5a && added == 0x0000_00f0 && ored == 0x0000_00ff;
-    ok &= cell == 0x0000_ffff;
-
     report.ok(
         uart,
         "atomic",
-        ok,
+        classes::atomics(),
         format_args!("lr/sc amoswap amoadd amoor (A)"),
     );
 }
