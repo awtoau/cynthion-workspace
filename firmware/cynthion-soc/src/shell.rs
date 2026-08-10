@@ -20,6 +20,10 @@ pub(crate) mod editor;
 
 pub(crate) use console::board_absent;
 pub(crate) mod hardware;
+// The `hr` verb and the `load`/`parse_hex`/`staging` helpers below are compiled
+// out under `hyperram-bist` -- see the dispatch arms. `cynthion-boot` carries the
+// same allow for the same reason (#226).
+#[cfg_attr(feature = "hyperram-bist", allow(dead_code))]
 pub(crate) mod hr;
 pub(crate) mod i2c;
 pub(crate) mod led;
@@ -34,8 +38,10 @@ pub(crate) mod vbus;
 
 use core::fmt::Write;
 
+#[cfg_attr(feature = "hyperram-bist", allow(unused_imports))]
 use self::parse::{parse_decimal, parse_hex, trim};
 use crate::uart::Uart;
+#[cfg_attr(feature = "hyperram-bist", allow(unused_imports))]
 use crate::{
     bench, board, clock, events, info, log,
     reboot, sched, scratch_responds, selftest, staging, target, timer,
@@ -577,13 +583,24 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // healthy. This asks whether the core and the flash window work at all,
         // and it is the thing to run first when a board is behaving strangely --
         // every other command's output is only worth reading if this passes.
+        // `load` and `hr` reach the part through the BootRAM CSR window, and the
+        // BIST variant decodes neither that nor HYPERRAM_PROBE -- the engine owns
+        // the pins. A load to an undecoded address never acks, so the CPU stalls
+        // mid-command and the board goes silent with no way to ask why. Same
+        // defect as the boot-time probe in `init.rs`, same guard (#226).
+        #[cfg(not(feature = "hyperram-bist"))]
         b"load" => match parse_hex(rest) {
             Some(len) => staging::load(index, uart, len),
             None => {
                 let _ = writeln!(uart, "usage: load <hex byte count>");
             }
         },
+        #[cfg(not(feature = "hyperram-bist"))]
         b"hr" => hr::command(uart, trim(rest)),
+        #[cfg(feature = "hyperram-bist")]
+        b"load" | b"hr" => {
+            let _ = writeln!(uart, "hyperram ABSENT: the BIST engine owns the part; use `bist`");
+        }
         b"reset" => {
             let _ = writeln!(uart, "restarting");
             reboot();
