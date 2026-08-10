@@ -61,6 +61,7 @@ import contextlib
 import fcntl
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from amaranth               import Elaboratable, Module, Signal, Instance, Cat
@@ -77,42 +78,21 @@ from amaranth_soc           import wishbone
 # cached netlist means this path is never touched -- only a cache miss reaches
 # it, and those are rare enough to be years apart.
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
 
+from shared_paths import resolve_shared            # noqa: E402
 
-def _superproject(root):
-    """The main checkout behind a git worktree, or None.
-
-    A linked worktree's `.git` is a file naming `<super>/.git/worktrees/<name>`.
-    """
-    marker = root / ".git"
-    if not marker.is_file():
-        return None
-    gitdir = Path(marker.read_text().partition("gitdir:")[2].strip())
-    return gitdir.parents[2] if gitdir.parent.name == "worktrees" else None
-
-
-def _checkout():
-    """The VexiiRiscv sources to generate from.
-
-    A worktree has NO `repos/vexiiriscv` of its own -- `git worktree add` does not
-    populate submodules -- so it falls back to the main checkout's, which is then
-    shared and is what `_generator_lock` must therefore be keyed on. `VEXII_ROOT`
-    overrides both.
-    """
-    candidates = [Path(os.environ["VEXII_ROOT"])] if os.environ.get("VEXII_ROOT") else []
-    candidates.append(ROOT / "repos" / "vexiiriscv")
-    superproject = _superproject(ROOT)
-    if superproject is not None:
-        candidates.append(superproject / "repos" / "vexiiriscv")
-    for candidate in candidates:
-        if (candidate / "build.sbt").is_file():
-            return candidate
-    # Not raised at import: a caller that never regenerates (soc_generate_pac.py
-    # patches generate out) must still be able to import this module.
-    return candidates[-1]
-
-
-VEXII = _checkout()
+# The VexiiRiscv sources to generate from: this checkout, else the main one
+# behind a worktree, `VEXII_ROOT` overriding both. `build.sbt` is the marker
+# because an unpopulated submodule is a directory that exists and holds nothing.
+#
+# `./dev.py worktree-setup` gives a worktree its own, which is what stops the
+# fallback sharing one generator directory between concurrent builds (#306).
+# Falling back is not an error at import: a caller that never regenerates
+# (soc_generate_pac.py patches generate out) must still be able to import this.
+VEXII = (resolve_shared(ROOT, Path("repos/vexiiriscv"), env_var="VEXII_ROOT",
+                        marker="build.sbt")
+         or ROOT / "repos" / "vexiiriscv")
 
 # The generator flags that produce a Wishbone core with caches and atomics.
 #
@@ -238,9 +218,10 @@ def _generator_lock():
     Beside `tmp/`, not inside the submodule: an untracked lock file in
     `repos/vexiiriscv` shows up as a dirty submodule forever after.
 
-    Keyed on the CHECKOUT, not on `ROOT`: worktrees have no submodules of their
-    own and share the main checkout's, so a lock under each worktree's own `tmp/`
-    excludes nothing between them -- which is the race in #306.
+    Keyed on the CHECKOUT `VEXII` lives in, not on `ROOT`. The two are the same
+    once `./dev.py worktree-setup` has run; a worktree that falls back to the
+    main checkout's submodule shares its generator directory, and a lock under
+    each worktree's own `tmp/` would exclude nothing between them (#306).
     """
     lock = VEXII.parent.parent / "tmp" / "vexii-generate.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -312,9 +293,8 @@ def generate(reset_addr, cache_sets=128, output=None, regions=None,
     # that was about to succeed.
     if not (VEXII / "build.sbt").is_file():
         raise FileNotFoundError(
-            f"no VexiiRiscv checkout at {VEXII}. It is a submodule: "
-            f"`git submodule update --init repos/vexiiriscv` in the main checkout, "
-            f"or set VEXII_ROOT. A worktree has none of its own.")
+            f"no VexiiRiscv checkout at {VEXII}. `git worktree add` populates no "
+            f"submodules: run `./dev.py worktree-setup` (#365), or set VEXII_ROOT.")
 
     with _generator_lock():
         result = subprocess.run(
