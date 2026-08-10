@@ -16,6 +16,8 @@
 //! Per console, not global: two half-typed lines must not share a buffer.
 
 use embedded_cli::cli::{Cli, CliBuilder, CliHandle};
+use core::fmt::Write;
+
 use embedded_cli::command::RawCommand;
 use embedded_cli::service::{Autocomplete, CommandProcessor, Help, ProcessError};
 use embedded_cli::autocomplete::{Autocompletion, Request};
@@ -201,6 +203,9 @@ pub fn editor(uart: Uart) -> Option<Editor> {
 pub struct Dispatch<'a> {
     pub index: usize,
     pub devices: &'a mut crate::Devices,
+    /// The line as typed, or empty on a history recall. Preferred over the
+    /// crate's tokens, which cannot represent a negative number (#347).
+    pub typed: &'a [u8],
 }
 
 impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
@@ -221,18 +226,37 @@ impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
 
         let mut line = [0u8; COMMAND_LEN];
         let mut len = 0usize;
-        push(&mut line, &mut len, raw.name().as_bytes());
-        for arg in raw.args().args() {
-            if let Ok(embedded_cli::arguments::Arg::Value(value)) = arg {
-                push(&mut line, &mut len, b" ");
-                push(&mut line, &mut len, value.as_bytes());
+        let mut uart = crate::primary_for(self.index);
+
+        if !self.typed.is_empty() {
+            // The typed line, straight through. A token like `-250` never
+            // survives `ArgList`: it is three `Err(NonAsciiShortOption)`s, and
+            // the reconstruction below drops every one of them (#347).
+            push(&mut line, &mut len, self.typed);
+        } else {
+            push(&mut line, &mut len, raw.name().as_bytes());
+            for arg in raw.args().args() {
+                match arg {
+                    Ok(embedded_cli::arguments::Arg::Value(value)) => {
+                        push(&mut line, &mut len, b" ");
+                        push(&mut line, &mut len, value.as_bytes());
+                    }
+                    // A dropped argument used to look like one that was given
+                    // and did nothing. Say so instead.
+                    _ => {
+                        let _ = writeln!(
+                            uart,
+                            "argument dropped: recall the line and retype it (#347)"
+                        );
+                        return Ok(());
+                    }
+                }
             }
         }
 
         // `run` writes through its own `Uart`, not through the CLI's writer, so
         // the two must not interleave. `cli.writer()` is untouched here for that
         // reason: the command owns the screen until it returns.
-        let mut uart = crate::primary_for(self.index);
         crate::shell::run(self.index, &mut uart, &line[..len], self.devices);
         let _ = cli;
         Ok(())

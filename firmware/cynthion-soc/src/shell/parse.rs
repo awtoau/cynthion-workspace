@@ -26,7 +26,12 @@ pub(crate) fn as_str(cell: &[u8]) -> &str {
 /// A decimal that may be negative. `parse_decimal` is unsigned, and a current
 /// limit can legitimately be below zero -- the VBUS switch tree is
 /// bidirectional, so a port can sink and its VSENSE code is signed.
+///
+/// Trims first. `parse_decimal` does, so without this a leading space killed a
+/// negative and passed a positive -- ` -3` was `None` where ` 3` was `Some(3)`,
+/// and a lever that reads zero looks like a lever that does nothing (#347).
 pub(crate) fn parse_signed(text: &[u8]) -> Option<i32> {
+    let text = trim(text);
     match text.split_first() {
         Some((b'-', rest)) => parse_decimal(rest).map(|v| -(v as i32)),
         _ => parse_decimal(text).map(|v| v as i32),
@@ -124,5 +129,37 @@ impl<'a> FixedWriter<'a> {
     pub(crate) fn new(buffer: &'a mut [u8]) -> Self {
         buffer.fill(0);
         FixedWriter { buffer, used: 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #347 asked whether `parse_signed` rejects negatives. It does not, and the
+    /// `Some((b'-', rest))` arm is correct -- match ergonomics deref the `&u8`.
+    #[test]
+    fn signed_takes_negatives() {
+        assert_eq!(parse_signed(b"3"), Some(3));
+        assert_eq!(parse_signed(b"-3"), Some(-3));
+        assert_eq!(parse_signed(b"-250"), Some(-250));
+        assert_eq!(parse_signed(b"0"), Some(0));
+        assert_eq!(parse_signed(b"-0"), Some(0));
+    }
+
+    /// The defect that WAS here: a leading space killed only the negative.
+    #[test]
+    fn signed_trims_like_decimal() {
+        assert_eq!(parse_signed(b" 3"), Some(3));
+        assert_eq!(parse_signed(b" -3"), Some(-3));
+        assert_eq!(parse_signed(b"-3 "), Some(-3));
+    }
+
+    #[test]
+    fn signed_rejects_malformed() {
+        assert_eq!(parse_signed(b""), None);
+        assert_eq!(parse_signed(b"-"), None);
+        assert_eq!(parse_signed(b"12x"), None);
+        assert_eq!(parse_signed(b"-12x"), None);
     }
 }

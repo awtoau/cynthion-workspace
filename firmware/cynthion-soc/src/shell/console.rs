@@ -206,6 +206,8 @@ impl Shell {
         // of the crate's three primitives -- Backward, Forward, Backspace --
         // and each needs to know how far it can go before it starts eating the
         // wrong characters.
+        // Captured before `Key::Enter` clears it below.
+        let before_enter = self.line_len;
         match key {
             Key::Text(byte) => {
                 if self.line_len < self.line.len() {
@@ -238,7 +240,20 @@ impl Shell {
             _ => {}
         }
 
-        let mut dispatch = Dispatch { index, devices };
+        // The line AS TYPED, before the crate tokenises it. `-250` is three
+        // `Err(NonAsciiShortOption)`s to `ArgList`, and the sign was lost with
+        // them (#347). Empty on a history recall, which never passed through
+        // here -- `Dispatch` says so rather than dropping the argument.
+        let mut typed = [0u8; LINE];
+        let typed_len = if matches!(key, Key::Enter) {
+            let n = before_enter.min(typed.len());
+            typed[..n].copy_from_slice(&self.line[..n]);
+            n
+        } else {
+            0
+        };
+
+        let mut dispatch = Dispatch { index, devices, typed: &typed[..typed_len] };
         let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
 
         // KEYS THE CRATE HAS NO INPUT FOR, spelled with the ones it does.
@@ -385,7 +400,7 @@ impl Shell {
         };
         for _ in 0..count {
             for &byte in sequence {
-                let mut dispatch = Dispatch { index, devices };
+                let mut dispatch = Dispatch { index, devices, typed: &[] };
                 let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
             }
         }
@@ -436,7 +451,7 @@ impl Shell {
         let ours = line.contains(' ');
         for &byte in &insert[..insert_len] {
             if ours {
-                let mut dispatch = Dispatch { index, devices };
+                let mut dispatch = Dispatch { index, devices, typed: &[] };
                 let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
             }
             if self.line_len < self.line.len() {
