@@ -110,20 +110,30 @@ def reads_outside(fragment, skip, path="top", found=None):
     return found
 
 
-def elaborate(dqs, sync_mhz):
-    """Elaborate one build, returning its parameters and the signals read."""
+def prepare(dqs, sync_mhz):
+    """One build's prepared fragment, its parameters and its results.
+
+    Results are spied too: a test that wants "what drives the register the
+    firmware reads" needs the value expression, not only the address.
+    """
     import bist as harness_module
     from board import CynthionPlatformRev1D4
     from hyperram.hyperram_ceiling_top import HyperRAMCeiling
 
-    captured = []
+    captured, results = [], []
     original = harness_module.BISTHarness.add_register
+    original_ro = harness_module.BISTHarness.add_read_only_register
 
     def spy(self, address, *, value_signal):
         captured.append((address, value_signal))
         return original(self, address, value_signal=value_signal)
 
+    def spy_ro(self, address, *, read):
+        results.append((address, read))
+        return original_ro(self, address, read=read)
+
     harness_module.BISTHarness.add_register = spy
+    harness_module.BISTHarness.add_read_only_register = spy_ro
     try:
         design = HyperRAMCeiling(sync_mhz=sync_mhz, dqs=dqs)
         # `prepare` lowers `ClockSignal`/`ResetSignal` to the domain's own
@@ -131,7 +141,14 @@ def elaborate(dqs, sync_mhz):
         prepared = Fragment.get(design, CynthionPlatformRev1D4()).prepare()
     finally:
         harness_module.BISTHarness.add_register = original
-    return captured, reads_outside(prepared.fragment, {REGISTER_FILE})
+        harness_module.BISTHarness.add_read_only_register = original_ro
+    return prepared.fragment, captured, results
+
+
+def elaborate(dqs, sync_mhz):
+    """Elaborate one build, returning its parameters and the signals read."""
+    fragment, captured, _results = prepare(dqs, sync_mhz)
+    return captured, reads_outside(fragment, {REGISTER_FILE})
 
 
 def report(log, dqs, sync_mhz):
