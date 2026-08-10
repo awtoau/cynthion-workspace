@@ -24,11 +24,16 @@ Evidence, all four of which have to hold:
 
   * each output has the geometry its own process asked for
   * the two outputs differ
-  * the two sbt runs did not overlap in time -- that is the lock working
   * both processes named the same lock file
+  * the pair takes about twice as long as one generation alone -- which is what
+    serialisation looks like from outside, and the reason a solo run is timed
+    first
 
-Running it costs two sbt runs (~40 s each, serialised by the very lock being
-tested). It touches no board and builds no gateware.
+Process lifetimes overlapping proves nothing either way: each process starts,
+then waits for the lock. Only the ratio to the solo run says whether the two sbt
+runs were concurrent.
+
+Costs three generations. It touches no board and builds no gateware.
 """
 
 from __future__ import annotations
@@ -90,6 +95,21 @@ def main() -> int:
     outdir = args.outdir if args.outdir.is_absolute() else ROOT / args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # The solo baseline, first: two generations taking about twice this long is
+    # what the lock holding looks like from outside.
+    solo_out = outdir / "VexiiRiscv-solo.v"
+    solo_start = time.time()
+    solo = subprocess.run(
+        [sys.executable, "-c", CHILD.format(gateware=str(ROOT / "gateware" / "soc"),
+                                            sets=64, ways=2, out=str(solo_out))],
+        cwd=ROOT, capture_output=True, text=True)
+    solo_seconds = time.time() - solo_start
+    if solo.returncode != 0:
+        emit(f"solo generation failed: {solo.stderr[-600:]}")
+        return 1
+    emit(f"solo generation: {solo_seconds:.1f} s")
+
+    started_pair = time.time()
     children = []
     for index, config in enumerate(CONFIGS, 1):
         out = outdir / f"VexiiRiscv-{config['cache_sets']}x{config['cache_ways']}.v"
@@ -112,6 +132,7 @@ def main() -> int:
         except (ValueError, IndexError):
             row["stderr"] = stderr[-600:]
         rows.append(row)
+    pair_seconds = time.time() - started_pair
 
     ok = True
     for row in rows:
@@ -128,13 +149,14 @@ def main() -> int:
 
     if all("started" in row for row in rows):
         first, second = sorted(rows, key=lambda r: r["started"])
-        overlap = first["finished"] - second["started"]
         emit(f"checkout {first['checkout']}")
         emit(f"lock     {first['lock']}")
         emit(f"locks match: {first['lock'] == second['lock']}")
-        emit(f"overlap: {overlap:+.1f} s "
-             f"({'SERIALISED' if overlap <= 0 else 'CONCURRENT -- the lock did not hold'})")
-        ok &= overlap <= 0 and first["lock"] == second["lock"]
+        ratio = pair_seconds / solo_seconds
+        emit(f"pair: {pair_seconds:.1f} s against {solo_seconds:.1f} s solo "
+             f"({ratio:.2f}x) -- "
+             f"{'SERIALISED' if ratio >= 1.6 else 'CONCURRENT, the lock did not hold'}")
+        ok &= ratio >= 1.6 and first["lock"] == second["lock"]
 
     contents = {Path(row["output"]).read_bytes() for row in rows
                 if Path(row["output"]).exists()}
