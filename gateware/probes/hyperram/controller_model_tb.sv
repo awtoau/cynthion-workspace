@@ -62,13 +62,14 @@
   `define REFRESH_EVERY 100
 `endif
 
-// Edges between a write's first data beat and a read's at the same latency. The
-// device has to turn the bus around, so it cannot drive DQ on the edge it leaves
-// Hi-Z. `hyperram_model.v` records this measured against the vendor model: 28
-// edges from the last CA edge to the strobe at 14 CK fixed, 14 at 7 CK variable,
-// both of which are 2L + 1 beats from CS#. Stated here so that if the model moves
-// it again, this fails rather than following.
-`define READ_TURNAROUND_EDGES 1
+// Edges between a write's first data beat and a read's at the same latency.
+// ZERO: Winbond's own model serves the first read byte on `4 + 2 x L_ck`, the
+// same edge a write starts, at every legal code -- there is no later event on the
+// device to name. Turnaround is a HOST constraint (it owns DQ through the CA and
+// must release it), and putting it in the device model hides a controller that
+// reads one edge late. Stated here so a model that moves it fails rather than
+// being followed. (#352)
+`define READ_TURNAROUND_EDGES 0
 
 module tb;
 
@@ -312,6 +313,11 @@ module tb;
   integer    code;
   integer    base_ck;
   integer    lat_ck;
+  integer    dev_ck;
+  // The CK count the device last decoded from a LEGAL code, POR 0x8f2f = 14. A
+  // reserved code holds it, CR0[3] included, so nothing about a reserved case may
+  // be derived from the code. (#350)
+  integer    held_ck = 14;
   reg [15:0] cr0_value;
   reg [31:0] a;
   integer    latency_codes [0:5];
@@ -423,9 +429,21 @@ module tb;
     integer want_beat, model_beat, data_errors;
     begin
       // The decode `hyperram_model.v` documents: clocks = 5 + sext4(code), doubled
-      // when CR0[3] selects fixed latency.
-      base_ck    = (lcode >= 14) ? (5 + lcode - 16) : (5 + lcode);
-      lat_ck     = base_ck * 2;
+      // when CR0[3] selects fixed latency. Codes 3..13 are RESERVED and the device
+      // holds `held_ck` there instead, so this case times to what the device will
+      // serve rather than to a number derived from a code that defines none.
+      if ((lcode <= 2) || (lcode >= 14)) begin
+        base_ck = (lcode >= 14) ? (5 + lcode - 16) : (5 + lcode);
+        dev_ck  = fixed ? (base_ck * 2) : base_ck;
+        held_ck = dev_ck;
+      end else begin
+        dev_ck  = held_ck;
+        base_ck = held_ck;
+        $display("[tb] RESERVED code %0d: the device holds %0d CK and CR0[3] is inert with it (#350)",
+                 lcode, held_ck);
+      end
+      // The short count, and the long one a refresh election takes.
+      lat_ck     = fixed ? dev_ck : (dev_ck * 2);
       mode_label = fixed ? "fixed" : "var";
       case_mode  = mode_label;
       case_code  = lcode;
@@ -525,6 +543,7 @@ module tb;
       fixed_latency      = 1'b1;
       latency_clocks     = 14;
       low_latency_clocks = 7;
+      held_ck            = 14;          // CR0 0x8f2f: code 2 = 7 CK, CR0[3] doubles
       run_burst(ADDR_CR0, 1'b1, 1'b1, 1, 16'h8f2f);
     end
   endtask
