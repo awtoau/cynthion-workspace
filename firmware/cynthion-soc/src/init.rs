@@ -69,9 +69,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::uart::Uart;
 use crate::{
-    bench, hyperram, info, log, plic, power, sched, shell, target, timer, ulpi, vbus,
-    Devices,
+    bench, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices,
 };
+// Only the non-BIST `hyperram_init` reaches these; under `hyperram-bist` that
+// body is compiled out and an unconditional import is a warning.
+#[cfg(not(feature = "hyperram-bist"))]
+use crate::{hyperram, info};
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
@@ -341,6 +344,18 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
     );
 }
 
+/// The BIST variant has NO BootRAM, and a read of an address in no declared
+/// region never gets an ack -- the CPU stalls on the load and the board is
+/// silent from reset, with no banner and no shell. `soc_run.py` already
+/// compiles the same probe out of `cynthion-boot` for this reason; the shell
+/// gained the call at boot afterwards and did not inherit the guard (#226).
+#[cfg(feature = "hyperram-bist")]
+fn hyperram_init(out: &mut Out) {
+    out.line("hyperram", "ABSENT",
+             format_args!("the BIST engine owns the part; no BootRAM window here"));
+}
+
+#[cfg(not(feature = "hyperram-bist"))]
 fn hyperram_init(out: &mut Out) {
     let report = hyperram::init(info::build::GIT_WORD);
     if !report.alive {

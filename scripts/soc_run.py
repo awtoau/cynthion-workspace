@@ -589,14 +589,25 @@ def main():
         else:
             if not args.no_build:
                 cargo = ["cargo", "build", "--release"]
-                if args.features:
+                # The BIST gateware instantiates NO BootRAM, so the shell's
+                # boot-time HyperRAM probe reads an address in no declared
+                # region, never gets an ack, and the CPU stalls -- silent from
+                # reset, no banner, no shell. Same guard the bootloader below
+                # already gets, and not optional: forgetting it produces a board
+                # that looks bricked (#226).
+                features = [f for f in args.features.split(",") if f]
+                if os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0"):
+                    features.append("hyperram-bist")
+                    emit("shell: boot-time HyperRAM probe COMPILED OUT (BIST "
+                         "variant has no BootRAM to probe)")
+                if features:
                     # Said out loud, every time. A board left running a
                     # feature-built image looks exactly like one running the
                     # shipping image, and the difference has to be in the log or
                     # it is in nobody's head.
-                    cargo += ["--features", args.features]
-                    emit(f"BUILDING WITH FEATURES: {args.features} -- this is NOT "
-                         f"the shipping image")
+                    cargo += ["--features", ",".join(features)]
+                    emit(f"BUILDING WITH FEATURES: {','.join(features)} -- this "
+                         f"is NOT the shipping image")
                 result = run(cargo, cwd=CRATE)
                 if result.returncode != 0:
                     emit("cargo build failed:")
