@@ -52,7 +52,24 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
+
+
+def _sources_root() -> Path:
+    """Where `sources/` really lives.
+
+    The vendor model is gitignored -- it is Winbond IP -- so it is never in a
+    git worktree, and a worktree is where agents are supposed to work. Fall back
+    to the main checkout above `.claude/worktrees/<name>/` rather than making
+    every worktree re-fetch it.
+    """
+    if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".claude":
+        main = ROOT.parent.parent.parent
+        if (main / "sources" / "models").is_dir():
+            return main
+    return ROOT
+
+
+MODEL_ZIP = _sources_root() / "sources" / "models" / "W956X8MBY_verilog_p.zip"
 TESTBENCH = ROOT / "gateware" / "probes" / "hyperram" / "vendor_model_tb.sv"
 OPEN_MODEL = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_model.v"
 WORKDIR = ROOT / "tmp" / "hyperram-vendor-model"
@@ -121,7 +138,7 @@ def extract_model(part: str) -> Path:
     """Unpack the nested per-voltage zip for `part` into the work directory."""
     if not MODEL_ZIP.exists():
         raise SystemExit(
-            f"{MODEL_ZIP.relative_to(ROOT)} is missing -- it is gitignored vendor IP. "
+            f"{MODEL_ZIP} is missing -- it is gitignored vendor IP. "
             f"Fetch it via the route in sources/README.md."
         )
     WORKDIR.mkdir(parents=True, exist_ok=True)
