@@ -61,8 +61,10 @@ LOGFILE = ROOT / "tmp" / "logs" / "hyperram_vendor_model_sim.log"
 
 DIAMOND = Path(os.environ.get("DIAMOND_ROOT", Path.home() / "lscc" / "diamond" / "3.14"))
 
-# The grades Config-AC.v defines AC parameters for. Anything else declares none.
-GRADES = ("T85", "T100", "T104", "T133", "T166", "T200", "T250")
+# The grades Config-AC.v defines AC parameters for. Anything else declares none:
+# T85 and T104 set tCK only and fail with 7 undefined identifiers in the protected
+# region -- docs/chips/hyperram/config-ac.md.
+GRADES = ("T100", "T133", "T166", "T200", "T250")
 
 # The testbench reports its own pass/fail; these are what a good run must contain.
 # The tCSM line is a DELIBERATE violation -- its absence means the check is gone,
