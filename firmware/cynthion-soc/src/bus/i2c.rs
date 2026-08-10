@@ -230,7 +230,7 @@ impl I2c {
     ///
     /// ONE command, not two. A bare `CR_STO` is issued from IDLE, where SCL is
     /// high, and the engine's STOP state drops SCL and pulls SDA low in the same
-    /// slot -- so SDA can fall on a high clock, which is a START (#350). Folding
+    /// slot -- so SDA can fall on a high clock, which is a START (#355). Folding
     /// the STOP into the read reaches the STOP state from RACK, where SCL is
     /// already low. ~10 us at 1 MHz.
     pub fn recover(&self) {
@@ -284,7 +284,7 @@ impl I2c {
     ///
     /// Conditional on BUSY: with no START outstanding there is nothing to
     /// release, and a STOP issued from IDLE puts a START on the wire instead
-    /// (#350). Every error path called this, so the recovery cost the next
+    /// (#355). Every error path called this, so the recovery cost the next
     /// transfer on that bus.
     fn release(&self) {
         if self.status() & SR_BUSY != 0 {
