@@ -157,45 +157,116 @@ This also confirms the count-minus-one convention independently of ISSI: section
 states a 64 Mbit device has "9 column address bits and 13 row address bits ... 2^22 = 4M
 words = 8M bytes", with 8192 rows.
 
-#### How they were fetched, so the next attempt does not repeat the dead ends
+#### Winbond DOES serve the datasheet unauthenticated — the earlier note was wrong
 
-Both PDFs came from third-party mirrors. **Winbond itself will not serve them.**
+Corrected 2026-08-10. The previous text here said *"Winbond itself will not serve
+them"* and routed everything through third-party mirrors. It reached that conclusion
+from **the wrong row**: the `level=4` login-walled entry for `W956D8MBY` is
+*"Automotive Grade 1 W956D8MBYA … A01-001_20230804"*, a different product. The
+industrial datasheet is a **`level=1`** row on **page 2** of the same result list,
+and page 2 was never opened.
 
-Working method:
+Working route, three steps, all inside awto-playwrong:
 
-1. Load `https://www.winbond.com/hq/support/documentation/index.html?__locale=en&categoryName=Specialty%20DRAM&pno=W956D8MBY`
-   in awto-playwrong, then read the anchors back with a `js` op --
-   `document.querySelectorAll("a")` **does** return them once the page's JS has run. The
-   earlier "anchors come back empty" note was an artefact of scraping the wrong URL.
-2. That reveals the real download endpoint:
-   `downloadV2022.jsp?xmlPath=/support/resources/.content/item/<DOCID>.html&level=<N>`.
-   The datasheet is `DA00-W956D8MBYA` at **`level=4`**, and level 4 is login-walled --
-   it redirects to the technical-support request form. App notes and IBIS models at
-   `level=1` are open. So the vendor route ends here for datasheets specifically.
-3. Instead, search Bing via playwrong and decode the result links: Bing wraps targets in
-   `bing.com/ck/a?...&u=a1<base64url>`, so `base64.urlsafe_b64decode(...)` on the `u=a1`
-   payload recovers the real URL. Plain-`curl` DuckDuckGo returns HTTP 202 with an
-   "anomaly" page and is useless here.
-4. Download the recovered URL with plain `curl` and a browser user-agent. Neither mirror
-   needed cookies.
+1. `index.html?__locale=en&pno=<PART>` — the search rows are all in the DOM, so a `js`
+   op reads every `downloadV2022.jsp?…item/<DocNo>.html&level=<N>` anchor at once,
+   including rows the paginator hides.
+2. `levelOne.jsp?__locale=en&DocNo=<DocNo>` — `level=1` documents resolve here to a
+   plain `/resource-files/<name>.pdf` anchor. `downloadV2022.jsp` itself returns
+   HTTP 200 whose body is `document.location.href='levelOne.jsp?…'`, which is the
+   "200 that is not the document" this file warns about elsewhere.
+3. `mcp__playwrong__pdf` that `resource-files` URL. Filenames contain spaces
+   (`Winbond HyperRAM Application Note_20250528.pdf`) — percent-encode them.
 
-Mirrors that worked: **`xonstorage.z8.web.core.windows.net/pdf/`** (note `.z8.web`, not
-`.blob`, which 404s) and **`media.digikey.com/pdf/Data Sheets/Winbond PDFs/`**. Mouser's
-`mouser.com/datasheet/...` URLs return a 13 KB **HTML** bot page under a `.pdf` name --
-`file` reporting "HTML document" is what catches it. Arrow's `static6.arrow.com` and
-`marthel.eu` both failed to connect.
+Two gotchas that cost time: a DocNo carrying `_` in the listing is `.` in the
+`levelOne.jsp` parameter (`DA01-CAA104_3` → `DA01-CAA104.3`), and `levelOne.jsp`
+returns a zero-byte body for a DocNo it does not recognise rather than an error.
 
-The `resource-files/<PART>_<REV>.pdf` pattern still 404s for every `W956*` combination,
-but `productResource-files/Winbond_DRAM_HyperRAM_Product_Brief_2023Q2.pdf` is fetchable
-and is a useful family overview.
+**The mirror copy was genuine.** `W956x8MBYA_A01-006.pdf` fetched from
+`xonstorage` is byte-identical to Winbond's own
+(md5 `c9958060723af8e952885b658a3a963d`), so nothing here needs re-fetching — the
+route matters for everything Winbond publishes *besides* the datasheet.
 
-`scripts/fetch_winbond_hyperram.py` wraps the probe/links/get steps above.
+Mouser's `mouser.com/datasheet/…` URLs still return a 13 KB **HTML** bot page under a
+`.pdf` name; `file` reporting "HTML document" is what catches it.
 
-GitHub code search finds the part in Zephyr
-(`drivers/memc/memc_mcux_flexspi_w956a8mbya.c`) and in `aesc-silicon/elements-zibal`, but
-**neither encodes register addresses or contents**. The Zephyr driver is still worth
-reading for the HyperBus command encoding (`0xA0` read, `0x20` write, `0xE0` register
-read, `0x60` register write).
+`scripts/fetch_winbond_hyperram.py` no longer exists — it was retired to
+`debris/scripts/` in `25087b8`, and the three steps above replace it.
+
+#### Revision currency, checked 2026-08-10
+
+Every HyperRAM document here is the current one. Checked against the vendor listing,
+not against a search result.
+
+| document | ours | vendor's latest | source of truth |
+|---|---|---|---|
+| W956x8MBYA (the part) | A01-006, 2022-07-29 | **same** | `DA00-W956X8MBYA`, level 1 |
+| W957x8MFYA 128 Mb | A01-004, 2022-08-04 | **same** | `DA00-W957X8MFYA`, level 1 |
+| W958D8NBYA 256 Mb | A01-003, 2022-06-30 | **same** | `DA00-W958D8NBYA_3`, level 1 |
+| HyperBus spec | 001-99253 Rev `*H`, 2019-02-06 | **same** | infineon.com |
+| ISSI IS66WVH8M8ALL/BLL | Rev B2 | **same** — byte-identical re-fetch | issi.com |
+| ISSI IS66WVH16M8ALL/BLL | Rev B4 | **same** — byte-identical re-fetch | issi.com |
+
+The one part number that has moved on is **ISSI's**: `IS66WVH8M8F…` is a newer die
+(Rev A1, 2025-03, 51 pp, 200 MHz order parts) and is now here as
+`ISSI-IS66WVH8M8F-64Mbit-HyperRAM.pdf`
+(`https://www.issi.com/WW/pdf/66-67WVH8M8FALL-BLL.pdf`). There is no `16M8F`
+equivalent — that URL returns an HTML error page.
+
+### Winbond's HyperRAM application notes — four documents, none of them here before
+
+All `level=1`, all fetched 2026-08-10 by the route above. These are where Winbond
+answers the questions the datasheet leaves to "refer to the datasheet".
+
+| file | pages | what it is | source |
+|---|---|---|---|
+| `Winbond-AN-HyperRAM-20250528.pdf` | **53** | **Winbond HyperRAM Application Note, rev P01, 2025-05-28** — the whole family compared generation by generation. The most useful single document about this part after the datasheet | `/resource-files/Winbond HyperRAM Application Note_20250528.pdf` |
+| `Winbond-AN-HyperRAM-Burst-Operation.pdf` | 4 | *Burst Wrapped Operation*, rev P01, 2023-09 — tCSM as a host obligation, and the wrapped-burst address sequences | `/resource-files/Application note for Burst Operation of Winbond HyperRAM_0926.pdf` |
+| `Winbond-AN-pSRAM-data-cycling-effect-20220221.pdf` | 4 | *Data Cycling Effect in pSRAM*, rev P01-001 — the DRAM-cell disturb mechanism behind the refresh scheme, with tREF vs temperature | `/resource-files/DA01-0009A1.pdf` |
+| `Winbond-AN-SDP-DDP-128Mb-x8-HyperRAM.pdf` | 6 | *SDP and DDP implementation for 128Mb x8*, rev A01, 2019-11-15 — the die-select bit and what changes for a dual-die part | `/resource-files/DA01-CAA104.3A1.pdf` |
+
+**What the 2025 app note settles** — four open questions in
+`../docs/chips/hyperram/w956a8.md`:
+
+- **§6.4.9 lists `0010b` (7 clocks) as legal to 250 MHz** for HyperRAM 2.0
+  (`W956x8Mxxxxx` — ours), alongside the datasheet's 200 MHz entry. The die is
+  characterised above the package's grading, and Winbond's own Verilog model carries a
+  matching 250 MHz AC block (`tACC` 28 ns = 7 × 4 ns).
+- **§6.5.5: our generation supports the differential clock.** CR1[6] = 0b selects
+  CK/CK#, 1b is the single-ended default, and *"for the HyperRAM device do not support
+  differential clock inputs, write CR1 Bit[6] to 0 will have no effect"* — so a probe
+  that writes it and reads it back is safe and self-reporting. Answers "untried,
+  unremarked" for option 5.
+- **§6.5.7: CR1[1:0] has exactly one legal value on our part** — `01b` = 4 µs tCSM.
+  `10b` (1 µs) is legal only on the 256 Mb and later parts, `00b`/`11b` reserved
+  everywhere. Shortening tCSM is not an option we have.
+- **§7.2.2 Active Clock Stop** is entered automatically at tACC + 30 ns of stable
+  clock, read data stays latched and driven, and resumes on a toggling clock — but
+  *"must not be used in violation of the tCSM limit"* and *"not recommended … during
+  register access"*. The second clause is new; the abridged 10-page copy could not
+  answer even the first.
+
+### Vendor models — the Verilog one is encrypted, the HSPICE and IBIS are not
+
+`sources/models/`, all `level=1`, gitignored like the PDFs.
+
+| file | what | usable here |
+|---|---|---|
+| `W956X8MBY_verilog_p.zip` | nested per-voltage zips; `W956A8MBYA.{modelsim,vcs,nc}.vp` plus a plaintext `Config-AC.v` | **models: no** — `pragma protect data_method = "aes128-cbc"`, `encrypt_agent = "Model Technology"`, so ModelSim/VCS/NC only, nothing in the open flow reads them. **`Config-AC.v`: yes** — plaintext, and it is the whole AC parameter set |
+| `W956D8MBYA5I_ibis.zip` | `w956d8mbya5i_a001.ibs`, 784 KB IBIS 5.0 | yes — this is the file an SI check on the r1.4 traces needs |
+| `W956x8MBYA5I_hspice.zip` | fullchip HSPICE: `IO_netlist`, `model_{fast,nom,slow}`, `pkg_24ball`, `vdd_param_{18,30}` | yes, if anyone runs HSPICE |
+
+`Config-AC.v` is worth reading on its own. It carries the AC table for every grade
+including a **250 MHz** block the datasheet has no column for (`tCSHI` 6 ns, `tRWR`
+28 ns, `tACC` 28 ns, `tIS`/`tIH` 0.5 ns, `tDSS`/`tDSH` ±0.4 ns), a package default of
+200 MHz against a KGD default of 250 MHz, and `tCSM` as **4000 ns below 85 °C, 1000 ns
+above** — the temperature dependence that `` `define LA_85C `` switches.
+
+Code references for this part are surveyed in
+[`../docs/chips/hyperram/driver-survey.md`](../docs/chips/hyperram/driver-survey.md)
+(software and SoC drivers, plus simulation models) and
+[`../docs/chips/hyperram/controller-survey.md`](../docs/chips/hyperram/controller-survey.md)
+(RTL controllers).
 
 ### Note on fetching from ISSI
 
@@ -219,6 +290,23 @@ zeroed to Reserved, and the row field widened to `01110b` (15 row bits). It is t
 evidence that density scales by die count in the 128 Mbit part rather than by widening
 the address-bit fields.
 
+### The bus, and the other vendors' parts on it
+
+Four files that were in this directory but not in this manifest until 2026-08-10.
+
+| file | what | pages | source |
+|---|---|---|---|
+| `HyperBus_Spec_infineon.pdf` | **HyperBus Specification, 001-99253 Rev `*H`, 2019-02-06** — the bus itself, vendor-neutral. CA layout, register space rules, latency. Cypress-authored, Infineon-hosted | 45 | `https://www.infineon.com/assets/row/public/documents/10/57/infineon-hyperbus-specification-low-signal-count-high-performance-ddr-bus-additionaltechnicalinformation-en.pdf` |
+| `S27KL0641_infineon.pdf` | S27KL0641 / S27KS0641 / S70KL1281, 001-97964 Rev `*N`, 2021-08-16 — Infineon's 64 Mb HyperRAM, the part Zephyr's `memc_mcux_flexspi_s27ks0641.c` and GVSoC's model target | 52 | infineon.com |
+| `ISSI-IS66WVH8M8F-64Mbit-HyperRAM.pdf` | IS66/67WVH8M8FALL/BLL, **Rev A1, 2025-03** — ISSI's current 64 Mb die, 200 MHz parts | 51 | `https://www.issi.com/WW/pdf/66-67WVH8M8FALL-BLL.pdf` |
+| `gowin_psram_hs_ip.pdf` | Gowin PSRAM Memory Interface HS IP, 2026-03 — a vendor HyperBus-class controller with its calibration flow written down | 34 | gowin.com |
+
+`HyperBus_Spec_infineon.pdf` is the one to reach for when the question is "what does
+the *bus* require", and the Winbond datasheet when it is "what does *this device* do".
+§5 is explicit that the register map is device-dependent, which is why the same
+numeral means different registers across vendors — see the byte-vs-word trap in
+[`../docs/chips/hyperram/driver-survey.md`](../docs/chips/hyperram/driver-survey.md).
+
 ## Configuration flash
 
 The board's flash is a **Winbond W25Q32JV**, JEDEC `EF 40 16`.
@@ -232,6 +320,12 @@ The board's flash is a **Winbond W25Q32JV**, JEDEC `EF 40 16`.
 Both generations are kept because they differ in the timing maximums that
 `../docs/luna_ecp5_fpga/flash-detailed.md` transcribes, and reading the wrong one is an
 easy way to attribute a JV limit to an FV part.
+
+**Winbond's portal no longer lists a plain-JV datasheet.** Checked 2026-08-10 by the
+`levelOne.jsp` route above: `DocNo=DA00-W25Q32JV` resolves to
+`/resource-files/W25Q32JV_DTR RevH 010172019 Plus.pdf` — the **DTR** variant, which is
+a different device. Rev G above stays the reference for the fitted part, and it has to
+come from the `resource-files` URL in its row, not from the portal.
 
 ### The JV copy that was here was the 2014 PRELIMINARY, and one number differs
 
@@ -266,7 +360,15 @@ figure is the denominator in the host→flash transport gap in
 | file | part | source |
 |---|---|---|
 | `Lattice-ECP5-Family-DataSheet-FPGA-DS-02012.pdf` | ECP5 / ECP5-5G family, FPGA-DS-02012 v1.9, March 2018 | `https://www.latticesemi.com/view_document?document_id=50461` | **108 pages** |
-| `Lattice-ECP5-sysCONFIG-FPGA-TN-02039.pdf` | sysCONFIG user guide, FPGA-TN-02039-2.3, March 2024 — configuration modes, timing, and the SPI boot path | `https://www.latticesemi.com/view_document?document_id=50462` | **74 pages** |
+| `Lattice-ECP5-sysCONFIG-FPGA-TN-02039-2.5.pdf` | sysCONFIG user guide, **FPGA-TN-02039-2.5, January 2026** — configuration modes, timing, and the SPI boot path | mirror (Lattice's own copy is behind a block page) | **75 pages** |
+| `Lattice-ECP5-HighSpeed-IO-FPGA-TN-02035-1.3.pdf` | High-Speed I/O Interface, FPGA-TN-02035-1.3, October 2020 — DDR primitives, `DELAYF`/`DELAYG`, `CLKDIV`, and the input-register modes the HyperRAM PHY is built from | latticesemi.com | **86 pages** |
+
+**sysCONFIG 2.5 replaced 2.3 on 2026-08-10**, and the two byte-identical 2.3 copies
+that differed only in filename case are gone. 2.5 keeps everything #234 was answered
+from — 8 hits for `TransFR`, 3 for `Background Mode`. Validity check:
+
+    pdfinfo <file> | grep Pages                        # 75
+    pdftotext -layout <file> - | grep -c 'TransFR'     # non-zero
 
 ### One file here was never a PDF, and nothing caught it
 
@@ -357,16 +459,10 @@ Six files arrived here named `*.pdf` and were **HTML bot-check or error pages**:
 one of them, and it costs nothing to run after a fetch. Both notes above about Mouser and
 ISSI describe the same failure; this is the general form of it.
 
-## `lattice-ecp5-sysconfig-FPGA-TN-02039.pdf`
+## What the sysCONFIG guide answers
 
-ECP5 and ECP5-5G sysCONFIG User Guide, **FPGA-TN-02039-2.3, March 2024**, 74 pages.
-
-    https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02039-2-3-ECP5-and-ECP5-5G-sysCONFIG.pdf
-
-A mirror, because Lattice's own copy is behind a block page — Mouser's returned an
-HTML interstitial rather than a PDF. Verify a good copy by page count (74) and by
-the presence of the string `6.6. TransFR Operation`; a truncated download loses
-exactly the configuration sections that matter.
+Mirror `https://0x04.net/~mwk/doc/lattice/ecp5/` for 2.3; Lattice's own copy is behind
+a block page and Mouser's returns an HTML interstitial rather than a PDF.
 
 Answers #234: the ECP5 does support loading without taking the design down.
 **Background Mode** is "a configuration mode where all the I/O pins remain

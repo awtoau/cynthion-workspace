@@ -73,6 +73,11 @@ ecp5-test/sideband/build/
 # effectively as the PDF, and is derived anyway.
 sources/**/*.pdf
 sources/**/*.txt
+# Vendor simulation/IBIS/HSPICE models are the same deal: Winbond IP, redistributable by
+# them and not by us. `sources/models/` holds the zips; the manifest holds the URLs.
+sources/**/*.zip
+sources/**/*.ibs
+sources/**/*.vp
 
 # Cargo build output. Regenerable by `cargo build`, ~49 MB, and it was tracked once by
 # accident -- a merge carried it back in because the branch that removed it never had it
