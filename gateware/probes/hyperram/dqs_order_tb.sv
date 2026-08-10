@@ -511,7 +511,7 @@ module tb;
         latency_clocks = n[3:0];
         do_read(READ_BASE);
         $display("[order] test=read base=%0h code=%0d n=%0d dev_ck=%0d dev_beat=%0d served=%0h dev_first=%0d dev_n=%0d wire=%h%h%h%h%h%h%h%h got=%h gv=%0d hung=%0d",
-                 READ_BASE[21:0], code, n, dev_ck, 5 + 2*dev_ck, served,
+                 READ_BASE[21:0], code, n, dev_ck, 4 + 2*dev_ck, served,
                  dev_first, dev_n,
                  dev_b[0], dev_b[1], dev_b[2], dev_b[3],
                  dev_b[4], dev_b[5], dev_b[6], dev_b[7],

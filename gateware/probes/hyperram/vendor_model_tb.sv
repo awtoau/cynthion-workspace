@@ -472,8 +472,11 @@ module tb;
     // The axis #338 is stuck on. With CR0[3] = 1 the latency is always 2x and the
     // CA-period RWDS carries no information; with CR0[3] = 0 that RWDS *is* the
     // answer, so a controller that samples it wrongly mis-times every read while
-    // passing every fixed-latency test. Measure both, in edges from the end of CA
-    // to the first read strobe: 14 CK = 28 edges fixed, 7 CK = 14 edges variable.
+    // passing every fixed-latency test.
+    //
+    // The RWDS LEVEL is the fact here. The edge count is not: this hunt reads
+    // 28/14 on the vendor and 27/13 on the twin with the DQ edge identical on
+    // both. dqs_latency_probe_tb.sv owns the exact count. (#352)
     $display("[tb] === latency: fixed vs variable (CR0[3]) ===");
     write_register(ADDR_CR0, 16'h8f2f);            // fixed, latency code 7
     read_register(ADDR_ID0, got);
