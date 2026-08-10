@@ -933,6 +933,15 @@ def main():
               "distinguish this image from one built for another target.\n"
               f"received: {show(reply) or '(nothing)'}")
 
+        # And the optimisation level, which the profile name does not carry.
+        # `opt_level_sweep.py` builds -O0 through -Oz all under `release`, and
+        # a size or speed figure taken from an image that cannot say which one
+        # it is has nothing to attach itself to.
+        check("`info` names the optimisation level, not just the profile",
+              b"release -O" in reply,
+              "the tools line carried a profile name and no level.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
         # The dirty flag, against git rather than against itself. A hash
         # with no dirty flag beside it is a claim nobody can check, which is
         # worse than no hash at all.

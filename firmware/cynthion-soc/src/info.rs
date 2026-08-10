@@ -333,12 +333,15 @@ pub fn command(uart: &mut Uart) {
         build::GIT_BRANCH,
         build::BUILT
     );
+    // `-O{}` beside the profile, because `release` is a name and not a setting:
+    // `scripts/opt_level_sweep.py` builds every level under it.
     let _ = writeln!(
         uart,
-        "tools    {}  {} {}",
+        "tools    {}  {} {} -O{}",
         build::RUSTC,
         build::TARGET,
-        build::PROFILE
+        build::PROFILE,
+        build::OPT_LEVEL
     );
 
     // WHICH LINE EDITOR IS RUNNING, and it is not cosmetic.
