@@ -27,3 +27,6 @@ pub mod bist_pure;
 
 #[path = "../../cynthion-soc/src/power_rails.rs"]
 pub mod power_rails;
+
+#[path = "../../cynthion-soc/src/shell/parse.rs"]
+pub mod parse;
