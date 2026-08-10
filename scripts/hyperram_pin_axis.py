@@ -220,11 +220,16 @@ def report():
         if pin is None:
             state = "pins UNRECORDED"
         else:
-            state = " ".join(
-                f"{key.split('/')[0]}.{attr}={value}"
-                for key, attrs in sorted(pin.items())
-                for attr, value in sorted(attrs.items())
-                if attr in ("DRIVE", "SLEWRATE", "HYSTERESIS", "PULLMODE"))
+            # Collapsed to distinct values per group: eight DQ pads at the same
+            # setting is one fact, and printed per pad it buries the one pad that
+            # differs.
+            seen = {}
+            for key, attrs in sorted(pin.items()):
+                for attr in ("DRIVE", "SLEWRATE", "HYSTERESIS", "PULLMODE"):
+                    seen.setdefault((key.split("/")[0], attr), set()).add(
+                        str(attrs.get(attr)))
+            state = " ".join(f"{group}.{attr}={'/'.join(sorted(values))}"
+                             for (group, attr), values in sorted(seen.items()))
         rows.append((path.name, run["label"], run["summary"]["pass"],
                      run.get("ck_mhz"), state))
     for name, label, passed, ck, state in rows:
