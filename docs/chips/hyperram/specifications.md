@@ -154,6 +154,10 @@ falls: the valid window is squeezed from both ends, not just shortened.
 is always safe at a lower clock; the frequencies are ceilings on the code, not
 requirements.
 
+The 250 MHz entry is this generation only, and thin: on 2.1/2.2/3.1/3.2 Winbond
+re-prices 250 MHz as `0101b` = **10** clocks and caps `0010b` at 200 MHz
+([app-notes.md](app-notes.md) §1).
+
 ## Checking a number
 
 The datasheet copy is verified by page count and revision string:
