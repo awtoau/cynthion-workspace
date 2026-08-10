@@ -43,6 +43,11 @@ variable latency, which is a change to make deliberately and measure.
 `HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, which
 is what `hyperram_latency.py` used to exist for.
 
+**The variable-latency path is now driveable and reads the request where it is.**
+`low_latency_clocks` is an input, not a class constant that matched no latency
+code (#380), and the RWDS sample is a counted cycle rather than the two CA states,
+which read pin cycles before CS# had fallen (#381).
+
 ## What is NOT fixed here
 
 The read path still has no bitslip. `IDDRX2DQA` feeds the data path directly, and
@@ -65,6 +70,45 @@ from . import hyperram_controller
 # per-grade table. Was 10.0 here too, which is the T100 column. (#341)
 T_CSHI_NS = hyperram_controller.T_CSHI_NS
 T_RWR_NS = hyperram_controller.T_RWR_NS
+
+
+# Sync cycles between this FSM emitting a signal and the device's answer to it
+# arriving back, on the DQS path. 1 is the behavioural PHY every model testbench
+# runs: `dqs_config_tb.sv` registers `phy_rwds_i` once (Q = 1) and pipes DQ out
+# by none (P = 0). The REAL `HyperRAMDQSPHY`'s number is unresolved -- see #186
+# and #381 -- which is why this is a constructor argument and not a constant.
+PHY_ROUND_TRIP_CYCLES = 1
+
+
+def rwds_sample_cycle(phy_round_trip_cycles=PHY_ROUND_TRIP_CYCLES):
+    """WHICH cycle from `start_transfer` reads the extra-latency request. (#381)
+
+    With R = P out + Q back, in this controller's 2-CK cycles:
+
+        CS# falls at the pin       1 + P
+        the CA occupies pin cycles 3 + P .. 4 + P
+        RWDS is driven from tDSV after CS# falls and dropped on the last CA edge,
+        which is inside 4 + P -- so 3 + P is the only pin cycle wholly inside it
+        the controller sees pin M  at cycle M + Q
+
+    It was sampled in `SHIFT_COMMAND0` and `SHIFT_COMMAND1`, cycles 2 and 3,
+    which read pin cycles `2 - R` and `3 - R`: at any R of 1 or more that is
+    before CS# has even fallen, on a deselected bus.
+    """
+    return phy_round_trip_cycles + 3
+
+
+def low_latency_clocks(latency_ck):
+    """`low_latency_clocks` for a device that DECLINES the extra latency. (#380)
+
+    It serves after L CK and `HANDLE_LATENCY` waits `2 x n + 2`, so only EVEN
+    waits exist here and an odd L cannot be met -- a real limit of the 4:1
+    gearing. Rounded DOWN, which enters READ_DATA early rather than late; late
+    loses the first word outright. At an odd L the read comes back rotated
+    whatever is waited -- #399, where the rounding is still open.
+    """
+    return max(0, latency_ck // 2 - 1)
+
 
 # tCSM, the longest CS# may stay Low: 4 us, W956A8 rev A01-006 Table 24, and
 # section 10 makes it the HOST's obligation. Overrunning it drops a refresh, with
@@ -107,9 +151,9 @@ class HyperRAMDQSController(Elaboratable):
     # `HIGH_LATENCY_CLOCKS` with `bootram.HYPERRAM_LATENCY_CLOCKS`. 5 is `L - 1`
     # for L = 6; this part powers up at L = 7 and wants 6.
     #
-    # LOW is the variable-latency branch (1 x L CK), which is dead while
-    # `fixed_latency` is True -- and cannot be exact for an odd L anyway, since
-    # L / 2 is not a whole cycle. Only the doubled count divides evenly.
+    # LOW is only the RESET value of `low_latency_clocks` now. It was a class
+    # constant with no input, so the short branch waited 8 CK at every latency
+    # code and no code was right. See `low_latency_clocks`. (#380)
     LOW_LATENCY_CLOCKS  = 3
     HIGH_LATENCY_CLOCKS = 5
 
@@ -125,7 +169,8 @@ class HyperRAMDQSController(Elaboratable):
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
                  max_latency_clocks=None, fixed_latency=True,
                  tcshi_ns=T_CSHI_NS, trwr_ns=T_RWR_NS,
-                 max_recovery_cycles=None):
+                 max_recovery_cycles=None,
+                 phy_round_trip_cycles=PHY_ROUND_TRIP_CYCLES):
         """
         Parameters:
             phy                 -- The RAM record that should be connected to this chip.
@@ -143,8 +188,13 @@ class HyperRAMDQSController(Elaboratable):
             trwr_ns             -- tRWR/tACC, in ns. RESET value of
                                    `min_latency_clocks`; see the non-DQS twin.
             max_recovery_cycles -- Ceiling for `recovery_cycles`, which sizes it.
+            phy_round_trip_cycles -- Sync cycles between this FSM emitting a
+                                   signal and the device's answer arriving back.
+                                   Sets WHEN the extra-latency RWDS sample is
+                                   taken; see `rwds_sample_cycle`.
         """
         self._fixed_latency = fixed_latency
+        self._rwds_sample_cycle = rwds_sample_cycle(phy_round_trip_cycles)
         # Rounded UP, and at least one: a gap shorter than tCSHI is the violation this
         # exists to prevent, so the rounding may only ever be generous.
         self._recovery_cycles = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
@@ -212,6 +262,13 @@ class HyperRAMDQSController(Elaboratable):
         # CR0[3] as the part is set to; see the non-DQS controller. Was
         # `int(self._fixed_latency)`, which made the variable path dead (#338).
         self.fixed_latency    = Signal(reset=int(fixed_latency))
+        # The count for the SHORT branch, when the part declines the extra
+        # latency. An input rather than a derivation for the reason the non-DQS
+        # twin gives: the derivation is the datasheet's, not the silicon's.
+        # `low_latency_clocks()` is what a caller should drive it with. (#380)
+        self.low_latency_clocks = Signal(
+            range(0, self._max_latency_clocks + 1),
+            reset=min(self.LOW_LATENCY_CLOCKS, self._max_latency_clocks))
         # The same three levers the non-DQS twin grew, same reasons, same reset
         # values. `recovery_cycles` is tCSHI in whole `sync` cycles; the burst
         # bounds are the tCSM watchdog and can only be shortened. (#341)
@@ -239,6 +296,11 @@ class HyperRAMDQSController(Elaboratable):
         # by the watchdog rather than by the caller. Tells a device fault from a
         # controller fault without a bus trace.
         self.timed_out        = Signal()
+        # The device asked for the extra latency on this transaction, latched at
+        # the sample and held to the end of it. Brought out so a rig can COUNT
+        # elections per cell, as the non-DQS twin already allows. Always 0 under
+        # `fixed_latency`, where nothing is asked. (#338, #381)
+        self.extra_latency    = Signal()
         # The configured latency does not cover tRWR/tACC at this CK. Under fixed
         # latency the part spends 2 x L CK and this controller counts L - 1, so
         # the CK it waits is `2 x latency_clocks + 2`. (#341)
@@ -254,8 +316,14 @@ class HyperRAMDQSController(Elaboratable):
 
         recovery_remaining = Signal(range(self._max_recovery_cycles + 1))
 
+        # Under `var` the SHORT branch is the one that can be taken, so it is the
+        # binding count -- the same reading the non-DQS twin makes. It reported
+        # against the long count in both modes while the short one was a constant
+        # nothing could reach. (#341, #380)
         m.d.comb += self.latency_below_trwr.eq(
-            (2 * self.latency_clocks + 2) < self.min_latency_clocks)
+            Mux(self.fixed_latency,
+                (2 * self.latency_clocks + 2) < self.min_latency_clocks,
+                (2 * self.low_latency_clocks + 2) < self.min_latency_clocks))
 
         #
         # Latched control/addressing signals.
@@ -271,11 +339,27 @@ class HyperRAMDQSController(Elaboratable):
 
         # Tracks whether we need to add an extra latency period between our
         # command and the data body.
-        extra_latency   = Signal()
+        extra_latency   = self.extra_latency
 
         # Tracks how many cycles of latency we have remaining between a command
         # and the relevant data stages.
         latency_clocks_remaining  = Signal(range(0, self._max_latency_clocks + 1))
+
+        # Sync cycles since `start_transfer`, stopped one past the sample so the
+        # counter cannot wrap and the sample is a single cycle. Which cycle that
+        # is, and why it is not a state, is `rwds_sample_cycle`. (#381)
+        xact_age   = Signal(range(0, self._rwds_sample_cycle + 2))
+        sample_now = Signal()
+        rwds_asks  = Signal()
+        m.d.comb += [
+            sample_now.eq(xact_age == self._rwds_sample_cycle),
+            rwds_asks.eq(sample_now & ~self.fixed_latency
+                         & self.phy.rwds.i.any()),
+        ]
+        with m.If(xact_age <= self._rwds_sample_cycle):
+            m.d.sync += xact_age.eq(xact_age + 1)
+        with m.If(rwds_asks):
+            m.d.sync += extra_latency.eq(1)
 
         #
         # Core operation FSM.
@@ -364,6 +448,7 @@ class HyperRAMDQSController(Elaboratable):
                         self.phy.dq.o       .eq(0),
                         self.timed_out      .eq(0),
                         extra_latency       .eq(0),
+                        xact_age            .eq(1),
                     ]
 
                 with m.Else():
@@ -386,10 +471,9 @@ class HyperRAMDQSController(Elaboratable):
                     self.phy.dq.o.eq(Cat(ca[16:48])),
                     self.phy.dq.e.eq(1),
                 ]
-                # Mid-CA, which is where the device raises RWDS to ask for the
-                # extra latency; SHIFT_COMMAND1 ORs the live input on top and
-                # decides at the end of the CA. (#321)
-                m.d.sync += extra_latency.eq(extra_latency | self.phy.rwds.i.any())
+                # NO RWDS SAMPLE HERE. This is cycle 2, which reads pin cycle
+                # `2 - R` -- before CS# falls at any round trip of one cycle or
+                # more. The sample is `rwds_sample_cycle`. (#381)
                 m.next = 'SHIFT_COMMAND1'
 
             with m.State('SHIFT_COMMAND1'):
@@ -426,21 +510,34 @@ class HyperRAMDQSController(Elaboratable):
 
                     # CR0 = 0x8f2f selects FIXED latency, so the long count is
                     # right for this part; upstream's `extra_latency | 1` says so
-                    # by accident. `fixed_latency=False` honours the RWDS sample,
-                    # which is #319's sweep. The decision is taken at the end of
-                    # the CA, so a later RWDS change cannot erase it. (#321)
-                    with m.If(extra_latency | self.phy.rwds.i.any()
-                              | self.fixed_latency):
+                    # by accident. Under variable latency the answer has not
+                    # arrived yet at any round trip of one cycle or more, so this
+                    # loads the SHORT count and HANDLE_LATENCY upgrades it in
+                    # place. `rwds_asks` covers a shallower PHY. (#321, #381)
+                    with m.If(extra_latency | rwds_asks | self.fixed_latency):
                         m.d.sync += latency_clocks_remaining.eq(self.latency_clocks)
                     with m.Else():
-                        m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS)
+                        m.d.sync += latency_clocks_remaining.eq(self.low_latency_clocks)
 
 
-            # HANDLE_LATENCY -- applies clock cycles until our latency period is over.
+            # HANDLE_LATENCY -- applies clock cycles until our latency period is
+            # over, and it is where the device's extra-latency request is read.
             with m.State('HANDLE_LATENCY'):
-                m.d.sync += latency_clocks_remaining.eq(latency_clocks_remaining - 1)
+                # SHORT plus the difference, applied in place: the count is still
+                # running, so honouring the request costs no cycle of its own.
+                extra_wait = Mux(self.latency_clocks >= self.low_latency_clocks,
+                                 self.latency_clocks - self.low_latency_clocks, 0)
+                with m.If(rwds_asks):
+                    m.d.sync += latency_clocks_remaining.eq(
+                        latency_clocks_remaining - 1 + extra_wait)
+                with m.Else():
+                    m.d.sync += latency_clocks_remaining.eq(
+                        latency_clocks_remaining - 1)
 
-                with m.If(latency_clocks_remaining == 0):
+                # `~rwds_asks` matters at the shortest code: `low_latency_clocks`
+                # is 0 at L = 3, so the count reaches zero on the sample cycle
+                # itself and exiting there leaves the upgrade nowhere to happen.
+                with m.If((latency_clocks_remaining == 0) & ~rwds_asks):
                     with m.If(is_read):
                         m.next = 'READ_DATA'
                     with m.Else():
