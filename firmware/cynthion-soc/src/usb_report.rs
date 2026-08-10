@@ -14,6 +14,7 @@
 
 use core::fmt::Write;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::usb;
 
@@ -25,12 +26,29 @@ const LSR_DR: u8 = 1 << 0;
 const LSR_THRE: u8 = 1 << 5;
 const IER_ERBFI: u8 = 1 << 0;
 
-/// Turns to wait for the transmit holding register. At 115200 baud a character
-/// is 87 us, so a full 16-deep FIFO drains in 1.4 ms; one turn of this loop is
-/// an uncached MMIO read, tens of cycles at most. 200,000 covers that with room
-/// and bounds the case where nothing is draining the other end -- the same
-/// argument `src/uart.rs` makes for its own bound.
+/// Turns to wait for the transmit holding register before dropping the byte.
+///
+/// **The derivation this carried was invalid and the value is therefore not
+/// derived** (#295). It read "at 115200 baud a character is 87 us", and there is
+/// no baud rate on this link: this is a USB-CDC endpoint, so what is being
+/// waited on is the host's service interval for it. Until that is measured the
+/// multiplier over expected cannot be stated.
+///
+/// On expiry: drop the byte and count it ([`drops`]). Unchanged in value on
+/// purpose -- replacing it without the figure would be one guess for another.
 const THRE_SPINS: u32 = 200_000;
+
+/// Bytes [`Console::put`] gave up on since boot.
+///
+/// Dropping beats wedging on a console -- `src/uart.rs` argues it at length --
+/// but it was silent, so output simply had holes and a hole reads as firmware
+/// that never printed rather than a host that stopped reading.
+static DROPS: AtomicU32 = AtomicU32::new(0);
+
+/// How many transmitted bytes this console has dropped since boot.
+pub fn drops() -> u32 {
+    DROPS.load(Ordering::Relaxed)
+}
 
 /// The transmit half. Owned by whoever is printing, which is the point: a
 /// handler has nowhere to be handed one from.
@@ -49,6 +67,7 @@ impl Console {
         while unsafe { read_volatile((self.base + LSR) as *const u8) } & LSR_THRE == 0 {
             spins += 1;
             if spins > THRE_SPINS {
+                DROPS.fetch_add(1, Ordering::Relaxed);
                 return;
             }
         }
@@ -162,10 +181,14 @@ pub fn summary(
     );
     let _ = writeln!(
         console,
-        "usb: vendor {} overflows {} depth {}",
+        "usb: vendor {} overflows {} depth {} console drops {}",
         vendor_requests,
         queue.overflows.load(Ordering::Relaxed),
         queue.depth_max.load(Ordering::Relaxed),
+        // Beside the queue's own overflows, because they are the same class of
+        // loss: this one is output the console gave up on (#295). A non-zero
+        // count means the report above may itself have holes in it.
+        drops(),
     );
     let trace = &control.trace;
     let _ = writeln!(
