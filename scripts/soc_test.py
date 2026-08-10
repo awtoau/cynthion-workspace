@@ -588,6 +588,11 @@ def ask_fresh_qemu(text, needle, seconds, settle=None, settle_s=0):
     measurement of the command that asked, so `stats` waits for the idle
     re-banner first and gets a couple of seconds of doing nothing to average
     over.
+
+    `needle`'s whole LINE, via `expect_line`. A sentinel that is a prefix of
+    the token being asserted on -- `image ` for the word `dirty` that follows
+    it -- returns before that word is on the wire, and the caller then blames
+    the firmware for a truncated read (#370).
     """
     session = Session(ELF)
     try:
@@ -598,7 +603,7 @@ def ask_fresh_qemu(text, needle, seconds, settle=None, settle_s=0):
             session.expect(settle, settle_s, first + 1)
         mark = len(session.snapshot())
         session.send(text.encode() + b"\r")
-        session.expect(needle, seconds, mark)
+        expect_line(session, needle, seconds, mark)
         # Both callers parse what comes back, so wait for the prompt as well.
         session.expect(PROMPT, seconds, mark)
         return session.snapshot()[mark:]
