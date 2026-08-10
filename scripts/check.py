@@ -9,7 +9,7 @@ no cloud runners and no GitHub Actions.
     ./scripts/check.py                 # every check
     ./scripts/check.py rust python     # only the named checks
     ./scripts/check.py --list          # what is available
-    ./scripts/check.py --fast          # skip any check marked slow (none are)
+    ./scripts/check.py --fast          # skip any check marked slow (featureiso)
     ./scripts/check.py --parallel      # run independent checks concurrently
 
 Exit status is 0 only if every selected check passed, so this works
@@ -246,6 +246,21 @@ def build_checks() -> List[Check]:
                 # a word, which is how `VbusControl`'s two input-enable ports
                 # drove no pad for as long as they existed (#305).
                 Step([PYTHON, "scripts/check_ports_connected.py"], ROOT),
+            ],
+        ),
+        Check(
+            name="featureiso",
+            description="no spike feature reaches the shipping shell",
+            skip_reason=_need("llvm-objdump"),
+            slow=True,
+            steps=[
+                # In no gate at all until now, and red on main the whole time
+                # (#386). The three failures were the fingerprint, not the
+                # features: one was `rticspike`, declared `[]`.
+                #
+                # `slow`: ~10 shell builds. `--fast` skips it; the gate does
+                # not, because a check nothing runs goes red again unwatched.
+                Step([PYTHON, "scripts/soc_feature_isolation_check.py"], ROOT),
             ],
         ),
         Check(
