@@ -85,6 +85,11 @@ from amaranth.lib.cdc               import FFSynchronizer
 from clocks import SocClocks
 from peripherals.clock_monitor import ClockMonitor
 
+# Every environment variable below that changes what this file elaborates, and
+# the build directory derived from them. One table, shared with `soc_run.py`'s
+# bitstream cache -- see `variant.py`.
+import variant
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import usb_ids
 
@@ -125,6 +130,11 @@ from amaranth_soc                   import csr, gpio, wishbone
 from amaranth_soc.wishbone          import Decoder
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+
+# This variant's build directory, at import time because the CPU's netlist is
+# emitted during elaboration and has to land inside it -- see `BUILD_DIR` use in
+# `AwtoSoc.elaborate` and #306.
+BUILD_DIR = variant.build_dir(ROOT)
 
 # 64 KiB at address zero, matching what moondancer allocates. The reset vector
 # is 0x00000000, so the bootloader's entry point must be the first instruction.
@@ -597,7 +607,7 @@ FLASH_DIVISOR = 0
 #     124.77 MHz -- so it caps sync whenever FLASH_PHY_FAST or HYPERRAM_DQS is on
 # `usb` is the A8 oscillator, so the PHY does not constrain this.
 # 60 is a rung with margin. The real ceiling is unmeasured.
-SYNC_MHZ = 50 if os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0") else 60
+SYNC_MHZ = 50 if variant.flag("CYNTHION_HYPERRAM_BIST") else 60
 # 50 for the BIST variant ONLY, and it is what makes the rig usable.
 #
 # That build adds a second PLL, a fourth clock domain and the engine, and it
@@ -730,7 +740,7 @@ HYPERRAM_CLOCK_STOP = False
 # So do not regenerate the PAC with this set: the committed one is the shipping
 # variant's, and `soc_generate_pac.py --check` calling the BIST map stale is
 # that fact rather than a defect.
-HYPERRAM_BIST = os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0")
+HYPERRAM_BIST = variant.flag("CYNTHION_HYPERRAM_BIST")
 
 # Device CK for the BIST variant, in MHz. Independent of SYNC_MHZ -- that
 # independence is the point of the variant, and `hyperram_clocks.py` refuses a
@@ -744,7 +754,7 @@ HYPERRAM_BIST = os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0")
 # `peripherals/hyperram_ck.py`. Two is the ceiling and the DQS path takes one;
 # `hyperram_clocks.py` argues both limits and refuses the rest.
 HYPERRAM_BIST_CK_RUNGS = [float(ck) for ck in
-                          os.environ.get("CYNTHION_HYPERRAM_CK_MHZ", "100").split(",")]
+                          variant.value("CYNTHION_HYPERRAM_CK_MHZ").split(",")]
 
 # Rung 0, for everything that needs a single number. The BIST engine's timing
 # constants are derived from it, so a two-rung build gives the OTHER rung the
@@ -761,7 +771,7 @@ HYPERRAM_BIST_CK_MHZ = HYPERRAM_BIST_CK_RUNGS[0]
 # CK/2 and `hr_fast` carries the gearing, so the same logic reaches twice the CK.
 # Defaults to DQS -- the path under investigation, and the one whose fabric
 # leaves headroom. Set CYNTHION_HYPERRAM_BIST_DQS=0 to measure the other.
-HYPERRAM_BIST_DQS = os.environ.get("CYNTHION_HYPERRAM_BIST_DQS", "1") not in ("", "0")
+HYPERRAM_BIST_DQS = variant.flag("CYNTHION_HYPERRAM_BIST_DQS")
 
 # Divided copies of the clocks on PMOD A, for a scope. See #294 and
 # `peripherals/clock_mirror.py`.
@@ -772,12 +782,12 @@ HYPERRAM_BIST_DQS = os.environ.get("CYNTHION_HYPERRAM_BIST_DQS", "1") not in (""
 # is the resource #314 was about.
 #
 #     CYNTHION_CLOCK_MIRROR=1 ./scripts/soc_run.py
-CLOCK_MIRROR = os.environ.get("CYNTHION_CLOCK_MIRROR", "") not in ("", "0")
+CLOCK_MIRROR = variant.flag("CYNTHION_CLOCK_MIRROR")
 
 # /4. LVCMOS33 output is rated 150 MHz and `hr_fast` is the device CK on the DQS
 # path, so the raw net is out of spec on the pad above 150. /4 puts every source
 # in 15..50 MHz across the swept range. Powers of two only.
-CLOCK_MIRROR_DIV = int(os.environ.get("CYNTHION_CLOCK_MIRROR_DIV", "4"))
+CLOCK_MIRROR_DIV = int(variant.value("CYNTHION_CLOCK_MIRROR_DIV"))
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
@@ -913,8 +923,15 @@ class AwtoSoc(Elaboratable):
         # to the firmware, so a literal here would let the core and the geometry
         # it advertises drift apart silently. They did not, but only because both
         # happened to be 64.
+        # `netlist` is this variant's own copy, and it is what makes concurrent
+        # builds safe. The generator writes into the submodule at a fixed path
+        # shared by every build (#306); with nowhere else to put it, one build
+        # could read a netlist another was halfway through writing -- yosys then
+        # fails in whatever way a truncated 1.2 MB Verilog file happens to break
+        # it, or worse, succeeds on a stale but valid one.
         cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
-                         cache_ways=CACHE_WAYS, regions=regions)
+                         cache_ways=CACHE_WAYS, regions=regions,
+                         netlist=BUILD_DIR / "VexiiRiscv.v")
         m.submodules.cpu = cpu
 
         # The die's one `JTAGG`, and both taps off it.
@@ -2044,7 +2061,7 @@ def main():
                         default=ROOT / "tmp" / "riscv_hello" / "hello.bin",
                         help="the IMAGE, linked for IMAGE_ORIGIN")
     parser.add_argument("--bootloader", type=Path,
-                        default=ROOT / "tmp" / "rust_boot.bin",
+                        default=BUILD_DIR / "rust_boot.bin",
                         help="the resident bootloader, linked for 0x0; omit for a "
                              "single-image build that boots --firmware directly")
     args = parser.parse_args()
@@ -2131,7 +2148,15 @@ def main():
     # packaged platform has no such dependency.
     from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
 
-    build_dir = ROOT / "tmp" / "awto_soc" / "build"
+    # One directory per variant, not one for all of them.
+    #
+    # A fixed path meant two builds could not run at once: a CK ladder is one
+    # bitstream per rung and twenty of them are twenty sequential synthesis runs
+    # on a 31-core machine (#351). The name comes from `variant.py`, which is the
+    # same table `soc_run.py` hashes into the bitstream cache key -- one notion of
+    # what makes a build distinct, so the cache and the directory cannot disagree.
+    build_dir = BUILD_DIR
+    build_dir.mkdir(parents=True, exist_ok=True)
 
     # No `**ecppack_opts()` here, and it was tried: `CynthionPlatformRev1D4`
     # passes its own `ecppack_opts` in `toolchain_prepare`

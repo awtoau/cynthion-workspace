@@ -55,13 +55,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "tmp" / "riscv_clock_ladder.json"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
-BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
+
+# This variant's build directory (#351).
+BUILD = variant.build_dir(ROOT)
+BITSTREAM = BUILD / "top.bit"
 
 # 0x12345678 * 3, which the firmware prints. Checking the value rather than merely
 # checking that something arrived is what separates "faster" from "faster and wrong".
@@ -100,7 +104,7 @@ def build():
     # nextpnr reports achieved frequency per clock; the sync domain is the one being
     # swept. A design can fail timing and still run -- nextpnr's estimate is
     # conservative -- so this is recorded rather than treated as pass/fail.
-    timing = ROOT / "tmp" / "awto_soc" / "build" / "top.tim"
+    timing = BUILD / "top.tim"
     achieved = None
     if timing.exists():
         for line in timing.read_text().splitlines():

@@ -49,12 +49,16 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "tmp" / "awto_soc" / "build"
 OUT = ROOT / "tmp" / "build-spread"
 
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 from devlog import emit, spawn  # noqa: E402
+from soc import variant  # noqa: E402
+
+# This variant's build directory (#351).
+BUILD = variant.build_dir(ROOT)
 
 FMAX_RE = re.compile(r"Max frequency for clock\s+'([^']+)':\s+([\d.]+) MHz\s+\((\w+)")
 
@@ -180,7 +184,8 @@ def main():
         row = one_run(args.label, index, args.soc_run_args)
         rows.append(row)
         if row["rc"] != 0:
-            emit(f"  build {index} FAILED; see tmp/logs/synthesis.log")
+            emit(f"  build {index} FAILED; see "
+                 f"tmp/logs/synthesis-{variant.slug()}.log")
 
     result = {"label": args.label, "rows": rows,
               "summary": summarise(rows, f"{args.label}: spread over "

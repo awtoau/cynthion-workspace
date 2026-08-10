@@ -37,13 +37,16 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
+
+# This variant's build, chosen by the same environment that built it (#351).
+BITSTREAM = variant.build_dir(ROOT) / "top.bit"
 
 # How many tty events to wait through for the console to appear.
 #

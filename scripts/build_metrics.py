@@ -7,7 +7,7 @@
 Area, timing and full configuration for every SoC build, in a database.
 
     ./dev.py metrics status         # is the server up, and how many rows are spooled
-    ./dev.py metrics record         # record the build sitting in tmp/awto_soc/build
+    ./dev.py metrics record         # record the build in this variant's build dir
     ./dev.py metrics report         # current vs previous vs best-ever vs branch point
     ./dev.py metrics graph          # trend graphs, written to reports/
     ./dev.py metrics flush          # push spooled records once the server is back
@@ -106,7 +106,13 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD_DIR = ROOT / "tmp" / "awto_soc" / "build"
+sys.path.insert(0, str(ROOT / "gateware"))
+from soc import variant  # noqa: E402
+
+# The build directory of the variant selected by the environment -- one per
+# variant since #351, so a concurrent build of another one is a different
+# directory rather than the same files.
+BUILD_DIR = variant.build_dir(ROOT)
 SPOOL = ROOT / "tmp" / "build-metrics" / "pending"
 # Rendered reports go to a ROOT-LEVEL `reports/`, not under `tmp/`.
 #
@@ -870,7 +876,7 @@ def config_hash(cfg: dict) -> str:
 # ---------------------------------------------------------------------------
 # Firmware and toolchain
 # ---------------------------------------------------------------------------
-def firmware_sizes() -> dict:
+def firmware_sizes(build_dir: Path = BUILD_DIR) -> dict:
     """Section sizes from the ELF, plus the two images actually loaded."""
     elf = (ROOT / "firmware" / "cynthion-soc" / "target"
            / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc")
@@ -885,9 +891,11 @@ def firmware_sizes() -> dict:
                     name = parts[0].lstrip(".").replace(".", "_")
                     if name in ("text", "rodata", "data", "bss", "init"):
                         out[f"fw_{name}_bytes"] = int(parts[1])
-    for key, path in (("fw_bram_image_bytes", ROOT / "tmp" / "rust_fw.bin"),
-                      ("fw_flash_image_bytes", ROOT / "tmp" / "rust_rodata.bin"),
-                      ("fw_boot_bytes", ROOT / "tmp" / "rust_boot.bin")):
+    # Beside the bitstream they were built for, not in a shared `tmp/`: two
+    # variants have different firmware, and the row must describe this one.
+    for key, path in (("fw_bram_image_bytes", Path(build_dir) / "rust_fw.bin"),
+                      ("fw_flash_image_bytes", Path(build_dir) / "rust_rodata.bin"),
+                      ("fw_boot_bytes", Path(build_dir) / "rust_boot.bin")):
         if path.exists():
             out[key] = path.stat().st_size
     manifest = ROOT / "firmware" / "cynthion-soc" / "Cargo.toml"
@@ -971,7 +979,7 @@ def collect(build_dir: Path = BUILD_DIR, *, target: str = DEFAULT_TARGET,
     row.update(toolchain())
     row["nextpnr_opts"] = nextpnr_opts()
     row.update({k: v for k, v in pnr["headline"].items() if v is not None})
-    row.update(firmware_sizes())
+    row.update(firmware_sizes(build_dir))
     row.update(cfg)
 
     placed = parse_placed_bram(Path(build_dir) / "top.config")
@@ -1788,7 +1796,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("status", help="is the server up, is anything spooled")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("record", help="record the build in tmp/awto_soc/build")
+    p = sub.add_parser("record", help=f"record the build in "
+                                      f"{BUILD_DIR.relative_to(ROOT)}")
     p.add_argument("--build-dir", default=str(BUILD_DIR))
     p.add_argument("--target", default=DEFAULT_TARGET)
     p.add_argument("--status", default="ok")

@@ -45,7 +45,7 @@ Boxes are distance from the bus fabric, measured on those same edges, so a new p
 is filed next to the ones it structurally resembles rather than by a list of names kept
 here.
 
-The yosys netlist (`tmp/awto_soc/build/top.json`) was the other candidate source and
+The yosys netlist (`tmp/awto_soc/build/<variant>/top.json`) was the other candidate and
 is not used: `synth_ecp5` flattens, so that file is one `top` module of 14,700 LUT-level
 cells with no hierarchy left. The unflattened `top.il` does keep it -- and its module
 list matches this script's fragment tree exactly -- but it is an 8.6 MB build artifact
