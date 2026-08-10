@@ -566,6 +566,30 @@ def build_firmware(extra=()):
     return None
 
 
+def image_not_from_head():
+    """Why the built ELF is not this commit's, or None.
+
+    `build.rs` stamps `GIT_HASH` as a `&str`, so HEAD's short hash is in the
+    binary verbatim. Checked BEFORE anything boots: cargo reporting success
+    does not prove the ELF moved, and a stale one answers every check except
+    those naming a command it predates -- which then read as firmware
+    regressions rather than as a build that did not happen (#377).
+    """
+    head = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"],
+                          cwd=ROOT, capture_output=True, text=True)
+    head = head.stdout.strip()
+    # No git, no claim: `build.rs` stamps "no-git" and there is nothing to
+    # compare against.
+    if not head or head.encode() in ELF.read_bytes():
+        return None
+    return (f"the image at {ELF.relative_to(ROOT)} does not carry HEAD "
+            f"({head}).\n"
+            "cargo reported success and the binary is some other build's. "
+            "Every check below\n"
+            "would describe that image rather than this tree; see #377. "
+            f"Delete {BUILD_DIR.relative_to(ROOT)} and run again.")
+
+
 def tree_is_dirty():
     """What both build stamps call dirty.
 
@@ -658,6 +682,10 @@ def main():
             emit(failed)
             return 1
         emit(f"built {ELF.relative_to(ROOT)}: {ELF.stat().st_size} bytes")
+        wrong = image_not_from_head()
+        if wrong is not None:
+            emit(wrong)
+            return 1
 
     if not args.board and not ELF.exists():
         emit(f"no QEMU image at {ELF.relative_to(ROOT)}; drop --no-build")
