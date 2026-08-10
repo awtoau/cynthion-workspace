@@ -168,6 +168,18 @@ CR1_ADDRESS = 0x0801
 # CR0 as the part powers up. The sweep replaces only the drive-strength field.
 CR0_POWER_ON = 0x8F2F
 APPLY_BIT = 1 << 16
+
+# CR0[7:4] -> initial latency in CK clocks. Datasheet Table 8, rev A01-006 p.21.
+# SPARSE: 3..13 are RESERVED and have no defined count, so they keep the
+# power-on one rather than getting an invented value.
+LATENCY_CLOCKS_BY_CODE = {14: 3, 15: 4, 0: 5, 1: 6, 2: 7}
+CR0_POWER_ON_LATENCY_CODE = (CR0_POWER_ON >> 4) & 0xF
+
+# The non-DQS controller counts HALF-clocks: its shipped constant of 14 aligns
+# with the power-on code's 7 CK, measured on the board 2026-08-10. So the count
+# the controller needs is twice the datasheet's clocks, and the mapping
+# reproduces the old default rather than replacing it. (#331)
+CONTROLLER_CYCLES_PER_CLOCK = 2
 REG_ACTUAL      = 17
 REG_GOLDEN      = 18
 
@@ -556,6 +568,24 @@ class HyperRAMCeiling(Elaboratable):
             # The non-DQS PHY never drives RESET#; the platform's buffer holds it
             # released, which is the behaviour this path has always had.
             reset_assert = Signal()
+
+            # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
+            # and left the controller's own wait welded, so only the one code
+            # matching it could align and the other fifteen failed whatever the
+            # part did. The DQS path keeps its constant: its gearing gives no
+            # integral relation to Table 8, and #314 voids its results anyway.
+            effective_cr0 = Signal(16)
+            m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0,
+                                             device_cr0[:16]))
+            with m.Switch(effective_cr0[4:8]):
+                for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
+                    with m.Case(code):
+                        m.d.comb += psram.latency_clocks.eq(
+                            CONTROLLER_CYCLES_PER_CLOCK * clocks)
+                with m.Default():
+                    m.d.comb += psram.latency_clocks.eq(
+                        CONTROLLER_CYCLES_PER_CLOCK
+                        * LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE])
 
         # Device word address. The controller advances internally within a burst,
         # so only the start address is issued; it steps by `burst_words` scaled to
