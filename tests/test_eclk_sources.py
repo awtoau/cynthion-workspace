@@ -163,3 +163,77 @@ def test_edge_clock_pll_is_pinned_to_the_left(name, design):
         f"{name}: BEL is {pll.attrs.get('BEL')!r}, not {LEFT_PLL_BEL!r}. The "
         f"HyperRAM pads are bank 7 and the 25F die has no upper-left PLL, so a "
         f"placer that moves this PLL right drops the edge clock onto fabric (#314)")
+
+
+# ---------------------------------------------------------------------------
+# The artifact audit. The tests above read the SOURCE; these read what the tools
+# produced, which is the only thing that says where the clock actually went.
+#
+# Both fixtures are verbatim from the matched pair built at 4d4c539 --
+# `soc_eclk_check.py` with and without `--control` -- and differ in one arc and
+# one log line.
+# ---------------------------------------------------------------------------
+CONFIG_DEDICATED = """\
+.tile CIB_R25C2:ECLK_L
+arc: S1W2_ECLKI0 G_JLLCPLL0CLKOS
+arc: W2_JECLK0 W2_JNEIGHBORECLK0
+"""
+
+CONFIG_FABRIC_TAP = CONFIG_DEDICATED.replace("G_JLLCPLL0CLKOS", "G_JLLQECLKCIB0")
+
+TIM_DEDICATED = """\
+Info: Logic utilisation before packing:
+Info: Promoted 'fast_clk' to bank 7 ECLK0.
+Info:     Derived frequency constraint of 120.0 MHz for net fast_clk$eclk7_0
+Info: \t        ECLKBRIDGECS:       0/      2     0%
+Info:     trying dedicated routing for edge clock source fast_clk
+Info: Max frequency for clock '$glbnet$clk': 309.89 MHz (PASS at 60.00 MHz)
+"""
+
+TIM_FABRIC = TIM_DEDICATED.replace(
+    "Info:     trying dedicated routing for edge clock source fast_clk\n",
+    "Info:     trying dedicated routing for edge clock source fast_clk\n"
+    "Info:         no route found, general routing will be used.\n")
+
+
+def _build_dir(tmp_path, config, tim):
+    (tmp_path / "top.config").write_text(config)
+    (tmp_path / "top.tim").write_text(tim)
+    return tmp_path
+
+
+def _audit(build_dir):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from soc_eclk_check import audit
+    return audit(build_dir)
+
+
+def test_audit_passes_the_dedicated_path(tmp_path):
+    ok, lines = _audit(_build_dir(tmp_path, CONFIG_DEDICATED, TIM_DEDICATED))
+    assert ok, "\n".join(lines)
+
+
+def test_audit_fails_the_fabric_tap(tmp_path):
+    """The pre-fix design. Both halves of it, each on its own."""
+    ok, _ = _audit(_build_dir(tmp_path, CONFIG_FABRIC_TAP, TIM_FABRIC))
+    assert not ok, "the control passed -- this check has stopped looking (#314)"
+
+    ok, _ = _audit(_build_dir(tmp_path, CONFIG_FABRIC_TAP, TIM_DEDICATED))
+    assert not ok, "a fabric-tap arc passed when nextpnr happened not to log it"
+
+    ok, _ = _audit(_build_dir(tmp_path, CONFIG_DEDICATED, TIM_FABRIC))
+    assert not ok, "'general routing will be used' passed on a dedicated arc"
+
+
+def test_audit_is_vacuous_without_an_edge_clock(tmp_path):
+    """The shipping SoC builds no `fast`, so it must not fail this."""
+    ok, lines = _audit(_build_dir(tmp_path, ".tile CIB_R25C2:CIB_EBR\n",
+                                 "Info: Logic utilisation before packing:\n"))
+    assert ok and "no edge clock" in "\n".join(lines)
+
+
+def test_audit_reads_only_the_last_nextpnr_run(tmp_path):
+    """`top.tim` accumulates; a fixed build must not inherit the old failure."""
+    ok, _ = _audit(_build_dir(tmp_path, CONFIG_DEDICATED,
+                              TIM_FABRIC + TIM_DEDICATED))
+    assert ok, "an earlier run's fabric fallback was read as this build's"
