@@ -42,7 +42,10 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"cell" => match axes(args) {
             Some(axes) => bist::one(uart, &engine, axes, DEFAULT_PASSES),
             None => {
-                let _ = writeln!(uart, "usage: bist cell <drive 0-7> <dif|se> <sel 0-7>");
+                let _ = writeln!(
+                    uart,
+                    "usage: bist cell <drive 0-7> <dif|se> <sel 0-7> [latency 0-15] [fix|var]"
+                );
             }
         },
         _ => crate::shell::list_family(uart, "bist"),
@@ -100,7 +103,7 @@ fn passes(args: &[u8]) -> u32 {
     }
 }
 
-/// `<drive> <dif|se> <sel>`.
+/// `<drive> <dif|se> <sel> [latency] [fix|var]`.
 fn axes(args: &[u8]) -> Option<Axes> {
     let mut words = args.split(|&b| b == b' ').filter(|w| !w.is_empty());
     let drive = parse_decimal(words.next()?)?;
@@ -109,6 +112,15 @@ fn axes(args: &[u8]) -> Option<Axes> {
     // Latency is optional: omitted means the power-on 0010b/fixed, which is what
     // every reading before this used.
     let latency = words.next().and_then(parse_decimal).unwrap_or(2);
+    // `fixed_latency` was HARDCODED true here, so no single cell could ever
+    // command CR0[3] = 0 -- only the sweeps varied it, and they do not report the
+    // readback. That is why the fix/var axis shows "no effect" with nothing
+    // proving the axis moved at all (#334).
+    let fixed_latency = match words.next() {
+        None | Some(b"fix") => true,
+        Some(b"var") => false,
+        Some(_) => return None,
+    };
     if drive > 7 || readclksel > 7 {
         return None;
     }
@@ -122,6 +134,6 @@ fn axes(args: &[u8]) -> Option<Axes> {
         single_ended_clock,
         readclksel: readclksel as u8,
         latency: latency as u8,
-        fixed_latency: true,
+        fixed_latency,
     })
 }
