@@ -67,22 +67,27 @@
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::clock::Hz;
+use crate::clock::{self, Hz};
 use crate::uart::Uart;
 use crate::{
-    bench, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices,
+    bench, info, log, plic, power, sched, selftest, shell, target, timer, ulpi,
+    vbus, Devices,
 };
-// Only the non-BIST `hyperram_init` reaches these; under `hyperram-bist` that
+// Only the non-BIST `hyperram_init` reaches this; under `hyperram-bist` that
 // body is compiled out and an unconditional import is a warning.
 #[cfg(not(feature = "hyperram-bist"))]
-use crate::{hyperram, info};
+use crate::hyperram;
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
-/// Thirteen lines of stamp, name, verdict and a detail with room to explain a
+/// Sixteen lines of stamp, name, verdict and a detail with room to explain a
 /// failure. Overflow is COUNTED and reported rather than silently truncating,
 /// which is the property `src/events.rs`'s drop counter has.
-const RETAINED: usize = 1600;
+///
+/// Block RAM, and `.bss`, so raising it costs image space directly. It is spent
+/// rather than conserved: a report that truncates is a report whose last line --
+/// the one the newest check writes -- is the one nobody sees.
+const RETAINED: usize = 2400;
 
 /// Room past the retained report for a line the SHELL asked for.
 ///
@@ -496,6 +501,185 @@ fn facilities(out: &mut Out) {
             "{}, 1 task: power_refresh every {} ms",
             sched::MODEL,
             power::interval_ms()
+        ),
+    );
+    isa(out);
+    clocks(out);
+    die(out);
+}
+
+/// The instruction classes this image was COMPILED with, EXECUTED.
+///
+/// Two accounts disagree about this core and neither is checkable on its own:
+/// `misa` reads `rv32im` however the core was generated, and the gateware's
+/// `cpu` word says what it was asked for. Running the instructions is what
+/// settles it, and `selftest` already had the sequences -- it just had to be
+/// typed. Now it is not.
+///
+/// **The gateware's word gates the run, not the other way round.** A core with
+/// no `A` does not answer `lr.w` wrongly, it raises an illegal instruction, and
+/// this firmware aborts on one. So a class the core was not generated with is
+/// reported unrun; only a class it claims is exercised.
+///
+/// Cost: no MMIO and no wait. The four sequences are ~120 instructions plus at
+/// most eight lr/sc attempts -- microseconds at any `sync` this board runs.
+fn isa(out: &mut Out) {
+    // What the COMPILER emitted for, from its own cfg rather than a list anyone
+    // typed: `riscv32imac-unknown-none-elf` gives m, a and c, and changing the
+    // triple moves this with it.
+    let want_m = cfg!(target_feature = "m");
+    let want_a = cfg!(target_feature = "a");
+    let want_c = cfg!(target_feature = "c");
+
+    // What the core was GENERATED with. A target that is not a bitstream has no
+    // second account, so there is nothing to contradict and the classes run.
+    let cpu = info::gateware::id().filter(|id| id.present()).map(|id| id.cpu);
+    let generated = |flag: u32| cpu.is_none_or(|cpu| cpu & flag != 0);
+
+    let missing = if want_m && !generated(info::gateware::CPU_M) {
+        "M"
+    } else if want_a && !generated(info::gateware::CPU_A) {
+        "A"
+    } else if want_c && !generated(info::gateware::CPU_C) {
+        "C"
+    } else {
+        ""
+    };
+    if !missing.is_empty() {
+        return out.line(
+            "isa",
+            "FAIL",
+            format_args!(
+                "{} needs {}, and this bitstream's core was generated without it \
+                 -- those instructions trap, not fail; NOT RUN",
+                info::build::TARGET,
+                missing
+            ),
+        );
+    }
+
+    let mut ok = selftest::classes::alu();
+    if want_m {
+        ok &= selftest::classes::muldiv();
+    }
+    if want_c {
+        let (value, bytes) = selftest::classes::compressed();
+        ok &= value == 128 && bytes == 6;
+    }
+    if want_a {
+        ok &= selftest::classes::atomics();
+    }
+    out.line(
+        "isa",
+        if ok { "ok" } else { "FAIL" },
+        format_args!(
+            "{}: alu{}{}{} executed{}",
+            info::build::TARGET,
+            if want_m { ", mul/div/rem" } else { "" },
+            if want_c { ", compressed" } else { "" },
+            if want_a { ", lr/sc and amo" } else { "" },
+            if ok {
+                ""
+            } else {
+                " -- A CLASS RETURNED THE WRONG ANSWER; `selftest` says which"
+            }
+        ),
+    );
+}
+
+/// What `sync` is COUNTED at, beside what this firmware assumes it is.
+///
+/// Every interval in this image is derived from `target::TIME_HZ`, and until now
+/// the boot report printed that constant and nothing else -- the shape of fault
+/// this project keeps finding. `info` has had the measured figure since #226,
+/// but only for someone who typed it.
+///
+/// Cost: two register reads, plus a bounded wait for the first window.
+/// `clock_monitor.py` averages over 1 ms of the 60 MHz oscillator, so nothing
+/// can be read before one has elapsed; the budget is 1.25x that, and boot
+/// usually reaches here well past it, in which case the wait is zero. On expiry
+/// the line says the window did not complete, which is a `usb` domain -- the
+/// discrete oscillator -- that is not running.
+fn clocks(out: &mut Out) {
+    if target::BOARD.is_none() {
+        return out.line("clocks", "ABSENT", format_args!("no clock monitor on this target"));
+    }
+    let budget = clock::micros(clock::WINDOW_US + clock::WINDOW_US / 4);
+    let began = clock::now();
+    let mut measured = clock::measured();
+    while measured.is_none() && began.elapsed(clock::now()) < budget {
+        measured = clock::measured();
+    }
+    let Some(measured) = measured else {
+        return out.line(
+            "clocks",
+            "FAIL",
+            format_args!(
+                "no {} us window completed in {} us -- the 60 MHz oscillator \
+                 domain is not running",
+                clock::WINDOW_US,
+                clock::to_micros(began.elapsed(clock::now()))
+            ),
+        );
+    };
+    let agrees = info::within_one_percent(measured.khz, target::TIME_HZ / 1000);
+    out.line(
+        "clocks",
+        if agrees && measured.locked { "ok" } else { "FAIL" },
+        format_args!(
+            "sync counted at {} against the {} this image assumes, pll {}",
+            Hz::khz(measured.khz),
+            Hz(target::TIME_HZ),
+            if measured.locked { "locked" } else { "UNLOCKED" }
+        ),
+    );
+}
+
+/// The die's own temperature, and the one thing on this board that depends on it.
+///
+/// Not cosmetic. The HyperRAM's tCSM is **4 us below 85 C and 1 us above** --
+/// Winbond's `Config-AC.v`, behind `` `define LA_85C `` -- and every CS# cap in
+/// this design is derived from the 4 us figure alone. Above the knee the
+/// watchdog that is supposed to end a burst inside tCSM is four times too loose,
+/// and a sustained matrix sweep is precisely the workload that heats the die.
+///
+/// Cost: one register read. The conversion free-runs in fabric every 8.7 ms
+/// (`gateware_id.py`), so nothing here waits for one.
+fn die(out: &mut Out) {
+    let Some(id) = info::gateware::id().filter(|id| id.present()) else {
+        return out.line("die", "ABSENT", format_args!("no gateware id on this target"));
+    };
+    let Some((sign, degrees)) = id.celsius() else {
+        return out.line(
+            "die",
+            if id.die & info::gateware::DIE_PRESENT == 0 { "ABSENT" } else { "WARN" },
+            format_args!(
+                "{}",
+                if id.die & info::gateware::DIE_PRESENT == 0 {
+                    "no DTR in this bitstream"
+                } else {
+                    "the DTR has not completed a conversion -- \
+                     started every 8.7 ms, so this is the block not answering"
+                }
+            ),
+        );
+    };
+    let hot = sign.is_empty() && degrees >= info::gateware::TCSM_KNEE_C;
+    out.line(
+        "die",
+        if hot { "WARN" } else { "ok" },
+        format_args!(
+            "{}{} C (dtr code {}), tCSM {}{}",
+            sign,
+            degrees,
+            id.die & 0x3f,
+            if hot { "1000" } else { "4000" },
+            if hot {
+                " ns above 85 C -- EVERY CS# CAP HERE IS DERIVED FROM 4000 ns \
+                 AND IS 4x TOO LOOSE"
+            } else {
+                " ns, which is what the CS# caps are derived from"
+            }
         ),
     );
 }

@@ -146,6 +146,46 @@ pub fn to_micros(ticks: u32) -> u32 {
     ticks / (target::TIME_HZ / 1_000_000).max(1)
 }
 
+/// What the fabric COUNTS `sync` at, and whether the PLL says it locked.
+///
+/// `gateware/soc/peripherals/clock_monitor.py` counts `sync` cycles per
+/// millisecond of the 60 MHz oscillator, so the latched value IS kHz.
+/// Everything else in this firmware reports `target::TIME_HZ`, which is what the
+/// design was ASKED for -- a PLL with its feedback unconnected reported
+/// `sync 30000000` from that constant while `sync` was not oscillating.
+#[derive(Clone, Copy)]
+pub struct Measured {
+    pub khz: u32,
+    pub locked: bool,
+}
+
+/// The window the monitor averages over, from `clock_monitor.py`'s
+/// `WINDOW_CYCLES`. Nothing can be measured before one has completed.
+pub const WINDOW_US: u32 = 1000;
+
+/// One reading, or `None` before the first window completes.
+///
+/// `None` and "zero kHz" are different answers and the gateware distinguishes
+/// them: bit 1 of `status` says a window has finished. Only the board has this
+/// peripheral, so a target with no board has nothing to read.
+pub fn measured() -> Option<Measured> {
+    target::BOARD?;
+    use cynthion_soc_pac::board_clocks::offset as clocks;
+    let base = cynthion_soc_pac::base::BOARD_CLOCKS;
+    // SAFETY: the generated base and offsets for a read-only CSR peripheral this
+    // SoC always builds. Volatile because it is a device whose value varies.
+    let (khz, status) = unsafe {
+        (
+            core::ptr::read_volatile((base + clocks::SYNC_KHZ) as *const u32),
+            core::ptr::read_volatile((base + clocks::STATUS) as *const u32),
+        )
+    };
+    (status & 2 != 0).then_some(Measured {
+        khz,
+        locked: status & 1 != 0,
+    })
+}
+
 /// A frequency, printed in the unit its magnitude calls for (#333).
 ///
 /// - `>= 1 MHz` -> `60 MHz`, `85.714 MHz`
