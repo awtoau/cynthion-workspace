@@ -21,6 +21,9 @@ use embedded_cli::service::{Autocomplete, CommandProcessor, Help, ProcessError};
 use embedded_cli::autocomplete::{Autocompletion, Request};
 use embedded_io::{ErrorType, Write as IoWrite};
 
+use core::fmt::Write as FmtWrite;
+
+use crate::shell::rejoin::{explain, rejoin};
 use crate::shell::HELP;
 use crate::uart::Uart;
 
@@ -209,31 +212,20 @@ impl CommandProcessor<UartIo, Never> for Dispatch<'_> {
         cli: &mut CliHandle<'_, UartIo, Never>,
         raw: RawCommand<'a>,
     ) -> Result<(), ProcessError<'a, Never>> {
-        // Rejoined from the crate's tokens. `ArgList` yields typed `Arg`s and
-        // exposes no raw tail, so values are put back with single spaces --
-        // which is what every command here parses anyway, none of them taking
-        // `--flags` or quoted strings.
-        fn push(line: &mut [u8], len: &mut usize, bytes: &[u8]) {
-            let take = bytes.len().min(line.len() - *len);
-            line[*len..*len + take].copy_from_slice(&bytes[..take]);
-            *len += take;
-        }
-
-        let mut line = [0u8; COMMAND_LEN];
-        let mut len = 0usize;
-        push(&mut line, &mut len, raw.name().as_bytes());
-        for arg in raw.args().args() {
-            if let Ok(embedded_cli::arguments::Arg::Value(value)) = arg {
-                push(&mut line, &mut len, b" ");
-                push(&mut line, &mut len, value.as_bytes());
-            }
-        }
-
         // `run` writes through its own `Uart`, not through the CLI's writer, so
         // the two must not interleave. `cli.writer()` is untouched here for that
         // reason: the command owns the screen until it returns.
         let mut uart = crate::primary_for(self.index);
-        crate::shell::run(self.index, &mut uart, &line[..len], self.devices);
+        let mut line = [0u8; COMMAND_LEN];
+        // NOT RUN if a token was lost. A command missing an argument it was
+        // given is #347: `bist phase clkos2 -3` stepped zero times and reported
+        // success. See `shell/rejoin.rs`.
+        match rejoin(raw.name(), raw.args().args(), &mut line) {
+            Ok(len) => crate::shell::run(self.index, &mut uart, &line[..len], self.devices),
+            Err(fault) => {
+                let _ = writeln!(uart, "{}", explain(fault));
+            }
+        }
         let _ = cli;
         Ok(())
     }

@@ -33,3 +33,6 @@ pub mod power_rails;
 
 #[path = "../../cynthion-soc/src/shell/parse.rs"]
 pub mod parse;
+
+#[path = "../../cynthion-soc/src/shell/rejoin.rs"]
+pub mod rejoin;

@@ -6,4 +6,9 @@ license = "BSD-3-Clause"
 description = "Host harness that runs cynthion-soc's pure-logic unit tests (#337)"
 publish = false
 
+# The line editor, at the version and features `cynthion-soc` uses. Not a
+# stand-in: `tests/line_editor.rs` types a line into a real `Cli`, so the
+# tokeniser under test is the one that runs on the board.
 [dependencies]
+embedded-cli = { version = "0.2.1", features = ["autocomplete", "history", "help"] }
+embedded-io = "0.6"
