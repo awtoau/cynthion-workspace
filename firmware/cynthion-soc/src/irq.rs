@@ -523,87 +523,6 @@ pub fn init() {
     }
 }
 
-/// What each source's lateness costs, as a PLIC level. 1..7; 0 never interrupts.
-///
-/// Ranked by the cost of being late, not by how important the peripheral is: a
-/// source with a bounded hardware FIFO and a short drain window outranks one
-/// where lateness is merely annoying.
-///
-/// * The only place a level is written. `scripts/soc_plic_sim.py` holds the same
-///   numbers, checks every claim site resolves to one of them, and programs a
-///   real PLIC with them to assert the resulting claim order. #344.
-/// * **Levels 5-7 are held free** for the capture path (#125) and HyperRAM
-///   (#324). That is why the consoles sit at 3 rather than at the top.
-/// * **Priority is not preemption.** One context, and [`machine_external`] runs
-///   its whole claim loop with `mstatus.MIE` off, so a level only decides which
-///   source is claimed first among those pending at the same instant. It cannot
-///   interrupt a handler already running; short handlers are what bounds that.
-/// * Nothing here can starve anything: every source is either drained, cleared
-///   by one MMIO write, or masked by its handler, so none can hold the arbiter.
-pub mod priority {
-    /// The PAC1954's latched ALERT -- over-voltage or over-current.
-    ///
-    /// Above the consoles because it is a hardware fault; below the capture path
-    /// because the load switch protects itself and firmware is only reporting.
-    pub const POWER_ALERT: u32 = 4;
-
-    /// Both 16550s. A 16-byte FIFO, so an overrun costs a keystroke or a log
-    /// byte and is recoverable. `CONSOLE` is the lower source number, so it
-    /// takes the tie against `APOLLO` -- see `gateware/soc/top.py`.
-    pub const CONSOLE: u32 = 3;
-
-    /// The FUSB302Bs. PD timers are milliseconds, and the handler defers the
-    /// clear to task context anyway, so delivery latency is not the bound.
-    pub const TYPE_C: u32 = 2;
-
-    /// Completion only, cleared by one MMIO write, and `command()` polls
-    /// `SR.TIP` regardless. Entirely latency-tolerant.
-    pub const I2C: u32 = 1;
-}
-
-/// A peripheral claims its PLIC source, now that it is ready to be interrupted.
-///
-/// Called by the peripheral's own bring-up, not from a list here. The order
-/// matters and it is the peripheral that knows it: the FUSB302Bs must have had
-/// their interrupt registers cleared first, or the first thing delivered is a
-/// plug event from the previous session.
-///
-/// `priority` comes from the [`priority`] module and from nowhere else: a level
-/// written as a bare number here is a ranking nothing can check, and that is how
-/// every source on this board came to be claimed at 1 -- with the order decided
-/// by wiring rather than by the table. Equal levels still leave the PLIC's
-/// tie-break to decide, which is lowest source number first.
-pub fn claim(source: u32, priority: u32) {
-    let plic = Plic::new(target::PLIC_BASE);
-    plic.set_priority(source, priority);
-    plic.enable(source);
-
-    // Release any claim left in flight by a `j _start` reboot. The CPU restarts;
-    // the PLIC does not. A source claimed by the previous session and never
-    // completed stays gated forever, and the symptom is a console that
-    // enumerates, banners, and then ignores every keystroke.
-    //
-    // Harmless when there is nothing to release: completing a source that was
-    // not claimed clears a bit that was already clear.
-    plic.complete(source);
-}
-
-/// The consoles claim their sources and start asking.
-///
-/// One call rather than a `claim` per port at the call site, because the
-/// receive-interrupt enable in the 16550 has to follow the PLIC enable: a UART
-/// asking before the PLIC will deliver is a byte that lands in the ring with
-/// nothing scheduled to come and get it.
-pub fn claim_consoles() {
-    for &source in target::UART_IRQS {
-        claim(source, priority::CONSOLE);
-    }
-    // The UARTs start asking only now that there is something to answer them.
-    for &base in target::UART_BASES {
-        UartRx::new(base).enable_rx_interrupt();
-    }
-}
-
 /// The Type-C controllers claim their sources.
 ///
 /// **Only valid after `type_c.start`**, which clears both parts' interrupt
@@ -611,8 +530,9 @@ pub fn claim_consoles() {
 /// previous session and the report it produces describes a cable that may no
 /// longer be there.
 pub fn claim_type_c() {
+    let plic = Plic::new(target::PLIC_BASE);
     for &source in target::TYPE_C_IRQS {
-        claim(source, priority::TYPE_C);
+        plic.claim_source(source, crate::plic::priority::TYPE_C);
     }
 }
 

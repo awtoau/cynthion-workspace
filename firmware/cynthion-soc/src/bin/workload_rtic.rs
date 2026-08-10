@@ -122,6 +122,15 @@ mod metrics {
     pub fn busy() {}
 }
 
+/// `src/timer.rs`'s tick releases the shell's PAC1954 REFRESH task here (#245).
+///
+/// Empty because there is no power stack in this binary to refresh, and pending
+/// a SLIC source that no task is bound to would be a store to nothing. Same
+/// stand-in as `mod metrics` above, for the same reason.
+mod rtic_app {
+    pub fn tick() {}
+}
+
 /// Where the dispatch instructions go, and what a `critical_section` costs.
 ///
 /// Every counter here is behind `--features rticprobe`, and the probe build is

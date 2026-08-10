@@ -590,7 +590,7 @@ def run_type_c_checks(checks, verbose):
 # source with a bounded hardware FIFO and a short drain window outranks one where
 # lateness is merely annoying.
 #
-# Named by the constant in `firmware/cynthion-soc/src/irq.rs`'s `priority`
+# Named by the constant in `firmware/cynthion-soc/src/plic.rs`'s `priority`
 # module, which is where each level's reasoning lives. This file holds only the
 # numbers, so the two cannot drift without one of them failing.
 RANKING = {
@@ -634,9 +634,9 @@ SOURCE_LEVEL = {
 # the source-to-level map.
 BORROWED_SOURCES = {"SOURCE"}
 
-# `irq::claim` forwards its own parameter to `plic.set_priority`. That is the one
-# place a level may be a variable, because it is the funnel every other site goes
-# through.
+# `Plic::claim_source` forwards its own parameter to `set_priority`. That is the
+# one place a level may be a variable, because it is the funnel every other site
+# goes through.
 FORWARDED_LEVELS = {"priority"}
 
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
@@ -648,13 +648,13 @@ PAC_BASE = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
 # change what they measure.
 SKIP_DIRS = {"bin"}
 
-# `claim(source, level)` and `set_priority(source, level)`, with an optional
+# `claim_source(source, level)` and `set_priority(source, level)`, with an optional
 # path in front and an optional trailing comma. Two arguments and no nested
 # parens, which is every call site in this firmware; anything else is reported
 # as unparseable rather than skipped, because a call this cannot read is a
 # priority this cannot check.
 CALL_RE = re.compile(
-    r"(?:\w+::)*(?P<fn>claim|set_priority)\("
+    r"(?:\w+::)*(?P<fn>claim_source|claim|set_priority)\("
     r"\s*(?P<source>[^,()]+?)\s*,\s*(?P<level>[^,()]+?)\s*,?\s*\)", re.S)
 
 LOOP_RE = re.compile(r"for\s+&(\w+)\s+in\s+target::(\w+)")
@@ -687,8 +687,8 @@ def read_target_slices():
 
 
 def read_priority_module():
-    """`{constant name: level}` from `irq.rs`'s `priority` module, or `{}`."""
-    match = PRIORITY_MOD_RE.search((FIRMWARE / "irq.rs").read_text())
+    """`{constant name: level}` from `plic.rs`'s `priority` module, or `{}`."""
+    match = PRIORITY_MOD_RE.search((FIRMWARE / "plic.rs").read_text())
     if not match:
         return {}
     return {name: int(value)
@@ -738,7 +738,7 @@ def read_claim_sites(pac_sources, slices):
                     continue
                 level = tail[1]
                 if level not in priorities:
-                    unresolved.append(f"{where}  no priority::{level} in irq.rs")
+                    unresolved.append(f"{where}  no priority::{level} in plic.rs")
                     continue
 
             # Which sources this call configures.
@@ -791,7 +791,7 @@ def run_ranking_checks(checks, verbose):
         + "\n        ".join(literals + unresolved))
 
     checks.check(
-        "irq.rs's priority module matches the table",
+        "plic.rs's priority module matches the table",
         priorities == RANKING,
         f"firmware has {priorities}, this file's table is {RANKING}.\n"
         "The levels live in one place and the reasoning beside them; this is "
@@ -900,7 +900,7 @@ def main():
     emit("i2c_mux.I2CBusMux -> Plic -- a source per FUSB302B")
     run_type_c_checks(checks, args.verbose)
     emit()
-    emit("the ranking -- src/irq.rs against this file's table (#344)")
+    emit("the ranking -- src/plic.rs against this file's table (#344)")
     run_ranking_checks(checks, args.verbose)
     return checks.summary()
 
