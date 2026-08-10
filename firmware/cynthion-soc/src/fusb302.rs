@@ -52,8 +52,7 @@
 //!   applies per port: a source whose device has not been read stays asserted.
 //! - Clearing means reading the device's `INTERRUPT` registers -- an I2C
 //!   transaction over the same controller the foreground uses for the power
-//!   monitor, ~80 us at the bus's current 1 MHz (`I2C_SCL_HZ`,
-//!   `gateware/soc/top.py`; was ~1 ms before #269 raised the rate from 80 kHz).
+//!   monitor, ~80 us at the 1 MHz the bus runs (`bus::I2C_SCL_HZ`, #272).
 //!   Doing that inside a handler would be two things this firmware refuses: a
 //!   long spin in interrupt context, and a second master on a peripheral with
 //!   no lock. So the handler MASKS the source and records the event
@@ -524,10 +523,9 @@ impl fmt::Display for Interrupts {
 /// one is unverified** (#295).
 ///
 /// What the bus provides: each write and the read after it are separate I2C
-/// transactions, three and four bytes, so at 1 MHz (`I2C_SCL_HZ`) roughly tens
-/// of microseconds pass between the select moving and `STATUS0` being sampled.
-/// It was hundreds before #269 raised the rate from 80 kHz -- a 12.5x cut in the
-/// only thing standing in for a delay.
+/// transactions, three and four bytes, so at the 1 MHz the bus runs
+/// (`bus::I2C_SCL_HZ`, #272) roughly tens of microseconds pass between the
+/// select moving and `STATUS0` being sampled.
 ///
 /// What the part requires: **the datasheet does not say.** It specifies no
 /// settling, response or acquisition time for the measure block; `MDAC` appears

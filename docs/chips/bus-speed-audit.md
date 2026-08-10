@@ -178,6 +178,50 @@ have returned them. Running it at BAUD 0 costs one USB request.
 
 ---
 
+## Where each I²C bus actually stops — measured 2026-08-10, board image `1e574f4`
+
+Swept with [`../../scripts/i2c_rate_sweep.py`](../../scripts/i2c_rate_sweep.py),
+1000 identity reads per rung, on the `bist1-ck120` variant (sync counted at
+50 MHz). The identity is checked against the value the device is KNOWN to hold,
+because `i2c soak` takes its expected value from its own first read and calls a
+stable wrong answer CLEAN.
+
+| bus | rated max | board allows | we run | why the gap |
+|---|---|---|---|---|
+| power (PAC1954) | **1 MHz** Fm+; 3.4 MHz only with `I2C_HISPEED` set | **3.33 MHz** clean, fails at 5 MHz | **1.000 MHz** | the part's Fm+ rating. 3.33 MHz is out of spec until `I2C_HISPEED` (reg `1Ch` bit 0) is set — see below |
+| target (FUSB302B) | **1 MHz**, hard — no Hs mode | **2.5 MHz** clean, fails at 3.33 MHz | **1.000 MHz** | the part's rating. The bus goes faster than the part is specified for |
+| aux (FUSB302B) | **1 MHz**, hard — no Hs mode | **2.5 MHz** clean, fails at 3.33 MHz | **1.000 MHz** | as target |
+
+- The failure is not graceful and not the same on each bus. Target/aux at
+  3.33 MHz return `0xff` with **zero** bus errors — an undriven bus, read as a
+  stable wrong value. Power at 5 MHz returns 1000 bus errors.
+- 1 MHz is now reached rather than claimed: PRER is derived from the clock the
+  fabric counts, so the BIST variant's 50 MHz gives PRER 9 instead of the
+  generated 11. It ran at **833 kHz** while reporting 1 MHz (#272).
+- Both variants land on the same bit timing: 50 MHz/PRER 9 and 60 MHz/PRER 11
+  are both a 200 ns slot, so the margins table below holds for either.
+
+### The one rated headroom that exists
+
+The PAC1954 is alone on the power bus and is a 3.4 MHz part. Microchip's Hs
+entry is a **register bit, not the standard master-code handshake** —
+DS20006539F §7, reg `1Ch` bit 0 `I2C_HISPEED`: *"Setting this bit enables the
+3.4 MHz I2C operation by changing the pulse-width parameters of the Pulse
+Gobbler."* Its stated master requirement is a **CMOS (push-pull) SCL driver**
+(§3.4, p. 17), which this board already has — all three `scl` are `dir="o"`.
+
+So the blocking conditions are two, and neither is the master code:
+- **Bus capacitance ≤ 100 pF per line** at 3.4 MHz, against 550 pF at Fm+
+  (DS20006539F p. 7). Unmeasured here — see the open item below.
+- **One prescale, three buses.** The controller has a single PRER, so a per-bus
+  rate needs it reprogrammed on every mux select. The FUSB302Bs cannot follow
+  above 1 MHz.
+
+That the sweep finds the power bus clean at 3.33 MHz and broken at 5 MHz, with
+3.4 MHz the part's own Hs ceiling, is consistent with the part rather than the
+copper being the limit — but it is consistency, not proof, until `Cb` is
+measured.
+
 ## Verifying the I²C numbers
 
 Asked for, so checked rather than restated. Recomputed from the datasheets in

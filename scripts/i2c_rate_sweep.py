@@ -48,8 +48,12 @@ import soc_shell  # noqa: E402
 
 LOG = ROOT / "tmp" / "logs" / "i2c-rate-sweep.log"
 
-# f_SCL = f_sync / (5 * (PRER + 1)). 11 is what the build configures.
-LADDER = [11, 5, 3, 2, 1, 0]
+# f_SCL = f_sync / (5 * (PRER + 1)). Every rung from the configured rate down to
+# the fastest the divider reaches, so the FAILURE POINT is bracketed rather than
+# stepped over: the useful number is where the bus stops, not that it started.
+# At the 50 MHz sync this variant runs: 9 -> 1.00 MHz, 4 -> 2.00, 2 -> 3.33,
+# 0 -> 10 MHz.
+LADDER = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
 BUSES = ["power", "target", "aux"]
 
 # What each bus's device is known to answer, so a self-consistent wrong value

@@ -300,8 +300,8 @@ pub const DEFAULT_FLOOR_UA: u32 = 10_000;
 ///
 /// 50 ms: fast enough that a plug event is reported while the person who caused
 /// it is still watching, and cheap enough to be free. One poll is a 1-byte write
-/// plus a 19-byte read, ~0.18 ms of bus time at 1 MHz (`I2C_SCL_HZ`; ~2.3 ms
-/// before #269 raised the rate from 80 kHz), so the bus is idle >99% of the time.
+/// plus a 19-byte read -- ~200 bit periods, so ~0.2 ms at the 1 MHz the bus runs
+/// (`bus::I2C_SCL_HZ`, #272), and the bus is idle >99% of the time.
 pub const DEFAULT_INTERVAL_MS: u32 = 50;
 
 /// [`set_interval_ms`] takes this to mean "do not poll at all".
