@@ -98,12 +98,14 @@ of 250, and **`tCSM` = 4000 ns below 85 °C / 1000 ns above** behind
 nobody can read — and kept honest by the shared testbench.
 
 **Models:** the 8 MiB array, CA decode, register space with POR values, the
-CR0[7:4] sparse latency encoding and CR0[3] doubling, RWDS as read strobe and as
-write mask, linear bursts, and a tCSM check.
+CR0[7:4] sparse latency encoding and CR0[3] doubling with the matching CA-period
+RWDS level, RWDS as read strobe and as write mask, linear / wrapped / hybrid
+bursts, deep power down with RESET# recovery, and a tCSM check.
 
-**Does not model:** setup/hold, tRWR, tRP/tRPH, refresh collisions, DPD, hybrid
-sleep, wrapped and hybrid bursts, or anything analogue. Those stay the vendor
-model's job — which is why the pair is the deliverable, not either one alone.
+**Does not model:** setup/hold, tRWR, tRP/tRPH, **refresh** — and therefore the
+refresh collision that makes variable latency vary — hybrid sleep, software
+reset, or anything analogue. Those stay the vendor model's job, which is why the
+pair is the deliverable rather than either one alone.
 
 One number in it is calibrated rather than derived: the data phase starts
 `4 + 2 × latency_ck` edges after CS# falls, where the arithmetic suggests
