@@ -11,13 +11,25 @@ Import this before building, or `source` the shell form it prints. Amaranth read
 into the generated build script, so **nothing is patched** -- these are documented
 override hooks.
 
-## Measured, on `gateware/soc/top.py`
+## The trade these flags make
 
-    baseline                        70 s
-    with nextpnr flags              59 s      and Fmax 72.6 -> 80.65 MHz
+`--parallel-refine` buys wall clock and gives up REPRODUCIBILITY: its threaded SA
+refinement depends on thread interleaving, so two runs of one netlist place
+differently. Measured 2026-08-10 on a fixed `top.json`, seed fixed, 8 runs each
+(#306):
 
-Faster *and* better placed. The design was verified on hardware afterwards: identical
-console output, `jedec 00ef4016`, same read values, same benchmark cycle count.
+    with --parallel-refine       61.0 s mean   sync clk 57.38 - 71.72 MHz
+    without it                   84.6 s mean   sync clk 70.87 MHz, 8/8 identical
+
+So: ~24 s a build, against a 14 MHz-wide Fmax distribution whose lower tail sits
+below the constraints this project builds against. Utilisation does not move
+either way (16939 TRELLIS_COMB in all 16 runs) -- packing is decided by the
+netlist, so an area difference is never placement noise.
+
+Drop `--parallel-refine` for a build whose Fmax is evidence, or whose bitstream
+has to be reproducible; `AMARANTH_nextpnr_opts` overrides this without editing
+anything. The design was verified on hardware with these flags: identical console
+output, `jedec 00ef4016`, same read values, same benchmark cycle count.
 
 ## Why `--threads` alone does nothing
 
@@ -63,9 +75,9 @@ import sys
 
 # nextpnr flags, in the order they matter:
 #
-#   --parallel-refine   the actual win -- parallelises the SA refinement pass that runs
-#                       after HeAP placement, which is 16 of nextpnr's 24 seconds
-#   --threads 31        gives that pass threads to use; inert on its own
+#   --parallel-refine   parallelises the SA refinement pass after HeAP placement, and
+#                       is the only reason a rebuild's Fmax moves at all (#306)
+#   --threads 31        gives that pass threads to use; inert on its own, caps at 16
 #   --router router2    recovers the Fmax that --parallel-refine alone gives up
 NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
 
