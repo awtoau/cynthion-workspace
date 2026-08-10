@@ -185,17 +185,22 @@ watchdog in review and is not one. Do not copy this shape.
 Established 2026-08-10 by reading the code and by simulation
 (`tmp/logs/probe_fsm.log`, `tmp/logs/probe_gap.log`).
 
+**One entry has been withdrawn.** *"`T_CSHI_NS = 10.0` is right"* was a datasheet
+reading of the T100 column; the fitted part is T166 and wants 6 ns. It is now 6.0
+and a runtime input
+([#341](https://github.com/awtoau/cynthion-workspace/issues/341)). A constant
+nothing can sweep does not belong on a do-not-re-audit list.
+
 - **The `recovery_remaining` last-assignment-wins arrangement is sound.**
   Amaranth takes the last statement in a domain; the blanket load is emitted
   before the FSM's switch, so RECOVERY's own decrement wins while active and the
   load re-arms on exit. Measured: back-to-back memory writes give CS# high for
   **2 cycles / 20 ns at sync 100 MHz** and **3 cycles / 18 ns at 165 MHz**.
-- **`T_CSHI_NS = 10.0` is right.** Datasheet Table 21 gives tCSHI 10 ns at
-  100 MHz falling to 6 ns at 200 MHz. Ours is the 100 MHz figure at every clock,
-  so it is conservative, never short.
 - **tRWR is not an inter-transaction gap.** 35–40 ns, and Figures 27/28 measure
   it from CS# falling to first data — 14 CK of latency covers it several times
-  over. It has been misread as a CS#-high requirement; it is not one.
+  over. It has been misread as a CS#-high requirement; it is not one. Now
+  implemented as the `min_latency_clocks` floor and reported by
+  `latency_below_trwr` ([#341](https://github.com/awtoau/cynthion-workspace/issues/341)).
 - **CA[45] and CA[46] are constructed correctly.** `CA[45] = is_multipage =
   ~single_page`, `CA[46] = is_register`. Datasheet §9.1: *"CA[45] must be 1 as
   only linear single word register writes are supported."* True for every

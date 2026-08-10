@@ -159,10 +159,11 @@ from bus.wishbone_pipe import RegisteredResponse
 SYNC_MHZ = 120.0
 SYNC_HZ = SYNC_MHZ * 1e6
 
-# tCSHI, CS# high between transactions, W956A8. Ten nanoseconds is longer than
-# one 120 MHz cycle, which is why back-to-back transactions violate it at the
-# rate this part is actually run at.
-T_CSHI_NS = 10.0
+# tCSHI, CS# high between transactions, for the grade FITTED: a `6I` = T166,
+# where Winbond's own `Config-AC.v` gives 6 ns. Ten was the T100 column and is
+# what this file asked for until #341. Restated here rather than imported, for
+# the reason `T_CSM_NS` gives below.
+T_CSHI_NS = 6.0
 
 # tCSM, the longest CS# may stay Low, W956A8 rev A01-006 Table 24: 4 us on every
 # speed bin. Stated HERE from the datasheet rather than imported from the
@@ -335,6 +336,12 @@ class ModelHyperRAM:
         self._read = True
         self._prev_cs = 0
         self._cs_high_beats = 10**6  # nothing before the first transaction
+        # The SHORTEST CS#-high gap this run saw, in `sync` cycles. Counting
+        # violations alone stops discriminating as soon as tCSHI falls under one
+        # cycle -- at T166's 6 ns and sync 120 it does, and upstream's no-recovery
+        # controller then passes the same check ours does. The gap itself
+        # separates them at every clock. (#341)
+        self.cs_high_min = None
         # tCSM, counted where it is spent rather than at the end of a transaction,
         # so a device left selected for ever is counted once rather than never.
         self._tcsm_beats = int(T_CSM_NS * SYNC_MHZ / 1000.0)
@@ -389,6 +396,9 @@ class ModelHyperRAM:
             required = -(-T_CSHI_NS * SYNC_MHZ // 1000)
             if self._cs_high_beats < max(1, int(required)):
                 self.cshi_violations += 1
+            if self._cs_high_beats < 10**6:
+                self.cs_high_min = min(self.cs_high_min or 10**6,
+                                       self._cs_high_beats)
             self._cs_high_beats = 0
             self._state = "command"
             self._ca_bytes = []
@@ -747,28 +757,44 @@ def section_recovery(checks, emit):
         await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
         await run(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
 
-    # THE NEGATIVE CONTROL, and it is the whole value of this section. A model
-    # that could not detect a violation would pass the positive check silently,
-    # so upstream's controller is run through the same harness to prove the
-    # detector fires.
+    # THE NEGATIVE CONTROL, and it is the whole value of this section. Upstream's
+    # controller is run through the same harness to prove the detector fires.
+    #
+    # It is the GAP and not the violation count: with tCSHI at T166's 6 ns and
+    # sync 120, one cycle (8.33 ns) already clears it, so upstream's `# TODO:
+    # implement recovery` scores zero violations too. The instrument stopped
+    # discriminating the moment the requirement moved -- exactly the shape #341
+    # is about, one level up. Upstream leaves the ONE cycle its caller's state
+    # count happens to give; ours leaves what the counter was told to. (#341)
     control = simulate(back_to_back, upstream=True)
-    checks.check("upstream's controller VIOLATES tCSHI back-to-back",
-                 control.cshi_violations > 0,
-                 "no violation seen from upstream either, so this harness "
-                 "cannot tell the two apart and the check below proves nothing")
+    checks.check("upstream's controller leaves ONE cycle and nothing more",
+                 control.cs_high_min == 1,
+                 f"{control.cs_high_min} cycles -- if upstream already held a gap "
+                 f"this harness cannot tell the two apart")
 
     model = simulate(back_to_back)
     check_completed(checks, model, "back-to-back DQS reads")
+    required = max(1, int(-(-T_CSHI_NS * SYNC_MHZ // 1000)))
     checks.check("the vendored controller keeps tCSHI with NO gap from the master",
                  model.cshi_violations == 0,
                  f"{model.cshi_violations} violations -- the RECOVERY counter is "
                  f"not holding CS# high long enough")
+    checks.check("...and the gap is the count RECOVERY was given",
+                 model.cs_high_min == required,
+                 f"{model.cs_high_min} cycles against {required}")
+    # At sync 120 the two agree, because T166's 6 ns is under one cycle there and
+    # upstream's accidental single cycle already clears it. The gap only separates
+    # them above 166.7 MHz. What separates them at EVERY clock is that ours moves
+    # when `recovery_cycles` is driven and upstream has nothing to drive --
+    # measured in `scripts/hyperram_timing_levers_sim.py`. (#341)
+    if required == 1:
+        emit("        at this clock tCSHI is under one cycle, so upstream's "
+             "accident clears it too -- the lever sweep is the discriminator")
 
-    required = max(1, int(-(-T_CSHI_NS * SYNC_MHZ // 1000)))
     emit(f"        tCSHI {T_CSHI_NS:g} ns at {SYNC_MHZ:g} MHz is "
          f"{required} whole cycle(s), counted inside the controller")
-    emit(f"        upstream: {control.cshi_violations} violations, "
-         f"vendored: {model.cshi_violations}")
+    emit(f"        shortest gap -- upstream: {control.cs_high_min} cycle(s), "
+         f"vendored: {model.cs_high_min}")
 
 
 class NonDQSProtocolHarness(Elaboratable):
@@ -785,11 +811,18 @@ class NonDQSProtocolHarness(Elaboratable):
     """
 
     def __init__(self, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ,
-                 fixed_latency=True, max_latency_clocks=None):
+                 fixed_latency=True, max_latency_clocks=None,
+                 clock_stop=False):
         self.phy = HyperBusPHY()
         self.sync_mhz = sync_mhz
+        # `clock_stop` puts `ClockStopPHY` between the controller and the model
+        # with `stall` left for the testbench to drive -- a master with no
+        # arrival pattern of its own, so what is measured is the CONTROLLER's
+        # response to a stall rather than some engine's stall pattern. (#340)
+        self.gate = ClockStopPHY(dev=self.phy) if clock_stop else None
         if upstream:
-            self.psram = HyperRAMInterface(phy=self.phy)
+            self.psram = HyperRAMInterface(phy=self.gate.ctrl if self.gate
+                                           else self.phy)
         else:
             # `ModelHyperRAM16` hangs off the `HyperBusPHY` record directly and
             # answers in the same cycle, so the round trip here is 0 against
@@ -797,12 +830,18 @@ class NonDQSProtocolHarness(Elaboratable):
             # `scripts/hyperram_phy_rwds_sim.py` is where the 4 is measured and where
             # the real PHY is exercised. (#338)
             self.psram = HyperRAMController(
-                phy=self.phy, sync_mhz=sync_mhz, fixed_latency=fixed_latency,
+                phy=self.gate.ctrl if self.gate else self.phy,
+                sync_mhz=sync_mhz, fixed_latency=fixed_latency,
                 max_latency_clocks=max_latency_clocks, phy_round_trip_cycles=0)
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.psram = self.psram
+        if self.gate is not None:
+            m.submodules.gate = self.gate
+            hold = getattr(self.psram, "register_active", None)
+            if hold is not None:
+                m.d.comb += self.gate.hold.eq(hold)
         return m
 
 
@@ -876,10 +915,17 @@ async def run16(ctx, dut, model, *, address, read, data=None, gap=0,
 
 
 def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None,
-               max_latency_clocks=None):
-    """Run `body(ctx, dut, model)` on the 16-bit path and return the model."""
+               max_latency_clocks=None, clock_stop=False, monitor=None):
+    """Run `body(ctx, dut, model)` on the 16-bit path and return the model.
+
+    `monitor` is a second testbench run alongside `body`, one sample per cycle.
+    It is where a hostile master lives: driving `gate.stall` from the transaction
+    itself rather than from an arrival pattern makes the measurement about the
+    controller.
+    """
     dut = NonDQSProtocolHarness(upstream=upstream, sync_mhz=sync_mhz,
-                                max_latency_clocks=max_latency_clocks)
+                                max_latency_clocks=max_latency_clocks,
+                                clock_stop=clock_stop)
     model = ModelHyperRAM16(sync_mhz=sync_mhz, deliver=deliver)
 
     async def testbench(ctx):
@@ -888,6 +934,10 @@ def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None,
     sim = Simulator(Fragment.get(dut, None))
     sim.add_clock(1 / (sync_mhz * 1e6), domain="sync")
     sim.add_testbench(testbench)
+    if monitor is not None:
+        async def watcher(ctx):
+            await monitor(ctx, dut, model)
+        sim.add_testbench(watcher)
     sim.run()
     return model
 
@@ -1005,7 +1055,7 @@ def section_as_built(checks, emit):
         await run(ctx, dut, model, address=TEST_ADDRESS + 2, read=True, gap=0)
 
     model = simulate(back_to_back, **built)
-    # Also reported: at sync 60 the count is ceil(10 ns x 60 MHz / 1000) = 1
+    # Also reported: at sync 60 the count is ceil(6 ns x 60 MHz / 1000) = 1
     # cycle, and one cycle there is 16.7 ns, comfortably over tCSHI. A violation
     # anyway means the count is right and the HOLD is off by a cycle -- the same
     # shape as the first RECOVERY attempt, which counted without deasserting CS#.
@@ -2207,6 +2257,93 @@ def section_clock_stop(checks, emit):
          f"{HYPERRAM_CK_MHZ:g}, against a 33 ns worst case")
 
 
+def section_register_clock_stop(checks, emit):
+    """11b. The clock must not stop during a register access. (#340)
+
+    Winbond's 2025 application note 7.2.2 and the datasheet's 10.2.2 are the same
+    paragraph until their last sentence, where the datasheet says *"stop the
+    clock when it is in Low state"* and the note says *"do not stop the clock
+    during register access"*. Neither carries both; the note REPLACES the rule.
+
+    Register accesses run through the same FSM as memory ones, so a master that
+    stalls mid-transaction stops CK during a register read or write. Coalescing is
+    off for correctness (#185), which makes this latent rather than live -- the
+    shape #240 tracks, a defect that wakes when a build flag moves.
+
+    THE MASTER HERE IS MAXIMALLY HOSTILE: `stall` is asserted on every cycle CS#
+    is Low. That is not an arrival pattern any engine produces; it is the
+    strongest form of the question, and it makes the answer about the controller.
+    Memory in the same harness is the positive control -- it MUST still have its
+    clock withheld, or the gate has simply been disconnected.
+    """
+    emit("\n11b. The clock during a register access\n")
+
+    def under_stall(register_space, read):
+        """One transaction with a master that stalls whenever CS# is Low.
+
+        Returns (model, withheld states). `withheld` is every cycle the
+        controller asked for a clock and the gate took it away, recorded against
+        the controller's own FSM state so a failure names where.
+        """
+        withheld = []
+
+        async def body(ctx, dut, model):
+            await run16(ctx, dut, model, address=0, read=read,
+                        data=0x8f2f, register_space=register_space)
+
+        async def monitor(ctx, dut, model):
+            # One sample per cycle for as long as the body can run: `run16`'s own
+            # bound plus the request and RECOVERY cycles around it. Expiry is not
+            # an error here -- the body decides whether the transaction finished.
+            for _ in range(completion_bound(dut.sync_mhz) + 8):
+                cs = ctx.get(dut.phy.cs)
+                ctx.set(dut.gate.stall, cs)
+                if (cs and ctx.get(dut.gate.ctrl.clk_en)
+                        and not ctx.get(dut.phy.clk_en)):
+                    withheld.append(HyperRAMController.STATES[
+                        ctx.get(dut.psram.state)])
+                await ctx.tick()
+
+        model = simulate16(body, clock_stop=True, monitor=monitor)
+        return model, withheld
+
+    reg_write, write_withheld = under_stall(register_space=True, read=False)
+    reg_read, read_withheld = under_stall(register_space=True, read=True)
+    memory, mem_withheld = under_stall(register_space=False, read=False)
+
+    # THE POSITIVE CONTROL FIRST. If the gate withheld nothing anywhere, the two
+    # checks below would pass on a harness whose `stall` goes nowhere.
+    checks.check("the same stall DOES withhold clocks from a memory access",
+                 bool(mem_withheld),
+                 "no clock was withheld from memory either, so `stall` is not "
+                 "reaching the gate and this section proves nothing")
+
+    checks.check("a register WRITE keeps its clock under a stalling master",
+                 not write_withheld,
+                 f"{len(write_withheld)} cycles withheld, in "
+                 f"{sorted(set(write_withheld))}")
+    checks.check("a register READ keeps its clock under a stalling master",
+                 not read_withheld,
+                 f"{len(read_withheld)} cycles withheld, in "
+                 f"{sorted(set(read_withheld))}")
+    # A clock held for the register access is only useful if the access then
+    # finishes: a hold that leaves the FSM parked is a different defect.
+    checks.check("...and both register transactions still complete",
+                 reg_write.incomplete == 0 and reg_read.incomplete == 0,
+                 f"write incomplete {reg_write.incomplete}, "
+                 f"read incomplete {reg_read.incomplete}")
+    # Completing via the tCSM watchdog is not completing. A register read whose
+    # clock is taken away never gets its data, so it ends the only other way there
+    # is -- which reads as "finished" to `incomplete` alone.
+    checks.check("...by serving the transaction, not by the tCSM watchdog",
+                 not reg_write.timed_out and not reg_read.timed_out,
+                 f"write timed_out {reg_write.timed_out}, "
+                 f"read timed_out {reg_read.timed_out}")
+
+    emit(f"        withheld cycles -- register write: {len(write_withheld)}, "
+         f"register read: {len(read_withheld)}, memory: {len(mem_withheld)}")
+
+
 def check_completed(checks, model, what):
     """Every transaction `run`/`run16` drove reached IDLE inside the bound."""
     checks.check(f"{what}: every transaction returned to IDLE",
@@ -2529,7 +2666,8 @@ def main():
                     section_latency_input, section_structural, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
-                    section_clock_stop, section_escape, section_tcsm,
+                    section_clock_stop, section_register_clock_stop,
+                    section_escape, section_tcsm,
                     section_ca_rwds, section_register_ca):
         section(checks, emit)
 

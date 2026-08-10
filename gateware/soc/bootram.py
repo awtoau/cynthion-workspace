@@ -187,11 +187,17 @@ class ClockStopPHY(Elaboratable):
         self.dev = dev
         self.ctrl = HyperBusPHY()
         self.stall = Signal()
+        # `stall` is IGNORED while this is High. Wire it to the controller's
+        # `register_active`: the 2025 app note 7.2.2 says not to stop the clock
+        # during a register access, and register accesses run through the same
+        # FSM as memory ones, so a stalling master reaches them too. Undriven is
+        # the old behaviour. (#340)
+        self.hold = Signal()
 
     def elaborate(self, platform):
         m = Module()
         m.d.comb += [
-            self.dev.clk_en.eq(self.ctrl.clk_en & ~self.stall),
+            self.dev.clk_en.eq(self.ctrl.clk_en & ~(self.stall & ~self.hold)),
             self.dev.cs.eq(self.ctrl.cs),
             self.dev.reset.eq(self.ctrl.reset),
             self.dev.dq.o.eq(self.ctrl.dq.o),
@@ -714,9 +720,10 @@ class BootRAM(Elaboratable):
                 if self._clock_stop:
                     gate = ClockStopPHY(dev=psram_phy.phy)
                     m.submodules.clock_stop = gate
-                    m.d.comb += gate.stall.eq(self.clk_stop)
                     psram = HyperRAMController(phy=gate.ctrl,
                                                sync_mhz=self._sync_mhz)
+                    m.d.comb += [gate.stall.eq(self.clk_stop),
+                                 gate.hold.eq(psram.register_active)]
                 else:
                     psram = HyperRAMController(phy=psram_phy.phy,
                                                sync_mhz=self._sync_mhz)

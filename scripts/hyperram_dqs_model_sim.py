@@ -289,9 +289,10 @@ def stage_config(extra: list[str]) -> list[str]:
     return run("vvp(config)", ["vvp", "config.vvp"] + extra, WORKDIR).splitlines()
 
 
-# tCSHI, W956A8 rev A01-006 Table 24. The testbench measures the real gap; this
-# is what it is judged against.
-T_CSHI_NS = 10.0
+# tCSHI at the grade fitted -- a `6I` = T166, 6 ns in Winbond's `Config-AC.v`.
+# Was 10.0, the T100 column (#341). The testbench measures the real gap; this is
+# what it is judged against.
+T_CSHI_NS = 6.0
 
 
 def verdict_config(rows: list[dict]) -> list[str]:

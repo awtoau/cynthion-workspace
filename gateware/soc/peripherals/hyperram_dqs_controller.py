@@ -58,9 +58,13 @@ from amaranth import (Cat, ClockSignal, Const, Elaboratable, Instance, Module, M
 from amaranth.hdl.rec import DIR_FANIN, DIR_FANOUT
 from amaranth.lib.cdc import FFSynchronizer
 
-# CS# high between transactions, from the W956A8 datasheet. Longer than one cycle
-# at any sync above 100 MHz, which is why it cannot be left to chance.
-T_CSHI_NS = 10.0
+from . import hyperram_controller
+
+# CS# high between transactions, and tRWR/tACC, for the grade fitted -- a `6I`,
+# T166. Both from `Config-AC.v` via the non-DQS controller, which holds the
+# per-grade table. Was 10.0 here too, which is the T100 column. (#341)
+T_CSHI_NS = hyperram_controller.T_CSHI_NS
+T_RWR_NS = hyperram_controller.T_RWR_NS
 
 # tCSM, the longest CS# may stay Low: 4 us, W956A8 rev A01-006 Table 24, and
 # section 10 makes it the HOST's obligation. Overrunning it drops a refresh, with
@@ -120,7 +124,8 @@ class HyperRAMDQSController(Elaboratable):
 
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
                  max_latency_clocks=None, fixed_latency=True,
-                 tcshi_ns=T_CSHI_NS):
+                 tcshi_ns=T_CSHI_NS, trwr_ns=T_RWR_NS,
+                 max_recovery_cycles=None):
         """
         Parameters:
             phy                 -- The RAM record that should be connected to this chip.
@@ -133,12 +138,23 @@ class HyperRAMDQSController(Elaboratable):
                                    which is not this part's power-on code.
             fixed_latency       -- True when the part takes the long latency on every
                                    transaction, which is what CR0 = 0x8f2f selects.
-            tcshi_ns            -- CS# high between transactions, in ns.
+            tcshi_ns            -- CS# high between transactions, in ns. RESET value
+                                   of `recovery_cycles`.
+            trwr_ns             -- tRWR/tACC, in ns. RESET value of
+                                   `min_latency_clocks`; see the non-DQS twin.
+            max_recovery_cycles -- Ceiling for `recovery_cycles`, which sizes it.
         """
         self._fixed_latency = fixed_latency
         # Rounded UP, and at least one: a gap shorter than tCSHI is the violation this
         # exists to prevent, so the rounding may only ever be generous.
         self._recovery_cycles = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
+        self._max_recovery_cycles = max(self._recovery_cycles,
+                                        max_recovery_cycles or 0)
+        # The tRWR/tACC floor, in CK. One cycle here is 2 CK, so the count this
+        # controller waits is compared at 2x. Reported, never enforced -- the
+        # device waits what CR0[7:4] says. (#341)
+        self._min_latency_clocks = hyperram_controller.min_latency_code(
+            2.0 * sync_mhz, trwr_ns)
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
         # Ceiling for `latency_clocks`; see the non-DQS controller. Defaults to the
@@ -196,6 +212,21 @@ class HyperRAMDQSController(Elaboratable):
         # CR0[3] as the part is set to; see the non-DQS controller. Was
         # `int(self._fixed_latency)`, which made the variable path dead (#338).
         self.fixed_latency    = Signal(reset=int(fixed_latency))
+        # The same three levers the non-DQS twin grew, same reasons, same reset
+        # values. `recovery_cycles` is tCSHI in whole `sync` cycles; the burst
+        # bounds are the tCSM watchdog and can only be shortened. (#341)
+        self.recovery_cycles  = Signal(range(0, self._max_recovery_cycles + 1),
+                                       reset=self._recovery_cycles)
+        self.burst_cycles     = Signal(range(0, self._burst_cycles + 1),
+                                       reset=self._burst_cycles)
+        self.burst_beats      = Signal(range(0, self._burst_beats + 1),
+                                       reset=self._burst_beats)
+        # The tRWR floor in CK, against `2 x latency_clocks + 2` -- this
+        # controller's count is in 2 CK cycles and HANDLE_LATENCY runs it plus a
+        # zero cycle.
+        self.min_latency_clocks = Signal(
+            range(0, 2 * self._max_latency_clocks + 3),
+            reset=min(self._min_latency_clocks, 2 * self._max_latency_clocks + 2))
 
         # Status signals.
         self.idle             = Signal()
@@ -208,6 +239,10 @@ class HyperRAMDQSController(Elaboratable):
         # by the watchdog rather than by the caller. Tells a device fault from a
         # controller fault without a bus trace.
         self.timed_out        = Signal()
+        # The configured latency does not cover tRWR/tACC at this CK. Under fixed
+        # latency the part spends 2 x L CK and this controller counts L - 1, so
+        # the CK it waits is `2 x latency_clocks + 2`. (#341)
+        self.latency_below_trwr = Signal()
 
         # Data signals.
         self.read_data        = Signal(32)
@@ -217,7 +252,10 @@ class HyperRAMDQSController(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        recovery_remaining = Signal(range(self._recovery_cycles + 1))
+        recovery_remaining = Signal(range(self._max_recovery_cycles + 1))
+
+        m.d.comb += self.latency_below_trwr.eq(
+            (2 * self.latency_clocks + 2) < self.min_latency_clocks)
 
         #
         # Latched control/addressing signals.
@@ -285,7 +323,7 @@ class HyperRAMDQSController(Elaboratable):
         # Arming at each `m.next = 'RECOVERY'` instead needs every transition to
         # remember to do it -- there are three, and a patch that added the line by
         # text match got two of them at the wrong indentation.
-        m.d.sync += recovery_remaining.eq(self._recovery_cycles)
+        m.d.sync += recovery_remaining.eq(self.recovery_cycles)
 
         # Armed while CS# is High: loaded before the data phase rather than at each
         # of the three edges into it, as pulp does (`hyperbus_phy.sv:308`). Counts
@@ -298,8 +336,8 @@ class HyperRAMDQSController(Elaboratable):
         m.d.comb += [burst_expired.eq(burst_remaining == 0),
                      beat_cap.eq(beats_remaining <= 1)]
         with m.If(~self.phy.cs):
-            m.d.sync += [burst_remaining.eq(self._burst_cycles),
-                         beats_remaining.eq(self._burst_beats)]
+            m.d.sync += [burst_remaining.eq(self.burst_cycles),
+                         beats_remaining.eq(self.burst_beats)]
         with m.Else():
             with m.If(~burst_expired):
                 m.d.sync += burst_remaining.eq(burst_remaining - 1)
