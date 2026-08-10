@@ -399,6 +399,17 @@ def cmd_worktree_check(extra: list[str]) -> int:
     return run_tool([PY, script("worktree_setup.py"), "check"], extra)
 
 
+@command("submodule pins that exist on no remote, and the push that fixes them",
+         args="[--push repos/NAME] [--json]", kind="action")
+def cmd_pin_publish(extra: list[str]) -> int:
+    """A pin only this machine has is a repo only this machine can build (#373).
+
+    Reports without `--push`; `--push` names ONE submodule, refuses anything that
+    is not a fast-forward, and scrubs the outgoing diff first -- these forks are
+    public and a push cannot be taken back."""
+    return run_tool([PY, script("submodule_pin_publish.py")], extra)
+
+
 @command("make a fresh git worktree buildable: submodules, shared not copied",
          args="[--prune]", kind="action")
 def cmd_worktree_setup(extra: list[str]) -> int:
