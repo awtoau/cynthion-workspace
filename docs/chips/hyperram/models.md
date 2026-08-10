@@ -136,11 +136,22 @@ the one way its name promises. A held fault has no tDSV, which is what separates
 Winbond; what does is that the same model still passes `vendor_model_tb.sv` with
 every knob at its default.
 
-One number in it is calibrated rather than derived: the data phase starts
+One number in it was calibrated rather than derived: the data phase starts
 `4 + 2 × latency_ck` edges after CS# falls, where the arithmetic suggests
 `6 + 2 × latency_ck`. The latency count runs from the last CA *clock*, and the
 last two CA bytes share the third clock. The shared testbench is what caught it,
 and only on a write — a read self-aligns on RWDS and hides the error.
+
+It is now **measured, on both models, at every legal code**
+(`hyperram_dqs_model_sim.py --stage probe --sim both`): reads and writes start on
+the same edge, `4 + 2 × latency_ck`, and there is no later event to name.
+[#352](https://github.com/awtoau/cynthion-workspace/issues/352) is what a
+one-edge read offset in the twin cost, and how it survived: it was calibrated by
+hunting the RWDS strobe from the end of the CA, and **that hunt is not the data
+edge**. Over the same stimulus with both models on the identical DQ edge,
+`vendor_model_tb.sv` still reports 28/14 edges for the vendor and 27/13 for the
+twin — so no single expected string can hold both, and the exact count belongs to
+`--stage probe`, which watches DQ.
 
 ## Three protocol facts the pair established
 
@@ -196,7 +207,7 @@ Added for #338. All five latency codes, both modes, both models.
 | CR0 write + read-back | yes | yes | drive strength 34 → 67 ohm |
 | CR1 write + read-back | yes | yes | **CR1[6] = 0 differential is accepted and reads back 0** |
 | memory write + read, low and top word | yes | yes | `0x3fffff` confirms 8 MiB |
-| **fixed vs variable latency (`CR0[3]`)** | yes | yes | **28 vs 14 edges, to the edge** — see below |
+| **fixed vs variable latency (`CR0[3]`)** | yes | yes | RWDS level over the CA; the exact data edge is `--stage probe`, not this TB's strobe hunt |
 | **deep power down + RESET# recovery** | yes | yes | `CR0[15] = 0`, device silent until RESET# |
 | deliberate tCSM violation | yes | yes | fires at exactly 4 us |
 | **wrapped / hybrid burst (`CR0[2]`)** | yes | yes | **hybrid confirmed** — see below |
@@ -204,6 +215,7 @@ Added for #338. All five latency codes, both modes, both models.
 | RWDS over the CA, all six edges | yes | yes | `zz1111` / `zz0000`; tDSV is why the first two are `z` |
 | **refresh collision forcing 2x latency** | yes | yes | twin's cadence copies the vendor's, and neither is a clock |
 | 128-word bursts, the BIST's geometry | yes | yes | the negative control lives here |
+| **reserved CR0[7:4] codes 3–13** | yes | yes | the last legal CK count is held — see below |
 | hybrid sleep, software reset | **not exercised** | no | vendor only |
 | setup/hold, tRWR, tRP | n/a | no | vendor checks them; the twin is not a timing model |
 
@@ -214,12 +226,17 @@ DPD rows are checked as exact strings so a drift fails rather than degrades.
 ### Variable latency, measured
 
 The mechanism [#338](https://github.com/awtoau/cynthion-workspace/issues/338)
-turns on, from Winbond's own model and matched by the twin to the edge:
+turns on, from Winbond's own model and matched by the twin to the edge. Code 2,
+`--stage probe --sim both`; the edge is counted from CS# falling:
 
-| `CR0[3]` | RWDS during CA | edges from end of CA to first read strobe |
+| `CR0[3]` | RWDS during CA | first data edge |
 |---|---|---|
-| `1` fixed | **high** | **28** = 14 CK = 2 x 7 |
-| `0` variable | **low** | **14** = 7 CK |
+| `1` fixed | **high** | **32** = 4 + 2 x 14 CK |
+| `0` variable | **low** | **18** = 4 + 2 x 7 CK |
+
+`vendor_model_tb.sv`'s own strobe hunt reads 28/14 on the vendor and 27/13 on the
+twin **over these same runs**, with the DQ edge identical on both — it is a
+property of the instrument, not of the device, and it is not a latency. (#352)
 
 So under fixed latency the device raises RWDS during every CA and the level
 carries no information — a controller can sample it at the wrong moment, or not
@@ -229,6 +246,29 @@ wrongly while still passing every fixed-latency test.
 
 The twin never asks for extra latency because it has no refresh. The vendor model
 does, which is why a refresh-collision case has to run against the vendor.
+
+### Reserved CR0[7:4] codes hold the last legal latency
+
+`clocks = 5 + sext4(code)`, so only 0/1/2 (5/6/7 CK) and 14/15 (3/4 CK) are
+defined. Codes **3–13 are reserved** and the part is undefined there. Measured on
+the vendor model, reserved codes 6 and 7 written after a legal one:
+
+| written after | CR0[3] on the reserved write | first data edge |
+|---|---|---|
+| code 2 (7 CK) | either | **32** = 14 CK |
+| code 14 (3 CK) | either | **16** = 6 CK |
+
+- The **whole latency field goes inert**, CR0[3] included: the CK count last
+  decoded from a legal code is served, and the new CR0[3] neither doubles nor
+  halves it.
+- **RWDS over the CA still follows the new CR0[3]**, so a reserved code makes the
+  device ask for one latency and serve another.
+- CR0 read-back still returns the reserved code — the register takes the write;
+  only the decode ignores it.
+- The twin holds the same count (`lat_ck_held`) and prints a line naming the code
+  as reserved. **Observed, not specified** — reproducible undefined behaviour, and
+  nothing may be designed against it.
+  ([#350](https://github.com/awtoau/cynthion-workspace/issues/350))
 
 ### Hybrid burst leaves the group; it does not circle it
 

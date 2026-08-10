@@ -367,9 +367,8 @@ def report(lines: list[str], tag: str) -> list[dict]:
         text = line.lstrip("# ").rstrip()
         if text.startswith(("[probe]", "[dqs]", "[edge]", "[order]", "[cfg]")):
             log.info("%-6s %s", tag, text)
-        if (text.startswith("[probe] cr0=") or text.startswith("[dqs] code=")
-                or text.startswith("[order] test=")
-                or text.startswith("[cfg] txn=")):
+        if text.startswith(("[probe] cr0=", "[probe] reserved=", "[dqs] code=",
+                            "[order] test=", "[cfg] txn=")):
             rows.append(dict(kv.split("=", 1) for kv in text.split()[1:] if "=" in kv))
     return rows
 
@@ -383,6 +382,8 @@ BASE_CK = {0: 5, 1: 6, 2: 7, 14: 3, 15: 4}
 def verdict_probe(twin: list[dict], vendor: list[dict]) -> list[str]:
     """What the probe settles, checked rather than asserted in prose."""
     bad = []
+    twin, twin_res = split_reserved(twin)
+    vendor, vendor_res = split_reserved(vendor)
     log.info("--- what the probe measured ---")
     for row in twin:
         code, fixed = int(row["code"]), int(row["fixed"])
@@ -414,6 +415,45 @@ def verdict_probe(twin: list[dict], vendor: list[dict]) -> list[str]:
                     bad.append(f"twin and vendor disagree on code {row['code']} "
                                f"fixed={row['fixed']}: {row['read_first']} vs "
                                f"{other['read_first']}")
+    bad += verdict_reserved(twin_res, vendor_res)
+    return bad
+
+
+def split_reserved(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The sweep's legal-code rows, and the reserved-predecessor rows (#350)."""
+    return ([r for r in rows if "reserved" not in r],
+            [r for r in rows if "reserved" in r])
+
+
+def verdict_reserved(twin: list[dict], vendor: list[dict]) -> list[str]:
+    """Reserved CR0[7:4]: undefined on the part, so the ONLY reference is the vendor.
+
+    Nothing is asserted about what the number should be -- only that the twin does
+    not invent a different one, and that it varies with the predecessor rather than
+    with the code. (#350)
+    """
+    bad = []
+    if not twin:
+        return bad
+    log.info("--- reserved codes: what is held, and after what ---")
+    by_key = {(r["code"], r["after"], r["fixed"]): r for r in vendor}
+    for row in twin:
+        other = by_key.get((row["code"], row["after"], row["fixed"]))
+        log.info("  code %2s after %2s fixed=%s: twin edge %3s, vendor edge %3s",
+                 row["code"], row["after"], row["fixed"], row["read_first"],
+                 other["read_first"] if other else "n/a")
+        if other and row["read_first"] != other["read_first"]:
+            bad.append(f"reserved code {row['code']} after {row['after']} "
+                       f"fixed={row['fixed']}: twin edge {row['read_first']}, "
+                       f"vendor edge {other['read_first']} -- the twin invents a "
+                       f"latency where the part is undefined")
+    for code, fixed in sorted({(r["code"], r["fixed"]) for r in twin}):
+        edges = {r["read_first"] for r in twin
+                 if (r["code"], r["fixed"]) == (code, fixed)}
+        if len(edges) == 1:
+            bad.append(f"reserved code {code} fixed={fixed} answered edge "
+                       f"{edges.pop()} whatever preceded it -- it is deriving a "
+                       f"latency from the code, not holding the last legal one")
     return bad
 
 

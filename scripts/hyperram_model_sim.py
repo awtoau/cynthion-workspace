@@ -31,12 +31,12 @@ on purpose rather than by where a transaction counter happened to land.
 is tested is the CA encoding, the byte order and the latency arithmetic; what is
 not is the ECP5 IOLOGIC skew or anything electrical.
 
-Reads start one edge later than writes at the same latency, because the device
-has to turn the bus around. `READ_TURNAROUND_EDGES` in the testbench states that
-as an assumption so a model that moves it fails here instead of being followed.
-The consequence is worth knowing: with the device's word straddling two sync
-cycles, every read is taken by `READ_DATA`'s clock-inversion branch, and the
-testbench reports which branch took each burst.
+Reads and writes start on the SAME edge, `4 + 2 x L_ck` -- Winbond's own model at
+every legal code (#352). `READ_TURNAROUND_EDGES` in the testbench is 0 and states
+that so a model that moves it fails here instead of being followed. The
+consequence is worth knowing: every read now lands on `READ_DATA`'s aligned
+branch, where the one-edge offset put all of them on the clock-inversion branch.
+The testbench reports which branch took each burst.
 
 Usage:
 
@@ -246,30 +246,39 @@ def emit_controller(outdir: Path, sync_mhz: float, max_latency_clocks: int) -> t
 def latency_decode_probe(outdir: Path) -> dict[int, tuple[int, int]]:
     """Evaluate `hyperram_model.v`'s own `latency_ck` at every CR0[7:4].
 
-    The function is LIFTED OUT OF THE MODEL FILE rather than restated, so this
-    cannot drift into checking a copy. It answers a question the main testbench
-    cannot: when a latency code produces no data phase at all, is the controller
-    silent or is the device?
+    The decode is LIFTED OUT OF THE MODEL FILE rather than restated, so this
+    cannot drift into checking a copy -- `legal_code`, `decode_ck`, the
+    `lat_ck_held` register and `latency_ck`, as one contiguous block. It answers a
+    question the main testbench cannot: when a latency code produces no data phase
+    at all, is the controller silent or is the device?
     """
     text = MODEL.read_text()
-    m = re.search(r"^  function \[7:0\] latency_ck;.*?^  endfunction$", text,
-                  re.S | re.M)
+    m = re.search(r"^  function legal_code;.*?"
+                  r"^  function \[7:0\] latency_ck;.*?^  endfunction$",
+                  text, re.S | re.M)
     if not m:
-        raise SystemExit("could not lift `latency_ck` out of hyperram_model.v -- "
-                         "the function was renamed or reshaped, fix this parser "
-                         "before believing anything it would have reported")
+        raise SystemExit("could not lift the CR0[7:4] decode out of "
+                         "hyperram_model.v -- `legal_code` .. `latency_ck` was "
+                         "renamed or reshaped, fix this parser before believing "
+                         "anything it would have reported")
     probe = outdir / "latency_decode_probe.v"
     probe.write_text(
         "`timescale 1ns/1ps\n"
-        "// `latency_ck`, lifted verbatim from hyperram_model.v by\n"
+        "// The CR0[7:4] decode, lifted verbatim from hyperram_model.v by\n"
         "// scripts/hyperram_model_sim.py. Do not edit; it is regenerated per run.\n"
         "module latency_decode_probe;\n"
         f"{m.group(0)}\n"
         "  integer c;\n"
-        "  initial for (c = 0; c < 16; c = c + 1)\n"
-        "    $display(\"decode %0d %0d %0d\", c,\n"
-        "             latency_ck({8'h80, c[3:0], 4'h0}),\n"
-        "             latency_ck({8'h80, c[3:0], 4'h8}));\n"
+        "  initial begin\n"
+        "    // No CR0 write path here, so seed the held count with the POR decode.\n"
+        "    // A reserved code must answer this in BOTH columns -- CR0[3] is inert\n"
+        "    // with it. (#350)\n"
+        "    lat_ck_held = decode_ck(16'h8f2f);\n"
+        "    for (c = 0; c < 16; c = c + 1)\n"
+        "      $display(\"decode %0d %0d %0d\", c,\n"
+        "               latency_ck({8'h80, c[3:0], 4'h0}),\n"
+        "               latency_ck({8'h80, c[3:0], 4'h8}));\n"
+        "  end\n"
         "endmodule\n")
     run("iverilog(probe)", ["iverilog", "-g2012", "-o", "probe.vvp", probe.name])
     out = run("vvp(probe)", ["vvp", "probe.vvp"])
@@ -285,10 +294,25 @@ def latency_decode_probe(outdir: Path) -> dict[int, tuple[int, int]]:
     return decoded
 
 
+# CR0_RESET 0x8f2f: code 2 = 7 CK, CR0[3] = 1 doubles it. What the probe seeds
+# `lat_ck_held` with, so it is also what a reserved code must answer there.
+POR_HELD_CK = 14
+
+
 def decode_defects(decoded: dict[int, tuple[int, int]]) -> list[int]:
     """Codes where the model's decode disagrees with the table it documents."""
     bad = []
     for code, (variable, fixed) in decoded.items():
+        if not (code <= 2 or code >= 14):
+            # Reserved: the part defines nothing, holds the last legal count, and
+            # CR0[3] does not double it. Checked as "did not derive one from the
+            # code", which is the defect. (#350)
+            if variable != POR_HELD_CK or fixed != POR_HELD_CK:
+                bad.append(code)
+                log.error("model latency decode: RESERVED code %d gives %d CK "
+                          "variable / %d CK fixed; it must hold %d CK either way",
+                          code, variable, fixed, POR_HELD_CK)
+            continue
         want = 5 + (code - 16 if code >= 14 else code)
         if variable != want or fixed != want * 2:
             bad.append(code)

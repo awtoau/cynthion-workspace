@@ -53,6 +53,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
+
+# `sources/**` is gitignored, so a git worktree does not carry it -- and a worktree
+# is where agents work when several are running. Fall back to the main checkout
+# rather than telling someone to re-fetch vendor IP they already have.
+# `HYPERRAM_MODEL_ZIP` overrides both. Same resolution as
+# `hyperram_dqs_model_sim.py`, deliberately: two scripts reading one zip should not
+# disagree about where it lives.
+if not MODEL_ZIP.exists():
+    _env = os.environ.get("HYPERRAM_MODEL_ZIP")
+    if _env:
+        MODEL_ZIP = Path(_env)
+    else:
+        _common = subprocess.run(["git", "rev-parse", "--path-format=absolute",
+                                  "--git-common-dir"], cwd=ROOT,
+                                 capture_output=True, text=True)
+        if _common.returncode == 0:
+            _main = Path(_common.stdout.strip()).parent
+            if (_main / "sources" / "models" / MODEL_ZIP.name).exists():
+                MODEL_ZIP = _main / "sources" / "models" / MODEL_ZIP.name
 TESTBENCH = ROOT / "gateware" / "probes" / "hyperram" / "vendor_model_tb.sv"
 FAULT_TB = ROOT / "gateware" / "probes" / "hyperram" / "fault_model_tb.sv"
 OPEN_MODEL = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_model.v"
@@ -77,11 +96,18 @@ REQUIRED_MARKERS = (
     "PASS differential clock accepted",
     "PASS mem[0x000000] = dead",
     "PASS mem[0x3fffff] = 5aa5",
-    # Latency is checked as an exact edge count, not just "shorter". Both models
-    # must agree to the edge, or the twin has drifted from the part it stands in
-    # for -- and the RWDS level during CA is the half that #338 turns on.
-    "fixed    strobe at 28 edges, RWDS during CA = 1",
-    "variable strobe at 14 edges, RWDS during CA = 0",
+    # The RWDS level during CA is the half of the latency question #338 turns
+    # on, so it stays here. The exact edge count does NOT: this testbench finds
+    # it by hunting for the strobe, and the hunt burns a different number of
+    # edges on the two models even where both drive data and strobe on the same
+    # edge -- so a single expected string cannot match both, and pinning one
+    # made a correct fix to the twin look like a regression.
+    #
+    # dqs_latency_probe_tb.sv measures the data edge directly, on both models,
+    # over the whole sparse code table. That is where an exact count belongs;
+    # scripts/hyperram_dqs_model_sim.py --stage probe runs it.
+    "RWDS during CA = 1",
+    "RWDS during CA = 0",
     "PASS wrapped burst wraps to the group start",
     "PASS hybrid burst: leaves the group after one pass",
     "PASS device is silent in deep power down",
@@ -138,7 +164,11 @@ STEP_TIMEOUT_S = 10
 # distinguishable at all, and what #338 is about.
 FAULT_CASES = (
     ("control", {}, (
-        "ca rwds = zz1111, strobe at 28 edges, id0 = 0c86",
+        # 27, not 28: the twin used to delay reads one edge past the vendor and
+        # this row pinned that. dqs_latency_probe_tb.sv caught it at every
+        # latency code, and the twin now drives data on the same edge the part
+        # does. See the note on the strobe hunt above.
+        "ca rwds = zz1111, strobe at 27 edges, id0 = 0c86",
         "mem[0x000100] = 1234",
         "burst served 8 of 8",
         "cr0 after write = af2f",

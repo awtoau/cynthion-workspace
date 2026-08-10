@@ -386,7 +386,7 @@ that the same model still passes `vendor_model_tb.sv` with every knob at 0:
 
 | run | bus |
 |---|---|
-| control | `ca rwds = zz1111`, strobe at 28 edges, `id0 = 0c86`, 8 of 8 words, `cr0 = af2f` |
+| control | `ca rwds = zz1111`, strobe at 27 edges, `id0 = 0c86`, 8 of 8 words, `cr0 = af2f` |
 | `CA_RWDS_FAULT=1/2/3` | `111111` / `000000` / `zzzzzz` |
 | `DELIVER_WORDS=0` | `id0 = zzzz`, 0 of 8 words |
 | `DELIVER_WORDS=3` | 3 of 8 words |

@@ -105,14 +105,31 @@ module hyperram_model #(
 
   // CR0[7:4] is a sparse, sign-extended encoding: clocks = 5 + sext4(code), so
   // 0..2 give 5..7 and 14..15 give 3..4. CR0[3] = 1 doubles it (fixed latency).
-  function [7:0] latency_ck;
+  // Codes 3..13 are RESERVED -- see `lat_ck_held`.
+  function legal_code;
+    input [3:0] code;
+    begin legal_code = (code <= 4'd2) || (code >= 4'd14); end
+  endfunction
+
+  function [7:0] decode_ck;
     input [15:0] cr0_v;
-    reg [3:0] code;
     reg [7:0] base;
     begin
-      code = cr0_v[7:4];
-      base = (code >= 4'd14) ? (code - 4'd11) : (code + 4'd5);
-      latency_ck = cr0_v[3] ? (base * 2) : base;
+      base = (cr0_v[7:4] >= 4'd14) ? (cr0_v[7:4] - 4'd11) : (cr0_v[7:4] + 4'd5);
+      decode_ck = cr0_v[3] ? (base * 2) : base;
+    end
+  endfunction
+
+  // The latency in CK last decoded from a LEGAL code. A reserved code leaves the
+  // whole latency field inert -- CR0[3] included -- and the part serves this
+  // instead. OBSERVED from the vendor model, not specified: reserved is undefined
+  // silicon and nothing may be designed against it. (#350)
+  reg [7:0] lat_ck_held;
+
+  function [7:0] latency_ck;
+    input [15:0] cr0_v;
+    begin
+      latency_ck = legal_code(cr0_v[7:4]) ? decode_ck(cr0_v) : lat_ck_held;
     end
   endfunction
 
@@ -156,6 +173,11 @@ module hyperram_model #(
       case (a)
         22'h00_0800: begin
           cr0 = d;
+          if (legal_code(d[7:4]))
+            lat_ck_held = decode_ck(d);
+          else
+            $display("%m: CR0[7:4] = %0d is RESERVED -- undefined on the part; holding %0d CK",
+                     d[7:4], lat_ck_held);
           if (!d[15]) begin
             dpd = 1'b1;
             $display("%m: CR0[15] = 0 -- entering deep power down, RESET# is the only way out");
@@ -176,6 +198,7 @@ module hyperram_model #(
   integer i;
   initial begin
     id0 = ID0_RESET; id1 = ID1_RESET; cr0 = CR0_RESET; cr1 = CR1_RESET; dpd = 1'b0;
+    lat_ck_held = decode_ck(CR0_RESET);
     for (i = 0; i < MEM_WORDS; i = i + 1) memory[i] = 16'h0000;
   end
 
@@ -189,6 +212,7 @@ module hyperram_model #(
   always @(negedge resetb) begin
     cr0 = CR0_RESET;
     cr1 = CR1_RESET;
+    lat_ck_held = decode_ck(CR0_RESET);
     dpd = 1'b0;
     $display("%m: RESET# low at %0t -- config registers back to default", $time);
   end
@@ -263,14 +287,16 @@ module hyperram_model #(
           // edges). It is dropped in the latency branch below.
           if (!is_read) rwds_oe = 1'b0;   // on any write the HOST owns RWDS from here
         end
-      end else if (beat < first_data_beat(is_register && !is_read) +
-                          (is_read ? 16'd1 : 16'd0)) begin
+      end else if (beat < first_data_beat(is_register && !is_read)) begin
         rwds_out = 1'b0;                // latency period: the request is answered
         if (is_read) rwds_oe = 1'b1;    // CA_RWDS_FAULT covers the CA and no more
       end else begin
-        // A read starts one edge later than a write at the same latency -- the
-        // device has to turn the bus around. Measured against the vendor model:
-        // 28 edges to the strobe at 14 CK fixed, 14 at 7 CK variable.
+        // Reads and writes start at the SAME edge. An earlier version delayed
+        // reads by one, "measured against the vendor model" -- but that was
+        // measured by hunting for the RWDS strobe, and the two models drive RWDS
+        // through the latency differently, so the hunt agreed while the DQ edge
+        // did not. dqs_latency_probe_tb.sv measures the DQ edge directly on both
+        // models and caught it at every latency code.
         if (is_read && DELIVER_WORDS >= 0 && served >= DELIVER_WORDS) begin
           // The device has stopped answering. Both lines released, so there is no
           // strobe and the address does not advance -- what a part in Deep Power
@@ -282,7 +308,7 @@ module hyperram_model #(
           rwds_oe  = 1'b1;
           rd_word  = read_word(word_addr);   // Icarus will not part-select a call
           // Even data beats carry the high byte and raise the strobe.
-          if (!((beat - first_data_beat(1'b0) - 16'd1) & 1)) begin
+          if (!((beat - first_data_beat(1'b0)) & 1)) begin
             dq_out   = rd_word[15:8];
             rwds_out = 1'b1;
           end else begin

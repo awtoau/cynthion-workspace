@@ -284,6 +284,7 @@ module tb;
   //
 
   integer      code, fixed, i, w, wrote_at;
+  integer      prev, rfix;
   reg [15:0]   cr0_want, cr0_got;
   integer      base, expect_ck;
   reg [15:0]   probe_val;
@@ -365,6 +366,31 @@ module tb;
                    read_first, read_strobe,
                    (read_first < 0) ? -1 : (read_first % 4),
                    rwds_ca_high, rwds_ca_last, wrote_at);
+        end
+      end
+    end
+
+    // Reserved codes, with the predecessor VARIED. The sweep above always reaches
+    // code 7 from code 2, and "holds the last legal decode", "falls back to POR"
+    // and "clamps to the longest" all answer 7 CK there -- so it cannot tell them
+    // apart. Preceding the same reserved code by code 2 (7 CK) and by code 14
+    // (3 CK) does, and varying CR0[3] afterwards says whether what is held is the
+    // base or the doubled count. (#350)
+    for (i = 0; i < 2; i = i + 1) begin
+      prev = (i == 0) ? 2 : 14;
+      for (code = 6; code <= 7; code = code + 1) begin
+        for (rfix = 1; rfix >= 0; rfix = rfix - 1) begin
+          cr0_want = 16'h8f2f;
+          cr0_want[7:4] = prev[3:0];
+          cr0_want[3]   = 1'b1;               // the predecessor is always fixed
+          write_register(ADDR_CR0, cr0_want);
+          cr0_want[7:4] = code[3:0];
+          cr0_want[3]   = rfix[0];
+          write_register(ADDR_CR0, cr0_want);
+          read_register(ADDR_CR0, cr0_got);
+          probe_read(32'h00_0100);
+          $display("[probe] reserved=1 code=%0d after=%0d fixed=%0d cr0=%h read_first=%0d rwds_ca_high=%0d rwds_ca_last=%0d",
+                   code, prev, rfix, cr0_got, read_first, rwds_ca_high, rwds_ca_last);
         end
       end
     end
