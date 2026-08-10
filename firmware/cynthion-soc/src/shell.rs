@@ -31,6 +31,7 @@ pub(crate) mod memory;
 pub(crate) mod parse;
 pub(crate) mod phy;
 pub(crate) mod power;
+pub(crate) mod rejoin;
 pub(crate) mod sideband;
 pub(crate) mod typec;
 pub(crate) mod usb;

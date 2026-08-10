@@ -9,11 +9,27 @@
 use core::fmt::Write;
 
 use crate::shell::parse::{
-    as_str, parse_decimal, parse_limit, parse_port, parse_signed, trim, FixedWriter,
+    as_str, parse_decimal, parse_signed, trim, FixedWriter,
 };
 use crate::uart::Uart;
 use crate::shell::console::board_absent;
 use crate::{ clock, power, target, Devices};
+
+/// Which limit a word names, or `None`.
+///
+/// Here rather than in `shell/parse.rs` with the other parsers: it needs
+/// `crate::power`, and that module has to stay free of `crate::` paths to be
+/// host-testable (#337). This is its only caller.
+fn parse_limit(name: &[u8]) -> Option<power::Limit> {
+    power::Limit::ALL.iter().copied().find(|l| l.name().as_bytes() == name)
+}
+
+/// A port name to a PAC channel index. Named rather than numbered because
+/// channel order is NOT connector order on this part -- channel 1 is TARGET_A,
+/// not CONTROL -- and a bare index invites exactly that mistake.
+fn parse_port(name: &[u8]) -> Option<usize> {
+    power::PORTS.iter().position(|&p| p.as_bytes() == name)
+}
 
 /// `power`, or `power floor <port> <mA>`.
 ///

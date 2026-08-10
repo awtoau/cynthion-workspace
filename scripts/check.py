@@ -108,6 +108,8 @@ def build_checks() -> List[Check]:
     cyn_fw = REPOS / "cynthion" / "firmware"
     apollo_fw = REPOS / "apollo" / "firmware"
     tinyusb = REPOS / "apollo" / "lib" / "tinyusb"
+    soc_fw = ROOT / "firmware" / "cynthion-soc"
+    soc_tests = ROOT / "firmware" / "cynthion-soc-tests"
 
     return [
         Check(
@@ -118,6 +120,31 @@ def build_checks() -> List[Check]:
                 Step(["cargo", "check", "--release",
                       "--target", "riscv32imac-unknown-none-elf"], cyn_fw),
                 Step(["make", "clippy"], cyn_fw),
+            ],
+        ),
+        Check(
+            name="socfw",
+            description="cynthion-soc: host unit tests, then the target build",
+            skip_reason=_need("cargo"),
+            steps=[
+                # OUR firmware's unit tests, and until #337 they had never run
+                # once: the crate is no_std/no_main with RISC-V asm, so
+                # `cargo test` cannot build it for this machine. The pure logic
+                # is `#[path]`-included by cynthion-soc-tests instead, which is
+                # an ordinary host crate.
+                #
+                # `tests/coverage.rs` is the one that matters here: it fails if a
+                # `#[cfg(test)]` module in cynthion-soc is not included, so
+                # coverage cannot be lost by deleting a line. A green `cargo
+                # test` alone would not notice.
+                #
+                # No board, no toolchain beyond cargo, well under a second.
+                Step(["cargo", "test", "--quiet"], soc_tests),
+                # The other half of the same crate -- the register access the
+                # tests deliberately cannot reach. Nothing in this gate compiled
+                # it before: the `rust` check above is moondancer, in
+                # repos/cynthion, which is upstream's firmware and not ours.
+                Step(["cargo", "check", "--release"], soc_fw),
             ],
         ),
         Check(

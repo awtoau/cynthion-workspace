@@ -51,14 +51,38 @@ mod tests {
     #[test]
     fn synthetic_samples_discriminate() {
         let rail = RAILS[3];
-        let in_tolerance = within_tolerance(rail, 5_000);
-        let out_of_tolerance = within_tolerance(rail, 4_749);
-        println!(
-            "5000 mV: {}; 4749 mV: {}",
-            if in_tolerance { "PASS" } else { "FAIL" },
-            if out_of_tolerance { "PASS" } else { "FAIL" }
+        assert!(within_tolerance(rail, 5_000));
+        assert!(!within_tolerance(rail, 4_749));
+    }
+
+    /// The USB limits themselves must be valid: `>=`/`<=`, not `>`/`<`.
+    #[test]
+    fn the_boundaries_are_inclusive_on_every_rail() {
+        for rail in RAILS {
+            assert!(within_tolerance(rail, 4_750), "{} lower", rail.name);
+            assert!(within_tolerance(rail, 5_250), "{} upper", rail.name);
+            assert!(!within_tolerance(rail, 4_749), "{} below", rail.name);
+            assert!(!within_tolerance(rail, 5_251), "{} above", rail.name);
+        }
+    }
+
+    /// A dead rail reads 0 mV, and `saturating_sub` must not turn that into a
+    /// pass by wrapping the lower bound.
+    #[test]
+    fn zero_millivolts_is_never_in_tolerance() {
+        for rail in RAILS {
+            assert!(!within_tolerance(rail, 0), "{}", rail.name);
+        }
+    }
+
+    /// Channel order is not connector order on this part; the table says so and
+    /// nothing else records it.
+    #[test]
+    fn the_channel_names_are_in_pac_order() {
+        let names: [&str; 4] = core::array::from_fn(|i| RAILS[i].name);
+        assert_eq!(
+            names,
+            ["target_a_vbus", "target_c_vbus", "aux_vbus", "control_vbus"]
         );
-        assert!(in_tolerance);
-        assert!(!out_of_tolerance);
     }
 }

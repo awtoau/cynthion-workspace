@@ -110,12 +110,19 @@ Do not add workflow files back. If something needs automating, extend
 | Check | What |
 |-------|------|
 | `rust` | `cargo check` + `make clippy` for moondancer (riscv32imac) |
+| `socfw` | `cynthion-soc`'s unit tests on this machine, then its target build |
 | `apollo` | SAMD11 firmware build + size report |
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
 | `socmap` | the committed SVD still matches the SoC's memory map |
 | `irqlog` | no interrupt handler can reach a console |
 | `paths` | no tracked file names one machine's filesystem — this repo is public |
+
+`socfw` runs `cargo test` in `firmware/cynthion-soc-tests`, a host crate that
+`#[path]`-includes `cynthion-soc`'s pure modules — the firmware itself is
+`no_std`/`no_main` with RISC-V asm and cannot be built for this machine. One of
+those tests walks the firmware's source and fails if a `#[cfg(test)]` module is
+not included, so coverage cannot be lost by deleting a line (#337).
 
 The whole set runs in well under a second. There was a `gateware` check that
 elaborated the upstream USB analyzer top out of `repos/cynthion` for
