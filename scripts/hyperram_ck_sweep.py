@@ -137,6 +137,15 @@ def main():
                     print(f"      lat {code:2d} {mark:8s} errors {errors:5d} "
                           f"words {words:5d} control {control:5d}  {verdict}")
 
+        # A sweep that parsed nothing at every rung must not exit 0: an empty
+        # result set reads exactly like a board that reported nothing, and the
+        # per-rung note above scrolls past (#333).
+        if not results:
+            raise SystemExit(
+                f"NO ROWS PARSED AT ANY OF THE {len(table)} RUNG(S). Either "
+                "`bist latency` is not in this build or its row format has "
+                f"moved away from the parser. Transcript: {TRANSCRIPT}")
+
         if len(results) > 1:
             print("\ncomparison")
             sets = {mhz: set(passed) for mhz, (passed, _) in results.items()}
