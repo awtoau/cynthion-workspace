@@ -111,6 +111,13 @@ def main():
 
     board = Board()
     try:
+        # RUNG 0, FIRST. The probe clock is built at rung 0's frequency, so with
+        # rung 1 live `hr` and the probe differ and the XOR beats instead of
+        # holding still -- the count then lands on aliases of the counting clock
+        # and reads as a phase that is not there. `hyperram_ck_sweep.py` leaves
+        # the last rung selected, so this is the normal state to arrive in.
+        board.send("bist ck 0")
+
         first = board.send("bist phase")
         _, rotation, level, count, locked = state(first)
         if not locked:

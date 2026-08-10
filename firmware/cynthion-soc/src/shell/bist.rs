@@ -9,7 +9,7 @@
 
 use core::fmt::Write;
 
-use super::parse::{parse_decimal, parse_signed, trim};
+use super::parse::{parse_decimal, trim};
 use crate::bist::{self, Axes, Bist};
 use crate::clock::Hz;
 use crate::uart::Uart;
@@ -123,10 +123,18 @@ fn phase(uart: &mut Uart, args: &[u8]) {
                 return;
             }
         };
-        let count = words.next().and_then(parse_signed).unwrap_or(0);
-        let back = count < 0;
+        // The sign is split off here rather than through `parse_signed`, which
+        // returned `None` for `-3` on the board and left the verb silently
+        // taking zero steps -- a lever that reports success and does nothing is
+        // the exact failure this pair of issues is about.
+        let (back, digits) = match words.next() {
+            Some([b'-', rest @ ..]) => (true, rest),
+            Some(word) => (false, word),
+            None => (false, &b""[..]),
+        };
+        let count = parse_decimal(digits).unwrap_or(0);
         phase.select(sel, back);
-        for _ in 0..count.unsigned_abs() {
+        for _ in 0..count {
             if !phase.step(sel, back) {
                 let _ = writeln!(uart, "phase: step did not complete -- busy stuck");
                 break;
