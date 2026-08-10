@@ -88,6 +88,26 @@ def main():
     s = ROOT / "scripts"
     results = {}
 
+    # 0. SIMULATION FIRST, because it needs no hardware and costs 4 s against a
+    # 3-8 minute bitstream. If the CA encoding or the latency arithmetic is
+    # wrong, every board result below is noise -- and on hardware that noise is
+    # indistinguishable from signal integrity, which is how #226 concluded every
+    # earlier measurement was void.
+    #
+    # This one first of the two: a drift shows up here as a named beat count and
+    # latency code, which reads faster than a testbench summary line.
+    results["controller vs the independent model"] = step(
+        "the controller's CA and latency arithmetic, against hyperram_model.v",
+        [py, str(s / "hyperram_model_sim.py")])[0]
+
+    results["the twin against the shared testbench"] = step(
+        "the open twin, against the vendor model's own testbench",
+        [py, str(s / "hyperram_vendor_model_sim.py"), "--sim", "icarus"])[0]
+
+    results["controller vs our Python model"] = step(
+        "the controller against our own model -- fault injection and the SoC above it",
+        [py, str(s / "soc_hyperram_sim.py")])[0]
+
     # 1-2. Liveness first. It also proves the link and the applet id, so a board
     # that is not answering fails here rather than halfway through a sweep.
     results["axis liveness"] = step(
