@@ -6,6 +6,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 |---|---|
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
 | [specifications.md](specifications.md) | **the numbers** — DC, current, refresh, and AC per speed grade, each with its source |
+| [app-notes.md](app-notes.md) | **what the vendor says outside the datasheet** — the four Winbond application notes, the four questions they settle, and the three places they contradict the datasheet or each other |
 | [bist-plan.md](bist-plan.md) | **the method** — what to measure, the matrix, and the rule that makes a result admissible |
 | [survey.md](survey.md) | **everyone else** — nineteen open HyperBus controllers in RTL, the software and SoC drivers above them, and the simulation models |
 | [byte-order.md](byte-order.md) | **which byte goes where** — the 32-bit DQS path's byte and word order, measured, with the check that keeps it |
