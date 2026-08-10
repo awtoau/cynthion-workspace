@@ -48,6 +48,37 @@ SUBJECTS = {
         "body": ("hyperram", "psram", "rwds", "w956a8", "readclksel",
                  "burstdet", "hyperbus", "dqsbufm"),
     },
+    "flash": {
+        "title": ("flash", "qspi", "spi nor", "w25q", "bitstream"),
+        "body": ("flash", "qspi", "w25q", "winbond", "spiflash",
+                 "configuration flash", "flash_divisor"),
+    },
+    "usb": {
+        "title": ("usb", "ulpi", "cdc", "endpoint", "tinyusb", "facedancer",
+                  "moondancer", "phy register"),
+        "body": ("ulpi", "usb3343", "endpoint", "tinyusb", "cdc-acm",
+                 " cdc ", "descriptor", "enumerat", "bulk endpoint"),
+    },
+    # Deliberately narrower than `riscv`, which covers the softcore, the SoC
+    # and the firmware. This is the microarchitecture only.
+    "cpu": {
+        "title": ("vexii", "vexriscv", "cache", "branch predict", "fmax",
+                  "instructions", "superloop"),
+        "body": ("vexii", "gshare", "d-cache", "i-cache", "cache line",
+                 "branch predictor", "cycles per instruction", "coremark",
+                 "fetch-bound"),
+    },
+    "pins": {
+        "title": ("pins", "pmod", "pinout", "slew", "iobuf"),
+        "body": ("pmod", "pullmode", "slewrate", "hysteresis", "iostandard",
+                 "add_resources", "request(", "pin drive", " .oe"),
+    },
+    "clocks": {
+        "title": ("clock", "clocks", "pll", "fmax", "eclk", "domain"),
+        "body": ("ehxpll", "clkos", "clki_div", "clkfb", "eclksync",
+                 "clock domain", "solve_pll", "ecp5 pll", "dcsc",
+                 "ddrdll", "edge clock"),
+    },
 }
 
 # Body hits per 1000 characters needed to call an issue "about" the subject.
