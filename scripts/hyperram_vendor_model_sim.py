@@ -53,6 +53,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
+
+# `sources/**` is gitignored, so a git worktree does not carry it -- and a worktree
+# is where agents work when several are running. Fall back to the main checkout
+# rather than telling someone to re-fetch vendor IP they already have.
+# `HYPERRAM_MODEL_ZIP` overrides both. Same resolution as
+# `hyperram_dqs_model_sim.py`, deliberately: two scripts reading one zip should not
+# disagree about where it lives.
+if not MODEL_ZIP.exists():
+    _env = os.environ.get("HYPERRAM_MODEL_ZIP")
+    if _env:
+        MODEL_ZIP = Path(_env)
+    else:
+        _common = subprocess.run(["git", "rev-parse", "--path-format=absolute",
+                                  "--git-common-dir"], cwd=ROOT,
+                                 capture_output=True, text=True)
+        if _common.returncode == 0:
+            _main = Path(_common.stdout.strip()).parent
+            if (_main / "sources" / "models" / MODEL_ZIP.name).exists():
+                MODEL_ZIP = _main / "sources" / "models" / MODEL_ZIP.name
 TESTBENCH = ROOT / "gateware" / "probes" / "hyperram" / "vendor_model_tb.sv"
 FAULT_TB = ROOT / "gateware" / "probes" / "hyperram" / "fault_model_tb.sv"
 OPEN_MODEL = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_model.v"
