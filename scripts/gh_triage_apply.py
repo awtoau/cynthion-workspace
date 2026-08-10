@@ -15,12 +15,20 @@ how a table ends up posted with literal `\n` in it. One section per issue:
 
     ### 199 label: p1 needs-hardware-test
 
-`action` is `comment`, `close` or `label`. For the first two, everything after the colon
-is the reason line, bolded at the top of the body, so a closing comment always says why.
-For `label` it is the space-separated labels to add, and the body is a note to the log
-rather than a comment — labels do not need explaining twice.
+    ### 185 retitle: hyperram: coalescing is off for correctness
+
+`action` is `comment`, `close`, `label` or `retitle`. For the first two, everything after
+the colon is the reason line, bolded at the top of the body, so a closing comment always
+says why. For `label` it is the space-separated labels to add, and for `retitle` it is the
+new title; in both cases the body is a note to the log rather than a comment — a label does
+not need explaining twice, and a title carries a number that has been superseded, which is
+deleted rather than annotated.
 
     scripts/gh_triage_apply.py <manifest.md> [--repo owner/name] [--dry-run]
+
+Building the manifest's input list: `gh issue list --state open --limit 300`. The default
+limit is 100 and it returns exactly 100 rows with nothing saying a page was cut, which is
+how the 2026-08-10 pass silently covered only the newest 100 of 163 (#383).
 
 Log: tmp/logs/gh_triage_apply.log (append). Applied numbers are read back from it, so a
 re-run after a failure skips what already landed.
@@ -69,7 +77,7 @@ def already_applied() -> set[tuple[int, str]]:
     return done
 
 
-HEADING = re.compile(r"^###\s+(\d+)\s+(comment|close|label)\s*(?::\s*(.*))?$")
+HEADING = re.compile(r"^###\s+(\d+)\s+(comment|close|label|retitle)\s*(?::\s*(.*))?$")
 
 
 def parse_manifest(text: str) -> list[dict]:
@@ -90,9 +98,9 @@ def parse_manifest(text: str) -> list[dict]:
             current["lines"].append(line)
     for entry in entries:
         entry["body"] = "\n".join(entry.pop("lines")).strip()
-        if entry["action"] == "label":
+        if entry["action"] in ("label", "retitle"):
             if not entry["reason"]:
-                raise ValueError(f"issue {entry['number']} names no label")
+                raise ValueError(f"issue {entry['number']} names no {entry['action']} value")
         elif not entry["body"]:
             raise ValueError(f"issue {entry['number']} has an empty body")
     return entries
@@ -124,6 +132,15 @@ def apply_one(entry: dict, repo: str, dry_run: bool) -> None:
             args += ["--add-label", label]
         run_gh(args, None)
         log(f"APPLIED {number} label {' '.join(labels)}")
+        return
+
+    if action == "retitle":
+        title = entry["reason"]
+        if dry_run:
+            log(f"DRYRUN {number} retitle {title}")
+            return
+        run_gh(["issue", "edit", str(number), "--repo", repo, "--title", title], None)
+        log(f"APPLIED {number} retitle {title}")
         return
 
     body = entry["body"].rstrip() + "\n"
