@@ -53,6 +53,23 @@
   `define RECOVER_LIMIT 512
 `endif
 
+// Transactions between the model's refresh-forced 2x elections. The driver sweeps
+// this rather than leaving it at the shipped 100, because at 100 whether a sweep
+// cell collides with a refresh is an accident of how many transactions ran before
+// it -- which is the nondeterminism #338 is trying to pin down, not a way to test
+// it. 0 never elects (the variable SHORT branch), 1 always does (the LONG one).
+`ifndef REFRESH_EVERY
+  `define REFRESH_EVERY 100
+`endif
+
+// Edges between a write's first data beat and a read's at the same latency. The
+// device has to turn the bus around, so it cannot drive DQ on the edge it leaves
+// Hi-Z. `hyperram_model.v` records this measured against the vendor model: 28
+// edges from the last CA edge to the strobe at 14 CK fixed, 14 at 7 CK variable,
+// both of which are 2L + 1 beats from CS#. Stated here so that if the model moves
+// it again, this fails rather than following.
+`define READ_TURNAROUND_EDGES 1
+
 module tb;
 
   // `HyperRAMPHY` emits one CK per sync cycle, so the sync period is also the CK
@@ -89,6 +106,14 @@ module tb;
 
   integer errors = 0;
   integer checks = 0;
+
+  // Which of `READ_DATA`'s two branches took each burst. The controller's own
+  // docstring says nothing has measured this; with the device's read word starting
+  // one edge after a write's, it straddles two sync cycles and only the
+  // clock-inversion branch can assemble it. Counted rather than asserted, because
+  // the answer is a property of the CK-to-sync phase and this gearbox has one phase.
+  integer aligned_bursts  = 0;
+  integer inverted_bursts = 0;
 
   //
   // Clock and reset.
@@ -174,23 +199,14 @@ module tb;
   reg [7:0] s_pos_dq = 8'h0, s_neg_dq = 8'h0;
   reg       s_pos_rwds = 1'b0, s_neg_rwds = 1'b0;
 
-  // A device that does NOT ask for the extra latency. `hyperram_model.v` drives RWDS
-  // High through every CA regardless of CR0[3], so in variable-latency mode it
-  // requests the long count and then serves the short one -- no controller can
-  // satisfy both, and the short branch is unreachable. This masks the request on the
-  // way into the controller only; the model still serves the short count, so the two
-  // are consistent with each other for the first time. Set for case 5 alone.
-  reg  force_ca_rwds_low = 1'b0;
-  wire rwds_seen = (force_ca_rwds_low && model.beat < 7) ? 1'b0 : rwds;
-
-  always @(posedge ck_s) begin s_pos_dq <= adq; s_pos_rwds <= rwds_seen; end
-  always @(negedge ck_s) begin s_neg_dq <= adq; s_neg_rwds <= rwds_seen; end
+  always @(posedge ck_s) begin s_pos_dq <= adq; s_pos_rwds <= rwds; end
+  always @(negedge ck_s) begin s_neg_dq <= adq; s_neg_rwds <= rwds; end
   always @(posedge clk) begin
     dq_i   <= {s_pos_dq, s_neg_dq};
     rwds_i <= {s_pos_rwds, s_neg_rwds};
   end
 
-  hyperram_model model (
+  hyperram_model #(.REFRESH_EVERY(`REFRESH_EVERY)) model (
     .adq(adq), .clk(ck), .clk_n(~ck), .csb(csb),
     .rwds(rwds), .VCC(VCC), .VSS(VSS), .resetb(resetb)
   );
@@ -202,6 +218,20 @@ module tb;
   integer ck_edges = 0;
   always @(negedge csb) ck_edges = 0;
   always @(posedge ck or negedge ck) if (!csb) ck_edges = ck_edges + 1;
+
+  // The DEVICE's first read data beat, taken off the bus rather than inferred from
+  // when the controller strobed. The controller's strobe is one or two sync cycles
+  // behind depending on which half of the cycle the word landed in, so deriving the
+  // device's beat from it bakes an alignment assumption into the measurement -- and
+  // the alignment is exactly what the turnaround edge changes.
+  //
+  // The first RWDS High after the CA is the read strobe: during the CA it is the
+  // latency request, and through the latency period the model holds it Low.
+  integer dev_first_beat = -1;
+  always @(negedge csb) dev_first_beat = -1;
+  always @(posedge ck_s or negedge ck_s)
+    if (!csb && dev_first_beat < 0 && ck_edges > 6 && rwds === 1'b1)
+      dev_first_beat = ck_edges - 1;   // ck_edges already counted the current beat
 
   //
   // Burst engine. One transaction at a time; `final_word` and `write_data` come out
@@ -216,6 +246,7 @@ module tb;
   integer    burst_count  = 0;
   reg        saw_beat     = 1'b0;
   integer    first_beat   = -1;
+  reg [1:0]  strobe_rwds  = 2'b00;
   reg [15:0] read_words [0:31];
 
   // Address-derived, and the varying half is the HIGH byte: consecutive words share
@@ -233,10 +264,16 @@ module tb;
       if (read_ready) begin
         read_words[burst_count[4:0]] <= read_data;
         burst_count <= burst_count + 1;
-        // ck_edges here has already counted the two beats of the cycle that carried
-        // the strobe, and the controller sees the bus one cycle late through the
-        // IDDR: -4 puts this back on the device beat that carried the high byte.
-        if (!saw_beat) begin first_beat <= ck_edges - 4; saw_beat <= 1'b1; end
+        // Raw, not converted back to a device beat: how far the strobe trails the
+        // data depends on which half of the sync cycle the word landed in, and that
+        // is the thing being measured. `dev_first_beat` is the device's own answer.
+        // `strobe_rwds` says which of READ_DATA's two branches took the word:
+        // 0b10 is the aligned one, anything else is the clock-inversion one.
+        if (!saw_beat) begin
+          first_beat  <= ck_edges;
+          strobe_rwds <= rwds_i;
+          saw_beat    <= 1'b1;
+        end
       end else if (write_ready) begin
         burst_count <= burst_count + 1;
         // `write_ready` is asserted the cycle BEFORE the registered `dq.o` reaches
@@ -374,10 +411,14 @@ module tb;
   //              count its own contract says it must take (the long one whenever
   //              CR0[3] is set or the device raised RWDS over the CA). True or false
   //              whatever the device does next, so it survives a silent model.
+  //   MODEL-BEAT the beat the DEVICE puts its first read word on, taken off the bus,
+  //              against its own documented decode plus the turnaround edge.
   //   DATA       what actually landed in, and came back out of, the model's array.
   //
-  // A case where CTRL-BEAT passes and DATA fails is the device disagreeing with the
-  // controller, not the controller being wrong.
+  // The first two are read off opposite ends of the same bus and graded against the
+  // same observed CA request, so neither can excuse the other. A case where
+  // CTRL-BEAT passes and DATA fails is the device disagreeing with the controller,
+  // not the controller being wrong.
   task latency_case(input integer lcode, input fixed, input [31:0] region);
     integer want_beat, model_beat, data_errors;
     begin
@@ -385,7 +426,7 @@ module tb;
       // when CR0[3] selects fixed latency.
       base_ck    = (lcode >= 14) ? (5 + lcode - 16) : (5 + lcode);
       lat_ck     = base_ck * 2;
-      mode_label = fixed ? "fixed" : (force_ca_rwds_low ? "varlow" : "var");
+      mode_label = fixed ? "fixed" : "var";
       case_mode  = mode_label;
       case_code  = lcode;
 
@@ -411,10 +452,10 @@ module tb;
       a = region + (lcode << 8);
       run_burst(a, 1'b0, 1'b1, 4, 16'h0);
 
-      // What the controller owed, given what the device asked for over the CA.
+      // What the controller owed, given what the device asked for over the CA. The
+      // request is OBSERVED, not assumed: under variable latency the model elects
+      // the long count on a refresh collision, and `ca_rwds` is how it said so.
       want_beat  = 4 + 2 * (((ca_rwds !== 2'b00) || fixed) ? lat_ck : base_ck);
-      // What the model's documented decode says it will serve.
-      model_beat = 4 + 2 * (fixed ? lat_ck : base_ck);
 
       checks = checks + 1;
       if (first_beat === want_beat)
@@ -428,12 +469,6 @@ module tb;
         errors = errors + 1;
       end
 
-      // The device asked for the extra latency over the CA and then served the short
-      // count: no controller can satisfy both, so the beats cannot line up.
-      if (want_beat != model_beat)
-        $display("[tb] MODEL-DISAGREES %0s code %2d: controller serves beat %0d, model serves beat %0d",
-                 mode_label, lcode, want_beat, model_beat);
-
       for (i = 0; i < 4; i = i + 1) begin
         checks = checks + 1;
         if (model.memory[a[21:0] + i[21:0]] !== pattern(a + i)) begin
@@ -446,6 +481,9 @@ module tb;
       end
 
       run_burst(a, 1'b0, 1'b0, 4, 16'h0);
+      // Recomputed off THIS transaction's request, which is what the read was
+      // served against.
+      model_beat = 4 + 2 * (((ca_rwds !== 2'b00) || fixed) ? lat_ck : base_ck);
       for (i = 0; i < 4; i = i + 1) begin
         checks = checks + 1;
         if (read_words[i] !== pattern(a + i)) begin
@@ -458,20 +496,24 @@ module tb;
 
       // Nothing stored and nothing strobed: the device never entered a data phase at
       // all, which is a different failure from serving the wrong beat.
-      if (data_errors == 8 && first_beat == -1)
+      if (data_errors == 8 && dev_first_beat == -1)
         $display("[tb] MODEL-SILENT %0s code %2d: no read strobe and nothing stored",
                  mode_label, lcode);
 
-      // Both sides agree on which count is owed, and the device still served
-      // somewhere else: the device is not keeping to its own decode. Only meaningful
-      // when want_beat == model_beat, because otherwise MODEL-DISAGREES already has
-      // it and the controller is deliberately elsewhere.
-      if (want_beat == model_beat && first_beat !== model_beat && first_beat != -1)
-        $display("[tb] MODEL-BEAT %0s code %2d: device served read beat %0d, its own decode says %0d",
-                 mode_label, lcode, first_beat, model_beat);
+      // The device's OWN first read beat, off the bus, against its own decode plus
+      // the turnaround edge. Nothing about the controller enters this comparison.
+      if (dev_first_beat != -1
+          && dev_first_beat !== model_beat + `READ_TURNAROUND_EDGES)
+        $display("[tb] MODEL-BEAT %0s code %2d: device served read beat %0d, its own decode plus turnaround says %0d",
+                 mode_label, lcode, dev_first_beat,
+                 model_beat + `READ_TURNAROUND_EDGES);
 
-      $display("[tb] %0s code %2d: CR0=%h, first read beat %0d, 4 words %0s",
-               mode_label, lcode, cr0_value, first_beat,
+      if (strobe_rwds === 2'b10) aligned_bursts  = aligned_bursts  + 1;
+      else                       inverted_bursts = inverted_bursts + 1;
+
+      $display("[tb] %0s code %2d: CR0=%h, device read beat %0d, controller strobed at edge %0d on the %0s branch, 4 words %0s",
+               mode_label, lcode, cr0_value, dev_first_beat, first_beat,
+               (strobe_rwds === 2'b10) ? "aligned" : "inverted",
                (data_errors == 0) ? "OK" : "WRONG");
       case_mode = "-";
       case_code = -1;
@@ -603,28 +645,22 @@ module tb;
 
     //
     // CASE 4 -- variable latency. CR0[3] = 0, and the controller honours the RWDS
-    // sample instead of taking the long count unconditionally (#338).
+    // sample instead of taking the long count unconditionally (#338). Which branch
+    // this exercises is set by REFRESH_EVERY, which the driver sweeps: 0 never
+    // elects the 2x count and 1 always does, so both branches are reached on
+    // purpose rather than by where a transaction counter happened to land.
     //
-    $display("[tb] === case 4: variable latency, CR0[3] = 0 ===");
+    $display("[tb] === case 4: variable latency, CR0[3] = 0, REFRESH_EVERY = %0d ===",
+             `REFRESH_EVERY);
     for (ci = 0; ci < 6; ci = ci + 1)
       latency_case(latency_codes[ci], 1'b0, 32'h0002_0000);
-    restore_por;
-
-    //
-    // CASE 5 -- variable latency with the device declining the extra latency, which
-    // is the SHORT branch and the one #331/#338 found welded to a constant. Only
-    // reachable with the CA-time RWDS masked; see `force_ca_rwds_low`.
-    //
-    $display("[tb] === case 5: variable latency, device does not ask for extra ===");
-    force_ca_rwds_low = 1'b1;
-    for (ci = 0; ci < 6; ci = ci + 1)
-      latency_case(latency_codes[ci], 1'b0, 32'h0003_0000);
-    force_ca_rwds_low = 1'b0;
     restore_por;
 
     run_burst(ADDR_CR0, 1'b1, 1'b0, 1, 16'h0);
     check16("CR0 restored", read_words[0], 16'h8f2f);
 
+    $display("[tb] BRANCH %0d bursts on READ_DATA's aligned branch, %0d on the clock-inversion branch",
+             aligned_bursts, inverted_bursts);
     $display("[tb] === done, %0d checks, %0d failures ===", checks, errors);
     $finish;
   end
