@@ -67,6 +67,7 @@
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::clock::Hz;
 use crate::uart::Uart;
 use crate::{
     bench, log, plic, power, sched, shell, target, timer, ulpi, vbus, Devices,
@@ -292,10 +293,10 @@ fn i2c_init(out: &mut Out, devices: &mut Devices) {
         "i2c",
         if report.established() { "ok" } else { "FAIL" },
         format_args!(
-            "{} Hz scl, prer {} read back at {} Hz sync, bus released with 9 clocks + stop{}",
-            report.scl_hz,
+            "{} scl, prer {} read back at {} sync, bus released with 9 clocks + stop{}",
+            Hz(report.scl_hz),
             report.prescale,
-            target::TIME_HZ,
+            Hz(target::TIME_HZ),
             if report.established() { "" } else { " -- the core did not take the prescale" }
         ),
     );
@@ -474,9 +475,9 @@ fn facilities(out: &mut Out) {
         "timer",
         if timer::running() { "ok" } else { "FAIL" },
         format_args!(
-            "{} ms tick on mtimecmp, {} Hz counter",
+            "{} ms tick on mtimecmp, {} counter",
             timer::PERIOD_MS,
-            target::TIME_HZ
+            Hz(target::TIME_HZ)
         ),
     );
     let (fe, be) = bench::hpm::stalls();

@@ -490,6 +490,11 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
             // `at {} Hz` on the same line and a language where the division is
             // free.
             //
+            // So this is the ONE frequency still printed in raw Hz (#333): the
+            // field is the divisor a machine reads, `soc_test.py:1485` matches
+            // it as `at (\d+) Hz`, and `clock::Hz` would render `60 MHz` and
+            // fail that match. Changing it means changing the parser with it.
+            //
             // The low word alone would have divided in one instruction and
             // wrapped every 71.6 s at 60 MHz (see `src/clock.rs`), which is
             // shorter than the intervals this line exists to be compared over.

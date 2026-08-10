@@ -45,6 +45,7 @@
 
 use core::fmt::Write;
 
+use crate::clock::Hz;
 use crate::plic;
 use crate::target;
 use crate::uart::Uart;
@@ -479,9 +480,9 @@ pub fn command(uart: &mut Uart) {
             write_built(uart, id.built);
             let _ = writeln!(
                 uart,
-                "  sync {} usb {} Hz  cache {}x{}",
-                id.sync_hz,
-                id.usb_hz,
+                "  sync {} usb {}  cache {}x{}",
+                Hz(id.sync_hz),
+                Hz(id.usb_hz),
                 id.cache_sets(),
                 id.cache_ways()
             );
@@ -541,8 +542,8 @@ pub fn command(uart: &mut Uart) {
                 let _ = writeln!(
                     uart,
                     "         SYNC MISMATCH: firmware \
-                                        assumes {} Hz",
-                    target::TIME_HZ
+                                        assumes {}",
+                    Hz(target::TIME_HZ)
                 );
             }
             // MEASURED, not declared. Everything above is a constant baked in

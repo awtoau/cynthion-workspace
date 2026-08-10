@@ -7,6 +7,7 @@ use core::fmt::Write;
 use crate::shell::parse::{parse_decimal, trim};
 use crate::uart::Uart;
 use crate::shell::console::board_absent;
+use crate::clock::Hz;
 use crate::{bus, target, Devices};
 
 /// Scan the power monitor's I2C bus and identify what is on it.
@@ -178,8 +179,11 @@ pub(crate) fn i2c_soak(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
     let scl_hz = target::TIME_HZ / (5 * (prescale as u32 + 1));
     let _ = writeln!(
         uart,
-        "i2c soak  {} at prescale {} = {} Hz scl, {} reads",
-        label, prescale, scl_hz, reads
+        "i2c soak  {} at prescale {} = {} scl, {} reads",
+        label,
+        prescale,
+        Hz(scl_hz),
+        reads
     );
 
     bus.set_prescale(prescale);
@@ -226,13 +230,13 @@ pub(crate) fn i2c_soak(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
     // marginal bus works, and "mostly" is the signature it presents with.
     let _ = writeln!(
         uart,
-        "  {} at {} Hz -- prescale restored to {}",
+        "  {} at {} -- prescale restored to {}",
         if errors == 0 && wrong == 0 && expected.is_some() {
             "CLEAN"
         } else {
             "FAILED"
         },
-        scl_hz,
+        Hz(scl_hz),
         restore
     );
 }
