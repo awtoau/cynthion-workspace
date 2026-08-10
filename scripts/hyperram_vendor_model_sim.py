@@ -172,6 +172,10 @@ FAULT_CASES = (
         "mem[0x000100] = 1234",
         "burst served 8 of 8",
         "cr0 after write = af2f",
+        # The tCSHI monitor, proved the way the tCSM one is: by a deliberate
+        # violation. It is the only judge of the gap now that the Python models
+        # have stopped judging it against their own copy of the number. (#346)
+        "ERROR tCSHI violation",
     )),
     ("rwds stuck High", {"FAULT_CA_RWDS": 1}, (
         "ca rwds = 111111",
