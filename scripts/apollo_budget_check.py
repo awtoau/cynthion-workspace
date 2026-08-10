@@ -323,7 +323,8 @@ def main():
         emit("A step change rather than drift is what this catches: a new")
         emit("buffer, a disabled optimisation, or a newly linked library.")
         emit("Raising the ceiling is the wrong first response -- check what")
-        emit("grew, with scripts/apollo_memory_report.py.")
+        emit("grew, with scripts/apollo_memory_report.py, and what each way")
+        emit("out costs, with scripts/apollo_budget_levers.py.")
         return 1
 
     return 0

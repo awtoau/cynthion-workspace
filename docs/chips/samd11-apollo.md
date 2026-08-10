@@ -308,6 +308,7 @@ generated PAC covers the *FPGA's* registers, not this part's — see
 |---|---|
 | `scripts/apollo_budget_check.py` | flash/RAM against the ceiling |
 | `scripts/apollo_memory_report.py` | where the bytes go |
+| `scripts/apollo_budget_levers.py` | what each way back under budget costs, built not estimated |
 | `scripts/verify_vectors.py` | the LTO vector-table guard; in `check.py` since #199 |
 | `scripts/apollo_reflash.py` | reflash over DFU |
 | [`../apollo_samd11_mcu/`](../apollo_samd11_mcu/) | code review, race conditions, DFU buffers, serial architecture, the configure-speed investigation |
