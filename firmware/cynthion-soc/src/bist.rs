@@ -520,36 +520,70 @@ impl Bist {
 fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 2],
           expected: u32, verbose: bool) {
     let short = cell.words < expected || cell.control_words < expected;
-    let verdict = match cell.verdict() {
-        Verdict::Pass if short => "NO RESULT -- short cell, fewer words than asked",
-        Verdict::Fail(_) if short => "fail (SHORT -- fewer words than asked)",
-        Verdict::Pass => "PASS",
-        Verdict::Fail(_) => "fail",
+    let timed_out = matches!(poll[0], Poll::TimedOut { .. })
+        || matches!(poll[1], Poll::TimedOut { .. });
+    // Verdict and reason are separate columns because they are separate
+    // questions, and because a prose verdict cannot be a column: the old
+    // "NO RESULT -- short cell, fewer words than asked" was four times the width
+    // of every other field and pushed the row off a terminal. The reason is a
+    // fixed token now, and the sentence that explained it lives in the doc.
+    let (verdict, why) = match cell.verdict() {
+        Verdict::Pass if short => ("NORESULT", "short"),
+        Verdict::Fail(_) if short => ("fail", "short"),
+        Verdict::Pass => ("PASS", "-"),
+        Verdict::Fail(_) => ("fail", "-"),
         // A timeout reaches NoResult by the same door as a control that did not
         // fire, and the two want completely different next steps -- so they must
-        // not print the same text.
-        Verdict::NoResult
-            if matches!(poll[0], Poll::TimedOut { .. })
-                || matches!(poll[1], Poll::TimedOut { .. }) =>
-            "NO RESULT -- engine never completed (timeout)",
-        Verdict::NoResult => "NO RESULT -- control did not fire",
+        // not print the same token.
+        Verdict::NoResult if timed_out => ("NORESULT", "timeout"),
+        Verdict::NoResult => ("NORESULT", "no-control"),
     };
     // THE TIME, on every row. A sweep that takes under a second is a claim
     // until each row carries its own stamp; then per-cell duration is in the
     // data and "how quick" stops being something anyone has to ask.
     let _ = write!(uart, "{}  ", crate::log::now());
-    let _ = writeln!(
-        uart, "{:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}",
-        cell.axes.drive,
-        if cell.axes.single_ended_clock { "se" } else { "dif" },
-        cell.axes.readclksel,
-        cell.errors, cell.words, cell.control_errors, verdict);
+    // ONE LINE PER CELL. The first mismatch used to be a second line, and the
+    // rotate-by-16 finding a third, so a 4,096-cell sweep was up to three lines
+    // per row and could not be read as a table, sorted, or diffed against
+    // another sweep. Both are columns now: the index and the two values, and a
+    // note that says `rot16` when the value is the same word rotated by 16 bits
+    // -- one DEVICE word of slip, which is #186 rather than a timing margin, and
+    // no capture phase corrects it.
+    if cell.errors != 0 {
+        let (index, got, want) = (bist.read(reg::BAD_INDEX),
+                                  bist.read(reg::BAD_GOT),
+                                  bist.read(reg::BAD_WANT));
+        let note = if got.rotate_left(16) == want || got == want.rotate_left(16) {
+            "rot16"
+        } else {
+            "-"
+        };
+        let _ = writeln!(
+            uart, "{:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {:8}  {:10}  {:#6x}  {:#010x}  {:#010x}  {}",
+            cell.axes.drive,
+            if cell.axes.single_ended_clock { "se" } else { "dif" },
+            cell.axes.readclksel,
+            cell.errors, cell.words, cell.control_errors, verdict, why,
+            index, got, want, note);
+    } else {
+        let _ = writeln!(
+            uart, "{:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {:8}  {:10}  {:>6}  {:>10}  {:>10}  {}",
+            cell.axes.drive,
+            if cell.axes.single_ended_clock { "se" } else { "dif" },
+            cell.axes.readclksel,
+            cell.errors, cell.words, cell.control_errors, verdict, why,
+            "-", "-", "-", "-");
+    }
 
     // A silent expiry is worse than no bound at all: say which half, what the
     // limit was and how far it got.
     let mut stalled = false;
     for (label, p) in [("real", poll[0]), ("control", poll[1])] {
         if let Poll::TimedOut { limit, spins } = p {
+            if !verbose {
+                stalled = true;
+                continue;
+            }
             let _ = writeln!(
                 uart, "      {} pass TIMED OUT after {} spins, limit {} \
                        -- engine never raised done",
@@ -562,25 +596,6 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
     // never asked for a transaction, the second says it asked and got no answer.
     if stalled {
         bist.describe_fsm(uart);
-    }
-    // THE FIRST MISMATCH, with its index and both values. One bad word in a
-    // million and a million bad words are different faults, and *how* it is
-    // wrong separates a one-word slip from a dead lane from noise. The pattern
-    // is invertible by construction, so a value decodes back to the address it
-    // belongs to.
-    if cell.errors != 0 {
-        let (index, got, want) = (bist.read(reg::BAD_INDEX),
-                                  bist.read(reg::BAD_GOT),
-                                  bist.read(reg::BAD_WANT));
-        let _ = writeln!(uart, "      first bad: index {:#x}  got {:#010x}  \
-                                want {:#010x}", index, got, want);
-        // A 16-bit rotation is one DEVICE word of slip, which is #186 rather
-        // than a timing margin -- and no capture phase can correct it.
-        let rotated = got.rotate_left(16);
-        if rotated == want || got == want.rotate_left(16) {
-            let _ = writeln!(uart, "      ^ that is the SAME word rotated by 16 \
-                                    bits: one device word of slip, not a phase");
-        }
     }
     if verbose {
         bist.describe_status(uart, "real   ", st[0]);
@@ -601,7 +616,8 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
 /// `clk` sits left and everything numeric sits right.
 const STAMP_PAD: &str = "            ";
 const HEADING_AXES: &str = "drive  clk  sel";
-const HEADING_COUNTS: &str = "    errors     words   control  verdict";
+const HEADING_COUNTS: &str =
+    "    errors     words   control  verdict   why            bad         got        want  note";
 
 /// One cell, by hand. The unit a sweep is made of, so nothing is exercised in a
 /// sweep that was not first exercised alone.
