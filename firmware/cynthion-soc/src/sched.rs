@@ -261,14 +261,19 @@ pub fn released(task: usize, late: u32) {
 /// the claim register: that would take an interrupt away from the handler and
 /// never complete it, killing the console from a diagnostic command. See
 /// `Plic::claim`.
+///
+/// `pri` is read back from the PLIC, not from `irq::priority`. A level that is
+/// not what the table says is a claim order that is not what the table says, and
+/// nothing else on this console could show it. #344.
 pub fn sources(uart: &mut Uart) {
     let plic = Plic::new(target::PLIC_BASE);
     let _ = writeln!(
         uart,
-        "plic  @{:08x} pending {:08x} enabled {:08x}",
+        "plic  @{:08x} pending {:08x} enabled {:08x} threshold {}",
         target::PLIC_BASE,
         plic.pending(),
-        plic.enabled()
+        plic.enabled(),
+        plic.threshold()
     );
     for console in 0..target::UART_BASES.len() {
         let (interrupts, stalls, buffered) = irq::stats(console);
@@ -278,9 +283,10 @@ pub fn sources(uart: &mut Uart) {
         // typed is a noisy line.
         let _ = writeln!(
             uart,
-            "  {} src {} irqs {} stalls {} buffered {} lost {}",
+            "  {} src {} pri {} irqs {} stalls {} buffered {} lost {}",
             console,
             target::UART_IRQS[console],
+            plic.priority(target::UART_IRQS[console]),
             interrupts,
             stalls,
             buffered,
@@ -295,8 +301,9 @@ pub fn sources(uart: &mut Uart) {
         let count = irq::i2c_interrupts();
         let _ = writeln!(
             uart,
-            "  i2c           src {} irqs {}{}",
+            "  i2c           src {} pri {} irqs {}{}",
             cynthion_soc_pac::base::BOARD_I2C_IRQ,
+            plic.priority(cynthion_soc_pac::base::BOARD_I2C_IRQ),
             count,
             if count == 0 { "  -- never fired" } else { "" }
         );
@@ -311,8 +318,9 @@ pub fn sources(uart: &mut Uart) {
         let count = irq::power_alert_interrupts();
         let _ = writeln!(
             uart,
-            "  power alert   src {} irqs {}{}",
+            "  power alert   src {} pri {} irqs {}{}",
             cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
+            plic.priority(cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ),
             count,
             if count == 0 { "  -- never fired" } else { "" }
         );
@@ -329,9 +337,10 @@ pub fn sources(uart: &mut Uart) {
     for (port, &source) in target::TYPE_C_IRQS.iter().enumerate() {
         let _ = writeln!(
             uart,
-            "  type-c {:6} src {} irqs {}",
+            "  type-c {:6} src {} pri {} irqs {}",
             fusb302::Port::ALL[port].name(),
             source,
+            plic.priority(source),
             irq::type_c_interrupts(port)
         );
     }
