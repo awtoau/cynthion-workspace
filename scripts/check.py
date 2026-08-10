@@ -182,6 +182,13 @@ def build_checks() -> List[Check]:
                 # without hardware attached.
                 Step([PYTHON, "scripts/apollo_budget_check.py",
                       "--stack-measured", "344"], ROOT),
+                # The LTO guard, which until now ran in no check at all -- the
+                # same gap as #337 and #362. Docs call it the vector-table guard
+                # and the firmware is built -flto; the failure it catches is a
+                # binary that links cleanly and does nothing, because the plugin
+                # resolved a weak alias to Dummy_Handler. Needs only the ELF the
+                # step above already built.
+                Step([PYTHON, "scripts/verify_vectors.py"], ROOT),
             ],
         ),
         Check(
