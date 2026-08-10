@@ -25,9 +25,28 @@ that was believed and it is not true. Verified 2026-08-04 on
 `openjdk 25.0.4` with `sbt` from the distro. If a regeneration fails, read the
 error; do not conclude the toolchain is unusable.
 
-The generated file lands at `repos/vexiiriscv/VexiiRiscv.v` and is copied to
-`gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v`, which is what the SoC elaborates
-against and what `scripts/soc_generate_pac.py` uses for its metadata-only walk.
+The generator writes `repos/vexiiriscv/VexiiRiscv.v` — a fixed path, because
+SpinalHDL's target directory is the process cwd and sbt's cwd must be the project
+root. `generate(output=...)` copies it to the caller's path; `top.py` passes
+`tmp/awto_soc/build/<variant>/VexiiRiscv.v`, and that copy is what synthesis
+reads.
+
+`gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v` is a checked-in copy that
+`scripts/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
+can be regenerated without sbt.
+
+### Concurrency (#306)
+
+* One generator at a time. `cpu.py`'s lock covers the sbt run **and** the copy,
+  so a caller passing `output=` cannot read a half-written file.
+* The lock lives beside the **checkout**, not beside the worktree:
+  `<checkout>/../../tmp/vexii-generate.lock`. `git worktree add` does not
+  populate submodules, so every worktree shares the main checkout's
+  `repos/vexiiriscv` — a per-worktree lock would have excluded nothing.
+* `VEXII_ROOT` moves the sources and the lock together.
+* Not caching the netlist is deliberate here: every build regenerates, and a
+  build that skipped it once picked up another configuration's core and left the
+  board mute with every check passing (#306).
 
 ## The flags, and where they live
 

@@ -11,13 +11,25 @@ Import this before building, or `source` the shell form it prints. Amaranth read
 into the generated build script, so **nothing is patched** -- these are documented
 override hooks.
 
-## Measured, on `gateware/soc/top.py`
+## The trade these flags make
 
-    baseline                        70 s
-    with nextpnr flags              59 s      and Fmax 72.6 -> 80.65 MHz
+`--parallel-refine` buys wall clock and gives up REPRODUCIBILITY: its threaded SA
+refinement depends on thread interleaving, so two runs of one netlist place
+differently. Measured 2026-08-10 on a fixed `top.json`, seed fixed, 8 runs each
+(#306):
 
-Faster *and* better placed. The design was verified on hardware afterwards: identical
-console output, `jedec 00ef4016`, same read values, same benchmark cycle count.
+    with --parallel-refine       61.0 s mean   sync clk 57.38 - 71.72 MHz
+    without it                   84.6 s mean   sync clk 70.87 MHz, 8/8 identical
+
+So: ~24 s a build, against a 14 MHz-wide Fmax distribution whose lower tail sits
+below the constraints this project builds against. Utilisation does not move
+either way (16939 TRELLIS_COMB in all 16 runs) -- packing is decided by the
+netlist, so an area difference is never placement noise.
+
+Drop `--parallel-refine` for a build whose Fmax is evidence, or whose bitstream
+has to be reproducible; `AMARANTH_nextpnr_opts` overrides this without editing
+anything. The design was verified on hardware with these flags: identical console
+output, `jedec 00ef4016`, same read values, same benchmark cycle count.
 
 ## Why `--threads` alone does nothing
 
@@ -37,6 +49,20 @@ recovers it. The two seconds that costs are worth paying.
 Note it caps itself at 16 threads regardless of what `--threads` says, and 8 gives nearly
 the same result. **31 cores are not the binding constraint** -- this design is too small to
 use them. Do not expect more cores to help.
+
+## Why yosys is pinned to one thread
+
+`YOSYS_MAX_THREADS=1`, and this one is correctness rather than speed. Measured
+2026-08-10 on one `top.il` of the shipping SoC, 12 runs each (#306):
+
+    yosys as installed      2 aborts in 12, and 1 run wrote a DIFFERENT netlist
+                            (11496 against 11733 LUT4) -- no error either way
+    YOSYS_MAX_THREADS=1     12 of 12 identical, same top.json digest
+
+Solo wall clock is the same to within noise (72/71 s against 69/74 s), so the
+threads were buying nothing here. The failure mode is what matters: a run that
+silently synthesises a different netlist is a bitstream nobody knows is
+different.
 
 ## The synthesis flag, and why it is NOT enabled by default
 
@@ -63,14 +89,22 @@ import sys
 
 # nextpnr flags, in the order they matter:
 #
-#   --parallel-refine   the actual win -- parallelises the SA refinement pass that runs
-#                       after HeAP placement, which is 16 of nextpnr's 24 seconds
-#   --threads 31        gives that pass threads to use; inert on its own
+#   --parallel-refine   parallelises the SA refinement pass after HeAP placement, and
+#                       is the only reason a rebuild's Fmax moves at all (#306)
+#   --threads 31        gives that pass threads to use; inert on its own, caps at 16
 #   --router router2    recovers the Fmax that --parallel-refine alone gives up
 NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
 
+# yosys runs SINGLE-THREADED here, and it is not a performance decision.
+#
+# Its threads are unsound on this design: 12 runs of one `top.il` gave 2 aborts
+# and one silently DIFFERENT netlist; the same 12 with this set gave 12 identical
+# ones, at the same wall clock. Evidence and the mechanism are in #306.
+YOSYS_MAX_THREADS = "1"
+
 OVERRIDES = {
     "AMARANTH_nextpnr_opts": NEXTPNR_OPTS,
+    "YOSYS_MAX_THREADS": YOSYS_MAX_THREADS,
 }
 
 
