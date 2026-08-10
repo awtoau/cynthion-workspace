@@ -21,28 +21,22 @@ What runs:
      and instantiates `hyperram_model.v` on the other side.
   3. The testbench grades itself; this script decides whether the run counts.
 
-Five cases: register read/write against the model's own CR0/CR1, memory write and
+Four cases: register read/write against the model's own CR0/CR1, memory write and
 read back with an address-derived pattern, then CR0[7:4] swept at 0/1/2/6/14/15
-in fixed latency, in variable latency, and in variable latency with the device
-declining the extra latency (the short branch, otherwise unreachable).
+in fixed latency and in variable latency. The whole thing runs three times over
+`REFRESH_EVERY`, so the variable path's SHORT and LONG branches are each reached
+on purpose rather than by where a transaction counter happened to land.
 
 `HyperRAMPHY` is deliberately NOT in the loop -- see the testbench header. What
 is tested is the CA encoding, the byte order and the latency arithmetic; what is
 not is the ECP5 IOLOGIC skew or anything electrical.
 
-Two defects in `hyperram_model.v` are what this currently exits non-zero on, and
-both are invisible to `vendor_model_tb.sv` because that testbench only ever uses
-CR0 = 0x8f2f:
-
-  * `latency_ck()` returns 243/230 CK at CR0[7:4] = 14 and 244/232 at 15, where
-    its own comment says 3/6 and 4/8. `{4'hF, code}` wraps in 8-bit arithmetic
-    before the `- 16`; `5 + code - 16` in one step gives the documented table.
-    The decode probe below lifts the function out of the model and shows this
-    without running the bus at all.
-  * RWDS is driven High through every CA regardless of CR0[3], so in variable
-    latency the model asks for the long count and then serves the short one. No
-    controller can satisfy both. Case 5 masks the request on the way in so the
-    two are self-consistent, which is the only way the short branch is testable.
+Reads start one edge later than writes at the same latency, because the device
+has to turn the bus around. `READ_TURNAROUND_EDGES` in the testbench states that
+as an assumption so a model that moves it fails here instead of being followed.
+The consequence is worth knowing: with the device's word straddling two sync
+cycles, every read is taken by `READ_DATA`'s clock-inversion branch, and the
+testbench reports which branch took each burst.
 
 Usage:
 
@@ -117,6 +111,17 @@ REQUIRED_MARKERS = (
 
 # Every latency code the sweep must have reached, in both modes.
 LATENCY_CODES = (0, 1, 2, 6, 14, 15)
+
+# The model elects the 2x count on a refresh collision, counted in transactions.
+# At the shipped 100 whether a sweep cell collides depends on how many transactions
+# ran before it -- which is the nondeterminism #338 is trying to pin down, not a way
+# to test it. Both branches get a pass of their own, and the shipped cadence gets one
+# too so the default configuration is still exercised.
+REFRESH_PASSES = (
+    (0, "no refresh collision -- variable latency takes the SHORT count"),
+    (1, "a collision every transaction -- variable latency takes the LONG count"),
+    (100, "the model's shipped cadence"),
+)
 
 log = logging.getLogger("hyperram-model-sim")
 
@@ -310,11 +315,9 @@ def check_output(out: str) -> tuple[list[str], list[str]]:
 
       * `CTRL-BEAT FAIL` is the controller putting its first write word on a beat its
         own contract does not allow. Nothing the device does can cause it.
-      * `MODEL-SILENT`, `MODEL-DISAGREES` and `MODEL-BEAT` are the device never
-        starting a data phase, asking for the long latency and then serving the
-        short one, or serving at a beat its own documented decode does not allow.
-        The latency decode probe is what makes the last of those a fact rather than
-        a guess.
+      * `MODEL-SILENT` and `MODEL-BEAT` are the device never starting a data phase,
+        or starting one at a beat its own documented decode does not allow. Both are
+        read off the bus, not off what the controller made of it.
     """
     controller, model = [], []
 
@@ -324,13 +327,13 @@ def check_output(out: str) -> tuple[list[str], list[str]]:
 
     # Every latency code must have been reported in both modes, or the sweep did not
     # run -- which reads exactly like a clean pass if only failures are counted.
-    for mode in ("fixed", "var", "varlow"):
+    for mode in ("fixed", "var"):
         for code in LATENCY_CODES:
             if not re.search(rf"^\[tb\] {mode} +code +{code}:", out, re.M):
                 controller.append(f"latency sweep never reported {mode} code {code}")
 
     controller += re.findall(r"^\[tb\] CTRL-BEAT FAIL.*$", out, re.M)
-    model += re.findall(r"^\[tb\] MODEL-(?:SILENT|DISAGREES|BEAT).*$", out, re.M)
+    model += re.findall(r"^\[tb\] MODEL-(?:SILENT|BEAT).*$", out, re.M)
 
     # A sweep cell the model provably cannot serve. Everything downstream of one --
     # the words that never landed, the burst that never finished, the controller
@@ -339,7 +342,7 @@ def check_output(out: str) -> tuple[list[str], list[str]]:
     excused = {
         (mode, code)
         for mode, code in
-        re.findall(r"^\[tb\] MODEL-(?:SILENT|DISAGREES|BEAT) +(\w+) +code +(\d+)", out, re.M)
+        re.findall(r"^\[tb\] MODEL-(?:SILENT|BEAT) +(\w+) +code +(\d+)", out, re.M)
     }
     for pattern in (r"^\[tb\] DATA FAIL (\w+) code (\d+).*$",
                     r"^\[tb\] INCOMPLETE \[(\w+) code (-?\d+)\].*$",
@@ -348,6 +351,12 @@ def check_output(out: str) -> tuple[list[str], list[str]]:
             if (m.group(1), m.group(2)) not in excused:
                 controller.append(m.group(0))
     controller += re.findall(r"^\[tb\] FAIL.*$", out, re.M)
+
+    branch = re.search(r"^\[tb\] BRANCH .*$", out, re.M)
+    if branch:
+        log.info("%s", branch.group(0).replace("[tb] BRANCH ", ""))
+    else:
+        controller.append("testbench did not report which READ_DATA branch it took")
 
     m = re.search(r"=== done, (\d+) checks, (\d+) failures ===", out)
     if not m:
@@ -405,18 +414,23 @@ def main() -> int:
     # assumed. Same arithmetic as `HyperRAMController._burst_cycles`.
     burst_cycles = int(T_CSM_NS * T_CSM_MARGIN * args.sync_mhz / 1000.0) - 2
 
-    run("iverilog", ["iverilog", "-g2012", f"-DLAT_W={width}",
-                     f"-DTCK_NS={1000.0 / args.sync_mhz:.4f}",
-                     f"-DRECOVER_LIMIT={int(burst_cycles * 1.4)}",
-                     "-o", "tb.vvp", TESTBENCH.name, MODEL.name, dut.name])
-    plusargs = ["+dump"] if args.dump else []
-    if args.negative_control:
-        plusargs.append(f"+skew={args.negative_control}")
-    out = run("vvp", ["vvp", "tb.vvp"] + plusargs)
-    for line in out.splitlines():
-        log.info("  %s", line)
-
-    controller, model = check_output(out)
+    controller, model = [], []
+    for refresh_every, what in REFRESH_PASSES:
+        log.info("=== REFRESH_EVERY = %d -- %s ===", refresh_every, what)
+        run("iverilog", ["iverilog", "-g2012", f"-DLAT_W={width}",
+                         f"-DTCK_NS={1000.0 / args.sync_mhz:.4f}",
+                         f"-DRECOVER_LIMIT={int(burst_cycles * 1.4)}",
+                         f"-DREFRESH_EVERY={refresh_every}",
+                         "-o", "tb.vvp", TESTBENCH.name, MODEL.name, dut.name])
+        plusargs = ["+dump"] if args.dump else []
+        if args.negative_control:
+            plusargs.append(f"+skew={args.negative_control}")
+        out = run("vvp", ["vvp", "tb.vvp"] + plusargs)
+        for line in out.splitlines():
+            log.info("  %s", line)
+        pass_controller, pass_model = check_output(out)
+        controller += [f"[refresh {refresh_every}] {f}" for f in pass_controller]
+        model += [f"[refresh {refresh_every}] {f}" for f in pass_model]
 
     if args.negative_control:
         # The control passes when the harness FAILS. Only controller-attributed
