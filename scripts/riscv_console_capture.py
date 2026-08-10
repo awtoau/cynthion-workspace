@@ -32,8 +32,10 @@ script is built around rather than one it pretends does not exist.
 """
 
 import argparse
+import select
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,6 +59,14 @@ BITSTREAM = variant.build_dir(ROOT) / "top.bit"
 # node, because this workstation has eleven ttyACM nodes and one of them is an
 # ST-LINK.
 TTY_ROUNDS = 60
+
+# ...and the same wait expressed in TIME, because the round count is not a bound
+# (#295): no enumeration means no events, so `readline()` blocks for ever and
+# TTY_ROUNDS is never reached. Expected ~8 s to configure and enumerate; 60 s is
+# 7.5x, generous on purpose because `gateware/usb_ids.py` records a tighter
+# bound here producing false negatives on healthy boards. On expiry: name the
+# wait, the limit and the elapsed, and return None.
+TTY_DEADLINE_S = 60.0
 
 # Serial read timeout per line, in seconds.
 #
@@ -98,8 +108,15 @@ def wait_for_console():
     monitor = subprocess.Popen(
         ["udevadm", "monitor", "--udev", "--subsystem-match=tty"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    started = time.monotonic()
     try:
         for _ in range(TTY_ROUNDS):
+            left = TTY_DEADLINE_S - (time.monotonic() - started)
+            if left <= 0 or not select.select([monitor.stdout], [], [], left)[0]:
+                emit(f"  no console after {TTY_DEADLINE_S:.0f} s "
+                     f"(elapsed {time.monotonic() - started:.0f} s): the board "
+                     f"did not enumerate")
+                return None
             if monitor.stdout.readline() == "":
                 break
             node = usb_ids.wait_for_tty("riscv_console", settles=1)
