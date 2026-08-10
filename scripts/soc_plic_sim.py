@@ -28,6 +28,14 @@ handler can service the device it claimed without reading, scanning or clearing
 anything belonging to the other. `docs/architecture.md` decision 8 is the argument;
 these are the assertions that it is built that way.
 
+The fourth section is not a simulation of gateware at all: it reads the priority
+levels the FIRMWARE configures and asserts they match this file's ranking table.
+Priorities were stored, read back and decided nothing for the life of the
+project -- every source claimed at 1, so the order was the source-number
+tie-break, i.e. wiring order. A table that lives only in a comment goes flat
+again the first time someone adds a source; this is what makes that a failure.
+See #344.
+
 The one that actually matters most is `pending_read_has_no_side_effect`. This
 SoC has lost two multi-day stretches to registers whose reads changed state, so
 "reading it twice gives the same answer, and nothing else moved" is asserted here
@@ -43,6 +51,7 @@ QEMU, against QEMU's own PLIC, which is the other half of the argument.
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -571,6 +580,307 @@ def run_type_c_checks(checks, verbose):
     sim.run()
 
 
+# ---------------------------------------------------------------------------
+# The ranking, and the firmware that has to match it. #344.
+# ---------------------------------------------------------------------------
+
+# THE TABLE. Levels 1..7 (PRIORITY_BITS = 3); 0 means "never interrupt".
+#
+# Ranked by the cost of being late, not by how important the peripheral is. A
+# source with a bounded hardware FIFO and a short drain window outranks one where
+# lateness is merely annoying.
+#
+# Named by the constant in `firmware/cynthion-soc/src/irq.rs`'s `priority`
+# module, which is where each level's reasoning lives. This file holds only the
+# numbers, so the two cannot drift without one of them failing.
+RANKING = {
+    "POWER_ALERT": 4,
+    "CONSOLE":     3,
+    "TYPE_C":      2,
+    "I2C":         1,
+}
+
+# Levels no source may use yet, and what each is being kept for.
+#
+# The consoles sit at 3 rather than at the top precisely so these stay free: a
+# ranking with no headroom has to renumber everything to admit the data path.
+# A live source that reaches into this range fails the check below.
+RESERVED = {
+    7: "USB capture / ULPI RX CMD -- #125, the shortest drain window on the board",
+    6: "HyperRAM timed_out / overflow -- #324, the capture sink",
+    5: "unallocated, between the capture path and a hardware fault",
+}
+
+# Which level each wired source takes. Keys are the `*_IRQ` constants in the
+# generated `firmware/cynthion-soc-pac/src/base.rs`, so a source that moves in
+# `gateware/soc/top.py` and is regenerated lands here automatically -- and a
+# source ADDED there with nothing claiming it fails `every wired source has a
+# stated priority` below.
+SOURCE_LEVEL = {
+    "CONSOLE_IRQ":                   "CONSOLE",
+    "APOLLO_UART_IRQ":               "CONSOLE",
+    "BOARD_I2C_IRQ":                 "I2C",
+    "BOARD_I2C_MUX_TARGET_IRQ":      "TYPE_C",
+    "BOARD_I2C_MUX_AUX_IRQ":         "TYPE_C",
+    "BOARD_I2C_MUX_POWER_ALERT_IRQ": "POWER_ALERT",
+}
+
+# Source expressions that name no wired source of their own.
+#
+# `workload::source::SOURCE` is #115's measurement harness, which HIJACKS an
+# existing source (TARGET on the board, the goldfish RTC under QEMU) rather than
+# adding one. It still has to state a level from the table -- that is what stops
+# it silently demoting the source it borrowed -- but it contributes no entry to
+# the source-to-level map.
+BORROWED_SOURCES = {"SOURCE"}
+
+# `irq::claim` forwards its own parameter to `plic.set_priority`. That is the one
+# place a level may be a variable, because it is the funnel every other site goes
+# through.
+FORWARDED_LEVELS = {"priority"}
+
+FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src"
+PAC_BASE = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
+
+# `src/bin/` is out of scope: those are #115's dispatcher models, each a
+# standalone binary that arms one or two sources to measure a latency. They do
+# not run the instrument, and ranking them against the instrument's table would
+# change what they measure.
+SKIP_DIRS = {"bin"}
+
+# `claim(source, level)` and `set_priority(source, level)`, with an optional
+# path in front and an optional trailing comma. Two arguments and no nested
+# parens, which is every call site in this firmware; anything else is reported
+# as unparseable rather than skipped, because a call this cannot read is a
+# priority this cannot check.
+CALL_RE = re.compile(
+    r"(?:\w+::)*(?P<fn>claim|set_priority)\("
+    r"\s*(?P<source>[^,()]+?)\s*,\s*(?P<level>[^,()]+?)\s*,?\s*\)", re.S)
+
+LOOP_RE = re.compile(r"for\s+&(\w+)\s+in\s+target::(\w+)")
+IRQ_CONST_RE = re.compile(r"^pub const (\w+_IRQ): u32 = (\d+);", re.M)
+SLICE_RE = re.compile(r"pub const (\w+): &\[u32\] = &\[(.*?)\];", re.S)
+PRIORITY_MOD_RE = re.compile(r"pub mod priority \{(.*?)\n\}", re.S)
+PRIORITY_CONST_RE = re.compile(r"pub const (\w+): u32 = (\d+);")
+
+
+def read_pac_sources():
+    """`{name: source number}` for every PLIC source the generated PAC declares."""
+    return {name: int(value)
+            for name, value in IRQ_CONST_RE.findall(PAC_BASE.read_text())}
+
+
+def read_target_slices():
+    """`{slice name: [IRQ constant name, ...]}` from `src/target.rs`.
+
+    Each slice is declared twice, once per `#[cfg]`. The board's is the one whose
+    body names the generated PAC; QEMU's is a bare literal and is not what the
+    bitstream wires.
+    """
+    text = (FIRMWARE / "target.rs").read_text()
+    slices = {}
+    for name, body in SLICE_RE.findall(text):
+        names = re.findall(r"base::(\w+)", body)
+        if names:
+            slices[name] = names
+    return slices
+
+
+def read_priority_module():
+    """`{constant name: level}` from `irq.rs`'s `priority` module, or `{}`."""
+    match = PRIORITY_MOD_RE.search((FIRMWARE / "irq.rs").read_text())
+    if not match:
+        return {}
+    return {name: int(value)
+            for name, value in PRIORITY_CONST_RE.findall(match.group(1))}
+
+
+def read_claim_sites(pac_sources, slices):
+    """Every priority the firmware states, and how it states it.
+
+    Returns `(levels, literals, unresolved)`:
+
+      levels      {source number: level constant name, or an int for a literal}
+      literals    ["file:line  expression"] -- a level written as a bare number
+      unresolved  ["file:line  expression"] -- a call this parser cannot read
+
+    A literal is recorded in BOTH: it is a violation, and it is also what the
+    hardware would actually be programmed with, which is what the arbitration
+    check below needs in order to show today's ordering rather than no ordering.
+    """
+    priorities = read_priority_module()
+    levels, literals, unresolved = {}, [], []
+
+    for path in sorted(FIRMWARE.rglob("*.rs")):
+        if SKIP_DIRS & set(path.relative_to(FIRMWARE).parts):
+            continue
+        text = path.read_text()
+        loops = [(m.start(), m.group(1), m.group(2))
+                 for m in LOOP_RE.finditer(text)]
+        for match in CALL_RE.finditer(text):
+            # The definition of `claim` itself, whose parameter list has the
+            # same shape as a call to it.
+            if text[max(0, match.start() - 3):match.start()] == "fn ":
+                continue
+            where = f"{path.relative_to(ROOT)}:{text.count(chr(10), 0, match.start()) + 1}"
+            source_expr = match.group("source")
+            level_expr = match.group("level")
+
+            if level_expr in FORWARDED_LEVELS:
+                continue
+            if level_expr.isdigit():
+                level = int(level_expr)
+                literals.append(f"{where}  {match.group('fn')}(.., {level_expr})")
+            else:
+                tail = level_expr.rsplit("::", 1)
+                if len(tail) != 2 or not tail[0].endswith("priority"):
+                    unresolved.append(f"{where}  level {level_expr!r}")
+                    continue
+                level = tail[1]
+                if level not in priorities:
+                    unresolved.append(f"{where}  no priority::{level} in irq.rs")
+                    continue
+
+            # Which sources this call configures.
+            bare = source_expr.rsplit("::", 1)[-1]
+            if bare in BORROWED_SOURCES:
+                continue
+            if bare in pac_sources:
+                numbers = [pac_sources[bare]]
+            elif bare.isdigit():
+                numbers = [int(bare)]
+            else:
+                # A loop variable: `for &source in target::UART_IRQS`.
+                loop = [(pos, var, slc) for pos, var, slc in loops
+                        if pos < match.start() and var == bare]
+                if not loop or loop[-1][2] not in slices:
+                    unresolved.append(f"{where}  source {source_expr!r}")
+                    continue
+                numbers = [pac_sources[n] for n in slices[loop[-1][2]]
+                           if n in pac_sources]
+            for number in numbers:
+                levels[number] = level
+
+    return levels, literals, unresolved
+
+
+def level_value(level, priorities):
+    """A level as a number, whether it was written as a constant or a literal."""
+    return level if isinstance(level, int) else priorities.get(level)
+
+
+def run_ranking_checks(checks, verbose):
+    """The firmware's priorities against RANKING, and the order they produce.
+
+    Not a gateware simulation until the last check. The arbiter has honoured
+    priority since the `>=` fix above; what had never been checked is that
+    anything ever wrote a priority other than 1 -- so the ordering on this board
+    was the source-number tie-break, and the two consoles outranked the data
+    path by accident of wiring order.
+    """
+    pac_sources = read_pac_sources()
+    slices = read_target_slices()
+    priorities = read_priority_module()
+    levels, literals, unresolved = read_claim_sites(pac_sources, slices)
+
+    checks.check(
+        "every claim site states its level as a named constant",
+        not literals and not unresolved,
+        "a bare number at a claim site is a ranking that no table can enforce, "
+        "and it is how every source came to be claimed at 1:\n        "
+        + "\n        ".join(literals + unresolved))
+
+    checks.check(
+        "irq.rs's priority module matches the table",
+        priorities == RANKING,
+        f"firmware has {priorities}, this file's table is {RANKING}.\n"
+        "The levels live in one place and the reasoning beside them; this is "
+        "the assertion that the two files are still describing one ranking.")
+
+    missing = sorted(name for name in pac_sources
+                     if pac_sources[name] not in levels)
+    checks.check(
+        "every wired source has a stated priority",
+        not missing,
+        f"{', '.join(missing) or '-'} appear in the generated PAC -- so the "
+        f"gateware wires them -- and nothing claims them with a level. A source "
+        f"added without a rank inherits its number as its rank.")
+
+    wanted = {pac_sources[name]: RANKING[level]
+              for name, level in SOURCE_LEVEL.items() if name in pac_sources}
+    actual = {number: level_value(level, priorities)
+              for number, level in levels.items() if number in wanted}
+    checks.check(
+        "each source is ranked where the table puts it",
+        actual == wanted,
+        f"source-to-level is {actual}, expected {wanted}")
+
+    checks.check(
+        "the ranking is not flat",
+        len(set(actual.values())) > 1,
+        f"every source is at the same level ({sorted(set(actual.values()))}), "
+        "so the PLIC's arbitration is entirely the source-number tie-break and "
+        "the priority registers decide nothing. That was the state this check "
+        "was written against.")
+
+    used = {level for level in actual.values() if level is not None}
+    intruding = sorted(used & set(RESERVED))
+    checks.check(
+        "levels 5-7 are still free for the capture path",
+        not intruding,
+        "\n        ".join([f"level {n} is taken: {RESERVED[n]}"
+                           for n in intruding]))
+
+    # --- and what that ordering actually does, on the arbiter itself ---------
+    #
+    # The checks above are text. This one programs the real Plic with the levels
+    # the firmware just said it writes, raises every source at once, and reads
+    # the order back out of the claim register.
+    count = max(pac_sources.values())
+    dut = Plic(sources=count)
+    order = []
+
+    async def testbench(ctx):
+        bus = Bus(ctx, dut.bus, verbose)
+        await bus.write(ENABLE_BASE + 0, 0xff)
+        await bus.write(ENABLE_BASE + 1, 0xff)
+        for number, level in sorted(levels.items()):
+            if number <= count:
+                await bus.write(priority_addr(number),
+                                level_value(level, priorities) or 0)
+        ctx.set(dut.sources, ((1 << (count + 1)) - 1) & ~1)
+        await ctx.tick()
+        # Claim without completing: each claim gates its source, so the next one
+        # returns the next in arbitration order. Exactly what the handler loop
+        # in `machine_external` does when several sources are pending at once.
+        for _ in range(count):
+            order.append(await bus.read(CLAIM))
+
+    sim = Simulator(Fragment.get(dut, None))
+    sim.add_clock(1e-6)
+    sim.add_testbench(testbench)
+    sim.run()
+
+    # Highest level first; a tie goes to the lowest source number.
+    expected = sorted(wanted, key=lambda n: (-wanted[n], n))
+    checks.check(
+        "the claim order is the table's order",
+        order == expected,
+        f"claimed {order}, the table wants {expected}.\n"
+        "Source-number order here means the priorities were written and "
+        "ignored -- which is what a flat ranking looks like from the arbiter.")
+
+    alert = pac_sources.get("BOARD_I2C_MUX_POWER_ALERT_IRQ")
+    console = pac_sources.get("CONSOLE_IRQ")
+    checks.check(
+        "a hardware fault outranks a lower-numbered console",
+        order and order[0] == alert,
+        f"source {console} was claimed before source {alert} with both "
+        f"pending. The console is the lower number, so under a flat ranking it "
+        f"wins every time -- and the ranking is meant to be the thing that "
+        f"decides, not the wiring order.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -589,6 +899,9 @@ def main():
     emit()
     emit("i2c_mux.I2CBusMux -> Plic -- a source per FUSB302B")
     run_type_c_checks(checks, args.verbose)
+    emit()
+    emit("the ranking -- src/irq.rs against this file's table (#344)")
+    run_ranking_checks(checks, args.verbose)
     return checks.summary()
 
 

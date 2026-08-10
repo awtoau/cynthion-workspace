@@ -86,6 +86,10 @@ __all__ = ["Plic"]
 # rather than an error. That is the standard's own behaviour -- the priority
 # register is defined as WARL -- and it is why a driver should read back rather
 # than assume.
+#
+# WHICH level each source gets is not decided here: it is
+# `firmware/cynthion-soc/src/irq.rs`'s `priority` module, and
+# `scripts/soc_plic_sim.py` asserts the resulting claim order against it. #344.
 PRIORITY_BITS = 3
 
 # Fixed offsets, from riscv-plic-spec 1.0.0. Not parameters: a PLIC at different

@@ -506,8 +506,10 @@ pub fn type_c_interrupts(port: usize) -> u32 {
 pub fn init() {
     let plic = Plic::new(target::PLIC_BASE);
 
-    // 0 lets anything with a nonzero priority through. Nothing here is latency
-    // critical enough to justify starving the other console.
+    // 0 admits every level in the table -- the rule is `level > threshold`, so
+    // anything above "never" gets through. The ranking in [`priority`] is what
+    // orders them; the threshold is not a second ranking and not a critical
+    // section (RTIC locks against `riscv-slic`'s own, see `docs/rtic.md`).
     plic.set_threshold(0);
 
     // SAFETY: the handler is installed at link time, the trap vector was set by
@@ -521,6 +523,44 @@ pub fn init() {
     }
 }
 
+/// What each source's lateness costs, as a PLIC level. 1..7; 0 never interrupts.
+///
+/// Ranked by the cost of being late, not by how important the peripheral is: a
+/// source with a bounded hardware FIFO and a short drain window outranks one
+/// where lateness is merely annoying.
+///
+/// * The only place a level is written. `scripts/soc_plic_sim.py` holds the same
+///   numbers, checks every claim site resolves to one of them, and programs a
+///   real PLIC with them to assert the resulting claim order. #344.
+/// * **Levels 5-7 are held free** for the capture path (#125) and HyperRAM
+///   (#324). That is why the consoles sit at 3 rather than at the top.
+/// * **Priority is not preemption.** One context, and [`machine_external`] runs
+///   its whole claim loop with `mstatus.MIE` off, so a level only decides which
+///   source is claimed first among those pending at the same instant. It cannot
+///   interrupt a handler already running; short handlers are what bounds that.
+/// * Nothing here can starve anything: every source is either drained, cleared
+///   by one MMIO write, or masked by its handler, so none can hold the arbiter.
+pub mod priority {
+    /// The PAC1954's latched ALERT -- over-voltage or over-current.
+    ///
+    /// Above the consoles because it is a hardware fault; below the capture path
+    /// because the load switch protects itself and firmware is only reporting.
+    pub const POWER_ALERT: u32 = 4;
+
+    /// Both 16550s. A 16-byte FIFO, so an overrun costs a keystroke or a log
+    /// byte and is recoverable. `CONSOLE` is the lower source number, so it
+    /// takes the tie against `APOLLO` -- see `gateware/soc/top.py`.
+    pub const CONSOLE: u32 = 3;
+
+    /// The FUSB302Bs. PD timers are milliseconds, and the handler defers the
+    /// clear to task context anyway, so delivery latency is not the bound.
+    pub const TYPE_C: u32 = 2;
+
+    /// Completion only, cleared by one MMIO write, and `command()` polls
+    /// `SR.TIP` regardless. Entirely latency-tolerant.
+    pub const I2C: u32 = 1;
+}
+
 /// A peripheral claims its PLIC source, now that it is ready to be interrupted.
 ///
 /// Called by the peripheral's own bring-up, not from a list here. The order
@@ -528,10 +568,11 @@ pub fn init() {
 /// their interrupt registers cleared first, or the first thing delivered is a
 /// plug event from the previous session.
 ///
-/// `priority` is 1 for everything on this board -- the lowest that is not
-/// "never". Nothing here is latency critical enough to starve anything else, and
-/// equal priorities leave the PLIC's tie-break to decide, which is lowest source
-/// number first.
+/// `priority` comes from the [`priority`] module and from nowhere else: a level
+/// written as a bare number here is a ranking nothing can check, and that is how
+/// every source on this board came to be claimed at 1 -- with the order decided
+/// by wiring rather than by the table. Equal levels still leave the PLIC's
+/// tie-break to decide, which is lowest source number first.
 pub fn claim(source: u32, priority: u32) {
     let plic = Plic::new(target::PLIC_BASE);
     plic.set_priority(source, priority);
@@ -555,7 +596,7 @@ pub fn claim(source: u32, priority: u32) {
 /// nothing scheduled to come and get it.
 pub fn claim_consoles() {
     for &source in target::UART_IRQS {
-        claim(source, 1);
+        claim(source, priority::CONSOLE);
     }
     // The UARTs start asking only now that there is something to answer them.
     for &base in target::UART_BASES {
@@ -571,7 +612,7 @@ pub fn claim_consoles() {
 /// longer be there.
 pub fn claim_type_c() {
     for &source in target::TYPE_C_IRQS {
-        claim(source, 1);
+        claim(source, priority::TYPE_C);
     }
 }
 

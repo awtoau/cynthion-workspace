@@ -90,6 +90,17 @@ impl Plic {
         }
     }
 
+    /// What level a source is actually set to. No side effects.
+    ///
+    /// Read back from the PLIC rather than remembered, and `cpu irq` prints it:
+    /// #246 was a source wired in gateware and masked in firmware for the life
+    /// of the project, found only by reading `enabled` out of hardware. A level
+    /// is exactly as forgettable, and a wrong one changes the order silently.
+    pub fn priority(&self, source: u32) -> u32 {
+        // SAFETY: as above.
+        unsafe { read_volatile(self.reg(PRIORITY_BASE + 4 * source as usize)) }
+    }
+
     /// Let context 0 be interrupted by `source`.
     ///
     /// Read-modify-write, because the enable register holds every source's bit

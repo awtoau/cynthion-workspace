@@ -76,7 +76,7 @@ from devlog import emit  # noqa: E402
 PORT_RE = re.compile(
     r"^\s*(target|aux)\s+device\s+(\w+)\s+(.*?)\s+cc\s+(\S+)\s+(\S)/(\S)\s+"
     r"int\s+(\d+)\s+fault\s+(\d+)\s+serviced\s+(\d+)", re.M)
-IRQ_RE = re.compile(r"type-c (target|aux)\s+src (\d+) irqs (\d+)")
+IRQ_RE = re.compile(r"type-c (target|aux)\s+src (\d+) pri (\d+) irqs (\d+)")
 
 
 def sample(shell, emit=None):
@@ -88,7 +88,7 @@ def sample(shell, emit=None):
         state[port] = {"device": dev, "status": status.strip(),
                        "cc": cc, "bands": f"{cc1}/{cc2}",
                        "int": intr, "fault": fault, "serviced": serviced}
-    for port, _src, irqs in IRQ_RE.findall(text):
+    for port, _src, _pri, irqs in IRQ_RE.findall(text):
         state.setdefault(port, {})["irqs"] = irqs
     # A parser that stops matching reports "nothing changed" forever, which is
     # indistinguishable from the result this tool exists to record. So it says so

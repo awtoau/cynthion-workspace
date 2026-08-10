@@ -39,9 +39,26 @@ the SoC.
 | concurrency | RTIC 2.3, `riscv-clint-backend` | upstream | [`rtic.md`](rtic.md) |
 | monotonic | CLINT-backed, ~60 lines | written | same — `rtic-monotonics` has no CLINT backend |
 | logging from handlers | deferred ring | written | #122, #124 |
+| source ranking | levels 4/3/2/1, 5–7 held free | written | [`irq.rs`](../firmware/cynthion-soc/src/irq.rs)'s `priority`, #344 |
 
 `src/irq.rs`'s PLIC claim loop survives RTIC adoption, with the SLIC in series
 behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
+
+### Sources are ranked by the cost of being late
+
+- Not by how important the peripheral is. `irq::priority` is the only place a
+  level is written, with the reasoning beside each number.
+- Today: `POWER_ALERT` 4, the two consoles 3, Type-C 2, I2C 1. **5–7 are held
+  free** for the capture path (#125) and HyperRAM (#324), which is why the
+  consoles are not at the top.
+- **Enforced, not documented.** `scripts/soc_plic_sim.py` reads the levels out
+  of the claim sites, fails a bare number, fails a source with no rank, and
+  programs a real PLIC with them to assert the claim order. A flat ranking —
+  the state this board shipped in until #344 — is a test failure.
+- **Priority is not preemption.** One context, `MIE` off through the whole claim
+  loop, so a level orders sources pending at the same instant and nothing more.
+  Short handlers are what bounds latency; `cpu irq` prints each level read back
+  from the PLIC.
 
 ## Peripherals
 
