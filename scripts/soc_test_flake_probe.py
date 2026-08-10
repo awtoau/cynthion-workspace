@@ -46,7 +46,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit                                          # noqa: E402
-from soc_test import (ELF, PROMPT, REPLY_S, Session,              # noqa: E402
+from soc_test import (CRATE, ELF, PROMPT, REPLY_S, Session,       # noqa: E402
                       build_firmware, expect_line, show)
 
 # 2^30, from `HALVE_AT` in firmware/cynthion-soc/src/metrics.rs. Duplicated
@@ -115,6 +115,47 @@ def probe_dirty(runs):
     emit(f"dirty: {truncated}/{runs} run(s) had no clean/dirty word at the "
          f"sentinel")
     return truncated
+
+
+def probe_stamp(rebuild):
+    """The dirty check's own defect: an image whose stamp is not this tree's.
+
+    Writes the marker soc_test writes, optionally rebuilds, and reports what
+    `info` says. WITHOUT the rebuild the stamp is stale and the assertion must
+    fail -- that is the whole reason the check exists. WITH it, it must pass.
+    Run both to see the check can do more than pass.
+    """
+    marker = CRATE / "src" / "soc-test-dirty-marker"
+    emit(f"stamp: marker under src/, {'rebuilt' if rebuild else 'NOT rebuilt'}")
+    try:
+        marker.write_text("`info` must call this tree dirty.\n")
+        if rebuild:
+            failed = build_firmware()
+            if failed is not None:
+                emit("cargo build (qemu) failed:")
+                emit(failed)
+                return 1
+        session = Session(ELF)
+        try:
+            if session.expect(b"Cynthion RISC-V SoC", 5.0) is None:
+                emit("never booted")
+                return 1
+            mark = len(session.snapshot())
+            session.send(b"info\r")
+            expect_line(session, b"image ", REPLY_S, mark)
+            reply = session.snapshot()[mark:]
+        finally:
+            session.close()
+        line = next((l for l in show(reply).splitlines()
+                     if l.startswith("image ")), "(no image line)")
+        emit(f"  {line}")
+        emit(f"  the assertion `dirty in reply` would "
+             f"{'PASS' if b'dirty' in reply else 'FAIL'}")
+    finally:
+        marker.unlink(missing_ok=True)
+        # Leave the image describing the tree that is here, as soc_test does.
+        build_firmware()
+    return 0
 
 
 def read_stats(session):
@@ -270,7 +311,7 @@ def probe_prompt(runs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    parser.add_argument("mode", choices=["dirty", "busy", "prompt"])
+    parser.add_argument("mode", choices=["dirty", "busy", "prompt", "stamp"])
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--load", type=int, default=0,
                         help="host processes spinning for the duration")
@@ -303,6 +344,8 @@ def main():
             probe_dirty(args.runs)
         elif args.mode == "prompt":
             probe_prompt(args.runs)
+        elif args.mode == "stamp":
+            return probe_stamp(not args.no_build)
         else:
             probe_busy(args.runs, args.idle, args.straddle,
                        args.retries)
