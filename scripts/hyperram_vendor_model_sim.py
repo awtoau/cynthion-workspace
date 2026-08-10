@@ -83,8 +83,33 @@ REQUIRED_MARKERS = (
     "PASS hybrid burst: leaves the group after one pass",
     "PASS device is silent in deep power down",
     "PASS CR0 after reset recovery = 8f2f",
+    # And the same axis walked over the whole sparse code table, in CK rather
+    # than edges. `fix` and `var` differ by L, so a controller that takes the
+    # wrong branch misses the whole burst -- which is what #338 measures.
+    "PASS fix L=3 latency 6 CK",
+    "PASS var L=3 latency 3 CK",
+    "PASS fix L=7 latency 14 CK",
+    "PASS var L=7 latency 7 CK",
+    "PASS var write = 2004",
 )
 TCSM_MARKER = "tCSM violation"
+
+# What the device asks for over the CA period, and what it then delivers. RWDS is
+# not driven for the first tDSV (12 ns, Config-AC.v T166/3.0 V), so the first two
+# CA edges at 100 MHz carry a float and only the last four carry the answer.
+# `zz0000` is "no extra latency", `zz1111` is "take 2L". These are the exact
+# strings both models print; a change in either is a change in the protocol fact
+# that #342 records, not a cosmetic one.
+CA_RWDS_MARKERS = (
+    "var L=7 code=2: RWDS over the CA = zz0000",
+    "fix L=7 code=2: RWDS over the CA = zz1111",
+)
+
+# The 2x election. The vendor model has distributed refresh and elects the long
+# latency on a variable-latency transaction when one is pending; the open twin has
+# no refresh and never does. Both are correct for what they model, so this is
+# reported rather than required -- see docs/chips/hyperram/models.md.
+ELECTION_RE = re.compile(r"variable-latency elections: (\d+) short, (\d+) long, of (\d+)")
 
 # Measured on this machine: vlib 25 ms, vlog 51 ms, vsim 555 ms (200 us of model
 # time). The one term not measured is a cold FlexLM checkout, and that is the whole
@@ -169,10 +194,21 @@ def check_output(out: str, which: str) -> list[str]:
             log.info("  [%s] %s", which, marker)
         else:
             failures.append(f"{which}: missing {marker!r}")
+    for marker in CA_RWDS_MARKERS:
+        if marker in out:
+            log.info("  [%s] %s", which, marker)
+        else:
+            failures.append(f"{which}: missing {marker!r}")
     if TCSM_MARKER not in out:
         failures.append(f"{which}: the deliberate tCSM violation was not reported")
     else:
         log.info("  [%s] tCSM violation reported, as the stimulus intends", which)
+    m = ELECTION_RE.search(out)
+    if not m:
+        failures.append(f"{which}: the variable-latency election tally is missing")
+    else:
+        log.info("  [%s] variable latency: %s of %s transactions took 2L (refresh)",
+                 which, m.group(2), m.group(3))
     m = re.search(r"=== done, (\d+) failures ===", out)
     if not m:
         failures.append(f"{which}: testbench did not reach its summary line")
@@ -181,7 +217,7 @@ def check_output(out: str, which: str) -> list[str]:
     return failures
 
 
-def run_open(grade: str) -> int:
+def run_open(grade: str, hunt: int) -> int:
     """Same testbench, same stimulus, open model, open simulator."""
     for tool in ("iverilog", "vvp"):
         if shutil.which(tool) is None:
@@ -191,6 +227,7 @@ def run_open(grade: str) -> int:
     shutil.copy(OPEN_MODEL, WORKDIR / OPEN_MODEL.name)
     env = dict(os.environ)
     run("iverilog", ["iverilog", "-g2012", "-DDUT_MODULE=hyperram_model",
+                     f"-DREFRESH_HUNT_N={hunt}",
                      "-o", "tb.vvp", TESTBENCH.name, OPEN_MODEL.name], env)
     return check_output(run("vvp", ["vvp", "tb.vvp"], env), "open")
 
@@ -204,6 +241,9 @@ def main() -> int:
                     help="AC parameter set from Config-AC.v (default: T166, the 6I on this board)")
     ap.add_argument("--part", default="W956A8MBYA",
                     help="W956A8MBYA (3.0 V, ours) or W956D8MBYA (1.8 V)")
+    ap.add_argument("--hunt", type=int, default=256, metavar="N",
+                    help="variable-latency transactions to run while looking for a "
+                         "refresh-forced 2x election (default 256, ~54 us of model time)")
     ap.add_argument("--keep", action="store_true", help="keep the work library for vsim -gui")
     ap.add_argument("-v", "--verbose", action="store_true", help="log every tool line")
     args = ap.parse_args()
@@ -215,7 +255,7 @@ def main() -> int:
         shutil.rmtree(WORKDIR)
 
     if args.sim == "icarus":
-        failures = run_open(args.grade)
+        failures = run_open(args.grade, args.hunt)
         for f in failures:
             log.error("FAIL %s", f)
         if not failures:
@@ -233,13 +273,14 @@ def main() -> int:
         shutil.rmtree(WORKDIR / "work")
     run("vlib", [str(questa_bin("vlib")), "work"], env)
     run("vlog", [str(questa_bin("vlog")), "-sv", f"+define+{args.grade}", "+define+VENDOR_ONLY",
+                 f"+define+REFRESH_HUNT_N={args.hunt}",
                  model.name, TESTBENCH.name], env)
     out = run("vsim", [str(questa_bin("vsim")), "-c", "-voptargs=+acc", "tb",
                        "-do", "run -all; quit -f"], env)
 
     failures = check_output(out, "vendor")
     if args.sim == "both":
-        failures += run_open(args.grade)
+        failures += run_open(args.grade, args.hunt)
     if failures:
         for f in failures:
             log.error("FAIL %s", f)
