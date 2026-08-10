@@ -78,6 +78,7 @@ from amaranth.lib.memory import Memory
 
 from luna.gateware.interface.psram import HyperRAMPHY
 
+from peripherals import hyperram_controller
 from peripherals.hyperram_controller import HyperRAMController
 
 from bist import BISTAddresses, BISTHarness
@@ -215,15 +216,17 @@ ADDRESS_BITS = 22
 # was wrong; these say *how* -- shifted, stuck, or noise.
 CAPTURE_DEPTH = 64
 
-# tCSHI, CS# high between transactions, from the datasheet.
+# tCSHI, CS# high between transactions. ONE definition, the controllers' own
+# per-grade table -- the copy here was 10.0, the T100 column on a T166 part (#364).
 #
-# BOTH controllers now hold this themselves -- upstream's `RECOVERY` was
-# `# TODO: implement recovery` and fell through to IDLE, which is why this
-# applet counted the gap itself. The counter below is kept: it is the only place
-# a violation would show up as a wrong measurement rather than as data
-# corruption, and a harness that measures a ceiling should not also be the thing
-# that assumes the controller is right.
-T_CSHI_NS = 10.0
+# A MINIMUM RECOVERY, not a timeout: too much costs throughput and corrupts
+# nothing, so the 1.25x rule does not apply.
+#
+# The counter below is kept even though both controllers now hold this
+# themselves: it is the only place a violation shows up as a wrong measurement
+# rather than as data corruption, and a harness that measures a ceiling should
+# not also assume the controller is right.
+T_CSHI_NS = hyperram_controller.T_CSHI_NS
 
 # The DTR conversion is retriggered by the wrap of a free-running counter. 2**19
 # cycles is milliseconds -- far longer than the block's 8-cycle conversion and far
@@ -740,7 +743,7 @@ class HyperRAMCeiling(Elaboratable):
         # IDLE.
         #
         # **Expected duration**: `recovery_cycles` for tCSHI (1 at every rung
-        # this rig builds, since tCSHI is 10 ns and `hr` is 50-100 MHz) plus the
+        # this rig builds, since tCSHI is 6 ns and `hr` is 50-100 MHz) plus the
         # controller's own RECOVERY and its FSM transitions back to IDLE -- not
         # enumerated here, so budget ~16 cycles.
         #
