@@ -346,10 +346,10 @@ fn is_i2c(source: u32) -> bool {
 /// it before the `plic.complete` at the bottom of the claim loop.
 ///
 /// That clear is ONE MMIO WRITE. A FUSB302B's is three read-to-clear registers
-/// over I2C at 80 kHz -- about a millisecond, on the controller the power task
-/// is also using -- which is why that one is masked and deferred and this one is
-/// not. Same rule, opposite answer, because the rule is about how long the clear
-/// takes.
+/// over I2C -- ~120 us at the bus's 1 MHz (#272), on the controller the power
+/// task is also using -- which is why that one is masked and deferred and this
+/// one is not. Same rule, opposite answer, because the rule is about how long
+/// the clear takes.
 ///
 /// The driver's own `command()` still spins on `SR.TIP`, which is a different
 /// bit and is not touched here. Both writing `IACK` is idempotent, so a handler
@@ -389,8 +389,8 @@ fn defer_workload(plic: &Plic, source: u32) {
 /// A level-sensitive Type-C line, handled by NOT handling it here.
 ///
 /// Clearing a FUSB302B means reading three read-to-clear registers over I2C --
-/// about a millisecond at 80 kHz, on the single controller the power monitor's
-/// poll is also using. Doing that here would be a long spin inside an interrupt
+/// ~120 us at the bus's 1 MHz (#272), on the single controller the power
+/// monitor's poll is also using. Doing that here would be a long spin inside an
 /// AND a second master on a peripheral with no lock, either of which is worse
 /// than the problem. **That is why the deferral survives per-device sources**:
 /// what made a handler unable to clear was the I2C, not the sharing.

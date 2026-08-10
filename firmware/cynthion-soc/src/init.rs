@@ -298,10 +298,11 @@ fn i2c_init(out: &mut Out, devices: &mut Devices) {
         "i2c",
         if report.established() { "ok" } else { "FAIL" },
         format_args!(
-            "{} scl, prer {} read back at {} sync, bus released with 9 clocks + stop{}",
+            "{} scl, prer {} read back at {} sync ({}), bus released with 9 clocks + stop{}",
             Hz(report.scl_hz),
             report.prescale,
-            Hz(target::TIME_HZ),
+            Hz(report.sync_hz),
+            if report.sync_measured { "counted" } else { "assumed" },
             if report.established() { "" } else { " -- the core did not take the prescale" }
         ),
     );

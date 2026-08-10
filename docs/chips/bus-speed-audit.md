@@ -27,7 +27,7 @@ one by an oscillator, and only one by the device on the far end.
 
 | interface | the part supports | this board allows | we configure | gap |
 |---|---|---|---|---|
-| **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | SDA rise time: 2.2k pull-up ⇒ `Cb` ≤ 64 pF for the Fm+ 120 ns limit. Hs needs a current source, which no resistor is | **1.000 MHz**, `PRER` 11 ([`../../gateware/soc/top.py`](../../gateware/soc/top.py)) | **closed on the CPU path.** The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
+| **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | measured: 3.33 MHz power, 2.5 MHz target/aux — see the sweep below | **1.000 MHz**, `PRER` derived from the COUNTED sync clock (#272) | **closed on the CPU path** at the parts' Fm+ rating. The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
 | **SPI flash SCK** | 133 MHz `fC1` | `USRMCLK` has no DDR ⇒ SCK ≤ the fabric clock; luna_soc's clock generator halves it again ⇒ SCK = `sync`/2 | **30 MHz** (`sync` 60, `FLASH_DIVISOR = 0`) | **4.4×** to the part, 2× of which is the `/2` |
 | **flash MCLK at boot** | 133 MHz on `0x0B` | `ecppack --freq` accepts only {2.4, 19.4, 38.8, 62.0}; ECP5 Table 4.7 stops at 62 | **38.8 MHz** | **1.6×** on configuration time |
 | **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** — the FPGA pin, not the RAM. Non-DQS PHY makes CK = fabric clock | **60 MHz** | **2.5×** to the board's own ceiling |
@@ -177,6 +177,50 @@ high byte of `wIndex` and counts bytes that return exactly as the TAP should
 have returned them. Running it at BAUD 0 costs one USB request.
 
 ---
+
+## Where each I²C bus actually stops — measured 2026-08-10, board image `1e574f4`
+
+Swept with [`../../scripts/i2c_rate_sweep.py`](../../scripts/i2c_rate_sweep.py),
+1000 identity reads per rung, on the `bist1-ck120` variant (sync counted at
+50 MHz). The identity is checked against the value the device is KNOWN to hold,
+because `i2c soak` takes its expected value from its own first read and calls a
+stable wrong answer CLEAN.
+
+| bus | rated max | board allows | we run | why the gap |
+|---|---|---|---|---|
+| power (PAC1954) | **1 MHz** Fm+; 3.4 MHz only with `I2C_HISPEED` set | **3.33 MHz** clean, fails at 5 MHz | **1.000 MHz** | the part's Fm+ rating. 3.33 MHz is out of spec until `I2C_HISPEED` (reg `1Ch` bit 0) is set — see below |
+| target (FUSB302B) | **1 MHz**, hard — no Hs mode | **2.5 MHz** clean, fails at 3.33 MHz | **1.000 MHz** | the part's rating. The bus goes faster than the part is specified for |
+| aux (FUSB302B) | **1 MHz**, hard — no Hs mode | **2.5 MHz** clean, fails at 3.33 MHz | **1.000 MHz** | as target |
+
+- The failure is not graceful and not the same on each bus. Target/aux at
+  3.33 MHz return `0xff` with **zero** bus errors — an undriven bus, read as a
+  stable wrong value. Power at 5 MHz returns 1000 bus errors.
+- 1 MHz is now reached rather than claimed: PRER is derived from the clock the
+  fabric counts, so the BIST variant's 50 MHz gives PRER 9 instead of the
+  generated 11. It ran at **833 kHz** while reporting 1 MHz (#272).
+- Both variants land on the same bit timing: 50 MHz/PRER 9 and 60 MHz/PRER 11
+  are both a 200 ns slot, so the margins table below holds for either.
+
+### The one rated headroom that exists
+
+The PAC1954 is alone on the power bus and is a 3.4 MHz part. Microchip's Hs
+entry is a **register bit, not the standard master-code handshake** —
+DS20006539F §7, reg `1Ch` bit 0 `I2C_HISPEED`: *"Setting this bit enables the
+3.4 MHz I2C operation by changing the pulse-width parameters of the Pulse
+Gobbler."* Its stated master requirement is a **CMOS (push-pull) SCL driver**
+(§3.4, p. 17), which this board already has — all three `scl` are `dir="o"`.
+
+So the blocking conditions are two, and neither is the master code:
+- **Bus capacitance ≤ 100 pF per line** at 3.4 MHz, against 550 pF at Fm+
+  (DS20006539F p. 7). Unmeasured here — see the open item below.
+- **One prescale, three buses.** The controller has a single PRER, so a per-bus
+  rate needs it reprogrammed on every mux select. The FUSB302Bs cannot follow
+  above 1 MHz.
+
+That the sweep finds the power bus clean at 3.33 MHz and broken at 5 MHz, with
+3.4 MHz the part's own Hs ceiling, is consistent with the part rather than the
+copper being the limit — but it is consistency, not proof, until `Cb` is
+measured.
 
 ## Verifying the I²C numbers
 

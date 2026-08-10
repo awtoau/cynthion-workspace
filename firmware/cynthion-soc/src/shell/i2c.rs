@@ -8,7 +8,7 @@ use crate::shell::parse::{parse_decimal, trim};
 use crate::uart::Uart;
 use crate::shell::console::board_absent;
 use crate::clock::Hz;
-use crate::{bus, target, Devices};
+use crate::{bus, Devices};
 
 /// Scan the power monitor's I2C bus and identify what is on it.
 ///
@@ -186,7 +186,9 @@ pub(crate) fn i2c_soak(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
     let restore = bus.prescale();
 
     // f_SCL = f_sync / (5 * (PRER + 1)), the formula the bit engine implements.
-    let scl_hz = target::TIME_HZ / (5 * (prescale as u32 + 1));
+    // From the COUNTED sync clock: every rung a sweep prints is otherwise wrong
+    // by the ratio between the build's constant and the silicon (#272).
+    let scl_hz = crate::bus::sync_hz().0 / (5 * (prescale as u32 + 1));
     let _ = writeln!(
         uart,
         "i2c soak  {} at prescale {} = {} scl, {} reads",

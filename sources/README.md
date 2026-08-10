@@ -410,8 +410,8 @@ check that distinguishes a document from a login page:
 |---|---|
 | `Atmel-42363-SAM-D11_Datasheet.pdf` | SAMD11 — the Apollo MCU |
 | `Atmel-42336-ASF-USB-Stack-Manual_ApplicationNote_AT09331.pdf` | ASF USB stack |
-| `FUSB302B-958669.pdf` | USB-C PD controller (#98) |
-| `PAC195X-Family-DS20006539B.pdf` | PAC1954 power monitor (#82, #84) |
+| `FUSB302B-D.pdf` | FUSB302B USB-C PD controller — **rev 5, August 2021, 33 pp** (#98, #272) (`https://www.onsemi.cn/pdf/datasheet/fusb302b-d.pdf`) |
+| `PAC195X-Family-DS20006539F.pdf` | PAC1951/2/3/4 power monitor — **DS20006539F, Jun 2025, 92 pp** (#82, #84, #272) (`https://ww1.microchip.com/downloads/aemDocuments/documents/APID/ProductDocuments/DataSheets/PAC1951-2-3-4-Single-Multi-Channel-Power-Monitor-with-Accumulator-32V-Full-Scale-Range-DS20006539.pdf`) |
 | `334x.pdf` | USB3343 PHY |
 | `Vishay-SiA483ADJ-P-Channel-30V-MOSFET.pdf` | SiA483ADJ — the VBUS pass MOSFET, Q1/Q2/Q4/Q5/Q6/Q7 (`https://www.vishay.com/docs/77080/sia483adj.pdf`) |
 | `SiTime-SiT1602-MEMS-oscillator.pdf` | SiT1602B, **rev 1.08, 1 Jan 2023, 18 pp** — Y1, the board's only oscillator (`https://www.sitime.com/datasheet/SiT1602`) |
@@ -469,6 +469,63 @@ MOSFET"**. One device per switch function, as the six-designator count already s
 this part landed as a 720 KB `<title>Page Not Found | Vishay</title>` page saved under a
 `.pdf` name — indistinguishable from a datasheet by name and size alone. The URL above
 is the working one; `file` on the result is what tells them apart.
+
+### What the PAC195X and FUSB302B datasheets settled: neither slave stretches SCL (#272)
+
+Fetched 2026-08-10 to answer whether SCL may be driven push-pull from the FPGA master.
+A slave that stretches would be shorted by a push-pull master; a slave that never does
+cannot be.
+
+**PAC1951/2/3/4 — DS20006539F (the manifest previously named rev B; F is current):**
+
+- **Never stretches.** §6.0, p. 30: *"Stretching of the SMCLK signal is supported.
+  However, PAC1951/2/3/4 does not stretch the clock signal itself."* Unconditional — no
+  carve-out for conversions, REFRESH or register access.
+- Its substitute for stretching is a NACK. §5.0, p. 20: changes take effect within 1 ms
+  of REFRESH and *"Any new commands written within this 1 ms window are ignored and
+  NACKed to indicate that they are ignored."* The 1 ms wait is the master's job.
+- **SM_CLK is an input pin.** §3.4, p. 17: *"This is the SMBus clock input pin and
+  requires an external pull-up resistor, except if used in High-Speed mode, which
+  requires a CMOS driver from the host."* Push-pull SCL is the vendor's own Hs-mode
+  requirement, not a liberty taken.
+- Caveat on the same claim: the DC table, p. 6, lists V_OL sinking *"20 mA for the CLK
+  pin in all modes"* — a driver spec for a pin every other page calls an input. Read as a
+  table artifact; the pin description and §6.0 agree with each other.
+- fSMB, AC table p. 7: **0.01–1 MHz** Fast Mode Plus, **0.01–3.4 MHz** High-Speed. No
+  minimum unless SMBus time-out is enabled (§6.2, p. 31 — disabled by default, 25–35 ms).
+- Hs-mode is a register bit, not the standard master-code handshake: Register 7-10
+  `SMBUS SETTINGS`, p. 47, **bit 0 `I2C_HISPEED`**, POR = 0 — *"Setting this bit enables
+  the 3.4 MHz I2C operation by changing the pulse-width parameters of the Pulse Gobbler."*
+  The words "master code" appear nowhere in the document.
+- Hs-mode costs, all p. 6–7: bus capacitance drops **550 pF → 100 pF per line**, SDA sink
+  drops to **4 mA**, SCL needs the CMOS driver above.
+
+**FUSB302B — rev 5:**
+
+- **No clock stretching.** The string "stretch" does not occur anywhere in the 33 pages,
+  and no SCL-hold or wait-state behaviour is described for PD messages or interrupts —
+  interrupts are signalled on the separate open-drain `INT_N` pin. p. 5 pin table: *"SCL /
+  Input / I2C serial clock signal to be connected to the phone-based I2C master."*
+  Absence of evidence, but the pin is documented as an input and nothing contradicts it.
+- **f_SCL 0–1000 kHz**, Table 14 "I2C SPECIFICATIONS FAST MODE PLUS", p. 17.
+- **No Hs-mode.** Both I2C tables (13 and 14, p. 17) are headed *"STANDARD, FAST, OR FAST
+  MODE PLUS SPEED MODE"*; "3.4 MHz" and "High Speed" appear nowhere. p. 12: *"This block
+  is designed for Fast Mode Plus traffic up to 1 MHz SCL operation."*
+- Same page adds a limit worth carrying into #272: *"The TOGGLE features allow for very
+  low power operation with slow clocking thus may not be fully compliant to the 1 MHz
+  operation."*
+
+**Validity check before trusting a copy:**
+
+    pdfinfo PAC195X-Family-DS20006539F.pdf | grep Pages          # 92
+    pdftotext -layout PAC195X-Family-DS20006539F.pdf - | grep -c 'does not stretch'   # 1
+    pdfinfo FUSB302B-D.pdf | grep Pages                          # 33
+    pdftotext -layout FUSB302B-D.pdf - | grep -c 'FAST MODE PLUS I2C SPECIFICATIONS'  # 1
+
+**onsemi's own `www.onsemi.com/pdf/datasheet/fusb302b-d.pdf` returns HTTP 403**, and
+Mouser's mirror returns an HTML block page saved as a 14 KB `.pdf` — the failure this
+file's last section describes, hit twice more. `www.onsemi.cn` serves the same document
+unauthenticated.
 
 ## A failed download looks exactly like a datasheet
 

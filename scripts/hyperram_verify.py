@@ -48,6 +48,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "hyperram-verify.log"
 
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
+import variant  # noqa: E402
+
+# The `.bit` this variant builds to. Passed to the matrix so its runs record
+# what the HyperRAM pins were set to; without it every run the GATE records is
+# saved with `pins: null` and cannot be compared against a pin patch (#311).
+BITSTREAM = variant.build_dir(ROOT) / "top.bit"
+
 
 def emit(line=""):
     print(line, flush=True)
@@ -85,7 +93,16 @@ def main():
     parser.add_argument("--label", default="verify",
                         help="names the saved matrix runs")
     parser.add_argument("--passes", type=int, default=8)
+    parser.add_argument("--bitstream", type=Path, default=BITSTREAM,
+                        help="the .bit that was configured. Defaults to this "
+                             "SHELL's variant, which is not the board's unless "
+                             "the same CYNTHION_* variables are set")
     args = parser.parse_args()
+
+    # WHICH VARIANT THIS SHELL RESOLVED, before any step runs. `variant.slug()`
+    # reads the environment, so a gate run without the board's `CYNTHION_*`
+    # variables silently names a different build's directory (#311).
+    emit(f"variant {variant.slug()} -> {args.bitstream}")
 
     py = sys.executable
     s = ROOT / "scripts"
@@ -133,10 +150,17 @@ def main():
         emit("\n=== matrix SKIPPED (--quick)")
         emit("    so nothing here says a cell is stable, only that it passed once")
     else:
+        matrix = [py, str(s / "hyperram_matrix_diff.py"), "--label", args.label,
+                  "--passes", str(args.passes), "--repeat", "2"]
+        if args.bitstream.exists():
+            matrix += ["--bitstream", str(args.bitstream),
+                       "--build-dir", str(args.bitstream.parent)]
+        else:
+            emit(f"\n    NO BITSTREAM at {args.bitstream} -- the matrix runs "
+                 "below will record `pins: null`. Set the board's CYNTHION_* "
+                 "variables, or pass --bitstream (#311)")
         results["matrix, twice, diffed"] = step(
-            "the 4096-cell matrix, twice, diffed",
-            [py, str(s / "hyperram_matrix_diff.py"), "--label", args.label,
-             "--passes", str(args.passes), "--repeat", "2"])[0]
+            "the 4096-cell matrix, twice, diffed", matrix)[0]
 
     emit("\n" + "=" * 60)
     for name, ok in results.items():

@@ -72,6 +72,10 @@ SUMMARY = re.compile(r"(\d+)\s+pass,\s*(\d+)\s+fail,\s*(\d+)\s+no result of\s*(\
 # `bist all` prints this only when its cell count overstates what it varied.
 REPEATS = re.compile(r"(\d+)\s+DISTINCT configurations x (\d+) repeats")
 RUNG = re.compile(r"^\s*rung\s+(\d+)\s+([\d.]+)\s+MHz(\s+<- live)?", re.M)
+# What the BOARD says it is running, from `info`. The host checkout's HEAD is a
+# different fact and has been the wrong one -- see `board_identity`.
+IMAGE = re.compile(r"^\s*image\s+(\S+)\s+(clean|dirty)", re.M)
+GATEWARE = re.compile(r"^\s*gateware\s+(\S+)\s+(clean|dirty)", re.M)
 
 
 def emit(line=""):
@@ -155,11 +159,36 @@ def pin_provenance(bitstream, build_dir):
     return identity, pins
 
 
+def board_identity(board):
+    """The firmware and gateware commits the BOARD reports, from `info`.
+
+    `git rev-parse HEAD` describes the HOST CHECKOUT, which is only the same
+    thing when the board was flashed from it -- and a board left running an
+    older image is the normal state during a build. A run stamped with the
+    checkout's commit while the board ran another is a measurement filed under
+    the wrong build, which is the one error a recorded artifact cannot survive.
+    """
+    text = board.send("info", 6)
+    image, gateware = IMAGE.search(text), GATEWARE.search(text)
+    if not image:
+        raise SystemExit(
+            "`info` did not report an image commit, so this run cannot be "
+            f"attributed to a firmware build. Reply was:\n{text[-600:]}")
+    return {"image": image.group(1), "image_dirty": image.group(2) == "dirty",
+            "gateware": gateware.group(1) if gateware else None,
+            "gateware_dirty": gateware.group(2) == "dirty" if gateware else None}
+
+
 def record(label, passes, rung, bitstream=None, build_dir=None):
     """One matrix run, with everything needed to judge it later."""
     identity, pins = pin_provenance(bitstream, build_dir or hyperram_pin_patch.BUILD)
     board = Board()
     try:
+        onboard = board_identity(board)
+        head = git("rev-parse", "HEAD")
+        if head and not head.startswith(onboard["image"]):
+            emit(f"  BOARD RUNS {onboard['image']}, CHECKOUT IS AT {head[:8]} -- "
+                 "this run measures the board's image, not the checkout")
         ck = board.send(f"bist ck {rung}", 4)
         rungs = {int(n): float(mhz) for n, mhz, _ in RUNG.findall(ck)}
         if not rungs:
@@ -213,6 +242,9 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
         "label": label,
         "commit": git("rev-parse", "HEAD"),
         "dirty": bool(git("status", "--porcelain")),
+        # What the BOARD said it was running. `commit` above is the host
+        # checkout, which is a different fact -- see `board_identity`.
+        "board": onboard,
         "ck_mhz": rungs.get(rung),
         "rung": rung,
         "rungs": rungs,
@@ -284,6 +316,12 @@ def diff(first, second):
     emit(f"B  {Path(second).name}")
     emit(f"   {b['recorded']}  CK {b['ck_mhz']} MHz  {b['passes_per_cell']} passes"
          f"  commit {(b['commit'] or '?')[:8]}{'  DIRTY' if b['dirty'] else ''}")
+
+    ba, bb = a.get("board") or {}, b.get("board") or {}
+    if ba.get("image") != bb.get("image"):
+        emit(f"\n  DIFFERENT FIRMWARE: A ran {ba.get('image')}, B ran "
+             f"{bb.get('image')} -- a moved cell is not marginality, it is the "
+             "build change")
 
     pin_delta(a, b)
 

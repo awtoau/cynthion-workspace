@@ -146,6 +146,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("pac1954 limit <k> <port> <n>", "ov/oc/uv/uc threshold, in mV or mA"),
     ("pac1954 samples <k> <port> <n>", "consecutive samples before it asserts"),
     ("pac1954 bracket <port> <mA> <mV>", "limits around the present reading"),
+    ("pac1954 hispeed [on|off]", "SLOW bit 0: the 3.4 MHz Pulse Gobbler filter"),
     ("pac1954 reset", "DESTRUCTIVE: PWRDN#, which loses the accumulators"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
