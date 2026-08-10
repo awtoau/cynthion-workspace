@@ -8,6 +8,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 | [specifications.md](specifications.md) | **the numbers** — DC, current, refresh, and AC per speed grade, each with its source |
 | [bist-plan.md](bist-plan.md) | **the method** — what to measure, the matrix, and the rule that makes a result admissible |
 | [survey.md](survey.md) | **everyone else** — nineteen open HyperBus controllers in RTL, the software and SoC drivers above them, and the simulation models |
+| [byte-order.md](byte-order.md) | **which byte goes where** — the 32-bit DQS path's byte and word order, measured, with the check that keeps it |
 | [models.md](models.md) | **the part without the board** — Winbond's own model, the open twin, and the testbench that holds them equal |
 | [sim-audit.md](sim-audit.md) | **what the Python sim actually asserts** — all 143 checks classified, and what a retirement would cost |
 | [2026-08-10-audit.md](2026-08-10-audit.md) | **our own faults** — six found, three fixed, and why no measurement survives |

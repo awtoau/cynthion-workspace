@@ -4,10 +4,12 @@
 # DQS controller's 4:1 gearing can land on it.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Two measurements, one runner.
+"""Three measurements, one runner.
 
-    scripts/hyperram_dqs_model_sim.py                 # both stages, open twin
+    scripts/hyperram_dqs_model_sim.py                 # probe + controller, open twin
     scripts/hyperram_dqs_model_sim.py --stage probe   # the device alone
+    scripts/hyperram_dqs_model_sim.py --stage order   # byte and word order, #206
+    scripts/hyperram_dqs_model_sim.py --stage all     # all three
     scripts/hyperram_dqs_model_sim.py --sim both      # ...and the vendor model too
     scripts/hyperram_dqs_model_sim.py --controller-sweep   # the shim's own parameters
 
@@ -23,6 +25,13 @@ and drives the same device model with it, through a behavioural PHY built from
 `hyperram_dqs_phy.py`'s own primitive mapping. The primitives' SCLK-to-pin
 latencies have no open model, so the relative offset is a swept parameter and the
 run reports which settings let the device decode the address it was asked for.
+
+**order** settles #206: which byte of a 32-bit fabric word lands at which device
+address, for reads and writes independently. Writes are checked against the
+model's memory array read hierarchically, reads against an array preloaded
+directly, so neither direction can cancel an error in the other. Every run also
+repeats the measurement with the data beats deliberately rewired and requires
+the checks to fire. The convention is in `docs/chips/hyperram/byte-order.md`.
 
 Log: `tmp/logs/hyperram_dqs_model_sim.log`. Exit status 0 if every stage ran and
 the twin answered.
@@ -44,6 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PROBES = ROOT / "gateware" / "probes" / "hyperram"
 PROBE_TB = PROBES / "dqs_latency_probe_tb.sv"
 CTRL_TB = PROBES / "dqs_model_tb.sv"
+ORDER_TB = PROBES / "dqs_order_tb.sv"
 OPEN_MODEL = PROBES / "hyperram_model.v"
 MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
 
@@ -236,14 +246,45 @@ def stage_controller(extra: list[str]) -> list[str]:
     return run("vvp(ctl)", ["vvp", "ctl.vvp"] + extra, WORKDIR).splitlines()
 
 
+# The behavioural PHY's `(dq_pipe, ck_pipe, dq_ph, rd_slip)`.
+#
+# The primitives' SCLK-to-pin latencies have no open model, so the relative
+# offset between the CK path and the DQ path is a searched parameter. The
+# controller stage starts at zero and sweeps; `--controller-sweep` at
+# 57a9a99 found (0, 1, 1, 0) to be the ONLY one of the sixteen in which the
+# device resolves the address the controller asked for, so the order stage
+# starts there rather than measuring in a setting where nothing decodes.
+CTRL_SHIM = (0, 0, 0, 0)
+ORDER_SHIM = (0, 1, 1, 0)
+
+
+def shim(args, default: tuple) -> tuple:
+    """The shim offsets for a stage: its own default where the caller said nothing."""
+    given = (args.dq_pipe, args.ck_pipe, args.dq_ph, args.rd_slip)
+    return tuple(d if g is None else g for g, d in zip(given, default))
+
+
+def build_order() -> None:
+    need("iverilog", "vvp")
+    ctl = elaborate_controller()
+    run("iverilog(order)", ["iverilog", "-g2012", "-DDUT_MODULE=hyperram_model",
+                            "-o", "order.vvp", str(ORDER_TB), str(OPEN_MODEL),
+                            ctl.name], WORKDIR)
+
+
+def stage_order(extra: list[str]) -> list[str]:
+    return run("vvp(order)", ["vvp", "order.vvp"] + extra, WORKDIR).splitlines()
+
+
 def report(lines: list[str], tag: str) -> list[dict]:
     """The measurement lines, wherever the simulator put its own prefix."""
     rows = []
     for line in lines:
         text = line.lstrip("# ").rstrip()
-        if text.startswith(("[probe]", "[dqs]", "[edge]")):
+        if text.startswith(("[probe]", "[dqs]", "[edge]", "[order]")):
             log.info("%-6s %s", tag, text)
-        if text.startswith("[probe] cr0=") or text.startswith("[dqs] code="):
+        if (text.startswith("[probe] cr0=") or text.startswith("[dqs] code=")
+                or text.startswith("[order] test=")):
             rows.append(dict(kv.split("=", 1) for kv in text.split()[1:] if "=" in kv))
     return rows
 
@@ -311,19 +352,199 @@ def verdict_controller(rows: list[dict]) -> None:
                  ",".join(r["n"] for r in best) or "NO SETTING")
 
 
+# THE MEASURED CONVENTION (#206), as a check rather than as prose.
+#
+# Both are "fabric byte position f -> device byte offset", where f = 0 is
+# `dq.o[31:24]` / `dq.i[31:24]` and offset 0 is the high byte of the
+# lower-addressed 16-bit device word. (0, 1, 2, 3) is therefore:
+#
+#   dq[31:24] -> device byte 0, the HIGH byte of the LOWER-addressed word
+#   dq[23:16] -> device byte 1, the low  byte of the lower-addressed word
+#   dq[15:8]  -> device byte 2, the high byte of the higher-addressed word
+#   dq[7:0]   -> device byte 3, the low  byte of the higher-addressed word
+#
+# Measured by `--stage order`; see docs/chips/hyperram/byte-order.md. A change
+# here is a change to the wire format, so the run fails rather than reporting a
+# new convention quietly.
+ORDER_WRITE = (0, 1, 2, 3)
+ORDER_READ = (0, 1, 2, 3)
+
+# What each 8-byte `wire=` field says when a slot was never driven.
+_UNSET = ("xx", "zz")
+
+_PERM_NAME = {0: "as wired", 1: "bytes swapped inside each half",
+              2: "16-bit halves swapped", 3: "full reverse"}
+
+
+def _wire_bytes(field: str) -> list[int | None]:
+    return [None if field[i:i + 2] in _UNSET else int(field[i:i + 2], 16)
+            for i in range(0, len(field), 2)]
+
+
+def _fabric_to_device(fabric: list[int], device: list[int]) -> tuple | None:
+    """For each fabric byte position, where in the device pair it turned up.
+
+    Returns None unless the two lists are the same four distinct values -- which
+    is the whole reason the patterns are chosen with four distinct bytes. A
+    pattern that cannot do this cannot answer the question and says so.
+    """
+    if len(set(fabric)) != 4 or sorted(fabric) != sorted(device):
+        return None
+    return tuple(device.index(b) for b in fabric)
+
+
+def verdict_order(rows: list[dict]) -> list[str]:
+    bad: list[str] = []
+    log.info("--- #206: what order the 32-bit path uses ---")
+
+    #
+    # 1. The CA, which the device decodes into an address.
+    #
+    ca = [r for r in rows if r.get("test") == "ca"]
+    identity_ok = False
+    discriminated = 0
+    for row in ca:
+        perm, want, got = int(row["perm"]), row["addr"], row["served"]
+        same = int(want, 16) == int(got, 16)
+        log.info("  ca    perm %d (%-30s) asked %6s, device resolved %6s  %s",
+                 perm, _PERM_NAME[perm], want, got,
+                 "MATCH" if same else "differs")
+        if perm == 0:
+            identity_ok = same
+            if not same:
+                bad.append(f"the PHY's own byte order does not decode a CA: "
+                           f"asked {want}, device resolved {got}")
+        elif same:
+            bad.append(f"CA permutation {perm} resolved the SAME address -- the "
+                       f"CA test cannot tell the byte orders apart")
+        else:
+            discriminated += 1
+    if ca and identity_ok and discriminated == 3:
+        log.info("  ca    -> only the wiring as written decodes the address the "
+                 "controller asked for; the other three orders name other "
+                 "transactions. The data path shares this mapping.")
+
+    #
+    # 2. Writes, read back out of the model's array and not through the controller.
+    #
+    writes = [r for r in rows if r.get("test") == "write"]
+    # A pattern with a repeated byte, or with equal halves, leaves two of the
+    # candidate orders producing the same memory image -- it would look like a
+    # measurement and settle nothing. Checked, not asserted in the comment.
+    for pat in sorted({r["pat"] for r in writes}):
+        pb = [(int(pat, 16) >> s) & 0xFF for s in (24, 16, 8, 0)]
+        if len(set(pb)) != 4:
+            bad.append(f"write pattern {pat} repeats a byte: it cannot tell the "
+                       f"candidate orders apart")
+    # ON THE WIRE, before the device has interpreted anything: the last four
+    # bytes the controller drove are the data word, and their order is the
+    # answer for the write direction. Checked on every row, so a change shows up
+    # here as well as in the memory image.
+    for row in writes:
+        pb = [(int(row["pat"], 16) >> s) & 0xFF for s in (24, 16, 8, 0)]
+        drove = [b for b in _wire_bytes(row["wire"]) if b is not None]
+        if drove[-4:] != pb:
+            seq = "".join(f"{b:02x}" for b in drove[-4:])
+            bad.append(f"the data word did not leave MSB-first: {row['pat']} went "
+                       f"out on the wire as {seq}")
+            break
+    aligned_w = []
+    for row in writes:
+        pat = int(row["pat"], 16)
+        pb = [(pat >> s) & 0xFF for s in (24, 16, 8, 0)]
+        m0, m1 = int(row["m0"], 16), int(row["m1"], 16)
+        spill = [row[k] for k in ("mm2", "mm1", "m2", "m3") if int(row[k], 16) != 0xEEEE]
+        dev = [m0 >> 8, m0 & 0xFF, m1 >> 8, m1 & 0xFF]
+        sig = _fabric_to_device(pb, dev)
+        if sig is not None and not spill:
+            aligned_w.append((row, sig))
+    if writes and not aligned_w:
+        got = {(r["pat"], r["m0"], r["m1"]) for r in writes}
+        bad.append("no write landed the four pattern bytes in the addressed "
+                   f"device word pair at any latency: saw {sorted(got)}")
+    seen_w: dict[tuple, list[str]] = {}
+    for row, sig in aligned_w:
+        seen_w.setdefault((row["pat"], row["m0"], row["m1"], sig), []).append(
+            f"code {row['code']} n={row['n']}")
+    for (pat, m0, m1, sig), where in seen_w.items():
+        log.info("  write %s -> memory[+0]=%s memory[+1]=%s, fabric->device %s "
+                 "(%d settings, %s .. %s)%s", pat, m0, m1, sig, len(where),
+                 where[0], where[-1],
+                 "" if sig == ORDER_WRITE else "  <-- NOT the recorded order")
+        if sig != ORDER_WRITE:
+            bad.append(f"write order changed: pattern {pat} landed as {sig}, "
+                       f"recorded {ORDER_WRITE} (docs/chips/hyperram/byte-order.md)")
+
+    #
+    # 3. Reads, out of a preloaded array the controller never wrote.
+    #
+    reads = [r for r in rows if r.get("test") == "read"]
+    # The premise of the read test: the device serves the preloaded ramp from the
+    # addressed word, so a `read_data` byte's value IS its device byte offset.
+    # If the wire does not carry 00..07 the reference is gone and nothing below
+    # means anything.
+    for row in reads:
+        if _wire_bytes(row["wire"]) != list(range(8)):
+            bad.append(f"the device did not serve the ramp from the addressed "
+                       f"word: wire {row['wire']}, expected 0001020304050607")
+            break
+    aligned_r = []
+    for row in reads:
+        if row["gv"] != "1":
+            continue
+        got = int(row["got"], 16)
+        # The ramp makes every byte in the window equal to its own device byte
+        # offset, so the four bytes of `read_data` name their own positions.
+        off = [(got >> s) & 0xFF for s in (24, 16, 8, 0)]
+        if len(set(off)) != 4 or max(off) - min(off) != 3:
+            continue                      # not four contiguous device bytes
+        aligned_r.append((row, tuple(o - min(off) for o in off), min(off)))
+    if reads and not aligned_r:
+        bad.append("no read returned four contiguous ramp bytes at any latency: "
+                   f"saw {sorted({r['got'] for r in reads})}")
+    seen_r: dict[tuple, list[str]] = {}
+    for row, sig, first in aligned_r:
+        seen_r.setdefault((row["got"], sig, first), []).append(
+            f"code {row['code']} n={row['n']}")
+    for (got, sig, first), where in seen_r.items():
+        log.info("  read  read_data=%s, first device byte %+d from the addressed "
+                 "word, fabric->device %s (%d settings, %s .. %s)%s",
+                 got, first, sig, len(where), where[0], where[-1],
+                 "" if sig == ORDER_READ else "  <-- NOT the recorded order")
+        if sig != ORDER_READ:
+            bad.append(f"read order changed: read_data {got} maps as {sig}, "
+                       f"recorded {ORDER_READ} (docs/chips/hyperram/byte-order.md)")
+
+    # The slip is a SEPARATE fault from the order and is reported, not merged
+    # into it: #186 owns where the read grouping is anchored.
+    slips = {first for _, _, first in aligned_r}
+    if slips:
+        log.info("  read  grouping starts %s device bytes into the addressed "
+                 "word (0 = aligned; this is #186's slip, not an order)",
+                 sorted(slips))
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--stage", default="both", choices=("probe", "controller", "both"))
+    ap.add_argument("--stage", default="both",
+                    choices=("probe", "controller", "order", "both", "all"))
     ap.add_argument("--sim", default="icarus", choices=("icarus", "questa", "both"),
                     help="which device model the probe stage runs against")
     ap.add_argument("--grade", default="T166")
     ap.add_argument("--part", default="W956A8MBYA")
     ap.add_argument("--controller-sweep", action="store_true",
                     help="run the controller stage at every shim pipeline offset")
-    ap.add_argument("--dq-pipe", type=int, default=0)
-    ap.add_argument("--ck-pipe", type=int, default=0)
-    ap.add_argument("--dq-ph", type=int, default=0)
-    ap.add_argument("--rd-slip", type=int, default=0)
+    # Unset means each stage's own default: the controller stage starts from
+    # zero offset and sweeps, the order stage starts from the ONE combination
+    # that combination sweep found the device decoding a CA in.
+    for name in ("--dq-pipe", "--ck-pipe", "--dq-ph", "--rd-slip"):
+        ap.add_argument(name, type=int, default=None)
+    ap.add_argument("--data-perm", type=int, default=0, choices=(0, 1, 2, 3),
+                    help="order stage: rewire the DATA beats (0 = the PHY as "
+                         "written; 1 bytes-in-half, 2 halves, 3 reversed)")
+    ap.add_argument("--no-control", action="store_true",
+                    help="order stage: skip the negative control run")
     ap.add_argument("--verbose-edges", action="store_true",
                     help="controller stage: one line per device clock edge")
     ap.add_argument("--keep", action="store_true")
@@ -339,7 +560,7 @@ def main() -> int:
     twin_rows: list[dict] = []
     vendor_rows: list[dict] = []
 
-    if args.stage in ("probe", "both"):
+    if args.stage in ("probe", "both", "all"):
         if args.sim in ("icarus", "both"):
             log.info("=== probe, open twin ===")
             lines = stage_probe_icarus()
@@ -357,10 +578,10 @@ def main() -> int:
                 failures.append("probe/vendor produced no measurement")
         failures += verdict_probe(twin_rows, vendor_rows)
 
-    if args.stage in ("controller", "both"):
+    if args.stage in ("controller", "both", "all"):
         log.info("=== controller through a behavioural 4:1 PHY ===")
         build_controller()
-        combos = [(args.dq_pipe, args.ck_pipe, args.dq_ph, args.rd_slip)]
+        combos = [shim(args, CTRL_SHIM)]
         if args.controller_sweep:
             # The primitives' SCLK-to-pin latencies have no open model, so the
             # relative offset is searched rather than assumed. Whole cycles both
@@ -377,6 +598,37 @@ def main() -> int:
             if not rows:
                 failures.append(f"controller stage produced no measurement at {extra}")
             verdict_controller(rows)
+
+    if args.stage in ("order", "all"):
+        log.info("=== byte and word order through the 32-bit path (#206) ===")
+        build_order()
+        dq, ck, phs, slip = shim(args, ORDER_SHIM)
+        extra = [f"+dq_pipe={dq}", f"+ck_pipe={ck}",
+                 f"+dq_ph={phs}", f"+rd_slip={slip}"]
+        if args.verbose_edges:
+            extra.append("+verbose=1")
+        rows = report(stage_order(extra + [f"+data_perm={args.data_perm}"]), "order")
+        if not rows:
+            failures.append("order stage produced no measurement")
+        failures += verdict_order(rows)
+
+        # The control. A new instrument's first run is against a known answer:
+        # rewiring the data beats to the halves-swapped order -- the transform
+        # #206 removed from `bootram` -- must make the checks above fail. If it
+        # does not, they were never watching the thing they claim to watch.
+        if not args.no_control and args.data_perm == 0:
+            log.info("--- negative control: the data path rewired halves-swapped ---")
+            rows = report(stage_order(extra + ["+data_perm=2"]), "ctrl")
+            caught = verdict_order(rows)
+            if caught:
+                log.info("  control: %d check(s) fired, so the order tests can "
+                         "see a permutation", len(caught))
+                for f in dict.fromkeys(caught):
+                    log.info("    would fail: %s", f)
+            else:
+                failures.append("the negative control PASSED: a halves-swapped "
+                                "data path was not caught, so the order checks "
+                                "prove nothing")
 
     for f in failures:
         log.error("FAIL %s", f)
