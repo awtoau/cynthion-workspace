@@ -5,6 +5,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 | document | what it is |
 |---|---|
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
+| [specifications.md](specifications.md) | **the numbers** — DC, current, refresh, and AC per speed grade, each with its source |
 | [bist-plan.md](bist-plan.md) | **the method** — what to measure, the matrix, and the rule that makes a result admissible |
 | [survey.md](survey.md) | **everyone else** — nineteen open HyperBus controllers in RTL, the software and SoC drivers above them, and the simulation models |
 | [models.md](models.md) | **the part without the board** — Winbond's own model, the open twin, and the testbench that holds them equal |
