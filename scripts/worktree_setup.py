@@ -106,32 +106,75 @@ def is_linked_worktree() -> bool:
     return (ROOT / ".git").is_file()
 
 
-def module_dir(name: str) -> Path:
-    """Where the superproject keeps a submodule's objects, shared by every worktree."""
-    return common_dir() / "modules" / name
-
-
 # ---------------------------------------------------------------------------
 # Submodules
 # ---------------------------------------------------------------------------
 
-def submodules() -> list[tuple[str, Path, str]]:
-    """(name, path, url) from `.gitmodules`, in file order."""
+class Sub:
+    """One submodule, at any depth. `label` is its path from the repo root."""
+
+    def __init__(self, label: str, work: Path, mod: Path, url: str, pin: str,
+                 parent: Path, rel: str):
+        self.label, self.work, self.mod, self.url, self.pin = \
+            label, work, mod, url, pin
+        self.parent, self.rel = parent, rel      # for `submodule update --init`
+
+
+def _parse_gitmodules(text: str) -> list[tuple[str, str]]:
     parser = configparser.ConfigParser()
-    parser.read_string((ROOT / ".gitmodules").read_text())
-    found = []
-    for section in parser.sections():
-        if not section.startswith("submodule "):
-            continue
-        path = parser[section]["path"]
-        found.append((path, ROOT / path, parser[section].get("url", "")))
+    parser.read_string(text)
+    return [(parser[s]["path"], parser[s].get("url", ""))
+            for s in parser.sections() if s.startswith("submodule ")]
+
+
+def _gitmodules_of(work: Path, mod: Path, pin: str) -> str:
+    """`.gitmodules` from the checkout if there is one, else from the pinned tree.
+
+    Reading it from the object store is what lets `check` see nested submodules
+    of a submodule that is not checked out yet -- otherwise an empty
+    `repos/vexiiriscv` hides that its build needs `ext/SpinalHDL`.
+    """
+    if (work / ".gitmodules").is_file():
+        return (work / ".gitmodules").read_text()
+    if mod.exists() and pin:
+        r = git(["--git-dir", str(mod), "show", f"{pin}:.gitmodules"])
+        if r.returncode == 0:
+            return r.stdout
+    return ""
+
+
+def _gitlink(work: Path, mod: Path, pin: str, path: str) -> str:
+    """The commit a submodule is pinned to, from the index or the pinned tree."""
+    if (work / ".git").exists():
+        line = out(["ls-files", "-s", "--", path], work)
+        if line:
+            return line.split()[1]
+    if mod.exists() and pin:
+        line = out(["--git-dir", str(mod), "ls-tree", pin, "--", path])
+        if line:
+            return line.split()[2]
+    return ""
+
+
+def submodules(work: Path | None = None, mod_root: Path | None = None,
+               prefix: str = "", pin: str = "") -> list[Sub]:
+    """Every submodule, recursively, in `.gitmodules` order.
+
+    Recursion is not optional: VexiiRiscv's `build.sbt` takes `ext/SpinalHDL` as
+    a `ProjectRef`, so a `repos/vexiiriscv` without its own submodules cannot
+    generate the CPU either.
+    """
+    work = ROOT if work is None else work
+    mod_root = common_dir() if mod_root is None else mod_root
+    found: list[Sub] = []
+    for path, url in _parse_gitmodules(_gitmodules_of(work, mod_root, pin)):
+        child = Sub(label=prefix + path, work=work / path,
+                    mod=mod_root / "modules" / path, url=url,
+                    pin=_gitlink(work, mod_root, pin, path),
+                    parent=work, rel=path)
+        found.append(child)
+        found += submodules(child.work, child.mod, child.label + "/", child.pin)
     return found
-
-
-def recorded_pin(path: str) -> str:
-    """The gitlink in THIS worktree's index -- what a build is supposed to use."""
-    line = out(["ls-files", "-s", "--", path], ROOT)
-    return line.split()[1] if line else ""
 
 
 def head_of(work: Path) -> str:
@@ -183,51 +226,53 @@ def check(verbose: bool = False) -> int:
     emit(f"shared .git: {common_dir()}")
     emit("")
 
-    for path, work, url in submodules():
-        name = path
-        pin = recorded_pin(path)
-        mod = module_dir(name)
-        head = head_of(work)
+    subs = submodules()
+    width = max([len(s.label) for s in subs] + [len(str(VENDOR_MODEL.parent))])
+    for sub in subs:
+        head = head_of(sub.work)
 
-        if not pin:
-            failures.append(f"{name}: no gitlink in the index -- .gitmodules and "
+        if not sub.pin:
+            failures.append(f"{sub.label}: no gitlink recorded -- .gitmodules and "
                             f"the tree disagree")
-            emit(f"  {name:<24} FAIL  not a gitlink in this index")
+            emit(f"  {sub.label:<{width}}  FAIL  not a gitlink")
             continue
 
         if not head:
-            failures.append(f"{name}: empty ({'no' if not mod.exists() else 'has'} "
-                            f"local object store) -- run ./dev.py worktree-setup")
-            emit(f"  {name:<24} FAIL  empty, pin {pin[:8]} not checked out")
+            failures.append(f"{sub.label}: empty -- run ./dev.py worktree-setup")
+            emit(f"  {sub.label:<{width}}  FAIL  empty, pin {sub.pin[:8]} not "
+                 f"checked out")
             continue
 
-        if head != pin:
-            failures.append(f"{name}: checked out {head[:8]}, index records "
-                            f"{pin[:8]} -- run ./dev.py worktree-setup")
-            emit(f"  {name:<24} FAIL  HEAD {head[:8]} != pin {pin[:8]}")
+        if head != sub.pin:
+            failures.append(f"{sub.label}: checked out {head[:8]}, pin is "
+                            f"{sub.pin[:8]} -- run ./dev.py worktree-setup")
+            emit(f"  {sub.label:<{width}}  FAIL  HEAD {head[:8]} != pin "
+                 f"{sub.pin[:8]}")
             continue
 
         # Sharing rather than copying is the property that makes 30 worktrees
         # affordable, so it is checked rather than assumed.
-        shared = (work / ".git").is_file() and str(mod) in (work / ".git").read_text()
-        note = "shared" if shared else "OWN COPY"
+        marker = sub.work / ".git"
+        shared = marker.is_file() and str(sub.mod) in marker.read_text()
         if not shared and is_linked_worktree():
-            warnings.append(f"{name}: not sharing {mod} -- this checkout has its "
-                            f"own copy of the objects")
-        emit(f"  {name:<24} ok    {pin[:8]} ({note})")
+            warnings.append(f"{sub.label}: not sharing {sub.mod} -- this checkout "
+                            f"has its own copy of the objects")
+        emit(f"  {sub.label:<{width}}  ok    {sub.pin[:8]} "
+             f"({'shared' if shared else 'OWN COPY'})")
 
-        if mod.exists() and not on_any_remote(mod, pin):
-            warnings.append(f"{name}: pin {pin[:8]} is on no remote -- fine here, "
-                            f"fatal for a fresh clone (#365)")
+        if sub.mod.exists() and not on_any_remote(sub.mod, sub.pin):
+            warnings.append(f"{sub.label}: pin {sub.pin[:8]} is on no remote -- "
+                            f"fine here, fatal for a fresh clone (#365)")
 
     model = resolve_shared(ROOT, VENDOR_MODEL)
+    label = str(VENDOR_MODEL.parent)
     if model is None:
         failures.append(f"{VENDOR_MODEL} found in neither this checkout nor the "
                         f"main one -- the vendor-model simulations cannot run")
-        emit(f"  {'sources/models':<24} FAIL  {VENDOR_MODEL.name} not found")
+        emit(f"  {label:<{width}}  FAIL  {VENDOR_MODEL.name} not found")
     else:
         where = "here" if model.is_relative_to(ROOT) else "main checkout"
-        emit(f"  {'sources/models':<24} ok    {model.name} ({where})")
+        emit(f"  {label:<{width}}  ok    {model.name} ({where})")
 
     emit("")
     for line in warnings:
@@ -261,14 +306,59 @@ def ensure_pin(name: str, url: str, mod: Path, pin: str) -> list[str] | None:
     return unfetchable_report(name, url, mod, pin)
 
 
-def clone_module(name: str, path: str, mod: Path) -> bool:
-    """No object store yet -- let git create one the ordinary way."""
-    emit(f"  {name}: no object store at {mod.name}, running submodule update --init")
-    r = git(["submodule", "update", "--init", "--", path], ROOT,
+def clone_module(sub: Sub) -> bool:
+    """No object store yet -- let git create one the ordinary way (fresh clone)."""
+    emit(f"  {sub.label}: no object store yet, running submodule update --init")
+    r = git(["submodule", "update", "--init", "--", sub.rel], sub.parent,
             timeout=CHECKOUT_TIMEOUT_S * 4)
     if r.returncode != 0:
-        log(f"{name}: submodule update failed: {r.stderr.strip()}", "ERROR")
+        log(f"{sub.label}: submodule update failed: {r.stderr.strip()}", "ERROR")
     return r.returncode == 0
+
+
+def setup_one(sub: Sub, width: int, prune: bool) -> tuple[int, list[str]]:
+    """Materialise one submodule. Returns (changes made, problems)."""
+    if not sub.pin:
+        return 0, [f"{sub.label}: no gitlink recorded; nothing to check out"]
+
+    acted = 0
+    if not sub.mod.exists():
+        if not clone_module(sub):
+            return 0, [f"{sub.label}: could not create an object store"]
+        acted += 1
+
+    if prune:
+        git(["--git-dir", str(sub.mod), "worktree", "prune"])
+
+    head = head_of(sub.work)
+    if head == sub.pin:
+        emit(f"  {sub.label:<{width}}  already at {sub.pin[:8]} - nothing to do")
+        return acted, []
+
+    diagnosis = ensure_pin(sub.label, sub.url, sub.mod, sub.pin)
+    if diagnosis:
+        emit(f"  {sub.label:<{width}}  FAILED - see below")
+        return acted, diagnosis
+
+    if head:
+        r = git(["checkout", "--detach", sub.pin], sub.work,
+                timeout=CHECKOUT_TIMEOUT_S)
+        what = f"moved {head[:8]} -> {sub.pin[:8]}"
+    else:
+        # A registration left by a deleted worktree at this path makes
+        # `worktree add` refuse; prune first so setup is re-runnable.
+        git(["--git-dir", str(sub.mod), "worktree", "prune"])
+        if sub.work.exists() and not any(sub.work.iterdir()):
+            sub.work.rmdir()
+        r = git(["--git-dir", str(sub.mod), "worktree", "add", "--detach",
+                 str(sub.work), sub.pin], timeout=CHECKOUT_TIMEOUT_S)
+        what = f"checked out {sub.pin[:8]} (objects shared, not copied)"
+
+    if r.returncode != 0:
+        emit(f"  {sub.label:<{width}}  FAILED - {r.stderr.strip()[:120]}")
+        return acted, [f"{sub.label}: {r.stderr.strip() or r.stdout.strip()}"]
+    emit(f"  {sub.label:<{width}}  {what}")
+    return acted + 1, []
 
 
 def setup(prune: bool = False) -> int:
@@ -279,55 +369,20 @@ def setup(prune: bool = False) -> int:
     emit(f"  sharing objects from {common_dir() / 'modules'}")
     emit("")
 
-    for path, work, url in submodules():
-        name = path
-        pin = recorded_pin(path)
-        mod = module_dir(name)
-
-        if not pin:
-            problems.append(f"{name}: no gitlink in the index; nothing to check out")
-            continue
-
-        if not mod.exists():
-            if not clone_module(name, path, mod):
-                problems.append(f"{name}: could not create an object store")
-                continue
-            acted += 1
-
-        if prune:
-            git(["--git-dir", str(mod), "worktree", "prune"])
-
-        head = head_of(work)
-        if head == pin:
-            emit(f"  {name:<24} already at {pin[:8]} - nothing to do")
-            continue
-
-        diagnosis = ensure_pin(name, url, mod, pin)
-        if diagnosis:
-            problems.extend(diagnosis)
-            emit(f"  {name:<24} FAILED - see below")
-            continue
-
-        if head:
-            r = git(["checkout", "--detach", pin], work,
-                    timeout=CHECKOUT_TIMEOUT_S)
-            what = f"moved {head[:8]} -> {pin[:8]}"
-        else:
-            # Stale registration from a deleted worktree at this path would make
-            # `worktree add` refuse; prune first so setup is re-runnable.
-            git(["--git-dir", str(mod), "worktree", "prune"])
-            if work.exists() and not any(work.iterdir()):
-                work.rmdir()
-            r = git(["--git-dir", str(mod), "worktree", "add", "--detach",
-                     str(work), pin], timeout=CHECKOUT_TIMEOUT_S)
-            what = f"checked out {pin[:8]} (objects shared, not copied)"
-
-        if r.returncode != 0:
-            problems.append(f"{name}: {r.stderr.strip() or r.stdout.strip()}")
-            emit(f"  {name:<24} FAILED - {r.stderr.strip()[:120]}")
-            continue
-        acted += 1
-        emit(f"  {name:<24} {what}")
+    # Re-listed after each level: a submodule's own `.gitmodules` gitlinks are
+    # read from its index once it is checked out, which is more authoritative
+    # than the pinned tree the first pass had to use.
+    done: set[str] = set()
+    while True:
+        pending = [s for s in submodules() if s.label not in done]
+        if not pending:
+            break
+        width = max(len(s.label) for s in pending)
+        for sub in pending:
+            done.add(sub.label)
+            changes, trouble = setup_one(sub, width, prune)
+            acted += changes
+            problems += trouble
 
     emit("")
     model = resolve_shared(ROOT, VENDOR_MODEL)
