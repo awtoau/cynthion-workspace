@@ -33,7 +33,6 @@ Configures the FPGA (SRAM only; a power cycle restores whatever was there).
     ./scripts/hyperram_regfuzz.py
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +41,7 @@ LOG = ROOT / "tmp" / "logs" / "hyperram_regfuzz.log"
 BITSTREAM = ROOT / "gateware" / "probes" / "hyperram" / "regfuzz_build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 APPLET_ID = 0x52465A5A
 REGISTER_ID    = 1
@@ -77,13 +77,11 @@ def main():
             emit(f"bitstream missing: {BITSTREAM}")
             return 1
 
-        result = subprocess.run(
-            [sys.executable,
-             str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"),
-             "configure", str(BITSTREAM)],
-            cwd=ROOT, capture_output=True, text=True)
-        if result.returncode != 0:
-            emit(f"configure failed: {(result.stderr or result.stdout).strip()[-200:]}")
+        # `expect="design"`: read over JTAG registers, no console to prompt, so
+        # the part's DONE bit is the confirmation (#360).
+        import soc_confirm
+
+        if soc_confirm.configure_and_confirm(BITSTREAM, expect="design") != 0:
             return 1
 
         from apollo_fpga import ApolloDebugger

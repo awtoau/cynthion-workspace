@@ -79,13 +79,15 @@ LINE_TIMEOUT_S = 5.0
 
 
 def configure():
-    """Load the bitstream over JTAG. Also serves as the CPU reset."""
-    result = subprocess.run(
-        [sys.executable, str(APOLLO_CLI), "configure", str(BITSTREAM)],
-        capture_output=True, text=True, cwd=str(ROOT))
-    for line in (result.stdout + result.stderr).strip().splitlines():
-        emit(f"    {line}")
-    return result.returncode == 0
+    """Load the bitstream over JTAG. Also serves as the CPU reset.
+
+    `expect="console"`: it must enumerate, and must NOT be prompted -- the
+    banner is flushed on the first received byte and capturing it is this
+    script's whole purpose (#360).
+    """
+    import soc_confirm
+
+    return soc_confirm.configure_and_confirm(BITSTREAM, expect="console") == 0
 
 
 def wait_for_console():

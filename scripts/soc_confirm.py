@@ -9,7 +9,7 @@ Confirm a design is actually running, and NAME which failure it is when it is no
     ./scripts/soc_confirm.py                # confirm; exit 1 and name the cause
     ./scripts/soc_confirm.py --json         # the same, machine-readable
     ./scripts/soc_confirm.py --before       # the pre-configure gate only
-    ./scripts/soc_confirm.py --no-shell     # a bitstream with no console: DONE only
+    ./scripts/soc_confirm.py --expect design   # no console: the DONE bit only
 
     from soc_confirm import configure_and_confirm     # configure, then confirm
 
@@ -53,9 +53,11 @@ is the whole value.
   bus and a wedged part both read back `ffffffff`.
 - Nothing here is about WHICH bitstream is running -- that is the gateware digest
   and USERCODE check in `soc_run.py`, and this does not duplicate it.
-- `--no-shell` (`shell=False`) stops at DONE: a probe read over JTAG registers
-  presents no console, so "running" is as far as the evidence goes. Whether it
-  does its job is the caller's own readback.
+- `--expect design` stops at DONE: a probe read over JTAG registers presents no
+  console, so "running" is as far as the evidence goes. `--expect console`
+  requires the console to enumerate without prompting it, for callers that
+  capture the banner themselves -- the first received byte flushes it, so a
+  prompt here would eat the transcript they are about to read.
 
 ## Order of evidence, and why the console goes first
 
@@ -125,6 +127,15 @@ CONSOLE_REPLY_S = 2.0
 # asks, not one -- one ask scores a live board dead (see hyperram_pin_axis.py).
 CONSOLE_ASKS = 2
 
+# How far confirmation can go, per bitstream. The caller says which, because
+# only the caller knows what its bitstream presents and what it is about to read.
+#
+#   "shell"   the SoC console: prompted, so silence is attributable
+#   "console" the console must ENUMERATE, and is not prompted -- for callers
+#             that capture the banner themselves, which the first byte flushes
+#   "design"  no console at all (a JTAG-register probe): DONE is the evidence
+EXPECT = ("shell", "console", "design")
+
 # `--json` keeps stdout to one parseable object. Set there and nowhere else.
 QUIET = False
 
@@ -154,13 +165,12 @@ class Evidence:
     idcode: int | None = None           # ECP5 IDCODE from the JTAG scan
     status: int | None = None           # ECP5 configuration status register
     jtag_console: bytes | None = None   # the JTAG-pin UART, Apollo's own CDC node
-    # Does this bitstream present the SoC shell at all? A probe read over JTAG
-    # registers has no console, and asking for one would score it dead.
-    shell: bool = True
+    # How far confirmation can go for THIS bitstream. See `EXPECT`.
+    expect: str = "shell"
 
     def as_json(self):
         return {
-            "shell": self.shell,
+            "expect": self.expect,
             "apollo": self.apollo, "console_usb": self.console_usb,
             "console_node": self.console_node, "served": self.served,
             "thieves": [{"pid": pid, "command": cmd} for pid, cmd in self.thieves],
@@ -220,9 +230,9 @@ def diagnose(ev: Evidence) -> Verdict:
     Ordered by what is cheapest to be certain about: a reply settles it, then the
     bus census, and only then the JTAG evidence which is the least direct.
     """
-    if not ev.shell:
-        # A bitstream with no shell -- a probe read over JTAG registers, say.
-        # There is no console to ask, so DONE is the whole of the evidence.
+    if ev.expect == "design":
+        # A bitstream with no console -- a probe read over JTAG registers, say.
+        # DONE is the whole of the evidence there is.
         if ev.apollo is False:
             return Verdict("board-absent", "no part of this board is on USB", [
                 "  1d50:615c (Apollo, CONTROL) is not on the bus.",
@@ -233,6 +243,14 @@ def diagnose(ev: Evidence) -> Verdict:
                 "  console, so DONE is as far as confirmation goes -- whether the",
                 "  design does its job is the caller's own readback.",
             ]))
+
+    if ev.expect == "console" and ev.console_usb:
+        # Presence only, deliberately: the caller reads this console itself and
+        # the banner is flushed on the FIRST received byte, so prompting here
+        # would consume the transcript it is about to capture.
+        return Verdict("ok", "the console enumerated", [
+            "  1d50:6180 is on the bus. Not prompted -- the caller reads it.",
+        ])
 
     if ev.reply and ev.reply.strip():
         return Verdict("ok", "the shell answered", [
@@ -450,11 +468,13 @@ def ask_jtag(ev):
                if ev.status is not None else ", status unreadable"))
 
 
-def gather(*, node=None, jtag=True, shell=True):
+def gather(*, node=None, jtag=True, expect="shell"):
     """Every probe, cheapest first, stopping as soon as the verdict is decided."""
     import usb_ids
 
-    ev = Evidence(shell=shell)
+    if expect not in EXPECT:
+        raise ValueError(f"expect must be one of {EXPECT}, not {expect!r}")
+    ev = Evidence(expect=expect)
     ev.apollo = usb_present(APOLLO_PID)
     ev.console_usb = usb_present(usb_ids.product_id(CONSOLE))
     ev.console_node = node or usb_ids.find_tty(CONSOLE)
@@ -463,22 +483,24 @@ def gather(*, node=None, jtag=True, shell=True):
         f"1d50:{usb_ids.product_id(CONSOLE):04x} "
         f"{'present' if ev.console_usb else 'ABSENT'} (console, AUX)")
 
-    if shell and (ev.console_usb or node):
+    if expect == "console" and ev.console_usb:
+        return ev
+    if expect == "shell" and (ev.console_usb or node):
         ask_console(ev, node)
         if (ev.reply and ev.reply.strip()) or ev.thieves:
             return ev
     if not ev.console_usb and ev.apollo and jtag:
-        if shell:
+        if expect == "shell":
             ask_jtag_console(ev)
         if not (ev.jtag_console and ev.jtag_console.strip()):
             ask_jtag(ev)
     return ev
 
 
-def confirm(*, node=None, jtag=True, shell=True):
+def confirm(*, node=None, jtag=True, expect="shell"):
     """Gather, diagnose, and say so. Returns the Verdict."""
-    say("confirming a design is running (#360):")
-    verdict = diagnose(gather(node=node, jtag=jtag, shell=shell))
+    say(f"confirming a design is running, expecting a {expect} (#360):")
+    verdict = diagnose(gather(node=node, jtag=jtag, expect=expect))
     if verdict.ok:
         say(f"CONFIRMED: {verdict.headline}")
     else:
@@ -512,7 +534,7 @@ def precheck():
     ])
 
 
-def configure_and_confirm(bitstream, *, tries=3, node=None, shell=True):
+def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
     """Configure the FPGA and prove a design is running. 0 on success.
 
     THE ONE PATH. Per-script liveness gates were growing after each script got
@@ -540,7 +562,7 @@ def configure_and_confirm(bitstream, *, tries=3, node=None, shell=True):
             say(f"  configure attempt {attempt}/{tries} FAILED: "
                 + (tail[-1][:160] if tail else "killed at its time limit"))
             continue
-        verdict = confirm(node=node, jtag=True, shell=shell)
+        verdict = confirm(node=node, jtag=True, expect=expect)
         if verdict.ok:
             say(f"configured {Path(bitstream).name} and the design answers"
                 + (f" (attempt {attempt})" if attempt > 1 else ""))
@@ -567,9 +589,10 @@ def main():
     parser.add_argument("--node", help="a tty to use instead of the USB console")
     parser.add_argument("--no-jtag", action="store_true",
                         help="skip the JTAG probe; USB and the console only")
-    parser.add_argument("--no-shell", action="store_true",
-                        help="this bitstream presents no console: DONE is the "
-                             "whole of the confirmation")
+    parser.add_argument("--expect", choices=EXPECT, default="shell",
+                        help="how far confirmation can go for this bitstream: "
+                             "prompt the shell, require the console to "
+                             "enumerate, or stop at the part's DONE bit")
     args = parser.parse_args()
 
     global QUIET
@@ -591,7 +614,7 @@ def main():
     else:
         started = time.perf_counter()
         ev = gather(node=args.node, jtag=not args.no_jtag,
-                    shell=not args.no_shell)
+                    expect=args.expect)
         verdict = diagnose(ev)
         say(f"  ({time.perf_counter() - started:.1f} s of evidence)")
 

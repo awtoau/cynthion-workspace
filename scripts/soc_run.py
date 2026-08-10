@@ -1242,9 +1242,12 @@ def configure_and_read(args, emit):
 
         # CONFIGURE AND CONFIRM, never configure alone. A zero exit from
         # `apollo configure` is not a running design -- four sessions in one day
-        # were spent on that, each blaming the change under test (#360). This
-        # retries the retryable causes and names the rest.
-        if soc_confirm.configure_and_confirm(BITSTREAM) != 0:
+        # were spent on that, each blaming the change under test (#360).
+        #
+        # `expect="console"`: it must ENUMERATE, and is not prompted here. The
+        # banner is flushed on the first received byte, and the read below is
+        # what prints it -- prompting twice would leave the transcript empty.
+        if soc_confirm.configure_and_confirm(BITSTREAM, expect="console") != 0:
             return 1
 
         if args.no_read:

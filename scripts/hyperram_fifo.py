@@ -111,14 +111,12 @@ def build():
             achieved, verdict, target = matches[0]
             timing = f"{verdict} {float(achieved):.0f}/{float(target):.0f} MHz"
 
-    load = subprocess.run(
-        [sys.executable, "-m", "apollo_fpga.commands.cli", "configure",
-         str(BITSTREAM)],
-        cwd=ROOT, capture_output=True, text=True,
-        env={**__import__("os").environ,
-             "PYTHONPATH": str(ROOT / "repos" / "apollo")})
-    if load.returncode != 0:
-        return False, f"configure failed: {(load.stderr or load.stdout)[-200:]}"
+    # `expect="design"`: counters are read over JTAG registers, no console, so
+    # the part's DONE bit is the confirmation rather than an exit code (#360).
+    import soc_confirm
+
+    if soc_confirm.configure_and_confirm(BITSTREAM, expect="design") != 0:
+        return False, "no design running; the verdict above names why"
     return True, timing
 
 

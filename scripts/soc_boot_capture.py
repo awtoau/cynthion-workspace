@@ -35,7 +35,6 @@ when one is running rather than fighting it for the tty.
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -112,13 +111,13 @@ def main():
         link = soc_shell.Link.open(None)
         emit(f"console: {link.how}")
         emit("configuring...")
-        done = subprocess.run([sys.executable, str(APOLLO), "configure",
-                               str(BITSTREAM)], capture_output=True, text=True)
-        if done.returncode != 0:
-            emit("configure failed:")
-            emit((done.stderr or done.stdout).strip()[-400:])
+        # `expect="console"`: it must enumerate and must NOT be prompted -- this
+        # script is capturing what the CPU says on its way up, and the first
+        # received byte flushes the banner (#360).
+        import soc_confirm
+
+        if soc_confirm.configure_and_confirm(BITSTREAM, expect="console") != 0:
             return 1
-        emit("configured")
         # The tty is destroyed and recreated by the reconfigure, so the link
         # taken before it is stale whatever it was. Reopened rather than reused.
         link.close()

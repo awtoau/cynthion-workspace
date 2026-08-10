@@ -36,7 +36,6 @@ HyperBus parts use 9 column address bits.
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -103,11 +102,15 @@ def decode_id0(value):
 
 
 def configure():
-    result = subprocess.run(
-        [sys.executable, str(ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"),
-         "configure", str(BITSTREAM)],
-        cwd=ROOT, capture_output=True, text=True)
-    return result.returncode == 0, (result.stderr or result.stdout).strip()[-200:]
+    """Load the probe and confirm the part reports a design. `(ok, detail)`.
+
+    `expect="design"`: this bitstream is read over JTAG registers and presents
+    no console, so the DONE bit is the confirmation available (#360).
+    """
+    import soc_confirm
+
+    rc = soc_confirm.configure_and_confirm(BITSTREAM, expect="design")
+    return rc == 0, "see the verdict above"
 
 
 def main():

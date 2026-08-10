@@ -115,7 +115,7 @@ def configure(bitstream, rung):
     (#360), so every path gets it and each cause is named rather than reported
     as "the board did not come up".
     """
-    if soc_confirm.configure_and_confirm(bitstream) != 0:
+    if soc_confirm.configure_and_confirm(bitstream, expect="shell") != 0:
         raise SystemExit(f"no design running after configuring {bitstream}")
     if not carries_rung(rung):
         raise SystemExit(

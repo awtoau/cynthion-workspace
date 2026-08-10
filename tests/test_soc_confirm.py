@@ -195,17 +195,31 @@ def test_a_bitstream_with_no_console_is_confirmed_by_done_alone():
     `hyperram_identify.py` reads its results over JTAG registers. DONE is the
     whole of the confirmation available, and it is still more than an exit code.
     """
-    assert verdict(shell=False, apollo=True, idcode=ECP5_IDCODE,
+    assert verdict(expect="design", apollo=True, idcode=ECP5_IDCODE,
                    status=STATUS_RUNNING).name == "ok"
-    assert verdict(shell=False, apollo=True, idcode=ECP5_IDCODE,
+    assert verdict(expect="design", apollo=True, idcode=ECP5_IDCODE,
                    status=STATUS_BLANK).name == "blank-fpga"
-    assert verdict(shell=False, apollo=False).name == "board-absent"
+    assert verdict(expect="design", apollo=False).name == "board-absent"
 
 
 def test_a_console_less_bitstream_is_never_called_wrong_port():
     """`wrong-port` is about a console that should have enumerated. There is none."""
-    assert verdict(shell=False, apollo=True, console_usb=False,
+    assert verdict(expect="design", apollo=True, console_usb=False,
                    idcode=ECP5_IDCODE, status=STATUS_RUNNING).ok
+
+
+def test_expect_console_passes_on_enumeration_without_prompting():
+    """For callers that capture the banner themselves.
+
+    The banner is flushed on the FIRST received byte, so a prompt here would eat
+    the transcript `riscv_console_capture.py` exists to record. Presence of
+    1d50:6180 is the confirmation, and a blank FPGA still cannot fake it.
+    """
+    assert verdict(expect="console", apollo=True, console_usb=True).name == "ok"
+    assert verdict(expect="console", apollo=True, console_usb=False,
+                   idcode=ECP5_IDCODE, status=STATUS_BLANK).name == "blank-fpga"
+    assert verdict(expect="console", apollo=True, console_usb=False,
+                   idcode=ECP5_IDCODE, status=STATUS_RUNNING).name == "wrong-port"
 
 
 def test_the_cli_names_a_stolen_port_end_to_end():
