@@ -11,6 +11,7 @@ use core::fmt::Write;
 
 use super::parse::{parse_decimal, trim};
 use crate::bist::{self, Axes, Bist};
+use crate::clock::Hz;
 use crate::uart::Uart;
 
 /// Passes per cell when none is given.
@@ -54,8 +55,12 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
 
 /// `bist ck [0|1]` -- report the rungs this bitstream carries, or select one.
 ///
-/// Reports in MHz with three decimals: the reachable rungs include 85.7143 and
-/// 94.2857, and a sweep exists to tell those apart from their neighbours (#333).
+/// Through `clock::Hz`, which is lossless: the reachable rungs include 85.7143
+/// and 94.2857 MHz, and a sweep exists to tell those apart from their
+/// neighbours (#333). The rung column is ragged as a result -- a whole megahertz
+/// prints as `60 MHz`, not `60.000` -- and both host regexes
+/// (`hyperram_ck_sweep.py`, `hyperram_matrix_diff.py`) already read
+/// `([\d.]+)\s+MHz`.
 fn ck(uart: &mut Uart, args: &[u8]) {
     // SAFETY: `bist::CK_BASE` is the selector's CSR base.
     let ck = unsafe { bist::Ck::new(bist::CK_BASE) };
@@ -75,13 +80,11 @@ fn ck(uart: &mut Uart, args: &[u8]) {
 
     let live = ck.selected();
     for rung in 0..rungs {
-        let khz = ck.khz(rung);
         let _ = writeln!(
             uart,
-            "  rung {} {:>4}.{:03} MHz{}",
+            "  rung {} {}{}",
             rung,
-            khz / 1000,
-            khz % 1000,
+            Hz::khz(ck.khz(rung)),
             if rung == live { "  <- live" } else { "" }
         );
     }
