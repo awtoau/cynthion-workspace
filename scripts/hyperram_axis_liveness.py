@@ -27,8 +27,11 @@ the difference is whether something in the same run shows the axis moved.
 `CONFIG_VERIFY`. So any CR0 field can be proven live by commanding two different
 values and reading both back.
 
-There is no CR1 readback, which is why `CR1[6]` cannot be settled here at all --
-that needs gateware, and it is the substance of #334.
+`REG_DEVICE_READBACK_CR1` does the same for CR1 (#334), so `CR1[6]` is settled
+here too. It is a CAPABILITY bit: the vendor's application note (rev P01,
+s6.5.5) says a part without differential-clock support silently DISCARDS the
+write, so a readback that does not follow the command is the part refusing the
+mode -- and every `dif`/`se` row ever taken is then void, not merely inert.
 
 Transcript -> `tmp/logs/hyperram-axis-liveness.txt`.
 """
@@ -51,6 +54,7 @@ TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-axis-liveness.txt"
 # that silently matches nothing is the same failure as an axis that silently
 # does nothing.
 READBACK = re.compile(r"CR0\s+part reports\s+(0x[0-9a-fA-F]+)")
+READBACK_CR1 = re.compile(r"CR1\s+part reports\s+(0x[0-9a-fA-F]+)")
 
 # CR0 fields, Table 8 rev A01-006 p.21.
 FIELDS = {
@@ -81,16 +85,20 @@ class Board:
         TRANSCRIPT.write_text("\n".join(self.log))
 
 
-def cr0_after(board, cell):
-    """Run a cell, then read CR0 back as the part reports it."""
+def status_after(board, cell):
+    """Run a cell, then read CR0 and CR1 back as the part reports them."""
     board.send(f"bist cell {cell}", 20)
     text = board.send("bist status")
-    found = READBACK.search(text)
-    if not found:
+    found = [pattern.search(text) for pattern in (READBACK, READBACK_CR1)]
+    if not all(found):
         raise SystemExit(
             "no device readback in `bist status`. The parse, not the part, is the "
             f"first suspect. Reply was:\n{text}")
-    return int(found.group(1), 0)
+    return tuple(int(match.group(1), 0) for match in found)
+
+
+def cr0_after(board, cell):
+    return status_after(board, cell)[0]
 
 
 def decode(value):
@@ -120,10 +128,33 @@ def main():
             print(f"  {'LIVE -- the part stored what was asked' if live else
                      'NOT PROVEN -- the field did not change in the readback'}")
 
+        # CR1[6], the one axis with no CR0 field. Commanded both ways and read
+        # back through #334's `REG_DEVICE_READBACK_CR1`.
+        first, second = (status_after(board, "3 dif 0 2 fix")[1],
+                         status_after(board, "3 se 0 2 fix")[1])
+        bit_a, bit_b = (first >> 6) & 1, (second >> 6) & 1
+        print("\nCR1[6]  clock mode")
+        print(f"  bist cell 3 dif 0 2 fix  -> CR1 {first:#06x}  bit6 {bit_a}")
+        print(f"  bist cell 3 se  0 2 fix  -> CR1 {second:#06x}  bit6 {bit_b}")
+        if first in (0, 0xffff) or second in (0, 0xffff):
+            cr1_live = None
+            print("  NOT PROVEN -- the CR1 read path is dead, so no dif/se row "
+                  "carries information in either direction")
+        elif bit_a == bit_b:
+            cr1_live = False
+            print("  NOT PROVEN -- the part DISCARDED the write, which the vendor "
+                  "note says a part without differential-clock support does. Every "
+                  "dif/se row is void, not inert.")
+        else:
+            cr1_live = True
+            print("  LIVE -- the part stored the mode it was commanded")
+
         print("\nsummary")
         for field, live in verdicts.items():
             print(f"  {field:20s} {'live' if live else 'NOT PROVEN'}")
-        print("  CR1[6]  clock mode  NO READBACK EXISTS -- see #334")
+        print(f"  {'CR1[6] clock mode':20s} "
+              f"{'live' if cr1_live else 'NOT PROVEN'}")
+        verdicts["CR1[6] clock mode"] = bool(cr1_live)
 
         if not all(verdicts.values()):
             print("\nAny sweep row varying a NOT PROVEN field carries no "
