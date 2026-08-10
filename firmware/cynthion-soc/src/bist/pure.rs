@@ -81,6 +81,66 @@ impl Cell {
     }
 }
 
+/// `REG_CTRL_STATE` bits 8..10: whether the engine's CR0/CR1 readback stands up.
+///
+/// The readback shares its capture window with the data path, so a cell run at a
+/// phase outside the window returns a held or slid word -- and the report was
+/// printed as fact, once announcing a part in Deep Power Down that was awake
+/// (#366). Each rule is one residue seen on the board (#358).
+pub mod trust {
+    /// CR0 read twice with CR1 between agreed. A path sliding by one transaction
+    /// cannot.
+    pub const REREAD: u32 = 1 << 8;
+    /// CR0 and CR1 came back different. A path holding one word answers alike.
+    pub const DISTINCT: u32 = 1 << 9;
+    /// Both words carry their 16 bits in both halves, as a register read does.
+    /// A byte-slipped capture does not.
+    pub const HALVES: u32 = 1 << 10;
+}
+
+/// What may be said about the part's configuration, given the trust bits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Readback {
+    /// Nothing has been read back yet, so there is no claim to make either way.
+    NotLatched,
+    /// The words stand alone.
+    Reported { cr0: u16, cr1: u16 },
+    /// Withheld, and why. **It carries no number**: a value printed beside a
+    /// warning that it is wrong is read as the value, and every claim derived
+    /// from it -- the latency code, the drive strength, "the part is asleep" --
+    /// is as wrong as the word it came from.
+    Withheld(&'static str),
+}
+
+/// Whether the CR0/CR1 readback may be reported, and what to say when it may not.
+///
+/// `write_cycles` is the engine's own counter: its first increment is
+/// `WRITE_START`, which every run reaches through the config path, so zero means
+/// nothing has been read back off the part at all.
+pub fn readback(write_cycles: u32, ctrl_state: u32, cr0: u32, cr1: u32) -> Readback {
+    if write_cycles == 0 {
+        return Readback::NotLatched;
+    }
+    // First failing rule names itself. The order is most to least specific about
+    // what the read path did.
+    if ctrl_state & trust::REREAD == 0 {
+        return Readback::Withheld(
+            "CR0 read twice gave two answers -- the read path slid, so both \
+             words belong to other transactions");
+    }
+    if ctrl_state & trust::DISTINCT == 0 {
+        return Readback::Withheld(
+            "CR0 and CR1 read back identical -- the read path is handing back \
+             one held word, not the registers");
+    }
+    if ctrl_state & trust::HALVES == 0 {
+        return Readback::Withheld(
+            "a register read arrives in both halves of the word and these do \
+             not match -- the capture is slipped by whole bytes");
+    }
+    Readback::Reported { cr0: cr0 as u16, cr1: cr1 as u16 }
+}
+
 /// CR0 for these axes, without the apply bit.
 ///
 /// Every field the sweep varies must be CLEARED before it is set, or the
@@ -220,6 +280,48 @@ mod tests {
     #[test]
     fn an_engine_that_never_ran_is_not_a_pass() {
         assert!(matches!(cell(0, 0, 4096, 4096).verdict(), Verdict::NoResult));
+    }
+
+    const ALL_TRUST: u32 = trust::REREAD | trust::DISTINCT | trust::HALVES;
+
+    /// THE BOARD'S OWN NUMBERS, #366. After a cell at a failing capture phase
+    /// `bist status` printed `CR1 = 0xbf2f` -- the PREVIOUS CR0 -- and read
+    /// CR1[5] out of it as "the part is asleep". The part was awake.
+    #[test]
+    fn a_slid_readback_is_withheld_rather_than_decoded() {
+        let slid = readback(1, ALL_TRUST & !trust::REREAD, 0x4006_4006, 0xbf2f_bf2f);
+        assert!(matches!(slid, Readback::Withheld(_)));
+        // And nothing derived survives: no word comes out of a withheld report,
+        // so no caller can decode CR1[5] out of one.
+        assert!(!matches!(slid, Readback::Reported { .. }));
+    }
+
+    /// Each rule alone must be able to withhold. A trust word that only ever
+    /// reports when every bit is wrong would pass the test above and nothing else.
+    #[test]
+    fn every_trust_rule_can_withhold_on_its_own() {
+        for rule in [trust::REREAD, trust::DISTINCT, trust::HALVES] {
+            assert!(matches!(readback(1, ALL_TRUST & !rule, 0x8f2f_8f2f, 0xff81_ff81),
+                             Readback::Withheld(_)),
+                    "rule {rule:#x} cannot withhold on its own");
+        }
+    }
+
+    /// The control: a good readback must still be reported, or "withheld" is
+    /// just silence and the instrument has lost its measurement.
+    #[test]
+    fn a_readback_that_passes_every_rule_is_reported() {
+        assert!(matches!(readback(1, ALL_TRUST, 0x8f2f_8f2f, 0xff81_ff81),
+                         Readback::Reported { cr0: 0x8f2f, cr1: 0xff81 }));
+    }
+
+    /// Before any run there is nothing to report and nothing to distrust; the
+    /// two must not print the same thing.
+    #[test]
+    fn nothing_latched_is_not_the_same_as_untrustworthy() {
+        assert!(matches!(readback(0, 0, 0, 0), Readback::NotLatched));
+        assert!(matches!(readback(0, ALL_TRUST, 0x8f2f_8f2f, 0xff81_ff81),
+                         Readback::NotLatched));
     }
 
     /// The bound must track the parameter it depends on, not be a flat ceiling.

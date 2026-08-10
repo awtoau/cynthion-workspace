@@ -53,7 +53,7 @@ use core::fmt::Write;
 /// module's vocabulary and callers should not have to know where they live.
 pub mod pure;
 
-pub use pure::{Axes, Cell, Verdict};
+pub use pure::{Axes, Cell, Readback, Verdict};
 use pure::{cr0_word, cr1_word, latency_clocks, latency_code_legal, poll_limit,
            HEADING_AXES, HEADING_COUNTS, STAMP_PAD};
 
@@ -82,13 +82,15 @@ pub mod reg {
     /// stalled. The engine's own comment: without it a hung sweep is a silent
     /// poll loop, and the cell index does not say which state.
     pub const FSM_STATE: usize = 28;
-    /// The controller HANDSHAKE, as three bits: `idle`, `recovery elapsed`,
-    /// `start`. Not an FSM state -- see the engine, where the state number was
-    /// declared and never bound, so it read zero and looked like "state 0".
+    /// The READ PATH's state: the controller handshake in bits 0..3 -- `idle`,
+    /// `recovery elapsed`, `start`, `stalled` (sticky) -- and the readback trust
+    /// rules in bits 8..10, see [`pure::trust`].
     ///
-    /// These are the two halves of what `READ_RECOVER` waits on, which is the
-    /// state the engine parks in. Reading them separately says WHICH half is
-    /// false; a state number never could.
+    /// Not an FSM state: in the engine the controller's state number was
+    /// declared and never bound, so it read zero and looked like "state 0". Bits
+    /// 0..1 are the two halves of what `READ_RECOVER` waits on, which is the
+    /// state the engine parks in; reading them separately says WHICH half is
+    /// false, and a state number never could.
     pub const CTRL_STATE: usize = 29;
     /// CR0 AS THE PART REPORTS IT, read back after configuring.
     ///
@@ -401,47 +403,62 @@ impl Bist {
         // `WRITE_START` without verifying -- the counter advances with nothing
         // latched. `configure` below always sets both apply bits, so reaching
         // that state needs a sweep started by something other than this shell.
+        //
+        // AND THE READBACK CAPTURES THROUGH THE CELL'S OWN PHASE, so at a phase
+        // outside the window it is a word from another transaction. `readback`
+        // decides; a withheld report carries no number, so nothing below can
+        // decode one. (#366)
         let write_cycles = self.read(reg::WRITE_CYCLES);
-        if write_cycles == 0 {
-            let _ = writeln!(uart,
-                "  CR0/CR1 NOT LATCHED -- no cell has run since this bitstream \
-                 was configured, so nothing has been read back off the part");
-        } else {
-            // WHAT THE PART SAYS, against what it was told. Datasheet default is
-            // 0x8F2F: latency code 2 (7 clocks), fixed, drive 34 ohms.
-            let back = self.read(reg::DEVICE_READBACK) & 0xffff;
-            // The code decoded, because the field is SPARSE: `5 + sext4(code)`,
-            // so 14 and 15 are the two SHORTEST at 3 and 4 clocks and sit below
-            // code 0. Reading the raw code as if it were monotonic is a mistake
-            // the sweeps invite.
-            let code = ((back >> 4) & 0xf) as u8;
-            let _ = writeln!(
-                uart, "  CR0     part reports {:#06x}  latency code {} = {} clocks{}  \
-                       {}  drive {}",
-                back, code, latency_clocks(code),
-                if latency_code_legal(code) { "" } else { " RESERVED" },
-                if back & 8 != 0 { "fixed" } else { "variable" },
-                (back >> 12) & 0x7);
-            // CR1[6] IS A CAPABILITY, not a setting. The vendor's application note
-            // (rev P01, s6.5.5) says a part without differential-clock support
-            // silently discards a write to this bit -- so the readback is the only
-            // thing that separates "the axis has no effect" from "the axis never
-            // moved", which are the same measurement without it (#334, #336).
-            let cr1 = self.read(reg::DEVICE_READBACK_CR1) & 0xffff;
-            let _ = writeln!(
-                uart, "  CR1     part reports {:#06x}  clock {}  hybrid sleep {}",
-                cr1,
-                if cr1 & (1 << 6) != 0 { "single-ended" } else { "differential" },
-                if cr1 & (1 << 5) != 0 { "ON -- the part is asleep" } else { "off" });
-            if cr1 == 0 || cr1 == 0xffff {
+        match pure::readback(write_cycles, self.read(reg::CTRL_STATE),
+                             self.read(reg::DEVICE_READBACK),
+                             self.read(reg::DEVICE_READBACK_CR1)) {
+            Readback::NotLatched => {
                 let _ = writeln!(uart,
-                    "  CR1     READBACK IS {:#06x} -- so the dif/se axis cannot be \
-                     judged in either direction", cr1);
+                    "  CR0/CR1 NOT LATCHED -- no cell has run since this bitstream \
+                     was configured, so nothing has been read back off the part");
             }
-            if back == 0 || back == 0xffff {
+            Readback::Withheld(why) => {
                 let _ = writeln!(uart,
-                    "  CR0     READBACK IS {:#06x} after a run -- the register read \
-                     path is not working, so nothing here says the write landed", back);
+                    "  CR0/CR1 WITHHELD -- {}. Re-run at a capture phase inside \
+                     the proven window, then read this again", why);
+            }
+            Readback::Reported { cr0, cr1 } => {
+                // WHAT THE PART SAYS, against what it was told. Datasheet default
+                // is 0x8F2F: latency code 2 (7 clocks), fixed, drive 34 ohms.
+                //
+                // The code decoded, because the field is SPARSE: `5 + sext4(code)`,
+                // so 14 and 15 are the two SHORTEST at 3 and 4 clocks and sit below
+                // code 0. Reading the raw code as if it were monotonic is a mistake
+                // the sweeps invite.
+                let code = ((cr0 >> 4) & 0xf) as u8;
+                let _ = writeln!(
+                    uart, "  CR0     part reports {:#06x}  latency code {} = {} clocks{}  \
+                           {}  drive {}",
+                    cr0, code, latency_clocks(code),
+                    if latency_code_legal(code) { "" } else { " RESERVED" },
+                    if cr0 & 8 != 0 { "fixed" } else { "variable" },
+                    (cr0 >> 12) & 0x7);
+                // CR1[6] IS A CAPABILITY, not a setting. The vendor's application
+                // note (rev P01, s6.5.5) says a part without differential-clock
+                // support silently discards a write to this bit -- so the readback
+                // is the only thing that separates "the axis has no effect" from
+                // "the axis never moved", which are the same measurement without
+                // it (#334, #336).
+                let _ = writeln!(
+                    uart, "  CR1     part reports {:#06x}  clock {}  hybrid sleep {}",
+                    cr1,
+                    if cr1 & (1 << 6) != 0 { "single-ended" } else { "differential" },
+                    if cr1 & (1 << 5) != 0 { "ON -- the part is asleep" } else { "off" });
+                if cr1 == 0 || cr1 == 0xffff {
+                    let _ = writeln!(uart,
+                        "  CR1     READBACK IS {:#06x} -- so the dif/se axis cannot be \
+                         judged in either direction", cr1);
+                }
+                if cr0 == 0 || cr0 == 0xffff {
+                    let _ = writeln!(uart,
+                        "  CR0     READBACK IS {:#06x} after a run -- the register read \
+                         path is not working, so nothing here says the write landed", cr0);
+                }
             }
         }
         self.describe_fsm(uart);
