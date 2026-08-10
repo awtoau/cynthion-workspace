@@ -36,6 +36,9 @@ Three things it reports:
      CS# is High* and nowhere else, which is the idle line and nothing more. If the
      controller samples the device's CA answer, this changes nothing. If it samples
      the idle line, it changes every election.
+  4. **Early strobes.** Read strobes taken before the device drove DQ. Graded to
+     zero: the CA-period RWDS request is a level, and entering `READ_DATA` before it
+     has fallen latches the fall as a strobe over a tristate bus. (#353)
 
 `+float=0` is the control: it must be indistinguishable from the part.
 
@@ -68,7 +71,13 @@ from amaranth import Elaboratable, Module, Signal          # noqa: E402
 from amaranth.back import verilog                          # noqa: E402
 from luna.gateware.interface.psram import HyperBusPHY, HyperRAMPHY   # noqa: E402
 
-from peripherals.hyperram_controller import HyperRAMController  # noqa: E402
+from peripherals.hyperram_controller import (                   # noqa: E402
+    HyperRAMController, PHY_ROUND_TRIP_CYCLES)
+
+# Smallest `latency_clocks` a READ may take. The device releases the CA-period RWDS
+# request in pin cycle 6+P and the IDDR shows the fall at R+6, so the first clean
+# cycle is R+7; `READ_DATA` is entered at `xact_age` 4 + `latency_clocks`. (#353)
+MIN_READ_LATENCY_CLOCKS = PHY_ROUND_TRIP_CYCLES + 3
 
 MODEL = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_model.v"
 TESTBENCH = ROOT / "gateware" / "probes" / "hyperram" / "phy_rwds_tb.sv"
@@ -302,6 +311,7 @@ def main() -> int:
         f"-DST_HANDLE_LATENCY={state_index('HANDLE_LATENCY')}",
         f"-DST_READ_DATA={state_index('READ_DATA')}",
         f"-DST_IDLE={state_index('IDLE')}",
+        f"-DMIN_READ_LATENCY={MIN_READ_LATENCY_CLOCKS}",
     ]
 
     failed = 0

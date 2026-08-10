@@ -52,6 +52,12 @@ weak pull on RWDS while CS# is High moved every variable-latency election. The
 sample now follows `phy_round_trip_cycles`; `fixed_latency` is untouched by any
 of it. (#338)
 
+**And READ_DATA cannot begin before the CA-period RWDS request has fallen.** That
+request is a LEVEL held High over the CA, not a strobe, and the PHY's round trip
+put the data phase early enough at code 14 (2L = 6) to latch its fall as a read
+strobe over a tristate bus. The LONG count is floored at
+`min_read_latency_clocks` on reads; writes are untouched. (#353)
+
 `HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, so
 the count can be swept without a source edit, as it can on the DQS side.
 
@@ -98,6 +104,17 @@ T_CSM_MARGIN = 0.9
 # `scripts/hyperram_phy_rwds_sim.py`. The RWDS sample instant is derived from this,
 # so a harness with a different PHY -- or none -- must say so. (#338)
 PHY_ROUND_TRIP_CYCLES = 4
+
+
+def min_read_latency_clocks(phy_round_trip_cycles=PHY_ROUND_TRIP_CYCLES):
+    """Smallest `latency_clocks` a READ may take, in half-clocks. (#353)
+
+    The device holds RWDS High over the CA as its extra-latency request and drops it
+    in pin cycle 6+P; the IDDR shows that fall at R+6. `READ_DATA` begins at
+    `xact_age` 4 + `latency_clocks`, so anything below R+3 enters while the fall is
+    still in flight and latches it as a read strobe over a tristate bus.
+    """
+    return phy_round_trip_cycles + 3
 
 
 class HyperRAMController(Elaboratable):
@@ -192,6 +209,10 @@ class HyperRAMController(Elaboratable):
         # R = 4 the window starts at 6, so both landed on pin cycles 2 and 3 against
         # a CS# that falls at 4 -- a deselected, undriven bus. (#338)
         self._rwds_sample_cycle = phy_round_trip_cycles + 2
+        # Floor on the LONG count, for READS only -- see `min_read_latency_clocks`.
+        # Writes keep the count they were given: their data phase has to land where
+        # the device expects it, and WRITE_DATA never looks at RWDS. (#353)
+        self._min_read_latency_clocks = min_read_latency_clocks(phy_round_trip_cycles)
         # Rounded UP, and at least one: a gap shorter than tCSHI is the violation this
         # exists to prevent, so the rounding may only ever be generous.
         self._recovery_cycles = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
@@ -202,12 +223,16 @@ class HyperRAMController(Elaboratable):
         # caller that never drives the input gets exactly the old build.
         self._max_latency_clocks = max(self.HIGH_LATENCY_CLOCKS,
                                        max_latency_clocks or 0)
+        # The count HANDLE_LATENCY can actually run to, which is the ceiling or the
+        # read floor, whichever is higher.
+        self._max_wait_clocks = max(self._max_latency_clocks,
+                                    self._min_read_latency_clocks)
 
         # CS#-Low cycles before the first data beat: CS_SETUP, three command
         # words, and HANDLE_LATENCY, which runs one cycle per remaining count plus
         # the zero cycle. Worst case, so the tCSM check covers the longest latency
         # the caller can select at runtime.
-        self._data_entry_cycles = 4 + self._max_latency_clocks - 1
+        self._data_entry_cycles = 4 + self._max_wait_clocks - 1
 
         # WATCHDOG on READ_DATA/WRITE_DATA, whose only exit was a device beat
         # meeting `final_word` -- 7 of 8 beats hung for ever (#316). Waits for the
@@ -318,7 +343,15 @@ class HyperRAMController(Elaboratable):
 
         # Tracks how many cycles of latency we have remaining between a command
         # and the relevant data stages.
-        latency_clocks_remaining  = Signal(range(0, self._max_latency_clocks + 1))
+        latency_clocks_remaining  = Signal(range(0, self._max_wait_clocks + 1))
+
+        # The LONG count as this transaction will actually wait it: floored on a READ
+        # so READ_DATA cannot begin while the CA-period RWDS request is still in
+        # flight. See `min_read_latency_clocks`. (#353)
+        long_latency = Signal(range(0, self._max_wait_clocks + 1))
+        m.d.comb += long_latency.eq(
+            Mux(is_read & (self.latency_clocks < self._min_read_latency_clocks),
+                self._min_read_latency_clocks, self.latency_clocks))
 
         # Sync cycles since `start_transfer`, stopped one past the sample so the
         # counter cannot wrap and the sample is a single cycle. Which cycle that is,
@@ -494,8 +527,7 @@ class HyperRAMController(Elaboratable):
                         # entry and exit, so a count below 2 would wrap the
                         # counter and wait ~2^n cycles instead of none.
                         m.d.sync += latency_clocks_remaining.eq(
-                            Mux(self.latency_clocks >= 2,
-                                self.latency_clocks - 2, 0))
+                            Mux(long_latency >= 2, long_latency - 2, 0))
                     with m.Else():
                         m.d.sync += latency_clocks_remaining.eq(
                             Mux(self.low_latency_clocks >= 2,
@@ -508,8 +540,8 @@ class HyperRAMController(Elaboratable):
                 # SHORT plus the difference, applied in place. The count is still
                 # running, so honouring the request costs no cycle of its own --
                 # which is what makes a decision this late possible at every code.
-                extra_wait = Mux(self.latency_clocks >= self.low_latency_clocks,
-                                 self.latency_clocks - self.low_latency_clocks, 0)
+                extra_wait = Mux(long_latency >= self.low_latency_clocks,
+                                 long_latency - self.low_latency_clocks, 0)
                 with m.If(rwds_asks):
                     m.d.sync += latency_clocks_remaining.eq(
                         latency_clocks_remaining - 1 + extra_wait)

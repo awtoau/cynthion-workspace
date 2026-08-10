@@ -56,6 +56,12 @@
 `ifndef REFRESH_EVERY
   `define REFRESH_EVERY 0
 `endif
+// Smallest `latency_clocks` a READ may take, passed in from the controller's own
+// derivation. Below it `READ_DATA` begins while the CA-period RWDS request is still
+// in flight and latches its fall as a read strobe. (#353)
+`ifndef MIN_READ_LATENCY
+  `define MIN_READ_LATENCY 7
+`endif
 
 module tb;
 
@@ -342,11 +348,13 @@ module tb;
   //
   integer    cell_errors;
   integer    cell_shift;
+  integer    cell_early;
+  integer    early_mark;
   reg [15:0] cr0_value;
   reg [8*8-1:0] mode_label;
 
   task run_cell(input integer code, input fixed, input [31:0] base);
-    integer L, want_hl, i, s, matched;
+    integer L, want_hl, long_hl, i, s, matched;
     reg device_long;
     begin
       cr0_value      = 16'h8f2f;
@@ -367,13 +375,18 @@ module tb;
       fixed_latency      = fixed;
 
       run_burst(base, 1'b0, 1'b1, BURST, 16'h0);
+      early_mark = early_strobes;
       run_burst(base, 1'b0, 1'b0, BURST, 16'h0);
+      cell_early = early_strobes - early_mark;
 
       // What the DEVICE decided for this transaction, from the model's own state.
+      // The LONG count is floored: a read that starts its RWDS hunt before the
+      // CA-period request has fallen catches the fall as a strobe. (#353)
       device_long = model.cr0[3] | model.take_long;
-      want_hl     = device_long ? (2 * L - 1) : (L - 1);
+      long_hl     = ((2 * L) < `MIN_READ_LATENCY) ? `MIN_READ_LATENCY : (2 * L);
+      want_hl     = device_long ? (long_hl - 1) : (L - 1);
 
-      if (hl_count == 2 * L - 1)      elections_long  = elections_long + 1;
+      if (hl_count == long_hl - 1)    elections_long  = elections_long + 1;
       else if (hl_count == L - 1)     elections_short = elections_short + 1;
 
       if (hl_count != want_hl) elections_wrong = elections_wrong + 1;
@@ -389,9 +402,6 @@ module tb;
       for (s = 0; s < 16; s = s + 1)
         if (cell_shift < 0 && read_words[0] === pattern(base + s)) cell_shift = s;
 
-      // Only the ELECTION is graded. Word errors are reported, not graded: whether
-      // a wrong election costs data depends on how far the caller's read hunt
-      // absorbs it, and that is a property of the caller, not of #338.
       checks = checks + 1;
       if (hl_count != want_hl) begin
         errors = errors + 1;
@@ -399,12 +409,31 @@ module tb;
                  mode_label, code, hl_count, want_hl);
       end
 
-      $display("[cell] float=%0s %0s code %2d L=%0d | controller waited %0d (%0s), device asked %0s | errors %0d/%0d shift %0d",
+      // A strobe taken before the device drove DQ is never right, at any latency
+      // and in any mode: the word it clocks in comes off a tristate bus. (#353)
+      checks = checks + 1;
+      if (cell_early != 0) begin
+        errors = errors + 1;
+        $display("[tb] FAIL early strobe [%0s code %0d L=%0d] %0d read strobe(s) taken before the device drove DQ",
+                 mode_label, code, L, cell_early);
+      end
+
+      // Word errors are graded only where the election was RIGHT. Where it was
+      // wrong the data loss is a consequence of that, and how much of it the
+      // caller's hunt absorbs is a property of the caller, not of the controller.
+      checks = checks + 1;
+      if (hl_count == want_hl && cell_errors != 0) begin
+        errors = errors + 1;
+        $display("[tb] FAIL data [%0s code %0d L=%0d] %0d of %0d words wrong on a correct election, shift %0d",
+                 mode_label, code, L, cell_errors, BURST, cell_shift);
+      end
+
+      $display("[cell] float=%0s %0s code %2d L=%0d | controller waited %0d (%0s), device asked %0s | errors %0d/%0d shift %0d early %0d",
                (float_level === 1'bz) ? "z" : (float_level ? "1" : "0"),
                mode_label, code, L, hl_count,
-               (hl_count == 2 * L - 1) ? "LONG" : (hl_count == L - 1) ? "SHORT" : "??",
+               (hl_count == long_hl - 1) ? "LONG" : (hl_count == L - 1) ? "SHORT" : "??",
                device_long ? "LONG" : "SHORT",
-               cell_errors, BURST, cell_shift);
+               cell_errors, BURST, cell_shift, cell_early);
     end
   endtask
 
