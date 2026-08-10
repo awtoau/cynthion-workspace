@@ -51,8 +51,9 @@ module tb;
   // carries `hung=1`.
   localparam integer WAIT_CYCLES = 800;
 
-  // tCSHI, W956A8 rev A01-006. CS# must be High this long between transactions.
-  localparam real T_CSHI_NS = 10.0;
+  // tCSHI at the grade fitted -- a `6I` = T166, 6 ns in Winbond's `Config-AC.v`.
+  // Was 10.0, the T100 column. A minimum recovery, not a timeout. (#341, #364)
+  localparam real T_CSHI_NS = 6.0;
 
   localparam [31:0] DATA_ADDR = 32'h0000_0100;
   localparam [31:0] CR0_ADDR  = 32'h0000_0800;
@@ -151,6 +152,35 @@ module tb;
   integer dq_ph   = 1;
   integer rd_slip = 0;
   integer verbose = 0;
+
+  // THE CAPTURE MISSES, on demand. `capture_frozen` holds the read capture
+  // registers, which is what a READCLKSEL phase outside the window does to
+  // DQSBUFM: no strobe reaches IDDRX2DQA, its outputs keep the last group, and
+  // DATAVALID still fires because it comes from the READ window (#358, #366).
+  //
+  // `+cap_miss=<mask>` selects which reads it happens on, per sequence:
+  //   1 rd_cr0   2 rd_cr1   4 rd_cr0b (the re-read)   8 mem_rd
+  reg     capture_frozen = 1'b0;
+  integer cap_miss = 0;
+
+  // THE CAPTURE LAGS BY ONE TRANSACTION. `+cap_lag=1` hands the controller the
+  // word the PREVIOUS transaction captured, which is the board's #366
+  // fingerprint: CR1 read back as the previous CR0, and every claim decoded out
+  // of it -- latency code, drive, "the part is asleep" -- wrong with it.
+  //
+  // Distinct from a freeze: every read still returns a plausible replicated
+  // register word, so nothing about any one word says it is the wrong one.
+  // Seeded with a plausible register word rather than zero: the lag's FIRST
+  // read must not be caught for free by the halves rule, or the control is the
+  // easy case instead of the board's.
+  integer    cap_lag = 0;
+  reg [31:0] rd_word_lagged = 32'hff81ff81;
+
+  // Does the engine re-read CR0 after CR1? `0` is the sequence the engine had
+  // when #366 was filed, and it is the NEGATIVE CONTROL: with a capture miss on
+  // the CR1 read there is nothing in the transcript that can mark the reported
+  // CR1 as fabricated, so the checks in the runner must fire on it.
+  integer verify_reread = 1;
 
   reg [31:0] dq_o_hist  [0:7];
   reg        dq_e_hist  [0:7];
@@ -278,11 +308,15 @@ module tb;
           served_read = u_ram.is_read;
         end
         slot = (p + 8 - ((dq_ph + rd_slip) % 4)) % 4;
-        rd_bytes[slot] = adq;
-        rd_valid[slot] = (adq !== 8'hzz) && (adq !== 8'hxx) && !adq_oe;
-        if (slot == 3) begin
-          rd_word = {rd_bytes[0], rd_bytes[1], rd_bytes[2], rd_bytes[3]};
-          rd_word_valid = rd_valid[0] & rd_valid[1] & rd_valid[2] & rd_valid[3];
+        // FROZEN means the capture registers do not update, so what the
+        // controller is handed is whatever the LAST transaction left there.
+        if (!capture_frozen) begin
+          rd_bytes[slot] = adq;
+          rd_valid[slot] = (adq !== 8'hzz) && (adq !== 8'hxx) && !adq_oe;
+          if (slot == 3) begin
+            rd_word = {rd_bytes[0], rd_bytes[1], rd_bytes[2], rd_bytes[3]};
+            rd_word_valid = rd_valid[0] & rd_valid[1] & rd_valid[2] & rd_valid[3];
+          end
         end
         if (verbose)
           $display("[edge] e=%0d ph=%0d adq=%h oe=%0d st=%0d", edge_idx, p, adq,
@@ -314,7 +348,7 @@ module tb;
   integer dv_from_read = 0;
 
   always @(posedge sync_clk) begin
-    phy_dq_i      <= rd_word;
+    phy_dq_i      <= cap_lag ? rd_word_lagged : rd_word;
     phy_datavalid <= dv_from_read ? (phy_read != 2'b00) : rd_word_valid;
     phy_burstdet  <= rd_word_valid;
     phy_rwds_i    <= {4{rwds === 1'b1}};
@@ -345,10 +379,12 @@ module tb;
   // One register transaction, the engine's handshake: `start` gated on `idle`,
   // held through the WAIT state, `final_word` high because one word IS the
   // transaction.
-  task reg_txn(input [31:0] a, input is_write, input [15:0] d, input [63:0] tag);
+  task reg_txn(input [31:0] a, input is_write, input [15:0] d, input [63:0] tag,
+               input freeze);
     begin
       wait_idle;
       got_valid = 1'b0; got_first = 32'hxxxx_xxxx; hung = 1'b1;
+      capture_frozen = freeze;
       @(posedge sync_clk); #(TSET/2.0);
       address = a; register_space = 1'b1; perform_write = is_write;
       write_data = {16'h0, d}; final_word = 1'b1; start_transfer = 1'b1;
@@ -361,20 +397,26 @@ module tb;
         end
         if (idle && cycles > 2) begin hung = 1'b0; cycles = WAIT_CYCLES; end
       end
-      final_word = 1'b0; register_space = 1'b0;
-      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d",
+      final_word = 1'b0; register_space = 1'b0; capture_frozen = 1'b0;
+      if (!is_write) rd_word_lagged = rd_word;
+      // `dev_cr0`/`dev_cr1` are what the DEVICE holds, read out of the model
+      // rather than inferred from what was written. That is the reference the
+      // reported word is judged against -- the part is allowed to discard a
+      // write it does not support (#334), so "what we asked for" is not one.
+      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d frozen=%0d dev_cr0=%h dev_cr1=%h",
                tag, 1, served_register, served_read, served,
                got_valid ? got_first : 32'hxxxx_xxxx, cs_high_ns, hung,
-               dv_from_read);
+               dv_from_read, freeze, u_ram.cr0, u_ram.cr1);
     end
   endtask
 
   // One data burst. `leak_control` forces the fault mechanism A is accused of,
   // so the checks below can be shown to detect it.
-  task data_txn(input is_write, input [63:0] tag);
+  task data_txn(input is_write, input [63:0] tag, input freeze);
     begin
       wait_idle;
       got_valid = 1'b0; got_first = 32'hxxxx_xxxx; hung = 1'b1; words = 0;
+      capture_frozen = freeze;
       @(posedge sync_clk); #(TSET/2.0);
       address = DATA_ADDR;
       register_space = leak_control ? 1'b1 : 1'b0;
@@ -395,11 +437,12 @@ module tb;
         end
         if (idle && cycles > 2) begin hung = 1'b0; cycles = WAIT_CYCLES; end
       end
-      final_word = 1'b0; register_space = 1'b0;
-      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d",
+      final_word = 1'b0; register_space = 1'b0; capture_frozen = 1'b0;
+      if (!is_write) rd_word_lagged = rd_word;
+      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d frozen=%0d dev_cr0=%h dev_cr1=%h",
                tag, leak_control, served_register, served_read, served,
                got_valid ? got_first : 32'hxxxx_xxxx, cs_high_ns, hung,
-               dv_from_read);
+               dv_from_read, freeze, u_ram.cr0, u_ram.cr1);
     end
   endtask
 
@@ -413,14 +456,21 @@ module tb;
                             : ((cr0v[7:4] >= 14) ? (5 + cr0v[7:4] - 16)
                                                  : (5 + cr0v[7:4]));
       fixed_latency = cr0v[3];
-      $display("[cfg] --- CR0=%h CR1=%h device %0d CK, controller %0d x 2 CK, leak_control=%0d",
-               cr0v, cr1v, dev_latency, n, leak_control);
-      reg_txn(CR0_ADDR, 1'b1, cr0v, "wr_cr0");
-      reg_txn(CR1_ADDR, 1'b1, cr1v, "wr_cr1");
-      reg_txn(CR0_ADDR, 1'b0, 16'h0, "rd_cr0");
-      reg_txn(CR1_ADDR, 1'b0, 16'h0, "rd_cr1");
-      data_txn(1'b1, "mem_wr");
-      data_txn(1'b0, "mem_rd");
+      $display("[cfg] --- CR0=%h CR1=%h device %0d CK, controller %0d x 2 CK, leak_control=%0d cap_miss=%0d cap_lag=%0d reread=%0d",
+               cr0v, cr1v, dev_latency, n, leak_control, cap_miss, cap_lag,
+               verify_reread);
+      reg_txn(CR0_ADDR, 1'b1, cr0v, "wr_cr0", 1'b0);
+      reg_txn(CR1_ADDR, 1'b1, cr1v, "wr_cr1", 1'b0);
+      reg_txn(CR0_ADDR, 1'b0, 16'h0, "rd_cr0", (cap_miss & 1) != 0);
+      // CR0 AGAIN, back to back. A read path lagging by one transaction hands
+      // this one CR0's own word and the FIRST one whatever preceded it, so the
+      // two disagree. Straddling CR1 would not see it: the lag returns the same
+      // word to both reads of a CR0/CR1/CR0 sequence. (#366)
+      if (verify_reread)
+        reg_txn(CR0_ADDR, 1'b0, 16'h0, "rd_cr0b", (cap_miss & 4) != 0);
+      reg_txn(CR1_ADDR, 1'b0, 16'h0, "rd_cr1", (cap_miss & 2) != 0);
+      data_txn(1'b1, "mem_wr", 1'b0);
+      data_txn(1'b0, "mem_rd", (cap_miss & 8) != 0);
     end
   endtask
 
@@ -431,6 +481,9 @@ module tb;
     if (!$value$plusargs("rd_slip=%d", rd_slip)) rd_slip = 0;
     if (!$value$plusargs("verbose=%d", verbose)) verbose = 0;
     if (!$value$plusargs("dv_from_read=%d", dv_from_read)) dv_from_read = 0;
+    if (!$value$plusargs("cap_miss=%d", cap_miss)) cap_miss = 0;
+    if (!$value$plusargs("cap_lag=%d", cap_lag)) cap_lag = 0;
+    if (!$value$plusargs("verify_reread=%d", verify_reread)) verify_reread = 1;
 
     VCC = 1'b1; VSS = 1'b0; resetb = 1'b1;
     #200_000;

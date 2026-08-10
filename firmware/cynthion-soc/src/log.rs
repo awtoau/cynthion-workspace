@@ -62,6 +62,11 @@ use crate::timer;
 
 /// The two fixed-width formatters, host-testable because nothing in them reads
 /// a clock (#337).
+///
+/// `#[path]` for the reason `src/clock.rs` gives on `mod hz`: reached by
+/// `#[path = "../log.rs"]` from `src/bin/`, this file is a module root and a
+/// bare `mod format;` is looked for as `src/format.rs` (#362).
+#[path = "log/format.rs"]
 mod format;
 
 pub use format::{Clock, Stamp};

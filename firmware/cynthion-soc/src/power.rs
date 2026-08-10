@@ -974,9 +974,9 @@ impl Monitor {
         // Here rather than in `configure`: the source is only meaningful once
         // the pin is an ALERT pin, and claiming it before that would enable a
         // source whose pad is still a GPIO input floating on a pull-up.
-        crate::irq::claim(
+        crate::plic::Plic::new(crate::target::PLIC_BASE).claim_source(
             cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
-            crate::irq::priority::POWER_ALERT,
+            crate::plic::priority::POWER_ALERT,
         );
         Ok(())
     }

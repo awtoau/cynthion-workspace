@@ -187,6 +187,11 @@ pub fn measured() -> Option<Measured> {
 }
 
 /// The frequency formatter, host-testable because it reads nothing (#337).
+///
+/// `#[path]` because `src/bin/*.rs` reach this file by `#[path = "../clock.rs"]`,
+/// which makes it a module root: a bare `mod hz;` is then looked for beside it,
+/// as `src/hz.rs`, and no RTIC binary built (#362).
+#[path = "clock/hz.rs"]
 mod hz;
 
 pub use hz::Hz;

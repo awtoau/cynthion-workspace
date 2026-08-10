@@ -88,7 +88,7 @@ __all__ = ["Plic"]
 # than assume.
 #
 # WHICH level each source gets is not decided here: it is
-# `firmware/cynthion-soc/src/irq.rs`'s `priority` module, and
+# `firmware/cynthion-soc/src/plic.rs`'s `priority` module, and
 # `scripts/soc_plic_sim.py` asserts the resulting claim order against it. #344.
 PRIORITY_BITS = 3
 

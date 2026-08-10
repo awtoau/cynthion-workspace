@@ -78,6 +78,7 @@ from amaranth.lib.memory import Memory
 
 from luna.gateware.interface.psram import HyperRAMPHY
 
+from peripherals import hyperram_controller
 from peripherals.hyperram_controller import HyperRAMController
 
 from bist import BISTAddresses, BISTHarness
@@ -215,15 +216,17 @@ ADDRESS_BITS = 22
 # was wrong; these say *how* -- shifted, stuck, or noise.
 CAPTURE_DEPTH = 64
 
-# tCSHI, CS# high between transactions, from the datasheet.
+# tCSHI, CS# high between transactions. ONE definition, the controllers' own
+# per-grade table -- the copy here was 10.0, the T100 column on a T166 part (#364).
 #
-# BOTH controllers now hold this themselves -- upstream's `RECOVERY` was
-# `# TODO: implement recovery` and fell through to IDLE, which is why this
-# applet counted the gap itself. The counter below is kept: it is the only place
-# a violation would show up as a wrong measurement rather than as data
-# corruption, and a harness that measures a ceiling should not also be the thing
-# that assumes the controller is right.
-T_CSHI_NS = 10.0
+# A MINIMUM RECOVERY, not a timeout: too much costs throughput and corrupts
+# nothing, so the 1.25x rule does not apply.
+#
+# The counter below is kept even though both controllers now hold this
+# themselves: it is the only place a violation shows up as a wrong measurement
+# rather than as data corruption, and a harness that measures a ceiling should
+# not also assume the controller is right.
+T_CSHI_NS = hyperram_controller.T_CSHI_NS
 
 # The DTR conversion is retriggered by the wrap of a free-running counter. 2**19
 # cycles is milliseconds -- far longer than the block's 8-cycle conversion and far
@@ -740,7 +743,7 @@ class HyperRAMCeiling(Elaboratable):
         # IDLE.
         #
         # **Expected duration**: `recovery_cycles` for tCSHI (1 at every rung
-        # this rig builds, since tCSHI is 10 ns and `hr` is 50-100 MHz) plus the
+        # this rig builds, since tCSHI is 6 ns and `hr` is 50-100 MHz) plus the
         # controller's own RECOVERY and its FSM transitions back to IDLE -- not
         # enumerated here, so budget ~16 cycles.
         #
@@ -765,6 +768,9 @@ class HyperRAMCeiling(Elaboratable):
         # What the PART says CR0 is, read back after configuring it.
         device_readback = Signal(32)
         device_readback_cr1 = Signal(32)
+        # CR0 read a second time, after CR1. Not reported -- it exists to say
+        # whether the first two can be. See CONFIG_VERIFY_CR0_AGAIN.
+        device_readback_again = Signal(32)
 
 
         # DID THE RUN FINISH. `harness.done` used to be an expression over
@@ -927,6 +933,30 @@ class HyperRAMCeiling(Elaboratable):
                              config_address.eq(CR0_ADDRESS)]
                 with m.If(psram.read_ready):
                     m.d.sync += device_readback.eq(psram.read_data)
+                with m.If(psram.idle):
+                    m.next = "CONFIG_VERIFY_CR0_AGAIN"
+
+            # CR0 A SECOND TIME, back to back. The readback shares its capture
+            # window with the data path, so at a phase outside the window it
+            # returns a held or lagging word -- and `bist status` printed that as
+            # fact, once announcing a part in Deep Power Down that was awake.
+            #
+            # CONSECUTIVE, not either side of CR1: a path lagging by one
+            # transaction returns CR0's own word to a CR0 read that follows a CR0
+            # read, and returns the SAME word to both reads of a CR0/CR1/CR0
+            # sequence -- so straddling CR1 cannot see the lag at all. (#358, #366)
+            with m.State("CONFIG_VERIFY_CR0_AGAIN"):
+                m.d.comb += [configuring.eq(1), last.eq(1),
+                             config_address.eq(CR0_ADDRESS),
+                             start.eq(psram.idle)]
+                with m.If(~psram.idle):
+                    m.next = "CONFIG_VERIFY_CR0_AGAIN_WAIT"
+
+            with m.State("CONFIG_VERIFY_CR0_AGAIN_WAIT"):
+                m.d.comb += [configuring.eq(1), last.eq(1),
+                             config_address.eq(CR0_ADDRESS)]
+                with m.If(psram.read_ready):
+                    m.d.sync += device_readback_again.eq(psram.read_data)
                 with m.If(psram.idle):
                     m.next = "CONFIG_VERIFY_CR1"
 
@@ -1173,13 +1203,59 @@ class HyperRAMCeiling(Elaboratable):
         # `psram.idle & (recovery >= recovery_cycles)` is what it is waiting for.
         # Reading the halves separately says which one is false, which the state
         # number never could.
+        #
+        # WHETHER THE READBACK MAY BE REPORTED AT ALL. Three rules over the
+        # three register reads, each one a residue seen on the board (#358):
+        # a lagging path cannot answer two consecutive CR0 reads alike, a held
+        # path answers CR0 and CR1 alike, and a byte-slipped one breaks the
+        # replication a register read has in both halves of the fabric word.
+        #
+        # Rules, not a phase table: which phases are good is a per-board
+        # measurement, and a hardcoded window would fabricate trust off it.
+        readback_reread_ok = Signal()
+        readback_distinct = Signal()
+        readback_halves_ok = Signal()
+        m.d.comb += [
+            readback_reread_ok.eq(device_readback_again == device_readback),
+            readback_distinct.eq(device_readback != device_readback_cr1),
+        ]
+        # 16-bit word on the non-DQS path, so there is no second half to match.
+        m.d.comb += readback_halves_ok.eq(
+            ((device_readback[16:] == device_readback[:16])
+             & (device_readback_cr1[16:] == device_readback_cr1[:16]))
+            if self.dqs else 1)
+
+        # THE READ PATH'S STATE: the controller handshake, and whether the
+        # readback the CPU is about to print stands up.
+        #
+        # It shares this register because the window is full at 32 addresses and
+        # `addr_width=8` costs timing -- `bist_csr.py` records builds closing at
+        # 56.21 MHz against a 60 MHz constraint.
+        #
+        # The controller's own FSM state is NOT here. Amaranth's FSM carries no
+        # readable `state` attribute here and adding one broke
+        # `soc_hyperram_sim`, so `REG_CTRL_STATE` sat DECLARED AND UNBOUND -- and
+        # an unbound address reads zero through the CSR transport, which is
+        # indistinguishable from "the controller is in state 0". It was read off
+        # the board as exactly that and used to rule out the controller, wrongly.
+        # A register that cannot answer must not answer plausibly.
+        #
+        # What goes here instead is the exit condition of READ_RECOVER, split
+        # into its two halves, because that is the state the engine parks in and
+        # `psram.idle & (recovery >= recovery_cycles)` is what it is waiting for.
+        # Reading the halves separately says which one is false, which the state
+        # number never could.
         harness.add_read_only_register(
             REG_CTRL_STATE,
             read=Cat(psram.idle,                        # bit 0
                      recovery >= recovery_cycles,       # bit 1
                      start,                             # bit 2
                      stalled,                           # bit 3, sticky
-                     Const(0, 28)))
+                     Const(0, 4),
+                     readback_reread_ok,                # bit 8
+                     readback_distinct,                 # bit 9
+                     readback_halves_ok,                # bit 10
+                     Const(0, 21)))
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it
@@ -1204,7 +1280,10 @@ class HyperRAMCeiling(Elaboratable):
             m.d.sync += finished.eq(0)
 
         m.d.comb += [
-            harness.busy.eq(1),
+            # NOT PARKED, not a literal. `busy.eq(1)` could never say not-busy,
+            # so no caller could wait on it and `bist status` read busy=1 at rest
+            # for ever. HALTED is the only state that drives nothing. (#359)
+            harness.busy.eq(~engine.ongoing("HALTED")),
             harness.done.eq(finished),
             # GATED ON THE READ STATE. `read_ready` also fires for the register
             # READ in CONFIG_VERIFY, and CR0 is not a data word -- ungated, every
