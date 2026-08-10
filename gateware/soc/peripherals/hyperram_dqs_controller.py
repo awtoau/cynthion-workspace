@@ -99,6 +99,13 @@ class HyperRAMDQSController(Elaboratable):
                                caller. Cleared by the next `start_transfer`.
     """
 
+    # In 2 CK cycles, and both are UPSTREAM's -- every caller here overrides
+    # `HIGH_LATENCY_CLOCKS` with `bootram.HYPERRAM_LATENCY_CLOCKS`. 5 is `L - 1`
+    # for L = 6; this part powers up at L = 7 and wants 6.
+    #
+    # LOW is the variable-latency branch (1 x L CK), which is dead while
+    # `fixed_latency` is True -- and cannot be exact for an odd L anyway, since
+    # L / 2 is not a whole cycle. Only the doubled count divides evenly.
     LOW_LATENCY_CLOCKS  = 3
     HIGH_LATENCY_CLOCKS = 5
 
@@ -120,9 +127,10 @@ class HyperRAMDQSController(Elaboratable):
             sync_mhz            -- The `sync` clock, in MHz. Only used to turn tCSHI into
                                    a cycle count; pass the real number or CS# recovery is
                                    wrong.
-            high_latency_clocks -- Override the fixed-latency count. Upstream's constant
-                                   is 5, which at 4:1 gearing is 10 CK and lands the
-                                   32-bit group at least one word late on this board.
+            high_latency_clocks -- Override the fixed-latency count, in 2 CK cycles.
+                                   `L - 1` for a part at initial latency L with CR0[3]
+                                   set; 6 here. Upstream's 5 is `L - 1` for L = 6,
+                                   which is not this part's power-on code.
             fixed_latency       -- True when the part takes the long latency on every
                                    transaction, which is what CR0 = 0x8f2f selects.
             tcshi_ns            -- CS# high between transactions, in ns.
@@ -176,10 +184,13 @@ class HyperRAMDQSController(Elaboratable):
         self.single_page      = Signal()
         self.start_transfer   = Signal()
         self.final_word       = Signal()
-        # Initial latency to wait before the data body, in this controller's own
-        # cycles (4:1 geared, so one cycle is 4 CK). Reset is the build-time
-        # constant, so a caller that leaves it alone behaves as before. Drive it
-        # to sweep the controller in step with the part's CR0[7:4] (#331).
+        # Initial latency before the data body, in this controller's own cycles.
+        # ONE CYCLE IS 2 CK, not 4: the 4:1 gearing carries four BYTES per cycle
+        # and the part moves two bytes per CK. `HANDLE_LATENCY` runs this count
+        # plus a zero cycle, so with fixed latency (2 x L CK) the exact value is
+        # `L - 1` -- 6 for the power-on code's L = 7, which is what `bootram`
+        # passes. Reset is the build-time constant; drive it to sweep in step
+        # with the part's CR0[7:4] (#331).
         self.latency_clocks   = Signal(range(0, self._max_latency_clocks + 1),
                                        reset=self.HIGH_LATENCY_CLOCKS)
 

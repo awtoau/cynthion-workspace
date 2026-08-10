@@ -175,10 +175,16 @@ APPLY_BIT = 1 << 16
 LATENCY_CLOCKS_BY_CODE = {14: 3, 15: 4, 0: 5, 1: 6, 2: 7}
 CR0_POWER_ON_LATENCY_CODE = (CR0_POWER_ON >> 4) & 0xF
 
-# The non-DQS controller counts HALF-clocks: its shipped constant of 14 aligns
-# with the power-on code's 7 CK, measured on the board 2026-08-10. So the count
-# the controller needs is twice the datasheet's clocks, and the mapping
-# reproduces the old default rather than replacing it. (#331)
+# The datasheet's FIXED-LATENCY DOUBLING, not a half-clock counter.
+#
+# CR0[3]=1 selects fixed latency, where the part waits 2 x the initial-latency
+# code on every transaction. The non-DQS PHY is 2:1 geared, so one controller
+# cycle IS one CK, and the shipped 14 is 2 x the power-on code's 7 -- confirmed
+# on the board 2026-08-10. `LOW_LATENCY_CLOCKS = 7` is the same L undoubled,
+# which is the variable-latency branch. (#331)
+#
+# It is 2 for the DQS path too, but the DQS controller's cycle is 2 CK, so its
+# count is `L - 1` rather than `2 * L`. See `HyperRAMDQSController`. (#314)
 CONTROLLER_CYCLES_PER_CLOCK = 2
 REG_ACTUAL      = 17
 REG_GOLDEN      = 18
@@ -594,8 +600,9 @@ class HyperRAMCeiling(Elaboratable):
             # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
             # and left the controller's own wait welded, so only the one code
             # matching it could align and the other fifteen failed whatever the
-            # part did. The DQS path keeps its constant: its gearing gives no
-            # integral relation to Table 8, and #314 voids its results anyway.
+            # part did. The DQS path keeps its constant -- not for want of a
+            # relation (it is `L - 1`, exact for every code) but because #314
+            # voids its results until it is rebuilt on a real edge clock.
             effective_cr0 = Signal(16)
             m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0,
                                              device_cr0[:16]))
