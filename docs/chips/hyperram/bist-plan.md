@@ -223,7 +223,7 @@ Only once this behaves does the matrix mean anything.
 | BURSTDET settled | one harness wrong, or the two measure different things |
 | Known-good reference | **First one taken 2026-08-10**: non-DQS, CK 80, drive 3, phase 0, CR0 latency 2 and 6 pass on both fixed and variable, control fired 512/512. One run — see the repeatability caveat below. |
 | #204 | **cleared 2026-08-07** — `jtag_registers.py` is TCK-clocked, so no ratio applies; `jtck` closes at 295.68 MHz. The fault was luna's, not JTAG's. |
-| **#314** | **DQS edge clock ran on general fabric.** Two PLL sites, both Y49; ECLK consumers Y2–Y11; ~38 tiles apart, so no placement reaches it. `ECLKBRIDGECS` instantiated 2026-08-10, **not yet built**. No DQS number counts before it is. |
+| **#314** | **DQS edge clock ran on general fabric — closed 2026-08-10, and now checked on every build.** Fix was `CLKOS2` → `CLKOS` plus `a_BEL="X2/Y49/EHXPLL_LL"`; zero `ECLKBRIDGECS`, which sits downstream of the mux that rejected the source. Evidence is `arc: S1W2_ECLKI0 G_JLLCPLL0CLKOS` in `top.config` and zero `general routing will be used`. `soc_run.py` fails the build on either, via `soc_eclk_check.audit`. Results published before 7d88981 are still void. |
 | **Repeatability** | The engine wedges on some reconfigures: one 128-cell sweep clean, the next producing nothing, same bitstream. **A result is not a reference until it reproduces.** |
 | #215 | non-DQS controller vendored, tCSHI + latency — done 2026-08-07 |
 
