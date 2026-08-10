@@ -26,25 +26,13 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let argument = trim(rest);
 
     if argument.is_empty() {
-        // `in c/a` is the INPUT register, and it reaches no pin.
-        // `top.py` deliberately does not request
-        // `control_vbus_in_en`/`aux_vbus_in_en` -- nothing here has a reason to
-        // command a power input closed, and hardware overvoltage protection
-        // (D17, a 5.6 V zener) backs that. So the register reads back whatever
-        // was last written to it and drives nothing.
-        //
-        // Printed as `(nc)` because printing it bare made the shell able to lie
-        // about power: `in c1 a0` reads as the board's input state and is not.
-        let (control_in, aux_in) = inputs();
         let _ = writeln!(
             uart,
-            "vbus {:02x}  c{} a{} t{}  in c{} a{} (nc)",
+            "vbus {:02x}  c{} a{} t{}",
             state(),
             is_closed(Source::Control) as u8,
             is_closed(Source::Aux) as u8,
             is_closed(Source::TargetC) as u8,
-            control_in as u8,
-            aux_in as u8
         );
         return;
     }
@@ -82,16 +70,10 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         }
         return;
     }
-    if let Some(which) = argument.strip_prefix(b"input").map(trim) {
-        let ok = match which {
-            b"control" => prefer_control(&devices.power),
-            b"both" => {
-                allow_all_inputs();
-                true
-            }
-            _ => false,
-        };
-        let _ = writeln!(uart, "input {}", if ok { "set" } else { "no" });
+    if argument.starts_with(b"input") {
+        // Kept as a message rather than dropped to `?`: the verb was documented
+        // and used, and "unknown command" would read as a typo (#305).
+        let _ = writeln!(uart, "vbus input: removed -- the register reached no pin (#305)");
         return;
     }
     match Source::parse(argument) {
