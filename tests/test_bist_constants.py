@@ -39,6 +39,7 @@ TOP = ROOT / "gateware" / "soc" / "top.py"
 TRANSPORT = ROOT / "gateware" / "soc" / "peripherals" / "bist_csr.py"
 PERIPHERAL = ROOT / "gateware" / "soc" / "peripherals" / "hyperram_bist.py"
 ENGINE = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_ceiling_top.py"
+CONTROLLER = ROOT / "gateware" / "soc" / "peripherals" / "hyperram_controller.py"
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src" / "bist.rs"
 
 
@@ -155,3 +156,25 @@ def test_register_numbers_are_the_engines_own():
             f"the two rigs would be addressing different registers under the "
             f"same name")
     assert "APPLET_ID" in firmware
+
+
+def test_latency_mapping_reproduces_the_shipped_constant():
+    """The controller's count and the datasheet's clocks are anchored, not guessed.
+
+    `LATENCY_CLOCKS_BY_CODE` is Table 8; `CONTROLLER_CYCLES_PER_CLOCK` is the 2x
+    that turns it into the non-DQS controller's half-clock count. The anchor is
+    that the power-on code must land exactly on `HIGH_LATENCY_CLOCKS`, the count
+    every non-DQS measurement in this repository was taken with.
+
+    Without this, either side can drift and the sweep goes back to being a test
+    of one arbitrary alignment while still printing sixteen rows. See #331.
+    """
+    engine = _grab(ENGINE, r"^CONTROLLER_CYCLES_PER_CLOCK\s*=\s*(\d+)")
+    por = _grab(ENGINE, r"^CR0_POWER_ON\s*=\s*(0x[0-9A-Fa-f]+)")
+    code = (por >> 4) & 0xF
+    clocks = _grab(ENGINE, rf"^LATENCY_CLOCKS_BY_CODE\s*=\s*\{{[^}}]*\b{code}:\s*(\d+)")
+    shipped = _grab(CONTROLLER, r"^\s*HIGH_LATENCY_CLOCKS\s*=\s*(\d+)")
+    assert engine * clocks == shipped, (
+        f"the power-on code {code} maps to {clocks} clocks x {engine} = "
+        f"{engine * clocks}, but the controller ships {shipped}; one of the two "
+        f"moved, so every latency the sweep selects is now off by the difference")
