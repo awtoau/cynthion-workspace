@@ -24,7 +24,15 @@ module hyperram_model #(
     // CS# low to RWDS valid. Not a timing check -- it decides WHICH CA edge
     // carries the extra-latency request, and a controller sampling earlier than
     // this samples a float. 12 ns at T166 / 3.0 V, Config-AC.v. (#338, #342)
-    parameter real   T_DSV_NS  = 12.0
+    parameter real   T_DSV_NS  = 12.0,
+    // TRANSACTIONS between refresh-forced 2x elections; 0 disables.
+    //
+    // The only case that makes a variable-latency transaction take 2L. Counted in
+    // transactions and not in time because that is what the VENDOR model does --
+    // measured at exactly 100 CS# assertions apart whether the transaction is one
+    // word (210 ns) or 128 (1480 ns). A real part refreshes on a wall clock, so
+    // this cadence exercises the path, it does not predict a rate. (#338, #342)
+    parameter integer REFRESH_EVERY = 100
 ) (
     inout  wire [7:0] adq,
     input  wire       clk,
@@ -50,6 +58,10 @@ module hyperram_model #(
   reg [15:0] beat;
   reg [21:0] word_addr;
   reg        is_read, is_register;
+
+  // Refresh, as the vendor model does it: a transaction counter, not a clock.
+  integer    xact_count = 0;
+  reg        take_long  = 1'b0;
 
   reg  [7:0] write_high;
   reg [15:0] rd_word;
@@ -85,8 +97,12 @@ module hyperram_model #(
   // write does not and captures an idle bus.
   function [15:0] first_data_beat;
     input is_reg_write;
+    reg [7:0] l;
     begin
-      first_data_beat = is_reg_write ? 16'd6 : (16'd4 + 2 * latency_ck(cr0));
+      // A refresh election doubles the count, exactly as CR0[3] does -- so with
+      // CR0[3] = 1 it changes nothing, which is why fixed latency never shows it.
+      l = latency_ck(cr0) * ((take_long && !cr0[3]) ? 2 : 1);
+      first_data_beat = is_reg_write ? 16'd6 : (16'd4 + 2 * l);
     end
   endfunction
 
@@ -148,6 +164,10 @@ module hyperram_model #(
     ca         = 48'h0;
     write_done = 1'b0;
     t_cs_fall  = $realtime;
+    xact_count = xact_count + 1;
+    // Decided at CS# falling, before tDSV, and held for the whole transaction --
+    // the device cannot change its mind once the CA has been answered.
+    take_long  = (REFRESH_EVERY != 0) && (xact_count % REFRESH_EVERY == 0);
   end
 
   // The extra-latency request. RWDS over the CA period is the ONLY thing that
@@ -155,14 +175,12 @@ module hyperram_model #(
   // first CA edge or two carry a float, not an answer. The vendor model shows
   // `zz1111` for fixed and `zz0000` for variable at 100 MHz.
   //
-  // This model has no refresh, so with CR0[3] = 0 it never asks for the extra
-  // latency. A refresh collision is the one case that makes a variable-latency
-  // transaction take 2L, and it stays the vendor model's alone. (#338, #342)
+  // Fixed latency always asks; variable latency asks only when a refresh is due.
   always @(negedge csb) begin
     rwds_oe = 1'b0;
     #(T_DSV_NS);
     if (!csb) begin
-      rwds_out = cr0[3];
+      rwds_out = cr0[3] | take_long;
       rwds_oe  = 1'b1;
     end
   end

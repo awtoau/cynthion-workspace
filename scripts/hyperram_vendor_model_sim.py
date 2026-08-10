@@ -208,7 +208,7 @@ def check_output(out: str, which: str) -> list[str]:
     return failures
 
 
-def run_open(grade: str, hunt: int) -> int:
+def run_open(grade: str, hunt: int, bursts: int) -> int:
     """Same testbench, same stimulus, open model, open simulator."""
     for tool in ("iverilog", "vvp"):
         if shutil.which(tool) is None:
@@ -218,7 +218,7 @@ def run_open(grade: str, hunt: int) -> int:
     shutil.copy(OPEN_MODEL, WORKDIR / OPEN_MODEL.name)
     env = dict(os.environ)
     run("iverilog", ["iverilog", "-g2012", "-DDUT_MODULE=hyperram_model",
-                     f"-DREFRESH_HUNT_N={hunt}",
+                     f"-DREFRESH_HUNT_N={hunt}", f"-DBURST_HUNT_N={bursts}",
                      "-o", "tb.vvp", TESTBENCH.name, OPEN_MODEL.name], env)
     return check_output(run("vvp", ["vvp", "tb.vvp"], env), "open")
 
@@ -235,6 +235,9 @@ def main() -> int:
     ap.add_argument("--hunt", type=int, default=256, metavar="N",
                     help="variable-latency transactions to run while looking for a "
                          "refresh-forced 2x election (default 256, ~54 us of model time)")
+    ap.add_argument("--bursts", type=int, default=64, metavar="N",
+                    help="variable-latency bursts of 128 words -- the BIST's own "
+                         "geometry -- to run in the same hunt (default 64, ~96 us)")
     ap.add_argument("--keep", action="store_true", help="keep the work library for vsim -gui")
     ap.add_argument("-v", "--verbose", action="store_true", help="log every tool line")
     args = ap.parse_args()
@@ -246,7 +249,7 @@ def main() -> int:
         shutil.rmtree(WORKDIR)
 
     if args.sim == "icarus":
-        failures = run_open(args.grade, args.hunt)
+        failures = run_open(args.grade, args.hunt, args.bursts)
         for f in failures:
             log.error("FAIL %s", f)
         if not failures:
@@ -265,13 +268,14 @@ def main() -> int:
     run("vlib", [str(questa_bin("vlib")), "work"], env)
     run("vlog", [str(questa_bin("vlog")), "-sv", f"+define+{args.grade}",
                  f"+define+REFRESH_HUNT_N={args.hunt}",
+                 f"+define+BURST_HUNT_N={args.bursts}",
                  model.name, TESTBENCH.name], env)
     out = run("vsim", [str(questa_bin("vsim")), "-c", "-voptargs=+acc", "tb",
                        "-do", "run -all; quit -f"], env)
 
     failures = check_output(out, "vendor")
     if args.sim == "both":
-        failures += run_open(args.grade, args.hunt)
+        failures += run_open(args.grade, args.hunt, args.bursts)
     if failures:
         for f in failures:
             log.error("FAIL %s", f)

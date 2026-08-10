@@ -15,6 +15,10 @@
   `define REFRESH_HUNT_N 256
 `endif
 
+`ifndef BURST_HUNT_N
+  `define BURST_HUNT_N 64
+`endif
+
 module tb;
 
   localparam real TCK = 10.0;   // 100 MHz -- below the 166 MHz grade, legal everywhere
@@ -44,6 +48,13 @@ module tb;
   // case exists, cheap enough for the default regression. Raise it with
   // `--hunt N` to measure the interval rather than just find it.
   localparam int REFRESH_HUNT_N = `REFRESH_HUNT_N;
+
+  // The BIST's own geometry, so the election rate measured here is the rate the
+  // board sees. 128 words is `hyperram_ceiling_top.BURST_WORDS`, set by tCSM;
+  // 64 bursts is ~96 us of model time, ~4 refresh intervals.
+  localparam int BURST_WORDS  = 128;
+  localparam int BURST_HUNT_N = `BURST_HUNT_N;
+  localparam [31:0] BURST_BASE = 32'h00_1000;
 
   reg        clk = 1'b0;
   wire       clk_n = ~clk;
@@ -81,6 +92,7 @@ module tb;
   real       lat_ck;             // measured initial latency, in CK
   reg  [5:0] rwds_ca;            // RWDS at each of the six CA edges, [5] first
   integer    hunt_long, hunt_short;
+  integer    burst_bad, burst_long, burst_wrong;
 
   // A HyperBus CA: command in [47:40], A[31:3] in [44:16], A[2:0] in [2:0].
   function [47:0] ca(input [7:0] cmd, input [31:0] word_addr);
@@ -246,6 +258,52 @@ module tb;
              3: lat_ck_of = 6; default: lat_ck_of = 7; endcase
   endfunction
 
+  // The pattern a burst is checked against. Address-dependent, so a burst that
+  // stalls and repeats a word fails as loudly as one that returns rubbish.
+  function [15:0] ramp(input [31:0] word_addr);
+    ramp = word_addr[15:0] ^ 16'h5a5a;
+  endfunction
+
+  // A linear burst write, at the latency the HOST believes.
+  task write_burst(input [31:0] word_addr, input integer n, input integer lat);
+    integer k;
+    reg [15:0] w;         // Icarus will not part-select a function call
+    begin
+      drive_ca(ca(CMD_MEM_WRITE, word_addr));
+      repeat (lat - 1) @(posedge clk);
+      adq_oe   = 1'b1;
+      rwds_oe  = 1'b1;
+      rwds_drv = 1'b0;
+      for (k = 0; k < n; k = k + 1) begin
+        w = ramp(word_addr + k);
+        @(negedge clk); #1; adq_drv = w[15:8];
+        @(posedge clk); #1; adq_drv = w[7:0];
+      end
+      @(negedge clk); #1; adq_oe = 1'b0; rwds_oe = 1'b0;
+      bus_idle;
+    end
+  endtask
+
+  // A linear burst read. The first word self-aligns on RWDS and sets `lat_ck`;
+  // the rest follow two edges apart. `burst_bad` counts words that came back
+  // wrong -- the board's failure is a whole burst of these.
+  task read_burst(input [31:0] word_addr, input integer n);
+    integer k;
+    reg [15:0] w;
+    begin
+      burst_bad = 0;
+      drive_ca(ca(CMD_MEM_READ, word_addr));
+      capture_word(w);
+      if (w !== ramp(word_addr)) burst_bad = burst_bad + 1;
+      for (k = 1; k < n; k = k + 1) begin
+        @(clk); #0.5; w[15:8] = adq;
+        @(clk); #0.5; w[7:0]  = adq;
+        if (w !== ramp(word_addr + k)) burst_bad = burst_bad + 1;
+      end
+      bus_idle;
+    end
+  endtask
+
   // CR0 with the latency field and CR0[3] set, everything else at POR.
   task set_latency(input [3:0] code, input fixed);
     begin
@@ -385,6 +443,35 @@ module tb;
     end
     $display("[tb] variable-latency elections: %0d short, %0d long, of %0d",
              hunt_short, hunt_long, REFRESH_HUNT_N);
+    // === the board's geometry: 128-word variable-latency bursts ===
+    //
+    // #338 measures whole bursts of 128 lost, ~1 cell in 50 over 128 bursts. This
+    // is the same shape in the model: how many bursts of 128 words meet a pending
+    // refresh and are told to take 2L. That fraction is the ceiling on how often
+    // the RWDS decision can matter, and the board's failure rate has to fit under it.
+    $display("[tb] === variable latency: %0d bursts of %0d words ===",
+             BURST_HUNT_N, BURST_WORDS);
+    set_latency(4'd2, 1'b1);                          // fixed, to lay the ramp down
+    write_burst(BURST_BASE, BURST_WORDS, 14);
+    set_latency(4'd2, 1'b0);                          // variable, L = 7
+    burst_long  = 0;
+    burst_wrong = 0;
+    for (i = 0; i < BURST_HUNT_N; i = i + 1) begin
+      read_burst(BURST_BASE, BURST_WORDS);
+      if (lat_ck > 1.5 * 7) begin
+        burst_long = burst_long + 1;
+        $display("[tb] burst %0d took 2L, t = %0.0f ns", i, $realtime);
+      end
+      if (burst_bad != 0) begin
+        burst_wrong = burst_wrong + 1;
+        $display("[tb] burst %0d: %0d of %0d words wrong, latency %0.1f CK, RWDS over the CA = %b",
+                 i, burst_bad, BURST_WORDS, lat_ck, rwds_ca);
+        errors = errors + 1;
+      end
+    end
+    $display("[tb] variable-latency bursts: %0d of %0d took 2L, %0d returned bad words",
+             burst_long, BURST_HUNT_N, burst_wrong);
+
     set_latency(4'd2, 1'b1);              // back to POR before the tCSM section
 
     // tCSM is 4 us. At 100 MHz that is 400 CK, so hold CS# low for 500 and see
