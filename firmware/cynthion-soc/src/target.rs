@@ -264,14 +264,10 @@ pub struct Board {
     /// corrupt a link something else is using. See the module comment in
     /// `src/ulpi.rs`.
     pub ulpi: usize,
-    /// PRER for the I2C bus. `f_SCL = f_sync / (5 * (PRER + 1))`, so at 60 MHz
-    /// 149 gives 80 kHz -- see the bit-timing section of
-    /// `gateware/soc/peripherals/i2c_master.py` for why 80 and not 100.
-    ///
-    /// This is a constant here rather than computed, because the firmware does
-    /// not know what `sync` runs at: `SYNC_MHZ` lives in the gateware. If the
-    /// clock changes, this changes with it, and the symptom of forgetting is a
-    /// bus that violates its own setup times and answers most of the time.
+    /// PRER for the I2C bus, as the build computed it. The FALLBACK only:
+    /// [`crate::bus::Bus::init`] re-derives from the clock the fabric counts,
+    /// because this constant is generated against the DEFAULT variant's
+    /// `SYNC_MHZ` and is wrong on any build that moved it (#272).
     pub i2c_prescale: u16,
 }
 

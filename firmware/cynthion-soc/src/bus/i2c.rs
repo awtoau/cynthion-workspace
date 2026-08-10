@@ -13,8 +13,9 @@
 //! - A poll that can spin forever is indistinguishable from a dead core -- has cost
 //!   real days in this tree (`uart.rs`, `hyperram.rs`). `wait` gives up.
 //! - Bound: [`I2c::wait_limit`], derived per command from the prescale the core
-//!   actually holds. Was a flat `200_000` -- ~278x the longest command, which is a
-//!   hang with a number attached rather than a safety factor (#355).
+//!   actually holds -- 150 turns at the prescale 9 this build runs. Was a flat
+//!   `200_000`, which is a hang with a number attached rather than a safety
+//!   factor (#355).
 //! - Protects against the peripheral not being there at all, not a slow bus: the bit
 //!   engine's states are all a fixed number of slots long and cannot hang. Turns "the
 //!   shell stopped responding" into "i2c: timeout".
@@ -260,9 +261,11 @@ impl I2c {
     /// - **Expected worst case** is the longest command this driver issues, 12 bit
     ///   periods, each `5 * (PRER + 1)` sync cycles -- the engine's own arithmetic,
     ///   read from the prescale the core holds rather than from the rate the build
-    ///   was written with. 720 cycles at the configured prescale of 11.
+    ///   was written with. 600 cycles at the configured prescale of 9 (#272).
     /// - **Multiplier 1.25x**, over a turn assumed as short as [`CYCLES_PER_TURN`]:
-    ///   180 turns at prescale 11, against 200_000 before (#355).
+    ///   150 turns at prescale 9. Assumed SHORT on purpose -- a turn that
+    ///   compiles tighter needs more turns to cover the same wait, so the low
+    ///   assumption is the safe one.
     /// - **On expiry** [`I2c::command`] records the command byte, this limit and the
     ///   turns spent, and returns [`Error::Timeout`]. `i2c status` prints the record.
     ///
