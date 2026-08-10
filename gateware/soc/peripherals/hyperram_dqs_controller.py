@@ -112,7 +112,8 @@ class HyperRAMDQSController(Elaboratable):
               "WRITE_DATA", "HANDLE_LATENCY", "READ_DATA", "RECOVERY")
 
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
-                 fixed_latency=True, tcshi_ns=T_CSHI_NS):
+                 max_latency_clocks=None, fixed_latency=True,
+                 tcshi_ns=T_CSHI_NS):
         """
         Parameters:
             phy                 -- The RAM record that should be connected to this chip.
@@ -132,11 +133,16 @@ class HyperRAMDQSController(Elaboratable):
         self._recovery_cycles = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
+        # Ceiling for `latency_clocks`; see the non-DQS controller. Defaults to the
+        # fixed count, so a caller that never drives the input gets the old build.
+        self._max_latency_clocks = max(self.HIGH_LATENCY_CLOCKS,
+                                       max_latency_clocks or 0)
 
         # CS#-Low cycles before the first data beat: CS_SETUP, two command beats,
         # and HANDLE_LATENCY, which runs one cycle per remaining count plus the
-        # zero cycle.
-        self._data_entry_cycles = 3 + self.HIGH_LATENCY_CLOCKS + 1
+        # zero cycle. Worst case, so the tCSM check covers the longest latency the
+        # caller can select at runtime.
+        self._data_entry_cycles = 3 + self._max_latency_clocks + 1
 
         # WATCHDOG on READ_DATA/WRITE_DATA, whose only exit was a device beat
         # meeting `final_word` -- 7 of 8 beats hung for ever (#316). Waits for the
@@ -170,6 +176,12 @@ class HyperRAMDQSController(Elaboratable):
         self.single_page      = Signal()
         self.start_transfer   = Signal()
         self.final_word       = Signal()
+        # Initial latency to wait before the data body, in this controller's own
+        # cycles (4:1 geared, so one cycle is 4 CK). Reset is the build-time
+        # constant, so a caller that leaves it alone behaves as before. Drive it
+        # to sweep the controller in step with the part's CR0[7:4] (#331).
+        self.latency_clocks   = Signal(range(0, self._max_latency_clocks + 1),
+                                       reset=self.HIGH_LATENCY_CLOCKS)
 
         # Status signals.
         self.idle             = Signal()
@@ -211,7 +223,7 @@ class HyperRAMDQSController(Elaboratable):
 
         # Tracks how many cycles of latency we have remaining between a command
         # and the relevant data stages.
-        latency_clocks_remaining  = Signal(range(0, self.HIGH_LATENCY_CLOCKS + 1))
+        latency_clocks_remaining  = Signal(range(0, self._max_latency_clocks + 1))
 
         #
         # Core operation FSM.
@@ -367,7 +379,7 @@ class HyperRAMDQSController(Elaboratable):
                     # the CA, so a later RWDS change cannot erase it. (#321)
                     with m.If(extra_latency | self.phy.rwds.i.any()
                               | int(self._fixed_latency)):
-                        m.d.sync += latency_clocks_remaining.eq(self.HIGH_LATENCY_CLOCKS)
+                        m.d.sync += latency_clocks_remaining.eq(self.latency_clocks)
                     with m.Else():
                         m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS)
 

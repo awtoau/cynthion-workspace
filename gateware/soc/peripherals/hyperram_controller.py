@@ -68,7 +68,7 @@ Everything else is upstream's, deliberately:
 
 import math
 
-from amaranth import Cat, Const, Elaboratable, Module, Signal
+from amaranth import Cat, Const, Elaboratable, Module, Mux, Signal
 
 # CS# high between transactions, from the W956A8 datasheet. Longer than one cycle
 # at any sync above 100 MHz, which is why it cannot be left to chance.
@@ -125,7 +125,8 @@ class HyperRAMController(Elaboratable):
               "RECOVERY")
 
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
-                 fixed_latency=True, tcshi_ns=T_CSHI_NS):
+                 max_latency_clocks=None, fixed_latency=True,
+                 tcshi_ns=T_CSHI_NS):
         """
         Parameters:
             phy                 -- The RAM record that should be connected to this chip.
@@ -135,7 +136,11 @@ class HyperRAMController(Elaboratable):
                                    on this path it is also CK.
             high_latency_clocks -- Override the fixed-latency count. Upstream's constant
                                    is 14 and every non-DQS measurement in this repository
-                                   was taken with it, so it is the default.
+                                   was taken with it, so it is the default. It is the
+                                   RESET value of `latency_clocks`, not a hard wiring.
+            max_latency_clocks  -- Ceiling for `latency_clocks`, which sizes the signal
+                                   and sets the worst case the tCSM check assumes.
+                                   Defaults to `high_latency_clocks`, i.e. a fixed count.
             fixed_latency       -- True when the part takes the long latency on every
                                    transaction, which is what CR0 = 0x8f2f selects.
             tcshi_ns            -- CS# high between transactions, in ns.
@@ -146,11 +151,17 @@ class HyperRAMController(Elaboratable):
         self._recovery_cycles = max(1, math.ceil(tcshi_ns * sync_mhz / 1000.0))
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
+        # The ceiling `latency_clocks` may be driven to, which sizes it and which
+        # the tCSM check below must assume. Defaults to the fixed count, so a
+        # caller that never drives the input gets exactly the old build.
+        self._max_latency_clocks = max(self.HIGH_LATENCY_CLOCKS,
+                                       max_latency_clocks or 0)
 
         # CS#-Low cycles before the first data beat: CS_SETUP, three command
         # words, and HANDLE_LATENCY, which runs one cycle per remaining count plus
-        # the zero cycle.
-        self._data_entry_cycles = 4 + self.HIGH_LATENCY_CLOCKS - 1
+        # the zero cycle. Worst case, so the tCSM check covers the longest latency
+        # the caller can select at runtime.
+        self._data_entry_cycles = 4 + self._max_latency_clocks - 1
 
         # WATCHDOG on READ_DATA/WRITE_DATA, whose only exit was a device beat
         # meeting `final_word` -- 7 of 8 beats hung for ever (#316). Waits for the
@@ -184,6 +195,13 @@ class HyperRAMController(Elaboratable):
         self.single_page      = Signal()
         self.start_transfer   = Signal()
         self.final_word       = Signal()
+        # HALF-CLOCKS of initial latency to wait before the data body. Reset is the
+        # build-time constant, so a caller that leaves it alone behaves as before
+        # and yosys folds it away. Drive it to sweep the controller in step with
+        # the part's CR0[7:4], which is the whole point -- moving one side only
+        # can never pass more than a single code (#331).
+        self.latency_clocks   = Signal(range(0, self._max_latency_clocks + 1),
+                                       reset=self.HIGH_LATENCY_CLOCKS)
 
         # Status signals.
         self.idle             = Signal()
@@ -225,7 +243,7 @@ class HyperRAMController(Elaboratable):
 
         # Tracks how many cycles of latency we have remaining between a command
         # and the relevant data stages.
-        latency_clocks_remaining  = Signal(range(0, self.HIGH_LATENCY_CLOCKS + 1))
+        latency_clocks_remaining  = Signal(range(0, self._max_latency_clocks + 1))
 
         # Store last edge values of RWDS and DQ lines.
         # This is used to handle clock inversion cases.
@@ -378,7 +396,12 @@ class HyperRAMController(Elaboratable):
                     # the CA, so a later RWDS change cannot erase it. (#321)
                     with m.If(extra_latency | self.phy.rwds.i.any()
                               | int(self._fixed_latency)):
-                        m.d.sync += latency_clocks_remaining.eq(self.HIGH_LATENCY_CLOCKS-2)
+                        # Clamped: the two cycles come off HANDLE_LATENCY's own
+                        # entry and exit, so a count below 2 would wrap the
+                        # counter and wait ~2^n cycles instead of none.
+                        m.d.sync += latency_clocks_remaining.eq(
+                            Mux(self.latency_clocks >= 2,
+                                self.latency_clocks - 2, 0))
                     with m.Else():
                         m.d.sync += latency_clocks_remaining.eq(self.LOW_LATENCY_CLOCKS-2)
 
