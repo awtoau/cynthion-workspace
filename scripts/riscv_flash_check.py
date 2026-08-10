@@ -32,8 +32,10 @@ a silent SoC spent hours reading an ST-LINK.
 
 import argparse
 import re
+import select
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -134,6 +136,18 @@ LINE_TIMEOUT_S = 3.0
 # reconfigure. See wait_for_console() for why this cannot be a bare
 # `udevadm settle` loop.
 TTY_ROUNDS = 60
+
+# ...and how long, because the round count is not a bound (#295).
+#
+# Waiting for: FPGA reconfigure, USB enumeration, the kernel binding CDC-ACM.
+# `udevadm monitor` delivers a line per event, so a board that never enumerates
+# delivers none and `readline()` blocks for ever -- TTY_ROUNDS never engages.
+# Expected: ~8 s for configure-and-enumerate. 60 s is 7.5x, and deliberately
+# generous: `gateware/usb_ids.py` records a too-tight bound here producing a
+# false negative on a healthy board three times, once costing an investigation.
+# On expiry: say which wait, the limit and the elapsed, and return None -- the
+# caller reports it rather than guessing a node.
+TTY_DEADLINE_S = 60.0
 
 
 # The offset the firmware reads twice and benchmarks. Must match
@@ -250,10 +264,18 @@ def wait_for_console():
     monitor = subprocess.Popen(
         ["udevadm", "monitor", "--udev", "--subsystem-match=tty"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    started = time.monotonic()
     try:
         for _ in range(TTY_ROUNDS):
-            # Blocks until the kernel reports a tty event. This is the line
-            # that makes the loop a wait rather than a spin.
+            # Waits for a kernel tty event, but never past the deadline: a board
+            # that never enumerates produces no event at all, and this used to
+            # block on `readline()` for ever with the round count untouched.
+            left = TTY_DEADLINE_S - (time.monotonic() - started)
+            if left <= 0 or not select.select([monitor.stdout], [], [], left)[0]:
+                emit(f"  no console after {TTY_DEADLINE_S:.0f} s "
+                     f"(elapsed {time.monotonic() - started:.0f} s): the board "
+                     f"did not enumerate")
+                return None
             if monitor.stdout.readline() == "":
                 break
             node = usb_ids.wait_for_tty("riscv_console", settles=1)

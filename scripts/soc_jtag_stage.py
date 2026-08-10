@@ -264,6 +264,11 @@ def drain(link):
     for _ in range(DRAIN_READS):
         if not link.read_available():
             return
+    # Exhausting the bound means the port never went quiet, which is a talking
+    # board rather than an empty buffer -- and the caller then stages on top of a
+    # stream it did not read. It returned silently either way (#295).
+    emit(f"  console still talking after {DRAIN_READS} drain reads; "
+         f"staging anyway, and what follows may be interleaved")
 
 
 def read_console(link, emit, want=()):

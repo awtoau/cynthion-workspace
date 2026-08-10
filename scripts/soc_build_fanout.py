@@ -96,7 +96,10 @@ def parse_spec(spec: str) -> dict:
 
 def one_build(overlay: dict, jobs: int, extra: list[str]) -> dict:
     """Run one `soc_run.py --build-only`. Returns a row describing it."""
-    env = {**os.environ, **overlay}
+    # How many builds share the machine, so the child can size its own synthesis
+    # bound. Without it soc_run would use a limit measured on builds that ran
+    # alone and kill this one for being concurrent (#295).
+    env = {**os.environ, **overlay, "CYNTHION_BUILD_JOBS": str(jobs)}
     slug = variant.slug(env)
     build = variant.build_dir(ROOT, env)
     limit = deadline(jobs)

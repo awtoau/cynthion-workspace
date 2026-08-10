@@ -184,15 +184,25 @@ def sections(elf):
     return found
 
 
-def run_workload(elf, events, trace=None):
-    """Boot, run `usb <events>`, return the report text or None."""
+def run_workload(elf, events, trace=None, say=print):
+    """Boot, run `usb <events>`, return the report text or None.
+
+    `say` so an expiry reaches the transcript `main` keeps, not just stdout.
+    """
     session = Session(elf, trace)
     try:
+        # WHICH budget expired. The caller said only "the run never reported",
+        # which is the same sentence for a QEMU that never booted and a workload
+        # that never finished -- two different faults (#295).
         if session.expect(b"Cynthion RISC-V SoC", BOOT_S) is None:
+            say(f"  TIMEOUT: no banner within BOOT_S = {BOOT_S:.0f} s; "
+                f"the image never reached its shell")
             return None
         mark = len(session.snapshot())
         session.send(f"usb {events}\r".encode())
         if session.expect(b"  event ", RUN_S, mark) is None:
+            say(f"  TIMEOUT: booted, but no report within RUN_S = {RUN_S:.0f} s "
+                f"of `usb {events}`")
             return None
         return session.snapshot()[mark:].decode("ascii", "replace")
     finally:
@@ -253,7 +263,7 @@ def main():
         if args.trace:
             trace = ROOT / "tmp" / "logs" / f"trace-{name}.log"
         started = time.monotonic()
-        report = run_workload(elves[(name, True)], args.events, trace)
+        report = run_workload(elves[(name, True)], args.events, trace, say)
         if report is None:
             say("  the run never reported -- see the transcript above")
             return 1

@@ -61,6 +61,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -147,8 +149,18 @@ def emit(msg: str = "") -> None:
         pass
 
 
+# Grace between the child closing its output and the child exiting.
+#
+# EOF on the pipe means it has finished writing, so what remains is process
+# teardown -- sub-millisecond in every run in `tmp/logs/dev.log`. 5 s is a floor
+# generous enough that a slow flush cannot trip it, and it exists so a child that
+# closes stdout and then wedges is killed and named rather than waited on for
+# ever (#295).
+EXIT_GRACE_S = 5.0
+
+
 def spawn(cmd: list[str], cwd: Path | str | None = None, *,
-          quiet: bool = False) -> int:
+          quiet: bool = False, bound_seconds: float | None = None) -> int:
     """Run `cmd`, streaming its output to the terminal AND into `dev.log`.
 
     The whole point: `subprocess.call` hands the child the parent's streams, so
@@ -161,14 +173,32 @@ def spawn(cmd: list[str], cwd: Path | str | None = None, *,
 
     `quiet` suppresses the terminal copy but still records -- for children whose
     output is parsed rather than read.
+
+    `bound_seconds` kills the child at that limit and logs the operation, the
+    limit and the elapsed. **Unbounded is the default and is correct here**: this
+    also runs the console watchers and board sessions, which outlive
+    reconfigures by design (`riscv_console.py`, `tio_user.py`), and a dispatcher
+    cannot know what its argv is for. The bound belongs at the call site that
+    knows the operation -- see `soc_run.py`'s QEMU gate. What is NOT optional is
+    the exit grace below: EOF then a wedge is a hang either way.
     """
     log("run: " + " ".join(str(part) for part in cmd), depth=3)
     program = Path(str(cmd[0])).name
     if program in ("python3", "python") and len(cmd) > 1:
         program = Path(str(cmd[1])).name
 
+    started = time.monotonic()
     proc = subprocess.Popen(cmd, cwd=cwd or ROOT, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
+    watchdog = None
+    if bound_seconds is not None:
+        def overrun():
+            log(f"TIMEOUT {program}: killed at {bound_seconds:.0f}s, "
+                f"elapsed {time.monotonic() - started:.0f}s", "ERROR", depth=3)
+            proc.kill()
+        watchdog = threading.Timer(bound_seconds, overrun)
+        watchdog.daemon = True
+        watchdog.start()
     try:
         handle = None
         try:
@@ -189,6 +219,23 @@ def spawn(cmd: list[str], cwd: Path | str | None = None, *,
             handle.close()
     finally:
         proc.stdout.close()
-    rc = proc.wait()
+        if watchdog is not None:
+            watchdog.cancel()
+    try:
+        rc = proc.wait(timeout=EXIT_GRACE_S)
+    except subprocess.TimeoutExpired:
+        log(f"TIMEOUT {program}: output ended but it did not exit within "
+            f"{EXIT_GRACE_S:.0f}s (elapsed {time.monotonic() - started:.0f}s); "
+            f"killed", "ERROR", depth=3)
+        proc.kill()
+        rc = proc.wait()
+    # A bounded run that succeeded is evidence about how long this takes, so the
+    # next one's bound comes from measurement rather than from the floor.
+    if bound_seconds is not None and rc == 0:
+        try:
+            from subprocess_timeout_from_history import record
+            record(f"spawn:{program}", time.monotonic() - started)
+        except (ImportError, OSError):
+            pass
     log(f"rc={rc}: {program}", "INFO" if rc == 0 else "ERROR", depth=3)
     return rc
