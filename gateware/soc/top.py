@@ -411,6 +411,18 @@ HYPERRAM_BIST_BASE = 0xf0000800
 # error at elaboration (#226).
 HYPERRAM_CK_BASE = 0xf0000a00
 
+# The PLL's dynamic phase shifter, present only when HYPERRAM_PHASE is set. 16
+# bytes: four 32-bit registers, see `peripherals/pll_phase.py`.
+PLL_PHASE_BASE = 0xf0000a10
+
+# Which clock is on which PMOD pad, present only when CLOCK_MIRROR is set. 8
+# bytes, and 8-byte aligned for the same decoder reason as the window above.
+#
+# A window of its own rather than a field in `gateware_id`: the mirror is a build
+# option and the id block is in every build, so folding it in would put a
+# permanent hole in the shipping map for a variant feature.
+CLOCK_MIRROR_BASE = 0xf0000a20
+
 # The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
 #
 # Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
@@ -778,6 +790,17 @@ CLOCK_MIRROR = os.environ.get("CYNTHION_CLOCK_MIRROR", "") not in ("", "0")
 # path, so the raw net is out of spec on the pad above 150. /4 puts every source
 # in 15..50 MHz across the swept range. Powers of two only.
 CLOCK_MIRROR_DIV = int(os.environ.get("CYNTHION_CLOCK_MIRROR_DIV", "4"))
+
+# The HyperRAM PLL's dynamic phase shifter as a runtime lever, plus the probe
+# clock that says whether it moved. See #228 and `peripherals/pll_phase.py`.
+#
+# OFF by default, and it is not only caution: it flips `DPHASE_SOURCE` to
+# ENABLED, adds CLKOS2 and a fourth clock domain. What ENABLED does to a PLL
+# whose phase ports are all held at 0 is not documented anywhere local, so a
+# build that does not want the lever does not get the config bit either.
+#
+#     CYNTHION_HYPERRAM_PHASE=1 CYNTHION_HYPERRAM_BIST=1 ./scripts/soc_run.py
+HYPERRAM_PHASE = os.environ.get("CYNTHION_HYPERRAM_PHASE", "") not in ("", "0")
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
 # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
@@ -1386,7 +1409,8 @@ class AwtoSoc(Elaboratable):
             # two CK per `hr` cycle, so `hr = ck / 2` there, and taking `ck_mhz`
             # here means a caller cannot get that factor of two wrong.
             m.submodules.hr_car = hr_car = HyperRAMDomains(
-                ck_mhz=HYPERRAM_BIST_CK_RUNGS, dqs=HYPERRAM_BIST_DQS)
+                ck_mhz=HYPERRAM_BIST_CK_RUNGS, dqs=HYPERRAM_BIST_DQS,
+                phase=HYPERRAM_PHASE)
             # `usb` rather than `clk_60MHz`: the SoC's own generator has already
             # requested that resource, and Amaranth allows one requester. `usb`
             # is the same 60 MHz -- the FPGA sources the ULPI clock from it --
@@ -1417,6 +1441,30 @@ class AwtoSoc(Elaboratable):
             decoder.add(hyper_ck_bridge.wb_bus, addr=HYPERRAM_CK_BASE,
                         name="hyperram_ck")
 
+            # The phase lever, and the probe that says it moved. Inside the BIST
+            # block because it drives THIS PLL's ports -- the SoC's own generator
+            # has its own EHXPLLL and its own five tied-off inputs (#228).
+            if HYPERRAM_PHASE:
+                from peripherals.pll_phase import PLLPhase
+
+                # `8 * CLKOP_DIV` steps per rotation: one step is 1/8 of a VCO
+                # period and CLKOS2 divides that VCO by CLKOP_DIV. Taken from the
+                # generator rather than recomputed, so it cannot disagree.
+                pll_phase = PLLPhase(rotation=8 * hr_car.clkop_div)
+                m.submodules.pll_phase = pll_phase
+                m.d.comb += [
+                    hr_car.phase_sel.eq(pll_phase.phase_sel),
+                    hr_car.phase_dir.eq(pll_phase.phase_dir),
+                    hr_car.phase_step.eq(pll_phase.phase_step),
+                    pll_phase.probe_level.eq(hr_car.probe_level),
+                    pll_phase.locked.eq(hr_car.locked),
+                ]
+                pll_phase_bridge = WishboneCSRBridge(pll_phase.bus,
+                                                     data_width=32)
+                m.submodules.pll_phase_bridge = pll_phase_bridge
+                decoder.add(pll_phase_bridge.wb_bus, addr=PLL_PHASE_BASE,
+                            name="pll_phase")
+
         # Divided clocks on PMOD A, so an instrument outside the die can say
         # what the die is running at. Off unless asked -- see CLOCK_MIRROR.
         #
@@ -1431,6 +1479,12 @@ class AwtoSoc(Elaboratable):
                 mirrored.append("hr")
                 if HYPERRAM_BIST_DQS:
                     mirrored.append("hr_fast")
+                # The phase probe, next to the `hr` it is shifted against. The
+                # divider preserves an absolute delay, so a phase step of 312 ps
+                # on the die is 312 ps between these two pads -- which is the
+                # whole of #294's case for #228's lever.
+                if HYPERRAM_PHASE:
+                    mirrored.append("hr_probe")
 
             # `dir="-"` and the buffer inside the mirror: requesting the
             # resource at all is what costs the pins, so a build with the mirror
@@ -1438,6 +1492,17 @@ class AwtoSoc(Elaboratable):
             m.submodules.clock_mirror = ClockMirror(
                 pads=platform.request("user_pmod", 0, dir="-"),
                 domains=mirrored, divisor=CLOCK_MIRROR_DIV)
+
+            # WHICH PAD CARRIES WHAT, from the design rather than from a comment.
+            from peripherals.clock_mirror import ClockMirrorMap
+
+            mirror_map = ClockMirrorMap(domains=mirrored,
+                                        divisor=CLOCK_MIRROR_DIV)
+            m.submodules.clock_mirror_map = mirror_map
+            mirror_map_bridge = WishboneCSRBridge(mirror_map.bus, data_width=32)
+            m.submodules.clock_mirror_map_bridge = mirror_map_bridge
+            decoder.add(mirror_map_bridge.wb_bus, addr=CLOCK_MIRROR_BASE,
+                        name="clock_mirror")
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #

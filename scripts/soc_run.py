@@ -182,6 +182,13 @@ VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_BIST", ""),
     ("CYNTHION_HYPERRAM_CK_MHZ", "100"),
     ("CYNTHION_HYPERRAM_BIST_DQS", "1"),
+    # Both were missing, and the mirror one had already shipped: a build with
+    # CYNTHION_CLOCK_MIRROR=1 hashed the same as one without, so the cache served
+    # a bitstream with no mirror in it and the pins stayed dark for the reason
+    # nobody would have looked for.
+    ("CYNTHION_CLOCK_MIRROR", ""),
+    ("CYNTHION_CLOCK_MIRROR_DIV", "4"),
+    ("CYNTHION_HYPERRAM_PHASE", ""),
 )
 
 
