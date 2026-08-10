@@ -791,9 +791,14 @@ class NonDQSProtocolHarness(Elaboratable):
         if upstream:
             self.psram = HyperRAMInterface(phy=self.phy)
         else:
+            # `ModelHyperRAM16` hangs off the `HyperBusPHY` record directly and
+            # answers in the same cycle, so the round trip here is 0 against
+            # upstream's `HyperRAMPHY` at 4, and the RWDS sample instant follows it.
+            # `scripts/hyperram_phy_rwds_sim.py` is where the 4 is measured and where
+            # the real PHY is exercised. (#338)
             self.psram = HyperRAMController(
                 phy=self.phy, sync_mhz=sync_mhz, fixed_latency=fixed_latency,
-                max_latency_clocks=max_latency_clocks)
+                max_latency_clocks=max_latency_clocks, phy_round_trip_cycles=0)
 
     def elaborate(self, platform):
         m = Module()
@@ -1531,9 +1536,10 @@ class NonDQSHarness(Elaboratable):
         self.phy = HyperBusPHY()
         self._ck_align = ck_align
         self.gate = ClockStopPHY(dev=self.phy) if clock_stop else None
+        # No PHY pipeline in this harness either; see `NonDQSProtocolHarness`.
         self.interface = HyperRAMController(
             phy=self.gate.ctrl if clock_stop else self.phy,
-            sync_mhz=NON_DQS_SYNC_MHZ)
+            sync_mhz=NON_DQS_SYNC_MHZ, phy_round_trip_cycles=0)
         self.bootram = BootRAM(interface=self.interface, sustained=sustained,
                                clock_stop=clock_stop)
         self._pipe = pipe
