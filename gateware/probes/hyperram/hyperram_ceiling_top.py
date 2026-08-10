@@ -1103,7 +1103,11 @@ class HyperRAMCeiling(Elaboratable):
         m.d.comb += [
             harness.busy.eq(1),
             harness.done.eq(finished),
-            harness.check.eq(psram.read_ready),
+            # GATED ON THE READ STATE. `read_ready` also fires for the register
+            # READ in CONFIG_VERIFY, and CR0 is not a data word -- ungated, every
+            # cell scored one extra word and one extra mismatch (2049 of 2048,
+            # errors 1) and could never reach a zero-error verdict. (#332)
+            harness.check.eq(psram.read_ready & engine.ongoing("READ")),
             harness.actual.eq(psram.read_data),
             harness.golden.eq(expected),
             harness.status_extra.eq(
