@@ -48,6 +48,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "hyperram-verify.log"
 
+sys.path.insert(0, str(ROOT / "gateware" / "soc"))
+import variant  # noqa: E402
+
+# The `.bit` this variant builds to. Passed to the matrix so its runs record
+# what the HyperRAM pins were set to; without it every run the GATE records is
+# saved with `pins: null` and cannot be compared against a pin patch (#311).
+BITSTREAM = variant.build_dir(ROOT) / "top.bit"
+
 
 def emit(line=""):
     print(line, flush=True)
@@ -133,10 +141,15 @@ def main():
         emit("\n=== matrix SKIPPED (--quick)")
         emit("    so nothing here says a cell is stable, only that it passed once")
     else:
+        matrix = [py, str(s / "hyperram_matrix_diff.py"), "--label", args.label,
+                  "--passes", str(args.passes), "--repeat", "2"]
+        if BITSTREAM.exists():
+            matrix += ["--bitstream", str(BITSTREAM)]
+        else:
+            emit(f"\n    NO BITSTREAM at {BITSTREAM.relative_to(ROOT)} -- the "
+                 "matrix runs below will record `pins: null` (#311)")
         results["matrix, twice, diffed"] = step(
-            "the 4096-cell matrix, twice, diffed",
-            [py, str(s / "hyperram_matrix_diff.py"), "--label", args.label,
-             "--passes", str(args.passes), "--repeat", "2"])[0]
+            "the 4096-cell matrix, twice, diffed", matrix)[0]
 
     emit("\n" + "=" * 60)
     for name, ok in results.items():
