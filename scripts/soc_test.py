@@ -1689,11 +1689,9 @@ def main():
         # instruction in the main loop -- which is why the liveness check
         # below is the one that matters and why it runs on this target at
         # all rather than waiting for a bitstream.
-        def stats_state(name):
+        def parse_stats(reply):
             """`stats`, parsed: (window, busy basis points, ipc per 1000,
                 turns, mean, worst, polls, worst gap ms)."""
-            reply = command("cpu stats", [b"cycles   window", b"loop     turns",
-                                      b"poll     every"], name)
             cycles = re.search(rb"window (\d+)\s+busy (\d+)\.(\d\d)%"
                                rb"\s+ipc (\d+)\.(\d\d\d)", reply)
             loop = re.search(rb"turns (\d+)\s+mean (\d+) cycles"
@@ -1708,6 +1706,28 @@ def main():
                     int(loop.group(1)), int(loop.group(2)),
                     int(loop.group(3)),
                     int(poll.group(2)), int(poll.group(3))), reply
+
+        def stats_state(name):
+            """One `cpu stats`, as a named check."""
+            return parse_stats(
+                command("cpu stats", [b"cycles   window", b"loop     turns",
+                                      b"poll     every"], name))
+
+        def stats_quiet():
+            """One `cpu stats`, asserting nothing. For the retries below."""
+            mark = len(session.snapshot())
+            session.send(b"cpu stats\r")
+            if expect_line(session, b"poll     every", REPLY_S, mark) is None:
+                return None, b""
+            session.expect(PROMPT, REPLY_S, mark)
+            return parse_stats(session.snapshot()[mark:])
+
+        def work_quiet():
+            """`cpu log 20`, asserting nothing. 20 ms busy in one turn."""
+            mark = len(session.snapshot())
+            session.send(b"cpu log 20\r")
+            expect_line(session, b"log pushed 15 of 20", REPLY_S, mark)
+            session.expect(PROMPT, REPLY_S, mark)
 
         # Twice, either side of a known amount of work, because the
         # interesting number is the DIFFERENCE. The first reading is an
@@ -1725,6 +1745,32 @@ def main():
         command("cpu log 20", [b"log pushed 15 of 20"],
                 "an overfull log drops the excess and counts it, once more")
         stats, reply = stats_state("`stats` answers again after a busy turn")
+
+        # A SHRINKING WINDOW VOIDS THE PAIR, so take another one.
+        #
+        # `WINDOW_CYCLES` and `WINDOW_BUSY` halve together at 2^30 cycles
+        # (`HALVE_AT`, firmware/cynthion-soc/src/metrics.rs). The comparison
+        # below is an absolute product of the two and does not survive that: a
+        # halving between the readings scales the first reading's work out of
+        # the second, and a machine that did work reads as one that did none.
+        # That is #363. The window only ever shrinks by halving, so
+        # `window_after < window_before` IS the instrument saying the pair is
+        # void -- there is nothing to infer.
+        #
+        # Four pairs. One pair costs ~25 ms against a halving period of ~6 s
+        # under QEMU (2^30 host TSC cycles; 17.9 s at 60 MHz on the board), so
+        # a straddle is well under 1% and four independent ones do not happen.
+        # A run that manages it fails, with the reason, rather than passing.
+        retries = 0
+        while (idle is not None and stats is not None
+               and stats[0] < idle[0] and retries < 3):
+            retries += 1
+            idle, _ = stats_quiet()
+            work_quiet()
+            stats, _ = stats_quiet()
+        if retries:
+            emit(f"        the window halved mid-measurement; re-took the "
+                 f"pair {retries} time(s)")
 
         if idle is not None:
             # The IPC is NOT a measurement under QEMU. On `virt`, `mcycle` and
@@ -1777,13 +1823,18 @@ def main():
             # than it found.
             check("work moves the busy cycle count",
                   window * busy > idle[0] * idle[1],
-                  f"busy was {idle[1] / 100:.2f}% and is "
-                  f"{busy / 100:.2f}% after a command that spends 20 ms\n"
-                  "inside the firmware in a single turn. Nothing is "
-                  "calling metrics::busy,\n"
-                  "or the flag is being consumed before the turn it "
-                  "belongs to closes.\n"
-                  f"received: {show(reply) or '(nothing)'}")
+                  f"busy was {idle[1] / 100:.2f}% of {idle[0]} cycles and is "
+                  f"{busy / 100:.2f}% of {window} after a command\n"
+                  "that spends 20 ms inside the firmware in a single turn. "
+                  "Nothing is calling\n"
+                  "metrics::busy, or the flag is being consumed before the "
+                  "turn it belongs to\n"
+                  "closes.\n"
+                  + ("A SMALLER WINDOW after than before means the halving "
+                     "won all four pairs;\n"
+                     "that is the measurement, not the firmware (#363).\n"
+                     if window < idle[0] else "")
+                  + f"received: {show(reply) or '(nothing)'}")
 
             # A fraction that exceeds its whole is a scaling bug, and it is
             # the one failure mode of `parts()` that would still print
