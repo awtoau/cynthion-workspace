@@ -777,7 +777,8 @@ def main():
                    # `reset` and `clear` are the DESTRUCTIVE verbs (#315),
                    # asserted here so a rename cannot quietly drop the one word
                    # that separates each from its `init`.
-                   b"[status|floor|alert|rate|detect|limit|samples|bracket|reset]",
+                   b"[status|floor|alert|rate|detect|limit|samples|bracket"
+                   b"|hispeed|reset]",
                    # `clear` is the other one, and `info` was missing from this
                    # row already.
                    b"[info|status|read|sel|sweep|test|cross|ramp|bench|id|clear]",

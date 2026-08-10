@@ -233,6 +233,16 @@ impl Limit {
     ];
 }
 
+/// SLOW. Bit 0 is `I2C_HISPEED`, the only bit this firmware touches here.
+///
+/// One byte, and every other bit is a live sample-rate control -- so it is
+/// read-modify-written, never blind-written (#273's lesson on this part).
+const REG_SLOW: u8 = 0x1c;
+/// "Enables the 3.4 MHz I2C operation by changing the pulse-width parameters of
+/// the Pulse Gobbler" (DS20006539F). A SPIKE FILTER, not protocol state: no
+/// master code and no Hs arbitration are involved (#272).
+const SLOW_I2C_HISPEED: u8 = 1 << 0;
+
 /// VSENSE range for all four channels. `0x55` selects bipolar +/-100 mV for
 /// each two-bit CFG_VSn field; the low byte leaves every VBUS range unipolar.
 const REG_NEG_PWR_FSR: u8 = 0x1d;
@@ -917,6 +927,26 @@ impl Monitor {
 
     fn write16(&self, bus: &mut Bus, register: u8, value: u16) -> Result<(), bus::Error> {
         bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &value.to_be_bytes())
+    }
+
+    /// Read `SLOW`, or set/clear `I2C_HISPEED` in it. Returns the byte AFTER.
+    ///
+    /// Read-modify-write: the other bits are sample-rate controls (#273).
+    /// The readback is the whole result -- a part that did not take the bit is
+    /// the interesting case, and a blind write could not tell.
+    pub fn hispeed(&self, bus: &mut Bus, set: Option<bool>) -> Result<u8, bus::Error> {
+        let mut raw = [0u8; 1];
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, REG_SLOW, &mut raw)?;
+        if let Some(on) = set {
+            let wanted = if on {
+                raw[0] | SLOW_I2C_HISPEED
+            } else {
+                raw[0] & !SLOW_I2C_HISPEED
+            };
+            bus.write_registers(BUS_POWER_MONITOR, ADDRESS, REG_SLOW, &[wanted])?;
+            bus.read_registers(BUS_POWER_MONITOR, ADDRESS, REG_SLOW, &mut raw)?;
+        }
+        Ok(raw[0])
     }
 
     /// Make GPIO/ALERT2 an ALERT pin, without disturbing anything else in CTRL.

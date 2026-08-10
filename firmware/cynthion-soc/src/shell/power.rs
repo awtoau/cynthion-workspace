@@ -172,6 +172,39 @@ pub(crate) fn rate_command(uart: &mut Uart, arg: &[u8]) {
     }
 }
 
+/// `pac1954 hispeed [on|off]` -- `SLOW` bit 0, the Pulse Gobbler's spike filter.
+///
+/// The READBACK is printed, not the request: the whole question is whether the
+/// part takes the bit, and this bus has already been caught reporting a value it
+/// read from itself (#272).
+fn hispeed_command(uart: &mut Uart, args: &[u8], devices: &mut Devices) {
+    let set = match args {
+        b"" => None,
+        b"on" => Some(true),
+        b"off" => Some(false),
+        _ => {
+            let _ = writeln!(uart, "usage: pac1954 hispeed [on|off]");
+            return;
+        }
+    };
+    let Some(bus) = devices.bus.as_mut() else {
+        return board_absent(uart);
+    };
+    match devices.power.hispeed(bus, set) {
+        Ok(slow) => {
+            let _ = writeln!(
+                uart,
+                "  SLOW reads {:#04x}  I2C_HISPEED {}",
+                slow,
+                if slow & 1 != 0 { "on" } else { "off" }
+            );
+        }
+        Err(error) => {
+            let _ = writeln!(uart, "  {}", error.as_str());
+        }
+    }
+}
+
 pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     let rest = trim(rest);
 
@@ -205,6 +238,9 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // `power::Monitor::reset`.
     if rest == b"reset" {
         return pac1954_reset(uart, devices);
+    }
+    if rest.starts_with(b"hispeed") {
+        return hispeed_command(uart, trim(&rest[b"hispeed".len()..]), devices);
     }
     if rest.starts_with(b"floor") {
         let rest = trim(&rest[b"floor".len()..]);
