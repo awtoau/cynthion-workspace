@@ -37,6 +37,7 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from logging_utils import setup_logging
+from subprocess_timeout_from_history import limit_for, run_bounded
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -287,10 +288,21 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
                               seconds=time.monotonic() - started,
                               detail=msg, failed_cmd=printable)
 
-            proc = subprocess.run(
-                step.cmd, cwd=step.cwd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            )
+            # Bounded by what this check has actually taken before, not
+            # unbounded. This is the whole local gate: a wedged nextpnr or cargo
+            # used to hang it for ever, with nothing to distinguish that from a
+            # slow build (#295). The mechanism was already in the tree with one
+            # caller.
+            proc = run_bounded(step.cmd, cwd=step.cwd, merge_stderr=True,
+                               family=f"check:{check.name}")
+            if proc is None:
+                bound, reason = limit_for(f"check:{check.name}")
+                msg = f"TIMED OUT after {bound:.0f}s ({reason})"
+                log_file.write(msg + "\n")
+                logger.error("%s: %s", check.name, msg)
+                return Result(check.name, ok=False,
+                              seconds=time.monotonic() - started,
+                              detail=msg, failed_cmd=printable)
             log_file.write(proc.stdout or "")
             log_file.flush()
             if verbose and proc.stdout:

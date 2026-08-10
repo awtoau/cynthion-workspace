@@ -128,6 +128,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, spawn  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS  # noqa: E402
+from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
 
 # The recorder every build goes through. Area, timing and the full configuration
 # land in Postgres from one unconditional call below, so there is no way to
@@ -137,9 +138,44 @@ from fast_build_env import NEXTPNR_OPTS  # noqa: E402
 import build_metrics  # noqa: E402
 
 
-def run(cmd, cwd=None, env=None, shell=False):
-    return subprocess.run(cmd, cwd=cwd or ROOT, env=env, shell=shell,
-                          capture_output=True, text=True)
+def synthesis_floor():
+    """Seconds a gateware build may take, given how many are in flight.
+
+    History cannot supply this: every recorded run was measured alone, and a
+    build sharing 31 cores with seven others is slower than any of them. A bound
+    from those recordings would kill a build that was working.
+
+    Measured 2026-08-10, and the workings are in #351: 138 s alone, and each
+    further concurrent build adds ~17 s to every one of them. 1.25x that.
+    `soc_build_fanout.py` sets the variable; a lone build leaves it unset.
+    """
+    jobs = max(int(os.environ.get("CYNTHION_BUILD_JOBS", "1") or 1), 1)
+    return 1.25 * (138 + 17 * (jobs - 1))
+
+
+def run(cmd, cwd=None, env=None, floor=None):
+    """Every cargo, objcopy, yosys and apollo invocation goes through here.
+
+    Bounded by what THIS program has taken before, per family, rather than not at
+    all (#295): a wedged place-and-route used to hang the whole run with nothing
+    to distinguish it from a slow one. The family is the program's own name, so
+    an objcopy is not given a bound sized by a synthesis.
+
+    On expiry `run_bounded` prints the family, the limit and the elapsed, and the
+    caller sees returncode 124 -- the shell's convention for "killed by timeout"
+    -- so existing `returncode != 0` handling reports it as a failure rather than
+    reading None as success.
+    """
+    family = Path(str(cmd[0])).name
+    if family in ("python3", "python", "python3.15t") and len(cmd) > 1:
+        family = Path(str(cmd[1])).name
+    result = run_bounded(cmd, family=f"run:{family}", cwd=cwd or ROOT, env=env,
+                         floor=floor)
+    if result is not None:
+        return result
+    bound, reason = limit_for(f"run:{family}", floor)
+    return subprocess.CompletedProcess(
+        cmd, 124, "", f"TIMED OUT after {bound:.0f}s ({reason}): {family}\n")
 
 
 def firmware_digest(path=None):
@@ -874,7 +910,7 @@ def main():
         emit(f"  full tool output -> {SYNTH_LOG.relative_to(ROOT)} "
              f"(thousands of lines; only the summary comes back here)")
         build_started = time.perf_counter()
-        result = run(["bash", "-c", build])
+        result = run(["bash", "-c", build], floor=synthesis_floor())
         build_seconds = time.perf_counter() - build_started
         output = (result.stdout or "") + (result.stderr or "")
 
