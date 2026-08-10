@@ -9,7 +9,7 @@
 
 use core::fmt::Write;
 
-use super::parse::{parse_decimal, trim};
+use super::parse::{parse_decimal, parse_signed, trim};
 use crate::bist::{self, Axes, Bist};
 use crate::clock::Hz;
 use crate::uart::Uart;
@@ -40,6 +40,8 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
         b"ck" => ck(uart, args),
+        b"phase" => phase(uart, args),
+        b"mirror" => mirror(uart),
         b"cell" => match axes(args) {
             Some(axes) => bist::one(uart, &engine, axes, DEFAULT_PASSES),
             None => {
@@ -92,6 +94,90 @@ fn ck(uart: &mut Uart, args: &[u8]) {
     // the one condition under which every number above is meaningless.
     if !ck.locked() {
         let _ = writeln!(uart, "  PLL NOT LOCKED -- no measurement here means anything");
+    }
+}
+
+/// `bist phase [clkos|clkos2|clkos3|clkop [[-]steps]]` -- move the PLL's phase.
+///
+/// With no argument it reports. With an output it steps that output by `steps`,
+/// negative for backward, and reports after each step so a sweep is readable as
+/// it runs rather than only at the end.
+///
+/// **`clkop` is the feedback output of this PLL.** Shifting it does not move
+/// CLKOP; the loop corrects it and everything else moves instead. Allowed, and
+/// named, because finding that out should not cost a rebuild.
+fn phase(uart: &mut Uart, args: &[u8]) {
+    // SAFETY: `bist::PHASE_BASE` is the shifter's CSR base.
+    let phase = unsafe { bist::Phase::new(bist::PHASE_BASE) };
+    if !phase.present() {
+        let _ = writeln!(uart, "phase: no shifter in this bitstream");
+        return;
+    }
+
+    let mut words = args.split(|&b| b == b' ').filter(|w| !w.is_empty());
+    if let Some(name) = words.next() {
+        let sel = match bist::PHASESEL.iter().find(|(n, _)| n.as_bytes() == name) {
+            Some(&(_, sel)) => sel,
+            None => {
+                let _ = writeln!(uart, "usage: bist phase [clkos|clkos2|clkos3|clkop [[-]steps]]");
+                return;
+            }
+        };
+        let count = words.next().and_then(parse_signed).unwrap_or(0);
+        let back = count < 0;
+        phase.select(sel, back);
+        for _ in 0..count.unsigned_abs() {
+            if !phase.step(sel, back) {
+                let _ = writeln!(uart, "phase: step did not complete -- busy stuck");
+                break;
+            }
+        }
+    }
+
+    let _ = writeln!(
+        uart,
+        "  steps {}  of {} per rotation  level {}  count {}{}",
+        phase.steps(),
+        phase.rotation(),
+        phase.level() as u32,
+        phase.count(),
+        if phase.has_probe() { "" } else { "  (NO PROBE -- level means nothing)" }
+    );
+    if !phase.locked() {
+        let _ = writeln!(uart, "  PLL NOT LOCKED -- the phase moved something it should not have");
+    }
+}
+
+/// `bist mirror` -- which clock is on which PMOD A pad, and divided by what.
+fn mirror(uart: &mut Uart) {
+    // SAFETY: `bist::MIRROR_BASE` is the mirror map's CSR base.
+    let mirror = unsafe { bist::Mirror::new(bist::MIRROR_BASE) };
+    let pads = mirror.pads();
+    if pads == 0 {
+        let _ = writeln!(uart, "mirror: no clocks on the PMOD pins in this bitstream");
+        return;
+    }
+    let _ = writeln!(uart, "  PMOD A, each source divided by {}", mirror.divisor());
+    for index in 0..pads as usize {
+        match mirror.source(index) {
+            Some(name) => {
+                let _ = writeln!(
+                    uart,
+                    "  pin {:>2}  ball {:<4} {}",
+                    bist::PMOD_A_PINS[index],
+                    bist::PMOD_A_BALLS[index],
+                    name
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    uart,
+                    "  pin {:>2}  ball {:<4} driven low",
+                    bist::PMOD_A_PINS[index],
+                    bist::PMOD_A_BALLS[index]
+                );
+            }
+        }
     }
 }
 
