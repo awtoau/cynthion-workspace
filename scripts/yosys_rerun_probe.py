@@ -31,6 +31,13 @@ successful run leaves the directory usable.
 inputs, and keeps every `top.json` -- so the runs are independent and their
 digests are comparable afterwards. Concurrency is the point: the assert is rare
 enough that a serial probe spends most of an hour not reproducing it.
+
+`--yosys-threads N` sets `YOSYS_MAX_THREADS`, which is the discriminator that
+matters for this assert: the check it fires from is itself threaded --
+`check_module()` in `kernel/rtlil.cc` shards the cell list across a
+`ParallelDispatchThreadPool`, and the assert is inside that lambda. If the same
+inputs fail with threads and never fail with `--yosys-threads 1`, the fault is
+yosys's concurrency, not the netlist.
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -68,7 +76,7 @@ def cell_counts(report: Path) -> dict:
     return {name: int(used) for used, name in CELL_RE.findall(text)}
 
 
-def one_run(build: Path, run: int, jobs: int) -> dict:
+def one_run(build: Path, run: int, jobs: int, threads: int | None = None) -> dict:
     """One yosys invocation, in its own directory when more than one is in flight."""
     work = build
     if jobs > 1:
@@ -78,10 +86,13 @@ def one_run(build: Path, run: int, jobs: int) -> dict:
             if (build / name).exists():
                 shutil.copy2(build / name, work / name)
     report = work / f"retry-{run}.rpt"
+    env = dict(os.environ)
+    if threads:
+        env["YOSYS_MAX_THREADS"] = str(threads)
     started = time.perf_counter()
     result = subprocess.run(
         f'{ENVIRONMENT} && yosys -q -l {report.name} top.ys',
-        cwd=work, shell=True, capture_output=True, text=True)
+        cwd=work, shell=True, capture_output=True, text=True, env=env)
     elapsed = time.perf_counter() - started
     produced = work / "top.json"
     digest = (hashlib.sha256(produced.read_bytes()).hexdigest()[:12]
@@ -100,6 +111,9 @@ def main() -> int:
     parser.add_argument("--dir", type=Path, default=variant.build_dir(ROOT),
                         help="a build directory holding top.ys and its inputs")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--yosys-threads", type=int, default=None, metavar="N",
+                        help="YOSYS_MAX_THREADS for each run; 1 pins the threaded "
+                             "design checker to the calling thread")
     parser.add_argument("--jobs", type=int, default=1,
                         help="runs in flight; each gets its own rerun-<n>/ copy. "
                              "yosys is single-threaded, so this is free parallelism")
@@ -115,12 +129,14 @@ def main() -> int:
     inputs = {name: hashlib.sha256((build / name).read_bytes()).hexdigest()[:12]
               for name in ("top.ys", "top.il", "VexiiRiscv.v")
               if (build / name).exists()}
-    emit(f"re-running yosys {args.runs}x in {build.relative_to(ROOT)}")
+    emit(f"re-running yosys {args.runs}x in {build.relative_to(ROOT)}"
+         + (f", YOSYS_MAX_THREADS={args.yosys_threads}" if args.yosys_threads else ""))
     for name, digest in inputs.items():
         emit(f"  {name} {digest}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        rows = sorted(pool.map(lambda run: one_run(build, run, args.jobs),
+        rows = sorted(pool.map(lambda run: one_run(build, run, args.jobs,
+                                                   args.yosys_threads),
                                range(1, args.runs + 1)),
                       key=lambda row: row["run"])
 
