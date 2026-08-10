@@ -234,9 +234,16 @@ def main():
     if interactive:
         threading.Thread(target=keyboard, args=(state, lock), daemon=True).start()
 
-    print("watching the Cynthion RISC-V console (Ctrl-C to stop)", flush=True)
+    # The quit key differs by mode, and saying the wrong one strands the session:
+    # interactive is RAW, so Ctrl-C is a byte for the BOARD and cannot end this.
+    # Ctrl-T is tio's escape and this is not tio, so that does nothing either.
     if interactive:
-        print("type commands here — they go to the board", flush=True)
+        print("watching the Cynthion RISC-V console", flush=True)
+        print("  Ctrl-]  quits (Ctrl-C goes to the BOARD -- raw mode, so TAB and "
+              "arrows reach the shell's editor)", flush=True)
+        print("  type commands here — they go to the board", flush=True)
+    else:
+        print("watching the Cynthion RISC-V console (Ctrl-C to stop)", flush=True)
 
     port = None
     waiting_announced = False
@@ -258,7 +265,11 @@ def main():
                     continue
                 with lock:
                     state["port"] = port
-                print(f"attached: {node}", flush=True)
+                # Repeated per attach, not once at startup: a reconfigure floods
+                # the screen with the boot report, so the one line saying how to
+                # get out has scrolled away by the time anyone wants it.
+                print(f"attached: {node}"
+                      + ("   [Ctrl-] quits]" if interactive else ""), flush=True)
                 waiting_announced = False
 
             try:
