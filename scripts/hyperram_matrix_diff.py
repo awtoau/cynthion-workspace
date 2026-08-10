@@ -220,6 +220,12 @@ def main():
         for first, second in zip(written, written[1:]):
             moved += diff(str(first), str(second))
         emit(f"\n{moved} cell(s) moved across {len(written)} identical runs")
+        # A MOVED CELL IS A FAILING GATE. This returned 0 unconditionally, so
+        # `hyperram_verify.py` scored the step PASS and printed "no cell moved
+        # between two identical runs" directly beneath 482 printed moved cells.
+        # The recording succeeded; the measurement did not, and the exit code
+        # reported the recording. (#351)
+        return 1 if moved else 0
     return 0
 
 
