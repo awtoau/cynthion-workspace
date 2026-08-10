@@ -792,21 +792,11 @@ class HyperRAMCeiling(Elaboratable):
                 with m.If(psram.idle):
                     m.next = "CONFIG_VERIFY"
 
-            # READ CR0 BACK. The engine only ever WROTE the part's registers --
-            # every state that set `configuring` also set `writing` -- so a write
-            # that never landed was indistinguishable from one that did.
-            #
-            # That is not hypothetical. A latency sweep passed on codes 2 and 6
-            # only, where the datasheet says 0, 1, 2 and 15 are legal and 3..13
-            # are RESERVED. 2 is the power-on default and 6 is the default with
-            # one bit flipped, which is the signature of the write not landing at
-            # all. CR1[6] selecting a differential clock and CR0[3] selecting
-            # variable latency likewise changed nothing, and both must.
-            #
-            # A register READ is `configuring` WITHOUT `writing`. Its result goes
-            # to REG_DEVICE_READBACK so the CPU can compare it against what it
-            # asked for, which turns "did the configuration apply" from an
-            # inference about behaviour into a measurement.
+            # READ CR0 BACK. Every state that set `configuring` also set
+            # `writing`, so a write that never landed looked like one that did.
+            # A register READ is `configuring` WITHOUT `writing`; the result goes
+            # to REG_DEVICE_READBACK for the CPU to compare against what it asked.
+            # Measured 2026-08-10: 0xbf2f then 0xefff, both as commanded (#226).
             with m.State("CONFIG_VERIFY"):
                 # `start` IS THE TRANSACTION. Setting `configuring` alone only
                 # selects register space -- it does not issue anything, so the
