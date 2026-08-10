@@ -71,13 +71,17 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, log  # noqa: E402
 
+import private_path_check  # noqa: E402
 import worktree_setup  # noqa: E402
 
-# Strings that must never be published. Private paths first, because they are
-# what actually leaks: a comment written on this machine carries `/mnt/2tb/...`
-# and nobody notices until it is on a public branch.
+# What must never be published, checked on ADDED lines only.
+#
+# The private-path pattern is imported, not restated: `private_path_check.py`
+# already decides what a per-machine path is, and two definitions of that would
+# disagree the first time one of them is edited.
 FORBIDDEN = [
-    (re.compile(r"^\+.*(/mnt/2tb|/home/[a-z])", re.M), "a private filesystem path"),
+    (re.compile(r"^\+.*(" + private_path_check.PRIVATE.pattern + ")", re.M),
+     "a private filesystem path"),
     (re.compile(r"^\+.*(api[_-]?key|secret|password|BEGIN [A-Z ]*PRIVATE KEY)",
                 re.M | re.I), "a credential-shaped string"),
 ]

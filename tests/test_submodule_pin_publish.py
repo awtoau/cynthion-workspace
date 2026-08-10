@@ -25,7 +25,13 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import private_path_check  # noqa: E402
 import submodule_pin_publish as publisher  # noqa: E402
+
+# Built from the checker's own root list rather than written out: a literal
+# per-machine path in a tracked file is the very thing the `paths` check fails
+# on, and this file is tracked.
+PRIVATE_PATH = f"/{private_path_check.ROOTS[2]}/disk1/git/private/thing"
 
 
 def run(args, cwd):
@@ -73,8 +79,8 @@ def test_a_clean_fast_forward_publishes(tmp_path):
 
 
 def test_a_private_path_in_the_outgoing_diff_refuses(tmp_path):
-    """These forks are public; a `/mnt/2tb/...` in a comment is a leak."""
-    sub, detail = make_pair(tmp_path, content="# see /mnt/2tb/git/private/thing\n")
+    """These forks are public; one machine's mount point in a comment is a leak."""
+    sub, detail = make_pair(tmp_path, content=f"# see {PRIVATE_PATH}\n")
     assert publisher.scrub(sub, detail)
     assert publisher.publish(sub, detail) == 1
     assert not publisher.worktree_setup.on_any_remote(sub.mod, sub.pin)
