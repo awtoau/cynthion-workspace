@@ -109,6 +109,16 @@ const PERIOD_US: u32 = 5_000;
 /// called with an instant `PERIOD_US / 2` behind `now`.
 const OVERRUN_AT: u32 = 50;
 
+/// How long `#[idle]` waits for the run to finish, in microseconds.
+///
+/// - Waits for: `run` to set `DONE` after `PERIODS_WANTED` periods.
+/// - Expected 100 x 5 ms = 500 ms of timer-driven grid, from the two constants
+///   above; the deliberate overrun adds 1.5 periods and fits in the margin.
+/// - 1.25x, the project's rule. Derived, not rounded: 625 ms.
+/// - On expiry `#[idle]` stops waiting, says so with the elapsed time, and
+///   prints the report anyway -- short `periods` is what the harness asserts.
+const WAIT_LIMIT_US: u32 = PERIODS_WANTED * PERIOD_US * 5 / 4;
+
 mod device {
     pub mod interrupt {
         pub use riscv::interrupt::Interrupt as CoreInterrupt;
@@ -283,7 +293,7 @@ fn panic(_info: &PanicInfo) -> ! {
 mod app {
     use super::{
         clock, device, mono, target, wl_report, DONE, LATE_FIRE, OVERRUN_AT, PERIODS,
-        PERIODS_WANTED, PERIOD_US, TOTAL_LATE, WORST_EARLY, WORST_LATE,
+        PERIODS_WANTED, PERIOD_US, TOTAL_LATE, WAIT_LIMIT_US, WORST_EARLY, WORST_LATE,
     };
     use core::sync::atomic::Ordering;
     use rtic_monotonics::Monotonic;
@@ -373,11 +383,30 @@ mod app {
     #[idle(local = [console])]
     fn idle(cx: idle::Context) -> ! {
         let console = cx.local.console;
+        let per_us = target::TIME_HZ / 1_000_000;
+        let started = mono::Mono::now().ticks();
+        let limit = started + WAIT_LIMIT_US as u64 * per_us as u64;
+
+        let mut timed_out = false;
         while DONE.load(Ordering::Acquire) == 0 {
+            if mono::Mono::now().ticks() >= limit {
+                timed_out = true;
+                break;
+            }
             core::hint::spin_loop();
         }
+        if timed_out {
+            // Narrowed before the divide: a 64-bit division is a libcall and
+            // this elapsed is bounded by the limit above -- 625 ms is 37.5M
+            // ticks at 60 MHz, well inside a u32.
+            let waited = (mono::Mono::now().ticks() - started) as u32;
+            console.wait_timeout(
+                WAIT_LIMIT_US,
+                waited / per_us,
+                PERIODS.load(Ordering::Relaxed),
+            );
+        }
 
-        let per_us = target::TIME_HZ / 1_000_000;
         let periods = PERIODS.load(Ordering::Relaxed).max(1);
         console.monotonic(
             (periods, PERIODS_WANTED),

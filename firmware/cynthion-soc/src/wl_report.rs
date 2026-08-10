@@ -127,6 +127,21 @@ impl Console {
         crate::workload::finish(&mut self.0, started);
     }
 
+    /// `#[idle]` gave up waiting for the run (#362).
+    ///
+    /// Printed before the report, never instead of it: the report's `periods N
+    /// of 100` is what `scripts/soc_rtic_monotonic.py` asserts on, and a
+    /// timeout that printed nothing else would look like a hung guest.
+    #[cfg(feature = "rticmono")]
+    pub fn wait_timeout(&mut self, limit_us: u32, waited_us: u32, periods: u32) {
+        let _ = writeln!(
+            self.0,
+            "mono   TIMED OUT waiting for the run: limit {} us, waited {} us, \
+             {} periods done",
+            limit_us, waited_us, periods
+        );
+    }
+
     /// The monotonic's report. Lateness against an ABSOLUTE grid, so a period
     /// that overran cannot push the next one out; `early` is a defect and not
     /// jitter, which is why it is a line of its own.
