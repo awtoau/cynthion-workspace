@@ -94,16 +94,23 @@ Measured 2026-08-10, commit `3796d4f`, one board, one session.
   configures of the same bitstream.
 - 896 of 4096 cells pass, and the pass set is **uniform** — exactly 112 per `sel`
   value, 112 per `drive` value, 448 per `clk` value. Only `lat` and `mode` move
-  it.
-- The failure set is **byte-identical at 80 MHz and at 90 MHz**
-  ([`20260810-143037-baseline-a.json`](../../../results/hyperram/20260810-143037-baseline-a.json)
-  vs [`20260810-143202-base90-b.json`](../../../results/hyperram/20260810-143202-base90-b.json)).
-  A 12.5% change in clock frequency moves nothing.
+  it. 896 = 7 × 128, so the pass set is decided entirely by `lat`/`mode`: seven
+  of the thirty-two combinations pass all 128 of their cells, twenty-five fail
+  all 128.
+- **`sel` is uniform because it is not connected**, not because the rig is blind
+  to it: on a non-DQS build nothing reads the register
+  ([#343](https://github.com/awtoau/cynthion-workspace/issues/343)), so those
+  4096 cells are 512 configurations run 8 times. That flatness is now expected
+  and carries no information either way.
+- The failure set is **byte-identical at 80 MHz and at 90 MHz**. A 12.5% change
+  in clock frequency moves nothing. (The two runs were `baseline-a` and
+  `base90-b`; every recorded matrix run was deleted with #353.)
 - Disabling the CK output pad outright (`clk.BASE_TYPE=NONE`) also moved nothing.
 
-`sel` is the capture phase. A matrix where every phase scores the same is not
-measuring a read window, so nothing electrical could be measured on that build.
-Seven points were run there — hysteresis off, CK# fast, CK slow, all-slow, CK
+The verdict stands, but not on `sel`: that axis is unwired here (#343), so its
+flatness proves nothing. What is left still voids the build — **disabling the CK
+pad moved nothing**, and a 12.5% change in CK moved nothing. Seven points were
+run there — hysteresis off, CK# fast, CK slow, all-slow, CK
 4 mA, DQ 4 mA, DQ pull-up, 16 mA everywhere — and all scored "no effect". **All
 seven are void**, and are not in `results/`. `axes_live` exists so the next such
 corpus is void on its face rather than after a day of it.
