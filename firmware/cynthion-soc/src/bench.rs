@@ -1039,8 +1039,8 @@ fn hyper(uart: &mut Uart) {
 pub fn command(uart: &mut Uart, rest: &[u8]) {
     let _ = writeln!(
         uart,
-        "bench    mcycle at {} Hz; D-cache 4 KiB = 64 sets x 1 way x 64 B line",
-        target::TIME_HZ
+        "bench    mcycle at {}; D-cache 4 KiB = 64 sets x 1 way x 64 B line",
+        crate::clock::Hz(target::TIME_HZ)
     );
     // No region is every region, so it is tested before the name is parsed.
     if rest.is_empty() {

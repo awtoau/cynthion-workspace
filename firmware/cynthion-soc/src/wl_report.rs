@@ -156,6 +156,6 @@ impl Console {
             "  past    one deadline set {} us behind now, fired {} ticks late",
             past.0, past.1
         );
-        let _ = writeln!(self.0, "  clock   {} Hz", clock_hz);
+        let _ = writeln!(self.0, "  clock   {}", crate::clock::Hz(clock_hz));
     }
 }

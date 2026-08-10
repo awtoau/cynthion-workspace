@@ -516,7 +516,7 @@ fn clock_advances(uart: &mut Uart, report: &mut Report) {
         uart,
         "clock",
         ticks > 0,
-        format_args!("time advanced {} ticks at {} Hz", ticks, target::TIME_HZ),
+        format_args!("time advanced {} ticks at {}", ticks, clock::Hz(target::TIME_HZ)),
     );
 }
 
