@@ -149,7 +149,7 @@ def wait_for_window(session, margin, tries=400):
     return False
 
 
-def probe_busy(runs, idle_s, straddle):
+def probe_busy(runs, idle_s, straddle, retries):
     """The two `cpu stats` readings either side of `cpu log 20`.
 
     `idle_s` reproduces the state soc_test asks in: the suite reaches this
@@ -165,7 +165,8 @@ def probe_busy(runs, idle_s, straddle):
     emit(f"busy: {runs} run(s), `cpu stats` / `cpu log 20` / `cpu stats`, "
          f"{idle_s}s idle first"
          + (f", straddling the halving (within {straddle} cycles)"
-            if straddle else ""))
+            if straddle else "")
+         + (f", up to {retries} retake(s) on a halving" if retries else ""))
     emit(f"      halving threshold {HALVE_AT} cycles")
     emit()
     held = halved = 0
@@ -193,6 +194,22 @@ def probe_busy(runs, idle_s, straddle):
             if before is None or after is None:
                 emit(f"  run {run}: `cpu stats` did not parse")
                 continue
+            # soc_test's rule, applied here so `--straddle --retries 3` shows
+            # the fix rescuing the case `--straddle` forces.
+            retaken = 0
+            while after[0] < before[0] and retaken < retries:
+                retaken += 1
+                before = read_stats(session)
+                mark = len(session.snapshot())
+                session.send(b"cpu log 20\r")
+                expect_line(session, b"log pushed 15 of 20", REPLY_S, mark)
+                after = read_stats(session)
+                if before is None or after is None:
+                    break
+            if before is None or after is None:
+                emit(f"  run {run}: `cpu stats` did not parse on a retry")
+                continue
+
             product_before = before[0] * before[1]
             product_after = after[0] * after[1]
             a_halving = after[0] < before[0]
@@ -203,7 +220,8 @@ def probe_busy(runs, idle_s, straddle):
                  f"  product {product_before:>14} -> {product_after:>14}"
                  f"  {'HALVED' if a_halving else '      '}"
                  f"  {'holds' if product_after > product_before else 'FAILS'}"
-                 f"  {elapsed * 1000:6.0f} ms")
+                 f"  {elapsed * 1000:6.0f} ms"
+                 + (f"  {retaken} retake(s)" if retaken else ""))
         finally:
             session.close()
     emit()
@@ -258,6 +276,9 @@ def main():
                         help="host processes spinning for the duration")
     parser.add_argument("--idle", type=float, default=3.0,
                         help="busy mode: seconds of idle shell before asking")
+    parser.add_argument("--retries", type=int, default=0,
+                        help="busy mode: re-take the pair when the window "
+                             "shrank, as soc_test does")
     parser.add_argument("--straddle", type=int, default=0, metavar="CYCLES",
                         help="busy mode: wait for a window this close to the "
                              "halving, so it lands between the two readings")
@@ -283,7 +304,8 @@ def main():
         elif args.mode == "prompt":
             probe_prompt(args.runs)
         else:
-            probe_busy(args.runs, args.idle, args.straddle)
+            probe_busy(args.runs, args.idle, args.straddle,
+                       args.retries)
     finally:
         reap()
     return 0
