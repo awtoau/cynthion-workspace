@@ -227,19 +227,26 @@ The board carries a **`6I`: packaged, 3.0 V, 166 MHz** → the `T166` + `POWER3V
 column above, bolded. `T200` is the `5I` the schematic allows as a substitution;
 **`T250` is `KGD` and does not apply to a packaged part.**
 
-- **`tCSHI` is 6 ns at T166, not 10.** `T_CSHI_NS = 10.0` in both
+- **`tCSHI` is 6 ns at T166, not 10 — FIXED.** `T_CSHI_NS` was the **T100** figure
+  applied to a 166 MHz part in both
   [`hyperram_controller.py`](../../../gateware/soc/peripherals/hyperram_controller.py)
-  and [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py)
-  is the **T100** figure applied to a 166 MHz part. Safe (too long), and costs one
-  recovery cycle per transaction at sync 166 MHz — `ceil(10 × 0.166)` = 2 against
-  `ceil(6 × 0.166)` = 1. At sync 192 both round to 2, so nothing is lost there.
-  It is a gap with no recorded reason, which is
-  [#341](https://github.com/awtoau/cynthion-workspace/issues/341)'s subject.
-- **`tRWR` is 36 ns at T166 and nothing implements it.** `RECOVERY` in both
-  controllers counts `tCSHI` only; there is no `T_RWR` constant anywhere in the
-  repo. Since `tRWR` == `tACC` and both are satisfied by the initial latency
-  (`ceil(36/6)` = 6 CK ≤ the 7 CK LC7 selects), the omission is currently covered
-  — **by the latency code, not by anything that knows why**.
+  and [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py).
+  Now 6.0, from `GRADE_AC_NS` with `FITTED_GRADE = "T166"`, and the RESET value of
+  a `recovery_cycles` input. Measured at sync 166: the CS#-high gap goes 3 cycles
+  to 2, 18.07 ns to 12.05, against a 6 ns requirement. At sync 192 both round to 2
+  and nothing moves.
+  ([#341](https://github.com/awtoau/cynthion-workspace/issues/341),
+  [`scripts/hyperram_timing_levers_sim.py`](../../../scripts/hyperram_timing_levers_sim.py))
+- **`tRWR` is 36 ns at T166 — now IMPLEMENTED.** It was nowhere: `RECOVERY` counts
+  `tCSHI` only, and the constraint was covered by LC7 spending 7 CK — by the
+  latency code, not by anything that knew why. Both controllers now carry a
+  `min_latency_clocks` input, reset to `ceil(tRWR × CK)`, and report
+  `latency_below_trwr` when the configured code does not cover it. Reported and
+  not enforced: the device waits what CR0[7:4] says, so a controller that silently
+  waited longer would miss the data.
+- **The code column is derived.** `min_latency_code(ck_mhz)` is `ceil(tACC/tCK)`
+  and reproduces 4/5/6/7/7 across T100…T250. At the 192 MHz the SoC runs the
+  non-DQS path, which no column tabulates, it gives **LC7**.
 - `tCSS` 3 ns, `tIS`/`tIH` 0.6 ns, `tDV` 1.3 ns and `tDSS`/`tDSH` ±0.8 ns are the
   T166 numbers the capture phase has to live inside.
 
@@ -252,7 +259,7 @@ column above, bolded. `T200` is the `5I` the schematic allows as a substitution;
 | *"`CR0[7:4]` = `0011b`–`1101b` reserved"*, [`specifications.md`](specifications.md) | names **`0011` = LC8 and `0100` = LC9**. Seven codes, not five, and `clocks = 5 + sext4(code)` holds for all seven |
 | *"`CR1[1:0]`: `00b`, `10b`, `11b` Reserved, `01b` the only defined value"*, [`w956a8.md`](w956a8.md) | names all four, and makes **`10b` the POR value under `LA_85C`** |
 | *"tDSV (12 ns) is under one sync cycle"*, `hyperram_controller.py:182` | 12 ns is 2 CK at 166 MHz — see question 1 |
-| *"`tCSHI`, 10 ns of CS# high"*, [`w956a8.md`](w956a8.md) | 10 ns is the T100 value; **6 ns** at T166 |
+| *"`tCSHI`, 10 ns of CS# high"*, [`w956a8.md`](w956a8.md) | 10 ns is the T100 value; **6 ns** at T166 — the gateware now uses 6 (#341) |
 | `--grade T85` / `T104` are usable, `hyperram_vendor_model_sim.py` | no AC block exists for either |
 
 **Confirms:** ID0/ID1/CR0/CR1 POR values; the CA bit layout and the register word

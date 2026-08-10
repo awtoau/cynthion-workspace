@@ -60,35 +60,66 @@ def _save(history):
     HISTORY.write_text(json.dumps(history, indent=2, sort_keys=True))
 
 
-def limit_for(family):
-    """The timeout this family should get, and why."""
+def limit_for(family, floor=None):
+    """The timeout this family should get, and why.
+
+    `floor` raises the minimum for a caller that knows something history cannot:
+    a build run beside seven others is slower than every run recorded alone, and
+    a bound from those recordings would kill it while it was working (#295, #351).
+    """
+    floor = MINIMUM_LIMIT if floor is None else max(MINIMUM_LIMIT, floor)
     history = _load()
     recorded = history.get(family, {})
     slowest = recorded.get("slowest")
 
     if slowest is None:
-        return FIRST_RUN_LIMIT, "no history yet"
+        return max(FIRST_RUN_LIMIT, floor), "no history yet"
 
-    bound = max(MINIMUM_LIMIT, slowest * (1 + MARGIN))
+    bound = max(floor, slowest * (1 + MARGIN))
     return bound, f"slowest was {slowest:.0f}s, +{int(MARGIN*100)}%"
 
 
-def run_bounded(command, *, family, cwd=None, env=None, capture=True):
+def record(family, elapsed):
+    """Remember how long a SUCCESSFUL run of `family` took.
+
+    Public because streamed runs (`devlog.spawn`) cannot go through
+    `run_bounded` -- they need the child's output line by line -- but their
+    bounds should tighten from measurement just the same.
+    """
+    history = _load()
+    recorded = history.setdefault(family, {})
+    recorded["slowest"] = max(recorded.get("slowest", 0.0), elapsed)
+    recorded["last"] = elapsed
+    recorded["runs"] = recorded.get("runs", 0) + 1
+    _save(history)
+
+
+def run_bounded(command, *, family, cwd=None, env=None, capture=True,
+                merge_stderr=False, floor=None):
     """Run `command`, killed if it overruns what this family has needed before.
 
     Returns the CompletedProcess, or None if it was killed. A killed run is
     deliberately not recorded: a hang is not evidence about how long a
     successful build takes.
+
+    `merge_stderr` puts the child's stderr in `stdout`, for callers that log one
+    interleaved stream rather than two.
     """
-    bound, reason = limit_for(family)
+    bound, reason = limit_for(family, floor)
     started = time.perf_counter()
+    streams =({"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+               if merge_stderr else {"capture_output": capture})
 
     try:
         result = subprocess.run(
-            command, cwd=cwd, env=env, timeout=bound,
-            capture_output=capture, text=True)
+            command, cwd=cwd, env=env, timeout=bound, text=True, **streams)
     except subprocess.TimeoutExpired:
-        print(f"  {family}: killed after {bound:.0f}s ({reason})")
+        # WHAT overran, the LIMIT and where it came from, and the ELAPSED. A
+        # bound that expires without naming itself turns a hang into a mystery,
+        # which is the failure this module exists to prevent (#295).
+        print(f"  TIMEOUT {family}: killed at {bound:.0f}s ({reason}), "
+              f"elapsed {time.perf_counter() - started:.0f}s")
+        print(f"    {' '.join(str(part) for part in command)[:160]}")
         return None
 
     elapsed = time.perf_counter() - started
@@ -97,13 +128,7 @@ def run_bounded(command, *, family, cwd=None, env=None, capture=True):
     # faster than a working one -- synthesis errors out early -- and recording
     # it would tighten the bound until real builds start being killed.
     if result.returncode == 0:
-        history = _load()
-        recorded = history.setdefault(family, {})
-        previous = recorded.get("slowest", 0.0)
-        recorded["slowest"] = max(previous, elapsed)
-        recorded["last"] = elapsed
-        recorded["runs"] = recorded.get("runs", 0) + 1
-        _save(history)
+        record(family, elapsed)
 
     return result
 

@@ -96,7 +96,7 @@ pub const BOARD_I2C_MUX_AUX_IRQ: u32 = 5;
 /// PLIC source number wired to BOARD_I2C_MUX_POWER_ALERT.
 pub const BOARD_I2C_MUX_POWER_ALERT_IRQ: u32 = 6;
 
-/// board/vbus: 2 registers at 0xf0000624
+/// board/vbus: 1 register at 0xf0000624
 pub const BOARD_VBUS: usize = 0xf0000624;
 /// Size of the BOARD_VBUS window, in bytes.
 pub const BOARD_VBUS_SIZE: usize = 0x00000004;

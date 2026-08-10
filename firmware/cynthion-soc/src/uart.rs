@@ -67,6 +67,20 @@ const LSR_FE: u8 = 1 << 3;
 /// promise up; the constant is still the standard's bit.
 const LSR_THRE: u8 = 1 << 5;
 
+/// Turns [`Uart::put`] spins on `LSR.THRE` before dropping the byte.
+///
+/// **The expected duration is not known, and this number is therefore not
+/// derived** (#295). It was a bare literal justified against 115200 baud, and
+/// there is no baud rate on this link: the transmit path is a USB-CDC endpoint,
+/// so what is being waited on is a host service interval, not a bit period.
+/// Until that interval is measured, the multiplier over expected cannot be
+/// stated -- which is the finding, not a detail.
+///
+/// On expiry: drop the byte and count it (`tx_drops`), reported by
+/// [`report_errors`]. Unchanged in value on purpose; moving it without the
+/// figure would swap one unjustified number for another.
+const THRE_SPINS: u32 = 200_000;
+
 /// The bits a read of LSR clears: OE, PE, FE, BI, and the bit 7 summary.
 ///
 /// Named as a mask rather than checked bit by bit because the point is that
@@ -139,6 +153,48 @@ static ERRORS: [AtomicU8; MAX_CONSOLES] = [const { AtomicU8::new(0) }; MAX_CONSO
 /// a line that keeps losing bytes, which a coalesced bitmask alone would hide.
 static ERROR_READS: [AtomicU32; MAX_CONSOLES] = [const { AtomicU32::new(0) }; MAX_CONSOLES];
 
+/// Bytes `put` gave up on, per console, since boot.
+///
+/// Dropping is the right policy and is argued at [`Uart::put`]. What was missing
+/// is that it happened SILENTLY: output simply had holes in it, and a hole in a
+/// transcript reads as firmware that never printed rather than a transport that
+/// stopped draining (#295). Counted here, reported by `report_errors`.
+static TX_DROPS: [AtomicU32; MAX_CONSOLES] = [const { AtomicU32::new(0) }; MAX_CONSOLES];
+
+/// How many transmitted bytes console `index` has dropped since boot.
+pub fn tx_drops(index: usize) -> u32 {
+    TX_DROPS[index].load(Ordering::Relaxed)
+}
+
+/// 1, 10, 100, ... and nothing else.
+fn is_decade(n: u32) -> bool {
+    let mut decade: u32 = 1;
+    while decade <= n {
+        if decade == n {
+            return true;
+        }
+        match decade.checked_mul(10) {
+            Some(next) => decade = next,
+            None => break,
+        }
+    }
+    false
+}
+
+/// Count one dropped byte against whichever console owns `base`.
+fn count_drop(base: usize) {
+    // Linear search over at most two entries, on the path that has already
+    // given up -- the same shape and the same reason as `read_lsr`'s.
+    let mut index = 0;
+    while index < target::UART_BASES.len() {
+        if target::UART_BASES[index] == base {
+            TX_DROPS[index].fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        index += 1;
+    }
+}
+
 /// Read LSR once, keeping the error bits the read destroyed.
 ///
 /// Every LSR read in this driver goes through here. See the module comment for
@@ -206,6 +262,21 @@ pub fn report_errors(uart: &mut Uart) {
                 if bits & LSR_OE != 0 { " overrun" } else { "" },
                 if bits & LSR_FE != 0 { " framing" } else { "" },
                 error_reads(index)
+            );
+        }
+        // Output lost, beside input lost. Reported at each power of ten rather
+        // than per byte: a transport that stopped drops thousands, and a line
+        // per drop would use the very console that is failing.
+        let drops = tx_drops(index);
+        if is_decade(drops) {
+            crate::metrics::busy();
+            crate::log!(
+                uart,
+                "uart {}: {} byte(s) DROPPED on transmit -- nothing drained \
+                 THRE within {} turns",
+                index,
+                drops,
+                THRE_SPINS
             );
         }
         index += 1;
@@ -317,15 +388,9 @@ impl Uart {
         // SAFETY: fixed peripheral addresses; volatile because these are devices
         // whose values change underneath the compiler.
         unsafe {
-            // 200,000 turns of a loop whose body is one uncached MMIO read --
-            // several milliseconds at 60 MHz, and several orders of magnitude
-            // longer than the microsecond a byte needs to reach the elastic
-            // buffer behind a USB endpoint that is being serviced. That is why
-            // the bound did not move when THRE became "empty" rather than "has
-            // room": what it is waiting on is the transport, not the FIFO depth,
-            // and the transport is what stops. Reaching it therefore means
-            // nothing is draining at all, and the only useful response to that
-            // is to carry on and let the next byte try again.
+            // Reaching THRE_SPINS means nothing is draining at all, and the only
+            // useful response is to carry on and let the next byte try again --
+            // counted, not silent.
             let mut spins = 0u32;
             // `read_lsr`, not a bare read: this loop is the busiest LSR reader in
             // the firmware, and a bare read here would clear an overrun the
@@ -333,7 +398,8 @@ impl Uart {
             // the report of lost input.
             while read_lsr(self.base) & LSR_THRE == 0 {
                 spins += 1;
-                if spins > 200_000 {
+                if spins > THRE_SPINS {
+                    count_drop(self.base);
                     return;
                 }
             }

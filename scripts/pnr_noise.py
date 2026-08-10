@@ -16,9 +16,22 @@ the spread of each.
         --runs 4 --freq 120
 
 Anything smaller than the spread reported here is noise, not a result.
+
+## Seeded spread versus the build's own spread
+
+`--seed` is a knob nothing in this project turns: `build_top.sh` passes no seed,
+so every real build runs the same one. `--repeat-seed` therefore holds the seed
+fixed and varies nothing at all, which is the only way to measure what a REBUILD
+spreads by -- and with `--opts "$(fast_build_env.NEXTPNR_OPTS)"`, which this
+defaults to, that is `--parallel-refine`'s thread interleaving and nothing else.
+
+`--jobs` runs several at once. Each nextpnr is itself threaded, so this
+oversubscribes deliberately: the question is what a rebuild does, and rebuilds on
+this machine now happen several at a time (#351).
 """
 
 import argparse
+import concurrent.futures
 import json
 import re
 import subprocess
@@ -31,6 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from fast_build_env import NEXTPNR_OPTS  # noqa: E402
 
 UTIL_RE = re.compile(r"^Info:\s+(\w+):\s+(\d+)/\s*(\d+)\s+\d+%")
 FMAX_RE = re.compile(r"^Info: Max frequency for clock\s+'([^']+)':\s+([\d.]+) MHz")
@@ -52,7 +66,7 @@ def parse_report(text):
     return util, fmax
 
 
-def run_once(nextpnr, json_path, lpf, outdir, seed, freq):
+def run_once(nextpnr, json_path, lpf, outdir, seed, freq, opts=(), label=None):
     """One nextpnr invocation. Returns (util, fmax, seconds) or None on failure."""
     outdir.mkdir(parents=True, exist_ok=True)
     tim = outdir / "top.tim"
@@ -61,7 +75,7 @@ def run_once(nextpnr, json_path, lpf, outdir, seed, freq):
         "--12k", "--package", "CABGA256", "--speed", "8",
         "--json", str(json_path), "--lpf", str(lpf),
         "--textcfg", str(outdir / "top.config"),
-        "--seed", str(seed),
+        "--seed", str(seed), *opts,
     ]
     if freq:
         cmd += ["--freq", str(freq)]
@@ -95,23 +109,41 @@ def main():
     ap.add_argument("--nextpnr", default="nextpnr-ecp5")
     ap.add_argument("--name", default="pnr_noise",
                     help="label for this run in the shared log")
+    ap.add_argument("--repeat-seed", type=int, default=None, metavar="SEED",
+                    help="hold the seed at SEED for every run: what a plain "
+                         "rebuild varies by, since no build passes a seed")
+    ap.add_argument("--opts", default=NEXTPNR_OPTS,
+                    help="extra nextpnr flags; defaults to the ones every build "
+                         "uses. Pass '' for a single-threaded control")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="runs in flight")
     args = ap.parse_args()
 
-    results = []
+    opts = args.opts.split()
+    seeds = ([args.repeat_seed] * args.runs if args.repeat_seed is not None
+             else list(range(1, args.runs + 1)))
     emit(f"{args.name}: netlist {args.json}")
-    emit(f"runs: {args.runs}  target freq: {args.freq}")
-    for seed in range(1, args.runs + 1):
-        emit(f"run seed={seed} ...")
+    emit(f"runs: {args.runs}  target freq: {args.freq}  jobs: {args.jobs}")
+    emit(f"seeds: {seeds}  opts: {' '.join(opts) or '(none)'}")
+
+    def attempt(indexed):
+        index, seed = indexed
         got = run_once(args.nextpnr, args.json, args.lpf,
-                       args.outdir / f"seed{seed}", seed, args.freq)
-        if got is None:
-            continue
-        util, fmax, elapsed = got
-        results.append({"seed": seed, "util": util, "fmax": fmax,
-                        "seconds": round(elapsed, 1)})
-        emit(f"  LUT={util.get('TRELLIS_COMB')} FF={util.get('TRELLIS_FF')} "
-            f"BRAM={util.get('DP16KD')} DSP={util.get('MULT18X18D')} "
-            f"fmax={fmax} {elapsed:.1f}s")
+                       args.outdir / f"run{index}-seed{seed}", seed, args.freq, opts)
+        return index, seed, got
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for index, seed, got in sorted(pool.map(attempt, enumerate(seeds, 1)),
+                                       key=lambda row: row[0]):
+            if got is None:
+                continue
+            util, fmax, elapsed = got
+            results.append({"run": index, "seed": seed, "util": util, "fmax": fmax,
+                            "seconds": round(elapsed, 1)})
+            emit(f"  run {index} seed={seed}: "
+                 f"COMB={util.get('TRELLIS_COMB')} FF={util.get('TRELLIS_FF')} "
+                 f"BRAM={util.get('DP16KD')} fmax={fmax} {elapsed:.1f}s")
 
     # The summary is the point: spread, not individual runs.
     emit("\n=== spread across runs ===")

@@ -82,7 +82,13 @@ EXPECTED_PRODUCT = "369d0368"
 # Each iteration now runs one `udevadm settle`, which blocks until the kernel's device
 # queue drains, so the loop advances only when something has actually changed. The count
 # bounds how many settles to wait through before giving up.
-TTY_SETTLE_LIMIT = 20
+#
+# 60, not 20, and it is `wait_for_tty`'s default rather than a second opinion:
+# `gateware/usb_ids.py` records 20 being too few three times under load, once
+# costing an entire investigation on a board that was on the bus throughout. A
+# ladder that condemns a frequency for that reason is the exact failure this
+# script already has a paragraph about (#295).
+TTY_SETTLE_LIMIT = 60
 
 
 def set_clock(mhz):

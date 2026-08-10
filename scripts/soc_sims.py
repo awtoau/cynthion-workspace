@@ -61,6 +61,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
 
 # In the order a reader should meet them: the CPU's own peripherals first, then
 # the board, then the two that drive the firmware rather than the gateware, then
@@ -135,10 +136,15 @@ def run_one(name, python, soak=False):
     command = [python, str(ROOT / "scripts" / f"{name}.py")]
     if soak and takes_soak(name):
         command.append("--soak")
-    proc = subprocess.run(
-        command,
-        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    )
+    # Bounded by this sim's own history. A looping simulation used to wedge its
+    # pool worker silently: the run never finished and nothing named which sim
+    # (#295). Per-sim family, because these differ by two orders of magnitude.
+    proc = run_bounded(command, cwd=ROOT, merge_stderr=True,
+                       family=f"sim:{name}{'-soak' if soak else ''}")
+    if proc is None:
+        bound, reason = limit_for(f"sim:{name}{'-soak' if soak else ''}")
+        return (name, False, 0, 1, time.monotonic() - started,
+                [f"TIMED OUT after {bound:.0f}s ({reason}); no result"])
     out = proc.stdout or ""
     results = RESULT.findall(out)
     passed = results.count("PASS")

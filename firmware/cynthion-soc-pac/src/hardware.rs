@@ -109,7 +109,7 @@ pub static PERIPHERALS: &[Peripheral] = &[
         name: "board_vbus",
         base: 0xf0000624,
         size: 0x00000004,
-        registers: 2,
+        registers: 1,
     },
     Peripheral {
         name: "board_gateware",

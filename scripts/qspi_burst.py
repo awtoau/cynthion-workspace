@@ -66,12 +66,20 @@ def run_burst(dut, *, mode, size, reads, tag):
     dut.registers.register_write(REG_BURST_COUNT, reads)
     dut.registers.register_write(REG_START, tag)
 
-    for _ in range(POLL_LIMIT):
+    for polled in range(POLL_LIMIT):
         status = dut.registers.register_read(REG_STATUS)
         if (status & 1) and not (status >> 1) & 1:
-            if dut.registers.register_read(REG_BURST_DONE) != reads:
+            done = dut.registers.register_read(REG_BURST_DONE)
+            if done != reads:
+                emit(f"  burst {size} B x {reads}: engine reported done after "
+                     f"{polled + 1} poll(s) having completed {done} -- not a "
+                     f"timeout, a short run; no cycle count")
                 return None
             return dut.registers.register_read(REG_BURST_CYCLES)
+    # The caller prints "did not complete" and moves to the next size, which
+    # folds a hung engine into "no result for this size" (#295). Name the bound.
+    emit(f"  TIMEOUT burst {size} B x {reads}: no completion in {POLL_LIMIT} "
+         f"polls, status {status:#x}")
     return None
 
 
