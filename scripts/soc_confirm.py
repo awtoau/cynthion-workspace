@@ -175,6 +175,8 @@ class Evidence:
             "console_node": self.console_node, "served": self.served,
             "thieves": [{"pid": pid, "command": cmd} for pid, cmd in self.thieves],
             "reply": (self.reply or b"").decode("ascii", "replace") or None,
+            "jtag_console": (self.jtag_console or b"").decode("ascii", "replace")
+                            or None,
             "idcode": None if self.idcode is None else f"{self.idcode:08x}",
             "status": None if self.status is None else f"{self.status:08x}",
             "done": None if self.status is None else bool(self.status & STATUS_DONE),
