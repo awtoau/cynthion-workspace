@@ -63,9 +63,13 @@ sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
 
 from bus.jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,   # noqa: E402
                         SIGNATURE)
+
+# This variant's bitstream, the one `soc_run.py` configured (#351).
+BITSTREAM = variant.build_dir(ROOT) / "top.bit"
 
 # The ECP5 user instruction the sink answers on. ER2 (0x38) belongs to the RISC-V
 # debug module; see `gateware/soc/bus/jtag_stage.py`.
@@ -409,7 +413,7 @@ def main():
             emit("removes the header, not the bytes. Reconfiguring is what puts")
             emit("the bitstream's own image back, in about a second:")
             emit("  python3 repos/apollo/apollo_fpga/commands/cli.py configure \\")
-            emit("      tmp/awto_soc/build/top.bit")
+            emit(f"      {BITSTREAM.relative_to(ROOT)}")
             if link:
                 link.close()
             return 0

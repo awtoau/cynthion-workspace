@@ -37,7 +37,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
 
 # Where Apollo's reference reads are dropped. `flash-read` writes to a file
 # rather than stdout, so it needs somewhere to put them.
@@ -48,6 +47,11 @@ sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
+
+# The variant environment picks the directory, exactly as it does for the build
+# that produced this bitstream (#351).
+BITSTREAM = variant.build_dir(ROOT) / "top.bit"
 
 # What the firmware prints. Anchored and exact: a pattern loose enough to match
 # `tic 00000` would defeat the point of checking for dropped characters.

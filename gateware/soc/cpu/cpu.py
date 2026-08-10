@@ -57,6 +57,8 @@ The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
 cacheless, PLIC vs a smaller concentrator -- are in `../../docs/architecture.md`.
 """
 
+import contextlib
+import fcntl
 import subprocess
 from pathlib import Path
 
@@ -199,6 +201,25 @@ DEFAULT_REGIONS = [
 ]
 
 
+@contextlib.contextmanager
+def _generator_lock():
+    """Serialise the Scala generator against this checkout.
+
+    Beside `tmp/`, not inside the submodule: an untracked lock file in
+    `repos/vexiiriscv` shows up as a dirty submodule forever after. One lock per
+    checkout is the right granularity -- a git worktree has its own
+    `repos/vexiiriscv` and its own `tmp/`, so the pair travel together.
+    """
+    lock = ROOT / "tmp" / "vexii-generate.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock, "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def generate(reset_addr, cache_sets=128, output=None, regions=None,
              cache_ways=1):
     """Run the Scala generator and return the path to the Verilog.
@@ -240,24 +261,44 @@ def generate(reset_addr, cache_sets=128, output=None, regions=None,
     for region in regions:
         flags += ["--region", region]
 
-    result = subprocess.run(
-        ["sbt", "--batch", "--no-server",
-         f"runMain vexiiriscv.Generate {' '.join(flags)}"],
-        cwd=VEXII, capture_output=True, text=True)
+    # ONE GENERATOR AT A TIME, and the copy is inside the lock.
+    #
+    # SpinalConfig's target directory is the process cwd, and sbt's cwd must be
+    # the project root -- so every build on this machine writes the same
+    # `repos/vexiiriscv/VexiiRiscv.v` and compiles into the same `target/`.
+    # Concurrent builds gave two different yosys errors from a half-written 1.2
+    # MB file, and could as easily have read a stale but valid one and produced a
+    # bitstream from another configuration's core (#306).
+    #
+    # Holding the lock across generate-plus-copy means a caller passing `output`
+    # gets a complete file that nothing else can then overwrite. A caller passing
+    # none still gets the shared path and is still racy: `output` is how a
+    # concurrent build stays correct, and `top.py` always passes one.
+    #
+    # Blocking, with no timeout: the wait is another build's generator, ~40 s,
+    # and every waiter is doing the same work. A timeout here would abort a build
+    # that was about to succeed.
+    with _generator_lock():
+        result = subprocess.run(
+            ["sbt", "--batch", "--no-server",
+             f"runMain vexiiriscv.Generate {' '.join(flags)}"],
+            cwd=VEXII, capture_output=True, text=True)
 
-    if result.returncode != 0:
-        errors = [l for l in result.stdout.splitlines()
-                  if l.startswith("[error]")]
-        raise RuntimeError("VexiiRiscv generation failed: "
-                           + (errors[-1] if errors else "unknown"))
+        if result.returncode != 0:
+            errors = [l for l in result.stdout.splitlines()
+                      if l.startswith("[error]")]
+            raise RuntimeError("VexiiRiscv generation failed: "
+                               + (errors[-1] if errors else "unknown"))
 
-    emitted = VEXII / "VexiiRiscv.v"
-    if not emitted.exists():
-        raise RuntimeError("generator produced no VexiiRiscv.v")
+        emitted = VEXII / "VexiiRiscv.v"
+        if not emitted.exists():
+            raise RuntimeError("generator produced no VexiiRiscv.v")
 
-    if output:
-        output.write_bytes(emitted.read_bytes())
-        return output
+        if output:
+            output = Path(output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(emitted.read_bytes())
+            return output
     return emitted
 
 
@@ -275,11 +316,16 @@ class VexiiRiscv(wiring.Component):
     data_width = 32
 
     def __init__(self, *, reset_addr=0x00000000, cache_sets=128,
-                 regions=None, cache_ways=1):
+                 regions=None, cache_ways=1, netlist=None):
         self._reset_addr = reset_addr
         self._cache_sets = cache_sets
         self._cache_ways = cache_ways
         self._regions = regions
+        # Where the generated Verilog is kept for this build. None leaves it at
+        # the generator's shared path in the submodule, which is correct for a
+        # one-off (`print(generate(0))`) and wrong for anything that may run
+        # beside another build -- see `generate` and #306.
+        self._netlist = netlist
 
         super().__init__({
             "ext_reset":    In(unsigned(1)),
@@ -348,7 +394,8 @@ class VexiiRiscv(wiring.Component):
 
         verilog = generate(self._reset_addr, self._cache_sets,
                            regions=self._regions,
-                           cache_ways=self._cache_ways)
+                           cache_ways=self._cache_ways,
+                           output=self._netlist)
         if platform is not None:
             platform.add_file("VexiiRiscv.v", verilog.read_text())
 

@@ -5,7 +5,7 @@
 
 """Assemble a self-contained synthesis-optimisation package from the last build.
 
-    ./scripts/pluribus_handover.py            # from tmp/awto_soc/build
+    ./scripts/pluribus_handover.py            # from this variant's build dir
     ./scripts/pluribus_handover.py --netlist  # include the 35 MB post-synth JSON
 
 Output goes to `tmp/pluribus-handover/`, log to `tmp/logs/pluribus_handover.log`.
@@ -41,12 +41,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
 
-BUILD = ROOT / "tmp" / "awto_soc" / "build"
+# This variant's build and its synthesis log -- both per variant since #351, so
+# two builds can run at once without overwriting each other's output.
+BUILD = variant.build_dir(ROOT)
 OUT = ROOT / "tmp" / "pluribus-handover"
-SYNTH_LOG = ROOT / "tmp" / "logs" / "synthesis.log"
+SYNTH_LOG = ROOT / "tmp" / "logs" / f"synthesis-{variant.slug()}.log"
 
 # What the open flow consumes, and nothing else. Sizes are from build #91.
 WANTED = [
@@ -144,7 +148,8 @@ def main() -> int:
 def write_readme(copied, times):
     rows = "\n".join(f"| `{n}` | {s / 1e6:.2f} MB | {w} |" for n, s, w in copied)
     timing = ("\n".join(f"- {k}: {v:.1f} s" for k, v in times.items())
-              or "- not captured; `tmp/logs/synthesis.log` had been rotated")
+              or f"- not captured; `{SYNTH_LOG.relative_to(ROOT)}` had been "
+                 f"rotated")
     (OUT / "README.md").write_text(f"""\
 # Cynthion SoC — synthesis-time package
 

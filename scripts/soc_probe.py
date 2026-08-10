@@ -15,7 +15,7 @@ from a terminal:
   * the FPGA had lost its SRAM configuration entirely;
   * a **stale bitstream** was configured by hand from a plausible-looking path
     (`tmp/soc/build/top.bit`, an orphan) while the real build sat in
-    `tmp/awto_soc/build/top.bit`.
+    `tmp/awto_soc/build/<variant>/top.bit`.
 
 Both present as silence. Neither is a CPU fault, and neither needs the console to
 diagnose.

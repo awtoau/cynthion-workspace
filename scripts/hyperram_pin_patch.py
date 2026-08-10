@@ -70,13 +70,18 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "tmp" / "awto_soc" / "build"
 OUT = ROOT / "tmp" / "pinpatch"
 
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 from bram_patch import Refuse, ecppack_command, rel, run_trellis  # noqa: E402
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
+
+# One build directory per variant, selected by the same environment that
+# selected the build (#351).
+BUILD = variant.build_dir(ROOT)
 
 # The Trellis database that ships with the toolchain on the path. Same tree
 # `ecppack` reads, so the enums here are the enums it will encode.

@@ -80,13 +80,17 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "diamond_riscv_ladder.log"
 RESULTS = ROOT / "tmp" / "diamond_riscv_ladder.json"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
-BUILD = ROOT / "tmp" / "awto_soc" / "build"
 WORK = ROOT / "tmp" / "diamond"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "gateware"))
+
+from soc import variant  # noqa: E402
+
+# This variant's build directory (#351).
+BUILD = variant.build_dir(ROOT)
 
 # The same configure and verify the open-flow ladder uses.  Importing rather
 # than reimplementing is deliberate: if the two ladders judged a frequency by

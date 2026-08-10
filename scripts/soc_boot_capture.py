@@ -42,13 +42,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
 import soc_shell  # noqa: E402
 
 CAPTURE = ROOT / "tmp" / "logs" / "soc-boot-capture.txt"
-# The same artifact `soc_run.py` configures, and named the same way there.
-BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
+# The same artifact `soc_run.py` configures, in the same per-variant directory:
+# the environment selects which build this is, here as there (#351).
+BITSTREAM = variant.build_dir(ROOT) / "top.bit"
 APOLLO = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
 # The order `init::bringup` runs in, so a truncated report names the step after

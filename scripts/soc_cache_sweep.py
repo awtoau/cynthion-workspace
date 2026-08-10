@@ -66,15 +66,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
 
 LOG = ROOT / "tmp" / "logs" / "soc_cache_sweep.log"
 RESULTS = ROOT / "tmp" / "soc_cache_sweep.json"
 
 # The stamp `soc_run` uses to decide synthesis can be skipped. Deleted before
 # every build here -- see `build_once`, and #287 for what happened without it.
-DIGEST = ROOT / "tmp" / "awto_soc" / "build" / "gateware-digest.txt"
+# In this variant's directory, as `soc_run` writes it (#351).
+DIGEST = variant.build_dir(ROOT) / "gateware-digest.txt"
 
 # sets x ways. 8 KiB is the geometry on `main`; the others hold the size roughly
 # constant and move the associativity, which is the comparison that matters.

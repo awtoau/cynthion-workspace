@@ -46,6 +46,8 @@ worse than one that says it did.
 """
 
 import argparse
+import contextlib
+import fcntl
 import os
 import re
 import shutil
@@ -55,9 +57,22 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(ROOT / "gateware"))
+
+# The variant table: the environment that changes what `top.py` elaborates, and
+# the build directory derived from it. Shared with the gateware so the bitstream
+# cache key below and the directory cannot describe different things (#351).
+from soc import variant  # noqa: E402
+
+# This variant's build directory. Every artifact of a build lives under it, so
+# two variants can build at once -- a CK ladder is one bitstream per rung and
+# nothing about them needs to be sequential.
+BUILD = variant.build_dir(ROOT)
+
 CRATE = ROOT / "firmware" / "cynthion-soc"
 ELF = CRATE / "target" / "riscv32imac-unknown-none-elf" / "release" / "cynthion-soc"
-FIRMWARE_BIN = ROOT / "tmp" / "rust_fw.bin"
+FIRMWARE_BIN = BUILD / "rust_fw.bin"
 
 # Where the image sits inside the 64 KiB block RAM initialiser. The bootloader owns
 # the kilobyte below it; see firmware/cynthion-soc/memory.x.
@@ -66,7 +81,7 @@ IMAGE_ORIGIN = 0x400
 # Sections the linker placed in flash, extracted separately because flash loads by a
 # different path from block RAM. The offset is moondancer's established firmware slot,
 # clear of the FPGA configuration at flash offset zero.
-RODATA_BIN = ROOT / "tmp" / "rust_rodata.bin"
+RODATA_BIN = BUILD / "rust_rodata.bin"
 # What we last wrote to flash, and where. Compared before writing again.
 FLASH_WRITTEN = ROOT / "tmp" / "flash-written.txt"
 FLASH_RODATA_OFFSET = 0x000b_0000
@@ -83,21 +98,22 @@ FLASH_SIZE = 0x0040_0000
 BOOT_CRATE = ROOT / "firmware" / "cynthion-boot"
 BOOT_ELF = (BOOT_CRATE / "target" / "riscv32imac-unknown-none-elf" / "release"
             / "cynthion-boot")
-BOOT_BIN = ROOT / "tmp" / "rust_boot.bin"
+BOOT_BIN = BUILD / "rust_boot.bin"
 GATEWARE = ROOT / "gateware" / "soc" / "top.py"
 # Where the synthesis tools' own output goes. Thousands of lines per build, of
 # which about four are worth a person's attention -- so they are diverted here
 # rather than interleaved into `tmp/logs/dev.log`, which is the log about the
 # board.
-SYNTH_LOG = ROOT / "tmp" / "logs" / "synthesis.log"
-BITSTREAM = ROOT / "tmp" / "awto_soc" / "build" / "top.bit"
+#
+# Per variant: with one name, the second of two concurrent builds overwrote the
+# first's log, and the log is the only record of why a build failed.
+SYNTH_LOG = ROOT / "tmp" / "logs" / f"synthesis-{variant.slug()}.log"
+BITSTREAM = BUILD / "top.bit"
 # The digest of the gateware sources the bitstream beside it was built from.
 # Written on a successful build, compared before every configure, and compared
 # again before synthesis so an unchanged tree does not resynthesise. See
 # `bitstream_is_stale`.
-GATEWARE_BUILT = ROOT / "tmp" / "awto_soc" / "build" / "gateware-digest.txt"
-
-sys.path.insert(0, str(ROOT / "gateware"))
+GATEWARE_BUILT = BUILD / "gateware-digest.txt"
 
 # Imported rather than restated. `fast_build_env.py` held a byte-identical copy of this
 # string and the reasoning behind it, and `./dev.py audit` found it by reporting it as
@@ -166,36 +182,26 @@ def firmware_in_bitstream(build_dir, emit):
 
 # Environment variables `gateware/soc/top.py` reads at import time. They change
 # what is elaborated without changing a byte of source, so they are part of the
-# bitstream's identity -- see `gateware_digest`. Anything added to `top.py` as an
-# `os.environ.get` that alters the design belongs here.
-# Each entry is (name, default), and the digest hashes the RESOLVED value.
+# bitstream's identity -- see `gateware_digest` -- and of the build directory's
+# name, which is what lets two of them build at once.
 #
-# Hashing the raw environment string was wrong: unset and set-to-the-default
-# produce identical gateware but different digests, so an ordinary run after a
-# sweep resynthesised for no reason -- and, worse, refused a `--firmware-only`
-# load as STALE when the bitstream was in fact correct.
-#
-# The defaults must match `top.py`'s. They are duplicated here rather than
-# imported because importing `top` pulls in the whole Amaranth elaboration just
-# to read three strings.
-VARIANT_ENV = (
-    ("CYNTHION_HYPERRAM_BIST", ""),
-    ("CYNTHION_HYPERRAM_CK_MHZ", "100"),
-    ("CYNTHION_HYPERRAM_BIST_DQS", "1"),
-)
+# The table is `gateware/soc/variant.py`, imported rather than restated. It used
+# to be a copy here with `top.py`'s defaults duplicated a third time, and the
+# duplication is exactly how a variable ends up hashed by one of them and not the
+# other. `top.py` reads its values back through the same table, so it stays
+# small: importing it costs no Amaranth elaboration.
+VARIANT_ENV = variant.VARIANT_ENV
 
 
 def variant_settings():
-    """The variant selection as `top.py` will resolve it, normalised."""
-    out = []
-    for name, default in VARIANT_ENV:
-        value = os.environ.get(name, default) or default
-        # `top.py` treats "" and "0" alike for the two flags, so normalise them
-        # to one spelling; otherwise `=0` and unset hash differently.
-        if name != "CYNTHION_HYPERRAM_CK_MHZ" and value in ("", "0"):
-            value = "0"
-        out.append(f"{name}={value}")
-    return out
+    """The variant selection as `top.py` will resolve it, normalised.
+
+    Normalised because unset and set-to-the-default produce identical gateware:
+    hashing the raw strings meant an ordinary run after a sweep resynthesised for
+    nothing, and refused a `--firmware-only` load as STALE when the bitstream was
+    in fact correct.
+    """
+    return variant.settings()
 
 
 def gateware_digest():
@@ -240,6 +246,56 @@ def gateware_digest():
     for setting in variant_settings():
         digest.update(setting.encode())
     return digest.hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Locks, so two variants can build at once
+# ---------------------------------------------------------------------------
+# Two of them, for two different shared resources:
+#
+#   * the HOST TOOLCHAIN -- one cargo target directory and one ELF path per
+#     crate, shared by every variant. cargo takes its own lock on `target/`, so
+#     two builds do not corrupt it; what cargo cannot protect is the objcopy that
+#     follows, which reads a fixed ELF path another build may have just rebuilt
+#     with different features. A BIST build and a shipping build differ in
+#     exactly that way, so the artifact would be the other variant's firmware.
+#     `soc_test.py` and the PAC regeneration touch the same tree, so the lock
+#     starts before them.
+#
+#   * the VARIANT's own build directory -- held for the whole run, and NOT
+#     waited for. Two runs of the same variant have nothing to say to each other:
+#     they would write the same files in the same order, and the second one to
+#     finish decides. Refusing says so in one line instead of producing a
+#     bitstream nobody can attribute.
+TOOLCHAIN_LOCK = ROOT / "tmp" / "firmware-toolchain.lock"
+
+
+def take_lock(path, emit, *, what, blocking=True):
+    """An exclusive flock on `path`. Returns the handle, or None if refused.
+
+    Closing the handle releases it; so does the process exiting, which is what
+    covers every `return 1` between here and the release.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except BlockingIOError:
+        pass
+    if not blocking:
+        handle.close()
+        emit(f"REFUSED: another process holds {what} ({path.relative_to(ROOT)})")
+        return None
+    # THE WAIT IS ANNOUNCED. No timeout -- the holder is another build doing work
+    # this one needs done, and aborting it would fail a build that was about to
+    # succeed. An unannounced wait is indistinguishable from a hang, which is the
+    # failure this line exists to prevent.
+    emit(f"waiting for {what}; another build holds it")
+    waited = time.perf_counter()
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    emit(f"  acquired after {time.perf_counter() - waited:.1f} s")
+    return handle
 
 
 # Where built bitstreams are kept, keyed by the gateware digest.
@@ -486,6 +542,28 @@ def main():
                              "board that gets left in that state")
     args = parser.parse_args()
 
+    # WHICH BUILD THIS IS, first line of every run. The variant used to be
+    # visible only in the environment of whoever started it, and every build
+    # landed in the same directory regardless.
+    BUILD.mkdir(parents=True, exist_ok=True)
+    emit(f"variant {variant.slug()} -> {BUILD.relative_to(ROOT)}")
+    for setting in variant_settings():
+        emit(f"  {setting}")
+
+    # One run per variant. See TOOLCHAIN_LOCK.
+    mine = take_lock(BUILD / ".build.lock", emit, blocking=False,
+                     what=f"the {variant.slug()} build directory")
+    if mine is None:
+        emit("Another build of this variant is running. A different variant can")
+        emit("run beside it -- they have separate directories -- but two of the")
+        emit("same would overwrite each other's artifacts halfway through.")
+        return 1
+
+    # Everything from here to the bootloader shares one cargo target directory
+    # and one ELF path per crate. See TOOLCHAIN_LOCK.
+    toolchain = take_lock(TOOLCHAIN_LOCK, emit,
+                          what="the firmware toolchain (cargo, objcopy, the PAC)")
+
     firmware = FIRMWARE_BIN
 
     # The gate. Before everything, including --no-build: a bitstream built earlier
@@ -712,6 +790,13 @@ def main():
             # too many, and the symptom is a dead CPU.
             BOOT_BIN.unlink()
 
+        # Released here: every artifact derived from the shared cargo tree is now
+        # this variant's own file under BUILD, so the next build can compile
+        # while this one synthesises.
+        if toolchain is not None:
+            toolchain.close()
+            toolchain = None
+
         # THE FAST PATH, and the reason `.text` in flash is worth having.
         #
         # Synthesis is ~60 s of the ~90 s loop, and once no part of the
@@ -819,7 +904,7 @@ def main():
         # build's. Reading the first would report an older attempt as if it
         # were current, which is the same class of mistake as a stale
         # bitstream.
-        timing = ROOT / "tmp" / "awto_soc" / "build" / "top.tim"
+        timing = BUILD / "top.tim"
         frequencies = []
         if timing.exists():
             for line in timing.read_text().splitlines():
@@ -881,7 +966,7 @@ def main():
         GATEWARE_BUILT.write_text(gateware_digest() + "\n")
         bitcache_put(gateware_digest(), emit)
 
-        report = ROOT / "tmp" / "awto_soc" / "build" / "top.rpt"
+        report = BUILD / "top.rpt"
         if report.exists():
             undriven = report.read_text().count("has no driver")
             emit(f"gateware built. undriven wires: {undriven}")
@@ -1041,6 +1126,18 @@ def configure_and_read(args, emit):
         if not BITSTREAM.exists():
             emit(f"no bitstream at {BITSTREAM.relative_to(ROOT)}")
             return 1
+
+        # `--build-only` STOPS HERE, and it did not.
+        #
+        # Every caller of this reached it having decided the bitstream is
+        # current, and one of those paths is "synthesis skipped, nothing to do" --
+        # which then tried to configure a board that `--build-only` promises not
+        # to touch. Silent while a board was attached; a failed `configure` in a
+        # fan-out where there is none (#351), which is how it was found.
+        if args.build_only:
+            emit(f"bitstream is current: {BITSTREAM.relative_to(ROOT)}")
+            emit("  --build-only: nothing configured, nothing written")
+            return 0
 
         # Nothing reaches the board past this point without the gateware on it
         # being the gateware in the tree.

@@ -87,19 +87,23 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "tmp" / "awto_soc" / "build"
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from soc import variant  # noqa: E402
+
+# This variant's build directory, and the firmware artifacts inside it. Both
+# moved there in #351 so two variants can build at once; the environment picks
+# which one this invocation is about, exactly as it does for the build.
+BUILD = variant.build_dir(ROOT)
 
 # The default is the same intermediate `soc_run.py` writes, and knowing that it is
 # the default is what lets this tool regenerate it. An explicitly-given `--firmware`
 # is the caller's own file and is left alone. See #155.
-DEFAULT_FIRMWARE = ROOT / "tmp" / "rust_fw.bin"
+DEFAULT_FIRMWARE = BUILD / "rust_fw.bin"
 
 # The block RAM is 32 bits wide and yosys splits it one bit per DP16KD, so slice k
 # holds bit k of every word. Each DP16KD stores its 16384 bits as 2048 init words of
@@ -352,7 +356,7 @@ def main():
                              "first. UNSAFE: this tool's whole purpose is the fast "
                              "path, and on that path the image is stale by "
                              "construction unless something rewrites it")
-    parser.add_argument("--bootloader", type=Path, default=ROOT / "tmp" / "rust_boot.bin",
+    parser.add_argument("--bootloader", type=Path, default=BUILD / "rust_boot.bin",
                         help="the resident bootloader, linked for 0x0")
     parser.add_argument("--build-dir", type=Path, default=BUILD)
     parser.add_argument("--output", type=Path,
