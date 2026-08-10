@@ -302,6 +302,24 @@ impl Bist {
         self.read(reg::ID) == APPLET_ID
     }
 
+    /// CR0 for these axes, as a pure function so the masks can be tested.
+    ///
+    /// Every field the sweep varies must be CLEARED before it is set, or the
+    /// power-on value shows through. `0x70f8` covers drive `[14:12]`, latency
+    /// `[7:4]` and fixed `[3]`. It was `0x70f0` and so omitted bit 3, which left
+    /// the power-on 1 in place and made variable latency unreachable -- the
+    /// `var` branch ORed zero onto an already-set bit, and 2048 cells of
+    /// `bist all` reported `fix` results under the `var` label (#335).
+    ///
+    /// This was arithmetic no test could reach until it was lifted out of a
+    /// method that writes to hardware.
+    fn cr0_word(axes: &Axes) -> u32 {
+        (0x8f2f & !0x70f8u32)
+            | ((axes.drive as u32 & 0x7) << 12)
+            | ((axes.latency as u32 & 0xf) << 4)
+            | (if axes.fixed_latency { 1 << 3 } else { 0 })
+    }
+
     /// Set the axis values. Held still for the whole pass, which is what makes
     /// the domain crossing safe without a FIFO.
     pub fn configure(&self, axes: &Axes) {
@@ -313,10 +331,7 @@ impl Bist {
         // CR0, built from the axes rather than from a magic constant. 0x8F2F was
         // the power-on value with only the drive field replaced, which silently
         // pinned latency to 0010b/fixed for every reading taken so far.
-        let cr0 = (0x8f2f & !0x70f0u32)
-            | ((axes.drive as u32 & 0x7) << 12)
-            | ((axes.latency as u32 & 0xf) << 4)
-            | (if axes.fixed_latency { 1 << 3 } else { 0 });
+        let cr0 = Self::cr0_word(axes);
         // FULL POWER MODE, forced, wherever CR0/CR1 are assembled. `CR0[15]=0`
         // is Deep Power Down and `CR1[5]=1` is Hybrid Sleep, and a part put
         // into either survives every reconfigure -- nothing on this board
@@ -783,5 +798,38 @@ mod tests {
         assert!(Bist::poll_limit(256) > Bist::poll_limit(16));
         // And it must not overflow into a tiny value at absurd inputs.
         assert!(Bist::poll_limit(u32::MAX) > Bist::poll_limit(1));
+    }
+
+    /// Every field the sweep varies must be reachable in BOTH directions.
+    ///
+    /// `CR0[3]` was not: the clear mask omitted bit 3, so `var` ORed zero onto a
+    /// bit the power-on value had already set. 2048 cells of `bist all` and 16
+    /// rows of `bist latency` reported `fix` results labelled `var` (#335).
+    #[test]
+    fn every_swept_cr0_field_can_be_cleared_and_set() {
+        let axes = |drive, latency, fixed_latency| Axes {
+            drive, single_ended_clock: false, readclksel: 0, latency, fixed_latency,
+        };
+
+        // The measured pair from the board, and the value the fix must produce.
+        assert_eq!(Bist::cr0_word(&axes(3, 2, true)), 0xbf2f);
+        assert_eq!(Bist::cr0_word(&axes(3, 2, false)), 0xbf27);
+
+        // Each field, both extremes, so a mask that drops a bit fails here
+        // rather than on the board a month later.
+        for fixed_latency in [true, false] {
+            for drive in 0..=7u8 {
+                for latency in 0..=15u8 {
+                    let word = Bist::cr0_word(&axes(drive, latency, fixed_latency));
+                    assert_eq!((word >> 12) & 0x7, drive as u32, "drive {drive}");
+                    assert_eq!((word >> 4) & 0xf, latency as u32, "latency {latency}");
+                    assert_eq!((word >> 3) & 1, fixed_latency as u32,
+                               "fixed {fixed_latency} drive {drive} lat {latency}");
+                    // CR0[15] must survive every combination: 0 is Deep Power
+                    // Down, and a part put there outlives the bitstream.
+                    assert_eq!((word >> 15) & 1, 1, "CR0[15] cleared");
+                }
+            }
+        }
     }
 }
