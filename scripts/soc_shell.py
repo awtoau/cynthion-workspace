@@ -222,13 +222,22 @@ class Link:
         caller prints whatever did arrive.
         """
         deadline = time.monotonic() + budget_s
+        started = time.monotonic()
         reply = b""
         while time.monotonic() < deadline:
             chunk = self.read_available()
             if chunk:
                 reply += chunk
                 if reply.rstrip().endswith(PROMPT):
-                    break
+                    return reply
+        # SAY SO. Expiry returned the partial bytes silently, so a timeout and a
+        # genuinely short reply were the same value and the caller could not tell
+        # a slow board from a quiet one (#295). The bytes are still returned --
+        # a partial transcript is diagnostic -- but the limit and the elapsed are
+        # now on the record.
+        emit(f"  no prompt within {budget_s:.1f} s "
+             f"(elapsed {time.monotonic() - started:.1f} s, "
+             f"{len(reply)} byte(s) received)")
         return reply
 
     def settle(self, seconds):
