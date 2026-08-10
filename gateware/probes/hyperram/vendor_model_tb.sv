@@ -56,6 +56,13 @@ module tb;
   reg [15:0] got;
   integer    errors = 0;
 
+  // Filled in by drive_ca / capture_word so a test can assert on the *timing* of a
+  // transaction, not only its data. Latency is the thing #338 is stuck on and it
+  // is invisible in the returned word.
+  reg        ca_rwds_high;      // did the device request extra latency during CA?
+  integer    strobe_edges;      // edges from the end of CA to the first read strobe
+  integer    fixed_edges, var_edges;
+
   // A HyperBus CA: command in [47:40], A[31:3] in [44:16], A[2:0] in [2:0].
   function [47:0] ca(input [7:0] cmd, input [31:0] word_addr);
     begin
@@ -70,14 +77,15 @@ module tb;
   // the model sees ~4 ns of setup against a tIS of 0.8 ns.
   task drive_ca(input [47:0] c);
     begin
+      ca_rwds_high = 1'b0;
       @(negedge clk); #1;
       csb     = 1'b0;
       adq_oe  = 1'b1;
       adq_drv = c[47:40];
-      @(posedge clk); #1; adq_drv = c[39:32];
-      @(negedge clk); #1; adq_drv = c[31:24];
-      @(posedge clk); #1; adq_drv = c[23:16];
-      @(negedge clk); #1; adq_drv = c[15:8];
+      @(posedge clk); #1; adq_drv = c[39:32]; if (rwds === 1'b1) ca_rwds_high = 1'b1;
+      @(negedge clk); #1; adq_drv = c[31:24]; if (rwds === 1'b1) ca_rwds_high = 1'b1;
+      @(posedge clk); #1; adq_drv = c[23:16]; if (rwds === 1'b1) ca_rwds_high = 1'b1;
+      @(negedge clk); #1; adq_drv = c[15:8];  if (rwds === 1'b1) ca_rwds_high = 1'b1;
       @(posedge clk); #1; adq_drv = c[7:0];
       @(negedge clk); #1; adq_oe = 1'b0;
     end
@@ -119,6 +127,7 @@ module tb;
         @(clk); #0.5;
         edges = edges + 1;
       end
+      strobe_edges = edges;
       if (edges >= 64)
         $display("[tb] no read strobe within %0d edges -- device silent", edges);
       else begin
@@ -180,7 +189,7 @@ module tb;
     end
   endtask
 
-  task check(input [127:0] what, input [15:0] observed, input [15:0] expected);
+  task check(input [255:0] what, input [15:0] observed, input [15:0] expected);
     begin
       if (observed === expected)
         $display("[tb] PASS %0s = %h", what, observed);
@@ -231,6 +240,58 @@ module tb;
     read_memory(32'h00_0000, got);  check("mem[0x000000]", got, 16'hdead);
     read_memory(32'h00_0001, got);  check("mem[0x000001]", got, 16'hbeef);
     read_memory(32'h3f_ffff, got);  check("mem[0x3fffff]", got, 16'h5aa5);
+
+    // The axis #338 is stuck on. With CR0[3] = 1 the latency is always 2x and the
+    // CA-period RWDS carries no information; with CR0[3] = 0 that RWDS *is* the
+    // answer, so a controller that samples it wrongly mis-times every read while
+    // passing every fixed-latency test. Measure both, in edges from the end of CA
+    // to the first read strobe: 14 CK = 28 edges fixed, 7 CK = 14 edges variable.
+    $display("[tb] === latency: fixed vs variable (CR0[3]) ===");
+    write_register(ADDR_CR0, 16'h8f2f);            // fixed, latency code 7
+    read_register(ADDR_ID0, got);
+    $display("[tb] fixed    strobe at %0d edges, RWDS during CA = %0d",
+             strobe_edges, ca_rwds_high);
+    fixed_edges = strobe_edges;
+    check("ID0 with fixed latency", got, 16'h0c86);
+
+    write_register(ADDR_CR0, 16'h8f27);            // CR0[3] = 0 -> variable
+    read_register(ADDR_CR0, got);
+    check("CR0 reads back variable", got, 16'h8f27);
+    read_register(ADDR_ID0, got);
+    $display("[tb] variable strobe at %0d edges, RWDS during CA = %0d",
+             strobe_edges, ca_rwds_high);
+    var_edges = strobe_edges;
+    check("ID0 with variable latency", got, 16'h0c86);
+
+    if (var_edges < fixed_edges)
+      $display("[tb] PASS variable latency is shorter: %0d edges vs %0d",
+               var_edges, fixed_edges);
+    else begin
+      $display("[tb] FAIL variable latency did not shorten: %0d vs %0d",
+               var_edges, fixed_edges);
+      errors = errors + 1;
+    end
+
+    write_register(ADDR_CR0, 16'h8f2f);            // back to the POR default
+    read_register(ADDR_CR0, got);  check("CR0 restored", got, 16'h8f2f);
+
+    // CR0[15] = 0 is Deep Power Down. Everything stops until RESET#, and a
+    // register write that lands one edge late writes exactly this by accident --
+    // which is why it is worth knowing what it looks like.
+    $display("[tb] === deep power down and reset recovery ===");
+    write_register(ADDR_CR0, 16'h0f2f);
+    #500;                                          // tCSDPD is 200 ns
+    read_register(ADDR_ID0, got);
+    if (got === 16'hzzzz)
+      $display("[tb] PASS device is silent in deep power down");
+    else begin
+      $display("[tb] FAIL device answered %h in deep power down", got);
+      errors = errors + 1;
+    end
+    resetb = 1'b0; #1_000; resetb = 1'b1; #2_000;  // tRP 200 ns, tRPH 400 ns
+    bus_idle;
+    read_register(ADDR_CR0, got);
+    check("CR0 after reset recovery", got, 16'h8f2f);
 
     // tCSM is 4 us. At 100 MHz that is 400 CK, so hold CS# low for 500 and see
     // what the model says. This is the check #317 added to our controller.

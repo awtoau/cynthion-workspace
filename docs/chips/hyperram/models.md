@@ -140,11 +140,40 @@ the controller work.
 | CR0 write + read-back | yes | yes | drive strength 34 → 67 ohm |
 | CR1 write + read-back | yes | yes | **CR1[6] = 0 differential is accepted and reads back 0** |
 | memory write + read, low and top word | yes | yes | `0x3fffff` confirms 8 MiB |
+| **fixed vs variable latency (`CR0[3]`)** | yes | yes | **28 vs 14 edges, to the edge** — see below |
+| **deep power down + RESET# recovery** | yes | yes | `CR0[15] = 0`, device silent until RESET# |
 | deliberate tCSM violation | yes | yes | fires at exactly 4 us |
-| variable latency (`CR0[3] = 0`) | **not exercised** | partial | the next thing to add |
-| wrapped / hybrid burst | **not exercised** | no | |
-| refresh collision forcing 2x latency | **not exercised** | no | vendor only |
-| DPD, hybrid sleep, software reset | **not exercised** | no | vendor only |
+| wrapped / hybrid burst (`CR0[2]`) | **not exercised** | no | |
+| refresh collision forcing 2x latency | **not exercised** | no | vendor only — the twin has no refresh |
+| hybrid sleep, software reset | **not exercised** | no | vendor only |
 
 The twin's fidelity is bounded by this table, not by the encryption. Every row
-added to the testbench is a row the twin has to get right.
+added to the testbench is a row the twin has to get right, and the latency and
+DPD rows are checked as exact strings so a drift fails rather than degrades.
+
+### Variable latency, measured
+
+The mechanism [#338](https://github.com/awtoau/cynthion-workspace/issues/338)
+turns on, from Winbond's own model and matched by the twin to the edge:
+
+| `CR0[3]` | RWDS during CA | edges from end of CA to first read strobe |
+|---|---|---|
+| `1` fixed | **high** | **28** = 14 CK = 2 x 7 |
+| `0` variable | **low** | **14** = 7 CK |
+
+So under fixed latency the device raises RWDS during every CA and the level
+carries no information — a controller can sample it at the wrong moment, or not
+at all, and nothing breaks. Under variable latency **that RWDS level is the whole
+answer**, and a controller that reads it stale or early times every access
+wrongly while still passing every fixed-latency test.
+
+The twin never asks for extra latency because it has no refresh. The vendor model
+does, which is why a refresh-collision case has to run against the vendor.
+
+### Deep power down is one bad register write away
+
+`CR0[15] = 0` enters DPD; the device then answers nothing and only RESET# gets it
+back (`tRP` 200 ns, `tRPH` 400 ns, and the vendor model warns below `tDPDIN`
+3 us). A register write whose first data byte is one edge late writes exactly
+this by accident — see the second protocol fact above. Both models are silent in
+DPD and both come back with `CR0 = 0x8f2f` after reset.

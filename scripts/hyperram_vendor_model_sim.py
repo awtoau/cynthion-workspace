@@ -74,6 +74,13 @@ REQUIRED_MARKERS = (
     "PASS differential clock accepted",
     "PASS mem[0x000000] = dead",
     "PASS mem[0x3fffff] = 5aa5",
+    # Latency is checked as an exact edge count, not just "shorter". Both models
+    # must agree to the edge, or the twin has drifted from the part it stands in
+    # for -- and the RWDS level during CA is the half that #338 turns on.
+    "fixed    strobe at 28 edges, RWDS during CA = 1",
+    "variable strobe at 14 edges, RWDS during CA = 0",
+    "PASS device is silent in deep power down",
+    "PASS CR0 after reset recovery = 8f2f",
 )
 TCSM_MARKER = "tCSM violation"
 

@@ -47,6 +47,7 @@ module hyperram_model #(
   reg [21:0] word_addr;
   reg        is_read, is_register;
 
+  reg        dpd;               // CR0[15] = 0; only RESET# gets out
   reg  [7:0] write_high;
   reg [15:0] rd_word;
   reg        write_done;
@@ -107,6 +108,10 @@ module hyperram_model #(
       case (a)
         22'h00_0800: begin
           cr0 = d;
+          if (!d[15]) begin
+            dpd = 1'b1;
+            $display("%m: CR0[15] = 0 -- entering deep power down, RESET# is the only way out");
+          end
           $display("%m: Write New CR0: 0x%h -- latency code %0d, %0s, drive %0d",
                    d, d[7:4], d[3] ? "fixed" : "variable", d[14:12]);
         end
@@ -122,7 +127,7 @@ module hyperram_model #(
 
   integer i;
   initial begin
-    id0 = ID0_RESET; id1 = ID1_RESET; cr0 = CR0_RESET; cr1 = CR1_RESET;
+    id0 = ID0_RESET; id1 = ID1_RESET; cr0 = CR0_RESET; cr1 = CR1_RESET; dpd = 1'b0;
     for (i = 0; i < MEM_WORDS; i = i + 1) memory[i] = 16'h0000;
   end
 
@@ -136,6 +141,7 @@ module hyperram_model #(
   always @(negedge resetb) begin
     cr0 = CR0_RESET;
     cr1 = CR1_RESET;
+    dpd = 1'b0;
     $display("%m: RESET# low at %0t -- config registers back to default", $time);
   end
 
@@ -156,12 +162,18 @@ module hyperram_model #(
 
   // One block on both edges: HyperBus is DDR and every beat is an edge.
   always @(posedge clk or negedge clk) begin
-    if (!csb && ready && resetb) begin
+    if (!csb && ready && resetb && !dpd) begin
       if (beat < 16'd6) begin
         // Command-Address, most significant byte first.
         ca = {ca[39:0], adq};
         rwds_oe  = 1'b1;
-        rwds_out = 1'b1;              // request the extra latency, as the part does
+        // RWDS during CA is the extra-latency request, and it only carries
+        // information under variable latency: with CR0[3] = 1 the answer is
+        // always 2x and the device says so every time. Variable and no refresh
+        // pending means 1x -- this model has no refresh, so it never asks for
+        // more. Vendor model, measured: fixed 28 edges to the strobe with RWDS
+        // high, variable 14 edges with RWDS low.
+        rwds_out = cr0[3];
         if (beat == 16'd5) begin
           is_read     = ca[47];         // 1 = read
           is_register = ca[46];         // AS: 1 = register space, 0 = memory array
@@ -169,13 +181,17 @@ module hyperram_model #(
           rwds_out    = 1'b0;
           if (is_register && !is_read) rwds_oe = 1'b0;   // host owns RWDS on a register write
         end
-      end else if (beat >= first_data_beat(is_register && !is_read)) begin
+      end else if (beat >= first_data_beat(is_register && !is_read) +
+                           (is_read ? 16'd1 : 16'd0)) begin
+        // A read starts one edge later than a write at the same latency -- the
+        // device has to turn the bus around. Measured against the vendor model:
+        // 28 edges to the strobe at 14 CK fixed, 14 at 7 CK variable.
         if (is_read) begin
           dq_oe    = 1'b1;
           rwds_oe  = 1'b1;
           rd_word  = read_word(word_addr);   // Icarus will not part-select a call
           // Even data beats carry the high byte and raise the strobe.
-          if (!((beat - first_data_beat(1'b0)) & 1)) begin
+          if (!((beat - first_data_beat(1'b0) - 16'd1) & 1)) begin
             dq_out   = rd_word[15:8];
             rwds_out = 1'b1;
           end else begin
