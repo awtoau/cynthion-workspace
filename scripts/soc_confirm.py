@@ -9,6 +9,7 @@ Confirm a design is actually running, and NAME which failure it is when it is no
     ./scripts/soc_confirm.py                # confirm; exit 1 and name the cause
     ./scripts/soc_confirm.py --json         # the same, machine-readable
     ./scripts/soc_confirm.py --before       # the pre-configure gate only
+    ./scripts/soc_confirm.py --no-shell     # a bitstream with no console: DONE only
 
     from soc_confirm import configure_and_confirm     # configure, then confirm
 
@@ -52,6 +53,9 @@ is the whole value.
   bus and a wedged part both read back `ffffffff`.
 - Nothing here is about WHICH bitstream is running -- that is the gateware digest
   and USERCODE check in `soc_run.py`, and this does not duplicate it.
+- `--no-shell` (`shell=False`) stops at DONE: a probe read over JTAG registers
+  presents no console, so "running" is as far as the evidence goes. Whether it
+  does its job is the caller's own readback.
 
 ## Order of evidence, and why the console goes first
 
@@ -150,9 +154,13 @@ class Evidence:
     idcode: int | None = None           # ECP5 IDCODE from the JTAG scan
     status: int | None = None           # ECP5 configuration status register
     jtag_console: bytes | None = None   # the JTAG-pin UART, Apollo's own CDC node
+    # Does this bitstream present the SoC shell at all? A probe read over JTAG
+    # registers has no console, and asking for one would score it dead.
+    shell: bool = True
 
     def as_json(self):
         return {
+            "shell": self.shell,
             "apollo": self.apollo, "console_usb": self.console_usb,
             "console_node": self.console_node, "served": self.served,
             "thieves": [{"pid": pid, "command": cmd} for pid, cmd in self.thieves],
@@ -175,12 +183,57 @@ class Verdict:
         return self.name == "ok"
 
 
+def from_jtag(ev: Evidence, when_running) -> Verdict:
+    """The part's own account of itself. `when_running()` is what DONE set means.
+
+    DONE set means a design is loaded -- whether that is success or `wrong-port`
+    depends on what the caller expected to enumerate, which is the caller's to
+    say and not this function's. A callable, because that verdict quotes a status
+    register the other two branches do not have.
+    """
+    if ev.status is None or ev.idcode in (0, 0xFFFFFFFF):
+        return Verdict("jtag-contended", "the ECP5 did not answer JTAG", [
+            f"  IDCODE {'not read' if ev.idcode is None else f'{ev.idcode:08x}'}"
+            f", status {'not read' if ev.status is None else f'{ev.status:08x}'}",
+            "  A design holding the shared JTAG bus and a wedged part read back",
+            "  the same. INCONCLUSIVE by construction -- retry, and if it repeats",
+            "  it is not contention.",
+        ], retry=True)
+
+    if not ev.status & STATUS_DONE:
+        lines = [
+            f"  ECP5 {ev.idcode:08x} is on the chain, status {ev.status:08x},"
+            f" DONE clear",
+            "  The part itself says no design is loaded. `apollo configure`",
+            "  returning 0 is not evidence against this -- see #360.",
+        ]
+        if ev.status & STATUS_SPI_FAIL:
+            lines.append("  SPI_FAIL is set: it also could not boot from flash.")
+        return Verdict("blank-fpga", "the FPGA is blank", lines)
+
+    return when_running()
+
+
 def diagnose(ev: Evidence) -> Verdict:
     """The evidence to a named cause. Pure -- `tests/test_soc_confirm.py` drives it.
 
     Ordered by what is cheapest to be certain about: a reply settles it, then the
     bus census, and only then the JTAG evidence which is the least direct.
     """
+    if not ev.shell:
+        # A bitstream with no shell -- a probe read over JTAG registers, say.
+        # There is no console to ask, so DONE is the whole of the evidence.
+        if ev.apollo is False:
+            return Verdict("board-absent", "no part of this board is on USB", [
+                "  1d50:615c (Apollo, CONTROL) is not on the bus.",
+            ])
+        return from_jtag(ev, lambda: Verdict(
+            "ok", "the part reports a configured design", [
+                f"  status {ev.status:08x}, DONE set. This bitstream presents no",
+                "  console, so DONE is as far as confirmation goes -- whether the",
+                "  design does its job is the caller's own readback.",
+            ]))
+
     if ev.reply and ev.reply.strip():
         return Verdict("ok", "the shell answered", [
             f"  {ev.reply.decode('ascii', 'replace').strip()[:200]!r}"])
@@ -226,32 +279,13 @@ def diagnose(ev: Evidence) -> Verdict:
             "  on another port. Apollo is CONTROL; the console is AUX.",
         ])
 
-    if ev.status is None or ev.idcode in (0, 0xFFFFFFFF):
-        return Verdict("jtag-contended", "the ECP5 did not answer JTAG", [
-            f"  IDCODE {'not read' if ev.idcode is None else f'{ev.idcode:08x}'}"
-            f", status {'not read' if ev.status is None else f'{ev.status:08x}'}",
-            "  A design holding the shared JTAG bus and a wedged part read back",
-            "  the same. INCONCLUSIVE by construction -- retry, and if it repeats",
-            "  it is not contention.",
-        ], retry=True)
-
-    if not ev.status & STATUS_DONE:
-        lines = [
-            f"  ECP5 {ev.idcode:08x} is on the chain, status {ev.status:08x},"
-            f" DONE clear",
-            "  The part itself says no design is loaded. `apollo configure`",
-            "  returning 0 is not evidence against this -- see #360.",
-        ]
-        if ev.status & STATUS_SPI_FAIL:
-            lines.append("  SPI_FAIL is set: it also could not boot from flash.")
-        return Verdict("blank-fpga", "the FPGA is blank", lines)
-
-    return Verdict("wrong-port", "a design is running; its console is on no bus", [
-        f"  status {ev.status:08x}, DONE set -- the part says a design is loaded",
-        "  but 1d50:6180 is not on the bus. The AUX cable is unplugged, is in",
-        "  TARGET, or this bitstream presents on another port. Apollo is CONTROL;",
-        "  the console is AUX (gateware/usb_ids.py).",
-    ])
+    return from_jtag(ev, lambda: Verdict(
+        "wrong-port", "a design is running; its console is on no bus", [
+            f"  status {ev.status:08x}, DONE set -- the part says a design is loaded",
+            "  but 1d50:6180 is not on the bus. The AUX cable is unplugged, is in",
+            "  TARGET, or this bitstream presents on another port. Apollo is",
+            "  CONTROL; the console is AUX (gateware/usb_ids.py).",
+        ]))
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +409,7 @@ def ask_jtag_console(ev):
         return
     ev.jtag_console = prompt(link)
     say(f"  JTAG-pin UART {node}: "
-         f"{'answered' if ev.jtag_console.strip() else 'silent'}")
+        f"{'answered' if ev.jtag_console.strip() else 'silent'}")
 
 
 def ask_jtag(ev):
@@ -411,39 +445,40 @@ def ask_jtag(ev):
             pass
     if ev.idcode is not None:
         say(f"  jtag: IDCODE {ev.idcode:08x}"
-             + (f", status {ev.status:08x} (DONE "
-                f"{'set' if ev.status & STATUS_DONE else 'CLEAR'})"
-                if ev.status is not None else ", status unreadable"))
+            + (f", status {ev.status:08x} (DONE "
+               f"{'set' if ev.status & STATUS_DONE else 'CLEAR'})"
+               if ev.status is not None else ", status unreadable"))
 
 
-def gather(*, node=None, jtag=True):
+def gather(*, node=None, jtag=True, shell=True):
     """Every probe, cheapest first, stopping as soon as the verdict is decided."""
     import usb_ids
 
-    ev = Evidence()
+    ev = Evidence(shell=shell)
     ev.apollo = usb_present(APOLLO_PID)
     ev.console_usb = usb_present(usb_ids.product_id(CONSOLE))
     ev.console_node = node or usb_ids.find_tty(CONSOLE)
     say(f"  usb: 1d50:{APOLLO_PID:04x} "
-         f"{'present' if ev.apollo else 'ABSENT'} (Apollo, CONTROL), "
-         f"1d50:{usb_ids.product_id(CONSOLE):04x} "
-         f"{'present' if ev.console_usb else 'ABSENT'} (console, AUX)")
+        f"{'present' if ev.apollo else 'ABSENT'} (Apollo, CONTROL), "
+        f"1d50:{usb_ids.product_id(CONSOLE):04x} "
+        f"{'present' if ev.console_usb else 'ABSENT'} (console, AUX)")
 
-    if ev.console_usb or node:
+    if shell and (ev.console_usb or node):
         ask_console(ev, node)
         if (ev.reply and ev.reply.strip()) or ev.thieves:
             return ev
     if not ev.console_usb and ev.apollo and jtag:
-        ask_jtag_console(ev)
+        if shell:
+            ask_jtag_console(ev)
         if not (ev.jtag_console and ev.jtag_console.strip()):
             ask_jtag(ev)
     return ev
 
 
-def confirm(*, node=None, jtag=True):
+def confirm(*, node=None, jtag=True, shell=True):
     """Gather, diagnose, and say so. Returns the Verdict."""
     say("confirming a design is running (#360):")
-    verdict = diagnose(gather(node=node, jtag=jtag))
+    verdict = diagnose(gather(node=node, jtag=jtag, shell=shell))
     if verdict.ok:
         say(f"CONFIRMED: {verdict.headline}")
     else:
@@ -477,7 +512,7 @@ def precheck():
     ])
 
 
-def configure_and_confirm(bitstream, *, tries=3, node=None):
+def configure_and_confirm(bitstream, *, tries=3, node=None, shell=True):
     """Configure the FPGA and prove a design is running. 0 on success.
 
     THE ONE PATH. Per-script liveness gates were growing after each script got
@@ -503,20 +538,20 @@ def configure_and_confirm(bitstream, *, tries=3, node=None):
         if result is None or result.returncode != 0:
             tail = ((result.stdout or "") if result else "").strip().splitlines()
             say(f"  configure attempt {attempt}/{tries} FAILED: "
-                 + (tail[-1][:160] if tail else "killed at its time limit"))
+                + (tail[-1][:160] if tail else "killed at its time limit"))
             continue
-        verdict = confirm(node=node, jtag=True)
+        verdict = confirm(node=node, jtag=True, shell=shell)
         if verdict.ok:
             say(f"configured {Path(bitstream).name} and the design answers"
-                 + (f" (attempt {attempt})" if attempt > 1 else ""))
+                + (f" (attempt {attempt})" if attempt > 1 else ""))
             return 0
         if verdict.name in ("silent-firmware", "stolen-port", "wrong-port",
                             "board-absent", "control-unplugged"):
             # Retrying cannot change any of these. Stop and say which it is
             # rather than spending two more configures on the same answer.
             return 1
-        say(f"  configure attempt {attempt}/{tries} returned 0 but the board did "
-             f"not come up [{verdict.name}]")
+        say(f"  configure attempt {attempt}/{tries} returned 0 but the board "
+            f"did not come up [{verdict.name}]")
     say(f"configure failed {tries} times for {bitstream}")
     return 1
 
@@ -532,6 +567,9 @@ def main():
     parser.add_argument("--node", help="a tty to use instead of the USB console")
     parser.add_argument("--no-jtag", action="store_true",
                         help="skip the JTAG probe; USB and the console only")
+    parser.add_argument("--no-shell", action="store_true",
+                        help="this bitstream presents no console: DONE is the "
+                             "whole of the confirmation")
     args = parser.parse_args()
 
     global QUIET
@@ -552,7 +590,8 @@ def main():
                       console_usb=usb_present(usb_ids.product_id(CONSOLE)))
     else:
         started = time.perf_counter()
-        ev = gather(node=args.node, jtag=not args.no_jtag)
+        ev = gather(node=args.node, jtag=not args.no_jtag,
+                    shell=not args.no_shell)
         verdict = diagnose(ev)
         say(f"  ({time.perf_counter() - started:.1f} s of evidence)")
 

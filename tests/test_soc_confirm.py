@@ -189,6 +189,25 @@ def test_other_readers_names_a_real_process_holding_a_real_tty():
         os.close(replica)
 
 
+def test_a_bitstream_with_no_console_is_confirmed_by_done_alone():
+    """A JTAG-readback probe has no shell; asking for one would score it dead.
+
+    `hyperram_identify.py` reads its results over JTAG registers. DONE is the
+    whole of the confirmation available, and it is still more than an exit code.
+    """
+    assert verdict(shell=False, apollo=True, idcode=ECP5_IDCODE,
+                   status=STATUS_RUNNING).name == "ok"
+    assert verdict(shell=False, apollo=True, idcode=ECP5_IDCODE,
+                   status=STATUS_BLANK).name == "blank-fpga"
+    assert verdict(shell=False, apollo=False).name == "board-absent"
+
+
+def test_a_console_less_bitstream_is_never_called_wrong_port():
+    """`wrong-port` is about a console that should have enumerated. There is none."""
+    assert verdict(shell=False, apollo=True, console_usb=False,
+                   idcode=ECP5_IDCODE, status=STATUS_RUNNING).ok
+
+
 def test_the_cli_names_a_stolen_port_end_to_end():
     """The whole path -- probe, diagnose, report -- against a real held tty.
 
