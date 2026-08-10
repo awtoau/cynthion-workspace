@@ -22,5 +22,8 @@
 // contents rather than the firmware's -- so most items look unused from here.
 #![allow(dead_code)]
 
+#[path = "../../cynthion-soc/src/bist/pure.rs"]
+pub mod bist_pure;
+
 #[path = "../../cynthion-soc/src/power_rails.rs"]
 pub mod power_rails;

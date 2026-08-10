@@ -48,6 +48,15 @@
 use crate::uart::Uart;
 use core::fmt::Write;
 
+/// The arithmetic, with no register access in it, so it can be tested on the
+/// host (#337). Re-exported rather than hidden: `Axes` and `Verdict` are this
+/// module's vocabulary and callers should not have to know where they live.
+pub mod pure;
+
+pub use pure::{Axes, Cell, Verdict};
+use pure::{cr0_word, cr1_word, latency_clocks, latency_code_legal, poll_limit,
+           HEADING_AXES, HEADING_COUNTS, STAMP_PAD};
+
 /// Engine register numbers, from `gateware/probes/hyperram/hyperram_ceiling_top.py`.
 pub mod reg {
     pub const ID: usize = 1;
@@ -120,11 +129,6 @@ pub const APPLET_ID: u32 = 0x4852_4331;
 /// Words per burst, from `BURST_WORDS` in the engine. The poll bound below is
 /// derived from it, so the two must agree.
 const BURST_WORDS: u32 = 128;
-
-/// `CR0[15]`: 1 is normal operation, 0 is Deep Power Down. Forced set.
-const CR0_FULL_POWER: u32 = 1 << 15;
-/// `CR1[5]`: 1 is Hybrid Sleep. Forced clear.
-const CR1_HYBRID_SLEEP: u32 = 1 << 5;
 
 /// Where the BIST peripheral sits, matching `HYPERRAM_BIST_BASE` in
 /// `gateware/soc/top.py`.
@@ -199,72 +203,6 @@ impl Ck {
     }
 }
 
-/// What one cell of the matrix was run with.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Axes {
-    /// `CR0[14:12]`, the part's output drive. 0..=7, 19..115 ohms.
-    pub drive: u8,
-    /// `CR1[6]`: false selects the differential clock the board is wired for.
-    pub single_ended_clock: bool,
-    /// `READCLKSEL` 0..=7, which shifts the DQSBUFM read pulse by T/4 a step.
-    pub readclksel: u8,
-    /// `CR0[7:4]`, the part's initial latency code, and `CR0[3]` fixed/variable.
-    ///
-    /// **The axis most likely to explain a one-word slip.** A read that starts
-    /// one clock early or late lands one device word off, and no capture phase
-    /// can correct that -- it is not a timing margin, it is an off-by-one. Left
-    /// at the power-on 0010b/fixed for every measurement so far.
-    pub latency: u8,
-    pub fixed_latency: bool,
-}
-
-/// What one cell produced, with the evidence that it means anything.
-#[derive(Clone, Copy)]
-pub struct Cell {
-    pub axes: Axes,
-    /// Errors on the real pass.
-    pub errors: u32,
-    /// Words compared on the real pass. Zero means the engine did not run.
-    pub words: u32,
-    /// Errors on the deliberately-wrong pass. Must be non-zero for a verdict.
-    pub control_errors: u32,
-    /// Words compared on the control pass.
-    pub control_words: u32,
-}
-
-/// The three verdicts a cell can carry, and there is no fourth.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Verdict {
-    /// Zero errors, and the control fired. The only reportable success.
-    Pass,
-    /// Errors on the real pass, and the control fired.
-    Fail(u32),
-    /// The control did NOT fire, so the comparator is not shown to work here.
-    /// Not a pass and not a failure: no result at all.
-    NoResult,
-}
-
-impl Cell {
-    /// The verdict, which cannot be `Pass` without the control having fired.
-    ///
-    /// This is the whole reason the type exists. Reading `errors == 0` directly
-    /// is how "zero errors at every rung" got recorded from a comparator that
-    /// was never armed.
-    pub fn verdict(&self) -> Verdict {
-        // The control must have run AND must have failed. A control reporting
-        // zero errors against a value the part cannot return means the
-        // comparison is not happening.
-        if self.control_words == 0 || self.control_errors == 0 || self.words == 0 {
-            return Verdict::NoResult;
-        }
-        if self.errors == 0 {
-            Verdict::Pass
-        } else {
-            Verdict::Fail(self.errors)
-        }
-    }
-}
-
 /// Why a poll stopped.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Poll {
@@ -308,76 +246,19 @@ impl Bist {
         self.read(reg::ID) == APPLET_ID
     }
 
-    /// CR0 for these axes, as a pure function so the masks can be tested.
-    ///
-    /// Every field the sweep varies must be CLEARED before it is set, or the
-    /// power-on value shows through. `0x70f8` covers drive `[14:12]`, latency
-    /// `[7:4]` and fixed `[3]`. It was `0x70f0` and so omitted bit 3, which left
-    /// the power-on 1 in place and made variable latency unreachable -- the
-    /// `var` branch ORed zero onto an already-set bit, and 2048 cells of
-    /// `bist all` reported `fix` results under the `var` label (#335).
-    ///
-    /// This was arithmetic no test could reach until it was lifted out of a
-    /// method that writes to hardware.
-    fn cr0_word(axes: &Axes) -> u32 {
-        (0x8f2f & !0x70f8u32)
-            | ((axes.drive as u32 & 0x7) << 12)
-            | ((axes.latency as u32 & 0xf) << 4)
-            | (if axes.fixed_latency { 1 << 3 } else { 0 })
-    }
-
     /// Set the axis values. Held still for the whole pass, which is what makes
     /// the domain crossing safe without a FIFO.
+    ///
+    /// Bit 16 is "apply this"; without it the part keeps its power-on
+    /// configuration. The gateware sweep once left it clear and swept a drive
+    /// axis that therefore did nothing -- eight rows that should have been
+    /// identical, and were not. The words themselves are `pure::cr0_word` /
+    /// `cr1_word`, which is where the forced full-power bits live.
     pub fn configure(&self, axes: &Axes) {
+        const APPLY: u32 = 1 << 16;
         self.write(reg::READCLKSEL, axes.readclksel as u32 & 0x7);
-        // Bit 16 is "apply this"; without it the part keeps its power-on
-        // configuration. The gateware sweep once left it clear and swept a
-        // drive axis that therefore did nothing -- eight rows that should have
-        // been identical, and were not.
-        // CR0, built from the axes rather than from a magic constant. 0x8F2F was
-        // the power-on value with only the drive field replaced, which silently
-        // pinned latency to 0010b/fixed for every reading taken so far.
-        let cr0 = Self::cr0_word(axes);
-        // FULL POWER MODE, forced, wherever CR0/CR1 are assembled. `CR0[15]=0`
-        // is Deep Power Down and `CR1[5]=1` is Hybrid Sleep, and a part put
-        // into either survives every reconfigure -- nothing on this board
-        // power-cycles it. A DQS build wrote `CR0 = 0x0000` for exactly this
-        // reason and the wedge outlived the code that caused it (#226, #315).
-        // Masked here rather than trusted to the base constant, so no sweep and
-        // no partial word can reach either state.
-        self.write(reg::DEVICE_CR0, (1 << 16) | cr0 | CR0_FULL_POWER);
-        let cr1 = if axes.single_ended_clock { 0xffc1 } else { 0xff81 };
-        self.write(reg::DEVICE_CR1, (1 << 16) | (cr1 & !CR1_HYBRID_SLEEP));
-    }
-
-    /// How many poll spins one pass of `passes` bursts may legitimately take.
-    ///
-    /// **Waits for**: the engine's `done`, one write burst plus one read burst
-    /// per pass.
-    ///
-    /// **Expected duration, and where it comes from**: a burst is
-    /// `BURST_WORDS` = 128 words, one word per `hr` cycle, and a pass does two
-    /// of them -- 256 `hr` cycles -- plus command, latency and tCSHI, call it
-    /// 512 to be safe about the fixed part. The slowest rung this rig builds is
-    /// CK 100 on the DQS path, where `hr` is 50 MHz, against a CPU at 60 MHz:
-    /// 512 x 60/50 = 614 CPU cycles per pass. One spin is an uncached CSR read
-    /// plus a mask and a branch; at ~10 cycles that is ~62 spins per pass.
-    ///
-    /// **Multiplier**: `SPINS_PER_PASS` is 80, about 1.3x that, and the whole
-    /// thing is per-pass rather than a fixed ceiling so it tracks the parameter
-    /// it depends on. `FLOOR` covers DLL lock and engine start-up once.
-    ///
-    /// **On expiry**: [`Poll::TimedOut`] carries the limit and the spins taken,
-    /// `words` is forced to zero so [`Cell::verdict`] reads NoResult, and the
-    /// caller prints all of it. A wedged engine can never be reported as a pass.
-    ///
-    /// The retired branch used a flat 2,000,000 here. At ~30x it made a wedged
-    /// cell slow enough that a 128-cell sweep was indistinguishable from a
-    /// lockup, which is how the wedge was first reported.
-    fn poll_limit(passes: u32) -> u32 {
-        const SPINS_PER_PASS: u32 = 80;
-        const FLOOR: u32 = 2_000;
-        passes.saturating_mul(SPINS_PER_PASS).saturating_add(FLOOR)
+        self.write(reg::DEVICE_CR0, APPLY | cr0_word(axes));
+        self.write(reg::DEVICE_CR1, APPLY | cr1_word(axes));
     }
 
     /// Run one pass and wait for it. `negative` builds the deliberately-wrong
@@ -395,7 +276,7 @@ impl Bist {
         self.write(reg::CONTROL, mode | control::GO);
         self.write(reg::CONTROL, mode);
 
-        let limit = Self::poll_limit(passes);
+        let limit = poll_limit(passes);
         let mut spins: u32 = 0;
         let mut last = self.read(reg::STATUS);
         while last & status::DONE == 0 {
@@ -498,9 +379,16 @@ impl Bist {
             // WHAT THE PART SAYS, against what it was told. Datasheet default is
             // 0x8F2F: latency code 2 (7 clocks), fixed, drive 34 ohms.
             let back = self.read(reg::DEVICE_READBACK) & 0xffff;
+            // The code decoded, because the field is SPARSE: `5 + sext4(code)`,
+            // so 14 and 15 are the two SHORTEST at 3 and 4 clocks and sit below
+            // code 0. Reading the raw code as if it were monotonic is a mistake
+            // the sweeps invite.
+            let code = ((back >> 4) & 0xf) as u8;
             let _ = writeln!(
-                uart, "  CR0     part reports {:#06x}  latency code {} {}  drive {}",
-                back, (back >> 4) & 0xf,
+                uart, "  CR0     part reports {:#06x}  latency code {} = {} clocks{}  \
+                       {}  drive {}",
+                back, code, latency_clocks(code),
+                if latency_code_legal(code) { "" } else { " RESERVED" },
                 if back & 8 != 0 { "fixed" } else { "variable" },
                 (back >> 12) & 0x7);
             // CR1[6] IS A CAPABILITY, not a setting. The vendor's application note
@@ -615,21 +503,6 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
         bist.describe_status(uart, "control", st[1]);
     }
 }
-
-/// Column headings, composed rather than sliced.
-///
-/// Two things the old single-string version got wrong. `report` prints
-/// `log::now()` and two spaces BEFORE the first field, so a heading without the
-/// same indent puts every column 12 characters out. And the latency variants
-/// built their heading as `&HEADING[13..]`, which cuts mid-word and produced a
-/// stray `el` in `lat  mode  el   errors`.
-///
-/// Widths must match `report`'s format string exactly: `{:5}  {:3}  {:3}` then
-/// three `{:8}` counts. Integers right-align, `&str` left-aligns, which is why
-/// `clk` sits left and everything numeric sits right.
-const STAMP_PAD: &str = "            ";
-const HEADING_AXES: &str = "drive  clk  sel";
-const HEADING_COUNTS: &str = "    errors     words   control  verdict";
 
 /// One cell, by hand. The unit a sweep is made of, so nothing is exercised in a
 /// sweep that was not first exercised alone.
@@ -816,85 +689,3 @@ fn gate(uart: &mut Uart, bist: &Bist) -> bool {
     false
 }
 
-// NOTE: nothing in this repo runs `cargo test`, and this crate cannot host-test
-// as it stands -- it is `#![no_std]` with its own panic handler. The tests below
-// therefore do not run anywhere today; `power_rails.rs` has had the same problem
-// for longer. They are kept because the property they state is the one this
-// module exists to enforce.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn axes() -> Axes {
-        Axes { drive: 0, single_ended_clock: false, readclksel: 0,
-               latency: 2, fixed_latency: true }
-    }
-
-    fn cell(errors: u32, words: u32, control_errors: u32, control_words: u32) -> Cell {
-        Cell { axes: axes(), errors, words, control_errors, control_words }
-    }
-
-    /// The property this whole rig exists to enforce.
-    #[test]
-    fn zero_errors_without_a_fired_control_is_not_a_pass() {
-        assert!(matches!(cell(0, 4096, 0, 4096).verdict(), Verdict::NoResult));
-        assert!(matches!(cell(0, 4096, 0, 0).verdict(), Verdict::NoResult));
-    }
-
-    #[test]
-    fn a_pass_needs_both_halves() {
-        assert!(matches!(cell(0, 4096, 4096, 4096).verdict(), Verdict::Pass));
-    }
-
-    #[test]
-    fn errors_are_a_failure_only_when_the_control_fired() {
-        assert!(matches!(cell(17, 4096, 4096, 4096).verdict(), Verdict::Fail(17)));
-        assert!(matches!(cell(17, 4096, 0, 4096).verdict(), Verdict::NoResult));
-    }
-
-    #[test]
-    fn an_engine_that_never_ran_is_not_a_pass() {
-        assert!(matches!(cell(0, 0, 4096, 4096).verdict(), Verdict::NoResult));
-    }
-
-    /// The bound must track the parameter it depends on, not be a flat ceiling.
-    #[test]
-    fn the_poll_bound_scales_with_passes() {
-        assert!(Bist::poll_limit(256) > Bist::poll_limit(16));
-        // And it must not overflow into a tiny value at absurd inputs.
-        assert!(Bist::poll_limit(u32::MAX) > Bist::poll_limit(1));
-    }
-
-    /// Every field the sweep varies must be reachable in BOTH directions.
-    ///
-    /// `CR0[3]` was not: the clear mask omitted bit 3, so `var` ORed zero onto a
-    /// bit the power-on value had already set. 2048 cells of `bist all` and 16
-    /// rows of `bist latency` reported `fix` results labelled `var` (#335).
-    #[test]
-    fn every_swept_cr0_field_can_be_cleared_and_set() {
-        let axes = |drive, latency, fixed_latency| Axes {
-            drive, single_ended_clock: false, readclksel: 0, latency, fixed_latency,
-        };
-
-        // The measured pair from the board, and the value the fix must produce.
-        assert_eq!(Bist::cr0_word(&axes(3, 2, true)), 0xbf2f);
-        assert_eq!(Bist::cr0_word(&axes(3, 2, false)), 0xbf27);
-
-        // Each field, both extremes, so a mask that drops a bit fails here
-        // rather than on the board a month later.
-        for fixed_latency in [true, false] {
-            for drive in 0..=7u8 {
-                for latency in 0..=15u8 {
-                    let word = Bist::cr0_word(&axes(drive, latency, fixed_latency));
-                    assert_eq!((word >> 12) & 0x7, drive as u32, "drive {drive}");
-                    assert_eq!((word >> 4) & 0xf, latency as u32, "latency {latency}");
-                    assert_eq!((word >> 3) & 1, fixed_latency as u32,
-                               "fixed {fixed_latency} drive {drive} lat {latency}");
-                    // CR0[15] must survive every combination: 0 is Deep Power
-                    // Down, and a part put there outlives the bitstream.
-                    assert_eq!((word >> 15) & 1, 1, "CR0[15] cleared");
-                }
-            }
-        }
-    }
-}
