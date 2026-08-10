@@ -591,7 +591,7 @@ pub mod source {
         // The table's level for the source this borrows -- TARGET on the board,
         // a stand-in for it under QEMU. A number here would silently demote a
         // real source for the length of the run.
-        plic.set_priority(SOURCE, crate::irq::priority::TYPE_C);
+        plic.set_priority(SOURCE, crate::plic::priority::TYPE_C);
         plic.complete(SOURCE);
         arm();
         plic.enable(SOURCE);

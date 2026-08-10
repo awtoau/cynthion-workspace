@@ -39,6 +39,7 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
+use crate::plic::{self, Plic};
 use crate::target;
 use crate::MAX_CONSOLES;
 
@@ -560,10 +561,30 @@ pub fn init(establish: bool) -> Init {
         for &base in target::UART_BASES {
             Uart::new(base).init();
         }
-        // The peripheral claims its own PLIC sources, rather than being
-        // remembered by a list in a file that is not its driver (#264).
-        crate::irq::claim_consoles();
+        claim_consoles();
     }
     let (lcr, iir, ier) = Uart::new(target::UART_BASES[0]).settings();
     Init { ports: target::UART_BASES.len(), lcr, iir, ier }
+}
+
+/// The consoles claim their PLIC sources and start asking.
+///
+/// In the driver, not in a list in a file that is not the driver (#264). It
+/// moved out of `src/irq.rs` in #362: that file is the shell's handler and no
+/// `src/bin/` dispatcher can include it, so naming it from here broke every
+/// binary that has a console but not a shell.
+///
+/// One call rather than a claim per port at the call site, because the
+/// receive-interrupt enable in the 16550 has to FOLLOW the PLIC enable: a UART
+/// asking before the PLIC will deliver is a byte that lands in the ring with
+/// nothing scheduled to come and get it.
+pub fn claim_consoles() {
+    let plic = Plic::new(target::PLIC_BASE);
+    for &source in target::UART_IRQS {
+        plic.claim_source(source, plic::priority::CONSOLE);
+    }
+    // The UARTs start asking only now that there is something to answer them.
+    for &base in target::UART_BASES {
+        UartRx::new(base).enable_rx_interrupt();
+    }
 }
