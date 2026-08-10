@@ -21,11 +21,18 @@ What runs:
      and instantiates `hyperram_model.v` on the other side.
   3. The testbench grades itself; this script decides whether the run counts.
 
-Four cases: register read/write against the model's own CR0/CR1, memory write and
-read back with an address-derived pattern, then CR0[7:4] swept at 0/1/2/6/14/15
-in fixed latency and in variable latency. The whole thing runs three times over
-`REFRESH_EVERY`, so the variable path's SHORT and LONG branches are each reached
-on purpose rather than by where a transaction counter happened to land.
+Five cases: register read/write against the model's own CR0/CR1, memory write and
+read back with an address-derived pattern, the CA fields, then CR0[7:4] swept at
+0/1/2/6/14/15 in fixed latency and in variable latency. The whole thing runs three
+times over `REFRESH_EVERY`, so the variable path's SHORT and LONG branches are each
+reached on purpose rather than by where a transaction counter happened to land.
+
+Then the stimuli that need a misbehaving device -- a burst nobody ends, a device
+that never answers, one that never drives RWDS over the CA -- and last the DEFECT
+runs. Every check that came here off `soc_hyperram_sim.py` under #346 has one: the
+defect goes on the wire BETWEEN the controller and the device, and the run is
+required to fail. A clean defect run means the check has stopped discriminating,
+and this script exits non-zero on it.
 
 `HyperRAMPHY` is deliberately NOT in the loop -- see the testbench header. What
 is tested is the CA encoding, the byte order and the latency arithmetic; what is
@@ -107,6 +114,47 @@ REQUIRED_MARKERS = (
     "eight single-word writes land in the model's array",
     "8-word burst write and read back agree",
     "PASS CR0 restored = 8f2f",
+    # Case 2b, the CA fields. They came off `soc_hyperram_sim.py`, where a second
+    # hand-written decoder in the same file graded the first. (#346)
+    "CA-FIELD PASS memory write command byte = 0020",
+    "CA-FIELD PASS memory write landed where it was addressed",
+    "CA-FIELD PASS memory read command byte = 00a0",
+    "CA-FIELD PASS register read command byte = 00e0",
+    "CA-FIELD PASS register write command byte, single_page asked for = 0060",
+    "CA-FIELD PASS wrapped memory read command byte = 0080",
+)
+
+# Stimuli that need a device the main matrix cannot run against, each REQUIRED to
+# pass. `defines` go to iverilog, `plusargs` to vvp.
+FAULT_RUNS = (
+    ("a burst nobody ends", ["+stim=1"], {"REFRESH_EVERY": 0},
+     ("PASS the controller ended a burst nobody ended",)),
+    ("a device that never answers", ["+stim=1"],
+     {"REFRESH_EVERY": 0, "DELIVER_WORDS": 0},
+     ("PASS the controller ended a burst nobody ended",)),
+    ("a device that never drives RWDS over the CA", ["+stim=2"],
+     {"REFRESH_EVERY": 0, "CA_RWDS_FAULT": 3},
+     ("CTRL-BEAT PASS var code  2", "4 words OK")),
+)
+
+# THE EVIDENCE. One row per check moved here off `soc_hyperram_sim.py`, with the
+# defect it was written for. The defect goes on the wire BETWEEN the controller and
+# the device, so the controller is untouched; each run is required to produce its
+# marker, and a clean defect run means the check has stopped discriminating. (#346)
+DEFECT_CASES = (
+    ("an address bit dropped in the CA", ["+ca_defect=1"], {},
+     "CA-FIELD FAIL memory write landed where it was addressed"),
+    ("CA[45], the burst type, flipped", ["+ca_defect=2"], {},
+     "CA-FIELD FAIL memory write command byte"),
+    ("CA[46], the address space, flipped", ["+ca_defect=3"], {},
+     "CA-FIELD FAIL memory write command byte"),
+    ("CS# released 25 ns late, eating the gap", ["+cs_hold_ns=25"], {},
+     "ERROR tCSHI violation"),
+    ("CS# held Low past tCSM on a burst nobody ends",
+     ["+cs_hold_ns=1000", "+stim=1"], {"REFRESH_EVERY": 0},
+     "ERROR tCSM violation"),
+    ("a float over the CA read as a request", ["+rwds_float=1", "+stim=2"],
+     {"REFRESH_EVERY": 0, "CA_RWDS_FAULT": 3}, "DATA FAIL var code 2"),
 )
 
 # Every latency code the sweep must have reached, in both modes.
@@ -365,6 +413,12 @@ def check_output(out: str) -> tuple[list[str], list[str]]:
                 controller.append(f"latency sweep never reported {mode} code {code}")
 
     controller += re.findall(r"^\[tb\] CTRL-BEAT FAIL.*$", out, re.M)
+    controller += re.findall(r"^\[tb\] (?:CA-FIELD|UNENDED) FAIL.*$", out, re.M)
+    # The DEVICE's own tCSM/tCSHI monitors. Read off the CS# edges, so they say
+    # nothing about what the controller thinks it did -- and they are the only
+    # judge of either bound now. (#346)
+    controller += [line.strip() for line in
+                   re.findall(r"^.*ERROR tCS(?:M|HI) violation.*$", out, re.M)]
     model += re.findall(r"^\[tb\] MODEL-(?:SILENT|BEAT).*$", out, re.M)
 
     # A sweep cell the model provably cannot serve. Everything downstream of one --
@@ -411,6 +465,9 @@ def main() -> int:
                     help="tell the controller to wait CK more than it is graded "
                          "against, and REQUIRE the run to fail. A pass here means "
                          "the harness is not measuring the controller's latency")
+    ap.add_argument("--skip-defects", action="store_true",
+                    help="skip the fault stimuli and the defect controls behind "
+                         "the checks moved off soc_hyperram_sim.py (#346)")
     ap.add_argument("--dump", action="store_true", help="write a VCD")
     ap.add_argument("--keep", action="store_true", help="keep the work directory")
     ap.add_argument("-v", "--verbose", action="store_true", help="log every tool line")
@@ -446,18 +503,22 @@ def main() -> int:
     # assumed. Same arithmetic as `HyperRAMController._burst_cycles`.
     burst_cycles = int(T_CSM_NS * T_CSM_MARGIN * args.sync_mhz / 1000.0) - 2
 
+    def build_and_run(target: str, defines: dict, plusargs: list[str]) -> str:
+        argv = ["iverilog", "-g2012", f"-DLAT_W={width}",
+                f"-DTCK_NS={1000.0 / args.sync_mhz:.4f}",
+                f"-DRECOVER_LIMIT={int(burst_cycles * 1.4)}"]
+        argv += [f"-D{key}={value}" for key, value in defines.items()]
+        argv += ["-o", target, TESTBENCH.name, MODEL.name, dut.name]
+        run("iverilog", argv)
+        return run("vvp", ["vvp", target] + plusargs)
+
     controller, model = [], []
     for refresh_every, what in REFRESH_PASSES:
         log.info("=== REFRESH_EVERY = %d -- %s ===", refresh_every, what)
-        run("iverilog", ["iverilog", "-g2012", f"-DLAT_W={width}",
-                         f"-DTCK_NS={1000.0 / args.sync_mhz:.4f}",
-                         f"-DRECOVER_LIMIT={int(burst_cycles * 1.4)}",
-                         f"-DREFRESH_EVERY={refresh_every}",
-                         "-o", "tb.vvp", TESTBENCH.name, MODEL.name, dut.name])
         plusargs = ["+dump"] if args.dump else []
         if args.negative_control:
             plusargs.append(f"+skew={args.negative_control}")
-        out = run("vvp", ["vvp", "tb.vvp"] + plusargs)
+        out = build_and_run("tb.vvp", {"REFRESH_EVERY": refresh_every}, plusargs)
         for line in out.splitlines():
             log.info("  %s", line)
         pass_controller, pass_model = check_output(out)
@@ -476,6 +537,33 @@ def main() -> int:
                   "so this harness is not measuring what it claims to",
                   args.negative_control)
         return 1
+
+    # The reduced stimuli, then the defect runs that prove they discriminate.
+    if not args.skip_defects:
+        for name, plusargs, defines, expected in FAULT_RUNS:
+            log.info("=== fault stimulus: %s ===", name)
+            out = build_and_run("fault.vvp", defines, plusargs)
+            for line in out.splitlines():
+                log.info("  %s", line)
+            for marker in expected:
+                if marker not in out:
+                    controller.append(f"[{name}] missing {marker!r}")
+            controller += [f"[{name}] {f}" for f in
+                           re.findall(r"^.*ERROR tCS(?:M|HI) violation.*$", out, re.M)]
+            controller += [f"[{name}] {f}" for f in
+                           re.findall(r"^\[tb\] (?:CA-FIELD|UNENDED|DATA) FAIL.*$",
+                                      out, re.M)]
+
+        for name, plusargs, defines, marker in DEFECT_CASES:
+            out = build_and_run("defect.vvp", defines, plusargs)
+            if marker in out:
+                log.info("DEFECT CONTROL ok -- %s is caught by %r", name, marker)
+            else:
+                controller.append(
+                    f"defect control: {name} produced no {marker!r}, so the check "
+                    f"it was moved here for can no longer fail")
+                for line in out.splitlines():
+                    log.error("  [%s] %s", name, line)
 
     if controller:
         for f in controller:
