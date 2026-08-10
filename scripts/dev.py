@@ -436,6 +436,14 @@ def cmd_console(extra: list[str]) -> int:
     return run_tool([PY, script("riscv_console.py")], extra)
 
 
+@command("decode the board's binary record stream (--self-test needs no board)",
+         args="[flags]", kind="action")
+def cmd_stream(extra: list[str]) -> int:
+    """docs/binary-protocol.md. No firmware emits records yet -- `--self-test`
+    and `tests/test_soc_stream.py` are what exercise the decoder today."""
+    return run_tool([PY, script("soc_stream.py")], extra)
+
+
 @command("stage firmware over JTAG without rebuilding the bitstream",
          args="[flags]", kind="action")
 def cmd_stage(extra: list[str]) -> int:
