@@ -44,7 +44,13 @@ module hyperram_model #(
     // timed. Mode 3 is the float a controller sampling before tDSV reads, which
     // is the prime suspect in #338; modes 1 and 2 are a device whose answer
     // contradicts what it then serves.
-    parameter integer CA_RWDS_FAULT = 0
+    parameter integer CA_RWDS_FAULT = 0,
+    // Read words this device serves before going silent, counted per transaction.
+    // -1 is a part, which always answers. 0 never answers at all, which is the
+    // shape of the board's wedge and the case `READ_DATA` had no exit from; N
+    // stops mid-burst, and 7-of-8 is how the unbounded state was proven (#316).
+    // Silent means DQ and RWDS both released: no strobe, so nothing clocks in.
+    parameter integer DELIVER_WORDS = -1
 ) (
     inout  wire [7:0] adq,
     input  wire       clk,
@@ -78,6 +84,8 @@ module hyperram_model #(
   // Refresh, as the vendor model does it: a transaction counter, not a clock.
   integer    xact_count = 0;
   reg        take_long  = 1'b0;
+
+  integer    served;            // read words served this transaction
 
   reg  [7:0] write_high;
   reg [15:0] rd_word;
@@ -184,6 +192,7 @@ module hyperram_model #(
     beat       = 16'd0;
     ca         = 48'h0;
     write_done = 1'b0;
+    served     = 0;
     t_cs_fall  = $realtime;
     xact_count = xact_count + 1;
     // Decided at CS# falling, before tDSV, and held for the whole transaction --
@@ -257,7 +266,13 @@ module hyperram_model #(
         // A read starts one edge later than a write at the same latency -- the
         // device has to turn the bus around. Measured against the vendor model:
         // 28 edges to the strobe at 14 CK fixed, 14 at 7 CK variable.
-        if (is_read) begin
+        if (is_read && DELIVER_WORDS >= 0 && served >= DELIVER_WORDS) begin
+          // The device has stopped answering. Both lines released, so there is no
+          // strobe and the address does not advance -- what a part in Deep Power
+          // Down looks like from here. (#316, #346)
+          dq_oe   = 1'b0;
+          rwds_oe = 1'b0;
+        end else if (is_read) begin
           dq_oe    = 1'b1;
           rwds_oe  = 1'b1;
           rd_word  = read_word(word_addr);   // Icarus will not part-select a call
@@ -268,6 +283,7 @@ module hyperram_model #(
           end else begin
             dq_out   = rd_word[7:0];
             rwds_out = 1'b0;
+            served   = served + 1;
             // registers repeat; memory advances, inside the group while wrapped.
             // Hybrid leaves the group after exactly one pass and continues
             // linearly from the group end -- measured on the vendor model, which

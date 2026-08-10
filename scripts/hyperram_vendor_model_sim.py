@@ -138,6 +138,7 @@ FAULT_CASES = (
     ("control", {}, (
         "ca rwds = zz1111, strobe at 28 edges, id0 = 0c86",
         "mem[0x000100] = 1234",
+        "burst served 8 of 8",
     )),
     ("rwds stuck High", {"FAULT_CA_RWDS": 1}, (
         "ca rwds = 111111",
@@ -150,6 +151,17 @@ FAULT_CASES = (
     ("rwds never driven", {"FAULT_CA_RWDS": 3}, (
         "ca rwds = zzzzzz",
         "id0 = 0c86",
+    )),
+    # The read watchdog's two shapes (#316). `id0 = zzzz` is the same silence in
+    # register space, which is what makes "never answers" a device state rather
+    # than a memory-array quirk.
+    ("device never answers", {"FAULT_DELIVER": 0}, (
+        "id0 = zzzz",
+        "burst served 0 of 8",
+    )),
+    ("device stops after 3 words", {"FAULT_DELIVER": 3}, (
+        "id0 = 0c86",
+        "burst served 3 of 8",
     )),
 )
 

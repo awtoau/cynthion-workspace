@@ -11,6 +11,8 @@
 //
 //   FAULT_CA_RWDS   RWDS over the CA: 0 the part, 1 stuck High, 2 stuck Low,
 //                   3 never driven -- the float a controller may sample early
+//   FAULT_DELIVER   read words served before the device goes silent, -1 = all.
+//                   0 is a device that never answers, N one that stops mid-burst
 //
 // ICARUS ONLY, and NOT the shared testbench. The vendor model has no such
 // parameters, so there is nothing to hold this one honest against; what holds it
@@ -24,6 +26,9 @@
 
 `ifndef FAULT_CA_RWDS
   `define FAULT_CA_RWDS 0
+`endif
+`ifndef FAULT_DELIVER
+  `define FAULT_DELIVER -1
 `endif
 
 module tb;
@@ -56,7 +61,8 @@ module tb;
   wire       rwds = rwds_oe ? rwds_drv : 1'bz;
 
   hyperram_model #(
-    .CA_RWDS_FAULT(`FAULT_CA_RWDS)
+    .CA_RWDS_FAULT(`FAULT_CA_RWDS),
+    .DELIVER_WORDS(`FAULT_DELIVER)
   ) dut (
     .adq(adq), .clk(clk), .clk_n(clk_n), .csb(csb),
     .rwds(rwds), .VCC(VCC), .VSS(VSS), .resetb(resetb)
@@ -66,6 +72,7 @@ module tb;
 
   reg [15:0] got;
   integer    strobe_edges;
+  integer    w, arrived;
 
   // One character per CA edge: `1`, `0` or `z`. The whole point of the RWDS knob
   // is visible here and nowhere else -- the part prints `zz1111`, stuck-High
@@ -177,6 +184,27 @@ module tb;
     end
   endtask
 
+  // Read `n` words as one burst and count how many ARRIVED. A device that stops
+  // mid-burst releases DQ, so a word that never came reads back `zzzz` -- which
+  // is the difference between a short burst and a wrong one.
+  task read_burst_served(input [31:0] word_addr, input integer n,
+                         output integer arrived);
+    integer w;
+    reg [15:0] word;
+    begin
+      arrived = 0;
+      drive_ca(ca(CMD_MEM_READ, word_addr));
+      capture_word(word);
+      if (word !== 16'hzzzz) arrived = 1;
+      for (w = 1; w < n; w = w + 1) begin
+        @(clk); #0.5; word[15:8] = adq;
+        @(clk); #0.5; word[7:0]  = adq;
+        if (word !== 16'hzzzz) arrived = arrived + 1;
+      end
+      bus_idle;
+    end
+  endtask
+
   initial begin
     VCC = 1'b1;
     VSS = 1'b0;
@@ -185,7 +213,8 @@ module tb;
     resetb = 1'b0; #1_000; resetb = 1'b1; #2_000;
     bus_idle;
 
-    $display("[fault] knobs: CA_RWDS=%0d", `FAULT_CA_RWDS);
+    $display("[fault] knobs: CA_RWDS=%0d DELIVER=%0d",
+             `FAULT_CA_RWDS, `FAULT_DELIVER);
 
     // A register read is the shortest transaction that shows the CA period and
     // then a strobe, so one of them answers both questions the knob raises: what
@@ -197,6 +226,14 @@ module tb;
     write_memory(32'h00_0100, 16'h1234);
     read_memory(32'h00_0100, got);
     $display("[fault] mem[0x000100] = %h", got);
+
+    // Eight words written and read back as one burst. Writes are not gated by
+    // DELIVER_WORDS, so the array is filled whatever the knob says and the count
+    // below is about the read alone.
+    for (w = 0; w < 8; w = w + 1)
+      write_memory(32'h00_0200 + w, 16'h2000 + w[15:0]);
+    read_burst_served(32'h00_0200, 8, arrived);
+    $display("[fault] burst served %0d of 8", arrived);
 
     $display("[fault] === done ===");
     $finish;
