@@ -106,10 +106,13 @@ module tb;
   reg         start_transfer = 1'b0;
   reg         final_word = 1'b0;
   reg  [3:0]  latency_clocks = 4'd6;
+  // The SHORT count, when the part declines the extra latency. Reset is the old
+  // class constant; `run_sequence` drives it per code. (#380)
+  reg  [3:0]  low_latency_clocks = 4'd3;
   reg         fixed_latency = 1'b1;
   reg  [31:0] write_data = 32'h0;
 
-  wire        idle, read_ready, write_ready, timed_out;
+  wire        idle, read_ready, write_ready, timed_out, extra_latency;
   wire [3:0]  state;
   wire [31:0] read_data;
 
@@ -132,9 +135,11 @@ module tb;
     .perform_write(perform_write), .single_page(single_page),
     .start_transfer(start_transfer), .final_word(final_word),
     .latency_clocks(latency_clocks), .fixed_latency(fixed_latency),
+    .low_latency_clocks(low_latency_clocks),
     .write_data(write_data),
     .idle(idle), .read_ready(read_ready), .write_ready(write_ready),
     .timed_out(timed_out), .state(state), .read_data(read_data),
+    .extra_latency(extra_latency),
     .phy_cs(phy_cs), .phy_clk_en(phy_clk_en), .phy_dq_o(phy_dq_o),
     .phy_dq_e(phy_dq_e), .phy_rwds_o(phy_rwds_o), .phy_rwds_e(phy_rwds_e),
     .phy_read(phy_read),
@@ -198,6 +203,17 @@ module tb;
 
   integer ph = 0;
   integer edge_idx = -1;
+  // WHERE THE READ WINDOW LANDS, in device CK edges from CS# falling. `read_edge`
+  // is the controller entering READ_DATA, `data_edge` the device first driving
+  // DQ. The word alone is a weak instrument for this: with DATAVALID from the
+  // device, a controller that entered late can still be handed the first word.
+  // (#380, #381)
+  localparam integer STATE_READ_DATA = 6;   // `HyperRAMDQSController.STATES`
+  integer read_edge = -1;
+  integer data_edge = -1;
+  // The same two, held past CS# rising so the report line can carry them.
+  integer held_read_edge = -1;
+  integer held_data_edge = -1;
 
   reg [7:0] rd_bytes [0:3];
   reg       rd_valid [0:3];
@@ -263,6 +279,8 @@ module tb;
     // time before each falling edge is the tCSHI measurement.
     if (csb && !cs_e) begin
       edge_idx = -1;
+      read_edge = -1;
+      data_edge = -1;
       cs_high_ns = $realtime - cs_high_since;
       served_register = 1'bx;
       served_read = 1'bx;
@@ -300,6 +318,12 @@ module tb;
       #0.5;
       if (ck_was !== clk && !csb) begin
         edge_idx = edge_idx + 1;
+        if (state == STATE_READ_DATA && read_edge < 0) begin
+          read_edge = edge_idx; held_read_edge = edge_idx;
+        end
+        if (u_ram.dq_oe && u_ram.is_read && data_edge < 0) begin
+          data_edge = edge_idx; held_data_edge = edge_idx;
+        end
         // The CA is decoded on edge 5, so edge 6 is the first moment the space
         // and the address the DEVICE resolved can be read out.
         if (edge_idx == 6) begin
@@ -359,13 +383,20 @@ module tb;
   //
   integer   cycles, i, words;
   reg       hung;
+  // The controller's own election, latched: `extra_latency` is set at the sample
+  // and held to the end of the transaction. (#381)
+  reg       elected_long;
   reg [31:0] got_first;
   reg       got_valid;
   integer   errors = 0;
   reg [15:0] cr0_v, cr1_v;
   integer   leak_control;
-  integer   dev_latency;         // the part's fixed latency in this run, in CK
+  integer   dev_latency;         // the part's latency in this run, in CK
+  integer   base_latency;        // L, the CR0[7:4] code undoubled, in CK
   integer   ctl_latency;         // what the controller was told, in 2-CK cycles
+  integer   refresh_every = 100; // the model's, mirrored so `dev_latency` knows
+  integer   latency_mode = 0;    // 0 = the fixed sequences, 1 = the variable ones
+  integer   low_const = -1;      // force the short count, or -1 for per-code
 
   task wait_idle;
     begin
@@ -384,6 +415,8 @@ module tb;
     begin
       wait_idle;
       got_valid = 1'b0; got_first = 32'hxxxx_xxxx; hung = 1'b1;
+      elected_long = 1'b0;
+      held_read_edge = -1; held_data_edge = -1;
       capture_frozen = freeze;
       @(posedge sync_clk); #(TSET/2.0);
       address = a; register_space = 1'b1; perform_write = is_write;
@@ -392,6 +425,7 @@ module tb;
       start_transfer = 1'b0;
       for (cycles = 0; cycles < WAIT_CYCLES; cycles = cycles + 1) begin
         @(posedge sync_clk); #(TSET/2.0);
+        if (extra_latency) elected_long = 1'b1;
         if (read_ready && !got_valid) begin
           got_first = read_data; got_valid = 1'b1;
         end
@@ -403,10 +437,11 @@ module tb;
       // rather than inferred from what was written. That is the reference the
       // reported word is judged against -- the part is allowed to discard a
       // write it does not support (#334), so "what we asked for" is not one.
-      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d frozen=%0d dev_cr0=%h dev_cr1=%h",
+      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d frozen=%0d dev_cr0=%h dev_cr1=%h elected=%0d dev_long=%0d lat_ck=%0d read_edge=%0d data_edge=%0d",
                tag, 1, served_register, served_read, served,
                got_valid ? got_first : 32'hxxxx_xxxx, cs_high_ns, hung,
-               dv_from_read, freeze, u_ram.cr0, u_ram.cr1);
+               dv_from_read, freeze, u_ram.cr0, u_ram.cr1, elected_long,
+               u_ram.take_long, dev_latency, held_read_edge, held_data_edge);
     end
   endtask
 
@@ -416,6 +451,8 @@ module tb;
     begin
       wait_idle;
       got_valid = 1'b0; got_first = 32'hxxxx_xxxx; hung = 1'b1; words = 0;
+      elected_long = 1'b0;
+      held_read_edge = -1; held_data_edge = -1;
       capture_frozen = freeze;
       @(posedge sync_clk); #(TSET/2.0);
       address = DATA_ADDR;
@@ -428,6 +465,7 @@ module tb;
       start_transfer = 1'b0;
       for (cycles = 0; cycles < WAIT_CYCLES; cycles = cycles + 1) begin
         @(posedge sync_clk); #(TSET/2.0);
+        if (extra_latency) elected_long = 1'b1;
         if ((read_ready || write_ready)) begin
           if (read_ready && !got_valid) begin
             got_first = read_data; got_valid = 1'b1;
@@ -439,25 +477,34 @@ module tb;
       end
       final_word = 1'b0; register_space = 1'b0; capture_frozen = 1'b0;
       if (!is_write) rd_word_lagged = rd_word;
-      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d frozen=%0d dev_cr0=%h dev_cr1=%h",
+      $display("[cfg] txn=%0s space=%0d dev_register=%0d dev_read=%0d served=%0h got=%h csh_ns=%0.1f hung=%0d dv=%0d frozen=%0d dev_cr0=%h dev_cr1=%h elected=%0d dev_long=%0d lat_ck=%0d read_edge=%0d data_edge=%0d",
                tag, leak_control, served_register, served_read, served,
                got_valid ? got_first : 32'hxxxx_xxxx, cs_high_ns, hung,
-               dv_from_read, freeze, u_ram.cr0, u_ram.cr1);
+               dv_from_read, freeze, u_ram.cr0, u_ram.cr1, elected_long,
+               u_ram.take_long, dev_latency, held_read_edge, held_data_edge);
     end
   endtask
 
   // The whole engine path: configure, verify both registers, write, read.
-  task run_sequence(input [15:0] cr0v, input [15:0] cr1v, input integer n);
+  //
+  // `n` is `latency_clocks`, and `low` is `low_latency_clocks` -- the count for
+  // a part that DECLINES the extra latency, which is reachable only with
+  // CR0[3] = 0. `+refresh_every=1` makes the model ask on every transaction, so
+  // both answers can be driven rather than waited for. (#380, #381)
+  task run_sequence_low(input [15:0] cr0v, input [15:0] cr1v, input integer n,
+                        input integer low);
     begin
       latency_clocks = n[3:0];
+      low_latency_clocks = (low_const >= 0) ? low_const[3:0] : low[3:0];
       ctl_latency = n;
-      dev_latency = cr0v[3] ? 2 * ((cr0v[7:4] >= 14) ? (5 + cr0v[7:4] - 16)
-                                                     : (5 + cr0v[7:4]))
-                            : ((cr0v[7:4] >= 14) ? (5 + cr0v[7:4] - 16)
-                                                 : (5 + cr0v[7:4]));
+      base_latency = (cr0v[7:4] >= 14) ? (5 + cr0v[7:4] - 16) : (5 + cr0v[7:4]);
+      // What the DEVICE will wait: 2L under fixed latency, and under variable
+      // latency 2L only when it asks -- which `+refresh_every=1` makes it do.
+      dev_latency = (cr0v[3] || refresh_every == 1) ? 2 * base_latency
+                                                    : base_latency;
       fixed_latency = cr0v[3];
-      $display("[cfg] --- CR0=%h CR1=%h device %0d CK, controller %0d x 2 CK, leak_control=%0d cap_miss=%0d cap_lag=%0d reread=%0d",
-               cr0v, cr1v, dev_latency, n, leak_control, cap_miss, cap_lag,
+      $display("[cfg] --- CR0=%h CR1=%h device %0d CK, controller %0d x 2 CK, low %0d x 2 CK, leak_control=%0d cap_miss=%0d cap_lag=%0d reread=%0d",
+               cr0v, cr1v, dev_latency, n, low, leak_control, cap_miss, cap_lag,
                verify_reread);
       reg_txn(CR0_ADDR, 1'b1, cr0v, "wr_cr0", 1'b0);
       reg_txn(CR1_ADDR, 1'b1, cr1v, "wr_cr1", 1'b0);
@@ -474,6 +521,14 @@ module tb;
     end
   endtask
 
+  // The old signature: the short count left at its reset, which is what every
+  // caller had before #380 gave the DQS controller an input for it.
+  task run_sequence(input [15:0] cr0v, input [15:0] cr1v, input integer n);
+    begin
+      run_sequence_low(cr0v, cr1v, n, 3);
+    end
+  endtask
+
   initial begin
     if (!$value$plusargs("dq_pipe=%d", dq_pipe)) dq_pipe = 0;
     if (!$value$plusargs("ck_pipe=%d", ck_pipe)) ck_pipe = 1;
@@ -484,6 +539,14 @@ module tb;
     if (!$value$plusargs("cap_miss=%d", cap_miss)) cap_miss = 0;
     if (!$value$plusargs("cap_lag=%d", cap_lag)) cap_lag = 0;
     if (!$value$plusargs("verify_reread=%d", verify_reread)) verify_reread = 1;
+    if (!$value$plusargs("refresh_every=%d", refresh_every)) refresh_every = 100;
+    // Which sequence set runs. `0` is the four fixed-latency sequences #349 and
+    // #366 are judged on; `1` is the variable-latency set, the only one in which
+    // the election is live at all. (#380, #381)
+    if (!$value$plusargs("latency_mode=%d", latency_mode)) latency_mode = 0;
+    // Force the SHORT count to one value at every code, which is what
+    // `LOW_LATENCY_CLOCKS = 3` did. -1 uses the per-code count. (#380)
+    if (!$value$plusargs("low_const=%d", low_const)) low_const = -1;
 
     VCC = 1'b1; VSS = 1'b0; resetb = 1'b1;
     #200_000;
@@ -496,10 +559,11 @@ module tb;
              dq_pipe, ck_pipe, dq_ph, rd_slip);
     $display("[cfg] tcshi_ns=%0.1f burst_words=%0d", T_CSHI_NS, BURST_WORDS);
 
+    leak_control = 0;
+    if (latency_mode == 0) begin
     // 1. MATCHED. CR0 latency code 2 fixed (14 CK) against the controller's 6
     //    (7 cycles x 2 CK). This is the only combination the DQS ceiling build
     //    can be right in, because it never drives `latency_clocks`.
-    leak_control = 0;
     run_sequence(16'h8f2f, 16'hff81, 6);
 
     // 2. MISMATCHED, and this is NOT hypothetical -- it is every `bist latency`
@@ -514,6 +578,17 @@ module tb;
     //    If the checks cannot see this, they cannot exonerate the CA either.
     leak_control = 1;
     run_sequence(16'h8f2f, 16'hffc1, 6);
+    end else begin
+    // VARIABLE LATENCY, CR0[3] = 0, one sequence per legal code. The device
+    // serves after L CK when it declines and 2L when it asks; the controller has
+    // to reach the same number from an RWDS that floats until tDSV. Both defects
+    // land here and nowhere else in this file -- every sequence above is fixed
+    // latency, where the election is inert. (#380, #381)
+    run_sequence_low(16'h8f27, 16'hff81, 6, 2);   // code 2,  L = 7
+    run_sequence_low(16'h8f07, 16'hff81, 4, 1);   // code 0,  L = 5
+    run_sequence_low(16'h8fe7, 16'hff81, 2, 0);   // code 14, L = 3
+    run_sequence_low(16'h8ff7, 16'hff81, 3, 1);   // code 15, L = 4
+    end
 
     $display("[cfg] === done ===");
     $finish;

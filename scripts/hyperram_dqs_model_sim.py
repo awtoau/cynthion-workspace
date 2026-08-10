@@ -125,8 +125,14 @@ def run(step: str, argv: list[str], cwd: Path) -> str:
     return out
 
 
-def elaborate_controller() -> Path:
-    """`HyperRAMDQSController` as Verilog, with the PHY record brought out flat."""
+def elaborate_controller(round_trip: int | None = None,
+                         stem: str = "dqs_controller") -> Path:
+    """`HyperRAMDQSController` as Verilog, with the PHY record brought out flat.
+
+    `round_trip` overrides `phy_round_trip_cycles`, which is what decides the
+    cycle the extra-latency RWDS sample is taken in. A wrong one is the control
+    for #381: the sample lands on a pin cycle that is not the CA's.
+    """
     sys.path.insert(0, str(ROOT / "gateware"))
     sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
@@ -141,9 +147,11 @@ def elaborate_controller() -> Path:
 
         def __init__(self):
             self.phy = HyperBusDQSPHY()
+            extra = ({} if round_trip is None
+                     else {"phy_round_trip_cycles": round_trip})
             self.ctl = HyperRAMDQSController(
                 phy=self.phy, sync_mhz=SYNC_MHZ,
-                max_latency_clocks=MAX_LATENCY_CLOCKS)
+                max_latency_clocks=MAX_LATENCY_CLOCKS, **extra)
             self.phy_cs = Signal()
             self.phy_clk_en = Signal(2)
             self.phy_dq_o = Signal(32)
@@ -179,14 +187,15 @@ def elaborate_controller() -> Path:
     ports = [
         ctl.address, ctl.register_space, ctl.perform_write, ctl.single_page,
         ctl.start_transfer, ctl.final_word, ctl.latency_clocks, ctl.fixed_latency,
-        ctl.write_data, ctl.idle, ctl.read_ready, ctl.write_ready, ctl.timed_out,
-        ctl.state, ctl.read_data,
+        ctl.low_latency_clocks, ctl.write_data, ctl.idle, ctl.read_ready,
+        ctl.write_ready, ctl.timed_out, ctl.state, ctl.read_data,
+        ctl.extra_latency,
         dut.phy_cs, dut.phy_clk_en, dut.phy_dq_o, dut.phy_dq_e, dut.phy_rwds_o,
         dut.phy_rwds_e, dut.phy_read, dut.phy_dq_i, dut.phy_rwds_i,
         dut.phy_datavalid, dut.phy_burstdet,
     ]
     src = verilog.convert(dut, name="dqs_controller", ports=ports)
-    out = WORKDIR / "dqs_controller.v"
+    out = WORKDIR / f"{stem}.v"
     out.write_text(src)
     log.info("elaborated %s (%d lines)", out.name, src.count("\n"))
     return out
@@ -277,16 +286,21 @@ def stage_order(extra: list[str]) -> list[str]:
     return run("vvp(order)", ["vvp", "order.vvp"] + extra, WORKDIR).splitlines()
 
 
-def build_config() -> None:
+def build_config(round_trip: int | None = None) -> str:
+    """Compile the config testbench, optionally against a controller whose RWDS
+    sample cycle is derived from another round trip. Returns the image name."""
     need("iverilog", "vvp")
-    ctl = elaborate_controller()
+    stem = "dqs_controller" if round_trip is None else f"dqs_controller_r{round_trip}"
+    ctl = elaborate_controller(round_trip, stem)
+    image = "config.vvp" if round_trip is None else f"config_r{round_trip}.vvp"
     run("iverilog(config)", ["iverilog", "-g2012", "-DDUT_MODULE=hyperram_model",
-                             "-o", "config.vvp", str(CONFIG_TB), str(OPEN_MODEL),
+                             "-o", image, str(CONFIG_TB), str(OPEN_MODEL),
                              ctl.name], WORKDIR)
+    return image
 
 
-def stage_config(extra: list[str]) -> list[str]:
-    return run("vvp(config)", ["vvp", "config.vvp"] + extra, WORKDIR).splitlines()
+def stage_config(extra: list[str], image: str = "config.vvp") -> list[str]:
+    return run("vvp(config)", ["vvp", image] + extra, WORKDIR).splitlines()
 
 
 # tCSHI at the grade fitted -- a `6I` = T166, 6 ns in Winbond's `Config-AC.v`.
@@ -441,6 +455,75 @@ def verdict_config(rows: list[dict]) -> list[str]:
         log.info("  the CA named MEMORY in every one of them, so this is not a "
                  "register-space leak -- it is a read that returned what the "
                  "data registers were still holding")
+    return bad
+
+
+# The word `mem_wr` writes and `mem_rd` must read back. The DQS path packs two
+# device words per beat, so a read landing one CK early returns them rotated --
+# `10011000` -- and one CK late loses the first entirely.
+MEM_WORD = "10001001"
+
+# The round trip the DQS controller is built for, read from the controller so the
+# sweep below reports against the shipped value rather than a copy of it. (#381)
+def _dqs_round_trip() -> int:
+    sys.path.insert(0, str(ROOT / "gateware" / "soc"))
+    from peripherals import hyperram_dqs_controller
+    return hyperram_dqs_controller.PHY_ROUND_TRIP_CYCLES
+
+
+DQS_ROUND_TRIP = _dqs_round_trip()
+
+
+def verdict_latency(rows: list[dict], label: str) -> list[str]:
+    """VARIABLE latency: did the controller wait what the device actually took?
+
+    The only sequences in this file where the election is live. `elected` is the
+    controller's own `extra_latency`; `dev_long` is what the DEVICE decided at
+    CS# falling, so the two are independent statements about the same
+    transaction and disagreeing is the #381 failure. `lat_ck` is the CK the
+    device waited, and a `mem_rd` that is not `MEM_WORD` is the #380 one.
+    """
+    bad: list[str] = []
+    log.info("--- #380/#381: variable latency, %s ---", label)
+    log.info("  %-9s %-9s %-8s %-9s %-11s %s", "CR0", "device CK", "elected",
+             "dev_long", "READ/data", "got")
+    seen = 0
+    for row in rows:
+        if row.get("txn") != "mem_rd":
+            continue
+        seen += 1
+        cr0, got = row.get("dev_cr0"), row.get("got")
+        elected, dev_long = row.get("elected"), row.get("dev_long")
+        lat = int(row.get("lat_ck", -1))
+        read_e, data_e = int(row.get("read_edge", -1)), int(row.get("data_edge", -1))
+        note = ""
+        if elected != dev_long:
+            note += "  <-- ELECTION DISAGREES WITH THE DEVICE"
+            bad.append(f"CR0={cr0}: the controller elected long={elected} where "
+                       f"the device took long={dev_long}")
+        # The window against the data, in device CK edges. `READ_DATA` must be
+        # entered before the device drives -- late loses words outright -- and by
+        # no more than the gearing's own quantum: the wait moves in 2 CK = 4
+        # edges, so at an ODD L the closest reachable lead is 3.
+        if not 0 <= data_e - read_e <= 3:
+            note += f"  <-- window {data_e - read_e} edges off"
+            bad.append(f"CR0={cr0} ({lat} CK): READ_DATA entered at edge "
+                       f"{read_e} and the device drove at {data_e} -- "
+                       f"{data_e - read_e} edges, wanted 0..3")
+        # An ODD device latency puts the first data edge mid-beat, which 4:1
+        # gearing cannot express: the word arrives rotated by one CK whatever
+        # count is waited. That is #186's missing bitslip, not the count.
+        if got != MEM_WORD and lat % 2 == 0:
+            note += f"  <-- read {got}, not {MEM_WORD}"
+            bad.append(f"CR0={cr0} ({lat} CK, EVEN): the memory read returned "
+                       f"{got}, not {MEM_WORD}")
+        elif got != MEM_WORD:
+            note += f"  (odd L: rotated, #186)"
+        log.info("  %-9s %-9s %-8s %-9s %-11s %s%s", cr0, lat, elected, dev_long,
+                 f"{read_e}/{data_e}", got, note)
+    if not seen:
+        bad.append(f"no variable-latency memory read in {label} -- the "
+                   "sequence set did not run")
     return bad
 
 
@@ -856,6 +939,65 @@ def main() -> int:
             failures.append("the negative control PASSED: a read path one "
                             "transaction behind was not caught without the "
                             "re-read, so the readback checks prove nothing")
+
+        # VARIABLE LATENCY. The election is inert in every sequence above --
+        # CR0[3] is 1 in all four -- so the two defects #380 and #381 name are
+        # unreachable there. Both answers the device can give are driven:
+        # `refresh_every=1` makes it ask on every transaction, the default makes
+        # it decline on all of them. (#380, #381)
+        var = extra + ["+dv_from_read=0", "+latency_mode=1"]
+        for asks, name in ((0, "the device DECLINES the extra latency"),
+                           (1, "the device ASKS for it on every transaction")):
+            log.info("--- variable latency: %s ---", name)
+            failures += verdict_latency(
+                report(stage_config(var + [f"+refresh_every={1 if asks else 100}"]),
+                       "var"), name)
+
+        # THE CONTROL for #380: the short count forced back to the class
+        # constant, at every code. It must FAIL, or the checks above cannot see
+        # a short count that matches no latency code.
+        log.info("--- negative control: the short count welded to 3 (#380) ---")
+        caught = verdict_latency(
+            report(stage_config(var + ["+refresh_every=100", "+low_const=3"]),
+                   "welded"), "the short count welded to 3")
+        if caught:
+            log.info("  control: %d check(s) fired on the welded short count",
+                     len(caught))
+            for line in dict.fromkeys(caught):
+                log.info("    would fail: %s", line)
+        else:
+            failures.append("the #380 control PASSED: a short count welded to 3 "
+                            "at every latency code read correctly, so the "
+                            "variable-latency checks prove nothing")
+
+        # WHERE THE SAMPLE MAY SIT, measured rather than derived. The controller
+        # is rebuilt at each round trip, which moves `rwds_sample_cycle` with it,
+        # and the device asks on every transaction so a sample that misses the
+        # request elects the short count. At least one setting must FAIL, or the
+        # cycle is not load-bearing and the checks above prove nothing. (#381)
+        log.info("--- where the RWDS sample may sit, per round trip (#381) ---")
+        # -1 is not a physical round trip: it puts the sample at cycle 2, which
+        # is where `SHIFT_COMMAND0` had it, so the sweep spans the old location
+        # as well as the new one.
+        survives = []
+        for trip in range(-1, 5):
+            caught = verdict_latency(
+                report(stage_config(var + ["+refresh_every=1"],
+                                    build_config(round_trip=trip)), f"r{trip}"),
+                f"round trip {trip}, sample at cycle {trip + 3}")
+            (survives if not caught else []).append(trip)
+            log.info("  round trip %d, sample cycle %d: %d check(s) fired",
+                     trip, trip + 3, len(caught))
+        log.info("  the election survives at round trip(s) %s of -1..4, i.e. "
+                 "sample cycle(s) %s; the controller is built for %d",
+                 survives, [t + 3 for t in survives], DQS_ROUND_TRIP)
+        if len(survives) == 6:
+            failures.append("the RWDS sample read the device's request at EVERY "
+                            "round trip from -1 to 4, so the sample cycle is "
+                            "not load-bearing and these checks prove nothing")
+        if DQS_ROUND_TRIP not in survives:
+            failures.append(f"the controller's own round trip {DQS_ROUND_TRIP} "
+                            "is not one the election survives at")
 
     if args.stage in ("order", "all"):
         log.info("=== byte and word order through the 32-bit path (#206) ===")

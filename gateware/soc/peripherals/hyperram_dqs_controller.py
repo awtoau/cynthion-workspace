@@ -98,8 +98,10 @@ def low_latency_clocks(latency_ck):
 
     It serves after L CK and `HANDLE_LATENCY` waits `2 x n + 2`, so only EVEN
     waits exist here and an odd L cannot be met -- a real limit of the 4:1
-    gearing. Rounded DOWN: a wait past the first data word loses it, which is
-    #381's `128 - L` shape, while a short one enters READ_DATA before the strobe.
+    gearing. Rounded DOWN, which enters READ_DATA early rather than late; late
+    loses the first word outright and is #381's `128 - L` shape. Neither
+    rounding is right at an odd L and the read is rotated either way (#186);
+    measured both ways in #380.
     """
     return max(0, latency_ck // 2 - 1)
 

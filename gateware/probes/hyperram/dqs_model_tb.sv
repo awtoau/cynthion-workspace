@@ -109,6 +109,8 @@ module tb;
   reg         start_transfer = 1'b0;
   reg         final_word = 1'b0;
   reg  [3:0]  latency_clocks = 4'd5;
+  // Wired only so it is not `x`: every run here is fixed latency. (#380)
+  reg  [3:0]  low_latency_clocks = 4'd3;
   reg         fixed_latency = 1'b1;
   reg  [31:0] write_data = 32'h0;
 
@@ -135,6 +137,7 @@ module tb;
     .perform_write(perform_write), .single_page(single_page),
     .start_transfer(start_transfer), .final_word(final_word),
     .latency_clocks(latency_clocks), .fixed_latency(fixed_latency),
+    .low_latency_clocks(low_latency_clocks),
     .write_data(write_data),
     .idle(idle), .read_ready(read_ready), .write_ready(write_ready),
     .timed_out(timed_out), .state(state), .read_data(read_data),

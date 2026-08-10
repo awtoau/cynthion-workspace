@@ -203,11 +203,19 @@ module hyperram_model #(
     end
   endtask
 
+  // `REFRESH_EVERY` as this run uses it. `+refresh_every=N` overrides EVERY
+  // instance in the run, which is the point: 1 makes the part ask for the extra
+  // latency on every transaction, so both answers can be driven deliberately
+  // instead of waiting 100 transactions for one. (#380, #381)
+  integer refresh_every = REFRESH_EVERY;
+
   integer i;
   initial begin
     id0 = ID0_RESET; id1 = ID1_RESET; cr0 = CR0_RESET; cr1 = CR1_RESET; dpd = 1'b0;
     lat_ck_held = decode_ck(CR0_RESET);
     for (i = 0; i < MEM_WORDS; i = i + 1) memory[i] = 16'h0000;
+    if ($value$plusargs("refresh_every=%d", refresh_every))
+      $display("%m: refresh_every = %0d from +refresh_every", refresh_every);
   end
 
   always @(posedge VCC) begin
@@ -237,7 +245,7 @@ module hyperram_model #(
     xact_count = xact_count + 1;
     // Decided at CS# falling, before tDSV, and held for the whole transaction --
     // the device cannot change its mind once the CA has been answered.
-    take_long  = (REFRESH_EVERY != 0) && (xact_count % REFRESH_EVERY == 0);
+    take_long  = (refresh_every != 0) && (xact_count % refresh_every == 0);
   end
 
   // The extra-latency request. RWDS over the CA period is the ONLY thing that
