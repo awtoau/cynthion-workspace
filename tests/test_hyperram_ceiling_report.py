@@ -22,6 +22,7 @@ config`, which runs the real controller against the device model.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -82,6 +83,55 @@ def _result(results, address):
         if claimed == address:
             return read
     raise AssertionError(f"no result register at address {address}")
+
+
+def _bit_of(value, name):
+    """Where a named signal starts in a `Cat`, so a bit number can be checked."""
+    at = 0
+    for part in getattr(value, "parts", ()):
+        if getattr(part, "name", None) == name:
+            return at
+        at += len(part)
+    raise AssertionError(f"`{name}` is not in this register")
+
+
+# The three rules, and the residue each one catches (#358, #366).
+TRUST_RULES = ["readback_reread_ok", "readback_distinct", "readback_halves_ok"]
+
+
+def test_the_readback_trust_rules_are_exported(build):
+    """#366: without them `bist status` prints a fabricated CR0/CR1 as fact."""
+    from hyperram.hyperram_ceiling_top import REG_CTRL_STATE
+
+    _fragment, _params, results = build
+    ctrl_state = _result(results, REG_CTRL_STATE)
+    for rule in TRUST_RULES:
+        assert _bit_of(ctrl_state, rule) >= 0
+
+
+def test_every_trust_rule_reads_the_readback_registers(build):
+    """A rule tied to a constant would report every readback trustworthy."""
+    fragment, _params, _results = build
+    latched = {"device_readback", "device_readback_cr1", "device_readback_again"}
+    for rule in TRUST_RULES:
+        names = {signal.name for signal in _sources(fragment, rule)}
+        assert names & latched, \
+            f"`{rule}` reads none of {sorted(latched)}, so it cannot see a " \
+            f"readback that came from another transaction (#366)"
+
+
+def test_the_firmware_reads_the_trust_rules_where_the_engine_puts_them(build):
+    """The bit numbers are written down in two languages; drift is silent."""
+    from hyperram.hyperram_ceiling_top import REG_CTRL_STATE
+
+    pure = (ROOT / "firmware" / "cynthion-soc" / "src" / "bist" / "pure.rs").read_text()
+    _fragment, _params, results = build
+    ctrl_state = _result(results, REG_CTRL_STATE)
+    for rule, name in zip(TRUST_RULES, ["REREAD", "DISTINCT", "HALVES"]):
+        match = re.search(rf"pub const {name}: u32 = 1 << (\d+);", pure)
+        assert match, f"`trust::{name}` is gone from pure.rs"
+        assert int(match.group(1)) == _bit_of(ctrl_state, rule), \
+            f"`trust::{name}` and the engine's `{rule}` are at different bits"
 
 
 def test_busy_is_not_a_literal(build):
