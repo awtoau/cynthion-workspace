@@ -262,11 +262,9 @@ including a **250 MHz** block the datasheet has no column for (`tCSHI` 6 ns, `tR
 200 MHz against a KGD default of 250 MHz, and `tCSM` as **4000 ns below 85 °C, 1000 ns
 above** — the temperature dependence that `` `define LA_85C `` switches.
 
-Code references for this part are surveyed in
-[`../docs/chips/hyperram/driver-survey.md`](../docs/chips/hyperram/driver-survey.md)
-(software and SoC drivers, plus simulation models) and
-[`../docs/chips/hyperram/controller-survey.md`](../docs/chips/hyperram/controller-survey.md)
-(RTL controllers).
+Code references for this part — RTL controllers, software and SoC drivers, and
+simulation models — are surveyed in
+[`../docs/chips/hyperram/survey.md`](../docs/chips/hyperram/survey.md).
 
 ### Note on fetching from ISSI
 
@@ -305,7 +303,7 @@ Four files that were in this directory but not in this manifest until 2026-08-10
 the *bus* require", and the Winbond datasheet when it is "what does *this device* do".
 §5 is explicit that the register map is device-dependent, which is why the same
 numeral means different registers across vendors — see the byte-vs-word trap in
-[`../docs/chips/hyperram/driver-survey.md`](../docs/chips/hyperram/driver-survey.md).
+[`../docs/chips/hyperram/survey.md`](../docs/chips/hyperram/survey.md).
 
 ## Configuration flash
 

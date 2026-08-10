@@ -6,7 +6,7 @@
 How to characterise the W956A8 and get a number worth keeping.
 The part itself: [w956a8.md](w956a8.md).
 What nineteen other controllers do, and the bounds ours is missing:
-[controller-survey.md](controller-survey.md).
+[survey.md](survey.md).
 
 The work: #230.
 
@@ -237,7 +237,7 @@ Only once this behaves does the matrix mean anything.
 - `READ_DATA` is unbounded, so a run that drops one beat parks the controller
   and the rig reports nothing (#316). Every cell below is measured through it.
   No implementation surveyed calibrates the read window, so the phase axis has
-  no prior art to shortcut it — [controller-survey.md](controller-survey.md).
+  no prior art to shortcut it — [survey.md](survey.md).
 
 ## The matrix
 
