@@ -9,7 +9,8 @@
     scripts/hyperram_dqs_model_sim.py                 # probe + controller, open twin
     scripts/hyperram_dqs_model_sim.py --stage probe   # the device alone
     scripts/hyperram_dqs_model_sim.py --stage order   # byte and word order, #206
-    scripts/hyperram_dqs_model_sim.py --stage all     # all three
+    scripts/hyperram_dqs_model_sim.py --stage config  # the config path, #349 #366
+    scripts/hyperram_dqs_model_sim.py --stage all     # all four
     scripts/hyperram_dqs_model_sim.py --sim both      # ...and the vendor model too
     scripts/hyperram_dqs_model_sim.py --controller-sweep   # the shim's own parameters
 
@@ -32,6 +33,12 @@ model's memory array read hierarchically, reads against an array preloaded
 directly, so neither direction can cancel an error in the other. Every run also
 repeats the measurement with the data beats deliberately rewired and requires
 the checks to fire. The convention is in `docs/chips/hyperram/byte-order.md`.
+
+**config** runs the ceiling engine's own configuration sequence -- CR0 write,
+CR1 write, the register verifies, then a data burst -- through the real
+controller. It settles which address space each burst named (#349) and whether
+the configuration the engine would REPORT is the one the part holds (#366), with
+two fault injections and a negative control that is the engine as filed.
 
 Log: `tmp/logs/hyperram_dqs_model_sim.log`. Exit status 0 if every stage ran and
 the twin answered.
@@ -286,6 +293,89 @@ def stage_config(extra: list[str]) -> list[str]:
 # Was 10.0, the T100 column (#341). The testbench measures the real gap; this is
 # what it is judged against.
 T_CSHI_NS = 6.0
+
+
+def sequences(rows: list[dict]) -> list[list[dict]]:
+    """The rows split into the engine sequences that produced them."""
+    out: list[list[dict]] = []
+    for row in rows:
+        if row.get("txn") == "wr_cr0" or not out:
+            out.append([])
+        out[-1].append(row)
+    return out
+
+
+def _word(row: dict) -> int | None:
+    try:
+        return int(row["got"], 16)
+    except (KeyError, ValueError):
+        return None
+
+
+def verdict_readback(rows: list[dict]) -> list[str]:
+    """Is the CR0/CR1 the engine would report the CR0/CR1 the part holds? #366.
+
+    The readback captures through the same window as the data path, so at a
+    phase outside it the reported configuration is a word from another
+    transaction -- and `bist status` decoded one into "the part is asleep".
+
+    Judged against `dev_cr0`/`dev_cr1`, read out of the device model itself. Not
+    against what was written: the part is allowed to discard a CR1 write it does
+    not support (#334), and that difference is the measurement.
+
+    The three rules are the engine's own (`REG_CTRL_STATE` bits 8..10). A wrong
+    word that fires none of them is a fabricated configuration reported as fact.
+    """
+    bad: list[str] = []
+    wrong_seen = fired_seen = 0
+    log.info("--- #366: does the reported configuration match the part's own ---")
+    for seq in sequences(rows):
+        reads = {row["txn"]: _word(row) for row in seq
+                 if row.get("txn", "").startswith("rd_cr")}
+        if "rd_cr0" not in reads or "rd_cr1" not in reads:
+            continue
+        held = {name: int(seq[-1][f"dev_{name}"], 16) for name in ("cr0", "cr1")}
+        cr0, cr1, again = reads["rd_cr0"], reads["rd_cr1"], reads.get("rd_cr0b")
+        if cr0 is None or cr1 is None:
+            bad.append("a register read returned no word at all")
+            continue
+
+        # A register read arrives in BOTH halves of the fabric word, so what the
+        # part holds predicts all 32 bits.
+        wrong = [name for name, word, want in
+                 (("CR0", cr0, held["cr0"]), ("CR1", cr1, held["cr1"]))
+                 if word != want * 0x10001]
+
+        fired = []
+        if again is not None and again != cr0:
+            fired.append("reread")
+        elif again is None:
+            fired.append("reread UNAVAILABLE")
+        if cr0 == cr1:
+            fired.append("distinct")
+        if any((w >> 16) != (w & 0xffff) for w in (cr0, cr1)):
+            fired.append("halves")
+        withheld = [rule for rule in fired if not rule.endswith("UNAVAILABLE")]
+
+        wrong_seen += bool(wrong)
+        fired_seen += bool(withheld)
+        log.info("  part holds CR0=%04x CR1=%04x  engine reports %08x %08x  %s",
+                 held["cr0"], held["cr1"], cr0, cr1,
+                 ("WRONG: " + ", ".join(wrong) + "  " if wrong else "")
+                 + ("withheld by " + ", ".join(fired) if fired else "reported"))
+        if wrong and not withheld:
+            bad.append(f"the engine reports CR0={cr0 & 0xffff:04x} CR1={cr1 & 0xffff:04x} "
+                       f"where the part holds {held['cr0']:04x}/{held['cr1']:04x}, "
+                       f"and no rule marks it -- a fabricated configuration "
+                       f"reported as fact ({', '.join(fired) or 'no rule fired'})")
+        if not wrong and withheld:
+            bad.append(f"a correct readback was withheld by {', '.join(withheld)} "
+                       f"-- a rule that fires on good data withholds every run")
+    if rows and not wrong_seen:
+        log.info("  every reported configuration matched the part's own")
+    elif wrong_seen and not fired_seen:
+        log.info("  no rule fired on any of the %d wrong readbacks", wrong_seen)
+    return bad
 
 
 def verdict_config(rows: list[dict]) -> list[str]:
@@ -741,6 +831,31 @@ def main() -> int:
         if not rows:
             failures.append("config stage produced no measurement")
         failures += verdict_config(rows)
+        failures += verdict_readback(rows)
+
+        # THE READ PATH ONE TRANSACTION BEHIND, which is #366's board
+        # fingerprint: every register read returns a plausible register word and
+        # it is the previous transaction's. Nothing about any one word is wrong.
+        log.info("--- the capture lagging by one transaction (#366) ---")
+        lagged = extra + ["+dv_from_read=1", "+cap_lag=1"]
+        failures += verdict_readback(report(stage_config(lagged), "lag"))
+
+        # THE NEGATIVE CONTROL, and it is the engine AS FILED: two register
+        # reads, so the lag returns one word to CR0's read and CR0's own word to
+        # CR1's, and no rule computable from those two can see it. The checks
+        # MUST fail here, or they cannot see the fault they claim to catch.
+        log.info("--- negative control: the same lag, and no re-read (#366) ---")
+        caught = verdict_readback(
+            report(stage_config(lagged + ["+verify_reread=0"]), "asfiled"))
+        if caught:
+            log.info("  control: %d check(s) fired on the two-read sequence",
+                     len(caught))
+            for line in dict.fromkeys(caught):
+                log.info("    would fail: %s", line)
+        else:
+            failures.append("the negative control PASSED: a read path one "
+                            "transaction behind was not caught without the "
+                            "re-read, so the readback checks prove nothing")
 
     if args.stage in ("order", "all"):
         log.info("=== byte and word order through the 32-bit path (#206) ===")
