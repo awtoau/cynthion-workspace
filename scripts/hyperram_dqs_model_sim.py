@@ -50,29 +50,22 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from shared_paths import resolve_shared  # noqa: E402
+
 PROBES = ROOT / "gateware" / "probes" / "hyperram"
 PROBE_TB = PROBES / "dqs_latency_probe_tb.sv"
 CTRL_TB = PROBES / "dqs_model_tb.sv"
 ORDER_TB = PROBES / "dqs_order_tb.sv"
 CONFIG_TB = PROBES / "dqs_config_tb.sv"
 OPEN_MODEL = PROBES / "hyperram_model.v"
-MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
 
-# `sources/**` is gitignored, so a git worktree does not carry it. Fall back to
-# the main checkout rather than telling the user to fetch vendor IP they already
-# have. `HYPERRAM_MODEL_ZIP` overrides both.
-if not MODEL_ZIP.exists():
-    _env = os.environ.get("HYPERRAM_MODEL_ZIP")
-    if _env:
-        MODEL_ZIP = Path(_env)
-    else:
-        _common = subprocess.run(["git", "rev-parse", "--path-format=absolute",
-                                  "--git-common-dir"], cwd=ROOT,
-                                 capture_output=True, text=True)
-        if _common.returncode == 0:
-            _main = Path(_common.stdout.strip()).parent
-            if (_main / "sources" / "models" / MODEL_ZIP.name).exists():
-                MODEL_ZIP = _main / "sources" / "models" / MODEL_ZIP.name
+# `sources/**` is gitignored, so a worktree does not carry it. `resolve_shared`
+# falls back to the main checkout; `HYPERRAM_MODEL_ZIP` overrides both. #365.
+_MODEL_REL = Path("sources/models/W956X8MBY_verilog_p.zip")
+MODEL_ZIP = (resolve_shared(ROOT, _MODEL_REL, env_var="HYPERRAM_MODEL_ZIP")
+             or ROOT / _MODEL_REL)
 WORKDIR = ROOT / "tmp" / "hyperram-dqs-model"
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_dqs_model_sim.log"
 
