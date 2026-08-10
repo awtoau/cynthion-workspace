@@ -6,7 +6,8 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 |---|---|
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
 | [bist-plan.md](bist-plan.md) | **the method** — what to measure, the matrix, and the rule that makes a result admissible |
-| [controller-survey.md](controller-survey.md) | **everyone else** — nineteen open HyperBus controllers, what to borrow and what to avoid |
+| [controller-survey.md](controller-survey.md) | **everyone else, in RTL** — nineteen open HyperBus controllers, what to borrow and what to avoid |
+| [driver-survey.md](driver-survey.md) | **everyone else, in software** — the four upstreams that name this part, the SoC HyperBus controllers, and the simulation models |
 | [2026-08-10-audit.md](2026-08-10-audit.md) | **our own faults** — six found, three fixed, and why no measurement survives |
 
 ## Read the plan before trusting a number
