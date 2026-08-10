@@ -96,6 +96,8 @@ const CR_ACK: u8 = 0x08;
 const CR_IACK: u8 = 0x01;
 
 const SR_TIP: u8 = 0x02;
+/// A START has gone out and no STOP has followed it yet.
+const SR_BUSY: u8 = 0x40;
 const SR_AL: u8 = 0x20;
 /// The acknowledge the slave sent. Zero means it acknowledged.
 const SR_RXACK: u8 = 0x80;
@@ -226,12 +228,13 @@ impl I2c {
     /// a slave can still be holding for. Then a STOP, which is what any slave
     /// listening treats as the end of a transaction.
     ///
-    /// Harmless on a healthy bus, which is why it is unconditional at init: no
-    /// START goes out in front of it, so nothing is addressed and no slave acts
-    /// on either command. ~10 us at 1 MHz.
+    /// ONE command, not two. A bare `CR_STO` is issued from IDLE, where SCL is
+    /// high, and the engine's STOP state drops SCL and pulls SDA low in the same
+    /// slot -- so SDA can fall on a high clock, which is a START (#350). Folding
+    /// the STOP into the read reaches the STOP state from RACK, where SCL is
+    /// already low. ~10 us at 1 MHz.
     pub fn recover(&self) {
-        let _ = self.command(CR_RD | CR_ACK);
-        let _ = self.command(CR_STO);
+        let _ = self.command(CR_RD | CR_ACK | CR_STO);
     }
 
     fn status(&self) -> u8 {
@@ -278,8 +281,15 @@ impl I2c {
     /// START and its STOP leaves the peripheral holding SCL low and every
     /// subsequent probe fails -- so one absent device would make the rest of a
     /// scan look absent too, which is exactly the wrong answer to give.
+    ///
+    /// Conditional on BUSY: with no START outstanding there is nothing to
+    /// release, and a STOP issued from IDLE puts a START on the wire instead
+    /// (#350). Every error path called this, so the recovery cost the next
+    /// transfer on that bus.
     fn release(&self) {
-        let _ = self.command(CR_STO);
+        if self.status() & SR_BUSY != 0 {
+            let _ = self.command(CR_STO);
+        }
     }
 
     /// Does anything answer at this seven-bit address?
