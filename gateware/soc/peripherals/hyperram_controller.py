@@ -394,6 +394,13 @@ class HyperRAMController(Elaboratable):
         # tRWR was implemented nowhere and covered only by LC7 spending 7 CK --
         # an accident, and one that goes if the code drops. (#341)
         self.latency_below_trwr = Signal()
+        # This transaction is a REGISTER access and CS# is Low. Winbond's 2025
+        # app note 7.2.2 replaces the datasheet's clock-stop sentence with
+        # "recommended not to stop the clock during register access", and register
+        # accesses run through the same FSM as memory ones -- so a master that
+        # stalls mid-transaction stops CK during one. Anything gating CK below
+        # this controller must hold off while it is High. (#340)
+        self.register_active  = Signal()
 
         # Data signals.
         self.read_data        = Signal(16)
@@ -417,6 +424,10 @@ class HyperRAMController(Elaboratable):
         is_register     = Signal()
         current_address = Signal(32)
         is_multipage    = Signal()
+
+        # Both latched at IDLE, so this is High from CS_SETUP to the cycle
+        # RECOVERY drops CS#.
+        m.d.comb += self.register_active.eq(is_register & self.phy.cs)
 
         #
         # FSM datapath signals.
