@@ -31,7 +31,8 @@ the surrounding code works.
 Cross-checked against the board, not only the source: net membership comes from
 [`repos/cynthion-hardware/production/netlist.ipc`](../../../repos/cynthion-hardware/production/netlist.ipc)
 (IPC-356, 256 `IC1` records) and values from
-[`repos/cynthion-hardware/production/bom.csv`](../../../repos/cynthion-hardware/production/bom.csv).
+`repos/cynthion-hardware/production/bom.csv` -- NOT a link, because that file is
+gitignored upstream (`*.csv`) and exists in no clone. See #376.
 A pin that the board terminates is a different finding from one that is free, and
 in two cases below the termination is the whole story.
 

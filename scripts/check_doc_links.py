@@ -28,9 +28,32 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from shared_paths import resolve_shared  # noqa: E402
 
 SKIP_PREFIXES = ("repos/", "debris/", "tmp/")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+
+# Only `sources/` falls back to the main checkout. Widening it to any path would
+# let a doc deleted on this branch pass because main still has it.
+SHARED_PREFIX = "sources"
+
+
+def resolves(candidate: Path) -> bool:
+    """Exists here, or -- under `sources/` only -- in the main checkout.
+
+    `sources/**` is gitignored, so every datasheet link was broken in every
+    worktree and this whole check was red there: 20+ failures, none real (#365).
+    """
+    if candidate.exists():
+        return True
+    try:
+        relative = candidate.resolve().relative_to(ROOT)
+    except ValueError:
+        return False
+    if relative.parts[:1] != (SHARED_PREFIX,):
+        return False
+    return resolve_shared(ROOT, relative) is not None
 
 
 def tracked_markdown(subtree):
@@ -62,7 +85,7 @@ def main():
             if not target:
                 continue
             checked += 1
-            if not (path.parent / target).exists():
+            if not resolves(path.parent / target):
                 broken.append((rel, target))
 
     emit(f"checked {checked} relative links")
