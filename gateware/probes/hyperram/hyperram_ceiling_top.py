@@ -1207,7 +1207,10 @@ class HyperRAMCeiling(Elaboratable):
             m.d.sync += finished.eq(0)
 
         m.d.comb += [
-            harness.busy.eq(1),
+            # NOT PARKED, not a literal. `busy.eq(1)` could never say not-busy,
+            # so no caller could wait on it and `bist status` read busy=1 at rest
+            # for ever. HALTED is the only state that drives nothing. (#359)
+            harness.busy.eq(~engine.ongoing("HALTED")),
             harness.done.eq(finished),
             # GATED ON THE READ STATE. `read_ready` also fires for the register
             # READ in CONFIG_VERIFY, and CR0 is not a data word -- ungated, every
