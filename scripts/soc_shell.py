@@ -222,13 +222,22 @@ class Link:
         caller prints whatever did arrive.
         """
         deadline = time.monotonic() + budget_s
+        started = time.monotonic()
         reply = b""
         while time.monotonic() < deadline:
             chunk = self.read_available()
             if chunk:
                 reply += chunk
                 if reply.rstrip().endswith(PROMPT):
-                    break
+                    return reply
+        # SAY SO. Expiry returned the partial bytes silently, so a timeout and a
+        # genuinely short reply were the same value and the caller could not tell
+        # a slow board from a quiet one (#295). The bytes are still returned --
+        # a partial transcript is diagnostic -- but the limit and the elapsed are
+        # now on the record.
+        emit(f"  no prompt within {budget_s:.1f} s "
+             f"(elapsed {time.monotonic() - started:.1f} s, "
+             f"{len(reply)} byte(s) received)")
         return reply
 
     def settle(self, seconds):
@@ -273,8 +282,16 @@ def main():
     got_anything = False
 
     if args.listen:
-        emit("--- listening ---")
-        deadline = time.monotonic() + 10
+        # Named, so the window is a stated capture length rather than a bare
+        # `+ 10` nobody can judge (#295). Waits for: whatever the board says
+        # unprompted. Expected: the banner, which arrives within ~0.5 s of a
+        # reconfigure -- this is 20x that, because the point of `--listen` is to
+        # catch output that is NOT a reply to anything, and too short a window
+        # reports a healthy board as silent. On expiry: say so, and exit
+        # non-zero if nothing arrived at all.
+        LISTEN_S = 10.0
+        emit(f"--- listening for {LISTEN_S:.0f} s ---")
+        deadline = time.monotonic() + LISTEN_S
         # Reassembled into lines before emitting: the console arrives in
         # whatever chunks the tty hands over, and a log line that is half a
         # word is not searchable.
@@ -289,6 +306,8 @@ def main():
                     emit(line)
         if pending:
             emit(pending)
+        emit(f"--- {LISTEN_S:.0f} s window closed"
+             f"{'' if got_anything else '; NOTHING arrived'} ---")
         link.close()
         return 0 if got_anything else 1
 

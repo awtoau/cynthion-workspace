@@ -59,6 +59,7 @@ cacheless, PLIC vs a smaller concentrator -- are in `../../docs/architecture.md`
 
 import contextlib
 import fcntl
+import os
 import subprocess
 from pathlib import Path
 
@@ -76,13 +77,42 @@ from amaranth_soc           import wishbone
 # cached netlist means this path is never touched -- only a cache miss reaches
 # it, and those are rare enough to be years apart.
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
-VEXII = ROOT / "repos" / "vexiiriscv"
-if not VEXII.is_dir():
-    raise FileNotFoundError(
-        f"the VexiiRiscv checkout is not at {VEXII}. It is a submodule: "
-        f"`git submodule update --init repos/vexiiriscv`. Regenerating the core "
-        f"needs it; a build with a cached netlist does not, which is why this "
-        f"can be missing for a long time without anything saying so.")
+
+
+def _superproject(root):
+    """The main checkout behind a git worktree, or None.
+
+    A linked worktree's `.git` is a file naming `<super>/.git/worktrees/<name>`.
+    """
+    marker = root / ".git"
+    if not marker.is_file():
+        return None
+    gitdir = Path(marker.read_text().partition("gitdir:")[2].strip())
+    return gitdir.parents[2] if gitdir.parent.name == "worktrees" else None
+
+
+def _checkout():
+    """The VexiiRiscv sources to generate from.
+
+    A worktree has NO `repos/vexiiriscv` of its own -- `git worktree add` does not
+    populate submodules -- so it falls back to the main checkout's, which is then
+    shared and is what `_generator_lock` must therefore be keyed on. `VEXII_ROOT`
+    overrides both.
+    """
+    candidates = [Path(os.environ["VEXII_ROOT"])] if os.environ.get("VEXII_ROOT") else []
+    candidates.append(ROOT / "repos" / "vexiiriscv")
+    superproject = _superproject(ROOT)
+    if superproject is not None:
+        candidates.append(superproject / "repos" / "vexiiriscv")
+    for candidate in candidates:
+        if (candidate / "build.sbt").is_file():
+            return candidate
+    # Not raised at import: a caller that never regenerates (soc_generate_pac.py
+    # patches generate out) must still be able to import this module.
+    return candidates[-1]
+
+
+VEXII = _checkout()
 
 # The generator flags that produce a Wishbone core with caches and atomics.
 #
@@ -203,14 +233,16 @@ DEFAULT_REGIONS = [
 
 @contextlib.contextmanager
 def _generator_lock():
-    """Serialise the Scala generator against this checkout.
+    """Serialise the Scala generator against the checkout it runs in.
 
     Beside `tmp/`, not inside the submodule: an untracked lock file in
-    `repos/vexiiriscv` shows up as a dirty submodule forever after. One lock per
-    checkout is the right granularity -- a git worktree has its own
-    `repos/vexiiriscv` and its own `tmp/`, so the pair travel together.
+    `repos/vexiiriscv` shows up as a dirty submodule forever after.
+
+    Keyed on the CHECKOUT, not on `ROOT`: worktrees have no submodules of their
+    own and share the main checkout's, so a lock under each worktree's own `tmp/`
+    excludes nothing between them -- which is the race in #306.
     """
-    lock = ROOT / "tmp" / "vexii-generate.lock"
+    lock = VEXII.parent.parent / "tmp" / "vexii-generate.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with open(lock, "w") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
@@ -278,6 +310,12 @@ def generate(reset_addr, cache_sets=128, output=None, regions=None,
     # Blocking, with no timeout: the wait is another build's generator, ~40 s,
     # and every waiter is doing the same work. A timeout here would abort a build
     # that was about to succeed.
+    if not (VEXII / "build.sbt").is_file():
+        raise FileNotFoundError(
+            f"no VexiiRiscv checkout at {VEXII}. It is a submodule: "
+            f"`git submodule update --init repos/vexiiriscv` in the main checkout, "
+            f"or set VEXII_ROOT. A worktree has none of its own.")
+
     with _generator_lock():
         result = subprocess.run(
             ["sbt", "--batch", "--no-server",
