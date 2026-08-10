@@ -781,7 +781,8 @@ def main():
                    # `clear` is the other one, and `info` was missing from this
                    # row already.
                    b"[info|status|read|sel|sweep|test|cross|ramp|bench|id|clear]",
-                   b"[status|off|input|control|both|charge]"]
+                   # `input` went with the selector that reached no pin (#305).
+                   b"[status|off|control|both|charge]"]
         command("help", listing, "`help` lists every command")
         command("?", listing, "`?` behaves as `help`")
 
