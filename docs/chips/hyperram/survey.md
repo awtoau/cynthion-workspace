@@ -444,10 +444,44 @@ independent source that is not the board and not the datasheet prose.
 and exits non-zero on a mismatch, so it is a regression rather than a demo. The
 testbench is `gateware/probes/hyperram/vendor_model_tb.sv`.
 
-**This is the only model that implements the register space.** nafarr, sergz72 and
+**It was the only model that implements the register space.** nafarr, sergz72 and
 GVSoC all model the array and the CA and none answers a register read with plausible
-contents, so anything that exercises `hyperram_identify.py` in simulation has to run
-against this one.
+contents. So we wrote one — see below.
+
+### Encryption stops us reading it; it does not stop us checking against it
+
+`gateware/probes/hyperram/hyperram_model.v` is an open twin in plain Verilog that
+Icarus, Verilator and cocotb all run. It is not a translation of the vendor model —
+nobody has seen that source — it is written to the datasheet and then **held to the
+vendor model's behaviour by sharing one testbench**. `vendor_model_tb.sv`
+instantiates whatever `` `DUT_MODULE `` names, so:
+
+    scripts/hyperram_vendor_model_sim.py                # runs both, requires them to agree
+    scripts/hyperram_vendor_model_sim.py --sim icarus   # open twin only, no Diamond needed
+
+Both report the same eight passes and the same deliberate tCSM violation. That is
+the answer to "we cannot decrypt it": you do not need the source, you need the
+behaviour, and the behaviour is observable.
+
+**Three bugs the shared testbench caught in one sitting**, each of which would have
+read as a hardware fault on the board:
+
+- **RWDS is driven high during CA** — the extra-latency request, not the read
+  strobe. A controller that hunts for the strobe from CS# low latches onto it and
+  samples a tristate bus.
+- **A register write must present its first data byte on the very next edge after
+  the CA.** One edge late and the device latches the idle bus as the high byte,
+  which lands `CR0[15] = 0` and puts the part into **deep power down** — after
+  which every later transaction fails for a reason that has nothing to do with the
+  code that caused it.
+- **A write byte commits on RWDS strictly low, not merely "not high".** A host that
+  releases RWDS with its data leaves it floating, and treating that as unmasked
+  stores `z` into the next address — surfacing much later as a corrupt word nowhere
+  near the transaction that wrote it.
+
+The twin covers protocol and contents. It is **not** a timing model: setup/hold,
+tRWR, tRP and the power-state machine stay the vendor's job, which is why the pair
+is the deliverable rather than either one alone.
 
 **The plaintext half is worth having independently.** `Config-AC.v` ships unencrypted
 in the same zip with the full AC parameter set per grade, including a **250 MHz**

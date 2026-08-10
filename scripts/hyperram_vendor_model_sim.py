@@ -3,7 +3,7 @@
 # Run Winbond's own W956A8MBYA model against a testbench, under Diamond's Questa.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""The vendor's encrypted Verilog model, elaborated and checked.
+"""The vendor's encrypted model, an open twin, and a testbench that holds them equal.
 
 `sources/models/W956X8MBY_verilog_p.zip` is AES-encrypted to Mentor's key
 (`key_keyowner = "Mentor Graphics Corporation"`), so Icarus, Verilator and
@@ -19,16 +19,22 @@ Two things are needed and neither is documented by Winbond:
   grade defined it declares no timing parameters at all and every identifier in
   the protected region is undefined.
 
-What it buys: this is the only model that implements the register space. It
-reports `ID0 = 0x0c86`, `CR0 = 0x8f2f`, `CR1 = 0xffc1` at power-up -- the values
-the board reports -- so `hyperram_identify.py`'s expectations can be checked
-without hardware. See `docs/chips/hyperram/survey.md`.
+What it buys: the vendor model is the only one that implements the register
+space, and it reports `ID0 = 0x0c86`, `CR0 = 0x8f2f`, `CR1 = 0xffc1` at power-up
+-- the values the board reports.
+
+**And it is the oracle for `hyperram_model.v`**, the open twin next to it. The
+same testbench drives both (`vendor_model_tb.sv` instantiates whatever
+`DUT_MODULE names), so the twin can be used in Icarus, Verilator and cocotb with
+the vendor model as the thing that says it is still right. Encryption stops us
+reading the source; it does not stop us checking the behaviour.
 
 Usage:
 
-    scripts/hyperram_vendor_model_sim.py                # 166 MHz grade
-    scripts/hyperram_vendor_model_sim.py --grade T250   # the grade the datasheet has no column for
-    scripts/hyperram_vendor_model_sim.py --keep         # leave the work library for vsim -gui
+    scripts/hyperram_vendor_model_sim.py                 # both, and they must agree
+    scripts/hyperram_vendor_model_sim.py --sim icarus    # open twin only, no Diamond needed
+    scripts/hyperram_vendor_model_sim.py --grade T250    # the grade the datasheet has no column for
+    scripts/hyperram_vendor_model_sim.py --keep          # leave the work dir for vsim -gui
 
 Log: `tmp/logs/hyperram_vendor_model_sim.log`.
 """
@@ -48,6 +54,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_ZIP = ROOT / "sources" / "models" / "W956X8MBY_verilog_p.zip"
 TESTBENCH = ROOT / "gateware" / "probes" / "hyperram" / "vendor_model_tb.sv"
+OPEN_MODEL = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_model.v"
 WORKDIR = ROOT / "tmp" / "hyperram-vendor-model"
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_vendor_model_sim.log"
 
@@ -56,14 +63,19 @@ DIAMOND = Path(os.environ.get("DIAMOND_ROOT", Path.home() / "lscc" / "diamond" /
 # The grades Config-AC.v defines AC parameters for. Anything else declares none.
 GRADES = ("T85", "T100", "T104", "T133", "T166", "T200", "T250")
 
-# Power-up values the part reports, from docs/chips/hyperram/w956a8.md. The model
-# agreeing with the board is the whole point of running it, so a mismatch fails.
-EXPECTED = {
-    "ID_REG0": "0c86",
-    "ID_REG1": "0001",
-    "CONFIG_REG0": "8f2f",
-    "CONFIG_REG1": "ffc1",
-}
+# The testbench reports its own pass/fail; these are what a good run must contain.
+# The tCSM line is a DELIBERATE violation -- its absence means the check is gone,
+# which is exactly the silent regression this script exists to catch.
+REQUIRED_MARKERS = (
+    "PASS ID0 = 0c86",
+    "PASS CR0 (POR) = 8f2f",
+    "PASS CR1 (POR) = ffc1",
+    "PASS CR0 after write = af2f",
+    "PASS differential clock accepted",
+    "PASS mem[0x000000] = dead",
+    "PASS mem[0x3fffff] = 5aa5",
+)
+TCSM_MARKER = "tCSM violation"
 
 # Measured on this machine: vlib 25 ms, vlog 51 ms, vsim 555 ms (200 us of model
 # time). The one term not measured is a cold FlexLM checkout, and that is the whole
@@ -140,8 +152,45 @@ def run(step: str, argv: list[str], env: dict[str, str]) -> str:
     return out
 
 
+def check_output(out: str, which: str) -> list[str]:
+    """The testbench grades itself; this decides whether the run counts."""
+    failures = []
+    for marker in REQUIRED_MARKERS:
+        if marker in out:
+            log.info("  [%s] %s", which, marker)
+        else:
+            failures.append(f"{which}: missing {marker!r}")
+    if TCSM_MARKER not in out:
+        failures.append(f"{which}: the deliberate tCSM violation was not reported")
+    else:
+        log.info("  [%s] tCSM violation reported, as the stimulus intends", which)
+    m = re.search(r"=== done, (\d+) failures ===", out)
+    if not m:
+        failures.append(f"{which}: testbench did not reach its summary line")
+    elif m.group(1) != "0":
+        failures.append(f"{which}: testbench reported {m.group(1)} failures")
+    return failures
+
+
+def run_open(grade: str) -> int:
+    """Same testbench, same stimulus, open model, open simulator."""
+    for tool in ("iverilog", "vvp"):
+        if shutil.which(tool) is None:
+            raise SystemExit(f"{tool} not on PATH -- needed for the open model")
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy(TESTBENCH, WORKDIR / TESTBENCH.name)
+    shutil.copy(OPEN_MODEL, WORKDIR / OPEN_MODEL.name)
+    env = dict(os.environ)
+    run("iverilog", ["iverilog", "-g2012", "-DDUT_MODULE=hyperram_model",
+                     "-o", "tb.vvp", TESTBENCH.name, OPEN_MODEL.name], env)
+    return check_output(run("vvp", ["vvp", "tb.vvp"], env), "open")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--sim", default="both", choices=("questa", "icarus", "both"),
+                    help="questa runs the vendor model, icarus runs the open twin, "
+                         "both runs each and requires them to agree (default)")
     ap.add_argument("--grade", default="T166", choices=GRADES,
                     help="AC parameter set from Config-AC.v (default: T166, the 6I on this board)")
     ap.add_argument("--part", default="W956A8MBYA",
@@ -155,6 +204,16 @@ def main() -> int:
 
     if not args.keep and WORKDIR.exists():
         shutil.rmtree(WORKDIR)
+
+    if args.sim == "icarus":
+        failures = run_open(args.grade)
+        for f in failures:
+            log.error("FAIL %s", f)
+        if not failures:
+            log.info("PASS -- the open model passes the shared testbench under Icarus")
+        if not args.keep:
+            shutil.rmtree(WORKDIR, ignore_errors=True)
+        return 1 if failures else 0
     model = extract_model(args.part)
     shutil.copy(TESTBENCH, WORKDIR / TESTBENCH.name)
 
@@ -169,28 +228,18 @@ def main() -> int:
     out = run("vsim", [str(questa_bin("vsim")), "-c", "-voptargs=+acc", "tb",
                        "-do", "run -all; quit -f"], env)
 
-    # The model prints its own power-up register dump; check it against the board.
-    failures = []
-    for name, want in EXPECTED.items():
-        m = re.search(rf"{name}\s*=\s*([0-9a-fA-F]{{4}})", out)
-        got = m.group(1).lower() if m else None
-        status = "ok" if got == want else "MISMATCH"
-        log.info("  %-12s = %s  (expect %s)  %s", name, got or "<absent>", want, status)
-        if got != want:
-            failures.append(f"{name}: model {got}, board {want}")
-
-    reg_read = re.findall(r"register out .*\(0x([0-9a-f]{2})\)", out)
-    if reg_read[:2] == ["0c", "86"]:
-        log.info("  bus read of ID0 returned 0c 86 -- CA decode and 14 CK latency both good")
-    else:
-        failures.append(f"bus read of ID0 returned {reg_read[:2]}, expected ['0c', '86']")
-
+    failures = check_output(out, "vendor")
+    if args.sim == "both":
+        failures += run_open(args.grade)
     if failures:
         for f in failures:
             log.error("FAIL %s", f)
         return 1
 
-    log.info("PASS -- vendor model agrees with the board on every power-up register")
+    if args.sim == "both":
+        log.info("PASS -- vendor and open models agree with the board and with each other")
+    else:
+        log.info("PASS -- the vendor model agrees with the board on every register and word")
     if not args.keep:
         shutil.rmtree(WORKDIR, ignore_errors=True)
     return 0

@@ -49,6 +49,7 @@ module hyperram_model #(
 
   reg  [7:0] write_high;
   reg [15:0] rd_word;
+  reg        write_done;
   reg  [7:0] dq_out = 8'h00;
   reg        dq_oe  = 1'b0;
   reg        rwds_out = 1'b0;
@@ -70,12 +71,18 @@ module hyperram_model #(
     end
   endfunction
 
-  // First edge that carries data: six for the CA, then the latency, except a
-  // register write which takes none at all.
+  // First edge that carries data. A register write takes none at all; everything
+  // else waits out the initial latency.
+  //
+  // The -2 is calibrated against the vendor model, not derived: the latency count
+  // runs from the last CA *clock*, and the last two CA bytes share the third
+  // clock, so counting from the last CA edge lands a beat late. The shared
+  // testbench is what caught it -- a read self-aligns on RWDS and hides this, a
+  // write does not and captures an idle bus.
   function [15:0] first_data_beat;
     input is_reg_write;
     begin
-      first_data_beat = is_reg_write ? 16'd6 : (16'd6 + 2 * latency_ck(cr0));
+      first_data_beat = is_reg_write ? 16'd6 : (16'd4 + 2 * latency_ck(cr0));
     end
   endfunction
 
@@ -133,9 +140,10 @@ module hyperram_model #(
   end
 
   always @(negedge csb) begin
-    beat      = 16'd0;
-    ca        = 48'h0;
-    t_cs_fall = $realtime;
+    beat       = 16'd0;
+    ca         = 48'h0;
+    write_done = 1'b0;
+    t_cs_fall  = $realtime;
   end
 
   always @(posedge csb) begin
@@ -188,7 +196,12 @@ module hyperram_model #(
               // idle bus lands as a second write of z -- which reads back as a
               // clobbered register, not as a protocol error.
               write_done = 1'b1;
-            end else if (rwds !== 1'b1) begin
+            end else if (rwds === 1'b0) begin
+              // Strictly low, not merely "not high". A host that has finished its
+              // burst releases RWDS along with the data, and treating that float
+              // as an unmasked write stores z into the next address -- which
+              // surfaces later as a corrupt word nowhere near the transaction
+              // that caused it.
               memory[word_addr] = {write_high, adq};
               word_addr = word_addr + 1'b1;
             end
