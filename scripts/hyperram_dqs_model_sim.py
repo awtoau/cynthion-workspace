@@ -9,7 +9,8 @@
     scripts/hyperram_dqs_model_sim.py                 # probe + controller, open twin
     scripts/hyperram_dqs_model_sim.py --stage probe   # the device alone
     scripts/hyperram_dqs_model_sim.py --stage order   # byte and word order, #206
-    scripts/hyperram_dqs_model_sim.py --stage all     # all three
+    scripts/hyperram_dqs_model_sim.py --stage config  # the config path, #349 #366
+    scripts/hyperram_dqs_model_sim.py --stage all     # all four
     scripts/hyperram_dqs_model_sim.py --sim both      # ...and the vendor model too
     scripts/hyperram_dqs_model_sim.py --controller-sweep   # the shim's own parameters
 
@@ -32,6 +33,12 @@ model's memory array read hierarchically, reads against an array preloaded
 directly, so neither direction can cancel an error in the other. Every run also
 repeats the measurement with the data beats deliberately rewired and requires
 the checks to fire. The convention is in `docs/chips/hyperram/byte-order.md`.
+
+**config** runs the ceiling engine's own configuration sequence -- CR0 write,
+CR1 write, the register verifies, then a data burst -- through the real
+controller. It settles which address space each burst named (#349) and whether
+the configuration the engine would REPORT is the one the part holds (#366), with
+two fault injections and a negative control that is the engine as filed.
 
 Log: `tmp/logs/hyperram_dqs_model_sim.log`. Exit status 0 if every stage ran and
 the twin answered.
