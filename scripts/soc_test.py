@@ -825,7 +825,12 @@ def main():
         listing = [b"help, ?", b"info", b"selftest", b"time", b"board",
                    b"led", b"load", b"reset", b"rtic", b"sideband",
                    b"fusb302b", b"pac1954", b"usb3343",
-                   b"[info|read|bench]", b"[stats|check|irq|log]",
+                   b"[info|read|bench]",
+                   # `status` and `wedge` are #411's readout and its negative
+                   # control. Asserted here so neither can be dropped: an
+                   # indicator whose failure case is unreachable is one nobody
+                   # should believe.
+                   b"[stats|check|irq|log|status|wedge]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
                    b"[info|id|read|bench]", b"[status|scan|soak]",
                    # `reset` and `clear` are the DESTRUCTIVE verbs (#315),
@@ -1544,6 +1549,41 @@ def main():
                         [b"model    rtic", b"task     power_refresh",
                          b"asked 50 ms", b"stalls   frontend"],
                         "`rtic` reports the model, the task and the counters")
+        # THE HEARTBEAT TASK MUST HAVE RUN, not merely be declared (#411).
+        #
+        # The orange LED's whole claim is that the scheduler dispatches, and the
+        # claim is worth nothing if this task is not dispatched. It sits at
+        # priority 3, above the `devices` ceiling, so a backend that silently
+        # dropped a priority the SLIC would not accept shows up HERE as `runs 0`
+        # rather than on the bench as a lamp that never blinks.
+        beat = re.search(rb"task\s+heartbeat prio (\d+) period (\d+) ms\s+"
+                         rb"runs (\d+)", reply)
+        check("the heartbeat task is declared, at priority 3, and has run",
+              beat is not None and beat.group(1) == b"3"
+              and beat.group(2) == b"100" and int(beat.group(3)) > 0,
+              "`rtic` does not report a heartbeat task that has run.\n"
+              "The orange LED claims the SCHEDULER is dispatching; it is that "
+              "task's toggle that\n"
+              "makes the claim. A declared task with `runs 0` means the claim "
+              "is unbacked and the\n"
+              "lamp would sit frozen on a board that was perfectly well.\n"
+              f"received: {show(reply) or '(nothing)'}")
+
+        # And `cpu status` must answer from the SAME counters, so the two
+        # renderings cannot drift. A number reachable by two names that disagree
+        # is worse than one reachable only by the less obvious name.
+        status = command("cpu status", [b"os       alive", b"runs", b"late"],
+                         "`cpu status` answers whether the OS is alive")
+        check("`cpu status` reports dispatches rather than a bare yes",
+              re.search(rb"runs\s+(\d+)", status) is not None
+              and int(re.search(rb"runs\s+(\d+)", status).group(1)) > 0,
+              "`cpu status` says the OS is alive without a dispatch count "
+              "behind it.\n"
+              "A liveness verb that cannot say how it knows is the class of "
+              "instrument #411\n"
+              "exists to remove.\n"
+              f"received: {show(status) or '(nothing)'}")
+
         check("the dispatcher is RTIC",
               b"model    rtic" in reply,
               "`rtic` did not report the RTIC dispatcher. The superloop was "

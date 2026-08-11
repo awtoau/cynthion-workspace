@@ -113,6 +113,10 @@ mod dispatch;
 mod events;
 mod fusb302;
 mod gpio;
+// The orange LED, toggled by a periodic RTIC task. If it stops, the OS is dead
+// (#411). One task, one LED, no gateware -- the GPIO peripheral's push-pull mode
+// is the whole handover.
+mod heartbeat;
 mod hyperram;
 mod info;
 // THE peripheral bring-up contract (#315): one `<peripheral>_init()` per part,
