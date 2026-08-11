@@ -179,6 +179,13 @@ mod app {
     /// drift and needs no second time source to check itself against.
     static SINCE_MS: AtomicU32 = AtomicU32::new(0);
 
+    /// The same pair for the heartbeat task (#411), kept separate so the two
+    /// periods cannot interact: the power interval is settable at runtime and
+    /// may be OFF, and whether the board looks alive must not inherit either
+    /// property.
+    static HEARTBEAT_SINCE_MS: AtomicU32 = AtomicU32::new(0);
+    static HEARTBEAT_AT: AtomicU32 = AtomicU32::new(0);
+
     /// One millisecond passed. Release the REFRESH task if its period is up.
     ///
     /// Called from `timer::tick`, in the machine timer handler. It may not print
@@ -192,6 +199,23 @@ mod app {
     /// wanted) and the `pends` against `runs` columns in the `rtic` command are
     /// what make it visible rather than silent.
     pub fn tick() {
+        // THE HEARTBEAT RELEASE COMES FIRST, and before every early return
+        // below. A release the power branch can skip would make whether the
+        // board looks alive depend on the PAC1954 poll rate, which is settable
+        // at runtime and may be OFF (#286).
+        let beat = HEARTBEAT_SINCE_MS.load(Ordering::Relaxed) + timer::PERIOD_MS;
+        if beat >= sched::HEARTBEAT_PERIOD_MS {
+            // Subtract rather than zero, so a tick that arrives late does not
+            // shorten the following interval -- the same absolute-grid argument
+            // `src/timer.rs` makes about `mtimecmp`.
+            HEARTBEAT_SINCE_MS.store(beat - sched::HEARTBEAT_PERIOD_MS, Ordering::Relaxed);
+            HEARTBEAT_AT.store(Instant::ZERO.elapsed(clock::now()), Ordering::Relaxed);
+            sched::pended(sched::HEARTBEAT);
+            rtic::export::pend(slic::SoftwareInterrupt::Heartbeat);
+        } else {
+            HEARTBEAT_SINCE_MS.store(beat, Ordering::Relaxed);
+        }
+
         let since = SINCE_MS.load(Ordering::Relaxed) + timer::PERIOD_MS;
 
         // A PAC1954 cycle is TWO dispatches, not one, and the gap between them
@@ -380,6 +404,39 @@ mod app {
     }
 
     const _: () = assert!(sched::POWER_ALERT_PRIORITY == 2);
+
+    /// Toggle the orange LED. The board's one live sign that the OS is up (#411).
+    ///
+    /// A SOFTWARE task, dispatched through the SLIC, not a hardware task bound
+    /// to the timer vector. Reaching this body means all of: the core is
+    /// fetching, the CLINT fired, `tick` ran and did its arithmetic, the pend
+    /// reached `msip`, the SLIC selected this source, and no lock was holding
+    /// the threshold above priority 3. A hardware task on the timer IRQ would
+    /// prove the first two and stop there.
+    ///
+    /// **What it does NOT prove, said plainly.** RTIC's software tasks here are
+    /// released by `tick`'s counter, not by a monotonic queue, so nothing below
+    /// exercises a deadline queue. That is not an omission that could be tidied
+    /// up: the CLINT has ONE comparator, `Mono::start()` claims `mtimecmp`, and
+    /// `src/timer.rs` already owns it -- adopting a monotonic moves every
+    /// periodic job in the firmware at once, including the tick that stamps
+    /// every log line. `src/bin/mono_rtic.rs` is that work, written and measured.
+    ///
+    /// And it would keep blinking through #409: a shell verb spinning at idle
+    /// priority with interrupts enabled leaves everything above intact. That is
+    /// the correct reading -- the OS is alive and the application is not -- but
+    /// it means this lamp is not a wedged-verb detector.
+    ///
+    /// Priority 3, ABOVE the `devices` ceiling of 2, so no shell command holding
+    /// that lock can stop the blink on a healthy board.
+    #[task(binds = Heartbeat, priority = 3)]
+    fn heartbeat(_cx: heartbeat::Context) {
+        let released = Instant::at(HEARTBEAT_AT.load(Ordering::Relaxed));
+        sched::released(sched::HEARTBEAT, released.elapsed(clock::now()));
+        crate::heartbeat::toggle();
+    }
+
+    const _: () = assert!(sched::HEARTBEAT_PRIORITY == 3);
 
     /// Release the ALERT task. Called from the machine-external handler.
     ///

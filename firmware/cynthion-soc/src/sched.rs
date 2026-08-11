@@ -76,11 +76,20 @@ pub const POWER: usize = 0;
 /// excursions slower to report, and #286 wants it off by default.
 pub const POWER_ALERT: usize = 1;
 
+/// The heartbeat: toggle the orange LED, every [`HEARTBEAT_PERIOD_MS`] (#411).
+///
+/// A TASK, not a line in `#[idle]`, and that is the whole of what the LED
+/// claims. A blink driven from a loop says only that a loop is turning, which a
+/// core spinning in a poll does too -- #409 is exactly that shape. A blink
+/// driven from a dispatched task says the SCHEDULER IS STILL SCHEDULING, and
+/// that is what "the OS is alive" means.
+pub const HEARTBEAT: usize = 2;
+
 /// How many tasks this module accounts for.
 ///
 /// The consoles are not one: the machine-external handler fills a ring at
 /// hardware priority, above every SLIC source. #247 sweeps the rest.
-const TASKS: usize = 2;
+const TASKS: usize = 3;
 
 /// What each task is, for the report. Parallel to the ids above.
 struct Task {
@@ -104,6 +113,11 @@ const TABLE: [Task; TASKS] = [
         priority: POWER_ALERT_PRIORITY,
         periodic: false,
     },
+    Task {
+        name: "heartbeat",
+        priority: HEARTBEAT_PRIORITY,
+        periodic: true,
+    },
 ];
 
 /// The period a task is asked to hold, or `None` if it is aperiodic.
@@ -117,9 +131,33 @@ fn period_ms(task: usize) -> Option<u32> {
             power::RATE_OFF => None,
             ms => Some(ms),
         },
+        HEARTBEAT => Some(HEARTBEAT_PERIOD_MS),
         _ => None,
     }
 }
+
+/// How often the heartbeat task toggles the orange LED, in milliseconds.
+///
+/// 100, so the LED's own period is 200 ms -- 5 Hz, unmistakably a blink rather
+/// than a flicker, and slow enough that a phone camera or a stopwatch can time
+/// it. Two toggles per period is what makes a stuck output distinguishable from
+/// a healthy one; a level, however carefully computed, cannot be.
+///
+/// The cost is 10 dispatches a second of one GPIO write.
+pub const HEARTBEAT_PERIOD_MS: u32 = 100;
+
+/// The RTIC priority the heartbeat task runs at.
+///
+/// 3, and it has to be ABOVE the `devices` ceiling of 2. `idle` locks `devices`
+/// around a whole shell command, which raises the SLIC threshold to that ceiling
+/// -- so a task at 1 or 2 would be masked for the length of any long command and
+/// the LED would stop blinking during a `bench` walk on a perfectly well board.
+/// Above the ceiling nothing a command does can delay it, which is what lets a
+/// stopped blink mean what it says.
+///
+/// It costs nothing to put it there: the body is one GPIO write and takes no
+/// shared resource, so there is nothing it can preempt into.
+pub const HEARTBEAT_PRIORITY: u8 = 3;
 
 /// The RTIC priority the power task runs at.
 ///
@@ -225,6 +263,69 @@ pub fn boot_complete(uart: &mut Uart) {
     metrics::restart();
 }
 
+/// `cpu status` -- is the OS alive, and how promptly (#411).
+///
+/// **The same statics the `rtic` table reads, formatted for one question.** Not
+/// a second copy of the arithmetic: a number reachable by two names that can
+/// drift apart is worse than one reachable only by the less obvious name. `rtic`
+/// is the dispatcher's whole report, every task and both its gap and lateness
+/// columns; this is the one row a person wants when they are asking whether the
+/// board is up.
+///
+/// The figures are STEADY STATE, not boot. [`boot_complete`] clears every
+/// counter after the prologue, so what prints here began at the first turn of
+/// the loop -- which is what makes the lateness a jitter measurement rather than
+/// the 12.6 ms of one-off bring-up that #322 is about.
+pub fn heartbeat_report(uart: &mut Uart) {
+    let runs = RUNS[HEARTBEAT].load(RELAXED);
+    let pends = RELEASES[HEARTBEAT].load(RELAXED);
+    let worst = WORST_LATE[HEARTBEAT].load(RELAXED);
+    let mean = TOTAL_LATE[HEARTBEAT]
+        .load(RELAXED)
+        .checked_div(runs)
+        .unwrap_or(0);
+
+    let _ = writeln!(
+        uart,
+        "os       {}  the {} LED toggles per dispatch, every {} ms",
+        if runs == 0 {
+            "NOT YET DISPATCHED -- nothing has toggled the lamp"
+        } else {
+            "alive"
+        },
+        HEARTBEAT_LAMP,
+        HEARTBEAT_PERIOD_MS
+    );
+    let _ = writeln!(
+        uart,
+        "  runs    {}  pends {}{}",
+        runs,
+        pends,
+        if pends != runs { "  COALESCED" } else { "" }
+    );
+    // LATE, not GAP, and the two are different questions -- a dispatcher that is
+    // late every time by the same amount holds a perfect period. `rtic` prints
+    // both columns; this prints the one that says whether a dispatch is prompt.
+    let _ = writeln!(
+        uart,
+        "  late    worst {} us  mean {} us   dispatch delay, steady state \
+         (boot cleared)",
+        clock::to_micros(worst),
+        clock::to_micros(mean)
+    );
+    // WHAT A BLINK DOES NOT SAY. Stated where the number is read, because the
+    // number invites exactly the wrong conclusion.
+    let _ = writeln!(
+        uart,
+        "  means   the scheduler dispatches; NOT that any verb is progressing \
+         -- see `cpu wedge`"
+    );
+}
+
+/// The colour the heartbeat task drives, for the report above. Named by colour
+/// and only by colour -- `src/gpio.rs` says why.
+const HEARTBEAT_LAMP: &str = "orange";
+
 /// A task became due. Called by the 1 ms tick, which is what decides that.
 pub fn pended(task: usize) {
     RELEASES[task].store(RELEASES[task].load(RELAXED).saturating_add(1), RELAXED);
@@ -247,7 +348,6 @@ pub fn released(task: usize, late: u32) {
     }
     WORST_LATE[task].fetch_max(late, RELAXED);
     TOTAL_LATE[task].store(TOTAL_LATE[task].load(RELAXED).saturating_add(late), RELAXED);
-
 }
 
 /// The PLIC and its five sources, as the `irq` command prints them.
@@ -437,6 +537,21 @@ pub fn command(uart: &mut Uart) {
         // the pin says so, and an interval between two of them measures the
         // rails, not the dispatcher.
         match period {
+            // `poll_stats` is the POWER poll's and only its. Printing it beside
+            // another task's period would put one task's interval under
+            // another's heading, which is a plausible wrong number -- worse here
+            // than an absent one.
+            _ if index != POWER => {
+                let _ = writeln!(
+                    uart,
+                    "  gap    not timed here -- {}",
+                    if index == HEARTBEAT {
+                        "the LED is the readout; `cpu wedge` is the control (#411)"
+                    } else {
+                        "released by the ALERT pin, not a period"
+                    }
+                );
+            }
             None => {
                 let _ = writeln!(
                     uart,
