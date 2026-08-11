@@ -235,7 +235,10 @@ Only once this behaves does the matrix mean anything.
   today, and two CDC bugs here have already presented as correct counters with
   dropped data.
 - Is the DQS one-word-late read a read-late or a write-early fault (#186)? A rig
-  measuring a path with a known offset measures the offset.
+  measuring a path with a known offset measures the offset. **The CA/latency
+  parity explanation is refuted** (`57a9a99`): the data phase starts at edge
+  `4 + 2 × L_ck`, which is a multiple of 4 at every legal fixed-latency code, so
+  DQS aligns. The fault is above the PHY and #186 is still open.
 - `READ_DATA` is unbounded, so a run that drops one beat parks the controller
   and the rig reports nothing (#316). Every cell below is measured through it.
   No implementation surveyed calibrates the read window, so the phase axis has

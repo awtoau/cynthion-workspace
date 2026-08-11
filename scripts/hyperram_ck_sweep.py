@@ -23,7 +23,7 @@ costs more builds. `scripts/hyperram_ck_rungs.py` does that arithmetic.
 `sync` cycle, so CK is `hr_clk` and nextpnr caps it near 94 MHz -- a 96 MHz build
 does not exist. The part is rated 166 MHz. So a clean sweep here says the FPGA
 kept up, not that the memory's limit was found; that measurement needs the 4:1
-DQS path and is blocked on #314.
+DQS path.
 
 Transcript -> `tmp/logs/hyperram-ck-sweep.txt`.
 """
