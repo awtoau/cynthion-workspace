@@ -117,6 +117,25 @@ def test_peripheral_base_is_aligned_to_its_window():
         f"0x{base - base % size + size:08x}")
 
 
+def test_phase_base_agrees():
+    """The phase window, same hand-written-constant problem as `BASE`.
+
+    It reads as zeroes when absent, and zero rotation means "no shifter in this
+    bitstream" -- so a base that has drifted does not fail, it reports the
+    feature missing on a board that has it.
+    """
+    size = 0x10
+    gateware = _grab(TOP, r"^PLL_PHASE_BASE\s*=\s*(0x[0-9a-fA-F_]+)")
+    firmware = _grab(FIRMWARE,
+                     r"^pub const PHASE_BASE:\s*usize\s*=\s*(0x[0-9a-fA-F_]+)")
+    assert firmware == gateware, (
+        f"PHASE_BASE is 0x{firmware:08x} but PLL_PHASE_BASE is 0x{gateware:08x}")
+    assert gateware % size == 0, (
+        f"PLL_PHASE_BASE 0x{gateware:08x} is not a multiple of its 0x{size:x}-"
+        f"byte window; the decoder's compare cannot match and the CPU hangs on "
+        f"the first read")
+
+
 def test_burst_words_agrees():
     """The firmware's poll bound is derived from the engine's burst length.
 

@@ -9,7 +9,7 @@
 
 use core::fmt::Write;
 
-use super::parse::{parse_decimal, trim};
+use super::parse::{parse_decimal, parse_signed, trim};
 use crate::bist::{self, Axes, Bist};
 use crate::clock::Hz;
 use crate::uart::Uart;
@@ -40,6 +40,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
         b"ck" => ck(uart, args),
+        b"phase" => phase(uart, args),
         b"cell" => match axes(args) {
             Some(axes) => bist::one(uart, &engine, axes, DEFAULT_PASSES),
             None => {
@@ -92,6 +93,67 @@ fn ck(uart: &mut Uart, args: &[u8]) {
     // the one condition under which every number above is meaningless.
     if !ck.locked() {
         let _ = writeln!(uart, "  PLL NOT LOCKED -- no measurement here means anything");
+    }
+}
+
+/// `bist phase [clkos|clkos2|clkos3|clkop [[-]steps|back steps]]`.
+///
+/// With no argument it reports. With an output it steps that output, negative
+/// for backward, and reports after each step so a sweep is readable as it runs
+/// rather than only at the end.
+///
+/// **`clkop` is the feedback output of this PLL.** Shifting it does not move
+/// CLKOP; the loop corrects it and everything else moves instead. Allowed, and
+/// named, because finding that out should not cost a rebuild.
+fn phase(uart: &mut Uart, args: &[u8]) {
+    // SAFETY: `bist::PHASE_BASE` is the shifter's CSR base.
+    let phase = unsafe { bist::Phase::new(bist::PHASE_BASE) };
+    if !phase.present() {
+        let _ = writeln!(uart, "phase: no shifter in this bitstream");
+        return;
+    }
+
+    let mut words = args.split(|&b| b == b' ').filter(|w| !w.is_empty());
+    if let Some(name) = words.next() {
+        let sel = match bist::PHASESEL.iter().find(|(n, _)| n.as_bytes() == name) {
+            Some(&(_, sel)) => sel,
+            None => {
+                let _ = writeln!(uart, "usage: bist phase [clkos|clkos2|clkos3|clkop [[-]steps|back steps]]");
+                return;
+            }
+        };
+        // `back N` as well as `-N`. Both spellings kept: `back` is what the
+        // measured 14-forward-14-back run used, before #347 let `-N` through.
+        let (back, count) = match words.next() {
+            Some(word) if word == b"back" =>
+                (true, words.next().and_then(parse_decimal).unwrap_or(0)),
+            Some(word) => {
+                let signed = parse_signed(word).unwrap_or(0);
+                (signed < 0, signed.unsigned_abs())
+            }
+            None => (false, 0),
+        };
+        phase.select(sel);
+        for _ in 0..count {
+            if !phase.step(sel, back) {
+                let _ = writeln!(uart, "phase: step did not complete -- busy stuck");
+                break;
+            }
+        }
+    }
+
+    let _ = writeln!(
+        uart,
+        "  steps {}  of {} per rotation  level {}  count {}  {}{}",
+        phase.steps(),
+        phase.rotation(),
+        phase.level() as u32,
+        phase.count(),
+        if phase.backward() { "backward" } else { "forward" },
+        if phase.has_probe() { "" } else { "  (NO PROBE -- level means nothing)" }
+    );
+    if !phase.locked() {
+        let _ = writeln!(uart, "  PLL NOT LOCKED -- the phase moved something it should not have");
     }
 }
 
