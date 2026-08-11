@@ -83,14 +83,6 @@ hyperram-bist = []
 # them.
 models = []
 
-# The Embassy skeleton in `src/bin/model_embassy.rs`. Optional dependencies, so
-# nothing here reaches the shipping image -- the same arrangement as `rtic`.
-#
-# Declared because the row it produces in `docs/rtic.md` was
-# measured with these added LOCALLY and never committed, which made a number in
-# a table that nobody could re-take.
-embassy = ["dep:embassy-executor", "dep:embassy-sync", "dep:static_cell",
-           "riscv/critical-section-single-hart"]
 
 # The #115 real-workload measurement: a synthetic USB device-emulation load
 # (`src/workload.rs`) and the `usb` shell command that runs it. Off, and every
@@ -246,9 +238,9 @@ lto = true
 codegen-units = 1
 debug = true         # kept -- costs nothing in the binary, and .elf is what gets read
 
-# Declared explicitly, because cargo auto-discovers `src/bin/*.rs` and builds
-# them all otherwise -- which put `model_embassy.rs` into the default build with
-# no `embassy_executor` to link against.
+# Every `[[bin]]` is declared explicitly, because cargo auto-discovers
+# `src/bin/*.rs` and builds them all otherwise -- which once put a model into
+# the default build with nothing to link it against.
 # For `--features rticprobe` only, whose `critical_section` implementation is
 # instrumented rather than `riscv`'s. Already in the graph -- riscv-slic depends
 # on it -- so this declares the direct use rather than adding a package.
@@ -275,18 +267,8 @@ optional = true
 version = "0.3"
 optional = true
 
-[dependencies.embassy-executor]
-version = "0.10"
-optional = true
-features = ["platform-riscv32", "executor-thread"]
 
-[dependencies.embassy-sync]
-version = "0.7"
-optional = true
 
-[dependencies.static_cell]
-version = "2"
-optional = true
 
 [[bin]]
 name = "model-bare"
@@ -308,10 +290,6 @@ name = "model-coop-hwtimer"
 path = "src/bin/model_coop_hwtimer.rs"
 required-features = ["models"]
 
-[[bin]]
-name = "model-embassy"
-path = "src/bin/model_embassy.rs"
-required-features = ["embassy"]
 
 # The workload's third dispatcher. `required-features` names the base feature;
 # a build must add `rticcs` or `rticprobe` on top of it to link, and the comment

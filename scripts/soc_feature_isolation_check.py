@@ -10,14 +10,14 @@
     python3 scripts/soc_feature_isolation_check.py -v
 
 `firmware/cynthion-soc` carries optional features -- `usbport`, `models`,
-`embassy` -- whose only purpose is to build measurement artefacts in `src/bin/`.
+whose only purpose is to build measurement artefacts in `src/bin/`.
 The claim each of them makes is "the shipping image is byte-identical either
 way". This checks it rather than asserting it, three ways:
 
 1. **Every `src/bin/*.rs` has a `[[bin]]` entry with `required-features`.**
    Cargo auto-discovers `src/bin/`, so a target without an entry is built by
-   the DEFAULT build. That is not hypothetical: an Embassy skeleton with no
-   `embassy` dependency in scope reached `./dev.py test` exactly this way.
+   the DEFAULT build. That is not hypothetical: a model skeleton with no
+   executor dependency in scope reached `./dev.py test` exactly this way.
 
 2. **`src/main.rs` declares no module the spikes own.** A file in `src/` is only
    compiled into the shell if something says `mod`. The spikes reach their
@@ -227,7 +227,7 @@ def normalised_lines(elf):
         # The machine outliner's serial numbers. LLVM names the functions it
         # outlines `OUTLINED_FUNCTION_0`, `_1`, ... in the order it creates them,
         # and that order moves when anything upstream of it does. Caught with
-        # `--features embassy`, which gates nothing the shell compiles: `.text`
+        # a model-only feature, which gates nothing the shell compiles: `.text`
         # stayed at exactly 37,236 bytes and 12,582 instructions, and the whole
         # of the difference was ONE call annotation reading `_9` instead of
         # `_8`. A serial number is not the program.

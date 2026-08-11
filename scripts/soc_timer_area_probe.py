@@ -9,7 +9,7 @@ Two shapes, because they are not the same peripheral:
 
     mtimecmp    a 64-bit comparator against `mtime`, which is what
                 `gateware/soc/cpu/clint.py` already has one of and what
-                `rtic_time::Monotonic` and `embassy-time` both assume
+                `rtic_time::Monotonic` and comparable timer traits assume
     reload      a 32-bit auto-reloading down-counter, which is what
                 `firmware/cynthion-soc/src/bin/model_coop_hwtimer.rs` assumes:
                 no 64-bit carry chain, and no rollover to reason about because

@@ -10,7 +10,6 @@ runtime and nothing else.
     model-bare           riscv-rt and nothing: the floor
     model-coop           a ready bitmap, a job table, a dispatch loop
     cynthion-soc-rtic    RTIC 2.3 on riscv-clint-backend (also scripts/rtic_probe.py)
-    model-embassy        embassy-executor 0.10, platform-riscv32
 
 and one pair that answers the hardware-timer question rather than the runtime
 question -- the same three periodic jobs, scheduled two ways:
@@ -22,7 +21,7 @@ The budget these spend is the 4 KiB direct-mapped I-cache, not flash and not
 block RAM. See the `opt-level` table in `firmware/cynthion-soc/Cargo.toml` for
 why code size on this machine is a speed question.
 
-NOT in `./dev.py gate`: the `rtic` and `embassy` features fetch crates a default
+NOT in `./dev.py gate`: the `rtic` feature fetches crates a default
 build never touches, and a gate that needs the network fails on a flight.
 
 Writes ./tmp/logs/soc_model_probe.log as well as stdout.
@@ -48,7 +47,6 @@ BUILDS = [
     # `rticspike`, not `rtic`: the `rtic` feature went with #245, and it is what
     # `[[bin]] cynthion-soc-rtic` names in `required-features` (#387).
     ("RTIC 2.3", "cynthion-soc-rtic", ["rticspike"]),
-    ("Embassy 0.10", "model-embassy", ["embassy"]),
     ("coop + 3 jobs, 1 mtimecmp", "model-coop-swqueue", ["models"]),
     ("coop + 3 jobs, 3 timers", "model-coop-hwtimer", ["models"]),
 ]
