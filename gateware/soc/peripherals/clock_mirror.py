@@ -50,11 +50,24 @@ rather than the log if this changes; nextpnr announces the fallback as
 
 from amaranth import Elaboratable, Module, Signal
 from amaranth.lib import io
+from amaranth.lib.wiring import In, Component, connect, flipped
+from amaranth_soc import csr
 
-__all__ = ["ClockMirror"]
+__all__ = ["ClockMirror", "ClockMirrorMap", "SOURCE_CODES"]
 
 # One PMOD pin per source, in order. Pin 0 is PMOD A pin 1.
 MAX_SOURCES = 8
+
+# What the firmware is told is on a pad. A number rather than a name because a
+# nibble per pad fits one register; `firmware/cynthion-soc/src/bist.rs` holds the
+# other half of the table and `tests/test_bist_constants.py` holds them equal.
+#
+# 0 is "nothing", so a build with no mirror -- whose window does not exist and
+# reads as zeroes -- reports every pad idle, which is what is true.
+#
+# `hr_probe` is reserved, not yet mirrorable: it arrives with #228's phase probe.
+# Allocated here so the code never has to be renumbered on the wire.
+SOURCE_CODES = {"sync": 1, "usb": 2, "hr": 3, "hr_fast": 4, "hr_probe": 5}
 
 
 class ClockMirror(Elaboratable):
@@ -103,4 +116,49 @@ class ClockMirror(Elaboratable):
             buffer.oe.eq(1),
         ]
 
+        return m
+
+
+class ClockMirrorMap(Component):
+    """Which source is on which pad, read from the bitstream rather than assumed.
+
+        +0  pads   RO  nibble per pad, pad 0 in bits 3:0; see SOURCE_CODES
+        +4  info   RO  bits 7:0 divisor, bits 15:8 pad count
+
+    Constants, and that is the point: the firmware's `pmod`/`bist mirror` answer
+    then comes from the design that drives the pins, not from a table in the
+    firmware that is right until someone reorders the domain list. `divisor` is
+    here for the same reason -- a reader with a scope needs it to turn 20 MHz on
+    a pad back into 80 MHz on the die.
+    """
+
+    def __init__(self, *, domains, divisor):
+        unknown = [name for name in domains if name not in SOURCE_CODES]
+        if unknown:
+            raise ValueError(f"no SOURCE_CODES entry for {unknown}; the firmware "
+                             f"cannot name a pad it has no code for")
+        self._pads = sum(SOURCE_CODES[name] << (4 * index)
+                         for index, name in enumerate(domains))
+        self._info = (len(domains) << 8) | (divisor & 0xFF)
+
+        self._pads_reg = csr.Register({"value": csr.Field(csr.action.R, 32)},
+                                      access="r")
+        self._info_reg = csr.Register({"value": csr.Field(csr.action.R, 32)},
+                                      access="r")
+        builder = csr.Builder(addr_width=3, data_width=8)
+        builder.add("pads", self._pads_reg, offset=0x00)
+        builder.add("info", self._info_reg, offset=0x04)
+        self._bridge = csr.Bridge(builder.as_memory_map())
+
+        super().__init__({"bus": In(csr.Signature(addr_width=3, data_width=8))})
+        self.bus.memory_map = self._bridge.bus.memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.bridge = self._bridge
+        connect(m, flipped(self.bus), self._bridge.bus)
+        m.d.comb += [
+            self._pads_reg.f.value.r_data.eq(self._pads),
+            self._info_reg.f.value.r_data.eq(self._info),
+        ]
         return m

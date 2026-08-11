@@ -40,6 +40,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         b"sweep" => bist::sweep(uart, &engine, passes(args), false),
         b"trace" => bist::sweep(uart, &engine, passes(args), true),
         b"ck" => ck(uart, args),
+        b"mirror" => mirror(uart),
         b"cell" => match axes(args) {
             Some(axes) => bist::one(uart, &engine, axes, DEFAULT_PASSES),
             None => {
@@ -92,6 +93,39 @@ fn ck(uart: &mut Uart, args: &[u8]) {
     // the one condition under which every number above is meaningless.
     if !ck.locked() {
         let _ = writeln!(uart, "  PLL NOT LOCKED -- no measurement here means anything");
+    }
+}
+
+/// `bist mirror` -- which clock is on which PMOD A pad, and divided by what.
+fn mirror(uart: &mut Uart) {
+    // SAFETY: `bist::MIRROR_BASE` is the mirror map's CSR base.
+    let mirror = unsafe { bist::Mirror::new(bist::MIRROR_BASE) };
+    let pads = mirror.pads();
+    if pads == 0 {
+        let _ = writeln!(uart, "mirror: no clocks on the PMOD pins in this bitstream");
+        return;
+    }
+    let _ = writeln!(uart, "  PMOD A, each source divided by {}", mirror.divisor());
+    for index in 0..pads as usize {
+        match mirror.source(index) {
+            Some(name) => {
+                let _ = writeln!(
+                    uart,
+                    "  pin {:>2}  ball {:<4} {}",
+                    bist::PMOD_A_PINS[index],
+                    bist::PMOD_A_BALLS[index],
+                    name
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    uart,
+                    "  pin {:>2}  ball {:<4} driven low",
+                    bist::PMOD_A_PINS[index],
+                    bist::PMOD_A_BALLS[index]
+                );
+            }
+        }
     }
 }
 

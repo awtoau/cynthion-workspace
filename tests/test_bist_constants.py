@@ -40,6 +40,7 @@ TRANSPORT = ROOT / "gateware" / "soc" / "peripherals" / "bist_csr.py"
 PERIPHERAL = ROOT / "gateware" / "soc" / "peripherals" / "hyperram_bist.py"
 ENGINE = ROOT / "gateware" / "probes" / "hyperram" / "hyperram_ceiling_top.py"
 CONTROLLER = ROOT / "gateware" / "soc" / "peripherals" / "hyperram_controller.py"
+MIRROR = ROOT / "gateware" / "soc" / "peripherals" / "clock_mirror.py"
 FIRMWARE = ROOT / "firmware" / "cynthion-soc" / "src" / "bist.rs"
 
 
@@ -115,6 +116,47 @@ def test_peripheral_base_is_aligned_to_its_window():
         f"acknowledged and the CPU hangs on the first read. Nearest aligned "
         f"bases are 0x{base - base % size:08x} and "
         f"0x{base - base % size + size:08x}")
+
+
+def test_mirror_base_agrees():
+    """The pad-map window, same hand-written-constant problem as `BASE`.
+
+    It reads as zeroes when absent, and zero means "no mirror in this
+    bitstream" -- so a base that has drifted does not fail, it reports the
+    feature missing on a board that has it.
+    """
+    size = 0x8
+    gateware = _grab(TOP, r"^CLOCK_MIRROR_BASE\s*=\s*(0x[0-9a-fA-F_]+)")
+    firmware = _grab(FIRMWARE,
+                     r"^pub const MIRROR_BASE:\s*usize\s*=\s*(0x[0-9a-fA-F_]+)")
+    assert firmware == gateware, (
+        f"MIRROR_BASE is 0x{firmware:08x} but CLOCK_MIRROR_BASE is "
+        f"0x{gateware:08x}")
+    assert gateware % size == 0, (
+        f"CLOCK_MIRROR_BASE 0x{gateware:08x} is not a multiple of its "
+        f"0x{size:x}-byte window; the decoder's compare cannot match and the "
+        f"CPU hangs on the first read")
+
+
+def test_mirror_source_codes_agree():
+    """The nibble the gateware puts on a pad must name the same clock in Rust.
+
+    A drift here mislabels a pin, which is the one failure a scope cannot catch:
+    the trace is real, the name above it is not.
+    """
+    codes = re.search(r"^SOURCE_CODES = \{([^}]*)\}", MIRROR.read_text(), re.M)
+    assert codes, "clock_mirror.py no longer defines SOURCE_CODES"
+    gateware = dict(re.findall(r'"(\w+)":\s*(\d+)', codes.group(1)))
+    listing = re.search(r"MIRROR_SOURCES:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\]",
+                        FIRMWARE.read_text())
+    assert listing, "bist.rs no longer defines MIRROR_SOURCES"
+    firmware = re.findall(r'"(\w+)"', listing.group(1))
+    for name, code in gateware.items():
+        index = int(code) - 1
+        assert 0 <= index < len(firmware) and firmware[index] == name, (
+            f"the gateware sends code {code} for {name!r}, the firmware reads "
+            f"{firmware[index] if index < len(firmware) else 'nothing'!r}")
+    assert len(firmware) == len(gateware)
 
 
 def test_burst_words_agrees():
