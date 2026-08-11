@@ -37,6 +37,11 @@ mode -- and every `dif`/`se` row ever taken is then void, not merely inert.
 not to the part. Nothing here can judge it, so it is reported from the engine's
 own PHY flag and settled properly by `hyperram_axis_wiring.py` (#343).
 
+**Every trial runs at a capture phase measured first, not at a constant (#421).**
+The readback captures through the cell's own phase, so at a phase outside the
+read eye both words belong to other transactions -- the board withholds them and
+says so, and this script used to report that as its own parse being wrong.
+
 Transcript -> `tmp/logs/hyperram-axis-liveness.txt`.
 """
 
@@ -49,9 +54,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 import soc_shell  # noqa: E402
+from hyperram_readclksel_sweep import analyse_window, analysis_lines  # noqa: E402
 
 TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-axis-liveness.txt"
+
+# Held at the power-on default so the phase probe below varies only the phase.
+PROBE = "3 dif {sel} 2 fix"
 
 # `bist status` prints `  CR0     part reports 0xbf2f  latency code 2 fixed  drive 3`.
 # Matched against the board's real wording rather than an assumed one -- a regex
@@ -107,6 +117,46 @@ def cr0_after(board, cell):
     return status_after(board, cell)[0]
 
 
+def capture_phase(board):
+    """Which `sel` to run the trials at, measured now rather than assumed (#421).
+
+    `sel 0` was hardcoded here. It is outside the read eye on the current DQS
+    build, so every readback came back WITHHELD -- the read path had slid -- and
+    this script reported that as its own parse being wrong.
+
+    Returns `(sel, why)`. Raises when no phase passes: nothing below can then be
+    told from a part that did not store the field.
+    """
+    text = board.send("bist status")
+    if NON_DQS.search(text):
+        return 0, "non-DQS build: `sel` reaches nothing (#343), so there is no phase to choose"
+
+    table = []
+    for sel in range(8):
+        command = "bist cell " + PROBE.format(sel=sel)
+        row = bist_rows.require_rows(board.send(command, 20), command)[-1]
+        table.append((sel, row["verdict"] == "PASS"))
+    print("\nREADCLKSEL  the read eye, measured before anything is judged")
+    for sel, passed in table:
+        print(f"  sel {sel}: {'PASS' if passed else 'fail'}")
+    analysis = analyse_window(table)
+    for line in analysis_lines(analysis):
+        print("  " + line)
+
+    if analysis.kind == "no_pass":
+        raise SystemExit(
+            "NO CAPTURE PHASE PASSED, so no readback below could be trusted at "
+            "any of them. This is the rig or the part, not the parse -- fix that "
+            "first. `bist smoke` and `bist status` are the next two commands.")
+    if analysis.kind == "all_pass":
+        return 0, "every phase passed, so the choice cannot matter"
+    if analysis.kind == "disjoint":
+        (start, end), _ = max(zip(analysis.ranges, analysis.widths),
+                              key=lambda pair: pair[1])
+        return (start + end) // 2, f"the widest of {len(analysis.ranges)} windows"
+    return analysis.centre, f"the centre of the one window {analysis.ranges[0]}"
+
+
 def decode(value):
     return {name: (value >> shift) & mask for name, (shift, mask) in FIELDS.items()}
 
@@ -114,12 +164,18 @@ def decode(value):
 def main():
     board = Board()
     try:
+        # THE PHASE IS MEASURED FIRST (#421). Every cell below captures through
+        # it, the CR0/CR1 readback included, so a phase outside the eye makes
+        # every trial report a word from another transaction.
+        sel, why = capture_phase(board)
+        print(f"\n  running every trial at sel {sel} -- {why}")
+
         # Each pair differs in ONE field, so a readback that changes can only be
         # that field moving.
         trials = [
-            ("drive  CR0[14:12]", "3 dif 0 2 fix", "6 dif 0 2 fix"),
-            ("latency CR0[7:4]", "3 dif 0 2 fix", "3 dif 0 15 fix"),
-            ("fixed  CR0[3]", "3 dif 0 2 fix", "3 dif 0 2 var"),
+            ("drive  CR0[14:12]", f"3 dif {sel} 2 fix", f"6 dif {sel} 2 fix"),
+            ("latency CR0[7:4]", f"3 dif {sel} 2 fix", f"3 dif {sel} 15 fix"),
+            ("fixed  CR0[3]", f"3 dif {sel} 2 fix", f"3 dif {sel} 2 var"),
         ]
 
         verdicts = {}
@@ -136,12 +192,12 @@ def main():
 
         # CR1[6], the one axis with no CR0 field. Commanded both ways and read
         # back through #334's `REG_DEVICE_READBACK_CR1`.
-        first, second = (status_after(board, "3 dif 0 2 fix")[1],
-                         status_after(board, "3 se 0 2 fix")[1])
+        first, second = (status_after(board, f"3 dif {sel} 2 fix")[1],
+                         status_after(board, f"3 se {sel} 2 fix")[1])
         bit_a, bit_b = (first >> 6) & 1, (second >> 6) & 1
         print("\nCR1[6]  clock mode")
-        print(f"  bist cell 3 dif 0 2 fix  -> CR1 {first:#06x}  bit6 {bit_a}")
-        print(f"  bist cell 3 se  0 2 fix  -> CR1 {second:#06x}  bit6 {bit_b}")
+        print(f"  bist cell 3 dif {sel} 2 fix  -> CR1 {first:#06x}  bit6 {bit_a}")
+        print(f"  bist cell 3 se  {sel} 2 fix  -> CR1 {second:#06x}  bit6 {bit_b}")
         if first in (0, 0xffff) or second in (0, 0xffff):
             cr1_live = None
             print("  NOT PROVEN -- the CR1 read path is dead, so no dif/se row "
@@ -164,8 +220,9 @@ def main():
             print("  UNWIRED -- this is a non-DQS build and nothing in the "
                   "gateware reads the register. Every `sel` row is a REPEAT.")
         else:
-            print("  no read-back exists for it in either build; "
-                  "`hyperram_axis_wiring.py` shows it reaching the PHY here")
+            print("  no read-back exists for it in either build, so it is judged "
+                  "by pass/fail: the eye above, and `hyperram_axis_wiring.py` "
+                  "for it reaching the PHY")
 
         print("\nsummary")
         for field, live in verdicts.items():
@@ -173,7 +230,7 @@ def main():
         print(f"  {'CR1[6] clock mode':20s} "
               f"{'live' if cr1_live else 'NOT PROVEN'}")
         print(f"  {'sel READCLKSEL':20s} "
-              f"{'UNWIRED -- rows are repeats' if sel_unwired else 'not judged here'}")
+              f"{'UNWIRED -- rows are repeats' if sel_unwired else f'live -- eye found, ran at {sel}'}")
         verdicts["CR1[6] clock mode"] = bool(cr1_live)
 
         if not all(verdicts.values()) or sel_unwired:

@@ -88,16 +88,20 @@ def rungs(board):
 
 
 def sweep(board, passes):
-    """`lat -> (errors, words, verdict)` for the fixed-latency rows."""
-    # `bist latency` runs 32 cells; the poll bound inside the firmware scales
-    # with passes, so the budget here only has to cover the serial round trip
-    # plus the run. 16 passes measured under a second.
+    """`lat -> (sel, errors, words, control, verdict)` for the fixed rows.
+
+    One row per code, at the capture phase that did best of the eight (#421):
+    a code that fails here failed at every phase, not at a chosen one.
+    """
+    # `bist latency` runs 256 cells on a DQS build, 32 on a non-DQS one; the
+    # poll bound inside the firmware scales with passes, so the budget here only
+    # has to cover the serial round trip plus the run.
     text = board.send(f"bist latency {passes}", 30)
     rows = {}
     for row in bist_rows.rows(text):
         if row["fixed"]:
-            rows[row["lat"]] = (row["errors"], row["words"], row["control"],
-                                row["verdict"])
+            rows[row["lat"]] = (row["sel"], row["errors"], row["words"],
+                                row["control"], row["verdict"])
     return rows
 
 
@@ -121,15 +125,16 @@ def main():
                 silent.append(f"{mhz:g} MHz")
                 print(f"\n  {mhz:g} MHz -- NO ROWS PARSED, the run did not report")
                 continue
-            passed = sorted(c for c, r in rows.items() if r[3] == "PASS")
+            passed = sorted(c for c, r in rows.items() if r[4] == "PASS")
             results[mhz] = (passed, rows)
             print(f"\n  {mhz:g} MHz  PASS {passed}")
             for code in sorted(rows):
-                errors, words, control, verdict = rows[code]
+                sel, errors, words, control, verdict = rows[code]
                 if verdict == "PASS" or code in LEGAL:
                     mark = "legal" if code in LEGAL else "RESERVED"
-                    print(f"      lat {code:2d} {mark:8s} errors {errors:5d} "
-                          f"words {words:5d} control {control:5d}  {verdict}")
+                    print(f"      lat {code:2d} {mark:8s} sel {sel} "
+                          f"errors {errors:5d} words {words:5d} "
+                          f"control {control:5d}  {verdict}")
 
         # A rung that parsed nothing must not exit 0: an empty result set reads
         # exactly like a board that reported nothing, and the per-rung note
