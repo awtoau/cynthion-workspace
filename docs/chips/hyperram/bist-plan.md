@@ -268,6 +268,32 @@ by nothing, so the 4096-cell matrix is **512 configurations run 8 times**
   the part through the engine's `CONFIG_CR0`/`CONFIG_CR1` writes, and the CR0/CR1
   read-back proves whether the part stored them.
 
+### PLL dynamic phase shift is NOT a capture-phase axis ([#228](https://github.com/awtoau/cynthion-workspace/issues/228))
+
+The lever is real — `bist phase` moves the PLL and the probe follows it — but on
+both PHYs **as built** it cannot move the read window:
+
+- One clock launches CK **and** captures the returning data. non-DQS: `ODDRX1F`
+  and `IDDRX1F` both on `hr` (CLKOP). DQS: `ODDRX2DQSB`, `ODDRX2DQA` and
+  `DQSBUFM`/`IDDRX2DQA` all on `hr_fast` (CLKOS).
+- Shift by δ and launch, pad CK, the device's reply and the capture edge all move
+  by δ. The external delay is unchanged, so the margin is unchanged. Common-mode.
+- non-DQS has no lever at all: `hr` is CLKOP, and CLKOP is `FEEDBK_PATH`, so
+  shifting it moves every *other* output instead.
+- A live axis needs the capture clock on a **different** PLL output from CK's. The
+  DQS path has no room (the bank ECLK mux takes CLKOP/CLKOS only, both spoken
+  for); the non-DQS PHY has spare outputs but would need CK moved onto one.
+
+So the axis is a PHY change, not a clocking change. `READCLKSEL` remains the only
+runtime capture knob, and it only becomes live on DQS
+([#343](https://github.com/awtoau/cynthion-workspace/issues/343)).
+
+`./scripts/hyperram_phase_sweep.py` is the measurement. It reads the probe and
+`locked` after every step and keys on the accumulated count rather than a single
+sample, so a crossing shows as an intermediate value instead of a coin flip. It
+answers "did the phase move", never "did the read window move" — and it needs a
+bitstream built with the lever, which is not on `main`.
+
 ### FPGA pin attributes are bitstream bits, not a rebuild
 
 `DRIVE`, `PULLMODE`, `SLEWRATE`, `HYSTERESIS` and `OPENDRAIN` are `.config_enum`
