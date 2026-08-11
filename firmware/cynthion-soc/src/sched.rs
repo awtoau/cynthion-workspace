@@ -327,13 +327,6 @@ pub fn heartbeat_report(uart: &mut Uart) {
         clock::to_micros(worst),
         clock::to_micros(mean)
     );
-    // WHAT A BLINK DOES NOT SAY. Stated where the number is read, because the
-    // number invites exactly the wrong conclusion.
-    let _ = writeln!(
-        uart,
-        "  means   the scheduler dispatches; NOT that any verb is progressing \
-         -- see `cpu wedge`"
-    );
 }
 
 /// The colour the heartbeat task drives, for the report above. Named by colour
