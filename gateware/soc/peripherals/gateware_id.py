@@ -227,16 +227,36 @@ class GatewareId(wiring.Component):
         self._die = csr.Register({"value": csr.Field(csr.action.R, 9)},
                                  access="r")
 
-        # addr_width=5 -- six 32-bit registers and one more is 28 bytes, and a
+        # What `bus/fault.BusFault` has terminated, and how close it came.
+        #
+        # `worst` is the measurement that keeps `BUS_TIMEOUT_CYCLES` honest: the
+        # bound is 1.25x a DERIVED worst case, and a board reporting a high-water
+        # mark anywhere near it is one about to fault on legitimate traffic.
+        # Without a way to read it, the margin is an assertion nobody can check
+        # -- which is the dead-instrument problem #411 was filed about.
+        self._bus_fault = csr.Register({
+            "unclaimed": csr.Field(csr.action.R, 8),
+            "timeouts":  csr.Field(csr.action.R, 8),
+            "worst":     csr.Field(csr.action.R, 16),
+        }, access="r")
+
+        # addr_width=5 -- six 32-bit registers and two more is 32 bytes, and a
         # window must be a power of two aligned to its own size.
         builder = csr.Builder(addr_width=5, data_width=8)
         for name, register in self._regs.items():
             builder.add(name, register)
         builder.add("die", self._die)
+        builder.add("bus_fault", self._bus_fault)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
         super().__init__({
             "bus": In(csr.Signature(addr_width=5, data_width=8)),
+            # From `BusFault`. Undriven in a design without one, which reads as
+            # "nothing has been terminated" -- true of a design that cannot
+            # terminate anything.
+            "fault_unclaimed": In(8),
+            "fault_timeouts": In(8),
+            "fault_worst": In(16),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -247,6 +267,12 @@ class GatewareId(wiring.Component):
 
         for name, register in self._regs.items():
             m.d.comb += register.f.value.r_data.eq(Const(self._values[name], 32))
+
+        m.d.comb += [
+            self._bus_fault.f.unclaimed.r_data.eq(self.fault_unclaimed),
+            self._bus_fault.f.timeouts.r_data.eq(self.fault_timeouts),
+            self._bus_fault.f.worst.r_data.eq(self.fault_worst),
+        ]
 
         # The DTR is a hard block, so it exists only when there is a device to
         # put it in. Guarding on the platform keeps every simulation of this

@@ -82,10 +82,19 @@ use crate::{
 /// firmware avoids it.
 pub(crate) const HELP: &[(&str, &str)] = &[
     ("bist", "the HyperRAM BIST engine, off the Wishbone"),
+    // THE SUBCOMMANDS GO WITH THE ENGINE. On a `bist0-*` bitstream the verb
+    // answers one sentence and touches no bus (#409), so offering TAB
+    // completion for measurements it cannot make would be an invitation to the
+    // hang the gate exists to prevent.
+    #[cfg(feature = "hyperram-bist")]
     ("bist status", "is the engine there, and what was it built as"),
+    #[cfg(feature = "hyperram-bist")]
     ("bist smoke", "four cells: can the rig both pass and detect a fault"),
+    #[cfg(feature = "hyperram-bist")]
     ("bist cell <d> <clk> <sel>", "one cell, by hand"),
+    #[cfg(feature = "hyperram-bist")]
     ("bist sweep [passes]", "drive x clock x readclksel, a row per cell"),
+    #[cfg(feature = "hyperram-bist")]
     ("bist trace [passes]", "the sweep, narrating each cell before it runs"),
     ("board", "every connector, rail and controller"),
     ("bram", "block RAM at address zero"),
@@ -99,6 +108,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("cpu log [n|tags]", "the deferred event ring the handlers push to"),
     ("cpu status", "is the OS alive: heartbeat dispatches and their lateness"),
     ("cpu wedge [ms]", "stop the scheduler on purpose; watch the lamp stop"),
+    ("cpu fault [hex]", "read an address nothing decodes; it must fault, not hang"),
     ("flash", "the memory-mapped W25Q32 config flash"),
     ("flash info", "base and size, from the generated map"),
     ("flash id", "the first flash word, and the size"),

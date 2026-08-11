@@ -1879,7 +1879,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_GATEWARE</name>
-      <description>board/gateware: 7 registers at 0xf0000640</description>
+      <description>board/gateware: 8 registers at 0xf0000640</description>
       <baseAddress>0xF0000640</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -2009,6 +2009,38 @@
               <description>value [8:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>9</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BUS_FAULT</name>
+          <description>BOARD_GATEWARE.BUS_FAULT, 32 bits at +0x1c</description>
+          <addressOffset>0x1C</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>UNCLAIMED</name>
+              <description>unclaimed [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TIMEOUTS</name>
+              <description>timeouts [15:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>WORST</name>
+              <description>worst [31:16]</description>
+              <bitOffset>16</bitOffset>
+              <bitWidth>16</bitWidth>
               <access>read-only</access>
             </field>
           </fields>

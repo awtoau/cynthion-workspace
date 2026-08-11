@@ -115,7 +115,7 @@ pub static PERIPHERALS: &[Peripheral] = &[
         name: "board_gateware",
         base: 0xf0000640,
         size: 0x00000020,
-        registers: 7,
+        registers: 8,
     },
     Peripheral {
         name: "board_clocks",

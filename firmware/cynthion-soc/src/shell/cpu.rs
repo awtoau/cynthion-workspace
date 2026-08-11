@@ -7,7 +7,7 @@
 use core::fmt::Write;
 use core::ptr::read_volatile;
 
-use crate::shell::parse::{parse_decimal, trim};
+use crate::shell::parse::{parse_decimal, parse_hex, trim};
 use crate::target::flash_word;
 use crate::uart::Uart;
 use crate::{clock, heartbeat, log, metrics, sched, target};
@@ -28,12 +28,65 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         }
         b"check" => check(uart),
         b"wedge" => wedge(uart, args),
+        b"fault" => fault(uart, args),
         b"" => {
-            let _ = uart.write_str("usage: cpu status|stats|check|irq|wedge\n");
+            let _ = uart.write_str("usage: cpu status|stats|check|irq|wedge|fault\n");
         }
         _ => {
-            let _ = uart.write_str("unknown: try `cpu status|stats|check|irq|wedge`\n");
+            let _ = uart.write_str("unknown: try `cpu status|stats|check|irq|wedge|fault`\n");
         }
+    }
+}
+
+/// The address `cpu fault` reads when none is given.
+///
+/// Inside the CPU's `f0000000+10000000` I/O region -- so the core issues the
+/// cycle rather than trapping on the PMA -- and inside no decoder window on
+/// either variant: the board block ends at f0000680 and the BIST engine, when
+/// present, starts at f0000800.
+const FAULT_ADDR: u32 = 0xf000_0700;
+
+/// `cpu fault [hex]` -- read an address nothing decodes, on purpose.
+///
+/// **The negative control for #409.** Before the gateware answered ERR for an
+/// unclaimed address, this command did not print its second line and the shell
+/// never came back: no ack, no err, the core stalled in the load. That is the
+/// defect, and it is the only way to show the fix is a fix.
+fn fault(uart: &mut Uart, args: &[u8]) {
+    let addr = match parse_hex(args) {
+        Some(value) => value & !3,
+        None if args.is_empty() => FAULT_ADDR,
+        None => {
+            let _ = writeln!(uart, "usage: cpu fault [hex address, default {:08x}]", FAULT_ADDR);
+            return;
+        }
+    };
+    let _ = writeln!(uart, "reading {:08x}; the bus must fault, not hang", addr);
+
+    // SAFETY: a 32-bit aligned volatile read of an I/O address. It is expected
+    // to fault, and the fault is the point -- `src/fault.rs` reports it and
+    // steps over this instruction.
+    let word = unsafe { read_volatile(addr as *const u32) };
+
+    let _ = writeln!(
+        uart,
+        "  {:08x} answered {:08x} -- {} trap(s) taken",
+        addr,
+        word,
+        crate::fault::taken()
+    );
+
+    // The FABRIC's account beside the CPU's, which is what makes this a control
+    // rather than a demonstration: `unclaimed` moving proves the terminator
+    // fired, and not that the firmware happened to print a line.
+    if let Some(id) = crate::info::gateware::id() {
+        let _ = writeln!(
+            uart,
+            "  bus  {} unclaimed, {} timed out, worst wait {} cycles",
+            id.bus_fault & 0xff,
+            (id.bus_fault >> 8) & 0xff,
+            id.bus_fault >> 16
+        );
     }
 }
 

@@ -827,10 +827,10 @@ def main():
                    b"fusb302b", b"pac1954", b"usb3343",
                    b"[info|read|bench]",
                    # `status` and `wedge` are #411's readout and its negative
-                   # control. Asserted here so neither can be dropped: an
-                   # indicator whose failure case is unreachable is one nobody
-                   # should believe.
-                   b"[stats|check|irq|log|status|wedge]",
+                   # control, `fault` is #409's. Asserted here so none can be
+                   # dropped: an indicator whose failure case is unreachable is
+                   # one nobody should believe.
+                   b"[stats|check|irq|log|status|wedge|fault]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
                    b"[info|id|read|bench]", b"[status|scan|soak]",
                    # `reset` and `clear` are the DESTRUCTIVE verbs (#315),
@@ -960,6 +960,41 @@ def main():
                  b"000061.000 999999.999 000000.000"],
                 "the timestamp format is right at zero, at a carry, and past "
                 "the six-digit field")
+
+        # --- the bus fault, and coming back from it ---------------------------
+        # #409: the shipping bitstream's `bist status` read f0000800, nothing
+        # decoded it, nothing acknowledged, and the core stalled in the load
+        # forever. The gateware answers ERR now; this asserts the OTHER half --
+        # that the trap is a sentence rather than an abort.
+        #
+        # `command` requires the prompt as well as the needles, so a handler that
+        # loops instead of returning fails this rather than passing quietly.
+        # Without `src/fault.rs` riscv-rt links `abort` here and both fail.
+        #
+        # `virt` faults on an unassigned address by itself, so this check runs on
+        # the emulator without needing the gateware fix. On the board it is the
+        # gateware fix that makes it reachable at all.
+        command("cpu fault",
+                [b"*** TRAP 5 (load access fault)", b"addr f0000700"],
+                "`cpu fault` reads an unmapped address, traps, and NAMES it")
+        command("cpu check", [b"sum   acf13568 ok"],
+                "the shell still answers after a bus fault")
+
+        # The verb that started #409, on a build with no engine behind it.
+        #
+        # `bist status` used to call `describe()`, which reads f0000800 -- a
+        # window the shipping variant does not decode. The gate is the cargo
+        # feature, not `Bist::present()`, because `present()` answers by reading
+        # the same address. So the assertion is BOTH halves: the sentence, and no
+        # trap line, which is what proves nothing touched the bus.
+        reply = command("bist status",
+                        [b"bist: this bitstream has no engine"],
+                        "`bist` on an engineless build says so")
+        check("`bist` touches no bus on an engineless build",
+              b"*** TRAP" not in reply,
+              f"a trap line means the verb read the absent engine anyway:\n"
+              f"{show(reply)}")
+
         # --- info -------------------------------------------------------------
         # Shape, not values. The hash, the branch, the timestamp and the
         # compiler are different on every machine and every commit, so what

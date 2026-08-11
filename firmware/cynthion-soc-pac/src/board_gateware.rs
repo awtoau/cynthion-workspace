@@ -8,6 +8,8 @@ pub struct RegisterBlock {
     cpu: Cpu,
     usb_hz: UsbHz,
     die: Die,
+    _reserved7: [u8; 0x02],
+    bus_fault: BusFault,
 }
 impl RegisterBlock {
     #[doc = "0x00 - BOARD_GATEWARE.MAGIC, 32 bits at +0x00"]
@@ -45,6 +47,11 @@ impl RegisterBlock {
     pub const fn die(&self) -> &Die {
         &self.die
     }
+    #[doc = "0x1c - BOARD_GATEWARE.BUS_FAULT, 32 bits at +0x1c"]
+    #[inline(always)]
+    pub const fn bus_fault(&self) -> &BusFault {
+        &self.bus_fault
+    }
 }
 #[doc = "MAGIC (r) register accessor: BOARD_GATEWARE.MAGIC, 32 bits at +0x00\n\nYou can [`read`](crate::Reg::read) this register and get [`magic::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@magic`] module"]
 #[doc(alias = "MAGIC")]
@@ -81,6 +88,11 @@ pub mod usb_hz;
 pub type Die = crate::Reg<die::DieSpec>;
 #[doc = "BOARD_GATEWARE.DIE, 9 bits at +0x18"]
 pub mod die;
+#[doc = "BUS_FAULT (r) register accessor: BOARD_GATEWARE.BUS_FAULT, 32 bits at +0x1c\n\nYou can [`read`](crate::Reg::read) this register and get [`bus_fault::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@bus_fault`] module"]
+#[doc(alias = "BUS_FAULT")]
+pub type BusFault = crate::Reg<bus_fault::BusFaultSpec>;
+#[doc = "BOARD_GATEWARE.BUS_FAULT, 32 bits at +0x1c"]
+pub mod bus_fault;
 
 /// Byte offsets from this peripheral's generated base address.
 pub mod offset {
@@ -91,4 +103,5 @@ pub mod offset {
     pub const CPU: usize = 0x10;
     pub const USB_HZ: usize = 0x14;
     pub const DIE: usize = 0x18;
+    pub const BUS_FAULT: usize = 0x1c;
 }

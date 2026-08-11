@@ -70,6 +70,7 @@ pub mod gateware {
     const CPU: usize = 0x10;
     const USB_HZ: usize = 0x14;
     const DIE: usize = 0x18;
+    const BUS_FAULT: usize = 0x1c;
 
     /// "CYN1". A window that decodes to nothing reads as zeros on this bus
     /// rather than faulting, so this is how "the peripheral is there" is told
@@ -116,6 +117,10 @@ pub mod gateware {
         /// The die temperature readout: bit 8 there is one, bit 7 the value is
         /// good, bits 5..0 the code. NOT degrees -- see `celsius`.
         pub die: u32,
+        /// What `bus/fault.BusFault` has terminated: unclaimed addresses
+        /// in 7..0, timeouts in 15..8, and the longest any request waited
+        /// in 31..16. The last is the one that keeps the bound honest.
+        pub bus_fault: u32,
     }
 
     impl Id {
@@ -128,6 +133,7 @@ pub mod gateware {
                 cpu: read(base, CPU),
                 usb_hz: read(base, USB_HZ),
                 die: read(base, DIE),
+                bus_fault: read(base, BUS_FAULT),
             }
         }
 
@@ -541,6 +547,19 @@ pub fn command(uart: &mut Uart) {
                     );
                 }
             }
+
+            // What the fabric has had to terminate, and how close a legitimate
+            // access has come to the bound (#409). `worst` is the margin: it is
+            // measured against BUS_TIMEOUT_CYCLES, which is 1.25x a DERIVED
+            // figure, and a number near the bound is a board about to fault on
+            // traffic that is fine.
+            let _ = writeln!(
+                uart,
+                "         bus  {} unclaimed, {} timed out, worst wait {} cycles",
+                id.bus_fault & 0xff,
+                (id.bus_fault >> 8) & 0xff,
+                id.bus_fault >> 16
+            );
 
             if id.git != build::GIT_WORD {
                 let _ = writeln!(

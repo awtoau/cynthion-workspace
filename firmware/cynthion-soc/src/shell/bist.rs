@@ -6,6 +6,22 @@
 //! ask it anything (#210).
 //!
 //! The driver is `src/bist.rs`; this only parses words.
+//!
+//! ## The verb is gated on the VARIANT, not on a probe (#409)
+//!
+//! `bist` was dispatched on every build, including the shipping
+//! `bist0-*` bitstreams, whose gateware has no engine and no window at
+//! `bist::BASE`. `describe()` read it anyway, nothing decoded it, nothing
+//! acknowledged, and the board was gone.
+//!
+//! `Bist::present()` is not the fix and cannot be: it answers by READING the
+//! engine, which is the access that hangs. The variant is known at build time --
+//! `gateware/soc/variant.py`, `CYNTHION_HYPERRAM_BIST`, which `soc_run.py`
+//! turns into this cargo feature -- so the verb that touches the bus only
+//! exists where the bus has something to touch.
+
+// Everything below `command` is reachable only from the engine-bearing build.
+#![cfg_attr(not(feature = "hyperram-bist"), allow(dead_code, unused_imports))]
 
 use core::fmt::Write;
 
@@ -21,6 +37,16 @@ use crate::uart::Uart;
 /// lucky burst, and short enough that a 128-cell sweep is not an afternoon.
 const DEFAULT_PASSES: u32 = 64;
 
+/// `bist` on a bitstream with no engine: one sentence, and NO bus access.
+#[cfg(not(feature = "hyperram-bist"))]
+pub(crate) fn command(uart: &mut Uart, _rest: &[u8]) {
+    let _ = writeln!(
+        uart,
+        "bist: this bitstream has no engine -- built without CYNTHION_HYPERRAM_BIST"
+    );
+}
+
+#[cfg(feature = "hyperram-bist")]
 pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let rest = trim(rest);
     // SAFETY: `bist::BASE` is the peripheral's CSR base, held equal to the

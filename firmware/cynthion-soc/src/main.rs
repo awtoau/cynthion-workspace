@@ -111,6 +111,10 @@ mod clock;
 #[cfg(feature = "preempt")]
 mod dispatch;
 mod events;
+// The exception handler. Without one, riscv-rt links `abort` and a bus fault is
+// an infinite loop with no output -- indistinguishable from the hang it
+// replaced (#409).
+mod fault;
 mod fusb302;
 mod gpio;
 // The orange LED, toggled by a periodic RTIC task. If it stops, the OS is dead
