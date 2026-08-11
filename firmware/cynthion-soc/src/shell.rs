@@ -99,6 +99,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("cpu log [n|tags]", "the deferred event ring the handlers push to"),
     ("cpu status", "is the OS alive: heartbeat dispatches and their lateness"),
     ("cpu wedge [ms]", "stop the scheduler on purpose; watch the lamp stop"),
+    ("cpu fault [hex]", "read an address nothing decodes; it must fault, not hang"),
     ("flash", "the memory-mapped W25Q32 config flash"),
     ("flash info", "base and size, from the generated map"),
     ("flash id", "the first flash word, and the size"),
