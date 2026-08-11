@@ -44,23 +44,11 @@ from .resources import LEDResources, ULPIResource
 
 __all__ = ["CynthionPlatformRev1D4", "LEDS", "LED_PINS"]
 
-# ---- THE SIX FPGA LEDs: index, ball, schematic reference, colour -------------
+# ---- The six FPGA LEDs: index, ball, schematic reference, colour ------------
 #
-# THE CANONICAL TABLE. Everything else that names an LED derives from here or
-# is checked against it -- `gateware/soc/top.py`'s GPIO_* constants import it,
-# `firmware/cynthion-soc/src/gpio.rs` is asserted equal to it by
-# `tests/test_led_map.py`, and `docs/hardware.md` cites it.
-#
-# It exists because the colour is the one fact the FPGA toolchain cannot check.
-# `LEDResources` is positional, the generated `top.lpf` names the pins
-# `led_0..led_5`, and neither carries a colour -- so a REVERSED order lived in
-# three places for months with nothing able to contradict it (#415). It was
-# caught by watching the board: the 2 Hz heartbeat at index 1 is BLUE, and the
-# 1 Hz fabric flash at index 3 is YELLOW.
-#
-# Colours are the schematic's, from `repos/cynthion-hardware/indicators_buttons.kicad_sch`,
-# where each diode carries its colour in its `Value` field. That sheet is the
-# only source; do not take a colour from anywhere else.
+# CANONICAL. top.py's GPIO_*, LEDResources' pins and gpio.rs all derive from or
+# are checked against this; colours are the schematic's, which is the only
+# source that has them (#415).
 LEDS = (
     # index, ball, schematic, colour
     (0, "E13", "D7", "violet"),
@@ -85,32 +73,20 @@ LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
 # overshoots the W956A8's absolute maximum unterminated. Numbers in #311.
 HYPERRAM_DRIVE_LADDER = ("8", "4", "12", "16")
 
-# STATED, not taken from the environment. These reach the pin constraints and so
-# reach the bitstream -- and none of them was in the variant table that keys the
-# bitstream cache, so two builds that differed electrically hashed identically
-# and the cache served one as the other (#418). That is #351's defect, and the
-# guard #351 added -- resolve through `variant.py` so an unlisted variable raises
-# -- was walked around by reading `os.getenv` here.
-#
-# A sweep does not need them settable at elaboration:
-# `scripts/hyperram_pin_patch.py` reaches every rung in a BUILT bitstream in
-# about a second, which is what makes these axes affordable in the first place.
-# So the environment bought nothing and cost the ability to tell two bitstreams
-# apart.
+# HyperRAM pin electricals. Stated, never from the environment: they reach the
+# bitstream and were not in the cache key, so builds that differed electrically
+# hashed the same (#418). Sweep a rung with `hyperram_pin_patch.py` instead.
 HYPERRAM_CK_DRIVE = "8"
 HYPERRAM_DQ_DRIVE = "8"
 # CS# and RESET# are static during a burst, so drive buys nothing there.
 HYPERRAM_CTRL_DRIVE = "4"
 
-# OFF, against nextpnr's forced ON for every single-ended input/bidir pin (the
-# Trellis default is OFF). Schmitt thresholds skew rise against fall on the exact
-# pins the read captures, and nothing has ever varied it. A first-class axis
-# ahead of FPGA CK drive. #311.
+# OFF against nextpnr's forced ON: Schmitt thresholds skew rise against fall on
+# the pins the read captures. #311.
 HYPERRAM_DQ_HYSTERESIS = "OFF"
 
-# Stated, not inherited: nextpnr master emits PULLMODE only when the attribute is
-# present, so a toolchain bump would flip this bus from NONE to the Trellis
-# default DOWN while it floats through turnaround. #311.
+# Stated because nextpnr emits PULLMODE only when present -- a toolchain bump
+# would otherwise flip this bus to the Trellis default DOWN. #311.
 HYPERRAM_DQ_PULLMODE = "NONE"
 
 
@@ -121,13 +97,8 @@ class CynthionPlatformRev1D4(CynthionPlatform):
     version     = (1, 4)
     device      = "LFE5U-12F"
     package     = "BG256"
-    # PINNED, where upstream reads ECP5_SPEED_GRADE from the environment.
-    #
-    # This selects the TIMING MODEL the build closes against, and it was not in
-    # the variant table that keys the bitstream cache -- so two builds judged
-    # against different models hashed identically, and every Fmax figure,
-    # metrics row and #361 spread analysis was keyed on a digest that omitted it
-    # (#418). A speed grade is a property of the part on this board, not a knob.
+    # Pinned; upstream reads ECP5_SPEED_GRADE. It picks the timing model, was
+    # not in the cache key, and is a property of the part (#418).
     speed       = "8"
 
     # By default, assume we'll be connecting via our control PHY.
