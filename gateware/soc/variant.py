@@ -65,6 +65,7 @@ VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_BIST_DQS",  "1",   "dqs",       FLAG),
     ("CYNTHION_CLOCK_MIRROR",       "",    "mirror",    FLAG),
     ("CYNTHION_CLOCK_MIRROR_DIV",   "4",   "mirrordiv", TEXT),
+    ("CYNTHION_HYPERRAM_PHASE",     "",    "phase",     FLAG),
 )
 
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
