@@ -91,6 +91,12 @@ pub const HEARTBEAT: usize = 2;
 /// hardware priority, above every SLIC source. #247 sweeps the rest.
 const TASKS: usize = 3;
 
+/// The same count, for anything outside this module that reports it. Derived
+/// rather than transcribed: the boot line said "1 task" while three were
+/// declared, and a boot line that miscounts the scheduler is read at exactly the
+/// moment someone is deciding whether to trust the machine.
+pub const TASK_COUNT: usize = TASKS;
+
 /// What each task is, for the report. Parallel to the ids above.
 struct Task {
     name: &'static str,

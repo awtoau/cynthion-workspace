@@ -495,12 +495,18 @@ fn facilities(out: &mut Out) {
             if fe == 0 && be == 0 { " -- read as hardwired zero here" } else { "" }
         ),
     );
+    // The count comes from the task table, not from a literal. It said "1 task"
+    // while three were declared, which is the failure mode a hand-maintained
+    // count always reaches -- and a boot line that miscounts the scheduler is
+    // read at exactly the moment someone is deciding whether to trust it.
     out.line(
         "sched",
         "ok",
         format_args!(
-            "{}, 1 task: power_refresh every {} ms",
+            "{}, {} tasks: heartbeat every {} ms, power_refresh every {} ms",
             sched::MODEL,
+            sched::TASK_COUNT,
+            sched::HEARTBEAT_PERIOD_MS,
             power::interval_ms()
         ),
     );
