@@ -75,6 +75,19 @@ fn fault(uart: &mut Uart, args: &[u8]) {
         word,
         crate::fault::taken()
     );
+
+    // The FABRIC's account beside the CPU's, which is what makes this a control
+    // rather than a demonstration: `unclaimed` moving proves the terminator
+    // fired, and not that the firmware happened to print a line.
+    if let Some(id) = crate::info::gateware::id() {
+        let _ = writeln!(
+            uart,
+            "  bus  {} unclaimed, {} timed out, worst wait {} cycles",
+            id.bus_fault & 0xff,
+            (id.bus_fault >> 8) & 0xff,
+            id.bus_fault >> 16
+        );
+    }
 }
 
 /// How long `cpu wedge` will hold the scheduler, in milliseconds.

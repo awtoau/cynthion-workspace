@@ -127,14 +127,14 @@ impl core::fmt::Debug for BoardVbus {
 }
 #[doc = "board/vbus: 1 register at 0xf0000624"]
 pub mod board_vbus;
-#[doc = "board/gateware: 7 registers at 0xf0000640"]
+#[doc = "board/gateware: 8 registers at 0xf0000640"]
 pub type BoardGateware = crate::Periph<board_gateware::RegisterBlock, 0xf000_0640>;
 impl core::fmt::Debug for BoardGateware {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardGateware").finish()
     }
 }
-#[doc = "board/gateware: 7 registers at 0xf0000640"]
+#[doc = "board/gateware: 8 registers at 0xf0000640"]
 pub mod board_gateware;
 #[doc = "board/clocks: 2 registers at 0xf0000660"]
 pub type BoardClocks = crate::Periph<board_clocks::RegisterBlock, 0xf000_0660>;

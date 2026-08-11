@@ -101,7 +101,7 @@ pub const BOARD_VBUS: usize = 0xf0000624;
 /// Size of the BOARD_VBUS window, in bytes.
 pub const BOARD_VBUS_SIZE: usize = 0x00000004;
 
-/// board/gateware: 7 registers at 0xf0000640
+/// board/gateware: 8 registers at 0xf0000640
 pub const BOARD_GATEWARE: usize = 0xf0000640;
 /// Size of the BOARD_GATEWARE window, in bytes.
 pub const BOARD_GATEWARE_SIZE: usize = 0x00000020;

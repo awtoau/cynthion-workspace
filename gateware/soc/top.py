@@ -1594,6 +1594,16 @@ class AwtoSoc(Elaboratable):
         wiring.connect(m, bus_pipe.sub_bus, bus_fault.intr_bus)
         wiring.connect(m, bus_fault.sub_bus, decoder.bus)
 
+        # And its account, where the CPU can read it. `worst` is what keeps
+        # BUS_TIMEOUT_CYCLES honest: a high-water mark near the bound is a board
+        # about to fault on legitimate traffic, and a margin nobody can read is
+        # a margin nobody can check.
+        m.d.comb += [
+            gateware_id.fault_unclaimed.eq(bus_fault.unclaimed_count),
+            gateware_id.fault_timeouts.eq(bus_fault.timeout_count),
+            gateware_id.fault_worst.eq(bus_fault.worst_wait),
+        ]
+
         # USB CDC-ACM, on the AUX port.
         #
         # CDC descriptors are what make a /dev/ttyACM node appear at all -- the kernel
