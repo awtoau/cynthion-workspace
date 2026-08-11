@@ -63,7 +63,7 @@ from amaranth.lib.wiring import connect, flipped  # noqa: E402
 from amaranth.hdl import Fragment  # noqa: E402
 from amaranth.sim import Simulator  # noqa: E402
 from amaranth_soc.csr.wishbone import WishboneCSRBridge  # noqa: E402
-from cynthion.gateware.platform.cynthion_r1_4 import (  # noqa: E402
+from board.cynthion_r1_4 import (  # noqa: E402
     CynthionPlatformRev1D4)
 
 from sim_check_harness import Checks  # noqa: E402

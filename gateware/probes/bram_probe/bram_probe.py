@@ -189,7 +189,7 @@ def main():
         print("expected contents written; pass --build to synthesise")
         return 0
 
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    from board.cynthion_r1_4 import CynthionPlatformRev1D4
 
     build_dir = ROOT / "tmp" / "bram_probe" / "build"
     CynthionPlatformRev1D4().build(BramProbe(), do_program=False,

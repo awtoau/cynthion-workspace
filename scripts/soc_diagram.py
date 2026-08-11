@@ -167,7 +167,7 @@ def elaborate(emit):
 
     import top as soc_top
     from amaranth.hdl._ir import Fragment
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    from board.cynthion_r1_4 import CynthionPlatformRev1D4
 
     platform = CynthionPlatformRev1D4()
 

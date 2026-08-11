@@ -2170,10 +2170,22 @@ def main():
         print("nothing to do; pass --build")
         return 0
 
-    # The installed cynthion package, not the in-repo source tree: the repo
-    # copy pulls in amaranth_boards, which is not installed here, while the
-    # packaged platform has no such dependency.
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    # THE VENDORED PLATFORM, `gateware/board/cynthion_r1_4.py`.
+    #
+    # This imported the installed `cynthion` package until #416, on the reasoning
+    # that `repos/cynthion/`'s copy pulls in `amaranth_boards`. True of THAT
+    # copy, and never true of the vendored one -- it takes `LEDResources`,
+    # `ULPIResource` and `CynthionPlatform` from local modules for exactly this
+    # reason, which is what vendoring it was for.
+    #
+    # The cost of not switching: the vendored file's one deliberate divergence is
+    # the HyperRAM pins' electrical attributes (#311), so the SoC built with NO
+    # `DRIVE` on any RAM pin -- silicon default, the condition #311 was filed
+    # about -- while the file that fixes it sat unused. Pin LOCATIONS are
+    # identical in both, so every build was correct about where nets land and
+    # nothing failed.
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from board.cynthion_r1_4 import CynthionPlatformRev1D4
 
     # One directory per variant, not one for all of them.
     #

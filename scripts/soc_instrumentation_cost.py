@@ -127,7 +127,7 @@ if STUB:
     hyperram_probe.HyperRAMProbe = _Hyper
 
 import top as soc_top
-from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+from board.cynthion_r1_4 import CynthionPlatformRev1D4
 
 # The block RAM initialiser does not affect the fabric this measures, and the
 # shipping build puts no firmware there anyway.

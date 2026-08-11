@@ -256,7 +256,7 @@ def elaborate_il(words, soc):
     costs an sbt run and an Amaranth elaboration -- about 9 s of the ~95 s a rebuild
     takes -- and unlike a source hash it compares the thing that was actually built.
     """
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    from board.cynthion_r1_4 import CynthionPlatformRev1D4
     plan = CynthionPlatformRev1D4().prepare(soc.AwtoSoc(firmware=words), "top")
     return plan.files["top.il"]
 

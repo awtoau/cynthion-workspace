@@ -134,7 +134,7 @@ def build_soc():
     # A real platform is needed, not None: elaborate() calls platform.request() for the
     # ULPI PHY, the flash pins and the LEDs. Requesting resources needs no toolchain and
     # touches no hardware -- this still builds nothing.
-    from cynthion.gateware.platform.cynthion_r1_4 import CynthionPlatformRev1D4
+    from board.cynthion_r1_4 import CynthionPlatformRev1D4
 
     # The platform is returned too, and it is not incidental. After elaboration it
     # knows which resources were actually `request`ed, which is the only authority
