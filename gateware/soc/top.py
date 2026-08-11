@@ -103,6 +103,8 @@ from luna_soc.gateware.core         import blockram
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from board.cynthion_r1_4 import LEDS as _BOARD_LEDS
 import cpu.cpu as vexii_cpu
 from cpu.cpu import VexiiRiscv
 from bus.jtag_stage import JTAGStager, UserJTAG
@@ -264,25 +266,11 @@ CLOCKS_BASE    = BOARD_BASE + 0x60
 # pad and Amaranth's `PinsN` does the inversion: a 1 here lights the LED. That
 # is the only place the active-low-ness appears, and neither the peripheral nor
 # the firmware needs to know about it.
-# Colours from the schematic (`repos/cynthion-hardware/indicators_buttons.kicad_sch`),
-# NOT from the platform -- `LEDResources(pins="E13 C13 B14 A15 D12 C11")` is
-# positional and carries no colour, so nothing here could contradict a wrong
-# name. This order was reversed until #415, confirmed on the bench: the 2 Hz
-# heartbeat at index 1 is BLUE, the 1 Hz fabric flash at index 3 is YELLOW.
-#
-#   index  ball  colour  schematic
-#       0  E13   violet  D7
-#       1  C13   blue    D6
-#       2  B14   green   D5
-#       3  A15   yellow  D4
-#       4  D12   orange  D3
-#       5  C11   red     D2
-GPIO_VIOLET  = 0
-GPIO_BLUE    = 1
-GPIO_GREEN   = 2
-GPIO_YELLOW  = 3
-GPIO_ORANGE  = 4
-GPIO_RED     = 5
+# The LED colour map is the platform's, not restated here. `gateware/board/
+# cynthion_r1_4.py` owns it -- see `LEDS` there for why the colour cannot come
+# from the toolchain and must come from the schematic (#415).
+GPIO_VIOLET, GPIO_BLUE, GPIO_GREEN, GPIO_YELLOW, GPIO_ORANGE, GPIO_RED = (
+    index for index, _ball, _sch, _colour in _BOARD_LEDS)
 
 # Pin 6: the power monitor's PWRDN, active low on the pad (`PinsN`), so a 1 here
 # powers the PAC1954 DOWN. It is an output with no input path, and the GPIO

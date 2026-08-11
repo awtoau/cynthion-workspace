@@ -43,7 +43,38 @@ from amaranth.build import (Attrs, Clock, Connector, DiffPairs, Pins, PinsN,
 from .core import CynthionPlatform
 from .resources import LEDResources, ULPIResource
 
-__all__ = ["CynthionPlatformRev1D4"]
+__all__ = ["CynthionPlatformRev1D4", "LEDS", "LED_PINS"]
+
+# ---- THE SIX FPGA LEDs: index, ball, schematic reference, colour -------------
+#
+# THE CANONICAL TABLE. Everything else that names an LED derives from here or
+# is checked against it -- `gateware/soc/top.py`'s GPIO_* constants import it,
+# `firmware/cynthion-soc/src/gpio.rs` is asserted equal to it by
+# `tests/test_led_map.py`, and `docs/hardware.md` cites it.
+#
+# It exists because the colour is the one fact the FPGA toolchain cannot check.
+# `LEDResources` is positional, the generated `top.lpf` names the pins
+# `led_0..led_5`, and neither carries a colour -- so a REVERSED order lived in
+# three places for months with nothing able to contradict it (#415). It was
+# caught by watching the board: the 2 Hz heartbeat at index 1 is BLUE, and the
+# 1 Hz fabric flash at index 3 is YELLOW.
+#
+# Colours are the schematic's, from `repos/cynthion-hardware/indicators_buttons.kicad_sch`,
+# where each diode carries its colour in its `Value` field. That sheet is the
+# only source; do not take a colour from anywhere else.
+LEDS = (
+    # index, ball, schematic, colour
+    (0, "E13", "D7", "violet"),
+    (1, "C13", "D6", "blue"),
+    (2, "B14", "D5", "green"),
+    (3, "A15", "D4", "yellow"),
+    (4, "D12", "D3", "orange"),
+    (5, "C11", "D2", "red"),
+)
+
+# The ball list `LEDResources` takes, derived rather than written twice -- the
+# resource declaration and this table cannot disagree about a pin.
+LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
 
 # ---- HyperRAM pin drive, explicit rather than inherited. See #311. -----------
 #
@@ -172,7 +203,8 @@ class CynthionPlatformRev1D4(CynthionPlatform):
         Resource("self_program", 0, PinsN("T13", dir="o"), Attrs(IO_TYPE="LVCMOS33", PULLMODE="UP")),
 
         # FPGA LEDs
-        *LEDResources(pins="E13 C13 B14 A15 D12 C11", attrs=Attrs(IO_TYPE="LVCMOS33"), invert=True),
+        # Pins from `LED_PINS` above, so the balls are stated once.
+        *LEDResources(pins=LED_PINS, attrs=Attrs(IO_TYPE="LVCMOS33"), invert=True),
 
         # USB PHYs
         ULPIResource("control_phy", 0,
