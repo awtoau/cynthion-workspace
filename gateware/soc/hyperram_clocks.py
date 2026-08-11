@@ -49,6 +49,46 @@ between two PLL outputs of the same VCO at run time, glitchlessly, so on the
 non-DQS path CK joins the runtime cross product instead of gating it. Two rungs
 per build, `MAX_RUNGS`, and the DQS path is fixed at one -- both limits are
 silicon and are argued where they are enforced.
+
+## Dynamic phase shift (#228)
+
+`phase=True` gives `DPHASE_SOURCE="ENABLED"` and drives the five phase ports from
+fabric instead of tying them off. Both move together: the ports were driven with
+the attribute DISABLED before, so the shifter was unreachable in every build.
+`peripherals/pll_phase.py` is the CSR the CPU writes; the silicon rules are here.
+
+Default is `phase=False`, which is what every build had -- the attribute's effect
+on a PLL whose phase ports are held at 0 is documented nowhere local, so a build
+that does not want the lever does not get the config bit either.
+
+  * **One step is 1/8 of a VCO period**, whatever the output divider. A full
+    360 degrees of an output is `8 * CLKOx_DIV` steps. (Diamond 3.14's
+    `EHXPLLL.v`: `vco_ph_del = ((FPHASE + step) * t_out) / (8 * DIV)`.)
+  * **PHASESEL is not natural binary**: CLKOP=0b11, CLKOS=0b00, CLKOS2=0b01,
+    CLKOS3=0b10 (Diamond `PLL_Options_XO2.htm`; same in the sim model).
+  * **CLKOP MUST NOT be shifted here.** `FEEDBK_PATH="CLKOP"`, so a shift on
+    CLKOP is inside the loop: the PLL corrects it and every OTHER output moves
+    instead. The sim model prints a warning for exactly this. The port is still
+    an input -- refusing it in gateware would cost a rebuild to find out what it
+    does -- and `pll_phase.py` names it as the trap.
+  * The shifter sits AFTER the loop, per-output (ECP5 datasheet Fig 2.5, p.18),
+    so shifting CLKOS/CLKOS2/CLKOS3 leaves the others alone.
+  * Pulse widths, ECP5 datasheet Table 3.23 p.71: PHASESTEP at least 4 VCO
+    cycles in each state, PHASESEL/PHASEDIR stable 5 ns before it. nextpnr
+    returns `TMG_IGNORE` for every EHXPLLL port (`ecp5/arch.cc`), so NOTHING in
+    the flow checks those -- they are met by construction in `pll_phase.py`.
+
+## The probe clock
+
+`phase=True` adds CLKOS2 at rung 0's frequency and a `hr_probe` domain on
+it, for no purpose but to be shifted and watched.
+
+A phase lever with no observation is the class of instrument this project has
+been burned by (#294). `probe_level` is a `hr`-domain toggle sampled by
+`hr_probe` and XORed back against itself: two outputs of one VCO at one
+frequency, so the sample point sits at a FIXED place in the toggle and the level
+is a constant -- until the phase moves it across an edge, when it flips. One flip
+per `4 * CLKOP_DIV` steps, which measures the step size rather than assuming it.
 """
 
 from amaranth import ClockDomain, ClockSignal, Elaboratable, Instance, Module, Signal
@@ -227,7 +267,7 @@ class HyperRAMDomains(Elaboratable):
     every ladder in this tree has made at least once.
     """
 
-    def __init__(self, *, ck_mhz, dqs=True, input_mhz=60.0):
+    def __init__(self, *, ck_mhz, dqs=True, input_mhz=60.0, phase=False):
         # A float or a sequence. One rung is the old behaviour exactly.
         self.ck_rungs = ([float(ck_mhz)] if isinstance(ck_mhz, (int, float))
                          else [float(ck) for ck in ck_mhz])
@@ -312,6 +352,20 @@ class HyperRAMDomains(Elaboratable):
         # there are; it is then ignored rather than absent.
         self.sel = Signal(range(max(len(self.ck_rungs), 2)))
 
+        # DYNAMIC PHASE SHIFT, driven by `peripherals/pll_phase.py` (#228).
+        #
+        # Levels, not pulses: the PLL acts on PHASESTEP's FALLING edge and needs
+        # 4 VCO cycles in each state, so the shaping is the peripheral's and this
+        # only carries what it produced.
+        self.phase_sel = Signal(2)
+        self.phase_dir = Signal()
+        self.phase_step = Signal()
+
+        # The probe clock's sample of `hr`, async to everything. See the module
+        # docstring; zero and meaningless without `phase`.
+        self.phase = phase
+        self.probe_level = Signal()
+
     def _unreachable(self, input_mhz):
         """Why the ladder rung asked for does not exist, and what does nearby."""
         rungs = ", ".join(f"{ck:g}" for ck in self.ck_rungs)
@@ -329,6 +383,8 @@ class HyperRAMDomains(Elaboratable):
         m.domains.hr = ClockDomain()
         if self.dqs:
             m.domains.hr_fast = ClockDomain()
+        if self.phase:
+            m.domains.hr_probe = ClockDomain()
 
         # One net per rung, straight off the PLL, plus the net the domain
         # actually runs on. With one rung they are the same wire.
@@ -336,6 +392,7 @@ class HyperRAMDomains(Elaboratable):
                     for index in range(len(self.rung_divs))]
         clk_hr = clk_rung[0] if len(clk_rung) == 1 else Signal(name="clk_hr")
         clk_hr_fast = Signal()
+        clk_probe = Signal()
         locked_raw = Signal()
 
         # CLKOS is rung 1 on the non-DQS path and `hr_fast` on the DQS one.
@@ -349,7 +406,17 @@ class HyperRAMDomains(Elaboratable):
             a_MFG_GMCREF_SEL="2",
             **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.dqs else {}),
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
-            p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
+            # WITHOUT THIS THE FIVE PHASE PORTS DO NOTHING. The sim model gates
+            # all four dynamic inputs to 0 internally when it is DISABLED, and
+            # the flow carries the enum straight through (nextpnr
+            # `ecp5/bitstream.cc` -> `PLL1_*/bits.db` F2B8). Every generator in
+            # this tree drove the ports and left this DISABLED, which is why
+            # #228 could be "logged, not investigated" for so long.
+            #
+            # Tracks `phase`, so the attribute and the ports always agree and a
+            # build that does not ask for the lever gets the config bit it had.
+            p_STDBY_ENABLE="DISABLED",
+            p_DPHASE_SOURCE="ENABLED" if self.phase else "DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
             p_OUTDIVIDER_MUXC="DIVC", p_OUTDIVIDER_MUXD="DIVD",
             p_CLKI_DIV=self.clki_div,
@@ -363,6 +430,14 @@ class HyperRAMDomains(Elaboratable):
                 "p_CLKOS_DIV": clkos_div,
                 "p_CLKOS_CPHASE": clkos_div - 1,
                 "p_CLKOS_FPHASE": 0} if clkos_div else {}),
+            # The probe clock: rung 0's frequency, and CPHASE/FPHASE set to the
+            # zero-degree point (`CPHASE = DIV - 1`), so at step 0 it is nominally
+            # CLKOP. CLKOS2 rather than CLKOS3 for no reason but that CLKOS3's
+            # CPHASE word lives in the partner tile.
+            **({"p_CLKOS2_ENABLE": "ENABLED",
+                "p_CLKOS2_DIV": self.clkop_div,
+                "p_CLKOS2_CPHASE": self.clkop_div - 1,
+                "p_CLKOS2_FPHASE": 0} if self.phase else {}),
             i_CLKI=self.clki,
             # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` closes the loop through the
             # CLKOP output, so leaving CLKFB undriven opens it: the PLL never
@@ -370,12 +445,21 @@ class HyperRAMDomains(Elaboratable):
             # still configures and still builds, which is why this cost a
             # bisect the first time -- see `clocks.py`.
             i_CLKFB=clk_rung[0],
-            i_RST=0, i_STDBY=0, i_PHASESEL0=0, i_PHASESEL1=0,
-            i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
+            i_RST=0, i_STDBY=0,
+            i_PHASESEL0=self.phase_sel[0], i_PHASESEL1=self.phase_sel[1],
+            i_PHASEDIR=self.phase_dir, i_PHASESTEP=self.phase_step,
+            # Held high, as Lattice's own BW_ALIGN reference design and every
+            # `ecppll` output do. It reloads the COARSE (CPHASE) phase on its
+            # falling edge; CPHASE here is already the zero-degree setting, so a
+            # falling edge would re-apply what is applied. Not exposed: nothing
+            # sweeps it, and a lever whose only effect is to repeat the current
+            # state is a footgun with no axis behind it.
+            i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
             o_CLKOP=clk_rung[0],
             **({"o_CLKOS": clk_hr_fast} if self.dqs else
                {"o_CLKOS": clk_rung[1]} if len(clk_rung) > 1 else {}),
+            **({"o_CLKOS2": clk_probe} if self.phase else {}),
             o_LOCK=locked_raw,
         )
 
@@ -429,6 +513,42 @@ class HyperRAMDomains(Elaboratable):
             # is no die to cross. `ECLKBRIDGECS: 0/2` is the success criterion.
             m.d.comb += ClockSignal("hr_fast").eq(clk_hr_fast)
 
+        if self.phase:
+            m.d.comb += ClockSignal("hr_probe").eq(clk_probe)
+
+            # THE PHASE DETECTOR, and it is two flip-flops.
+            #
+            # `pattern` is `hr` divided by two, sampled on the probe clock and
+            # brought back. `back ^ pattern` is then a STATIC level: same
+            # frequency off one VCO, so the sample lands at a fixed point of the
+            # pattern every cycle, and it only changes when a phase step walks
+            # that point across an edge.
+            #
+            # The XOR is what makes it static. Reporting the sample itself was
+            # the first version and it does not work: `pattern` alternates every
+            # cycle, so the sample alternates too whatever the phase, and what
+            # reached the CPU was an aliasing artefact of the counting clock
+            # rather than a phase. It moved with phase, which is the dangerous
+            # kind of wrong.
+            #
+            # No delay line to match latency: `pattern` toggles every cycle, so
+            # delaying it by the two cycles the round trip costs returns the same
+            # value it started at.
+            #
+            # Sampling a clock as DATA was the other obvious version and is also
+            # wrong: a PLL output used as data has to leave the clock network,
+            # and nothing in the flow promises it can. Three ordinary FFs on two
+            # ordinary clocks ask the same question with no special routing.
+            pattern = Signal()
+            sampled = Signal()
+            back = Signal()
+            m.d.hr += pattern.eq(~pattern)
+            m.d.hr_probe += sampled.eq(pattern)
+            m.d.hr += [
+                back.eq(sampled),
+                self.probe_level.eq(back ^ pattern),
+            ]
+
         # TELL THE PLACER WHAT THESE RUN AT.
         #
         # Without this nextpnr times them against a default and prints a PASS
@@ -445,6 +565,8 @@ class HyperRAMDomains(Elaboratable):
             platform.add_clock_constraint(clk_hr, self.hr_mhz_max * 1e6)
             if self.dqs:
                 platform.add_clock_constraint(clk_hr_fast, 2 * self.hr_mhz * 1e6)
+            if self.phase:
+                platform.add_clock_constraint(clk_probe, self.hr_mhz * 1e6)
 
         # LOCK is asynchronous to everything. Synchronised into `hr` because
         # that is the domain the engine gates on.
