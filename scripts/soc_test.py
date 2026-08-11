@@ -980,6 +980,21 @@ def main():
         command("cpu check", [b"sum   acf13568 ok"],
                 "the shell still answers after a bus fault")
 
+        # The verb that started #409, on a build with no engine behind it.
+        #
+        # `bist status` used to call `describe()`, which reads f0000800 -- a
+        # window the shipping variant does not decode. The gate is the cargo
+        # feature, not `Bist::present()`, because `present()` answers by reading
+        # the same address. So the assertion is BOTH halves: the sentence, and no
+        # trap line, which is what proves nothing touched the bus.
+        reply = command("bist status",
+                        [b"bist: this bitstream has no engine"],
+                        "`bist` on an engineless build says so")
+        check("`bist` touches no bus on an engineless build",
+              b"*** TRAP" not in reply,
+              f"a trap line means the verb read the absent engine anyway:\n"
+              f"{show(reply)}")
+
         # --- info -------------------------------------------------------------
         # Shape, not values. The hash, the branch, the timestamp and the
         # compiler are different on every machine and every commit, so what
