@@ -44,11 +44,8 @@ from .resources import LEDResources, ULPIResource
 
 __all__ = ["CynthionPlatformRev1D4", "LEDS", "LED_PINS"]
 
-# ---- The six FPGA LEDs: index, ball, schematic reference, colour ------------
-#
-# CANONICAL. top.py's GPIO_*, LEDResources' pins and gpio.rs all derive from or
-# are checked against this; colours are the schematic's, which is the only
-# source that has them (#415).
+# The six FPGA LEDs. CANONICAL -- top.py, LED_PINS and gpio.rs all derive from
+# or are checked against this. Colours are the schematic's. #415.
 LEDS = (
     # index, ball, schematic, colour
     (0, "E13", "D7", "violet"),
@@ -59,28 +56,15 @@ LEDS = (
     (5, "C11", "D2", "red"),
 )
 
-# The ball list `LEDResources` takes, derived rather than written twice -- the
-# resource declaration and this table cannot disagree about a pin.
+# Derived, so the resource and the table cannot disagree about a ball.
 LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
 
-# ---- HyperRAM pin electricals, explicit rather than inherited. #311. --------
-#
-# Stated, never from the environment: they reach the bitstream and were not in
-# the cache key, so builds that differed electrically hashed the same (#418).
-# Sweep a rung with `scripts/hyperram_pin_patch.py`, which patches a BUILT
-# bitstream in about a second.
-HYPERRAM_CK_DRIVE = "8"
-HYPERRAM_DQ_DRIVE = "8"
-# CS# and RESET# are static during a burst, so drive buys nothing there.
-HYPERRAM_CTRL_DRIVE = "4"
-
-# OFF against nextpnr's forced ON: Schmitt thresholds skew rise against fall on
-# the pins the read captures.
-HYPERRAM_DQ_HYSTERESIS = "OFF"
-
-# Stated because nextpnr emits PULLMODE only when present -- a toolchain bump
-# would otherwise flip this bus to the Trellis default DOWN.
-HYPERRAM_DQ_PULLMODE = "NONE"
+# HyperRAM pin electricals, stated not inherited. #311, #418.
+HYPERRAM_CK_DRIVE      = "8"
+HYPERRAM_DQ_DRIVE      = "8"
+HYPERRAM_CTRL_DRIVE    = "4"     # CS#/RESET# static in a burst
+HYPERRAM_DQ_HYSTERESIS = "OFF"   # nextpnr forces ON; skews rise against fall
+HYPERRAM_DQ_PULLMODE   = "NONE"  # nextpnr omits it unless stated
 
 
 class CynthionPlatformRev1D4(CynthionPlatform):
@@ -90,9 +74,7 @@ class CynthionPlatformRev1D4(CynthionPlatform):
     version     = (1, 4)
     device      = "LFE5U-12F"
     package     = "BG256"
-    # Pinned; upstream reads ECP5_SPEED_GRADE. It picks the timing model, was
-    # not in the cache key, and is a property of the part (#418).
-    speed       = "8"
+    speed       = "8"   # pinned; upstream reads ECP5_SPEED_GRADE. #418
 
     # By default, assume we'll be connecting via our control PHY.
     default_usb_connection = "aux_phy"
