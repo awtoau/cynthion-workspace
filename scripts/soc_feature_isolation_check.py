@@ -234,6 +234,15 @@ def normalised_lines(elf):
         line = re.sub(r"OUTLINED_FUNCTION_\d+", "OUTLINED_FUNCTION_N", line)
         # Addresses, and the direction of a PC-relative displacement.
         line = re.sub(r"[-+]?0x[0-9a-f]+", "0xADDR", line)
+        # `mv rd, rs` IS `addi rd, rs, 0`, and objdump prints the alias only when
+        # the displacement happens to land on zero. With the immediate already
+        # folded to `0xADDR` above, the two spellings are the same instruction
+        # with the same operands, so leaving them apart makes a build that moved
+        # one displacement to zero read as changed code. Seen as a one-line diff
+        # -- `addi a2, a2, 0xADDR` against `mv a2, a2` -- across the whole shell
+        # under `--features usbport`, which is declared `[]` (#386, #413).
+        line = re.sub(r"^\s*mv\s+([a-z][a-z0-9]*), ([a-z][a-z0-9]*)\s*$",
+                      r"addi\t\1, \2, 0xADDR", line)
         # The displacement of an indirect jump, INCLUDING whether it has one:
         # a target that moved from `jalr -0x1a4(ra)` to `jalr ra` is the same
         # call to the same symbol at a different distance. `jalr 0xADDR(ra)`
