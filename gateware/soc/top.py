@@ -120,11 +120,12 @@ from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
 from peripherals.stream_buffer import StreamBuffer
 from bus.wishbone_pipe import RegisteredResponse
+from bus.fault         import BusFault, worst_ack_cycles
 from peripherals.flash_cdc import ClockCrossedPHY
 from peripherals.hyperram_probe import HyperRAMProbe
 from peripherals.flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
-                         ObservablePHY, QSPIFlashPins)
+                         ObservablePHY, QSPIFlashPins, READ_MODES)
 
 from amaranth_soc                   import csr, gpio, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -609,6 +610,24 @@ FLASH_MODE = "quad"
 # measured speeds without touching the CPU needs the flash PHY in its own clock
 # domain -- see #100.
 FLASH_DIVISOR = 0
+
+# How long a Wishbone request may go unanswered before the fabric answers ERR.
+#
+#   waits for   ACK from a decoded subordinate
+#   expected    the memory-mapped flash, worst legitimate case: a cold quad read
+#               (69 cycles) with one maximal SPI-controller transfer stealing the
+#               crossbar before each of its four phases. `worst_ack_cycles`
+#               derives it; nothing else here is close -- CSR peripherals answer
+#               in 5, block RAM in 1, the HyperRAM window in 20.
+#   multiplier  1.25x
+#   on expiry   ERR to the CPU -- a load/store access fault the trap handler
+#               names -- and the red LED, which means any bus error (#411).
+#
+# In cycles, so it does not move with SYNC_MHZ, and derived from FLASH_MODE and
+# FLASH_DIVISOR, so raising either does not silently make it tight. Without it
+# an unanswered request is a hang, and a hang is what #409 is.
+BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
+                                             divisor=FLASH_DIVISOR) // 4)
 
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
@@ -1552,8 +1571,28 @@ class AwtoSoc(Elaboratable):
         m.submodules.bus_pipe = bus_pipe = RegisteredResponse(
             addr_width=30, data_width=32, granularity=8,
             features={"cti", "bte", "err"})
+        # And a terminator behind it, because the decoder does not have one.
+        #
+        # `amaranth_soc.wishbone.Decoder.elaborate` is one Switch with a Case per
+        # window and NO DEFAULT: an address matching none of them gets neither
+        # ACK nor ERR, and a classic initiator waits for one of those forever.
+        # The CPU's I/O PMA region is `f0000000+10000000` -- the whole top 256
+        # MiB -- while this decoder claims about twenty windows inside it, so
+        # every gap is a hang the core believes is a legal access. That is what
+        # took the board out when `bist status` read the BIST engine's window on
+        # a variant that has no engine (#409).
+        #
+        # Two mechanisms, and the second is not redundant: an address compare
+        # cannot see a peripheral that IS decoded and has stopped answering,
+        # which is the other half of #409. See bus/fault.py.
+        m.submodules.bus_fault = bus_fault = BusFault(
+            decoder=decoder, timeout=BUS_TIMEOUT_CYCLES,
+            addr_width=30, data_width=32, granularity=8,
+            features={"cti", "bte", "err"})
+
         wiring.connect(m, arbiter.bus, bus_pipe.intr_bus)
-        wiring.connect(m, bus_pipe.sub_bus, decoder.bus)
+        wiring.connect(m, bus_pipe.sub_bus, bus_fault.intr_bus)
+        wiring.connect(m, bus_fault.sub_bus, decoder.bus)
 
         # USB CDC-ACM, on the AUX port.
         #

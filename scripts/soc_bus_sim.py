@@ -68,7 +68,12 @@ from amaranth_soc          import wishbone                  # noqa: E402
 # it onto sys.modules under the bare name.
 from luna_soc.gateware.core import blockram                 # noqa: E402
 
+from amaranth_soc.memory   import MemoryMap                    # noqa: E402
+from amaranth_soc.wishbone import Decoder                      # noqa: E402
+
 from bus.wishbone_pipe import RegisteredResponse                # noqa: E402
+from bus.fault import BusFault, worst_ack_cycles                # noqa: E402
+from peripherals.flash import READ_MODES                        # noqa: E402
 
 # A small memory with distinct, non-zero words.
 #
@@ -123,6 +128,80 @@ class SideEffectTarget(wiring.Component):
         return m
 
 
+class SlowTarget(wiring.Component):
+    """A subordinate that answers after `latency` cycles, or never.
+
+    `latency=None` is the fault the address compare cannot see: a peripheral the
+    decoder claims, that has stopped answering. Nothing in the SoC's fabric
+    notices, and the CPU waits for it forever.
+    """
+
+    bus: In(wishbone.Signature(addr_width=4, data_width=32, granularity=8,
+                               features={"cti", "bte", "err"}))
+
+    def __init__(self, *, latency):
+        self.latency = latency
+        super().__init__()
+        # A window is a window whatever is behind it: the decoder needs a map to
+        # place one, and that map is what `BusFault` compares against.
+        memory_map = MemoryMap(addr_width=6, data_width=8)
+        memory_map.add_resource(name=("slow",), size=64, resource=self)
+        self.bus.memory_map = memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        if self.latency is None:
+            return m
+
+        # The counter must NOT depend on ACK, or `ack = f(~ack)` is a
+        # combinational loop and the simulator hangs rather than failing.
+        active = self.bus.cyc & self.bus.stb
+        waited = Signal(range(self.latency + 1))
+        with m.If(~active):
+            m.d.sync += waited.eq(0)
+        with m.Elif(waited != self.latency):
+            m.d.sync += waited.eq(waited + 1)
+
+        m.d.comb += [
+            self.bus.ack.eq(active & (waited == self.latency)),
+            self.bus.dat_r.eq(0x5107_0000),
+        ]
+        return m
+
+
+# Where the two windows sit in the harness decoder, and one address between
+# them that neither claims. Byte addresses, as `Decoder.add` takes them; the
+# initiator drives word addresses, hence the >> 2.
+RAM_WINDOW = 0x0000
+SLOW_WINDOW = 0x1000
+UNMAPPED = 0x0800
+
+
+def decoder_harness(*, guarded, timeout=8, latency=1):
+    """Two windows behind a decoder, optionally behind `BusFault` as well."""
+    m = Module()
+
+    ram = blockram.Peripheral(size=64, init=RAM_WORDS)
+    m.submodules.ram = ram
+    slow = SlowTarget(latency=latency)
+    m.submodules.slow = slow
+
+    signature = dict(addr_width=16, data_width=32, granularity=8,
+                     features={"cti", "bte", "err"})
+    decoder = Decoder(**signature)
+    m.submodules.decoder = decoder
+    decoder.add(ram.bus, addr=RAM_WINDOW, name="ram")
+    decoder.add(slow.bus, addr=SLOW_WINDOW, name="slow")
+
+    if not guarded:
+        return m, decoder.bus, None
+
+    fault = BusFault(decoder=decoder, timeout=timeout, **signature)
+    m.submodules.fault = fault
+    wiring.connect(m, fault.sub_bus, decoder.bus)
+    return m, fault.intr_bus, fault
+
+
 class Initiator:
     """A Wishbone classic initiator, driven from a testbench.
 
@@ -133,10 +212,11 @@ class Initiator:
     that a real CPU hangs on.
     """
 
-    def __init__(self, ctx, bus, verbose=False):
+    def __init__(self, ctx, bus, verbose=False, limit=32):
         self.ctx = ctx
         self.bus = bus
         self.verbose = verbose
+        self.limit = limit
 
     def _present(self, adr, we, dat_w, cti, bte):
         ctx = self.ctx
@@ -154,9 +234,10 @@ class Initiator:
         ctx = self.ctx
         cycles = 0
         # Bounded so a stage that never answers fails the run instead of
-        # hanging it. 32 is far beyond anything correct: the deepest path here
-        # is one subordinate cycle plus one stage cycle.
-        while cycles < 32:
+        # hanging it. 32 is far beyond anything correct here: the deepest path
+        # is one subordinate cycle plus one stage cycle. `limit` raises it for
+        # the bus-timeout checks, which have to outlast the bound being tested.
+        while cycles < self.limit:
             await ctx.tick()
             cycles += 1
             errored = hasattr(self.bus, "err") and ctx.get(self.bus.err)
@@ -220,7 +301,8 @@ def ram_harness(piped):
         return m, ram.bus, ram
 
     # The RAM has no ERR, so the stage is built without one here. In the SoC it
-    # has ERR, because the decoder raises it for an unmapped address.
+    # has ERR, and `bus/fault.BusFault` is what raises it -- the decoder itself
+    # raises ERR for nothing at all, which is what the checks below establish.
     pipe = RegisteredResponse(addr_width=4, data_width=32, granularity=8,
                               features={"cti", "bte"})
     m.submodules.pipe = pipe
@@ -350,6 +432,120 @@ def run_checks(checks, verbose):
         seen["requests"] == 1,
         f"the subordinate saw {seen['requests']} requests for one faulting "
         f"transfer")
+
+    fault_checks(checks, verbose)
+
+
+def one_access(*, guarded, adr, timeout=8, latency=1, limit=32, verbose=False):
+    """One single transfer through the harness. Returns (answer, fault unit)."""
+    m, bus, fault = decoder_harness(guarded=guarded, timeout=timeout,
+                                    latency=latency)
+    seen = {}
+
+    async def testbench(ctx):
+        initiator = Initiator(ctx, bus, verbose, limit=limit)
+        seen["answer"] = await initiator.single(adr)
+        if fault is not None:
+            seen["unclaimed"] = ctx.get(fault.unclaimed_count)
+            seen["timeouts"] = ctx.get(fault.timeout_count)
+            seen["worst"] = ctx.get(fault.worst_wait)
+
+    run(m, testbench)
+    return seen
+
+
+def fault_checks(checks, verbose):
+    """`bus/fault.BusFault`: the two ways a cycle ends that otherwise would not.
+
+    Every check here is paired with the run that shows it failing. The first
+    pair is the defect itself -- the same access, with and without the unit --
+    and neither passes by accident: an unguarded decoder cannot answer an
+    unmapped address at all, and there is no configuration of it that can.
+    """
+    # --- THE DEFECT: the decoder alone answers an unmapped address with
+    # --- nothing. Not ERR. Nothing.
+    bare = one_access(guarded=False, adr=UNMAPPED >> 2, verbose=verbose)
+    cycles, data, errored = bare["answer"]
+    checks.check(
+        "the decoder ALONE never answers an unmapped address, with ACK or ERR",
+        cycles == 32 and data is None and not errored,
+        f"answered after {cycles} cycles, errored={errored}. This check is the "
+        f"#409 defect stated positively: `amaranth_soc.wishbone.Decoder` is one "
+        f"Switch with no default, so an address in no window drives neither "
+        f"signal and a classic initiator waits forever. A pass here means the "
+        f"initiator gave up at its own bound, not that the bus answered.")
+
+    # --- MECHANISM 1: the same access, with the unit in front of the decoder.
+    guarded = one_access(guarded=True, adr=UNMAPPED >> 2, verbose=verbose)
+    cycles, _data, errored = guarded["answer"]
+    checks.check(
+        "an unmapped address is answered ERR, in one cycle",
+        errored and cycles == 1,
+        f"errored={errored} after {cycles} cycles. The run above is the control: "
+        f"the same address through the same decoder without the unit answers "
+        f"nothing at all.")
+    checks.check(
+        "an unmapped address is counted, and not as a timeout",
+        guarded["unclaimed"] == 1 and guarded["timeouts"] == 0,
+        f"unclaimed={guarded['unclaimed']} timeouts={guarded['timeouts']}")
+
+    # --- and it does not fire on an address that IS claimed ----------------
+    ok = one_access(guarded=True, adr=RAM_WINDOW >> 2, verbose=verbose)
+    cycles, data, errored = ok["answer"]
+    checks.check(
+        "a claimed address still reads, and is not faulted",
+        not errored and data == RAM_WORDS[0],
+        f"errored={errored}, read {data!r}, expected {RAM_WORDS[0]:#010x}. A "
+        f"unit that faulted everything would pass every check above this one.")
+
+    # --- MECHANISM 2: a subordinate the decoder DOES claim, that stopped ---
+    #
+    # The address compare cannot see this one: the window matches, so mechanism
+    # 1 is silent, and the run is the negative control for the claim that the
+    # timeout is not redundant.
+    silent = one_access(guarded=True, adr=SLOW_WINDOW >> 2, latency=None,
+                        timeout=8, limit=64, verbose=verbose)
+    cycles, _data, errored = silent["answer"]
+    checks.check(
+        "a DECODED subordinate that never answers is terminated by the bound",
+        errored and cycles == 8,
+        f"errored={errored} after {cycles} cycles, expected ERR at the 8-cycle "
+        f"bound. Mechanism 1 cannot reach "
+        f"this: the address is inside a window, so nothing about it is unmapped.")
+    checks.check(
+        "the timeout is counted as a timeout, and not as an unmapped address",
+        silent["timeouts"] == 1 and silent["unclaimed"] == 0,
+        f"timeouts={silent['timeouts']} unclaimed={silent['unclaimed']}")
+
+    # --- the bound does NOT fire on a subordinate inside it ----------------
+    #
+    # One cycle under the bound and one cycle over it, so the check would fail
+    # for a unit that fired early as well as one that never fired.
+    for latency, want_err in ((7, False), (9, True)):
+        slow = one_access(guarded=True, adr=SLOW_WINDOW >> 2, latency=latency,
+                          timeout=8, limit=64, verbose=verbose)
+        _cycles, data, errored = slow["answer"]
+        checks.check(
+            f"a subordinate answering in {latency} cycles "
+            f"{'faults' if want_err else 'does not fault'} against a bound of 8",
+            errored == want_err and (want_err or data == 0x5107_0000),
+            f"errored={errored} (wanted {want_err}), data {data!r}")
+
+    # --- the bound this SoC actually builds with ---------------------------
+    #
+    # Asserted rather than noted: it is derived from FLASH_MODE and
+    # FLASH_DIVISOR, and a change to either that made it tight would otherwise
+    # only show up as a board that faults at random.
+    worst = worst_ack_cycles(mode=READ_MODES["quad"], divisor=0)
+    checks.check(
+        "the shipping bound is 1.25x the slowest legitimate answer",
+        worst == 585 and -(-5 * worst // 4) == 732,
+        f"worst legitimate answer {worst} cycles, bound {-(-5 * worst // 4)}. "
+        f"The worst is a cold quad-mode flash read (69 cycles) with one maximal "
+        f"SPI-controller transfer stealing the crossbar before each of its four "
+        f"phases (4 x 129).")
+    checks.note(f"bus timeout {-(-5 * worst // 4)} cycles "
+                f"= 1.25 x {worst} (quad, divisor 0)")
 
 
 def main():
