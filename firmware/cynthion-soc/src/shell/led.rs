@@ -15,22 +15,15 @@ use crate::uart::Uart;
 use crate::shell::console::board_absent;
 use crate::{ target};
 
-/// Every LED, in board order, for a shell that wants to list them.
-pub(crate) const LEDS: [(Led, &str); 6] = [
-    (Led::Red, "red"),
-    (Led::Orange, "orange"),
-    (Led::Yellow, "yellow"),
-    (Led::Green, "green"),
-    (Led::Blue, "blue"),
-    (Led::Violet, "violet"),
-];
-
 /// Parse a colour name. Returns `None` for anything else, including an index --
 /// accepting "3" here would undo the whole point of naming them.
+///
+/// The names, the ball and the schematic reference all come from `Led` itself
+/// now. They used to be a table here, in an order that was REVERSED against the
+/// board (#415), and a second copy is exactly how that survived: nothing
+/// compared the two.
 pub(crate) fn led_by_name(name: &[u8]) -> Option<Led> {
-    LEDS.iter()
-        .find(|(_, text)| text.as_bytes() == name)
-        .map(|(led, _)| *led)
+    Led::from_name(name)
 }
 
 /// `led`, `led <colour>`, `led <colour> on|off|fabric`.
@@ -79,16 +72,22 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     // rather than reporting success and leaving the state to be guessed at.
     // This is the only way to confirm an LED from a terminal: nobody reading
     // this output can see the board.
-    for (led, colour) in LEDS {
+    // Colour, then the FPGA ball and the schematic reference. The colour is how
+    // a person addresses one; the other two are how it is found on the board and
+    // on the sheet, and printing them is what makes a wrong colour name
+    // falsifiable from the console instead of from a debugging session (#415).
+    for led in Led::ALL {
         let owner = match pins.led_owner(led) {
             gpio::Owner::Cpu => "cpu",
             gpio::Owner::Fabric => "fabric",
         };
         let _ = writeln!(
             uart,
-            "  {:7} {:3}  driven by {}",
-            colour,
+            "  {:7} {:3}  {:4} {:3}  driven by {}",
+            led.name(),
             if pins.led_lit(led) { "on" } else { "off" },
+            led.ball(),
+            led.refdes(),
             owner
         );
     }

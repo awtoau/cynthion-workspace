@@ -60,19 +60,77 @@ const SETCLR: usize = 4;
 const MODE_INPUT_ONLY: u16 = 0b00;
 const MODE_PUSH_PULL: u16 = 0b01;
 
-/// The six LEDs, in the order they sit on the board.
+/// The six LEDs, by the colour actually fitted.
 ///
-/// The discriminants are the GPIO pin numbers and match `GPIO_RED` and friends
-/// in `gateware/soc/top.py`. Nothing outside this module should
-/// need them.
+/// The discriminants are the GPIO pin numbers, which are the platform's
+/// `LEDResources(pins="E13 C13 B14 A15 D12 C11")` in order.
+///
+/// **This order was reversed until #415.** The platform declares the balls
+/// positionally and carries no colours, so nothing in the gateware or the
+/// firmware could contradict a wrong name -- and the wrong name survived in code,
+/// docs and notes until someone looked at the board and saw the wrong lamp
+/// blinking.
+///
+/// Settled two ways: `repos/cynthion-hardware/indicators_buttons.kicad_sch`
+/// gives each diode its colour (D2 red .. D7 purple), and on the bench the 2 Hz
+/// heartbeat at index 1 is BLUE while the 1 Hz fabric flash at index 3 is
+/// YELLOW.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Led {
-    Red = 0,
-    Orange = 1,
-    Yellow = 2,
-    Green = 3,
-    Blue = 4,
-    Violet = 5,
+    Violet = 0,
+    Blue = 1,
+    Green = 2,
+    Yellow = 3,
+    Orange = 4,
+    Red = 5,
+}
+
+impl Led {
+    /// Every LED, in pin order.
+    pub const ALL: [Led; 6] = [
+        Led::Violet, Led::Blue, Led::Green, Led::Yellow, Led::Orange, Led::Red,
+    ];
+
+    /// The colour name, which is how a person addresses one.
+    pub fn name(self) -> &'static str {
+        match self {
+            Led::Violet => "violet",
+            Led::Blue => "blue",
+            Led::Green => "green",
+            Led::Yellow => "yellow",
+            Led::Orange => "orange",
+            Led::Red => "red",
+        }
+    }
+
+    /// The FPGA ball, so a scope probe can be put on it.
+    pub fn ball(self) -> &'static str {
+        match self {
+            Led::Violet => "E13",
+            Led::Blue => "C13",
+            Led::Green => "B14",
+            Led::Yellow => "A15",
+            Led::Orange => "D12",
+            Led::Red => "C11",
+        }
+    }
+
+    /// The schematic reference designator, for `indicators_buttons.kicad_sch`.
+    pub fn refdes(self) -> &'static str {
+        match self {
+            Led::Violet => "D7",
+            Led::Blue => "D6",
+            Led::Green => "D5",
+            Led::Yellow => "D4",
+            Led::Orange => "D3",
+            Led::Red => "D2",
+        }
+    }
+
+    /// Match a colour name typed at the shell.
+    pub fn from_name(word: &[u8]) -> Option<Led> {
+        Led::ALL.into_iter().find(|led| led.name().as_bytes() == word)
+    }
 }
 
 

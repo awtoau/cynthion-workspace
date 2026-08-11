@@ -264,12 +264,25 @@ CLOCKS_BASE    = BOARD_BASE + 0x60
 # pad and Amaranth's `PinsN` does the inversion: a 1 here lights the LED. That
 # is the only place the active-low-ness appears, and neither the peripheral nor
 # the firmware needs to know about it.
-GPIO_RED     = 0
-GPIO_ORANGE  = 1
-GPIO_YELLOW  = 2
-GPIO_GREEN   = 3
-GPIO_BLUE    = 4
-GPIO_VIOLET  = 5
+# Colours from the schematic (`repos/cynthion-hardware/indicators_buttons.kicad_sch`),
+# NOT from the platform -- `LEDResources(pins="E13 C13 B14 A15 D12 C11")` is
+# positional and carries no colour, so nothing here could contradict a wrong
+# name. This order was reversed until #415, confirmed on the bench: the 2 Hz
+# heartbeat at index 1 is BLUE, the 1 Hz fabric flash at index 3 is YELLOW.
+#
+#   index  ball  colour  schematic
+#       0  E13   violet  D7
+#       1  C13   blue    D6
+#       2  B14   green   D5
+#       3  A15   yellow  D4
+#       4  D12   orange  D3
+#       5  C11   red     D2
+GPIO_VIOLET  = 0
+GPIO_BLUE    = 1
+GPIO_GREEN   = 2
+GPIO_YELLOW  = 3
+GPIO_ORANGE  = 4
+GPIO_RED     = 5
 
 # Pin 6: the power monitor's PWRDN, active low on the pad (`PinsN`), so a 1 here
 # powers the PAC1954 DOWN. It is an output with no input path, and the GPIO
@@ -1847,12 +1860,14 @@ class AwtoSoc(Elaboratable):
             # so this AUX-only design keeps behaving exactly as it did.
             sideband.advertise.eq(sideband_ctrl.advertise),
 
-            leds.eq(Cat(ever_errored,          # red    -- error, latched
-                        ever_fetched,          # orange -- fetching
-                        ever_io,               # yellow -- I/O bus reached
-                        heartbeat_on,          # green  -- heartbeat, flashing
-                        ever_console,          # blue   -- console data queued
-                        serial.connect)),      # violet -- USB up
+            # Cat is by PIN INDEX; the colour beside each is what is actually
+            # fitted (#415), which is the reverse of what these comments said.
+            leds.eq(Cat(ever_errored,          # 0 E13 violet -- error, latched
+                        ever_fetched,          # 1 C13 blue   -- fetching
+                        ever_io,               # 2 B14 green  -- I/O bus reached
+                        heartbeat_on,          # 3 A15 yellow -- fabric flash
+                        ever_console,          # 4 D12 orange -- console queued
+                        serial.connect)),      # 5 C11 red    -- USB up
         ]
 
         # ---- the board GPIO pins --------------------------------------------
