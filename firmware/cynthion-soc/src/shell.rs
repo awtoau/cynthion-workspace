@@ -87,6 +87,8 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("bist cell <d> <clk> <sel>", "one cell, by hand"),
     ("bist sweep [passes]", "drive x clock x readclksel, a row per cell"),
     ("bist trace [passes]", "the sweep, narrating each cell before it runs"),
+    ("bist ck [rung]", "the CK rungs this bitstream carries, or pick one"),
+    ("bist mirror", "which clock is on which PMOD A pad (#294)"),
     ("board", "every connector, rail and controller"),
     ("bram", "block RAM at address zero"),
     ("bram info", "base and size, from the generated map"),

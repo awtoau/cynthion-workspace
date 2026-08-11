@@ -209,6 +209,66 @@ impl Ck {
     }
 }
 
+/// The clock mirror's pad map, mirroring `CLOCK_MIRROR_BASE` in `top.py`.
+/// Same literal-not-PAC reasoning as `BASE`.
+pub const MIRROR_BASE: usize = 0xf000_0a20;
+
+/// Which clock is on which PMOD pad, as the bitstream reports it. See #294.
+///
+/// Read rather than assumed: the mirror's domain list is built in `top.py` from
+/// what the variant actually has, so a firmware table would be right until
+/// someone added a domain.
+pub struct Mirror {
+    base: usize,
+}
+
+/// `SOURCE_CODES` in `gateware/soc/peripherals/clock_mirror.py`, in code order
+/// from 1. `tests/test_bist_constants.py` holds the two equal.
+pub const MIRROR_SOURCES: [&str; 5] = ["sync", "usb", "hr", "hr_fast", "hr_probe"];
+
+/// PMOD A, in pin order, from the r1.4 platform's `Connector("pmod", 0, ...)`.
+/// Nothing else on the die claims these balls; the only contention is whatever
+/// is plugged into the header.
+pub const PMOD_A_BALLS: [&str; 8] = ["C9", "B9", "D11", "C12", "C8", "D8", "D9", "C10"];
+
+/// PMOD A pin numbers, which skip 5 and 6 -- those are ground and 3V3.
+pub const PMOD_A_PINS: [u8; 8] = [1, 2, 3, 4, 7, 8, 9, 10];
+
+impl Mirror {
+    /// # Safety
+    /// `base` must be the mirror map's CSR base.
+    pub const unsafe fn new(base: usize) -> Self {
+        Self { base }
+    }
+
+    fn read(&self, offset: usize) -> u32 {
+        // SAFETY: `offset` is one of the two registers the map defines.
+        unsafe { core::ptr::read_volatile((self.base + offset) as *const u32) }
+    }
+
+    /// How many pads are driven. Zero means no mirror in this bitstream, which
+    /// is also what an absent window reads as -- and both mean the same thing to
+    /// anyone holding a probe.
+    pub fn pads(&self) -> u32 {
+        (self.read(0x04) >> 8) & 0xFF
+    }
+
+    /// What the pad is divided by, so a number on a scope can be scaled back.
+    pub fn divisor(&self) -> u32 {
+        self.read(0x04) & 0xFF
+    }
+
+    /// The source on pad `index`, or `None` if it is not driven.
+    pub fn source(&self, index: usize) -> Option<&'static str> {
+        let code = (self.read(0x00) >> (4 * index)) & 0xF;
+        if code == 0 {
+            None
+        } else {
+            MIRROR_SOURCES.get(code as usize - 1).copied()
+        }
+    }
+}
+
 /// Why a poll stopped.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Poll {

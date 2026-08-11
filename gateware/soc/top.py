@@ -421,6 +421,17 @@ HYPERRAM_BIST_BASE = 0xf0000800
 # error at elaboration (#226).
 HYPERRAM_CK_BASE = 0xf0000a00
 
+# Which clock is on which PMOD pad, present only when CLOCK_MIRROR is set. 8
+# bytes, and 8-byte aligned for the same decoder reason as the window above.
+#
+# A window of its own rather than a field in `gateware_id`: the mirror is a build
+# option and the id block is in every build, so folding it in would put a
+# permanent hole in the shipping map for a variant feature.
+#
+# 0xa20, not 0xa10: 0xa10..0xa1f is reserved for #228's phase shifter, which is a
+# separate branch. Both are variant windows and neither shifts the shipping map.
+CLOCK_MIRROR_BASE = 0xf0000a20
+
 # The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
 #
 # Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
@@ -1455,6 +1466,17 @@ class AwtoSoc(Elaboratable):
             m.submodules.clock_mirror = ClockMirror(
                 pads=platform.request("user_pmod", 0, dir="-"),
                 domains=mirrored, divisor=CLOCK_MIRROR_DIV)
+
+            # WHICH PAD CARRIES WHAT, from the design rather than from a comment.
+            from peripherals.clock_mirror import ClockMirrorMap
+
+            mirror_map = ClockMirrorMap(domains=mirrored,
+                                        divisor=CLOCK_MIRROR_DIV)
+            m.submodules.clock_mirror_map = mirror_map
+            mirror_map_bridge = WishboneCSRBridge(mirror_map.bus, data_width=32)
+            m.submodules.clock_mirror_map_bridge = mirror_map_bridge
+            decoder.add(mirror_map_bridge.wb_bus, addr=CLOCK_MIRROR_BASE,
+                        name="clock_mirror")
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #
