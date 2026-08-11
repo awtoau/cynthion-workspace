@@ -54,9 +54,9 @@ use core::fmt::Write;
 /// module's vocabulary and callers should not have to know where they live.
 pub mod pure;
 
-pub use pure::{Axes, Cell, Readback, Tally, Verdict};
-use pure::{cr0_word, cr1_word, latency_clocks, latency_code_legal, poll_limit,
-           scored, HEADING, LEGEND};
+pub use pure::{Axes, Cell, Census, Readback, Tally, Verdict};
+use pure::{cr0_word, cr1_word, eye_centre, latency_clocks, latency_code_legal,
+           poll_limit, rank, scored, HEADING, LEGEND};
 
 /// Engine register numbers, from `gateware/probes/hyperram/hyperram_ceiling_top.py`.
 pub mod reg {
@@ -219,6 +219,21 @@ pub enum Poll {
     TimedOut { limit: u32, spins: u32 },
 }
 
+/// One cell, with the engine's evidence registers sampled at the time.
+///
+/// A sweep that walks several cells before choosing which row to print (#421)
+/// would otherwise attach the LAST cell's first-bad word and FSM state to it.
+#[derive(Clone, Copy)]
+pub struct Measured {
+    pub cell: Cell,
+    status: [u32; 2],
+    poll: [Poll; 2],
+    /// `(index, got, want)`, sampled only when the pass had errors.
+    bad: Option<(u32, u32, u32)>,
+    /// The two FSM states, twice, sampled only when a poll expired.
+    fsm: Option<[u32; 4]>,
+}
+
 /// The BIST peripheral's register window.
 pub struct Bist {
     base: usize,
@@ -358,15 +373,27 @@ impl Bist {
         self.run(true, passes)
     }
 
+    /// One cell AND its evidence, sampled before the next cell overwrites it.
+    /// The unit every sweep runs; see [`Measured`].
+    pub fn measured(&self, axes: Axes, passes: u32,
+                    carry: Option<(u32, u32, u32, Poll)>) -> Measured
+    {
+        let (cell, status, poll) = self.cell_with_control(axes, passes, carry);
+        Measured {
+            cell,
+            status,
+            poll,
+            bad: (cell.errors != 0).then(|| (self.read(reg::BAD_INDEX),
+                                             self.read(reg::BAD_GOT),
+                                             self.read(reg::BAD_WANT))),
+            fsm: poll.iter().any(|p| matches!(p, Poll::TimedOut { .. }))
+                .then(|| self.sample_fsm()),
+        }
+    }
+
     /// Decode STATUS for a human. Why a cell produced nothing is usually here.
     pub fn describe_status(&self, uart: &mut Uart, label: &str, st: u32) {
-        let _ = writeln!(
-            uart, "      {}: status {:#06x} busy={} done={} error={} negative={}",
-            label, st,
-            (st & status::BUSY != 0) as u8,
-            (st & status::DONE != 0) as u8,
-            (st & status::ERROR != 0) as u8,
-            (st & status::NEGATIVE != 0) as u8);
+        print_status(uart, label, st);
     }
 
     /// The two FSM states, which is where a stall actually is.
@@ -376,28 +403,13 @@ impl Bist {
     /// distinguish "wedged in state 3" from "cycling through state 3", and those
     /// want opposite investigations.
     pub fn describe_fsm(&self, uart: &mut Uart) {
-        let (engine_a, ctrl_a) = (self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE));
-        let (engine_b, ctrl_b) = (self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE));
-        let _ = writeln!(
-            uart, "  fsm     engine {} -> {} {}",
-            engine_a, engine_b,
-            if engine_a == engine_b { "(parked)" } else { "(moving)" });
-        // The two halves of READ_RECOVER's exit condition, named. Whichever is
-        // 0 is the one holding the engine there.
-        let _ = writeln!(
-            uart, "  ctrl    idle={} recovered={} start={}  (a=%{:03b} b=%{:03b})",
-            (ctrl_b & 1) as u8, ((ctrl_b >> 1) & 1) as u8, ((ctrl_b >> 2) & 1) as u8,
-            ctrl_a & 0b111, ctrl_b & 0b111);
-        // STICKY, and not cleared by `go`. A run that had to be rescued from a
-        // stall is not a clean run, and this must survive into the next reading
-        // -- a rig that recovers silently is a rig that reports a number taken
-        // after something went wrong.
-        if ctrl_b & 0b1000 != 0 {
-            let _ = writeln!(
-                uart, "  STALLED the controller failed to return to idle and \
-                       the engine was reset (sticky; power-cycle to clear)");
-        }
-        let _ = (ctrl_a, ctrl_b);
+        print_fsm(uart, self.sample_fsm());
+    }
+
+    /// Both states, twice, so a stall can be printed after later cells have run.
+    fn sample_fsm(&self) -> [u32; 4] {
+        [self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE),
+         self.read(reg::FSM_STATE), self.read(reg::CTRL_STATE)]
     }
 
     /// What the engine says about itself, before anything is measured.
@@ -501,13 +513,49 @@ impl Bist {
     }
 }
 
+/// One STATUS word, decoded. Takes the word, not the engine, so a row printed
+/// after later cells have run still describes its own pass.
+fn print_status(uart: &mut Uart, label: &str, st: u32) {
+    let _ = writeln!(
+        uart, "      {}: status {:#06x} busy={} done={} error={} negative={}",
+        label, st,
+        (st & status::BUSY != 0) as u8,
+        (st & status::DONE != 0) as u8,
+        (st & status::ERROR != 0) as u8,
+        (st & status::NEGATIVE != 0) as u8);
+}
+
+/// [`Bist::sample_fsm`]'s four words, decoded.
+fn print_fsm(uart: &mut Uart, words: [u32; 4]) {
+    let [engine_a, ctrl_a, engine_b, ctrl_b] = words;
+    let _ = writeln!(
+        uart, "  fsm     engine {} -> {} {}",
+        engine_a, engine_b,
+        if engine_a == engine_b { "(parked)" } else { "(moving)" });
+    // The two halves of READ_RECOVER's exit condition, named. Whichever is
+    // 0 is the one holding the engine there.
+    let _ = writeln!(
+        uart, "  ctrl    idle={} recovered={} start={}  (a=%{:03b} b=%{:03b})",
+        (ctrl_b & 1) as u8, ((ctrl_b >> 1) & 1) as u8, ((ctrl_b >> 2) & 1) as u8,
+        ctrl_a & 0b111, ctrl_b & 0b111);
+    // STICKY, and not cleared by `go`. A run that had to be rescued from a
+    // stall is not a clean run, and this must survive into the next reading
+    // -- a rig that recovers silently is a rig that reports a number taken
+    // after something went wrong.
+    if ctrl_b & 0b1000 != 0 {
+        let _ = writeln!(
+            uart, "  STALLED the controller failed to return to idle and \
+                   the engine was reset (sticky; power-cycle to clear)");
+    }
+}
+
 /// Print one cell's row, and the evidence when it produced nothing. Returns the
 /// verdict the row states, so the caller's tally cannot disagree with it.
 ///
 /// `expected` is how many words the cell was ASKED to compare; [`pure::scored`]
 /// is where shortness is folded into the verdict.
-fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 2],
-          expected: u32, verbose: bool) -> Verdict {
+fn report(uart: &mut Uart, m: &Measured, expected: u32, verbose: bool) -> Verdict {
+    let (cell, st, poll) = (&m.cell, m.status, m.poll);
     let short = cell.words < expected || cell.control_words < expected;
     let timed_out = matches!(poll[0], Poll::TimedOut { .. })
         || matches!(poll[1], Poll::TimedOut { .. });
@@ -540,44 +588,40 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
 
     // A silent expiry is worse than no bound at all: say which half, what the
     // limit was and how far it got.
-    let mut stalled = false;
     for (label, p) in [("real", poll[0]), ("control", poll[1])] {
         if let Poll::TimedOut { limit, spins } = p {
             let _ = writeln!(
                 uart, "      {} pass TIMED OUT after {} spins, limit {} \
                        -- engine never raised done",
                 label, spins, limit);
-            stalled = true;
         }
     }
     // WHERE it stalled, not merely that it did. A parked engine state and a
     // parked controller state are different faults: the first says the engine
     // never asked for a transaction, the second says it asked and got no answer.
-    if stalled {
-        bist.describe_fsm(uart);
+    if let Some(words) = m.fsm {
+        print_fsm(uart, words);
     }
     // THE FIRST MISMATCH, with its index and both values. One bad word in a
     // million and a million bad words are different faults, and *how* it is
     // wrong separates a one-word slip from a dead lane from noise. The pattern
     // is invertible by construction, so a value decodes back to the address it
     // belongs to.
-    if cell.errors != 0 {
-        let (index, got, want) = (bist.read(reg::BAD_INDEX),
-                                  bist.read(reg::BAD_GOT),
-                                  bist.read(reg::BAD_WANT));
+    if let Some((index, got, want)) = m.bad {
         let _ = writeln!(uart, "      first bad: index {:#x}  got {:#010x}  \
                                 want {:#010x}", index, got, want);
-        // A 16-bit rotation is one DEVICE word of slip, which is #186 rather
-        // than a timing margin -- and no capture phase can correct it.
+        // A 16-bit rotation is one DEVICE word of slip (#186). It is NOT proof
+        // the phase is right: the measured eye has this residue at `sel 0` and
+        // zero errors two phases away (#421).
         let rotated = got.rotate_left(16);
         if rotated == want || got == want.rotate_left(16) {
             let _ = writeln!(uart, "      ^ that is the SAME word rotated by 16 \
-                                    bits: one device word of slip, not a phase");
+                                    bits: one device word of slip (#186)");
         }
     }
     if verbose {
-        bist.describe_status(uart, "real   ", st[0]);
-        bist.describe_status(uart, "control", st[1]);
+        print_status(uart, "real   ", st[0]);
+        print_status(uart, "control", st[1]);
     }
     outcome
 }
@@ -642,8 +686,8 @@ pub fn one(uart: &mut Uart, bist: &Bist, axes: Axes, passes: u32) {
     }
     preamble(uart, bist);
     bist.configure(&axes);
-    let (cell, st, poll) = bist.cell(axes, passes);
-    report(uart, bist, &cell, st, poll, passes * BURST_WORDS, true);
+    let measured = bist.measured(axes, passes, None);
+    report(uart, &measured, passes * BURST_WORDS, true);
 }
 
 /// The rig's own smoke test: four cells, one CK, four values of a LIVE axis.
@@ -683,8 +727,8 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
             latency: if dqs { 2 } else { value },
         };
         bist.configure(&axes);
-        let (cell, st, poll) = bist.cell(axes, passes);
-        tally.add(report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false));
+        let measured = bist.measured(axes, passes, None);
+        tally.add(report(uart, &measured, passes * BURST_WORDS, false));
     }
 
     let _ = writeln!(uart, "  {}", tally);
@@ -730,15 +774,14 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
                         let axes = Axes { drive, single_ended_clock, readclksel,
                                           latency, fixed_latency };
                         bist.configure(&axes);
-                        let (cell, st, poll) = bist.cell_with_control(axes, passes, Some(carry));
+                        let measured = bist.measured(axes, passes, Some(carry));
                         // A clean pass is counted and NOT printed: 4096 rows at
                         // 115200 baud is 40 seconds of console for one number.
-                        if matches!(scored(&cell, expected), Verdict::Pass) {
+                        if matches!(scored(&measured.cell, expected), Verdict::Pass) {
                             tally.pass += 1;
                             continue;
                         }
-                        tally.add(report(uart, bist, &cell, st, poll, expected,
-                                         false));
+                        tally.add(report(uart, &measured, expected, false));
                     }
                 }
             }
@@ -750,40 +793,89 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
     bist.say_repeats(uart, 4096);
 }
 
-/// Sweep the part's LATENCY, which nothing has ever varied.
+/// Sweep the part's LATENCY, at EVERY capture phase, one row per code.
 ///
 /// `CR0[7:4]` is the initial latency code and `CR0[3]` selects fixed or
 /// variable. Every reading this project has taken used the power-on 0010b with
 /// fixed latency, because the CR0 write hardcoded 0x8F2F and replaced only the
 /// drive field.
 ///
-/// A read that starts one clock early or late lands ONE DEVICE WORD off, which
-/// is what the compare pairs have been showing -- the same value rotated by 16
-/// bits. That is not a timing margin and no capture phase corrects it, which is
-/// why a 128-cell sweep of phase, drive and clock mode failed in every cell.
+/// **The phase is walked, never assumed (#421).** A row pinned to one `sel` is a
+/// statement about that phase whenever the phase is outside the read eye, and
+/// the eye has moved between builds -- a whole 32-row sweep once reported
+/// 896/1024 at every code from `sel 0` alone. So each code is run at all eight
+/// phases and reported at the one that did best, with a census line under it
+/// naming what else was tried.
+///
+/// On a non-DQS build `sel` reaches nothing (#343), so there is one phase to
+/// walk and the sweep says so rather than measuring the same cell eight times.
 pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    let _ = writeln!(uart, "  32 cells: CR0[7:4] latency code x fixed/variable, at drive 3 sel 0");
+    let walked = if bist.dqs() { SEL_VALUES as u8 } else { 1 };
+    let _ = writeln!(uart, "  {} cells: CR0[7:4] latency code x fixed/variable \
+                            x {} capture phase(s), at drive 3",
+                     32 * walked as u32, walked);
+    let _ = writeln!(uart, "  one row per code, at the phase that did best; the \
+                            `sel` line under it says what else was tried");
+    if walked == 1 {
+        let _ = writeln!(uart, "  `sel` reaches nothing without the DQS PHY \
+                                (#343), so the phase is not an axis here");
+    }
     preamble(uart, bist);
 
     // ONE control for the sweep, not one per cell. It proves the comparator
     // fires, which is a property of the rig -- so this halves the sweep and
     // loses nothing. A SHORT control is still caught per cell (#424).
     let carry = bist.control_pass(passes);
+    let expected = passes * BURST_WORDS;
     let mut tally = Tally::default();
     for latency in 0u8..16 {
         for fixed_latency in [true, false] {
-            let axes = Axes { drive: 3, single_ended_clock: false, readclksel: 0,
-                              latency, fixed_latency };
-            bist.configure(&axes);
-            let (cell, st, poll) = bist.cell_with_control(axes, passes, Some(carry));
-            tally.add(report(uart, bist, &cell, st, poll, passes * BURST_WORDS,
-                             false));
+            let mut runs: [Option<Measured>; SEL_VALUES as usize] = [None; 8];
+            let mut passed = 0u8;
+            for readclksel in 0..walked {
+                let axes = Axes { drive: 3, single_ended_clock: false,
+                                  readclksel, latency, fixed_latency };
+                bist.configure(&axes);
+                let measured = bist.measured(axes, passes, Some(carry));
+                if matches!(scored(&measured.cell, expected), Verdict::Pass) {
+                    passed |= 1 << readclksel;
+                }
+                runs[readclksel as usize] = Some(measured);
+            }
+            let pick = pick_phase(&runs, passed, walked, expected);
+            // SAFETY of the unwrap: every phase below `walked` was just run, and
+            // `pick_phase` only ever returns one of them.
+            if let Some(measured) = runs[pick as usize] {
+                tally.add(report(uart, &measured, expected, false));
+            }
+            let _ = writeln!(uart, "{}", Census { walked, passed, pick });
         }
     }
     let _ = writeln!(uart, "  {}", tally);
+}
+
+/// Which phase's row stands for a code: the eye's centre when anything passed,
+/// else the least-bad cell -- so a fail row is the code's best case, not a
+/// phase's worst.
+fn pick_phase(runs: &[Option<Measured>], passed: u8, walked: u8, expected: u32) -> u8 {
+    if let Some(centre) = eye_centre(passed, walked) {
+        return centre;
+    }
+    let mut pick = 0u8;
+    for phase in 1..walked {
+        let better = match (runs[phase as usize], runs[pick as usize]) {
+            (Some(a), Some(b)) => rank(&a.cell, expected) < rank(&b.cell, expected),
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if better {
+            pick = phase;
+        }
+    }
+    pick
 }
 
 /// Sweep drive x clock x readclksel and print a row per cell.
@@ -817,9 +909,8 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
                                      if single_ended_clock { "se" } else { "dif" },
                                      readclksel);
                 }
-                let (cell, st, poll) = bist.cell_with_control(axes, passes, Some(carry));
-                tally.add(report(uart, bist, &cell, st, poll,
-                                 passes * BURST_WORDS, verbose));
+                let measured = bist.measured(axes, passes, Some(carry));
+                tally.add(report(uart, &measured, passes * BURST_WORDS, verbose));
             }
         }
     }
