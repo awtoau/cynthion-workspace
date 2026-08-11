@@ -63,30 +63,23 @@ LEDS = (
 # resource declaration and this table cannot disagree about a pin.
 LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
 
-# ---- HyperRAM pin drive, explicit rather than inherited. See #311. -----------
+# ---- HyperRAM pin electricals, explicit rather than inherited. #311. --------
 #
-# There was no DRIVE here at all, so every pin ran at the silicon default and the
-# value in use was written down nowhere. This is the decision.
-#
-# Sweep order 8 -> 4 -> 12 -> 16 mA: 8 is the impedance match, 4 is the NEGATIVE
-# CONTROL (the rung that should violate the part's minimum input slew), 16
-# overshoots the W956A8's absolute maximum unterminated. Numbers in #311.
-HYPERRAM_DRIVE_LADDER = ("8", "4", "12", "16")
-
-# HyperRAM pin electricals. Stated, never from the environment: they reach the
-# bitstream and were not in the cache key, so builds that differed electrically
-# hashed the same (#418). Sweep a rung with `hyperram_pin_patch.py` instead.
+# Stated, never from the environment: they reach the bitstream and were not in
+# the cache key, so builds that differed electrically hashed the same (#418).
+# Sweep a rung with `scripts/hyperram_pin_patch.py`, which patches a BUILT
+# bitstream in about a second.
 HYPERRAM_CK_DRIVE = "8"
 HYPERRAM_DQ_DRIVE = "8"
 # CS# and RESET# are static during a burst, so drive buys nothing there.
 HYPERRAM_CTRL_DRIVE = "4"
 
 # OFF against nextpnr's forced ON: Schmitt thresholds skew rise against fall on
-# the pins the read captures. #311.
+# the pins the read captures.
 HYPERRAM_DQ_HYSTERESIS = "OFF"
 
 # Stated because nextpnr emits PULLMODE only when present -- a toolchain bump
-# would otherwise flip this bus to the Trellis default DOWN. #311.
+# would otherwise flip this bus to the Trellis default DOWN.
 HYPERRAM_DQ_PULLMODE = "NONE"
 
 
