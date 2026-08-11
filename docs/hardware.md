@@ -216,37 +216,64 @@ C11, active-low) and five MCU LEDs.
 
 Driven so that **a working board and a dead one do not look the same** — nothing
 drove them before, which is a large part of why the silent SoC took days.
-Declared `LEDResources(..., invert=True)`, so the gateware drives active-high.
+Declared `LEDResources(pins="E13 C13 B14 A15 D12 C11", invert=True)`, so the
+gateware drives active-high.
 
-| # | colour | meaning | behaviour |
-|---|---|---|---|
-| 0 | **red** | any Wishbone bus error | solid, **latched** |
-| 1 | orange | CPU has fetched at least one instruction | solid, latched |
-| 2 | yellow | CPU has reached the I/O bus (third master alive) | solid, latched |
-| 3 | **green** | heartbeat | **flashing**, ~1.4 Hz |
-| 4 | blue | console data queued at least once | solid, latched |
-| 5 | violet | USB connected and configured | follows `serial.connect` |
+**The colour order is the schematic's, not the platform's.** `LEDResources` is
+positional and carries no colour, so nothing in the gateware or firmware could
+contradict a wrong name — and a reversed order survived in three places until
+someone watched the board and saw the wrong lamp blinking (#415). The source is
+`repos/cynthion-hardware/indicators_buttons.kicad_sch`, where each diode carries
+its colour in its `Value` field.
+
+| # | ball | sch | colour | driven by | behaviour |
+|---|---|---|---|---|---|
+| 0 | E13 | D7 | violet | — | **unassigned**, dark |
+| 1 | C13 | D6 | blue | `ever_console` | solid, latched |
+| 2 | B14 | D5 | green | `serial.connect` | solid while USB is up |
+| 3 | A15 | D4 | **yellow** | fabric counter | **flashing, 1 Hz** |
+| 4 | D12 | D3 | **orange** | RTIC task, firmware | **flashing, 2 Hz** |
+| 5 | C11 | D2 | **red** | `ever_errored` | latched — **off is good** |
+
+**Off is good, motion is alive.**
 
 | what you see | what it means |
 |---|---|
-| green flashing, orange + yellow + blue, no red | working normally |
-| green flashing, nothing else | clock runs, CPU not fetching — reset or bitstream |
-| green flashing, orange only | CPU fetches, never reaches I/O — bus master or address map |
-| orange + yellow, no blue | CPU runs, never writes the console — firmware, not gateware |
+| yellow **and** orange flashing, red dark | working normally |
+| yellow flashing, **orange frozen** | the FPGA runs; **the OS has stopped scheduling** |
+| yellow frozen | no clock, or the PLL lost lock |
 | **red lit** | a bus error occurred, whatever else looks right |
-| nothing | no clock, or no bitstream |
+| orange dark from boot | firmware never ran — its fabric default is dark on purpose |
+| nothing at all | no bitstream, or no power |
 
-**Everything except green is sticky**, because these events are brief — a bus
-error is one cycle, a first fetch happens once — and a human glances at the board
-at an arbitrary moment. *A fault that cleared itself is still a fault.* The same
-correction made the sideband usable: its `state` was raw Wishbone `cyc`, high only
-during a transaction, so reading `0` was near-certain even on a busy CPU. Latched,
-it answers "has this bus **ever** moved", which is the question being asked.
+**The two heartbeats are adjacent on purpose.** Yellow is a fabric counter off
+the solved `sync` clock; orange is a periodic RTIC task at the lowest priority.
+One at twice the rate of its neighbour is checkable by eye with no console — and
+that comparison is what caught the reversed colour map.
 
-**Green flashes rather than sitting solid** because a stuck-high output and a
-healthy design must not look the same. Motion proves the clock runs; a solid LED
+They answer different questions. Yellow says the **FPGA and its PLL** are alive
+and keeps flashing on a dead CPU. Orange says the **OS is scheduling**, and at
+the lowest priority it also says everything above it is getting done with slack
+left over.
+
+**`ever_fetched` and `ever_io` used to be here and are gone.** Both latched
+within microseconds of any boot and never distinguished anything again, so the
+board carried two permanently-lit lamps — the dead-instrument problem this
+section exists to avoid (#411).
+
+**A latched lamp answers "has this ever happened".** A bus error is one cycle
+long and a human glances at the board at an arbitrary moment: *a fault that
+cleared itself is still a fault.* The same correction made the sideband usable —
+its `state` was raw Wishbone `cyc`, high only during a transaction, so reading
+`0` was near-certain even on a busy CPU.
+
+**A flashing lamp beats a solid one** because a stuck-high output and a healthy
+design must not look the same. Motion proves something is running; a solid LED
 proves only that a pin is high, which is also what a design held in reset looks
 like.
+
+`led` prints the ball and the schematic reference beside each colour, so a wrong
+colour name is falsifiable from the console rather than from a schematic dig.
 
 The heartbeat divider must be derived from the clock, not hardcoded. Getting it
 wrong here gives a heartbeat at the wrong rate, which is harmless; the same
