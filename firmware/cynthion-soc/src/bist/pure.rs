@@ -81,6 +81,56 @@ impl Cell {
     }
 }
 
+/// The verdict a row PRINTS and the tally COUNTS, from one place.
+///
+/// Folds shortness in: a cell that compared fewer words than it was asked for is
+/// NO RESULT, not a pass -- one sweep row read `words 17` of 512 and scored PASS
+/// beside rows that compared all of them. A short FAILURE stays a failure and
+/// the row says `SHORT` beside it.
+pub fn scored(cell: &Cell, expected: u32) -> Verdict {
+    let short = cell.words < expected || cell.control_words < expected;
+    match cell.verdict() {
+        Verdict::Pass if short => Verdict::NoResult,
+        other => other,
+    }
+}
+
+/// A sweep's three counts, and there is no fourth.
+///
+/// **NO RESULT is not a pass and not a failure.** Collapsing the three is the
+/// failure this rig exists to avoid, so every sweep ends with all of them.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub pass: u32,
+    pub fail: u32,
+    pub no_result: u32,
+}
+
+impl Tally {
+    pub fn add(&mut self, verdict: Verdict) {
+        match verdict {
+            Verdict::Pass => self.pass += 1,
+            Verdict::Fail(_) => self.fail += 1,
+            Verdict::NoResult => self.no_result += 1,
+        }
+    }
+
+    /// Cells actually RUN, which is what `of N` reports. A sweep that stopped
+    /// early must not claim the count it planned.
+    pub fn total(&self) -> u32 {
+        self.pass + self.fail + self.no_result
+    }
+}
+
+impl core::fmt::Display for Tally {
+    /// `scripts/hyperram_matrix_diff.py` and `hyperram_register_path.py` parse
+    /// this exact wording; `tests/test_bist_row_parsers.py` holds them to it.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} pass, {} fail, {} no result of {}",
+               self.pass, self.fail, self.no_result, self.total())
+    }
+}
+
 /// `REG_CTRL_STATE` bits 8..10: whether the engine's CR0/CR1 readback stands up.
 ///
 /// The readback shares its capture window with the data path, so a cell run at a
@@ -212,30 +262,41 @@ pub fn poll_limit(passes: u32) -> u32 {
     passes.saturating_mul(SPINS_PER_PASS).saturating_add(FLOOR)
 }
 
-/// Column headings, composed rather than sliced.
+/// The ONE heading, over the one row shape every sweep prints.
 ///
-/// Two things the old single-string version got wrong. `report` prints
-/// `log::now()` and two spaces BEFORE the first field, so a heading without the
-/// same indent puts every column 12 characters out. And the latency variants
-/// built their heading as `&HEADING[13..]`, which cuts mid-word and produced a
-/// stray `el` in `lat  mode  el   errors`.
+/// - The stamp is column 0, not an indent: three writes per row put it between
+///   column 2 and column 3, mid-row.
+/// - Every axis is named, including the two the reader had to know from the
+///   source -- `mode` is CR0[3] fixed/variable and `clk` is CR1[6] dif/se.
 ///
 /// Widths must match [`FIELD_WIDTHS`] exactly. Integers right-align, `&str`
-/// left-aligns, which is why `clk` sits left and everything numeric sits right.
-pub const STAMP_PAD: &str = "            ";
-pub const HEADING_AXES: &str = "drive  clk  sel";
-pub const HEADING_COUNTS: &str = "    errors     words   control  verdict";
+/// left-aligns, which is why `mode` and `clk` are exactly their field's width
+/// and everything numeric sits right.
+pub const HEADING: &str =
+    "      time  lat  mode  drive  clk  sel    errors     words   control  verdict";
 
-/// `report`'s row format as data: six fields, two spaces between each, then the
-/// verdict. A format string has to be a literal, so this is the machine-readable
-/// half of `{:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}` and the headings above are
-/// checked against it.
-pub const FIELD_WIDTHS: [usize; 6] = [5, 3, 3, 8, 8, 8];
+/// What each column IS, printed once above the heading so a row can be read
+/// without this file. Register fields as the datasheet numbers them, Table 8
+/// (W956A8MBYA rev A01-006 p. 21).
+pub const LEGEND: [&str; 4] = [
+    "  time   ms since boot            lat    CR0[7:4] latency code",
+    "  mode   CR0[3] fixed/variable    drive  CR0[14:12] output drive",
+    "  clk    CR1[6] differential/single-ended    sel  READCLKSEL capture phase",
+    "  errors/words  the real pass    control  the negative control's errors",
+];
 
-/// Where each field of a row ends, counting from the first character after the
-/// timestamp. The verdict starts two columns after the last.
-pub const fn field_ends() -> [usize; 6] {
-    let mut ends = [0usize; 6];
+/// `report`'s row format as data: nine fields, two spaces between each, then
+/// the verdict. A format string has to be a literal, so this is the
+/// machine-readable half of
+/// `{}  {:3}  {:4}  {:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}`.
+///
+/// Field 0 is the stamp, which is exactly ten characters at every input --
+/// `log::format` asserts that, and this width depends on it.
+pub const FIELD_WIDTHS: [usize; 9] = [10, 3, 4, 5, 3, 3, 8, 8, 8];
+
+/// Where each field of a row ends. The verdict starts two columns after the last.
+pub const fn field_ends() -> [usize; 9] {
+    let mut ends = [0usize; 9];
     let (mut i, mut at) = (0, 0);
     while i < FIELD_WIDTHS.len() {
         at += FIELD_WIDTHS[i];
@@ -405,37 +466,77 @@ mod tests {
 
     /// Every heading word must occupy exactly its field's columns.
     ///
-    /// The two failures this replaces: a heading with no `STAMP_PAD` put every
+    /// The failures this replaces: a heading with no stamp column put every
     /// column 12 characters left of its data, and `&HEADING[13..]` cut a word in
     /// half and printed `lat  mode  el   errors`.
     #[test]
     fn the_headings_sit_over_the_columns_they_name() {
-        let heading = [HEADING_AXES, HEADING_COUNTS].concat();
         let ends = field_ends();
 
-        // Numeric fields right-align and `clk` is exactly its width, so every
-        // heading word ENDS at its field's last column.
-        for (word, end) in ["drive", "clk", "sel", "errors", "words", "control"]
-            .iter()
-            .zip(ends)
+        // Numeric fields right-align, and `mode`/`clk` are exactly their own
+        // width, so every heading word ENDS at its field's last column.
+        for (word, end) in ["time", "lat", "mode", "drive", "clk", "sel",
+                            "errors", "words", "control"].iter().zip(ends)
         {
-            assert_eq!(&heading[end - word.len()..end], *word, "{word} at {end}");
+            assert_eq!(&HEADING[end - word.len()..end], *word, "{word} at {end}");
         }
         // The verdict is the one unpadded field, two columns after the last.
-        assert_eq!(&heading[ends[5] + 2..], "verdict");
+        assert_eq!(&HEADING[ends[8] + 2..], "verdict");
 
         // Nothing but spaces in between, so a stray character cannot shift a
         // later column while every word still ends where it should.
-        assert_eq!(heading.len(), ends[5] + 2 + "verdict".len());
-        assert!(heading.chars().all(|c| c == ' ' || c.is_ascii_alphabetic()));
+        assert_eq!(HEADING.len(), ends[8] + 2 + "verdict".len());
+        assert!(HEADING.chars().all(|c| c == ' ' || c.is_ascii_alphabetic()));
     }
 
-    /// The stamp indent is `log::Stamp`'s ten characters plus `report`'s two
-    /// spaces. `tests/headings.rs` in the host crate holds it against the real
-    /// formatter; here it is only the width.
+    /// EVERY column is named, or the reader is back in the source. `mode` and
+    /// `clk` are the two that were unlabelled.
     #[test]
-    fn the_stamp_pad_is_twelve_blank_columns() {
-        assert_eq!(STAMP_PAD.len(), 12);
-        assert!(STAMP_PAD.bytes().all(|b| b == b' '));
+    fn the_legend_names_every_column_in_the_heading() {
+        let legend = LEGEND.concat();
+        for word in ["time", "lat", "mode", "drive", "clk", "sel", "errors",
+                     "words", "control"] {
+            assert!(legend.contains(word), "{word} is not in the legend");
+        }
+        // A console line wider than the terminal wraps and destroys the table
+        // it is explaining.
+        for line in LEGEND {
+            assert!(line.len() <= 80, "{} columns: {line}", line.len());
+        }
+        assert!(HEADING.len() <= 80, "{} columns", HEADING.len());
+    }
+
+    /// A short cell is NO RESULT, never a pass -- and the tally must bucket it
+    /// exactly as the row prints it.
+    #[test]
+    fn a_short_cell_is_no_result_rather_than_a_pass() {
+        assert!(matches!(scored(&cell(0, 4096, 4096, 4096), 4096), Verdict::Pass));
+        assert!(matches!(scored(&cell(0, 17, 4096, 4096), 4096), Verdict::NoResult));
+        // A short CONTROL is equally disqualifying: the comparator is not shown
+        // to have run over the words the real pass was judged on.
+        assert!(matches!(scored(&cell(0, 4096, 4096, 17), 4096), Verdict::NoResult));
+        // Errors are errors however few words carried them.
+        assert!(matches!(scored(&cell(9, 17, 4096, 4096), 4096), Verdict::Fail(9)));
+    }
+
+    /// The three counts stay separate, and `of N` is what RAN.
+    #[test]
+    fn the_tally_keeps_no_result_out_of_both_other_buckets() {
+        let mut tally = Tally::default();
+        for verdict in [Verdict::Pass, Verdict::Pass, Verdict::Fail(3),
+                        Verdict::NoResult] {
+            tally.add(verdict);
+        }
+        assert_eq!((tally.pass, tally.fail, tally.no_result), (2, 1, 1));
+        assert_eq!(tally.total(), 4);
+        assert_eq!(std::format!("{tally}"), "2 pass, 1 fail, 1 no result of 4");
+    }
+
+    /// The wording `scripts/hyperram_matrix_diff.py`'s `SUMMARY` regex reads.
+    /// A summary it cannot parse makes a finished 4096-cell run unsaveable.
+    #[test]
+    fn an_empty_tally_still_reports_all_four_numbers() {
+        assert_eq!(std::format!("{}", Tally::default()),
+                   "0 pass, 0 fail, 0 no result of 0");
     }
 }
