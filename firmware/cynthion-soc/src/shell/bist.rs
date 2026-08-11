@@ -60,6 +60,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
 
     match word {
         b"" | b"status" => engine.describe(uart),
+        b"legend" => bist::legend(uart),
         b"smoke" => bist::smoke(uart, &engine, passes(args)),
         b"latency" => bist::latency(uart, &engine, passes(args)),
         b"all" => bist::all(uart, &engine, passes(args)),

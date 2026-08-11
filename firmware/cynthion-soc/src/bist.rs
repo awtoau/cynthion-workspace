@@ -323,13 +323,39 @@ impl Bist {
 
     /// One cell: the real pass and its control, in that order.
     pub fn cell(&self, axes: Axes, passes: u32) -> (Cell, [u32; 2], [Poll; 2]) {
+        self.cell_with_control(axes, passes, None)
+    }
+
+    /// One cell, optionally reusing a control taken earlier in the sweep.
+    ///
+    /// The control proves the COMPARATOR fires, which is a property of the rig
+    /// and not of the axes -- so running it per cell doubled every sweep to
+    /// re-establish one bit. `carry` is a control measured once at the start;
+    /// there is no failure mode where the comparator works for cell 3 and not
+    /// cell 4 that a per-cell run would catch and a per-sweep one would not.
+    ///
+    /// A SHORT control is still caught per cell, from `control_words`, which is
+    /// the defect #424 was: a cell whose control compared fewer words than the
+    /// real pass was scored PASS.
+    pub fn cell_with_control(&self, axes: Axes, passes: u32,
+                             carry: Option<(u32, u32, u32, Poll)>)
+        -> (Cell, [u32; 2], [Poll; 2])
+    {
         let (errors, words, st_real, p_real) = self.run(false, passes);
-        let (control_errors, control_words, st_ctrl, p_ctrl) = self.run(true, passes);
+        let (control_errors, control_words, st_ctrl, p_ctrl) = match carry {
+            Some((ce, cw, st, p)) => (ce, cw, st, p),
+            None => self.run(true, passes),
+        };
         (
             Cell { axes, errors, words, control_errors, control_words },
             [st_real, st_ctrl],
             [p_real, p_ctrl],
         )
+    }
+
+    /// The control pass alone, for a sweep that takes it once.
+    pub fn control_pass(&self, passes: u32) -> (u32, u32, u32, Poll) {
+        self.run(true, passes)
     }
 
     /// Decode STATUS for a human. Why a cell produced nothing is usually here.
@@ -556,14 +582,21 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
     outcome
 }
 
-/// What every table carries above it: the speeds, the columns' meaning, the
-/// heading. One place, so no sweep can print a table missing any of them.
+/// What every table carries above it: the speeds and the heading.
+///
+/// The column legend is NOT here. It is four lines of static text that never
+/// changes, and reprinting it above every four-row sweep costs more attention
+/// than it repays -- `bist legend` prints it when it is wanted.
 fn preamble(uart: &mut Uart, bist: &Bist) {
     say_speeds(uart, bist);
+    let _ = writeln!(uart, "{}", HEADING);
+}
+
+/// The column legend, on request.
+pub fn legend(uart: &mut Uart) {
     for line in LEGEND {
         let _ = writeln!(uart, "{}", line);
     }
-    let _ = writeln!(uart, "{}", HEADING);
 }
 
 /// The CK the rows below were taken at, and the sync clock. A table whose
@@ -684,6 +717,10 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
     preamble(uart, bist);
 
     let expected = passes * BURST_WORDS;
+    // ONE control for the sweep, not one per cell. It proves the comparator
+    // fires, which is a property of the rig -- so this halves the sweep and
+    // loses nothing. A SHORT control is still caught per cell (#424).
+    let carry = bist.control_pass(passes);
     let mut tally = Tally::default();
     for latency in 0u8..16 {
         for fixed_latency in [true, false] {
@@ -693,7 +730,7 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
                         let axes = Axes { drive, single_ended_clock, readclksel,
                                           latency, fixed_latency };
                         bist.configure(&axes);
-                        let (cell, st, poll) = bist.cell(axes, passes);
+                        let (cell, st, poll) = bist.cell_with_control(axes, passes, Some(carry));
                         // A clean pass is counted and NOT printed: 4096 rows at
                         // 115200 baud is 40 seconds of console for one number.
                         if matches!(scored(&cell, expected), Verdict::Pass) {
@@ -731,13 +768,17 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
     let _ = writeln!(uart, "  32 cells: CR0[7:4] latency code x fixed/variable, at drive 3 sel 0");
     preamble(uart, bist);
 
+    // ONE control for the sweep, not one per cell. It proves the comparator
+    // fires, which is a property of the rig -- so this halves the sweep and
+    // loses nothing. A SHORT control is still caught per cell (#424).
+    let carry = bist.control_pass(passes);
     let mut tally = Tally::default();
     for latency in 0u8..16 {
         for fixed_latency in [true, false] {
             let axes = Axes { drive: 3, single_ended_clock: false, readclksel: 0,
                               latency, fixed_latency };
             bist.configure(&axes);
-            let (cell, st, poll) = bist.cell(axes, passes);
+            let (cell, st, poll) = bist.cell_with_control(axes, passes, Some(carry));
             tally.add(report(uart, bist, &cell, st, poll, passes * BURST_WORDS,
                              false));
         }
@@ -758,6 +799,10 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
     bist.say_repeats(uart, 128);
     preamble(uart, bist);
 
+    // ONE control for the sweep, not one per cell. It proves the comparator
+    // fires, which is a property of the rig -- so this halves the sweep and
+    // loses nothing. A SHORT control is still caught per cell (#424).
+    let carry = bist.control_pass(passes);
     let mut tally = Tally::default();
     for drive in 0u8..8 {
         for single_ended_clock in [false, true] {
@@ -772,7 +817,7 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
                                      if single_ended_clock { "se" } else { "dif" },
                                      readclksel);
                 }
-                let (cell, st, poll) = bist.cell(axes, passes);
+                let (cell, st, poll) = bist.cell_with_control(axes, passes, Some(carry));
                 tally.add(report(uart, bist, &cell, st, poll,
                                  passes * BURST_WORDS, verbose));
             }
