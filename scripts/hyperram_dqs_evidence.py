@@ -52,6 +52,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 import soc_shell  # noqa: E402
 
 TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-dqs-evidence.txt"
@@ -61,13 +62,8 @@ LOG = ROOT / "tmp" / "logs" / "hyperram_dqs_evidence.log"
 # pass, not `bist status`'s "at rest" -- the control runs second, so at rest is
 # the CONTROL's status and its BURSTDET is not the measurement's.
 STATUS_REAL = re.compile(r"real\s*:\s*status\s+(0x[0-9a-fA-F]+)")
-# `000197.956      3  dif    0      8192      8192      8192  fail`
-CELL = re.compile(r"^\s*\d+\.\d+\s+(\d)\s+(dif|se)\s+(\d)"
-                  r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S.*?)\s*$")
-# `      first bad: index 0x0  got 0x0000003f  want 0xffbf0000`
-FIRST_BAD = re.compile(r"first bad: index (0x[0-9a-f]+)\s+got (0x[0-9a-f]+)"
-                       r"\s+want (0x[0-9a-f]+)")
-CR0_BACK = re.compile(r"CR0\s+part reports\s+(0x[0-9a-fA-F]+)")
+FIRST_BAD = bist_rows.FIRST_BAD
+CR0_BACK = bist_rows.CR0_BACK
 
 
 def expected_cr0(drive, latency, fixed):
@@ -120,22 +116,20 @@ def cell(board, drive, clock, sel, latency, mode):
     `DEFAULT_PASSES` (64), so a sixth word would be parsed and dropped. 64 x 128
     burst words = 8192 words per cell.
     """
-    text = board.send(f"bist cell {drive} {clock} {sel} {latency} {mode}", 20)
-    rows = [m for m in (CELL.match(line) for line in text.splitlines()) if m]
+    command = f"bist cell {drive} {clock} {sel} {latency} {mode}"
+    text = board.send(command, 20)
+    row = bist_rows.require_rows(text, command)[-1]
     found = STATUS_REAL.search(text)
-    if not rows or not found:
+    if not found:
         raise SystemExit(
-            "no cell row or no `real: status` line parsed. The PARSE is the "
-            "first suspect -- that has been right five times on this rig. "
-            f"Reply was:\n{text}")
-    row = rows[-1]
+            "no `real: status` line parsed. The PARSE is the first suspect -- "
+            f"that has been right five times on this rig. Reply was:\n{text}")
     word = int(found.group(1), 0)
     bad = FIRST_BAD.search(text)
-    return dict(sel=int(row.group(3)),
-                errors=int(row.group(4)), words=int(row.group(5)),
-                control=int(row.group(6)), verdict=row.group(7),
+    return dict(sel=row["sel"], errors=row["errors"], words=row["words"],
+                control=row["control"], verdict=row["verdict"],
                 status=word,
-                got=bad.group(2) if bad else "", want=bad.group(3) if bad else "",
+                got=bad["got"] if bad else "", want=bad["want"] if bad else "",
                 **decode(word))
 
 
@@ -207,10 +201,10 @@ def main():
         # The CK the bitstream carries, so the STATUS bit map can be CHECKED
         # against a value already known rather than assumed correct.
         rung = board.send("bist ck")
-        found = re.search(r"rung\s+\d+\s+([\d.]+)\s+MHz", rung)
+        found = bist_rows.RUNG.search(rung)
         if not found:
             raise SystemExit(f"no CK rung reported. Reply was:\n{rung}")
-        ck_reported = float(found.group(1))
+        ck_reported = float(found["mhz"])
 
         if args.soak:
             return soak(board, log, ck_reported)

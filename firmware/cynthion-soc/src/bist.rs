@@ -45,6 +45,7 @@
 
 #![allow(dead_code)]
 
+use crate::clock::Hz;
 use crate::uart::Uart;
 use core::fmt::Write;
 
@@ -53,9 +54,9 @@ use core::fmt::Write;
 /// module's vocabulary and callers should not have to know where they live.
 pub mod pure;
 
-pub use pure::{Axes, Cell, Readback, Verdict};
+pub use pure::{Axes, Cell, Readback, Tally, Verdict};
 use pure::{cr0_word, cr1_word, latency_clocks, latency_code_legal, poll_limit,
-           HEADING_AXES, HEADING_COUNTS, STAMP_PAD};
+           scored, HEADING, LEGEND};
 
 /// Engine register numbers, from `gateware/probes/hyperram/hyperram_ceiling_top.py`.
 pub mod reg {
@@ -474,36 +475,38 @@ impl Bist {
     }
 }
 
-/// Print one cell's row, and the evidence when it produced nothing.
+/// Print one cell's row, and the evidence when it produced nothing. Returns the
+/// verdict the row states, so the caller's tally cannot disagree with it.
 ///
-/// `expected` is how many words the cell was ASKED to compare. A cell that
-/// compared fewer is not a pass: one sweep row read `words 17` of 512 and was
-/// scored PASS beside rows that compared all of them. The negative control
-/// guards against a comparator that never fired; nothing guarded against one
-/// that fired 3% of the time.
+/// `expected` is how many words the cell was ASKED to compare; [`pure::scored`]
+/// is where shortness is folded into the verdict.
 fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 2],
-          expected: u32, verbose: bool) {
+          expected: u32, verbose: bool) -> Verdict {
     let short = cell.words < expected || cell.control_words < expected;
-    let verdict = match cell.verdict() {
-        Verdict::Pass if short => "NO RESULT -- short cell, fewer words than asked",
-        Verdict::Fail(_) if short => "fail (SHORT -- fewer words than asked)",
+    let timed_out = matches!(poll[0], Poll::TimedOut { .. })
+        || matches!(poll[1], Poll::TimedOut { .. });
+    let outcome = scored(cell, expected);
+    let verdict = match outcome {
         Verdict::Pass => "PASS",
+        Verdict::Fail(_) if short => "fail (SHORT -- fewer words than asked)",
         Verdict::Fail(_) => "fail",
         // A timeout reaches NoResult by the same door as a control that did not
         // fire, and the two want completely different next steps -- so they must
         // not print the same text.
-        Verdict::NoResult
-            if matches!(poll[0], Poll::TimedOut { .. })
-                || matches!(poll[1], Poll::TimedOut { .. }) =>
-            "NO RESULT -- engine never completed (timeout)",
+        Verdict::NoResult if timed_out => "NO RESULT -- engine never completed (timeout)",
+        Verdict::NoResult if short => "NO RESULT -- short cell, fewer words than asked",
         Verdict::NoResult => "NO RESULT -- control did not fire",
     };
-    // THE TIME, on every row. A sweep that takes under a second is a claim
-    // until each row carries its own stamp; then per-cell duration is in the
-    // data and "how quick" stops being something anyone has to ask.
-    let _ = write!(uart, "{}  ", crate::log::now());
+    // ONE `writeln!`, every field in it, the stamp first. Built from three
+    // separate writes the stamp landed between column 2 and column 3, mid-row.
+    //
+    // The stamp is per-row so per-cell duration is in the data; "how quick" then
+    // stops being something anyone has to ask.
     let _ = writeln!(
-        uart, "{:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}",
+        uart, "{}  {:3}  {:4}  {:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}",
+        crate::log::now(),
+        cell.axes.latency,
+        if cell.axes.fixed_latency { "fix" } else { "var" },
         cell.axes.drive,
         if cell.axes.single_ended_clock { "se" } else { "dif" },
         cell.axes.readclksel,
@@ -550,6 +553,52 @@ fn report(uart: &mut Uart, bist: &Bist, cell: &Cell, st: [u32; 2], poll: [Poll; 
         bist.describe_status(uart, "real   ", st[0]);
         bist.describe_status(uart, "control", st[1]);
     }
+    outcome
+}
+
+/// What every table carries above it: the speeds, the columns' meaning, the
+/// heading. One place, so no sweep can print a table missing any of them.
+fn preamble(uart: &mut Uart, bist: &Bist) {
+    say_speeds(uart, bist);
+    for line in LEGEND {
+        let _ = writeln!(uart, "{}", line);
+    }
+    let _ = writeln!(uart, "{}", HEADING);
+}
+
+/// The CK the rows below were taken at, and the sync clock. A table whose
+/// frequency is not on it cannot be compared with another table.
+fn say_speeds(uart: &mut Uart, bist: &Bist) {
+    // SAFETY: `CK_BASE` is the selector's CSR base, and this path exists only in
+    // the engine-bearing build, where that window is decoded (#409).
+    let ck = unsafe { Ck::new(CK_BASE) };
+    match ck.rungs() {
+        // No selector: `REG_CLOCK` is the constant baked in at elaboration, so
+        // it says what was ASKED for and nothing about whether the PLL locked.
+        0 => {
+            let _ = writeln!(uart, "  CK {} as built, no rung selector",
+                             Hz::khz(bist.read(reg::CLOCK)));
+        }
+        rungs => {
+            let live = ck.selected();
+            let _ = writeln!(uart, "  CK {}  rung {} of {}  PLL {}",
+                             Hz::khz(ck.khz(live)), live, rungs,
+                             if ck.locked() { "locked" }
+                             else { "NOT LOCKED -- no row below means anything" });
+        }
+    }
+    // `sync` as the fabric COUNTS it, not as the design asked: a PLL with its
+    // feedback unconnected reported the constant while `sync` was not running.
+    match crate::clock::measured() {
+        Some(m) => {
+            let _ = writeln!(uart, "  sync {} counted  PLL {}", Hz::khz(m.khz),
+                             if m.locked { "locked" } else { "NOT LOCKED" });
+        }
+        None => {
+            let _ = writeln!(uart, "  sync not counted yet -- the {} us window \
+                                    has not completed", crate::clock::WINDOW_US);
+        }
+    }
 }
 
 /// One cell, by hand. The unit a sweep is made of, so nothing is exercised in a
@@ -558,7 +607,7 @@ pub fn one(uart: &mut Uart, bist: &Bist, axes: Axes, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
+    preamble(uart, bist);
     bist.configure(&axes);
     let (cell, st, poll) = bist.cell(axes, passes);
     report(uart, bist, &cell, st, poll, passes * BURST_WORDS, true);
@@ -591,10 +640,9 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
                      if dqs { "capture phases" } else { "latency codes" });
     let _ = writeln!(uart, "  wanted: at least one PASS *and* at least one fail.");
     let _ = writeln!(uart, "  four passes means the rig cannot see a fault.");
-    let _ = writeln!(uart, "{}{}{}{}", if dqs { "" } else { "lat  " },
-                     STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
+    preamble(uart, bist);
 
-    let (mut passed, mut failed, mut nothing) = (0u32, 0u32, 0u32);
+    let mut tally = Tally::default();
     for value in values {
         let axes = Axes {
             drive: 3, single_ended_clock: false, fixed_latency: true,
@@ -603,20 +651,12 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
         };
         bist.configure(&axes);
         let (cell, st, poll) = bist.cell(axes, passes);
-        match cell.verdict() {
-            Verdict::Pass => passed += 1,
-            Verdict::Fail(_) => failed += 1,
-            Verdict::NoResult => nothing += 1,
-        }
-        if !dqs {
-            let _ = write!(uart, "{:3}  ", axes.latency);
-        }
-        report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false);
+        tally.add(report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false));
     }
 
-    let _ = writeln!(uart, "  {} pass, {} fail, {} no result", passed, failed, nothing);
-    let _ = writeln!(uart, "  rig: {}", match (passed, failed, nothing) {
-        (_, _, n) if n == 4 => "WEDGED -- fix the rig, this says nothing about the part",
+    let _ = writeln!(uart, "  {}", tally);
+    let _ = writeln!(uart, "  rig: {}", match (tally.pass, tally.fail, tally.no_result) {
+        (_, _, n) if n == tally.total() => "WEDGED -- fix the rig, this says nothing about the part",
         (_, _, n) if n > 0 => "INCOMPLETE -- some cells produced no result",
         (0, _, _) => "cannot report success -- no cell passed",
         (_, 0, _) => "NOT VALIDATED -- nothing failed, so a pass is not evidence",
@@ -641,10 +681,10 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
     let _ = writeln!(uart, "  4096 cells: latency x fix/var x drive x clock x phase");
     bist.say_repeats(uart, 4096);
     let _ = writeln!(uart, "  printing only what is NOT a clean pass");
-    let _ = writeln!(uart, "lat  mode  {}{}{}",
-                     STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
+    preamble(uart, bist);
 
-    let (mut pass, mut fail, mut none) = (0u32, 0u32, 0u32);
+    let expected = passes * BURST_WORDS;
+    let mut tally = Tally::default();
     for latency in 0u8..16 {
         for fixed_latency in [true, false] {
             for drive in 0u8..8 {
@@ -654,24 +694,20 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
                                           latency, fixed_latency };
                         bist.configure(&axes);
                         let (cell, st, poll) = bist.cell(axes, passes);
-                        let short = cell.words < passes * BURST_WORDS;
-                        match cell.verdict() {
-                            Verdict::Pass if !short => { pass += 1; continue }
-                            Verdict::Pass => none += 1,
-                            Verdict::Fail(_) => fail += 1,
-                            Verdict::NoResult => none += 1,
+                        // A clean pass is counted and NOT printed: 4096 rows at
+                        // 115200 baud is 40 seconds of console for one number.
+                        if matches!(scored(&cell, expected), Verdict::Pass) {
+                            tally.pass += 1;
+                            continue;
                         }
-                        let _ = write!(uart, "{:3}  {:4}  ", latency,
-                                       if fixed_latency { "fix" } else { "var" });
-                        report(uart, bist, &cell, st, poll, passes * BURST_WORDS,
-                               false);
+                        tally.add(report(uart, bist, &cell, st, poll, expected,
+                                         false));
                     }
                 }
             }
         }
     }
-    let _ = writeln!(uart, "  {} pass, {} fail, {} no result of 4096",
-                     pass, fail, none);
+    let _ = writeln!(uart, "  {}", tally);
     // AFTER the summary the host parses, and repeated: a tally of 4096 read
     // without this line overstates what was measured by eight times.
     bist.say_repeats(uart, 4096);
@@ -692,21 +728,21 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    let _ = writeln!(uart, "  CR0[7:4] latency code x fixed/variable, at drive 3 sel 0");
-    let _ = writeln!(uart, "lat  mode  {}{}{}",
-                     STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
+    let _ = writeln!(uart, "  32 cells: CR0[7:4] latency code x fixed/variable, at drive 3 sel 0");
+    preamble(uart, bist);
+
+    let mut tally = Tally::default();
     for latency in 0u8..16 {
         for fixed_latency in [true, false] {
             let axes = Axes { drive: 3, single_ended_clock: false, readclksel: 0,
                               latency, fixed_latency };
             bist.configure(&axes);
             let (cell, st, poll) = bist.cell(axes, passes);
-            let _ = write!(uart, "{:3}  {:4}  ", latency,
-                           if fixed_latency { "fix" } else { "var" });
-            report(uart, bist, &cell, st, poll, passes * BURST_WORDS, false);
+            tally.add(report(uart, bist, &cell, st, poll, passes * BURST_WORDS,
+                             false));
         }
     }
-    let _ = writeln!(uart, "  latency sweep complete");
+    let _ = writeln!(uart, "  {}", tally);
 }
 
 /// Sweep drive x clock x readclksel and print a row per cell.
@@ -720,8 +756,9 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
     }
     let _ = writeln!(uart, "  {} passes per cell, 128 cells", passes);
     bist.say_repeats(uart, 128);
-    let _ = writeln!(uart, "{}{}{}", STAMP_PAD, HEADING_AXES, HEADING_COUNTS);
+    preamble(uart, bist);
 
+    let mut tally = Tally::default();
     for drive in 0u8..8 {
         for single_ended_clock in [false, true] {
             for readclksel in 0u8..8 {
@@ -736,11 +773,12 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
                                      readclksel);
                 }
                 let (cell, st, poll) = bist.cell(axes, passes);
-                report(uart, bist, &cell, st, poll, passes * BURST_WORDS, verbose);
+                tally.add(report(uart, bist, &cell, st, poll,
+                                 passes * BURST_WORDS, verbose));
             }
         }
     }
-    let _ = writeln!(uart, "  sweep complete");
+    let _ = writeln!(uart, "  {}", tally);
 }
 
 /// Refuse to measure through an engine that is not answering.

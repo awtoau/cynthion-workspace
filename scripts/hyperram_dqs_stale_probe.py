@@ -43,13 +43,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 import soc_shell  # noqa: E402
 
 TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-dqs-stale.txt"
@@ -60,12 +60,9 @@ LOG = ROOT / "tmp" / "logs" / "hyperram_dqs_stale_probe.log"
 # them this probe must stop matching rather than quietly track it.
 CR1_BY_CLOCK = {"dif": 0xFF81, "se": 0xFFC1}
 
-FIRST_BAD = re.compile(r"first bad: index (0x[0-9a-f]+)\s+got (0x[0-9a-f]+)"
-                       r"\s+want (0x[0-9a-f]+)")
-CR0_BACK = re.compile(r"CR0\s+part reports\s+(0x[0-9a-fA-F]+)")
-CR1_BACK = re.compile(r"CR1\s+part reports\s+(0x[0-9a-fA-F]+)")
-CELL = re.compile(r"^\s*\d+\.\d+\s+(\d)\s+(dif|se)\s+(\d)"
-                  r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S.*?)\s*$")
+FIRST_BAD = bist_rows.FIRST_BAD
+CR0_BACK = bist_rows.CR0_BACK
+CR1_BACK = bist_rows.CR1_BACK
 
 
 def expected_cr0(drive, latency, fixed):
@@ -98,10 +95,9 @@ class Board:
         TRANSCRIPT.write_text("\n".join(self.transcript))
 
 
-# `bist latency` prints `lat  mode  ` then `report`'s row, and the first-bad line
-# on the next line. Both are needed together, so the sweep is parsed as a pair.
-LAT_ROW = re.compile(r"^\s*(\d+)\s+(fix|var)\s+\d+\.\d+\s+(\d)\s+(dif|se)\s+(\d)"
-                     r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S.*?)\s*$")
+# A row and the first-bad line beneath it are needed TOGETHER, so the sweep is
+# parsed as a pair rather than through `bist_rows.rows`.
+LAT_ROW = bist_rows.ROW
 
 # `bist latency` sweeps at `dif`, so every cell in it writes this CR1.
 # `firmware/cynthion-soc/src/bist.rs:latency`: `single_ended_clock: false`.
@@ -139,13 +135,13 @@ def latency_sweep(board, log, passes):
             bad = FIRST_BAD.search(lines[j])
             if bad:
                 break
-        rows.append(dict(latency=int(m.group(1)), mode=m.group(2),
-                         errors=int(m.group(6)), words=int(m.group(7)),
-                         verdict=m.group(9),
-                         got=int(bad.group(2), 0) if bad else None))
+        cell = bist_rows.cell(m)
+        rows.append(dict(latency=cell["lat"], mode=cell["mode"],
+                         errors=cell["errors"], words=cell["words"],
+                         verdict=cell["verdict"],
+                         got=int(bad["got"], 0) if bad else None))
     if not rows:
-        raise SystemExit(f"no sweep row parsed. The PARSE is the first suspect "
-                         f"on this rig. Reply was:\n{text}")
+        bist_rows.require_rows(text, f"bist latency {passes}")
 
     log.info("`bist latency` writes CR1 = %#06x on every cell, so the word this "
              "predicts is %#010x", LATENCY_SWEEP_CR1, want)
@@ -207,11 +203,11 @@ def main():
     board = Board(args.node)
     try:
         rung = board.send("bist ck", 8)
-        found = re.search(r"rung\s+\d+\s+([\d.]+)\s+MHz", rung)
+        found = bist_rows.RUNG.search(rung)
         if not found:
             raise SystemExit(f"no CK rung reported -- is this the DQS SoC "
                              f"bitstream? Reply was:\n{rung}")
-        log.info("CK %s MHz", found.group(1))
+        log.info("CK %s MHz", found["mhz"])
         if args.status:
             log.info("%s", board.send("bist status", 8))
             return 0
@@ -225,9 +221,10 @@ def main():
 
         verdict = []
         for clock in ("dif", "se"):
-            text = board.send(
-                f"bist cell {args.drive} {clock} {args.sel} {args.latency} fix", 30)
-            row = [m for m in (CELL.match(l) for l in text.splitlines()) if m]
+            command = (f"bist cell {args.drive} {clock} {args.sel} "
+                       f"{args.latency} fix")
+            text = board.send(command, 30)
+            row = bist_rows.require_rows(text, command)
             bad = FIRST_BAD.search(text)
             status = board.send("bist status", 8)
             cr0 = CR0_BACK.search(status)
@@ -235,15 +232,14 @@ def main():
             cr0_v = int(cr0.group(1), 0) if cr0 else -1
             cr1_v = int(cr1.group(1), 0) if cr1 else -1
             want_cr1 = CR1_BY_CLOCK[clock]
-            got = int(bad.group(2), 0) if bad else -1
+            got = int(bad["got"], 0) if bad else -1
             # Both halves equal to the CR1 value is the register-read return
             # word, measured in simulation as `{cr, cr}`.
             tracks = got >= 0 and got == ((want_cr1 << 16) | want_cr1)
             verdict.append((clock, cr0_v, cr1_v, got, tracks))
             log.info("%-4s %#06x       %#06x       %#06x       %s/%s  %-14s  %s",
                      clock, want_cr1, cr0_v, cr1_v,
-                     row[-1].group(4) if row else "?",
-                     row[-1].group(5) if row else "?",
+                     row[-1]["errors"], row[-1]["words"],
                      f"{got:#010x}" if got >= 0 else "(none -- clean)",
                      "YES" if tracks else "no")
 

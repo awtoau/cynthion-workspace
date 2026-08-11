@@ -58,14 +58,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
+import bist_rows  # noqa: E402
 from devlog import emit  # noqa: E402
 import soc_shell  # noqa: E402
 from hyperram_clocks import reachable_ck  # noqa: E402
 
 CSV = ROOT / "tmp" / "hyperram-matrix.csv"
-
-# `drive  clk  sel   errors     words   control  verdict`
-ROW = re.compile(r"^\s*(\d)\s+(dif|se)\s+(\d)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*?)\s*$")
 
 FMAX = re.compile(r"Max frequency for clock\s+'\$glbnet\$clk':\s*([\d.]+) MHz.*?(PASS|FAIL)")
 
@@ -107,15 +105,13 @@ def sweep(passes, budget_s):
     finally:
         link.close()
 
-    rows = []
-    for line in text.splitlines():
-        found = ROW.match(line)
-        if not found:
-            continue
-        drive, clk, sel, errors, words, control, verdict = found.groups()
-        rows.append(dict(drive=int(drive), clock=clk, readclksel=int(sel),
-                         errors=int(errors), words=int(words),
-                         control_errors=int(control), verdict=verdict))
+    # `bist sweep` prints a row for EVERY cell, so an empty parse is always the
+    # parser -- this pattern predated the timestamp column and matched nothing
+    # for as long as it took anyone to look.
+    rows = [dict(drive=row["drive"], clock=row["clk"], readclksel=row["sel"],
+                 errors=row["errors"], words=row["words"],
+                 control_errors=row["control"], verdict=row["verdict"])
+            for row in bist_rows.require_rows(text, f"bist sweep {passes}")]
     return rows, text
 
 

@@ -58,20 +58,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 import hyperram_pin_patch  # noqa: E402
 import soc_shell  # noqa: E402
 
 RESULTS = ROOT / "results" / "hyperram"
 LOG = ROOT / "tmp" / "logs" / "hyperram-matrix-diff.log"
 
-# `bist all` prints only FAILING cells, plus a summary. The log timestamp lands
-# mid-row, between the mode and the drive code.
-ROW = re.compile(r"^\s*(\d+)\s+(fix|var)\s+\S+\s+(\d+)\s+(dif|se)\s+(\d+)"
-                 r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(PASS|fail)", re.M)
-SUMMARY = re.compile(r"(\d+)\s+pass,\s*(\d+)\s+fail,\s*(\d+)\s+no result of\s*(\d+)")
-# `bist all` prints this only when its cell count overstates what it varied.
-REPEATS = re.compile(r"(\d+)\s+DISTINCT configurations x (\d+) repeats")
-RUNG = re.compile(r"^\s*rung\s+(\d+)\s+([\d.]+)\s+MHz(\s+<- live)?", re.M)
+# The row, summary, repeat and rung patterns live in `bist_rows` -- one copy for
+# all seven scripts that read this output, because three private copies had
+# already gone stale unnoticed.
+RUNG = bist_rows.RUNG
 # What the BOARD says it is running, from `info`. The host checkout's HEAD is a
 # different fact and has been the wrong one -- see `board_identity`.
 IMAGE = re.compile(r"^\s*image\s+(\S+)\s+(clean|dirty)", re.M)
@@ -198,7 +195,7 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
             emit(f"  BOARD RUNS {onboard['image']}, CHECKOUT IS AT {head[:8]} -- "
                  "this run measures the board's image, not the checkout")
         ck = board.send(f"bist ck {rung}", 4)
-        rungs = {int(n): float(mhz) for n, mhz, _ in RUNG.findall(ck)}
+        rungs = {int(m["rung"]): float(m["mhz"]) for m in RUNG.finditer(ck)}
         if not rungs:
             raise SystemExit(f"no CK rungs reported; is `bist ck` in this build?\n{ck}")
         if "NOT LOCKED" in ck:
@@ -209,18 +206,26 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
     finally:
         board.close()
 
+    # A CLEAN run legitimately prints no rows -- `bist all` shows only what is
+    # not a clean pass -- so this is the one caller that may not demand any.
     cells = {}
-    for lat, mode, drive, clk, sel, errors, words, control, verdict in ROW.findall(text):
-        # Only failures are printed, so the key set IS the failure set.
-        cells[f"{lat},{mode},{drive},{clk},{sel}"] = [
-            int(errors), int(words), int(control), verdict]
+    for row in bist_rows.rows(text):
+        if not row["verdict"].startswith("fail"):
+            continue
+        # Only failures are kept, so the key set IS the failure set.
+        cells["{lat},{mode},{drive},{clk},{sel}".format(**row)] = [
+            row["errors"], row["words"], row["control"], row["verdict"]]
 
-    totals = SUMMARY.search(text)
-    if not totals:
+    totals = bist_rows.require_summary(text, f"bist all {passes}")
+    passed, failed = totals["passed"], totals["failed"]
+    noresult, total = totals["no_result"], totals["total"]
+    # A summary claiming failures beside a parse that found none is the silent
+    # no-match, and it reads as a clean matrix. Not a warning.
+    if failed and not cells:
         raise SystemExit(
-            "no summary line -- the run did not finish, and a partial matrix "
-            f"must not be saved as a complete one. Tail was:\n{text[-800:]}")
-    passed, failed, noresult, total = (int(g) for g in totals.groups())
+            f"{failed} failures summarised and NOT ONE ROW PARSED. The parse is "
+            "the suspect, not the board -- see scripts/bist_rows.py and "
+            f"tests/test_bist_row_parsers.py. Tail was:\n{text[-800:]}")
     if len(cells) != failed:
         emit(f"  WARNING: {failed} failures summarised but {len(cells)} parsed. "
              "Saving anyway; the diff will be wrong by the difference.")
@@ -232,8 +237,8 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
     # equally consistent with "no effect" and "not connected". The engine says
     # which it is: on a non-DQS build `sel` is read by nothing (#343), so it is
     # dead here however the failures happened to fall.
-    repeats = REPEATS.search(text)
-    distinct, per_config = (int(repeats.group(1)), int(repeats.group(2))) \
+    repeats = bist_rows.REPEATS.search(text)
+    distinct, per_config = (int(repeats["distinct"]), int(repeats["repeats"])) \
         if repeats else (total, 1)
     if per_config > 1:
         live["sel"] = False
