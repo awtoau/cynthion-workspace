@@ -814,11 +814,11 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
         return;
     }
     let walked = if bist.dqs() { SEL_VALUES as u8 } else { 1 };
-    let _ = writeln!(uart, "  {} cells: CR0[7:4] latency code x fixed/variable \
+    let _ = writeln!(uart, "  {} cells: CR0[7:4] latency code x fix/var \
                             x {} capture phase(s), at drive 3",
                      32 * walked as u32, walked);
-    let _ = writeln!(uart, "  one row per code, at the phase that did best; the \
-                            `sel` line under it says what else was tried");
+    let _ = writeln!(uart, "  one row per code at its best phase; `sel` under it \
+                            says what else was tried");
     if walked == 1 {
         let _ = writeln!(uart, "  `sel` reaches nothing without the DQS PHY \
                                 (#343), so the phase is not an axis here");
