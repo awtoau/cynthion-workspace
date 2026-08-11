@@ -1552,14 +1552,19 @@ def main():
         # THE HEARTBEAT TASK MUST HAVE RUN, not merely be declared (#411).
         #
         # The orange LED's whole claim is that the scheduler dispatches, and the
-        # claim is worth nothing if this task is not dispatched. It sits at
-        # priority 3, above the `devices` ceiling, so a backend that silently
-        # dropped a priority the SLIC would not accept shows up HERE as `runs 0`
-        # rather than on the bench as a lamp that never blinks.
+        # claim is worth nothing if this task is not dispatched. A backend that
+        # silently dropped the priority shows up HERE as `runs 0` rather than on
+        # the bench as a lamp that never blinks.
+        #
+        # THE PRIORITY IS ASSERTED AS THE LOWEST, and that is the point of the
+        # lamp: at the bottom a blink means everything above it is also getting
+        # done and there is slack left over. Raised above the `devices` ceiling
+        # it could never be delayed, and would report "the timer fires" -- which
+        # is nearly always true and so nearly never news.
         beat = re.search(rb"task\s+heartbeat prio (\d+) period (\d+) ms\s+"
                          rb"runs (\d+)", reply)
-        check("the heartbeat task is declared, at priority 3, and has run",
-              beat is not None and beat.group(1) == b"3"
+        check("the heartbeat task is declared, at the LOWEST priority, and has run",
+              beat is not None and beat.group(1) == b"1"
               and beat.group(2) == b"100" and int(beat.group(3)) > 0,
               "`rtic` does not report a heartbeat task that has run.\n"
               "The orange LED claims the SCHEDULER is dispatching; it is that "

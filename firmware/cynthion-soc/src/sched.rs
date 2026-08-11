@@ -154,16 +154,23 @@ pub const HEARTBEAT_PERIOD_MS: u32 = 100;
 
 /// The RTIC priority the heartbeat task runs at.
 ///
-/// 3, and it has to be ABOVE the `devices` ceiling of 2. `idle` locks `devices`
-/// around a whole shell command, which raises the SLIC threshold to that ceiling
-/// -- so a task at 1 or 2 would be masked for the length of any long command and
-/// the LED would stop blinking during a `bench` walk on a perfectly well board.
-/// Above the ceiling nothing a command does can delay it, which is what lets a
-/// stopped blink mean what it says.
+/// **THE LOWEST, deliberately.** It was 3, above the `devices` ceiling, so that
+/// no shell command could stop the blink. That bought a lamp saying "the timer
+/// fires" -- nearly always true, and so nearly never news.
 ///
-/// It costs nothing to put it there: the body is one GPIO write and takes no
-/// shared resource, so there is nothing it can preempt into.
-pub const HEARTBEAT_PRIORITY: u8 = 3;
+/// At the bottom it says the stronger thing: **everything above it is also
+/// getting done, and there is slack left over.** A board that has stopped
+/// keeping up stops blinking, and that is the condition worth seeing.
+///
+/// It also gains the failure this lamp was built for. At 3 it blinked straight
+/// through #409 -- a verb spinning at idle priority with interrupts enabled
+/// leaves everything above it intact. At the bottom that spin holds the CPU and
+/// the blink stops.
+///
+/// The cost is real and is the point: a long command that holds `devices` WILL
+/// pause the lamp. That is not a false alarm. It is the board reporting it has
+/// no slack, which is the same fact said a different way.
+pub const HEARTBEAT_PRIORITY: u8 = 1;
 
 /// The RTIC priority the power task runs at.
 ///

@@ -410,33 +410,41 @@ mod app {
     /// A SOFTWARE task, dispatched through the SLIC, not a hardware task bound
     /// to the timer vector. Reaching this body means all of: the core is
     /// fetching, the CLINT fired, `tick` ran and did its arithmetic, the pend
-    /// reached `msip`, the SLIC selected this source, and no lock was holding
-    /// the threshold above priority 3. A hardware task on the timer IRQ would
-    /// prove the first two and stop there.
+    /// reached `msip`, and the SLIC selected this source. A hardware task on the
+    /// timer IRQ would prove the first two and stop there.
     ///
-    /// **What it does NOT prove, said plainly.** RTIC's software tasks here are
-    /// released by `tick`'s counter, not by a monotonic queue, so nothing below
-    /// exercises a deadline queue. That is not an omission that could be tidied
-    /// up: the CLINT has ONE comparator, `Mono::start()` claims `mtimecmp`, and
-    /// `src/timer.rs` already owns it -- adopting a monotonic moves every
-    /// periodic job in the firmware at once, including the tick that stamps
-    /// every log line. `src/bin/mono_rtic.rs` is that work, written and measured.
+    /// **THE LOWEST PRIORITY, deliberately.** It ran at 3 -- above the `devices`
+    /// ceiling -- so that no shell command could stop the blink. That made the
+    /// lamp say "the timer fires", which is nearly always true and so nearly
+    /// never news.
     ///
-    /// And it would keep blinking through #409: a shell verb spinning at idle
-    /// priority with interrupts enabled leaves everything above intact. That is
-    /// the correct reading -- the OS is alive and the application is not -- but
-    /// it means this lamp is not a wedged-verb detector.
+    /// At the bottom it says something stronger: **everything above it is also
+    /// getting done, and there is slack left over.** A board that has stopped
+    /// keeping up stops blinking, which is the condition worth seeing.
     ///
-    /// Priority 3, ABOVE the `devices` ceiling of 2, so no shell command holding
-    /// that lock can stop the blink on a healthy board.
-    #[task(binds = Heartbeat, priority = 3)]
+    /// It also gains the failure this lamp was built for. At priority 3 it
+    /// blinked straight through #409, because a verb spinning at idle priority
+    /// with interrupts enabled leaves everything above it intact. At the bottom
+    /// that spin holds the CPU and the blink stops.
+    ///
+    /// The cost is real and is the point: a shell command that holds the CPU
+    /// long enough WILL pause the lamp. That is not a false alarm -- it is the
+    /// board reporting that it has no slack, which is the same fact.
+    ///
+    /// RTIC's software tasks here are released by `tick`'s counter, not by a
+    /// monotonic queue, so nothing below exercises a deadline queue. Not an
+    /// omission that could be tidied up: the CLINT has ONE comparator,
+    /// `Mono::start()` claims `mtimecmp`, and `src/timer.rs` already owns it --
+    /// adopting a monotonic moves every periodic job at once, including the tick
+    /// that stamps every log line. `src/bin/mono_rtic.rs` is that work.
+    #[task(binds = Heartbeat, priority = 1)]
     fn heartbeat(_cx: heartbeat::Context) {
         let released = Instant::at(HEARTBEAT_AT.load(Ordering::Relaxed));
         sched::released(sched::HEARTBEAT, released.elapsed(clock::now()));
         crate::heartbeat::toggle();
     }
 
-    const _: () = assert!(sched::HEARTBEAT_PRIORITY == 3);
+    const _: () = assert!(sched::HEARTBEAT_PRIORITY == 1);
 
     /// Release the ALERT task. Called from the machine-external handler.
     ///

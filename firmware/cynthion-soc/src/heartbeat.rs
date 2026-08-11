@@ -32,13 +32,12 @@
 //!
 //! It is a SOFTWARE task through RTIC's SLIC dispatcher, so a blink means the
 //! core is fetching, the CLINT fired, the release arithmetic ran, the pend
-//! reached `msip`, the dispatcher selected this source, and nothing was masking
-//! priority 3.
+//! reached `msip`, and the dispatcher selected this source.
 //!
-//! It does NOT mean the shell is well. A verb spinning at idle priority with
-//! interrupts enabled -- #409 -- leaves every one of those intact and the LED
-//! blinks straight through it. That is the right answer to the question this
-//! lamp asks; it is the wrong lamp to ask about a wedged command.
+//! It runs at the LOWEST priority, so it also means **everything above it is
+//! getting done and there is slack left over**. A board that has stopped keeping
+//! up stops blinking. That is the condition worth seeing, and it is why a lamp
+//! that could never be delayed would have been the wrong lamp.
 
 use crate::gpio::{Gpio, Led};
 use crate::target;
