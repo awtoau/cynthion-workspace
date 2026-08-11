@@ -21,16 +21,16 @@ otherwise, see that module), and `CynthionPlatform` from the local reduced
 **Plus the `ram` resource's electrical attributes** -- the one deliberate
 divergence, see `HYPERRAM_*` below and #311. Pin locations are untouched.
 
-Everything else -- pin map, connectors, `default_clk`, device, package, speed
-grade -- is upstream's. Do not "improve" it. A pin map that differs from the
-board is worse than no change at all: the build succeeds and the wrong ball
-drives the wrong net.
+Everything else -- pin map, connectors, `default_clk`, device, package -- is
+upstream's. Do not "improve" it. A pin map that differs from the board is worse
+than no change at all: the build succeeds and the wrong ball drives the wrong
+net. The speed grade is pinned rather than read from the environment; see the
+class body.
 
-`gateware/soc/top.py` does NOT build against this file. It imports the platform
-from the installed `cynthion` package (`repos/cynthion/...`), so the attributes
-below reach the probe bitstreams under `gateware/probes/` and not the shipping
-SoC. `scripts/hyperram_pin_patch.py` is what reaches a built bitstream either
-way.
+**`gateware/soc/top.py` builds against this file** (#416). It imported the
+installed `cynthion` package until then, so the attributes below reached the
+probe bitstreams and not the SoC -- which is how #311's DRIVE settings sat in
+the tree while every RAM pin ran at the silicon default.
 
 Upstream: repos/cynthion/cynthion/python/src/gateware/platform/cynthion_r1_4.py
 """
