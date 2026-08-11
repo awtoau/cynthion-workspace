@@ -211,9 +211,10 @@ def main():
         emit(f"step 3 -- bist latency {args.passes}")
         emit("  datasheet legal: 0, 1, 2, 14, 15. RESERVED: 3-13.")
         emit("  at CK 85.7 the prediction is {0, 1, 2, 15}, 14 marginal (85.7 > 83)")
-        # **Waits for**: 32 cells (16 codes x fix/var) and 32 report rows.
-        # **Expected**: ~2 ms per cell = 64 ms of engine, plus ~3 kB of console
-        # at 115200 = ~260 ms. **Multiplier**: ~25x. **On expiry**: the rows that
+        # **Waits for**: 256 cells (16 codes x fix/var x 8 capture phases, #421)
+        # and the 32 report rows they reduce to, one per code.
+        # **Expected**: ~2 ms per cell = ~510 ms of engine, plus ~5 kB of console
+        # at 115200 = ~440 ms. **Multiplier**: ~8x. **On expiry**: the rows that
         # arrived are still parsed and the count is reported against 32.
         latency_text = shell.send(f"bist latency {args.passes}", budget=8.0)
         latency_rows = rows_of(latency_text, LATENCY_ROW)

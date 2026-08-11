@@ -26,10 +26,10 @@ pub struct Axes {
     pub readclksel: u8,
     /// `CR0[7:4]`, the part's initial latency code, and `CR0[3]` fixed/variable.
     ///
-    /// **The axis most likely to explain a one-word slip.** A read that starts
-    /// one clock early or late lands one device word off, and no capture phase
-    /// can correct that -- it is not a timing margin, it is an off-by-one. Left
-    /// at the power-on 0010b/fixed for every measurement so far.
+    /// A read that starts one clock early or late lands one device word off, so
+    /// this is one candidate for a rotated compare pair. It is not the only one:
+    /// the measured read eye turns the same residue into zero errors two capture
+    /// phases away, which is why `latency` sweeps both axes (#421).
     pub latency: u8,
     pub fixed_latency: bool,
 }
@@ -92,6 +92,73 @@ pub fn scored(cell: &Cell, expected: u32) -> Verdict {
     match cell.verdict() {
         Verdict::Pass if short => Verdict::NoResult,
         other => other,
+    }
+}
+
+/// Order for choosing which capture phase's row stands for a cell. Lower wins:
+/// a pass beats every failure, fewer errors beats more, NO RESULT is last.
+pub fn rank(cell: &Cell, expected: u32) -> (u8, u32) {
+    match scored(cell, expected) {
+        Verdict::Pass => (0, 0),
+        Verdict::Fail(errors) => (1, errors),
+        Verdict::NoResult => (2, 0),
+    }
+}
+
+/// The centre of the widest run of passing phases in `passed`, bit N per phase.
+///
+/// Centre rather than first pass: it is the phase with margin either side. Runs
+/// do NOT wrap -- a window over the ends reads as two runs and the wider one is
+/// still inside it.
+pub fn eye_centre(passed: u8, walked: u8) -> Option<u8> {
+    let (mut best_start, mut best_len) = (0u8, 0u8);
+    let (mut start, mut len) = (0u8, 0u8);
+    for phase in 0..walked.min(8) {
+        if passed >> phase & 1 == 0 {
+            len = 0;
+            continue;
+        }
+        if len == 0 {
+            start = phase;
+        }
+        len += 1;
+        if len > best_len {
+            (best_start, best_len) = (start, len);
+        }
+    }
+    (best_len > 0).then(|| best_start + (best_len - 1) / 2)
+}
+
+/// Which capture phases a row was chosen from, printed under it (#421).
+///
+/// A row naming one `sel` is a statement about that phase unless this says what
+/// else was tried. `pick` is the phase the row above was taken at.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Census {
+    pub walked: u8,
+    /// Bit N set: phase N passed.
+    pub passed: u8,
+    pub pick: u8,
+}
+
+impl core::fmt::Display for Census {
+    /// `scripts/bist_rows.py`'s `CENSUS` reads this; `tests/test_bist_row_
+    /// parsers.py` holds it. `none passed` carries no pass list ON PURPOSE, so a
+    /// caller cannot read the pick as a phase that works.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "      sel  {} walked  ", self.walked)?;
+        if self.passed == 0 {
+            return write!(f, "none passed  pick {} -- the fewest errors", self.pick);
+        }
+        write!(f, "pass ")?;
+        let mut first = true;
+        for phase in 0..self.walked.min(8) {
+            if self.passed >> phase & 1 != 0 {
+                write!(f, "{}{}", if first { "" } else { "," }, phase)?;
+                first = false;
+            }
+        }
+        write!(f, "  pick {} -- the widest window's centre", self.pick)
     }
 }
 
@@ -517,6 +584,56 @@ mod tests {
         assert!(matches!(scored(&cell(0, 4096, 4096, 17), 4096), Verdict::NoResult));
         // Errors are errors however few words carried them.
         assert!(matches!(scored(&cell(9, 17, 4096, 4096), 4096), Verdict::Fail(9)));
+    }
+
+    /// The eye MEASURED on the board 2026-08-11 (#421): phases 1, 2, 3 clean,
+    /// 0 and 4..7 not. The centre is the phase with margin either side.
+    #[test]
+    fn the_centre_of_the_measured_eye_is_the_middle_of_its_window() {
+        assert_eq!(eye_centre(0b0000_1110, 8), Some(2));
+        // One phase is a window of one, and the ends are reachable.
+        assert_eq!(eye_centre(0b0000_0001, 8), Some(0));
+        assert_eq!(eye_centre(0b1000_0000, 8), Some(7));
+        // Nothing passed: there is no centre to report, and no phase to use.
+        assert_eq!(eye_centre(0, 8), None);
+        // Two runs: the wider one, and its centre -- never a phase between them.
+        assert_eq!(eye_centre(0b0011_1001, 8), Some(4));
+        // A non-DQS build walks one phase, where `sel` reaches nothing (#343).
+        assert_eq!(eye_centre(0b0000_0001, 1), Some(0));
+        assert_eq!(eye_centre(0b1111_1110, 1), None);
+    }
+
+    /// A pass at any phase beats every failure, so a code that works somewhere
+    /// can never be reported by a phase where it did not.
+    #[test]
+    fn a_pass_outranks_every_failure_and_no_result_is_last() {
+        let at = |errors, control_errors| {
+            Cell { axes: axes(), errors, words: 4096, control_errors,
+                   control_words: 4096 }
+        };
+        assert!(rank(&at(0, 4096), 4096) < rank(&at(1, 4096), 4096));
+        assert!(rank(&at(1, 4096), 4096) < rank(&at(4096, 4096), 4096));
+        assert!(rank(&at(4096, 4096), 4096) < rank(&at(0, 0), 4096));
+        // A short cell is NO RESULT however few errors it counted.
+        assert!(rank(&at(4096, 4096), 4096)
+                < rank(&Cell { words: 17, ..at(0, 4096) }, 4096));
+    }
+
+    /// The line a host reads to learn which phases were tried. A pick with no
+    /// pass list must be unreadable as a working phase.
+    #[test]
+    fn the_census_names_every_passing_phase_and_the_one_picked() {
+        let line = |walked, passed, pick| {
+            std::format!("{}", Census { walked, passed, pick })
+        };
+        assert_eq!(line(8, 0b0000_1110, 2),
+                   "      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre");
+        assert_eq!(line(8, 0, 5),
+                   "      sel  8 walked  none passed  pick 5 -- the fewest errors");
+        // Widest case: still one line, and still inside a terminal.
+        assert!(line(8, 0xff, 3).len() <= 80, "{}", line(8, 0xff, 3));
+        // A row is never mistaken for one: the census has no timestamp column.
+        assert!(!line(8, 0b0000_1110, 2).contains("PASS"));
     }
 
     /// The three counts stay separate, and `of N` is what RAN.

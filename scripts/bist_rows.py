@@ -54,6 +54,14 @@ HEADING = re.compile(r"^\s+time\s+lat\s+mode\s+drive\s+clk\s+sel\s+errors\s+"
 SUMMARY = re.compile(r"(?P<passed>\d+) pass,\s*(?P<failed>\d+) fail,\s*"
                      r"(?P<no_result>\d+) no result of\s*(?P<total>\d+)")
 
+# The `sel` census under a row that had a choice of capture phase (#421):
+# `      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre`.
+# `passed` is ABSENT when nothing passed, and a caller must then not read `pick`
+# as a phase that works -- `require_census` is what enforces that.
+CENSUS = re.compile(r"^\s*sel\s+(?P<walked>\d+) walked\s+"
+                    r"(?:pass (?P<passed>[\d,]+)|none passed)\s+"
+                    r"pick (?P<pick>\d+)", re.M)
+
 # Printed only when the cell count overstates what was varied (#343).
 REPEATS = re.compile(r"(?P<distinct>\d+)\s+DISTINCT configurations "
                      r"x (?P<repeats>\d+) repeats")
@@ -112,6 +120,35 @@ def require_rows(text, what):
             "firmware/cynthion-soc/src/bist/pure.rs; tests/test_bist_row_"
             f"parsers.py is the check that should have caught this.\n{text[-800:]}")
     return found
+
+
+def censuses(text):
+    """Every `sel` census, in the order printed. `passed` is a list of ints."""
+    found = []
+    for match in CENSUS.finditer(text):
+        got = match.groupdict()
+        found.append({
+            "walked": int(got["walked"]),
+            "pick": int(got["pick"]),
+            "passed": [int(n) for n in got["passed"].split(",")]
+                      if got["passed"] else [],
+        })
+    return found
+
+
+def require_census(text, what):
+    """The LAST census, or a loud exit.
+
+    A caller asking for one wants a phase to run at, so a sweep that printed
+    none must not be read as "phase 0 is fine" -- which is the defect in #421.
+    """
+    found = censuses(text)
+    if not found:
+        raise SystemExit(
+            f"NO `sel` CENSUS from `{what}` -- {_blame(text)}. It is printed by "
+            "firmware/cynthion-soc/src/bist.rs under every row that had a "
+            f"choice of capture phase.\n{text[-800:]}")
+    return found[-1]
 
 
 def summary(text):

@@ -38,10 +38,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import bist_rows  # noqa: E402
 
-# `bist latency 16` as the board prints it. Two rows, the first-bad evidence
-# line under the failing one, and the summary every sweep now ends with.
+# `bist latency 16` as the board prints it. Each row is followed by the `sel`
+# census that says which capture phases were walked for it (#421), the first-bad
+# evidence line under the failing one, and the summary every sweep ends with.
 LATENCY = """\
-  32 cells: CR0[7:4] latency code x fixed/variable, at drive 3 sel 0
+  256 cells: CR0[7:4] latency code x fix/var x 8 capture phase(s), at drive 3
+  one row per code at its best phase; `sel` under it says what else was tried
   CK 80 MHz  rung 0 of 2  PLL locked
   sync 60 MHz counted  PLL locked
   time   ms since boot            lat    CR0[7:4] latency code
@@ -49,10 +51,13 @@ LATENCY = """\
   clk    CR1[6] differential/single-ended    sel  READCLKSEL capture phase
   errors/words  the real pass    control  the negative control's errors
       time  lat  mode  drive  clk  sel    errors     words   control  verdict
-000101.787    0  fix       3  dif    0         0      2048      2048  PASS
-000101.812    0  var       3  dif    0      2048      2048      2048  fail
+000101.787    0  fix       3  dif    2         0      2048      2048  PASS
+      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre
+000101.812    0  var       3  dif    5      2048      2048      2048  fail
+      sel  8 walked  none passed  pick 5 -- the fewest errors
       first bad: index 0x0  got 0x00000000  want 0xffbf0000
 000101.840   15  var       7  dif    6         8      1024      1024  NO RESULT -- control did not fire
+      sel  8 walked  none passed  pick 6 -- the fewest errors
   1 pass, 1 fail, 1 no result of 3
 """
 
@@ -110,9 +115,10 @@ def test_the_fixtures_are_the_firmwares_own_columns():
         ends.append(at)
         at += 2
 
-    row = LATENCY.splitlines()[9]
+    # By its stamp, not its line number: the fixture grows evidence lines.
+    row, = [line for line in LATENCY.splitlines() if line.startswith("000101.812")]
     for i, (end, want) in enumerate(zip(ends, [
-            "000101.812", "0", "var", "3", "dif", "0", "2048", "2048", "2048"])):
+            "000101.812", "0", "var", "3", "dif", "5", "2048", "2048", "2048"])):
         assert row[end - widths[i]:end].strip() == want, f"field {i}: {row!r}"
         assert heading[end - widths[i]:end].strip(), f"heading field {i} is blank"
     assert row[ends[-1] + 2:] == "fail"
@@ -162,6 +168,32 @@ def test_a_single_cell_row_parses_the_same_as_a_sweep_row():
     assert row["words"] == 8192
 
 
+def test_the_census_says_which_phases_were_walked_for_each_row():
+    """A latency row is a statement about its capture phase unless this line
+    says what else was tried (#421)."""
+    first, second, third = bist_rows.censuses(LATENCY)
+    assert (first["walked"], first["passed"], first["pick"]) == (8, [1, 2, 3], 2)
+    # NOTHING PASSED carries no pass list: a pick out of a dead sweep must not
+    # read as a working phase.
+    assert (second["passed"], second["pick"]) == ([], 5)
+    assert third["passed"] == []
+    # The last one is what `require_census` hands a caller asking for a phase.
+    assert bist_rows.require_census(LATENCY, "bist latency")["pick"] == 6
+
+
+def test_a_census_line_is_not_read_as_a_result_row():
+    """Both are indented lines under a heading; only one has a stamp."""
+    census = "      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre"
+    assert bist_rows.ROW.search(census) is None
+    assert len(bist_rows.rows(LATENCY)) == 3
+
+
+def test_a_sweep_with_no_census_exits_rather_than_defaulting_to_phase_zero():
+    with pytest.raises(SystemExit) as raised:
+        bist_rows.require_census(CELL, "bist eye")
+    assert "NO `sel` CENSUS" in str(raised.value)
+
+
 def test_the_heading_is_recognised_apart_from_the_rows():
     """"the parser is wrong" and "the sweep did not run" must not look alike."""
     assert bist_rows.HEADING.search(LATENCY)
@@ -184,7 +216,7 @@ def test_an_unparsable_reply_exits_loudly_rather_than_returning_empty():
     assert "NO ROWS PARSED" in str(raised.value)
 
     # And a heading with no rows must blame the PARSE, not the board.
-    heading = LATENCY.splitlines()[7] + "\n"
+    heading = bist_rows.HEADING.search(LATENCY).group(0) + "\n"
     with pytest.raises(SystemExit) as raised:
         bist_rows.require_rows(heading, "bist latency")
     assert "the PARSE is wrong" in str(raised.value)
