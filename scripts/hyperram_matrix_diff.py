@@ -208,13 +208,18 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
 
     # A CLEAN run legitimately prints no rows -- `bist all` shows only what is
     # not a clean pass -- so this is the one caller that may not demand any.
-    cells = {}
+    # THREE BUCKETS, because the firmware scores three. A NO RESULT is not a
+    # pass and not a failure -- the control did not fire, so the cell says
+    # nothing -- and dropping it made a PASS -> NO RESULT move invisible to the
+    # diff that exists to find marginal cells (#422).
+    cells, noresults = {}, {}
     for row in bist_rows.rows(text):
-        if not row["verdict"].startswith("fail"):
-            continue
-        # Only failures are kept, so the key set IS the failure set.
-        cells["{lat},{mode},{drive},{clk},{sel}".format(**row)] = [
-            row["errors"], row["words"], row["control"], row["verdict"]]
+        key = "{lat},{mode},{drive},{clk},{sel}".format(**row)
+        entry = [row["errors"], row["words"], row["control"], row["verdict"]]
+        if row["verdict"].startswith("fail"):
+            cells[key] = entry
+        elif not row["verdict"].startswith("PASS"):
+            noresults[key] = entry
 
     totals = bist_rows.require_summary(text, f"bist all {passes}")
     passed, failed = totals["passed"], totals["failed"]
@@ -230,7 +235,7 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
         emit(f"  WARNING: {failed} failures summarised but {len(cells)} parsed. "
              "Saving anyway; the diff will be wrong by the difference.")
 
-    spread = axis_spread(cells)
+    spread = axis_spread({**cells, **noresults})
     live = liveness(spread)
 
     # STRUCTURE BEATS SPREAD. `liveness` reads the failure set, and a flat one is
@@ -279,6 +284,9 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
         # summary is stored beside it -- the complement is only trustworthy if
         # the totals agree.
         "failures": cells,
+        # Kept apart rather than merged: a cell that fails is evidence about the
+        # part, one that returns NO RESULT is evidence about the rig.
+        "no_results": noresults,
     }
 
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -356,23 +364,41 @@ def diff(first, second):
         emit("\n  NOTE: these runs differ in CK or pass count, so a moved cell is "
              "not necessarily marginal -- it may just be a different experiment.")
 
-    fa, fb = set(a["failures"]), set(b["failures"])
-    healed, broke = sorted(fa - fb), sorted(fb - fa)
+    return diff_runs(a, b)
 
-    emit(f"\n  A fails {len(fa)}, B fails {len(b['failures'])}")
-    if not healed and not broke:
-        emit("  IDENTICAL failure sets -- nothing moved between these two runs")
+
+def diff_runs(a, b):
+    """The comparison itself, on two loaded runs. Split out so it is testable
+    without a recorded file -- `tests/test_matrix_diff_buckets.py`."""
+    # DIFF ON THE VERDICT CLASS, not on the failure set. A run records the cells
+    # that failed and the cells that returned NO RESULT; anything in neither
+    # passed. Comparing failure sets alone made PASS -> NO RESULT invisible --
+    # and NO RESULT is exactly where a marginal cell lands, since the control
+    # firing is the thing that goes intermittent (#422).
+    def classes(run):
+        seen = {key: "fail" for key in run["failures"]}
+        seen.update({key: "no result" for key in run.get("no_results", {})})
+        return seen
+
+    ca, cb = classes(a), classes(b)
+    moved = sorted(key for key in set(ca) | set(cb) if ca.get(key) != cb.get(key))
+
+    emit(f"\n  A {len(a['failures'])} fail {len(a.get('no_results', {}))} no result"
+         f"   B {len(b['failures'])} fail {len(b.get('no_results', {}))} no result")
+    if not moved:
+        emit("  IDENTICAL verdicts -- nothing moved between these two runs")
         return 0
 
-    emit(f"  {len(healed) + len(broke)} cell(s) changed verdict. Format: "
-         "lat,mode,drive,clk,sel")
-    for key in healed:
-        emit(f"    fail -> PASS  {key}")
-    for key in broke:
-        emit(f"    PASS -> fail  {key}   errors {b['failures'][key][0]}")
+    emit(f"  {len(moved)} cell(s) changed verdict. Format: lat,mode,drive,clk,sel")
+    for key in moved:
+        was, now = ca.get(key, "PASS"), cb.get(key, "PASS")
+        extra = ""
+        if now == "fail":
+            extra = f"   errors {b['failures'][key][0]}"
+        emit(f"    {was:9} -> {now:9}  {key}{extra}")
     emit("\n  A cell that changed under identical conditions is MARGINAL, and a "
          "single run would have scored it as a verdict.")
-    return len(healed) + len(broke)
+    return len(moved)
 
 
 def main():
