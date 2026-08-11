@@ -1860,14 +1860,26 @@ class AwtoSoc(Elaboratable):
             # so this AUX-only design keeps behaving exactly as it did.
             sideband.advertise.eq(sideband_ctrl.advertise),
 
-            # Cat is by PIN INDEX; the colour beside each is what is actually
-            # fitted (#415), which is the reverse of what these comments said.
-            leds.eq(Cat(ever_errored,          # 0 E13 violet -- error, latched
-                        ever_fetched,          # 1 C13 blue   -- fetching
-                        ever_io,               # 2 B14 green  -- I/O bus reached
-                        heartbeat_on,          # 3 A15 yellow -- fabric flash
-                        ever_console,          # 4 D12 orange -- console queued
-                        serial.connect)),      # 5 C11 red    -- USB up
+            # OFF IS GOOD, MOTION IS ALIVE. Cat is by PIN INDEX and the colour
+            # beside each is what the board actually fits (#415).
+            #
+            # `ever_fetched` and `ever_io` are deliberately NOT here any more:
+            # both latch within microseconds of any boot and have never
+            # distinguished anything since. A lamp that is always on is the
+            # dead-instrument problem #411 was filed about.
+            #
+            # The two heartbeats sit ADJACENT on purpose -- yellow at 1 Hz from
+            # the fabric, orange at 2 Hz from the RTIC task -- so the rates can
+            # be compared by eye. That comparison is what caught the reversed
+            # colour map.
+            leds.eq(Cat(0,                     # 0 E13 violet -- unassigned
+                        ever_console,          # 1 C13 blue   -- a byte has moved
+                        serial.connect,        # 2 B14 green  -- USB console up
+                        heartbeat_on,          # 3 A15 yellow -- FPGA alive, 1 Hz
+                        0,                     # 4 D12 orange -- CPU takes this;
+                                               #   DARK until firmware drives
+                                               #   it, so no OS reads as no blink
+                        ever_errored)),        # 5 C11 red    -- ANY bus error
         ]
 
         # ---- the board GPIO pins --------------------------------------------
