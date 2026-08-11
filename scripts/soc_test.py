@@ -1565,7 +1565,7 @@ def main():
                          rb"runs (\d+)", reply)
         check("the heartbeat task is declared, at the LOWEST priority, and has run",
               beat is not None and beat.group(1) == b"1"
-              and beat.group(2) == b"100" and int(beat.group(3)) > 0,
+              and beat.group(2) == b"250" and int(beat.group(3)) > 0,
               "`rtic` does not report a heartbeat task that has run.\n"
               "The orange LED claims the SCHEDULER is dispatching; it is that "
               "task's toggle that\n"

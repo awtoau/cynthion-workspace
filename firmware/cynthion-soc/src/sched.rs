@@ -144,13 +144,14 @@ fn period_ms(task: usize) -> Option<u32> {
 
 /// How often the heartbeat task toggles the orange LED, in milliseconds.
 ///
-/// 100, so the LED's own period is 200 ms -- 5 Hz, unmistakably a blink rather
-/// than a flicker, and slow enough that a phone camera or a stopwatch can time
-/// it. Two toggles per period is what makes a stuck output distinguishable from
-/// a healthy one; a level, however carefully computed, cannot be.
+/// 250, so the LED's own period is 500 ms -- **2 Hz**, unmistakably a blink
+/// rather than a flicker, and slow enough that a phone camera or a stopwatch
+/// can time it. Two toggles per period is what makes a stuck output
+/// distinguishable from a healthy one; a level, however carefully computed,
+/// cannot be.
 ///
-/// The cost is 10 dispatches a second of one GPIO write.
-pub const HEARTBEAT_PERIOD_MS: u32 = 100;
+/// The cost is 4 dispatches a second of one GPIO write.
+pub const HEARTBEAT_PERIOD_MS: u32 = 250;
 
 /// The RTIC priority the heartbeat task runs at.
 ///

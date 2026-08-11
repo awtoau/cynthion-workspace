@@ -25,8 +25,8 @@
 //!
 //! A level -- however carefully computed -- cannot distinguish a healthy board
 //! from a stuck output, and five of this board's six lamps were exactly that
-//! before #411. Motion is the whole signal: two toggles per LED period, at 100
-//! ms each, is 5 Hz. Unmistakably a blink, and slow enough to time.
+//! before #411. Motion is the whole signal: two toggles per LED period, at 250
+//! ms each, is 2 Hz. Unmistakably a blink, and slow enough to time.
 //!
 //! ## What a blink proves, and what it does not
 //!
