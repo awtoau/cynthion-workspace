@@ -54,24 +54,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 from devlog import emit  # noqa: E402
 import soc_shell  # noqa: E402
 
 TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-register-path.txt"
 
-# `  CR0     part reports 0x8f2f  latency code 2 fixed  drive 0`
-CR0 = re.compile(r"CR0\s+part reports\s+(0x[0-9a-fA-F]+)\s+latency code\s+(\d+)\s+"
+# `  CR0     part reports 0x8f2f  latency code 2 = 7 clocks  fixed  drive 3`.
+# The clocks and the RESERVED marker sit between the code and the mode, and this
+# pattern omitted both -- so it matched nothing and every step reported "no CR0
+# line in `bist status`" whatever the part said.
+CR0 = re.compile(r"CR0\s+part reports\s+(0x[0-9a-fA-F]+)\s+latency code\s+(\d+)"
+                 r"\s+=\s+\d+ clocks(?:\s+RESERVED)?\s+"
                  r"(fixed|variable)\s+drive\s+(\d+)")
 
-# `lat  mode  drive  clk  sel   errors     words   control  verdict`, then the
-# timestamp `report()` stamps on every row.
-LATENCY_ROW = re.compile(
-    r"^\s*(\d+)\s+(fix|var)\s+\S+\s+(\d)\s+(dif|se)\s+(\d)\s+"
-    r"(\d+)\s+(\d+)\s+(\d+)\s+(.*?)\s*$")
-ALL_ROW = re.compile(
-    r"^\s*(\d+)\s+(fix|var)\s+\S+\s+(\d)\s+(dif|se)\s+(\d)\s+"
-    r"(\d+)\s+(\d+)\s+(\d+)\s+(.*?)\s*$")
-TALLY = re.compile(r"(\d+) pass, (\d+) fail, (\d+) no result")
+# One row shape for every sweep now, so `bist latency` and `bist all` read alike.
+LATENCY_ROW = ALL_ROW = bist_rows.ROW
+TALLY = bist_rows.SUMMARY
 
 # The datasheet's legal `CR0[7:4]` codes and the clocks each selects.
 # Table 8, W956A8MBYA rev A01-006 p. 21. 3-13 are RESERVED.
@@ -129,18 +128,11 @@ def readback(shell, budget):
 
 def rows_of(text, pattern):
     """Every result row in a sweep's output."""
-    out = []
-    for line in text.splitlines():
-        found = pattern.match(line)
-        if not found:
-            continue
-        latency, mode, drive, clock, sel, errors, words, control, verdict = \
-            found.groups()
-        out.append(dict(latency=int(latency), fixed=mode == "fix",
-                        drive=int(drive), clock=clock, readclksel=int(sel),
-                        errors=int(errors), words=int(words),
-                        control_errors=int(control), verdict=verdict.strip()))
-    return out
+    return [dict(latency=row["lat"], fixed=row["fixed"], drive=row["drive"],
+                 clock=row["clk"], readclksel=row["sel"], errors=row["errors"],
+                 words=row["words"], control_errors=row["control"],
+                 verdict=row["verdict"])
+            for row in (bist_rows.cell(m) for m in pattern.finditer(text))]
 
 
 def main():
@@ -225,6 +217,10 @@ def main():
         # arrived are still parsed and the count is reported against 32.
         latency_text = shell.send(f"bist latency {args.passes}", budget=8.0)
         latency_rows = rows_of(latency_text, LATENCY_ROW)
+        # `bist latency` prints a row for every cell, so an empty parse is the
+        # parser -- and reads exactly like a board that reported nothing.
+        if not latency_rows:
+            bist_rows.require_rows(latency_text, f"bist latency {args.passes}")
         emit(f"  {len(latency_rows)} rows of 32")
         for row in latency_rows:
             flag = "legal" if row["latency"] in LEGAL_LATENCY else "RESERVED"
@@ -254,13 +250,17 @@ def main():
         # reported against 4096, which distinguishes a slow run from a wedge.
         all_text = shell.send(f"bist all {args.passes}", budget=150.0)
         all_rows = rows_of(all_text, ALL_ROW)
-        tally = TALLY.search(all_text)
+        tally = bist_rows.summary(all_text)
         if tally:
-            emit(f"  engine tally: {tally.group(1)} pass, {tally.group(2)} fail, "
-                 f"{tally.group(3)} no result of 4096")
+            emit("  engine tally: {passed} pass, {failed} fail, {no_result} "
+                 "no result of {total}".format(**tally))
         else:
             emit("  NO TALLY LINE -- the sweep did not finish inside the budget")
         emit(f"  {len(all_rows)} non-pass rows came back")
+        # A tally claiming failures beside a parse that found no row is the
+        # silent no-match, and it reads as a clean 4096-cell matrix.
+        if tally and (tally["failed"] + tally["no_result"]) and not all_rows:
+            bist_rows.require_rows(all_text, f"bist all {args.passes}")
         # The SHAPE, not the count: which latency codes the failures sit under,
         # and whether any axis is uniformly bad.
         by_latency = {}

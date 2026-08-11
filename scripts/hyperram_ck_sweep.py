@@ -31,26 +31,18 @@ Transcript -> `tmp/logs/hyperram-ck-sweep.txt`.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 import soc_shell  # noqa: E402
 
 TRANSCRIPT = ROOT / "tmp" / "logs" / "hyperram-ck-sweep.txt"
 
-# One row per code per fixed/variable, as the BOARD prints it -- the log
-# timestamp lands mid-row, between the mode and the drive code, so it is matched
-# rather than assumed away:
-#
-#   0  fix   000101.787      3  dif    0         0      2048      2048  PASS
-#   ^code    ^timestamp      ^drive    ^sel  ^errors   ^words  ^control
-ROW = re.compile(r"^\s*(\d+)\s+(fix|var)\s+\S+\s+(\d+)\s+(?:dif|se)\s+(\d+)"
-                 r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(PASS|fail)", re.M)
-RUNG = re.compile(r"^\s*rung\s+(\d+)\s+([\d.]+)\s+MHz(\s+<- live)?", re.M)
+RUNG = bist_rows.RUNG
 
 # Datasheet Table 8, rev A01-006 p.21. Sparse: 3..13 are RESERVED.
 LEGAL = {0, 1, 2, 14, 15}
@@ -85,7 +77,7 @@ def rungs(board):
     # configure can collide with the banner and come back as `unknown command`,
     # which reads exactly like a build without the verb.
     text = board.send("bist ck 0", 4)
-    found = [(int(n), float(mhz)) for n, mhz, _ in RUNG.findall(text)]
+    found = [(int(m["rung"]), float(m["mhz"])) for m in RUNG.finditer(text)]
     if not found:
         raise SystemExit(
             "no rungs reported. Either this bitstream has no CK selector, or the "
@@ -102,9 +94,10 @@ def sweep(board, passes):
     # plus the run. 16 passes measured under a second.
     text = board.send(f"bist latency {passes}", 30)
     rows = {}
-    for code, mode, _drive, _sel, errors, words, control, verdict in ROW.findall(text):
-        if mode == "fix":
-            rows[int(code)] = (int(errors), int(words), int(control), verdict)
+    for row in bist_rows.rows(text):
+        if row["fixed"]:
+            rows[row["lat"]] = (row["errors"], row["words"], row["control"],
+                                row["verdict"])
     return rows
 
 
@@ -120,11 +113,12 @@ def main():
         print(f"{len(table)} rung(s): "
               + ", ".join(f"{mhz:g} MHz" for _, mhz in table))
 
-        results = {}
+        results, silent = {}, []
         for index, mhz in table:
             board.send(f"bist ck {index}", 4)
             rows = sweep(board, args.passes)
             if not rows:
+                silent.append(f"{mhz:g} MHz")
                 print(f"\n  {mhz:g} MHz -- NO ROWS PARSED, the run did not report")
                 continue
             passed = sorted(c for c, r in rows.items() if r[3] == "PASS")
@@ -137,14 +131,17 @@ def main():
                     print(f"      lat {code:2d} {mark:8s} errors {errors:5d} "
                           f"words {words:5d} control {control:5d}  {verdict}")
 
-        # A sweep that parsed nothing at every rung must not exit 0: an empty
-        # result set reads exactly like a board that reported nothing, and the
-        # per-rung note above scrolls past (#333).
-        if not results:
+        # A rung that parsed nothing must not exit 0: an empty result set reads
+        # exactly like a board that reported nothing, and the per-rung note
+        # above scrolls past (#333). ANY silent rung, not only all of them --
+        # a comparison missing a rung is not the comparison that was asked for.
+        if silent:
             raise SystemExit(
-                f"NO ROWS PARSED AT ANY OF THE {len(table)} RUNG(S). Either "
-                "`bist latency` is not in this build or its row format has "
-                f"moved away from the parser. Transcript: {TRANSCRIPT}")
+                f"NO ROWS PARSED AT {', '.join(silent)} of {len(table)} rung(s). "
+                "Either `bist latency` is not in this build or its row format "
+                "has moved away from scripts/bist_rows.py -- which "
+                "tests/test_bist_row_parsers.py should have caught. "
+                f"Transcript: {TRANSCRIPT}")
 
         if len(results) > 1:
             print("\ncomparison")

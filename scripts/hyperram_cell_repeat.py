@@ -40,7 +40,6 @@ Log: `tmp/logs/hyperram-cell-repeat.log`.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -48,14 +47,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import bist_rows  # noqa: E402
 import soc_shell  # noqa: E402
 
 LOG = ROOT / "tmp" / "logs" / "hyperram-cell-repeat.log"
 
-ROW = re.compile(r"^\s*\S*\s*(\d+)\s+(dif|se)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)"
-                 r"\s+(PASS|fail)", re.M)
-FIRST_BAD = re.compile(r"first bad:\s*index\s*(0x[0-9a-f]+)\s*got\s*(0x[0-9a-f]+)"
-                       r"\s*want\s*(0x[0-9a-f]+)")
+FIRST_BAD = bist_rows.FIRST_BAD
 
 
 def emit(line=""):
@@ -98,14 +95,15 @@ def main():
             if args.settle:
                 send(args.settle)
             text = send(cell)
-            row = ROW.search(text)
+            row = bist_rows.ROW.search(text)
             if not row:
                 unparsed += 1
                 continue
-            _drive, _clk, _sel, errors, words, control, verdict = row.groups()
-            outcomes[(verdict, int(errors), int(words), int(control))] += 1
+            got = bist_rows.cell(row)
+            outcomes[(got["verdict"], got["errors"], got["words"],
+                      got["control"])] += 1
             bad = FIRST_BAD.search(text)
-            residues[bad.group(2) if bad else "-"] += 1
+            residues[bad["got"] if bad else "-"] += 1
     finally:
         link.close()
 
@@ -114,6 +112,13 @@ def main():
     if unparsed:
         emit(f"  {unparsed} of {args.repeat} replies did not parse -- NOT scored "
              "as pass or fail")
+    # EVERY reply unparsed is the parser, not the part. An empty distribution
+    # reads exactly like a board that reported nothing.
+    if unparsed == args.repeat:
+        raise SystemExit(
+            f"NOT ONE of {args.repeat} replies parsed. The row format is "
+            "scripts/bist_rows.py; tests/test_bist_row_parsers.py is the check "
+            f"that should have caught a drift. Log: {LOG}")
     emit(f"  {'verdict':8s} {'errors':>8s} {'words':>8s} {'control':>8s}  count")
     for (verdict, errors, words, control), count in outcomes.most_common():
         short = "  SHORT" if words < control else ""
