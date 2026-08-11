@@ -195,10 +195,13 @@ def build_checks() -> List[Check]:
             name="python",
             description=f"import check + pytest on {PYTHON}",
             steps=[
-                # `facedancer` was asserted here and imported by nothing in this
-                # repo -- the assertion was the whole reason the submodule was
-                # installed. See #169.
-                Step([PYTHON, "-c", "import cynthion, apollo_fpga"], ROOT),
+                # `apollo_fpga` only. `facedancer` was asserted here and
+                # imported by nothing (#169); `cynthion` went the same way in
+                # #416, when the SoC moved to the vendored pin map and the last
+                # real import of the package went with it. A gate that demands a
+                # package nothing imports is testing the installation, not the
+                # tree.
+                Step([PYTHON, "-c", "import apollo_fpga"], ROOT),
                 # `tests/` is OURS and was not collected here until now. Both
                 # files in it passed and neither had ever run in the gate, so
                 # when 37a6095 retired `hyperram_readclksel_sweep.py` to
@@ -207,7 +210,6 @@ def build_checks() -> List[Check]:
                 # An uncollected test directory is worse than no tests: it
                 # reads as coverage and asserts nothing.
                 Step([PYTHON, "-m", "pytest",
-                      "repos/cynthion/cynthion/python/tests/",
                       "tests/",
                       "-q", "--tb=short"], ROOT),
             ],
@@ -220,7 +222,7 @@ def build_checks() -> List[Check]:
                 # the GIL back on, the parallel build path silently serialises.
                 Step([PYTHON, "-c",
                       "import sys; "
-                      "import cynthion, apollo_fpga; "
+                      "import apollo_fpga; "
                       "assert not sys._is_gil_enabled(), "
                       "'GIL is enabled - not a free-threaded build, or an "
                       "import re-enabled it'; "
