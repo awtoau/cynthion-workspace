@@ -88,6 +88,9 @@ def main() -> int:
         handlers=[logging.StreamHandler(sys.stdout),
                   logging.FileHandler(logs / "hyperram_rwds_float_rate.log", "w")])
 
+    # Its OWN workdir: `hyperram_dqs_model_sim.py` clears its one at startup, so
+    # sharing it means either run destroys the other's images mid-sweep.
+    sim.WORKDIR = ROOT / "tmp" / "hyperram-rwds-float-rate"
     if sim.WORKDIR.exists():
         shutil.rmtree(sim.WORKDIR)
     sim.WORKDIR.mkdir(parents=True, exist_ok=True)
