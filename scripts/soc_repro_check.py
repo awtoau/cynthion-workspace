@@ -28,11 +28,11 @@ loop inside one interpreter would have reported the design reproducible.
 ## The negative control
 
 `--perturb` is the run that must fail. It drops one throwaway `.py` into
-`gateware/soc/` between the two runs, which moves exactly one 32-bit constant:
-the source digest in `gateware_id`'s `built` word. If the comparison reports
-those two netlists as identical, it cannot detect anything and its PASS is
-worthless -- so the control exits non-zero when the netlists match, and zero
-when they differ.
+`gateware/soc/` before the LAST run, which moves exactly one 32-bit constant: the
+source digest in `gateware_id`'s `built` word. It asserts both halves -- the runs
+before the perturbation agreed, and the one after did not -- because a check that
+reported everything as different would pass a one-sided control as loudly as a
+working one.
 
 Run it before believing a PASS. This repo has twelve instruments that reported
 success while structurally unable to fail.
@@ -210,14 +210,26 @@ def run_stage(args):
                                                     for k, v in fmax(timing).items()))
 
     if args.perturb:
-        # The control passes when the comparison NOTICES the perturbation.
-        if same:
+        # Two properties, and a control asserting only one of them is half an
+        # instrument: the runs BEFORE the perturbation must agree, and the one
+        # after must not. A check that reports everything as different would
+        # otherwise pass this as loudly as a working one.
+        before = {digest(path) for path in artifacts[:-1]}
+        agreed = len(before) == 1
+        noticed = digest(artifacts[-1]) not in before
+        if len(artifacts) > 1 and not agreed:
+            emit(f"CONTROL FAILED: the {len(artifacts) - 1} runs before the "
+                 f"perturbation did not agree with each other, so this says "
+                 f"nothing about whether the perturbation was detected.")
+            return 1
+        if not noticed:
             emit("CONTROL FAILED: the netlists matched across a deliberate "
                  "one-constant change. This check cannot detect anything and no "
                  "PASS from it means a thing.")
             return 1
-        emit("control passed: a one-constant change was reported as DIFFERENT, "
-             "so a match from this check is evidence rather than a default.")
+        emit(f"control passed: {len(artifacts) - 1} unperturbed run(s) agreed and "
+             f"a one-constant change was reported as DIFFERENT, so a match from "
+             f"this check is evidence rather than a default.")
         return 0
 
     if same:

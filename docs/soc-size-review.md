@@ -77,12 +77,29 @@ pinning `built` and `git` gives **1,074**. Same code, same question, 360 cells
 apart, and the smaller number is the wrong one. DFF was 456 both times — which is
 what "DFF is exact" means in practice.
 
-- Fixed since [#441](https://github.com/awtoau/cynthion-workspace/issues/441):
-  `built` was `datetime.now()`, so a build a minute later was a different netlist
-  and nothing was reproducible. It is now the gateware source digest.
+**Measured**, 2026-08-12, shipping SoC `bist0-ck160-dqs1-merge0-sync60-mirror0-mirrordiv4`,
+`--no-parallel-refine`, one firmware image, 3 builds an arm
+([`soc_repro_arms.py`](../scripts/soc_repro_arms.py)):
+
+| arm | distinct netlists | COMB spread | FF spread | `clk` spread |
+|---|---|---|---|---|
+| `built` varies, naming pinned | 3 | **276** | 0 | **7.95 MHz** |
+| naming varies, `built` pinned | 3 | 0 | 0 | 0.00 MHz |
+| both fixed (shipped) | **1** | 0 | 0 | 0.00 MHz |
+
+- The 32-bit constant is the whole of the area and timing cost. The
+  `id()`-derived module name changed the netlist BYTES and mapped, packed and
+  placed identically — it broke reproducibility without costing a cell.
+- Both still had to be fixed. Either one alone leaves three distinct netlists,
+  and a netlist that is not byte-identical cannot be a control for anything.
+- FF is flat in every arm. Only the MAPPING moved, never the function.
+- Fixed in [#441](https://github.com/awtoau/cynthion-workspace/issues/441):
+  `built` was `datetime.now()`, so a build a minute later was a different netlist.
+  It is now the gateware source digest.
 - Still pin them for an A/B. Both arms of an A/B edit the tree, so the digest
   moves with the edit — the constant is stable across TIME, not across SOURCES.
-- `scripts/soc_repro_check.py` is the gate: two builds of one tree, byte-compared.
+- [`soc_repro_check.py`](../scripts/soc_repro_check.py) is the gate: two builds of
+  one tree, byte-compared, and `check.py`'s `repro` runs it.
 
 ### The other hazard: Fmax is placement luck
 
