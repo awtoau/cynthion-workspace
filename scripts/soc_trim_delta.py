@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Build the SoC with a candidate trim removed, and diff it. #447.
+# Build the SoC with a candidate trim removed, and diff it. #451.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Build the real SoC with and without a named trim, and report the delta.

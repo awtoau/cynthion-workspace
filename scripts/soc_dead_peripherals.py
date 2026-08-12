@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Which SoC windows nothing reads or writes. #447.
+# Which SoC windows nothing reads or writes. #451.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Find the CSR windows on this SoC's bus that no software reaches.
@@ -58,7 +58,12 @@ LOG = ROOT / "tmp" / "logs" / "soc_dead_peripherals.log"
 # Where a user could live. `repos/` is upstream and does not build against this
 # SoC's map; `tmp/` and `target/` are build output.
 SEARCH_ROOTS = ("firmware", "scripts", "tests", "gui")
-SKIP = ("/repos/", "/tmp/", "/target/", "/debris/", "cynthion-soc-pac/")
+# This file is skipped along with the generated PAC, and that is not tidiness:
+# `KNOWN_ABSENT` below is a name that must appear nowhere, and once this script
+# was committed `git grep` found it here and the control failed. A detector that
+# counts itself as a user reports every window used.
+SKIP = ("/repos/", "/tmp/", "/target/", "/debris/", "cynthion-soc-pac/",
+        "soc_dead_peripherals.py")
 
 # The generated C firmware is a user, and a different kind: it is not built by
 # `soc_run.py` unless `--c-firmware` is passed, so a window only it reaches has

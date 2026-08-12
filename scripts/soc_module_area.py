@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# What each module in a built SoC actually costs, in context. #447.
+# What each module in a built SoC actually costs, in context. #451.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Per-module area and critical-path share, read out of one finished build.
@@ -30,7 +30,9 @@ netlist that did not change at all -- by +102 COMB, `hyper_probe` by +390 and
 
 Two things here ARE trustworthy: the TOTAL, which is checked against nextpnr,
 and `--noflatten`, which keeps real module boundaries. For what a deletion
-recovers, use `scripts/soc_trim_delta.py`, which builds both ways.
+recovers, use `scripts/soc_trim_delta.py`, which builds both ways;
+`scripts/soc_csr_mux_cost.py` is the controlled version of the one structural
+claim this table did support, that a CSR block's multiplexer outweighs it.
 
 `TRELLIS_COMB` is what nextpnr counts and what the 24,288 limit is against; it
 does not exist before packing, so it is modelled here as
