@@ -23,46 +23,38 @@ Where the two differ, the "built" column says so.
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
 
-## There are two things called "priority" and they are unrelated
+## Priority is software only
 
-| | PLIC priority | RTIC task priority |
-|---|---|---|
-| lives in | **hardware** — a register per source in `gateware/soc/cpu/plic.py` | **software** — `riscv-slic`, RTIC's RISC-V backend |
-| set by | firmware at init, then never changed | declared in the task's attribute |
-| decides | which source `claim()` returns **first** when several are pending at the same moment | which task runs, and **which task can interrupt which** |
-| preempts a running handler | **no. Never.** | **yes** — this is where preemption comes from |
-| values here | `POWER_ALERT` 4, `CONSOLE` 3, `TYPE_C` 2, `I2C` 1 | see [`rtic.md`](rtic.md) |
+**There is one priority in this design and it is RTIC's**, in `riscv-slic`.
+Declared per task, it decides which task runs and which task can interrupt
+which. That is where preemption comes from — see [`rtic.md`](rtic.md).
 
-They are different numbers with different meanings and they do not interact.
+**The interrupt controller has none.** No priority registers, no threshold, no
+claim/complete. Pending bits and enables.
 
-### Why the hardware one cannot preempt
+The firmware's `POWER_ALERT 4 / CONSOLE 3 / TYPE_C 2 / I2C 1` stays what it
+already is: a `const` array, available if the firmware wants to order its own
+dispatch loop.
 
-The PLIC gives the CPU **one** interrupt line. When it fires, the CPU traps and
+### Why the controller cannot preempt, whatever it offers
+
+It gives the CPU **one** interrupt line. When that fires the CPU traps and
 `mstatus.MIE` is cleared — the privileged specification, and VexiiRiscv's
-`TrapPlugin.scala:869`. No further interrupt is taken until software sets it
-again. PLIC 1.0.0 line 93 says the same from the other side: *"the PLIC provides
-no concept of interrupt preemption or nesting"*.
+`TrapPlugin.scala:869`. Nothing further is taken until software sets it again,
+so a source going pending mid-handler does nothing until that handler finishes.
 
-So when a handler is running, a higher-priority source going pending does
-nothing at all until that handler finishes.
+PLIC 1.0.0 line 93 says it from the other side: *"the PLIC provides no concept
+of interrupt preemption or nesting"*.
 
-### So the design has no hardware priority
+### Why the built PLIC's priority is removable
 
-If RTIC decides preemption, hardware priority has nothing left to decide.
+It could only matter if a source needed servicing **sooner** than another. But
+**every claim site loops until `claim()` returns 0**, so every pending source is
+serviced in the same trap regardless. Its priority registers reorder four short
+handlers inside one loop; nothing measures that order and nothing depends on it.
 
-It could only matter if a higher-priority source needed servicing **sooner**
-than a lower one. But **every claim site loops until `claim()` returns 0**, so
-every pending source is serviced in the same trap regardless. Priority reorders
-four short handlers inside one loop; nothing measures that order and nothing
-depends on it.
-
-**Design: no priority registers, no threshold, no claim/complete.** Pending bits
-and enables. The firmware's `POWER_ALERT 4 / CONSOLE 3 / TYPE_C 2 / I2C 1` stays
-what it already is — a `const` array, available if the firmware ever wants to
-order its own dispatch loop.
-
-This is the argument for the controller in decision 1 below: `EventMonitor` has
-no priority machinery to remove.
+This is the argument for the controller in decision 1: `EventMonitor` has no
+priority machinery to remove.
 
 ### Ordering that is load-bearing
 
