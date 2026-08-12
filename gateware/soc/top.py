@@ -616,12 +616,14 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 # (`scripts/riscv_clock_ladder.py` rewrites the line instead, and #439 is what
 # that rewrite has been doing since the default became a ternary).
 #
-# 60 is the rung the shipping design has always closed at. The design now
-# carries both peripheral sets, and what binds it is the Wishbone/CSR arbiter's
-# grant fan-out rather than anything on the HyperRAM path -- 2.46 ns of logic
-# against 18.02 ns of routing, measured on the merged closure probe. The rung
-# this one closes at across placer seeds is #432's own measurement; take its
-# answer rather than assuming this number survives.
+# 50, and it is measured: `scripts/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
+# seeds, `--no-parallel-refine`. 60 closed on 3 of 4 seeds, worst -3.2%; 50 on
+# 4 of 4, and the binding domain leaves `clk` for `hr_clk` there -- so a rung
+# below 50 buys nothing. Conditions, the whole ladder and the caveat about four
+# seeds against a 9 MHz placement distribution: #432, #467.
+#
+# What binds at 60 is the Wishbone/CSR arbiter's grant fan-out, not the HyperRAM
+# path: registering that grant is the work that would lift this.
 #
 # `--relaxed-btb` (jumpAt = 2) is already on and is NOT the remaining limit --
 # see `cpu/cpu.py`, where it was added for exactly this symptom at 57.55 MHz.

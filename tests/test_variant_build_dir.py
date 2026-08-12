@@ -44,12 +44,12 @@ TOP = ROOT / "gateware" / "soc" / "top.py"
 DEFAULT: dict = {}
 DQS = {"CYNTHION_HYPERRAM_DQS": "1"}
 DQS_CK120 = {"CYNTHION_HYPERRAM_DQS": "1", "CYNTHION_HYPERRAM_CK_MHZ": "120"}
-SYNC50 = {"CYNTHION_SYNC_MHZ": "50"}
+SYNC45 = {"CYNTHION_SYNC_MHZ": "45"}
 
 
 def test_different_variants_get_different_directories():
     dirs = {variant.build_dir(ROOT, env)
-            for env in (DEFAULT, DQS, DQS_CK120, SYNC50)}
+            for env in (DEFAULT, DQS, DQS_CK120, SYNC45)}
     assert len(dirs) == 4, sorted(str(d) for d in dirs)
 
 
@@ -100,7 +100,7 @@ def test_the_directory_is_under_the_build_root_and_is_one_component():
 
 def test_the_directory_and_the_cache_key_separate_the_same_things():
     import soc_run
-    for env in (DEFAULT, DQS, DQS_CK120, SYNC50):
+    for env in (DEFAULT, DQS, DQS_CK120, SYNC45):
         assert soc_run.variant_settings.__module__  # imported, not shadowed
     # Every entry in the table appears in the slug and in the settings list.
     for name, _default, tag, _kind in variant.VARIANT_ENV:

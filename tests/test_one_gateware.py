@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT / "gateware"))
 from soc import variant  # noqa: E402
 
 SOC = ROOT / "gateware" / "soc"
+NAME = "CYNTHION_SYNC_MHZ"
 
 
 def _ask(env, expression):
@@ -49,8 +50,11 @@ def _ask(env, expression):
 
 
 def test_the_clock_is_one_value_for_one_design():
-    assert _ask({}, "top.SYNC_MHZ") == "60.0"
-    assert _ask({"CYNTHION_SYNC_MHZ": "50"}, "top.SYNC_MHZ") == "50.0"
+    # 50 is the measured rung -- `soc_sync_ladder.py`, every seed. Read from
+    # the table rather than typed, so this test is about there being ONE
+    # value, not about which.
+    assert _ask({}, "top.SYNC_MHZ") == str(float(variant.value(NAME, {})))
+    assert _ask({NAME: "45"}, "top.SYNC_MHZ") == "45.0"
 
 
 def test_no_variant_variable_selects_a_half():
