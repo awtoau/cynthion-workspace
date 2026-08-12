@@ -68,24 +68,21 @@ subclassing the modules under test with an empty `elaborate`.
 **DFF is exact in both.** A register is a register wherever it is placed. LUT4
 is mapping, and mapping depends on the neighbours; read the DFF column first.
 
-### The hazard: this design's LUT count is not stable between builds
+### The hazard: `gateware_id`'s constants fold, so an A/B must pin them
 
-Four builds of nominally the same design gave **14,178, 14,200, 14,025 and
-14,476** TRELLIS_COMB. The cause is not placement — synthesis is deterministic
-given a netlist. It is that `peripherals/gateware_id.py` bakes the build timestamp and the
-git hash in as 32-bit constants and synthesis folds them, so a build a minute
-later is a different netlist. **Up to 451 TRELLIS_COMB of spread from a clock**,
-against a design whose whole instrumentation block is 1,074.
+`GatewareId` bakes its identity in as 32-bit constants and synthesis folds them,
+so two different words land on different LUT counts. `soc_instrumentation_cost.py`
+run without pinning them reported the instrumentation at **714** TRELLIS_COMB;
+pinning `built` and `git` gives **1,074**. Same code, same question, 360 cells
+apart, and the smaller number is the wrong one. DFF was 456 both times — which is
+what "DFF is exact" means in practice.
 
-This is not academic. `soc_instrumentation_cost.py` was first run without pinning
-those constants and reported the instrumentation at **714** TRELLIS_COMB; pinning
-`built` and `git` across both builds gives **1,074**. Same code, same question,
-360 cells of difference, and the smaller number is the wrong one. The DFF figure
-was 456 both times, which is what "DFF is exact" means in practice.
-
-So: **you cannot compare LUT counts between two builds of this design made at
-different times.** Any A/B has to pin `GatewareId`'s arguments or report a number
-a third of which is a timestamp.
+- Fixed since [#441](https://github.com/awtoau/cynthion-workspace/issues/441):
+  `built` was `datetime.now()`, so a build a minute later was a different netlist
+  and nothing was reproducible. It is now the gateware source digest.
+- Still pin them for an A/B. Both arms of an A/B edit the tree, so the digest
+  moves with the edit — the constant is stable across TIME, not across SOURCES.
+- `scripts/soc_repro_check.py` is the gate: two builds of one tree, byte-compared.
 
 ### The other hazard: Fmax is placement luck
 

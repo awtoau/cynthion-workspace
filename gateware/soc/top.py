@@ -1620,6 +1620,12 @@ class AwtoSoc(Elaboratable):
         # bulk, being the same two stream endpoints plus descriptors.
         from luna.gateware.usb.devices.acm import USBSerialDevice
 
+        # Before the USBDevice elaborates: luna names the second of CDC's two IN
+        # endpoints after `id()`, which is an address and changes every process
+        # (#441). Endpoint number instead, so the RTLIL repeats.
+        from luna_stable_names import stable_endpoint_names
+        stable_endpoint_names()
+
         # AUX rather than CONTROL or TARGET: CONTROL is shared with Apollo and has to be
         # claimed (sideband bit 5, `gateware/probes/sideband/sideband_advertise.py`), TARGET is the port
         # under test, and AUX belongs to the FPGA outright.

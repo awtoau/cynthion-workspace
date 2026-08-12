@@ -23,10 +23,38 @@ whose provenance is least obvious later, so it is worth being able to tell.
     platform.build(design, **ecppack_opts())
 """
 
+import hashlib
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+GATEWARE_SOC = ROOT / "gateware" / "soc"
+
+
+def source_digest():
+    """A hash of every gateware source, and of the variant that selects among them.
+
+    The one definition of "which gateware is this". `soc_run.gateware_digest`
+    folds HEAD and the placer flags into it for the bitstream cache;
+    `peripherals/gateware_id.py` puts its low 32 bits in a register.
+    """
+    if str(GATEWARE_SOC) not in sys.path:
+        sys.path.insert(0, str(GATEWARE_SOC))
+    import variant
+
+    digest = hashlib.sha256()
+    for source in sorted(GATEWARE_SOC.rglob("*.py")):
+        digest.update(source.relative_to(ROOT).as_posix().encode())
+        digest.update(source.read_bytes())
+    for setting in variant.settings():
+        digest.update(setting.encode())
+    return digest.hexdigest()
+
+
+def source_id():
+    """`source_digest` as the 32 bits `gateware_id`'s `built` register holds."""
+    return int(source_digest()[:8], 16)
 
 
 def usercode():
@@ -75,3 +103,4 @@ def describe(code):
 
 if __name__ == "__main__":
     print(f"usercode: {usercode():#010x}  -> {describe(usercode())}")
+    print(f"source:   {source_id():#010x}  -> {source_digest()}")

@@ -108,7 +108,9 @@ pub mod gateware {
         /// Bit 31 dirty, bits 30..0 the short git hash. The encoding
         /// `gateware/build_helpers.py` stamps into USERCODE.
         pub git: u32,
-        /// Packed UTC: year-2000, month, day, hour, minute, second.
+        /// WHICH gateware, not when: the top 32 bits of the digest over every
+        /// `gateware/soc/**/*.py` and the variant environment. Reproduce it with
+        /// `python3 gateware/build_helpers.py`.
         pub built: u32,
         pub sync_hz: u32,
         /// Cache sets, ways, and the ISA the core was generated with.
@@ -699,20 +701,12 @@ fn write_isa(uart: &mut Uart, misa: u32) {
     }
 }
 
-/// The gateware's packed build time, as ISO 8601.
+/// The gateware's build identity: the digest over its own sources.
 ///
-/// UTC, and it says so, because the field carries no offset -- a bitstream is
-/// built on one machine and read on another. The firmware's own timestamp
-/// beside it carries the builder's offset, which is why the two look different.
+/// It was a packed wall clock, which made it the one constant in the design that
+/// moved when nothing else did -- no two builds shared a netlist (#441). A hash
+/// is comparable against `python3 gateware/build_helpers.py`; a timestamp never
+/// was.
 fn write_built(uart: &mut Uart, built: u32) {
-    let _ = write!(
-        uart,
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        2000 + (built >> 26),
-        (built >> 22) & 0xf,
-        (built >> 17) & 0x1f,
-        (built >> 12) & 0x1f,
-        (built >> 6) & 0x3f,
-        built & 0x3f
-    );
+    let _ = write!(uart, "src {:08x}", built);
 }

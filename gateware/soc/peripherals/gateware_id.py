@@ -20,7 +20,7 @@ when the two were built from different trees.
 
     +0x00  magic    32  R   0x43594e31, "CYN1" -- this window answers at all
     +0x04  git      32  R   bit 31 dirty, bits 30..0 the short git hash
-    +0x08  built    32  R   when, packed (below)
+    +0x08  built    32  R   WHAT was built: the gateware source digest (below)
     +0x0c  sync_hz  32  R   what `sync` ACTUALLY runs at, in Hz
     +0x10  cpu      32  R   cache geometry and the ISA the core was generated with
     +0x14  usb_hz   32  R   what the `usb` domain actually runs at, in Hz
@@ -30,16 +30,24 @@ when the two were built from different trees.
 USERCODE, and it is the same function that produces it -- so the value Apollo
 reads over JTAG and the value the CPU reads here cannot disagree.
 
-`built` is packed rather than an epoch count so that firmware can print a date
-without a calendar routine:
+`built` is the top 32 bits of `../build_helpers.py`'s `source_digest()` -- a hash
+of every `gateware/soc/**/*.py` and of the variant environment. It says WHICH
+GATEWARE this is, not when it was made.
 
-    bits 31..26  year - 2000    bits 16..12  hour
-    bits 25..22  month 1..12    bits 11..6   minute
-    bits 21..17  day 1..31      bits  5..0   second
+It used to be `datetime.now()`, and that made this the only constant in the
+design that moved when nothing else did: two elaborations of one tree were never
+byte-identical, so no build of this project was ever reproducible and every Fmax
+was a sample from a different netlist (#441). A clock is not identity.
 
-UTC, so the field means one thing wherever it is read. Minute resolution would
-have fit in 26 bits; seconds are there because two bitstreams built a minute
-apart during a bring-up session are exactly the pair that get confused.
+What identity needs, and what the pair now covers between them:
+
+    different commit, same tree     `git` differs
+    same commit, different edits    `built` differs -- `git`'s dirty bit says
+                                    only THAT the tree was dirty, never WHICH
+    different variant, same tree    `built` differs (#351's collision)
+
+Reproduce it beside a board with `python3 gateware/build_helpers.py`, which is
+the point of a value derived from the sources rather than from a clock.
 
 `sync_hz` and `usb_hz` are `VariableClockDomainGenerator`'s `actual_*_mhz`, not
 the requested figures. The PLL divides a solved VCO and lands where it lands;
@@ -130,10 +138,10 @@ from amaranth.lib.wiring    import In
 from amaranth_soc           import csr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from build_helpers import usercode
+from build_helpers import source_id, usercode
 
 
-__all__ = ["GatewareId", "MAGIC", "DIE_PRESENT", "pack_built", "pack_cpu",
+__all__ = ["GatewareId", "MAGIC", "DIE_PRESENT", "pack_cpu",
            "CPU_M", "CPU_A", "CPU_C", "CPU_RDTIME"]
 
 
@@ -147,17 +155,6 @@ CPU_M      = 1 << 24
 CPU_A      = 1 << 25
 CPU_C      = 1 << 26
 CPU_RDTIME = 1 << 27
-
-
-def pack_built(when):
-    """Pack a `datetime` in UTC into the `built` word."""
-    when = when.utctimetuple()
-    return (((when.tm_year - 2000) & 0x3f) << 26
-            | (when.tm_mon & 0xf) << 22
-            | (when.tm_mday & 0x1f) << 17
-            | (when.tm_hour & 0x1f) << 12
-            | (when.tm_min & 0x3f) << 6
-            | (when.tm_sec & 0x3f))
 
 
 def pack_cpu(sets, ways, flags):
@@ -194,9 +191,9 @@ class GatewareId(wiring.Component):
     cpu_flags : int
         The CPU_* bits above, for the ISA extensions the core was generated
         with.
-    built : datetime or None
-        When, in UTC. `None` means now, which is what a build wants; a caller
-        passes one only to make a test deterministic.
+    built : int or None
+        The 32-bit build identity. `None` hashes the gateware sources, which is
+        what a build wants; a caller passes one to keep a test off the tree.
     git : int or None
         The USERCODE-format identifier. `None` reads the working tree.
     """
@@ -204,13 +201,10 @@ class GatewareId(wiring.Component):
     def __init__(self, *, sync_hz, usb_hz, cache_sets, cache_ways=1,
                  cpu_flags=CPU_M | CPU_A | CPU_C | CPU_RDTIME,
                  built=None, git=None):
-        if built is None:
-            from datetime import datetime, timezone
-            built = datetime.now(timezone.utc)
         self._values = {
             "magic":   MAGIC,
             "git":     usercode() if git is None else git,
-            "built":   pack_built(built),
+            "built":   source_id() if built is None else built,
             "sync_hz": int(sync_hz),
             "cpu":     pack_cpu(cache_sets, cache_ways, cpu_flags),
             "usb_hz":  int(usb_hz),
@@ -304,7 +298,5 @@ class GatewareId(wiring.Component):
 
 
 if __name__ == "__main__":
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
     print(f"magic {MAGIC:#010x}  git {usercode():#010x}  "
-          f"built {pack_built(now):#010x}  ({now.isoformat()})")
+          f"built {source_id():#010x}")

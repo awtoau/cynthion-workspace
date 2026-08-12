@@ -80,20 +80,18 @@ STUB = {stub!r}
 
 # PIN `GatewareId`'s CONSTANTS, and this is not a nicety.
 #
-# `GatewareId` bakes the build time and the git hash in as 32-bit constants, and
-# synthesis folds them: two builds a minute apart have different `built` words,
-# constant-fold differently, and land on different LUT counts. Measured at 153
-# TRELLIS_COMB between two builds of an otherwise identical design -- which is a
-# fifth of the number this script exists to report. Fixing both makes the two
-# netlists differ only in what is being measured.
+# `GatewareId` bakes the build identity and the git hash in as 32-bit constants,
+# and synthesis folds them: two words that differ constant-fold differently and
+# land on different LUT counts. Measured at 153 TRELLIS_COMB between two builds
+# of an otherwise identical design -- a fifth of the number this script exists to
+# report. Both arms of this comparison edit the tree, so `built` moves with the
+# edit even now that it is a source digest rather than a clock (#441).
 import peripherals.gateware_id as gateware_id
-from datetime import datetime, timezone
 _real = gateware_id.GatewareId
 
 class _Fixed(_real):
     def __init__(self, **kwargs):
-        kwargs.setdefault("built",
-                          datetime(2000, 1, 1, tzinfo=timezone.utc))
+        kwargs.setdefault("built", 0)
         kwargs.setdefault("git", 0)
         super().__init__(**kwargs)
 
