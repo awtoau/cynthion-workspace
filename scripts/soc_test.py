@@ -216,12 +216,11 @@ IDLE_S = 8.0
 # Nothing polls. `expect` blocks on the reader thread's condition variable and is
 # woken by the arrival of bytes, so the only waits left are the budgets above.
 #
-# It used to recheck the buffer every 20 ms, which put a 20 ms floor under every
-# assertion whatever it asked: 98 checks with a median cost of 20.1 ms, to the tenth
-# of a millisecond, for a harness whose checks are string comparisons. Two of the
-# 5.5 s were spent asleep. Event-driven, the median is 0.2 ms and the run is 3.5 s;
-# what remains is the handful of assertions that genuinely wait for the firmware --
-# the two ~1.7 s idle re-banners, and `log 20`'s millisecond between pushes. See #175.
+# Rechecking the buffer on an interval puts that interval as a floor under every
+# assertion whatever it asks -- at 20 ms, 98 string comparisons cost a median
+# 20.1 ms each and two of 5.5 s go to sleeping. Event-driven the median is 0.2 ms
+# and the run is 3.5 s, leaving only the assertions that genuinely wait for the
+# firmware: the two ~1.7 s idle re-banners and `log 20`. See #175.
 #
 # Blocking is also strictly LESS load than any poll, which matters here: the suite
 # asserts that an untouched shell is mostly idle, and a 1 ms poll once made that fail
@@ -242,11 +241,10 @@ IDLE_S = 8.0
 #
 # A PATTERN, because the prompt carries a stamp and the console's name --
 # `000006.008 aux> `, built by `refresh_prompt` in
-# firmware/cynthion-soc/src/shell/console.rs. The literal `\r\n> ` this used to
-# be stopped matching when the stamp landed, and a sentinel that never matches
-# is not a slow check, it is no check: every `command()` sat out its whole
-# REPLY_S budget and then returned as if the handler had finished. Measured
-# with `scripts/soc_test_flake_probe.py prompt` (#363).
+# firmware/cynthion-soc/src/shell/console.rs. A literal `\r\n> ` stops matching
+# the moment the stamp changes, and a sentinel that never matches is not a slow
+# check, it is no check: every `command()` sits out its whole REPLY_S budget and
+# returns as if the handler had finished. `soc_test_flake_probe.py prompt` (#363).
 PROMPT = re.compile(rb"\r\n[0-9:.]+ [a-z?]+> ")
 
 
@@ -768,11 +766,9 @@ def main():
             # keypress, so this is the only window in which the assertion means
             # anything.
             #
-            # The inverse of what this used to check. It re-banered every 2 s so
-            # an attaching terminal would not have missed the first one, and
-            # that is a transmission with nobody there -- console 1's TX shares
-            # a net with JTAG TMS, so it had to be restricted to console 0.
-            # Nothing is unbidden now. See `target::NEVER_SPEAKS_FIRST`.
+            # Re-bannering on an interval is a transmission with nobody there,
+            # and console 1's TX shares a net with JTAG TMS. Nothing here is
+            # unbidden. See `target::NEVER_SPEAKS_FIRST`.
             again = session.expect(banner, IDLE_S, at + len(banner))
             check("an idle console transmits nothing", again is None,
                   f"a second banner arrived within {IDLE_S}s of the first.\n"
@@ -803,8 +799,8 @@ def main():
             # And then the prompt: the needles say the reply STARTED, this says
             # the handler has finished and `reply` is all of it.
             #
-            # ASSERTED, not merely waited for. The return used to be discarded,
-            # so a handler that never came back read exactly like one that did.
+            # ASSERTED, not merely waited for: discard the return and a handler
+            # that never comes back reads exactly like one that did.
             prompt = session.expect(PROMPT, REPLY_S, mark)
             reply = session.snapshot()[mark:]
             check(name, not missing and prompt is not None,
@@ -982,7 +978,7 @@ def main():
 
         # The verb that started #409, on a build with no engine behind it.
         #
-        # `bist status` used to call `describe()`, which reads f0000800 -- a
+        # `bist status` must not call `describe()`, which reads f0000800 -- a
         # window the shipping variant does not decode. The gate is the cargo
         # feature, not `Bist::present()`, because `present()` answers by reading
         # the same address. So the assertion is BOTH halves: the sentence, and no
@@ -1777,8 +1773,7 @@ def main():
         # rather than a measurement.
         #
         # NEITHER worst case is asserted on, and the reason is the same for
-        # both -- which is the correction here, because `cost` used to be
-        # bounded while `late` was not.
+        # both: bounding one and not the other is arbitrary.
         #
         # Under emulation both are dominated by the host's scheduler. A guest
         # preempted mid-handler resumes with the guest counter having advanced

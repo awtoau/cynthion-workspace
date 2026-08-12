@@ -1197,13 +1197,10 @@ int main(void) {
             /* THE WRITE TEST RUNS EVEN WHEN THE JEDEC READ FAILED, and that is
                the point of running it.
 
-               The earlier version gated this on `answered`, on the reasoning
-               that a write verified through a broken read path is not
-               verified. That reasoning applied when the verify read back
-               through the controller. It no longer does: the verify now uses
-               the MEMORY MAP, which is independently cross-checked against
-               `apollo flash-read` at two offsets and is the one path here known
-               to be correct.
+               NOT gated on `answered`. Gating assumes the verify reads back
+               through the controller; it uses the MEMORY MAP, which is
+               independently cross-checked against `apollo flash-read` at two
+               offsets and is the one path here known to be correct.
 
                So this is a diagnostic rather than a dependant. Erase and
                program are commands the controller ISSUES; their effect is

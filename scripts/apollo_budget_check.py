@@ -258,7 +258,7 @@ def main():
     emit()
 
     # The defect this check was built around: an allocated section belonging to
-    # neither region used to read as zero. It now reads as a failure.
+    # neither region must read as a failure, not as zero.
     for s in book["unaccounted"]:
         failures.append(f"section {s['name']} ({s['size']} bytes, "
                         f"VMA 0x{s['vma']:08x}, LMA 0x{s['lma']:08x}) is "

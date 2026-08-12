@@ -407,10 +407,9 @@ def run_check(check: Check, logger, verbose: bool) -> Result:
                               detail=unprepared, failed_cmd=printable)
 
             # Bounded by what this check has actually taken before, not
-            # unbounded. This is the whole local gate: a wedged nextpnr or cargo
-            # used to hang it for ever, with nothing to distinguish that from a
-            # slow build (#295). The mechanism was already in the tree with one
-            # caller.
+            # unbounded. This is the whole local gate: unbounded, a wedged
+            # nextpnr or cargo hangs it for ever, with nothing to distinguish
+            # that from a slow build (#295).
             proc = run_bounded(step.cmd, cwd=step.cwd, merge_stderr=True,
                                family=f"check:{check.name}")
             if proc is None:

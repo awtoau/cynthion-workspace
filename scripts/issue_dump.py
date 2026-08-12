@@ -39,9 +39,8 @@ def open_issue_numbers() -> list[int]:
     """Every open issue number.
 
     From `tmp/issues/open.txt` when it exists -- a caller that wants a subset
-    writes one -- and otherwise from `gh`. It used to read that file
-    unconditionally and never wrote it, so a first run died with
-    FileNotFoundError on a path it had just created the directory for.
+    writes one -- and otherwise from `gh`, which also writes it. Reading it
+    unconditionally makes a first run die with FileNotFoundError.
     """
     listing = OUT / "open.txt"
     if listing.exists():

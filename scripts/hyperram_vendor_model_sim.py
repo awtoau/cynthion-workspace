@@ -154,10 +154,9 @@ STEP_TIMEOUT_S = 10
 # distinguishable at all, and what #338 is about.
 FAULT_CASES = (
     ("control", {}, (
-        # 27, not 28: the twin used to delay reads one edge past the vendor and
-        # this row pinned that. dqs_latency_probe_tb.sv caught it at every
-        # latency code, and the twin now drives data on the same edge the part
-        # does. See the note on the strobe hunt above.
+        # 27, not 28: the twin drives data on the same edge the part does, and
+        # this row pins it. dqs_latency_probe_tb.sv checks it at every latency
+        # code. See the note on the strobe hunt above.
         "ca rwds = zz1111, strobe at 27 edges, id0 = 0c86",
         "mem[0x000100] = 1234",
         "burst served 8 of 8",

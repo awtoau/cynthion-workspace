@@ -105,9 +105,8 @@ SIMS = [
 # flag, passed to the simulations that have repetition to restore.
 TIERS = {"once": SIMS, "soak": SIMS}
 
-# What the tiers used to be called, kept working. `fast` meant "the cheap
-# simulations" and now means "one cycle of every simulation"; `all` meant "every
-# simulation" and now means "every simulation, with its repetition".
+# Accepted spellings of the two tiers: `fast` is `once` (one cycle of every
+# simulation), `all` is `soak` (every simulation, with its repetition).
 TIER_ALIASES = {"fast": "once", "all": "soak"}
 
 RESET, BOLD, GREEN, RED, CYAN = (
@@ -136,9 +135,9 @@ def run_one(name, python, soak=False):
     command = [python, str(ROOT / "scripts" / f"{name}.py")]
     if soak and takes_soak(name):
         command.append("--soak")
-    # Bounded by this sim's own history. A looping simulation used to wedge its
-    # pool worker silently: the run never finished and nothing named which sim
-    # (#295). Per-sim family, because these differ by two orders of magnitude.
+    # Bounded by this sim's own history. Unbounded, a looping simulation wedges
+    # its pool worker silently: the run never finishes and nothing names which
+    # sim (#295). Per-sim family, because these differ by two orders of magnitude.
     proc = run_bounded(command, cwd=ROOT, merge_stderr=True,
                        family=f"sim:{name}{'-soak' if soak else ''}")
     if proc is None:
@@ -164,7 +163,7 @@ def main():
                         default="soak",
                         help="`once` runs every simulation one cycle each and "
                              "gates a commit; `soak` adds the repetition. "
-                             "`fast` and `all` are the old names for them")
+                             "`fast` and `all` are accepted for them")
     # Two cores back, so a full-tilt run leaves the machine usable.
     parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() - 2),
                         help="how many to run at once (they are independent)")

@@ -110,10 +110,9 @@ def carries_rung(rung):
 def configure(bitstream, rung):
     """Load the point's bitstream and prove the design is running.
 
-    The liveness gate used to live here, added after this rig was bitten by a
-    configure that returned zero over a blank FPGA. It is `soc_confirm` now
-    (#360), so every path gets it and each cause is named rather than reported
-    as "the board did not come up".
+    The liveness gate is `soc_confirm` (#360), not a check local to this rig, so
+    every path gets it and each cause is named rather than reported as "the board
+    did not come up" -- a configure can return zero over a blank FPGA.
     """
     if soc_confirm.configure_and_confirm(bitstream, expect="shell") != 0:
         raise SystemExit(f"no design running after configuring {bitstream}")

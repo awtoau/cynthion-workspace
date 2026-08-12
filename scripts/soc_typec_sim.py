@@ -352,9 +352,9 @@ def run_orientation_checks(checks, verbose):
     """Runs every cable scenario, and returns what each one read.
 
     The answers are returned rather than dropped because the blindness section
-    below asks a question about two of them. It used to re-simulate those two --
-    same models, same driver, same two reads -- which was 1.2 s spent producing
-    numbers this loop had already produced.
+    below asks a question about two of them. Re-simulating those two -- same
+    models, same driver, same two reads -- is 1.2 s spent producing numbers this
+    loop has already produced.
     """
     answers = {}
     for name, cc1, cc2, expected in CABLES:

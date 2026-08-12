@@ -219,11 +219,9 @@ def stable_read(registers, address, *, tries=4):
     `readback_is_trustworthy` exists and why it is checked first -- retries are
     not a substitute for a ratio that holds.
 
-    THE READBACK CAN SLIP A BIT, and this was found the alarming way: a rung
-    refused to measure because the applet ID came back `0x48a48663` where
-    `0x48524331` ("HRC1") was expected -- and bits 8..23 of that are exactly the
-    wanted value shifted LEFT by one. A serial slip in the JTAG register path,
-    not a wrong bitstream.
+    THE READBACK CAN SLIP A BIT: an applet ID of `0x48a48663` where `0x48524331`
+    ("HRC1") is expected has bits 8..23 exactly the wanted value shifted LEFT by
+    one -- a serial slip in the JTAG register path, not a wrong bitstream.
 
     That matters far beyond the ID. Every number this harness reports -- word
     counts, ERROR counts, cycle counts -- comes back through the same interface,
@@ -320,9 +318,9 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     # ratio the JTAG shift register slips deterministically, so every value from
     # this rung -- word count, cycle count, ERROR count -- is suspect, and a zero
     # error count is the most dangerous of them.
-    # WARN, do not refuse. An earlier version returned here without measuring
-    # anything below the ratio, which throws away rungs that may be perfectly
-    # good -- the ratio is a prediction, and the applet id is a DIRECT test of
+    # WARN, do not refuse. Returning here without measuring throws away rungs
+    # that may be perfectly good -- the ratio is a prediction, and the applet id
+    # is a DIRECT test of
     # the same path. It is read before and after every rung; if a known constant
     # survives the round trip twice, the readback worked for this measurement
     # whatever the ratio says. Refusing in advance is guessing with extra steps.

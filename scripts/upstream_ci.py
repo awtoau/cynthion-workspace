@@ -115,8 +115,8 @@ REPOS = {
             },
         },
     },
-    # No "facedancer": this workspace no longer carries that submodule (#169),
-    # so there is no repos/facedancer to cherry-pick from.
+    # No "facedancer": this workspace carries no such submodule (#169), so there
+    # is no repos/facedancer to cherry-pick from.
     "luna-soc": {
         "url": "https://github.com/greatscottgadgets/luna-soc.git",
         "jobs": {},

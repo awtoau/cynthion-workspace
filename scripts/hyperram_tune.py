@@ -244,8 +244,7 @@ def main():
     registers.register_write(REG_SWEEP_MASK, (args.drives << 8) | args.phases)
     # Zero first: the gateware starts on a RISING EDGE of this bit, so leaving
     # it set from a previous run means the next GO does nothing and the host
-    # reads back the old table -- which it did, silently, and a soak returned
-    # its own screen.
+    # silently reads back the previous table.
     registers.register_write(REG_SWEEP_GO, 0)
     registers.register_write(REG_SWEEP_GO, 1)
 
@@ -254,11 +253,10 @@ def main():
     # case, where a raised pass count makes it genuinely long.
     # WATCH IT PROGRESS, do not just wait for done.
     #
-    # This used to spin 20,000 blind reads on the done bit. When a CR0 write put
-    # the part into deep power down the sweep stalled at cell 0 and the host sat
-    # there for eleven minutes learning nothing -- while the very register it was
-    # polling carries the cell index next to the done bit, so "stuck at cell 0"
-    # was one decode away the whole time.
+    # Spinning blind reads on the done bit learns nothing from a stall: a CR0
+    # write into deep power down stops the sweep at cell 0 for as long as the
+    # poll runs. The same register carries the cell index beside the done bit,
+    # so "stuck at cell 0" is one decode away.
     previous_cell, stuck = -1, 0
     for _ in range(20_000):
         status = registers.register_read(REG_SWEEP_DONE)

@@ -102,10 +102,9 @@ def shell_features():
     that uses it. Today it finds `workload` and `preempt`, the #115 measurement
     load and its dispatcher.
 
-    It used to find `rtic` as well. That feature is gone: RTIC is the shell's
-    only dispatcher since #245, so there is no longer a build in which the
-    dispatcher is a variable -- and nothing here has to hold two versions of the
-    shell in its head to say whether a feature moved it.
+    Not `rtic`: RTIC is the shell's only dispatcher since #245, so there is no
+    build in which the dispatcher is a variable, and nothing here holds two
+    versions of the shell in its head to say whether a feature moved it.
     """
     found = set()
     for path in sorted(SRC_DIR.glob("*.rs")):
@@ -376,9 +375,8 @@ def main():
     # [[bin]] cannot touch the shell, but one that also turns on a feature of a
     # SHARED dependency can. `rticcs` is that shape -- it enables
     # `riscv/critical-section-single-hart` on a crate the shell links -- so it is
-    # the one worth watching. (`rtic` used to be the example and is now
-    # unconditional, which is why that feature is no longer on the shared-crate
-    # list: the shell always carries it.)
+    # the one worth watching. (`rtic` is unconditional, so it is not on the
+    # shared-crate list: the shell always carries it.)
     baseline, error = build_shell([])
     reference = None
     if error:
