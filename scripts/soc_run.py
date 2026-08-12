@@ -162,9 +162,18 @@ def synthesis_floor():
     Measured 2026-08-10, and the workings are in #351: 138 s alone, and each
     further concurrent build adds ~17 s to every one of them. 1.25x that.
     `soc_build_fanout.py` sets the variable; a lone build leaves it unset.
+
+    `CYNTHION_SYNTHESIS_FLOOR_SECONDS` raises it for a design this arithmetic
+    does not describe -- a bigger variant is a longer place-and-route, and the
+    figures above are the shipping SoC's. #440 is what the missing override
+    cost: a merged build killed at 172 s left a half-written `top.tim` whose
+    intermediate frequencies parsed as a completed run. Same class as the CK
+    and sync ceilings -- an argument rather than an edit, visible in the command
+    that raised it.
     """
     jobs = max(int(os.environ.get("CYNTHION_BUILD_JOBS", "1") or 1), 1)
-    return 1.25 * (138 + 17 * (jobs - 1))
+    override = float(os.environ.get("CYNTHION_SYNTHESIS_FLOOR_SECONDS") or 0)
+    return max(1.25 * (138 + 17 * (jobs - 1)), override)
 
 
 def run(cmd, cwd=None, env=None, floor=None):

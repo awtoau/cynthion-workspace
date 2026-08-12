@@ -44,6 +44,11 @@ success either way (#402 and the ten before it):
     A `top.tim` full of FAIL, so this is the control for "closes" versus "built".
 
 If either control comes back CLOSES, the run stops without reporting a number.
+
+A third failure mode is not a control but a check, because it happened here: a
+build killed by its own timeout leaves nextpnr's post-placement estimates in
+`top.tim`, and they parse exactly like a finished run's (#440). A row counts
+only if the log says `Program finished normally.`
 """
 
 import argparse
@@ -72,6 +77,23 @@ FMAX_RE = re.compile(
 
 CLOSES, MISSES, NO_RESULT = "CLOSES", "MISSES TIMING", "NO RESULT"
 
+# What a nextpnr log says when it reached the end. Present when timing FAILS as
+# well -- a failed build ends `0 warnings, 1 error` and then this. A killed one
+# stops mid `Running main router loop...` with its post-PLACEMENT estimates
+# already in the file, and those parse exactly like a result (#440).
+FINISHED = "Program finished normally."
+
+# Seconds a merged build may take.
+#
+#   waits for   yosys + nextpnr on the merged variant
+#   expected    204 s, the slowest observed with one other build in flight;
+#               the shipping design's 130-140 s is what `soc_run.synthesis_floor`
+#               is derived from and it is 23% less logic
+#   multiplier  1.25x
+#   on expiry   `run_bounded` names the family, the limit and the elapsed, and
+#               the row here is NO RESULT (killed) rather than a frequency
+SYNTHESIS_FLOOR_SECONDS = 255
+
 
 def env_for(sync_mhz):
     """The variant this script measures, at one CPU clock."""
@@ -83,14 +105,18 @@ def apply_env(env):
     for name, _default, _tag, _kind in variant.VARIANT_ENV:
         os.environ.pop(name, None)
     os.environ.update(env)
+    os.environ["CYNTHION_SYNTHESIS_FLOOR_SECONDS"] = str(SYNTHESIS_FLOOR_SECONDS)
 
 
 def timing(path):
-    """{clock: {mhz, target, status, margin}} from a nextpnr log."""
+    """{clock: {mhz, target, status, margin}} from a COMPLETED nextpnr log."""
     if not path.exists():
         return {}
+    text = path.read_text()
+    if FINISHED not in text:
+        return {}
     out = {}
-    for clock, mhz, status, target in FMAX_RE.findall(path.read_text()):
+    for clock, mhz, status, target in FMAX_RE.findall(text):
         out[clock.split("$")[-1]] = {
             "mhz": float(mhz), "target": float(target), "status": status,
             "margin": round(float(mhz) / float(target) - 1, 4)}
@@ -156,6 +182,10 @@ def point(label, sync_mhz, runs):
                "clocks": clocks, "nextpnr": flags,
                "deterministic": bool(flags) and "--parallel-refine" not in flags}
         rows.append(row)
+        if row["verdict"] == NO_RESULT:
+            emit(f"  run {index}: NO RESULT -- no completed nextpnr log "
+                 f"(killed, or the build never got there). #440")
+            continue
         emit(f"  run {index}: {row['verdict']:13s} binds={row['binds']}  "
              + "  ".join(f"{name}={c['mhz']:.2f}/{c['target']:.0f}"
                          for name, c in sorted(clocks.items())))

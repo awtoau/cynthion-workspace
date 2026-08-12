@@ -100,6 +100,20 @@ def eclk_evidence(config_text, tim_text):
             "fabric_eclk_lines": tim_text.count(FABRIC_ECLK)}
 
 
+def netlist_digest():
+    """What nextpnr was GIVEN, so a spread can be attributed.
+
+    Without it, two runs differing in Fmax are ambiguous: the placer may be
+    non-deterministic, or yosys may have produced a different netlist. The first
+    is a property of the flags, the second of the sources.
+    """
+    netlist = BUILD / "top.json"
+    if not netlist.exists():
+        return None
+    import hashlib
+    return hashlib.sha256(netlist.read_bytes()).hexdigest()[:16]
+
+
 def one_run(label, index, extra):
     """One full build. Returns the row, or None if the build failed."""
     bust_cache()
@@ -124,11 +138,11 @@ def one_run(label, index, extra):
                       if not re.fullmatch(r"[0-9a-f ]+", line)))
 
     row = {"label": label, "run": index, "rc": rc,
-           "seconds": round(elapsed, 1),
+           "seconds": round(elapsed, 1), "netlist": netlist_digest(),
            "fmax": {k: v[0] for k, v in frequencies(tim_text).items()},
            "status": {k: v[1] for k, v in frequencies(tim_text).items()},
            **eclk_evidence(config_text, tim_text)}
-    emit(f"  run {index}: rc={rc} {elapsed:.0f}s  "
+    emit(f"  run {index}: rc={rc} {elapsed:.0f}s  netlist={row['netlist']}  "
          + "  ".join(f"{k.split('$')[-1]}={v:.2f}" for k, v in row["fmax"].items()))
     if row["fabric_eclk_lines"]:
         emit(f"    *** {row['fabric_eclk_lines']} edge clock(s) on GENERAL ROUTING")
