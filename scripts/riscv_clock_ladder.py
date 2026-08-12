@@ -233,6 +233,28 @@ def stressed(replies):
     return True, f"stress ok ({passes.group(1) if passes else '?'} passes)"
 
 
+def is_ours(replies):
+    """(ok, detail) -- is the flash image on the board the one this run built.
+
+    The shell lives in flash and the arbiter cannot write it, so between this
+    ladder's `soc_run` and its board job another agent's `soc_run` can land. The
+    board names the checkout its image came from; a row attributed to the wrong
+    one is #430's failure with a frequency attached.
+    """
+    said = "\n".join(reply for command, reply in replies
+                     if command.strip() == "info")
+    found = re.search(r"^image\s+(\S+)\s+(\w+)\s+(\S+)", said, re.M)
+    if not found:
+        return False, "no `image` line in `info`"
+    branch = subprocess.run(["git", "branch", "--show-current"], cwd=ROOT,
+                            capture_output=True, text=True).stdout.strip()
+    if branch and found.group(3) != branch:
+        return False, (f"the board is running {found.group(3)}'s image, not "
+                       f"{branch}'s -- another build landed between the flash "
+                       f"write and this job")
+    return True, f"image {found.group(1)} {found.group(2)} {found.group(3)}"
+
+
 def die_celsius(record, replies):
     """Junction temperature -- the axis nobody has varied.
 
@@ -274,15 +296,17 @@ def rung(overlay, mhz, seed, budget):
     ok_math, math_detail = arithmetic(replies)
     ok_move, move_detail = advanced(replies)
     ok_load, load_detail = stressed(replies)
+    ok_ours, ours_detail = is_ours(replies)
     row.update(measured_khz=khz, clock_ok=ok_clock, arithmetic_ok=ok_math,
-               advancing=ok_move, stress_ok=ok_load)
-    row["verdict"] = ("PASS" if (ok_clock and ok_math and ok_move and ok_load)
-                      else "LIGHT ONLY" if (ok_clock and ok_math and ok_move)
-                      else "FAIL")
+               advancing=ok_move, stress_ok=ok_load, image_ok=ok_ours)
+    ready = ok_clock and ok_ours
+    row["verdict"] = ("NO RESULT" if not ready else
+                      "PASS" if (ok_math and ok_move and ok_load) else
+                      "LIGHT ONLY" if (ok_math and ok_move) else "FAIL")
     row["detail"] = "; ".join(
-        part for part, ok in ((clock_detail, ok_clock), (math_detail, ok_math),
-                              (move_detail, ok_move), (load_detail, ok_load))
-        if not ok) or load_detail
+        part for part, ok in ((ours_detail, ok_ours), (clock_detail, ok_clock),
+                              (math_detail, ok_math), (move_detail, ok_move),
+                              (load_detail, ok_load)) if not ok) or load_detail
 
     heat = f"{row['die_celsius']} C" if row["die_celsius"] is not None else "no DTR"
     say(f"  SYNC {mhz:>4g}  {row['verdict']:10s}  {forecast:34s}  die {heat:6s}  "
@@ -326,7 +350,8 @@ def main():
     rows = [rung(overlay, mhz, args.seed, args.budget) for mhz in rungs]
 
     passed = [r["sync_mhz"] for r in rows if r["verdict"] == "PASS"]
-    light = [r["sync_mhz"] for r in rows if r["verdict"] != "FAIL"]
+    light = [r["sync_mhz"] for r in rows
+             if r["verdict"] in ("PASS", "LIGHT ONLY")]
     say()
     say(f"highest rung correct UNDER LOAD: {max(passed):g} MHz"
         if passed else "nothing verified under load")
