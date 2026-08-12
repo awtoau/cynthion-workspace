@@ -56,31 +56,17 @@ so a source going pending mid-handler does nothing until that handler finishes.
 PLIC 1.0.0 line 93 says it from the other side: *"the PLIC provides no concept
 of interrupt preemption or nesting"*.
 
-### Why the built PLIC's priority is removable
-
-It could only matter if a source needed servicing **sooner** than another. But
-**every claim site loops until `claim()` returns 0**, so every pending source is
-serviced in the same trap regardless. Its priority registers reorder four short
-handlers inside one loop; nothing measures that order and nothing depends on it.
-
-This is the argument for the controller in decision 1: `EventMonitor` has no
-priority machinery to remove.
-
-### Deferring a source: complete, then disable
+### Deferring a source
 
 A handler that cannot finish the work inline — the FUSB302B needs I2C, which
-takes milliseconds — hands off to a task and turns the source off meanwhile.
-The two steps only work in one order:
+takes milliseconds — disables the source, hands off to a task, and the task
+re-enables when it is done.
 
-1. **`complete`** — tell the controller this claim is finished
-2. **`disable`** — stop the source raising another until the task has dealt with it
-
-**Disabling first loses the source permanently.** `pending = source & ~claimed`,
-so while the claim is outstanding the source cannot go pending again; and once
-disabled, the completion has nothing to act on. The claim stays set, pending
-stays low, and the line never fires again.
-
-`src/irq.rs`'s `defer_type_c` is the worked example.
+With pending bits and enables that is the whole of it. **The ordering hazard
+belongs to claim/complete**, where completing after disabling strands the claim:
+the source cannot go pending while a claim is outstanding, and a disabled source
+has nothing to complete against, so the line never fires again. Removing
+claim/complete removes the hazard.
 
 ## Open decisions
 
