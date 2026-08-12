@@ -74,7 +74,9 @@ class CynthionPlatformRev1D4(CynthionPlatform):
     version     = (1, 4)
     device      = "LFE5U-12F"
     package     = "BG256"
-    speed       = "8"   # pinned; upstream reads ECP5_SPEED_GRADE. #418
+    # 25F die, grade 8. Both known and settled; see docs/chips/ecp5/lfe5u-12f.md.
+    # Pinned rather than read from ECP5_SPEED_GRADE. #418, #474.
+    speed       = "8"
 
     # By default, assume we'll be connecting via our control PHY.
     default_usb_connection = "aux_phy"

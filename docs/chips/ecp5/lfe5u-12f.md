@@ -1,7 +1,13 @@
 # ECP5 `LFE5U-12F` — the FPGA, and it is a 25F die
 
 The main programmable device on Cynthion r1.4. Lattice ECP5, marked `LFE5U-12F`,
-CABGA256, speed grade 8.
+CABGA256.
+
+**We build for the 25F die at speed grade 8, and that is settled.** The marking
+understates the die (below), and the part's own grade marking is 6. Both are
+known. The flow targets 25F/-8 and every number here is in those terms; divide
+by ~1.3 for a board-relative figure. Revisit only if a measured failure points
+at the grade -- not otherwise, and not as a caveat on individual results.
 
 **Index:** [`../hardware.md`](../../hardware.md)
 
