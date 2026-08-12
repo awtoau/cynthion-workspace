@@ -125,7 +125,7 @@ from bus.wishbone_pipe import RegisteredResponse
 from bus.fault         import BusFault, worst_ack_cycles
 from peripherals.flash_cdc import ClockCrossedPHY
 from peripherals.hyperram_probe import HyperRAMProbe
-from peripherals.flash import (FairSPIControlPortCrossbar, FlashILA, FlashPinProbe,
+from peripherals.flash import (FairSPIControlPortCrossbar, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins, READ_MODES)
 
@@ -396,9 +396,6 @@ FLASH_PROBE_BASE = 0xf0000200
 # one of them said it should burst and the board says it costs 336 CK.
 HYPERRAM_PROBE_BASE = 0xf0000280
 
-# The logic analyser's registers, in the same uncached CSR region.
-FLASH_ILA_BASE = 0xf0000300
-
 # The HyperRAM BIST engine's register window, present only when HYPERRAM_BIST is
 # set. 512 bytes: the engine addresses its registers by number, and each number
 # maps to a 32-bit CSR twice -- a parameter at 4*n and a result at 0x100 + 4*n,
@@ -531,16 +528,6 @@ IRQ_TYPE_C_AUX = 5
 # GPIO output. It is an input here and `oe` stays 0; R86 is what holds it high
 # when nothing is asserting, which is what an open-drain ALERT requires.
 IRQ_POWER_ALERT = 6
-
-# Capture depth, in samples of the sync clock.
-#
-# 32 SCK edges at divisor 0 is 64 sync cycles of clocking, plus the FSM
-# transitions between the four transfers of a JEDEC read. 1024 spans all of it
-# with room to spare and costs exactly one DP16KD at 8 bits wide -- the SoC uses
-# 41 of 56, so nothing else has to give way. Depth over width was the right
-# trade here: the question is when a strobe fires across a whole multi-transfer
-# command, not what a dozen other signals are doing.
-ILA_DEPTH = 1024
 
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
 # above that aliases back to offset 0, so mapping more would map the same chip
@@ -1359,31 +1346,6 @@ class AwtoSoc(Elaboratable):
         m.submodules.flash_probe_bridge = flash_probe_bridge
         decoder.add(flash_probe_bridge.wb_bus, addr=FLASH_PROBE_BASE,
                     name="flash_probe")
-
-        # The logic analyser, on the same signals plus the PHY's internals.
-        #
-        # Triggered by software immediately before the transaction under test,
-        # rather than by chip select falling. If the fault were that nothing is
-        # issued, triggering on the symptom's absence would capture an empty
-        # window and confirm only what is already known -- and the trigger has
-        # to cover the gaps BETWEEN the four transfers of a JEDEC read, because
-        # "does the capture strobe still fire on transfer 2" is the hypothesis.
-        m.submodules.flash_ila = flash_ila = FlashILA(sample_depth=ILA_DEPTH)
-        m.d.comb += [
-            flash_ila.sck         .eq(flash_bus.sck),
-            flash_ila.dq_i1       .eq(flash_phy.o_dq_i1),
-            flash_ila.cs          .eq(flash_pins.pins.cs.o),
-            flash_ila.sr_in_shift .eq(flash_phy.o_sr_in_shift),
-            flash_ila.sample_stb  .eq(flash_phy.o_sample),
-            flash_ila.update_stb  .eq(flash_phy.o_update),
-            flash_ila.in_xfer     .eq(flash_phy.o_in_xfer),
-            flash_ila.dq_o0       .eq(flash_phy.o_dq_o0),
-        ]
-
-        flash_ila_bridge = WishboneCSRBridge(flash_ila.bus, data_width=32)
-        m.submodules.flash_ila_bridge = flash_ila_bridge
-        decoder.add(flash_ila_bridge.wb_bus, addr=FLASH_ILA_BASE,
-                    name="flash_ila")
 
         # HyperRAM, and the two paths that stage firmware into it.
         #

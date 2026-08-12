@@ -484,7 +484,6 @@ def cross_check(peripherals, emit):
         "HYPERRAM": soc_module.HYPERRAM_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
         "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
-        "FLASH_ILA": soc_module.FLASH_ILA_BASE,
         "BOOTRAM": soc_module.BOOTRAM_BASE,
     }
 

@@ -58,12 +58,6 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 14,
     },
     Peripheral {
-        name: "flash_ila",
-        base: 0xf0000300,
-        size: 0x00000020,
-        registers: 4,
-    },
-    Peripheral {
         name: "bootram",
         base: 0xf0000400,
         size: 0x00000020,

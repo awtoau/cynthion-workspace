@@ -627,9 +627,9 @@ mod tests {
             std::format!("{}", Census { walked, passed, pick })
         };
         assert_eq!(line(8, 0b0000_1110, 2),
-                   "      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre");
+                   "  sel 8 walked pass 1,2,3  pick 2 -- the widest window's centre");
         assert_eq!(line(8, 0, 5),
-                   "      sel  8 walked  none passed  pick 5 -- the fewest errors");
+                   "  sel 8 walked none passed  pick 5 -- the fewest errors");
         // Widest case: still one line, and still inside a terminal.
         assert!(line(8, 0xff, 3).len() <= 80, "{}", line(8, 0xff, 3));
         // A row is never mistaken for one: the census has no timestamp column.
