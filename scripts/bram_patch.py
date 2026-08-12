@@ -52,11 +52,8 @@ Four checks, all of which refuse rather than warn:
 
 ## The source check is exact
 
-One elaboration, compared byte for byte, nothing normalised away. It used to be two
-elaborations with an `id()`-derived module name stripped and a `datetime.now()` stamp
-recovered from the RTLIL, because neither repeated between runs; both are fixed and the
-design elaborates identically every time (#441). `scripts/soc_repro_check.py` is the
-gate on that staying true.
+One elaboration, compared byte for byte, nothing normalised away. The design elaborates
+identically every time; `scripts/soc_repro_check.py` is the gate on that staying true.
 
 ## What it does not check
 
