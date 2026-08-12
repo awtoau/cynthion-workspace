@@ -814,9 +814,52 @@ class HyperRAMCeiling(Elaboratable):
         bad_want = Signal(32)
         bad_seen = Signal()
 
-        with m.If(harness.go):
+        # LATCH GO, the way `sweep_pending` latches a sweep request. The FSM
+        # consumed it in HALTED only, while the harness zeroes the counters on
+        # the write from any state -- so a GO to a running engine started
+        # nothing and the engine halted on the new PASS_LIMIT after a partial
+        # burst. The engine free-runs from power-up, so that was every sweep
+        # that takes its control first (#438).
+        go_pending = Signal()
+        go_request = Signal()
+        go_accept = Signal()
+        m.d.comb += go_request.eq(harness.go | go_pending)
+        with m.If(go_accept):
+            m.d.sync += go_pending.eq(0)
+        with m.Elif(harness.go):
+            m.d.sync += go_pending.eq(1)
+
+        # Counters cleared when the run STARTS, not when the write lands: the
+        # words still in flight belong to the run being replaced. Overridden in
+        # SWEEP_CONTROL and SWEEP_CELL, which clear for their own reasons.
+        m.d.comb += harness.clear.eq(go_accept)
+
+        with m.If(go_accept):
             m.d.sync += [bad_index.eq(0), bad_got.eq(0), bad_want.eq(0),
                          bad_seen.eq(0)]
+
+        # The restart, from either state that consumes a GO.
+        def start_run():
+            m.d.comb += go_accept.eq(1)
+            m.d.sync += [passes.eq(0), index.eq(0), recovery.eq(0),
+                         stall.eq(0), bad_seen.eq(0), base.eq(0)]
+            # THROUGH THE CONFIG STATES when an apply bit is set.
+            #
+            # `CONFIG_CR0` was reachable only from RESET, which runs once at
+            # power-up -- microseconds in, while `device_cr0` is still zero from
+            # CSR reset. The host writes CR0 long afterwards and then writes GO,
+            # so the part was NEVER configured: every measurement ran at its
+            # power-on default.
+            #
+            # It is invisible in the results because it makes them PERFECT: 16
+            # latency codes x fixed/variable produced 32 byte-identical rows,
+            # and 8 drive codes x 2 clock modes x 8 phases produced 128 rows
+            # with the same first mismatch. An axis that does nothing looks like
+            # an axis that does not matter (#226).
+            with m.If(device_cr0[16] | device_cr1[16]):
+                m.next = "CONFIG_CR0"
+            with m.Else():
+                m.next = "WRITE_START"
 
         with m.FSM() as engine:
             with m.State("RESET"):
@@ -1061,7 +1104,14 @@ class HyperRAMCeiling(Elaboratable):
                     m.d.comb += control_done.eq(
                         Mux(sweep_control_pass, passes >= 0,
                             passes + 1 >= sweep_passes))
-                    with m.If(sweeping & control_done):
+                    # A HOST GO FIRST, so a free-running engine restarts at the
+                    # next burst boundary instead of halting on the pass limit
+                    # the same write installed (#438). Not while sweeping: the
+                    # sweep drives itself and abandoning it mid-cell would leave
+                    # `sweep_done` clear for ever; the request waits for HALTED.
+                    with m.If(go_request & ~sweeping):
+                        start_run()
+                    with m.Elif(sweeping & control_done):
                         with m.If(sweep_control_pass):
                             # The control has run: it passes only if EVERY word
                             # mismatched.
@@ -1149,27 +1199,8 @@ class HyperRAMCeiling(Elaboratable):
                 # To WRITE_START rather than RESET: RESET waits out a 2**16
                 # cycle heartbeat for tRP/tRPH, which is right once per
                 # configuration and wrong once per pass.
-                with m.If(harness.go):
-                    m.d.sync += [passes.eq(0), index.eq(0), recovery.eq(0),
-                                 stall.eq(0), bad_seen.eq(0), base.eq(0)]
-                    # THROUGH THE CONFIG STATES when an apply bit is set.
-                    #
-                    # `CONFIG_CR0` was reachable only from RESET, which runs once
-                    # at power-up -- microseconds in, while `device_cr0` is still
-                    # zero from CSR reset. The host writes CR0 long afterwards
-                    # and then writes GO, so the part was NEVER configured: every
-                    # measurement ran at its power-on default.
-                    #
-                    # It is invisible in the results because it makes them
-                    # PERFECT: 16 latency codes x fixed/variable produced 32
-                    # byte-identical rows, and 8 drive codes x 2 clock modes x 8
-                    # phases produced 128 rows with the same first mismatch. An
-                    # axis that does nothing looks like an axis that does not
-                    # matter (#226).
-                    with m.If(device_cr0[16] | device_cr1[16]):
-                        m.next = "CONFIG_CR0"
-                    with m.Else():
-                        m.next = "WRITE_START"
+                with m.If(go_request):
+                    start_run()
 
         #
         # The engine's state, so a stalled sweep says WHERE.
@@ -1265,7 +1296,7 @@ class HyperRAMCeiling(Elaboratable):
         # `go` arriving in the same cycle as a completion wins: Amaranth takes
         # the last assignment in a domain, and "the host asked for a new run" is
         # the more recent fact.
-        with m.If(harness.go):
+        with m.If(go_accept):
             m.d.sync += finished.eq(0)
 
         m.d.comb += [

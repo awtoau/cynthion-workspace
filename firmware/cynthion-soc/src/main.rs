@@ -115,6 +115,9 @@ mod events;
 // an infinite loop with no output -- indistinguishable from the hang it
 // replaced (#409).
 mod fault;
+// The SPI flash CONTROLLER, not the memory map: every opcode the map's FSM
+// cannot issue -- JEDEC, SFDP, status, erase, page program (#442).
+mod flash;
 mod fusb302;
 mod gpio;
 // The orange LED, toggled by a periodic RTIC task. If it stops, the OS is dead

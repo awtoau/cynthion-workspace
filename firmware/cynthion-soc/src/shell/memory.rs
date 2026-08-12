@@ -4,6 +4,7 @@
 
 use core::fmt::Write;
 
+use crate::flash::{self, Flash};
 use crate::memory::*;
 use crate::target;
 use crate::shell::parse::{parse_hex, trim};
@@ -16,6 +17,13 @@ pub fn command(uart: &mut Uart, region: Region, rest: &[u8]) {
         Some(i) => (&rest[..i], trim(&rest[i + 1..])),
         None => (rest, &rest[..0]),
     };
+
+    // The controller's verbs are flash-only: `bram sfdp` is not a sentence, and
+    // the region check keeps them out of the other two regions' usage lines.
+    if matches!(region, Region::Flash) && matches!(verb, b"sfdp" | b"status" | b"erase" | b"program")
+    {
+        return controller(uart, verb, arg);
+    }
 
     match verb {
         b"read" => read(uart, region, arg),
@@ -121,17 +129,187 @@ fn id(uart: &mut Uart, region: Region) {
         return;
     }
 
-    // Read through the memory map, which is the path everything else here uses and
-    // the one the D-cache and the mmap FSM are on. The JEDEC id proper needs the
-    // SPI controller driven by hand, which is the C firmware's job; what this can
-    // say is the first word -- 615000ff on a programmed part, because offset 0
-    // holds the bitstream -- and how much of the part the window decodes.
+    // The REAL id first, over the controller: `0x9f` is a register read, not an
+    // address read, so no memory map can express it (#442).
+    match Flash::take() {
+        None => {
+            let _ = writeln!(uart, "flash jedec needs the SPI controller, absent here");
+        }
+        Some(spi) => match spi.jedec_id() {
+            Err(why) => {
+                let _ = writeln!(uart, "flash jedec unavailable: {}", why);
+            }
+            Ok(id) => {
+                let _ = write!(uart, "flash jedec {:06x}  {}", id, maker(id >> 16));
+                match capacity_kib(id) {
+                    Some(kib) => {
+                        let _ = writeln!(uart, ", {} KiB declared", kib);
+                    }
+                    None => {
+                        let _ = writeln!(uart, ", capacity byte {:02x} is not a density",
+                                         id & 0xff);
+                    }
+                }
+            }
+        },
+    }
+
+    // And then the memory map's account: the first word -- 615000ff on a
+    // programmed part, because offset 0 holds the bitstream -- and how much of
+    // the part the window decodes.
     let _ = writeln!(
         uart,
         "flash @0 {:08x}, {} KiB",
         target::flash_word(0),
         target::FLASH_SIZE / 1024
     );
+}
+
+/// JEDEC bank-1 manufacturer. Only the one this board carries is named; a
+/// table of 200 would be code for a question nobody asks twice.
+fn maker(manufacturer: u32) -> &'static str {
+    match manufacturer {
+        0xef => "winbond",
+        _ => "unknown maker",
+    }
+}
+
+/// KiB from the capacity byte, which is `log2(bytes)`. `None` for a byte that
+/// is not one -- 00 and ff are what a silent path returns, and reporting either
+/// as a size would dress up a dead read as an answer.
+fn capacity_kib(id: u32) -> Option<u32> {
+    match id & 0xff {
+        exponent @ 10..=31 => Some(1 << (exponent - 10)),
+        _ => None,
+    }
+}
+
+/// `flash sfdp|status|erase|program` -- the verbs only the controller can serve.
+fn controller(uart: &mut Uart, verb: &[u8], arg: &[u8]) {
+    let Some(spi) = Flash::take() else {
+        let _ = writeln!(uart, "flash: no SPI controller on this target");
+        return;
+    };
+    match verb {
+        b"sfdp" => sfdp(uart, &spi),
+        b"status" => status(uart, &spi),
+        b"erase" => erase(uart, &spi, arg),
+        b"program" => program(uart, &spi, arg),
+        _ => {}
+    }
+}
+
+/// The SFDP header: signature, revision, and how many parameter headers follow.
+///
+/// SFDP is what declares the 4 MiB that every address above it aliases back
+/// into, so it is the one account of the part's size that is not a constant in
+/// this tree.
+fn sfdp(uart: &mut Uart, spi: &Flash) {
+    let mut header = [0u8; 8];
+    match spi.sfdp(0, &mut header) {
+        Err(why) => {
+            let _ = writeln!(uart, "flash sfdp unavailable: {}", why);
+        }
+        Ok(()) => {
+            let _ = writeln!(
+                uart,
+                "flash sfdp {:02x}{:02x}{:02x}{:02x} rev {}.{}, {} parameter header(s)  {}",
+                header[0], header[1], header[2], header[3],
+                header[5], header[4], header[6] as u32 + 1,
+                if &header[..4] == b"SFDP" { "signature ok" } else { "NOT SFDP" }
+            );
+        }
+    }
+}
+
+fn status(uart: &mut Uart, spi: &Flash) {
+    match spi.status1() {
+        Err(why) => {
+            let _ = writeln!(uart, "flash status unavailable: {}", why);
+        }
+        Ok(sr1) => {
+            let _ = writeln!(uart, "flash sr1 {:02x}  busy {} wel {}", sr1,
+                             (sr1 & flash::SR1_BUSY != 0) as u8,
+                             (sr1 & flash::SR1_WEL != 0) as u8);
+        }
+    }
+}
+
+/// `flash erase <hex>` -- one 4 KiB sector, and only the reserved one.
+///
+/// The offset must be typed. The driver refuses anything outside the sector,
+/// so this cannot reach the bitstream at 0 or the image at 0xb0000; requiring
+/// the argument is about the operation being deliberate rather than a TAB away.
+fn erase(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
+    let Some(offset) = parse_hex(arg) else {
+        let _ = writeln!(uart, "usage: flash erase <hex offset in the {:06x} sector>",
+                         flash::SCRATCH);
+        return;
+    };
+    // Announced BEFORE it starts, because the shell does not come back from it:
+    // the erase lands, and the CPU does not survive the 45 ms the part spends
+    // answering nothing but its status register. Reconfigure to get it back;
+    // the sector is erased when you do. #463.
+    let _ = writeln!(uart, "flash erase {:06x} starting -- the console will not \
+                            return; reconfigure after (#463)", offset);
+    match spi.sector_erase(offset) {
+        Err(why) => {
+            let _ = writeln!(uart, "flash erase {:06x} failed: {}", offset, why);
+        }
+        Ok(cycles) => {
+            let us = flash::micros(cycles);
+            let _ = write!(uart, "flash erase {:06x}  4 KiB in {} us", offset, us);
+            // tSE is 45 ms typical. An erase two orders under that erased
+            // nothing, which is the shape of the fault the C bring-up firmware
+            // found on this path -- report it rather than believe the timing.
+            if us < flash::ERASE_FLOOR_US {
+                let _ = write!(uart, "  IMPLAUSIBLY FAST (tSE typ 45 ms)");
+            }
+            readback(uart, spi, offset, 0xffff_ffff);
+        }
+    }
+}
+
+/// `flash program <hex>` -- eight words of a seeded ramp into the reserved
+/// sector, verified over the controller so the D-cache cannot answer for it.
+fn program(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
+    let Some(seed) = parse_hex(arg) else {
+        let _ = writeln!(uart, "usage: flash program <hex seed>");
+        return;
+    };
+    let mut words = [0u32; 8];
+    for (index, word) in words.iter_mut().enumerate() {
+        *word = seed.wrapping_add(index as u32);
+    }
+    // As `erase`: the program lands and the console does not come back (#463).
+    let _ = writeln!(uart, "flash program {:06x} starting -- the console will not \
+                            return; reconfigure after (#463)", flash::SCRATCH);
+    match spi.page_program(flash::SCRATCH, &words) {
+        Err(why) => {
+            let _ = writeln!(uart, "flash program failed: {}", why);
+        }
+        Ok(cycles) => {
+            let _ = write!(uart, "flash program {:06x}  {} words in {} us",
+                           flash::SCRATCH, words.len(), flash::micros(cycles));
+            readback(uart, spi, flash::SCRATCH, seed);
+        }
+    }
+}
+
+/// One word back over the CONTROLLER, and whether it is what was asked for.
+/// Ends the line either way.
+fn readback(uart: &mut Uart, spi: &Flash, offset: u32, expected: u32) {
+    match spi.read_word(offset) {
+        Err(why) => {
+            let _ = writeln!(uart, "; readback failed: {}", why);
+        }
+        Ok(word) if word == expected => {
+            let _ = writeln!(uart, "; reads {:08x}", word);
+        }
+        Ok(word) => {
+            let _ = writeln!(uart, "; reads {:08x}, WANTED {:08x}", word, expected);
+        }
+    }
 }
 
 /// How to call it, named for the region that was actually typed: a person who typed
@@ -142,7 +320,7 @@ fn usage(uart: &mut Uart, region: Region) {
         "usage: {} read <hex offset>{}",
         region.name(),
         if region.no_id().is_none() {
-            ", or `flash id`"
+            ", or `flash id|sfdp|status|erase|program`"
         } else {
             ""
         }
