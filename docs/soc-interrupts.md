@@ -46,11 +46,23 @@ no concept of interrupt preemption or nesting"*.
 So when a handler is running, a higher-priority source going pending does
 nothing at all until that handler finishes.
 
-### What the hardware priority actually buys here
+### So the design has no hardware priority
 
-Almost nothing. **Every claim site loops until `claim()` returns 0**, so all
-pending sources are serviced inside the one trap regardless. Priority only
-changes the order of a handful of short handlers within that loop.
+If RTIC decides preemption, hardware priority has nothing left to decide.
+
+It could only matter if a higher-priority source needed servicing **sooner**
+than a lower one. But **every claim site loops until `claim()` returns 0**, so
+every pending source is serviced in the same trap regardless. Priority reorders
+four short handlers inside one loop; nothing measures that order and nothing
+depends on it.
+
+**Design: no priority registers, no threshold, no claim/complete.** Pending bits
+and enables. The firmware's `POWER_ALERT 4 / CONSOLE 3 / TYPE_C 2 / I2C 1` stays
+what it already is — a `const` array, available if the firmware ever wants to
+order its own dispatch loop.
+
+This is the argument for the controller in decision 1 below: `EventMonitor` has
+no priority machinery to remove.
 
 ### Ordering that is load-bearing
 
