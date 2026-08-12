@@ -148,6 +148,8 @@ FREQ_RE = re.compile(
     r'^\s*FREQUENCY\s+(PORT|NET)\s+("[^"]+"|\S+)\s+([\d.eE+]+)\s+HZ\s*;',
     re.IGNORECASE)
 
+IO_TYPE_RE = re.compile(r'IO_TYPE=(\w+)')
+
 
 def lpf_from_amaranth(src, dst):
     """Reuse the Amaranth-generated .lpf as Diamond preferences, with a fix.
@@ -174,9 +176,17 @@ def lpf_from_amaranth(src, dst):
     unconstrained Diamond run reports whatever frequency it happened to reach
     instead of one it worked toward, which is not comparable to the open
     flow's binary-searched number.
+
+    The configuration bank's voltage is missing for the same reason. Diamond
+    infers every ordinary bank's VCCIO from the IO_TYPE of the pins located
+    into it, but bank 8 is the ECP5's config bank and takes its voltage from
+    SYSCONFIG CONFIG_IOVOLTAGE, which defaults to 2.5 V and cannot be moved by
+    a BANK preference. par refused int_0__io at T6 on exactly that.
     """
     out_lines = []
+    io_types = set()
     for line in Path(src).read_text().splitlines():
+        io_types.update(IO_TYPE_RE.findall(line))
         m = FREQ_RE.match(line)
         if m:
             kind, name, hz = m.group(1), m.group(2), float(m.group(3))
@@ -184,6 +194,12 @@ def lpf_from_amaranth(src, dst):
                              f"{hz / 1e6:g} MHZ;")
         else:
             out_lines.append(line)
+
+    # Only when the design speaks one I/O standard, which this one does -- every
+    # pin is LVCMOS33. A mixed design needs the real per-bank map, and guessing
+    # it would place pins at a voltage the board does not supply.
+    if io_types and all(t.startswith("LVCMOS33") for t in io_types):
+        out_lines += ["", "SYSCONFIG CONFIG_IOVOLTAGE=3.3;"]
     Path(dst).write_text("\n".join(out_lines) + "\n")
 
 
@@ -329,13 +345,9 @@ def main():
         total = 0.0
 
         if args.mode == "lse":
-            # Diamond's own synthesis, straight from Verilog.
-            #
-            # `-frequency` matters as much as the .lpf: LSE has its own target,
-            # defaulting to 200 MHz here, and the preferences file is read by
-            # map/par/trce rather than by synthesis. Left at the default, LSE
-            # chases 200 MHz on a design that runs at 50 -- 83 minutes without
-            # finishing synthesis (#498).
+            # LSE has its own target and does not read the .lpf; left at its
+            # 200 MHz default it chases a clock this design does not reach.
+            # That is not why it is slow, though -- see #498.
             cmd = ["synthesis", "-a", ARCH, "-d", DEVICE, "-t", PACKAGE,
                    "-s", SPEED, "-top", args.top, "-ngd", ngd.name,
                    "-optimization_goal", args.opt_goal,
@@ -380,18 +392,14 @@ def main():
             timings["ngdbuild"] = t
             total += t
         else:
-            # yosys already did synthesis, and its netlist instantiates ECP5
-            # primitives by name. Diamond only needs to read it in and bind it
-            # against the device library, with no synthesis of its own -- so
-            # any difference that survives is place-and-route, not synthesis.
-            #
-            # The handoff is EDIF: ngdbuild reads .ngo/.edif but not Verilog,
-            # and routing structural Verilog back through LSE would let LSE
-            # re-synthesise it, which would destroy the separation this mode
-            # exists to create.
+            # yosys already synthesised, so Diamond only binds the netlist
+            # against the device library and any surviving difference is
+            # place-and-route. EDIF because ngdbuild does not read Verilog, and
+            # routing it back through LSE would re-synthesise it.
             ngo = out / f"{args.top}.ngo"
             t, _ = run(["edif2ngd", "-l", ARCH, "-d", DEVICE,
-                        src.name, ngo.name], out, handle, env, "edif2ngd", "edif2ngd")
+                        src.name, ngo.name], out, handle, env,
+                       "edif2ngd", "edif2ngd")
             timings["edif2ngd"] = t
             total += t
             t, _ = run(["ngdbuild", "-a", ARCH, "-d", DEVICE,
