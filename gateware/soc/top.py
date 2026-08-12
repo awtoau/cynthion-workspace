@@ -1563,6 +1563,18 @@ class AwtoSoc(Elaboratable):
         # for the duplicate-strobe hazard this handles, which is the reason it
         # is not simply a register on `ack`, and scripts/soc_bus_sim.py for the
         # measurement of both.
+        # The CSR PMA region is narrowed to the top of the CLINT (#452), so a
+        # window added above it would be decoded by the fabric and unreachable
+        # from the CPU -- an access there traps before any bus cycle.
+        _csr_top = vexii_cpu.CSR_REGION_BASE + vexii_cpu.CSR_REGION_SIZE
+        for _window, _name, (_start, _end, _ratio) in decoder.bus.memory_map.windows():
+            if _start >= vexii_cpu.CSR_REGION_BASE and _end > _csr_top:
+                raise ValueError(
+                    f"decoder window {_name} ends at {_end:#010x}, above "
+                    f"the CSR PMA region's {_csr_top:#010x}: the CPU would trap "
+                    f"on it rather than reach it. Raise CSR_REGION_SIZE in "
+                    f"cpu/cpu.py.")
+
         m.submodules.bus_pipe = bus_pipe = RegisteredResponse(
             addr_width=30, data_width=32, granularity=8,
             features={"cti", "bte", "err"})
