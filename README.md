@@ -153,6 +153,22 @@ namespace package, shadowing the installed one — `cynthion.__file__` becomes
 `None` and `cynthion.shared.usb` fails to resolve. The workspace root works, as
 does `repos/cynthion/cynthion/python`.
 
+## Filing on the tracker
+
+**One command, and the scrub is in it — never `gh issue` by hand.**
+
+```bash
+./scripts/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
+./scripts/gh_post.py comment 498 --body-file tmp/x.md
+./scripts/gh_post.py close   498 --body-file tmp/x.md
+```
+
+It refuses, before any network call, on a private path (the patterns come from
+`private_path_check.py`, so there is one set), on a credential, and on anything
+naming work that stays off a public tracker. `awtoau/cynthion-workspace` is
+pre-approved and is the default; **every other repo is refused**, naming the
+approval that would be needed. `--dry-run` scrubs and files nothing.
+
 ## Python strategy
 
 **The workspace runs on free-threaded (no-GIL) CPython 3.15t, installed as the
