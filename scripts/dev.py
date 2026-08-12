@@ -268,9 +268,9 @@ def cmd_describe(_extra: list[str]) -> int:
                        "125": "step skipped (tool absent)", "other": "failure"},
         # Which commands reach the board, so an agent can tell what is safe to
         # run unattended from what needs hardware present.
-        "needs_hardware": ["run", "console", "flash", "hyperram", "probe",
-                           "test-board", "fw", "stage", "capture", "typec",
-                           "optlevel"],
+        "needs_hardware": ["board", "run", "console", "flash", "hyperram",
+                           "probe", "test-board", "fw", "stage", "capture",
+                           "typec", "optlevel"],
         "commands": {
             name: {k: v for k, v in meta.items() if k != "fn"}
             for name, meta in COMMANDS.items()
@@ -336,6 +336,16 @@ def cmd_clean(_extra: list[str]) -> int:
 def cmd_run(extra: list[str]) -> int:
     """The full loop, and the only command here that configures the FPGA."""
     return run_tool([PY, script("soc_run.py")], extra)
+
+
+@command("the board arbiter: submit a job, get a transcript with provenance",
+         args="<run|shell|confirm|configure|idle|status|stop> [flags]",
+         kind="action")
+def cmd_board(extra: list[str]) -> int:
+    """EVERY board operation goes through this. Never open the tty yourself,
+    never run `apollo configure` yourself -- one owner for the tty, the JTAG and
+    what is configured (#430, docs/board-arbiter.md)."""
+    return run_tool([PY, script("board.py")], extra)
 
 
 @command("install what a fresh machine needs: packages, Rust, Python, udev",

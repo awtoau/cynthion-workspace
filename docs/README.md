@@ -62,6 +62,7 @@ in its §13 got there in the first place.
 * [`codex-agent.md`](codex-agent.md) — Handing work to Codex — here
 * [`architecture.md`](architecture.md) — Decisions still open, and what would settle them
 * [`binary-protocol.md`](binary-protocol.md) — The binary record stream: framing, kinds, versioning, and why the Apollo link is a different question
+* **[`board-arbiter.md`](board-arbiter.md) — one owner for the tty, the JTAG and what is configured**: every board operation goes through it, and why the idle queue's output can never be quoted as a measurement
 * [`gateware-architecture-plan.md`](gateware-architecture-plan.md) — Making the test gateware reusable by the CPU build
 * [`git.md`](git.md) — Git & Submodules Reference
 * [`github_actions.md`](github_actions.md) — (no title)
