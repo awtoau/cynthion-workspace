@@ -169,15 +169,19 @@ def test_a_sample_that_does_not_converge_is_bounded_and_recorded(tmp_path,
 
 def test_a_ladder_rung_is_a_build_directory_of_its_own():
     """#439: the rung has to reach the build, and be visible in the artifacts."""
-    assert (riscv_clock_ladder.rung_build_dir(72)
-            != riscv_clock_ladder.rung_build_dir(60))
-    assert riscv_clock_ladder.rung_env(72)["CYNTHION_SYNC_MHZ"] == "72"
-    assert variant.value("CYNTHION_SYNC_MHZ",
-                         riscv_clock_ladder.rung_env(72)) == "72"
+    dirs = {mhz: variant.build_dir(ROOT, {"CYNTHION_SYNC_MHZ": f"{mhz:g}"})
+            for mhz in (50, 60, 72)}
+    assert len(set(dirs.values())) == 3, dirs
+    assert variant.value("CYNTHION_SYNC_MHZ", {"CYNTHION_SYNC_MHZ": "72"}) == "72"
 
 
 def test_the_ladder_reads_the_constraint_nextpnr_enforced():
-    """The check whose absence let every rung build at 60 and say otherwise."""
-    found = riscv_clock_ladder.CONSTRAINT.search(NEXTPNR_LOG)
-    assert found and float(found.group(2)) == 60.00
-    assert float(found.group(1)) == 62.36
+    """The check whose absence let every rung build at 60 and say otherwise.
+
+    `timing()` is shared with `soc_sync_ladder.py` and is what both compare the
+    rung against; a log without `Program finished normally.` yields nothing at
+    all, so a killed run cannot be read as a rung (#440).
+    """
+    got = riscv_clock_ladder.timing(NEXTPNR_LOG + "\nInfo: Program finished normally.\n")
+    assert got["clk"]["target"] == 60.00 and got["clk"]["mhz"] == 62.36
+    assert riscv_clock_ladder.timing(NEXTPNR_LOG) == {}
