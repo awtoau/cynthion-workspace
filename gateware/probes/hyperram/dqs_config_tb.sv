@@ -371,11 +371,28 @@ module tb;
   // that handshake does with a mistimed window, not to model the primitive.
   integer dv_from_read = 0;
 
+  // RWDS FLOAT, GIVEN A VALUE. `rwds === 1'b1` read an undriven line as a firm 0,
+  // so a sample landing in a float was invisible here. `+rwds_float_pct=<0..100>`
+  // is the chance a float reads High, `+rwds_float_seed` the stream. Default 0 is
+  // the old behaviour exactly, so nothing already green becomes flaky. (#400)
+  integer rwds_float_pct  = 0;
+  integer rwds_float_seed = 1;
+  integer rwds_floats     = 0;   // samples that landed on an undriven line
+  integer rwds_float_hi   = 0;   // ...and were handed to the controller as High
+  reg     rwds_bit;
+
   always @(posedge sync_clk) begin
+    if (rwds === 1'b1)      rwds_bit = 1'b1;
+    else if (rwds === 1'b0) rwds_bit = 1'b0;
+    else begin
+      rwds_floats = rwds_floats + 1;
+      rwds_bit    = (({$random(rwds_float_seed)} % 100) < rwds_float_pct);
+      if (rwds_bit) rwds_float_hi = rwds_float_hi + 1;
+    end
     phy_dq_i      <= cap_lag ? rd_word_lagged : rd_word;
     phy_datavalid <= dv_from_read ? (phy_read != 2'b00) : rd_word_valid;
     phy_burstdet  <= rd_word_valid;
-    phy_rwds_i    <= {4{rwds === 1'b1}};
+    phy_rwds_i    <= {4{rwds_bit}};
   end
 
   //
@@ -547,6 +564,8 @@ module tb;
     // Force the SHORT count to one value at every code, which is what
     // `LOW_LATENCY_CLOCKS = 3` did. -1 uses the per-code count. (#380)
     if (!$value$plusargs("low_const=%d", low_const)) low_const = -1;
+    if (!$value$plusargs("rwds_float_pct=%d", rwds_float_pct)) rwds_float_pct = 0;
+    if (!$value$plusargs("rwds_float_seed=%d", rwds_float_seed)) rwds_float_seed = 1;
 
     VCC = 1'b1; VSS = 1'b0; resetb = 1'b1;
     #200_000;
@@ -590,6 +609,10 @@ module tb;
     run_sequence_low(16'h8ff7, 16'hff81, 3, 1);   // code 15, L = 4
     end
 
+    // The injection's own witness: a run asking for floats that met none injected
+    // nothing, and a check passing under it proves nothing. (#400)
+    $display("[cfg] floats=%0d float_high=%0d float_pct=%0d float_seed=%0d",
+             rwds_floats, rwds_float_hi, rwds_float_pct, rwds_float_seed);
     $display("[cfg] === done ===");
     $finish;
   end
