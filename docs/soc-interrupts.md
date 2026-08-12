@@ -22,12 +22,26 @@ reach the firmware through `cynthion_soc_pac::base`, generated from
 | 5 | `BOARD_I2C_MUX_AUX_IRQ` | **FUSB302B** | `U12` | as above | AUX port CC/PD event, pin 5 `int` |
 | 6 | `BOARD_I2C_MUX_POWER_ALERT_IRQ` | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `ALERT` on GPIO/ALERT2, pin 15 |
 
-Pull-ups and balls: source 4 `R37` 2.2 kΩ on ball **A3**; source 5 `R39` 2.2 kΩ
-on ball **H14**; source 6 on ball **D6**. Full pin table:
-[`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
+Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
 
-**Source 6 is wired but not enabled.** `info` reports `enabled 0000003e` — bits
-1–5. Whether that is deliberate is not recorded.
+**Source 6 is wired but not enabled.** `top.py` drives it —
+`plic.sources[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)`, inverted because the
+pin is open-drain — and `info` reports `enabled 0000003e`, bits 1–5. Whether
+leaving it out of the mask is deliberate is not recorded.
+
+## The PAC1954 has two alert outputs and only one is available
+
+The part offers *"Two Independent ALERT/GPIO pins"* (DS20006539B). This board
+wires both, and spends one:
+
+| pin | function | what the gateware does |
+|---|---|---|
+| 1 `SLOW/ALERT1` | either a SLOW **input** or a second alert **output** | driven as an output, `slow.o = 0, oe = 1` — used for SLOW, so ALERT1 is not available |
+| 15 `GPIO/ALERT2` | alert output, open-drain | read as an input → PLIC source 6 |
+
+So a second power-alert source exists in the silicon and is unreachable while
+`SLOW` is being driven. Freeing it means deciding SLOW is not needed — the ADC
+rate it controls is the trade.
 
 Every source is **level**-sensitive. That is required rather than incidental: a
 16550's `irq` stays high while its FIFO holds a byte, so an edge-triggered input

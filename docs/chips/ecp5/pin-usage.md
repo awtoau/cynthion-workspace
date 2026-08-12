@@ -54,7 +54,7 @@ in two cases below the termination is the whole story.
 121 + 6 + 56 = 183, so every declared ball is accounted for. The 56 break down as
 `user_mezzanine` 22, the two PMODs 16, `control_phy` 13, N4/P3, K13/L13 and T13.
 
-The six requested-unused balls are the PAC1954's `slow` (C6) and `gpio` (D6), and
+The requested-unused balls are the PAC1954's `slow` (C6) and
 the four Type-C `sbu1`/`sbu2` pins (A2, E4, H13, K14).
 
 ---
@@ -149,7 +149,7 @@ Detail on the parts: [`../fusb302b-type-c.md`](../fusb302b-type-c.md).
 | | `sda` | C7 | used | `R84` 2.2 kΩ |
 | | `pwrdn` | D5 | used | GPIO pin 6. `R87` 5.1 kΩ pull-up, PAC1954 `U1` pin 16 |
 | | `slow` | C6 | **requested-unused** | PAC1954 `U1` pin 1 = SLOW/ALERT1. **`R85`, 10 kΩ to +3V3, is fitted** |
-| | `gpio` | D6 | **requested-unused** | PAC1954 `U1` pin 15 = GPIO/ALERT2. **`R86`, 10 kΩ to +3V3, is fitted** |
+| | `gpio` | D6 | used | PAC1954 `U1` pin 15 = GPIO/ALERT2 → `plic.sources[IRQ_POWER_ALERT]`, inverted. **`R86`, 10 kΩ to +3V3, is fitted**. The source is not in the firmware's enable mask — see [`../../soc-interrupts.md`](../../soc-interrupts.md) |
 
 Part detail: [`../pac1954-power-monitor.md`](../pac1954-power-monitor.md).
 
@@ -259,11 +259,14 @@ board. What would settle it: apply a step load to a rail and time how long
 under *Known limitations* that "`SLOW` is driven low for the 1024 SPS default".
 That is true of the probes and false of the SoC, which is the design that ships.
 
-### 3. PAC1954 `gpio` (D6) — a fitted, pulled-up, open-drain interrupt line
+### 3. PAC1954 `gpio` (D6) — wired to the interrupt controller, not enabled by the firmware
 
-**State:** requested-unused. `R86`, 10 kΩ to +3V3, is fitted — which is exactly
-what the datasheet requires for the ALERT function, since the pin is open-drain
-(§3.9). The board paid for the pull-up and nothing listens to the pin.
+**State:** `plic.sources[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)` in
+`gateware/soc/top.py`. `R86`, 10 kΩ to +3V3, is fitted — what the datasheet
+requires for the ALERT function, since the pin is open-drain (§3.9).
+
+The firmware's enable mask is `0000003e`, bits 1–5, so nothing listens yet.
+Whether that is deliberate is unrecorded — [`../../soc-interrupts.md`](../../soc-interrupts.md).
 
 **What the part can do with it** (DS20006539B §5.16, Registers 7-2, 7-20, 7-22,
 7-34):
