@@ -126,7 +126,19 @@ could report another's memories.
 **Fmax is not in this table on purpose.** One build's Fmax is a property of that
 placement: the distribution at fixed occupancy is 9 MHz wide (#467), and the
 constraint the design is given does not change it (#478). Timing per geometry is
-a seed sweep — `soc_occupancy_timing.py` with the `cpu-l1-*` arms.
+a seed sweep — `soc_occupancy_timing.py` with the `cpu-l1-*` arms, 40 seeds each,
+in #481:
+
+| geometry | paired vs 64×2 | 95% CI | faster |
+|---|---|---|---|
+| **128×1** | **+3.50 MHz** | [+2.20, +4.80] | 34/40 |
+| 256×1 | +2.25 | [+0.61, +3.88] | 29/40 |
+| fetch 64×2 / lsu 128×1 | +2.16 | [+0.74, +3.58] | 25/40 |
+| 64×1 | -0.74 | [-2.35, +0.86] | 17/40 |
+| 32×2 | -1.91 | [-3.09, -0.72] | 12/40 |
+
+Dropping the way pays only where the sets are: 64×1 is indistinguishable from
+64×2. #494 is the decision, and it is blocked on the hit-rate half.
 
 ### What none of this measures
 

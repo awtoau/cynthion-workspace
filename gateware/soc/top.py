@@ -783,8 +783,12 @@ _refuse_ck_past_the_fabric()
 # Block RAM per geometry, off each geometry's own netlist -- 43 (64x1), 47
 # (128x1, 32x2), 49 (this), 55 (256x1), 57 (128x2, 32x4). The last two do not
 # place: 57 blocks on a die with 56. 3 ways does not exist -- SpinalHDL's PLRU
-# asserts `isPow2`. Timing per geometry is a seed sweep, not a build: #481, and
-# `docs/chips/ecp5/bram-budget.md` has the table.
+# asserts `isPow2`.
+#
+# TIMING SAYS 128x1, and it is the open half of this decision: +3.50 MHz
+# [+2.20, +4.80] over 40 seeds a side, 2 blocks cheaper, and it holds at the
+# real speed grade (#494, #481). What is not measured is the hit rate that
+# 2 ways is for -- `STALLED_CYCLES_FRONTEND` under a preempting workload.
 CACHE_SETS = 64
 CACHE_WAYS = 2
 
