@@ -217,7 +217,30 @@ CynthionPlatformRev1D4().build(
 
 
 CLOCK_NET = "car.clk_sync"
-CONSTRAINED = re.compile(r"^(?P<name>[\w.-]+)-at(?P<mhz>\d+)$")
+CONSTRAINED = re.compile(r"^(?P<name>[\w.-]+)-(?:at(?P<mhz>\d+)|sp(?P<speed>\d))$")
+
+
+def regrade(arm, speed):
+    """Clone an arm's netlist, timed for another speed grade.
+
+    The flow asks for `--speed 8` because the platform says so, and the part is
+    grade 6 (#474). Same netlist, same seeds, one word of the command line: what
+    the grade is worth on this design, rather than a factor quoted from arcs.
+    """
+    source, target = arm_dir(arm) / "synth", arm_dir(f"{arm}-sp{speed}") / "synth"
+    if not (source / "top.json").exists():
+        raise SystemExit(f"{arm}: no netlist -- run `synth` first")
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("top.json", "top.lpf"):
+        (target / name).write_bytes((source / name).read_bytes())
+    script = (source / "build_top.sh").read_text()
+    if "--speed 8" not in script:
+        raise SystemExit(f"{arm}: build_top.sh does not ask for --speed 8, so "
+                         f"this clone would not be changing what it claims")
+    (target / "build_top.sh").write_text(script.replace("--speed 8",
+                                                        f"--speed {speed}"))
+    emit(f"{arm}-sp{speed}: {arm}'s netlist, timed for speed grade {speed}")
+    return f"{arm}-sp{speed}"
 
 
 def constrain(arm, mhz):
@@ -792,8 +815,8 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=("synth", "sweep", "report", "power",
-                                          "paths", "constrain", "determinism",
-                                          "list"))
+                                          "paths", "constrain", "regrade",
+                                          "determinism", "list"))
     parser.add_argument("--arm", action="append", default=[])
     parser.add_argument("--seeds", type=int, default=20)
     parser.add_argument("--jobs", type=int, default=8)
@@ -810,6 +833,8 @@ def main():
                         help="MHz the `power` stage sizes n for")
     parser.add_argument("--mhz", type=int, default=80,
                         help="`constrain` clocks the clone's `clk` at this")
+    parser.add_argument("--speed", type=int, default=6,
+                        help="`regrade` times the clone for this speed grade")
     args = parser.parse_args()
 
     if args.stage == "list":
@@ -819,13 +844,16 @@ def main():
 
     arms = args.arm or list(ARMS)
     for arm in arms:
-        # `<arm>-at<mhz>` is a `constrain` clone: it has a directory rather than
-        # an entry, because its netlist is another arm's.
+        # `<arm>-at<mhz>` and `<arm>-sp<n>` are clones: a directory rather than
+        # an entry, because the netlist is another arm's.
         found = CONSTRAINED.match(arm)
         if found and found.group("name") in ARMS:
             if not (arm_dir(arm) / "synth" / "top.json").exists():
-                raise SystemExit(f"{arm}: run `constrain --arm "
-                                 f"{found.group('name')} --mhz {found.group('mhz')}`")
+                stage = ("constrain --mhz " + found.group("mhz")
+                         if found.group("mhz") else
+                         "regrade --speed " + found.group("speed"))
+                raise SystemExit(f"{arm}: run `{stage} --arm "
+                                 f"{found.group('name')}` first")
             continue
         if arm not in ARMS:
             raise SystemExit(f"no such arm: {arm}; `list` shows them")
@@ -862,6 +890,12 @@ def main():
         for arm in arms:
             constrain(arm, args.mhz)
         flush_log("constrain")
+        return 0
+
+    if args.stage == "regrade":
+        for arm in arms:
+            regrade(arm, args.speed)
+        flush_log("regrade")
         return 0
 
     if args.stage == "determinism":
