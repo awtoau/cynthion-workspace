@@ -127,11 +127,19 @@ def open_flow_build(mhz, env, build):
     to place, but a refusal to emit a bitstream it cannot vouch for.  The
     achieved figure is still in `top.tim` either way, so it is parsed from
     there regardless of whether the build completed.
+
+    A failure with no `top.tim` never reached nextpnr, and calling that a
+    timing refusal invents a result: a missing firmware binary reported as all
+    four rungs refused, in one second.
     """
+    # Removed first, so a rerun of this rung cannot report the previous run's
+    # number as this one's.
+    timing = build / "top.tim"
+    timing.unlink(missing_ok=True)
+
     result = sh(f'source "$HOME/opt/oss-cad-suite/environment" && '
                 f'python3.15t {GATEWARE} --build', env=env)
     achieved = None
-    timing = build / "top.tim"
     if timing.exists():
         for line in timing.read_text().splitlines():
             found = re.search(r"Max frequency for clock\s+'\$glbnet\$clk':"
@@ -139,6 +147,9 @@ def open_flow_build(mhz, env, build):
             if found:
                 achieved = float(found.group(1))
     if result.returncode != 0:
+        if achieved is None:
+            tail = (result.stdout + result.stderr).strip().splitlines()
+            return False, None, f"build failed before nextpnr: {tail[-1][:90]}"
         return False, achieved, "nextpnr refused (timing not met)"
     return True, achieved, "built"
 
