@@ -527,6 +527,104 @@ def verdict_latency(rows: list[dict], label: str) -> list[str]:
     return bad
 
 
+def elections(rows: list[dict]) -> list[str]:
+    """The election disagreements alone, out of `verdict_latency`'s findings.
+
+    The window and the word move with the round trip whatever RWDS did, so a
+    float experiment graded on all three would report the build, not the float.
+    """
+    return [b for b in verdict_latency(rows, "float") if "elected long" in b]
+
+
+def float_witness(lines: list[str]) -> tuple[int, int]:
+    """`(floats met, floats read High)` from the testbench's own counters. (#400)"""
+    for line in lines:
+        m = re.search(r"floats=(\d+) float_high=(\d+)", line)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return (0, 0)
+
+
+def stage_float(failures: list[str], extra: list[str]) -> None:
+    """#400: a float given a value, and what the election does with it.
+
+    Four runs, one experiment. `var` is `latency_mode=1` with the device
+    DECLINING, which is the only shape in which a float read High invents a
+    request nobody made; `fix` is the same float with `fixed_latency` on, where
+    the election is gated off. The pre-#381 build samples at cycle 2, before CS#
+    has fallen, and the shipped one samples inside the driven CA.
+    """
+    var = extra + ["+dv_from_read=0", "+latency_mode=1", "+refresh_every=100"]
+    pre = build_config(round_trip=-1)          # sample cycle 2, where #381 found it
+    now = "config.vvp"                         # the shipped round trip
+
+    def run_float(image, args, pct, tag):
+        lines = stage_config(args + [f"+rwds_float_pct={pct}"], image)
+        met, high = float_witness(lines)
+        return elections(report(lines, tag)), met, high
+
+    # 1. THE CONTROL, and it is #400 itself: the same defective build with the
+    #    float read as a firm 0 -- which is what every testbench here did. It must
+    #    NOT fire, or the float is not what the run below is measuring.
+    blind, met, high = run_float(pre, var, 0, "pre/0")
+    if high:
+        failures.append(f"#400 control: {high} floats read High at pct=0 -- the "
+                        "default is not deterministic")
+    if not met:
+        failures.append("#400 control: the pre-#381 build met no float at all, so "
+                        "nothing below injected anything")
+    if blind:
+        failures.append("#400 control: the pre-#381 sample cycle was ALREADY "
+                        f"caught with the float read as 0 ({blind[0]}), so the "
+                        "float is not what the checks below see")
+
+    # 2. THE MECHANISM. Same build, same device, float read High.
+    caught, met_hi, high_hi = run_float(pre, var, 100, "pre/100")
+    if not high_hi:
+        failures.append("#400: pct=100 injected no float High, so the knob is inert")
+    reproduces = bool(caught)
+
+    # 3. THE ASYMMETRY. Fixed latency, same build, same float: `fixed_latency`
+    #    gates the election, so a float High must be inert here.
+    fix, _, _ = run_float(pre, extra + ["+dv_from_read=0", "+latency_mode=0"],
+                          100, "pre/fix")
+    if fix:
+        failures.append(f"#400: a float read High moved a FIXED-latency election "
+                        f"({fix[0]}) -- the election is meant to be gated off there")
+
+    # 4. #381's FIX, against the mechanism rather than consistent with it: the
+    #    shipped sample cycle sits inside the driven CA, so the same float must
+    #    change nothing.
+    shipped, _, _ = run_float(now, var, 100, "now/100")
+
+    log.info("--- #400: the RWDS float given a value ---")
+    log.info("  pre-#381 build (sample cycle 2), device DECLINES:")
+    log.info("    float read as 0   -- %d election(s) fired, %d floats met",
+             len(blind), met)
+    log.info("    float read High   -- %d election(s) fired, %d of %d floats High",
+             len(caught), high_hi, met_hi)
+    log.info("    ...same float, FIXED latency -- %d election(s) fired", len(fix))
+    log.info("  shipped build (round trip %d, sample cycle %d), same float High "
+             "-- %d election(s) fired", DQS_ROUND_TRIP, DQS_ROUND_TRIP + 3,
+             len(shipped))
+    for line in dict.fromkeys(caught):
+        log.info("    reproduced: %s", line)
+
+    if reproduces:
+        log.info("  VERDICT: the marginality mechanism REPRODUCES -- a float read "
+                 "High elects the long count on a `var` transaction the device "
+                 "declined, and is inert on a `fix` one")
+    else:
+        failures.append("#400: a float read High at every sample changed no "
+                        "election even at the pre-#381 sample cycle, so the "
+                        "mechanism does not reproduce and the corpus's rate has "
+                        "no support here")
+    if shipped:
+        failures.append(f"#400: the SHIPPED sample cycle elected off a float "
+                        f"({shipped[0]}) -- #381's fix does not remove the "
+                        "mechanism")
+
+
 def report(lines: list[str], tag: str) -> list[dict]:
     """The measurement lines, wherever the simulator put its own prefix."""
     rows = []
@@ -998,6 +1096,10 @@ def main() -> int:
         if DQS_ROUND_TRIP not in survives:
             failures.append(f"the controller's own round trip {DQS_ROUND_TRIP} "
                             "is not one the election survives at")
+
+        # THE FLOAT GIVEN A VALUE, which is the only thing here that can show a
+        # sample INVENTING a request rather than missing one. (#400)
+        stage_float(failures, extra)
 
     if args.stage in ("order", "all"):
         log.info("=== byte and word order through the 32-bit path (#206) ===")
