@@ -82,7 +82,7 @@ LEVERS = {
         "drops the synthetic JTAG benchmark (0xb9) -- the only instrument that "
         "measures the JTAG path with USB out of the way, and so the regression "
         "check for it. The largest flash lever there is, and the only one that "
-        "clears flash; wants a build-time switch in apollo rather than deletion",
+        "clears flash; wants a build-time switch in apollo rather than deletion (#496)",
         [(VENDOR_C, "return handle_jtag_benchmark(rhport, request);",
           "return false;")],
         {},
