@@ -1,83 +1,69 @@
-# SoC interrupts — every source, and the chip that raises it
+# SoC interrupts — the design
 
-What is wired to the RISC-V SoC's interrupt controller, what each source means,
-and what is deliberately not a source.
+Every interrupt-capable signal on the board, what should raise an interrupt, and
+what is still undecided. **This is the design, not a description of the build.**
+Where the two differ, the "built" column says so.
 
-**Index:** [`README.md`](README.md) · sibling pages
+**Index:** [`README.md`](README.md) · siblings
 [`soc-clocking.md`](soc-clocking.md), [`soc-memory-bus.md`](soc-memory-bus.md)
 
-## Sources
+## Every interrupt-capable signal
 
-Source 0 is reserved by the PLIC specification as "nothing pending", so real
-sources start at 1. The gateware wiring is `gateware/soc/top.py`; the numbers
-reach the firmware through `cynthion_soc_pac::base`, generated from
-`AwtoSoc.interrupt_sources` by `scripts/soc_generate_pac.py`.
-
-| # | firmware constant | chip | refdes | chip part | what raises it |
-|---|---|---|---|---|---|
-| 1 | `CONSOLE_IRQ` | — | — | 16550 in fabric | USB console UART, RX or TX-empty |
-| 2 | `APOLLO_UART_IRQ` | — | — | 16550 in fabric | the Apollo link; the far end is the **SAMD11** `U6`, `ARM Cortex-M0+ MCU, 48MHz, 16KB Flash, 4KB RAM` |
-| 3 | `BOARD_I2C_IRQ` | — | — | I2C master in fabric | transaction complete |
-| 4 | `BOARD_I2C_MUX_TARGET_IRQ` | **FUSB302B** | `U2` | `FUSB302BMPX`, *IC USB TYPE C CTLR PROGR 14-MLP* | TARGET port CC/PD event, pin 5 `int` |
-| 5 | `BOARD_I2C_MUX_AUX_IRQ` | **FUSB302B** | `U12` | as above | AUX port CC/PD event, pin 5 `int` |
-| 6 | `BOARD_I2C_MUX_POWER_ALERT_IRQ` | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `ALERT` on GPIO/ALERT2, pin 15 |
+| chip | refdes | chip part | signal | trigger | built | design |
+|---|---|---|---|---|---|---|
+| — | — | 16550 in fabric | console UART | level | source 1 | keep |
+| — | — | 16550 in fabric | Apollo link UART | level | source 2 | keep |
+| — | — | I2C master in fabric | transaction complete | level | source 3 | keep |
+| **FUSB302B** | `U2` | *IC USB TYPE C CTLR PROGR 14-MLP* | TARGET `int`, pin 5 | level | source 4 | keep |
+| **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
+| **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
+| **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — driven as SLOW output | decide: SLOW, or a second alert |
+| **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
+| **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
 
-**Source 6 is wired but not enabled.** `top.py` drives it —
-`plic.sources[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)`, inverted because the
-pin is open-drain — and `info` reports `enabled 0000003e`, bits 1–5. Whether
-leaving it out of the mask is deliberate is not recorded.
+## Why the DPO2036 faults must be edge
 
-## The PAC1954 has two alert outputs and only one is available
+`FAULTB` is a level on the wire — low while the part is protecting and through
+its 26–38 ms recovery, then released (`sources/DPO2036.pdf`, DS40644 Rev. 2-2).
 
-The part offers *"Two Independent ALERT/GPIO pins"* (DS20006539B). This board
-wires both, and spends one:
+A level read at a poll answers *"is it faulting now"*. The question is *"has it
+faulted"*, and no sampling rate answers that — only a latch does. So the capture
+is the **falling edge**, held until the firmware clears it.
 
-| pin | function | what the gateware does |
-|---|---|---|
-| 1 `SLOW/ALERT1` | either a SLOW **input** or a second alert **output** | driven as an output, `slow.o = 0, oe = 1` — used for SLOW, so ALERT1 is not available |
-| 15 `GPIO/ALERT2` | alert output, open-drain | read as an input → PLIC source 6 |
+Today neither line is captured or acted on: the only firmware reference is a
+status line printed by the `typec` shell command. #506, #507.
 
-So a second power-alert source exists in the silicon and is unreachable while
-`SLOW` is being driven. Freeing it means deciding SLOW is not needed — the ADC
-rate it controls is the trade.
+## Why the rest are level
 
-Every source is **level**-sensitive. That is required rather than incidental: a
-16550's `irq` stays high while its FIFO holds a byte, so an edge-triggered input
-loses an interrupt whenever a second byte arrives before the first is read. The
-FUSB302B's interrupt registers are read-to-clear, so servicing the device is
-what drops its line.
+Required, not incidental. A 16550's `irq` stays high while its FIFO holds a
+byte, so an edge-triggered input loses an interrupt whenever a second byte
+arrives before the first is read. The FUSB302B's interrupt registers are
+read-to-clear, so servicing the device is what drops its line.
 
 **One source per FUSB302B, not one OR-ed source.** `docs/architecture.md`
 decision 8.
 
-## Wired to a register, and to nothing else
+## The PAC1954's second alert
 
-| chip | refdes | chip part | pin | ECP5 ball | goes to |
-|---|---|---|---|---|---|
-| **DPO2036** | `U13` (TARGET) | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | 6 `FAULTB` | **D4**, `R100` 10 kΩ | `i2c_mux.target_fault` → CSR bit |
-| **DPO2036** | `U14` (AUX) | as above | 6 `FAULTB` | — | `i2c_mux.aux_fault` → CSR bit |
+The part offers *"Two Independent ALERT/GPIO pins"* (DS20006539B), and this
+board wires both. `SLOW/ALERT1` is currently driven as an **output** —
+`slow.o = 0, oe = 1` — so it serves the SLOW function and the second alert is
+unreachable. Freeing it means deciding SLOW is not needed; the ADC sample rate
+it controls is the trade.
 
-`FAULTB` is active-low open-drain, asserted while the part is protecting and
-through its 26–38 ms recovery, then released — `sources/DPO2036.pdf`, DS40644
-Rev. 2-2. Nothing latches it and nothing acts on it: the only firmware reference
-is a status line printed by the `typec` shell command. #506, #507.
+## What the controller can and cannot do
 
-The DPO2036 has no bus interface — twelve pins, no SCL, no SDA, no registers.
-`FAULTB` is the entire software-visible surface.
-
-## What the controller does and does not do
-
-**No hardware preemption.** The PLIC specification 1.0.0 line 93: *"the PLIC
+**No hardware preemption**, by specification. PLIC 1.0.0 line 93: *"the PLIC
 provides no concept of interrupt preemption or nesting"*. The privileged
-specification clears `mstatus.MIE` on trap entry and VexiiRiscv's
+specification clears `mstatus.MIE` on trap entry, and VexiiRiscv's
 `TrapPlugin.scala:869` does exactly that. So priority decides **which source a
-claim returns when several are pending**, never whether a running handler is
+claim returns when several are pending** — never whether a running handler is
 interrupted.
 
-**Preemption is delivered in software.** RTIC's RISC-V backend is `riscv-slic`,
-a software interrupt controller. See [`rtic.md`](rtic.md).
+**Preemption is delivered in software**, by RTIC's `riscv-slic` backend. See
+[`rtic.md`](rtic.md). No interrupt controller change alters that.
 
 **Priorities are compile-time constants** — `POWER_ALERT` 4, `CONSOLE` 3,
 `TYPE_C` 2, `I2C` 1 — never written at runtime, and the threshold is 0
@@ -88,6 +74,17 @@ permutes the order of the handlers serviced inside one trap.
 disabling throws the completion away and gates the source off permanently,
 because `pending[i] = sources[i] & ~claimed[i]`. `src/irq.rs`'s `defer_type_c`
 carries the argument.
+
+## Open decisions
+
+1. **Which controller.** The review (#503) recommends deleting
+   `gateware/soc/cpu/plic.py` for `amaranth_soc.csr.event.EventMonitor` — smaller,
+   Amaranth-native, latches W1C, supports level and edge per source. **Not agreed.**
+2. **The PAC1954 alert (source 6)** — enable it, or record why not.
+3. **`SLOW/ALERT1`** — keep SLOW, or free the pin for a second alert.
+4. **What the board should DO on a CC/SBU over-voltage.** Counting and surfacing
+   it is the floor; opening VBUS on the faulting port is the obvious candidate,
+   since the switches are already under firmware control. #507.
 
 ## Where the pieces are
 
