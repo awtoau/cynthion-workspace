@@ -115,12 +115,8 @@ the number a driver computes a prescale from.
     bus 1  aux_type_c      0x22  FUSB302B    fSCL 0-1000 kHz
     bus 2  power_monitor   0x10  PAC1954-1   fSMB 0.010-1 MHz
 
-Nothing standard-mode is on it, and nothing ever has been. This file used to
-budget against standard mode's 4.7 us intervals anyway, and picked 80 kHz over
-the round 100 kHz because at 100 kHz t_SU;STA landed 0.7 us inside a *standard
-mode* minimum. That reasoning was sound and answered the question it was asked;
-nobody asked what the parts actually support. The bus ran twelve times slower
-than every device on it for the life of the project. See #269.
+Budget against Fm+ minima. Standard mode's 4.7 us intervals do not apply here
+and cost a factor of twelve if used. #269.
 
 At 60 MHz with PRER = 11 the slot is 200 ns and the data rate is exactly 1 MHz:
 
