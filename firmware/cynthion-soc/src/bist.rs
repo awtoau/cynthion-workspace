@@ -426,10 +426,10 @@ impl Bist {
         //
         // `CONFIG_VERIFY` in `hyperram_ceiling_top.py` is what reads CR0 and
         // CR1 back off the part, and only a commanded run reaches it. On a cold
-        // board both registers hold their reset value -- 0x0000 -- and the
-        // block below used to decode that into `latency code 0 variable
-        // drive 0` and then attribute it to a broken register read path. Both
-        // are claims about a part nothing has spoken to.
+        // board both registers hold their reset value -- 0x0000 -- which the
+        // block below would decode as `latency code 0 variable drive 0` and
+        // attribute to a broken register read path. Both are claims about a
+        // part nothing has spoken to.
         //
         // The discriminator is the ENGINE's `write_cycles`, not a flag this
         // firmware keeps: it is only ever incremented, never cleared, and its

@@ -1,11 +1,9 @@
 //! One word out of one memory: `flash id`, and `read` on any of the three regions.
 //!
-//! The shell used to have `id` and `read <hex>`, both flash-only and neither saying
-//! so, while `bench` had already learned to take a region name. One command family
-//! was region-aware and the other silently assumed a region, which left a reader of
-//! `read 40` having to know which of three memories it meant. This module is the
-//! other half of `bench`'s vocabulary: the same three words in front of the same
-//! verb.
+//! Every command here names its region. A flash-only `id` or `read <hex>` that does
+//! not say so leaves a reader of `read 40` guessing which of three memories it
+//! meant, while `bench` takes a region name. This module is the other half of
+//! `bench`'s vocabulary: the same three words in front of the same verb.
 //!
 //!     flash id
 //!     flash read <hex>

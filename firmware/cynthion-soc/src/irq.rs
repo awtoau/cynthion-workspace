@@ -366,8 +366,7 @@ fn service_i2c() {
 /// How many I2C completions have been delivered.
 ///
 /// Zero here after traffic means the source is masked, `CTR.IEN` is clear, or
-/// the gateware is not driving it -- three different faults that used to be
-/// indistinguishable because none of them produced a number.
+/// the gateware is not driving it -- three faults that no other number separates.
 static I2C_INTERRUPTS: AtomicU32 = AtomicU32::new(0);
 
 /// The count, for `irq` and `rtic` to print.
@@ -399,15 +398,14 @@ fn defer_workload(plic: &Plic, source: u32) {
 /// the PLIC keeps its pending bit; nothing is lost. `type_c::service` in normal
 /// context clears that one device and re-enables that one source.
 ///
-/// What per-device sources changed is the shape of the obligation. A shared
-/// level had to be cleared on *every* asserting device before it could be
-/// re-enabled, and missing one was a storm that presents as a hung CPU. Here
-/// there is one device behind the source, so there is nothing to miss, and a
-/// deferred TARGET no longer masks AUX's ability to interrupt.
+/// Per-device sources are the shape of the obligation: a shared level must be
+/// cleared on *every* asserting device before it can be re-enabled, and missing
+/// one is a storm that presents as a hung CPU. One device behind the source
+/// leaves nothing to miss, and a deferred TARGET does not mask AUX.
 ///
 /// `log_from_irq!` records; it does not print. See `src/events.rs` for why a
-/// handler that printed would hang this board. The record now carries the port
-/// bitmap, which the shared source could not supply without a register read.
+/// handler that printed would hang this board. The record carries the port
+/// bitmap, which a shared source could not supply without a register read.
 fn defer_type_c(plic: &Plic, source: u32, port: usize) {
     // Complete BEFORE masking, and never the other way round.
     //
@@ -494,12 +492,10 @@ pub fn type_c_interrupts(port: usize) -> u32 {
 /// source is claimed by the peripheral behind it, in [`claim`], once that
 /// peripheral is in a state where an interrupt from it would mean something.
 ///
-/// It used to be one function that enabled the consoles and the Type-C
-/// controllers from two lists held here. That arrangement is why the I2C source
-/// has never fired: it is wired in `gateware/soc/top.py`, and adding it meant
-/// remembering to add it to a third list in a file that is not the I2C driver.
-/// A peripheral that claims its own source cannot be forgotten by a list it is
-/// not in. See #246.
+/// NOT a list of sources held here. A source wired in `gateware/soc/top.py`
+/// then needs adding to a list in a file that is not its driver, which is why
+/// the I2C source never fired. A peripheral that claims its own source cannot
+/// be forgotten by a list it is not in. See #246.
 ///
 /// Safe to call before any peripheral exists: a threshold of 0 with nothing
 /// enabled cannot deliver anything.

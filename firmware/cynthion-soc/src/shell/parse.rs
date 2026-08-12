@@ -30,15 +30,14 @@ pub(crate) fn as_str(cell: &[u8]) -> &str {
 /// limit can legitimately be below zero -- the VBUS switch tree is
 /// bidirectional, so a port can sink and its VSENSE code is signed.
 ///
-/// Out of range is `None`, not a wrap. `4294967295` used to come back as `-1`
-/// and `-2147483648` overflowed its own negation; both were reachable from
-/// `power limit`, where a threshold silently becoming its own opposite sign is
-/// an alert that fires on every sample or on none (#347).
+/// Out of range is `None`, not a wrap: `4294967295` as `-1`, or `-2147483648`
+/// overflowing its own negation, are both reachable from `power limit`, where a
+/// threshold silently becoming its own opposite sign is an alert that fires on
+/// every sample or on none (#347).
 pub(crate) fn parse_signed(text: &[u8]) -> Option<i32> {
-    // TRIMMED FIRST. `parse_decimal` trims and this did not, so ` -3` split on
-    // the space, fell to the unsigned arm and returned `None` -- a caller that
-    // handed over a word with a space in front got a rejection it could not
-    // explain.
+    // TRIMMED FIRST, as `parse_decimal` does: untrimmed, ` -3` splits on the
+    // space, falls to the unsigned arm and returns `None` -- a rejection the
+    // caller cannot explain.
     let text = trim(text);
     match text.split_first() {
         // `wrapping_neg` on the u32, not `-(v as i32)`: i32::MIN's magnitude is

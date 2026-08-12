@@ -13,22 +13,20 @@
 //! - A poll that can spin forever is indistinguishable from a dead core -- has cost
 //!   real days in this tree (`uart.rs`, `hyperram.rs`). `wait` gives up.
 //! - Bound: [`I2c::wait_limit`], derived per command from the prescale the core
-//!   actually holds -- 150 turns at the prescale 9 this build runs. Was a flat
-//!   `200_000`, which is a hang with a number attached rather than a safety
-//!   factor (#355).
+//!   actually holds -- 150 turns at the prescale 9 this build runs. A flat
+//!   `200_000` is a hang with a number attached, not a safety factor (#355).
 //! - Protects against the peripheral not being there at all, not a slow bus: the bit
 //!   engine's states are all a fixed number of slots long and cannot hang. Turns "the
 //!   shell stopped responding" into "i2c: timeout".
-//! - `Uart::put` still carries the old flat `200_000` with the same stated reason. Not
+//! - `Uart::put` still carries a flat `200_000` with the same stated reason. Not
 //!   fixed here; it belongs to the tree-wide timeout audit, #295.
 //!
 //! ## The completion interrupt: enabled, and what it is for
 //!
-//! - `CTR.IEN` set, PLIC source 3 claimed by [`I2c::init`]. Until #246 it was not:
-//!   source was wired in `gateware/soc/top.py`, `irq::init` enabled only console and
-//!   Type-C from a list held in that file, bit stayed clear at reset. `enabled
-//!   00000036` had bit 3 missing with nothing saying so -- why a peripheral now
-//!   claims its own source instead of being remembered by a list elsewhere.
+//! - `CTR.IEN` set, PLIC source 3 claimed by [`I2c::init`]. A peripheral claims its
+//!   own source rather than being remembered by a list elsewhere: a source wired in
+//!   `gateware/soc/top.py` but absent from that list reads as `enabled 00000036`,
+//!   bit 3 missing, with nothing saying so (#246).
 //! - **This driver still spins on `SR.TIP`.** `TIP` ("transfer in progress") and `IF`
 //!   (completion flag, raises the line) are different bits, neither waits on the
 //!   other. A shell command reading a register has nothing else to do while it

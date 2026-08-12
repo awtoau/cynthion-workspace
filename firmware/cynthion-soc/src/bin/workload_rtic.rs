@@ -19,9 +19,9 @@
 //! takes `pac`, `swi = [...]` and a backend, and nothing else: there is no
 //! hardware-interrupt list in the macro's grammar, so no `#[task]` can bind a
 //! PLIC source on any RISC-V target. [`machine_external`] below is therefore the
-//! same claim loop `src/irq.rs` has, with `rtic::export::pend` where the work
-//! used to be, and the queue between it and the task is a `static` that RTIC
-//! does not check.
+//! same claim loop `src/irq.rs` has, with `rtic::export::pend` in place of the
+//! work, and the queue between it and the task is a `static` that RTIC does not
+//! check.
 //!
 //! ## What RTIC does check here
 //!

@@ -71,9 +71,9 @@
 //!
 //! - Each UART raises a PLIC source when a byte lands; the handler in `src/irq.rs`
 //!   moves it into a per-console ring; the loop below takes bytes out with `irq::pop`.
-//!   Shell reads identically from a user's point of view -- what changed is the byte
-//!   was already collected before the loop asked, so a console busy printing no longer
-//!   has to be back at `uart.get()` in time.
+//!   Shell reads identically from a user's point of view: the byte is already
+//!   collected before the loop asks, so a console busy printing need not be back at
+//!   `uart.get()` in time.
 //! - Transmit is still a bounded spin in `Uart::put`, deliberately -- see `IER_ERBFI`
 //!   in `src/uart.rs` for why enabling the transmit-empty interrupt on this peripheral
 //!   would be a storm, not a service.
@@ -242,20 +242,18 @@ fn boot() -> Devices {
     //
     // Nothing here touches a bus, a pin, or a part. It is the CPU's own
     // facilities, and it comes first so that everything after it is measured,
-    // timed and interruptible -- rather than the other way round, which is how
-    // this was written and which meant the whole of boot was counted under the
-    // wrong performance-counter events and stamped `000000.000`.
+    // timed and interruptible -- the other way round counts the whole of boot
+    // under the wrong performance-counter events and stamps `000000.000`.
     //
     // The CPU's four performance counters, pointed at the events #115 names.
     // FIRST, because they free-run from reset: a selector written late means
-    // everything counted before it was a different event. This used to be the
-    // last line of `boot`, so the I2C configuration and both PHY probes -- the
-    // expensive part of coming up -- were counted as something else.
+    // everything counted before it was a different event, so the I2C
+    // configuration and both PHY probes count as something else.
     sched::init();
 
     // The 1 ms tick. Before the peripherals, so a slow one is visibly slow: the
-    // stamp on every line below comes from this, and a peripheral that took
-    // 40 ms to answer used to be indistinguishable from one that took none.
+    // stamp on every line below comes from this, and without it a peripheral
+    // taking 40 ms to answer is indistinguishable from one taking none.
     //
     // `mstatus.MIE` is still clear, so the first tick simply stays pending until
     // `irq::init` below turns delivery on. A pending tick is not a lost one.

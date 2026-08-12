@@ -25,10 +25,9 @@ pub struct Shell {
     /// `Autocomplete` hook has no writer -- so a TAB that wants to list, or to
     /// complete anything past the first word, needs the line tracked here.
     ///
-    /// It held only the first word, cleared on every space, which is how `i2c
-    /// st` + TAB came to offer `selftest` and `sideband`: the shadow said `st`
-    /// and nothing recorded that a command name was no longer what was being
-    /// typed.
+    /// It holds the whole line, not the first word: cleared on every space,
+    /// `i2c st` + TAB offers `selftest` and `sideband`, because the shadow says
+    /// `st` and nothing records that a command name is not what is being typed.
     ///
     /// It can drift: recalling a line from history replaces the input without a
     /// printable byte passing through here. Cleared on anything that could
@@ -119,14 +118,9 @@ impl Shell {
         // THE BANNER IS ANSWERED, NEVER OFFERED. It waits here until the first
         // keypress and prints once.
         //
-        // It used to reprint every 2 s on an idle console so an attaching
-        // terminal would not have missed it -- the CPU starts as soon as the
-        // FPGA is configured, and the host takes about half a second to
-        // enumerate and bind a tty. That transmits with nobody there, which is
-        // why it had to be restricted to console 0: console 1's TX is shared
-        // with JTAG TMS, and an unbidden transmission on it is bus contention.
-        //
-        // Nothing is unbidden now, so the restriction is gone with it and every
+        // Reprinting on an idle console transmits with nobody there, and
+        // console 1's TX is shared with JTAG TMS, where an unbidden
+        // transmission is bus contention. Nothing here is unbidden, so every
         // console banners on its own first keypress.
         if !self.spoken {
             self.spoken = true;
@@ -194,10 +188,10 @@ impl Shell {
             _ => self.typed,
         };
 
-        // ESCAPE SEQUENCES ARE NOT TEXT, and the shadow used to treat them as
-        // text. `0x1b` cleared it and then `[` and `C` were pushed as
-        // printable, so a right-arrow left `[C` in the completion buffer. It
-        // only ever looked harmless because no command starts with `[`.
+        // ESCAPE SEQUENCES ARE NOT TEXT. Treated as text, `0x1b` clears the
+        // shadow and then `[` and `C` push as printable, so a right-arrow
+        // leaves `[C` in the completion buffer -- which looks harmless only
+        // because no command starts with `[`.
         //
         // The state machine also gives the sequences a name, which is what
         // [`Self::key`] needs to add the keys the crate has no `ControlInput`

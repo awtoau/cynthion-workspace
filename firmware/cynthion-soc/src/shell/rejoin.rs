@@ -4,13 +4,12 @@
 //! list. Every command here owns its own byte grammar (#303), so the pieces are
 //! rejoined and re-parsed rather than the grammar being moved into the crate.
 //!
-//! **The rejoin used to keep only `Arg::Value` and drop everything else.** That
-//! is #347: `-3` is not a value to that crate, it is a short option whose
-//! character is not alphabetic, so `ArgsIter` yields `Err` and the whole token
-//! vanished. `bist phase clkos2 -3` reached the verb with no count at all,
-//! `unwrap_or(0)` took zero steps, and the verb printed a fresh state as though
-//! it had worked. `power limit <kind> <port> -100` loses its threshold the same
-//! way.
+//! **Every token is kept, not only `Arg::Value`** (#347). `-3` is not a value to
+//! that crate, it is a short option whose character is not alphabetic, so
+//! `ArgsIter` yields `Err` and dropping it loses the whole token: `bist phase
+//! clkos2 -3` reaches the verb with no count, `unwrap_or(0)` takes zero steps and
+//! the verb prints a fresh state as though it had worked. `power limit <kind>
+//! <port> -100` loses its threshold the same way.
 //!
 //! No `crate::` paths: `firmware/cynthion-soc-tests` includes this file and
 //! drives it through a real `Cli` (#337).

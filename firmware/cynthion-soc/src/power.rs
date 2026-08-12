@@ -375,8 +375,8 @@ pub fn set_interval_ms(ms: u32) -> u32 {
         ms.max(MIN_INTERVAL_MS)
     };
     INTERVAL_MS.store(ms, core::sync::atomic::Ordering::Relaxed);
-    // The gap statistics were measured against the old period and describe a
-    // different experiment now.
+    // Gap statistics measured against another period describe a different
+    // experiment.
     crate::metrics::forget_polls();
     ms
 }
@@ -850,8 +850,8 @@ impl Monitor {
         // ---- dispatch A: ask, and return ---------------------------------
         //
         // A Send Byte and nothing else -- about 30 us at 1 MHz. The task holds
-        // `Devices` for that and hands it back, where the old single-shot
-        // transaction held it for the whole ~2 ms.
+        // `Devices` for that and hands it back; a single-shot transaction would
+        // hold it for the whole ~2 ms.
         if !self.refreshing {
             self.phase = "refresh";
             refresh(bus)?;
@@ -1445,11 +1445,9 @@ impl Monitor {
     /// **The sole owner of the PAC1954's REFRESH cycle.** Everything else asks
     /// [`Monitor::latest`], which touches nothing.
     ///
-    /// There is one caller and it is `power_refresh` in `src/rtic_app.rs`. The
-    /// interval check that used to live beside this, in a `poll` the main loop
-    /// ran on every turn, is gone with the superloop (#245): when this runs is
-    /// the tick's decision now, and this function does not have an opinion about
-    /// it.
+    /// There is one caller and it is `power_refresh` in `src/rtic_app.rs`. No
+    /// interval check lives here: when this runs is the tick's decision, and
+    /// this function has no opinion about it (#245).
     ///
     /// Normal context, and still allowed to print and to spin on I2C -- this is
     /// a task at a priority, not a handler.

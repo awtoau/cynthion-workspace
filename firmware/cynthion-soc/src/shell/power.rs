@@ -49,9 +49,9 @@ fn parse_port(name: &[u8]) -> Option<usize> {
 /// holding the board.
 /// `power detect [on|off]` -- plug detection in the part, not in the poll (#285).
 ///
-/// The poll is off by default (#286), and connection state used to come from it.
+/// The poll is off by default (#286), so connection state does not come from it.
 /// This arms a current limit at the floor instead, so the part reports a crossing
-/// against every sample at 1024 SPS -- faster than the 50 ms poll it replaces.
+/// against every sample at 1024 SPS -- faster than a 50 ms poll.
 ///
 /// Takes one current limit per port, in whichever direction the port can move,
 /// which is why it is opt-in: a protection threshold on the same direction and
@@ -221,14 +221,12 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         return board_absent(uart);
     }
 
-    // `power` bare lists the family; `power status` is the reading. The table
-    // used to be what a bare `power` printed, which made it the only family
-    // whose bare form did work rather than describing itself.
+    // `power` bare lists the family; `power status` is the reading. A bare form
+    // that did work rather than describing itself would be the only one here.
     if rest.is_empty() {
         return crate::shell::list_family(uart, "pac1954");
     }
-    // `status` falls through to the table below, which is where it already
-    // lived -- it was simply reached by typing nothing.
+    // `status` falls through to the table below.
     let rest: &[u8] = if rest == b"status" { b"" } else { rest };
     if rest.starts_with(b"detect") {
         return detect_command(uart, trim(&rest[b"detect".len()..]), devices);
@@ -350,10 +348,9 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // ONE row per port, with the reading and every setting that governs it.
     //
     // The measurement, its four limits, the debounce, the floor and whether the
-    // alert is armed all describe the same port, and they used to be in three
-    // places: `power` for the reading, a second block for the floor, and
-    // `power alert` for the limits. A reader asking "what is aux doing and what
-    // will it tell me about" had to hold three tables in their head.
+    // alert is armed all describe the same port, so they are in one table.
+    // Split across three -- reading, floor, limits -- a reader asking "what is
+    // aux doing and what will it tell me about" holds three in their head.
     //
     // Limits are read FROM THE PART. `ALERT_STATUS` deliberately is not -- it is
     // read-to-clear and belongs to the service path, so `fired` comes from what

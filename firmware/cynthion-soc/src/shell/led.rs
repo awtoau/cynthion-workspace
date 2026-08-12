@@ -18,10 +18,9 @@ use crate::{ target};
 /// Parse a colour name. Returns `None` for anything else, including an index --
 /// accepting "3" here would undo the whole point of naming them.
 ///
-/// The names, the ball and the schematic reference all come from `Led` itself
-/// now. They used to be a table here, in an order that was REVERSED against the
-/// board (#415), and a second copy is exactly how that survived: nothing
-/// compared the two.
+/// The names, the ball and the schematic reference all come from `Led` itself.
+/// A second table here goes REVERSED against the board and survives, because
+/// nothing compares the two (#415).
 pub(crate) fn led_by_name(name: &[u8]) -> Option<Led> {
     Led::from_name(name)
 }

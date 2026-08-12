@@ -329,8 +329,8 @@ pub const HYPERRAM_SIZE: usize = 0x0080_0000;
 /// `615000ff` is a known-good value.
 ///
 /// Whether the D-cache backs this window is `FLASH_CACHED` below, generated from
-/// the gateware. It used to be asserted here in prose, and the prose was wrong
-/// within a commit of the window being switched to uncached.
+/// the gateware -- not asserted here in prose, which goes wrong within a commit
+/// of the window switching to uncached.
 ///
 /// Note for anyone reading both branches below: QEMU's `virt` puts its 16550 at
 /// this exact address. That collision is why flash is reached through
