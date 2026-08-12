@@ -80,6 +80,15 @@ Anything else is `failed`, `refused` or `preempted`, and the client exits
 non-zero. [`tests/test_board_arbiter.py`](../tests/test_board_arbiter.py) drives
 each leg to a failure.
 
+## While a build is running
+
+- The arbiter holds the variant's `<build>/.build.lock` (#351) while it hashes
+  and configures the bitstream. `soc_run.py` rewrites `top.bit` in place, and
+  without the lock the sha256 recorded and the bytes the ECP5 got can be from
+  different builds.
+- A job submitted while that variant is building is **refused**, naming the
+  lock. It does not wait, and it does not configure half a file.
+
 ## Going around it
 
 - The tty's holders are read from `/proc`
@@ -115,7 +124,12 @@ They earn their board time with **events**, never rows:
 - a **tally that moved** between identical runs
 - a **cell that changed verdict** — compared over cells *both* runs reached,
   since a preempted sweep prints a prefix
+- a **cell that disagrees with itself** across passes of one job — same
+  configuration, seconds apart, which is the sharpest form of it (#437)
 - **die drift** ≥ 5 °C (#341)
+- **BUILD CHANGED** — a different bitstream sha256 or board image than the
+  previous observation. Nothing is compared across it; another session
+  rebuilding the variant mid-soak is the event, not the cells that moved.
 
 ## Preemption, and what it costs
 
