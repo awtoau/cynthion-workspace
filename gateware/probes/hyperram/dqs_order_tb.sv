@@ -344,11 +344,28 @@ module tb;
     end
   end
 
+  // RWDS FLOAT, GIVEN A VALUE. `rwds === 1'b1` read an undriven line as a firm 0,
+  // so a sample landing in a float was invisible here. `+rwds_float_pct=<0..100>`
+  // is the chance a float reads High, `+rwds_float_seed` the stream. Default 0 is
+  // the old behaviour exactly, so nothing already green becomes flaky. (#400)
+  integer rwds_float_pct  = 0;
+  integer rwds_float_seed = 1;
+  integer rwds_floats     = 0;
+  integer rwds_float_hi   = 0;
+  reg     rwds_bit;
+
   always @(posedge sync_clk) begin
+    if (rwds === 1'b1)      rwds_bit = 1'b1;
+    else if (rwds === 1'b0) rwds_bit = 1'b0;
+    else begin
+      rwds_floats = rwds_floats + 1;
+      rwds_bit    = (({$random(rwds_float_seed)} % 100) < rwds_float_pct);
+      if (rwds_bit) rwds_float_hi = rwds_float_hi + 1;
+    end
     phy_dq_i      <= rd_word;
     phy_datavalid <= rd_word_valid;
     phy_burstdet  <= rd_word_valid;
-    phy_rwds_i    <= {4{rwds === 1'b1}};
+    phy_rwds_i    <= {4{rwds_bit}};
   end
 
   //
@@ -452,6 +469,8 @@ module tb;
     if (!$value$plusargs("rd_slip=%d", rd_slip)) rd_slip = 0;
     if (!$value$plusargs("verbose=%d", verbose)) verbose = 0;
     if (!$value$plusargs("data_perm=%d", data_perm)) data_perm = 0;
+    if (!$value$plusargs("rwds_float_pct=%d", rwds_float_pct)) rwds_float_pct = 0;
+    if (!$value$plusargs("rwds_float_seed=%d", rwds_float_seed)) rwds_float_seed = 1;
 
     VCC = 1'b1; VSS = 1'b0; resetb = 1'b1;
     #200_000;
@@ -522,6 +541,10 @@ module tb;
       end
     end
 
+    // The injection's own witness: a run asking for floats that met none injected
+    // nothing, and a check passing under it proves nothing. (#400)
+    $display("[order] floats=%0d float_high=%0d float_pct=%0d float_seed=%0d",
+             rwds_floats, rwds_float_hi, rwds_float_pct, rwds_float_seed);
     $display("[order] === done ===");
     $finish;
   end

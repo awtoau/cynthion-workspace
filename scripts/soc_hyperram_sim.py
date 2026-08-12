@@ -398,7 +398,8 @@ class Harness(Elaboratable):
     model that never detects a violation would pass it just as well.
     """
 
-    def __init__(self, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None):
+    def __init__(self, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
+                 tcsm_ns=None):
         self.phy = HyperBusDQSPHY()
         self.sync_mhz = sync_mhz
         if upstream:
@@ -413,7 +414,8 @@ class Harness(Elaboratable):
                 phy=self.phy, sync_mhz=sync_mhz,
                 high_latency_clocks=(
                     latency if latency is not None
-                    else HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS))
+                    else HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS),
+                **({} if tcsm_ns is None else {"tcsm_ns": tcsm_ns}))
 
     def elaborate(self, platform):
         m = Module()
@@ -519,7 +521,7 @@ async def run(ctx, dut, model, *, address, read, data=None,
 
 
 def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
-             model_latency=None, deliver=None):
+             model_latency=None, deliver=None, tcsm_ns=None):
     """Run `body(ctx, dut, model)` and return the model it used.
 
     `model_latency` sets the DEVICE's latency independently of the controller's.
@@ -529,7 +531,8 @@ def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
 
     `deliver` caps how many read beats the device serves before going silent.
     """
-    dut = Harness(upstream=upstream, sync_mhz=sync_mhz, latency=latency)
+    dut = Harness(upstream=upstream, sync_mhz=sync_mhz, latency=latency,
+                  tcsm_ns=tcsm_ns)
     model = ModelHyperRAM(latency=model_latency, deliver=deliver)
 
     async def testbench(ctx):
@@ -712,7 +715,7 @@ class NonDQSProtocolHarness(Elaboratable):
 
     def __init__(self, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ,
                  fixed_latency=True, max_latency_clocks=None,
-                 clock_stop=False):
+                 clock_stop=False, tcsm_ns=None):
         self.phy = HyperBusPHY()
         self.sync_mhz = sync_mhz
         # `clock_stop` puts `ClockStopPHY` between the controller and the model
@@ -732,7 +735,8 @@ class NonDQSProtocolHarness(Elaboratable):
             self.psram = HyperRAMController(
                 phy=self.gate.ctrl if self.gate else self.phy,
                 sync_mhz=sync_mhz, fixed_latency=fixed_latency,
-                max_latency_clocks=max_latency_clocks, phy_round_trip_cycles=0)
+                max_latency_clocks=max_latency_clocks, phy_round_trip_cycles=0,
+                **({} if tcsm_ns is None else {"tcsm_ns": tcsm_ns}))
 
     def elaborate(self, platform):
         m = Module()
@@ -815,7 +819,8 @@ async def run16(ctx, dut, model, *, address, read, data=None, gap=0,
 
 
 def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None,
-               max_latency_clocks=None, clock_stop=False, monitor=None):
+               max_latency_clocks=None, clock_stop=False, monitor=None,
+               tcsm_ns=None):
     """Run `body(ctx, dut, model)` on the 16-bit path and return the model.
 
     `monitor` is a second testbench run alongside `body`, one sample per cycle.
@@ -825,7 +830,7 @@ def simulate16(body, *, upstream=False, sync_mhz=NON_DQS_SYNC_MHZ, deliver=None,
     """
     dut = NonDQSProtocolHarness(upstream=upstream, sync_mhz=sync_mhz,
                                 max_latency_clocks=max_latency_clocks,
-                                clock_stop=clock_stop)
+                                clock_stop=clock_stop, tcsm_ns=tcsm_ns)
     model = ModelHyperRAM16(sync_mhz=sync_mhz, deliver=deliver)
 
     async def testbench(ctx):
@@ -2217,6 +2222,11 @@ def section_escape(checks, emit):
          f"{short.durations[0]}; 8 of 8 returns in {whole.durations[0]}")
 
 
+def cs_low_ns(cycles, sync_mhz):
+    """The longest CS#-Low run as a DURATION, which is what tCSM bounds."""
+    return 1000.0 * cycles / sync_mhz
+
+
 def section_tcsm(checks, emit):
     """13. How long CS# is held Low, ours against upstream's.
 
@@ -2224,6 +2234,11 @@ def section_tcsm(checks, emit):
     burst runs there under `+stim=1`, with `+cs_hold_ns=1000` as the control that
     proves its monitor fires. What stays here is the caller-side half: a caller
     that never ends a burst, and the controller's own word cap chopping it. (#317)
+
+    Judged in NANOSECONDS against tCSM. It was judged against
+    `completion_bound`, which is 1.25x tCSM plus 32 cycles -- the harness's own
+    give-up limit, and 1.30x the limit it was standing in for. A chop landing at
+    5.2 us passed it. `+tcsm_ns` builds exactly that controller as the control.
     """
     emit("\n13. CS# Low on a burst nobody ends\n")
 
@@ -2240,9 +2255,10 @@ def section_tcsm(checks, emit):
                  f"upstream {control.cs_low_max} cycles, ours "
                  f"{chopped.cs_low_max} -- so this harness cannot tell the two "
                  f"apart and the checks below prove nothing")
-    checks.check("ours chops it inside the budget the controller computed",
-                 chopped.cs_low_max <= completion_bound(NON_DQS_SYNC_MHZ),
-                 f"CS# Low up to {chopped.cs_low_max} cycles")
+    ours_ns = cs_low_ns(chopped.cs_low_max, NON_DQS_SYNC_MHZ)
+    checks.check("ours chops it inside tCSM ITSELF, not inside the give-up limit",
+                 ours_ns <= T_CSM_NS,
+                 f"CS# Low up to {ours_ns:.0f} ns against tCSM {T_CSM_NS:.0f}")
     checks.check("...at the word cap exactly, not one beat past it",
                  chopped.beats_taken == budget,
                  f"took {chopped.beats_taken} beats against a cap of {budget}")
@@ -2252,14 +2268,80 @@ def section_tcsm(checks, emit):
     dqs = simulate(
         lambda ctx, dut, model: run(ctx, dut, model, address=TEST_ADDRESS,
                                     read=True, beats=0))
-    checks.check("the DQS controller chops the same shape",
-                 dqs.cs_low_max <= completion_bound(SYNC_MHZ),
-                 f"CS# Low up to {dqs.cs_low_max} beats")
+    dqs_ns = cs_low_ns(dqs.cs_low_max, SYNC_MHZ)
+    checks.check("the DQS controller chops inside tCSM too",
+                 dqs_ns <= T_CSM_NS,
+                 f"CS# Low up to {dqs_ns:.0f} ns against tCSM {T_CSM_NS:.0f}")
 
+    # THE CONTROL FOR THE CHECK ITSELF: a controller told tCSM is 4.8 us. Its chop
+    # lands at 4.3 us -- a real violation, and INSIDE the give-up limit of 5.2 us,
+    # so the threshold this section used until now passed it. If the ns check does
+    # not fire here it is not watching tCSM.
+    loose = simulate16(endless_read, tcsm_ns=1.2 * T_CSM_NS)
+    loose_ns = cs_low_ns(loose.cs_low_max, NON_DQS_SYNC_MHZ)
+    checks.check("a controller built on a 4.8 us tCSM overruns the real one",
+                 loose_ns > T_CSM_NS,
+                 f"the 1.2x build chopped at {loose_ns:.0f} ns, inside tCSM -- "
+                 f"so the ns check above has nothing to fail on")
+    checks.check("...and the OLD threshold, the give-up limit, passed it",
+                 loose.cs_low_max <= completion_bound(NON_DQS_SYNC_MHZ),
+                 f"{loose.cs_low_max} cycles against a give-up limit of "
+                 f"{completion_bound(NON_DQS_SYNC_MHZ)} -- the old check would "
+                 f"have failed on this too, so it was not the weaker test")
+
+    # THE HOT BOARD. `Config-AC.v` gives tCSM as 1 us above 85 C, and the shipped
+    # constant is the benign half of the range (#342). The 4 us chop is 4.3x over
+    # it; the build at 1 us is not, and it elaborates, so the fix is a constant.
+    hot = simulate16(endless_read, tcsm_ns=1000.0)
+    hot_ns = cs_low_ns(hot.cs_low_max, NON_DQS_SYNC_MHZ)
+    checks.check("the 4 us chop is a tCSM violation on a board above 85 C",
+                 ours_ns > 1000.0,
+                 f"{ours_ns:.0f} ns is inside the hot tCSM of 1000 ns already, "
+                 f"so there is nothing for the hot build to fix")
+    checks.check("...and a controller built on the hot 1 us figure chops inside it",
+                 hot_ns <= 1000.0,
+                 f"the 1 us build chopped at {hot_ns:.0f} ns")
+
+    # EVERY SHAPE SECTION 12 RUNS, judged as a duration. Section 12 asks only
+    # whether the transaction ended; a transaction can end and still have held CS#
+    # Low past tCSM. `burst_remaining` is armed on CS# High and counts every
+    # CS#-Low cycle, so this covers the states before the data phase as well.
+    shapes = {
+        "silent device": simulate16(
+            lambda ctx, dut, m: run16(ctx, dut, m, address=TEST_ADDRESS,
+                                      read=True), deliver=0),
+        "7 of 8 beats": simulate16(
+            lambda ctx, dut, m: run16(ctx, dut, m, address=TEST_ADDRESS,
+                                      read=True, beats=8), deliver=7),
+        "stalled consumer": simulate16(
+            lambda ctx, dut, m: run16(ctx, dut, m, address=TEST_ADDRESS,
+                                      read=False, data=TEST_DATA, beats=0)),
+        "register write": simulate16(
+            lambda ctx, dut, m: run16(ctx, dut, m, address=0, read=False,
+                                      data=0x8f2f, register_space=True)),
+        "register read, silent": simulate16(
+            lambda ctx, dut, m: run16(ctx, dut, m, address=0, read=True,
+                                      register_space=True), deliver=0),
+    }
+    worst = max((cs_low_ns(m.cs_low_max, NON_DQS_SYNC_MHZ), n)
+                for n, m in shapes.items())
+    checks.check("no shape section 12 runs holds CS# Low past tCSM",
+                 worst[0] <= T_CSM_NS,
+                 f"{worst[1]} held CS# Low {worst[0]:.0f} ns")
+
+    emit("        every escape shape, as a duration: " + ", ".join(
+        f"{n} {cs_low_ns(m.cs_low_max, NON_DQS_SYNC_MHZ):.0f} ns"
+        for n, m in shapes.items()))
     emit(f"        CS# Low, longest run: upstream {control.cs_low_max} cycles, "
-         f"ours {chopped.cs_low_max}, DQS {dqs.cs_low_max} beats")
+         f"ours {chopped.cs_low_max} ({ours_ns:.0f} ns), DQS {dqs.cs_low_max} "
+         f"({dqs_ns:.0f} ns) -- tCSM {T_CSM_NS:.0f} ns")
     emit(f"        word cap {budget} beats, taken {chopped.beats_taken}; the device "
          f"clocked out {chopped.read_beats}, the extra one on the RECOVERY cycle")
+    emit(f"        the check's own control: a 1.2x tCSM build chops at "
+         f"{loose_ns:.0f} ns, which the give-up limit of "
+         f"{completion_bound(NON_DQS_SYNC_MHZ)} cycles accepted")
+    emit(f"        above 85 C tCSM is 1000 ns: the shipped chop is {ours_ns:.0f} ns "
+         f"({ours_ns / 1000.0:.1f}x over), the 1 us build {hot_ns:.0f} ns (#342)")
 
 
 # 14, the extra-latency sample taken inside the CA, and 15, CA[45] forced for
