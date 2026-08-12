@@ -86,13 +86,15 @@ COMMANDS = ["cpu check", "cpu stats", "cpu stress 500", "info", "cpu stats"]
 # ok in it and would otherwise read as a pass.
 CHECKS = ("sum", "prod", "@0", "@40")
 
-# Seconds one build may take.
+# Seconds one build-and-load may take.
 #
-#   waits for   cargo, the CPU generator, yosys and nextpnr for one variant
-#   expected    256 s, the slowest completed merged build (#432)
+#   waits for   cargo, the CPU generator, yosys, nextpnr, the flash write and
+#               the configure, for one variant
+#   expected    256 s for the slowest completed merged build (#432), plus ~90 s
+#               for a 120 KB flash write and a reconfigure
 #   multiplier  1.25x
-#   on expiry   the child is killed and the rung is BUILD TIMEOUT, named as such
-BUILD_SECONDS = 320
+#   on expiry   the child is killed and the rung is NO BUILD, naming the limit
+BUILD_SECONDS = 435
 
 OUTPUT = []
 
@@ -115,10 +117,17 @@ def build(overlay, mhz, seed):
            "CYNTHION_SYNC_CEILING_MHZ": f"{max(mhz, 90):g}"}
     slug = variant.slug(env)
     build_dir = variant.build_dir(ROOT, env)
+    # NOT `--build-only`. The shell's `.text` lives in flash, not in the
+    # bitstream, so a rung whose firmware is never written runs whatever image
+    # the board already held -- which is another agent's, and which answers
+    # `unknown` to any command this ladder added. The flash write goes over
+    # Apollo rather than through the CPU, so a rung too fast to execute can
+    # still be loaded.
+    #
     # `--allow-timing-fail` is the point of the ladder: a rung nextpnr says
     # misses is exactly the one worth loading, because STA's verdict on this die
     # has never been checked against the die (#470).
-    command = [sys.executable, str(SOC_RUN), "--build-only", "--skip-tests",
+    command = [sys.executable, str(SOC_RUN), "--skip-tests", "--no-read",
                "--no-parallel-refine", "--allow-timing-fail"]
     if seed is not None:
         command += ["--seed", str(seed)]
