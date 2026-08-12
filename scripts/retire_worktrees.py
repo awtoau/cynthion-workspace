@@ -36,6 +36,7 @@ afterwards only clears the registration of a directory that is already gone.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -44,7 +45,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "tmp" / "logs" / "retire-worktrees.log"
-WASTEBASKET = Path("/mnt/2tb/wastebasket")
+# Machine-wide and project-neutral: cross-project junk must not be routed
+# through one project's data directory. `AWTO_WASTEBASKET` names it; the
+# fallback is under $HOME so a fresh clone works without configuration.
+WASTEBASKET = Path(os.environ.get("AWTO_WASTEBASKET") or Path.home() / "wastebasket")
 
 
 def emit(line=""):
