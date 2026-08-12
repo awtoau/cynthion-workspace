@@ -59,12 +59,12 @@ of interrupt preemption or nesting"*.
 ### Deferring a source
 
 A handler that cannot finish the work inline — the FUSB302B needs I2C, which
-takes milliseconds — disables the source, hands off to a task, and the task
-re-enables when it is done.
+takes milliseconds — **masks** the source, hands off to a task, and the task
+unmasks when it is done.
 
 With pending bits and enables that is the whole of it. **The ordering hazard
-belongs to claim/complete**, where completing after disabling strands the claim:
-the source cannot go pending while a claim is outstanding, and a disabled source
+belongs to claim/complete**, where completing after masking strands the claim:
+the source cannot go pending while a claim is outstanding, and a masked source
 has nothing to complete against, so the line never fires again. Removing
 claim/complete removes the hazard.
 
