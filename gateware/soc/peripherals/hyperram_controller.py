@@ -202,7 +202,7 @@ class HyperRAMController(Elaboratable):
 
     def __init__(self, *, phy, sync_mhz, high_latency_clocks=None,
                  max_latency_clocks=None, fixed_latency=True,
-                 tcshi_ns=T_CSHI_NS, trwr_ns=T_RWR_NS,
+                 tcshi_ns=T_CSHI_NS, trwr_ns=T_RWR_NS, tcsm_ns=T_CSM_NS,
                  max_recovery_cycles=None,
                  phy_round_trip_cycles=PHY_ROUND_TRIP_CYCLES):
         """
@@ -226,6 +226,11 @@ class HyperRAMController(Elaboratable):
             trwr_ns             -- tRWR/tACC, in ns. RESET value of
                                    `min_latency_clocks`, the floor `latency_below_trwr`
                                    reports against.
+            tcsm_ns             -- Longest CS# may stay Low, in ns. Sets
+                                   `_burst_cycles`. A lever so a sim can build a
+                                   controller whose chop lands PAST tCSM, which is
+                                   the only way to show a tCSM check failing. Also
+                                   the 1 us above 85 C -- see #341, #317.
             max_recovery_cycles -- Ceiling for `recovery_cycles`, which sizes it.
                                    Defaults to the count `tcshi_ns` gives, i.e. a
                                    lever that can only shorten the gap.
@@ -298,7 +303,8 @@ class HyperRAMController(Elaboratable):
         # caller's and tCSM is its only ceiling. 0.9 is a margin BELOW a limit the
         # part imposes, not 1.25x above an expected duration. Less two cycles: the
         # exit into RECOVERY leaves CS# Low for two more. Expiry sets `timed_out`.
-        self._burst_cycles = int(T_CSM_NS * T_CSM_MARGIN * sync_mhz / 1000.0) - 2
+        self._tcsm_ns = tcsm_ns
+        self._burst_cycles = int(tcsm_ns * T_CSM_MARGIN * sync_mhz / 1000.0) - 2
         if self._burst_cycles <= self._data_entry_cycles:
             raise ValueError(
                 f"tCSM allows {self._burst_cycles} cycles at sync {sync_mhz} MHz, "
