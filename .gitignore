@@ -73,6 +73,9 @@ ecp5-test/sideband/build/
 # effectively as the PDF, and is derived anyway.
 sources/**/*.pdf
 sources/**/*.txt
+# Specifications fetched as AsciiDoc source rather than as the built PDF -- same deal,
+# and the manifest gives the `gh api` command that reproduces each one.
+sources/**/*.adoc
 # Vendor simulation/IBIS/HSPICE models are the same deal: Winbond IP, redistributable by
 # them and not by us. `sources/models/` holds the zips; the manifest holds the URLs.
 sources/**/*.zip

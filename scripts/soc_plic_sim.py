@@ -281,8 +281,9 @@ def run_plic_checks(checks, verbose):
             f"claimed {first_claim} then {second_claim}, expected "
             f"{CONSOLE} then {APOLLO}.\n"
             "The spec breaks ties by lowest id. Breaking them the other way "
-            "starves source 1 whenever source 2 is equally busy, which here "
-            "is the USB console losing to the Apollo port permanently.")
+            "reverses the order two tied sources are drained in inside one "
+            "trap -- not whether either is drained, since the handler claims "
+            "until this returns 0. #503.")
 
         # --- a higher priority wins regardless of number ----------------------
         await bus.write(CLAIM, CONSOLE)

@@ -241,10 +241,10 @@ class Plic(wiring.Component):
         # closes over the previous one, so the result is a tree.
         #
         # Iterating from the HIGHEST source number down, with `>=` in the test,
-        # is what makes the lowest source number win a tie. The spec requires
-        # that, and a design that breaks the tie the other way starves source 1
-        # whenever source 2 is equally busy -- which here is the USB console
-        # losing to the Apollo port.
+        # is what makes the lowest source number win a tie -- the spec's rule.
+        # It decides which of two tied sources is drained FIRST, not whether
+        # either is: `irq.rs` claims until this returns 0, so both are serviced
+        # in the same trap either way. #503.
         best_id = C(0, unsigned(8))
         best_priority = C(0, unsigned(PRIORITY_BITS))
         for number in range(count, 0, -1):
