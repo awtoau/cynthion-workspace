@@ -18,17 +18,10 @@ Where the two differ, the "built" column says so.
 | **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
 | **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
-| **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
+| **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** ([why](chips/dpo2036-cc-sbu-protection.md)) | CSR bit only | **make it a source** |
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
-
-## Why the DPO2036 faults must be edge
-
-`FAULTB` is a level, and the event it reports is transient — so a poll answers
-*"is it faulting now"* when the question is *"has it faulted"*. Only a capture
-answers that. The timings are in
-[`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md).
 
 ## There are two things called "priority" and they are unrelated
 
