@@ -131,18 +131,11 @@ ARMS = {
 ARMS.update({f"cpu-{name}": text
              for name, text in soc_cpu_arms.snippets().items()})
 
-# THE CONSTRAINT ITSELF, as an arm.
-#
-# Every arm above is constrained at `SYNC_MHZ` 60 and closes 65-75, so the
-# placer and router stop working the moment they pass -- and the Fmax reported
-# is then how much slack the tool happened to leave, not how fast the netlist
-# can go. 80 MHz is a constraint no arm meets, which keeps the effort on until
-# it gives up. Same netlist family, and paired by seed against the 60 MHz arm of
-# the same configuration.
-_CLK80 = 'import os\nos.environ["CYNTHION_SYNC_MHZ"] = "80"\n'
-ARMS["clk80-base"] = _CLK80
-ARMS.update({f"clk80-cpu-{name}": _CLK80 + soc_cpu_arms.SNIPPET.format(name=name)
-             for name in ("pc0", "dbg-none")})
+# THE CONSTRAINT IS NOT AN ARM, and #478 is why: the same netlist asked for 80
+# MHz instead of 60 places and routes to a bit-identical result on every clock,
+# 12 seeds for 12. `constrain` is kept as the way to re-check that on a new
+# netlist; an arm elaborated at another SYNC_MHZ would measure the netlist
+# change (PLL, baud divisors, ~250 cells), not the ask.
 
 OUTPUT = []
 
@@ -635,13 +628,16 @@ def report(arms, clock):
         emit(f"    {arm:<24} {statistics.median(values):>7.2f} {best:>7.2f} "
              f"{best - statistics.median(values):>+7.2f} {seed:>10}")
 
-    emit()
-    emit("  per seed, MHz -- the pairing, visible")
-    every = sorted({seed for arm in series for seed in by_seed[arm]})
-    emit("    seed  " + "".join(f"{arm[:14]:>15}" for arm in series))
-    for seed in every:
-        emit(f"    {seed:>4}  " + "".join(
-            f"{by_seed[arm].get(seed, float('nan')):>15.2f}" for arm in series))
+    # The pairing, visible -- but only while it fits on a line. Past a handful of
+    # arms it is a 300-column wall that nobody reads; the JSON is the record.
+    if len(series) <= 6:
+        emit()
+        emit("  per seed, MHz -- the pairing, visible")
+        every = sorted({seed for arm in series for seed in by_seed[arm]})
+        emit("    seed  " + "".join(f"{arm[:14]:>15}" for arm in series))
+        for seed in every:
+            emit(f"    {seed:>4}  " + "".join(
+                f"{by_seed[arm].get(seed, float('nan')):>15.2f}" for arm in series))
 
     if "base" in series:
         emit()
