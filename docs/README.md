@@ -73,6 +73,7 @@ in its §13 got there in the first place.
 * [`rtic.md`](rtic.md) — RTIC and the four alternatives: what the workload needs, and what each costs
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
+* [`soc-interrupts.md`](soc-interrupts.md) — Every interrupt source and the chip that raises it, and the two fault lines that reach a register and nothing else
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
 * [`soc-size-review.md`](soc-size-review.md) — Where the SoC's size actually is — per-peripheral area, per-module `.text`, and why two of the obvious ways to measure both give wrong answers
