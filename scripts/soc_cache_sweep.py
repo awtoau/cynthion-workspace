@@ -4,14 +4,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Synthesise the SoC once per cache geometry and report block RAM and Fmax.
+Build the SoC once per cache geometry and report what each one COSTS.
 
     ./scripts/soc_cache_sweep.py                     # the default set
     ./scripts/soc_cache_sweep.py --geometry 64x2 128x1
-    ./scripts/soc_cache_sweep.py --repeat 3          # see the placement spread
 
 Output is mirrored to ./tmp/logs/soc_cache_sweep.log, and the raw rows land in
 ./tmp/soc_cache_sweep.json.
+
+**Fmax is not here, and that is deliberate.** Block RAM and cell counts are
+deterministic and one build settles them; Fmax from one build is a property of
+that placement, and the distribution at fixed occupancy on this design is 9 MHz
+wide (#467). Timing per geometry is `scripts/soc_occupancy_timing.py` with the
+`cpu-l1-*` arms of `scripts/soc_cpu_arms.py`: one netlist per geometry, N
+nextpnr seeds each, paired by seed.
 
 ## The question this exists to settle
 
@@ -36,15 +42,6 @@ Whether to spend spare block RAM on **capacity** (more sets) or on
   spare. A way also needs a way-select mux in the cache hit path, at an Fmax
   the BTB already had to be `--relaxed-btb` to meet.
 - Neither argument settles it. Measuring does.
-
-## Reading the output, and the trap in it
-
-- **Fmax from a single build is not a property of the design.** Two builds
-  of the identical 128x1 geometry closed `clk` at 78.04 and 67.76 MHz -- a
-  spread wider than most of the differences this sweep is looking for.
-  `--repeat` exists because of that: with one build per geometry, the
-  ranking is placement noise wearing a result's clothes. Block RAM and cell
-  counts ARE deterministic and can be trusted from a single build.
 
 ## What this does NOT measure
 
@@ -92,7 +89,6 @@ DEFAULT_GEOMETRIES = [
     (32, 4),    # 8 KiB 4-way          -- associativity pushed as far as it goes
 ]
 
-FMAX = re.compile(r"Max frequency for clock\s+'([^']+)':\s+([0-9.]+)\s+MHz")
 METRICS = re.compile(r"metrics: recorded as build #(\d+) -- "
                      r"(\d+) COMB, (\d+) FF, (\d+) BRAM")
 
@@ -157,11 +153,6 @@ def build_once(sets, ways):
         # published "50 BRAM" -- some previous build's figure, presented in a
         # results table as a measurement of 64x2.
         #
-        # It is worse under `--repeat`. The second build of a geometry has
-        # byte-identical sources and the same HEAD, so its digest ALWAYS matches
-        # the first. Every repeat would skip synthesis and echo the first run's
-        # numbers -- and the sweep would report perfect reproducibility as
-        # evidence, which is the exact opposite of what --repeat is for.
         if DIGEST.exists():
             DIGEST.unlink()
         result = subprocess.run(
@@ -200,8 +191,7 @@ def build_once(sets, ways):
 
     row = {"sets": sets, "ways": ways, "ok": True,
            "log": str(per_build),
-           "kib": sets * ways * 64 // 1024,
-           "clocks": {name: float(mhz) for name, mhz in FMAX.findall(output)}}
+           "kib": sets * ways * 64 // 1024}
     found = METRICS.search(output)
     if found:
         row.update(build=int(found.group(1)), comb=int(found.group(2)),
@@ -211,36 +201,19 @@ def build_once(sets, ways):
 
 def report(rows):
     emit("")
-    emit(f"{'geometry':>10}  {'per cache':>9}  {'BRAM':>5}  {'COMB':>6}  "
-         f"{'FF':>6}  {'clk MHz':>8}")
+    emit(f"{'geometry':>10}  {'per cache':>9}  {'BRAM':>5}  {'COMB':>6}  {'FF':>6}")
     for row in rows:
         name = f"{row['sets']}x{row['ways']}"
         if not row.get("ok"):
             emit(f"{name:>10}  {row.get('why', 'failed')}")
             continue
-        clk = row.get("clocks", {}).get("$glbnet$clk")
         emit(f"{name:>10}  {row['kib']:>7} KiB  {row.get('bram', 0):>5}  "
-             f"{row.get('comb', 0):>6}  {row.get('ff', 0):>6}  "
-             f"{clk if clk else '--':>8}")
-
-    ok = [r for r in rows if r.get("ok")]
-    if len({(r["sets"], r["ways"]) for r in ok}) < len(ok):
-        spread = {}
-        for row in ok:
-            spread.setdefault((row["sets"], row["ways"]), []).append(
-                row.get("clocks", {}).get("$glbnet$clk"))
-        emit("")
-        emit("PLACEMENT SPREAD -- the reason --repeat exists")
-        for (sets, ways), values in spread.items():
-            got = [v for v in values if v]
-            if len(got) > 1:
-                emit(f"  {sets}x{ways}: {', '.join(f'{v:.2f}' for v in got)} MHz "
-                     f"-- range {max(got) - min(got):.2f}")
+             f"{row.get('comb', 0):>6}  {row.get('ff', 0):>6}")
 
     emit("")
-    emit("Block RAM and cell counts are deterministic. Fmax from ONE build is a")
-    emit("property of that placement, not of the design -- 128x1 has measured")
-    emit("both 78.04 and 67.76 MHz. Do not rank geometries on a single number.")
+    emit("Block RAM and cell counts are deterministic; one build settles them.")
+    emit("Fmax per geometry is soc_occupancy_timing.py's cpu-l1-* arms -- a")
+    emit("distribution over nextpnr seeds, because one build's is placement.")
     emit("")
     emit("This says what each geometry COSTS. What it BUYS is the frontend-stall")
     emit("counter under a workload that preempts, which synthesis cannot tell you.")
@@ -252,19 +225,15 @@ def main():
     parser.add_argument("--geometry", nargs="*", type=geometry,
                         default=DEFAULT_GEOMETRIES,
                         help="SETSxWAYS, e.g. 128x1 64x2. Ways must be a power of two.")
-    parser.add_argument("--repeat", type=int, default=1,
-                        help="builds per geometry; >1 exposes the placement spread")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
-    emit(f"cache geometry sweep: {len(args.geometry)} geometries "
-         f"x {args.repeat} build(s)")
+    emit(f"cache geometry sweep: {len(args.geometry)} geometries")
 
     rows = []
     for sets, ways in args.geometry:
-        for _ in range(args.repeat):
-            rows.append(build_once(sets, ways))
-            RESULTS.write_text(json.dumps(rows, indent=2))
+        rows.append(build_once(sets, ways))
+        RESULTS.write_text(json.dumps(rows, indent=2))
 
     report(rows)
     emit(f"rows -> {RESULTS}")
