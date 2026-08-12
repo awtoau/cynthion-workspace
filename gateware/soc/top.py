@@ -1331,11 +1331,15 @@ class AwtoSoc(Elaboratable):
             hyper_probe.dll_ready.eq(dll_ready),
             hyper_probe.burstdet.eq(burstdet),
             hyper_probe.stall.eq(bootram.probe_stall),
-            # The DQS tap, out to the PHY through the staging side of the mode
-            # mux. A static configuration value, so it crosses as a level.
-            hyper_ram.stage.readclksel.eq(hyper_probe.sel[:3]),
-            hyper_ram.stage.read_phase.eq(hyper_probe.sel[3]),
         ]
+        # The DQS tap, out to the PHY through the staging side of the mux. Two
+        # flops for metastability, not for coherence: the bits are a
+        # configuration this firmware changes between passes, and a change is
+        # already a step nothing is timed across.
+        m.submodules += FFSynchronizer(hyper_probe.sel[:4],
+                                       Cat(hyper_ram.stage.readclksel,
+                                           hyper_ram.stage.read_phase),
+                                       o_domain="hr")
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge
         decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
