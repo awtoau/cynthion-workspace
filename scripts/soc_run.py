@@ -162,9 +162,18 @@ def synthesis_floor():
     Measured 2026-08-10, and the workings are in #351: 138 s alone, and each
     further concurrent build adds ~17 s to every one of them. 1.25x that.
     `soc_build_fanout.py` sets the variable; a lone build leaves it unset.
+
+    `CYNTHION_SYNTHESIS_FLOOR_SECONDS` raises it for a design this arithmetic
+    does not describe -- a bigger variant is a longer place-and-route, and the
+    figures above are the shipping SoC's. #440 is what the missing override
+    cost: a merged build killed at 172 s left a half-written `top.tim` whose
+    intermediate frequencies parsed as a completed run. Same class as the CK
+    and sync ceilings -- an argument rather than an edit, visible in the command
+    that raised it.
     """
     jobs = max(int(os.environ.get("CYNTHION_BUILD_JOBS", "1") or 1), 1)
-    return 1.25 * (138 + 17 * (jobs - 1))
+    override = float(os.environ.get("CYNTHION_SYNTHESIS_FLOOR_SECONDS") or 0)
+    return max(1.25 * (138 + 17 * (jobs - 1)), override)
 
 
 def run(cmd, cwd=None, env=None, floor=None):
@@ -696,8 +705,16 @@ def main():
     # literal in `firmware/cynthion-soc/src/bist.rs` precisely so that the PAC
     # does not have to change, and `tests/test_bist_constants.py` holds that
     # literal to `top.py` in 0.01 s.
-    if not args.c_firmware and os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0"):
-        emit("peripheral map NOT regenerated: CYNTHION_HYPERRAM_BIST has its own")
+    # The #432 closure probe is the same argument twice over: its map has BOTH
+    # halves, and `CYNTHION_SYNC_MHZ` puts a different clock constant in the
+    # generated PAC. Neither belongs in the committed shipping one.
+    measurement_variant = (
+        any(os.environ.get(name, "") not in ("", "0")
+            for name in ("CYNTHION_HYPERRAM_BIST", "CYNTHION_HYPERRAM_MERGED"))
+        or variant.value("CYNTHION_SYNC_MHZ")
+        != variant.SYNC_DEFAULT_MHZ[False])
+    if not args.c_firmware and measurement_variant:
+        emit("peripheral map NOT regenerated: this variant has its own")
         emit("  no HYPERRAM window and no BOOTRAM in that variant, by design.")
         emit("  the committed PAC stays the shipping one; the BIST peripheral is")
         emit("  a literal in bist.rs, checked by tests/test_bist_constants.py.")
