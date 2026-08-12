@@ -204,10 +204,11 @@ def run(cmd, cwd=None, env=None, floor=None):
 def firmware_digest(path=None):
     """A short hash of the firmware image, for saying WHICH firmware.
 
-    The provenance already in the build -- a short git hash from `build.rs` into
-    USERCODE -- cannot answer this. A git hash does not move when a file is edited
-    and not committed, which is the common case while working, and is exactly the
-    case where a stale load is hardest to notice.
+    The provenance already in the build -- the short git hash `build.rs` compiles
+    in, and the one the gateware stamps into USERCODE -- cannot answer this. A
+    git hash does not move when a file is edited and not committed, which is the
+    common case while working, and is exactly the case where a stale load is
+    hardest to notice.
 
     So: hash the bytes. `soc_run.py` prints this for what it built and again for
     what it read back out of the bitstream, and the two must agree.
@@ -395,7 +396,11 @@ def bitcache_put(digest, emit):
     have = BITCACHE / digest
     have.mkdir(parents=True, exist_ok=True)
     kept = 0
-    for name in ("top.bit", "top.svf", "firmware.hex", "gateware-digest.txt"):
+    # `usercode.json` travels with the bitstream: it is what a USERCODE read off
+    # the part resolves to, and a cache hit that left it behind would restore a
+    # bitstream nobody could attribute.
+    for name in ("top.bit", "top.svf", "firmware.hex", "gateware-digest.txt",
+                 "usercode.json"):
         source = BITSTREAM.parent / name
         if source.exists():
             shutil.copy2(source, have / name)

@@ -75,8 +75,7 @@ from amaranth_soc import gpio
 
 from peripherals.i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
 from peripherals.sideband_csr import SidebandControl
-from peripherals.gateware_id import (GatewareId, MAGIC, pack_cpu,
-                         CPU_M, CPU_A, CPU_C, CPU_RDTIME)
+from peripherals.fabric_status import FabricStatus, DIE_PRESENT
 from peripherals.ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
 from clocks import PHY_PAD_RESET_CYCLES, PHY_PREP_CYCLES
 from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C, BUS_AUX_C, BUS_POWER_MONITOR,
@@ -1408,21 +1407,16 @@ def run_sideband_checks(checks, verbose):
         f"flag is the hazard this peripheral is shaped to avoid")
 
 
-def run_gateware_id_checks(checks, verbose):
-    """The build-id window, byte by byte, in the order firmware reads it.
+def run_fabric_status_checks(checks, verbose):
+    """The live window, byte by byte, in the order firmware reads it.
 
-    The values are constants, so what is being simulated is the map: that seven
-    registers land where `src/info.rs` looks for them, that a 32-bit value comes
-    back little-endian from four byte reads, and that the packing of `built` and
-    `cpu` survives the trip. An offset that is wrong here reports a plausible
-    number from the wrong register on the board, which is the failure this whole
-    peripheral exists to make loud.
+    What the map has to get right: `die` at +0x00 and `bus_fault` at +0x04, a
+    32-bit value coming back little-endian from four byte reads, and the three
+    counters inside `bus_fault` landing in the fields `src/info.rs` shifts them
+    out of. An offset wrong here reports a plausible number from the wrong
+    register on the board.
     """
-    # Fixed inputs, so the expected words are arithmetic rather than whatever
-    # the tree happened to be when the test ran.
-    built = 0xA1B2_C3D4
-    dut = GatewareId(sync_hz=60_000_000, usb_hz=60_000_000, cache_sets=64,
-                     built=built, git=0x8123_4567)
+    dut = FabricStatus()
     seen = {}
 
     async def testbench(ctx):
@@ -1436,15 +1430,18 @@ def run_gateware_id_checks(checks, verbose):
                 value |= await bus.read(offset + index) << (8 * index)
             return value
 
-        for name, offset in (("magic", 0x00), ("git", 0x04), ("built", 0x08),
-                             ("sync_hz", 0x0c), ("cpu", 0x10),
-                             ("usb_hz", 0x14)):
-            seen[name] = await word(offset)
-        seen["die_low"] = await bus.read(0x18)
-        seen["die_high"] = await bus.read(0x19)
+        # Distinct in every field, so a swapped shift shows up as a wrong number
+        # rather than as the same number.
+        ctx.set(dut.fault_unclaimed, 0x12)
+        ctx.set(dut.fault_timeouts, 0x34)
+        ctx.set(dut.fault_worst, 0xBEEF)
+
+        seen["die_low"] = await bus.read(0x00)
+        seen["die_high"] = await bus.read(0x01)
+        seen["bus_fault"] = await word(0x04)
         # Twice, because a register whose read changed something would be a
         # register a diagnostic could not poll.
-        seen["magic_again"] = await word(0x00)
+        seen["bus_fault_again"] = await word(0x04)
 
     sim = Simulator(Fragment.get(dut, None))
     sim.add_clock(1e-6)
@@ -1452,45 +1449,24 @@ def run_gateware_id_checks(checks, verbose):
     sim.run()
 
     checks.check(
-        "the build-id window answers with its magic",
-        seen.get("magic") == MAGIC,
-        f"read {seen.get('magic')!r}, expected {MAGIC:#010x}. Zero here is what "
-        f"an address that decodes to nothing reads as, which is exactly the "
-        f"case the magic is there to distinguish.")
-    checks.check(
-        "the git word carries the hash and the dirty bit",
-        seen.get("git") == 0x8123_4567,
-        f"read {seen.get('git')!r}; bit 31 is dirty and the rest is the short "
-        f"hash, the same encoding build_helpers.usercode() stamps into USERCODE")
-    checks.check(
-        "the build identity comes back whole, all 32 bits",
-        seen.get("built") == built,
-        f"read {seen.get('built')!r}, expected {built:#010x}. The word is the "
-        f"gateware source digest, and every byte of it is the discriminator -- "
-        f"a truncated read would name the wrong build (#441).")
-    checks.check(
-        "the clock frequencies are reported in Hz",
-        seen.get("sync_hz") == 60_000_000 and seen.get("usb_hz") == 60_000_000,
-        f"sync {seen.get('sync_hz')!r} usb {seen.get('usb_hz')!r}; these are "
-        f"what target::TIME_HZ is checked against")
-    checks.check(
-        "the cpu word carries the cache geometry and the ISA",
-        seen.get("cpu") == pack_cpu(64, 1, CPU_M | CPU_A | CPU_C | CPU_RDTIME),
-        f"read {seen.get('cpu')!r}: sets {seen.get('cpu', 0) & 0xffff}, ways "
-        f"{(seen.get('cpu', 0) >> 16) & 0xff}. misa on this core reports rv32im "
-        f"whatever it was generated with, so this is the other account.")
-    checks.check(
         "with no platform there is no DTR, and the register says so",
         seen.get("die_low") == 0 and seen.get("die_high") == 0,
         f"die read {seen.get('die_high')!r}{seen.get('die_low')!r}. The block is "
-        f"a hard macro instantiated only when a device is being built for; a "
-        f"reading of zero from a design that HAS one would mean a conversion "
-        f"that never completed, and bit 8 is what tells those apart.")
+        f"a hard macro instantiated only when a device is being built for; bit 8 "
+        f"({DIE_PRESENT:#x}) is what tells 'no block' from 'no conversion yet', "
+        f"and it is the window's presence guard.")
+    checks.check(
+        "the fault counters land in their own fields",
+        seen.get("bus_fault") == 0xBEEF_3412,
+        f"read {seen.get('bus_fault')!r}, expected 0xbeef3412: unclaimed in "
+        f"7..0, timeouts in 15..8, worst wait in 31..16. `worst` is the number "
+        f"that keeps BUS_TIMEOUT_CYCLES honest (#409), so a shift wrong here "
+        f"silently reports the margin as something else.")
     checks.check(
         "reading the window twice gives the same answer",
-        seen.get("magic_again") == seen.get("magic"),
-        f"{seen.get('magic')!r} then {seen.get('magic_again')!r}; no read here "
-        f"may change anything")
+        seen.get("bus_fault_again") == seen.get("bus_fault"),
+        f"{seen.get('bus_fault')!r} then {seen.get('bus_fault_again')!r}; no "
+        f"read here may change anything")
 
 
 def main():
@@ -1527,8 +1503,8 @@ def main():
     run_ulpi_checks(checks, args.verbose)
     emit()
 
-    emit("gateware_id.GatewareId -- what the bitstream says it is")
-    run_gateware_id_checks(checks, args.verbose)
+    emit("fabric_status.FabricStatus -- what the die and the bus are doing")
+    run_fabric_status_checks(checks, args.verbose)
     return checks.summary()
 
 

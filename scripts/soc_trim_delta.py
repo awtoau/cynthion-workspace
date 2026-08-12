@@ -16,11 +16,6 @@ map, the generated PAC and the firmware's addresses are unchanged and the only
 difference is the logic -- which UNDERSTATES a real deletion by the CSR bridge
 and the decoder window it would also remove.
 
-`GatewareId`'s `built` timestamp and git hash are pinned on both sides. They are
-baked in as 32-bit constants and synthesis folds them, so two builds a minute
-apart land on different LUT counts for no reason connected to the trim -- 153
-TRELLIS_COMB, measured, between two builds of one design (#441).
-
     ./scripts/soc_trim_delta.py --trim spi-controller --runs 3
     ./scripts/soc_trim_delta.py --list
 
@@ -152,18 +147,6 @@ import fast_build_env
 # this leaves is elaboration's, not the placer's (#441, #306).
 os.environ["AMARANTH_nextpnr_opts"] = "--threads 31 --router router2"
 
-# PIN the identity constants -- see the module docstring.
-import peripherals.gateware_id as gateware_id
-from datetime import datetime, timezone
-_real_id = gateware_id.GatewareId
-
-class _Fixed(_real_id):
-    def __init__(self, **kwargs):
-        kwargs.setdefault("built", datetime(2000, 1, 1, tzinfo=timezone.utc))
-        kwargs.setdefault("git", 0)
-        super().__init__(**kwargs)
-
-gateware_id.GatewareId = _Fixed
 
 {setup}
 

@@ -106,10 +106,10 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 1,
     },
     Peripheral {
-        name: "board_gateware",
+        name: "board_fabric",
         base: 0xf0000640,
-        size: 0x00000020,
-        registers: 8,
+        size: 0x00000008,
+        registers: 2,
     },
     Peripheral {
         name: "board_clocks",

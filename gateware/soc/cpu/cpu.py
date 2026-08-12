@@ -203,6 +203,20 @@ GENERATE_FLAGS = [
 ]
 
 
+def isa_generated(flags=None):
+    """Which instruction classes this core is GENERATED with.
+
+    `misa` reads 0x40001100 -- `rv32im` -- whatever it was generated with, so
+    this list is the only account of A, C and rdtime. `soc_generate_pac.py`
+    writes it into the PAC and `usercode_map.py` into the build record; nothing
+    transcribes it.
+    """
+    flags = GENERATE_FLAGS if flags is None else flags
+    return {name: f"--with-{flag}" in flags
+            for name, flag in (("m", "rvm"), ("a", "rva"),
+                               ("c", "rvc"), ("rdtime", "rdtime"))}
+
+
 # The SoC's address map, as PMA regions. Anything not listed here is
 # unreachable rather than merely uncached.
 DEFAULT_REGIONS = [

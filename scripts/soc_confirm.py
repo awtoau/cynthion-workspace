@@ -40,6 +40,13 @@ is the whole value.
 | `tty-unbound`       | device enumerated, no tty yet                 | USB present, no node -- retryable |
 | `jtag-contended`    | the ECP5 will not answer JTAG                 | IDCODE `ffffffff`/`0` -- retryable, inconclusive |
 | `silent-firmware`   | everything present and free, no reply         | the residual, and the only one that IS the firmware |
+| `wrong-part`        | this is not the die the build was packed for  | IDCODE against the build record's, from prjtrellis |
+| `stale-bitstream`   | a design is running and it is not this build  | USERCODE against the build record's |
+| `declared-clock`    | the build asks for a clock this part cannot do | the record's `sync_hz`/`usb_hz` against `soc/clocks.py` |
+
+The last three need an EXPECTATION -- the `usercode.json` the gateware build
+writes beside its bitstream (`gateware/usercode_map.py`). Without one they are
+not decided either way, and `confirm()` says so rather than passing.
 
 ## What it cannot distinguish
 
@@ -51,8 +58,11 @@ is the whole value.
   invisible and would score as `silent-firmware`.
 - `jtag-contended` is deliberately inconclusive: a design holding the shared JTAG
   bus and a wedged part both read back `ffffffff`.
-- Nothing here is about WHICH bitstream is running -- that is the gateware digest
-  and USERCODE check in `soc_run.py`, and this does not duplicate it.
+- `wrong-part` and `stale-bitstream` are only as good as the record beside the
+  bitstream. A build directory with no `usercode.json` leaves both undecided.
+- `declared-clock` is about what the build ASKED FOR, not what the board runs at.
+  Counting `sync` needs the ClockMonitor and the CPU; `info` does that, and the
+  two checks are from opposite directions.
 - `--expect design` stops at DONE: a probe read over JTAG registers presents no
   console, so "running" is as far as the evidence goes. `--expect console`
   requires the console to enumerate without prompting it, for callers that
@@ -177,6 +187,10 @@ class Evidence:
     reply: bytes | None = None          # what the shell said to a CR
     idcode: int | None = None           # ECP5 IDCODE from the JTAG scan
     status: int | None = None           # ECP5 configuration status register
+    usercode: int | None = None         # ECP5 USERCODE, opcode 0xc0
+    # The `usercode.json` beside the bitstream that was just loaded. None is
+    # "nothing to compare against", which is not "they agree".
+    expected: dict | None = None
     jtag_console: bytes | None = None   # the JTAG-pin UART, Apollo's own CDC node
     # How far confirmation can go for THIS bitstream. See `EXPECT`.
     expect: str = "shell"
@@ -193,6 +207,9 @@ class Evidence:
             "idcode": None if self.idcode is None else f"{self.idcode:08x}",
             "status": None if self.status is None else f"{self.status:08x}",
             "done": None if self.status is None else bool(self.status & STATUS_DONE),
+            "usercode": (None if self.usercode is None
+                         else f"{self.usercode:08x}"),
+            "expected": self.expected,
         }
 
 
@@ -239,12 +256,93 @@ def from_jtag(ev: Evidence, when_running) -> Verdict:
     return when_running()
 
 
+def from_identity(ev: Evidence):
+    """Is this the right part running the right build? A Verdict, or None.
+
+    None means "not decided here", which happens when there is no expectation to
+    compare against or the part did not answer -- never when the two agree and
+    never when they disagree.
+
+    FIRST, before the console. A design that is running answers a prompt exactly
+    as well when it is the wrong one, so `ok` from a reply would be a pass over
+    the top of a stale load.
+    """
+    want = ev.expected
+    if not want:
+        return None
+
+    # The part, before the bitstream. A different die makes every number taken
+    # from this board a number about a different device, and it would otherwise
+    # be reported as a stale bitstream -- which is the wrong repair.
+    if want.get("idcode") is not None and ev.idcode not in (None, 0, 0xFFFFFFFF):
+        if ev.idcode != want["idcode"]:
+            return Verdict("wrong-part", "this is not the part the build was packed for", [
+                f"  IDCODE {ev.idcode:08x}, the build wants {want['idcode']:08x} "
+                f"({want.get('device')})",
+                "  prjtrellis' devices.json is where the expected value comes from,",
+                "  through the platform's own `device` string -- not typed here.",
+                "  ecppack packed for one die and this is another: timing, resources",
+                "  and every measurement from this board are about a different chip.",
+            ])
+
+    if ev.usercode is not None and ev.usercode != want.get("usercode"):
+        found = None
+        try:
+            import usercode_map
+
+            found = usercode_map.lookup(ev.usercode)
+        except Exception:
+            pass
+        lines = [
+            f"  USERCODE {ev.usercode:08x}, this build stamped "
+            f"{want.get('usercode', 0):08x}",
+            f"  wanted: {(want.get('commit') or '?')[:7]}"
+            f"{' dirty' if want.get('dirty') else ''} {want.get('variant')}",
+        ]
+        if found:
+            lines.append(f"  running: {(found.get('commit') or '?')[:7]}"
+                         f"{' dirty' if found.get('dirty') else ''} "
+                         f"{found.get('variant')} from {found.get('build_dir')}")
+        else:
+            lines.append("  running: no record for those 32 bits -- a build from "
+                         "another tree, or one whose record was cleaned away")
+        lines += [
+            "  The board is configured with a bitstream that is not the one just",
+            "  built. Every peripheral address, clock and geometry the firmware",
+            "  assumes may be wrong, and nothing on the board would say so.",
+        ]
+        return Verdict("stale-bitstream", "a design is running and it is not this build",
+                       lines)
+
+    # What the build ASKED the PLL for, against what the part can do. Cheap, and
+    # it is the one check that does not need the board to have answered.
+    try:
+        import usercode_map
+
+        problems = usercode_map.clock_problems(want)
+    except Exception:
+        problems = []
+    if problems:
+        return Verdict("declared-clock", "this build declares a clock the part cannot deliver",
+                       ["  " + line for line in problems] + [
+                           "  Built for {} -{}, usercode {:08x}.".format(
+                               want.get("device"), want.get("speed"),
+                               want.get("usercode", 0)),
+                       ])
+    return None
+
+
 def diagnose(ev: Evidence) -> Verdict:
     """The evidence to a named cause. Pure -- `tests/test_soc_confirm.py` drives it.
 
-    Ordered by what is cheapest to be certain about: a reply settles it, then the
-    bus census, and only then the JTAG evidence which is the least direct.
+    Ordered by what is cheapest to be certain about: identity settles it outright,
+    then a reply, then the bus census, and only then the JTAG evidence which is
+    the least direct.
     """
+    wrong = from_identity(ev)
+    if wrong is not None:
+        return wrong
+
     if ev.expect == "design":
         # A bitstream with no console -- a probe read over JTAG registers, say.
         # DONE is the whole of the evidence there is.
@@ -487,13 +585,42 @@ def ask_jtag(ev):
                if ev.status is not None else ", status unreadable"))
 
 
-def gather(*, node=None, jtag=True, expect="shell"):
-    """Every probe, cheapest first, stopping as soon as the verdict is decided."""
+def ask_identity(ev):
+    """IDCODE and USERCODE, and what the build that was loaded expected.
+
+    Only when there IS an expectation: without one there is nothing to compare
+    against, and JTAG_START drives the pins the design's second UART sits on --
+    so an unconditional read would disturb a healthy board to learn nothing.
+    """
+    from soc_usercode import read_identity
+
+    try:
+        ev.idcode, ev.usercode = read_identity()
+    except Exception as failure:
+        say(f"  jtag identity: {failure}")
+        return
+    say(f"  jtag: IDCODE "
+        f"{'unread' if ev.idcode is None else f'{ev.idcode:08x}'}, USERCODE "
+        f"{'unread' if ev.usercode is None else f'{ev.usercode:08x}'}")
+
+
+def gather(*, node=None, jtag=True, expect="shell", expected=None):
+    """Every probe, cheapest first, stopping as soon as the verdict is decided.
+
+    `expected` is the build record beside the bitstream that was loaded
+    (`gateware/usercode_map.py`). Given one, the part's identity is read FIRST:
+    a stale bitstream answers a prompt as readily as the right one, so asking
+    the console first would report `ok` before the question was put.
+    """
     import usb_ids
 
     if expect not in EXPECT:
         raise ValueError(f"expect must be one of {EXPECT}, not {expect!r}")
-    ev = Evidence(expect=expect)
+    ev = Evidence(expect=expect, expected=expected)
+    if expected and jtag:
+        ask_identity(ev)
+        if from_identity(ev) is not None:
+            return ev
     ev.apollo = usb_present(APOLLO_PID)
     ev.console_usb = usb_present(usb_ids.product_id(CONSOLE))
     ev.console_node = node or usb_ids.find_tty(CONSOLE)
@@ -516,10 +643,14 @@ def gather(*, node=None, jtag=True, expect="shell"):
     return ev
 
 
-def confirm(*, node=None, jtag=True, expect="shell"):
+def confirm(*, node=None, jtag=True, expect="shell", expected=None):
     """Gather, diagnose, and say so. Returns the Verdict."""
     say(f"confirming a design is running, expecting a {expect} (#360):")
-    verdict = diagnose(gather(node=node, jtag=jtag, expect=expect))
+    if expected is None:
+        say("  no build record to compare against: WHICH bitstream is running "
+            "is not decided here")
+    verdict = diagnose(gather(node=node, jtag=jtag, expect=expect,
+                              expected=expected))
     if verdict.ok:
         say(f"CONFIRMED: {verdict.headline}")
     else:
@@ -596,6 +727,17 @@ def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
             say(line)
         return 1
 
+    # WHAT WAS LOADED, from beside the bitstream itself rather than from an
+    # argument. This is the party doing the loading, so it is the party that can
+    # be held to the claim -- and the record travels with the .bit through the
+    # bitcache, so a restored bitstream is still attributable.
+    import usercode_map
+
+    expected = usercode_map.read_build_record(Path(bitstream).parent)
+    if expected is None:
+        say(f"  no {usercode_map.RECORD_NAME} beside {Path(bitstream).name}: "
+            f"the identity of what is being loaded is not checkable")
+
     from subprocess_timeout_from_history import run_bounded
 
     for attempt in range(1, tries + 1):
@@ -609,13 +751,16 @@ def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
             continue
         if expect != "design":
             wait_for_console()
-        verdict = confirm(node=node, jtag=True, expect=expect)
+        verdict = confirm(node=node, jtag=True, expect=expect, expected=expected)
         if verdict.ok:
             say(f"configured {Path(bitstream).name} and the design answers"
                 + (f" (attempt {attempt})" if attempt > 1 else ""))
             return 0
         if verdict.name in ("silent-firmware", "stolen-port", "wrong-port",
-                            "board-absent", "control-unplugged"):
+                            "board-absent", "control-unplugged",
+                            # A second configure of the same file loads the same
+                            # bitstream onto the same die. Retrying restates it.
+                            "wrong-part", "stale-bitstream", "declared-clock"):
             # Retrying cannot change any of these. Stop and say which it is
             # rather than spending two more configures on the same answer.
             return 1
@@ -636,6 +781,10 @@ def main():
     parser.add_argument("--node", help="a tty to use instead of the USB console")
     parser.add_argument("--no-jtag", action="store_true",
                         help="skip the JTAG probe; USB and the console only")
+    parser.add_argument("--expect-build", type=Path,
+                        help="a build directory whose usercode.json the part "
+                             "must match; without it, WHICH bitstream is "
+                             "running is not decided")
     parser.add_argument("--expect", choices=EXPECT, default="shell",
                         help="how far confirmation can go for this bitstream: "
                              "prompt the shell, require the console to "
@@ -659,9 +808,15 @@ def main():
         ev = Evidence(apollo=usb_present(APOLLO_PID),
                       console_usb=usb_present(usb_ids.product_id(CONSOLE)))
     else:
+        import usercode_map
+
+        expected = (usercode_map.read_build_record(args.expect_build)
+                    if args.expect_build else None)
+        if args.expect_build and expected is None:
+            say(f"no {usercode_map.RECORD_NAME} in {args.expect_build}")
         started = time.perf_counter()
         ev = gather(node=args.node, jtag=not args.no_jtag,
-                    expect=args.expect)
+                    expect=args.expect, expected=expected)
         verdict = diagnose(ev)
         say(f"  ({time.perf_counter() - started:.1f} s of evidence)")
 

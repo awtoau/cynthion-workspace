@@ -256,9 +256,15 @@ def test_the_cli_names_a_stolen_port_end_to_end():
         os.close(replica)
 
 
-def test_every_verdict_the_module_can_return_is_covered_here():
-    """A new verdict must arrive with a test, or this fails and names it."""
+def test_every_verdict_the_module_can_return_is_covered():
+    """A new verdict must arrive with a test, or this fails and names it.
+
+    Across the whole suite, not this file alone: the identity verdicts are
+    driven from `test_usercode_stale_load.py`, which owns their controls.
+    """
     produced = set(re.findall(r'Verdict\("([a-z-]+)"',
                               (ROOT / "scripts" / "soc_confirm.py").read_text()))
-    covered = set(re.findall(r'== "([a-z-]+)"', Path(__file__).read_text()))
+    covered = set()
+    for test in sorted(Path(__file__).parent.glob("test_*.py")):
+        covered |= set(re.findall(r'== "([a-z-]+)"', test.read_text()))
     assert not produced - covered, f"verdicts with no test: {sorted(produced - covered)}"
