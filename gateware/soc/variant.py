@@ -74,12 +74,19 @@ VARIANT_ENV = (
 # path and not on the other, and #410 is the failure: a raw nextpnr ERROR at the
 # documented invocation, with nothing naming the CK as the cause.
 #
-# non-DQS 84 is the fabric ceiling -- 90 does not close. DQS 84 would be a third
-# of what the path reaches, so it is the PART's 166 MHz rating that binds there
-# and 160 is the rung under it; 168 and 180 close too and are for the ceiling
-# sweep, which is the rig's job and not a default's. Measurements and their
-# conditions: #410.
-CK_DEFAULT_MHZ = {True: "160", False: "84"}
+# NEITHER IS THE CEILING, and that is the point of a default.
+#
+# non-DQS: the ceiling is 84 and 90 does not close, but two deterministic builds
+# of 84 at different commits measured 90.03 and 85.51 MHz -- 4.5 MHz of
+# netlist-to-netlist movement against 1.8% of margin. 80 is the rung below, at
+# 8%. DQS: 180 closes, but the PART is rated 166 MHz and a default must not
+# overclock it; 160 is the rung under that, and 168/180 are the ceiling sweep's
+# business.
+#
+# So each default is one rung below what binds it, and what binds it differs:
+# the fabric on one path, the part on the other. Measurements, their conditions
+# and the full ladder: #410.
+CK_DEFAULT_MHZ = {True: "160", False: "80"}
 
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
 
