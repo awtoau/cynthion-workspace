@@ -10,21 +10,13 @@ compare against nextpnr on the same RTL.
 
 ## Why the question is worth asking
 
-nextpnr on this design, same source, only the requested SYNC_MHZ varying:
+nextpnr's achieved figure is a property of the design, not of the request: 60,
+80 and 90 all come back at 82-83 MHz, inside the placement noise floor (#482).
+So the question is no longer whether to trust that number but whether an
+independent place-and-route beats it.
 
-| requested | achieved | outcome |
-|---|---|---|
-| 60 | 72.6 MHz | builds  |
-| 80 | 76.3 MHz | builds  |
-| 90 | 86.1 MHz | refused |
-| 100| 92.0 MHz | refused |
-
-The *achieved* figure rises with the request, so the placer works harder against
-a tighter constraint and 92 MHz is where nextpnr stopped improving rather than a
-wall in the silicon.  Diamond's timing-driven placer is generally stronger on
-marginal designs, and the part has headroom -- the 12F-marked die is a 25F, and
-20,143 LUT4s computed correctly at 86.43 MHz on it
-(#116, pluribus#98) while this SoC uses 7,249.
+The part has headroom for the attempt -- the 12F-marked die is a 25F, and 20,143
+LUT4s computed correctly at 86.43 MHz on it (#116, pluribus#98).
 
 ## Which comparison is actually available
 
