@@ -43,23 +43,13 @@ ROOT = Path(__file__).resolve().parent.parent
 ARMS = {
     "base": {},
 
-    # PERFORMANCE COUNTERS. `PerformanceCounterPlugin_logic_ignoreNextCommit`
-    # appears in the net names on the measured `clk` critical path, which runs
-    # entirely inside TrapPlugin's FSM. Whether the counters are what widens it
-    # is a measurement.
+    # PERFORMANCE COUNTERS, which share net names with the trap FSM on the
+    # measured critical path.
     #
-    # `--performance-counters 0` keeps the plugin (mcycle + minstret) with no
-    # additional counters; dropping the option removes zicntr/zihpm from the
-    # ISA, and `withPerformanceCounters` is that ISA check
-    # (`Param.scala:590,1174`), so the plugin is not instantiated at all.
-    #
-    # DROPPING THE OPTION IS NOT REMOVAL, and `digest` is what said so:
-    # `--performance-counters` dropped generates a core byte-identical to `pc0`.
-    # `--with-rdtime` adds zicntr (`Param.scala:802`) and
-    # `withPerformanceCounters` is `zihpm || zicntr` (`:590`), so rdtime and the
-    # plugin are ONE switch. `pc-none` therefore drops rdtime too, and with it
-    # the `PrivilegedPlugin_logic_rdtime` port -- diagnostic only, since the SoC
-    # requires `rdtime` and the CLINT's `mtime` to be one counter (`cpu.py`).
+    # `pc0` keeps the plugin with no additional counters. Removing it needs
+    # `--with-rdtime` dropped as well -- rdtime and the plugin are one switch
+    # (#471) -- and with it the `PrivilegedPlugin_logic_rdtime` port. `pc-none`
+    # is diagnostic only: this SoC requires rdtime.
     "pc0": {"flags": {"--performance-counters": "0"}},
     "pc2": {"flags": {"--performance-counters": "2"}},
     "pc8": {"flags": {"--performance-counters": "8"}},
