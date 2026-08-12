@@ -70,7 +70,7 @@ in its §13 got there in the first place.
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`../linux-on-cynthion/`](../linux-on-cynthion/) — **Linux on Cynthion**: the analysis, the bring-up plan, and the sweep scripts behind them
-* [`rtic.md`](rtic.md) — RTIC and the four alternatives: what the workload needs, and what each costs
+* [`rtic.md`](rtic.md) — **The concurrency design**: tasks on one stack, priority in software, and the I-cache that sizes it
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`soc-interrupts.md`](soc-interrupts.md) — **The interrupt design**: every interrupt-capable signal, what should raise one, and the four decisions still open

@@ -1,210 +1,101 @@
-# RTIC on this SoC: the measurement behind the decision, and what it costs
+# RTIC — the concurrency design
 
-**RTIC is the concurrency model** — [`architecture.md`](architecture.md), issue #115.
-This is the evidence, not a re-argument.
+How this firmware schedules work, and what constrains it. **This is the design.**
+Numbers appear only where they bound something.
 
-> **The numbers in the later sections measure a synthetic workload, not this
-> system.** They come from the `workload` feature — a stand-in built to be
-> measured, because when they were taken no real load existed to measure. They
-> are fair between the models, since all three ran the same stand-in, but they
-> are not a statement about what the shipping firmware does. The section
-> immediately below is the one that is.
+**Index:** [`README.md`](README.md) · CPU
+[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) · interrupts
+[`soc-interrupts.md`](soc-interrupts.md)
 
-**Index:** [`hardware.md`](hardware.md) · CPU:
-[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
+## The model
 
-## The decision, and the measurement it was made on
+**RTIC is the dispatcher and there is no alternative in the tree.**
+`src/rtic_app.rs` emits `fn main`; there is no `#[entry]` elsewhere, no `rtic`
+cargo feature, and no superloop.
 
-Issue #245. The superloop is **gone**. `src/rtic_app.rs` emits this firmware's
-`fn main`; there is no `#[entry]` elsewhere, no `rtic` feature, and no path back.
+- **Tasks run to completion on one stack.** RTIC gives no task its own stack,
+  which is why the dispatcher costs tens of bytes of `.bss` rather than
+  kilobytes. `memory.x` reserves an 8 KiB floor.
+- **Priority is declared per task and decides preemption**, in software, through
+  RTIC's `riscv-slic` backend. Nothing in the interrupt controller participates —
+  [`soc-interrupts.md`](soc-interrupts.md).
+- **Shared resources are checked at compile time.** That is what the dispatcher
+  is bought for, over a hand-written cooperative loop.
+- **The monotonic is the CLINT**, written here: `rtic-monotonics` 2.2.1 ships two
+  RISC-V backends and neither is a CLINT one.
 
-For one day there were two, chosen at compile time, so that the comparison could
-be made with exactly one variable in it: both dispatchers called the same
-`power::Monitor::service`, ran the same `boot`, and shared every line of the
-shell. The only difference was how the REFRESH cycle was reached — a check at the
-top of a loop, or a task released by the 1 ms tick.
+## What it is sized against
 
-**Matched runs on hardware, 364 against 363 dispatches:**
+This core is a **USB controller**, and the workload is device emulation —
+bursty, latency-sensitive, arriving at the host's convenience, cache-hostile.
+Not the console, which is idle almost always and measures nothing.
 
-| | superloop | rtic |
-|---|---|---|
-| release lateness, worst | 132 µs | **86 µs** |
-| release lateness, mean | **5 µs** | 57 µs |
-| achieved period, worst | 50 ms | 50 ms |
-| frontend stalls | 44 / 1000 cycles | 452 / 1000 |
-| backend stalls | 648 / 1000 cycles | **343 / 1000** |
-| `.text` | — | +1,700 B |
+The reference is moondancer (`greatscottgadgets/cynthion`,
+`firmware/moondancer`), and the shape that matters:
 
-RTIC **bounds the worst case and costs the mean**. The stall profile inverts: the
-superloop waits on MMIO, RTIC on instruction fetch through the SLIC path.
-
-### That is not a win, and the superloop went anyway
-
-Worth stating plainly, because #245 explicitly admitted "no better" as a result
-and this is close to it.
-
-The measurement was taken with **one task**, and with that task **spinning on
-I²C** rather than being woken by it — the transaction-complete interrupt is
-wired in `gateware/soc/top.py` and has never fired, which is
-[#246](https://github.com/awtoau/cynthion-workspace/issues/246). So the figure
-above is RTIC paying a dispatcher's price to do the superloop's work. It is a
-floor, not a verdict.
-
-The decision was made on architecture rather than on that number: one dispatcher,
-preemptive, with peripherals as tasks — and a losing path kept "just in case" is
-a dead branch nobody dares touch. #246 removes the spin, #247 adds the tasks that
-give priorities something to arbitrate, and #259 re-measures.
-
-### What went with it
-
-- `power::Monitor::poll` — the interval check at the top of the loop. `service`
-  remains and is the only caller's whole job.
-- The `rtic` cargo feature, and `riscv/critical-section-single-hart` with it,
-  which moves to `[dependencies]` because every build now needs it.
-- `soc_test.py`'s "the shipping image must say `superloop`" assertion, and the
-  `--features rtic` duality that ran the suite twice.
-
-One thing did **not** go: the `model` line in the `rtic` command. A transcript
-that does not say what produced it cannot be compared with one taken after the
-next dispatcher change.
-
-### One trap, recorded
-
-`crate::rtic_app::tick()` in `src/timer.rs` was `#[cfg(feature = "rtic")]`.
-Removing the feature made that cfg permanently **false**, so the tick stopped
-pending the task and it simply never ran — a build that compiled cleanly, booted,
-answered every command, and had no scheduler. Nothing caught it except
-`soc_test.py`'s `polls > 0` assertion on the achieved interval.
-
-A `#[cfg]` on a feature that no longer exists is not a compile error. Grep for
-the feature name after deleting one.
-
-## What it fixes, and what it costs
-
-| | superloop (today) | preempt | RTIC |
-|---|---|---|---|
-| worst arrival→handled | 1,220 µs | 271 µs | **274 µs** |
-| events past the 375 µs deadline | 600 / 2,000 | 0 | **0** |
-| dispatcher `.text` | — | +424 B | +1,812 B |
-| dispatch cost per event | — | 21 instr | ~180 instr |
-| worst window with `mstatus.MIE` clear | 0 | 0 | 60 instr, ~1 µs |
-
-**RTIC closes the unbounded turn** — 274 µs against the hand-written
-dispatcher's 271, zero deadline misses either way. The dispatcher is kept in the
-tree as the fallback if the I-cache stays 4 KiB, not as a rival.
-
-## The workload that decides it
-
-This core is a **USB controller**. The workload is device emulation: bursty,
-latency-sensitive, arriving at the host's convenience, cache-hostile by nature.
-Not the console — that is idle almost all the time and measuring against it
-produces numbers that describe nothing.
-
-moondancer is the reference, read from the mirror (`greatscottgadgets/cynthion`,
-`firmware/moondancer`; `src/workload.rs` carries the same citations beside the
-code that imitates them):
-
-| step | where | cost |
-|---|---|---|
-| handler drains the 8-byte setup FIFO, one MMIO read per byte | `lunasoc-hal/src/usb.rs:380-392` | 8 bus transactions |
-| enqueues into a 64-slot queue | `bin/moondancer.rs:28` | |
-| **a full queue is `loop { nop }` in interrupt context** | `bin/moondancer.rs:30-46` | the queue is an assertion, not a buffer |
-| zeroes a 1 KiB buffer per command; verbs zero their own | `bin/moondancer.rs:460`, `gcp/moondancer.rs:560` | 1–3 KB of memset, independent of payload |
-| response written one 8-bit MMIO store per byte | `lunasoc-hal/src/usb.rs:487` | 512 bus transactions |
-
-Upstream's own figure, in a comment beside the code that produced it:
-`examples/bulk_speed_test.rs:390` reads **5.03 MB/s**. At 60 MHz that is 11.9
-cycles per MMIO byte store, so a 512-byte packet costs **~5,000–6,000 cycles,
-85–100 µs** — about 80% of a 125 µs high-speed microframe. The part tops out near
-one packet per microframe, and under bulk load moondancer genuinely runs at
-**70–80% CPU**.
-
-That is why the tail matters: at 26% busy in the harness the superloop already
-misses 600 deadlines in 2,000, and the real duty cycle is three times higher.
-
-## What each model costs
-
-| model | `.text` | runtime | `.bss` | preempts | checks sharing | needs |
-|---|---|---|---|---|---|---|
-| superloop (today) | — | 0 | — | no | no | nothing |
-| cooperative, hand-written | 984 | 224 | 8 | no | no | a dispatcher |
-| **RTIC 2.3** `riscv-clint-backend` | 2,312 | 1,552 | 24 | **yes, by priority** | **yes, at compile time** | an `rtic_time::Monotonic` |
-| bare riscv-rt (the Rust floor) | 760 | — | 4 | | | |
-| bare C (the C floor) | 186 | — | 4 | | | |
-
-**Neither gives a task a stack**, which is why `.bss` is tens of bytes rather
-than kilobytes: RTIC tasks and cooperative jobs both run to completion on the one
-stack. A model that did give each task a stack would be decided by a different
-number — how deep the shell's call chain is, which nothing here computes.
-`memory.x` reserves an 8 KiB floor and says so.
-
-**Every model leaves `src/irq.rs`'s PLIC claim loop in place.** Neither runtime
-has a PLIC backend, and that is not a gap in either of them.
-
-## RTIC, measured rather than argued
-
-`firmware/cynthion-soc/src/bin/workload_rtic.rs`, behind `--features rticcs`,
-running the same workload as `workload_bare.rs` so the two are comparable.
-
-| question | answer |
+| step | cost |
 |---|---|
-| does it fix the unbounded turn? | **yes** — 274 µs, zero deadline misses |
-| dispatch cost | **~180 instructions/event**, 4.3% of an event |
-| `critical_section` per pend | **74 instructions**, worst window 60 |
-| does the PLIC survive adoption? | **yes** — 1,108 claims, 1,208 completes, nothing gated off |
-| is there a CLINT monotonic? | **yes** — written and measured, 7 µs worst late |
-| priorities and shared resources configurable? | **yes**, and one obvious configuration is a priority-2 blocker |
-| is checked access worth 1,812 bytes? | **yes**, it is adopted |
+| handler drains the 8-byte setup FIFO, one MMIO read per byte | 8 bus transactions |
+| **a full queue is `loop { nop }` in interrupt context** | the queue is an assertion, not a buffer |
+| response written one 8-bit MMIO store per byte | 512 bus transactions |
 
-**`rtic-monotonics` 2.2.1 has two RISC-V backends.** What it lacks is a CLINT
-one, which is why writing ours was small. An earlier claim that RISC-V had
-nothing was wrong.
+Upstream's own figure is 5.03 MB/s, so at 60 MHz a 512-byte packet is
+**~5,000–6,000 cycles, 85–100 µs** — about 80% of a 125 µs high-speed
+microframe. Under bulk load the part runs at **70–80% CPU**.
 
-## The I-cache constraint, and what to do about it
+**So the design is bounded by the tail, not the mean.** RTIC bounds the worst
+case and costs the mean; that is the trade taken deliberately.
 
-Stated once, because it is a property of the machine rather than of any runtime.
+| | bound |
+|---|---|
+| worst arrival→handled | **274 µs** |
+| events past the 375 µs deadline | **0** |
+| worst window with `mstatus.MIE` clear | 60 instructions, ~1 µs |
 
-The I-cache is **8 KiB, 64 sets x 2 ways** (it was 4 KiB direct-mapped when this
-was measured — #283, #292). Measured over both traces with
-`scripts/soc_icache_model.py`, 200 events:
+## The constraint that shapes it: the I-cache
 
-| | `workload_bare` | `workload_rtic` |
-|---|---|---|
-| footprint | **4,032 B — fits, by one line** | **5,440 B — does not** |
-| misses | 573 (0.03%) | 1,393 (0.05%) |
+A property of the machine, not of the runtime.
 
-+1,812 bytes of `.text` cost +1,408 bytes of footprint. Footprint transfers
-between builds; the specific set conflicts do not, because the model uses the
-QEMU build's addresses and has no prefetch.
+The I-cache is **8 KiB, 64 sets × 2 ways**. The RTIC build's hot footprint is
+**5,440 B** against the bare build's 4,032 B — the dispatcher's `.text` costs
+about 1.4 KB of footprint, and footprint is what transfers between builds.
 
-**The solutions, which is the only part still open:**
+It fits at 8 KiB. It did not at 4 KiB, which is why both L1s were grown (#110,
+#283, #292), spending block RAM that is now at 79%. That is a real trade and the
+reason the cache size is part of this design rather than an unrelated setting.
 
-1. **Grow the cache — done.** Both L1s went from 64 sets to 128, 4 KiB to 8 KiB,
-   spending spare block RAM that had no better claim on it (#110).
-   This is the direct fix and the one that makes the question go away. It costs
-   block RAM, which is at 79% after the BTB
-   ([`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)), so it is a real
-   trade rather than a free one.
-2. **Take the 424-byte dispatcher.** It closes the same defect and leaves the hot
-   set fitting.
-3. **Shrink the hot set** so a resident runtime fits beside it. Nothing has
-   measured what that would take.
+**If the cache ever shrinks**, the 424-byte hand-written dispatcher closes the
+same latency defect with a footprint that fits. It stays in the tree as that
+fallback, not as a rival.
 
-Nothing here is a reason to reject RTIC on a machine with a bigger cache.
+## Traps this is shaped around
 
-## Not settled
+- **A `#[cfg]` on a feature that no longer exists is not a compile error.**
+  `crate::rtic_app::tick()` was `#[cfg(feature = "rtic")]`; deleting the feature
+  made it permanently false, so the tick stopped pending its task and the
+  firmware ran with no scheduler — compiling cleanly, booting, answering every
+  command. Only `soc_test.py`'s `polls > 0` assertion caught it. **Grep for a
+  feature name after deleting one.**
+- **The `model` line in the `rtic` command stays.** A transcript that does not
+  say what produced it cannot be compared with one taken after the next change.
+
+## Open
 
 | | |
 |---|---|
-| IPC and `ICACHE_MISS` on silicon | needs a bitstream first: `peripherals/uart16550.py` implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
+| the I2C transaction-complete interrupt has never fired | wired in `gateware/soc/top.py`; #246. Until it does, the power task spins on I2C rather than being woken by it |
+| IPC and `ICACHE_MISS` on silicon | needs a bitstream: `peripherals/uart16550.py` implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
 | what shrinking the hot set would take | unmeasured |
 
-## Reproducing
+## Reproducing the numbers
 
 ```bash
 ./scripts/soc_rtic_workload.py --events 2000
 ./scripts/soc_rtic_monotonic.py
 ./scripts/soc_rtic_workload.py --events 200 --trace
 ./scripts/soc_icache_model.py tmp/logs/trace-rtic.log --elf <the rtic elf>
-./scripts/soc_feature_isolation_check.py    # the shipping image is unchanged
 ```
+
+The figures above come from the `workload` feature — a synthetic stand-in built
+to be measured, fair between models because all of them ran it, and not a
+statement about what the shipping firmware does.
