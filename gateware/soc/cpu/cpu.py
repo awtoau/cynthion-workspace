@@ -219,9 +219,17 @@ def isa_generated(flags=None):
 
 # The SoC's address map, as PMA regions. Anything not listed here is
 # unreachable rather than merely uncached.
+#
+# The CSR region ends above the CLINT (0xf0800000 + 64 KiB), not at the top of
+# the 256 MiB it used to claim: 248 MiB then traps in the LSU with no bus cycle
+# instead of reaching `bus/fault.py` to be terminated (#452). `top.py` asserts
+# every decoder window falls inside it.
+CSR_REGION_BASE = 0xf0000000
+CSR_REGION_SIZE = 0x00810000
+
 DEFAULT_REGIONS = [
     "base=00000000,size=00010000,main=1,exe=1",   # block RAM
-    "base=f0000000,size=10000000,main=0,exe=0",   # CSR peripherals
+    f"base={CSR_REGION_BASE:08x},size={CSR_REGION_SIZE:08x},main=0,exe=0",
 ]
 
 
