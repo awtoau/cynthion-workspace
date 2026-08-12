@@ -614,6 +614,12 @@ def main():
                              "is the whole of this design's Fmax spread (#361). "
                              "Slower and reproducible: use it for any build whose "
                              "timing number is going to be reported")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="nextpnr's placer seed. Same netlist, different "
+                             "placement, so a spread over seeds is placement and "
+                             "nothing else -- unlike repeat builds, which are "
+                             "different netlists (#441). Folded into the gateware "
+                             "digest, so each seed resynthesises")
     parser.add_argument("--features", default="",
                         help="cargo features for the shell crate, comma-separated. "
                              "`rtic` builds the RTIC dispatcher instead of the "
@@ -626,10 +632,14 @@ def main():
     # WHICH BUILD THIS IS, first line of every run. Unprinted, the variant is
     # visible only in the environment of whoever started it.
     # Before the digest is taken, because it is one of the digest's inputs.
-    if args.no_parallel_refine:
+    if args.no_parallel_refine or args.seed is not None:
         global PNR_OPTS
-        PNR_OPTS = " ".join(opt for opt in NEXTPNR_OPTS.split()
-                            if opt != "--parallel-refine")
+        PNR_OPTS = NEXTPNR_OPTS
+        if args.no_parallel_refine:
+            PNR_OPTS = " ".join(opt for opt in PNR_OPTS.split()
+                                if opt != "--parallel-refine")
+        if args.seed is not None:
+            PNR_OPTS = f"{PNR_OPTS} --seed {args.seed}"
 
     BUILD.mkdir(parents=True, exist_ok=True)
     emit(f"variant {variant.slug()} -> {BUILD.relative_to(ROOT)}")
