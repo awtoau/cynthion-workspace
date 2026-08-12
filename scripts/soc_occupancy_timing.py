@@ -131,6 +131,19 @@ ARMS = {
 ARMS.update({f"cpu-{name}": text
              for name, text in soc_cpu_arms.snippets().items()})
 
+# THE CONSTRAINT ITSELF, as an arm.
+#
+# Every arm above is constrained at `SYNC_MHZ` 60 and closes 65-75, so the
+# placer and router stop working the moment they pass -- and the Fmax reported
+# is then how much slack the tool happened to leave, not how fast the netlist
+# can go. 80 MHz is a constraint no arm meets, which keeps the effort on until
+# it gives up. Same netlist family, and paired by seed against the 60 MHz arm of
+# the same configuration.
+_CLK80 = 'import os\nos.environ["CYNTHION_SYNC_MHZ"] = "80"\n'
+ARMS["clk80-base"] = _CLK80
+ARMS.update({f"clk80-cpu-{name}": _CLK80 + soc_cpu_arms.SNIPPET.format(name=name)
+             for name in ("pc0", "dbg-none")})
+
 OUTPUT = []
 
 
@@ -192,6 +205,42 @@ CynthionPlatformRev1D4().build(
         raise SystemExit(f"{arm}: no netlist\n"
                          + proc.stdout[-4000:] + "\n" + proc.stderr[-4000:])
     return time.monotonic() - started
+
+
+CLOCK_NET = "car.clk_sync"
+CONSTRAINED = re.compile(r"^(?P<name>[\w.-]+)-at(?P<mhz>\d+)$")
+
+
+def constrain(arm, mhz):
+    """Clone an arm's netlist under a different `clk` constraint.
+
+    THE SAME top.json, so this is the one comparison that changes the constraint
+    and nothing else: elaborating at another SYNC_MHZ moves the PLL, the baud
+    divisors and a few hundred cells with it. Rewriting the LPF moves only what
+    nextpnr is asked for.
+
+    Every arm here is constrained at 60 and closes 65-75, i.e. the tool stops
+    working as soon as it passes. Whether the reported Fmax is the netlist's
+    ceiling or the slack the router happened to leave is what this measures.
+    """
+    source, target = arm_dir(arm) / "synth", arm_dir(f"{arm}-at{mhz}") / "synth"
+    if not (source / "top.json").exists():
+        raise SystemExit(f"{arm}: no netlist -- run `synth` first")
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("top.json", "build_top.sh"):
+        (target / name).write_bytes((source / name).read_bytes())
+    lines, hits = [], 0
+    for line in (source / "top.lpf").read_text().splitlines():
+        if line.startswith(f'FREQUENCY NET "{CLOCK_NET}"'):
+            line = f'FREQUENCY NET "{CLOCK_NET}" {mhz * 1e6:.1f} HZ;'
+            hits += 1
+        lines.append(line)
+    if hits != 1:
+        raise SystemExit(f"{arm}: {hits} constraints on {CLOCK_NET} in top.lpf, "
+                         f"expected 1 -- the clock was renamed")
+    (target / "top.lpf").write_text("\n".join(lines) + "\n")
+    emit(f"{arm}-at{mhz}: {arm}'s netlist, {CLOCK_NET} constrained to {mhz} MHz")
+    return f"{arm}-at{mhz}"
 
 
 def nextpnr_command(arm):
@@ -695,7 +744,8 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=("synth", "sweep", "report", "power",
-                                          "paths", "determinism", "list"))
+                                          "paths", "constrain", "determinism",
+                                          "list"))
     parser.add_argument("--arm", action="append", default=[])
     parser.add_argument("--seeds", type=int, default=20)
     parser.add_argument("--jobs", type=int, default=8)
@@ -710,6 +760,8 @@ def main():
                              "default")
     parser.add_argument("--delta", type=float, default=2.0,
                         help="MHz the `power` stage sizes n for")
+    parser.add_argument("--mhz", type=int, default=80,
+                        help="`constrain` clocks the clone's `clk` at this")
     args = parser.parse_args()
 
     if args.stage == "list":
@@ -719,6 +771,14 @@ def main():
 
     arms = args.arm or list(ARMS)
     for arm in arms:
+        # `<arm>-at<mhz>` is a `constrain` clone: it has a directory rather than
+        # an entry, because its netlist is another arm's.
+        found = CONSTRAINED.match(arm)
+        if found and found.group("name") in ARMS:
+            if not (arm_dir(arm) / "synth" / "top.json").exists():
+                raise SystemExit(f"{arm}: run `constrain --arm "
+                                 f"{found.group('name')} --mhz {found.group('mhz')}`")
+            continue
         if arm not in ARMS:
             raise SystemExit(f"no such arm: {arm}; `list` shows them")
 
@@ -749,6 +809,12 @@ def main():
             emit(f"{len(failed)} arm(s) have no netlist: {', '.join(failed)}")
         flush_log("synth")
         return 1 if failed else 0
+
+    if args.stage == "constrain":
+        for arm in arms:
+            constrain(arm, args.mhz)
+        flush_log("constrain")
+        return 0
 
     if args.stage == "determinism":
         for arm in arms:

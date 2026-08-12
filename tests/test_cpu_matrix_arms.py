@@ -115,6 +115,42 @@ def test_critical_path_of_a_clock_that_is_not_in_the_log_is_none():
     assert soc_occupancy_timing.critical_path(NEXTPNR_LOG, "$glbnet$usb") is None
 
 
+def test_constrain_clones_the_netlist_and_moves_only_the_constraint(tmp_path,
+                                                                    monkeypatch):
+    """The one comparison that changes the constraint and nothing else."""
+    monkeypatch.setattr(soc_occupancy_timing, "OUT", tmp_path)
+    synth = tmp_path / "base" / "synth"
+    synth.mkdir(parents=True)
+    (synth / "top.json").write_text('{"modules": {}}')
+    (synth / "build_top.sh").write_text("nextpnr-ecp5 --lpf top.lpf\n")
+    (synth / "top.lpf").write_text(
+        'FREQUENCY NET "car.clk_sync" 60000000.0 HZ;\n'
+        'FREQUENCY NET "user_jtag.tck" 20000000.0 HZ;\n')
+
+    soc_occupancy_timing.constrain("base", 80)
+    clone = tmp_path / "base-at80" / "synth"
+    assert (clone / "top.json").read_text() == (synth / "top.json").read_text()
+    lpf = (clone / "top.lpf").read_text()
+    assert 'FREQUENCY NET "car.clk_sync" 80000000.0 HZ;' in lpf
+    assert 'FREQUENCY NET "user_jtag.tck" 20000000.0 HZ;' in lpf
+
+
+def test_constrain_refuses_an_lpf_it_cannot_find_the_clock_in(tmp_path,
+                                                              monkeypatch):
+    monkeypatch.setattr(soc_occupancy_timing, "OUT", tmp_path)
+    synth = tmp_path / "base" / "synth"
+    synth.mkdir(parents=True)
+    (synth / "top.json").write_text("{}")
+    (synth / "build_top.sh").write_text("\n")
+    (synth / "top.lpf").write_text('FREQUENCY NET "renamed" 60000000.0 HZ;\n')
+    try:
+        soc_occupancy_timing.constrain("base", 80)
+    except SystemExit as error:
+        assert "expected 1" in str(error)
+    else:
+        raise AssertionError("a silently unconstrained clone was produced")
+
+
 def test_a_ladder_rung_is_a_build_directory_of_its_own():
     """#439: the rung has to reach the build, and be visible in the artifacts."""
     assert (riscv_clock_ladder.rung_build_dir(72)
