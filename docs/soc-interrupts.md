@@ -30,27 +30,41 @@ Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin
 answers that. The timings are in
 [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md).
 
-## What the controller can and cannot do
+## There are two things called "priority" and they are unrelated
 
-**No hardware preemption**, by specification. PLIC 1.0.0 line 93: *"the PLIC
-provides no concept of interrupt preemption or nesting"*. The privileged
-specification clears `mstatus.MIE` on trap entry, and VexiiRiscv's
-`TrapPlugin.scala:869` does exactly that. So priority decides **which source a
-claim returns when several are pending** — never whether a running handler is
-interrupted.
+| | PLIC priority | RTIC task priority |
+|---|---|---|
+| lives in | **hardware** — a register per source in `gateware/soc/cpu/plic.py` | **software** — `riscv-slic`, RTIC's RISC-V backend |
+| set by | firmware at init, then never changed | declared in the task's attribute |
+| decides | which source `claim()` returns **first** when several are pending at the same moment | which task runs, and **which task can interrupt which** |
+| preempts a running handler | **no. Never.** | **yes** — this is where preemption comes from |
+| values here | `POWER_ALERT` 4, `CONSOLE` 3, `TYPE_C` 2, `I2C` 1 | see [`rtic.md`](rtic.md) |
 
-**Preemption is delivered in software**, by RTIC's `riscv-slic` backend. See
-[`rtic.md`](rtic.md). No interrupt controller change alters that.
+They are different numbers with different meanings and they do not interact.
 
-**Priorities are compile-time constants** — `POWER_ALERT` 4, `CONSOLE` 3,
-`TYPE_C` 2, `I2C` 1 — never written at runtime, and the threshold is 0
-everywhere. Every claim site loops until `claim()` returns 0, so priority only
-permutes the order of the handlers serviced inside one trap.
+### Why the hardware one cannot preempt
 
-**Ordering that is load-bearing:** complete before disable. Completing after
-disabling throws the completion away and gates the source off permanently,
-because `pending[i] = sources[i] & ~claimed[i]`. `src/irq.rs`'s `defer_type_c`
-carries the argument.
+The PLIC gives the CPU **one** interrupt line. When it fires, the CPU traps and
+`mstatus.MIE` is cleared — the privileged specification, and VexiiRiscv's
+`TrapPlugin.scala:869`. No further interrupt is taken until software sets it
+again. PLIC 1.0.0 line 93 says the same from the other side: *"the PLIC provides
+no concept of interrupt preemption or nesting"*.
+
+So when a handler is running, a higher-priority source going pending does
+nothing at all until that handler finishes.
+
+### What the hardware priority actually buys here
+
+Almost nothing. **Every claim site loops until `claim()` returns 0**, so all
+pending sources are serviced inside the one trap regardless. Priority only
+changes the order of a handful of short handlers within that loop.
+
+### Ordering that is load-bearing
+
+**Complete before disable.** Completing after disabling throws the completion
+away and gates the source off permanently, because
+`pending[i] = sources[i] & ~claimed[i]`. `src/irq.rs`'s `defer_type_c` carries
+the argument.
 
 ## Open decisions
 
