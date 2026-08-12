@@ -18,10 +18,24 @@ Where the two differ, the "built" column says so.
 | **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
 | **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
+| — | — | `SidebandDebug` in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** |
 | **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** ([why](chips/dpo2036-cc-sbu-protection.md)) | CSR bit only | **make it a source** |
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
+
+## Why the sideband must interrupt
+
+`sideband_csr` exposes `rx`, the last byte Apollo sent, and `rxcnt`, how many
+have arrived. The firmware polls and compares the count against its own copy.
+
+**`rx` holds one byte.** Two arrivals between polls and the first is
+unrecoverable — `rxcnt` reports that it happened and cannot give it back. An
+interrupt per arrival makes it one byte per interrupt.
+
+The count stays: it is how a repeat is told from a silence, and it is not
+read-to-clear, so reading has no side effect.
+[`chips/cynone-sideband.md`](chips/cynone-sideband.md).
 
 ## Priority is software only
 
@@ -52,12 +66,21 @@ handlers inside one loop; nothing measures that order and nothing depends on it.
 This is the argument for the controller in decision 1: `EventMonitor` has no
 priority machinery to remove.
 
-### Ordering that is load-bearing
+### Deferring a source: complete, then disable
 
-**Complete before disable.** Completing after disabling throws the completion
-away and gates the source off permanently, because
-`pending[i] = sources[i] & ~claimed[i]`. `src/irq.rs`'s `defer_type_c` carries
-the argument.
+A handler that cannot finish the work inline — the FUSB302B needs I2C, which
+takes milliseconds — hands off to a task and turns the source off meanwhile.
+The two steps only work in one order:
+
+1. **`complete`** — tell the controller this claim is finished
+2. **`disable`** — stop the source raising another until the task has dealt with it
+
+**Disabling first loses the source permanently.** `pending = source & ~claimed`,
+so while the claim is outstanding the source cannot go pending again; and once
+disabled, the completion has nothing to act on. The claim stays set, pending
+stays low, and the line never fires again.
+
+`src/irq.rs`'s `defer_type_c` is the worked example.
 
 ## Open decisions
 
