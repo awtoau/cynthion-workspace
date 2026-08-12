@@ -702,8 +702,9 @@ def path_report(arms, clock):
     emit(f"critical path on {clock}, over seeds")
     emit()
     emit(f"  {'arm':<24} {'n':>3} {'logic':>6} {'route':>6} {'route %':>7} "
-         f"{'hops':>5} {'span':>5}  start -> end (times seen)")
-    emit("  " + "-" * 110)
+         f"{'hops':>5} {'span':>5} {'in CPU':>7} {'ends':>5}  "
+         f"commonest start -> end")
+    emit("  " + "-" * 120)
     for arm in arms:
         found = sample_paths(arm, clock)
         if not found:
@@ -717,15 +718,23 @@ def path_report(arms, clock):
                 for p in paths if p["bbox"]]
         logic = statistics.mean(p["logic_ns"] for p in paths)
         route = statistics.mean(p["routing_ns"] for p in paths)
+        # Both ends inside the CPU instance. If this is not most of them, the
+        # CPU is not what binds the clock, whatever one build said.
+        inside = sum(1 for p in paths
+                     if (p["source"] or "").startswith("cpu.cpu.")
+                     and (p["sink"] or "").startswith("cpu.cpu."))
         emit(f"  {arm:<24} {len(paths):>3} {logic:>6.2f} {route:>6.2f} "
              f"{100 * route / (logic + route):>6.1f}% "
              f"{statistics.mean(p['hops'] for p in paths):>5.1f} "
-             f"{statistics.mean(span) if span else 0:>5.1f}  "
+             f"{statistics.mean(span) if span else 0:>5.1f} "
+             f"{100 * inside / len(paths):>6.0f}% {len(ends):>5}  "
              + ", ".join(f"{name} ({count})" for name, count in
-                         sorted(ends.items(), key=lambda kv: -kv[1])[:3]))
+                         sorted(ends.items(), key=lambda kv: -kv[1])[:2]))
     emit()
     emit("  logic + routing is the period, so those two columns ARE the Fmax.")
-    emit("  `span` is the longer side of the path's tile bounding box.")
+    emit("  `span` is the longer side of the path's tile bounding box, `ends`")
+    emit("  the number of DISTINCT start->end pairs the seeds produced: the")
+    emit("  critical path's identity is a draw, not a property of the design.")
 
 
 def needed_n(values, delta):
