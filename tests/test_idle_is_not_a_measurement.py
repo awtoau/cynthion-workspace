@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+#
+# Idle output must be INCAPABLE of being quoted as a measurement. #430
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""The refusal, proved.
+
+Three independent barriers, because a caveat beside a number is read as the
+number and this corpus has been deleted twice:
+
+1. a separate directory -- `tmp/board-arbiter/idle/`, never `results/hyperram/`
+2. a separate schema -- `board-idle-observation`, and `load` refuses it
+3. different keys -- no `failures`, no `summary`, so the diff could not consume
+   one even with the refusal removed
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
+
+import board_arbiter as arb  # noqa: E402
+import hyperram_matrix_diff as matrix  # noqa: E402
+
+
+SWEEP = """
+      time  lat  mode  drive  clk  sel    errors     words   control  verdict
+000000.424    2  fix       3  dif    0      8192      8192      8192  fail
+000000.427    2  fix       3  dif    2         0      8192      8192  PASS
+  1 pass, 1 fail, 0 no result of 2
+"""
+
+
+def observation(status="passed", reply=SWEEP, command="bist all 8", die=50):
+    return {
+        "schema": arb.SCHEMA_IDLE, "id": "20260812-000000-aaaa",
+        "priority": "idle", "status": status,
+        "request": {"commands": [command], "budget_s": 40.0},
+        "provenance": {"board": {"image": "deadbee", "die_c": die}},
+        "transcript": [{"command": command, "pass": 0, "status": "ok",
+                        "elapsed_s": 1.0, "reply": reply}],
+    }
+
+
+def test_the_diff_refuses_an_idle_observation_by_schema(tmp_path):
+    path = tmp_path / "20260812-000000-aaaa.json"
+    path.write_text(json.dumps(arb.idle_observe(observation(), None)))
+    with pytest.raises(SystemExit) as refusal:
+        matrix.load(path)
+    assert "IDLE OBSERVATION" in str(refusal.value)
+
+
+def test_the_diff_refuses_anything_under_the_idle_directory(tmp_path):
+    """Even stripped of its schema: the directory is the second barrier."""
+    directory = tmp_path / "board-arbiter" / "idle"
+    directory.mkdir(parents=True)
+    run = observation()
+    del run["schema"]
+    (directory / "run.json").write_text(json.dumps(run))
+    with pytest.raises(SystemExit):
+        matrix.load(directory / "run.json")
+
+
+def test_a_recorded_run_still_loads(tmp_path):
+    """The refusal must not swallow the artifact it exists to protect."""
+    path = tmp_path / "20260812-000000-baseline.json"
+    path.write_text(json.dumps({"schema": "hyperram-matrix-run",
+                                "failures": {}, "summary": {}}))
+    assert matrix.load(path)["schema"] == "hyperram-matrix-run"
+
+
+def test_an_idle_observation_carries_no_measurement_keys():
+    run = arb.idle_observe(observation(), None)
+    for forbidden in ("failures", "summary", "no_results", "pins", "ck_mhz",
+                      "axis_fail_counts"):
+        assert forbidden not in run, f"{forbidden} makes this quotable as a row"
+
+
+def test_the_idle_directory_is_not_the_results_directory():
+    assert arb.IDLE_DIR != matrix.RESULTS
+    assert "results" not in arb.IDLE_DIR.as_posix()
+
+
+# --- what an idle run is FOR: events ---------------------------------------
+
+
+def test_a_wedge_is_an_event():
+    run = observation(status="failed", reply="")
+    run["transcript"][0]["status"] = "timeout"
+    run["transcript"][0]["elapsed_s"] = 40.0
+    events = arb.idle_observe(run, None)["events"]
+    assert any(line.startswith("WEDGE:") for line in events)
+
+
+def test_a_moved_tally_is_an_event():
+    first = arb.idle_observe(observation(), None)
+    moved = SWEEP.replace("1 pass, 1 fail", "0 pass, 2 fail")
+    second = arb.idle_observe(observation(reply=moved), first)
+    assert any("TALLY MOVED" in line for line in second["events"])
+
+
+def test_a_cell_that_changed_verdict_is_an_event():
+    first = arb.idle_observe(observation(), None)
+    flipped = SWEEP.replace("      0      8192      8192  PASS",
+                            "     16      8192      8192  fail")
+    second = arb.idle_observe(observation(reply=flipped), first)
+    assert any("changed verdict" in line for line in second["events"])
+
+
+def test_a_truncated_sweep_does_not_manufacture_changed_cells():
+    """A preempted sweep prints a PREFIX of the cells, and the cells it never
+    reached did not change verdict -- they were not measured."""
+    full = arb.idle_observe(observation(), None)
+    cut = SWEEP.rsplit("000000.427", 1)[0]          # the second cell is gone
+    partial = arb.idle_observe(observation(reply=cut, status="preempted"), full)
+    assert not any("changed verdict" in line for line in partial["events"])
+
+
+def test_a_first_idle_run_reports_no_change():
+    """Nothing to compare against is not 4096 cells that moved."""
+    first = arb.idle_observe(observation(reply=""), None)
+    second = arb.idle_observe(observation(), first)
+    assert not any("changed verdict" in line for line in second["events"])
+
+
+def test_a_cell_disagreeing_with_itself_in_one_run_is_an_event():
+    """The strongest marginality evidence: same configuration, seconds apart."""
+    run = observation()
+    flipped = SWEEP.replace("      0      8192      8192  PASS",
+                            "     16      8192      8192  fail")
+    run["transcript"].append({"command": "bist all 8", "pass": 1,
+                              "status": "ok", "elapsed_s": 4.6,
+                              "reply": flipped})
+    events = arb.idle_observe(run, None)["events"]
+    assert any("WITHIN this run" in line for line in events)
+
+
+def test_repeated_identical_passes_report_no_disagreement():
+    run = observation()
+    run["transcript"].append(dict(run["transcript"][0], **{"pass": 1}))
+    events = arb.idle_observe(run, None)["events"]
+    assert not any("WITHIN this run" in line for line in events)
+
+
+def test_a_new_bitstream_stops_the_comparison_and_says_so():
+    """Another session rebuilding the variant is the event, not 985 moved cells."""
+    first = arb.idle_observe(observation(), None)
+    first["provenance"]["bitstream"] = {"sha256": "a" * 64}
+    later = observation()
+    later["provenance"]["bitstream"] = {"sha256": "b" * 64}
+    flipped = SWEEP.replace("      0      8192      8192  PASS",
+                            "     16      8192      8192  fail")
+    later["transcript"][0]["reply"] = flipped
+    events = arb.idle_observe(later, first)["events"]
+    assert any("BUILD CHANGED" in line for line in events)
+    assert not any("changed verdict" in line for line in events)
+
+
+def test_a_new_firmware_image_stops_the_comparison_too():
+    first = arb.idle_observe(observation(), None)
+    later = observation()
+    later["provenance"]["board"]["image"] = "0ddba11"
+    events = arb.idle_observe(later, first)["events"]
+    assert any("BUILD CHANGED" in line for line in events)
+
+
+def test_die_drift_is_an_event():
+    first = arb.idle_observe(observation(die=50), None)
+    second = arb.idle_observe(
+        observation(die=50 + arb.DIE_DRIFT_C), first)
+    assert any("DIE TEMPERATURE" in line for line in second["events"])
+
+
+def test_identical_idle_runs_report_nothing():
+    """No event is the normal case, and it must not manufacture one."""
+    first = arb.idle_observe(observation(), None)
+    second = arb.idle_observe(observation(), first)
+    assert second["events"] == []
+
+
+def test_a_long_reply_is_trimmed_but_its_size_is_kept():
+    run = arb.idle_observe(observation(reply="x" * 50_000), None)
+    step = run["transcript"][0]
+    assert step["reply_bytes"] == 50_000
+    assert len(step["reply"]) == arb.IDLE_REPLY_TAIL

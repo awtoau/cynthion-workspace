@@ -256,6 +256,9 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
              f"every value, so this run measured nothing on {'them' if len(dead) > 1 else 'it'}")
 
     run = {
+        # Names what this file IS, so an idle observation cannot be mistaken for
+        # one -- `load` refuses that schema outright.
+        "schema": "hyperram-matrix-run",
         "recorded": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "label": label,
         "commit": git("rev-parse", "HEAD"),
@@ -298,8 +301,29 @@ def record(label, passes, rung, bitstream=None, build_dir=None):
     return path
 
 
+# What the arbiter writes when the board was running a job nobody asked for.
+# Imported by name rather than as a string in two places -- see `load`.
+IDLE_SCHEMA = "board-idle-observation"
+IDLE_DIRECTORY = "board-arbiter/idle"
+
+
 def load(path):
-    return json.loads(Path(path).read_text())
+    """One recorded run. REFUSES an idle observation, by schema and by path.
+
+    Idle jobs run when the board would otherwise be doing nothing and are
+    abandoned mid-sweep when a real job arrives (#430). Their output is not a
+    measurement and must be incapable of being quoted as one -- a caveat beside
+    a number is read as the number, and this corpus has been deleted twice.
+    """
+    path = Path(path)
+    data = json.loads(path.read_text())
+    if data.get("schema") == IDLE_SCHEMA or IDLE_DIRECTORY in path.as_posix():
+        raise SystemExit(
+            f"{path.name} is an IDLE OBSERVATION, not a measurement. Idle jobs "
+            "are preempted mid-sweep and their board state is unattributable; "
+            "they report events, never rows. Take a real run with "
+            "`./scripts/board.py run` behind it. (#430)")
+    return data
 
 
 def pin_delta(a, b):

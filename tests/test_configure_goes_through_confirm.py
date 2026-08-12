@@ -28,8 +28,10 @@ OWNER = "soc_confirm.py"
 # `"configure"` as an argv element -- the CLI verb, not the English word.
 INVOCATION = re.compile(r'["\']configure["\']\s*[,\]]')
 
-# Not a caller of the CLI: it names the verb as one of its own `--mode` choices.
-EXEMPT = {"bitstream_load_time_probe.py"}
+# Not callers of the CLI: each names the verb as one of its OWN choices -- a
+# `--mode` in one, a job kind in the arbiter and its client, which reach the
+# board only through `soc_confirm.configure_and_confirm`.
+EXEMPT = {"bitstream_load_time_probe.py", "board_arbiter.py", "board.py"}
 
 
 def callers():
