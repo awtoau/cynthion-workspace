@@ -20,12 +20,16 @@ Passing an explicit env to each subprocess keeps them from ever meeting.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flow import ARCH, DEVICE, diamond_env  # noqa: E402
+from flow import ARCH, DEVICE, DIAMOND, PACKAGE, SPEED, diamond_env  # noqa: E402
+
+# Diamond's part database, the authority on what a device name buys.
+DEVFILE = DIAMOND / "data" / "DiamondDevFile.xml"
 
 # scripts/diamond/<name>.py, so the repo root is three levels up. These lived in
 # scripts/ and were moved; a stale `.parent.parent` put every log and artifact
@@ -93,7 +97,25 @@ def check_install(handle):
               if "ECP5" in ln]
     log(f"ECP5 architectures map accepts: {arches}", handle)
     log(f"using ARCH={ARCH} DEVICE={DEVICE}", handle)
+    log(f"  {DEVICE} {PACKAGE} -8: {device_resources()}", handle)
     return ok
+
+
+def device_resources():
+    """What Diamond thinks the configured part has, from its own part database.
+
+    Echoing the constant proves nothing: Diamond enforces the marking, and a
+    part name one bin small refuses a design nextpnr places comfortably.
+    """
+    if not DEVFILE.is_file():
+        return f"{DEVFILE.name} not found"
+    want = f'{DEVICE}-{SPEED}'
+    for line in DEVFILE.read_text(errors="replace").splitlines():
+        if want in line and f'pkg="{PACKAGE}"' in line and 'opt="COM"' in line:
+            fields = dict(re.findall(r'(\w+)="([^"]*)"', line))
+            return (f"reg={fields.get('reg')} EBB={fields.get('EBB')} "
+                    f"DSP={fields.get('DSP')} PLL={fields.get('PLL')}")
+    return f"no {want} {PACKAGE} part in {DEVFILE.name}"
 
 
 def edif_case(name, source, extra_passes, handle, yosys="yosys"):

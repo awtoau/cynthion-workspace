@@ -31,12 +31,11 @@ is an independent implementation of all three stages, so where it does better th
 gap names a specific missing capability in the open tools rather than being a
 reason to switch.
 
-The immediate question it answers: **nextpnr's achieved frequency rises with the
-frequency requested** -- 60 asked gives 72.6 MHz achieved, 80 gives 76.3 -- which
-means its result is not a property of the design alone. That matters right now,
-because the flash PHY's own domain failed at 144 MHz with 124.77 MHz achieved and
-at 120 with 111.26. If a better placer closes 120, the flash runs twice as fast.
-See #110 and #100.
+The question it answers: **does an independent place-and-route beat the ~83 MHz
+nextpnr reaches on the SoC?** nextpnr's figure was suspected of tracking the
+request rather than the design; it does not (#482), so the oracle is now a
+second opinion on a trusted number rather than a check on a doubtful one.
+Where it wins, the gap names a capability. See #110 and #100.
 
 ## The install
 
