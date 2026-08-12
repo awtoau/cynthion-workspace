@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Does freeing die area improve timing on this design? #455.
+# Does freeing die area improve timing on this design? No -- #467.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Sample the Fmax DISTRIBUTION at several occupancy levels and compare them.
@@ -30,6 +30,11 @@ difference between arms is the one under test. The two questions then separate:
 
 Nothing in this project has ever passed `--seed`, so every Fmax in its history is
 one draw from the default placement.
+
+Answered in #467: at 56% occupancy, -1315 LUT4-equivalents buys +0.19 MHz, 95% CI
+[-0.96, +1.35] -- nothing, on a harness that resolves the -6.45 MHz control at
+p < 0.0001. The placement distribution at FIXED occupancy is 9 MHz wide, which is
+what every single-build comparison here was reading as signal.
 
     ./scripts/soc_occupancy_timing.py synth --arm base --arm hyperram-probe
     ./scripts/soc_occupancy_timing.py sweep --arm base --seeds 20 --jobs 8
