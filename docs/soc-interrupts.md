@@ -1,13 +1,43 @@
 # SoC interrupts — the design
 
-Every interrupt-capable signal on the board, what should raise an interrupt, and
-what is still undecided. **This is the design, not a description of the build.**
-Where the two differ, the "built" column says so.
+What can interrupt this CPU and what should. **This is the design, not a
+description of the build.** Where the two differ, the "built" column says so.
 
 **Index:** [`README.md`](README.md) · siblings
 [`soc-clocking.md`](soc-clocking.md), [`soc-memory-bus.md`](soc-memory-bus.md)
 
-## Every interrupt-capable signal
+## Four ways into the trap handler
+
+RISC-V has three interrupt causes and one synchronous one, and all four arrive
+through `mtvec`.
+
+| cause | raised by | used for |
+|---|---|---|
+| **machine external** (MEI) | the interrupt controller | every board signal — the table below |
+| **machine timer** (MTI) | the CLINT's `mtime` reaching `mtimecmp` | the 1 ms tick, and RTIC's monotonic |
+| **machine software** (MSI) | the CLINT's `msip`, written by the CPU itself | RTIC pending a task — this is how `riscv-slic` dispatches |
+| **exceptions** | the instruction being executed | faults: load/store access, illegal instruction, misaligned, `ecall`, breakpoint |
+
+**Only the external one is a board signal.** The timer and software causes are
+the CPU interrupting itself through the CLINT; exceptions are not interrupts at
+all, they are the current instruction failing.
+
+### Software interrupts are the dispatcher
+
+`msip` is how a task gets released: RTIC writes it, the CPU takes MSI, and
+`riscv-slic` decides which task runs. So software priority (below) is
+implemented on this cause, not on the external one.
+
+### Exceptions must not be silent
+
+Without a handler, `riscv-rt` links `abort`, and a bus fault becomes an infinite
+loop with no output — indistinguishable from the hang it replaced. So the design
+carries an exception handler that reports cause, `pc` and faulting address.
+
+A trap the firmware issues on purpose is also the DPO2036 test path: a load from
+an unmapped address is how the trap-heavy load exercises this handler.
+
+## Every board signal that can interrupt
 
 | chip | refdes | chip part | signal | trigger | built | design |
 |---|---|---|---|---|---|---|
@@ -18,24 +48,11 @@ Where the two differ, the "built" column says so.
 | **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
 | **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
-| — | — | `SidebandDebug` in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** |
+| — | — | sideband in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** (#509) |
 | **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** ([why](chips/dpo2036-cc-sbu-protection.md)) | CSR bit only | **make it a source** |
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
-
-## Why the sideband must interrupt
-
-The sideband exposes `rx`, the last byte Apollo sent, and `rxcnt`, how many have
-arrived. The firmware polls and compares the count against its own copy.
-
-**`rx` holds one byte.** Two arrivals between polls and the first is
-unrecoverable — `rxcnt` reports that it happened and cannot give it back. An
-interrupt per arrival makes it one byte per interrupt.
-
-The count stays: it is how a repeat is told from a silence, and it is not
-read-to-clear, so reading has no side effect.
-[`chips/cynone-sideband.md`](chips/cynone-sideband.md).
 
 ## Priority is software only
 
