@@ -104,9 +104,9 @@ def resolver(tmp_path):
 def test_prose_is_not_a_call(resolver):
     """The bug #157 asked to fix, pinned so it cannot come back.
 
-    `references_from` used to be `if name in text`, so a comment or a docstring
-    explaining what a script had measured was evidence that something ran it.
-    That is how a spent probe stays `called` forever.
+    With `references_from` as `if name in text`, a comment or a docstring
+    explaining what a script measured is evidence that something ran it. That is
+    how a spent probe stays `called` forever.
     """
     found = resolver('"""Confirmed by soc_run.py, see docs."""\n'
                      '# soc_test.py measured this at 22 s\n'
