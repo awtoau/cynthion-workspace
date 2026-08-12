@@ -59,8 +59,13 @@ checking the arithmetic is the whole point.
 vary, which `VariableClockDomainGenerator` already handles.
 
 **`SidebandDebug` derives its baud from the clock**, so raising `sync` without
-raising it gives a dead debug link rather than a slow one.  `top.py`
-derives both from `SYNC_MHZ`, so only that one constant is rewritten.
+raising it gives a dead debug link rather than a slow one.  `top.py` derives
+both from `SYNC_MHZ`, which comes from `CYNTHION_SYNC_MHZ`.
+
+`--board` is opt-in and off by default.  Diamond is configured for the 25F die
+this part actually is, so `bitgen` writes the 25F IDCODE while the part reports
+the 12F one -- a Diamond bitstream is a timing result here, not something to
+load.  The timing comparison needs no board.
 
     ./dev.py diamond ladder -- --check-edif
     ./dev.py diamond ladder -- --frequencies 90 100 110
@@ -68,6 +73,7 @@ derives both from `SYNC_MHZ`, so only that one constant is rewritten.
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -89,21 +95,30 @@ sys.path.insert(0, str(ROOT / "gateware"))
 
 from soc import variant  # noqa: E402
 
-# This variant's build directory (#351).
-BUILD = variant.build_dir(ROOT)
-
-# The same configure and verify the open-flow ladder uses.  Importing rather
-# than reimplementing is deliberate: if the two ladders judged a frequency by
+# The same verify the open-flow ladder uses.  Importing rather than
+# reimplementing is deliberate: if the two ladders judged a frequency by
 # different standards, a Diamond "win" could be nothing but a looser check.
-from riscv_clock_ladder import configure, verify, set_clock
+from riscv_clock_ladder import verify
 
 
-def sh(command, cwd=ROOT, check=False):
-    return subprocess.run(["bash", "-c", command], cwd=str(cwd),
-                          capture_output=True, text=True, check=check)
+def rung_env(mhz):
+    """The variant environment for one rung, and the build directory it names.
+
+    `CYNTHION_SYNC_MHZ`, not a source rewrite: `top.py` reads the clock through
+    `variant.value()`, so `riscv_clock_ladder.set_clock`'s regex matches nothing
+    and every rung would build at the default (#439).  Each rung then has its
+    own build directory (#351), so the artifacts do not overwrite each other.
+    """
+    env = dict(os.environ, CYNTHION_SYNC_MHZ=str(mhz))
+    return env, variant.build_dir(ROOT, env)
 
 
-def open_flow_build(mhz):
+def sh(command, cwd=ROOT, env=None):
+    return subprocess.run(["bash", "-c", command], cwd=str(cwd), env=env,
+                          capture_output=True, text=True)
+
+
+def open_flow_build(mhz, env, build):
     """Build with yosys + nextpnr at `mhz`.  Returns (ok, achieved, detail).
 
     nextpnr's generated build script runs under `set -e` with no
@@ -114,9 +129,9 @@ def open_flow_build(mhz):
     there regardless of whether the build completed.
     """
     result = sh(f'source "$HOME/opt/oss-cad-suite/environment" && '
-                f'python3.15t {GATEWARE} --build')
+                f'python3.15t {GATEWARE} --build', env=env)
     achieved = None
-    timing = BUILD / "top.tim"
+    timing = build / "top.tim"
     if timing.exists():
         for line in timing.read_text().splitlines():
             found = re.search(r"Max frequency for clock\s+'\$glbnet\$clk':"
@@ -128,7 +143,7 @@ def open_flow_build(mhz):
     return True, achieved, "built"
 
 
-def emit_sources(mhz):
+def emit_sources(mhz, build):
     """Turn the Amaranth RTLIL the open flow just wrote into Verilog for LSE.
 
     Reusing that `.il` rather than re-elaborating is what makes this a
@@ -138,8 +153,8 @@ def emit_sources(mhz):
     outdir = WORK / f"src{mhz}"
     result = sh(f'source "$HOME/opt/oss-cad-suite/environment" && '
                 f'python3 {ROOT}/scripts/emit_verilog.py '
-                f'--il {BUILD}/top.il --outdir {outdir} '
-                f'--extra-verilog {BUILD}/VexiiRiscv.v '
+                f'--il {build}/top.il --outdir {outdir} '
+                f'--extra-verilog {build}/VexiiRiscv.v '
                 f'--name emit_diamond{mhz}')
     behav = outdir / "behavioural.v"
     edif = outdir / "structural.edf"
@@ -148,7 +163,7 @@ def emit_sources(mhz):
     return behav, edif, None
 
 
-def diamond_build(behav, mhz):
+def diamond_build(behav, mhz, build):
     """Diamond LSE synthesis + map + par + trce + bitgen at `mhz`.
 
     `--freq` appends a FREQUENCY NET constraint, which is what makes the
@@ -164,7 +179,7 @@ def diamond_build(behav, mhz):
     """
     outdir = WORK / f"lse{mhz}"
     result = sh(f'python3 {ROOT}/scripts/diamond/flow.py '
-                f'--verilog {behav} --lpf {BUILD}/top.lpf --mode lse '
+                f'--verilog {behav} --lpf {build}/top.lpf --mode lse '
                 f'--outdir {outdir} --freq {mhz} --name diamond_lse{mhz}')
     res = outdir / "result.json"
     if result.returncode != 0 or not res.exists():
@@ -181,7 +196,7 @@ def diamond_bitstream(outdir):
     return bits[0] if bits else None
 
 
-def check_edif(behav_edif, mhz, emit):
+def check_edif(behav_edif, mhz, build, emit):
     """Re-check the PAR-isolation blocker rather than inheriting the claim.
 
     The finding is that Diamond's ngdbuild cannot read a yosys ECP5 netlist
@@ -190,7 +205,7 @@ def check_edif(behav_edif, mhz, emit):
     """
     outdir = WORK / f"yospar{mhz}"
     result = sh(f'python3 {ROOT}/scripts/diamond/flow.py '
-                f'--verilog {behav_edif} --lpf {BUILD}/top.lpf --mode yosys '
+                f'--verilog {behav_edif} --lpf {build}/top.lpf --mode yosys '
                 f'--outdir {outdir} --freq {mhz} --name diamond_yospar{mhz}')
     text = result.stdout + result.stderr
     errors = sorted({l.strip() for l in text.splitlines() if "ERROR -" in l})
@@ -213,8 +228,8 @@ def main():
                         default=[90, 100, 110])
     parser.add_argument("--check-edif", action="store_true",
                         help="re-check the yosys-netlist-into-Diamond-PAR blocker")
-    parser.add_argument("--restore", type=int, default=60,
-                        help="SYNC_MHZ to leave the source at")
+    parser.add_argument("--board", action="store_true",
+                        help="configure and verify each bitstream on hardware")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -231,60 +246,61 @@ def main():
         emit("a marginal CPU computes the wrong answer rather than stopping.")
         emit()
 
-        try:
-            for mhz in args.frequencies:
-                emit(f"=== {mhz} MHz")
-                set_clock(mhz)
+        for mhz in args.frequencies:
+            emit(f"=== {mhz} MHz")
+            env, build = rung_env(mhz)
+            emit(f"  variant {build.name}")
 
-                ok, achieved, detail = open_flow_build(mhz)
-                shown = f"{achieved:.1f} MHz" if achieved else "unknown"
-                emit(f"  nextpnr: {detail}, achieved {shown}")
-                row = {"nextpnr_built": ok, "nextpnr_achieved": achieved}
+            ok, achieved, detail = open_flow_build(mhz, env, build)
+            shown = f"{achieved:.1f} MHz" if achieved else "unknown"
+            emit(f"  nextpnr: {detail}, achieved {shown}")
+            row = {"nextpnr_built": ok, "nextpnr_achieved": achieved,
+                   "variant": build.name}
 
-                behav, edif, err = emit_sources(mhz)
-                if not behav:
-                    emit(f"  verilog emit failed: {err[-200:] if err else ''}")
-                    results[mhz] = row | {"diamond": "verilog emit failed"}
-                    continue
+            behav, edif, err = emit_sources(mhz, build)
+            if not behav:
+                emit(f"  verilog emit failed: {err[-200:] if err else ''}")
+                results[mhz] = row | {"diamond": "verilog emit failed"}
+                continue
 
-                if args.check_edif:
-                    passed, errors = check_edif(edif, mhz, emit)
-                    row["par_isolation_possible"] = passed
-                    row["ngdbuild_errors"] = errors[:8]
+            if args.check_edif:
+                passed, errors = check_edif(edif, mhz, build, emit)
+                row["par_isolation_possible"] = passed
+                row["ngdbuild_errors"] = errors[:8]
 
-                res, outdir, err = diamond_build(behav, mhz)
-                if res is None:
-                    emit(f"  Diamond: FAILED -- {err}")
-                    results[mhz] = row | {"diamond_built": False,
-                                          "diamond_detail": err}
-                    continue
+            res, outdir, err = diamond_build(behav, mhz, build)
+            if res is None:
+                emit(f"  Diamond: FAILED -- {err}")
+                results[mhz] = row | {"diamond_built": False,
+                                      "diamond_detail": err}
+                continue
 
-                fmax = res.get("fmax", {})
-                emit(f"  Diamond: built, fmax {fmax}, util {res.get('util')}, "
-                     f"{res.get('seconds')}s")
-                row |= {"diamond_built": True, "diamond_fmax": fmax,
-                        "diamond_util": res.get("util"),
-                        "diamond_seconds": res.get("seconds")}
+            fmax = res.get("fmax", {})
+            emit(f"  Diamond: built, fmax {fmax}, util {res.get('util')}, "
+                 f"{res.get('seconds')}s")
+            row |= {"diamond_built": True, "diamond_fmax": fmax,
+                    "diamond_util": res.get("util"),
+                    "diamond_seconds": res.get("seconds")}
+            results[mhz] = row
 
-                bit = diamond_bitstream(outdir)
-                if not bit:
-                    emit("  Diamond: no bitstream emitted -- nothing to verify")
-                    results[mhz] = row | {"hardware": "no bitstream"}
-                    continue
+            if not args.board:
+                continue
 
-                emit(f"  configuring {bit.name}")
-                if not configure_bit(bit):
-                    emit("  configure FAILED")
-                    results[mhz] = row | {"hardware": "configure failed"}
-                    continue
-                good, detail = verify()
-                emit(f"  hardware: {'PASS' if good else '*** FAIL'}  {detail}")
-                results[mhz] = row | {"hardware_pass": good,
-                                      "hardware_detail": detail}
-        finally:
-            set_clock(args.restore)
-            emit()
-            emit(f"restored SYNC_MHZ = {args.restore}")
+            bit = diamond_bitstream(outdir)
+            if not bit:
+                emit("  Diamond: no bitstream emitted -- nothing to verify")
+                results[mhz] = row | {"hardware": "no bitstream"}
+                continue
+
+            emit(f"  configuring {bit.name}")
+            if not configure_bit(bit):
+                emit("  configure FAILED")
+                results[mhz] = row | {"hardware": "configure failed"}
+                continue
+            good, detail = verify()
+            emit(f"  hardware: {'PASS' if good else '*** FAIL'}  {detail}")
+            results[mhz] = row | {"hardware_pass": good,
+                                  "hardware_detail": detail}
 
         RESULTS.write_text(json.dumps(results, indent=2, default=str) + "\n")
         emit(f"results {RESULTS}")
