@@ -97,6 +97,24 @@ Fixed in [`7d3b83c`](https://github.com/awtoau/cynthion-workspace/commit/7d3b83c
 VDD is precisely what §3.8 asks for on an ALERT1 pin, and 8 SPS was the
 documented cost of fitting it and never programming the mode.
 
+### The pin should be a runtime choice, not a build-time one
+
+Driving C6 low fixes the sample rate and spends the pin: `SLOW/ALERT1` can be a
+SLOW **input** or a second alert **output**, and only one is reachable per
+bitstream. The part offers *"Two Independent ALERT/GPIO pins"*, so this board
+has two alert sources available and uses one.
+
+The platform already declares the pin bidirectional
+(`Subsignal("slow", Pins("C6", dir="io"))`), so the buffer is there and the
+gateware merely hard-drives it. What is needed:
+
+* `slow.oe` and `slow.o` from CSR bits rather than constants
+* `slow.i` on an interrupt source, which never fires while the pin is driven
+
+Two register bits and a possibly-idle source, and the firmware picks at boot or
+changes its mind. **The general rule, since a rebuild is ~200 s and a variant:
+a pin function that could be a runtime choice should not be a build-time one.**
+
 **Resolution, as configured rather than as specified.** Firmware writes
 `NEG_PWR_FSR = 0x5500`: every `CFG_VSn` = `01` (bipolar ±100 mV) and every
 `CFG_VBn` = `00` (unipolar 0–32 V).

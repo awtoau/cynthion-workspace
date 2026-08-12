@@ -127,6 +127,10 @@ remains an impression rather than a finding.
 Everything else — IER, LCR, MCR, MSR, SCR, and +0 with DLAB set, which is DLL —
 may be read at any rate with no effect at all.
 
+**`irq` is a level, and the interrupt controller must treat it as one.** It stays
+high while the FIFO holds a byte, so an edge-triggered input loses an interrupt
+whenever a second byte arrives before the first is read.
+
 **LSR is at +5 and RBR at +0, in different 32-bit words.** That is what makes a
 poll loop structurally unable to reach the data register, whatever the bus does
 to the access, and it is why the standard layout was adopted. IIR at +2 *does*

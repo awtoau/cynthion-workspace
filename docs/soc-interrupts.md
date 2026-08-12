@@ -25,48 +25,10 @@ Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin
 
 ## Why the DPO2036 faults must be edge
 
-`FAULTB` is a level on the wire — low while the part is protecting and through
-its 26–38 ms recovery, then released (`sources/DPO2036.pdf`, DS40644 Rev. 2-2).
-
-A level read at a poll answers *"is it faulting now"*. The question is *"has it
-faulted"*, and no sampling rate answers that — only a latch does. So the capture
-is the **falling edge**, held until the firmware clears it.
-
-Today neither line is captured or acted on: the only firmware reference is a
-status line printed by the `typec` shell command. #506, #507.
-
-## Why the rest are level
-
-Required, not incidental. A 16550's `irq` stays high while its FIFO holds a
-byte, so an edge-triggered input loses an interrupt whenever a second byte
-arrives before the first is read. The FUSB302B's interrupt registers are
-read-to-clear, so servicing the device is what drops its line.
-
-**One source per FUSB302B, not one OR-ed source.** `docs/architecture.md`
-decision 8.
-
-## The PAC1954's second alert, and pin function as a runtime choice
-
-The part offers *"Two Independent ALERT/GPIO pins"* (DS20006539B), and this
-board wires both. `SLOW/ALERT1` is hard-driven as an **output** —
-`slow.o = 0, oe = 1` — so it serves the SLOW function and the second alert is
-unreachable.
-
-**Make it runtime-selectable rather than picking one.** The platform already
-declares the pin bidirectional (`Subsignal("slow", Pins("C6", dir="io"))`), so
-the tri-state buffer is there; the gateware simply hard-drives it. What is
-needed:
-
-* `slow.oe` and `slow.o` from CSR bits rather than constants
-* `slow.i` wired to an interrupt source, which never fires while the pin is
-  driven
-
-Then the firmware chooses SLOW or ALERT1 at boot, and can change its mind. The
-cost is two register bits and a source that may sit idle.
-
-**The general rule, because a rebuild is ~200 s and a variant:** a pin function
-that *could* be a runtime choice should not be a build-time one. Anything
-hard-driven in `top.py` that the part can repurpose is a candidate.
+`FAULTB` is a level, and the event it reports is transient — so a poll answers
+*"is it faulting now"* when the question is *"has it faulted"*. Only a capture
+answers that. The timings are in
+[`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md).
 
 ## What the controller can and cannot do
 
@@ -96,8 +58,9 @@ carries the argument.
    `gateware/soc/cpu/plic.py` for `amaranth_soc.csr.event.EventMonitor` — smaller,
    Amaranth-native, latches W1C, supports level and edge per source. **Not agreed.**
 2. **The PAC1954 alert (source 6)** — enable it, or record why not.
-3. **`SLOW/ALERT1`** — make it runtime-selectable, rather than choosing SLOW or
-   ALERT1 at build time. Then the question is only what the firmware defaults to.
+3. **`SLOW/ALERT1`** — make it runtime-selectable rather than a build-time
+   choice, so the question becomes only what the firmware defaults to.
+   [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md).
 4. **What the board should DO on a CC/SBU over-voltage.** Counting and surfacing
    it is the floor; opening VBUS on the faulting port is the obvious candidate,
    since the switches are already under firmware control. #507.

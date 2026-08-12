@@ -75,6 +75,7 @@ in its §13 got there in the first place.
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`soc-interrupts.md`](soc-interrupts.md) — **The interrupt design**: every interrupt-capable signal, what should raise one, and the four decisions still open
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
+* [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) — The CC/SBU over-voltage protection: a series switch with one open-drain flag, and nothing listening to it
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
 * [`soc-size-review.md`](soc-size-review.md) — Where the SoC's size actually is — per-peripheral area, per-module `.text`, and why two of the obvious ways to measure both give wrong answers
 * [`toolchain-simplification.md`](toolchain-simplification.md) — Can we drop `luna_soc`?
