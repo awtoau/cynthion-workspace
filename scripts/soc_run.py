@@ -181,8 +181,12 @@ def run(cmd, cwd=None, env=None, floor=None):
 
     Bounded by what THIS program has taken before, per family, rather than not at
     all (#295): unbounded, a wedged place-and-route hangs the whole run with
-    nothing to distinguish it from a slow one. The family is the program's name, so
-    an objcopy is not given a bound sized by a synthesis.
+    nothing to distinguish it from a slow one.
+
+    The family carries the VARIANT for a synthesis. Keyed on the program name
+    alone, every build in the project is `run:bash` -- so a bound learned from
+    twelve shipping builds killed a BIST build at CK 160 that was legitimately
+    slower. A variant is a different design and gets its own history.
 
     On expiry `run_bounded` prints the family, the limit and the elapsed, and the
     caller sees returncode 124 -- the shell's convention for "killed by timeout"
@@ -192,6 +196,8 @@ def run(cmd, cwd=None, env=None, floor=None):
     family = Path(str(cmd[0])).name
     if family in ("python3", "python", "python3.15t") and len(cmd) > 1:
         family = Path(str(cmd[1])).name
+    if family == "bash":
+        family = f"synth:{BUILD.name}"
     result = run_bounded(cmd, family=f"run:{family}", cwd=cwd or ROOT, env=env,
                          floor=floor)
     if result is not None:
