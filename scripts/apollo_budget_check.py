@@ -50,12 +50,29 @@ reports 344 bytes at the deepest path exercised.
 
 ## The ceilings
 
-Set above current usage with room to work, not at it. A ceiling equal to current
-usage fails on the next byte added and gets raised reflexively, which trains people
-to ignore it.
-
 The point is to catch a *step change* -- a new buffer, a disabled optimisation, a
-library pulled in -- not to police normal drift.
+library pulled in -- not to police normal drift. A ceiling equal to current usage
+fails on the next byte added and gets raised reflexively, which trains people to
+ignore it.
+
+95% and 85% were derived on 2026-07-30 from totals 80 bytes low in both regions,
+the `.relocate` blind spot above. Counted correctly, the firmware they shipped
+with was already at 95.48% flash and 86.33% RAM: neither line was ever met, and
+both sat within ~10 bytes of usage rather than above it (#404, evidence in
+`apollo_budget_history.py`).
+
+Re-derived, from the size of the thing that must trip them:
+
+- 64 bytes is the smallest object worth noticing on this part --
+  `apollo_memory_report.py` flags any RAM object at or above it, 1/64th of all
+  RAM in one place.
+- each ceiling sits *under* one such object above the measured image, so the next
+  notable object fails and byte-level drift does not.
+- flash 95.9% = 13748, 60 bytes above the image; RAM 87.5% = 3584, 32 above.
+
+Flash has no headroom left to give: 588 bytes free is what upstream runs with,
+and every lever that would buy more is costed in `apollo_budget_levers.py` --
+`bench` is 336 bytes and the only one that clears flash.
 
     ./scripts/apollo_budget_check.py
     ./scripts/apollo_budget_check.py --stack-measured 344
@@ -76,10 +93,11 @@ APOLLO = ROOT / "repos" / "apollo"
 FIRMWARE = APOLLO / "firmware"
 ELF = FIRMWARE / "_build" / "cynthion_d11" / "firmware.elf"
 
-# Ceilings, as a fraction of each region. See #199 for the current usage they are
-# measured against and for why they sit where they do.
-ROM_CEILING = 0.95
-RAM_CEILING = 0.85
+# Ceilings, as a fraction of each region: under one 64-byte object above the
+# measured image, so the next notable object trips them (#404, and the docstring
+# above for the derivation).
+ROM_CEILING = 0.959
+RAM_CEILING = 0.875
 
 SHF_ALLOC = 0x2
 SHT_NOBITS = 8
@@ -288,18 +306,18 @@ def main():
         verdict = f"OVER by {rom_used - rom_limit}"
         failures.append(f"flash at {rom_pct:.2f}% ({rom_used} of {rom[1]}), "
                         f"{rom_used - rom_limit} bytes over the "
-                        f"{ROM_CEILING * 100:.0f}% ceiling of {rom_limit}")
+                        f"{ROM_CEILING * 100:.1f}% ceiling of {rom_limit}")
     emit(f"  flash  {rom_used:>6} / {rom[1]}  {rom_pct:>6.2f}%  "
-         f"(ceiling {ROM_CEILING * 100:.0f}% = {rom_limit})  {verdict}")
+         f"(ceiling {ROM_CEILING * 100:.1f}% = {rom_limit})  {verdict}")
 
     verdict = "ok"
     if ram_used > ram_limit:
         verdict = f"OVER by {ram_used - ram_limit}"
         failures.append(f"RAM at {ram_pct:.2f}% ({ram_used} of {ram[1]}), "
                         f"{ram_used - ram_limit} bytes over the "
-                        f"{RAM_CEILING * 100:.0f}% ceiling of {ram_limit}")
+                        f"{RAM_CEILING * 100:.1f}% ceiling of {ram_limit}")
     emit(f"  RAM    {ram_used:>6} / {ram[1]}  {ram_pct:>6.2f}%  "
-         f"(ceiling {RAM_CEILING * 100:.0f}% = {ram_limit})  {verdict}")
+         f"(ceiling {RAM_CEILING * 100:.1f}% = {ram_limit})  {verdict}")
 
     stack = next((s["size"] for s in book["sections"]
                   if s["name"] == ".stack"), 0)
