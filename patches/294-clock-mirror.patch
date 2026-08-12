@@ -1,0 +1,264 @@
+commit c08c6c6e461a4bac890bedbe0aef3edd2cb7595d
+Author: Dan on Selwyn <dan@awto.au>
+Date:   Wed Aug 12 12:57:49 2026 +1000
+
+    soc: retire the PMOD clock mirror, recoverable as a patch (#294)
+    
+    Divided copies of every clock on PMOD A, for a scope. It answered "what is the
+    die actually running at" and has not been asked since.
+    
+    Already OFF by default, so this is not area in a shipping build. What it costs
+    is the VARIANT SPACE: `mirror` and `mirrordiv` are two axes in the digest and
+    in every build directory name, so the bitcache carries the cross product of two
+    knobs nobody turns.
+    
+    Its own cost when on is not small either -- a fabric register in every mirrored
+    domain, and on `hr_fast` that pulls an edge clock onto the primary network,
+    which is the resource #314 is about.
+    
+    Restore with `git apply patches/294-clock-mirror.patch` (next commit).
+
+diff --git b/gateware/soc/peripherals/clock_mirror.py a/gateware/soc/peripherals/clock_mirror.py
+new file mode 100644
+index 0000000..2589cfd
+--- /dev/null
++++ a/gateware/soc/peripherals/clock_mirror.py
+@@ -0,0 +1,106 @@
++#!/usr/bin/env python3
++#
++# Clocks out to PMOD pins, so a scope can check them. See #294.
++# SPDX-License-Identifier: BSD-3-Clause
++
++"""Divided copies of the internal clocks on PMOD A, for an external instrument.
++
++## Why
++
++Every clock number this project has produced so far is the design describing
++itself -- `clock_monitor` counts `sync` against `usb`, and both are inside the
++same die that would be wrong together. A scope on a pin is the first source of
++evidence that does not share a failure mode with the thing under test.
++
++It matters more once CK is runtime-selectable (#228): "which rung is live" then
++has to be answerable from outside, not from the register that requested it.
++
++## Divisor
++
++**/4, fixed at build.** Two limits set it:
++
++  * LVCMOS33 output is rated 150 MHz (ECP5 datasheet Table 3.21). `hr_fast` is
++    the device CK on the DQS path and reaches 200 MHz, so the raw net is out of
++    spec on the pad.
++  * A PMOD header with flying leads is not a transmission line at any of these
++    rates. A number that is provably `f/4` beats a rounded-off edge at `f`.
++
++/4 puts every source in 15..50 MHz for the CK range this board is swept over
++(sync 60, usb 60, hr <=200, hr_fast <=200). Powers of two only -- the divider is
++a counter bit, so an odd divisor would need a duty-cycle correction that no
++reader of the pin wants to have to know about.
++
++## Fabric counter, not CLKDIVF
++
++`CLKDIVF` is the hard divider, but it takes ECLK in and ECLK out: reaching it
++means an `ECLKSYNCB` on the same edge-clock spine the DQS PHY is using, which is
++the resource #314 was about. A toggle counter is two LUT4s and two FFs per
++source and touches nothing.
++
++The cost is that the source domain gains a fabric register. On `hr_fast` that
++means the net must reach the primary clock network as well as the edge clock,
++which is why this is OFF by default.
++
++It does not cost the edge clock: with the mirror on, the DQS build still routes
++`S1W2_ECLKI0` from `G_JLLCPLL0CLKOS` -- the dedicated PLL tap, not the fabric
++one -- and no clock falls back to general routing. Check that in `top.config`
++rather than the log if this changes; nextpnr announces the fallback as
++`log_info` and no summary carries it (#314).
++"""
++
++from amaranth import Elaboratable, Module, Signal
++from amaranth.lib import io
++
++__all__ = ["ClockMirror"]
++
++# One PMOD pin per source, in order. Pin 0 is PMOD A pin 1.
++MAX_SOURCES = 8
++
++
++class ClockMirror(Elaboratable):
++    """`divisor`-divided copies of `domains` on the pins of one PMOD buffer.
++
++    `domains` is a list of domain names; each gets the next PMOD pin, in order,
++    so pin N is `domains[N]` and the mapping is positional rather than named.
++    A caller that reorders the list moves the pins, which is the intent -- the
++    firmware's `pmod` command reports the same list.
++
++    `pads` is a `dir="-"` PMOD resource; the buffer is built here so that a
++    build with the mirror off never requests the resource at all and the pins
++    stay available to whatever is plugged into them.
++    """
++
++    def __init__(self, *, pads, domains, divisor=4):
++        if divisor < 2 or divisor & (divisor - 1):
++            raise ValueError(f"divisor must be a power of two >= 2, not {divisor}")
++        if len(domains) > MAX_SOURCES:
++            raise ValueError(f"{len(domains)} sources for {MAX_SOURCES} pins")
++
++        self.pads = pads
++        self.domains = list(domains)
++        self.divisor = divisor
++        self.stages = divisor.bit_length() - 1
++
++    def elaborate(self, platform):
++        m = Module()
++
++        m.submodules.buffer = buffer = io.Buffer("io", self.pads)
++        out = Signal(len(buffer.o))
++
++        for index, domain in enumerate(self.domains):
++            # A free-running counter; bit `stages-1` is the input divided by
++            # `divisor`. Registered, so the pin never sees a decode glitch.
++            count = Signal(self.stages, name=f"mirror_{domain}_count")
++            m.d[domain] += count.eq(count + 1)
++            m.d.comb += out[index].eq(count[-1])
++
++        m.d.comb += [
++            buffer.o.eq(out),
++            # Whole-buffer enable: `io.Buffer` has one `oe` for all eight pins,
++            # so the unused ones are driven low rather than left floating. A
++            # floating pin next to a clock is a pin someone will scope by
++            # mistake.
++            buffer.oe.eq(1),
++        ]
++
++        return m
+diff --git b/gateware/soc/top.py a/gateware/soc/top.py
+index 3c8ebd0..0f5dbda 100755
+--- b/gateware/soc/top.py
++++ a/gateware/soc/top.py
+@@ -846,6 +846,22 @@ def _refuse_ck_past_the_fabric():
+ if WITH_BIST:
+     _refuse_ck_past_the_fabric()
+ 
++# Divided copies of the clocks on PMOD A, for a scope. See #294 and
++# `peripherals/clock_mirror.py`.
++#
++# OFF by default: the pins are general-purpose and a shipping SoC should not
++# spend them, and the mirror puts a fabric register in every domain it copies --
++# on `hr_fast` that pulls an edge clock onto the primary network as well, which
++# is the resource #314 was about.
++#
++#     CYNTHION_CLOCK_MIRROR=1 ./scripts/soc_run.py
++CLOCK_MIRROR = variant.flag("CYNTHION_CLOCK_MIRROR")
++
++# /4. LVCMOS33 output is rated 150 MHz and `hr_fast` is the device CK on the DQS
++# path, so the raw net is out of spec on the pad above 150. /4 puts every source
++# in 15..50 MHz across the swept range. Powers of two only.
++CLOCK_MIRROR_DIV = int(variant.value("CYNTHION_CLOCK_MIRROR_DIV"))
++
+ # Sets in each of the two L1 caches, one way each. A constant rather than a
+ # literal at the instantiation because `peripherals/gateware_id.py` reports it to the
+ # firmware, and a geometry reported from a different number than the one the
+@@ -1493,6 +1509,28 @@ class AwtoSoc(Elaboratable):
+             decoder.add(hyper_ck_bridge.wb_bus, addr=HYPERRAM_CK_BASE,
+                         name="hyperram_ck")
+ 
++        # Divided clocks on PMOD A, so an instrument outside the die can say
++        # what the die is running at. Off unless asked -- see CLOCK_MIRROR.
++        #
++        # `hr`/`hr_fast` exist only in the BIST variant, so the list is built
++        # from what the design actually has rather than from a fixed table that
++        # would elaborate against a domain that is not there.
++        if CLOCK_MIRROR:
++            from peripherals.clock_mirror import ClockMirror
++
++            mirrored = ["sync", "usb"]
++            if WITH_BIST:
++                mirrored.append("hr")
++                if HYPERRAM_BIST_DQS:
++                    mirrored.append("hr_fast")
++
++            # `dir="-"` and the buffer inside the mirror: requesting the
++            # resource at all is what costs the pins, so a build with the mirror
++            # off must not reach this line.
++            m.submodules.clock_mirror = ClockMirror(
++                pads=platform.request("user_pmod", 0, dir="-"),
++                domains=mirrored, divisor=CLOCK_MIRROR_DIV)
++
+         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
+         #
+         # `ext_reset` has no other source. The CPU reboots itself by jumping to
+diff --git b/gateware/soc/variant.py a/gateware/soc/variant.py
+index eee5118..69618ff 100644
+--- b/gateware/soc/variant.py
++++ a/gateware/soc/variant.py
+@@ -28,10 +28,10 @@ So `VARIANT_ENV` is the only list, `top.py` reads its own values back through
+ `flag()`/`value()`, and the defaults exist once.
+ 
+ **Anything `top.py` reads from the environment at import time that changes what
+-it elaborates belongs here.** The clock mirror's flag and divisor did not, and
+-they add a pad-driving register in every mirrored domain -- so two builds either
+-side of that flag hashed identically, and the second was served the first's
+-bitstream as "built from these exact sources". Retired since; #294.
++it elaborates belongs here.** `CYNTHION_CLOCK_MIRROR` and its divisor did not,
++and they add a pad-driving register in every mirrored domain -- so two builds
++either side of that flag hashed identically, and the second was served the
++first's bitstream as "built from these exact sources".
+ 
+ ## Naming
+ 
+@@ -65,6 +65,8 @@ VARIANT_ENV = (
+     ("CYNTHION_HYPERRAM_BIST_DQS",  "1",   "dqs",       FLAG),
+     ("CYNTHION_HYPERRAM_MERGED",    "",    "merge",     FLAG),
+     ("CYNTHION_SYNC_MHZ",           None,  "sync",      TEXT),
++    ("CYNTHION_CLOCK_MIRROR",       "",    "mirror",    FLAG),
++    ("CYNTHION_CLOCK_MIRROR_DIV",   "4",   "mirrordiv", TEXT),
+ )
+ 
+ # The CK default is PER PATH, because one number cannot be right for both.
+diff --git b/tests/test_variant_build_dir.py a/tests/test_variant_build_dir.py
+index 1a347c9..4e626a2 100644
+--- b/tests/test_variant_build_dir.py
++++ a/tests/test_variant_build_dir.py
+@@ -45,12 +45,13 @@ DEFAULT: dict = {}
+ BIST = {"CYNTHION_HYPERRAM_BIST": "1"}
+ BIST_CK120 = {"CYNTHION_HYPERRAM_BIST": "1", "CYNTHION_HYPERRAM_CK_MHZ": "120"}
+ BIST_NODQS = {"CYNTHION_HYPERRAM_BIST": "1", "CYNTHION_HYPERRAM_BIST_DQS": "0"}
++MIRROR = {"CYNTHION_CLOCK_MIRROR": "1"}
+ 
+ 
+ def test_different_variants_get_different_directories():
+     dirs = {variant.build_dir(ROOT, env)
+-            for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS)}
+-    assert len(dirs) == 4, sorted(str(d) for d in dirs)
++            for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS, MIRROR)}
++    assert len(dirs) == 5, sorted(str(d) for d in dirs)
+ 
+ 
+ def test_the_same_variant_gets_the_same_directory():
+@@ -64,7 +65,8 @@ def test_the_same_variant_gets_the_same_directory():
+         {"CYNTHION_HYPERRAM_BIST": "0"},
+         # The DQS default, spelled out. Taken from the table rather than typed:
+         # it is per path now, and a literal here would pin one of the two.
+-        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[True]},
++        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[True],
++         "CYNTHION_CLOCK_MIRROR_DIV": "4"},
+     ]
+     dirs = {variant.build_dir(ROOT, env) for env in same}
+     assert len(dirs) == 1, sorted(str(d) for d in dirs)
+@@ -102,7 +104,7 @@ def test_the_directory_is_under_the_build_root_and_is_one_component():
+ 
+ def test_the_directory_and_the_cache_key_separate_the_same_things():
+     import soc_run
+-    for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS):
++    for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS, MIRROR):
+         assert soc_run.variant_settings.__module__  # imported, not shadowed
+     # Every entry in the table appears in the slug and in the settings list.
+     for name, _default, tag, _kind in variant.VARIANT_ENV:
+@@ -125,7 +127,7 @@ REFUSAL_OVERRIDES = {
+ def test_top_py_reads_every_variant_variable_through_the_table():
+     # An `os.environ.get` in top.py that is not in VARIANT_ENV is a bitstream
+     # that hashes the same as a different one and shares its directory --
+-    # The clock mirror was exactly that until #351 (retired, #294).
++    # `CYNTHION_CLOCK_MIRROR` was exactly that until #351.
+     source = TOP.read_text()
+     stray = [name for name in
+              re.findall(r'os\.environ\.get\(\s*"(CYNTHION_[A-Z_]+)"', source)
