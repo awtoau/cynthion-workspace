@@ -53,9 +53,8 @@ LATENCY = """\
       time  lat  mode  drive  clk  sel    errors     words   control  verdict
 000101.787    0  fix       3  dif    2         0      2048      2048  PASS
       sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre
-000101.812    0  var       3  dif    5      2048      2048      2048  fail
+000101.812    0  var       3  dif    5      2048      2048      2048  fail  bad[0x0] got 0x00000000 want 0xffbf0000
       sel  8 walked  none passed  pick 5 -- the fewest errors
-      first bad: index 0x0  got 0x00000000  want 0xffbf0000
 000101.840   15  var       7  dif    6         8      1024      1024  NO RESULT -- control did not fire
       sel  8 walked  none passed  pick 6 -- the fewest errors
   1 pass, 1 fail, 1 no result of 3
@@ -66,10 +65,9 @@ CELL = """\
   CK 120 MHz  rung 0 of 1  PLL locked
   sync 60 MHz counted  PLL locked
       time  lat  mode  drive  clk  sel    errors     words   control  verdict
-000197.956    2  fix       3   se    0      8192      8192      8192  fail
+000197.956    2  fix       3   se    0      8192      8192      8192  fail  bad[0x0] got 0x0000003f want 0xffbf0000
       real   : status 0x4078f7 busy=1 done=1 error=1 negative=0
       control: status 0x4078f7 busy=1 done=1 error=1 negative=0
-      first bad: index 0x0  got 0x0000003f  want 0xffbf0000
 """
 
 # `bist all` on a non-DQS build: only non-clean rows print, so a clean run has
@@ -121,7 +119,9 @@ def test_the_fixtures_are_the_firmwares_own_columns():
             "000101.812", "0", "var", "3", "dif", "5", "2048", "2048", "2048"])):
         assert row[end - widths[i]:end].strip() == want, f"field {i}: {row!r}"
         assert heading[end - widths[i]:end].strip(), f"heading field {i} is blank"
-    assert row[ends[-1] + 2:] == "fail"
+    # The verdict, then a failed row's evidence on the SAME line (#423). The
+    # column contract covers the fixed fields; the tail is verdict + evidence.
+    assert row[ends[-1] + 2:].startswith("fail  bad[")
 
 
 def test_a_row_yields_every_axis_and_every_count():
@@ -148,9 +148,10 @@ def test_a_sweep_transcript_parses_rows_summary_and_evidence():
     assert len(rows) == 3
     assert bist_rows.require_summary(LATENCY, "bist latency") == {
         "passed": 1, "failed": 1, "no_result": 1, "total": 3}
-    bad = bist_rows.FIRST_BAD.search(LATENCY)
-    assert bad and (bad["index"], bad["got"], bad["want"]) == (
-        "0x0", "0x00000000", "0xffbf0000")
+    # Per ROW, not per transcript. A sweep walking several cells before it
+    # picks one to print would otherwise pin the last cell's word to it (#421).
+    assert rows[1]["bad"] == {"index": 0, "got": 0, "want": 0xffbf0000}
+    assert rows[0]["bad"] is None and rows[2]["bad"] is None
 
 
 def test_the_speeds_are_on_every_table():

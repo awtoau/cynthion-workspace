@@ -66,9 +66,14 @@ CENSUS = re.compile(r"^\s*sel\s+(?P<walked>\d+) walked\s+"
 REPEATS = re.compile(r"(?P<distinct>\d+)\s+DISTINCT configurations "
                      r"x (?P<repeats>\d+) repeats")
 
-FIRST_BAD = re.compile(r"first bad:\s*index\s*(?P<index>0x[0-9a-f]+)\s*"
+FIRST_BAD = re.compile(r"bad\[(?P<index>0x[0-9a-f]+)\]\s*"
                        r"got\s*(?P<got>0x[0-9a-f]+)\s*"
                        r"want\s*(?P<want>0x[0-9a-f]+)")
+
+# A failed row's evidence trails its verdict on the SAME line (#423). This is
+# where the verdict ends -- the verdict text itself contains no `  bad[`, no
+# `  fsm ` and no TIMEOUT, so the first of these is the boundary.
+EVIDENCE = re.compile(r"\s{2}(?:(?:real|control) TIMEOUT|fsm |bad\[)")
 
 # `bist ck`'s rung listing, and the CK/sync lines every sweep now prints above
 # its table. The frequency is ragged on purpose -- reachable rungs include
@@ -86,10 +91,20 @@ INTS = ("lat", "drive", "sel", "errors", "words", "control")
 
 
 def cell(match):
-    """One row's named groups, with the numeric ones as ints."""
+    """One row's named groups, with the numeric ones as ints.
+
+    `verdict` is split from the trailing `evidence` a failed row now carries,
+    so a bucket keyed on the verdict does not gain a key per bad word.
+    """
     got = match.groupdict()
     got.update({name: int(got[name]) for name in INTS})
     got["fixed"] = got["mode"] == "fix"
+    split = EVIDENCE.search(got["verdict"])
+    got["evidence"] = got["verdict"][split.start():].strip() if split else ""
+    got["verdict"] = got["verdict"][:split.start()] if split else got["verdict"]
+    bad = FIRST_BAD.search(got["evidence"])
+    got["bad"] = ({"index": int(bad["index"], 16), "got": int(bad["got"], 16),
+                   "want": int(bad["want"], 16)} if bad else None)
     return got
 
 

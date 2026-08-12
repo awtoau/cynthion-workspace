@@ -549,6 +549,46 @@ fn print_fsm(uart: &mut Uart, words: [u32; 4]) {
     }
 }
 
+/// A failed cell's evidence, as a SUFFIX to its row rather than lines under it.
+///
+/// Everything here is empty on a clean pass, so a passing sweep is unchanged.
+struct Evidence<'a>(&'a Measured);
+
+impl core::fmt::Display for Evidence<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let m = self.0;
+        // Which half expired, how far it got and against what. A silent expiry
+        // is worse than no bound at all.
+        for (label, p) in [("real", m.poll[0]), ("control", m.poll[1])] {
+            if let Poll::TimedOut { limit, spins } = p {
+                write!(f, "  {label} TIMEOUT {spins}/{limit} spins")?;
+            }
+        }
+        // WHERE it stalled. A parked engine never asked for a transaction; a
+        // parked controller asked and got no answer. `STALL` is sticky (#409).
+        if let Some([engine_a, ctrl_a, engine_b, ctrl_b]) = m.fsm {
+            write!(f, "  fsm {engine_a}>{engine_b}{}  ctrl %{:03b}>%{:03b}",
+                   if engine_a == engine_b { " parked" } else { "" },
+                   ctrl_a & 0b111, ctrl_b & 0b111)?;
+            if ctrl_b & 0b1000 != 0 {
+                write!(f, " STALLED-STICKY")?;
+            }
+        }
+        // The first mismatch and both values: one bad word and a million bad
+        // words are different faults, and the pattern is invertible so a value
+        // decodes back to the address it belongs to.
+        if let Some((index, got, want)) = m.bad {
+            write!(f, "  bad[{index:#x}] got {got:#010x} want {want:#010x}")?;
+            // 16-bit rotation == one device word of slip (#186). NOT proof the
+            // phase is right: the eye has this residue at `sel 0` (#421).
+            if got.rotate_left(16) == want || got == want.rotate_left(16) {
+                write!(f, " ROT16(#186)")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Print one cell's row, and the evidence when it produced nothing. Returns the
 /// verdict the row states, so the caller's tally cannot disagree with it.
 ///
@@ -571,54 +611,20 @@ fn report(uart: &mut Uart, m: &Measured, expected: u32, verbose: bool) -> Verdic
         Verdict::NoResult if short => "NO RESULT -- short cell, fewer words than asked",
         Verdict::NoResult => "NO RESULT -- control did not fire",
     };
-    // ONE `writeln!`, every field in it, the stamp first. Built from three
-    // separate writes the stamp landed between column 2 and column 3, mid-row.
+    // ONE `writeln!`, EVERY field in it including the evidence. A row that
+    // wraps is a row `bist_rows.py` and a reader both have to reassemble. #423.
     //
-    // The stamp is per-row so per-cell duration is in the data; "how quick" then
-    // stops being something anyone has to ask.
+    // The stamp is per-row so per-cell duration is in the data.
     let _ = writeln!(
-        uart, "{}  {:3}  {:4}  {:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}",
+        uart, "{}  {:3}  {:4}  {:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}{}",
         crate::log::now(),
         cell.axes.latency,
         if cell.axes.fixed_latency { "fix" } else { "var" },
         cell.axes.drive,
         if cell.axes.single_ended_clock { "se" } else { "dif" },
         cell.axes.readclksel,
-        cell.errors, cell.words, cell.control_errors, verdict);
+        cell.errors, cell.words, cell.control_errors, verdict, Evidence(m));
 
-    // A silent expiry is worse than no bound at all: say which half, what the
-    // limit was and how far it got.
-    for (label, p) in [("real", poll[0]), ("control", poll[1])] {
-        if let Poll::TimedOut { limit, spins } = p {
-            let _ = writeln!(
-                uart, "      {} pass TIMED OUT after {} spins, limit {} \
-                       -- engine never raised done",
-                label, spins, limit);
-        }
-    }
-    // WHERE it stalled, not merely that it did. A parked engine state and a
-    // parked controller state are different faults: the first says the engine
-    // never asked for a transaction, the second says it asked and got no answer.
-    if let Some(words) = m.fsm {
-        print_fsm(uart, words);
-    }
-    // THE FIRST MISMATCH, with its index and both values. One bad word in a
-    // million and a million bad words are different faults, and *how* it is
-    // wrong separates a one-word slip from a dead lane from noise. The pattern
-    // is invertible by construction, so a value decodes back to the address it
-    // belongs to.
-    if let Some((index, got, want)) = m.bad {
-        let _ = writeln!(uart, "      first bad: index {:#x}  got {:#010x}  \
-                                want {:#010x}", index, got, want);
-        // A 16-bit rotation is one DEVICE word of slip (#186). It is NOT proof
-        // the phase is right: the measured eye has this residue at `sel 0` and
-        // zero errors two phases away (#421).
-        let rotated = got.rotate_left(16);
-        if rotated == want || got == want.rotate_left(16) {
-            let _ = writeln!(uart, "      ^ that is the SAME word rotated by 16 \
-                                    bits: one device word of slip (#186)");
-        }
-    }
     if verbose {
         print_status(uart, "real   ", st[0]);
         print_status(uart, "control", st[1]);
