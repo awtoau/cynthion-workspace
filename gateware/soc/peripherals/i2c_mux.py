@@ -50,9 +50,9 @@ state-changing read one byte from the register the handler polls
     spare sources, so nothing was saved by sharing (`../../docs/architecture.md`,
     decision 8).
   * **`fault` gets no source, and the level is not captured either.** The
-    DPO2036 auto-recovers: `FAULTB` asserts within 300 us and de-asserts about
-    4 ms later, so a transient is gone long before the 50 ms poll samples it.
-    A clean read is therefore not evidence that no fault occurred. #506.
+    DPO2036 auto-recovers, holding its FETs off 26-38 ms, so `FAULTB` is low
+    for roughly that long and nothing here latches it. A clean read at the
+    50 ms poll is not evidence that no fault occurred. #506.
 """
 
 from amaranth               import Module, Mux, Signal
