@@ -118,7 +118,7 @@ def build_once(sets, ways):
 
     # Patched in the file rather than passed as a flag: `top.py` is the source of
     # truth for CACHE_SETS/CACHE_WAYS and reports both to the firmware through
-    # `gateware_id.py`. A flag that bypassed it would measure a core whose
+    # `soc_generate_pac.py`. A flag that bypassed it would measure a core whose
     # geometry disagreed with what the SoC advertises -- which is exactly the
     # drift the constants exist to prevent.
     top = ROOT / "gateware" / "soc" / "top.py"

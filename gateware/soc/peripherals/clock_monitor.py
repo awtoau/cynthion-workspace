@@ -7,8 +7,8 @@
 
 ## Why a declared frequency is not evidence
 
-`gateware_id` reports `sync` and `usb` as constants baked in at elaboration --
-what the generator was *asked* for. That is not the same as what the silicon
+Every declared frequency in this design -- `target::TIME_HZ`, the build record --
+is what the generator was *asked* for. That is not the same as what the silicon
 produces, and the difference is not academic:
 
     gateware a9627d4  sync 30000000 usb 60000000 Hz

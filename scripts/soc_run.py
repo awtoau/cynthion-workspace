@@ -1066,6 +1066,15 @@ def main():
         # Recorded only now, after the build has returned zero. Written before
         # it would claim a bitstream that may not exist.
         GATEWARE_BUILT.write_text(gateware_digest() + "\n")
+        # The cache key, into the record the bitstream carries: it is the name of
+        # the `tmp/bitcache` directory this bitstream is filed under, so a
+        # USERCODE read off a board leads back to the artifact.
+        import usercode_map
+
+        record = usercode_map.read_build_record(BITSTREAM.parent)
+        if record is not None:
+            record["gateware_digest"] = gateware_digest()
+            usercode_map.write(record, BITSTREAM.parent)
         bitcache_put(gateware_digest(), emit)
 
         report = BUILD / "top.rpt"

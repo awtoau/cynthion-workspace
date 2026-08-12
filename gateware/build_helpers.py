@@ -41,8 +41,8 @@ def source_digest():
     """A hash of every gateware source, and of the variant that selects among them.
 
     The one definition of "which gateware is this". `soc_run.gateware_digest`
-    folds HEAD and the placer flags into it for the bitstream cache;
-    `peripherals/gateware_id.py` puts its low 32 bits in a register.
+    folds the placer flags into it for the bitstream cache; `usercode_map.py`
+    records it beside the bitstream.
     """
     if str(GATEWARE_SOC) not in sys.path:
         sys.path.insert(0, str(GATEWARE_SOC))
@@ -55,11 +55,6 @@ def source_digest():
     for setting in variant.settings():
         digest.update(setting.encode())
     return digest.hexdigest()
-
-
-def source_id():
-    """`source_digest` as the 32 bits `gateware_id`'s `built` register holds."""
-    return int(source_digest()[:8], 16)
 
 
 def usercode():
@@ -94,22 +89,13 @@ def ecppack_opts(extra="", code=None):
     """
     code = usercode() if code is None else code
     # DECIMAL. ecppack parses --usercode with a plain integer reader and rejects
-    # `0x...` outright ("the argument ... is invalid"), so the hex this used to
-    # emit failed every build that asked for a USERCODE -- the stamp could not
-    # have been reaching any bitstream. Verified against ecppack 1.4-79 for
-    # values above 2**31 too, which is where a dirty tree's top bit puts it.
+    # `0x...` outright ("the argument ... is invalid"). Verified against ecppack
+    # 1.4-79 for values above 2**31 too, which is where a dirty tree's top bit
+    # puts it.
     return {"ecppack_opts": f"--compress --freq 38.8 --usercode {code:d} "
                             f"{extra}".strip()}
 
 
-def describe(code):
-    """Render a USERCODE read back from hardware."""
-    if code == 0:
-        return "unset -- built before USERCODE stamping"
-    dirty = " (dirty tree)" if code & 0x80000000 else ""
-    return f"git {code & 0x7fffffff:07x}{dirty}"
-
-
 if __name__ == "__main__":
-    print(f"usercode: {usercode():#010x}  -> {describe(usercode())}")
-    print(f"source:   {source_id():#010x}  -> {source_digest()}")
+    print(f"usercode: {usercode():#010x}")
+    print(f"source:   {source_digest()}")
