@@ -61,6 +61,9 @@ def test_the_paired_interval_brackets_the_mean():
     assert got["n"] == 10
 
     # An arm that is identical to the reference has a zero-width interval on
-    # zero, not a missing one.
+    # zero, not a missing one -- and it is the LEAST surprising result there is,
+    # so both p values are 1. The null arm really does produce this: a netlist
+    # byte-identical to base gives Fmax identical on every seed.
     same = soc_occupancy_timing.paired(ref, dict(ref))
     assert same["mean"] == same["lo"] == same["hi"] == 0.0
+    assert same["p"] == 1.0 and same["sign_p"] == 1.0

@@ -585,13 +585,22 @@ def paired(ref, arm):
     mean = statistics.mean(diffs)
     sd = statistics.stdev(diffs)
     n = len(diffs)
-    t = mean / (sd / math.sqrt(n)) if sd else math.inf
-    p = (_betainc((n - 1) / 2, 0.5, (n - 1) / (n - 1 + t * t)) if sd else 0.0)
+    if sd:
+        t = mean / (sd / math.sqrt(n))
+        p = _betainc((n - 1) / 2, 0.5, (n - 1) / (n - 1 + t * t))
+    else:
+        # No spread at all is the null arm: every seed identical. p is 1, not 0
+        # -- "the two netlists agree exactly" is the least surprising result
+        # available, and the old branch called it significant.
+        t, p = (math.inf, 0.0) if mean else (0.0, 1.0)
     half = t_critical(n - 1) * sd / math.sqrt(n) if sd else 0.0
     wins = sum(1 for d in diffs if d > 0)
-    # Sign test: how surprising is `wins` out of n if the trim did nothing.
-    sign_p = min(1.0, 2 * sum(math.comb(n, k) for k in range(min(wins, n - wins) + 1))
-                 / 2 ** n)
+    # Sign test over the seeds that MOVED. Ties are not evidence either way, and
+    # counting them as losses made an arm that changed nothing look one-sided.
+    moved = sum(1 for d in diffs if d)
+    sign_p = (min(1.0, 2 * sum(math.comb(moved, k)
+                               for k in range(min(wins, moved - wins) + 1))
+                  / 2 ** moved) if moved else 1.0)
     return {"n": n, "mean": mean, "sd": sd, "min": min(diffs), "max": max(diffs),
             "median": statistics.median(diffs), "p": p, "wins": wins,
             "sign_p": sign_p, "common": common, "diffs": diffs,
