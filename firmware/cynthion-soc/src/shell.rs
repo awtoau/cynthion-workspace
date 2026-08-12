@@ -90,6 +90,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("cpu", "the RISC-V core"),
     ("cpu stats", "cycles, instructions, busy fraction"),
     ("cpu check", "smoke test: add/multiply, flash reads, time format"),
+    ("cpu stress [ms]", "full load on the critical path; every answer checked"),
     ("cpu irq", "interrupt counts, per source"),
     ("cpu log [n|tags]", "the deferred event ring the handlers push to"),
     ("cpu status", "is the OS alive: heartbeat dispatches and their lateness"),

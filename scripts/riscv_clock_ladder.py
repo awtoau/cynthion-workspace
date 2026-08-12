@@ -1,52 +1,58 @@
 #!/usr/bin/env python3
 #
-# Raise the RISC-V SoC clock until it stops computing correctly.
-# See awtoau/cynthion-workspace#110.
+# Raise the SoC clock until the board stops computing correctly. #110, #439.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Builds, flashes and verifies the SoC at a series of clock frequencies.
+Build, load and CHECK THE ARITHMETIC at a series of `sync` frequencies.
 
-The SoC is constrained to 60 MHz and already meets 76.71 MHz, so 60 is a constraint rather
-than a limit. The die is also a 25F rather than the 12F it is marked as -- 20,143 LUT4s
-placed and computed correctly at 86.43 MHz, and the two parts share a speed grade
-(#116, pluribus#98). Both say there is headroom; neither says
-how much, which is what this measures.
+    ./scripts/riscv_clock_ladder.py --sync 60 70 80 90 100
+    ./scripts/riscv_clock_ladder.py --spec CYNTHION_HYPERRAM_DQS=1 --sync 60
 
 ## What counts as passing
 
-**Not** "the bitstream built" and **not** "the tty appeared". The firmware prints
-`0x12345678 * 3` and a counter, so a passing run means:
+Not "the bitstream built", not "the tty appeared". A CPU with marginal timing
+does not stop; it computes the wrong answer.
 
-- the product reads `369d0368` -- real multiplication, not a stored constant
-- the counter **advances between two separate reads** -- executing, not replaying a buffer
+  * `cpu check` -- the LIGHT load. Volatile add, multiply and two memory-mapped
+    flash reads; every line must read `ok`.
+  * `cpu stress` -- the HARD load, aimed at the measured critical paths rather
+    than at a score: cache-missing arithmetic checksummed against a value the
+    host compiler computed, 64 deliberate exceptions a pass through `TrapPlugin`
+    (#468), and the timer tick. Every one of the three is verified.
+  * `cpu stats` read twice -- the counters must advance.
+  * `info` -- `measured sync` is COUNTED in fabric against the 60 MHz
+    oscillator, and must match the rung. This is the check #439 asked for: the
+    board says what it is running at, rather than the script assuming. It is
+    read straight after the stress load, so the die temperature is the hot one.
 
-A CPU with marginal timing does not stop; it computes the wrong answer. Checking the
-arithmetic is what distinguishes "faster" from "faster and wrong", and a bitstream that
-merely enumerates proves neither.
+A rung that passes the light load and fails the hard one is `LIGHT ONLY`, and
+that is the interesting row: it would mean every previous "it runs at N MHz"
+here was measured with the wrong workload.
 
-## Two things that must move with the clock
+## The rung is an environment variable
 
-**The sideband.** Its bit period is a cycle count fixed at build time, so a design that
-raises `sync` and leaves the responder's `clk_freq_hz` alone gets a dead debug link rather
-than a slow one. `top.py` derives both from `SYNC_MHZ`, so this only has to
-rewrite one constant.
+`CYNTHION_SYNC_MHZ` is in `variant.VARIANT_ENV`, so a rung is one build
+directory and one cache key. It replaces the `SYNC_MHZ = \\d+` rewrite of
+`top.py`, which since f7bdb18 hit the BIST arm of a ternary and left the
+shipping arm at 60 -- every rung the old script reported was the same 60 MHz
+design under a different name (#439). All results from before that are void.
 
-**The `usb` domain must stay at 60 MHz.** The ULPI PHY requires it. Only `sync` and `fast`
-are swept.
+`solve_pll` must reach the rung exactly; an unreachable one is skipped with the
+reachable neighbours named, never built and rounded.
 
-## Cost
+## The board
 
-A clean build and a configure per point, a couple of minutes each. The FPGA is
-reconfigured repeatedly; nothing is written to flash, so a power cycle restores whatever
-was loaded before.
+Through `scripts/board.py` only -- one shared, stateful resource, and a
+transcript with the bitstream digest that produced it. Never the tty directly.
 
-    ./scripts/riscv_clock_ladder.py
-    ./scripts/riscv_clock_ladder.py --frequencies 60 80 100
+Logs to ./tmp/logs/riscv_clock_ladder.log, results to
+./tmp/riscv_clock_ladder.json.
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -54,170 +60,322 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "tmp" / "riscv_clock_ladder.json"
-GATEWARE = ROOT / "gateware" / "soc" / "top.py"
+LOG = ROOT / "tmp" / "logs" / "riscv_clock_ladder.log"
 
-sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
-from soc import variant  # noqa: E402
+from soc import clocks, variant  # noqa: E402
+from soc_sync_ladder import parse_spec, timing  # noqa: E402
 
-# This variant's build directory (#351).
-BUILD = variant.build_dir(ROOT)
-BITSTREAM = BUILD / "top.bit"
+SOC_RUN = ROOT / "scripts" / "soc_run.py"
+BOARD = ROOT / "scripts" / "board.py"
 
-# 0x12345678 * 3, which the firmware prints. Checking the value rather than merely
-# checking that something arrived is what separates "faster" from "faster and wrong".
-EXPECTED_PRODUCT = "369d0368"
-
-# Waiting for the tty needs a real wait, not a spin.
+# The shell commands, in order.
 #
-# Polling find_tty() in a bare loop completes in microseconds and always fails: the
-# FPGA has to reconfigure, the device has to re-enumerate and the kernel has to bind
-# the CDC driver, none of which is instant. That reports "no console tty appeared"
-# for a working board at every frequency -- a false negative that condemns
-# frequencies that are fine.
+# Two loads, not one. `cpu check` is liveness -- one multiply and two flash
+# reads, which pass at rungs where real code fails. `cpu stress` drives the
+# measured critical paths: cache-missing arithmetic against a host-computed
+# checksum, 64 deliberate exceptions a pass through `TrapPlugin` (#468), and the
+# timer tick. `info` follows it so the die temperature is read HOT.
+COMMANDS = ["cpu check", "cpu stats", "cpu stress 500", "info", "cpu stats"]
+
+# `cpu check`'s four answers. The firmware prints the verdict; this asserts that
+# all four are present, because a truncated reply with no BAD in it also has no
+# ok in it and would otherwise read as a pass.
+CHECKS = ("sum", "prod", "@0", "@40")
+
+# Seconds one build-and-load may take.
 #
-# Each iteration now runs one `udevadm settle`, which blocks until the kernel's device
-# queue drains, so the loop advances only when something has actually changed. The count
-# bounds how many settles to wait through before giving up.
-#
-# 60, not 20, and it is `wait_for_tty`'s default rather than a second opinion:
-# `gateware/usb_ids.py` records 20 being too few three times under load, once
-# costing an entire investigation on a board that was on the bus throughout. A
-# ladder that condemns a frequency for that reason is the exact failure this
-# script already has a paragraph about (#295).
-TTY_SETTLE_LIMIT = 60
+#   waits for   cargo, the CPU generator, yosys, nextpnr, the flash write and
+#               the configure, for one variant
+#   expected    256 s for the slowest completed merged build (#432), plus ~90 s
+#               for a 120 KB flash write and a reconfigure
+#   multiplier  1.25x
+#   on expiry   the child is killed and the rung is NO BUILD, naming the limit
+BUILD_SECONDS = 435
+
+OUTPUT = []
 
 
-def set_clock(mhz):
-    text = GATEWARE.read_text()
-    GATEWARE.write_text(re.sub(r"SYNC_MHZ = \d+", f"SYNC_MHZ = {mhz}", text))
+def say(line=""):
+    emit(line)
+    OUTPUT.append(line)
 
 
-def build():
-    """Returns (ok, achieved_mhz or None, detail)."""
-    result = subprocess.run(
-        ["bash", "-c",
-         f'source "$HOME/opt/oss-cad-suite/environment" && '
-         f'python3.15t {GATEWARE} --build'],
-        cwd=ROOT, capture_output=True, text=True)
-    if result.returncode != 0:
-        tail = (result.stderr or result.stdout).strip().splitlines()
-        return False, None, tail[-1][:90] if tail else "build failed"
-
-    # nextpnr reports achieved frequency per clock; the sync domain is the one being
-    # swept. A design can fail timing and still run -- nextpnr's estimate is
-    # conservative -- so this is recorded rather than treated as pass/fail.
-    timing = BUILD / "top.tim"
-    achieved = None
-    if timing.exists():
-        for line in timing.read_text().splitlines():
-            found = re.search(r"Max frequency for clock.*?:\s*([\d.]+)\s*MHz", line)
-            if found:
-                value = float(found.group(1))
-                achieved = value if achieved is None else min(achieved, value)
-    return True, achieved, None
+def flush():
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    LOG.write_text("\n".join(OUTPUT) + "\n")
 
 
-def configure():
-    """Load this rung's bitstream and confirm a design is running.
-
-    `expect="console"`: `verify()` below reads the banner and the ticks, and the
-    first received byte flushes the banner -- so the console is required to
-    enumerate but is not prompted. A rung marked FAIL because the FPGA was left
-    blank is a rung attributed to its frequency (#360).
-    """
-    import soc_confirm
-
-    return soc_confirm.configure_and_confirm(BITSTREAM, expect="console") == 0
-
-
-def verify():
-    """Read the console twice. Returns (ok, detail)."""
-    import serial
-    import usb_ids
-
-    # Settles, and confirms the port opens -- immediately after a reconfigure find_tty()
-    # can still return the node from before it, which then fails to open.
-    node = usb_ids.wait_for_tty("riscv_console", settles=TTY_SETTLE_LIMIT)
-    if not node:
-        return False, "no console tty appeared"
-
+def build(overlay, mhz, seed):
+    """Build one rung. Returns (built, build_dir, slug, detail)."""
+    env = {**os.environ, **overlay, "CYNTHION_SYNC_MHZ": f"{mhz:g}",
+           # The ceiling refuses a rung the fabric is not expected to close.
+           # Whether the DIE agrees with that expectation is the question.
+           "CYNTHION_SYNC_CEILING_MHZ": f"{max(mhz, 90):g}"}
+    slug = variant.slug(env)
+    build_dir = variant.build_dir(ROOT, env)
+    # NOT `--build-only`. The shell's `.text` lives in flash, not in the
+    # bitstream, so a rung whose firmware is never written runs whatever image
+    # the board already held -- which is another agent's, and which answers
+    # `unknown` to any command this ladder added. The flash write goes over
+    # Apollo rather than through the CPU, so a rung too fast to execute can
+    # still be loaded.
+    #
+    # `--allow-timing-fail` is the point of the ladder: a rung nextpnr says
+    # misses is exactly the one worth loading, because STA's verdict on this die
+    # has never been checked against the die (#470).
+    command = [sys.executable, str(SOC_RUN), "--skip-tests", "--no-read",
+               "--no-parallel-refine", "--allow-timing-fail"]
+    if seed is not None:
+        command += ["--seed", str(seed)]
     try:
-        port = serial.Serial(node, 115200, timeout=3)
-        first = port.read(256).decode("ascii", "replace")
-        second = port.read(256).decode("ascii", "replace")
-        port.close()
-    except Exception as error:
-        return False, f"{type(error).__name__} reading {node}"
+        done = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+                              text=True, timeout=BUILD_SECONDS)
+    except subprocess.TimeoutExpired:
+        return False, build_dir, slug, f"killed at the {BUILD_SECONDS} s limit"
+    if not (build_dir / "top.bit").exists():
+        tail = (done.stderr or done.stdout).strip().splitlines()
+        return False, build_dir, slug, tail[-1][:110] if tail else "no top.bit"
+    return True, build_dir, slug, None
 
-    if EXPECTED_PRODUCT not in first + second:
-        return False, f"product {EXPECTED_PRODUCT} not seen -- arithmetic is wrong"
 
-    ticks = re.findall(r"tick ([0-9a-f]{8})", first + second)
-    if len(ticks) < 2:
-        return False, f"only {len(ticks)} tick(s) seen"
-    if ticks[-1] == ticks[0]:
-        return False, "counter did not advance -- not executing"
-    return True, f"product ok, ticks {ticks[0]} -> {ticks[-1]}"
+def predicted(build_dir):
+    """What nextpnr says about this build: {clock: {mhz, target, status}}."""
+    report = build_dir / "top.tim"
+    return timing(report.read_text()) if report.exists() else {}
+
+
+def on_board(bitstream, budget, label):
+    """Run COMMANDS through the arbiter. Returns (record, [(command, reply)]).
+
+    By path, not by slug: one arbiter serves the whole machine and it resolves a
+    slug against ITS checkout's build directory, which is another worktree's.
+    """
+    done = subprocess.run(
+        [sys.executable, str(BOARD), "--json", "run",
+         "--bitstream", str(bitstream),
+         "--budget", str(budget), "--label", label, *COMMANDS],
+        cwd=ROOT, capture_output=True, text=True)
+    try:
+        record = json.loads(done.stdout[done.stdout.index("{"):])
+    except ValueError:
+        record = {"status": "no record",
+                  "error": (done.stderr or done.stdout)[-400:]}
+    replies = [(step.get("command", ""), step.get("reply", ""))
+               for step in record.get("transcript") or []]
+    return record, replies
+
+
+def arithmetic(replies):
+    """(ok, detail) from `cpu check` -- the whole point of the ladder."""
+    said = "\n".join(reply for command, reply in replies
+                     if command.startswith("cpu check"))
+    if not said.strip():
+        return False, "cpu check returned nothing"
+    if "BAD" in said:
+        bad = [line.strip() for line in said.splitlines() if "BAD" in line]
+        return False, "WRONG ANSWER: " + "; ".join(bad)
+    missing = [name for name in CHECKS
+               if not re.search(rf"^{re.escape(name)}\s+[0-9a-f]{{8}} ok",
+                                said, re.M)]
+    if missing:
+        return False, f"no ok line for {', '.join(missing)}"
+    return True, "sum, prod and both flash words ok"
+
+
+def advanced(replies):
+    """(ok, detail) -- did the counters move between the two `cpu stats`."""
+    reads = [reply for command, reply in replies
+             if command.strip() == "cpu stats"]
+    if len(reads) < 2:
+        return False, f"only {len(reads)} cpu stats reply(s)"
+    if reads[0].strip() == reads[1].strip():
+        return False, "cpu stats identical twice -- not executing"
+    return True, "counters advanced"
+
+
+def measured(replies, mhz):
+    """(ok, khz, detail) -- what the FABRIC counts, against the rung asked for."""
+    said = "\n".join(reply for command, reply in replies
+                     if command.strip() == "info")
+    if "CLOCK MISMATCH" in said:
+        return False, None, "firmware reports CLOCK MISMATCH"
+    found = re.search(r"measured sync (\d+) kHz, pll (\w+)", said)
+    if not found:
+        return False, None, "no `measured sync` line in `info`"
+    khz, lock = int(found.group(1)), found.group(2)
+    off = abs(khz - mhz * 1000) / (mhz * 1000)
+    if off > 0.01:
+        return False, khz, (f"fabric counts {khz} kHz, the rung asked for "
+                            f"{mhz:g} MHz -- this build is not the rung (#439)")
+    if lock != "locked":
+        return False, khz, f"PLL {lock}"
+    return True, khz, f"{khz} kHz, pll locked"
+
+
+def stressed(replies):
+    """(ok, detail) from `cpu stress` -- the load aimed at what actually binds."""
+    said = "\n".join(reply for command, reply in replies
+                     if command.startswith("cpu stress"))
+    if not said.strip():
+        return False, "cpu stress returned nothing"
+    found = re.search(r"verdict\s+(PASS|FAIL)", said)
+    if not found:
+        return False, "cpu stress did not reach its verdict -- it did not finish"
+    if found.group(1) != "PASS":
+        broke = [line.strip() for line in said.splitlines()
+                 if "BAD" in line or "WRONG" in line]
+        return False, "UNDER LOAD: " + "; ".join(broke)
+    passes = re.search(r"passes\s+(\d+)", said)
+    return True, f"stress ok ({passes.group(1) if passes else '?'} passes)"
+
+
+def is_ours(replies):
+    """(ok, detail) -- is the flash image on the board the one this run built.
+
+    The shell lives in flash and the arbiter cannot write it, so between this
+    ladder's `soc_run` and its board job another agent's `soc_run` can land. The
+    board names the checkout its image came from; a row attributed to the wrong
+    one is #430's failure with a frequency attached.
+    """
+    said = "\n".join(reply for command, reply in replies
+                     if command.strip() == "info")
+    found = re.search(r"^image\s+(\S+)\s+(\w+)\s+(\S+)", said, re.M)
+    if not found:
+        return False, "no `image` line in `info`"
+    branch = subprocess.run(["git", "branch", "--show-current"], cwd=ROOT,
+                            capture_output=True, text=True).stdout.strip()
+    if branch and found.group(3) != branch:
+        return False, (f"the board is running {found.group(3)}'s image, not "
+                       f"{branch}'s -- another build landed between the flash "
+                       f"write and this job")
+    return True, f"image {found.group(1)} {found.group(2)} {found.group(3)}"
+
+
+def die_celsius(record, replies):
+    """Junction temperature -- the axis nobody has varied.
+
+    From `info`, which the ladder runs immediately after the stress load, so it
+    is the HOT reading. The arbiter's own is taken at configure time and is the
+    fallback."""
+    said = "\n".join(reply for command, reply in replies
+                     if command.strip() == "info")
+    found = re.search(r"die ([+-]?)(\d+) C", said)
+    if found:
+        return int(found.group(1) + found.group(2))
+    return ((record.get("provenance") or {}).get("board") or {}).get("die_c")
+
+
+def rung(overlay, mhz, seed, budget):
+    row = {"sync_mhz": mhz, "seed": seed}
+    built, build_dir, slug, detail = build(overlay, mhz, seed)
+    row["slug"] = slug
+    if not built:
+        row["verdict"] = "NO BUILD"
+        row["detail"] = detail
+        say(f"  SYNC {mhz:>4g}  NO BUILD  {detail}")
+        return row
+
+    row["predicted"] = predicted(build_dir)
+    clk = row["predicted"].get("clk")
+    forecast = ("nextpnr clk {mhz:.2f}/{target:.0f} {status}".format(**clk)
+                if clk else "no timing report")
+
+    record, replies = on_board(build_dir / "top.bit", budget,
+                               f"clock ladder sync {mhz:g}")
+    row["board_status"] = record.get("status")
+    row["bitstream_sha256"] = (
+        ((record.get("provenance") or {}).get("bitstream") or {}).get("sha256"))
+    row["transcript"] = [{"command": c, "reply": r} for c, r in replies]
+    row["die_celsius"] = die_celsius(record, replies)
+
+    ok_clock, khz, clock_detail = measured(replies, mhz)
+    ok_math, math_detail = arithmetic(replies)
+    ok_move, move_detail = advanced(replies)
+    ok_load, load_detail = stressed(replies)
+    ok_ours, ours_detail = is_ours(replies)
+    row.update(measured_khz=khz, clock_ok=ok_clock, arithmetic_ok=ok_math,
+               advancing=ok_move, stress_ok=ok_load, image_ok=ok_ours)
+    ready = ok_clock and ok_ours
+    row["verdict"] = ("NO RESULT" if not ready else
+                      "PASS" if (ok_math and ok_move and ok_load) else
+                      "LIGHT ONLY" if (ok_math and ok_move) else "FAIL")
+    row["detail"] = "; ".join(
+        part for part, ok in ((ours_detail, ok_ours), (clock_detail, ok_clock),
+                              (math_detail, ok_math), (move_detail, ok_move),
+                              (load_detail, ok_load)) if not ok) or load_detail
+
+    heat = f"{row['die_celsius']} C" if row["die_celsius"] is not None else "no DTR"
+    say(f"  SYNC {mhz:>4g}  {row['verdict']:10s}  {forecast:34s}  die {heat:6s}  "
+        f"{row['detail']}")
+    return row
 
 
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--frequencies", type=int, nargs="+",
-                        default=[60, 70, 80, 90, 100])
+    parser.add_argument("--sync", type=float, nargs="+",
+                        default=[60, 70, 72, 75, 80, 84, 90, 96, 100],
+                        help="the rungs to walk, lowest first")
+    parser.add_argument("--spec", default="",
+                        help="variant overlay, KEY=VAL,KEY=VAL; empty = shipping")
+    parser.add_argument("--seed", type=int, default=1,
+                        help="nextpnr placer seed, so a rung is reproducible")
+    parser.add_argument("--budget", type=float, default=6.0,
+                        help="seconds per shell command; `info` is the slow one")
+    parser.add_argument("--label", default=None)
     args = parser.parse_args()
 
-    original = re.search(r"SYNC_MHZ = (\d+)", GATEWARE.read_text())
-    original = int(original.group(1)) if original else 60
+    overlay = parse_spec(args.spec)
 
-    emit("RISC-V SoC clock ladder")
-    emit(f"restoring SYNC_MHZ = {original} when done")
-    emit()
-    emit("passing means the printed product is correct AND the counter advances;")
-    emit("a marginal CPU computes wrong answers rather than stopping.")
-    emit()
+    rungs, refused = [], []
+    for mhz in args.sync:
+        (rungs if clocks.solve_pll(mhz, clocks.USB_PHY_MHZ) else refused
+         ).append(mhz)
+    for mhz in refused:
+        near = clocks.reachable(mhz - 8, mhz + 8, clocks.USB_PHY_MHZ)
+        say(f"SYNC {mhz:g}: no exact PLL solution from the 60 MHz oscillator. "
+            f"Reachable nearby: {near}")
 
-    results = {}
-    try:
-        for mhz in args.frequencies:
-            set_clock(mhz)
-            ok, achieved, detail = build()
-            if not ok:
-                emit(f"  {mhz:3d} MHz  build failed: {detail}")
-                results[mhz] = {"built": False, "detail": detail}
-                continue
+    say(f"clock ladder: spec={args.spec or 'shipping'} seed={args.seed} "
+        f"rungs={[f'{m:g}' for m in rungs]}")
+    say("passing means `cpu check` is all ok, the counters advance, and the "
+        "fabric counts the rung it was asked for")
+    say()
 
-            margin = f"nextpnr {achieved:.1f} MHz" if achieved else "timing unknown"
-            if not configure():
-                emit(f"  {mhz:3d} MHz  {margin}  configure failed")
-                results[mhz] = {"built": True, "configured": False}
-                continue
+    rows = [rung(overlay, mhz, args.seed, args.budget) for mhz in rungs]
 
-            good, detail = verify()
-            emit(f"  {mhz:3d} MHz  {margin}  "
-                 f"{'PASS' if good else '*** FAIL'}  {detail}")
-            results[mhz] = {"built": True, "configured": True,
-                            "achieved_mhz": achieved, "pass": good,
-                            "detail": detail}
-    finally:
-        set_clock(original)
-        emit()
-        emit(f"restored SYNC_MHZ = {original}; rebuild to put it back on the board")
+    passed = [r["sync_mhz"] for r in rows if r["verdict"] == "PASS"]
+    light = [r["sync_mhz"] for r in rows
+             if r["verdict"] in ("PASS", "LIGHT ONLY")]
+    say()
+    say(f"highest rung correct UNDER LOAD: {max(passed):g} MHz"
+        if passed else "nothing verified under load")
+    if light and (not passed or max(light) > max(passed)):
+        say(f"highest rung correct on the LIGHT load only: {max(light):g} MHz "
+            f"-- the gap between these two is what a liveness test would have "
+            f"reported as the limit")
+    for row in rows:
+        if row["verdict"] == "PASS":
+            continue
+        clk = (row.get("predicted") or {}).get("clk")
+        say(f"first rung that broke: {row['sync_mhz']:g} MHz "
+            f"({row['verdict']}) -- {row['detail']}"
+            + (f"; nextpnr predicted {clk['mhz']:.2f} MHz against "
+               f"{clk['target']:.0f}" if clk else ""))
+        break
 
-    RESULTS.write_text(json.dumps(results, indent=2) + "\n")
-    passed = [m for m, r in results.items() if r.get("pass")]
-    emit()
-    if passed:
-        emit(f"highest verified: {max(passed)} MHz")
-    else:
-        emit("nothing verified")
-
-    return 0
+    RESULTS.parent.mkdir(parents=True, exist_ok=True)
+    RESULTS.write_text(json.dumps(
+        {"spec": args.spec, "seed": args.seed, "refused": refused,
+         "rows": rows}, indent=2) + "\n")
+    say(f"wrote {RESULTS.relative_to(ROOT)}")
+    flush()
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

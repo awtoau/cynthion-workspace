@@ -59,6 +59,8 @@ output. Instantiating it is what makes CK sweepable without touching the CPU, an
 it is not wired into `top.py` yet (#230).
 """
 
+import os
+
 from amaranth import (ClockDomain, ClockSignal, Elaboratable, Instance, Module,
                       ResetSignal, Signal)
 
@@ -98,14 +100,16 @@ USB_PHY_MHZ = 60.0
 #
 # 90 MHz is deliberately generous against the ~65-79 MHz this design has actually
 # measured across placements -- the point is to refuse the absurd, not to
-# second-guess a build that might close. `SYNC_CEILING_OVERRIDE` exists because
-# the ceiling is a measurement of one design at one moment and will move; it is
-# an argument rather than an edit so that raising it is visible in the command
-# that did it.
+# second-guess a build that might close.
+#
+# `CYNTHION_SYNC_CEILING_MHZ` raises it, because the ceiling is a measurement of
+# one design at one moment and asking what the DIE does past what nextpnr
+# predicts is a legitimate experiment (#470). Not in `VARIANT_ENV`: it permits a
+# build, it does not change what is elaborated at a given `sync`.
 #
 # Same class as the `fPFD` floor above: the solver knows something the caller
 # does not, and staying silent about it costs a build.
-SYNC_CEILING_MHZ = 90.0
+SYNC_CEILING_MHZ = float(os.environ.get("CYNTHION_SYNC_CEILING_MHZ") or 90.0)
 
 # How long RESETB is held low, in `usb` cycles. The USB334x datasheet Rev 1.2
 # section 5.6.2: cycling RESETB resets the ULPI registers to their defaults and

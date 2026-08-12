@@ -143,6 +143,59 @@ const HYPER_ACCESSES: u32 = 1024;
 /// a coincidence.
 const PATTERN: u32 = 0x9e37_79b9;
 
+/// The stress walk's stride, in words. 17 words is 68 bytes, past the 64-byte
+/// line, and coprime with the 2048-word buffer, so one pass visits every word
+/// and nearly every access misses.
+const STRESS_STRIDE: usize = 17;
+const _: () = assert!(RAM_WORDS.is_power_of_two());
+
+/// The checksum's seed and multiplier. Odd, with bits in both halves, so a
+/// dropped bit anywhere in the datapath changes the answer.
+const STRESS_SEED: u32 = 0x1234_5678;
+const STRESS_MIX: u32 = 0x2545_f491;
+
+/// The answer, computed by the HOST compiler.
+///
+/// This is what makes `cpu stress` a measurement rather than a benchmark: the
+/// board must arrive at a number it did not compute. A score nobody checks says
+/// nothing about a CPU whose failure mode is a wrong answer.
+pub(crate) const STRESS_GOLDEN: u32 = stress_golden();
+
+const fn stress_golden() -> u32 {
+    let mut sum = STRESS_SEED;
+    let mut index = 0usize;
+    let mut done = 0;
+    while done < RAM_WORDS {
+        let word = PATTERN.wrapping_mul(index as u32 + 1);
+        sum = sum.rotate_left(7) ^ word.wrapping_mul(STRESS_MIX);
+        sum = sum.wrapping_add(word);
+        index = (index + STRESS_STRIDE) & (RAM_WORDS - 1);
+        done += 1;
+    }
+    sum
+}
+
+/// One stress pass: fill the buffer, then stride it folding every word into a
+/// checksum. Returns what this CPU made of it, for comparison with
+/// [`STRESS_GOLDEN`]. 2048 stores and 2048 loads, nearly all of them misses.
+pub(crate) fn stress_checksum() -> u32 {
+    let base = ram_base();
+    for index in 0..RAM_WORDS {
+        // SAFETY: see `ram_base`.
+        unsafe { write_volatile(base.add(index), PATTERN.wrapping_mul(index as u32 + 1)) };
+    }
+    let mut sum = STRESS_SEED;
+    let mut index = 0usize;
+    for _ in 0..RAM_WORDS {
+        // SAFETY: see `ram_base`. Volatile, so no pass folds into the last.
+        let word = unsafe { read_volatile(base.add(index)) };
+        sum = sum.rotate_left(7) ^ word.wrapping_mul(STRESS_MIX);
+        sum = sum.wrapping_add(word);
+        index = (index + STRESS_STRIDE) & (RAM_WORDS - 1);
+    }
+    sum
+}
+
 /// One walk's cost.
 struct Run {
     cycles: u32,

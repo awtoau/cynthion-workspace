@@ -27,13 +27,15 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             sched::log_health(uart);
         }
         b"check" => check(uart),
+        b"stress" => stress(uart, args),
         b"wedge" => wedge(uart, args),
         b"fault" => fault(uart, args),
         b"" => {
-            let _ = uart.write_str("usage: cpu status|stats|check|irq|wedge|fault\n");
+            let _ = uart.write_str("usage: cpu status|stats|check|stress|irq|wedge|fault\n");
         }
         _ => {
-            let _ = uart.write_str("unknown: try `cpu status|stats|check|irq|wedge|fault`\n");
+            let _ =
+                uart.write_str("unknown: try `cpu status|stats|check|stress|irq|wedge|fault`\n");
         }
     }
 }
@@ -88,6 +90,129 @@ fn fault(uart: &mut Uart, args: &[u8]) {
             id.bus_fault >> 16
         );
     }
+}
+
+/// `cpu stress` defaults and ceiling, in milliseconds.
+///
+///   waits for   nothing -- a window spun out against `rdtime`
+///   duration    200 ms is ~40 passes at 60 MHz, enough for the die to be under
+///               load throughout the reading `info` then takes
+///   ceiling     2000 ms, so a typo cannot strand a shared board
+const STRESS_DEFAULT_MS: u32 = 200;
+const STRESS_MAX_MS: u32 = 2_000;
+
+/// Deliberate exceptions per stress pass.
+///
+/// A pass is ~2048 cache-missing accesses, so 64 puts a trap every few hundred
+/// cycles -- two orders of magnitude above the 1 ms timer, through the same
+/// `TrapPlugin` FSM that `clk`'s critical path runs inside (#468).
+const TRAPS_PER_PASS: u32 = 64;
+
+/// `cpu stress [ms]` -- run the core flat out at what actually binds, and check
+/// the answer.
+///
+/// `cpu check` is liveness: one multiply and two flash reads pass at rungs where
+/// real code fails. This drives the three things on the measured critical paths
+/// at once and verifies each:
+///
+///   * **arithmetic under cache pressure** -- an 8 KiB strided walk against a
+///     4 KiB D-cache, checksummed against a value the HOST compiler computed
+///   * **exceptions** -- `TRAPS_PER_PASS` unmapped reads a pass; the count the
+///     handler recorded must equal the count issued
+///   * **timer interrupts** -- the 1 ms tick, which must still be arriving
+fn stress(uart: &mut Uart, args: &[u8]) {
+    if target::BOARD.is_none() {
+        return crate::shell::console::board_absent(uart);
+    }
+    let millis = match parse_decimal(args) {
+        Some(value) if value > STRESS_MAX_MS => {
+            let _ = writeln!(uart, "at most {} ms", STRESS_MAX_MS);
+            return;
+        }
+        Some(value) => value,
+        None if args.is_empty() => STRESS_DEFAULT_MS,
+        None => {
+            let _ = writeln!(uart, "usage: cpu stress [ms, up to {}]", STRESS_MAX_MS);
+            return;
+        }
+    };
+
+    let window = clock::millis(millis);
+    let began = clock::now();
+    let traps_before = crate::fault::taken();
+    let ticks_before = crate::timer::millis();
+    let (mut passes, mut wrong, mut first_bad) = (0u32, 0u32, 0u32);
+    let mut last = 0u32;
+
+    while began.elapsed(clock::now()) < window {
+        let sum = crate::bench::stress_checksum();
+        last = sum;
+        if sum != crate::bench::STRESS_GOLDEN {
+            wrong += 1;
+            if wrong == 1 {
+                first_bad = sum;
+            }
+        }
+        for _ in 0..TRAPS_PER_PASS {
+            // SAFETY: an aligned volatile read of an I/O address nothing
+            // decodes. The fault is the point; `src/fault.rs` steps over it.
+            unsafe { read_volatile(FAULT_ADDR as *const u32) };
+        }
+        passes += 1;
+    }
+
+    let traps = crate::fault::taken().wrapping_sub(traps_before);
+    let ticks = crate::timer::millis().wrapping_sub(ticks_before);
+    let issued = passes * TRAPS_PER_PASS;
+
+    let _ = writeln!(uart, "cpu stress {} ms", millis);
+    let _ = writeln!(
+        uart,
+        "  passes   {}  ({} strided words, {} of them missing the cache)",
+        passes,
+        passes.saturating_mul(2048),
+        passes.saturating_mul(2048)
+    );
+    let _ = writeln!(
+        uart,
+        "  checksum {:08x} expected {:08x}  {}",
+        last,
+        crate::bench::STRESS_GOLDEN,
+        if wrong == 0 {
+            "ok"
+        } else {
+            "BAD -- the CPU computed a different answer"
+        }
+    );
+    if wrong != 0 {
+        let _ = writeln!(
+            uart,
+            "  WRONG    {} of {} passes; first bad {:08x}",
+            wrong, passes, first_bad
+        );
+    }
+    let _ = writeln!(
+        uart,
+        "  traps    {} taken, {} issued  {}",
+        traps,
+        issued,
+        if traps == issued { "ok" } else { "BAD" }
+    );
+    let _ = writeln!(
+        uart,
+        "  ticks    {} timer interrupt(s)  {}",
+        ticks,
+        if ticks > 0 { "ok" } else { "BAD" }
+    );
+    let _ = writeln!(
+        uart,
+        "  verdict  {}",
+        if wrong == 0 && traps == issued && ticks > 0 {
+            "PASS -- arithmetic, exceptions and the tick all correct under load"
+        } else {
+            "FAIL"
+        }
+    );
 }
 
 /// How long `cpu wedge` will hold the scheduler, in milliseconds.
