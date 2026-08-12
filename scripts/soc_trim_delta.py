@@ -52,6 +52,84 @@ FMAX_RE = re.compile(r"Max frequency for clock\s+'(\S+)':\s+([\d.]+) MHz")
 FINISHED = "Program finished normally."
 CELLS = ("TRELLIS_COMB", "TRELLIS_FF", "DP16KD", "TRELLIS_RAMW")
 
+# Extra decoder windows, added at elaboration. `{count}` of them at addresses
+# nothing decodes today, each fed 32 live bits so the read-data gather cannot
+# fold -- that gather is 98% of the decoder's cells (`soc_decoder_cost.py`).
+# A trim that ADDS is how the marginal window is measured: removing one prunes
+# the peripheral behind it as well, and the two cannot then be separated.
+_EXTRA_WINDOWS = '''
+from amaranth import Cat, Module
+from amaranth.lib import wiring
+from amaranth.lib.wiring import In
+from amaranth_soc import csr, wishbone
+from amaranth_soc.csr.wishbone import WishboneCSRBridge
+from amaranth_soc.memory import MemoryMap
+
+_COUNT = {count}
+_BRIDGED = {bridged}
+
+class _Held(wiring.Component):
+    def __init__(self):
+        super().__init__({{}})
+
+class _Bare(wiring.Component):
+    """ACK always, and 32 live bits back."""
+    def __init__(self):
+        super().__init__({{
+            "bus": In(wishbone.Signature(addr_width=2, data_width=32,
+                                         granularity=8)),
+            "data": In(32),
+        }})
+        memory_map = MemoryMap(addr_width=4, data_width=8)
+        memory_map.add_resource(_Held(), name=("held",), size=16)
+        self.bus.memory_map = memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.d.comb += [self.bus.ack.eq(self.bus.cyc & self.bus.stb),
+                     self.bus.dat_r.eq(self.data)]
+        return m
+
+class _Bridged(wiring.Component):
+    """One live 32-bit register behind a csr.Bridge and a WishboneCSRBridge."""
+    def __init__(self):
+        builder = csr.Builder(addr_width=3, data_width=8)
+        self._reg = csr.Register({{"value": csr.Field(csr.action.R, 32)}},
+                                 access="r")
+        builder.add("value", self._reg)
+        self._csr = csr.Bridge(builder.as_memory_map())
+        self._wb = WishboneCSRBridge(self._csr.bus, data_width=32)
+        super().__init__({{"data": In(32)}})
+        self.bus = self._wb.wb_bus
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.csr = self._csr
+        m.submodules.wb = self._wb
+        m.d.comb += self._reg.f.value.r_data.eq(self.data)
+        return m
+
+_real_elaborate = wishbone.Decoder.elaborate
+
+class _Extra(wishbone.Decoder):
+    def elaborate(self, platform):
+        subs = []
+        for index in range(_COUNT):
+            sub = _Bridged() if _BRIDGED else _Bare()
+            self.add(sub.bus, addr=0xf0001000 + index * 0x100,
+                     name=f"extra{{index}}")
+            subs.append(sub)
+        m = Module()
+        m.submodules.decoder = _real_elaborate(self, platform)
+        for index, sub in enumerate(subs):
+            m.submodules[f"extra{{index}}"] = sub
+            # 32 bits that move: the decoder's own address, plus two strobes.
+            m.d.comb += sub.data.eq(Cat(self.bus.adr, self.bus.we, self.bus.stb))
+        return m
+
+wishbone.Decoder = _Extra
+'''
+
 # Each trim is Python spliced into the build subprocess before `top` is
 # imported. One statement of setup per entry, and the entry's key is what
 # `--trim` names.
@@ -117,6 +195,60 @@ class _NoClaimed(fault.BusFault):
 fault.BusFault = _NoClaimed
 """,
 
+    # The whole SPI0 stack, window included: the controller, its hold register,
+    # its WishboneCSRBridge and the decoder window in front of them. #442's
+    # deletion, as opposed to `spi-controller` above which keeps the window.
+    "window-spi0": """
+import peripherals.flash as flash
+from amaranth import Module
+from amaranth_soc import wishbone
+
+class _Gone(flash.HoldableSPIController):
+    def elaborate(self, platform):
+        return Module()
+
+flash.HoldableSPIController = _Gone
+
+_real_add = wishbone.Decoder.add
+
+def _add(self, sub_bus, *, name=None, addr=None, sparse=False):
+    # The bridge is left constructed and unconnected; with its `wb_bus` read by
+    # nothing, synthesis prunes it, which is what a deletion would do.
+    if name == "spi0":
+        return None
+    return _real_add(self, sub_bus, name=name, addr=addr, sparse=sparse)
+
+wishbone.Decoder.add = _add
+""",
+
+    # WHAT ONE DECODER WINDOW COSTS, measured by ADDING rather than removing:
+    # a removal prunes the peripheral behind it too and the two cannot be
+    # separated. Three bare subordinates, each answering ACK and 32 live bits,
+    # at addresses nothing else uses. Divide by three.
+    "plus3-windows": _EXTRA_WINDOWS.format(count=3, bridged=False),
+    "plus1-window": _EXTRA_WINDOWS.format(count=1, bridged=False),
+
+    # The same, each behind a `WishboneCSRBridge` and an 8-byte CSR block --
+    # the shape of the `console` window. The difference from `plus3-windows` is
+    # what the bridge and its multiplexer cost (#443).
+    "plus3-bridged-windows": _EXTRA_WINDOWS.format(count=3, bridged=True),
+
+    # THE NULL CONTROL. Nothing is removed and nothing is added: one pinned
+    # 32-bit identity constant takes a different value. Whatever this moves is
+    # what the MAPPER moves when the netlist changes at all, and no trim delta
+    # smaller than it is attributable to the trim. #454.
+    "null-constant": """
+import peripherals.gateware_id as gateware_id
+_pinned = gateware_id.GatewareId
+
+class _Other(_pinned):
+    def __init__(self, **kwargs):
+        kwargs["built"] = 0xdeadbeef
+        super().__init__(**kwargs)
+
+gateware_id.GatewareId = _Other
+""",
+
     # THE POSITIVE CONTROL. `HyperRAMProbe` is twelve counters and a large CSR
     # block; if stubbing it does not move the total either, the harness is not
     # measuring removals and no other row in this table means anything.
@@ -153,13 +285,14 @@ import fast_build_env
 os.environ["AMARANTH_nextpnr_opts"] = "--threads 31 --router router2"
 
 # PIN the identity constants -- see the module docstring.
+# Both are ints since #441 (`built` is a source digest, not a timestamp); a
+# datetime here raised TypeError at elaboration and built nothing (#455).
 import peripherals.gateware_id as gateware_id
-from datetime import datetime, timezone
 _real_id = gateware_id.GatewareId
 
 class _Fixed(_real_id):
     def __init__(self, **kwargs):
-        kwargs.setdefault("built", datetime(2000, 1, 1, tzinfo=timezone.utc))
+        kwargs.setdefault("built", 0)
         kwargs.setdefault("git", 0)
         super().__init__(**kwargs)
 

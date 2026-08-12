@@ -18,6 +18,9 @@ they were taken under; what to *do* about any of them is an issue. See
 | [`soc_upstream_copy_check.py`](../scripts/soc_upstream_copy_check.py) | whether our verbatim copy of luna_soc's SPI PHY is still verbatim |
 | [`pnr_noise.py`](../scripts/pnr_noise.py) | how much of an Fmax difference is placement luck |
 | [`soc_icache_model.py`](../scripts/soc_icache_model.py) | what a `.text` layout costs in I-cache misses |
+| [`soc_review.py`](../scripts/soc_review.py) | what moved since the recorded baseline, and what got duplicated — run it after every change |
+| [`soc_map_audit.py`](../scripts/soc_map_audit.py) | how much of the decoded address space is mapped, and what an unmapped read does |
+| [`soc_decoder_cost.py`](../scripts/soc_decoder_cost.py) | which knob drives the Wishbone decoder's cell count |
 
 ---
 
@@ -100,6 +103,21 @@ what "DFF is exact" means in practice.
   moves with the edit — the constant is stable across TIME, not across SOURCES.
 - [`soc_repro_check.py`](../scripts/soc_repro_check.py) is the gate: two builds of
   one tree, byte-compared, and `check.py`'s `repro` runs it.
+
+### The floor: a COMB delta under ~200 is the mapper
+
+- Null control, 2026-08-12, `432d29b`, `bist0-ck160-dqs1-merge0-sync60`,
+  `--no-parallel-refine`: one 32-bit identity constant given a different value,
+  no logic touched → **TRELLIS_COMB +194, TRELLIS_FF +1**
+  ([`soc_trim_delta.py --trim null-constant`](../scripts/soc_trim_delta.py)).
+- Global, not local folding: the whole `gateware_id` block is 153 COMB, and the
+  move is 194.
+- So a COMB delta is a result only when it is well clear of ±194 **and** an FF,
+  BRAM or LUTRAM delta of the same sign supports it. Numbers this unsettles, and
+  the trims that survive it:
+  [#454](https://github.com/awtoau/cynthion-workspace/issues/454).
+- [`soc_review.py`](../scripts/soc_review.py) enforces it: a smaller move is
+  printed and explicitly not called a regression.
 
 ### The other hazard: Fmax is placement luck
 

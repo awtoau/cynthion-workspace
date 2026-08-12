@@ -1,0 +1,57 @@
+{
+  "recorded": "2026-08-12T13:56:04+10:00",
+  "commit": "432d29b",
+  "variant": "bist0-ck160-dqs1-merge0-sync60",
+  "tools": {
+    "yosys": "Yosys 0.65+57 (git sha1 9d0cdb855, clang++ 18.1.8 -fPIC -O3)",
+    "nextpnr-ecp5": "\"nextpnr-ecp5\" -- Next Generation Place and Route (Version nextpnr-0.10-74-gee605e2b)"
+  },
+  "map": {
+    "windows": [
+      "ram",
+      "spiflash",
+      "hyperram",
+      "console",
+      "spi0",
+      "flash_probe",
+      "hyperram_probe",
+      "bootram",
+      "apollo_uart",
+      "board",
+      "plic",
+      "clint"
+    ],
+    "claimed": 16908624,
+    "mapped": 12648628,
+    "silent": 4259996,
+    "err": 264175280
+  },
+  "dead": {
+    "dead": [],
+    "c_only": [
+      "FLASH_PROBE",
+      "SPI0"
+    ]
+  },
+  "duplication": {
+    "map_decoded_in": [
+      "gateware/soc/bus/fault.py"
+    ],
+    "fifo_behind_fifo": [
+      "apollo_rx_buf(StreamBuffer) -> apollo_uart(Uart16550)",
+      "apollo_uart(Uart16550) -> apollo_tx_buf(StreamBuffer)",
+      "console(Uart16550) -> console_tx_buf(StreamBuffer)",
+      "console_rx_buf(StreamBuffer) -> console(Uart16550)"
+    ]
+  },
+  "build": "tmp/trim-delta/baseline-0",
+  "cells": {
+    "TRELLIS_COMB": 15509,
+    "TRELLIS_FF": 7830,
+    "DP16KD": 49,
+    "TRELLIS_RAMW": 219
+  },
+  "warnings": [
+    "ABC: Error: Abc_FrameUpdateGia(): Transformation has failed."
+  ]
+}
