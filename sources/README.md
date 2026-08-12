@@ -527,6 +527,28 @@ Mouser's mirror returns an HTML block page saved as a 14 KB `.pdf` — the failu
 file's last section describes, hit twice more. `www.onsemi.cn` serves the same document
 unauthenticated.
 
+## RISC-V specifications
+
+AsciiDoc source, not the built PDF: it greps, and `gh api` reproduces it exactly. Both
+were fetched with `gh` rather than through a browser because the RISC-V specs live in
+GitHub repos, which is the one sanctioned non-playwrong path.
+
+| file | document | fetch |
+|---|---|---|
+| `riscv-plic-1.0.0.adoc` | **RISC-V PLIC Specification 1.0.0**, revdate 3/2023, Ratified | `gh api repos/riscv/riscv-plic-spec/contents/riscv-plic.adoc -H "Accept: application/vnd.github.raw"` |
+| `riscv-priv-machine.adoc` | **Privileged Architecture, machine-level chapter**, release `riscv-isa-release-ba25a36-2026-08-04` | `gh api repos/riscv/riscv-isa-manual/contents/src/priv/machine.adoc -H "Accept: application/vnd.github.raw"` |
+
+Telling a good copy from a bad one:
+
+| file | lines | must contain |
+|---|---|---|
+| `riscv-plic-1.0.0.adoc` | 515 | `:revnumber: 1.0.0` in the header, and **`the PLIC provides no concept of interrupt preemption or nesting`** (line 95) — the sentence the whole PLIC review turns on. Also `interrupts with the lowest ID have the highest effective priority` (line 298) |
+| `riscv-priv-machine.adoc` | 3631 | **`__x__PIE is set to the value of __x__IE; __x__IE is set to 0`** (line 395) — trap entry disables interrupts. Also `interrupts are globally enabled when __x__IE=1` (line 366) |
+
+The two sentences above are quoted in #503. A copy missing either is truncated: the repos
+serve raw text unauthenticated, so a short file means the API call failed, not that the
+spec changed.
+
 ## A failed download looks exactly like a datasheet
 
 Six files arrived here named `*.pdf` and were **HTML bot-check or error pages**: an
