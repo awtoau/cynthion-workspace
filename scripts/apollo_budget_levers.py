@@ -5,9 +5,9 @@
 
 """Costs the levers available on the d11 flash and RAM budget, by building each.
 
-#199 left the d11 over both ceilings -- flash 95.48% against 95%, RAM 86.72%
-against 85%. The choice is raise the ceilings, cut something, or #182's
-single-purpose profiles, and the first two are only arguable with numbers.
+The d11 is a knife-edge on both regions, and the choice between cutting
+something, re-deriving a ceiling and #182's single-purpose profiles is only
+arguable with numbers (#199, #404).
 
 So each lever is built and measured rather than estimated. A clean build is
 0.6 s, which makes measuring cheaper than guessing.
@@ -39,6 +39,7 @@ ELF = FIRMWARE / "_build" / "cynthion_d11" / "firmware.elf"
 
 TUSB_CONFIG = FIRMWARE / "src/boards/cynthion_d11/tusb_config.h"
 JTAG_H = FIRMWARE / "src/jtag.h"
+VENDOR_C = FIRMWARE / "src/vendor.c"
 MAKEFILE = FIRMWARE / "Makefile"
 
 # A clean serial build of this firmware is 0.61 s (measured 2026-08-10, GCC
@@ -75,6 +76,15 @@ LEVERS = {
         "unconditionally, so this is not a one-define change",
         [(TUSB_CONFIG, "#define CFG_TUD_DFU_RUNTIME      1",
           "#define CFG_TUD_DFU_RUNTIME      0")],
+        {},
+    ),
+    "bench": (
+        "drops the synthetic JTAG benchmark (0xb9) -- the only instrument that "
+        "measures the JTAG path with USB out of the way, and so the regression "
+        "check for it. The largest flash lever there is, and the only one that "
+        "clears flash; wants a build-time switch in apollo rather than deletion",
+        [(VENDOR_C, "return handle_jtag_benchmark(rhport, request);",
+          "return false;")],
         {},
     ),
     "altbuf": (
