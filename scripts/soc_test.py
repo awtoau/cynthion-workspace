@@ -828,7 +828,10 @@ def main():
                    # one nobody should believe.
                    b"[stats|check|irq|log|status|wedge|fault]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
-                   b"[info|id|read|bench]", b"[status|scan|soak]",
+                   # The four after `bench` are the SPI controller's verbs
+                   # (#442) -- the opcodes the memory map's FSM cannot issue.
+                   b"[info|id|read|bench|sfdp|status|erase|program]",
+                   b"[status|scan|soak]",
                    # `reset` and `clear` are the DESTRUCTIVE verbs (#315),
                    # asserted here so a rename cannot quietly drop the one word
                    # that separates each from its `init`.
