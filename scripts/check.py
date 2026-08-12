@@ -104,6 +104,23 @@ def _need(tool: str) -> Callable[[], Optional[str]]:
     return probe
 
 
+def _need_dir(path: Path, fix: str) -> Callable[[], Optional[str]]:
+    """A skip that names the fix. `git worktree add` does not populate
+    submodules, so an agent's worktree reports this as an unexplained failure
+    and the check gets dismissed as environmental instead of run."""
+    def probe() -> Optional[str]:
+        if not path.is_dir() or not any(path.iterdir()):
+            return f"{path.name}/ is empty -- run `{fix}`"
+        return None
+    return probe
+
+
+def _first(*probes: Callable[[], Optional[str]]) -> Callable[[], Optional[str]]:
+    def probe() -> Optional[str]:
+        return next((r for r in (p() for p in probes) if r), None)
+    return probe
+
+
 def build_checks() -> List[Check]:
     """The checks, mirroring what the retired GitHub workflows ran."""
     cyn_fw = REPOS / "cynthion" / "firmware"
@@ -116,7 +133,9 @@ def build_checks() -> List[Check]:
         Check(
             name="rust",
             description="cargo check + clippy (moondancer, riscv32imac)",
-            skip_reason=_need("cargo"),
+            skip_reason=_first(_need("cargo"),
+                               _need_dir(cyn_fw,
+                                         "git submodule update --init repos/cynthion")),
             steps=[
                 Step(["cargo", "check", "--release",
                       "--target", "riscv32imac-unknown-none-elf"], cyn_fw),
