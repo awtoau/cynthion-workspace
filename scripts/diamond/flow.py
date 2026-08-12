@@ -9,17 +9,21 @@ and Diamond is an independent implementation of all three stages. Where it does
 better, the gap names a specific missing capability in the open tools, which is
 the thing worth fixing. See docs/diamond-oracle-ecp5.md.
 
-Two entry points, and the difference between them is the whole point:
+Three entry points, and the difference between them is the whole point:
 
-  --mode lse    Verilog -> Diamond LSE synthesis -> map -> par -> bitgen.
-                Both synthesis and place-and-route are Diamond's.
+  --mode lse       Verilog -> Diamond LSE synthesis -> map -> par -> bitgen.
+                   Both synthesis and place-and-route are Diamond's.
 
-  --mode yosys  yosys-emitted structural Verilog -> Diamond map -> par.
-                Synthesis is the open flow's, place-and-route is Diamond's.
+  --mode synplify  Verilog -> Synplify Pro -> EDIF -> map -> par -> bitgen.
+                   Diamond's production synthesiser rather than its lightweight
+                   one, and multi-threaded where LSE is not.
 
-Running both against the same design splits the problem in half: if Diamond
-only wins in `lse` mode, the gap is synthesis and belongs in yosys; if it wins
-in `yosys` mode too, the gap is in place-and-route and belongs in nextpnr.
+  --mode yosys     yosys-emitted structural Verilog -> Diamond map -> par.
+                   Synthesis is the open flow's, place-and-route is Diamond's.
+
+Running lse or synplify against the same design as yosys splits the problem in
+half: a difference in the vendor-synthesis modes is synthesis and belongs in
+yosys; one that survives `yosys` mode is place-and-route and belongs in nextpnr.
 
 Diamond's environment is sourced per-invocation rather than inherited, because
 oss-cad-suite sets PYTHONHOME and prepends its own libstdc++, which stops
@@ -31,7 +35,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -41,6 +44,10 @@ from pathlib import Path
 # under scripts/tmp/ instead of tmp/, which is silent and wrong.
 ROOT = Path(__file__).resolve().parent.parent.parent
 LOGDIR = ROOT / "tmp" / "logs"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from subprocess_timeout_from_history import run_bounded  # noqa: E402
 
 DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"
 DIAMOND_BIN = DIAMOND / "bin" / "lin64"
@@ -83,20 +90,50 @@ def diamond_env():
     return env
 
 
+# First-run ceiling per engine, seconds, with where the number came from. No
+# engine had a bound at all before #498, so two runs were ended by hand after
+# the better part of an hour with nothing saying whether waiting would help.
+# run_bounded tightens each to 1.25x the slowest SUCCESSFUL run after that.
+FIRST_RUN = {
+    "synthesis": (5400, "83 min produced nothing (#498); longer buys nothing"),
+    "edif2ngd": (600, "netlist read, no optimisation; 10x yosys write_edif"),
+    "ngdbuild": (600, "library bind only; same order as edif2ngd"),
+    "map": (1200, "nextpnr packs this design in ~1 min; 20x for a first run"),
+    "par": (2400, "nextpnr places+routes in ~4 min; 10x at -l 5"),
+    "trce": (900, "static analysis of a routed netlist; report-bound"),
+    "bitgen": (600, "frame assembly; ecppack does it in seconds"),
+}
+
+
 def log(msg, handle):
     print(msg, flush=True)
     handle.write(msg + "\n")
     handle.flush()
 
 
-def run(cmd, cwd, handle, env, step):
-    """Run one engine, timing it and failing loudly."""
+def run(cmd, cwd, handle, env, step, engine, family=None):
+    """Run one engine, bounded, timing it and failing loudly.
+
+    The bound is per engine rather than per flow: a synthesis that overruns and
+    a bitgen that overruns are different failures and a single number for both
+    would have to be the larger, which is no bound at all on the smaller.
+    `family` separates two engines doing the same job -- LSE and Synplify both
+    synthesise, and one's history would kill the other.
+    """
+    floor, why = FIRST_RUN[engine]
     log(f"--- {step}: {' '.join(str(c) for c in cmd)}", handle)
+    log(f"    bound >= {floor}s ({why})", handle)
     start = time.monotonic()
-    proc = subprocess.run([str(c) for c in cmd], cwd=str(cwd), env=env,
-                          capture_output=True, text=True)
+    proc = run_bounded([str(c) for c in cmd],
+                       family=family or f"diamond-{engine}",
+                       cwd=str(cwd), env=env, merge_stderr=True, floor=floor)
     elapsed = time.monotonic() - start
-    out = proc.stdout + proc.stderr
+    if proc is None:
+        # run_bounded already named the family, the limit and the elapsed time.
+        log(f"!!! {step} KILLED after {elapsed:.0f}s -- see the TIMEOUT line "
+            f"above", handle)
+        raise SystemExit(f"{step} timed out")
+    out = proc.stdout or ""
     handle.write(out + "\n")
     handle.flush()
     if proc.returncode != 0:
@@ -146,6 +183,41 @@ def lpf_from_amaranth(src, dst):
         else:
             out_lines.append(line)
     Path(dst).write_text("\n".join(out_lines) + "\n")
+
+
+# Synplify names the same part differently from the Diamond engines: underscore
+# rather than hyphen, and the short package code. From its own part database,
+# synpbase/lib/parts/lattice_diamond_parts.txt.
+SYNP_PART = DEVICE.replace("-", "_")
+SYNP_PACKAGE = "BG256C"
+
+
+def synplify_project(prj, sources, top, freq, edif):
+    """Write the Synplify Pro project file synpwrap consumes.
+
+    `-frequency auto` rather than a number is the point of this mode's default:
+    a synthesiser told to hit a clock the design cannot reach works
+    indefinitely hard for nothing, which is what #498 measured on LSE.
+    """
+    lines = [f'add_file -verilog "{s}"' for s in sources]
+    lines += [
+        "impl -add rev_1 -type fpga",
+        "set_option -vlog_std v2001",
+        "set_option -technology ECP5U",
+        f"set_option -part {SYNP_PART}",
+        f"set_option -package {SYNP_PACKAGE}",
+        f"set_option -speed_grade -{SPEED}",
+        f"set_option -top_module {top}",
+        f"set_option -frequency {freq if freq else 'auto'}",
+        # The design's IO buffers come from the .lpf and Diamond's map, not from
+        # synthesis; letting Synplify insert its own duplicates them.
+        "set_option -disable_io_insertion 0",
+        "set_option -resource_sharing 1",
+        "set_option -write_apr_constraint 0",
+        f'project -result_file "{edif}"',
+        'impl -active "rev_1"',
+    ]
+    Path(prj).write_text("\n".join(lines) + "\n")
 
 
 def parse_map_report(text):
@@ -204,10 +276,16 @@ def main():
     ap.add_argument("--lpf", required=True, type=Path,
                     help="Amaranth-generated .lpf, reused as Diamond preferences")
     ap.add_argument("--top", default="top")
-    ap.add_argument("--mode", choices=["lse", "yosys"], default="lse")
+    ap.add_argument("--mode", choices=["lse", "synplify", "yosys"],
+                    default="lse")
     ap.add_argument("--outdir", required=True, type=Path)
     ap.add_argument("--freq", type=float, default=None,
-                    help="constraint in MHz written into the .lpf before map")
+                    help="constraint in MHz written into the .lpf before map, "
+                         "and given to the synthesiser as its own target")
+    ap.add_argument("--opt-goal", choices=["Area", "Balanced", "Timing"],
+                    default="Area",
+                    help="LSE optimisation goal; Area by default because this "
+                         "project no longer optimises the SoC for timing")
     ap.add_argument("--par-effort", default="5",
                     help="par -l level, 1..5; 5 is the highest effort")
     ap.add_argument("--name", default="diamond_flow")
@@ -251,18 +329,44 @@ def main():
             # `-frequency` matters as much as the .lpf: LSE has its own target,
             # defaulting to 200 MHz here, and the preferences file is read by
             # map/par/trce rather than by synthesis. Left at the default, LSE
-            # chases 200 MHz on a design that does ~83 -- 83 minutes without
-            # finishing synthesis, and an area figure inflated by replication
-            # for an unreachable goal.
+            # chases 200 MHz on a design that runs at 50 -- 83 minutes without
+            # finishing synthesis (#498).
             cmd = ["synthesis", "-a", ARCH, "-d", DEVICE, "-t", PACKAGE,
                    "-s", SPEED, "-top", args.top, "-ngd", ngd.name,
+                   "-optimization_goal", args.opt_goal,
                    "-ver", src.name]
             if args.freq:
                 cmd[1:1] = ["-frequency", str(args.freq)]
             for e in extra:
                 cmd.append(e.name)
-            t, _ = run(cmd, out, handle, env, "synthesis(LSE)")
+            t, _ = run(cmd, out, handle, env, "synthesis(LSE)", "synthesis",
+                       "diamond-synthesis-lse")
             timings["synthesis"] = t
+            total += t
+        elif args.mode == "synplify":
+            # Synplify Pro, the production synthesiser LSE is the lightweight
+            # alternative to. It emits EDIF rather than an .ngd, so the netlist
+            # goes through the same edif2ngd/ngdbuild pair the yosys mode uses.
+            prj = out / "synplify.prj"
+            edif = out / "synplify.edi"
+            synplify_project(prj, [src.name] + [e.name for e in extra],
+                             args.top, args.freq, edif.name)
+            t, _ = run(["synpwrap", "-prj", prj.name, "-nolog"], out, handle,
+                       env, "synthesis(Synplify)", "synthesis",
+                       "diamond-synthesis-synplify")
+            timings["synthesis"] = t
+            total += t
+            ngo = out / f"{args.top}.ngo"
+            t, _ = run(["edif2ngd", "-l", ARCH, "-d", DEVICE,
+                        edif.name, ngo.name], out, handle, env,
+                       "edif2ngd", "edif2ngd")
+            timings["edif2ngd"] = t
+            total += t
+            t, _ = run(["ngdbuild", "-a", ARCH, "-d", DEVICE,
+                        "-p", str(FOUNDRY / ARCH_DIR / "data"),
+                        ngo.name, ngd.name], out, handle, env,
+                       "ngdbuild", "ngdbuild")
+            timings["ngdbuild"] = t
             total += t
         else:
             # yosys already did synthesis, and its netlist instantiates ECP5
@@ -276,12 +380,12 @@ def main():
             # exists to create.
             ngo = out / f"{args.top}.ngo"
             t, _ = run(["edif2ngd", "-l", ARCH, "-d", DEVICE,
-                        src.name, ngo.name], out, handle, env, "edif2ngd")
+                        src.name, ngo.name], out, handle, env, "edif2ngd", "edif2ngd")
             timings["edif2ngd"] = t
             total += t
             t, _ = run(["ngdbuild", "-a", ARCH, "-d", DEVICE,
                         "-p", str(FOUNDRY / ARCH_DIR / "data"),
-                        ngo.name, ngd.name], out, handle, env, "ngdbuild")
+                        ngo.name, ngd.name], out, handle, env, "ngdbuild", "ngdbuild")
             timings["ngdbuild"] = t
             total += t
 
@@ -289,14 +393,14 @@ def main():
         prf = out / f"{args.top}.prf"
         t, _ = run(["map", ngd.name, lpf.name, "-a", ARCH, "-p", DEVICE,
                     "-t", PACKAGE, "-s", SPEED, "-o", ncd.name,
-                    "-pr", prf.name], out, handle, env, "map")
+                    "-pr", prf.name], out, handle, env, "map", "map")
         timings["map"] = t
         total += t
 
         par_ncd = out / f"{args.top}_par.ncd"
         t, _ = run(["par", "-w", "-l", args.par_effort, "-n", "1",
                     ncd.name, par_ncd.name, prf.name],
-                   out, handle, env, "par")
+                   out, handle, env, "par", "par")
         timings["par"] = t
         total += t
 
@@ -310,13 +414,13 @@ def main():
         t, _ = run(["trce", "-v", "10", "-o", f"{args.top}.twr",
                     par_ncd.name if par_ncd.parent == out
                     else str(par_ncd), prf.name],
-                   out, handle, env, "trce")
+                   out, handle, env, "trce", "trce")
         timings["trce"] = t
         total += t
 
         t, _ = run(["bitgen", "-w", "-d",
                     par_ncd.name if par_ncd.parent == out else str(par_ncd)],
-                   out, handle, env, "bitgen")
+                   out, handle, env, "bitgen", "bitgen")
         timings["bitgen"] = t
         total += t
 
