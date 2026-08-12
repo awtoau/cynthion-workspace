@@ -151,6 +151,22 @@ def test_constrain_refuses_an_lpf_it_cannot_find_the_clock_in(tmp_path,
         raise AssertionError("a silently unconstrained clone was produced")
 
 
+def test_a_sample_that_does_not_converge_is_bounded_and_recorded(tmp_path,
+                                                                 monkeypatch):
+    """A router that will not converge must not hold a sweep open forever."""
+    monkeypatch.setattr(soc_occupancy_timing, "OUT", tmp_path)
+    monkeypatch.setattr(soc_occupancy_timing, "SAMPLE_LIMIT_S", 1)
+    # A stand-in for a router that never finishes, killed by the bound. It has
+    # to tolerate the `--seed N` the harness appends, so not `sleep`.
+    monkeypatch.setattr(
+        soc_occupancy_timing, "nextpnr_command",
+        lambda arm: [sys.executable, "-c", "import time; time.sleep(30)"])
+    (tmp_path / "stuck" / "synth").mkdir(parents=True)
+    row = soc_occupancy_timing.sample("stuck", 7)
+    assert row["ok"] is False and "not converging" in row["why"]
+    assert row["seconds"] >= 1
+
+
 def test_a_ladder_rung_is_a_build_directory_of_its_own():
     """#439: the rung has to reach the build, and be visible in the artifacts."""
     assert (riscv_clock_ladder.rung_build_dir(72)

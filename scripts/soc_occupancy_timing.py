@@ -78,6 +78,14 @@ import soc_cpu_arms  # noqa: E402
 from soc_trim_delta import TRIMS  # noqa: E402
 
 FINISHED = "Program finished normally."
+
+# What one place-and-route is allowed. Waits for: nextpnr placing and routing
+# this SoC, measured at 60-160 s over ~700 samples with the machine loaded.
+# 600 s is ~4x the worst, not a round number that felt safe -- a run past it is
+# a router that is not converging (the `regfile-registers` arm sat at 280
+# iterations with 600 wires overused), not a slow one. On expiry: the sample is
+# recorded failed with its elapsed time, and the sweep goes on.
+SAMPLE_LIMIT_S = 600
 UTIL_RE = re.compile(r"^Info:\s+(\S+):\s+(\d+)/\s*(\d+)")
 FMAX_RE = re.compile(r"Max frequency for clock\s+'(\S+)':\s+([\d.]+) MHz")
 
@@ -288,8 +296,14 @@ def sample(arm, seed, threads=None, tag=None):
         cmd[at + 1] = str(threads)
 
     started = time.monotonic()
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=synth_dir)
     (out / "argv").write_text(" ".join(cmd) + "\n")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=synth_dir,
+                              timeout=SAMPLE_LIMIT_S)
+    except subprocess.TimeoutExpired:
+        elapsed = time.monotonic() - started
+        return {"arm": arm, "seed": seed, "ok": False, "seconds": round(elapsed),
+                "why": f"killed at the {SAMPLE_LIMIT_S} s limit -- not converging"}
     elapsed = time.monotonic() - started
     text = tim.read_text() if tim.exists() else proc.stdout + proc.stderr
     if FINISHED not in text:
