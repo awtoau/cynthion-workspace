@@ -202,11 +202,11 @@ const ROUND_TRIP: [u32; 2] = [0x5aa5_0f0f, 0xa55a_f0f0];
 /// contents this deliberately abandoned.
 ///
 /// **What it cannot do here, and says rather than claiming otherwise**: assert
-/// `RESET#`. That pin is tied de-asserted in the shipping SoC
-/// (`gateware/soc/bootram.py:706,723`), so the full hardware reset -- `tRP`
-/// 200 ns low, `tRPH` 400 ns before CS# -- has no path from firmware at all. It
-/// would destroy the array outright (§11.3.6), which is exactly why it belongs
-/// behind an operator's command and not behind an init.
+/// `RESET#`. The staging side of the mux holds that pin released
+/// (`gateware/soc/hyperram_share.py`), so the full hardware reset -- `tRP`
+/// 200 ns low, `tRPH` 400 ns before CS# -- is the BIST engine's to issue and
+/// has no path from firmware at all. It would destroy the array outright
+/// (§11.3.6), which is why it belongs behind an operator's command.
 #[cfg(feature = "image")]
 pub fn clear() {
     invalidate();

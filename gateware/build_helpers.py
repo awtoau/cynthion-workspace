@@ -34,7 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GATEWARE_SOC = ROOT / "gateware" / "soc"
+GATEWARE = ROOT / "gateware"
+GATEWARE_SOC = GATEWARE / "soc"
 
 
 def source_digest():
@@ -43,13 +44,21 @@ def source_digest():
     The one definition of "which gateware is this". `soc_run.gateware_digest`
     folds the placer flags into it for the bitstream cache; `usercode_map.py`
     records it beside the bitstream.
+
+    ALL of `gateware/`, not just `soc/`. `top.py` elaborates the BIST engine from
+    `probes/` and the pin map from `board/`, and while they were outside this
+    walk an edit to either produced "the bitstream was built from these exact
+    sources" and configured the previous one (#489). Same failure as #294, one
+    directory over.
     """
     if str(GATEWARE_SOC) not in sys.path:
         sys.path.insert(0, str(GATEWARE_SOC))
     import variant
 
     digest = hashlib.sha256()
-    for source in sorted(GATEWARE_SOC.rglob("*.py")):
+    for source in sorted(GATEWARE.rglob("*.py")):
+        if "__pycache__" in source.parts:
+            continue
         digest.update(source.relative_to(ROOT).as_posix().encode())
         digest.update(source.read_bytes())
     for setting in variant.settings():

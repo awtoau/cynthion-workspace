@@ -590,6 +590,9 @@ class HyperRAMCeiling(Elaboratable):
         dll_locked = Signal(reset=1)
         dll_ready = Signal(reset=1)
         burstdet = Signal()
+        # Whether this engine owns the part. Always, unless it is embedded
+        # behind the mode mux -- see `RESET` below.
+        granted = Signal(reset=1)
 
         # CR0 AS IT WILL BE, for BOTH paths -- outside the DQS/non-DQS branches
         # on purpose. A path that does not drive `latency_clocks` and
@@ -606,11 +609,16 @@ class HyperRAMCeiling(Elaboratable):
             # the controller it stands in for (#432).
             psram = self._port
             reset_assert = psram.phy_reset
-            m.d.comb += [dll_locked.eq(psram.dll_locked),
-                         dll_ready.eq(psram.dll_ready),
-                         burstdet.eq(psram.burstdet),
+            m.d.comb += [burstdet.eq(psram.burstdet),
+                         granted.eq(psram.granted),
                          psram.readclksel.eq(Mux(sweeping, sweep_phase,
                                                  readclksel))]
+            # Only where there is a DLL. Off the DQS path the port reports 0
+            # because it has none to report on, and `RESET` exits on
+            # `dll_ready` -- so taking it from there parks the engine (#475).
+            if self.dqs:
+                m.d.comb += [dll_locked.eq(psram.dll_locked),
+                             dll_ready.eq(psram.dll_ready)]
         elif self.dqs:
             from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
             from peripherals.hyperram_dqs_controller import HyperRAMDQSController
@@ -888,7 +896,13 @@ class HyperRAMCeiling(Elaboratable):
                 # It happens once per configuration and nothing is timed across
                 # it, so being generous costs nothing.
                 m.d.comb += reset_assert.eq(~heartbeat[15])
-                with m.If(heartbeat[16] & dll_ready):
+                # AND ONLY ONCE THE PART IS OURS. The engine free-runs from
+                # configuration while the mux is on STAGE, and a
+                # `start_transfer` issued unowned is discarded -- the FSM then
+                # waits for a `write_ready` that cannot come (#475). Waiting
+                # here also puts the mux on BIST for the pulse above, which is
+                # the reset #473 says the rig lost.
+                with m.If(heartbeat[16] & dll_ready & granted):
                     # Configure the PART before measuring it, if the host asked.
                     # Skipped entirely when neither apply bit is set, so the
                     # default path is byte-for-byte what it was.

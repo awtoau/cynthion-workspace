@@ -671,6 +671,28 @@ def main():
 
     firmware = FIRMWARE_BIN
 
+    # THIS RUNG'S CLOCK CONSTANTS, before anything compiles the crate.
+    #
+    # `SYNC_HZ` follows `CYNTHION_SYNC_MHZ` and nothing else in the PAC does, so
+    # the rung's constants go in the rung's build directory and the crate's
+    # `build.rs` reads them from there. The committed crate stays the default
+    # variant's, and two rungs can build at once (#480).
+    variant_rs = BUILD / "variant.rs"
+    if not args.c_firmware:
+        result = run([sys.executable,
+                      str(ROOT / "scripts" / "soc_generate_pac.py"),
+                      "--variant-only", str(variant_rs)])
+        if result.returncode != 0:
+            emit("VARIANT CONSTANTS FAILED:")
+            emit((result.stdout or result.stderr).strip()[-700:])
+            emit("Refusing to build: the firmware's timebase would be another "
+                 "variant's.")
+            return 1
+        os.environ["CYNTHION_SOC_VARIANT_RS"] = str(variant_rs)
+        for line in (result.stdout or "").splitlines():
+            if line.startswith("wrote "):
+                emit(line)
+
     # The gate. Before everything, including --no-build: a bitstream built earlier
     # from firmware that fails these assertions is no safer to load than one built
     # now, and the source it is tested against is the source on disk either way.
@@ -719,15 +741,14 @@ def main():
     # It is still a hard stop if the generator itself fails, because then
     # nothing knows where the peripherals are.
     # ...except off the default variant, whose PAC is the committed one. Every
-    # build has the same peripherals now, but `CYNTHION_SYNC_MHZ` and the CK
-    # rungs put different constants in the generated crate -- so regenerating
-    # from a swept build would leave the next ordinary one checking itself
-    # against a map taken at another clock.
+    # build has the same peripherals, and the constants that do follow the rung
+    # were written above into this variant's own build directory.
     measurement_variant = variant.settings() != variant.settings({})
     if not args.c_firmware and measurement_variant:
         emit("peripheral map NOT regenerated: this variant is not the default")
         emit(f"  {' '.join(variant.settings())}")
-        emit("  the committed PAC stays the default variant's.")
+        emit("  the committed PAC stays the default variant's; this rung's")
+        emit(f"  clock constants are {variant_rs.relative_to(ROOT)} (#480).")
     elif not args.c_firmware:
         before = None
         generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
