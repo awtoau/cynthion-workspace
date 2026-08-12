@@ -146,7 +146,7 @@ impl core::fmt::Display for Census {
     /// parsers.py` holds it. `none passed` carries no pass list ON PURPOSE, so a
     /// caller cannot read the pick as a phase that works.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "      sel  {} walked  ", self.walked)?;
+        write!(f, "  sel {} walked ", self.walked)?;
         if self.passed == 0 {
             return write!(f, "none passed  pick {} -- the fewest errors", self.pick);
         }

@@ -51,12 +51,9 @@ LATENCY = """\
   clk    CR1[6] differential/single-ended    sel  READCLKSEL capture phase
   errors/words  the real pass    control  the negative control's errors
       time  lat  mode  drive  clk  sel    errors     words   control  verdict
-000101.787    0  fix       3  dif    2         0      2048      2048  PASS
-      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre
-000101.812    0  var       3  dif    5      2048      2048      2048  fail  bad[0x0] got 0x00000000 want 0xffbf0000
-      sel  8 walked  none passed  pick 5 -- the fewest errors
-000101.840   15  var       7  dif    6         8      1024      1024  NO RESULT -- control did not fire
-      sel  8 walked  none passed  pick 6 -- the fewest errors
+000101.787    0  fix       3  dif    2         0      2048      2048  PASS  sel 8 walked pass 1,2,3  pick 2 -- the widest window's centre
+000101.812    0  var       3  dif    5      2048      2048      2048  fail  bad[0x0] got 0x00000000 want 0xffbf0000  sel 8 walked none passed  pick 5 -- the fewest errors
+000101.840   15  var       7  dif    6         8      1024      1024  NO RESULT -- control did not fire  sel 8 walked none passed  pick 6 -- the fewest errors
   1 pass, 1 fail, 1 no result of 3
 """
 

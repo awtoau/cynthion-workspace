@@ -549,6 +549,19 @@ fn print_fsm(uart: &mut Uart, words: [u32; 4]) {
     }
 }
 
+/// The `sel` census as a row SUFFIX. `None` prints nothing, for the sweeps that
+/// do not walk a phase.
+struct Sel(Option<Census>);
+
+impl core::fmt::Display for Sel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Some(census) => write!(f, "{census}"),
+            None => Ok(()),
+        }
+    }
+}
+
 /// A failed cell's evidence, as a SUFFIX to its row rather than lines under it.
 ///
 /// Everything here is empty on a clean pass, so a passing sweep is unchanged.
@@ -594,7 +607,8 @@ impl core::fmt::Display for Evidence<'_> {
 ///
 /// `expected` is how many words the cell was ASKED to compare; [`pure::scored`]
 /// is where shortness is folded into the verdict.
-fn report(uart: &mut Uart, m: &Measured, expected: u32, verbose: bool) -> Verdict {
+fn report(uart: &mut Uart, m: &Measured, expected: u32, verbose: bool,
+          census: Option<Census>) -> Verdict {
     let (cell, st, poll) = (&m.cell, m.status, m.poll);
     let short = cell.words < expected || cell.control_words < expected;
     let timed_out = matches!(poll[0], Poll::TimedOut { .. })
@@ -616,14 +630,15 @@ fn report(uart: &mut Uart, m: &Measured, expected: u32, verbose: bool) -> Verdic
     //
     // The stamp is per-row so per-cell duration is in the data.
     let _ = writeln!(
-        uart, "{}  {:3}  {:4}  {:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}{}",
+        uart, "{}  {:3}  {:4}  {:5}  {:3}  {:3}  {:8}  {:8}  {:8}  {}{}{}",
         crate::log::now(),
         cell.axes.latency,
         if cell.axes.fixed_latency { "fix" } else { "var" },
         cell.axes.drive,
         if cell.axes.single_ended_clock { "se" } else { "dif" },
         cell.axes.readclksel,
-        cell.errors, cell.words, cell.control_errors, verdict, Evidence(m));
+        cell.errors, cell.words, cell.control_errors, verdict, Evidence(m),
+        Sel(census));
 
     if verbose {
         print_status(uart, "real   ", st[0]);
@@ -693,7 +708,7 @@ pub fn one(uart: &mut Uart, bist: &Bist, axes: Axes, passes: u32) {
     preamble(uart, bist);
     bist.configure(&axes);
     let measured = bist.measured(axes, passes, None);
-    report(uart, &measured, passes * BURST_WORDS, true);
+    report(uart, &measured, passes * BURST_WORDS, true, None);
 }
 
 /// The rig's own smoke test: four cells, one CK, four values of a LIVE axis.
@@ -734,7 +749,7 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
         };
         bist.configure(&axes);
         let measured = bist.measured(axes, passes, None);
-        tally.add(report(uart, &measured, passes * BURST_WORDS, false));
+        tally.add(report(uart, &measured, passes * BURST_WORDS, false, None));
     }
 
     let _ = writeln!(uart, "  {}", tally);
@@ -787,7 +802,7 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
                             tally.pass += 1;
                             continue;
                         }
-                        tally.add(report(uart, &measured, expected, false));
+                        tally.add(report(uart, &measured, expected, false, None));
                     }
                 }
             }
@@ -855,9 +870,9 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
             // SAFETY of the unwrap: every phase below `walked` was just run, and
             // `pick_phase` only ever returns one of them.
             if let Some(measured) = runs[pick as usize] {
-                tally.add(report(uart, &measured, expected, false));
+                tally.add(report(uart, &measured, expected, false,
+                                 Some(Census { walked, passed, pick })));
             }
-            let _ = writeln!(uart, "{}", Census { walked, passed, pick });
         }
     }
     let _ = writeln!(uart, "  {}", tally);
@@ -916,7 +931,7 @@ pub fn sweep(uart: &mut Uart, bist: &Bist, passes: u32, verbose: bool) {
                                      readclksel);
                 }
                 let measured = bist.measured(axes, passes, Some(carry));
-                tally.add(report(uart, &measured, passes * BURST_WORDS, verbose));
+                tally.add(report(uart, &measured, passes * BURST_WORDS, verbose, None));
             }
         }
     }

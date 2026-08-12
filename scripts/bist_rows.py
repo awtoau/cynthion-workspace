@@ -54,11 +54,11 @@ HEADING = re.compile(r"^\s+time\s+lat\s+mode\s+drive\s+clk\s+sel\s+errors\s+"
 SUMMARY = re.compile(r"(?P<passed>\d+) pass,\s*(?P<failed>\d+) fail,\s*"
                      r"(?P<no_result>\d+) no result of\s*(?P<total>\d+)")
 
-# The `sel` census under a row that had a choice of capture phase (#421):
-# `      sel  8 walked  pass 1,2,3  pick 2 -- the widest window's centre`.
+# The `sel` census, ON the row that had a choice of capture phase (#421, #423):
+# `... PASS  sel 8 walked pass 1,2,3  pick 2 -- the widest window's centre`.
 # `passed` is ABSENT when nothing passed, and a caller must then not read `pick`
 # as a phase that works -- `require_census` is what enforces that.
-CENSUS = re.compile(r"^\s*sel\s+(?P<walked>\d+) walked\s+"
+CENSUS = re.compile(r"\bsel\s+(?P<walked>\d+) walked\s+"
                     r"(?:pass (?P<passed>[\d,]+)|none passed)\s+"
                     r"pick (?P<pick>\d+)", re.M)
 
@@ -73,7 +73,7 @@ FIRST_BAD = re.compile(r"bad\[(?P<index>0x[0-9a-f]+)\]\s*"
 # A failed row's evidence trails its verdict on the SAME line (#423). This is
 # where the verdict ends -- the verdict text itself contains no `  bad[`, no
 # `  fsm ` and no TIMEOUT, so the first of these is the boundary.
-EVIDENCE = re.compile(r"\s{2}(?:(?:real|control) TIMEOUT|fsm |bad\[)")
+EVIDENCE = re.compile(r"\s{2}(?:(?:real|control) TIMEOUT|fsm |bad\[|sel \d+ walked)")
 
 # `bist ck`'s rung listing, and the CK/sync lines every sweep now prints above
 # its table. The frequency is ragged on purpose -- reachable rungs include
