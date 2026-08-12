@@ -17,10 +17,15 @@ synthesises the decoder ALONE and varies one thing at a time:
   * optional bus features, which decide whether a `_FeatureShim` is built
 
 Out of context, so the absolute numbers are an upper bound in the sense
-`scripts/soc_peripheral_area.py` means. The SLOPE is what survives, and the
-`geometry` case is the control that says whether this model describes the real
-decoder at all: configured with the shipping map's 12 windows it must land near
-the netlist's 2,149, and if it does not, nothing else here is worth reading.
+`scripts/soc_peripheral_area.py` means. The `geometry` case is the control that
+says whether this model describes the real decoder at all: configured with the
+shipping map's own windows it must land near the netlist's 2,149, and if it does
+not, nothing else here is worth reading. It measures 2008.
+
+**A slope out of this does not transfer.** Whole-design delta builds put the
+marginal window at +203, -164 and -75 COMB (#453), all at or inside the +/-194
+mapping floor (#454). What this script establishes is WHICH KNOB moves the
+decoder, not what one window is worth in the real design.
 
     ./scripts/soc_decoder_cost.py
     ./scripts/soc_decoder_cost.py --only count
@@ -54,23 +59,19 @@ from amaranth_soc.memory import MemoryMap                 # noqa: E402
 # of them is elaborated, so "never used" is the expected outcome, not news.
 warnings.filterwarnings("ignore", category=UnusedElaboratable)
 
-# The shipping map, read out of `scripts/soc_map_audit.py`'s window table:
-# (name, base, size in bytes). Two 4 MiB windows, two multi-MiB memories and
-# eight small CSR windows.
-SHIPPING = [
-    ("ram",            0x00000000, 64 * 1024),
-    ("spiflash",       0x10000000, 4 * 1024 * 1024),
-    ("hyperram",       0x20000000, 8 * 1024 * 1024),
-    ("console",        0xf0000000, 8),
-    ("spi0",           0xf0000100, 64),
-    ("flash_probe",    0xf0000200, 32),
-    ("hyperram_probe", 0xf0000280, 64),
-    ("bootram",        0xf0000400, 32),
-    ("apollo_uart",    0xf0000500, 8),
-    ("board",          0xf0000600, 128),
-    ("plic",           0xf0400000, 4 * 1024 * 1024),
-    ("clint",          0xf0800000, 64 * 1024),
-]
+
+def shipping():
+    """(name, base, size) per window, from the ELABORATED map.
+
+    Not a table of literals. A copy here would go stale against `top.py`, and
+    `scripts/soc_dead_peripherals.py` greps for raw addresses -- a script
+    carrying them counts itself as a peripheral's user.
+    """
+    import soc_map_audit
+    soc, _regions = soc_map_audit.build_soc()
+    facts = soc_map_audit.analyse(soc.decoder.bus.memory_map)
+    return [(entry["name"], entry["base"], entry["size"])
+            for entry in facts["windows"]]
 
 # What `top.py` builds: 30-bit word address, 32-bit data, byte granularity,
 # and the three optional signals.
@@ -232,7 +233,7 @@ CASES = {
         ("live dat_r", Harness(packed(12))),
         ("dat_r tied 0", Harness(packed(12), live=False))]),
     "geometry": lambda emit: sweep(emit, "12 windows, where they sit", [
-        ("shipping map", Harness(SHIPPING)),
+        ("shipping map", Harness(shipping())),
         ("same, packed 8 B", Harness(packed(12))),
         ("same, 0x100 apart", Harness(spread(12))),
         ("same, 4 KiB each packed", Harness(packed(12, size=4096)))]),
@@ -242,10 +243,10 @@ CASES = {
         for width in (30, 26, 20, 14)]),
     "gather_shape": lambda emit: sweep(
         emit, "the shipping map, MUX gather against OR gather", [
-            ("upstream Decoder", Harness(SHIPPING)),
-            ("OR fan-in", Harness(SHIPPING, decoder=OrDecoder)),
-            ("upstream, 6 windows", Harness(SHIPPING[:6])),
-            ("OR fan-in, 6 windows", Harness(SHIPPING[:6], decoder=OrDecoder))]),
+            ("upstream Decoder", Harness(shipping())),
+            ("OR fan-in", Harness(shipping(), decoder=OrDecoder)),
+            ("upstream, 6 windows", Harness(shipping()[:6])),
+            ("OR fan-in, 6 windows", Harness(shipping()[:6], decoder=OrDecoder))]),
     "features": lambda emit: sweep(emit, "12 packed windows, optional signals", [
         ("cti+bte+err", Harness(packed(12))),
         ("err only", Harness(packed(12), features=frozenset({"err"}))),
@@ -285,9 +286,11 @@ def main():
     for name in (args.only or list(CASES)):
         CASES[name](emit)
 
-    emit("  CONTROL: one window must be near zero, and the `shipping map` row of")
-    emit("  `geometry` must land near the 2,149 COMB the real netlist reports for")
-    emit("  `top.decoder` (#446). A model that misses that is not this decoder.")
+    emit("  CONTROL: the `shipping map` row of `geometry` must land near the")
+    emit("  2,149 COMB the real netlist reports for `top.decoder` (#446) -- a")
+    emit("  model that misses that is not this decoder. One window is NOT near")
+    emit("  zero (255 live, 12 with dat_r tied off), and that is the finding:")
+    emit("  the gather is priced per data bit, not per window.")
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
     LOG.write_text("\n".join(out) + "\n")
