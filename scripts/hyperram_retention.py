@@ -25,10 +25,15 @@ carries anything across.
 
 ## The sequence
 
-    job 1   configure, `bist smoke` (the engine writes its own patterns over
-            the array), `hr ramp` -- expected WRONG, which is what proves the
-            ramp is not left over from an earlier session -- then `hr ramp w`
-            to write it, then `reset`
+    job 1   configure, hand the part to the BIST engine and take it back --
+            the engine hard-resets it on the way in, which wipes the array --
+            then `hr ramp`, expected WRONG, which is what proves the ramp is
+            not left over from an earlier session. Then `hr ramp w` to write
+            it, then `reset`.
+
+            The handover rather than `bist smoke`: a smoke run leaves the
+            part's CR0 at the last cell's latency and staging cannot use it
+            afterwards (#490).
 
     job 2   the `reset` times out with no prompt, so the arbiter marks the
             board unknown and RECONFIGURES for this job. Then `hr ramp`
@@ -134,9 +139,9 @@ def main():
     # reload this check is built around.
     first, wrote = run(
         bitstream, args.budget,
-        ["info", "init", "bist mode", "bist mode bist", "bist smoke",
-         "bist mode stage", "hr ramp", "hr ramp w", "reset"],
-        "retention: scramble, write, then let the board go unknown")
+        ["info", "init", "bist mode", "bist mode bist", "bist status",
+         "bist mode stage", "init", "hr ramp", "hr ramp w", "reset"],
+        "retention: wipe, write, then let the board go unknown")
 
     items = []
     info = reply(wrote, "info")
@@ -150,17 +155,17 @@ def main():
     check(items, "`init hyperram` answers", bool(line) and "FAIL" not in line,
           line.strip()[:70] or "`init` said nothing about hyperram")
 
-    smoke = reply(wrote, "bist smoke")
-    tally = re.search(r"(\d+) pass, (\d+) fail, (\d+) no result of (\d+)", smoke)
-    check(items, "the BIST engine completes cells",
-          bool(tally) and "WEDGED" not in smoke and int(tally.group(3)) == 0,
-          (f"{tally.group(1)} pass, {tally.group(2)} fail, "
-           f"{tally.group(3)} no result of {tally.group(4)}"
-           + ("; rig WEDGED" if "WEDGED" in smoke else "")) if tally
-          else "no tally in the reply")
+    # The engine hard-resets the part on the way in, so the canary the previous
+    # boot wrote is gone. That is the wipe this check is built on, and the
+    # firmware says so itself.
+    back = [row for asked, text in wrote if asked.strip() == "init"
+            for row in text.splitlines() if "hyperram" in row]
+    check(items, "the engine's RESET# reached the part",
+          len(back) > 1 and "POWER WAS LOST" in back[-1],
+          back[-1].strip()[:70] if len(back) > 1 else "no second `init`")
 
-    # The ramp BEFORE the write, after the engine has been over the array. Wrong
-    # here is what rules out "the pattern was already there from another run".
+    # The ramp BEFORE the write, after the part has been wiped. Wrong here is
+    # what rules out "the pattern was already there from another run".
     before = ramp_verdict(reply(wrote, "hr ramp"))
     check(items, "the ramp is gone before it is written",
           before is not None and before[1] > 0,

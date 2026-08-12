@@ -115,13 +115,19 @@ def test_the_engine_can_still_assert_reset_when_it_owns_the_part():
     _run(bench)
 
 
-def test_the_engine_leaves_reset_on_a_path_with_no_dll():
-    """Otherwise it parks there: `busy=1 done=0`, FSM at 0, zero cycles. #475.
+def test_the_engine_waits_for_the_part_then_starts():
+    """Two ways the engine wedges, both seen on the board. #475.
+
+    It must not leave `RESET` on a path with no DLL waiting for a `dll_ready`
+    that will never arrive -- `busy=1 done=0`, FSM at 0, zero cycles.
+
+    And it must not leave `RESET` before the mux grants it the part: the
+    `start_transfer` is discarded and the FSM then waits in its write burst for
+    a `write_ready` that cannot come. On the board that reads as the FSM parked
+    with `write_cycles` climbing every clock and `read 0`.
 
     Watched at the port, which is the whole of the engine's contract with the
-    mux. In `RESET` it drives `phy_reset` from `~heartbeat[15]`, so a stuck
-    engine is a square wave that never stops and a `start_transfer` that never
-    comes.
+    mux.
     """
     from peripherals.hyperram_bist import HyperRAMBist  # noqa: PLC0415
 
@@ -131,12 +137,22 @@ def test_the_engine_leaves_reset_on_a_path_with_no_dll():
     sim.add_clock(1 / 80e6)
 
     async def bench(ctx):
+        # UNOWNED FIRST, which is how every board comes up: the mux resets to
+        # STAGE. A `start_transfer` issued here is discarded by the mux and the
+        # engine then waits for a `write_ready` that cannot come.
+        ctx.set(port.granted, 0)
+        ctx.set(port.idle, 0)
+        for _ in range(2 ** 17):
+            await ctx.tick()
+            assert not ctx.get(port.start_transfer), (
+                "the engine started a transaction it does not own the part for")
+
         ctx.set(port.granted, 1)
         ctx.set(port.idle, 1)
         # `RESET` runs for 2**16 cycles of the heartbeat; a little past it is
         # where a working engine has already asked for its first transaction.
         started = False
-        for _ in range(2 ** 16 + 4096):
+        for _ in range(2 ** 17 + 4096):
             await ctx.tick()
             if ctx.get(port.start_transfer):
                 started = True
