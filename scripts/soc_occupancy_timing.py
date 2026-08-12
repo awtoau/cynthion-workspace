@@ -269,6 +269,10 @@ def sample(arm, seed, threads=None, tag=None):
 
 
 PATH_HEAD = re.compile(r"Critical path report for clock\s+'(\S+)'")
+# nextpnr's own summary, and the section terminator. Taken over anything this
+# accumulates: the cross-domain reports follow immediately, and a parser that
+# runs into them reports an 86 ns path on a 14 ns design.
+PATH_TOTAL = re.compile(r"Info:\s+([\d.]+) ns logic,\s+([\d.]+) ns routing")
 PATH_STEP = re.compile(r"Info:\s+(clk-to-q|logic|routing|setup)\s+([\d.]+)\s+"
                        r"([\d.]+)\s+(Source|Net|Sink)?\s*(\S+)?")
 PATH_TILE = re.compile(r"\((\d+),(\d+)\)\s*->\s*\((\d+),(\d+)\)")
@@ -301,18 +305,18 @@ def critical_path(text, clock):
     xs, ys = [], []
     plugins = {}
     for line in lines[start:]:
-        if PATH_HEAD.search(line) or "Max frequency" in line:
+        total = PATH_TOTAL.match(line.rstrip())
+        if total:
+            logic, routing = float(total.group(1)), float(total.group(2))
+            break
+        if "Critical path report" in line or "Max frequency" in line:
             break
         step = PATH_STEP.match(line.rstrip())
         if step:
-            kind, delay, _total, role, name = step.groups()
+            kind, _delay, _total, _role, name = step.groups()
             if kind == "logic":
-                logic += float(delay)
                 hops += 1
-            elif kind in ("routing",):
-                routing += float(delay)
             elif kind == "clk-to-q":
-                logic += float(delay)
                 source = name
         if " Sink " in line:
             sink = line.split(" Sink ", 1)[1].strip()
@@ -323,9 +327,23 @@ def critical_path(text, clock):
         for name in PLUGIN.findall(line):
             plugins[name] = plugins.get(name, 0) + 1
 
-    owner = max(plugins, key=plugins.get) if plugins else "(no plugin named)"
-    return {"logic_ns": round(logic, 2), "routing_ns": round(routing, 2),
-            "hops": hops, "owner": owner, "source": source, "sink": sink,
+    def owner_of(cell):
+        """The plugin that named the cell, else the module it sits in.
+
+        Falling back to the hierarchy matters: half the endpoints are not
+        plugin-named, and "which module" is still the question being asked."""
+        found = PLUGIN.search(cell or "")
+        if found:
+            return found.group(1)
+        parts = (cell or "").split(".")
+        return ".".join(parts[:2]) if len(parts) > 2 else (cell or "?")
+
+    return {"logic_ns": logic, "routing_ns": routing, "hops": hops,
+            # Start and end separately: the path runs BETWEEN plugins, and one
+            # majority label hides which end moved.
+            "from": owner_of(source), "to": owner_of(sink),
+            "busiest": max(plugins, key=plugins.get) if plugins else "(none)",
+            "source": source, "sink": sink,
             "bbox": [min(xs), min(ys), max(xs), max(ys)] if xs else None,
             "plugins": plugins}
 
@@ -615,34 +633,54 @@ def report(arms, clock):
                  f"{got['sign_p']:>8.4f}")
 
 
-def path_report(arms, clock):
-    """Who owns the critical path, over the seed set, per arm."""
-    emit(f"critical path owner on {clock}, over seeds")
-    emit()
-    emit(f"  {'arm':<24} {'n':>3} {'logic ns':>9} {'route ns':>9} {'hops':>5} "
-         f"{'tiles':>7}  owners")
-    emit("  " + "-" * 90)
-    for arm in arms:
-        rows = [row for row in load(arm) if row.get("ok")]
-        paths = [row["paths"][clock] for row in rows
-                 if row.get("paths", {}).get(clock)]
-        if not paths:
+def sample_paths(arm, clock):
+    """Every sampled seed's critical path, re-read from its own nextpnr log.
+
+    From the log rather than from `samples.json`, so a fix to the parser applies
+    to samples already taken.
+    """
+    found = []
+    for row in load(arm):
+        if not row.get("ok"):
             continue
-        owners = {}
-        for path in paths:
-            owners[path["owner"]] = owners.get(path["owner"], 0) + 1
-        box = [max(p["bbox"][2] - p["bbox"][0], p["bbox"][3] - p["bbox"][1])
-               for p in paths if p["bbox"]]
-        emit(f"  {arm:<24} {len(paths):>3} "
-             f"{statistics.mean(p['logic_ns'] for p in paths):>9.2f} "
-             f"{statistics.mean(p['routing_ns'] for p in paths):>9.2f} "
-             f"{statistics.mean(p['hops'] for p in paths):>5.1f} "
-             f"{statistics.mean(box) if box else 0:>7.1f}  "
-             + ", ".join(f"{name} {count}/{len(paths)}" for name, count in
-                         sorted(owners.items(), key=lambda kv: -kv[1])))
+        log = arm_dir(arm) / f"seed{row['seed']:03d}" / "top.tim"
+        if not log.exists():
+            continue
+        path = critical_path(log.read_text(), clock)
+        if path:
+            found.append((row["seed"], row["fmax"].get(clock), path))
+    return found
+
+
+def path_report(arms, clock):
+    """What the critical path IS, over the seed set, per arm."""
+    emit(f"critical path on {clock}, over seeds")
     emit()
-    emit("  logic+routing is the period, so the two columns ARE the Fmax:")
-    emit("  a change that moves neither did not move the path.")
+    emit(f"  {'arm':<24} {'n':>3} {'logic':>6} {'route':>6} {'route %':>7} "
+         f"{'hops':>5} {'span':>5}  start -> end (times seen)")
+    emit("  " + "-" * 110)
+    for arm in arms:
+        found = sample_paths(arm, clock)
+        if not found:
+            continue
+        paths = [path for _seed, _fmax, path in found]
+        ends = {}
+        for path in paths:
+            key = f"{path['from']} -> {path['to']}"
+            ends[key] = ends.get(key, 0) + 1
+        span = [max(p["bbox"][2] - p["bbox"][0], p["bbox"][3] - p["bbox"][1])
+                for p in paths if p["bbox"]]
+        logic = statistics.mean(p["logic_ns"] for p in paths)
+        route = statistics.mean(p["routing_ns"] for p in paths)
+        emit(f"  {arm:<24} {len(paths):>3} {logic:>6.2f} {route:>6.2f} "
+             f"{100 * route / (logic + route):>6.1f}% "
+             f"{statistics.mean(p['hops'] for p in paths):>5.1f} "
+             f"{statistics.mean(span) if span else 0:>5.1f}  "
+             + ", ".join(f"{name} ({count})" for name, count in
+                         sorted(ends.items(), key=lambda kv: -kv[1])[:3]))
+    emit()
+    emit("  logic + routing is the period, so those two columns ARE the Fmax.")
+    emit("  `span` is the longer side of the path's tile bounding box.")
 
 
 def needed_n(values, delta):
@@ -731,6 +769,11 @@ def main():
             raise SystemExit("no samples yet -- run `sweep`")
         slowest = min(rows[0]["fmax"], key=lambda name: rows[0]["fmax"][name])
         clock = slowest
+
+    if args.stage == "paths":
+        path_report(arms, clock)
+        flush_log("paths")
+        return 0
 
     if args.stage == "power":
         for arm in arms:

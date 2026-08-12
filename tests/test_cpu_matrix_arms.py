@@ -44,6 +44,16 @@ Info:      logic  0.18  1.45 Source cpu.PerformanceCounterPlugin_logic_ignoreNex
 Info:    routing  1.21  2.66 Net cpu.TrapPlugin_logic_harts_0_trap_fsm_stateNext[0] (12,35) -> (20,38)
 Info:                          Sink cpu.TrapPlugin_logic_harts_0_trap_pending_arbiter_down_payload_exception.D
 Info:      logic  0.18  2.84 Source cpu.TrapPlugin_logic_harts_0_trap_fsm_buffer_i_valid.F
+Info:    routing  1.07  3.91 Net cpu.TrapPlugin_logic_harts_0_trap_fsm_stateNext[1] (20,38) -> (20,38)
+Info:                          Sink cpu.FetchL1Plugin_logic_plru_mem_spinal_port1_TRELLIS_FF_Q.M
+Info:      setup  0.00  3.91 Source cpu.FetchL1Plugin_logic_plru_mem_spinal_port1_TRELLIS_FF_Q.M
+Info: 0.76 ns logic, 3.15 ns routing
+
+Info: Critical path report for cross-domain path '<async>' -> '<async>':
+Info:   clk-to-q  0.40  0.40 Source stager.fifo.produce_w_bin_TRELLIS_FF_Q_4.Q
+Info:    routing  9.99  10.39 Net stager.fifo.produce_w_bin[5] (15,3) -> (16,4)
+Info: 0.40 ns logic, 9.99 ns routing
+
 Info: Max frequency for clock '$glbnet$clk': 62.36 MHz (PASS at 60.00 MHz)
 """
 
@@ -88,13 +98,15 @@ def test_split_geometry_arms_leave_the_generator_substitution_off():
                 f"substitution on, which would overwrite it")
 
 
-def test_critical_path_is_attributed_to_the_plugin_that_owns_it():
+def test_critical_path_names_both_ends_and_stops_at_its_own_section():
+    """The cross-domain reports follow immediately; a parser that runs into them
+    reports an 86 ns path on a 14 ns design."""
     path = soc_occupancy_timing.critical_path(NEXTPNR_LOG, "$glbnet$clk")
-    assert path["owner"] == "TrapPlugin"
+    assert (path["from"], path["to"]) == ("TrapPlugin", "FetchL1Plugin")
+    assert path["busiest"] == "TrapPlugin"
     assert path["hops"] == 2
-    # clk-to-q counts as logic; the period is logic + routing.
-    assert path["logic_ns"] == 0.76
-    assert path["routing_ns"] == 2.08
+    # nextpnr's own summary line, not an accumulation of the steps.
+    assert (path["logic_ns"], path["routing_ns"]) == (0.76, 3.15)
     assert path["bbox"] == [4, 33, 20, 38]
     assert "PerformanceCounterPlugin" in path["plugins"]
 
