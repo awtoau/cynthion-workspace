@@ -122,6 +122,19 @@ STATUS_SPI_FAIL = 1 << 22
 # arrived and the verdict below names the cause -- silence is never reported bare.
 CONSOLE_REPLY_S = 2.0
 
+# How long the AUX console gets to come BACK on the bus after a configure.
+#
+# Waits for: 1d50:6180 re-enumerating. Expected: configuring drops the device and
+# the host rebinds it in ~1.3 s measured on this board (#419). 2.5 s is ~1.9x
+# that, because enumeration competes with whatever else is on the bus. On expiry:
+# say so with the elapsed and confirm ANYWAY -- the wait removes a false
+# `wrong-port`, it never turns a dead board into a pass.
+CONSOLE_ENUMERATE_S = 2.5
+
+# How often that wait looks. `udevadm settle` returns instantly on an idle queue,
+# so a bare loop around it spins a core.
+ENUMERATE_TICK_S = 0.05
+
 # The FIRST command after a boot is swallowed: the banner is held in the log ring
 # and flushed on the first received byte, so it interleaves with the echo. Two
 # asks, not one -- one ask scores a live board dead (see hyperram_pin_axis.py).
@@ -536,6 +549,32 @@ def precheck():
     ])
 
 
+def wait_for_console(limit_s=CONSOLE_ENUMERATE_S):
+    """After a configure: the console back on the bus, or the elapsed on record.
+
+    Configuring drops `1d50:6180` and the host re-enumerates it. Confirming
+    inside that window scores `wrong-port` on a board that is fine -- #419, and
+    the first `run` job the arbiter ever submitted failed exactly that way.
+    Presence only, no tty open: `tio_user.py` holds that node and the boot banner
+    is flushed to whoever reads first.
+    """
+    import usb_ids
+
+    started = time.perf_counter()
+    while True:
+        if usb_present(usb_ids.product_id(CONSOLE)):
+            elapsed = time.perf_counter() - started
+            say(f"  console re-enumerated after {elapsed:.2f} s")
+            return elapsed
+        if time.perf_counter() - started >= limit_s:
+            say(f"  console did not re-enumerate within {limit_s:.1f} s "
+                f"(elapsed {time.perf_counter() - started:.1f} s); confirming "
+                f"anyway, which will name what is actually there")
+            return None
+        subprocess.run(["udevadm", "settle"], capture_output=True)
+        time.sleep(ENUMERATE_TICK_S)
+
+
 def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
     """Configure the FPGA and prove a design is running. 0 on success.
 
@@ -564,6 +603,8 @@ def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
             say(f"  configure attempt {attempt}/{tries} FAILED: "
                 + (tail[-1][:160] if tail else "killed at its time limit"))
             continue
+        if expect != "design":
+            wait_for_console()
         verdict = confirm(node=node, jtag=True, expect=expect)
         if verdict.ok:
             say(f"configured {Path(bitstream).name} and the design answers"
