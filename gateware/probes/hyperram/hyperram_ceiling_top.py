@@ -606,11 +606,15 @@ class HyperRAMCeiling(Elaboratable):
             # the controller it stands in for (#432).
             psram = self._port
             reset_assert = psram.phy_reset
-            m.d.comb += [dll_locked.eq(psram.dll_locked),
-                         dll_ready.eq(psram.dll_ready),
-                         burstdet.eq(psram.burstdet),
+            m.d.comb += [burstdet.eq(psram.burstdet),
                          psram.readclksel.eq(Mux(sweeping, sweep_phase,
                                                  readclksel))]
+            # Only where there is a DLL. Off the DQS path the port reports 0
+            # because it has none to report on, and `RESET` exits on
+            # `dll_ready` -- so taking it from there parks the engine (#475).
+            if self.dqs:
+                m.d.comb += [dll_locked.eq(psram.dll_locked),
+                             dll_ready.eq(psram.dll_ready)]
         elif self.dqs:
             from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
             from peripherals.hyperram_dqs_controller import HyperRAMDQSController

@@ -165,9 +165,13 @@ class HyperRAMShared(Elaboratable):
 
             ram_bus = platform.request("ram", 0)
             phy = HyperRAMPHY(bus=ram_bus)
-            # No DQSBUFM, so no tap to select and no strobe to detect; the
-            # platform's buffer holds RESET# released.
-            m.d.comb += ram_bus.reset.o.eq(~phy_reset)
+            # RESET# active high into the buffer: the pad is `PinsN`, so
+            # Amaranth inverts once and a second inversion here would hold the
+            # part in reset for the life of the bitstream (#479).
+            #
+            # No DQSBUFM, so no tap to select and no strobe to detect. The DLL
+            # signals stay 0 because there is no DLL to report on.
+            m.d.comb += ram_bus.reset.o.eq(phy_reset)
 
         psram.phy = phy.phy
         m.submodules.phy = phy

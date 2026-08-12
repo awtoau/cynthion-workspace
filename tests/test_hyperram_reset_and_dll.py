@@ -39,7 +39,9 @@ sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from board.cynthion_r1_4 import CynthionPlatformRev1D4  # noqa: E402
-from hyperram_share import MODE_BIST, MODE_STAGE, HyperRAMShared  # noqa: E402
+from hyperram_share import (MODE_BIST, MODE_STAGE, HyperRAMPort,  # noqa: E402
+                            HyperRAMShared)
+from peripherals.hyperram_controller import HyperRAMController  # noqa: E402
 
 
 class _HoldsTheBus:
@@ -113,14 +115,36 @@ def test_the_engine_can_still_assert_reset_when_it_owns_the_part():
     _run(bench)
 
 
-def test_a_path_with_no_dll_reports_ready_to_both_masters():
-    """Otherwise the engine never leaves `RESET`: `busy=1 done=0`, zero cycles."""
-    async def bench(ctx, dut, _bus):
-        await ctx.tick().repeat(2)
-        for which, port in (("stage", dut.stage), ("bist", dut.bist)):
-            assert ctx.get(port.dll_ready) == 1, (
-                f"{which}: the non-DQS path never reports the DLL ready, so "
-                f"the engine's RESET state has no exit")
-            assert ctx.get(port.dll_locked) == 1
+def test_the_engine_leaves_reset_on_a_path_with_no_dll():
+    """Otherwise it parks there: `busy=1 done=0`, FSM at 0, zero cycles. #475.
 
-    _run(bench)
+    Watched at the port, which is the whole of the engine's contract with the
+    mux. In `RESET` it drives `phy_reset` from `~heartbeat[15]`, so a stuck
+    engine is a square wave that never stops and a `start_transfer` that never
+    comes.
+    """
+    from peripherals.hyperram_bist import HyperRAMBist  # noqa: PLC0415
+
+    port = HyperRAMPort(HyperRAMController(phy=None, sync_mhz=80.0), name="bist")
+    dut = HyperRAMBist(ck_mhz=80.0, port=port, dqs=False, domain="sync")
+    sim = Simulator(dut)
+    sim.add_clock(1 / 80e6)
+
+    async def bench(ctx):
+        ctx.set(port.granted, 1)
+        ctx.set(port.idle, 1)
+        # `RESET` runs for 2**16 cycles of the heartbeat; a little past it is
+        # where a working engine has already asked for its first transaction.
+        started = False
+        for _ in range(2 ** 16 + 4096):
+            await ctx.tick()
+            if ctx.get(port.start_transfer):
+                started = True
+                break
+        assert started, (
+            "the engine never left RESET: no transaction after the whole "
+            "heartbeat, which is `busy=1 done=0` with zero cycles on the board")
+        assert ctx.get(port.phy_reset) == 0, "RESET# still asserted mid-transfer"
+
+    sim.add_testbench(bench)
+    sim.run()
