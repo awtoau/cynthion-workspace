@@ -568,10 +568,15 @@ def describe(values):
 
 
 def paired(ref, arm):
-    """Paired stats over the seeds both arms have. Same placement, two netlists.
+    """Paired stats over the seeds both arms have. Same seed, two netlists.
 
-    Pairing removes the seed-to-seed variation, which is the dominant term here,
-    so it sees a shift a two-sample test of the same size cannot.
+    PAIRING BUYS NOTHING HERE, and that is measured: the same seed on two
+    netlists correlates at r = -0.09, +0.05, +0.09 over three arms, so the paired
+    and unpaired standard errors agree to 0.03 MHz. A seed is not a difficulty
+    both arms inherit -- a different netlist re-rolls the placement outright.
+
+    Kept because it is still the right test for "same seed, two netlists", and
+    because the CI it reports is the rig's sensitivity: +/-1.3 MHz at n=40.
     """
     common = sorted(set(ref) & set(arm))
     diffs = [arm[seed] - ref[seed] for seed in common]
