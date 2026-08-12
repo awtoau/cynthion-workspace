@@ -240,6 +240,20 @@ class Link:
              f"{len(reply)} byte(s) received)")
         return reply
 
+    def discard_pending(self):
+        """Drop what arrived BEFORE this prompt.
+
+        A tty's buffer holds whatever the design wrote before it stopped, and a
+        caller that writes a CR and reads gets those bytes back -- a dead board
+        answering with its own last words. See `soc_confirm.ask_jtag_console`.
+        """
+        if self.sock:
+            self.settle(0.01)
+            while self.read_available():
+                pass
+        else:
+            self.port.reset_input_buffer()
+
     def settle(self, seconds):
         """Shorten the underlying read timeout, so a wait can end early.
 

@@ -440,6 +440,10 @@ def ask_jtag_console(ev):
     except Exception as failure:
         say(f"  JTAG-pin UART {node}: will not open ({failure})")
         return
+    # The node's buffer holds what the design wrote before it stopped, and those
+    # bytes read as a live reply -- a forced-offline FPGA scored `wrong-port`
+    # ("a design is running") on that evidence alone.
+    link.discard_pending()
     ev.jtag_console = prompt(link)
     say(f"  JTAG-pin UART {node}: "
         f"{'answered' if ev.jtag_console.strip() else 'silent'}")
