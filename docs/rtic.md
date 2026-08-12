@@ -10,19 +10,19 @@ Numbers appear only where they bound something.
 ## The model
 
 **RTIC is the dispatcher and there is no alternative in the tree.**
-`src/rtic_app.rs` emits `fn main`; there is no `#[entry]` elsewhere, no `rtic`
-cargo feature, and no superloop.
+It emits `fn main`; there is no `#[entry]` elsewhere, no `rtic` cargo feature,
+and no superloop.
 
 - **Tasks run to completion on one stack.** RTIC gives no task its own stack,
   which is why the dispatcher costs tens of bytes of `.bss` rather than
-  kilobytes. `memory.x` reserves an 8 KiB floor.
+  kilobytes. The linker script reserves an 8 KiB floor.
 - **Priority is declared per task and decides preemption**, in software, through
   RTIC's `riscv-slic` backend. Nothing in the interrupt controller participates —
   [`soc-interrupts.md`](soc-interrupts.md).
 - **Shared resources are checked at compile time.** That is what the dispatcher
   is bought for, over a hand-written cooperative loop.
-- **The monotonic is the CLINT**, written here: `rtic-monotonics` 2.2.1 ships two
-  RISC-V backends and neither is a CLINT one.
+- **Tasks are released by the 1 ms tick's counter, not by a deadline queue.**
+  Nothing in the shipping firmware exercises a monotonic.
 
 ## What it is sized against
 
@@ -52,6 +52,20 @@ case and costs the mean; that is the trade taken deliberately.
 | events past the 375 µs deadline | **0** |
 | worst window with `mstatus.MIE` clear | 60 instructions, ~1 µs |
 
+## Why there is no monotonic yet
+
+**The CLINT has one comparator.** The 1 ms tick owns `mtimecmp`, and
+`Mono::start()` claims it — so adopting a monotonic is not an addition, it moves
+**every** periodic job at once, including the tick that stamps every log line.
+
+A CLINT monotonic exists and is measured — 7 µs worst late — behind
+`--features rticmono`, as a separate binary. It is written here because
+`rtic-monotonics` 2.2.1 ships two RISC-V backends, ESP32-C3 and C6 SYSTIMER, and
+neither is a CLINT one. Independent work, not derived from either — #508.
+
+Adopting it is the open question, and the single comparator is the whole of the
+cost.
+
 ## The constraint that shapes it: the I-cache
 
 A property of the machine, not of the runtime.
@@ -71,11 +85,10 @@ fallback, not as a rival.
 ## Traps this is shaped around
 
 - **A `#[cfg]` on a feature that no longer exists is not a compile error.**
-  `crate::rtic_app::tick()` was `#[cfg(feature = "rtic")]`; deleting the feature
-  made it permanently false, so the tick stopped pending its task and the
-  firmware ran with no scheduler — compiling cleanly, booting, answering every
-  command. Only `soc_test.py`'s `polls > 0` assertion caught it. **Grep for a
-  feature name after deleting one.**
+  Deleting the `rtic` feature made the tick's cfg permanently false, so it
+  stopped pending its task and the firmware ran with no scheduler — compiling
+  cleanly, booting, answering every command. One test assertion caught it.
+  **Grep for a feature name after deleting one.**
 - **The `model` line in the `rtic` command stays.** A transcript that does not
   say what produced it cannot be compared with one taken after the next change.
 
@@ -83,8 +96,9 @@ fallback, not as a rival.
 
 | | |
 |---|---|
-| the I2C transaction-complete interrupt has never fired | wired in `gateware/soc/top.py`; #246. Until it does, the power task spins on I2C rather than being woken by it |
-| IPC and `ICACHE_MISS` on silicon | needs a bitstream: `peripherals/uart16550.py` implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
+| adopt the monotonic | one comparator, so it moves every periodic job at once |
+| the I2C transaction-complete interrupt has never fired | #246. Until it does, the power task spins on I2C rather than being woken by it |
+| IPC and `ICACHE_MISS` on silicon | the 16550 implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
 | what shrinking the hot set would take | unmeasured |
 
 ## Reproducing the numbers
