@@ -128,6 +128,25 @@ def test_a_first_idle_run_reports_no_change():
     assert not any("changed verdict" in line for line in second["events"])
 
 
+def test_a_cell_disagreeing_with_itself_in_one_run_is_an_event():
+    """The strongest marginality evidence: same configuration, seconds apart."""
+    run = observation()
+    flipped = SWEEP.replace("      0      8192      8192  PASS",
+                            "     16      8192      8192  fail")
+    run["transcript"].append({"command": "bist all 8", "pass": 1,
+                              "status": "ok", "elapsed_s": 4.6,
+                              "reply": flipped})
+    events = arb.idle_observe(run, None)["events"]
+    assert any("WITHIN this run" in line for line in events)
+
+
+def test_repeated_identical_passes_report_no_disagreement():
+    run = observation()
+    run["transcript"].append(dict(run["transcript"][0], **{"pass": 1}))
+    events = arb.idle_observe(run, None)["events"]
+    assert not any("WITHIN this run" in line for line in events)
+
+
 def test_die_drift_is_an_event():
     first = arb.idle_observe(observation(die=50), None)
     second = arb.idle_observe(

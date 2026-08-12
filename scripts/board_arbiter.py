@@ -396,15 +396,23 @@ class Board:
         """
         import hyperram_matrix_diff as matrix
 
-        reply, status, _ = self.ask(link, "info", DEFAULT_COMMAND_S, None)
-        text = reply.decode("ascii", "replace")
-        image = matrix.IMAGE.search(text)
+        # ASKED TWICE. The banner is flushed on the first byte received after a
+        # boot, so it can arrive mid-reply and carry the prompt this read stops
+        # at -- `info`'s own output then lands after the read finished. Seen on
+        # a real job; the same reason `soc_confirm.CONSOLE_ASKS` is 2.
+        for _attempt in range(2):
+            reply, status, _ = self.ask(link, "info", DEFAULT_COMMAND_S, None)
+            text = reply.decode("ascii", "replace")
+            image = matrix.IMAGE.search(text)
+            if status == "ok" and image:
+                break
         gateware = matrix.GATEWARE.search(text)
         die = DIE_C.search(text)
         if status != "ok" or not image:
             raise Refused(
                 "`info` did not report an image commit, so nothing this job did "
-                f"can be attributed to a build (status {status})")
+                f"can be attributed to a build (status {status}, "
+                f"{len(text)} bytes, asked twice)")
         return {
             "image": image.group(1), "image_dirty": image.group(2) == "dirty",
             "gateware": gateware.group(1) if gateware else None,
@@ -449,7 +457,7 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
     """
     import bist_rows
 
-    events, tally, classes = [], {}, {}
+    events, tally, classes, flapped = [], {}, {}, {}
     for step in record.get("transcript", []):
         text = step.get("reply", "")
         key = f"{step['command']}#{step['pass']}"
@@ -466,9 +474,16 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
         for row in bist_rows.rows(text):
             cell = "{lat},{mode},{drive},{clk},{sel}".format(**row)
             verdict = row["verdict"]
-            classes[cell] = ("fail" if verdict.startswith("fail")
-                             else "pass" if verdict.startswith("PASS")
-                             else "no result")
+            seen = ("fail" if verdict.startswith("fail")
+                    else "pass" if verdict.startswith("PASS")
+                    else "no result")
+            # A cell that disagrees with ITSELF across this job's own passes is
+            # the strongest marginality evidence there is: same configuration,
+            # same board, seconds apart.
+            if cell in classes and classes[cell] != seen:
+                flapped.setdefault(cell, set()).add(classes[cell])
+                flapped[cell].add(seen)
+            classes[cell] = seen
         step["reply_bytes"] = len(text)
         step["reply"] = text[-IDLE_REPLY_TAIL:]
 
@@ -478,6 +493,12 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
     board = (record.get("provenance") or {}).get("board") or {}
     record["tally"] = tally
     record["verdict_classes"] = classes
+    if flapped:
+        events.append(
+            f"{len(flapped)} cell(s) disagreed with themselves WITHIN this run: "
+            + ", ".join(f"{cell} {'/'.join(sorted(seen))}"
+                        for cell, seen in sorted(flapped.items())[:8])
+            + (" ..." if len(flapped) > 8 else ""))
 
     if previous:
         for key, counts in tally.items():
