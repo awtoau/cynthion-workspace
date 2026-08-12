@@ -166,6 +166,31 @@ def test_two_jobs_queue_rather_than_collide():
 # --- board state -----------------------------------------------------------
 
 
+def test_a_bitstream_being_rebuilt_is_refused(tmp_path):
+    """`soc_run.py` rewrites top.bit in place; half of one is not a bitstream."""
+    import fcntl
+
+    bitstream = tmp_path / "top.bit"
+    bitstream.write_bytes(b"\x00")
+    holder = (tmp_path / ".build.lock").open("w")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        with pytest.raises(arb.Refused) as failure:
+            with arb.build_lock(bitstream):
+                pass
+        assert "a build is writing" in str(failure.value)
+    finally:
+        holder.close()
+
+
+def test_a_bitstream_nobody_is_building_is_allowed(tmp_path):
+    """The control: the refusal above must not be unconditional."""
+    bitstream = tmp_path / "top.bit"
+    bitstream.write_bytes(b"\x00")
+    with arb.build_lock(bitstream):
+        pass
+
+
 def test_an_unknown_board_is_never_assumed_to_hold_the_right_image():
     """A cold start knows nothing, so the first job of any variant configures."""
     assert arb.Board().loaded is None

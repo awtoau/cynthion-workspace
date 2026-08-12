@@ -147,6 +147,28 @@ def test_repeated_identical_passes_report_no_disagreement():
     assert not any("WITHIN this run" in line for line in events)
 
 
+def test_a_new_bitstream_stops_the_comparison_and_says_so():
+    """Another session rebuilding the variant is the event, not 985 moved cells."""
+    first = arb.idle_observe(observation(), None)
+    first["provenance"]["bitstream"] = {"sha256": "a" * 64}
+    later = observation()
+    later["provenance"]["bitstream"] = {"sha256": "b" * 64}
+    flipped = SWEEP.replace("      0      8192      8192  PASS",
+                            "     16      8192      8192  fail")
+    later["transcript"][0]["reply"] = flipped
+    events = arb.idle_observe(later, first)["events"]
+    assert any("BUILD CHANGED" in line for line in events)
+    assert not any("changed verdict" in line for line in events)
+
+
+def test_a_new_firmware_image_stops_the_comparison_too():
+    first = arb.idle_observe(observation(), None)
+    later = observation()
+    later["provenance"]["board"]["image"] = "0ddba11"
+    events = arb.idle_observe(later, first)["events"]
+    assert any("BUILD CHANGED" in line for line in events)
+
+
 def test_die_drift_is_an_event():
     first = arb.idle_observe(observation(die=50), None)
     second = arb.idle_observe(

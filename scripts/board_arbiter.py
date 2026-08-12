@@ -74,6 +74,7 @@ the port is the mutex, and state lives in the MAIN working tree.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -84,6 +85,7 @@ import sys
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -263,6 +265,31 @@ def resolve_bitstream(job: Job) -> Path:
             f"`./dev.py run --build-only` under that variant's environment, or "
             f"`scripts/soc_build_fanout.py`; this does not build.")
     return built[job.variant]
+
+
+@contextmanager
+def build_lock(bitstream: Path):
+    """Hold the variant's build lock while its bytes are read and configured.
+
+    `soc_run.py` rewrites `top.bit` in place under `<build>/.build.lock` (#351),
+    and did so three times during one afternoon's soak here. Without this the
+    arbiter can hash one build and hand the ECP5 another's bytes.
+    """
+    path = bitstream.parent / ".build.lock"
+    handle = open(path, "a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as busy:
+            handle.seek(0)
+            raise Refused(
+                f"a build is writing {bitstream.parent.name} right now "
+                f"({path.name} is held). Its bytes are not a bitstream yet -- "
+                f"resubmit when the build finishes.") from busy
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 def identify(path: Path) -> dict:
@@ -448,6 +475,31 @@ IDLE_REPLY_TAIL = 2000
 DIE_DRIFT_C = 5
 
 
+def _identity(record: dict) -> tuple:
+    """What a comparison has to hold constant: the bitstream and the image."""
+    provenance = record.get("provenance") or {}
+    return ((provenance.get("bitstream") or {}).get("sha256"),
+            (provenance.get("board") or {}).get("image"))
+
+
+def same_build(record: dict, previous: dict) -> bool:
+    return _identity(record) == _identity(previous)
+
+
+def build_change(record: dict, previous: dict) -> str:
+    """The most useful event a soak produces: the board stopped being the same.
+
+    Observed live -- another session rebuilt this variant three times during one
+    afternoon's soak, and a cell diff across it would have read as marginality.
+    """
+    was_bit, was_image = _identity(previous)
+    now_bit, now_image = _identity(record)
+    return (f"BUILD CHANGED under the soak since {previous['id']}: bitstream "
+            f"{(was_bit or '?')[:12]} -> {(now_bit or '?')[:12]}, image "
+            f"{was_image} -> {now_image}. Nothing is compared across it -- a "
+            f"moved cell here is the build, not the part.")
+
+
 def idle_observe(record: dict, previous: dict | None) -> dict:
     """Fill an idle record's `tally`, `verdict_classes` and `events`.
 
@@ -499,6 +551,10 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
             + ", ".join(f"{cell} {'/'.join(sorted(seen))}"
                         for cell, seen in sorted(flapped.items())[:8])
             + (" ..." if len(flapped) > 8 else ""))
+
+    if previous and not same_build(record, previous):
+        events.append(build_change(record, previous))
+        previous = None                 # nothing below may compare across it
 
     if previous:
         for key, counts in tally.items():
@@ -659,11 +715,13 @@ class Arbiter:
         }
         if job.kind in ("run", "configure"):
             bitstream = resolve_bitstream(job)
-            identity = identify(bitstream)
-            want = (job.variant or identity["sha256"][:12], identity["sha256"])
-            provenance["bitstream"] = identity
-            provenance["configured_by_this_job"] = self.board.ensure_image(
-                job, want, bitstream)
+            with build_lock(bitstream):
+                identity = identify(bitstream)
+                want = (job.variant or identity["sha256"][:12],
+                        identity["sha256"])
+                provenance["bitstream"] = identity
+                provenance["configured_by_this_job"] = self.board.ensure_image(
+                    job, want, bitstream)
         elif self.board.polluted:
             raise Refused(
                 "a preempted idle sweep may still be printing on the console, "
