@@ -164,8 +164,21 @@ def show(record: dict) -> None:
         print(f"  -> {record['path']}")
 
 
+def post_job(payload: dict, quiet: bool = True):
+    """Submit, starting the server if needed. One retry, for one race only.
+
+    A server shutting down still has the port bound for a moment, so a client
+    that just checked can still meet a closed socket. The retry starts one.
+    """
+    ensure_server(quiet)
+    try:
+        return request("POST", "/jobs", payload)
+    except (OSError, urllib.error.URLError):
+        ensure_server(quiet)
+        return request("POST", "/jobs", payload)
+
+
 def submit(args, kind: str, priority: str = "normal") -> int:
-    ensure_server(args.json)
     payload = {
         "kind": kind, "priority": priority,
         "commands": list(getattr(args, "commands", []) or []),
@@ -178,13 +191,7 @@ def submit(args, kind: str, priority: str = "normal") -> int:
                    "user": os.environ.get("USER", "?"),
                    "argv": " ".join(sys.argv[1:])[:200]},
     }
-    try:
-        code, body = request("POST", "/jobs", payload)
-    except (OSError, urllib.error.URLError):
-        # The port answered a moment ago and is gone: a server shutting down as
-        # this client arrived. Start one and submit again, once.
-        ensure_server(args.json)
-        code, body = request("POST", "/jobs", payload)
+    code, body = post_job(payload, args.json)
     if code != 202:
         print(f"REFUSED: {body.get('error')}", file=sys.stderr)
         return 2

@@ -169,7 +169,13 @@ LOG = SHARED / "tmp" / "logs" / "board-arbiter.log"
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    """ISO 8601 with an offset, to the millisecond.
+
+    Milliseconds because two jobs' start and finish stamps are what shows they
+    were serialised rather than interleaved, and a second is longer than a job.
+    """
+    return datetime.now(timezone.utc).astimezone().isoformat(
+        timespec="milliseconds")
 
 
 def say(line: str = "") -> None:
@@ -478,9 +484,12 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
             was = (previous.get("tally") or {}).get(key)
             if was and was != counts:
                 events.append(f"TALLY MOVED for {key}: {was} -> {counts}")
+        # ONLY cells both runs reached. An idle sweep is abandoned mid-command,
+        # so its cell set is a prefix -- a union would report every cell the
+        # shorter run never got to as having changed verdict.
         before = previous.get("verdict_classes") or {}
-        moved = sorted(cell for cell in set(before) | set(classes)
-                       if before.get(cell) != classes.get(cell))
+        moved = sorted(cell for cell in set(before) & set(classes)
+                       if before[cell] != classes[cell])
         if moved:
             events.append(
                 f"{len(moved)} cell(s) changed verdict against "
@@ -602,7 +611,7 @@ class Arbiter:
             link = self.board.open_link()
             try:
                 record["provenance"]["board"] = self.board.provenance(link)
-                self.drive(job, link, transcript)
+                record["preempted"] = self.drive(job, link, transcript)
             finally:
                 link.close()
             record["status"] = self.verdict(job, record)
@@ -646,12 +655,17 @@ class Arbiter:
                           f"{provenance['confirm']['headline']}")
         return provenance
 
-    def drive(self, job: Job, link, transcript: list):
+    def drive(self, job: Job, link, transcript: list) -> bool:
+        """Every command, in order. True if a real submission cut it short.
+
+        An idle job abandoned before its first command counts: the configure it
+        did is not a failure, and calling it one would hide the preemption.
+        """
         stop = self.preempt if job.priority == "idle" else None
         for pass_index in range(max(1, job.repeat)):
             for command in job.commands:
                 if stop is not None and stop.is_set():
-                    return
+                    return True
                 reply, status, elapsed = self.board.ask(
                     link, command, job.budget_s, stop)
                 transcript.append({
@@ -676,7 +690,8 @@ class Arbiter:
     @staticmethod
     def verdict(job: Job, record: dict) -> str:
         """`passed` needs every leg. Nothing else may reach it."""
-        if any(step["status"] == "preempted" for step in record["transcript"]):
+        if record.get("preempted") or any(step["status"] == "preempted"
+                                          for step in record["transcript"]):
             return "preempted"
         if record["provenance"].get("confirm", {}).get("verdict") != "ok":
             return "failed"

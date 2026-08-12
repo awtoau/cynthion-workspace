@@ -112,6 +112,22 @@ def test_a_cell_that_changed_verdict_is_an_event():
     assert any("changed verdict" in line for line in second["events"])
 
 
+def test_a_truncated_sweep_does_not_manufacture_changed_cells():
+    """A preempted sweep prints a PREFIX of the cells, and the cells it never
+    reached did not change verdict -- they were not measured."""
+    full = arb.idle_observe(observation(), None)
+    cut = SWEEP.rsplit("000000.427", 1)[0]          # the second cell is gone
+    partial = arb.idle_observe(observation(reply=cut, status="preempted"), full)
+    assert not any("changed verdict" in line for line in partial["events"])
+
+
+def test_a_first_idle_run_reports_no_change():
+    """Nothing to compare against is not 4096 cells that moved."""
+    first = arb.idle_observe(observation(reply=""), None)
+    second = arb.idle_observe(observation(), first)
+    assert not any("changed verdict" in line for line in second["events"])
+
+
 def test_die_drift_is_an_event():
     first = arb.idle_observe(observation(die=50), None)
     second = arb.idle_observe(
