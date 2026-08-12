@@ -151,7 +151,10 @@ FREQ_RE = re.compile(
 IO_TYPE_RE = re.compile(r'IO_TYPE=(\w+)')
 
 
-def lpf_from_amaranth(src, dst):
+LOCATE_RE = re.compile(r'^\s*LOCATE\s+COMP\s+"([^"]+)"', re.IGNORECASE)
+
+
+def lpf_from_amaranth(src, dst, drop_locate=()):
     """Reuse the Amaranth-generated .lpf as Diamond preferences, with a fix.
 
     Amaranth emits LOCATE/IOBUF lines in Lattice's own preference syntax
@@ -182,11 +185,19 @@ def lpf_from_amaranth(src, dst):
     into it, but bank 8 is the ECP5's config bank and takes its voltage from
     SYSCONFIG CONFIG_IOVOLTAGE, which defaults to 2.5 V and cannot be moved by
     a BANK preference. par refused int_0__io at T6 on exactly that.
+
+    `drop_locate` unpins named ports. Diagnostic only -- a run with a pin
+    unpinned is not the shipping design's pinout, so say so with any number
+    that comes out of it.
     """
     out_lines = []
     io_types = set()
     for line in Path(src).read_text().splitlines():
         io_types.update(IO_TYPE_RE.findall(line))
+        pin = LOCATE_RE.match(line)
+        if pin and pin.group(1) in drop_locate:
+            out_lines.append(f"# LOCATE dropped by --drop-locate: {line.strip()}")
+            continue
         m = FREQ_RE.match(line)
         if m:
             kind, name, hz = m.group(1), m.group(2), float(m.group(3))
@@ -304,6 +315,9 @@ def main():
     ap.add_argument("--freq", type=float, default=None,
                     help="the synthesiser's own target in MHz; map/par/trce "
                          "take theirs from the Amaranth .lpf either way")
+    ap.add_argument("--drop-locate", nargs="*", default=[],
+                    help="unpin these ports. DIAGNOSTIC: the result is not the "
+                         "shipping pinout, so label any number from it")
     ap.add_argument("--opt-goal", choices=["Area", "Balanced", "Timing"],
                     default="Area",
                     help="LSE optimisation goal; Area by default because this "
@@ -339,7 +353,7 @@ def main():
         # A second hand-written `FREQUENCY NET "clk"` duplicated it against a
         # name Diamond does not have, so it constrained nothing.
         lpf = out / "top.lpf"
-        lpf_from_amaranth(args.lpf, lpf)
+        lpf_from_amaranth(args.lpf, lpf, set(args.drop_locate))
 
         ngd = out / f"{args.top}.ngd"
         total = 0.0
