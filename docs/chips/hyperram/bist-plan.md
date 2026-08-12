@@ -82,7 +82,7 @@ rate:
 
 The rig is on `main`, off by default:
 
-    CYNTHION_HYPERRAM_BIST=1 ./scripts/soc_run.py
+    ./scripts/soc_run.py            # one gateware; `bist mode bist` at run time
 
 | | |
 |---|---|

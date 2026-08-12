@@ -87,7 +87,7 @@ Measured 2026-08-10, commit `3796d4f`, one board, one session.
 
 ### 80/90 MHz, non-DQS — noise floor 0-3 cells, and the rig is inert
 
-`CYNTHION_HYPERRAM_BIST=1 CK_MHZ=80,90 BIST_DQS=0`.
+`CYNTHION_HYPERRAM_CK_MHZ=80,90 CYNTHION_HYPERRAM_DQS=0`.
 
 - Noise floor: **0 cells** moved across 3 identical runs at 80 MHz; **3** across
   3 runs at 90 MHz (2 distinct marginal cells); **0** between two separate
@@ -117,7 +117,7 @@ corpus is void on its face rather than after a day of it.
 
 ### 120 MHz, DQS — the rig is live and the noise floor is ~500 cells
 
-`CYNTHION_HYPERRAM_BIST=1 CK_MHZ=120 BIST_DQS=1`. All five axes live.
+`CYNTHION_HYPERRAM_CK_MHZ=120 CYNTHION_HYPERRAM_DQS=1`. All five axes live.
 
 Passing cells per run, 4096 cells, 2 passes each:
 

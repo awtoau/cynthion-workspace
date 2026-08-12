@@ -170,7 +170,8 @@ class HyperRAMShared(Elaboratable):
             m.d.comb += ram_bus.reset.o.eq(~phy_reset)
 
         psram.phy = phy.phy
-        m.submodules += [phy, psram]
+        m.submodules.phy = phy
+        m.submodules.psram = psram
 
         # WHICH MODE IS LIVE, and it moves only at an idle controller. A mode
         # write mid-transaction would hand the pads over with CS# still Low.

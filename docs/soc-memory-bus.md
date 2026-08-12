@@ -34,8 +34,9 @@ Everything below is marked **measured** (a number this workspace produced),
 ## What is on the table
 
 **Measured**, `scripts/soc_hyperram_sim.py` §8, re-run 2026-08-05 on `016f4c6`,
-all checks pass. Device CK = `SYNC_MHZ` = 60 MHz, since `HYPERRAM_DQS = False`
-and `HyperRAMPHY`'s `ODDRX1F` emits one CK per `sync` cycle:
+all checks pass, at device CK 60 MHz. CK is the second PLL's rung since #432 --
+`CYNTHION_HYPERRAM_CK_MHZ`, 80 by default on the non-DQS path -- and no longer a
+function of `SYNC_MHZ`:
 
 | arrangement | CK per 64-byte line | device-side ceiling |
 |---|---|---|
@@ -572,8 +573,8 @@ with the board bit-for-bit and one that contradicts it.
 
 **`HYPERRAM_MAX_BURST_WORDS` was 3.1x too permissive at the clock this SoC runs.**
 `bootram.py` set 748 words with the comment "below 768 CK at 192 MHz" —
-4 µs, correct for CK 192. `SYNC_MHZ` is 60 and `HYPERRAM_DQS` is False, so CK is
-60 MHz and 748 words was **12.5 µs, over three times tCSM**. Unreachable because
+4 µs, correct for CK 192. At the CK this SoC ran, 748 words was **12.5 µs, over
+three times tCSM**. Unreachable because
 a Wishbone burst never exceeds 32 words, and dead entirely while
 `sustained=False` — but it was a word count guarding a time limit, and §5 makes
 CS#-low time stop tracking word count at all.
