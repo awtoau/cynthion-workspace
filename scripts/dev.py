@@ -401,6 +401,15 @@ def cmd_audit(extra: list[str]) -> int:
     return run_tool([PY, script("audit_scripts.py")], extra)
 
 
+@command("file an issue, comment or close on the tracker; scrub is not optional",
+         args="<issue|comment|close> [flags]", kind="action")
+def cmd_gh_post(extra: list[str]) -> int:
+    """The only way to file from here. Private paths, credentials and the RE work
+    are refused before any network call, and every repo but this one is refused
+    outright with the approval it would need."""
+    return run_tool([PY, script("gh_post.py")], extra)
+
+
 @command("is THIS checkout buildable? (submodules, pins, vendor models)",
          kind="meta")
 def cmd_worktree_check(extra: list[str]) -> int:
