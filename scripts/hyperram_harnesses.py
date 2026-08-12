@@ -96,9 +96,10 @@ HARNESSES = {
         "yes, but every rung it produced is VOID -- see "
         "docs/chips/hyperram/bist-plan.md. The apparatus had four faults at "
         "once, and no figure from it survives. What does survive is a fact "
-        "about our design rather than the part: non-DQS is capped at CK 140 "
-        "by the FABRIC, because it clocks the fabric at CK, so CK 150/160/180 "
-        "miss timing at 139.3/147.7/134.6 MHz and never produce a bitstream.",
+        "about our design rather than the part: the FABRIC caps CK, because "
+        "the non-DQS PHY clocks it at CK and the DQS one at CK/2. Where that "
+        "cap sits is measured per build and recorded in #410; top.py refuses a "
+        "rung past it rather than letting nextpnr find out.",
     ),
     "readclksel": (
         "hyperram_readclksel_sweep.py", "hyperram_ceiling_top.py",

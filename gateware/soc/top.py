@@ -793,6 +793,44 @@ HYPERRAM_BIST_CK_MHZ = HYPERRAM_BIST_CK_RUNGS[0]
 # leaves headroom. Set CYNTHION_HYPERRAM_BIST_DQS=0 to measure the other.
 HYPERRAM_BIST_DQS = variant.flag("CYNTHION_HYPERRAM_BIST_DQS")
 
+# The highest CK the BIST engine's fabric has been measured to CLOSE at, per
+# path. Not the PLL's limit -- `hyperram_clocks.py` covers that -- and not the
+# part's, which is 166 MHz.
+#
+# Refused HERE because the alternative is #410: the failure arrives ~200 s later
+# as a raw nextpnr ERROR about `hr_clk`, with nothing naming CK as the cause.
+# Same class as `SYNC_CEILING_MHZ` in `clocks.py`, and the same escape hatch --
+# the ceiling is one measurement of one design and will move, so raising it is
+# an environment variable rather than an edit, and is visible in the command
+# that did it. It does not change what elaborates, so it is not in VARIANT_ENV.
+#
+# Rungs, conditions and the builds behind these two numbers: #410.
+HYPERRAM_BIST_CK_CEILING_MHZ = {True: 180.0, False: 84.0}
+
+
+def _refuse_ck_past_the_fabric():
+    ceiling = float(os.environ.get("CYNTHION_HYPERRAM_CK_CEILING_MHZ")
+                    or HYPERRAM_BIST_CK_CEILING_MHZ[HYPERRAM_BIST_DQS])
+    over = [ck for ck in HYPERRAM_BIST_CK_RUNGS if ck > ceiling]
+    if not over:
+        return
+    from hyperram_clocks import reachable_ck
+
+    path = "DQS" if HYPERRAM_BIST_DQS else "non-DQS"
+    fits = [ck for ck in reachable_ck(ceiling / 2, ceiling,
+                                      dqs=HYPERRAM_BIST_DQS) if ck <= ceiling]
+    raise SystemExit(
+        f"CYNTHION_HYPERRAM_CK_MHZ={','.join(f'{ck:g}' for ck in over)} is past "
+        f"the {path} fabric ceiling of {ceiling:g} MHz, so place-and-route will "
+        f"fail on hr_clk after ~200 s (#410).\n"
+        f"  rungs that close, top of the ladder: "
+        f"{', '.join(f'{ck:g}' for ck in fits[-6:])}\n"
+        f"  CYNTHION_HYPERRAM_CK_CEILING_MHZ raises this if you mean to try one")
+
+
+if HYPERRAM_BIST:
+    _refuse_ck_past_the_fabric()
+
 # Divided copies of the clocks on PMOD A, for a scope. See #294 and
 # `peripherals/clock_mirror.py`.
 #
@@ -1414,10 +1452,21 @@ class AwtoSoc(Elaboratable):
             from hyperram_clocks import HyperRAMDomains
             from peripherals.hyperram_bist import HyperRAMBist
 
-            # The second PLL, and the reason this variant exists. `hr` is the
-            # engine's clock and `hr_fast` its ECLK; neither is `sync`, so a CK
-            # rung can be chosen without moving the CPU, the console divisor or
-            # the CLINT tick.
+            # BIST-ONLY, AND THAT IS THE DECISION (#425).
+            #
+            # The shipping SoC's HyperRAM path is `sync` from the pad to the
+            # Wishbone -- `BootRAM` and both controllers are `m.d.sync`
+            # throughout -- so giving it this PLL would create `hr` with nothing
+            # able to consume it. Making it consume `hr` is an ASYNCHRONOUS
+            # crossing on the memory window, the path #90 needed
+            # `RegisteredResponse` to recover Fmax on. Not an instantiation.
+            #
+            # What the rig can therefore say, and what it cannot, is in #425;
+            # `tests/test_bist_shares_the_shipping_phy.py` holds the premise.
+            #
+            # `hr` is the engine's clock and `hr_fast` its ECLK; neither is
+            # `sync`, so a CK rung can be chosen without moving the CPU, the
+            # console divisor or the CLINT tick.
             #
             # The DEVICE number goes in, not the fabric one: the DQS PHY emits
             # two CK per `hr` cycle, so `hr = ck / 2` there, and taking `ck_mhz`

@@ -63,10 +63,25 @@ def test_the_same_variant_gets_the_same_directory():
         {},
         {"CYNTHION_HYPERRAM_BIST": ""},
         {"CYNTHION_HYPERRAM_BIST": "0"},
-        {"CYNTHION_HYPERRAM_CK_MHZ": "100", "CYNTHION_CLOCK_MIRROR_DIV": "4"},
+        # The DQS default, spelled out. Taken from the table rather than typed:
+        # it is per path now, and a literal here would pin one of the two.
+        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[True],
+         "CYNTHION_CLOCK_MIRROR_DIV": "4"},
     ]
     dirs = {variant.build_dir(ROOT, env) for env in same}
     assert len(dirs) == 1, sorted(str(d) for d in dirs)
+
+
+def test_the_ck_default_follows_the_path():
+    """One default could not be right for both: `hr` is CK, or CK/2 (#410)."""
+    for dqs, expected in ((True, variant.CK_DEFAULT_MHZ[True]),
+                          (False, variant.CK_DEFAULT_MHZ[False])):
+        env = {"CYNTHION_HYPERRAM_BIST": "1",
+               "CYNTHION_HYPERRAM_BIST_DQS": "1" if dqs else "0"}
+        assert variant.value("CYNTHION_HYPERRAM_CK_MHZ", env) == expected
+        # And an explicit value still wins on either path.
+        assert variant.value("CYNTHION_HYPERRAM_CK_MHZ",
+                             {**env, "CYNTHION_HYPERRAM_CK_MHZ": "120"}) == "120"
 
 
 def test_a_ck_rung_is_its_own_directory():
@@ -98,12 +113,25 @@ def test_the_directory_and_the_cache_key_separate_the_same_things():
     assert soc_run.VARIANT_ENV is variant.VARIANT_ENV
 
 
+# Variables top.py may read directly, because they cannot change the bitstream.
+#
+# A REFUSAL OVERRIDE only turns a refusal into the build that was already asked
+# for -- same CK, same design, same digest -- so it does not divide variants and
+# putting it in VARIANT_ENV would give every build a directory tag for a knob it
+# did not use. Anything that changes what elaborates does NOT belong here.
+REFUSAL_OVERRIDES = {
+    "CYNTHION_HYPERRAM_CK_CEILING_MHZ",   # #410, mirrors clocks.py SYNC_CEILING
+}
+
+
 def test_top_py_reads_every_variant_variable_through_the_table():
     # An `os.environ.get` in top.py that is not in VARIANT_ENV is a bitstream
     # that hashes the same as a different one and shares its directory --
     # `CYNTHION_CLOCK_MIRROR` was exactly that until #351.
     source = TOP.read_text()
-    stray = re.findall(r'os\.environ\.get\(\s*"(CYNTHION_[A-Z_]+)"', source)
+    stray = [name for name in
+             re.findall(r'os\.environ\.get\(\s*"(CYNTHION_[A-Z_]+)"', source)
+             if name not in REFUSAL_OVERRIDES]
     assert stray == [], stray
     for name, _default, _tag, _kind in variant.VARIANT_ENV:
         assert f'variant.flag("{name}")' in source or \

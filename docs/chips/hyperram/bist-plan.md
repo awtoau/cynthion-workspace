@@ -250,7 +250,7 @@ Only once this behaves does the matrix mean anything.
 
 | axis | values | count | runtime? |
 |---|---|---|---|
-| CK frequency | every even MHz 100–200 that the PLL reaches with `hr_fast = 2·hr` | **51** | needs `DCSC` (#228) |
+| CK frequency | the in-spec PLL rungs at or under the fabric ceiling: DQS 100–180 is `100 120 140 144 150 160 168 180`, non-DQS 60–84 is `60 70 72 75 80 84` | **8** DQS / **6** non-DQS | one build per rung; `DCSC` carries two per build on non-DQS only |
 | READCLKSEL tap | 0–7 | 8 | yes, CSR — **DQS builds only** |
 | Read-window phase | 0–1 | 2 | yes, CSR |
 | Device drive strength | CR0[14:12], 0–7 | 8 | yes, register write |
@@ -284,13 +284,16 @@ So the axis costs ~1 s per setting, not ~90 s, and four attributes that were
 never in the matrix become affordable. Starting values and the open electrical
 questions: **#311**.
 
-Full cross product is **51 × 8 × 2 × 8 × 2 × 4 = 104,448 cells**, so it is not
-run flat:
+Full cross product on the DQS path is **8 × 8 × 2 × 8 × 2 × 4 = 16,384 cells**,
+so it is not run flat:
 
 - FPGA drive is the outer loop — 4 bitstream patches, each sweeping everything
   runtime. Patches, not builds, per the section above.
-- Inner sweep per build is 51 × 8 × 2 × 8 × 2 = **26,112 cells**.
-- Coarse-then-fine: walk CK in 10 MHz steps first, then refine around the edge.
+- CK is a BUILD, one per rung, because `hr_fast` is an edge clock and the bank
+  ECLK mux takes CLKOP/CLKOS only — 8 builds, then 8 × 2 × 8 × 2 = **512 cells**
+  swept at runtime inside each.
+- Coarse-then-fine does not apply: the rungs are 20 MHz apart at the bottom of
+  the range and there is nothing between them to refine to (#313, #428).
 - Drive and clock mode are likely separable — hold them while finding the CK/phase
   surface, then vary them at the edge. That is an assumption to test, not a given.
 

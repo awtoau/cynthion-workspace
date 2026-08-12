@@ -79,9 +79,14 @@ def deadline(jobs: int) -> float:
 
 
 def parse_spec(spec: str) -> dict:
-    """`KEY=VAL,KEY=VAL` -> an environment overlay. Empty means the default."""
+    """`KEY=VAL,KEY=VAL` -> an environment overlay. Empty means the default.
+
+    A comma inside a VALUE stays there. `CYNTHION_HYPERRAM_CK_MHZ=84,72` is the
+    two-rung build that halves a non-DQS sweep, and splitting on every comma
+    made the one spec worth writing unwritable -- it read `72` as a variable.
+    """
     out = {}
-    for item in (s for s in spec.split(",") if s.strip()):
+    for item in _split_pairs(spec):
         name, _, value = item.partition("=")
         name = name.strip()
         if name not in {n for n, _d, _t, _k in variant.VARIANT_ENV}:
@@ -92,6 +97,17 @@ def parse_spec(spec: str) -> dict:
                 f"{', '.join(n for n, _d, _t, _k in variant.VARIANT_ENV)}")
         out[name] = value.strip()
     return out
+
+
+def _split_pairs(spec: str) -> list[str]:
+    """Split on the commas that start a new `KEY=`, and on no others."""
+    pairs: list[str] = []
+    for piece in (s for s in spec.split(",") if s.strip()):
+        if "=" in piece or not pairs:
+            pairs.append(piece)
+        else:
+            pairs[-1] += "," + piece
+    return pairs
 
 
 def one_build(overlay: dict, jobs: int, extra: list[str]) -> dict:
@@ -158,6 +174,11 @@ def main() -> int:
                         help="pass --skip-tests to every build. The QEMU gate is "
                              "about the firmware, which a ladder does not vary, "
                              "so it is worth running once and not N times")
+    parser.add_argument("--no-parallel-refine", action="store_true",
+                        help="pass it to every build. A ladder whose Fmax column "
+                             "is the result needs it: --parallel-refine is the "
+                             "whole of the spread (#361), so without it a rung "
+                             "that closes cannot be told from a lucky placement")
     args = parser.parse_args()
 
     overlays = [parse_spec(spec) for spec in args.specs]
@@ -178,7 +199,8 @@ def main() -> int:
         unique.append(overlay)
 
     jobs = args.jobs or len(unique)
-    extra = ["--skip-tests"] if args.skip_tests else []
+    extra = (["--skip-tests"] if args.skip_tests else []) + \
+            (["--no-parallel-refine"] if args.no_parallel_refine else [])
     emit(f"{len(unique)} build(s), {jobs} at a time, "
          f"{deadline(jobs):.0f} s each before they are killed")
     for overlay in unique:
