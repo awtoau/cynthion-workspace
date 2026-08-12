@@ -80,8 +80,9 @@ RAM region about 11 KiB is live and **the entire remainder is stack slack** —
 relieved nothing measurable. Doubling the caches attacks the number
 [`../../rtic.md`](../../rtic.md) actually measured.
 
-Timing held: `clk` closes at **78.04 MHz** against a 60 MHz constraint, and the
-USB domain at 90.30 MHz.
+Timing held, and "held" is the whole claim available from one build: `clk`'s
+distribution over 40 nextpnr seeds is 65.75–74.94 MHz, median 71.42, against a
+60 MHz constraint that does not itself affect the result (#467, #478).
 
 ### Sets or ways — measured, and four ways is simply out of blocks
 
@@ -92,35 +93,52 @@ PLRU rather than random, so a sweep of the full cache size still evicts every
 way; and that flush is only in the generated C test firmware, while the Rust
 firmware uses a real `fence.i`. The axis was never closed.
 
-[`../../../scripts/soc_cache_sweep.py`](../../../scripts/soc_cache_sweep.py)
-was built to settle it. **Its table did not survive a rebuild, so nothing below
-is concluded from it yet** — see #287:
+Block RAM per geometry, counted off each geometry's own netlist
+(`DP16KD` cells in `top.json`) by the CPU matrix's `cpu-l1-*` arms
+([`../../../scripts/soc_cpu_arms.py`](../../../scripts/soc_cpu_arms.py)),
+measured 2026-08-12 on the shipping SoC:
 
-| run | geometry | per cache | BRAM | outcome |
-|---|---|---|---|---|
-| baseline | 128×1 | 8 KiB direct | **48** | builds, 102 checks pass on the board |
-| sweep | 64×2 | 8 KiB 2-way | 50 | not rebuilt |
-| sweep | 128×2 | 16 KiB 2-way | **52** | placed |
-| **rebuild** | **128×2** | 16 KiB 2-way | **58** | **does not place** |
-| sweep | 32×4 | 8 KiB 4-way | 58 | does not place |
+| geometry | per cache | BRAM | outcome |
+|---|---|---|---|
+| 64×1 | 4 KiB direct | 43 | places |
+| 128×1 | 8 KiB direct | 47 | places |
+| 32×2 | 2 KiB 2-way | 47 | places |
+| **64×2** | **4 KiB 2-way** | **49** | **what `top.py` ships** |
+| fetch 64×2 / lsu 128×1 | mixed | 46 | places |
+| fetch 128×1 / lsu 64×2 | mixed | 50 | places |
+| 256×1 | 16 KiB direct | 55 | places |
+| 128×2 | 8 KiB 2-way | 57 | **does not place** |
+| 32×4 | 2 KiB 4-way | 57 | **does not place** |
 
-**Four ways is out of blocks on any reading** — 58 on a die with 56, nextpnr
-failing on `BtbPlugin_logic_mem` with "no BELs remaining". `bankCount = wayCount`,
-so each way brings its own bank, its own tag memory and a wider PLRU state. Three
-ways does not exist at all: SpinalHDL's PLRU asserts `isPow2` on the way count.
+**Two geometries are out of blocks**, 57 on a die with 56: nextpnr stops with
+"no BELs remaining to implement cell type 'DP16KD'" after ~2 s, on whichever
+memory it reaches last. `bankCount = wayCount`, so each way brings its own bank,
+its own tag memory and a wider PLRU state. Three ways does not exist at all:
+SpinalHDL's PLRU asserts `isPow2` on the way count.
 
-**128×2 was briefly adopted and reverted.** It dominates 128×1 on paper — same
-sets plus a way, so hit rate cannot get worse — and the 52-block row said it fit.
-The rebuild says 58 and fails to place. The failing build's netlist was checked
-and really does have two ways, so the geometry was applied; two builds of one
-design simply disagreed by six blocks on a figure that is meant to be
-deterministic. Picking the favourable half of that is picking a number, not a
-result, so **one way stays** until a geometry reproduces twice.
+**The 52-versus-58 disagreement on 128×2 (#287) does not reproduce.** Two
+elaborations of that geometry, minutes apart, produce a byte-identical `top.json`
+and 57 blocks both times. Two things that were true when it was seen are not now:
+elaboration is reproducible (#441), and every build no longer shares one
+generated `VexiiRiscv.v` path (#306), which is exactly how one geometry's build
+could report another's memories.
 
-**Fmax never entered into it and could not have.** 64×2 closed at 65.95 MHz and
-128×2 at 76.86, while 128×1 alone measured 78.04 and 67.76 across two builds of
-the identical design. The placement spread is wider than the differences between
-geometries.
+**Fmax is not in this table on purpose.** One build's Fmax is a property of that
+placement: the distribution at fixed occupancy is 9 MHz wide (#467), and the
+constraint the design is given does not change it (#478). Timing per geometry is
+a seed sweep — `soc_occupancy_timing.py` with the `cpu-l1-*` arms, 40 seeds each,
+in #481:
+
+| geometry | paired vs 64×2 | 95% CI | faster |
+|---|---|---|---|
+| **128×1** | **+3.50 MHz** | [+2.20, +4.80] | 34/40 |
+| 256×1 | +2.25 | [+0.61, +3.88] | 29/40 |
+| fetch 64×2 / lsu 128×1 | +2.16 | [+0.74, +3.58] | 25/40 |
+| 64×1 | -0.74 | [-2.35, +0.86] | 17/40 |
+| 32×2 | -1.91 | [-3.09, -0.72] | 12/40 |
+
+Dropping the way pays only where the sets are: 64×1 is indistinguishable from
+64×2. #494 is the decision, and it is blocked on the hit-rate half.
 
 ### What none of this measures
 

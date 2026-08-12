@@ -612,9 +612,9 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 # `usb` is the A8 oscillator, so the PHY does not constrain this.
 #
 # ONE VALUE, for one design. `CYNTHION_SYNC_MHZ=<n>` overrides it, which is what
-# lets one elaboration be built at two clocks without editing this file
-# (`scripts/riscv_clock_ladder.py` rewrites the line instead, and #439 is what
-# that rewrite has been doing since the default became a ternary).
+# lets one elaboration be built at two clocks without editing this file, and is
+# how `scripts/riscv_clock_ladder.py` and `scripts/soc_sync_ladder.py` pick a
+# rung since #439.
 #
 # 50, and it is measured: `scripts/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
 # seeds, `--no-parallel-refine`. 60 closed on 3 of 4 seeds, worst -3.2%; 50 on
@@ -759,57 +759,36 @@ def _refuse_ck_past_the_fabric():
 
 _refuse_ck_past_the_fabric()
 
-# Sets in each of the two L1 caches, one way each. A constant rather than a
-# literal at the instantiation because `scripts/soc_generate_pac.py` and
-# `gateware/usercode_map.py` both report it, and a geometry reported from a
-# different number than the one the core was generated with would be worse than
-# not reporting it.
+# The geometry of each of the two L1 caches: 64 sets x 2 ways x 64 B line = 8
+# KiB each. A constant rather than a literal at the instantiation because
+# `scripts/soc_generate_pac.py` and `gateware/usercode_map.py` both report it,
+# and a geometry reported from a different number than the core was generated
+# with would be worse than not reporting it.
 #
-# 128 sets x 1 way x 64 B line = 8 KiB per cache. Doubled from 64 because the
-# spare block RAM has no better claim on it: the matched superloop-vs-RTIC runs
-# in `docs/rtic.md` (#245) measured the RTIC dispatcher's
-# +1,700 B of `.text` moving frontend stalls from 44/1000 cycles to 452/1000
-# through the 4 KiB I-cache, while `.bss` uses 9,728 bytes of a 63 KiB RAM whose
-# remainder is all stack slack. Code size costs real cycles on this design; data
-# size does not.
+# 8 KiB rather than 4: the matched superloop-vs-RTIC runs in `docs/rtic.md`
+# (#245) measured the RTIC dispatcher's +1,700 B of `.text` moving frontend
+# stalls from 44/1000 cycles to 452/1000 through a 4 KiB I-cache, while `.bss`
+# uses 9,728 bytes of a 63 KiB RAM whose remainder is all stack slack. Code size
+# costs real cycles here; data size does not.
 #
-# Sets rather than ways, and that is not a correctness constraint:
-# `flash_cache_flush()` does NOT need a direct-mapped cache. PLRU replacement
-# means a sweep of the full cache size still evicts every way, and that flush is
-# only in the generated C test firmware -- the Rust firmware uses a real
-# `fence.i`. See `cpu/cpu.py`'s GENERATE_FLAGS.
-#
-# So the axis is open, and it is being measured rather than argued:
-# `scripts/soc_cache_sweep.py` builds each geometry and reports what it costs.
-# The case for ways is that RTIC's handlers are separate instruction working sets
-# that preempt each other, and two hot ones colliding on an index evict each
-# other however large a direct-mapped cache is. The case against is that
-# `bankCount = wayCount`, so ways cost block RAM fast, and a way-select mux lands
-# in the hit path.
-#
-# 3 ways is not an option: SpinalHDL's PLRU asserts `isPow2` on the way count.
-#
-# MEASURED by `scripts/soc_cache_sweep.py`, twice per geometry, synthesis forced:
-#
-#     128x1   8 KiB direct   48 BRAM   78.32, 77.39 MHz   places
-#      64x2   8 KiB 2-way    50 BRAM   62.81, 75.30, 81.12 MHz   places
-#     128x2  16 KiB 2-way    --        --                 does NOT place
-#      32x4   8 KiB 4-way    58 BRAM   --                 does NOT place
+# Ways are not ruled out by `flash_cache_flush()`: PLRU replacement means a
+# sweep of the full cache size still evicts every way, and that flush is only in
+# the generated C test firmware -- the Rust firmware uses a real `fence.i`.
 #
 # 2 ways, because RTIC's handlers are separate instruction working sets that
 # preempt each other, and in a DIRECT-MAPPED cache two hot ones sharing an index
 # evict each other however large the cache is. That is a conflict miss;
 # associativity is the only fix for it, capacity is not.
 #
-# Cost: +2 blocks. Fmax is NOT clearly worse -- 64x2 has measured 62.81, 75.30
-# and 81.12 MHz across three builds against a 60 MHz constraint, and 128x1 has
-# measured 67.76 to 79.58. Both spreads are ~15 MHz and they overlap, so no
-# ranking between them is supportable from these samples. The 62.81 floor is the
-# thing to watch, not a typical value. `./dev.py metrics report` diffs it; #291
-# is about making a regression explain itself.
+# Block RAM per geometry, off each geometry's own netlist -- 43 (64x1), 47
+# (128x1, 32x2), 49 (this), 55 (256x1), 57 (128x2, 32x4). The last two do not
+# place: 57 blocks on a die with 56. 3 ways does not exist -- SpinalHDL's PLRU
+# asserts `isPow2`.
 #
-# 4 ways does not fit (58 blocks on a die with 56) and 3 ways does not exist
-# (SpinalHDL's PLRU asserts isPow2).
+# TIMING SAYS 128x1, and it is the open half of this decision: +3.50 MHz
+# [+2.20, +4.80] over 40 seeds a side, 2 blocks cheaper, and it holds at the
+# real speed grade (#494, #481). What is not measured is the hit rate that
+# 2 ways is for -- `STALLED_CYCLES_FRONTEND` under a preempting workload.
 CACHE_SETS = 64
 CACHE_WAYS = 2
 
