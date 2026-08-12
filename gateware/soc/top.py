@@ -612,9 +612,9 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 # `usb` is the A8 oscillator, so the PHY does not constrain this.
 #
 # ONE VALUE, for one design. `CYNTHION_SYNC_MHZ=<n>` overrides it, which is what
-# lets one elaboration be built at two clocks without editing this file
-# (`scripts/riscv_clock_ladder.py` rewrites the line instead, and #439 is what
-# that rewrite has been doing since the default became a ternary).
+# lets one elaboration be built at two clocks without editing this file, and is
+# how `scripts/riscv_clock_ladder.py` and `scripts/soc_sync_ladder.py` pick a
+# rung since #439.
 #
 # 50, and it is measured: `scripts/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
 # seeds, `--no-parallel-refine`. 60 closed on 3 of 4 seeds, worst -3.2%; 50 on
