@@ -88,6 +88,12 @@ event id to the matching `mhpmevent` CSR (`0x323..0x326`), read back from
 
 `src/bench.rs`'s `hpm` module reads them around a walk.
 
+**The plugin is not optional while `rdtime` is kept.** `--with-rdtime` adds
+zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
+`--performance-counters` generates a **byte-identical** core to
+`--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
+FSM are all still there. Only the count is free. #471.
+
 **Why this file exists.** Chasing a HyperRAM performance question, five gateware
 probes were built and five readings of the source produced five wrong
 explanations — sixteen transactions per line, 316 CK inside the burst, a
@@ -103,11 +109,16 @@ theory outright. **Ask the CPU before instrumenting the fabric.**
 ## What regeneration costs
 
 * **Seconds of wall clock.** `sbt` is warm after the first run.
-* **Area and timing.** Adding the four counters stopped the design closing at
-  `SYNC_MHZ = 72`; it was already passing on placement luck there (71.45 to 76.99
-  MHz across identical rebuilds). `SYNC_MHZ` is 60 with the counters on, which has
-  20% margin. **Check the frequency line on every build** — `soc_run.py` prints
-  it now precisely because a passing build used to say nothing about its margin.
+* **Area.** The four counters are 670 LUT4-equivalents and 94 FFs of the 13,685
+  and 7,828 the SoC has, counted off the two netlists.
+* **Timing: not what one build said.** "Adding the counters stopped the design
+  closing at `SYNC_MHZ = 72`" was one build against one build, and the placement
+  distribution at fixed occupancy is 9 MHz wide (#467). Measured properly — one
+  netlist per configuration, 40 nextpnr seeds each — **removing** the counters is
+  worth **-3.01 MHz**, 95% CI [-4.65, -1.38]: the smaller design is the slower
+  one. Full matrix in #481.
+* The constraint a build is given does not change what nextpnr produces (#478),
+  so `SYNC_MHZ` cannot be used to buy or lose margin either.
 * **Nothing else.** The PAC, the linker scripts and the firmware are unaffected
   unless a `--region` or an address moves, and `./dev.py run` regenerates the
   peripheral map itself.
