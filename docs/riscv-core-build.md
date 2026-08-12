@@ -113,10 +113,11 @@ theory outright. **Ask the CPU before instrumenting the fabric.**
   and 7,828 the SoC has, counted off the two netlists.
 * **Timing: not what one build said.** "Adding the counters stopped the design
   closing at `SYNC_MHZ = 72`" was one build against one build, and the placement
-  distribution at fixed occupancy is 9 MHz wide (#467). Measured properly — one
-  netlist per configuration, 40 nextpnr seeds each — **removing** the counters is
-  worth **-3.01 MHz**, 95% CI [-4.65, -1.38]: the smaller design is the slower
-  one. Full matrix in #481.
+  distribution at fixed occupancy is 9 MHz wide (#467). Measured over 40 seeds a
+  side, **every** counter configuration is slower than the shipping four:
+  `pc8` -2.48 MHz, `pc0` -2.99, `pc2` -2.96, and removing the plugin outright
+  -6.52 [-7.77, -5.27]. The smaller design is the slower one, and the counters
+  are not what is holding the clock down. Full matrix in #481.
 * The constraint a build is given does not change what nextpnr produces (#478),
   so `SYNC_MHZ` cannot be used to buy or lose margin either.
 * **Nothing else.** The PAC, the linker scripts and the firmware are unaffected
