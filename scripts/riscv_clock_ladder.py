@@ -7,7 +7,7 @@
 Build, load and CHECK THE ARITHMETIC at a series of `sync` frequencies.
 
     ./scripts/riscv_clock_ladder.py --sync 60 70 80 90 100
-    ./scripts/riscv_clock_ladder.py --spec CYNTHION_HYPERRAM_MERGED=1 --sync 60
+    ./scripts/riscv_clock_ladder.py --spec CYNTHION_HYPERRAM_DQS=1 --sync 60
 
 ## What counts as passing
 
