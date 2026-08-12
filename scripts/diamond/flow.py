@@ -191,6 +191,10 @@ def lpf_from_amaranth(src, dst):
 SYNP_PART = DEVICE.replace("-", "_")
 SYNP_PACKAGE = "BG256C"
 
+# Synplify's implementation directory. One implementation is all this flow
+# wants, and every output -- .edi, .srr, .areasrr -- lands inside it.
+IMPL = "rev_1"
+
 
 def synplify_project(prj, sources, top, freq, edif):
     """Write the Synplify Pro project file synpwrap consumes.
@@ -201,7 +205,7 @@ def synplify_project(prj, sources, top, freq, edif):
     """
     lines = [f'add_file -verilog "{s}"' for s in sources]
     lines += [
-        "impl -add rev_1 -type fpga",
+        f"impl -add {IMPL} -type fpga",
         "set_option -vlog_std v2001",
         "set_option -technology ECP5U",
         f"set_option -part {SYNP_PART}",
@@ -215,7 +219,7 @@ def synplify_project(prj, sources, top, freq, edif):
         "set_option -resource_sharing 1",
         "set_option -write_apr_constraint 0",
         f'project -result_file "{edif}"',
-        'impl -active "rev_1"',
+        f'impl -active "{IMPL}"',
     ]
     Path(prj).write_text("\n".join(lines) + "\n")
 
@@ -348,17 +352,23 @@ def main():
             # alternative to. It emits EDIF rather than an .ngd, so the netlist
             # goes through the same edif2ngd/ngdbuild pair the yosys mode uses.
             prj = out / "synplify.prj"
-            edif = out / "synplify.edi"
             synplify_project(prj, [src.name] + [e.name for e in extra],
-                             args.top, args.freq, edif.name)
+                             args.top, args.freq, "synplify.edi")
             t, _ = run(["synpwrap", "-prj", prj.name, "-nolog"], out, handle,
                        env, "synthesis(Synplify)", "synthesis",
                        "diamond-synthesis-synplify")
             timings["synthesis"] = t
             total += t
+            # -result_file resolves inside the implementation directory, not
+            # beside the project, so the path given to Synplify is not the path
+            # the netlist appears at. Every engine runs with cwd=out, so what
+            # edif2ngd is handed has to be relative to that.
+            edif = f"{IMPL}/synplify.edi"
+            if not (out / edif).is_file():
+                raise SystemExit(f"Synplify wrote no netlist at {out / edif}")
             ngo = out / f"{args.top}.ngo"
             t, _ = run(["edif2ngd", "-l", ARCH, "-d", DEVICE,
-                        edif.name, ngo.name], out, handle, env,
+                        edif, ngo.name], out, handle, env,
                        "edif2ngd", "edif2ngd")
             timings["edif2ngd"] = t
             total += t
