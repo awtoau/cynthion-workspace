@@ -74,6 +74,24 @@ MAX_RUNGS = 2
 # apollo submodule and this must not depend on it.
 VCO_MIN_MHZ, VCO_MAX_MHZ, MAX_DIV = 400.0, 800.0, 128
 
+# Phase-detector minimum, FPGA-DS-02012 Table 3.23. `CLKI / CLKI_DIV` must stay
+# at or above it, and `clocks.py` has enforced it on the SoC's PLL all along.
+#
+# This file did not: `range(1, 8)` admitted CLKI_DIV 7, an 8.57 MHz phase
+# detector off the 60 MHz reference. Every CK of the form 60*k/7 was reachable
+# only that way -- 85.714286 among them, which is the rung #331/#332 measured
+# latency codes at. The datasheet's note 3 does not say such a build fails; it
+# says the jitter figures stop being guaranteed, so it fails as noise on the
+# edge being measured rather than as a refusal. See #428.
+PFD_MIN_MHZ = 10.0
+
+
+# CLKI_DIV values the floor leaves, for a given reference. One definition, used
+# by all four solvers -- they disagreed, and `solve_dcsc_rungs` was the only one
+# that was right.
+def _clki_range(input_mhz):
+    return range(1, int(input_mhz // PFD_MIN_MHZ) + 1)
+
 
 def solve_hr_pll(hr_mhz, input_mhz=60.0, with_fast=True, tolerance=0.001):
     """Dividers giving `hr`, and `hr_fast` at twice it when the DQS PHY needs it.
@@ -92,7 +110,7 @@ def solve_hr_pll(hr_mhz, input_mhz=60.0, with_fast=True, tolerance=0.001):
     `hr_fast` is CLKOS, not CLKOS2: only CLKOP and CLKOS reach the ECP5's
     edge-clock input mux. See `elaborate`.
     """
-    for clki_div in range(1, 8):
+    for clki_div in _clki_range(input_mhz):
         for clkfb_div in range(1, 81):
             if abs(input_mhz * clkfb_div / clki_div - hr_mhz) > tolerance:
                 continue
@@ -127,7 +145,7 @@ def solve_hr_pll_rungs(ck_list, input_mhz=60.0, tolerance=0.001):
     Returns (vco, clki_div, clkfb_div, [div per rung]) or None.
     """
     first = ck_list[0]
-    for clki_div in range(1, 8):
+    for clki_div in _clki_range(input_mhz):
         for clkfb_div in range(1, 81):
             if abs(input_mhz * clkfb_div / clki_div - first) > tolerance:
                 continue
@@ -154,7 +172,7 @@ def reachable_ck(low, high, dqs=True, input_mhz=60.0):
     stops being a comparison.
     """
     out = []
-    for clki in range(1, 8):
+    for clki in _clki_range(input_mhz):
         for clkfb in range(1, 81):
             hr = input_mhz * clkfb / clki
             ck = 2 * hr if dqs else hr
@@ -183,10 +201,10 @@ def solve_dcsc_rungs(low, high, outputs=4, input_mhz=60.0, step=5.0):
     Returns a list of (vco_mhz, [ck_mhz, ...]), greedy-smallest-first.
     """
     # Reachable VCOs: 60 * clkfb/clki, times an output divider, inside the
-    # ECP5's 400-800 MHz VCO range. `clki` stops at 6 for the 10 MHz phase
-    # detector floor -- the same limit that makes the single-output axis coarse.
+    # ECP5's 400-800 MHz VCO range. `_clki_range` is the 10 MHz phase-detector
+    # floor -- the same limit that makes the single-output axis coarse.
     reachable = set()
-    for clki in range(1, 7):
+    for clki in _clki_range(input_mhz):
         for clkfb in range(1, 81):
             base = input_mhz * clkfb / clki
             for div in range(1, MAX_DIV + 1):
