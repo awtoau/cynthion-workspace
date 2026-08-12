@@ -64,7 +64,6 @@ impl Region {
             // and a load to an undecoded address never acks -- the CPU stalls with
             // no console left to say so. `mem hyperram` and `bench hyperram` both
             // arrive through here, so one arm covers both (#226).
-            #[cfg(not(feature = "hyperram-bist"))]
             b"hyperram" => Some(Region::Hyperram),
             _ => None,
         }

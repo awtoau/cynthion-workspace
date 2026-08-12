@@ -74,7 +74,6 @@ qemu = []
 # Same name and same reason as `cynthion-boot`'s: an access to an address in no
 # declared region never acks, so the CPU stalls on the load, before the console
 # exists. `scripts/soc_run.py` passes it whenever it passes the gateware flag.
-hyperram-bist = []
 
 # The concurrency-model skeletons that produced the table in
 # `docs/rtic.md`. They are measurement artefacts, not code the

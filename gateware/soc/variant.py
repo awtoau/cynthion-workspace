@@ -35,8 +35,7 @@ bitstream as "built from these exact sources". Retired since; #294.
 
 ## Naming
 
-`bist0-ck100-dqs1-mirror0-mirrordiv4` -- one `tag` + value per entry, in table
-order. Legible from `ls` and stable: a rung's directory has the same name every
+`ck80-dqs0-sync60` -- one `tag` + value per entry, in table order. Legible from `ls` and stable: a rung's directory has the same name every
 time it is built, which is what makes revisiting one a cache hit rather than a
 resynthesis.
 
@@ -60,11 +59,9 @@ TEXT = "text"
 # the same digest, or an ordinary run after a sweep resynthesises for nothing and
 # then refuses a `--firmware-only` load as stale when the bitstream is correct.
 VARIANT_ENV = (
-    ("CYNTHION_HYPERRAM_BIST",      "",    "bist",      FLAG),
     ("CYNTHION_HYPERRAM_CK_MHZ",    None,  "ck",        TEXT),
-    ("CYNTHION_HYPERRAM_BIST_DQS",  "1",   "dqs",       FLAG),
-    ("CYNTHION_HYPERRAM_MERGED",    "",    "merge",     FLAG),
-    ("CYNTHION_SYNC_MHZ",           None,  "sync",      TEXT),
+    ("CYNTHION_HYPERRAM_DQS",       "",    "dqs",       FLAG),
+    ("CYNTHION_SYNC_MHZ",           "60",  "sync",      TEXT),
 )
 
 # The CK default is PER PATH, because one number cannot be right for both.
@@ -88,21 +85,12 @@ VARIANT_ENV = (
 # and the full ladder: #410.
 CK_DEFAULT_MHZ = {True: "160", False: "80"}
 
-# The CPU clock default, keyed on whether this is the BIST rig.
-#
-# 50 for the rig ONLY: the four-domain build stopped closing at 60 (`top.py`
-# SYNC_MHZ). The merged design (#432) is that build plus BootRAM, so it takes
-# the shipping 60 and stage 1 of #432 is the measurement of whether it holds.
-SYNC_DEFAULT_MHZ = {True: "50", False: "60"}
-
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
 
 # Defaults that are a function of another variable, so `None` in the table.
 _DERIVED = {
     "CYNTHION_HYPERRAM_CK_MHZ":
-        lambda env: CK_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_BIST_DQS", env)],
-    "CYNTHION_SYNC_MHZ":
-        lambda env: SYNC_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_BIST", env)],
+        lambda env: CK_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_DQS", env)],
 }
 
 

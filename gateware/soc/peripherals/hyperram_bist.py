@@ -33,21 +33,16 @@ The engine, its comparator, its negative control and its sweep FSM are
 `add_register` / `add_read_only_register` on the harness -- so this is an
 injection, not a fork.
 
-## Open: who owns the HyperRAM pins
+## Who owns the HyperRAM pins
 
-`platform.request("ram")` succeeds once, and the engine calls it itself. So as
-written this variant takes the pins exclusively, and the SoC's own window,
-BootRAM and staging path cannot be built alongside it.
+The pins, the PHY and the controller are `top.py`'s, and this engine is handed
+one side of the mode mux in front of them (`hyperram_share.py`). `ram` is
+requested once, the staging path is still built, and which of the two drives the
+part is a boot-time mode (#432).
 
-`docs/chips/hyperram/bist-plan.md` says that is the wrong answer, and says so
-from experience -- it is the first link in the chain that produced a silent
-board: engine claims the pins, the window goes, BootRAM goes, the bootloader
-probes a window that is now absent, VexiiRiscv traps, no banner. The plan's
-requirement is **share the pins, do not reassign them**: one requester, a CSR
-selecting who drives, everything else still built and merely idle.
-
-That mux belongs in `top.py`, where the requester lives. Until it is there, this
-peripheral is only safe in a measurement-only bitstream.
+`docs/chips/hyperram/bist-plan.md` asked for exactly that, from experience: an
+engine that claimed the pins took the window, BootRAM and the bootloader's
+staging probe with them, and the board came up silent with no banner.
 
 ## Domains
 
@@ -81,9 +76,12 @@ class HyperRAMBist(wiring.Component):
     negative_control : bool
         Build the deliberately-wrong variant. A cell that passes without its
         control having fired is recorded as *no result*, not as a pass.
+    port : HyperRAMPort
+        The BIST side of the mode mux in front of the shared PHY and
+        controller. The engine requests no pins of its own.
     """
 
-    def __init__(self, *, ck_mhz, dqs=True, negative_control=False,
+    def __init__(self, *, ck_mhz, port, dqs=True, negative_control=False,
                  addr_width=7, domain="hr"):
         self.ck_mhz = ck_mhz
         self.dqs = dqs
@@ -113,13 +111,13 @@ class HyperRAMBist(wiring.Component):
         # `own_dtr=False`: `fabric_status` has the ECP5's single DTR, and the
         #   engine does not need one -- die temperature is a property of the
         #   chip, readable from there.
-        # The HyperRAM pins it still requests itself; see the module docstring's
-        # open point, which is why this is not yet safe alongside the window.
+        # `port`: the pins, the PHY and the controller are the SoC's, behind a
+        #   mode mux.
         self._engine = HyperRAMCeiling(
             sync_mhz=ck_mhz / 2 if dqs else ck_mhz,
             dqs=dqs, negative_control=negative_control,
             transport=self._transport, own_clocks=False, own_leds=False,
-            own_dtr=False)
+            own_dtr=False, port=port)
 
         # Taken FROM the transport rather than recomputed. The bus has to span
         # both windows, and the result window sits at a fixed offset the firmware

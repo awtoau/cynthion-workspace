@@ -24,9 +24,9 @@ translation step that would be blamed for any difference.
 
 ## The variant matters
 
-`CYNTHION_HYPERRAM_BIST` selects a materially different design, so the package
-records which one it holds. Mixing the two would compare a ~15,300-cell SoC with
-an ~18,000-cell one and attribute the difference to a synthesis option.
+One gateware, but a CK rung, a PHY and a CPU clock still change what is
+synthesised -- so the package records the variant it holds. Mixing two would
+attribute a design difference to a synthesis option.
 """
 
 from __future__ import annotations
@@ -90,16 +90,12 @@ def head() -> str:
 
 
 def variant() -> str:
-    """Which design the build directory holds, from the peripheral list."""
-    config = BUILD / "top.config"
-    if not config.exists():
-        return "unknown"
-    # The BIST variant is the one with a second PLL, so it has an extra
-    # EHXPLLL. Cheaper than re-elaborating, and it reads the artifact rather
-    # than the environment -- which is the point, since the environment is
-    # exactly what went wrong before.
-    plls = config.read_text(errors="replace").count("EHXPLLL")
-    return "HYPERRAM_BIST (measurement)" if plls >= 2 else "shipping SoC"
+    """Which design the build directory holds, from the build's own slug.
+
+    The directory name, not the environment: it is what the artifacts were
+    written under, and the environment is exactly what went wrong before.
+    """
+    return BUILD.name if BUILD.exists() else "unknown"
 
 
 def main() -> int:

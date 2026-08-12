@@ -94,12 +94,6 @@
 
 #![no_std]
 #![no_main]
-// Under `hyperram-bist` the staging probe is compiled out, so everything it fed
-// -- most `Status` variants, the CRC pass, the flash-resident check -- has no
-// caller left. That is the feature taking effect, not an oversight: the image
-// drops from ~500 bytes to a jump.
-#![cfg_attr(feature = "hyperram-bist", allow(dead_code))]
-
 use core::panic::PanicInfo;
 use core::ptr::write_volatile;
 
@@ -155,6 +149,11 @@ enum Status {
     /// Not an error. It means: your staged image was fine, and it is not what is
     /// running. Program flash instead -- `./dev.py run` does, in seconds.
     FlashResident = 6,
+    /// The part could not be taken back from the BIST engine, so nothing was
+    /// read. A warm `reset` out of a BIST run leaves the mode where the shell
+    /// left it, and a staging access in that mode is answered all-ones (#432)
+    /// -- which would otherwise be reported as `Silent`.
+    Owned = 7,
 }
 
 /// Whether the image region is the memory-mapped flash window rather than block RAM.
@@ -245,14 +244,14 @@ fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
 /// at roughly 8 ms for 32 KiB at 60 MHz, so the largest image this will accept costs
 /// about 16 ms more than a single pass would.
 fn boot() -> ! {
-    // No staging RAM in the BIST variant -- the engine owns the part. Reading
-    // the header would trap on the FIRST load, since the window is absent from
-    // the decoder rather than merely unresponsive, so the probe is skipped and
-    // the jump below happens exactly as it does on every other path.
-    #[cfg(feature = "hyperram-bist")]
-    let status = Status::NoMagic;
+    // TAKE THE PART BACK FIRST. The mode survives a warm reboot -- the CPU
+    // jumps to `_start` and the CSR keeps what the shell wrote -- so a reset
+    // after a BIST run would read the staged image through a mux that is not
+    // pointing at the staging path.
+    if !hyperram::claim(false) {
+        enter_image(Status::Owned);
+    }
 
-    #[cfg(not(feature = "hyperram-bist"))]
     let status = match hyperram::staged() {
         Err(hyperram::Reject::NoMagic) => Status::NoMagic,
         Err(hyperram::Reject::Length) => Status::Length,

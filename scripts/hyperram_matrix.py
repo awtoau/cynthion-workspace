@@ -71,7 +71,6 @@ FMAX = re.compile(r"Max frequency for clock\s+'\$glbnet\$clk':\s*([\d.]+) MHz.*?
 def build_and_load(ck_mhz, retries):
     """One bitstream at this CK, loaded. Returns (ok, fmax, attempts)."""
     env = dict(os.environ)
-    env["CYNTHION_HYPERRAM_BIST"] = "1"
     env["CYNTHION_HYPERRAM_CK_MHZ"] = f"{ck_mhz:g}"
     log = ROOT / "tmp" / "logs" / f"matrix-ck{ck_mhz:g}.log"
 

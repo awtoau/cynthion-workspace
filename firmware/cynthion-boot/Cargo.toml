@@ -47,7 +47,6 @@ image = []
 #
 # So the probe is compiled out rather than being allowed to fail. Nothing else
 # about the boot path changes -- the jump is the same jump, to the same address.
-hyperram-bist = []
 
 # Measured, not assumed. `./scripts/soc_boot_size.py` re-runs the whole table.
 #

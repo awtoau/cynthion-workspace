@@ -137,20 +137,12 @@ const BURST_WORDS: u32 = 128;
 const SEL_VALUES: u32 = 8;
 
 
-/// Where the BIST peripheral sits, matching `HYPERRAM_BIST_BASE` in
-/// `gateware/soc/top.py`.
-///
-/// A literal rather than a PAC constant, and deliberately: the PAC is generated
-/// from whichever variant the gateware flag selects, and only one of the two can
-/// be committed. Taking this from the PAC would mean committing the measurement
-/// variant's map, which would leave the shipping image checking itself against a
-/// map it does not have. `tests/test_bist_constants.py` asserts this equals the
-/// gateware's, so the two cannot drift silently.
-pub const BASE: usize = 0xf000_0800;
+/// Where the BIST peripheral sits. One gateware, so the committed PAC has the
+/// window and this is the generated constant rather than a transcription.
+pub const BASE: usize = cynthion_soc_pac::base::HYPERRAM_BIST;
 
-/// The CK rung selector's CSR base, and the same literal-not-PAC reasoning as
-/// `BASE` above. Mirrors `HYPERRAM_CK_BASE` in `gateware/soc/top.py`.
-pub const CK_BASE: usize = 0xf000_0a00;
+/// The CK rung and mode selector's CSR base.
+pub const CK_BASE: usize = cynthion_soc_pac::base::HYPERRAM_CK;
 
 /// Which HyperRAM CK a two-rung bitstream drives. See #228, #313.
 ///

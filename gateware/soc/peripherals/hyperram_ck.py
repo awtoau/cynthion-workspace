@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
 #
-# The CPU picks which HyperRAM CK rung is live. See #228, #313.
+# The CPU picks which HyperRAM CK rung is live, and who owns the part. #228, #432.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
 One write selects the device clock, so CK is a runtime axis and not a rebuild.
+A second selects the part's role, so THAT is a boot-time mode and not a build.
 
     +0  ctrl    RW  bit 0    sel        which rung drives `hr`
+                    bit 1    bist       hand the part to the BIST engine
+                    bit 2    refused_clear  W1C for status.refused
     +4  status  RO  bit 0    locked     the HyperRAM PLL has locked
+                    bit 1    mode       who the mux is actually on
+                    bit 2    refused    sticky: a staging transaction was
+                                        asked for while the engine had it
                     bits 7:4 rungs      how many this bitstream carries
     +8  rung0   RO           CK in kHz
     +c  rung1   RO           CK in kHz, or 0 when this build has one rung
+
+## The mode, and what firmware owes it
+
+`bist` is a request; `status.mode` is what the mux is on. They differ while a
+HyperBus transaction is in flight, because the mux follows the request only at
+an idle controller -- so firmware writes `bist` and then waits for `mode` to
+agree before assuming either half owns the part.
+
+Selecting a mode is a step BETWEEN passes, exactly as selecting a rung is: the
+part is a boot-time role, and nothing here can tell a mid-pass write from a
+between-pass one.
 
 ## Why the rates are registers and not firmware constants
 
@@ -59,11 +76,15 @@ class HyperRAMClockSelect(wiring.Component):
 
         self._ctrl = csr.Register({
             "sel":      csr.Field(csr.action.RW, 1),
-            "reserved": csr.Field(csr.action.R, 31),
+            "bist":     csr.Field(csr.action.RW, 1),
+            "refused_clear": csr.Field(csr.action.W, 1),
+            "reserved": csr.Field(csr.action.R, 29),
         }, access="rw")
         self._status = csr.Register({
             "locked":   csr.Field(csr.action.R, 1),
-            "reserved": csr.Field(csr.action.R, 3),
+            "mode":     csr.Field(csr.action.R, 1),
+            "refused":  csr.Field(csr.action.R, 1),
+            "reserved": csr.Field(csr.action.R, 1),
             "rungs":    csr.Field(csr.action.R, 4),
             "pad":      csr.Field(csr.action.R, 24),
         }, access="r")
@@ -84,6 +105,12 @@ class HyperRAMClockSelect(wiring.Component):
             "bus":    In(csr.Signature(addr_width=4, data_width=8)),
             "sel":    Out(1),
             "locked": In(1),
+            # Out to `HyperRAMShared.sel`, back from its `mode`. The mux
+            # synchronises the request itself; `mode` comes back from `hr`.
+            "bist":   Out(1),
+            "mode":   In(1),
+            "refused":       In(1),
+            "refused_clear": Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -103,11 +130,22 @@ class HyperRAMClockSelect(wiring.Component):
         locked_sync = Signal()
         m.submodules.locked_cdc = FFSynchronizer(self.locked, locked_sync)
 
+        # The live mode, out of `hr`. Same reasoning as `locked`: a level the
+        # firmware polls, and a metastable answer here would be read as the
+        # handover having happened.
+        mode_sync = Signal()
+        m.submodules.mode_cdc = FFSynchronizer(self.mode, mode_sync)
+
         m.d.comb += [
             self.sel.eq(self._ctrl.f.sel.data),
+            self.bist.eq(self._ctrl.f.bist.data),
+            self.refused_clear.eq(self._ctrl.f.refused_clear.w_stb
+                                  & self._ctrl.f.refused_clear.w_data),
             self._ctrl.f.reserved.r_data.eq(0),
 
             self._status.f.locked.r_data.eq(locked_sync),
+            self._status.f.mode.r_data.eq(mode_sync),
+            self._status.f.refused.r_data.eq(self.refused),
             self._status.f.reserved.r_data.eq(0),
             self._status.f.rungs.r_data.eq(len(rungs)),
             self._status.f.pad.r_data.eq(0),

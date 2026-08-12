@@ -124,6 +124,7 @@ class HyperRAMShared(Elaboratable):
         self.stage = HyperRAMPort(self.psram, name="stage")
         self.bist = HyperRAMPort(self.psram, name="bist")
 
+        # The request, driven from `sync` and synchronised here.
         self.sel = Signal()
         # The mode the mux is actually on, back to the CPU. It follows `sel`
         # only at an idle controller, so firmware reads what the part is doing
@@ -173,8 +174,13 @@ class HyperRAMShared(Elaboratable):
 
         # WHICH MODE IS LIVE, and it moves only at an idle controller. A mode
         # write mid-transaction would hand the pads over with CS# still Low.
+        #
+        # `sel` is written by the CPU in `sync`; two flops, because a level
+        # sampled metastable here would pick an owner for one cycle.
+        sel = Signal()
+        m.submodules.sel_cdc = FFSynchronizer(self.sel, sel)
         with m.If(psram.idle):
-            m.d.sync += self.mode.eq(self.sel)
+            m.d.sync += self.mode.eq(sel)
 
         stage, bist = self.ports
         for field in HyperRAMPort.CONTROL:

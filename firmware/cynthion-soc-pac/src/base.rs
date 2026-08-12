@@ -106,6 +106,16 @@ pub const BOARD_CLOCKS: usize = 0xf0000660;
 /// Size of the BOARD_CLOCKS window, in bytes.
 pub const BOARD_CLOCKS_SIZE: usize = 0x00000010;
 
+/// hyperram_bist: 64 registers at 0xf0000800
+pub const HYPERRAM_BIST: usize = 0xf0000800;
+/// Size of the HYPERRAM_BIST window, in bytes.
+pub const HYPERRAM_BIST_SIZE: usize = 0x00000200;
+
+/// hyperram_ck: 4 registers at 0xf0000a00
+pub const HYPERRAM_CK: usize = 0xf0000a00;
+/// Size of the HYPERRAM_CK window, in bytes.
+pub const HYPERRAM_CK_SIZE: usize = 0x00000010;
+
 /// plic: 10 registers at 0xf0400000
 pub const PLIC: usize = 0xf0400000;
 /// Size of the PLIC window, in bytes.
