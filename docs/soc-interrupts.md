@@ -68,19 +68,6 @@ the source cannot go pending while a claim is outstanding, and a masked source
 has nothing to complete against, so the line never fires again. Removing
 claim/complete removes the hazard.
 
-## Open decisions
-
-1. **Which controller.** The review (#503) recommends deleting
-   `gateware/soc/cpu/plic.py` for `amaranth_soc.csr.event.EventMonitor` — smaller,
-   Amaranth-native, latches W1C, supports level and edge per source. **Not agreed.**
-2. **The PAC1954 alert (source 6)** — enable it, or record why not.
-3. **`SLOW/ALERT1`** — make it runtime-selectable rather than a build-time
-   choice, so the question becomes only what the firmware defaults to.
-   [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md).
-4. **What the board should DO on a CC/SBU over-voltage.** Counting and surfacing
-   it is the floor; opening VBUS on the faulting port is the obvious candidate,
-   since the switches are already under firmware control. #507.
-
 ## Where the pieces are
 
 | what | where |
