@@ -838,7 +838,7 @@ pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
     let _ = writeln!(uart, "  {} cells: CR0[7:4] latency code x fix/var \
                             x {} capture phase(s), at drive 3",
                      32 * walked as u32, walked);
-    let _ = writeln!(uart, "  one row per code at its best phase; `sel` under it \
+    let _ = writeln!(uart, "  one row per code at its best phase; `sel` ON it \
                             says what else was tried");
     if walked == 1 {
         let _ = writeln!(uart, "  `sel` reaches nothing without the DQS PHY \
