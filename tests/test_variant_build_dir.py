@@ -45,13 +45,12 @@ DEFAULT: dict = {}
 BIST = {"CYNTHION_HYPERRAM_BIST": "1"}
 BIST_CK120 = {"CYNTHION_HYPERRAM_BIST": "1", "CYNTHION_HYPERRAM_CK_MHZ": "120"}
 BIST_NODQS = {"CYNTHION_HYPERRAM_BIST": "1", "CYNTHION_HYPERRAM_BIST_DQS": "0"}
-MIRROR = {"CYNTHION_CLOCK_MIRROR": "1"}
 
 
 def test_different_variants_get_different_directories():
     dirs = {variant.build_dir(ROOT, env)
-            for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS, MIRROR)}
-    assert len(dirs) == 5, sorted(str(d) for d in dirs)
+            for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS)}
+    assert len(dirs) == 4, sorted(str(d) for d in dirs)
 
 
 def test_the_same_variant_gets_the_same_directory():
@@ -65,8 +64,7 @@ def test_the_same_variant_gets_the_same_directory():
         {"CYNTHION_HYPERRAM_BIST": "0"},
         # The DQS default, spelled out. Taken from the table rather than typed:
         # it is per path now, and a literal here would pin one of the two.
-        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[True],
-         "CYNTHION_CLOCK_MIRROR_DIV": "4"},
+        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[True]},
     ]
     dirs = {variant.build_dir(ROOT, env) for env in same}
     assert len(dirs) == 1, sorted(str(d) for d in dirs)
@@ -104,7 +102,7 @@ def test_the_directory_is_under_the_build_root_and_is_one_component():
 
 def test_the_directory_and_the_cache_key_separate_the_same_things():
     import soc_run
-    for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS, MIRROR):
+    for env in (DEFAULT, BIST, BIST_CK120, BIST_NODQS):
         assert soc_run.variant_settings.__module__  # imported, not shadowed
     # Every entry in the table appears in the slug and in the settings list.
     for name, _default, tag, _kind in variant.VARIANT_ENV:
@@ -127,7 +125,7 @@ REFUSAL_OVERRIDES = {
 def test_top_py_reads_every_variant_variable_through_the_table():
     # An `os.environ.get` in top.py that is not in VARIANT_ENV is a bitstream
     # that hashes the same as a different one and shares its directory --
-    # `CYNTHION_CLOCK_MIRROR` was exactly that until #351.
+    # The clock mirror was exactly that until #351 (retired, #294).
     source = TOP.read_text()
     stray = [name for name in
              re.findall(r'os\.environ\.get\(\s*"(CYNTHION_[A-Z_]+)"', source)

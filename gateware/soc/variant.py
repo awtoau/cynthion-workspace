@@ -28,10 +28,10 @@ So `VARIANT_ENV` is the only list, `top.py` reads its own values back through
 `flag()`/`value()`, and the defaults exist once.
 
 **Anything `top.py` reads from the environment at import time that changes what
-it elaborates belongs here.** `CYNTHION_CLOCK_MIRROR` and its divisor did not,
-and they add a pad-driving register in every mirrored domain -- so two builds
-either side of that flag hashed identically, and the second was served the
-first's bitstream as "built from these exact sources".
+it elaborates belongs here.** The clock mirror's flag and divisor did not, and
+they add a pad-driving register in every mirrored domain -- so two builds either
+side of that flag hashed identically, and the second was served the first's
+bitstream as "built from these exact sources". Retired since; #294.
 
 ## Naming
 
@@ -65,8 +65,6 @@ VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_BIST_DQS",  "1",   "dqs",       FLAG),
     ("CYNTHION_HYPERRAM_MERGED",    "",    "merge",     FLAG),
     ("CYNTHION_SYNC_MHZ",           None,  "sync",      TEXT),
-    ("CYNTHION_CLOCK_MIRROR",       "",    "mirror",    FLAG),
-    ("CYNTHION_CLOCK_MIRROR_DIV",   "4",   "mirrordiv", TEXT),
 )
 
 # The CK default is PER PATH, because one number cannot be right for both.
