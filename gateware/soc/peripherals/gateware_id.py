@@ -34,12 +34,12 @@ reads over JTAG and the value the CPU reads here cannot disagree.
 of every `gateware/soc/**/*.py` and of the variant environment. It says WHICH
 GATEWARE this is, not when it was made.
 
-It used to be `datetime.now()`, and that made this the only constant in the
-design that moved when nothing else did: two elaborations of one tree were never
-byte-identical, so no build of this project was ever reproducible and every Fmax
-was a sample from a different netlist (#441). A clock is not identity.
+NOT `datetime.now()`: a clock is not identity, and it makes this the one
+constant in the design that moves when nothing else does -- two elaborations of
+one tree are then never byte-identical, no build is reproducible, and every Fmax
+is a sample from a different netlist (#441).
 
-What identity needs, and what the pair now covers between them:
+What identity needs, and what the pair covers between them:
 
     different commit, same tree     `git` differs
     same commit, different edits    `built` differs -- `git`'s dirty bit says

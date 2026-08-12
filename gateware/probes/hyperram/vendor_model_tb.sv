@@ -570,9 +570,8 @@ module tb;
     // so the latency changes transaction to transaction. It is the case a correct
     // controller has to survive.
     //
-    // No longer `ifdef VENDOR_ONLY: the twin has a refresh cadence now, so both
-    // models must show the latency varying. That is the point of the twin gaining
-    // the case rather than the case being excused. (#338, #342)
+    // Runs for BOTH models, not `ifdef VENDOR_ONLY: the twin has a refresh
+    // cadence, so both must show the latency varying. (#338, #342)
     $display("[tb] === refresh collisions under variable latency ===");
     write_register(ADDR_CR0, 16'h8f27);            // variable
     extra = 0;

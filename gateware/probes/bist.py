@@ -136,10 +136,9 @@ class BISTHarness(Elaboratable):
         addresses = self.addresses
 
         # A GATEWARE-DRIVEN clear, for a sweep that walks combinations itself.
-        # The counters previously cleared only on `command_go`, which is a rising
-        # edge of the HOST's control register -- unreachable from inside the
-        # design. A sweep therefore accumulated errors across every cell and
-        # saturated during the first one.
+        # `command_go` is a rising edge of the HOST's control register and so is
+        # unreachable from inside the design: clearing on it alone accumulates
+        # errors across every cell and saturates during the first.
         command_go = Signal()
         negative = self.negative
 

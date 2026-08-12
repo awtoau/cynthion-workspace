@@ -108,10 +108,10 @@ GENERATE_FLAGS = [
     # last word (`top.py`'s CACHE_SETS is); kept equal so no reader has to work
     # out which number won.
     #
-    # ONE WAY IS STILL AN OPEN CHOICE, not forced. An earlier version of this
-    # comment claimed `flash_cache_flush()` (`scripts/riscv_firmware.py`) needed
-    # a direct-mapped cache, since it evicts by reading the cache's size at line
-    # stride. Wrong twice over:
+    # ONE WAY IS STILL AN OPEN CHOICE, not forced. `flash_cache_flush()`
+    # (`scripts/riscv_firmware.py`) evicts by reading the cache's size at line
+    # stride, which does NOT make a direct-mapped cache a correctness
+    # requirement. Two reasons:
     #   * replacement policy is PLRU, not random (`FetchL1Plugin.scala:187`,
     #     `Plru.scala`); a sweep of the FULL cache size touches every set
     #     `wayCount` times with distinct tags, evicting every way under PLRU.

@@ -198,17 +198,11 @@ class BurstSequencer(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        # Starts CLEAR. It used to start set, so a freshly configured board
-        # performed one read unasked -- and that read, not any the host chose,
-        # became the reference every later pass was compared against. Its
-        # divisor and opcode were whatever the registers reset to, and if the
-        # part had been left in Continuous Read by a previous bitstream it was
-        # not a valid transaction at all. The comparator then reported the same
-        # three mismatch counts at 120 MHz and at 144 MHz, which is the tell: a
-        # timing fault does not produce identical counts at two clock rates.
-        #
-        # The host now triggers the reference read explicitly, at a rate it has
-        # verified.
+        # Starts CLEAR, so the host triggers the reference read explicitly at a
+        # rate it has verified. Starting set makes a freshly configured board
+        # read once unasked, at whatever divisor and opcode the registers reset
+        # to, and THAT becomes the reference -- identical mismatch counts at
+        # 120 and 144 MHz is the tell, since a timing fault cannot produce them.
         pending = Signal(init=0)
         index   = Signal(16)
         count   = Signal(16)
