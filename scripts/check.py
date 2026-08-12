@@ -288,6 +288,23 @@ def build_checks() -> List[Check]:
             ],
         ),
         Check(
+            name="review",
+            description="the SoC review pass can still report a regression",
+            steps=[
+                # The review is what runs after a change (`soc_review.py`); this
+                # is its own control. Twelve instruments here have reported
+                # success while structurally unable to fail, so the comparator
+                # is asked to report a known regression -- a real build with
+                # three added windows -- and to stay silent on a reading
+                # compared with itself.
+                #
+                # No build and no board: comparisons over recorded readings, and
+                # the map enumerator's synthetic control. A few seconds.
+                Step([PYTHON, "scripts/soc_review.py", "--self-test"], ROOT),
+                Step([PYTHON, "scripts/soc_map_audit.py", "--control-only"], ROOT),
+            ],
+        ),
+        Check(
             name="repro",
             description="two elaborations of this tree give one RTLIL digest",
             slow=True,
