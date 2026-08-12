@@ -129,7 +129,7 @@ documented cost of fitting it and never programming the mode.
 | **VPOWERn accumulator** | — | **never read** | 32-bit, and it is what catches an event between polls |
 | **`VBUSn_AVG` / `VSENSEn_AVG`** | — | **never read** | 8× rolling average, Registers 7-7/7-8 |
 
-**The bus is no longer where the poll's cost is, and the arithmetic says so.**
+**The bus is not where the poll's cost is, and the arithmetic says so.**
 Pure bus time would have scaled with the 12.5× rate change:
 
     6.34% x (80 / 1000)  =  0.51%      what 1 MHz should have cost
@@ -400,10 +400,10 @@ impossible rather than rare.**
 The window matters more now, not less: since
 [#276](https://github.com/awtoau/cynthion-workspace/pull/276) the driver reads
 *inside* the cycle it started, 1 ms after its own `REFRESH_V`, rather than 50 ms
-later. The margin that used to be an interval wide is now the interval the
-datasheet specifies, and it belongs to one owner. The earlier fix — wait 2 ms, try once more — is deleted: it removed the
-symptom and left the structure, and a retry that can never fire is a claim about
-the system that is not true.
+later. The margin is the interval the datasheet specifies, not one poll interval
+wide, and it belongs to one owner. Waiting 2 ms and trying once more removes the
+symptom and leaves the structure, and a retry that can never fire is a claim
+about the system that is not true.
 
 **The age on the header line is load-bearing.** Worst-case staleness is 100 ms
 (one interval for the sample to be fetched, plus however long ago the last poll
