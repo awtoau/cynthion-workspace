@@ -137,8 +137,8 @@ being told something untrue.
 
 | | measured | of | | ceiling |
 |---|---|---|---|---|
-| flash | **13,688 B** | 14,336 B | **95.48%** | 95% — **over by 69 B** |
-| RAM | **3,552 B** | 4,096 B | **86.72%** | 85% — **over by 71 B** |
+| flash | **13,688 B** | 14,336 B | **95.48%** | 95.9% = 13,748 B — 60 B under |
+| RAM | **3,552 B** | 4,096 B | **86.72%** | 87.5% = 3,584 B — 32 B under |
 | `.text` / `.relocate` / `.bss` / stack | 13,608 / 80 / 2,768 / 704 | | | |
 | stack high-water mark | **344 B** of 704 reserved | | | |
 
@@ -150,6 +150,14 @@ being told something untrue.
 `.relocate` — VMA in RAM, LMA in flash — so it costs 80 bytes of each. The
 figures above superseded a check that summed by section name and reported
 94.92% / 84.77%, both under their ceilings, while both were over (#199).
+
+**The ceilings are derived, not chosen** (#404). 95% / 85% were computed against
+those 80-byte-low totals, and the firmware they shipped with was already at
+95.48% / 86.33%. Each now sits under one 64-byte object — the smallest
+`apollo_memory_report.py` flags — above the measured image, so the next notable
+object trips the guard and byte drift does not. Flash has nothing left to give:
+588 B free is what upstream runs with, and the levers that would buy more are
+costed in `scripts/apollo_budget_levers.py` (#496 is the largest, 336 B).
 
 **14 KB, not 16.** The part has 16 KiB of flash; `BOOTLOADER_SIZE := 0x800`
 reserves 2 KiB at the bottom for the Saturn-V DFU bootloader, leaving
