@@ -5,21 +5,16 @@
 
 """Do the gateware, the firmware and the transport agree on where things are?
 
-The BIST peripheral is addressed by a hand-written constant in the firmware
-rather than by the generated PAC, and that is deliberate: the PAC is generated
-from whichever variant `HYPERRAM_BIST` selects, and only one of the two can be
-committed. Committing the measurement variant's would leave the shipping image
-checking itself against a map it does not have.
+Drift here does not fail to build -- it reads a peripheral that is not there,
+or reads the parameter window and finds zeros where results should be. Zero
+errors out of zero words is exactly what a *passing* cell looks like to anything
+that does not check, which is the failure this project has already made more
+than once.
 
-The cost of that choice is a constant that can drift, and drift here does not
-fail to build -- it reads a peripheral that is not there, or reads the parameter
-window and finds zeros where results should be. Zero errors out of zero words is
-exactly what a *passing* cell looks like to anything that does not check, which
-is the failure this project has already made more than once.
+The peripheral's BASE comes from the generated PAC now that one gateware carries
+the engine, so `soc_generate_pac.py --check` closes that link. What is left is
+the pair of numbers no generator sees:
 
-So the agreement is asserted here instead:
-
-    HYPERRAM_BIST_BASE      top.py            <-> bist.rs   BASE
     RESULT_WINDOW           bist_csr.py       <-> bist.rs   RESULT_WINDOW
     BURST_WORDS             ceiling engine    <-> bist.rs   BURST_WORDS
 
@@ -54,14 +49,13 @@ def _grab(path: Path, pattern: str) -> int:
     return _int(match.group(1))
 
 
-def test_peripheral_base_agrees():
-    """`bist.rs` must point at where `top.py` puts the peripheral."""
-    gateware = _grab(TOP, r"^HYPERRAM_BIST_BASE\s*=\s*(0x[0-9a-fA-F_]+)")
-    firmware = _grab(FIRMWARE, r"^pub const BASE:\s*usize\s*=\s*(0x[0-9a-fA-F_]+)")
-    assert firmware == gateware, (
-        f"the firmware addresses the BIST peripheral at 0x{firmware:08x} but the "
-        f"gateware puts it at 0x{gateware:08x}; every register access would go "
-        f"somewhere else entirely")
+def test_peripheral_base_comes_from_the_generated_map():
+    """A literal here would be a transcription of the PAC, and would drift."""
+    for name, symbol in (("BASE", "HYPERRAM_BIST"), ("CK_BASE", "HYPERRAM_CK")):
+        line = re.search(rf"^pub const {name}: usize = (.+);$",
+                         FIRMWARE.read_text(), re.MULTILINE)
+        assert line, f"bist.rs: no {name}"
+        assert line.group(1) == f"cynthion_soc_pac::base::{symbol}", line.group(1)
 
 
 def test_result_window_agrees():

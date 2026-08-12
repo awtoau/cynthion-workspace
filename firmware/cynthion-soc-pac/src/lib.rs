@@ -136,6 +136,24 @@ impl core::fmt::Debug for BoardClocks {
 }
 #[doc = "board/clocks: 2 registers at 0xf0000660"]
 pub mod board_clocks;
+#[doc = "hyperram_bist: 64 registers at 0xf0000800"]
+pub type HyperramBist = crate::Periph<hyperram_bist::RegisterBlock, 0xf000_0800>;
+impl core::fmt::Debug for HyperramBist {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("HyperramBist").finish()
+    }
+}
+#[doc = "hyperram_bist: 64 registers at 0xf0000800"]
+pub mod hyperram_bist;
+#[doc = "hyperram_ck: 4 registers at 0xf0000a00"]
+pub type HyperramCk = crate::Periph<hyperram_ck::RegisterBlock, 0xf000_0a00>;
+impl core::fmt::Debug for HyperramCk {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("HyperramCk").finish()
+    }
+}
+#[doc = "hyperram_ck: 4 registers at 0xf0000a00"]
+pub mod hyperram_ck;
 #[doc = "plic: 10 registers at 0xf0400000"]
 pub type Plic = crate::Periph<plic::RegisterBlock, 0xf040_0000>;
 impl core::fmt::Debug for Plic {
@@ -187,6 +205,10 @@ pub struct Peripherals {
     pub board_fabric: BoardFabric,
     #[doc = "BOARD_CLOCKS"]
     pub board_clocks: BoardClocks,
+    #[doc = "HYPERRAM_BIST"]
+    pub hyperram_bist: HyperramBist,
+    #[doc = "HYPERRAM_CK"]
+    pub hyperram_ck: HyperramCk,
     #[doc = "PLIC"]
     pub plic: Plic,
     #[doc = "CLINT"]
@@ -227,6 +249,8 @@ impl Peripherals {
             board_vbus: BoardVbus::steal(),
             board_fabric: BoardFabric::steal(),
             board_clocks: BoardClocks::steal(),
+            hyperram_bist: HyperramBist::steal(),
+            hyperram_ck: HyperramCk::steal(),
             plic: Plic::steal(),
             clint: Clint::steal(),
         }

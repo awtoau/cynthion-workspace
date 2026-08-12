@@ -314,7 +314,8 @@ pub fn init(stamp: u32) -> Init {
 }
 
 use backend::seek;
-pub use backend::{read_pair, write_pair};
+pub use backend::{claim, clear_refused, owner_is_bist, read_pair, refused,
+                  write_pair};
 
 /// The HyperRAM CSR port on the FPGA, per `HyperRAMBoot` in
 /// `gateware/soc/bootram.py`.
@@ -374,6 +375,65 @@ mod backend {
     // counter added here failed the bootloader build immediately, which is the
     // guard doing its job. So these primitives REPORT a timeout and the SoC
     // counts -- see `hyperram::timeouts`.
+
+    /// The mode register, `hyperram_ck` (`gateware/soc/peripherals/hyperram_ck.py`).
+    ///
+    ///     ctrl   +0x00  bit 0 sel, bit 1 bist, bit 2 refused_clear
+    ///     status +0x04  bit 0 locked, bit 1 mode, bit 2 refused
+    const MODE_CTRL: *mut u32 = cynthion_soc_pac::base::HYPERRAM_CK as *mut u32;
+    const MODE_STATUS: *const u32 =
+        (cynthion_soc_pac::base::HYPERRAM_CK + 4) as *const u32;
+
+    /// Spins waiting for the mux to follow a mode write.
+    ///
+    /// **Waits for** an idle controller: the mux hands the part over between
+    /// transactions, and tCSM bounds one at 4 us -- 240 CPU cycles at 60 MHz,
+    /// or ~20 turns of this loop at the ~11.9 cycles an uncached MMIO read
+    /// costs. 64 is 3x that, covering the `sync`/`hr` round trip and a slower
+    /// CPU rung. On expiry `claim` returns false and the caller reports; the
+    /// part is then still owned by the other half.
+    const MODE_SPINS: u32 = 64;
+
+    /// Hand the part to the BIST engine, or take it back for staging.
+    ///
+    /// Returns whether the mux followed. A mode write during a pass is not
+    /// refused by anything here -- see the peripheral's own docs.
+    pub fn claim(bist: bool) -> bool {
+        // SAFETY: uncached peripheral registers.
+        unsafe {
+            let ctrl = read_volatile(MODE_CTRL as *const u32);
+            write_volatile(MODE_CTRL, (ctrl & !2) | ((bist as u32) << 1));
+            for _ in 0..MODE_SPINS {
+                if (read_volatile(MODE_STATUS) >> 1) & 1 == bist as u32 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Which half the mux is on, as the gateware reports it.
+    pub fn owner_is_bist() -> bool {
+        // SAFETY: as above.
+        unsafe { (read_volatile(MODE_STATUS) >> 1) & 1 != 0 }
+    }
+
+    /// Sticky: a staging transaction was asked for while the engine had the
+    /// part. Answered with all ones rather than left outstanding, so this bit
+    /// is the only thing that says the data was never the part's.
+    pub fn refused() -> bool {
+        // SAFETY: as above.
+        unsafe { (read_volatile(MODE_STATUS) >> 2) & 1 != 0 }
+    }
+
+    pub fn clear_refused() {
+        // SAFETY: as above. Bit 2 of `ctrl` is write-one-to-clear and holds no
+        // state, so the read-modify-write cannot lose the mode.
+        unsafe {
+            let ctrl = read_volatile(MODE_CTRL as *const u32);
+            write_volatile(MODE_CTRL, ctrl | 4);
+        }
+    }
 
     /// Set the word address for the next transfer.
     pub fn seek(word: u32) {
@@ -473,6 +533,21 @@ mod backend {
     pub fn seek(word: u32) {
         CURSOR.store(word as usize, Ordering::Relaxed);
     }
+
+    /// No mux without gateware: the array is always the staging buffer.
+    pub fn claim(bist: bool) -> bool {
+        !bist
+    }
+
+    pub fn owner_is_bist() -> bool {
+        false
+    }
+
+    pub fn refused() -> bool {
+        false
+    }
+
+    pub fn clear_refused() {}
 
     /// The array stays 16-bit, because that is the part's word and the header
     /// offsets are in those units. A pair is two entries, low word first --

@@ -7,21 +7,16 @@
 //!
 //! The driver is `src/bist.rs`; this only parses words.
 //!
-//! ## The verb is gated on the VARIANT, not on a probe (#409)
+//! ## The window is always decoded (#409, #432)
 //!
-//! `bist` was dispatched on every build, including the shipping
-//! `bist0-*` bitstreams, whose gateware has no engine and no window at
-//! `bist::BASE`. `describe()` read it anyway, nothing decoded it, nothing
-//! acknowledged, and the board was gone.
+//! `bist` used to be dispatched on bitstreams whose gateware had no engine and
+//! nothing at `bist::BASE`: `describe()` read it anyway, nothing acknowledged,
+//! and the board was gone. One gateware carries the engine, so every build has
+//! the window and the verb is unconditional.
 //!
-//! `Bist::present()` is not the fix and cannot be: it answers by READING the
-//! engine, which is the access that hangs. The variant is known at build time --
-//! `gateware/soc/variant.py`, `CYNTHION_HYPERRAM_BIST`, which `soc_run.py`
-//! turns into this cargo feature -- so the verb that touches the bus only
-//! exists where the bus has something to touch.
-
-// Everything below `command` is reachable only from the engine-bearing build.
-#![cfg_attr(not(feature = "hyperram-bist"), allow(dead_code, unused_imports))]
+//! Which HALF of the part is live is a boot-time mode -- `bist mode` -- and
+//! `hyperram_ck.status.refused` is what says a staging access was asked for
+//! while the engine had it.
 
 use core::fmt::Write;
 
@@ -37,16 +32,6 @@ use crate::uart::Uart;
 /// lucky burst, and short enough that a 128-cell sweep is not an afternoon.
 const DEFAULT_PASSES: u32 = 64;
 
-/// `bist` on a bitstream with no engine: one sentence, and NO bus access.
-#[cfg(not(feature = "hyperram-bist"))]
-pub(crate) fn command(uart: &mut Uart, _rest: &[u8]) {
-    let _ = writeln!(
-        uart,
-        "bist: this bitstream has no engine -- built without CYNTHION_HYPERRAM_BIST"
-    );
-}
-
-#[cfg(feature = "hyperram-bist")]
 pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let rest = trim(rest);
     // SAFETY: `bist::BASE` is the peripheral's CSR base, held equal to the
@@ -58,9 +43,22 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         None => (rest, &rest[..0]),
     };
 
+    // WHO OWNS THE PART, for the verbs that drive it. Reading the engine's
+    // registers is a CSR access and needs no claim; every verb below that
+    // starts a pass does. Released afterwards, so `load` and `hr` work on the
+    // next line rather than reporting `refused`.
+    let drives_the_part = matches!(
+        word,
+        b"smoke" | b"latency" | b"all" | b"sweep" | b"trace" | b"cell"
+    );
+    if drives_the_part && !claim(uart, true) {
+        return;
+    }
+
     match word {
         b"" | b"status" => engine.describe(uart),
         b"legend" => bist::legend(uart),
+        b"mode" => mode(uart, args),
         b"smoke" => bist::smoke(uart, &engine, passes(args)),
         b"latency" => bist::latency(uart, &engine, passes(args)),
         b"all" => bist::all(uart, &engine, passes(args)),
@@ -77,6 +75,51 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             }
         },
         _ => crate::shell::list_family(uart, "bist"),
+    }
+
+    if drives_the_part {
+        claim(uart, false);
+    }
+}
+
+/// Hand the part over, and say so if the mux did not follow.
+fn claim(uart: &mut Uart, bist: bool) -> bool {
+    if crate::hyperram::claim(bist) {
+        return true;
+    }
+    let _ = writeln!(
+        uart,
+        "hyperram: the mux did not reach {} -- a transaction is still open",
+        if bist { "bist" } else { "stage" }
+    );
+    false
+}
+
+/// `bist mode [stage|bist]` -- who drives the part, and whether anyone was
+/// refused while the other half had it.
+fn mode(uart: &mut Uart, args: &[u8]) {
+    match args {
+        b"" => {}
+        b"stage" => {
+            claim(uart, false);
+        }
+        b"bist" => {
+            claim(uart, true);
+        }
+        _ => {
+            let _ = writeln!(uart, "usage: bist mode [stage|bist]");
+            return;
+        }
+    }
+    let refused = crate::hyperram::refused();
+    let _ = writeln!(
+        uart,
+        "hyperram mode {}{}",
+        if crate::hyperram::owner_is_bist() { "bist" } else { "stage" },
+        if refused { "  REFUSED: a staging access was answered all-ones" } else { "" }
+    );
+    if refused {
+        crate::hyperram::clear_refused();
     }
 }
 

@@ -210,6 +210,7 @@ pub const BOOT_STATUS_TEXT: &[&str] = &[
     "hyperram did not answer",
     "the bootloader panicked",
     "staged image verified but NOT installed: this build boots from flash",
+    "the BIST engine still owned the part; nothing was read",
 ];
 
 /// One PLIC source per FUSB302B `int` line, in `fusb302::Port::ALL` order.

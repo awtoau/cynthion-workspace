@@ -5,9 +5,9 @@
 
 """Fan N gateware builds out across the cores, then say what came back.
 
-    ./scripts/soc_build_fanout.py --ck 80,85,90,95            # a BIST CK ladder
+    ./scripts/soc_build_fanout.py --ck 80,85,90,95            # a CK ladder
     ./scripts/soc_build_fanout.py --ck 80,85 --jobs 1         # the same, in series
-    ./scripts/soc_build_fanout.py CYNTHION_HYPERRAM_BIST=1 ''  # BIST and shipping
+    ./scripts/soc_build_fanout.py CYNTHION_HYPERRAM_DQS=1 ''  # both PHYs
 
 Each build is `soc_run.py --build-only`, which touches no hardware -- so a whole
 ladder can be built while the board is busy, and the board is then needed only
@@ -165,8 +165,8 @@ def main() -> int:
     parser.add_argument("specs", nargs="*", metavar="KEY=VAL,KEY=VAL",
                         help="one variant per argument; empty string = default")
     parser.add_argument("--ck", default="",
-                        help="shorthand for a BIST CK ladder: one build per "
-                             "comma-separated rung, CYNTHION_HYPERRAM_BIST=1")
+                        help="shorthand for a CK ladder: one build per "
+                             "comma-separated rung")
     parser.add_argument("--jobs", type=int, default=0,
                         help="builds in flight (default: all of them). --jobs 1 "
                              "is the sequential baseline")
@@ -182,7 +182,7 @@ def main() -> int:
     args = parser.parse_args()
 
     overlays = [parse_spec(spec) for spec in args.specs]
-    overlays += [{"CYNTHION_HYPERRAM_BIST": "1", "CYNTHION_HYPERRAM_CK_MHZ": ck}
+    overlays += [{"CYNTHION_HYPERRAM_CK_MHZ": ck}
                  for ck in (c for c in args.ck.split(",") if c.strip())]
     if not overlays:
         parser.error("nothing to build: give a variant spec or --ck")

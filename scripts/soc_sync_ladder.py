@@ -5,7 +5,7 @@
 
 """One variant, several `SYNC_MHZ` rungs, several `nextpnr --seed` values each.
 
-    ./scripts/soc_sync_ladder.py --spec CYNTHION_HYPERRAM_MERGED=1
+    ./scripts/soc_sync_ladder.py --spec CYNTHION_HYPERRAM_DQS=1
     ./scripts/soc_sync_ladder.py --spec '' --sync 60 --seeds 1,2,3,4
 
 ## The question, and why seeds rather than repeats

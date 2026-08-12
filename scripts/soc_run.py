@@ -288,11 +288,10 @@ def gateware_digest():
     stamp names is the commit the GATEWARE was packed at, which is the question
     the identity is asked.
 
-    **The variant environment is in here, and for a sharp reason.** The
-    BIST build (#226) is selected by `CYNTHION_HYPERRAM_BIST` rather than by
-    editing a file, so two completely different bitstreams -- one with the
-    HyperRAM on the bus, one with the engine owning the pins -- hash identically
-    from their sources. Without these, switching variants SKIPS SYNTHESIS and
+    **The variant environment is in here, and for a sharp reason.** A CK rung,
+    a PHY or a CPU clock is selected by an environment variable rather than by
+    editing a file, so two completely different bitstreams hash identically from
+    their sources. Without these, switching variants SKIPS SYNTHESIS and
     configures the board with the other one, while printing "the bitstream was
     built from these exact sources".
 
@@ -711,29 +710,16 @@ def main():
     #
     # It is still a hard stop if the generator itself fails, because then
     # nothing knows where the peripherals are.
-    # ...except for the BIST variant, which deliberately has a DIFFERENT map:
-    # no HYPERRAM window and no BOOTRAM, because the engine owns the part's pins.
-    # Regenerating here would overwrite the committed PAC -- the shipping
-    # variant's -- with a measurement build's, and the next ordinary build would
-    # then check itself against a map it does not have.
-    #
-    # Nothing is lost by skipping it. The BIST peripheral is addressed by a
-    # literal in `firmware/cynthion-soc/src/bist.rs` precisely so that the PAC
-    # does not have to change, and `tests/test_bist_constants.py` holds that
-    # literal to `top.py` in 0.01 s.
-    # The #432 closure probe is the same argument twice over: its map has BOTH
-    # halves, and `CYNTHION_SYNC_MHZ` puts a different clock constant in the
-    # generated PAC. Neither belongs in the committed shipping one.
-    measurement_variant = (
-        any(os.environ.get(name, "") not in ("", "0")
-            for name in ("CYNTHION_HYPERRAM_BIST", "CYNTHION_HYPERRAM_MERGED"))
-        or variant.value("CYNTHION_SYNC_MHZ")
-        != variant.SYNC_DEFAULT_MHZ[False])
+    # ...except off the default variant, whose PAC is the committed one. Every
+    # build has the same peripherals now, but `CYNTHION_SYNC_MHZ` and the CK
+    # rungs put different constants in the generated crate -- so regenerating
+    # from a swept build would leave the next ordinary one checking itself
+    # against a map taken at another clock.
+    measurement_variant = variant.settings() != variant.settings({})
     if not args.c_firmware and measurement_variant:
-        emit("peripheral map NOT regenerated: this variant has its own")
-        emit("  no HYPERRAM window and no BOOTRAM in that variant, by design.")
-        emit("  the committed PAC stays the shipping one; the BIST peripheral is")
-        emit("  a literal in bist.rs, checked by tests/test_bist_constants.py.")
+        emit("peripheral map NOT regenerated: this variant is not the default")
+        emit(f"  {' '.join(variant.settings())}")
+        emit("  the committed PAC stays the default variant's.")
     elif not args.c_firmware:
         before = None
         generated = ROOT / "firmware" / "cynthion-soc-pac" / "src" / "base.rs"
@@ -774,17 +760,7 @@ def main():
         else:
             if not args.no_build:
                 cargo = ["cargo", "build", "--release"]
-                # The BIST gateware instantiates NO BootRAM, so the shell's
-                # boot-time HyperRAM probe reads an address in no declared
-                # region, never gets an ack, and the CPU stalls -- silent from
-                # reset, no banner, no shell. Same guard the bootloader below
-                # already gets, and not optional: forgetting it produces a board
-                # that looks bricked (#226).
                 features = [f for f in args.features.split(",") if f]
-                if os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0"):
-                    features.append("hyperram-bist")
-                    emit("shell: boot-time HyperRAM probe COMPILED OUT (BIST "
-                         "variant has no BootRAM to probe)")
                 if features:
                     # Said out loud, every time. A board left running a
                     # feature-built image looks exactly like one running the
@@ -847,17 +823,7 @@ def main():
         # The bootloader, unless this is the C path -- that generator emits an
         # image linked for 0 and has no bootloader to sit under it.
         if not args.c_firmware:
-            # The BIST variant's bootloader must NOT probe for a staged image:
-            # that window is absent from the decoder, not merely unresponsive,
-            # and VexiiRiscv traps an access to an address in no declared
-            # region. The trap lands on the first load, before any of the
-            # bootloader's own fallbacks can run, so the board is silent from
-            # reset with no banner and no console.
             boot_cmd = ["cargo", "build", "--release"]
-            if os.environ.get("CYNTHION_HYPERRAM_BIST", "") not in ("", "0"):
-                boot_cmd += ["--features", "hyperram-bist"]
-                emit("bootloader: staging probe COMPILED OUT (BIST variant has "
-                     "no BootRAM to probe)")
             result = run(boot_cmd, cwd=BOOT_CRATE)
             if result.returncode != 0:
                 emit("bootloader build failed:")

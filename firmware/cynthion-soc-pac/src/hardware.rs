@@ -118,6 +118,18 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 2,
     },
     Peripheral {
+        name: "hyperram_bist",
+        base: 0xf0000800,
+        size: 0x00000200,
+        registers: 64,
+    },
+    Peripheral {
+        name: "hyperram_ck",
+        base: 0xf0000a00,
+        size: 0x00000010,
+        registers: 4,
+    },
+    Peripheral {
         name: "plic",
         base: 0xf0400000,
         size: 0x00400000,

@@ -377,8 +377,8 @@ class HyperRAMCeiling(Elaboratable):
 
     def __init__(self, *, sync_mhz=100.0, dqs=True, burst_words=BURST_WORDS,
                  negative_control=False, transport=None, own_clocks=True,
-                 own_leds=True, own_dtr=True):
-        """The four `own_*`/`transport` arguments exist so this can be EMBEDDED.
+                 own_leds=True, own_dtr=True, port=None):
+        """The `own_*`/`transport`/`port` arguments exist so this can be EMBEDDED.
 
         Defaults reproduce the standalone JTAG applet exactly. Passing a
         transport puts the same register window on another bus -- the CPU's CSR
@@ -410,6 +410,10 @@ class HyperRAMCeiling(Elaboratable):
         # Die temperature is a property of the chip, not of the engine, so an
         # embedded copy reads it from `fabric_status` and REG_DIE reads zero here.
         self._own_dtr = own_dtr
+        # `port` is a `HyperRAMPort`: the pins, the PHY and the controller are
+        # the enclosing design's, and this is one side of the mode mux in front
+        # of them. Given one, nothing here requests `ram` (#432).
+        self._port = port
 
         # The negative control. Reads are checked against the COMPLEMENT of what
         # was written, which the part cannot return, so a working detector must
@@ -595,7 +599,19 @@ class HyperRAMCeiling(Elaboratable):
         effective_cr0 = Signal(16)
         m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0, device_cr0[:16]))
 
-        if self.dqs:
+        if self._port is not None:
+            # EMBEDDED, and the pins are not this module's. `top.py` builds one
+            # PHY and one controller in `hr` and puts a mode mux in front of
+            # them; this port is one side of that mux, and looks exactly like
+            # the controller it stands in for (#432).
+            psram = self._port
+            reset_assert = psram.phy_reset
+            m.d.comb += [dll_locked.eq(psram.dll_locked),
+                         dll_ready.eq(psram.dll_ready),
+                         burstdet.eq(psram.burstdet),
+                         psram.readclksel.eq(Mux(sweeping, sweep_phase,
+                                                 readclksel))]
+        elif self.dqs:
             from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
             from peripherals.hyperram_dqs_controller import HyperRAMDQSController
             from bootram import HYPERRAM_LATENCY_CLOCKS
@@ -610,7 +626,22 @@ class HyperRAMCeiling(Elaboratable):
                          dll_ready.eq(phy.dll_ready)]
             reset_assert = phy.phy.reset
             m.d.comb += burstdet.eq(phy.phy.burstdet)
+        else:
+            bus = platform.request("ram")
+            # NO PHASE INPUT, and none available: no DQSBUFM, so `readclksel`
+            # and `sweep_phase` reach nothing on this path (#343). Wiring one
+            # would mean driving the DQ `DELAYF` taps, which luna leaves at a
+            # hardcoded `DEL_VALUE` with a TODO.
+            m.submodules.phy = phy = HyperRAMPHY(bus=bus)
+            m.submodules.psram = psram = HyperRAMController(
+                phy=phy.phy, sync_mhz=self.sync_mhz)
+            # The non-DQS PHY never drives RESET#; the platform's buffer holds it
+            # released, which is the behaviour this path has always had.
+            reset_assert = Signal()
 
+        # The latency sweep, in each path's own units. Outside the branch above
+        # because it belongs to the PATH, not to whoever owns the pins.
+        if self.dqs:
             # THE SAME SWEEP, IN THIS PATH'S UNITS. `HANDLE_LATENCY` runs
             # `latency_clocks + 1` cycles and one cycle is 2 CK at 4:1 gearing,
             # so the wait is `2 x (n + 1)` CK; the part's fixed latency is
@@ -639,18 +670,6 @@ class HyperRAMCeiling(Elaboratable):
                             dqs_low_latency_clocks(power_on)),
                     ]
         else:
-            bus = platform.request("ram")
-            # NO PHASE INPUT, and none available: no DQSBUFM, so `readclksel`
-            # and `sweep_phase` reach nothing on this path (#343). Wiring one
-            # would mean driving the DQ `DELAYF` taps, which luna leaves at a
-            # hardcoded `DEL_VALUE` with a TODO.
-            m.submodules.phy = phy = HyperRAMPHY(bus=bus)
-            m.submodules.psram = psram = HyperRAMController(
-                phy=phy.phy, sync_mhz=self.sync_mhz)
-            # The non-DQS PHY never drives RESET#; the platform's buffer holds it
-            # released, which is the behaviour this path has always had.
-            reset_assert = Signal()
-
             # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
             # and left the controller's own wait welded, so only the one code
             # matching it could align and the other fifteen failed whatever the

@@ -58,18 +58,10 @@ from amaranth.utils import log2_int
 from amaranth_soc import csr, wishbone
 from amaranth_soc.memory import MemoryMap
 
-from luna.gateware.interface.psram import HyperBusPHY, HyperRAMPHY
-
-# Both controllers are ours now, and so is one of the two PHYs.
-# `hyperram_dqs_phy` records the three I/O faults that make upstream's DQS PHY
-# uninstantiable on r1.4; the two controllers are luna's FSMs vendored so their
-# unimplemented tCSHI recovery and their forced latency branch could be fixed.
-# `HyperRAMPHY` stays upstream's -- it elaborates here and it works.
-# `docs/upstream-boundary.md`: do not inherit a stack to get one file -- vendor
-# the file.
-from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
-from peripherals.hyperram_dqs_controller import HyperRAMDQSController
-from peripherals.hyperram_controller import HyperRAMController
+# The PHY and the controller are `hyperram_share.py`'s -- one of each, behind
+# a mode mux -- and this module is handed the interface to drive.
+# `ClockStopPHY` below sits beneath a controller, so it keeps the record.
+from luna.gateware.interface.psram import HyperBusPHY
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
@@ -594,12 +586,15 @@ class BootRAM(Elaboratable):
     jtag_req, jtag_addr, jtag_data, jtag_ack : Signal
         The second requester, in `sync`. Wire these to a `JTAGStager`.
     clk_stop : Signal
-        Drive a `ClockStopPHY.stall` with this when `interface` is supplied from
-        outside; zero unless `clock_stop`.
+        Drive a `ClockStopPHY.stall` with this; zero unless `clock_stop`.
+
+    `interface` is the controller to drive, and it is required. In the SoC it is
+    a `HyperRAMHandover`: the real controller is in `hr` behind a mode mux, and
+    this module reaches it one 32-bit pair per transaction (#432).
     """
 
-    def __init__(self, *, interface=None, dqs=False, sustained=False,
-                 clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ, ram_number=0):
+    def __init__(self, *, interface, dqs=False, sustained=False,
+                 clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ):
         # DQS changes the data width -- 32 bits per beat against 16 -- so it is
         # recorded here and read where the word assembly is decided.
         self._dqs = dqs
@@ -619,14 +614,8 @@ class BootRAM(Elaboratable):
                                      sustained=sustained, ck_mhz=ck_mhz,
                                      clock_stop=clock_stop)
         self._interface = interface
-        # Which `ram` resource to request. 0 is the board's HyperRAM and the
-        # only one the platform declares; the #432 closure probe declares a
-        # shadow 1 so this and the BIST engine can both elaborate.
-        self._ram_number = ram_number
 
-        # For a caller that supplies its own `interface`: what to hand a
-        # `ClockStopPHY`. When this module builds its own PHY it wires this up
-        # internally and the output is instrumentation.
+        # What to hand a `ClockStopPHY.stall`; zero unless `clock_stop`.
         self.clk_stop = Signal()
 
         self.jtag_req  = Signal()
@@ -679,61 +668,14 @@ class BootRAM(Elaboratable):
         # cache or the arbiter. One counter separates them.
         self.probe_cyc = Signal()
 
-        # The DQS read path's self-report. Zero on the non-DQS build, where
-        # there is no DLL and no strobe detector to report anything.
-        # Driven by the probe's CSR so the tap can be swept without a rebuild.
-        self.readclksel = Signal(7, init=HYPERRAM_READCLKSEL)
-
         # 0..3. How many cycles late the read data is against the CK that asked
         # for it -- see the sweep comment in `elaborate`. #185.
         self.read_stall_cycles = Signal(2)
 
-        self.probe_dll_locked = Signal()
-        self.probe_dll_ready = Signal()
-        self.probe_burstdet = Signal()
-
     def elaborate(self, platform):
         m = Module()
 
-        if self._interface is None:
-            if self._dqs:
-                # Raw pads: the DQS primitives own the tristates, the gearing and
-                # the output buffers, so nothing here may be an Amaranth-managed
-                # pin. The PHY drives CK, CS# and RESET# itself.
-                ram_bus = platform.request("ram", self._ram_number, dir="-")
-                psram_phy = HyperRAMDQSPHY(
-                    bus=ram_bus,
-                    readclksel=self.readclksel[:3],
-                    read_phase=self.readclksel[3])
-                psram = HyperRAMDQSController(
-                    phy=psram_phy.phy,
-                    sync_mhz=self._sync_mhz,
-                    high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
-                # Active high into the PHY; the pad is `PinsN` and the PHY reads
-                # that polarity from the pin map rather than restating it.
-                m.d.comb += [
-                    psram_phy.phy.reset.eq(0),
-                    self.probe_dll_locked.eq(psram_phy.dll_locked),
-                    self.probe_dll_ready.eq(psram_phy.dll_ready),
-                    self.probe_burstdet.eq(psram_phy.phy.burstdet),
-                ]
-            else:
-                ram_bus = platform.request("ram", self._ram_number)
-                psram_phy = HyperRAMPHY(bus=ram_bus)
-                if self._clock_stop:
-                    gate = ClockStopPHY(dev=psram_phy.phy)
-                    m.submodules.clock_stop = gate
-                    psram = HyperRAMController(phy=gate.ctrl,
-                                               sync_mhz=self._sync_mhz)
-                    m.d.comb += [gate.stall.eq(self.clk_stop),
-                                 gate.hold.eq(psram.register_active)]
-                else:
-                    psram = HyperRAMController(phy=psram_phy.phy,
-                                               sync_mhz=self._sync_mhz)
-                m.d.comb += ram_bus.reset.o.eq(0)
-            m.submodules += [psram_phy, psram]
-        else:
-            psram = self._interface
+        psram = self._interface
 
         m.submodules.port = port = self.port
         m.submodules.mmap = mmap = self.mmap

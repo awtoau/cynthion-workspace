@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 #
-# Does the MERGED SoC close at SYNC_MHZ 60? #432 stage 1, and the gate on the rest of it.
+# Which `sync` rung does the one gateware close at? #432, over several builds.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Fmax for BootRAM + the second PLL + the BIST engine, in one elaboration.
+"""Fmax for the whole SoC -- staging path, second PLL and BIST engine.
 
     ./scripts/soc_merge_closure.py            # controls, then 60 x3, then 50 x3
     ./scripts/soc_merge_closure.py --runs 1   # one build per point
@@ -11,21 +11,11 @@
 
 ## The question
 
-`SYNC_MHZ` is 50 in the BIST variant because the four-domain build stopped
-closing at 60. The merged design (#432) is that same build plus `BootRAM` --
-strictly more logic -- so its `clk` Fmax decides whether the merge is worth
-building. Nothing else in #432 is built until this number exists.
-
-## What is measured, and what it is not
-
-`CYNTHION_HYPERRAM_MERGED=1` (see `gateware/soc/top.py`) elaborates both halves
-of the fork. The two masters do NOT share the part here: the engine keeps `ram`
-0, `BootRAM` is given a shadow `ram` 1 on the mezzanine pins. So this build
-carries two PHYs and two controllers where the merged design will carry one
-behind a mode mux, and its HyperRAM pins are not the product's.
-
-Every domain is present and nothing is pruned, which is what makes the Fmax
-real. The direction of the error is stated in the issue.
+One design carries both peripheral sets, and what binds it is the Wishbone/CSR
+arbiter's grant fan-out: 2.46 ns of logic against 18.02 ns of routing on a die
+at 72-77% LUT4. So the rung `SYNC_MHZ` can hold is a measurement, not a
+reading of the HyperRAM path -- and it is a WORST CASE over several builds,
+because two builds of one design are two placements (#441).
 
 ## Determinism, and proving the instrument can fail
 
@@ -97,7 +87,7 @@ SYNTHESIS_FLOOR_SECONDS = 320
 
 def env_for(sync_mhz):
     """The variant this script measures, at one CPU clock."""
-    return {"CYNTHION_HYPERRAM_MERGED": "1", "CYNTHION_SYNC_MHZ": f"{sync_mhz:g}"}
+    return {"CYNTHION_SYNC_MHZ": f"{sync_mhz:g}"}
 
 
 def apply_env(env):
@@ -208,7 +198,6 @@ def elaborate_child(sync_mhz):
     from board.cynthion_r1_4 import CynthionPlatformRev1D4  # noqa: PLC0415
     import top as soc_top                                   # noqa: PLC0415
 
-    assert soc_top.HYPERRAM_MERGED, "CYNTHION_HYPERRAM_MERGED did not reach top.py"
     assert soc_top.SYNC_MHZ == float(sync_mhz), soc_top.SYNC_MHZ
     where = OUT / f"elaborate-{sync_mhz:g}"
     plan = CynthionPlatformRev1D4().build(

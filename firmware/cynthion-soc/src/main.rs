@@ -84,12 +84,6 @@
 // pure modules and leaves this half alone (#337).
 #![no_std]
 #![no_main]
-// Under `hyperram-bist` the whole HyperRAM surface -- `hr`, `load`, the
-// `hyperram` region, the staging CRC -- is compiled out, so its helpers have no
-// caller left. That is the feature taking effect, not an oversight; the shell
-// cannot reach a window that variant does not decode. Same allow, same reason,
-// as `cynthion-boot` (#226).
-#![cfg_attr(feature = "hyperram-bist", allow(dead_code))]
 
 use core::fmt::Write;
 use core::panic::PanicInfo;

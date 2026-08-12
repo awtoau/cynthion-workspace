@@ -4,11 +4,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-`top.py` refuses a BIST CK its fabric cannot close at, and its default is not one.
+`top.py` refuses a CK its fabric cannot close at, and its default is not one.
 
-#410 is a default that could not be built: `CYNTHION_HYPERRAM_BIST=1
-CYNTHION_HYPERRAM_BIST_DQS=0` with everything else unset asked for CK 100, and
-the non-DQS fabric stops at 84. The failure arrived as a raw nextpnr ERROR about
+#410 is a default that could not be built: `CYNTHION_HYPERRAM_DQS=0` with
+everything else unset asked for CK 100, and the non-DQS fabric stops at 84. The failure arrived as a raw nextpnr ERROR about
 `hr_clk` after a full synthesis, with nothing naming CK as the cause.
 
 Two things have to hold and neither is checked by anything else:
@@ -46,7 +45,7 @@ def run_top(**env):
     return subprocess.run(
         [sys.executable, str(TOP), "--help"],
         cwd=ROOT, capture_output=True, text=True, timeout=IMPORT_SECONDS,
-        env={**os.environ, "CYNTHION_HYPERRAM_BIST": "1", **env})
+        env={**os.environ, **env})
 
 
 @pytest.mark.parametrize("dqs", [True, False])
@@ -55,19 +54,19 @@ def test_the_default_is_under_its_own_ceiling(dqs):
     import ast
 
     ceilings = ast.literal_eval(
-        TOP.read_text().split("HYPERRAM_BIST_CK_CEILING_MHZ = ")[1]
+        TOP.read_text().split("HYPERRAM_CK_CEILING_MHZ = ")[1]
         .splitlines()[0])
     assert float(variant.CK_DEFAULT_MHZ[dqs]) <= ceilings[dqs]
 
 
 @pytest.mark.parametrize("dqs", [True, False])
 def test_the_default_variant_elaborates(dqs):
-    result = run_top(CYNTHION_HYPERRAM_BIST_DQS="1" if dqs else "0")
+    result = run_top(CYNTHION_HYPERRAM_DQS="1" if dqs else "0")
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_a_ck_past_the_fabric_is_refused_by_name():
-    result = run_top(CYNTHION_HYPERRAM_BIST_DQS="0",
+    result = run_top(CYNTHION_HYPERRAM_DQS="0",
                      CYNTHION_HYPERRAM_CK_MHZ="100")
     assert result.returncode != 0
     message = result.stdout + result.stderr
@@ -78,7 +77,7 @@ def test_a_ck_past_the_fabric_is_refused_by_name():
 
 def test_the_ceiling_can_be_raised_on_purpose():
     """It is one measurement of one design; raising it is visible in the command."""
-    result = run_top(CYNTHION_HYPERRAM_BIST_DQS="0",
+    result = run_top(CYNTHION_HYPERRAM_DQS="0",
                      CYNTHION_HYPERRAM_CK_MHZ="100",
                      CYNTHION_HYPERRAM_CK_CEILING_MHZ="120")
     assert result.returncode == 0, result.stdout + result.stderr

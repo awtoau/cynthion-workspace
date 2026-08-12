@@ -9,10 +9,9 @@
     ./scripts/hyperram_register_path.py --skip-all     # steps 1-2 only
     ./scripts/hyperram_register_path.py --passes 16    # per cell
 
-Assumes a non-DQS BIST bitstream is already loaded:
+Assumes a non-DQS bitstream is already loaded:
 
-    CYNTHION_HYPERRAM_BIST=1 CYNTHION_HYPERRAM_BIST_DQS=0 \\
-      CYNTHION_HYPERRAM_CK_MHZ=85.7143 \\
+    CYNTHION_HYPERRAM_CK_MHZ=85.7143 \\
       python3 scripts/soc_run.py --skip-tests --force-flash
 
 Transcript -> `tmp/logs/hyperram-register-path.txt`, log -> `tmp/logs/dev.log`.

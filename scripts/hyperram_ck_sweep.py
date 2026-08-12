@@ -8,10 +8,9 @@
     ./scripts/hyperram_ck_sweep.py                 # every rung, 16 passes
     ./scripts/hyperram_ck_sweep.py --passes 64
 
-Assumes a non-DQS BIST bitstream with two rungs is loaded:
+Assumes a non-DQS bitstream with two rungs is loaded:
 
-    CYNTHION_HYPERRAM_BIST=1 CYNTHION_HYPERRAM_BIST_DQS=0 \\
-      CYNTHION_HYPERRAM_CK_MHZ=80,90 \\
+    CYNTHION_HYPERRAM_CK_MHZ=80,90 \\
       python3 scripts/soc_run.py --skip-tests --force-flash
 
 ## What it can and cannot see

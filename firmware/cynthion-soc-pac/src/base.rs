@@ -106,6 +106,16 @@ pub const BOARD_CLOCKS: usize = 0xf0000660;
 /// Size of the BOARD_CLOCKS window, in bytes.
 pub const BOARD_CLOCKS_SIZE: usize = 0x00000010;
 
+/// hyperram_bist: 64 registers at 0xf0000800
+pub const HYPERRAM_BIST: usize = 0xf0000800;
+/// Size of the HYPERRAM_BIST window, in bytes.
+pub const HYPERRAM_BIST_SIZE: usize = 0x00000200;
+
+/// hyperram_ck: 4 registers at 0xf0000a00
+pub const HYPERRAM_CK: usize = 0xf0000a00;
+/// Size of the HYPERRAM_CK window, in bytes.
+pub const HYPERRAM_CK_SIZE: usize = 0x00000010;
+
 /// plic: 10 registers at 0xf0400000
 pub const PLIC: usize = 0xf0400000;
 /// Size of the PLIC window, in bytes.
@@ -121,11 +131,11 @@ pub const CLINT_SIZE: usize = 0x00010000;
 /// `rdtime` counts one per `sync` cycle, so this is the timebase for
 /// every interval in the firmware. Hand-maintained it silently stretched
 /// or shrank them all whenever the gateware clock moved.
-pub const SYNC_HZ: u32 = 60000000;
+pub const SYNC_HZ: u32 = 50000000;
 
 /// I2C prescale for 1000 kHz SCL at that clock, from the gateware's own
 /// `prescale_for` -- `f_SCL = f_sync / (5 * (PRER + 1))`.
-pub const I2C_PRESCALE: u16 = 11;
+pub const I2C_PRESCALE: u16 = 9;
 
 /// Whether the SPIFLASH window is cached (VexiiRiscv PMA `main`).
 ///
