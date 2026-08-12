@@ -246,7 +246,7 @@ class HyperRAMDomains(Elaboratable):
     """
 
     def __init__(self, *, ck_mhz, dqs=True, input_mhz=60.0):
-        # A float or a sequence. One rung is the old behaviour exactly.
+        # A float or a sequence; a single rung behaves exactly like the scalar.
         self.ck_rungs = ([float(ck_mhz)] if isinstance(ck_mhz, (int, float))
                          else [float(ck) for ck in ck_mhz])
         if len(set(self.ck_rungs)) != len(self.ck_rungs):

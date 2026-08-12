@@ -14,9 +14,8 @@
 //! ## This is the entry point
 //!
 //! `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`. There is no
-//! `#[entry]` anywhere else and no superloop to fall back to: the two used to be
-//! mutually exclusive by the linker, which is why the choice was a feature, and
-//! #245 settled it.
+//! `#[entry]` anywhere else and no superloop to fall back to -- two entry points
+//! are mutually exclusive by the linker, and #245 settled the choice.
 //!
 //! ## What lives here, and what does not
 //!
@@ -231,9 +230,9 @@ mod app {
         // wants -- the tick period and the part's settling time happen to be
         // the same number, and `PERIOD_MS` is asserted against it below.
         //
-        // The alternative the driver used to run was to read the PREVIOUS
-        // cycle's latch 50 ms later. That respected the window by a wide margin
-        // and made every reading one whole interval stale.
+        // The alternative -- reading the PREVIOUS cycle's latch 50 ms later --
+        // respects the window by a wide margin and makes every reading one
+        // whole interval stale.
         if crate::power::refresh_pending() {
             SINCE_MS.store(since, Ordering::Relaxed);
             sched::pended(sched::POWER);
@@ -378,10 +377,10 @@ mod app {
 
     /// The limit ALERT, released by the pin rather than by a period (#285).
     ///
-    /// Servicing used to happen INSIDE the REFRESH cycle, so alert latency was
-    /// the poll period -- and #286 wants that period settable, and off by
-    /// default. Reporting an excursion up to a second late, or never, is not a
-    /// property the alert should inherit from an unrelated setting.
+    /// Servicing INSIDE the REFRESH cycle would make alert latency the poll
+    /// period, which #286 wants settable and off by default. Reporting an
+    /// excursion up to a second late, or never, is not a property the alert
+    /// should inherit from an unrelated setting.
     ///
     /// The handler cannot do this itself: clearing `ALERT_STATUS` is an I2C
     /// transaction and `devices` is a shared resource it has no `Context` to

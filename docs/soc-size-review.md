@@ -60,7 +60,7 @@ This matters more than any single number below, because two of the three are
 routinely quoted as if they were the third.
 
 **Out of context** — synthesise one module alone. Fast, works for a module the
-top no longer instantiates, and is an **upper bound**: alone, a peripheral keeps
+top does not instantiate, and is an **upper bound**: alone, a peripheral keeps
 logic that would be folded away among its neighbours. `soc_peripheral_area.py`.
 
 **In context** — build the whole SoC twice and diff the utilisation. This is the

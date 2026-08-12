@@ -75,7 +75,7 @@ half of a DQS write reaches the device first -- is
 `hyperram_dqs_model_sim.py --stage order`'s, against the twin and Winbond's model,
 with a deliberately rewired run required to fail.
 
-## What no longer has an independent judge
+## What has no independent judge
 
 * **The DQS controller's tCSHI and tCSM.** `controller_model_tb.sv` drives the
   non-DQS controller. Both controllers do the same `_recovery_cycles` arithmetic,

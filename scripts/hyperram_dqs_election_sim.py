@@ -38,9 +38,9 @@ same two defects end to end against the device model.
    over a 4-bit gearbox word is four chances to see a 1.
 5. **The election is sensitive to exactly ONE fabric cycle, and it is the one the
    controller declares.** Measured by driving RWDS high in a single cycle at a
-   time. #381: the sample used to sit in `SHIFT_COMMAND0`/`SHIFT_COMMAND1`, which
-   read the pin cycles BEFORE the CA -- a bus that is deselected at any round
-   trip of one cycle or more.
+   time. #381: sampled in `SHIFT_COMMAND0`/`SHIFT_COMMAND1` it reads the pin
+   cycles BEFORE the CA -- a bus that is deselected at any round trip of one
+   cycle or more.
 
 ## The controls
 

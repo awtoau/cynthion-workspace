@@ -88,10 +88,9 @@ HYPERRAM_READCLKSEL = 0b010
 # arrives. `scripts/hyperram_latency_probe.py` sweeps it against the model and
 # reports 6, 7 and 8 completing while 1-5 do not.
 #
-# It was 4, chosen to pull the capture EARLIER against an assumed late read, and
-# upstream's 5 is also below the minimum. Both sample before the device presents,
-# which is what a uniform one-word displacement looks like -- the window read
-# 0/16 at 4 while single-word staging reads still came back correct. See #186.
+# Anything below 6 samples before the device presents -- upstream's 5 included --
+# and that looks like a uniform one-word displacement: at 4 the window reads
+# 0/16 while single-word staging reads still come back correct. See #186.
 HYPERRAM_LATENCY_CLOCKS = 6
 
 # tCSM, the longest CS# may stay Low. CR1[1:0] = 01b, which Table 12 ties to a
@@ -127,10 +126,10 @@ HYPERRAM_CK_MHZ = 60.0
 def hyperram_max_burst_words(ck_mhz, *, clock_stop=False):
     """Words one transaction may hold CS# Low for, derived from tCSM.
 
-    THE CAP GUARDS A TIME LIMIT AND USED TO BE WRITTEN AS A BARE WORD COUNT.
-    748 words is right at CK 192 MHz and is 12.5 us -- over three times tCSM --
-    at the 60 MHz this SoC runs, unreachable today only because a Wishbone burst
-    never exceeds 32 words. It has to come from the clock.
+    THE CAP GUARDS A TIME LIMIT, so it comes from the clock, not from a bare
+    word count. A fixed 748 words is right at CK 192 MHz and is 12.5 us -- over
+    three times tCSM -- at the 60 MHz this SoC runs, unreachable today only
+    because a Wishbone burst never exceeds 32 words.
 
     `clock_stop` makes the divergence explicit rather than latent: Active Clock
     Stop spends CS#-Low cycles that produce no word, one per 32-bit beat and so
@@ -190,8 +189,8 @@ class ClockStopPHY(Elaboratable):
         # `stall` is IGNORED while this is High. Wire it to the controller's
         # `register_active`: the 2025 app note 7.2.2 says not to stop the clock
         # during a register access, and register accesses run through the same
-        # FSM as memory ones, so a stalling master reaches them too. Undriven is
-        # the old behaviour. (#340)
+        # FSM as memory ones, so a stalling master reaches them too. Undriven,
+        # `stall` always applies. (#340)
         self.hold = Signal()
 
     def elaborate(self, platform):
@@ -422,13 +421,13 @@ class HyperRAMBoot(wiring.Component):
 
     ## Why this is 32 bits wide and addresses in PAIRS
 
-    It used to move one 16-bit word, because the non-DQS controller moves one
-    16-bit word per cycle and matching it was free. The DQS PHY moves 32 bits per
-    cycle and has no narrower mode -- `HyperBusDQSPHY` is "a 32-bit HyperBus
-    interface on a DQS group for use with a 4:1 PHY module" -- so a 16-bit port
-    on top of it has to be synthesised from a half-select and an RWDS byte mask.
+    A 16-bit port is free on the non-DQS controller, which moves one 16-bit word
+    per cycle. The DQS PHY moves 32 bits per cycle and has no narrower mode --
+    `HyperBusDQSPHY` is "a 32-bit HyperBus interface on a DQS group for use with
+    a 4:1 PHY module" -- so a 16-bit port on top of it has to be synthesised from
+    a half-select and an RWDS byte mask.
 
-    That synthesis was the source of three separate faults: writes came back with
+    That synthesis is the source of three separate faults: writes come back with
     the masked half replaced by a copy of the other (`a5c3` read as `c3c3`), an
     odd start address hung the read path outright, and every access carried an
     address-bit-0 mux that no other HyperRAM controller has. LiteX's
@@ -748,13 +747,10 @@ class BootRAM(Elaboratable):
         second_word = Signal()
 
         # Does a 32-bit beat take TWO controller words? That is a property of the
-        # controller's width alone, now that every owner presents 32 bits -- the
-        # non-DQS controller moves 16 bits per cycle, the DQS one moves 32.
-        #
-        # It used to be a per-owner signal, set for the Wishbone window and clear
-        # for the staging ports, because the staging ports were 16 bits wide. It
-        # was never gated on `dqs`, so in DQS builds the window was still marked
-        # wide against a controller that was already 32 bits.
+        # controller's width alone -- every owner presents 32 bits, the non-DQS
+        # controller moves 16 bits per cycle and the DQS one moves 32. Not a
+        # per-owner signal: that cannot see `dqs` and marks the Wishbone window
+        # wide against a controller already 32 bits.
         wide = not self._dqs
 
         start = Signal()
@@ -893,11 +889,10 @@ class BootRAM(Elaboratable):
         word_event = (Mux(writing, psram.write_ready, psram.read_ready)
                       & ~Mux(writing, stall, stall_read))
 
-        # `wide` and "keeps the transaction open" used to be the same flag, which
-        # worked only because the 16-bit controller made them coincide: the
-        # Wishbone window was the sole owner needing two words AND the sole owner
-        # that bursts. The DQS controller separates them -- the window still
-        # bursts but its beat is now one word -- so they are two signals.
+        # `wide` and "keeps the transaction open" are two signals. They coincide
+        # only on the 16-bit controller, where the Wishbone window is both the
+        # sole owner needing two words and the sole owner that bursts; on DQS the
+        # window still bursts but its beat is one word.
 
         # Has this owner's 32-bit beat been fully transferred? On the DQS
         # controller one word IS the beat, so this is always true and the whole
@@ -936,29 +931,15 @@ class BootRAM(Elaboratable):
         #
         # HyperBus sends the lower-addressed word first.
         #
-        # THIS COMMENT USED TO CLAIM the DQS PHY puts that first word in the HIGH
-        # half of its 32-bit port, and that `dev.py test-board` cross-checked it.
-        # The second part is definitely wrong: the cross-check writes and reads
-        # through paths that share this function, so an inverted swap cancels and
-        # it can never see one.
+        # NEITHER DIRECTION SWAPS. `hyperram_ceiling_top.py` is the reference: it
+        # drives `psram.write_data` from its pattern and compares `psram.read_data`
+        # against it directly, no swap either way, over millions of words. A design
+        # that transforms neither side is self-consistent with whatever the
+        # controller's half convention is. See #186.
         #
-        # OBSERVED, not concluded: staging `a5c31234` with the swap applied put
-        # `a5c3` into the lower word; without the swap it put `1234` there. That
-        # is consistent with the wire taking the low half first -- but the SECOND
-        # word is corrupt in both cases (`c3c3`, then `3434`: the first word's low
-        # byte repeated), so one 32-bit value cannot separate an ordering fault
-        # from a permutation that happens to leave those four bytes looking right.
-        #
-        # `hr ramp` writes 0-255, where every byte names its own position, and
-        # that is what settles it.
-        #
-        # NEITHER DIRECTION SWAPS NOW. `hyperram_ceiling_top.py` is the reference:
-        # it drives `psram.write_data` from its pattern and compares
-        # `psram.read_data` against it directly, with no swap either way, and it
-        # moves millions of words. Whatever the controller's half convention is,
-        # a design that applies no transform on either side is self-consistent
-        # with it -- and `BootRAM` applying one on reads only was the remaining
-        # asymmetry between the two. See #186.
+        # `dev.py test-board` cannot judge a swap: it writes and reads through this
+        # function, so an inverted one cancels. `hr ramp` writes 0-255, where every
+        # byte names its own position, and that is what settles it.
         read_word = Signal(32 if self._dqs else 16)
         m.d.comb += read_word.eq(psram.read_data)
 
@@ -966,38 +947,20 @@ class BootRAM(Elaboratable):
             # Every owner presents a whole 32-bit pair, so this is one assignment
             # and there is no byte mask at all.
             #
-            # It used to duplicate a 16-bit staging word into both halves and let
-            # an RWDS mask choose which landed. That never worked on silicon --
-            # `a5c3` read back as `c3c3`, the masked half replaced by a copy of
-            # the other -- and luna's DQS interface does not support a write mask
-            # in the first place: it drives `rwds.o` to 0 unconditionally, which
-            # is why reaching it needed a subclass. Byte granularity was
-            # synthesised for ports that never needed it.
-            # NO SWAP ON THE WRITE SIDE -- one-variable experiment, #186.
-            #
-            # The comment above asserts the PHY puts the first word on the wire
-            # in the HIGH half. The board says otherwise: staging `a5c31234`
-            # becomes `0x1234a5c3` after the swap, and memory comes back holding
-            # `a5c3` in the FIRST word -- the LOW half of the swapped value. That
-            # is what happens if the wire takes the low half first and the swap is
-            # backwards.
-            #
-            # The read side keeps the swap for now, deliberately: changing both at
-            # once cannot be attributed. If this alone fixes the write ordering,
-            # the two directions need opposite conventions and the comment above
-            # is wrong; if it does not, the fault is not the swap.
+            # NO SWAP ON THE WRITE SIDE (#186). Duplicating a 16-bit staging word
+            # into both halves under an RWDS mask does not work on silicon --
+            # `a5c3` reads back as `c3c3` -- and luna's DQS interface has no write
+            # mask at all: it drives `rwds.o` to 0 unconditionally.
             m.d.comb += psram.write_data.eq(live_data)
         else:
             m.d.comb += psram.write_data.eq(
                 Mux(second_word, live_data[16:], live_data[:16]))
 
-        # `live_address` is already even by construction: the window addresses in
-        # 32-bit beats and both staging ports step by two. The `& ~1` that used to
-        # be here was covering for the 16-bit ports, which could name an odd word.
-        # A staging port is 32 bits, so on the 16-bit controller it takes two
-        # words: hold the first and present the pair when the second lands. The
-        # window does the same thing inside `HyperRAMWishbone`; the staging ports
-        # used to need none of it because they were themselves 16 bits.
+        # `live_address` is even by construction -- the window addresses in
+        # 32-bit beats and both staging ports step by two -- so no `& ~1` is
+        # needed. A staging port is 32 bits, so on the 16-bit controller it takes
+        # two words: hold the first, present the pair when the second lands. The
+        # window does the same inside `HyperRAMWishbone`.
         if wide:
             staged_low = Signal(16)
             staging_word = active & (owner == OWNER_CSR) & word_event
@@ -1026,11 +989,11 @@ class BootRAM(Elaboratable):
             psram.start_transfer.eq(start),
             psram.address.eq(live_address),
 
-            # These are held from the start edge through the whole transfer. Earlier
-            # pulsed drivers returned plausible wrong data rather than failing.
+            # These are held from the start edge through the whole transfer.
+            # Pulsing them returns plausible wrong data rather than failing.
             psram.perform_write.eq(Mux(start, selected_write, writing)),
             # `current_final` already folds in the start edge through `half_done`
-            # and `streaming`, so it no longer needs a Mux of its own here.
+            # and `streaming`, so it needs no Mux of its own here.
             # `stall_timeout` is the tCK escape above: closing the transaction is
             # the only exit `HyperRAMController` offers, so the bound uses it.
             psram.final_word.eq(current_final | stall_timeout),

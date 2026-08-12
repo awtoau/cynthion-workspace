@@ -38,9 +38,8 @@ phase detector's minimum, where the datasheet stops guaranteeing jitter. A
 solver that offered them would be offering configurations that build and then
 misbehave as noise.
 
-13 is still four times what the old topology allowed, and the constraint is now
-the PLL's published limit rather than an accident of sharing a VCO with the USB
-PHY.
+13 is four times what sharing a VCO with the USB PHY allows, and the constraint
+is the PLL's published limit rather than an accident of that sharing.
 
 60 MHz appears in this file exactly once, as the USB PHY's requirement. It is
 not the CPU's number and never was.
@@ -182,7 +181,7 @@ class SocClocks(Elaboratable):
     Parameters
     ----------
     sync_mhz : float
-        The CPU clock. Free -- it is no longer tied to the PHY's 60 MHz.
+        The CPU clock. Free -- not tied to the PHY's 60 MHz.
     with_fast : bool
         Build the `fast` edge-clock domain. Needed by the flash PHY and by the
         HyperRAM DQS PHY; nothing else reads it.

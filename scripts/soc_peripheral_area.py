@@ -8,7 +8,7 @@
 Written for `docs/soc-size-review.md`, which needs a per-module number for
 every "this could be deleted" claim. The alternative -- building the whole SoC
 once per candidate -- is about two minutes a build and cannot be done at all
-for a module the shipping top no longer instantiates.
+for a module the shipping top does not instantiate.
 
 **These are OUT-OF-CONTEXT numbers and they are an UPPER BOUND, not the
 delta.** Synthesised alone, a peripheral keeps logic that would be optimised

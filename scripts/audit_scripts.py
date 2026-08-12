@@ -44,11 +44,11 @@ because that depends on what it cost to write. It marks candidates and stops.
 
 ## What counts as a call, and what stopped counting
 
-`called` used to be `if name in text`, which counted a comment explaining what a
-script had measured. Prose about a tool outlives the tool, so that kept spent
-tools alive by definition -- and worse, it manufactured `live`: `install.py` was
-reachable from `./dev.py` because `machine_setup.py` passes `"install"` to `dnf`.
-56 KiB of installer nothing had run in months, wearing a load-bearing badge.
+`called` is not `if name in text`: a substring test counts a comment explaining
+what a script measured, and prose about a tool outlives the tool, so it keeps
+spent tools alive by definition. It also manufactures `live` -- `install.py`
+reads as reachable from `./dev.py` because `machine_setup.py` passes `"install"`
+to `dnf`: 56 KiB of installer nothing has run in months, wearing the badge.
 
 So for Python the evidence is the AST: imports, and string literals that are not
 docstrings. A bare stem counts only if it has an underscore, which every script
@@ -193,14 +193,12 @@ def without_comments(text, suffix):
 def references_from(path, names):
     """Which other scripts this file INVOKES -- not which it mentions.
 
-    This used to be `if name in text`, and that is the bug #157 records: a
-    comment explaining what a script had measured counted as a call, so `called`
-    was an upper bound nobody could act on. It was worse than the issue said --
-    `install.py` was classified LIVE off a docstring example in
-    `logging_utils.py` and a "mirrors install.py" comment in `check.py`. Nothing
-    has run it in months.
+    NOT `if name in text` (#157): a comment explaining what a script measured
+    counts as a call, making `called` an upper bound nobody can act on --
+    `install.py` reads LIVE off a docstring example in `logging_utils.py` and a
+    "mirrors install.py" comment in `check.py`.
 
-    So for Python the evidence is now the AST only:
+    So for Python the evidence is the AST only:
 
       * `import x` / `from x import y`, resolved against the script names;
       * a string LITERAL naming the script -- a subprocess argv, or a bare

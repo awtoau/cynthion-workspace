@@ -238,10 +238,10 @@ QPI and DTR in a separate datasheet; the `-IQ` fitted here has **neither**, nor
 `0xC0` Set Read Parameters. See
 [`../architecture.md`](../architecture.md).
 
-**Correction: there is no ADS bit on this part.** This table previously read
-SR3 `0x60` as "ADS clear". ADS/ADP are 4-byte-addressing bits and exist only on
-≥256 Mbit parts; SR3 bit S23 here is Reserved. `0x60` is DRV=25% and WPS=0, and
-nothing else. (S23 *is* `HOLD/RST` on the W25Q32FV — the JV dropped it.)
+**There is no ADS bit on this part**, so SR3 `0x60` does not read as "ADS clear".
+ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts; SR3 bit S23
+here is Reserved. `0x60` is DRV=25% and WPS=0, and nothing else. (S23 *is*
+`HOLD/RST` on the W25Q32FV — the JV dropped it.)
 
 **Capacity confirmed three ways** — SFDP, the ID byte, and aliasing. Reads at 4, 8
 and 12 MiB all return offset 0 exactly; reads past 16 MiB get no response.
@@ -273,9 +273,9 @@ lines are wired, so quad mode is a gateware question, not rework.
 **144 MHz SCK** — **8% past this part's rating**, which is 133 MHz for everything
 except `0x03` at VCC 3.0–3.6 V, and 2.9× past `0x03`'s own 50 MHz.
 
-**Correction: there is no Lattice `MCLK` figure to be past.** This section
-previously read *"132% past the 62 MHz Lattice specifies for `MCLK`"*. The 62 MHz
-is `fCCLK` in the sysCONFIG port timing table — the **configuration engine's**
+**There is no Lattice `MCLK` figure to be past**, so 144 MHz is not "132% past
+the 62 MHz Lattice specifies for `MCLK`". The 62 MHz is `fCCLK` in the sysCONFIG
+port timing table — the **configuration engine's**
 oscillator ceiling, which has nothing to do with user mode. The string `USRMCLK`
 does not appear in the ECP5 datasheet at all; FPGA-TN-02039 §6.1.2, the only
 `USRMCLK` documentation, gives no fmax, no setup/hold and no jitter; and

@@ -1,9 +1,8 @@
 //! What the dispatcher is achieving, and what it costs.
 //!
 //! Issue #245, under #115. This firmware has one concurrency model and it is
-//! `#[rtic::app]` in `src/rtic_app.rs`. It used to have two, chosen at compile
-//! time, with the superloop shipping and RTIC behind a feature; the superloop is
-//! gone and the measurements that decided it are in `docs/rtic.md`.
+//! `#[rtic::app]` in `src/rtic_app.rs`. Not a compile-time choice between two;
+//! the measurements that decided it are in `docs/rtic.md`.
 //!
 //! ## Why this module exists at all
 //!
@@ -71,9 +70,8 @@ pub const POWER: usize = 0;
 
 /// The limit ALERT: `power::Monitor::service_alert`, released by the pin (#285).
 ///
-/// Aperiodic. It used to be serviced INSIDE the REFRESH cycle, which made alert
-/// latency equal to the poll period -- so backing the poll off would have made
-/// excursions slower to report, and #286 wants it off by default.
+/// Aperiodic, and NOT inside the REFRESH cycle: that ties alert latency to the
+/// poll period, which #286 wants settable and off by default.
 pub const POWER_ALERT: usize = 1;
 
 /// The heartbeat: toggle the orange LED, every [`HEARTBEAT_PERIOD_MS`] (#411).
@@ -402,8 +400,8 @@ pub fn sources(uart: &mut Uart) {
     }
     // The I2C completion. Printed even when the count is zero, and especially
     // then: zero after traffic means the source is masked, `CTR.IEN` is clear,
-    // or the gateware is not driving it, and those used to be indistinguishable
-    // because none of them produced a number. #246.
+    // or the gateware is not driving it -- three faults no other number
+    // separates. #246.
     if let Some(board) = target::BOARD {
         let count = irq::i2c_interrupts();
         let _ = writeln!(

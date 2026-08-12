@@ -283,7 +283,7 @@ class HyperRAMController(Elaboratable):
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
         # The ceiling `latency_clocks` may be driven to, which sizes it and which
         # the tCSM check below must assume. Defaults to the fixed count, so a
-        # caller that never drives the input gets exactly the old build.
+        # caller that never drives the input gets exactly that count.
         self._max_latency_clocks = max(self.HIGH_LATENCY_CLOCKS,
                                        max_latency_clocks or 0)
         # The count HANDLE_LATENCY can actually run to, which is the ceiling or the
@@ -341,24 +341,18 @@ class HyperRAMController(Elaboratable):
         # than being welded to one mode. High takes the long count on every
         # transaction; low honours the RWDS sample. Reset is the build-time value,
         # so an undriven caller is unchanged.
-        #
-        # This was `int(self._fixed_latency)` ORed into the branch condition, which
-        # made the variable path DEAD whenever the constructor said True -- the
-        # sweep moved the PART into variable mode and left the controller unable to
-        # respond, so every `var` cell failed. Same defect as the latency count
-        # above, same fix. (#338)
+        # A constant folded into the branch condition kills the variable path
+        # whenever the constructor says True: the sweep moves the PART into
+        # variable mode and the controller cannot respond (#338).
         self.fixed_latency    = Signal(reset=int(fixed_latency))
         # The count for the SHORT branch, when the part declines the extra
         # latency. Fixed latency is 2L and variable is 1L, so this is half
         # `latency_clocks` -- but it is an input rather than a derivation because
         # the derivation is the datasheet's, not the silicon's, and this rig
         # exists to test that kind of claim.
-        #
-        # It was `LOW_LATENCY_CLOCKS = 7`, a class constant, which is why `var`
-        # passed only at codes 2 and 6 once the branch became reachable: the part
-        # elected the short latency and the controller waited a number that had
-        # nothing to do with the code. Third instance of one defect -- a swept
-        # axis whose consumer holds a constant. (#331, #338)
+        # A class constant here is a swept axis whose consumer never moves: the
+        # part elects the short latency and the controller waits a number with
+        # nothing to do with the code (#331, #338).
         self.low_latency_clocks = Signal(range(0, self._max_latency_clocks + 1),
                                          reset=self.LOW_LATENCY_CLOCKS)
         # tCSHI, in whole sync cycles, as RECOVERY will count it. Reset is the
@@ -366,10 +360,8 @@ class HyperRAMController(Elaboratable):
         # sweep the one parameter that binds hardest as CK rises. The gap CS# is
         # actually High is this plus one -- RECOVERY drives CS# from its second
         # cycle and IDLE holds it for one more.
-        #
-        # It was `self._recovery_cycles`, a constant, and so was unfalsifiable: the
-        # audit's "T_CSHI_NS = 10.0 is right" was a datasheet reading with no way to
-        # measure it. (#341)
+        # A constant here is unfalsifiable: "T_CSHI_NS = 10.0 is right" stays a
+        # datasheet reading with no way to measure it (#341).
         self.recovery_cycles  = Signal(range(0, self._max_recovery_cycles + 1),
                                        reset=self._recovery_cycles)
         # The floor tRWR puts under the initial latency, in CK: `ceil(tRWR/tCK)`,

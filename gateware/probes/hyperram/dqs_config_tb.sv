@@ -371,10 +371,10 @@ module tb;
   // that handshake does with a mistimed window, not to model the primitive.
   integer dv_from_read = 0;
 
-  // RWDS FLOAT, GIVEN A VALUE. `rwds === 1'b1` read an undriven line as a firm 0,
-  // so a sample landing in a float was invisible here. `+rwds_float_pct=<0..100>`
-  // is the chance a float reads High, `+rwds_float_seed` the stream. Default 0 is
-  // the old behaviour exactly, so nothing already green becomes flaky. (#400)
+  // RWDS FLOAT, GIVEN A VALUE. `rwds === 1'b1` reads an undriven line as a firm
+  // 0, so without this a sample landing in a float is invisible here.
+  // `+rwds_float_pct=<0..100>` is the chance a float reads High,
+  // `+rwds_float_seed` the stream. Default 0 never floats High. (#400)
   integer rwds_float_pct  = 0;
   integer rwds_float_seed = 1;
   integer rwds_floats     = 0;   // samples that landed on an undriven line
@@ -538,8 +538,7 @@ module tb;
     end
   endtask
 
-  // The old signature: the short count left at its reset, which is what every
-  // caller had before #380 gave the DQS controller an input for it.
+  // Short form: the low-latency count left at its reset (3). See #380.
   task run_sequence(input [15:0] cr0v, input [15:0] cr1v, input integer n);
     begin
       run_sequence_low(cr0v, cr1v, n, 3);

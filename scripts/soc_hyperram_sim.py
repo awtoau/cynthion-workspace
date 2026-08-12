@@ -351,9 +351,9 @@ class ModelHyperRAM:
                 self._beat = 0
 
         elif self._state == "data":
-            # NO CLOCK, NO TRANSFER. The write branch below used to check `dq_e`
-            # alone, so a word landed in this model even with CK stopped -- and
-            # that is exactly the failure being investigated in #186, where the
+            # NO CLOCK, NO TRANSFER. Checking `dq_e` alone lands a word in this
+            # model even with CK stopped -- which is exactly the failure being
+            # investigated in #186, where the
             # controller registers its last word and leaves for RECOVERY in the
             # same cycle, so the data reaches the pins after CK has stopped.
             #
@@ -525,9 +525,8 @@ def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
     """Run `body(ctx, dut, model)` and return the model it used.
 
     `model_latency` sets the DEVICE's latency independently of the controller's.
-    Leaving it None keeps the old behaviour, where the model takes luna's class
-    constant -- convenient, and the reason this harness could never show the two
-    disagreeing.
+    Leaving it None lets the model take luna's class constant -- convenient, and
+    the reason a harness that does that cannot show the two disagreeing.
 
     `deliver` caps how many read beats the device serves before going silent.
     """
@@ -636,10 +635,10 @@ def section_recovery(checks, emit):
     """4. The gap between transactions, on the DQS controller.
 
     MEASURED here and judged elsewhere. Whether a gap clears tCSHI is a fact about
-    the part, and the Python model used to judge it against a copy of the same
-    number the controller was handed. `hyperram_model.v` carries the monitor now;
-    what is left is the comparison between the two controllers, which needs no
-    datasheet number at all. (#346)
+    the part, and a Python model judging it against a copy of the number the
+    controller was handed decides nothing. `hyperram_model.v` carries the monitor;
+    what is left here is the comparison between the two controllers, which needs
+    no datasheet number at all. (#346)
     """
     emit("\n4. The gap the DQS controller's RECOVERY state leaves\n")
 
@@ -1030,7 +1029,7 @@ def section_latency_input(checks, emit):
     # The floor is `phy_round_trip_cycles + 3`, not 2: below it READ_DATA begins
     # while the device's RWDS fall is still in flight and latches it as a strobe
     # over a tristate bus. #353 derived it twice, from a burst and from the AC
-    # parameters. The check here used to say "below 2", which the floor refutes.
+    # parameters.
     floor = min_read_latency_clocks(0)
     at_floor = latency_cycles_held(latency=floor)
     checks.check("a count under the read floor is clamped up to it, not wrapped",
@@ -1738,8 +1737,8 @@ def section_line_write(checks, emit):
 
     # STEP ONE, before any burst result is believed: a single 32-bit write,
     # whose answer is known independently. Two words, at `adr*2` and `adr*2+1`,
-    # low half first. A capture that cannot get this right cannot be used to
-    # judge the gateware, and this one could not until its latency was fixed.
+    # low half first. A capture that cannot get this right cannot judge the
+    # gateware.
     single = simulate_single_write(adr=0x100)
     checks.check("a single 32-bit write stores exactly two device words",
                  len(single.memory) == 2, f"{len(single.memory)} words")
@@ -1856,10 +1855,10 @@ def section_line_refill(checks, emit):
     burst_cycles = sum(burst_model.transaction_cycles)
     classic_cycles = sum(classic_model.transaction_cycles)
     # The cap guards tCSM, which is a TIME, so it has to be checked at the clock
-    # the design runs -- not at the 192 MHz the old literal 748 was written for.
-    # That number was 12.5 us at CK 60, over three times the limit it exists to
+    # the design runs -- not at the 192 MHz a fixed 748 words assumes. That
+    # number is 12.5 us at CK 60, over three times the limit it exists to
     # enforce, and unreachable only because a Wishbone burst never exceeds 32
-    # words. The negative control below is the literal it replaced.
+    # words. The negative control below is that literal.
     for ck in (HYPERRAM_CK_MHZ, 192.0):
         for stop in (False, True):
             words = hyperram_max_burst_words(ck, clock_stop=stop)
@@ -1918,8 +1917,8 @@ def section_clock_stop(checks, emit):
     # device no clock at all; what it spends is CS#-low time, which is why the
     # burst cap had to stop being a word count.
     #
-    # 48 against section 8's ungated 49, and the missing CK is the one `RECOVERY`
-    # used to emit. Upstream leaves `clk_en` high for the first `RECOVERY` cycle.
+    # 48 against section 8's ungated 49, and the missing CK is the one an ungated
+    # `RECOVERY` emits. Upstream leaves `clk_en` high for the first `RECOVERY` cycle.
     # A write needs it -- `dq.o` is registered and that cycle is where the last
     # word reaches the wire -- and a read does not, so the ungated engine clocks
     # one word out of the device and throws it away. The gate suppresses that,

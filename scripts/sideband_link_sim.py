@@ -172,10 +172,10 @@ def run(checks):
     #
     # PING: the protocol version and the CPU's byte.
     #
-    # The window is the wider one the self-framing check below needs: that check
-    # used to send a SECOND identical PING for it, and a second PING is a second
-    # 440 ms Simulator build to watch the same reply go out. Widening this one
-    # costs 15 ms of wire time and answers both questions from one send.
+    # The window is the wider one the self-framing check below needs. A second
+    # identical PING for that check is another 440 ms Simulator build to watch
+    # the same reply go out; widening this one costs 15 ms of wire time and
+    # answers both questions from one send.
     reply, start, seen = transact(link(), CMD_PING, message=0x5A,
                                   quiet_cycles=quiet * 2)
     ping_reply, ping_seen = reply, seen

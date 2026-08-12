@@ -256,10 +256,10 @@ and keeps flashing on a dead CPU. Orange says the **OS is scheduling**, and at
 the lowest priority it also says everything above it is getting done with slack
 left over.
 
-**`ever_fetched` and `ever_io` used to be here and are gone.** Both latched
-within microseconds of any boot and never distinguished anything again, so the
-board carried two permanently-lit lamps — the dead-instrument problem this
-section exists to avoid (#411).
+**No `ever_fetched` or `ever_io` lamp.** Both latch within microseconds of any
+boot and never distinguish anything again, so the board would carry two
+permanently-lit lamps — the dead-instrument problem this section exists to
+avoid (#411).
 
 **A latched lamp answers "has this ever happened".** A bus error is one cycle
 long and a human glances at the board at an arbitrary moment: *a fault that

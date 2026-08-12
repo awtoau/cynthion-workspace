@@ -55,10 +55,10 @@ Two details that cost time to find, worth keeping in the patch:
 Verified on hardware: `boot-to-dfu` then `exit-dfu` returns a working debugger
 with no replug. Python only; no firmware change.
 
-This also matters for unattended work. An agent or a CI job that lands in the
-bootloader previously had no way out and had to stop and ask for a human to
-replug the board. With `exit-dfu` it can recover itself, so the DFU state stops
-being a dead end.
+This also matters for unattended work. Without it, an agent or a CI job that
+lands in the bootloader has no way out and must stop and ask for a human to
+replug the board. With `exit-dfu` it recovers itself, so the DFU state is not a
+dead end.
 
 ### `trigger_fpga_reconfiguration()` never releases INITN
 

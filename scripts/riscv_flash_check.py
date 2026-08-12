@@ -265,8 +265,8 @@ def wait_for_console():
     try:
         for _ in range(TTY_ROUNDS):
             # Waits for a kernel tty event, but never past the deadline: a board
-            # that never enumerates produces no event at all, and this used to
-            # block on `readline()` for ever with the round count untouched.
+            # that never enumerates produces no event at all, so `readline()`
+            # blocks for ever with the round count untouched.
             left = TTY_DEADLINE_S - (time.monotonic() - started)
             if left <= 0 or not select.select([monitor.stdout], [], [], left)[0]:
                 emit(f"  no console after {TTY_DEADLINE_S:.0f} s "

@@ -92,11 +92,9 @@ class SidebandDebug(Elaboratable):
 
     # 230400 by default, matching ADV_UART_BAUD in the Apollo firmware.
     #
-    # This defaulted to 115200 while the firmware ran at 230400, so anyone
-    # dropping this block in got a link that was dead rather than slow -- a 2x
-    # baud mismatch against a UART's ~2% tolerance, with no error anywhere,
-    # because both ends simply never frame a byte. The two numbers must be
-    # changed together; there is no build step that sees both.
+    # The two numbers must change together; no build step sees both. A mismatch
+    # is a DEAD link, not a slow one -- 2x against a UART's ~2% tolerance, with
+    # no error anywhere, because neither end ever frames a byte.
     def __init__(self, *, clk_freq_hz=60e6, baud=230400, domain="sync"):
         self.clk_freq_hz = clk_freq_hz
         self.baud = baud

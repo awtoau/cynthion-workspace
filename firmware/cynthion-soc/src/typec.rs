@@ -115,8 +115,9 @@ impl Controllers {
     /// Non-destructive: an FUSB302B holds register state and nothing else, and
     /// what matters is re-read immediately.
     ///
-    /// The verdict already existed and was thrown away -- `configured` was
-    /// computed and the boot report printed `ok` regardless (#315).
+    /// Returns the verdict rather than discarding it: `configured` is computed
+    /// either way, and a boot report printing `ok` regardless says nothing
+    /// (#315).
     pub fn init(&mut self, uart: &mut Uart, bus: &mut Bus) -> Init {
         self.start(uart, bus);
         crate::irq::claim_type_c();
@@ -177,8 +178,7 @@ impl Controllers {
     /// The bitmap comes from the PLIC source that fired, so this services the
     /// port that asserted and does not look at the other one. There is no
     /// `LINES` read here at all: with one source per device there is nothing to
-    /// decode, and the register that used to be read to find out is now read
-    /// only by `command` and `poll`.
+    /// decode, and that register is read only by `command` and `poll`.
     pub fn service(&mut self, uart: &mut Uart, bus: &mut Bus) {
         let pending = irq::take_type_c();
         if pending == 0 {

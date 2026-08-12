@@ -16,22 +16,22 @@
 file -- vendor the file.** Subclassing bought nothing here. luna arrives as a pip
 package, not a submodule, so "it keeps whatever fixes upstream makes" means
 "whenever someone runs pip install -U", and this project tracks upstream *main*
-while pip serves releases. The previous subclass also had to re-drive a signal by
-relying on Amaranth resolving conflicting drivers in statement order, which is a
-trick rather than an interface.
+while pip serves releases. Subclassing also has to re-drive a signal by relying
+on Amaranth resolving conflicting drivers in statement order, which is a trick
+rather than an interface.
 
-The PHY beneath this was already ours -- upstream's cannot be instantiated on
-r1.4 -- so the boundary ran through one class.
+The PHY beneath this is ours -- upstream's cannot be instantiated on r1.4 -- so
+the boundary runs through one class.
 
 ## The two changes
 
 **tCSHI is now enforced.** Upstream's `RECOVERY` carries `# TODO: implement
 recovery` and falls straight through to `IDLE`, so CS# can be re-asserted on the
 next cycle. The W956A8 wants 10 ns between transactions; at CK 180 (sync 90) one
-`sync` cycle is 11.1 ns, so the old arrangement had about a nanosecond of margin
-and only by accident. `hyperram_dqs_top.py` counted the gap outside the
-controller, but `bootram.py` -- the SoC, the thing that actually runs --
-enforced nothing at all. Now the controller holds it, so every caller gets it.
+`sync` cycle is 11.1 ns, so leaving the gap to fall out of the caller's cadence
+is about a nanosecond of margin by accident. A harness may count it outside the
+controller; `bootram.py` -- the SoC, the thing that actually runs -- cannot. The
+controller holds it, so every caller gets it.
 
 **The latency branch says what it means.** Upstream forces the long count with
 `with m.If(extra_latency | 1)`, which makes the low-latency branch dead and
@@ -40,8 +40,8 @@ carries its own FIXME. The long count is correct for this part -- CR0 reads
 default. `fixed_latency=False` honours the RWDS sample for a part reprogrammed to
 variable latency, which is a change to make deliberately and measure.
 
-`HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, which
-is what `hyperram_latency.py` used to exist for.
+`HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, so
+a caller sweeping latency needs no subclass.
 
 **The variable-latency path is now driveable and reads the request where it is.**
 `low_latency_clocks` is an input, not a class constant that matched no latency
@@ -210,7 +210,7 @@ class HyperRAMDQSController(Elaboratable):
         if high_latency_clocks is not None:
             self.HIGH_LATENCY_CLOCKS = high_latency_clocks
         # Ceiling for `latency_clocks`; see the non-DQS controller. Defaults to the
-        # fixed count, so a caller that never drives the input gets the old build.
+        # fixed count, so a caller that never drives the input gets that count.
         self._max_latency_clocks = max(self.HIGH_LATENCY_CLOCKS,
                                        max_latency_clocks or 0)
 

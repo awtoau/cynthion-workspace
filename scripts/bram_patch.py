@@ -427,10 +427,9 @@ def patch(args):
         il_path = build_dir / "top.il"
         if not il_path.exists():
             raise Refuse("no top.il in the build directory to compare against")
-        # Byte for byte, with nothing normalised away. It used to strip an
-        # `id()`-derived module name and recover the `datetime.now()` stamp from
-        # the RTLIL before comparing, because neither repeated; both are fixed,
-        # so the comparison is now the exact one it claimed to be (#441).
+        # Byte for byte, with nothing normalised away: neither an `id()`-derived
+        # module name nor a `datetime.now()` stamp survives in the RTLIL to be
+        # normalised around (#441).
         mark = time.monotonic()
         built = il_path.read_text()
         fresh = elaborate_il(old_words, soc)

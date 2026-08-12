@@ -84,9 +84,9 @@ fn write_u32(word_addr: u32, value: u32) {
 
 /// `pub` for `src/memory.rs`, which reads one pair for the shell's `hyperram read`.
 ///
-/// The port is 32 bits wide, so this is a single transfer and there is no longer a
-/// lo/hi assembly convention for a second copy to disagree with. `word_addr` counts
-/// the part's 16-bit words and must be EVEN.
+/// The port is 32 bits wide, so this is a single transfer with no lo/hi assembly
+/// convention for a second copy to disagree with. `word_addr` counts the part's
+/// 16-bit words and must be EVEN.
 pub fn read_u32(word_addr: u32) -> u32 {
     seek(word_addr);
     read_pair()
@@ -364,9 +364,8 @@ mod backend {
     /// 2,600 is **100x** that. Deliberately not the 1.25x the rules ask for: this
     /// runs before anything can report a false trip, and a premature timeout here
     /// drops a word into a staged image, which surfaces later as a CRC failure
-    /// pointing at the wrong thing. 100x still fails in ~31 us instead of the
-    /// ~20 ms the old 100,000 took -- a 38x improvement in how fast a dead
-    /// peripheral is noticed, with room for a first access after reset.
+    /// pointing at the wrong thing. 100x still gives up in ~31 us, fast enough
+    /// to notice a dead peripheral, with room for a first access after reset.
     const TIMEOUT: u32 = 2_600;
 
     // NO STATICS IN THIS FILE. `cynthion-boot` includes it with
@@ -430,8 +429,7 @@ mod backend {
                     return 0xffff_ffff;
                 }
             }
-            // Lowest byte first: that is the order the old DATA_LO/DATA_HI pair
-            // used, and the order the shadow is built in.
+            // Lowest byte first -- the order the shadow is built in.
             (read_volatile(DATA) as u32)
                 | ((read_volatile(DATA.add(1)) as u32) << 8)
                 | ((read_volatile(DATA.add(2)) as u32) << 16)

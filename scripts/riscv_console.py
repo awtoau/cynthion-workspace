@@ -89,7 +89,7 @@ def main():
 
     # Wait rather than exit. During a build-and-test cycle the board spends much of its
     # time with no bitstream loaded, so "not there yet" is the normal startup state, not a
-    # failure. --once keeps the old behaviour, since a one-shot read has nothing to wait
+    # failure. --once skips the wait, since a one-shot read has nothing to wait
     # for.
     clients = []
     lock = threading.Lock()

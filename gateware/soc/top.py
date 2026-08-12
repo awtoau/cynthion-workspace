@@ -496,8 +496,8 @@ IRQ_I2C = 3
 # What does NOT change: the handler still defers. Clearing is ~1 ms of I2C on the
 # controller the foreground also uses, so `src/irq.rs` masks the asserting source
 # and records the event, and normal context clears that one device and re-enables
-# that one source. Per-device masking means a deferred TARGET no longer blinds
-# AUX, which the shared source could not offer.
+# that one source. Per-device masking means a deferred TARGET does not blind
+# AUX, which a shared source cannot offer.
 #
 # `fault` gets no source at all. It means something different from `int`, and
 # nothing in the firmware can clear it -- it drops when the device's fault does.
@@ -559,8 +559,8 @@ FLASH_MODE = "quad"
 # clocks the flash at 30 MHz. That is the SLOWEST rung on the measured table and
 # the reason is below.
 #
-# TWO CLAIMS THAT USED TO BE HERE ARE WRONG, and they are why this sat at 30 MHz.
-# `docs/chips/w25q32-config-flash.md` supersedes both:
+# TWO CLAIMS ABOUT THIS PATH ARE WRONG. `docs/chips/w25q32-config-flash.md`
+# supersedes both:
 #
 #   * "inside the ECP5 MCLK pin's 62 MHz specification". THERE IS NO SUCH
 #     SPECIFICATION. The 62 MHz is `fCCLK` in the sysCONFIG port timing table --
@@ -856,12 +856,11 @@ if WITH_BIST:
 # remainder is all stack slack. Code size costs real cycles on this design; data
 # size does not.
 #
-# Sets rather than ways -- and an earlier version of this comment called that a
-# correctness constraint, which was wrong. It claimed `flash_cache_flush()` needs
-# a direct-mapped cache. The replacement policy is PLRU rather than random, so a
-# sweep of the full cache size still evicts every way; and that flush is only in
-# the generated C test firmware, while the Rust firmware uses a real `fence.i`.
-# See `cpu/cpu.py`'s GENERATE_FLAGS for the full correction.
+# Sets rather than ways, and that is not a correctness constraint:
+# `flash_cache_flush()` does NOT need a direct-mapped cache. PLRU replacement
+# means a sweep of the full cache size still evicts every way, and that flush is
+# only in the generated C test firmware -- the Rust firmware uses a real
+# `fence.i`. See `cpu/cpu.py`'s GENERATE_FLAGS.
 #
 # So the axis is open, and it is being measured rather than argued:
 # `scripts/soc_cache_sweep.py` builds each geometry and reports what it costs.
@@ -918,27 +917,25 @@ class AwtoSoc(Elaboratable):
 
         # A `fast` domain, for the flash and nothing else.
         #
-        # This used to say "no `fast` domain", because the only candidate was
-        # HyperRAMDQSPHY and we do not use it -- HyperRAMPHY makes double-rate output
-        # from `sync` alone. The flash is a second candidate and a better one: SCK is
-        # derived from the PHY's domain, so while the PHY sat in `sync` the flash rate
-        # was a function of the CPU clock, and the CPU clock is chosen for the CPU.
+        # SCK is derived from the PHY's domain, so a flash PHY in `sync` makes the
+        # flash rate a function of the CPU clock -- and the CPU clock is chosen
+        # for the CPU. HyperRAMPHY needs no `fast`; the flash does.
         #
         # SYNC_MHZ 72 with FLASH_FAST_RATIO 2 solves to exactly 144.000 MHz, which is
         # the fastest rung on the measured table (71.70 MB/s, `0xEB` continuous) and
         # the fastest the flash has ever been driven on this board.
         #
-        # The cost the old comment names is real and is now paid deliberately: a PLL
-        # output, a global buffer, and CLKOP_DIV forced even, which restricts which
-        # sync frequencies are reachable. 72 is reachable and is inside the 72-91 MHz
-        # nextpnr already estimates for this design.
+        # The cost is paid deliberately: a PLL output, a global buffer, and
+        # CLKOP_DIV forced even, which restricts which sync frequencies are
+        # reachable. 72 is reachable and is inside the 72-91 MHz nextpnr already
+        # estimates for this design.
         # `fast` is needed if EITHER the flash PHY is decoupled or the HyperRAM
         # uses its DQS PHY -- the latter reads `ClockSignal("fast")` for every
         # ECLK, so it cannot elaborate without one.
         # `usb` comes from the 60 MHz oscillator directly, not from this PLL --
         # the FPGA sources the ULPI clock, so it is exactly 60.000 by
-        # construction. That is what frees `sync`: it no longer has to share a
-        # VCO with a domain pinned to 60. See `clocks.py`.
+        # construction. That is what frees `sync`: it does not share a VCO with
+        # a domain pinned to 60. See `clocks.py`.
         m.submodules.car = car = SocClocks(
             sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST or HYPERRAM_DQS,
             fast_ratio=FLASH_FAST_RATIO)
@@ -1667,10 +1664,9 @@ class AwtoSoc(Elaboratable):
             serial.tx.first.eq(0),
 
             # `last` marks the final beat OF A PACKET, and the endpoint only observes it
-            # on a beat where `valid` is high. An earlier version here drove
-            # `last = ~valid`, which is unsatisfiable: the two are never high together, so
-            # no packet was ever terminated and nothing reached the host -- with the CPU
-            # running and the FIFO filling the whole time.
+            # on a beat where `valid` is high. `last = ~valid` is unsatisfiable:
+            # the two are never high together, so no packet is ever terminated and
+            # nothing reaches the host, with the CPU running and the FIFO filling.
             #
             # USBStreamInEndpoint has a `flush` input for exactly this, but
             # USBSerialDevice does not expose it -- it lives on the endpoint the device
@@ -1973,9 +1969,9 @@ class AwtoSoc(Elaboratable):
         #
         # `control_vbus_in_en` (K13) and `aux_vbus_in_en` (L13) are deliberately
         # NOT requested: hardware overvoltage protection above 5.5 V (D17, a
-        # 5.6 V zener) already does that job. `VbusControl` no longer has ports
-        # for them, so this is now a fact about the board rather than two
-        # dangling outputs (#305).
+        # 5.6 V zener) already does that job. `VbusControl` has no ports for
+        # them, so this is a fact about the board rather than two dangling
+        # outputs (#305).
         m.d.comb += [
             platform.request("target_c_vbus_en", 0).o
                 .eq(vbus_ctrl.target_c_vbus_en),
@@ -1991,14 +1987,10 @@ class AwtoSoc(Elaboratable):
         # push-pull mode, so the reset state is a 0 here, a 1 on the pad, and a
         # PAC1954 that is running -- which is what the I2C bus below needs.
         #
-        # SLOW IS DRIVEN LOW, and leaving it an input was costing 15x the
-        # sample rate.
-        #
-        # This used to say `slow` and `gpio` "are left as inputs ... neither is
-        # needed to read a measurement". The second half is wrong. **The board
-        # fits R85, 10k to +3V3**, so a pin left as an input is not neutral --
-        # it is pulled HIGH, and DS20006539B section 3.8 is unambiguous about
-        # what that means: "the SLOW pin is asserted, the sample rate is 8 SPS".
+        # SLOW IS DRIVEN LOW: leaving it an input costs 15x the sample rate.
+        # **The board fits R85, 10k to +3V3**, so an input is not neutral -- it
+        # is pulled HIGH, and DS20006539B section 3.8 is unambiguous about what
+        # that means: "the SLOW pin is asserted, the sample rate is 8 SPS".
         #
         # 8 SPS is 125 ms per conversion against a 50 ms poll, so two of every
         # three REFRESH cycles latched a conversion that had not changed. Seen
@@ -2014,13 +2006,11 @@ class AwtoSoc(Elaboratable):
         # Two independent conversions of a live rail do not agree to 488 uV and
         # 152 uA. That is one conversion, read three times.
         #
-        # The old caution -- "driving a pin whose purpose has not been
-        # established is how a board gets damaged" -- was the right instinct
-        # applied to a pin whose purpose IS established, in the datasheet, and
-        # which the board pulls up precisely so that it has a defined state. The
-        # part defaults `CTRL.SLOW_ALERT1` to the SLOW function and `power.rs`
-        # writes only `NEG_PWR_FSR`, so this is an input on the part and there
-        # is nothing to contend with.
+        # Driving it is safe: the pin's purpose is established in the datasheet
+        # and the board pulls it up precisely so it has a defined state. The part
+        # defaults `CTRL.SLOW_ALERT1` to the SLOW function and `power.rs` writes
+        # only `NEG_PWR_FSR`, so this is an input on the part and there is
+        # nothing to contend with.
         #
         # `gpio` (D6) stays an input, and that one IS unfinished business rather
         # than a defect: R86 pulls it up as the open-drain ALERT2 the part can

@@ -41,8 +41,7 @@
 //!
 //! - **One PLIC source per `int` line**, not an OR of the two -- see
 //!   `gateware/soc/peripherals/i2c_mux.py` (where the sources are wired) and
-//!   `docs/architecture.md` decision 8 (why). This comment used to claim the
-//!   opposite while citing the file that contradicts it.
+//!   `docs/architecture.md` decision 8 (why).
 //! - Not cosmetic: a SHARED level obliges whatever services it to clear *every*
 //!   asserting device before the source is live again, or the line stays high,
 //!   the interrupt re-fires immediately, and the CPU makes no progress -- a
@@ -358,8 +357,8 @@ pub fn source_target(bus: &mut Bus, current: HostCurrent) -> Result<(), bus::Err
 /// the module comment describes, so "read every one, always" is the rule rather
 /// than "read the one you expect".
 ///
-/// The bits used to be dropped on the floor here. Reading them is compulsory and
-/// they are the only record of WHY the line asserted -- the registers cannot be
+/// Reading them is compulsory, and they are the only record of WHY the line
+/// asserted -- the registers cannot be
 /// read a second time to find out, because the first read is what cleared them.
 /// So the values come back as [`Interrupts`], which knows their names, and
 /// `typec::Controllers::service` logs one line naming the cause. An interrupt
@@ -694,9 +693,8 @@ impl State {
 
     /// One line's worth of description, for the shell and the change log.
     ///
-    /// `nothing on CC` is now a statement about BOTH pins. It used to be a
-    /// statement about CC1 that read as one about the port, which is the fault
-    /// this change is here to remove; a port whose bands were never sampled says
+    /// `nothing on CC` is a statement about BOTH pins -- one about CC1 alone
+    /// reads as one about the port. A port whose bands were never sampled says
     /// so instead.
     pub fn cc(&self) -> &'static str {
         match (self.source_cc, self.orientation(), self.band()) {

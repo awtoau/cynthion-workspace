@@ -56,7 +56,7 @@ def test_different_variants_get_different_directories():
 def test_the_same_variant_gets_the_same_directory():
     # Unset, set to the default, and set to a synonym of the default are one
     # variant: they elaborate identically. A directory that differed would cost
-    # a resynthesis for nothing, and a cache key that differed used to refuse a
+    # a resynthesis for nothing, and a cache key that differed would refuse a
     # correct `--firmware-only` load as stale.
     same = [
         {},

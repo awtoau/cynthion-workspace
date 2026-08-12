@@ -73,11 +73,11 @@ EXPECTED_PRODUCT = "369d0368"
 
 # Waiting for the tty needs a real wait, not a spin.
 #
-# An earlier version polled find_tty() 600 times in a bare loop, which completes in
-# microseconds and always fails: the FPGA has to reconfigure, the device has to
-# re-enumerate, and the kernel has to bind the CDC driver, none of which is instant. It
-# reported "no console tty appeared" for a board that was working perfectly, at every
-# frequency -- a false negative that would have condemned frequencies that were fine.
+# Polling find_tty() in a bare loop completes in microseconds and always fails: the
+# FPGA has to reconfigure, the device has to re-enumerate and the kernel has to bind
+# the CDC driver, none of which is instant. That reports "no console tty appeared"
+# for a working board at every frequency -- a false negative that condemns
+# frequencies that are fine.
 #
 # Each iteration now runs one `udevadm settle`, which blocks until the kernel's device
 # queue drains, so the loop advances only when something has actually changed. The count

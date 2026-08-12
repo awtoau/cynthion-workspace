@@ -67,9 +67,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # `gateware/soc`, for the two vendored controllers and `bootram`'s constants.
-# This line used to name `gateware/probes/riscv`, which does not exist -- so the
-# DQS branch below could only ever import when the caller had already put the SoC
-# on the path, and the non-DQS branch now needs it too.
+# BOTH branches below import from it, so it cannot be left to the caller's path.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "soc"))
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable,
@@ -433,23 +431,21 @@ class HyperRAMCeiling(Elaboratable):
     def pattern(self, word_addr):
         """The word due at a device address, using EVERY address bit.
 
-        This used to be `Cat(addr[:half], ~addr[:half])` -- the low 16 bits of
-        the address and their complement. The part is 4 Mi words, so that pattern
-        REPEATED 64 TIMES ACROSS IT: an addressing fault anywhere in bits 16..21
-        wrote and read the same value and was scored correct. The harness could
-        not see aliasing over the whole upper part, which is the one question
-        `docs/chips/hyperram/w956a8.md` raises about the undocumented upper 4 MiB.
+        The part is 4 Mi words, so a pattern over the low 16 bits alone repeats
+        64 TIMES ACROSS IT: an addressing fault anywhere in bits 16..21 writes
+        and reads the same value and scores correct, hiding aliasing over the
+        upper part -- the one question `docs/chips/hyperram/w956a8.md` raises
+        about the undocumented upper 4 MiB.
 
         At 32 bits the low half carries `addr[0:16]` and the high half carries
         `addr[16:32]` complemented, so the value is INVERTIBLE: given a word that
         came back wrong, the address it actually belongs to can be decoded rather
         than guessed. That is what makes a displacement readable instead of
-        inferred -- the same property the 0-255 ramp has, and the reason it found
-        in one run what a self-comparing check had hidden all day.
+        inferred -- the same property the 0-255 ramp has.
 
         At 16 bits an address of 22 bits cannot be encoded, so the high bits are
         folded in by XOR. Aliasing then changes the value and is DETECTED, though
-        the source address is no longer uniquely recoverable.
+        the source address is not uniquely recoverable.
         """
         half = self.word_bits // 2
         if half >= 16:
@@ -486,10 +482,10 @@ class HyperRAMCeiling(Elaboratable):
 
         # --- the gateware-driven sweep --------------------------------------
         #
-        # The host used to drive every combination: configure, write registers,
-        # run, read back. That is one FPGA configuration per cell, and it was the
-        # whole cost. Here the applet walks the combinations itself and records a
-        # row each, so the host writes one bit and reads one table.
+        # Driving each combination from the host -- configure, write registers,
+        # run, read back -- costs one FPGA configuration per cell, which is the
+        # whole cost. The applet walks the combinations itself and records a row
+        # each, so the host writes one bit and reads one table.
         sweep_passes = Signal(32, init=1)
         sweep_mask = Signal(32, init=0xFFFF)
         harness.add_register(REG_SWEEP_PASSES, value_signal=sweep_passes)
@@ -591,13 +587,11 @@ class HyperRAMCeiling(Elaboratable):
         dll_ready = Signal(reset=1)
         burstdet = Signal()
 
-        # CR0 AS IT WILL BE, for BOTH paths. Hoisted out of the branches on
-        # purpose: this used to live inside the non-DQS `else`, so the DQS build
-        # never drove `latency_clocks` or `fixed_latency` at all and both sat at
-        # their reset values while `Bist::configure` reprogrammed the PART on
-        # every cell. 32 latency cells then returned byte-identical rows -- the
-        # same defect #331 fixed on the other path, and every DQS latency row
-        # ever recorded is void because of it. See #354.
+        # CR0 AS IT WILL BE, for BOTH paths -- outside the DQS/non-DQS branches
+        # on purpose. A path that does not drive `latency_clocks` and
+        # `fixed_latency` leaves the controller at its reset values while
+        # `Bist::configure` reprograms the PART, and every latency cell then
+        # returns byte-identical rows (#331, #354).
         effective_cr0 = Signal(16)
         m.d.comb += effective_cr0.eq(Mux(sweeping, sweep_cr0, device_cr0[:16]))
 
@@ -782,19 +776,9 @@ class HyperRAMCeiling(Elaboratable):
         device_readback_again = Signal(32)
 
 
-        # DID THE RUN FINISH. `harness.done` used to be an expression over
-        # leftover signal values --
-        #
-        #     psram.idle & (recovery >= recovery_cycles)
-        #                & (index == burst_words - 1)
-        #
-        # -- and the transition into HALTED clears `recovery` to 0, so a run that
-        # COMPLETED could never assert it. Read off the board as `idle=1
-        # recovered=0` with the engine sitting in HALTED and the CPU polling for
-        # a `done` that was unreachable by construction (#226).
-        #
-        # A state means "I finished", so say that, and set it where the FSM
-        # decides it has finished rather than inferring it afterwards.
+        # DID THE RUN FINISH. Set where the FSM decides it has, not inferred
+        # afterwards from leftover signal values: entering HALTED clears
+        # `recovery` to 0, so an expression over it can never assert (#226).
         finished = Signal()
 
         # A register-space write, when the configuration phase is running. It
@@ -1069,11 +1053,10 @@ class HyperRAMCeiling(Elaboratable):
                     #
                     # While sweeping, the limit is the per-cell pass count and
                     # reaching it ends the CELL, not the run.
-                    # START HERE TOO, not only out of RESET. `sweep_go` used to
-                    # be sampled in RESET alone -- a state the FSM leaves once at
-                    # power-up -- so a host writing GO afterwards was ignored and
-                    # the sweep never began. This is the state the engine returns
-                    # to every pass, so GO is seen within one burst of the write.
+                    # START HERE TOO, not only out of RESET: RESET is left once at
+                    # power-up, so `sweep_go` sampled there alone misses every
+                    # later write. The engine returns here every pass, so GO is
+                    # seen within one burst of the write.
                     control_done = Signal()
                     m.d.comb += control_done.eq(
                         Mux(sweep_control_pass, passes >= 0,
@@ -1159,14 +1142,11 @@ class HyperRAMCeiling(Elaboratable):
             # HALTED -- the bounded run is over. Nothing is driven, the counters
             # hold, and the host reads them at its leisure.
             with m.State("HALTED"):
-                # NOT terminal. `go` starts a fresh run.
+                # NOT terminal. `go` starts a fresh run: the negative control is
+                # ALWAYS a second run, so an engine that can only run once leaves
+                # every cell without a verdict (#226).
                 #
-                # It used to be `pass`, so an engine that completed one run could
-                # never be asked for another -- and the negative control is
-                # ALWAYS a second run, which means no cell could ever produce a
-                # verdict however well the first pass went (#226).
-                #
-                # Back to WRITE_START rather than RESET: RESET waits out a 2**16
+                # To WRITE_START rather than RESET: RESET waits out a 2**16
                 # cycle heartbeat for tRP/tRPH, which is right once per
                 # configuration and wrong once per pass.
                 with m.If(harness.go):
@@ -1203,9 +1183,9 @@ class HyperRAMCeiling(Elaboratable):
         # no readable `state` attribute here and adding one broke
         # `soc_hyperram_sim`, so `REG_CTRL_STATE` sat DECLARED AND UNBOUND -- and
         # an unbound address reads zero through the CSR transport, which is
-        # indistinguishable from "the controller is in state 0". It was read off
-        # the board as exactly that and used to rule out the controller, wrongly.
-        # A register that cannot answer must not answer plausibly.
+        # indistinguishable from "the controller is in state 0" -- which reads off
+        # the board as ruling the controller out. A register that cannot answer
+        # must not answer plausibly.
         #
         # What goes here instead is the exit condition of READ_RECOVER, split
         # into its two halves, because that is the state the engine parks in and
@@ -1245,9 +1225,9 @@ class HyperRAMCeiling(Elaboratable):
         # readable `state` attribute here and adding one broke
         # `soc_hyperram_sim`, so `REG_CTRL_STATE` sat DECLARED AND UNBOUND -- and
         # an unbound address reads zero through the CSR transport, which is
-        # indistinguishable from "the controller is in state 0". It was read off
-        # the board as exactly that and used to rule out the controller, wrongly.
-        # A register that cannot answer must not answer plausibly.
+        # indistinguishable from "the controller is in state 0" -- which reads off
+        # the board as ruling the controller out. A register that cannot answer
+        # must not answer plausibly.
         #
         # What goes here instead is the exit condition of READ_RECOVER, split
         # into its two halves, because that is the state the engine parks in and

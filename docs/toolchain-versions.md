@@ -233,7 +233,7 @@ finds its own bundled `ld` regardless of PATH — but any script that shells out
 a binutil by bare name gets the 2023 build, reading an ELF produced by a compiler
 ten major versions newer.
 
-The three guards no longer do. `scripts/arm_binutils_resolve.py` resolves them beside the
+The three guards do not shell out by bare name. `scripts/arm_binutils_resolve.py` resolves them beside the
 compiler — `arm-none-eabi-gcc -print-prog-name=nm` → 2.45 — and `verify_vectors.py`
 (`nm`), `apollo_budget_check.py` (`size`) and `apollo_memory_report.py`
 (`size`, `nm`) each print which binary they used and warn that PATH would have

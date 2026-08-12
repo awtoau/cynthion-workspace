@@ -180,8 +180,8 @@ def run(cmd, cwd=None, env=None, floor=None):
     """Every cargo, objcopy, yosys and apollo invocation goes through here.
 
     Bounded by what THIS program has taken before, per family, rather than not at
-    all (#295): a wedged place-and-route used to hang the whole run with nothing
-    to distinguish it from a slow one. The family is the program's own name, so
+    all (#295): unbounded, a wedged place-and-route hangs the whole run with
+    nothing to distinguish it from a slow one. The family is the program's name, so
     an objcopy is not given a bound sized by a synthesis.
 
     On expiry `run_bounded` prints the family, the limit and the elapsed, and the
@@ -617,9 +617,8 @@ def main():
                              "board that gets left in that state")
     args = parser.parse_args()
 
-    # WHICH BUILD THIS IS, first line of every run. The variant used to be
-    # visible only in the environment of whoever started it, and every build
-    # landed in the same directory regardless.
+    # WHICH BUILD THIS IS, first line of every run. Unprinted, the variant is
+    # visible only in the environment of whoever started it.
     # Before the digest is taken, because it is one of the digest's inputs.
     if args.no_parallel_refine:
         global PNR_OPTS
@@ -684,14 +683,11 @@ def main():
 
     # REGENERATE THE PERIPHERAL MAP, every time, rather than checking it.
     #
-    # This used to run `--check` and REFUSE on drift, on the reasoning that
-    # rewriting checked-in source mid-build is a surprise. Measured, that
-    # reasoning does not survive: `--check` is 0.515 s and a full regeneration
-    # is 0.712 s, because `--check` already regenerates into a temporary place
-    # and diffs it. So the refusing version paid nearly the whole cost, threw
-    # the result away, and made someone run it again by hand -- 0.2 s saved
-    # against a 60 s synthesis, in exchange for an ordering trap that cost an
-    # hour tonight.
+    # Checking and refusing on drift buys nothing: `--check` is 0.515 s against
+    # 0.712 s for a full regeneration, because `--check` already regenerates
+    # into a temporary place and diffs it. Refusing pays nearly the whole cost,
+    # throws the result away and makes someone run it by hand -- 0.2 s against a
+    # 60 s synthesis, in exchange for an ordering trap.
     #
     # The map is a DERIVED artifact. Regenerating it is what the repo's own
     # rule says to do with those, and the diff landing in `git status` is
@@ -742,10 +738,9 @@ def main():
                  "`git diff firmware/*-pac` shows what.")
 
     # `--no-build` skips COMPILING. It must NOT skip deriving the artifacts
-    # from the ELF or writing them: `run --no-build` used to configure the
-    # FPGA and leave stale firmware in flash, so the board ran code that was
-    # not the tree's while reporting success. That reads as a firmware bug
-    # and cost three confused measurements before it was spotted.
+    # from the ELF or writing them, or `run --no-build` configures the FPGA and
+    # leaves stale firmware in flash: the board runs code that is not the tree's
+    # while reporting success, which reads as a firmware bug.
     if True:
         if args.c_firmware:
             if not args.no_build:
@@ -794,22 +789,19 @@ def main():
             # RAM or in flash, and those load by completely different paths -- block
             # RAM as bitstream init, flash by writing the part. A single `-O binary`
             # over an ELF spanning both pads the address gap between 0x0 and
-            # 0x10000000, which produced a 269 MB "firmware" the first time this was
-            # tried.
+            # 0x10000000, which produces a 269 MB "firmware".
             #
             # `--only-section` per destination keeps each artifact the size of what
             # is actually in it. A build with nothing in flash simply produces an
             # empty second file, so this costs nothing when the layout is all-RAM.
             # WHICH sections go where is read from the ELF, not listed here.
             #
-            # This used to name them: `.init .text .data` to block RAM,
-            # `.rodata` to flash. That is a copy of memory.x's REGION_ALIAS
-            # lines maintained in a different file and a different language,
-            # and it is wrong the moment a section moves -- which is exactly
-            # what moving `.text` to flash does. A named list would have put
-            # `.text` in the block RAM artifact and flash would have been
-            # programmed with rodata alone, leaving the CPU fetching from an
-            # address nothing had written.
+            # NOT a named list. `.init .text .data` to block RAM and `.rodata`
+            # to flash is a copy of memory.x's REGION_ALIAS lines in another
+            # file and language, wrong the moment a section moves: with `.text`
+            # in flash it puts `.text` in the block RAM artifact and programs
+            # flash with rodata alone, leaving the CPU fetching from an address
+            # nothing wrote.
             #
             # So the linker decides and this follows: group the allocated
             # sections by whether their address lands in the flash window.
@@ -994,10 +986,9 @@ def main():
         # stderr; on SUCCESS it writes them only to `--log top.tim`, so a
         # passing build said nothing about its margin.
         #
-        # That margin is not academic: the build this was added on passes at
-        # 72.70 MHz against a 72.00 MHz constraint -- 1% -- and an earlier run
-        # in the same log failed at 64.76. It has been swinging either side of
-        # the line with placement, invisibly.
+        # That margin is not academic: builds pass at 72.70 MHz against a
+        # 72.00 MHz constraint -- 1% -- and fail at 64.76 in the same log,
+        # swinging either side of the line with placement.
         #
         # `top.tim` ACCUMULATES across runs, so only the last block is this
         # build's. Reading the first would report an older attempt as if it

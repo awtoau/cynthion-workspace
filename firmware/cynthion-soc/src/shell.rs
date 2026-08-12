@@ -290,8 +290,8 @@ pub(crate) fn list_all(out: &mut dyn FnMut(&str)) {
 /// The command name: everything before the first space.
 pub(crate) fn first_word(entry: &str) -> &str {
     // An alias row -- `help, ?` -- is ONE entry, not a family. Splitting it at
-    // the space printed `help,` and lost the `?`, so the listing no longer named
-    // the second way to ask for it.
+    // the space prints `help,` and loses the `?`, so the listing never names the
+    // second way to ask for it.
     if entry.as_bytes().contains(&b',') {
         return entry;
     }

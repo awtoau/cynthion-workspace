@@ -137,9 +137,9 @@ int ee_printf(const char *fmt, ...)
 
         p++;
         /* Skip flags, width and precision -- CoreMark uses %04x and %.2f, and
-         * the values matter more than the padding. An earlier version did not
-         * parse these and printed the format strings themselves, which looks
-         * like a benchmark that produced no numbers. */
+         * the values matter more than the padding. Not parsing them prints the
+         * format strings themselves, which looks like a benchmark that
+         * produced no numbers. */
         int zero_pad = 0, width = 0;
         while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0') {
             if (*p == '0') zero_pad = 1;

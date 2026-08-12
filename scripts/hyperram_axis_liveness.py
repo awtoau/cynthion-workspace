@@ -40,7 +40,7 @@ own PHY flag and settled properly by `hyperram_axis_wiring.py` (#343).
 **Every trial runs at a capture phase measured first, not at a constant (#421).**
 The readback captures through the cell's own phase, so at a phase outside the
 read eye both words belong to other transactions -- the board withholds them and
-says so, and this script used to report that as its own parse being wrong.
+says so, which is not this script's own parse being wrong.
 
 Transcript -> `tmp/logs/hyperram-axis-liveness.txt`.
 """

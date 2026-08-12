@@ -120,8 +120,8 @@ def _repo_path(name: str) -> Path:
 # Repositories are git submodules of the workspace, checked out under repos/.
 # Acquisition is 'git submodule update --init <path>' run from the workspace
 # root (WORKSPACE), not per-repo cloning — the submodule's tracked remote and
-# commit are authoritative. luna-soc is no longer a repo checkout (it is a pip
-# dependency), so it is not listed here.
+# commit are authoritative. luna-soc is a pip dependency, not a repo checkout,
+# so it is not listed here.
 WORKSPACE = ROOT
 REPOS_MANIFEST = {
     "apollo": {
@@ -134,15 +134,13 @@ REPOS_MANIFEST = {
         "required": True,
         "builds": ["moondancer-firmware"],
     },
-    # Only apollo and cynthion remain. facedancer, luna, packetry and saturn-v
-    # were removed as submodules (#169): nothing here imported any of them, and
-    # `luna` in particular was never the checkout -- `import luna` resolves to
-    # site-packages, which is why the entry could sit here as required=False for
-    # as long as it did.
+    # Only apollo and cynthion. facedancer, luna, packetry and saturn-v are not
+    # submodules (#169): nothing here imports any of them, and `import luna`
+    # resolves to site-packages rather than to a checkout.
     #
-    # cynthion's "builds" no longer lists gateware-analyzer or
-    # gateware-facedancer: both elaborated an upstream top for r0.2 and neither
-    # is a bitstream this repo ships.
+    # cynthion's "builds" omits gateware-analyzer and gateware-facedancer: both
+    # elaborate an upstream top for r0.2 and neither is a bitstream this repo
+    # ships.
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

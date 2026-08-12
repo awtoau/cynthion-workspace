@@ -133,9 +133,9 @@ use crate::uart::Uart;
 /// this image gets. The main loop drains on every pass -- microseconds apart --
 /// so this is not a latency budget: it is how many events may arrive in one
 /// burst while the loop is inside a command that is printing. A shell command
-/// can spin for milliseconds in `Uart::put`, and the interrupt this was written
-/// for is a shared Type-C line that can assert twice in a row, so 16 is generous
-/// rather than tight. Overrunning it is not a failure, it is a counted loss.
+/// can spin for milliseconds in `Uart::put`, and a Type-C line can assert twice
+/// in a row, so 16 is generous rather than tight. Overrunning it is not a
+/// failure, it is a counted loss.
 ///
 /// A power of two, so `% RING` is an AND and `SLOTS[i]` is a shift -- see
 /// [`Slot`] for why the entry is 16 bytes without any padding being spent on it.

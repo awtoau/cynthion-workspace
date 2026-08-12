@@ -26,8 +26,8 @@ move are that attribute's effect, isolated -- no rebuild, no confounded axes.
 ## Why `--bitstream` is not optional in practice
 
 A pin-attribute run and its control are the SAME commit, the same firmware and
-the same CK -- everything this file used to record is identical between them, and
-the one thing that differs was written nowhere. `--bitstream` unpacks the file
+the same CK -- everything else this file records is identical between them, and
+the one thing that differs is written nowhere. `--bitstream` unpacks the file
 that was configured and stores what its HyperRAM PIOs are actually set to, so a
 saved run says which electrical settings produced it. Without it the run is
 saved with `pins: null` and a warning, because an unattributable measurement

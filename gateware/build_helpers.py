@@ -89,9 +89,9 @@ def ecppack_opts(extra="", code=None):
     """
     code = usercode() if code is None else code
     # DECIMAL. ecppack parses --usercode with a plain integer reader and rejects
-    # `0x...` outright ("the argument ... is invalid"). Verified against ecppack
-    # 1.4-79 for values above 2**31 too, which is where a dirty tree's top bit
-    # puts it.
+    # `0x...` outright ("the argument ... is invalid"), so hex reaches no
+    # bitstream at all. Verified against ecppack 1.4-79 above 2**31, where a
+    # dirty tree's top bit puts it.
     return {"ecppack_opts": f"--compress --freq 38.8 --usercode {code:d} "
                             f"{extra}".strip()}
 

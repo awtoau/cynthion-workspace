@@ -103,7 +103,7 @@ def test_blank_and_wrong_port_differ_only_in_the_done_bit():
 
 
 def test_an_absent_board_is_not_a_blank_fpga():
-    """`soc_run.py` refused to configure an absent board. Preserved here."""
+    """`soc_run.py` refuses to configure an absent board. Pinned here."""
     assert verdict(apollo=False, console_usb=False).name == "board-absent"
 
 

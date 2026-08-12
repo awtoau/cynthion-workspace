@@ -18,10 +18,7 @@ upstream `amaranth-soc` first, then the wider Amaranth ecosystem, then a publish
 standard register map, then write our own. **Writing our own is an acceptable outcome,
 not a last resort.**
 
-This is a change of direction, and it is worth being explicit about what changed. The
-earlier framing here was "we expect to take more of their gateware later", with the
-luna_soc peripheral set — timer, uart, gpio, spi — listed as things we would adopt rather
-than write. That is no longer the plan.
+The luna_soc peripheral set — timer, uart, gpio, spi — is not on the adoption list.
 
 **Distinguish `luna` from `luna_soc`.** They are not the same quality of code and should
 not be treated as one decision:
@@ -103,10 +100,10 @@ tree that are *about this board* are exactly the parts worth taking.
 | `flash_bridge` | `apollo_fpga.gateware` | `flash --fast`, an FPGA-side flash writer |
 | selftest bitstream | `cynthion.selftest` | already used by some scripts here |
 
-Every row is board-specific. **The generic peripherals are no longer on this list.**
+Every row is board-specific. **The generic peripherals are not on this list.**
 
-Moondancer is the case that used to argue the other way, and it is worth stating how it
-now reads. It targets `riscv32imac` (which our CPU is), expects `blockram` at `0x00000000`
+Moondancer looks like the case for taking them, and it is worth stating how it reads.
+It targets `riscv32imac` (which our CPU is), expects `blockram` at `0x00000000`
 and `spiflash` at `0x100b0000` (which we now have), and needs leds, gpio0, gpio1, timer0,
 timer1, spi0 and a USB peripheral. Those are luna_soc peripherals — but what moondancer
 actually depends on is the **register interface**, not the implementation behind it. Three
@@ -171,10 +168,11 @@ compared against, so leaving the fixes in one of the two made every side-by-side
 measurement a comparison of two different instruments (#215, split out of #208).
 
 - `RECOVERY` carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
-  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers now
-  hold it, counted from the caller's `sync_mhz` so it follows the clock. It used to be
-  held outside the controller by `hyperram_ceiling_top.py` and by nothing at all in
-  `bootram.py`. Whether the gap clears tCSHI is judged by
+  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers
+  hold it, counted from the caller's `sync_mhz` so it follows the clock, so
+  `bootram.py` — the SoC path — gets it. `hyperram_ceiling_top.py` holds it outside
+  the controller as well (`:740`, gated at `:999` and `:1048`), deliberately, so that
+  harness pays tCSHI twice. Whether the gap clears tCSHI is judged by
   `hyperram_model.v` in `controller_model_tb.sv`, with `+cs_hold_ns=25` as the defect
   run that proves the monitor fires (#346). `scripts/soc_hyperram_sim.py` §4 and §4b
   keep the caller-side half: the gap ours leaves against upstream's, measured.

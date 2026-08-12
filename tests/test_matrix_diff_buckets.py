@@ -39,8 +39,8 @@ def run(failures=None, no_results=None):
 def test_pass_to_no_result_is_a_move(capsys):
     """The defect, stated as a test.
 
-    Under the old two-bucket diff both runs had an empty failure set, so this
-    reported IDENTICAL and returned 0.
+    A two-bucket diff sees an empty failure set in both runs, so it reports
+    IDENTICAL and returns 0.
     """
     a = run()
     b = run(no_results={CELL: [8, 1024, 1024, "NO RESULT -- control did not fire"]})

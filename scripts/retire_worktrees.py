@@ -78,7 +78,7 @@ def worktrees():
 def remote_heads():
     """Every branch on origin, in ONE round trip.
 
-    Asked per branch this was 43 network calls and outran a two-minute bound --
+    Asked per branch it is 43 network calls and outruns a two-minute bound --
     the moves themselves are renames on one filesystem and cost nothing.
     """
     out = git("ls-remote", "--heads", "origin", check=False)

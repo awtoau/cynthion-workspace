@@ -58,12 +58,10 @@
 //!   `zicntr`, which instantiates `PerformanceCounterPlugin`. One flag gates
 //!   `rdtime` and these together, so `info`'s `NO RDTIME` line warns for both. An
 //!   undecoded CSR read traps rather than reading zero.
-//! - **`mhpmcounter3..6` and `mhpmevent3..6` are REAL** (this comment used to say
-//!   otherwise). `gateware/soc/cpu/cpu.py:123` passes `--performance-counters 4`,
-//!   so the plugin allocates four counters with writable event selectors, not the
-//!   WARL-zero dummies from `additionalCounterCount = 0`. Stale claim survived
-//!   the flag being added (#173); corrected here because it was the reason
-//!   nothing outside `src/bench.rs` read one.
+//! - **`mhpmcounter3..6` and `mhpmevent3..6` are REAL.**
+//!   `gateware/soc/cpu/cpu.py:123` passes `--performance-counters 4`, so the
+//!   plugin allocates four counters with writable event selectors, not the
+//!   WARL-zero dummies from `additionalCounterCount = 0` (#173).
 //! - Cost is timing, not space: design stopped closing at 72 MHz when they were
 //!   added, hence `SYNC_MHZ = 60`. `src/bench.rs` owns event ids and selector
 //!   writes; `src/sched.rs` reads `STALLED_CYCLES_FRONTEND` and

@@ -62,9 +62,9 @@ IIR at +2 does share a word with RBR at +0, and what keeps them apart is the bus
 VexiiRiscv's `LsuCachelessWishbonePlugin` drives a single-byte `sel` for a byte
 access (`VexiiRiscv.v:7499-7515`), `amaranth_soc.csr.wishbone` strobes only the
 lanes `sel` names, and the console sits in a `main=0` PMA region where no cache
-line fill reaches it. An earlier version of this peripheral made reading IIR
-side-effect free to harden against a widened access instead;
-`../../docs/architecture.md` records that decision and its reversal.
+line fill reaches it. Making reading IIR side-effect free to harden against a
+widened access instead was considered and rejected; `../../docs/architecture.md`
+records why.
 
 ## There is no UART in this UART
 

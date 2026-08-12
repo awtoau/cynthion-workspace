@@ -22,9 +22,9 @@ module hyperram_model #(
     parameter real   T_VCS_NS  = 150_000.0,  // power-on to ready
     parameter real   T_CSM_NS  = 4_000.0,    // max CS# low, CR1[1:0] = 01b
     // Minimum CS# HIGH between transactions, at the grade FITTED: a `6I` = T166,
-    // where Config-AC.v gives 6 ns. Ten was the T100 column, and #341 took it out
-    // of both controllers. The ONLY place this part fact is judged -- the Python
-    // models used to judge it against their own copy of it. (#341, #346)
+    // where Config-AC.v gives 6 ns; 10 ns is the T100 column. The ONLY place this
+    // part fact is judged -- a Python model judges it against its own copy of it,
+    // which decides nothing. (#341, #346)
     parameter real   T_CSHI_NS = 6.0,
     // CS# low to RWDS valid. Not a timing check -- it decides WHICH CA edge
     // carries the extra-latency request, and a controller sampling earlier than
@@ -311,12 +311,10 @@ module hyperram_model #(
         rwds_out = 1'b0;                // latency period: the request is answered
         if (is_read) rwds_oe = 1'b1;    // CA_RWDS_FAULT covers the CA and no more
       end else begin
-        // Reads and writes start at the SAME edge. An earlier version delayed
-        // reads by one, "measured against the vendor model" -- but that was
-        // measured by hunting for the RWDS strobe, and the two models drive RWDS
-        // through the latency differently, so the hunt agreed while the DQ edge
-        // did not. dqs_latency_probe_tb.sv measures the DQ edge directly on both
-        // models and caught it at every latency code.
+        // Reads and writes start at the SAME edge. Hunting for the RWDS strobe
+        // cannot check that: the two models drive RWDS through the latency
+        // differently, so the hunt agrees while the DQ edge does not.
+        // dqs_latency_probe_tb.sv measures the DQ edge directly on both models.
         if (is_read && DELIVER_WORDS >= 0 && served >= DELIVER_WORDS) begin
           // The device has stopped answering. Both lines released, so there is no
           // strobe and the address does not advance -- what a part in Deep Power

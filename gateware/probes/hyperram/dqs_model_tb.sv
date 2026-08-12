@@ -321,10 +321,10 @@ module tb;
   // IDDRX2DQA output would land. `datavalid` follows the DEVICE driving and NOT
   // the controller's own `read` window -- the generous case, so a misalignment
   // reported here cannot be an artefact of a stingy handshake.
-  // RWDS FLOAT, GIVEN A VALUE. `rwds === 1'b1` read an undriven line as a firm 0,
-  // so a sample landing in a float was invisible here. `+rwds_float_pct=<0..100>`
-  // is the chance a float reads High, `+rwds_float_seed` the stream. Default 0 is
-  // the old behaviour exactly, so nothing already green becomes flaky. (#400)
+  // RWDS FLOAT, GIVEN A VALUE. `rwds === 1'b1` reads an undriven line as a firm
+  // 0, so without this a sample landing in a float is invisible here.
+  // `+rwds_float_pct=<0..100>` is the chance a float reads High,
+  // `+rwds_float_seed` the stream. Default 0 never floats High. (#400)
   integer rwds_float_pct  = 0;
   integer rwds_float_seed = 1;
   integer rwds_floats     = 0;

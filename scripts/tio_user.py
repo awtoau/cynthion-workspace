@@ -9,9 +9,8 @@ Attaches to the SoC console and prints it.
     ./scripts/tio_user.py
 
 Meant to be run by hand and left running, unlike the scripts around it that agents
-invoke one-shot. It used to live at the repo root for that reason; moving it here
-left its own `ROOT` pointing at `scripts/`, so `import usb_ids` failed from every
-working directory until that was fixed.
+invoke one-shot. `ROOT` must resolve to the repo root from here, or `import
+usb_ids` fails from every working directory.
 
 ## This owns the tty, and shares it over a socket
 
@@ -121,23 +120,17 @@ def keyboard(state, lock):
 
     Without this the terminal is read-only: keystrokes are echoed by the tty layer,
     so typing LOOKS like it worked, and then nothing answers -- which reads as a dead
-    shell rather than as a missing relay. Socket clients had a write path from the
-    start; the person sitting in front of it did not.
+    shell rather than as a missing relay.
 
-    RAW, one byte at a time, and that is a change: this was line-buffered "on
-    purpose" because the SoC shell was line-based and raw mode "would only
-    duplicate" its editor.
+    RAW, one byte at a time, because the shell's TAB completion and history (#171)
+    need the keystroke AS IT IS TYPED. Line-buffered, a TAB sits in the terminal's
+    own buffer and arrives after Enter, by which time there is nothing to complete,
+    and arrow keys never arrive as arrows at all -- a firmware feature verified on
+    the board and invisible from this terminal.
 
-    That stopped being true when the shell gained TAB completion and history
-    (#171). Both need the keystroke AS IT IS TYPED. Line-buffered, a TAB sits in
-    the terminal's own buffer and arrives after Enter -- by which time the line
-    is finished and there is nothing to complete. Arrow keys never arrive as
-    arrows at all. The feature was in the firmware, verified on the board, and
-    invisible from this terminal.
-
-    Ctrl-C now reaches the BOARD rather than this process, which is what a raw
-    terminal means. **Ctrl-] quits**, the same escape telnet and tio use, and the
-    banner says so.
+    Ctrl-C reaches the BOARD rather than this process, which is what a raw terminal
+    means. **Ctrl-] quits**, the same escape telnet and tio use, and the banner
+    says so.
 
     The handle comes from `state` under the lock rather than being captured, because a
     reconfigure replaces the port object and a thread holding the old one writes to a
@@ -201,11 +194,9 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    # ON BY DEFAULT. It used to be opt-in, and the result was that the port was
-    # held by a terminal with no way in: every script that wanted to read the
-    # console competed for the tty, got interleaved bytes or silence, and the
-    # answer each time was "restart it with --serve". A local socket costs
-    # nothing and removes that entire class of exchange.
+    # ON BY DEFAULT. Opt-in, the port is held by a terminal with no way in:
+    # every script wanting the console competes for the tty and gets interleaved
+    # bytes or silence. A local socket costs nothing and removes that.
     parser.add_argument("--no-serve", dest="serve", action="store_false",
                         help=f"do NOT fan out on TCP {SERVE_PORT} (serving is the "
                              f"default; this makes the tty exclusive to you)")

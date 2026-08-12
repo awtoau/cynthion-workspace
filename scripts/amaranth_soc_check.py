@@ -22,10 +22,10 @@ upstream fixes. Nothing raises, nothing prints a version, and the gateware that
 comes out is different. That is the whole hazard: not a build that breaks, a
 build that quietly means something else.
 
-Until #190 nothing declared either dependency, so this was one `pip uninstall`
-or one clean machine away at all times. `scripts/machine_setup.py` now declares
-both. This is the part that notices if that declaration is ever dropped, because
-a declaration is invisible and a red check is not.
+`scripts/machine_setup.py` declares both (#190); undeclared, that hazard is one
+`pip uninstall` or one clean machine away at all times. This is the part that
+notices if the declaration is ever dropped, because a declaration is invisible
+and a red check is not.
 
 ## Imported the way the designs import it
 
