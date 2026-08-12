@@ -17,7 +17,7 @@ Where the two differ, the "built" column says so.
 | **FUSB302B** | `U2` | *IC USB TYPE C CTLR PROGR 14-MLP* | TARGET `int`, pin 5 | level | source 4 | keep |
 | **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
-| **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — driven as SLOW output | decide: SLOW, or a second alert |
+| **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
 | **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
@@ -45,13 +45,28 @@ read-to-clear, so servicing the device is what drops its line.
 **One source per FUSB302B, not one OR-ed source.** `docs/architecture.md`
 decision 8.
 
-## The PAC1954's second alert
+## The PAC1954's second alert, and pin function as a runtime choice
 
 The part offers *"Two Independent ALERT/GPIO pins"* (DS20006539B), and this
-board wires both. `SLOW/ALERT1` is currently driven as an **output** —
+board wires both. `SLOW/ALERT1` is hard-driven as an **output** —
 `slow.o = 0, oe = 1` — so it serves the SLOW function and the second alert is
-unreachable. Freeing it means deciding SLOW is not needed; the ADC sample rate
-it controls is the trade.
+unreachable.
+
+**Make it runtime-selectable rather than picking one.** The platform already
+declares the pin bidirectional (`Subsignal("slow", Pins("C6", dir="io"))`), so
+the tri-state buffer is there; the gateware simply hard-drives it. What is
+needed:
+
+* `slow.oe` and `slow.o` from CSR bits rather than constants
+* `slow.i` wired to an interrupt source, which never fires while the pin is
+  driven
+
+Then the firmware chooses SLOW or ALERT1 at boot, and can change its mind. The
+cost is two register bits and a source that may sit idle.
+
+**The general rule, because a rebuild is ~200 s and a variant:** a pin function
+that *could* be a runtime choice should not be a build-time one. Anything
+hard-driven in `top.py` that the part can repurpose is a candidate.
 
 ## What the controller can and cannot do
 
@@ -81,7 +96,8 @@ carries the argument.
    `gateware/soc/cpu/plic.py` for `amaranth_soc.csr.event.EventMonitor` — smaller,
    Amaranth-native, latches W1C, supports level and edge per source. **Not agreed.**
 2. **The PAC1954 alert (source 6)** — enable it, or record why not.
-3. **`SLOW/ALERT1`** — keep SLOW, or free the pin for a second alert.
+3. **`SLOW/ALERT1`** — make it runtime-selectable, rather than choosing SLOW or
+   ALERT1 at build time. Then the question is only what the firmware defaults to.
 4. **What the board should DO on a CC/SBU over-voltage.** Counting and surfacing
    it is the floor; opening VBUS on the faulting port is the obvious candidate,
    since the switches are already under firmware control. #507.
