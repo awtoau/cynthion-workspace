@@ -22,7 +22,8 @@ met the real PHY or the real part.
 | boot mode | `info` | boot status is 0 or 1 | 7 `Owned`: the bootloader claimed STAGE and the mux did not follow |
 | PLL | `info` | `hr` reports locked | the part runs off the second PLL now; unlocked reads as a dead part |
 | mux at rest | `bist mode` | `stage`, nothing refused | the mode mux came up on the wrong side |
-| staging at CK 80 | `hr ramp w` | the ramp verifies | the staging path does not survive the clock change |
+| retention at CK 80 | `hr ramp` | the ramp verifies WITHOUT writing first | the part stores nothing; `hr ramp w` passes anyway, see below |
+| the two ports | `hr cross` | window and staging read each other's writes | one of the two paths is not reaching the part |
 | handover out | `bist mode bist` | mode reads back `bist` | the mux did not reach the engine, or a transaction is still open |
 | the engine | `bist smoke` | the rig both passes and detects a fault | the engine lost the part |
 | handover back | `bist mode stage` | mode reads back `stage` | the handover is one-way |
@@ -131,8 +132,9 @@ def main():
     # handover that never happened.
     record, replies = run(
         bitstream, args.budget,
-        ["info", "bist mode", "hr ramp w", "bist mode bist", "bist status",
-         "bist smoke", "bist mode stage", "hr ramp w"],
+        ["info", "bist mode", "hr ramp w", "hr ramp", "hr cross",
+         "bist mode bist", "bist status", "bist smoke", "bist mode stage",
+         "hr ramp w", "hr ramp", "hr cross"],
         "one gateware: the handover, both modes, CK 80 staging")
 
     items = []
@@ -147,10 +149,21 @@ def main():
     at_rest = reply(replies, "bist mode")
     check(items, "mux at rest is stage", "mode stage" in at_rest, tail(at_rest))
 
-    ramps = [text for asked, text in replies if asked.startswith("hr ramp")]
-    check(items, "staging at CK 80",
-          bool(ramps) and "BAD" not in ramps[0] and "usage" not in ramps[0],
+    # `hr ramp w` ALONE IS NOT EVIDENCE, and reading it as such was this
+    # script's own false pass. Write-then-immediately-verify returns 256/256
+    # correct on a part that stores nothing: the value comes back out of the
+    # write path. `hr ramp` on its own, a moment later, then reads zeros.
+    #
+    # So the item is the verify-only ramp plus `hr cross`, which writes through
+    # each port and reads through both.
+    ramps = [text for asked, text in replies if asked.strip() == "hr ramp"]
+    crosses = [text for asked, text in replies if asked.strip() == "hr cross"]
+    check(items, "the part RETAINS at CK 80",
+          bool(ramps) and "wrong" not in ramps[0],
           tail(ramps[0]) if ramps else "no reply")
+    check(items, "window and staging agree",
+          bool(crosses) and "DISAGREE" not in crosses[0],
+          tail(crosses[0], 1, 4) if crosses else "no reply")
 
     to_bist = reply(replies, "bist mode bist")
     check(items, "handover to the engine", "mode bist" in to_bist, tail(to_bist))
@@ -172,7 +185,8 @@ def main():
     check(items, "handover back to staging", "mode stage" in back, tail(back))
 
     check(items, "the part comes back",
-          len(ramps) > 1 and "BAD" not in ramps[-1] and "usage" not in ramps[-1],
+          len(ramps) > 1 and "wrong" not in ramps[-1]
+          and len(crosses) > 1 and "DISAGREE" not in crosses[-1],
           tail(ramps[-1]) if len(ramps) > 1 else "second ramp not reached")
 
     # The warm reboot, as its own job, and `reset` is expected to time out: the
