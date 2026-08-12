@@ -301,6 +301,13 @@ def sample(arm, seed, threads=None, tag=None):
         return {"arm": arm, "seed": seed, "ok": False,
                 "seconds": round(elapsed, 1),
                 "why": f"rc={proc.returncode} {why or f'no {FINISHED!r}'}"[:160]}
+    # The packed configuration is 7.5 MB a sample and nothing reads it: a sweep
+    # of 700 keeps 5 GB of bitstreams to answer a question about frequency. Any
+    # one of them is two minutes away from its own seed, deterministically.
+    config = out / "top.config"
+    if config.exists():
+        config.unlink()
+
     fmax, util = {}, {}
     for line in text.splitlines():
         found = UTIL_RE.match(line.strip())
