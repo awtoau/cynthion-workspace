@@ -75,7 +75,7 @@ from amaranth_soc import gpio
 
 from peripherals.i2c_master import I2CMaster, prescale_for, SLOTS_BIT, SLOTS_COND
 from peripherals.sideband_csr import SidebandControl
-from peripherals.gateware_id import (GatewareId, MAGIC, pack_built, pack_cpu,
+from peripherals.gateware_id import (GatewareId, MAGIC, pack_cpu,
                          CPU_M, CPU_A, CPU_C, CPU_RDTIME)
 from peripherals.ulpi_window import UlpiRegisters, TIMEOUT_CYCLES
 from clocks import PHY_PAD_RESET_CYCLES, PHY_PREP_CYCLES
@@ -1418,11 +1418,9 @@ def run_gateware_id_checks(checks, verbose):
     number from the wrong register on the board, which is the failure this whole
     peripheral exists to make loud.
     """
-    from datetime import datetime, timezone
-
     # Fixed inputs, so the expected words are arithmetic rather than whatever
     # the tree happened to be when the test ran.
-    built = datetime(2026, 8, 2, 11, 20, 3, tzinfo=timezone.utc)
+    built = 0xA1B2_C3D4
     dut = GatewareId(sync_hz=60_000_000, usb_hz=60_000_000, cache_sets=64,
                      built=built, git=0x8123_4567)
     seen = {}
@@ -1465,12 +1463,11 @@ def run_gateware_id_checks(checks, verbose):
         f"read {seen.get('git')!r}; bit 31 is dirty and the rest is the short "
         f"hash, the same encoding build_helpers.usercode() stamps into USERCODE")
     checks.check(
-        "the build time packs and unpacks",
-        seen.get("built") == pack_built(built)
-        and (seen.get("built", 0) >> 26) + 2000 == 2026
-        and (seen.get("built", 0) >> 22) & 0xf == 8,
-        f"read {seen.get('built')!r}, expected {pack_built(built):#010x} for "
-        f"{built.isoformat()}")
+        "the build identity comes back whole, all 32 bits",
+        seen.get("built") == built,
+        f"read {seen.get('built')!r}, expected {built:#010x}. The word is the "
+        f"gateware source digest, and every byte of it is the discriminator -- "
+        f"a truncated read would name the wrong build (#441).")
     checks.check(
         "the clock frequencies are reported in Hz",
         seen.get("sync_hz") == 60_000_000 and seen.get("usb_hz") == 60_000_000,

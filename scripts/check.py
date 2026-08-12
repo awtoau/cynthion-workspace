@@ -288,6 +288,22 @@ def build_checks() -> List[Check]:
             ],
         ),
         Check(
+            name="repro",
+            description="two elaborations of this tree give one RTLIL digest",
+            slow=True,
+            steps=[
+                # Nothing forced this and it was false for the life of the
+                # project: a live `datetime.now()` and an `id()`-derived module
+                # name meant no two builds shared a netlist, so every recorded
+                # Fmax and LUT count was a sample from a different design (#441).
+                # A regression here is invisible everywhere else.
+                #
+                # `slow`: two separate interpreters, ~8 s each -- both causes
+                # were constant within one process, so a loop would have passed.
+                Step([PYTHON, "scripts/soc_repro_check.py"], ROOT),
+            ],
+        ),
+        Check(
             name="irqlog",
             description="no interrupt handler can reach a console",
             steps=[

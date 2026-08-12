@@ -50,16 +50,13 @@ Four checks, all of which refuse rather than warn:
 - **Round trip.** The packed `.bit` is unpacked again with `ecpunpack` and the 32 blocks
   compared with what was intended. A patch that did not land is caught here.
 
-## Two things the design does that stop RTLIL being reproducible
+## The source check is exact
 
-Neither is a difference in logic, and both are reconciled rather than ignored -- if
-anything else moved, the comparison still fails.
-
-- `peripherals/gateware_id.py` packs `datetime.now()` into a register. The build's own stamp is
-  read back out of its `top.il` and the design elaborated a second time with it pinned,
-  which is why the source check costs two elaborations rather than one.
-- LUNA names some generated modules after `id(self)`, so a module carries a different
-  name each run under ASLR. Those names are normalised on both sides.
+One elaboration, compared byte for byte, nothing normalised away. It used to be two
+elaborations with an `id()`-derived module name stripped and a `datetime.now()` stamp
+recovered from the RTLIL, because neither repeated between runs; both are fixed and the
+design elaborates identically every time (#441). `scripts/soc_repro_check.py` is the
+gate on that staying true.
 
 ## What it does not check
 
@@ -261,47 +258,6 @@ def elaborate_il(words, soc):
     return plan.files["top.il"]
 
 
-# LUNA names some generated modules after `id(self)`, so the same design elaborates to
-# the same logic under a different module name every run. Normalised on both sides: a
-# name that differs while everything it names is identical cannot reach the bitstream.
-PYTHON_ID = re.compile(r"_\d{10,}\b")
-
-
-def built_stamp(fresh, built):
-    """Read the build's own `gateware_id` timestamp out of its RTLIL.
-
-    `peripherals/gateware_id.py` packs `datetime.now()` into a register, so no two elaborations of
-    identical source are byte-identical and a bare comparison can never pass. This
-    recovers the built-in timestamp so the design can be elaborated again *with* it,
-    which turns the comparison back into an exact one instead of an approximate one.
-
-    The 32-bit lines that differ must all carry the same pair of constants, and both
-    must unpack to a plausible date. Anything else and there is nothing to recover.
-    """
-    old = new = None
-    for line_fresh, line_built in zip(fresh.splitlines(), built.splitlines()):
-        if line_fresh == line_built:
-            continue
-        pair = [re.findall(r"32'([01]{32})", line) for line in (line_fresh, line_built)]
-        if not (len(pair[0]) == len(pair[1]) == 1):
-            continue                       # a narrower slice of the same word
-        candidate = (int(pair[0][0], 2), int(pair[1][0], 2))
-        if old is None:
-            new, old = candidate
-        elif (new, old) != candidate:
-            return None                    # more than one constant moved
-    if old is None:
-        return None
-
-    for stamp in (old, new):
-        year, month, day = 2000 + (stamp >> 26), (stamp >> 22) & 0xF, (stamp >> 17) & 0x1F
-        hour, minute, second = (stamp >> 12) & 0x1F, (stamp >> 6) & 0x3F, stamp & 0x3F
-        if not (2020 <= year <= 2099 and 1 <= month <= 12 and 1 <= day <= 31
-                and hour < 24 and minute < 60 and second < 60):
-            return None
-    return old if new >= old else None
-
-
 # --------------------------------------------------------------------------- packing
 
 
@@ -474,19 +430,13 @@ def patch(args):
         il_path = build_dir / "top.il"
         if not il_path.exists():
             raise Refuse("no top.il in the build directory to compare against")
+        # Byte for byte, with nothing normalised away. It used to strip an
+        # `id()`-derived module name and recover the `datetime.now()` stamp from
+        # the RTLIL before comparing, because neither repeated; both are fixed,
+        # so the comparison is now the exact one it claimed to be (#441).
         mark = time.monotonic()
-        built = PYTHON_ID.sub("_id", il_path.read_text())
-        fresh = PYTHON_ID.sub("_id", elaborate_il(old_words, soc))
-        if fresh != built:
-            # The design stamps its own build time into a register, so the first
-            # elaboration never matches. Recover that stamp and elaborate once more
-            # with it pinned, which restores an exact comparison rather than an
-            # approximate one -- if anything but the stamp moved, this still fails.
-            stamp = built_stamp(fresh, built)
-            if stamp is not None:
-                import peripherals.gateware_id as gateware_id
-                gateware_id.pack_built = lambda when, word=stamp: word
-                fresh = PYTHON_ID.sub("_id", elaborate_il(old_words, soc))
+        built = il_path.read_text()
+        fresh = elaborate_il(old_words, soc)
         if fresh != built:
             raise Refuse(
                 "the design elaborates differently than the build directory holds.\n"

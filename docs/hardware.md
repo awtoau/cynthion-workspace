@@ -731,6 +731,13 @@ The identifier is the one `gateware/build_helpers.py` stamps into the ECP5's
 USERCODE — short hash, bit 31 set for a dirty tree — so what Apollo reads over
 JTAG and what the CPU reads from inside are the same number by construction.
 
+`src XXXXXXXX` beside it is the gateware's own source digest, not a build time.
+The commit says *which commit*; the dirty bit says only *that* the tree was
+dirty, so the digest is what tells two uncommitted trees apart. Reproduce it
+with `python3 gateware/build_helpers.py`. It was `datetime.now()` until
+[#441](https://github.com/awtoau/cynthion-workspace/issues/441), which made it
+the one constant in the design that moved when nothing else did.
+
 Two lines are worth reading carefully:
 
 * **`misa` reports `rv32im`** on this core while it is generated `--with-rva

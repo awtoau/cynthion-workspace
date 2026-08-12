@@ -293,17 +293,19 @@ def gateware_digest():
     act as a control silently reconfigured with the measurement bitstream, and
     the control it was supposed to provide was worthless. Any variable that
     changes what `top.py` elaborates belongs on this list.
+
+    **The sources and the variant come from `build_helpers.source_digest()`,
+    which is also what `gateware_id` puts in a register.** One file list: a
+    second copy here is how a variable ends up hashed by the cache and not by
+    the board's own account of itself.
     """
     import hashlib
+    from build_helpers import source_digest
     digest = hashlib.sha256()
-    for source in sorted((ROOT / "gateware" / "soc").rglob("*.py")):
-        digest.update(source.relative_to(ROOT).as_posix().encode())
-        digest.update(source.read_bytes())
+    digest.update(source_digest().encode())
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True)
     digest.update(head.stdout.strip().encode())
-    for setting in variant_settings():
-        digest.update(setting.encode())
     # THE PLACER FLAGS ARE PART OF THE BITSTREAM. Without this a
     # `--no-parallel-refine` run of a variant already built would skip synthesis
     # and report the non-deterministic build's Fmax as the deterministic one.
