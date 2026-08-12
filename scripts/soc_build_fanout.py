@@ -158,6 +158,11 @@ def main() -> int:
                         help="pass --skip-tests to every build. The QEMU gate is "
                              "about the firmware, which a ladder does not vary, "
                              "so it is worth running once and not N times")
+    parser.add_argument("--no-parallel-refine", action="store_true",
+                        help="pass it to every build. A ladder whose Fmax column "
+                             "is the result needs it: --parallel-refine is the "
+                             "whole of the spread (#361), so without it a rung "
+                             "that closes cannot be told from a lucky placement")
     args = parser.parse_args()
 
     overlays = [parse_spec(spec) for spec in args.specs]
@@ -178,7 +183,8 @@ def main() -> int:
         unique.append(overlay)
 
     jobs = args.jobs or len(unique)
-    extra = ["--skip-tests"] if args.skip_tests else []
+    extra = (["--skip-tests"] if args.skip_tests else []) + \
+            (["--no-parallel-refine"] if args.no_parallel_refine else [])
     emit(f"{len(unique)} build(s), {jobs} at a time, "
          f"{deadline(jobs):.0f} s each before they are killed")
     for overlay in unique:

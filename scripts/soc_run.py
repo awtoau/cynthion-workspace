@@ -130,6 +130,13 @@ from devlog import emit, spawn  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
 from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
 
+# The nextpnr flags THIS run uses. `--no-parallel-refine` drops the one flag that
+# makes Fmax non-deterministic -- 14.34 MHz of spread on a fixed netlist, 8/8
+# identical without it (#361) -- so a build whose Fmax is evidence drops it.
+# `fast_build_env` documents an `AMARANTH_nextpnr_opts` override that never
+# worked from here: the build command below sets that variable itself (#429).
+PNR_OPTS = NEXTPNR_OPTS
+
 # The recorder every build goes through. Area, timing and the full configuration
 # land in Postgres from one unconditional call below, so there is no way to
 # produce a bitstream without a row describing it -- and if the database is not
@@ -288,6 +295,13 @@ def gateware_digest():
     digest.update(head.stdout.strip().encode())
     for setting in variant_settings():
         digest.update(setting.encode())
+    # THE PLACER FLAGS ARE PART OF THE BITSTREAM. Without this a
+    # `--no-parallel-refine` run of a variant already built would skip synthesis
+    # and report the non-deterministic build's Fmax as the deterministic one.
+    # Folded in only when they differ from the default, so the flag adds a second
+    # cache key rather than invalidating every bitstream ever built.
+    if PNR_OPTS != NEXTPNR_OPTS:
+        digest.update(PNR_OPTS.encode())
     return digest.hexdigest()[:16]
 
 
@@ -576,6 +590,11 @@ def main():
                              "firmware, which it does not once .text is in flash")
     parser.add_argument("--skip-tests", action="store_true",
                         help="configure even though the QEMU shell tests have not run")
+    parser.add_argument("--no-parallel-refine", action="store_true",
+                        help="drop nextpnr's --parallel-refine, whose threaded SA "
+                             "is the whole of this design's Fmax spread (#361). "
+                             "Slower and reproducible: use it for any build whose "
+                             "timing number is going to be reported")
     parser.add_argument("--features", default="",
                         help="cargo features for the shell crate, comma-separated. "
                              "`rtic` builds the RTIC dispatcher instead of the "
@@ -588,10 +607,18 @@ def main():
     # WHICH BUILD THIS IS, first line of every run. The variant used to be
     # visible only in the environment of whoever started it, and every build
     # landed in the same directory regardless.
+    # Before the digest is taken, because it is one of the digest's inputs.
+    if args.no_parallel_refine:
+        global PNR_OPTS
+        PNR_OPTS = " ".join(opt for opt in NEXTPNR_OPTS.split()
+                            if opt != "--parallel-refine")
+
     BUILD.mkdir(parents=True, exist_ok=True)
     emit(f"variant {variant.slug()} -> {BUILD.relative_to(ROOT)}")
     for setting in variant_settings():
         emit(f"  {setting}")
+    if args.no_parallel_refine:
+        emit(f"  nextpnr {PNR_OPTS} -- reproducible, ~24 s slower (#361)")
 
     # One run per variant. See TOOLCHAIN_LOCK.
     mine = take_lock(BUILD / ".build.lock", emit, blocking=False,
@@ -882,7 +909,7 @@ def main():
         # The OSS CAD Suite environment has to be sourced, so this one step is a
         # shell command rather than a bare exec.
         build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
-                 f'AMARANTH_nextpnr_opts="{NEXTPNR_OPTS}" '
+                 f'AMARANTH_nextpnr_opts="{PNR_OPTS}" '
                  # Inherited too, but stated here so the log line carries the whole
                  # toolchain contract. It is correctness, not speed -- see #306.
                  f'YOSYS_MAX_THREADS="{YOSYS_MAX_THREADS}" '
