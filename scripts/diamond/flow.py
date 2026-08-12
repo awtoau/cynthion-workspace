@@ -247,9 +247,18 @@ def main():
 
         if args.mode == "lse":
             # Diamond's own synthesis, straight from Verilog.
+            #
+            # `-frequency` matters as much as the .lpf: LSE has its own target,
+            # defaulting to 200 MHz here, and the preferences file is read by
+            # map/par/trce rather than by synthesis. Left at the default, LSE
+            # chases 200 MHz on a design that does ~83 -- 83 minutes without
+            # finishing synthesis, and an area figure inflated by replication
+            # for an unreachable goal.
             cmd = ["synthesis", "-a", ARCH, "-d", DEVICE, "-t", PACKAGE,
                    "-s", SPEED, "-top", args.top, "-ngd", ngd.name,
                    "-ver", src.name]
+            if args.freq:
+                cmd[1:1] = ["-frequency", str(args.freq)]
             for e in extra:
                 cmd.append(e.name)
             t, _ = run(cmd, out, handle, env, "synthesis(LSE)")
