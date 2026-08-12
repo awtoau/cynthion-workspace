@@ -276,9 +276,6 @@ def main():
     try:
         return run_stage(args)
     finally:
-        if PERTURB.exists():
-            PERTURB.unlink()
-            emit(f"removed {PERTURB.relative_to(ROOT)}")
         for cache in (ROOT / "gateware" / "soc").rglob("__pycache__"):
             shutil.rmtree(cache, ignore_errors=True)
 
