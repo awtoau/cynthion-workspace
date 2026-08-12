@@ -570,3 +570,11 @@ operational"; **NDR (TransFR)**, bit 28 of the control register, keeps an I/O at
 its previous value through `PROGRAMN`/`REFRESH` instead of tristating it; and
 Dual Boot / Multi Boot hold two patterns in the one SPI flash. `REFRESH` is
 issuable over JTAG, which is the port we already have.
+
+## `DPO2036.pdf` — Diodes DPO2036, CC/SBU over-voltage protection
+
+- URL: `https://www.diodes.com/assets/Datasheets/DPO2036.pdf`
+- Revision: DS40644 Rev. 2-2, July 2020
+- Good copy: **14 pages**, 1,102,134 bytes; contains `4-Channel Over-Voltage Protection with Auto-Recovery`
+  and the `tOVP_RESPONSE_CC_1` row reading `26  32  38  ms`
+- `U13` (TARGET) and `U14` (AUX) on r1.4. Pin 6 `FAULTB` is active-low open-drain.

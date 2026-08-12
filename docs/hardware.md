@@ -445,7 +445,7 @@ So each of CONTROL and AUX has **two** independent shutoff paths: the automatic
 hardware OVP, and deliberate FPGA control through the active-low `*_vbus_in_en`
 pins. Passthrough keeps working through either.
 
-### The signal pins have their own clamp, and it is a different part
+### The signal pins have their own protection, and it is a different part
 
 Everything above guards **VBUS**. The CC and SBU pins are guarded separately, by
 a part this document did not name until now (#156).
@@ -459,7 +459,7 @@ instance path.
 | protection | guards | mechanism |
 |---|---|---|
 | `D17`, 5.6 V zener | VBUS inputs (CONTROL, AUX) | hardware shutoff above 5.5 V |
-| **`U13`/`U14` DPO2036** | **CC1/CC2, SBU1/SBU2** | **clamp** |
+| **`U13`/`U14` DPO2036** | **CC1/CC2, SBU1/SBU2** | **series pass, opens on over-voltage; `FAULTB` open-collector** |
 | PAC1954 | all four ports | firmware policy, and slower |
 
 Why it matters: CC and SBU are low-voltage signal pins in a connector whose VBUS
@@ -469,7 +469,7 @@ drive straight into FPGA I/O. That is the failure this part exists to stop, and 
 is not visible anywhere else in this tree.
 
 **#97 is a free datapoint on it.** All four SBU pins passed drive-and-readback,
-and those lines run through the clamp — so that result is also evidence the clamp
+and those lines run through the DPO2036 — so that result is also evidence the part
 is not shorting them.
 
 ### What that means for firmware

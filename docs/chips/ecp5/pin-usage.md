@@ -118,7 +118,7 @@ These five are mutually exclusive: at most one may be requested in a design.
 | `target_type_c` 0 | `scl` | A4 | used | I2C mux segment `TARGET`, `R98` 2.2 kΩ pull-up |
 | | `sda` | C4 | used | `R97` 2.2 kΩ |
 | | `int` | A3 | used | → `i2c_mux.target_int` → CSR **and** `plic.sources[4]`. `R37` 2.2 kΩ, FUSB302B `U2` pin 5 |
-| | `fault` | D4 | used | → `i2c_mux.target_fault` → CSR. `R100` 10 kΩ; source is `U13` pin 6, the DPO2036 clamp — **not** the FUSB302B |
+| | `fault` | D4 | used | → `i2c_mux.target_fault` → CSR. `R100` 10 kΩ; source is `U13` pin 6 `FAULTB`, open-collector, on the DPO2036 — **not** the FUSB302B |
 | | `sbu1` | A2 | **requested-unused** | net `TARGET_C.SBU1S` → `U13` pin 10 → `J4` A8 |
 | | `sbu2` | E4 | **requested-unused** | net `TARGET_C.SBU2S` → `U13` pin 9 → `J4` B8 |
 | `aux_type_c` 0 | `scl` | H12 | used | `R38` 2.2 kΩ |
@@ -304,11 +304,11 @@ once the ALERT" function is assigned), and finding #2 wants that function.
 ### 4. The four SBU pins — Type-C sideband, proven alive, wired to nothing
 
 **State:** requested-unused on both ports. A2/E4 (TARGET-C) and H13/K14 (AUX) run
-through the DPO2036 clamps `U13`/`U14` to `J4`/`J1` pins A8/B8. Plain `dir="io"`
+through the DPO2036 protection switches `U13`/`U14` to `J4`/`J1` pins A8/B8. Plain `dir="io"`
 FPGA pins with a protection part in between and nothing else on the net.
 
 [#97](https://github.com/awtoau/cynthion-workspace/issues/97) already drove and
-read back all four successfully — so the pads, the buffers and the clamp are known
+read back all four successfully — so the pads, the buffers and the DPO2036 are known
 good. That is a survey result sitting idle.
 
 **What SBU1/SBU2 are for:** they are the Type-C sideband pair. In DisplayPort alt

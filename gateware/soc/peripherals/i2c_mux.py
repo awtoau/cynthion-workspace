@@ -49,11 +49,10 @@ state-changing read one byte from the register the handler polls
     sources delete that obligation rather than documenting it. The PLIC has 27
     spare sources, so nothing was saved by sharing (`../../docs/architecture.md`,
     decision 8).
-  * **`fault` gets no source at all.** It means something different from `int`,
-    and nothing here can clear it -- it drops when the device's fault does. An
-    interrupt on a level the firmware cannot clear must stay masked until a
-    poll says the level has gone, so it would add a handler and keep the poll.
-    Reported in LINES, left to the 50 ms poller.
+  * **`fault` gets no source, and the level is not captured either.** The
+    DPO2036 auto-recovers: `FAULTB` asserts within 300 us and de-asserts about
+    4 ms later, so a transient is gone long before the 50 ms poll samples it.
+    A clean read is therefore not evidence that no fault occurred. #506.
 """
 
 from amaranth               import Module, Mux, Signal

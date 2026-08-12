@@ -4,7 +4,7 @@ Two `FUSB302BMPX` USB Type-C / Power Delivery controllers on Cynthion r1.4,
 refdes **U12** (AUX) and **U2** (TARGET) — `type_c.kicad_sch` is one sheet
 instantiated once per port, so both parts live in the same file and the refdes
 comes from the instance path, not the symbol. **U14 is not one of them**; it is
-the AUX port's `DPO2036` dataline clamp (TARGET's is `U13`), and an earlier
+the AUX port's `DPO2036` over-voltage protection (TARGET's is `U13`), and an earlier
 revision of this line named it as the second FUSB302B.
 
 **Index:** [`../hardware.md`](../hardware.md)
