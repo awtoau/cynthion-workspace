@@ -76,6 +76,8 @@ OUT = ROOT / "tmp" / "repro"
 # hashes every `.py` under gateware/soc, so an added one moves the `built` word
 # and nothing else. One 32-bit constant is the smallest difference this design
 # can have, so a check that catches it catches anything.
+# GITIGNORED, and that is load-bearing: untracked, it would also flip
+# `usercode()`'s dirty bit on a clean tree and perturb two constants.
 PERTURB = ROOT / "gateware" / "soc" / "repro_perturbation.py"
 PERTURB_TEXT = ("# Written and deleted by scripts/soc_repro_check.py --perturb.\n"
                 "# Its only effect is to move gateware_id's source digest.\n")

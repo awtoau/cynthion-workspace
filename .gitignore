@@ -101,6 +101,10 @@ gateware/probes/cpu_matrix/*/top.svf
 gateware/probes/cpu_matrix/*/top.debug.v
 gateware/probes/cpu_matrix/*/build_top.*
 gateware/**/*.bit
+# `soc_repro_check.py --perturb` writes and deletes this. Ignored so it moves
+# the source digest ALONE: untracked here, a clean tree would also flip
+# `usercode()`'s dirty bit and the control would perturb two constants (#441).
+gateware/soc/repro_perturbation.py
 
 # Lattice tool droppings and stray build output at the root
 hdr_log
