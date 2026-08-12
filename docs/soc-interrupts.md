@@ -32,10 +32,6 @@ which. That is where preemption comes from — see [`rtic.md`](rtic.md).
 **The interrupt controller has none.** No priority registers, no threshold, no
 claim/complete. Pending bits and enables.
 
-The firmware's `POWER_ALERT 4 / CONSOLE 3 / TYPE_C 2 / I2C 1` stays what it
-already is: a `const` array, available if the firmware wants to order its own
-dispatch loop.
-
 ### Why the controller cannot preempt, whatever it offers
 
 It gives the CPU **one** interrupt line. When that fires the CPU traps and
