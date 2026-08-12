@@ -596,8 +596,8 @@ def tree_is_dirty():
     Plain `--porcelain`, untracked files included, because that is what
     `gateware/build_helpers.py:usercode()` uses for the ECP5's USERCODE and
     what `firmware/cynthion-soc/build.rs` copies from it. The two definitions
-    have to be the same one: `info` compares the words and would otherwise
-    report a mismatch that is not one.
+    have to be the same one, or a host comparing the two words reports a
+    mismatch that is not one.
     """
     status = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT,
                             capture_output=True, text=True)
@@ -1002,7 +1002,7 @@ def main():
         # script can derive independently agree with it.
         reply = command("info",
                         [b"image ", b"tools ", b"memory ", b"boot ", b"cpu ",
-                         b"trap ", b"plic ", b"gateware "],
+                         b"trap ", b"plic ", b"fabric "],
                         "`info` reports every section")
 
         # The bootloader's breadcrumb, and what this target has to say about
@@ -1087,18 +1087,18 @@ def main():
               "printing it is to compare that against what it was built with.\n"
               f"received: {show(reply) or '(nothing)'}")
 
-        # `virt` is not a bitstream, so there is no build-id window to read
-        # and `target::GATEWARE` is None. Saying so is the assertion: an
-        # `info` that invented an identity here would be reporting a
-        # peripheral that does not exist.
-        check("`info` reports the gateware's identity" if board
-              else "`info` says this target carries no gateware id",
-              (b"gateware " in reply and b"gateware none" not in reply)
-              if board else b"gateware none" in reply,
-              "on the board the gateware line must carry a real identity read\n"
-              "from the bitstream's own CSR; under QEMU it must report that\n"
-              "this target is not a bitstream, rather than a hash read from an\n"
-              "unmapped address.\n"
+        # `virt` is not a bitstream, so there is no fabric window to read and
+        # `target::FABRIC` is None. Saying so is the assertion: an `info` that
+        # invented a die reading here would be reporting a peripheral that does
+        # not exist.
+        check("`info` reads the fabric's own registers" if board
+              else "`info` says this target is not a bitstream",
+              (b"fabric " in reply and b"fabric   none" not in reply)
+              if board else b"fabric   none" in reply,
+              "on the board the fabric line must carry a real reading from the\n"
+              "bitstream's own CSR; under QEMU it must report that this target\n"
+              "is not a bitstream, rather than a value read from an unmapped\n"
+              "address.\n"
               f"received: {show(reply) or '(nothing)'}")
 
         # --- selftest -----------------------------------------------------------
@@ -1107,7 +1107,7 @@ def main():
         # block RAM walk are the instructions and the memory that ship.
         reply = command("selftest",
                         [b"alu", b"muldiv", b"comp", b"atomic", b"ram",
-                         b"clock", b"uart", b"gateware", b"flash", b"phy"],
+                         b"clock", b"uart", b"fabric", b"flash", b"phy"],
                         "`selftest` runs every item")
 
         check("no selftest item failed", b"FAIL" not in reply,
@@ -1132,9 +1132,9 @@ def main():
         # than it knows.
         check("`selftest` runs the items this target HAS" if board
               else "`selftest` skips what this target has not got",
-              (b"fail" not in reply and b"gateware" in reply) if board
+              (b"fail" not in reply and b"fabric" in reply) if board
               else b"skip" in reply and b"skipped" in reply,
-              "the gateware and phy items must report `skip` under QEMU, and\n"
+              "the fabric and phy items must report `skip` under QEMU, and\n"
               "the summary must count them separately from the passes.\n"
               f"received: {show(reply) or '(nothing)'}")
 
@@ -1238,8 +1238,8 @@ def main():
 
         # EXECUTED, not claimed. `misa` on the board's core reads `rv32im`
         # however it was generated, so the only account worth having is the
-        # instructions running. Under QEMU there is no gateware word to gate
-        # on and every class the compiler emitted for is run.
+        # instructions running. Under QEMU `target::CPU_HAS_*` is the machine's
+        # own rv32imac, so every class the compiler emitted for is run.
         check("the instruction classes the image was compiled with run",
               b"isa" in reply and b"lr/sc and amo" in reply
               and b"riscv32imac" in reply and b"isa       FAIL" not in reply,
