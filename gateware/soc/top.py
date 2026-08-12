@@ -627,7 +627,13 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 #     124.77 MHz -- so it caps sync whenever FLASH_PHY_FAST or HYPERRAM_DQS is on
 # `usb` is the A8 oscillator, so the PHY does not constrain this.
 # 60 is a rung with margin. The real ceiling is unmeasured.
-SYNC_MHZ = 50 if variant.flag("CYNTHION_HYPERRAM_BIST") else 60
+#
+# From the environment, defaulting per variant in `variant.SYNC_DEFAULT_MHZ` --
+# 60 shipping, 50 for the BIST rig. `CYNTHION_SYNC_MHZ=<n>` overrides it, which
+# is what lets one elaboration be built at two clocks without editing this file
+# (`scripts/riscv_clock_ladder.py` rewrites the line instead, and #439 is what
+# that rewrite has been doing since the default became a ternary).
+SYNC_MHZ = float(variant.value("CYNTHION_SYNC_MHZ"))
 # 50 for the BIST variant ONLY, and it is what makes the rig usable.
 #
 # That build adds a second PLL, a fourth clock domain and the engine, and it
@@ -762,6 +768,28 @@ HYPERRAM_CLOCK_STOP = False
 # that fact rather than a defect.
 HYPERRAM_BIST = variant.flag("CYNTHION_HYPERRAM_BIST")
 
+# Both at once: BootRAM AND the second PLL AND the engine. A CLOSURE PROBE for
+# #432 stage 1, not a design that works.
+#
+#     CYNTHION_HYPERRAM_MERGED=1 ./scripts/soc_run.py --build-only
+#
+# The question it answers: the merged design is the four-domain BIST build plus
+# BootRAM, and that build stopped closing at SYNC_MHZ 60. Whether the merge is
+# worth building at all is that Fmax, so it is measured before stage 2 exists.
+#
+# WHAT IT IS NOT. The two masters do not share the part: the engine keeps `ram`
+# 0 and BootRAM is given a shadow `ram` 1 on the mezzanine pins, so this build
+# has two PHYs and two controllers where the merged design will have one behind
+# a mode mux. More HyperRAM datapath than the real thing, no mux, and the pins
+# are not the product's. It is a bitstream to measure, never one to load.
+#
+# `scripts/soc_merge_closure.py` drives it and holds the numbers' conditions.
+HYPERRAM_MERGED = variant.flag("CYNTHION_HYPERRAM_MERGED")
+
+# What each half of the fork elaborates, so the merged build gets both halves.
+WITH_BOOTRAM = HYPERRAM_MERGED or not HYPERRAM_BIST
+WITH_BIST = HYPERRAM_MERGED or HYPERRAM_BIST
+
 # Device CK for the BIST variant, in MHz. Independent of SYNC_MHZ -- that
 # independence is the point of the variant, and `hyperram_clocks.py` refuses a
 # value the second PLL cannot reach rather than silently rounding to one it can.
@@ -828,7 +856,7 @@ def _refuse_ck_past_the_fabric():
         f"  CYNTHION_HYPERRAM_CK_CEILING_MHZ raises this if you mean to try one")
 
 
-if HYPERRAM_BIST:
+if WITH_BIST:
     _refuse_ck_past_the_fabric()
 
 # Divided copies of the clocks on PMOD A, for a scope. See #294 and
@@ -1372,8 +1400,24 @@ class AwtoSoc(Elaboratable):
         # firmware is baked into block RAM at elaboration instead, which is the
         # right trade for a measurement bitstream: it is rebuilt whenever what it
         # measures changes.
-        if not HYPERRAM_BIST:
+        if WITH_BOOTRAM:
             from bootram import BootRAM
+
+            # The shadow pins the closure probe puts BootRAM on, so both it and
+            # the engine elaborate against real pads (#432 stage 1). Declared
+            # here, never requested unless HYPERRAM_MERGED -- `user_mezzanine`
+            # covers the same pins and one of the two may be requested.
+            if HYPERRAM_MERGED:
+                from amaranth.build import Attrs, Pins, PinsN, Resource, Subsignal
+                platform.add_resources([Resource(
+                    "ram", 1,
+                    Subsignal("clk",   Pins("3", conn=("mezzanine", 0), dir="o")),
+                    Subsignal("dq",    Pins("4 5 6 7 8 9 10 11",
+                                            conn=("mezzanine", 0), dir="io")),
+                    Subsignal("rwds",  Pins("12", conn=("mezzanine", 0), dir="io")),
+                    Subsignal("cs",    PinsN("13", conn=("mezzanine", 0), dir="o")),
+                    Subsignal("reset", PinsN("18", conn=("mezzanine", 0), dir="o")),
+                    Attrs(IO_TYPE="LVCMOS33"))])
 
             # `sustained` is left at its default of False, and that is a decision
             # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
@@ -1403,7 +1447,7 @@ class AwtoSoc(Elaboratable):
             # the day that changes, and a burst cap that is too long is a device
             # specification violated rather than a number that looks odd.
             m.submodules.bootram = bootram = BootRAM(
-                dqs=HYPERRAM_DQS,
+                dqs=HYPERRAM_DQS, ram_number=1 if HYPERRAM_MERGED else 0,
                 ck_mhz=(2 * car.actual_sync_mhz if HYPERRAM_DQS
                         else car.actual_sync_mhz),
                 clock_stop=HYPERRAM_CLOCK_STOP, sustained=HYPERRAM_CLOCK_STOP)
@@ -1448,7 +1492,7 @@ class AwtoSoc(Elaboratable):
         # engine-driven register is shown to survive unequal clocks -- in 1.4 s,
         # against three failures on the retired branch that each cost a ~90 s
         # synthesis and a reconfigure to diagnose.
-        if HYPERRAM_BIST:
+        if WITH_BIST:
             from hyperram_clocks import HyperRAMDomains
             from peripherals.hyperram_bist import HyperRAMBist
 
@@ -1513,7 +1557,7 @@ class AwtoSoc(Elaboratable):
             from peripherals.clock_mirror import ClockMirror
 
             mirrored = ["sync", "usb"]
-            if HYPERRAM_BIST:
+            if WITH_BIST:
                 mirrored.append("hr")
                 if HYPERRAM_BIST_DQS:
                     mirrored.append("hr_fast")
@@ -1548,7 +1592,7 @@ class AwtoSoc(Elaboratable):
         # `stager.ack` is left unconnected rather than tied high, so a host that
         # tries to stage against this variant stalls visibly instead of being
         # told a write landed that went nowhere.
-        if not HYPERRAM_BIST:
+        if WITH_BOOTRAM:
             m.d.comb += [
                 bootram.jtag_req.eq(stager.req),
                 bootram.jtag_addr.eq(stager.addr),

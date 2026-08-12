@@ -600,7 +600,7 @@ class BootRAM(Elaboratable):
     """
 
     def __init__(self, *, interface=None, dqs=False, sustained=False,
-                 clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ):
+                 clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ, ram_number=0):
         # DQS changes the data width -- 32 bits per beat against 16 -- so it is
         # recorded here and read where the word assembly is decided.
         self._dqs = dqs
@@ -620,6 +620,10 @@ class BootRAM(Elaboratable):
                                      sustained=sustained, ck_mhz=ck_mhz,
                                      clock_stop=clock_stop)
         self._interface = interface
+        # Which `ram` resource to request. 0 is the board's HyperRAM and the
+        # only one the platform declares; the #432 closure probe declares a
+        # shadow 1 so this and the BIST engine can both elaborate.
+        self._ram_number = ram_number
 
         # For a caller that supplies its own `interface`: what to hand a
         # `ClockStopPHY`. When this module builds its own PHY it wires this up
@@ -697,7 +701,7 @@ class BootRAM(Elaboratable):
                 # Raw pads: the DQS primitives own the tristates, the gearing and
                 # the output buffers, so nothing here may be an Amaranth-managed
                 # pin. The PHY drives CK, CS# and RESET# itself.
-                ram_bus = platform.request("ram", 0, dir="-")
+                ram_bus = platform.request("ram", self._ram_number, dir="-")
                 psram_phy = HyperRAMDQSPHY(
                     bus=ram_bus,
                     readclksel=self.readclksel[:3],
@@ -715,7 +719,7 @@ class BootRAM(Elaboratable):
                     self.probe_burstdet.eq(psram_phy.phy.burstdet),
                 ]
             else:
-                ram_bus = platform.request("ram")
+                ram_bus = platform.request("ram", self._ram_number)
                 psram_phy = HyperRAMPHY(bus=ram_bus)
                 if self._clock_stop:
                     gate = ClockStopPHY(dev=psram_phy.phy)

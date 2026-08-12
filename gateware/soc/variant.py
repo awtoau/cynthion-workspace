@@ -63,6 +63,8 @@ VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_BIST",      "",    "bist",      FLAG),
     ("CYNTHION_HYPERRAM_CK_MHZ",    None,  "ck",        TEXT),
     ("CYNTHION_HYPERRAM_BIST_DQS",  "1",   "dqs",       FLAG),
+    ("CYNTHION_HYPERRAM_MERGED",    "",    "merge",     FLAG),
+    ("CYNTHION_SYNC_MHZ",           None,  "sync",      TEXT),
     ("CYNTHION_CLOCK_MIRROR",       "",    "mirror",    FLAG),
     ("CYNTHION_CLOCK_MIRROR_DIV",   "4",   "mirrordiv", TEXT),
 )
@@ -88,7 +90,22 @@ VARIANT_ENV = (
 # and the full ladder: #410.
 CK_DEFAULT_MHZ = {True: "160", False: "80"}
 
+# The CPU clock default, keyed on whether this is the BIST rig.
+#
+# 50 for the rig ONLY: the four-domain build stopped closing at 60 (`top.py`
+# SYNC_MHZ). The merged design (#432) is that build plus BootRAM, so it takes
+# the shipping 60 and stage 1 of #432 is the measurement of whether it holds.
+SYNC_DEFAULT_MHZ = {True: "50", False: "60"}
+
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
+
+# Defaults that are a function of another variable, so `None` in the table.
+_DERIVED = {
+    "CYNTHION_HYPERRAM_CK_MHZ":
+        lambda env: CK_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_BIST_DQS", env)],
+    "CYNTHION_SYNC_MHZ":
+        lambda env: SYNC_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_BIST", env)],
+}
 
 
 def _resolve(name, env=None):
@@ -100,8 +117,8 @@ def _resolve(name, env=None):
             f"different bitstreams hash the same and share a build directory.")
     default, _tag, kind = _BY_NAME[name]
     env = os.environ if env is None else env
-    if default is None:                 # CK, whose default depends on the path
-        default = CK_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_BIST_DQS", env)]
+    if default is None:                 # a default that depends on another entry
+        default = _DERIVED[name](env)
     raw = env.get(name, default) or default
     if kind is FLAG:
         # "", "0" and unset are one state; anything else is the other. Normalised
