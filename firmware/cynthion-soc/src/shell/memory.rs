@@ -167,8 +167,8 @@ fn id(uart: &mut Uart, region: Region) {
 
 /// JEDEC bank-1 manufacturer. Only the one this board carries is named; a
 /// table of 200 would be code for a question nobody asks twice.
-fn maker(id: u32) -> &'static str {
-    match id >> 8 {
+fn maker(manufacturer: u32) -> &'static str {
+    match manufacturer {
         0xef => "winbond",
         _ => "unknown maker",
     }
@@ -246,6 +246,12 @@ fn erase(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
                          flash::SCRATCH);
         return;
     };
+    // Announced BEFORE it starts, because the shell does not come back from it:
+    // the erase lands, and the CPU does not survive the 45 ms the part spends
+    // answering nothing but its status register. Reconfigure to get it back;
+    // the sector is erased when you do. #463.
+    let _ = writeln!(uart, "flash erase {:06x} starting -- the console will not \
+                            return; reconfigure after (#463)", offset);
     match spi.sector_erase(offset) {
         Err(why) => {
             let _ = writeln!(uart, "flash erase {:06x} failed: {}", offset, why);
@@ -275,6 +281,9 @@ fn program(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
     for (index, word) in words.iter_mut().enumerate() {
         *word = seed.wrapping_add(index as u32);
     }
+    // As `erase`: the program lands and the console does not come back (#463).
+    let _ = writeln!(uart, "flash program {:06x} starting -- the console will not \
+                            return; reconfigure after (#463)", flash::SCRATCH);
     match spi.page_program(flash::SCRATCH, &words) {
         Err(why) => {
             let _ = writeln!(uart, "flash program failed: {}", why);
