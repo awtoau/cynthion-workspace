@@ -1780,9 +1780,8 @@ class AwtoSoc(Elaboratable):
         # than a slow one -- a UART tolerates about +/-2% and the error scales with the
         # clock. Passing SYNC_MHZ keeps the two in step by construction.
         # The ACTUAL solved frequency, not `SYNC_MHZ`. The PLL does not always
-        # land on the request -- `GatewareId` above already reports
-        # `car.actual_sync_mhz` for exactly that reason -- and the baud divisor
-        # is computed from this at elaboration with nothing checking it after.
+        # land on the request, and the baud divisor is computed from this at
+        # elaboration with nothing checking it after.
         # Requesting 61 MHz builds 60.0, which is 227273 baud against 230769:
         # -1.5%, inside a UART's ~2% tolerance with the margin gone, silently.
         m.submodules.sideband = sideband = SidebandDebug(

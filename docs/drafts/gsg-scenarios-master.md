@@ -15,7 +15,7 @@ would be tested.
 TARGET port.**
 
 The peripherals are: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`,
-`i2c_mux`, `vbus`, `gateware_id`, `plic`, `clint`, `spiflash`, `bootram`, `hyperram`.
+`i2c_mux`, `vbus`, `fabric_status`, `plic`, `clint`, `spiflash`, `bootram`, `hyperram`.
 `gateware/soc/peripherals/ulpi_window.py` reads and writes a USB3343's PHY registers over
 `target_phy` and cannot send or receive a single packet. Moondancer's firmware expects
 three sets of `usb{0,1,2}` + `ep_control` + `ep_in` + `ep_out` CSR peripherals; none of
@@ -42,7 +42,7 @@ Our three test tiers do not overlap the way the scenarios need.
 
 * **`./dev.py test` runs `qemu-system-riscv32 -M virt`.** That machine has a 16550, a
   PLIC and a CLINT and *nothing else of ours* — no ULPI, no USB, no HyperRAM, no
-  `gateware_id`. QEMU can test firmware logic that does not touch a PHY: protocol
+  `fabric_status`. QEMU can test firmware logic that does not touch a PHY: protocol
   parsers, command dispatch, descriptor construction, the `smolusb` control state
   machine driven by a mock. It cannot test a single USB peripheral.
 * **`./dev.py sim` runs 15 Amaranth pysim simulations** (`scripts/soc_sims.py`), 9 of

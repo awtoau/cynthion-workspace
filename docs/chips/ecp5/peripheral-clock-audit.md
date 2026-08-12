@@ -41,7 +41,7 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | [`peripherals/i2c_mux.py`](../../../gateware/soc/peripherals/i2c_mux.py) | `sync` only | four `FFSynchronizer`s on `int`/`fault` | — | **sound** |
 | [`peripherals/sideband_csr.py`](../../../gateware/soc/peripherals/sideband_csr.py) | `sync` only | none needed | — | **sound** |
 | [`peripherals/vbus_csr.py`](../../../gateware/soc/peripherals/vbus_csr.py) | `sync` only | none needed | — | **sound** |
-| [`peripherals/gateware_id.py`](../../../gateware/soc/peripherals/gateware_id.py) | `sync` only | none needed | `2**19` `sync` cycles (DTR cadence) | **sound** — scales harmlessly |
+| [`peripherals/fabric_status.py`](../../../gateware/soc/peripherals/fabric_status.py) | `sync` only | none needed | `2**19` `sync` cycles (DTR cadence) | **sound** — scales harmlessly |
 | [`peripherals/flash_cdc.py`](../../../gateware/soc/peripherals/flash_cdc.py) | `sync` + `phy_domain` | two `AsyncFIFOBuffered` + `FFSynchronizer` on `cs` | — | **sound** |
 | [`peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) mmap / crossbar | `domain` param, honoured | none | `MMAP_DEFAULT_TIMEOUT = 256` cycles | **sound** |
 | `flash.py` `HoldableSPIController` | `domain` param, **not** honoured | none | — | **DEFECT 7** — latent |
@@ -253,7 +253,7 @@ The original finding:
 > than echoed from the request. […] the day that solver learns to approximate,
 > everything downstream is already reading the truth.
 
-`GatewareId` (`top.py:828`) and `SidebandDebug` (`top.py:1386`) do read
+`FabricStatus` (`top.py:828`) and `SidebandDebug` (`top.py:1386`) do read
 `car.actual_sync_mhz`, the latter with a comment spelling out the -1.5% baud
 error a request/solve mismatch would produce. The HyperRAM does not
 (`top.py:1108`):
@@ -425,7 +425,7 @@ and asynchronously resets `jtck` from `sync` so `cpu_hold` is known clear at
 power-up with no JTAG attached.
 
 **`plic.py`, `clint.py`, `cpu.py`, `wishbone_pipe.py`, `hyperram_probe.py`,
-`sideband_csr.py`, `vbus_csr.py`, `gateware_id.py`, `bootram.py`** are all
+`sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`, `bootram.py`** are all
 single-domain `sync`. None names `usb`; none is affected by the reset change. Two
 invariants they depend on are worth writing down because nothing enforces them:
 every PLIC source must be driven in `sync` (the PLIC has no synchroniser and
@@ -472,10 +472,10 @@ would mislead a reader:
   happens. See Defect 2.
 * `hyperram_dqs_phy.py:37-41` — describes `usb` being solved alongside `sync` by
   `VariableClockDomainGenerator`, which is no longer how `usb` is produced.
-* `gateware_id.py:44` and `bootram.py` throughout — still name
+* `fabric_status.py:44` and `bootram.py` throughout — still name
   `VariableClockDomainGenerator`.
 * `clint.py:87-88` ("16.7 ns"), `clint.py:188` ("9700 years at 60 MHz"),
-  `gateware_id.py:77` ("8.7 ms at 60 MHz"), `bootram.py:44` and `:828` — all
+  `fabric_status.py:77` ("8.7 ms at 60 MHz"), `bootram.py:44` and `:828` — all
   quote a 60 MHz `sync` in prose. Harmless individually; collectively they are
   what makes 60 look like a property of the design rather than one rung.
 * `flash.py:43-51` — the divisor table and its 50/62 MHz claims, superseded by

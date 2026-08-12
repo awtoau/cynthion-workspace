@@ -72,7 +72,7 @@ behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 | HyperRAM | `HyperRAMWishbone` at `0x2000_0000`, 8 MiB, `main=1 exe=1` | vendored | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md), [`soc-memory-bus.md`](soc-memory-bus.md), #90 |
 | sideband | FPGA_ADV, one wire, three commands | written | [`chips/cynone-sideband.md`](chips/cynone-sideband.md), #137 |
 | ULPI window | register access on `target_phy`, no packet path | written | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
-| GPIO, VBUS, `gateware_id`, I2C mux | | written | [`hardware.md`](hardware.md#register-reference) |
+| GPIO, VBUS, `fabric_status`, I2C mux | | written | [`hardware.md`](hardware.md#register-reference) |
 
 The three flash and UART peripherals are ours because upstream's have defects of
 one shape — a hold expressed as a ready. Each is named with its reproducer in

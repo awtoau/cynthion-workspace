@@ -75,6 +75,7 @@ USERCODE plus `gateware/usercode_map.py`. What that was worth in cells is in
 [#447](https://github.com/awtoau/cynthion-workspace/issues/447) and
 [#443](https://github.com/awtoau/cynthion-workspace/issues/443), with the
 conditions it was measured under.
+
 - [`soc_repro_check.py`](../scripts/soc_repro_check.py) is the gate: two builds of
   one tree, byte-compared, and `check.py`'s `repro` runs it.
 
@@ -99,11 +100,11 @@ Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
 | `flash_probe` | 183 | 72 | — | instrumentation |
 | `serial_line` | 162 | 99 | — | |
 | `vexii_irq` | 149 | 101 | — | **in no SoC** |
+| `fabric_status` | 110 | 36 | — | no DTR without a platform |
 | `ulpi_window` | 98 | 96 | — | |
 | `stream_buffer` (64, sync) | 90 | 27 | — | |
 | `flash_ila` | 89 | 108 | 1 | instrumentation |
 | `sideband_csr` | 85 | 50 | — | |
-| `gateware_id` | 80 | 26 | — | no DTR without a platform |
 | `stream_buffer` (16, CDC) | 46 | 57 | — | |
 | `vbus_csr` | 23 | 24 | — | |
 | `i2c_mux` | 9 | 20 | — | |
@@ -124,9 +125,6 @@ built again with their logic removed and their CSR bridges kept:
 | TRELLIS_COMB | 14,476 | 13,402 | **1,074** | 7.4% |
 | TRELLIS_FF | 7,472 | 7,016 | **456** | 6.1% |
 | DP16KD | 44 | 43 | **1** | |
-
-Both builds pinned `GatewareId`'s timestamp and git hash; see the hazard in §2
-for what the same measurement reports without that.
 
 **This understates a deletion.** Each stub keeps the CSR bridge that answers at
 its address, so a real removal recovers this plus three bridges and three

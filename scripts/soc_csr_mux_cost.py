@@ -42,7 +42,7 @@ from amaranth.lib import wiring                          # noqa: E402
 from amaranth.lib.wiring import In                       # noqa: E402
 from amaranth_soc import csr                             # noqa: E402
 
-# Eight 32-bit registers is `GatewareId`'s block, and near every other one here.
+# Eight 32-bit registers is about the size of a peripheral's block in this SoC.
 BLOCK = 8
 
 # (constants, live). The first row is the control: a block whose every register
