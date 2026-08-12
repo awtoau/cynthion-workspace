@@ -277,26 +277,43 @@ def parse_map_report(text):
     return util
 
 
-def parse_twr(text):
-    """Pull the achieved frequency out of Diamond's timing report (.twr).
+SUMMARY_ROW_RE = re.compile(
+    r'FREQUENCY\s+(?:NET|PORT)\s+"([^"]+)".*?\|\s*([\d.]+)\s*MHz\s*\|'
+    r'\s*([\d.]+)\s*MHz\s*\|\s*(\d+)\s*(\*?)', re.IGNORECASE | re.DOTALL)
 
-    Diamond reports slack against the constraint that was given, and also a
-    'maximum frequency' per clock domain. The latter is what compares against
-    nextpnr's 'Max frequency for clock', but only if the constraint was tight
-    enough to make Diamond work for it -- an unconstrained run reports
-    whatever it happened to reach, exactly the trap the open-flow numbers
-    avoided by binary search.
+COVERAGE_RE = re.compile(
+    r"Constraints cover ([\d,]+) paths, ([\d,]+) nets?, and ([\d,]+) "
+    r"connections \(([\d.]+)% coverage\)", re.IGNORECASE)
+
+
+def parse_twr(text):
+    """Read trce's Report Summary table, not the prose above it.
+
+    The prose says "N MHz is the maximum frequency for this preference" with
+    no clock name on the line, so scraping it attaches the number to whatever
+    word happens to start the line -- this returned {'Warning:': 71.7}.
+
+    The table has the name, the constraint, the achieved figure, the logic
+    depth and a `*` on any preference not met. `covered` matters as much: a
+    figure for a domain covering 4% of the design is not the design's Fmax,
+    and only the coverage line says which case this is.
     """
-    fmax = {}
-    for m in re.finditer(
-            r"^\s*(\S+)\s+.*?([\d.]+)\s*MHz\s*is the maximum frequency",
-            text, re.MULTILINE | re.IGNORECASE):
-        fmax[m.group(1)] = float(m.group(2))
-    if not fmax:
-        for m in re.finditer(r"([\d.]+)\s*MHz.*?maximum frequency", text,
-                             re.IGNORECASE):
-            fmax.setdefault("overall", float(m.group(1)))
-    return fmax
+    fmax, meta = {}, {}
+    # Long preferences wrap across two table rows, so a row is matched from its
+    # name to its first pair of MHz cells rather than within one line.
+    summary = text.split("Report Summary", 1)[-1].split("Critical Nets", 1)[0]
+    for m in SUMMARY_ROW_RE.finditer(summary):
+        fmax[m.group(1)] = {
+            "constraint_mhz": float(m.group(2)),
+            "achieved_mhz": float(m.group(3)),
+            "levels": int(m.group(4)),
+            "met": m.group(5) != "*",
+        }
+    cover = COVERAGE_RE.search(text)
+    if cover:
+        meta["coverage_pct"] = float(cover.group(4))
+        meta["paths"] = int(cover.group(1).replace(",", ""))
+    return fmax, meta
 
 
 def main():
@@ -458,20 +475,28 @@ def main():
         total += t
 
         # Collect the numbers.
-        util, fmax = {}, {}
+        util, fmax, timing_meta = {}, {}, {}
         for mrp in list(out.glob("*.mrp")):
             util.update(parse_map_report(mrp.read_text(errors="replace")))
         for twr in list(out.glob("*.twr")):
-            fmax.update(parse_twr(twr.read_text(errors="replace")))
+            found, meta = parse_twr(twr.read_text(errors="replace"))
+            fmax.update(found)
+            timing_meta.update(meta)
 
         log("\n=== Diamond result ===", handle)
         log(f"mode        {args.mode}", handle)
         log(f"utilisation {util}", handle)
-        log(f"fmax        {fmax}", handle)
+        for name, row in fmax.items():
+            log(f"  {name:24s} {row['achieved_mhz']:8.3f} MHz vs "
+                f"{row['constraint_mhz']:.0f} asked, {row['levels']} levels, "
+                f"{'met' if row['met'] else 'NOT MET'}", handle)
+        log(f"coverage    {timing_meta}", handle)
         log(f"time        {total:.1f}s  {timings}", handle)
 
         res = {"mode": args.mode, "device": DEVICE, "util": util,
-               "fmax": fmax, "seconds": round(total, 1),
+               "fmax": fmax, "timing": timing_meta,
+               "unpinned": sorted(args.drop_locate),
+               "seconds": round(total, 1),
                "steps": {k: round(v, 1) for k, v in timings.items()}}
         (out / "result.json").write_text(json.dumps(res, indent=2))
         log(f"wrote {out / 'result.json'}\nlog {logpath}", handle)
