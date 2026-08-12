@@ -268,20 +268,24 @@ def generate(reset_addr, cache_sets=128, output=None, regions=None,
     core has -- it is 1, 2 or 4. The failure is a Scala assertion during
     generation rather than anything a build would quietly accept.
 
+    `None` for either leaves that dimension as `GENERATE_FLAGS` has it, which is
+    the only way to give the fetch and load/store caches DIFFERENT geometries --
+    one `cache_sets` cannot say two things. `scripts/soc_cpu_arms.py` uses it.
+
     Ways cost block RAM faster than sets do: `bankCount = wayCount`
     (`FetchL1Plugin.scala:128`), so each way is its own bank of DP16KDs on top of
     its own tag and PLRU memory.
     """
-    if cache_ways & (cache_ways - 1):
+    if cache_ways is not None and cache_ways & (cache_ways - 1):
         raise ValueError(
             f"cache_ways must be a power of two, not {cache_ways}: SpinalHDL's "
             f"Plru asserts isPow2 on it (lib/misc/Plru.scala:15). Use 1, 2 or 4.")
     regions = regions if regions is not None else DEFAULT_REGIONS
     flags = list(GENERATE_FLAGS)
     for index, flag in enumerate(flags):
-        if flag in ("--fetch-l1-sets", "--lsu-l1-sets"):
+        if cache_sets is not None and flag in ("--fetch-l1-sets", "--lsu-l1-sets"):
             flags[index + 1] = str(cache_sets)
-        if flag in ("--fetch-l1-ways", "--lsu-l1-ways"):
+        if cache_ways is not None and flag in ("--fetch-l1-ways", "--lsu-l1-ways"):
             flags[index + 1] = str(cache_ways)
     flags += ["--reset-vector", hex(reset_addr)]
 

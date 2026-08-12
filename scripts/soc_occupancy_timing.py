@@ -66,6 +66,7 @@ OUT = ROOT / "tmp" / "occupancy"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import soc_cpu_arms  # noqa: E402
 from soc_trim_delta import TRIMS  # noqa: E402
 
 FINISHED = "Program finished normally."
@@ -123,6 +124,13 @@ ARMS = {
     "chain32": _CHAIN.format(depth=32),
 }
 
+# The CPU's own configuration, which is regenerated from Scala on every build
+# and so is an axis rather than a fixed input. `soc_cpu_arms.base` is the same
+# design as `base` above, generated through the same path; both are kept so the
+# two entry points can be compared.
+ARMS.update({f"cpu-{name}": text
+             for name, text in soc_cpu_arms.snippets().items()})
+
 OUTPUT = []
 
 
@@ -163,6 +171,11 @@ os.environ["AMARANTH_nextpnr_opts"] = "--threads 31 --router router2"
 
 import top as soc_top
 from board.cynthion_r1_4 import CynthionPlatformRev1D4
+
+# This arm's OWN generated core. `top.py` puts it in the variant build
+# directory, which every arm shares -- fine while no arm changed the CPU, and a
+# silent swap of one arm's netlist for another's now that they do (#306).
+soc_top.BUILD_DIR = Path({str(build_dir)!r})
 
 CynthionPlatformRev1D4().build(
     soc_top.AwtoSoc(firmware=[0] * (soc_top.RAM_SIZE // 4)),
@@ -230,8 +243,14 @@ def sample(arm, seed, threads=None, tag=None):
     elapsed = time.monotonic() - started
     text = tim.read_text() if tim.exists() else proc.stdout + proc.stderr
     if FINISHED not in text:
-        return {"arm": arm, "seed": seed, "ok": False, "seconds": elapsed,
-                "why": f"no '{FINISHED}' (rc={proc.returncode})"}
+        # The tool's own first ERROR, because "no Program finished normally" is
+        # the same string for a design that wants 57 block RAMs on a die with 56
+        # as for one that missed its constraint.
+        why = next((line.strip() for line in text.splitlines()
+                    if line.startswith("ERROR:")), "")
+        return {"arm": arm, "seed": seed, "ok": False,
+                "seconds": round(elapsed, 1),
+                "why": f"rc={proc.returncode} {why or f'no {FINISHED!r}'}"[:160]}
     fmax, util = {}, {}
     for line in text.splitlines():
         found = UTIL_RE.match(line.strip())
@@ -243,7 +262,72 @@ def sample(arm, seed, threads=None, tag=None):
     return {"arm": arm, "seed": seed, "ok": True, "seconds": round(elapsed, 1),
             "util": util,
             # nextpnr prints the table twice; the last describes the bitstream.
-            "fmax": {clock: values[-1] for clock, values in fmax.items()}}
+            "fmax": {clock: values[-1] for clock, values in fmax.items()},
+            # Which plugin owns each clock's critical path, and its logic/routing
+            # split -- a per-sample property, so it needs the seed set too.
+            "paths": {clock: critical_path(text, clock) for clock in fmax}}
+
+
+PATH_HEAD = re.compile(r"Critical path report for clock\s+'(\S+)'")
+PATH_STEP = re.compile(r"Info:\s+(clk-to-q|logic|routing|setup)\s+([\d.]+)\s+"
+                       r"([\d.]+)\s+(Source|Net|Sink)?\s*(\S+)?")
+PATH_TILE = re.compile(r"\((\d+),(\d+)\)\s*->\s*\((\d+),(\d+)\)")
+# `TrapPlugin_logic_...`, `PerformanceCounterPlugin_logic_...`: SpinalHDL names
+# every net after the plugin that made it, which is what makes a path
+# attributable at all.
+PLUGIN = re.compile(r"([A-Z][A-Za-z0-9]*Plugin)")
+
+
+def critical_path(text, clock):
+    """Summarise one clock's critical path out of a nextpnr log.
+
+    Returns the logic/routing split, the hop count, the tile bounding box and
+    which plugin owns the most nets on it -- the question `--parallel-refine`
+    and single-seed builds made unanswerable (#429, #467).
+    """
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        found = PATH_HEAD.search(line)
+        if found and found.group(1) == clock:
+            start = index + 1
+            break
+    if start is None:
+        return None
+
+    logic = routing = 0.0
+    hops = 0
+    source = sink = None
+    xs, ys = [], []
+    plugins = {}
+    for line in lines[start:]:
+        if PATH_HEAD.search(line) or "Max frequency" in line:
+            break
+        step = PATH_STEP.match(line.rstrip())
+        if step:
+            kind, delay, _total, role, name = step.groups()
+            if kind == "logic":
+                logic += float(delay)
+                hops += 1
+            elif kind in ("routing",):
+                routing += float(delay)
+            elif kind == "clk-to-q":
+                logic += float(delay)
+                source = name
+        if " Sink " in line:
+            sink = line.split(" Sink ", 1)[1].strip()
+        tile = PATH_TILE.search(line)
+        if tile:
+            xs += [int(tile.group(1)), int(tile.group(3))]
+            ys += [int(tile.group(2)), int(tile.group(4))]
+        for name in PLUGIN.findall(line):
+            plugins[name] = plugins.get(name, 0) + 1
+
+    owner = max(plugins, key=plugins.get) if plugins else "(no plugin named)"
+    return {"logic_ns": round(logic, 2), "routing_ns": round(routing, 2),
+            "hops": hops, "owner": owner, "source": source, "sink": sink,
+            "bbox": [min(xs), min(ys), max(xs), max(ys)] if xs else None,
+            "plugins": plugins}
 
 
 def occupancy(arm):
@@ -259,7 +343,10 @@ def occupancy(arm):
     lut4e = sum(counts.get(kind, 0) * weight for kind, weight in LUT4_EQUIV.items())
     return {"lut4_equiv": lut4e,
             **{kind: counts.get(kind, 0) for kind in LUT4_EQUIV},
-            "TRELLIS_FF": counts.get("TRELLIS_FF", 0)}
+            "TRELLIS_FF": counts.get("TRELLIS_FF", 0),
+            # Block RAM, which is what decides whether a cache geometry exists
+            # at all: 56 on this die, and 4 ways wants 58.
+            "DP16KD": counts.get("DP16KD", 0)}
 
 
 def results_path(arm):
@@ -329,8 +416,40 @@ def welch(left, right):
     return t, dof, _betainc(dof / 2, 0.5, x)
 
 
+def _betacf(a, b, x):
+    """Modified Lentz for the beta continued fraction. Converges for
+    x < (a+1)/(a+b+2); `_betainc` reflects the rest."""
+    tiny, epsilon = 1e-30, 1e-12
+    c, d = 1.0, 1 - (a + b) * x / (a + 1)
+    if abs(d) < tiny:
+        d = tiny
+    d = 1 / d
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        for num in (m * (b - m) * x / ((a + m2 - 1) * (a + m2)),
+                    -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1))):
+            d = 1 + num * d
+            if abs(d) < tiny:
+                d = tiny
+            d = 1 / d
+            c = 1 + num / c
+            if abs(c) < tiny:
+                c = tiny
+            h *= d * c
+        if abs(d * c - 1) < epsilon:
+            break
+    return h
+
+
 def _betainc(a, b, x):
-    """Regularised incomplete beta, continued fraction (Lentz). Enough for a p."""
+    """Regularised incomplete beta.
+
+    The p in every table here goes through this. The previous continued fraction
+    returned 0 below `(a+1)/(a+b+2)` and 1 above it -- a step function at the
+    reflection point, so every p ever printed by this script was 0.0 or 1.0 and
+    the value carried no information beyond the sign of the difference.
+    """
     if x <= 0:
         return 0.0
     if x >= 1:
@@ -339,22 +458,18 @@ def _betainc(a, b, x):
                      + a * math.log(x) + b * math.log(1 - x))
     if x > (a + 1) / (a + b + 2):
         return 1 - _betainc(b, a, 1 - x)
-    tiny, c, d = 1e-30, 1.0, 1.0
-    f = 1.0
-    for i in range(300):
-        m = i // 2
-        if i == 0:
-            num = 1.0
-        elif i % 2 == 0:
-            num = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m))
-        else:
-            num = -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))
-        d = 1 / (max(abs(1 + num * d), tiny) * (1 if 1 + num * d >= 0 else -1))
-        c = 1 + num / c if abs(1 + num / c) > tiny else tiny
-        f *= c * d
-        if abs(1 - c * d) < 1e-10:
-            break
-    return front * (f - 1) / a
+    return front * _betacf(a, b, x) / a
+
+
+def t_critical(dof, confidence=0.95):
+    """Two-sided t* by bisection on the same p the tests use. No SciPy here."""
+    target = 1 - confidence
+    low, high = 0.0, 100.0
+    for _ in range(80):
+        mid = (low + high) / 2
+        p = _betainc(dof / 2, 0.5, dof / (dof + mid * mid))
+        low, high = (mid, high) if p > target else (low, mid)
+    return (low + high) / 2
 
 
 def mann_whitney(left, right):
@@ -407,21 +522,23 @@ def paired(ref, arm):
     n = len(diffs)
     t = mean / (sd / math.sqrt(n)) if sd else math.inf
     p = (_betainc((n - 1) / 2, 0.5, (n - 1) / (n - 1 + t * t)) if sd else 0.0)
+    half = t_critical(n - 1) * sd / math.sqrt(n) if sd else 0.0
     wins = sum(1 for d in diffs if d > 0)
     # Sign test: how surprising is `wins` out of n if the trim did nothing.
     sign_p = min(1.0, 2 * sum(math.comb(n, k) for k in range(min(wins, n - wins) + 1))
                  / 2 ** n)
     return {"n": n, "mean": mean, "sd": sd, "min": min(diffs), "max": max(diffs),
             "median": statistics.median(diffs), "p": p, "wins": wins,
-            "sign_p": sign_p, "common": common, "diffs": diffs}
+            "sign_p": sign_p, "common": common, "diffs": diffs,
+            "lo": mean - half, "hi": mean + half}
 
 
 def report(arms, clock):
     emit(f"clock under test: {clock}")
     emit()
     emit(f"  {'arm':<24} {'LUT4-eq':>8} {'LUT4':>7} {'CCU2C':>6} {'DPR':>4} "
-         f"{'FF':>6}")
-    emit("  " + "-" * 62)
+         f"{'FF':>6} {'BRAM':>5}")
+    emit("  " + "-" * 68)
     series, area, by_seed = {}, {}, {}
     for arm in arms:
         rows = [row for row in load(arm) if row.get("ok")]
@@ -434,12 +551,22 @@ def report(arms, clock):
         cells = occupancy(arm)
         area[arm] = cells
         emit(f"  {arm:<24} {cells['lut4_equiv']:>8} {cells['LUT4']:>7} "
-             f"{cells['CCU2C']:>6} {cells['DPR16X4']:>4} {cells['TRELLIS_FF']:>6}")
+             f"{cells['CCU2C']:>6} {cells['DPR16X4']:>4} {cells['TRELLIS_FF']:>6} "
+             f"{cells['DP16KD']:>5}")
 
     emit()
     emit("  Fmax over seeds, MHz")
     for arm, values in series.items():
         emit(f"    {arm:<24} {describe(values)}")
+
+    emit()
+    emit("  BEST-OF-N, MHz -- what picking the fastest seed is worth")
+    emit(f"    {'arm':<24} {'median':>7} {'best':>7} {'gain':>7} {'best seed':>10}")
+    for arm, values in series.items():
+        best = max(values)
+        seed = max(by_seed[arm], key=lambda s: by_seed[arm][s])
+        emit(f"    {arm:<24} {statistics.median(values):>7.2f} {best:>7.2f} "
+             f"{best - statistics.median(values):>+7.2f} {seed:>10}")
 
     emit()
     emit("  per seed, MHz -- the pairing, visible")
@@ -472,19 +599,50 @@ def report(arms, clock):
 
         emit()
         emit("  PAIRED by seed -- same placement, two netlists")
-        emit(f"  {'arm':<24} {'n':>3} {'mean d':>8} {'sd':>6} {'min d':>7} "
-             f"{'max d':>7} {'paired p':>9} {'faster':>8} {'sign p':>8}")
-        emit("  " + "-" * 87)
+        emit(f"  {'arm':<24} {'n':>3} {'mean d':>8} {'95% CI':>17} {'sd':>6} "
+             f"{'paired p':>9} {'faster':>8} {'sign p':>8}")
+        emit("  " + "-" * 90)
         for arm in series:
             if arm == "base":
                 continue
             got = paired(by_seed["base"], by_seed[arm])
             if not got:
                 continue
+            interval = f"[{got['lo']:+.2f}, {got['hi']:+.2f}]"
             emit(f"  {arm:<24} {got['n']:>3} {got['mean']:>+8.2f} "
-                 f"{got['sd']:>6.2f} {got['min']:>+7.2f} {got['max']:>+7.2f} "
+                 f"{interval:>17} {got['sd']:>6.2f} "
                  f"{got['p']:>9.4f} {got['wins']:>3}/{got['n']:<4} "
                  f"{got['sign_p']:>8.4f}")
+
+
+def path_report(arms, clock):
+    """Who owns the critical path, over the seed set, per arm."""
+    emit(f"critical path owner on {clock}, over seeds")
+    emit()
+    emit(f"  {'arm':<24} {'n':>3} {'logic ns':>9} {'route ns':>9} {'hops':>5} "
+         f"{'tiles':>7}  owners")
+    emit("  " + "-" * 90)
+    for arm in arms:
+        rows = [row for row in load(arm) if row.get("ok")]
+        paths = [row["paths"][clock] for row in rows
+                 if row.get("paths", {}).get(clock)]
+        if not paths:
+            continue
+        owners = {}
+        for path in paths:
+            owners[path["owner"]] = owners.get(path["owner"], 0) + 1
+        box = [max(p["bbox"][2] - p["bbox"][0], p["bbox"][3] - p["bbox"][1])
+               for p in paths if p["bbox"]]
+        emit(f"  {arm:<24} {len(paths):>3} "
+             f"{statistics.mean(p['logic_ns'] for p in paths):>9.2f} "
+             f"{statistics.mean(p['routing_ns'] for p in paths):>9.2f} "
+             f"{statistics.mean(p['hops'] for p in paths):>5.1f} "
+             f"{statistics.mean(box) if box else 0:>7.1f}  "
+             + ", ".join(f"{name} {count}/{len(paths)}" for name, count in
+                         sorted(owners.items(), key=lambda kv: -kv[1])))
+    emit()
+    emit("  logic+routing is the period, so the two columns ARE the Fmax:")
+    emit("  a change that moves neither did not move the path.")
 
 
 def needed_n(values, delta):
@@ -499,7 +657,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=("synth", "sweep", "report", "power",
-                                          "determinism", "list"))
+                                          "paths", "determinism", "list"))
     parser.add_argument("--arm", action="append", default=[])
     parser.add_argument("--seeds", type=int, default=20)
     parser.add_argument("--jobs", type=int, default=8)
@@ -528,16 +686,31 @@ def main():
 
     if args.stage == "synth":
         # Elaboration is Python and yosys is pinned to one thread, so arms
-        # synthesise concurrently without contending.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(arms)) as pool:
-            for arm, seconds in zip(arms, pool.map(synth, arms)):
+        # synthesise concurrently without contending -- up to `--jobs`, which
+        # matters once a matrix is 17 arms on a machine with other work on it.
+        # One arm that cannot elaborate must not cost the other nineteen their
+        # netlists: a failure is a row, not the end of the batch.
+        failed = []
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(arms), args.jobs)) as pool:
+            futures = {pool.submit(synth, arm): arm for arm in arms}
+            for future in concurrent.futures.as_completed(futures):
+                arm = futures[future]
+                try:
+                    seconds = future.result()
+                except BaseException as error:
+                    failed.append(arm)
+                    emit(f"{arm}: FAILED -- {str(error).splitlines()[0][:120]}")
+                    continue
                 cells = occupancy(arm)
                 emit(f"{arm}: {seconds:.0f}s  LUT4-eq {cells['lut4_equiv']}  "
-                     f"FF {cells['TRELLIS_FF']}")
+                     f"FF {cells['TRELLIS_FF']}  BRAM {cells['DP16KD']}")
                 nextpnr_command(arm)  # asserts --parallel-refine is absent
         emit("build_top.sh checked for --parallel-refine on every arm: absent")
+        if failed:
+            emit(f"{len(failed)} arm(s) have no netlist: {', '.join(failed)}")
         flush_log("synth")
-        return 0
+        return 1 if failed else 0
 
     if args.stage == "determinism":
         for arm in arms:
