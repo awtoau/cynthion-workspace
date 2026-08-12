@@ -116,6 +116,23 @@ ARMS = {
     # BTB size. 512 sets is `Param.scala`'s default and `base`.
     "btb-128": {"add": ["--btb-sets", "128"]},
 
+    # NO `buffers` ARM. `--with-aligner-buffer --with-dispatcher-buffer`
+    # generates a core byte-identical to `base`: `--with-rvc` already forces the
+    # aligner buffer on (`Param.scala:618`), and `withDispatcherBuffer` appears
+    # nowhere in this checkout outside `Param.scala` -- it names a config and
+    # builds nothing. `digest` is what said so; the flags differ, the core does
+    # not.
+
+    # The register file as registers instead of dual-port block RAM. Trades
+    # block RAM for LUTs and takes the RAM's clock-to-out off the read path.
+    # `--regfile-async` comes with it, not optionally: `RegFileMem.scala:76`
+    # asserts `!syncRead` on the register-based path, and sync is the default.
+    "regfile-registers": {"add": ["--regfile-reg-based", "--regfile-async"]},
+
+    # An ALU in a later stage, which also turns the bypass network on
+    # (`allowBypassFrom` 100 = disabled by default, 0 with late ALU).
+    "late-alu": {"add": ["--with-late-alu"]},
+
     # The tag read taken out of the same cycle as the compare, both caches.
     "tags-async": {"add": ["--fetch-l1-tags-read-async",
                            "--lsu-l1-tags-read-async"]},
