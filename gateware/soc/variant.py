@@ -61,11 +61,25 @@ TEXT = "text"
 # then refuses a `--firmware-only` load as stale when the bitstream is correct.
 VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_BIST",      "",    "bist",      FLAG),
-    ("CYNTHION_HYPERRAM_CK_MHZ",    "100", "ck",        TEXT),
+    ("CYNTHION_HYPERRAM_CK_MHZ",    None,  "ck",        TEXT),
     ("CYNTHION_HYPERRAM_BIST_DQS",  "1",   "dqs",       FLAG),
     ("CYNTHION_CLOCK_MIRROR",       "",    "mirror",    FLAG),
     ("CYNTHION_CLOCK_MIRROR_DIV",   "4",   "mirrordiv", TEXT),
 )
+
+# The CK default is PER PATH, because one number cannot be right for both.
+#
+# `hr` IS CK on the non-DQS path and CK/2 on the DQS one, so the same fabric
+# closure buys twice the CK on DQS. A single default of 100 was buildable on one
+# path and not on the other, and #410 is the failure: a raw nextpnr ERROR at the
+# documented invocation, with nothing naming the CK as the cause.
+#
+# non-DQS 84 is the fabric ceiling -- 90 does not close. DQS 84 would be a third
+# of what the path reaches, so it is the PART's 166 MHz rating that binds there
+# and 160 is the rung under it; 168 and 180 close too and are for the ceiling
+# sweep, which is the rig's job and not a default's. Measurements and their
+# conditions: #410.
+CK_DEFAULT_MHZ = {True: "160", False: "84"}
 
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
 
@@ -79,6 +93,8 @@ def _resolve(name, env=None):
             f"different bitstreams hash the same and share a build directory.")
     default, _tag, kind = _BY_NAME[name]
     env = os.environ if env is None else env
+    if default is None:                 # CK, whose default depends on the path
+        default = CK_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_BIST_DQS", env)]
     raw = env.get(name, default) or default
     if kind is FLAG:
         # "", "0" and unset are one state; anything else is the other. Normalised

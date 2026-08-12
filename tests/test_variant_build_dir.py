@@ -63,10 +63,25 @@ def test_the_same_variant_gets_the_same_directory():
         {},
         {"CYNTHION_HYPERRAM_BIST": ""},
         {"CYNTHION_HYPERRAM_BIST": "0"},
-        {"CYNTHION_HYPERRAM_CK_MHZ": "100", "CYNTHION_CLOCK_MIRROR_DIV": "4"},
+        # The DQS default, spelled out. Taken from the table rather than typed:
+        # it is per path now, and a literal here would pin one of the two.
+        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[True],
+         "CYNTHION_CLOCK_MIRROR_DIV": "4"},
     ]
     dirs = {variant.build_dir(ROOT, env) for env in same}
     assert len(dirs) == 1, sorted(str(d) for d in dirs)
+
+
+def test_the_ck_default_follows_the_path():
+    """One default could not be right for both: `hr` is CK, or CK/2 (#410)."""
+    for dqs, expected in ((True, variant.CK_DEFAULT_MHZ[True]),
+                          (False, variant.CK_DEFAULT_MHZ[False])):
+        env = {"CYNTHION_HYPERRAM_BIST": "1",
+               "CYNTHION_HYPERRAM_BIST_DQS": "1" if dqs else "0"}
+        assert variant.value("CYNTHION_HYPERRAM_CK_MHZ", env) == expected
+        # And an explicit value still wins on either path.
+        assert variant.value("CYNTHION_HYPERRAM_CK_MHZ",
+                             {**env, "CYNTHION_HYPERRAM_CK_MHZ": "120"}) == "120"
 
 
 def test_a_ck_rung_is_its_own_directory():
