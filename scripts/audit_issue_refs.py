@@ -29,7 +29,7 @@ LOG = ROOT / "tmp" / "logs" / "audit_issue_refs.log"
 
 # A path reference: a directory we own, a slash, and a file extension we use.
 TOPS = ("ecp5-test", "gateware", "scripts", "firmware", "docs", "repos", "tests",
-        "fpga-jobs", "linux-on-cynthion", "debris", "venv", "luna")
+        "linux-on-cynthion", "debris", "venv", "luna")
 EXTS = ("py", "md", "rs", "c", "h", "x", "toml", "json", "patch", "diff", "ys",
         "v", "sch", "cfg", "lds", "svd", "yml", "yaml")
 PATH = re.compile(
