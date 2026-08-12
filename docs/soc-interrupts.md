@@ -26,8 +26,8 @@ Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin
 
 ## Why the sideband must interrupt
 
-`sideband_csr` exposes `rx`, the last byte Apollo sent, and `rxcnt`, how many
-have arrived. The firmware polls and compares the count against its own copy.
+The sideband exposes `rx`, the last byte Apollo sent, and `rxcnt`, how many have
+arrived. The firmware polls and compares the count against its own copy.
 
 **`rx` holds one byte.** Two arrivals between polls and the first is
 unrecoverable — `rxcnt` reports that it happened and cannot give it back. An
@@ -49,9 +49,9 @@ claim/complete. Pending bits and enables.
 ### Why the controller cannot preempt, whatever it offers
 
 It gives the CPU **one** interrupt line. When that fires the CPU traps and
-`mstatus.MIE` is cleared — the privileged specification, and VexiiRiscv's
-`TrapPlugin.scala:869`. Nothing further is taken until software sets it again,
-so a source going pending mid-handler does nothing until that handler finishes.
+`mstatus.MIE` is cleared, per the privileged specification. Nothing further is
+taken until software sets it again, so a source going pending mid-handler does
+nothing until that handler finishes.
 
 PLIC 1.0.0 line 93 says it from the other side: *"the PLIC provides no concept
 of interrupt preemption or nesting"*.
