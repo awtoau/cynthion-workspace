@@ -47,12 +47,19 @@ DIAMOND_BIN = DIAMOND / "bin" / "lin64"
 FOUNDRY = DIAMOND / "ispfpga"
 FPGA_BIN = FOUNDRY / "bin" / "lin64"
 
-# The part actually on the board. -12F is the constraint the whole project
-# is working against; using a bigger part would make every number meaningless.
+# The DIE on the board, which is a 25F under a 12F marking -- see
+# docs/chips/ecp5/lfe5u-12f.md. nextpnr's chipdb for `LFE5U-12F` is already the
+# 25k die, so 25F here is what makes the two flows target the same silicon;
+# Diamond enforces the marking (12,096 reg / 32 EBR) and would refuse a design
+# nextpnr places at 60% utilisation.
 ARCH = "ECP5U"
-DEVICE = "LFE5U-12F"
+DEVICE = "LFE5U-25F"
 PACKAGE = "CABGA256"
 SPEED = "8"
+
+# Diamond's own directory for ECP5U, from DiamondDevFile.xml `ach="sa5p00"`.
+# `ep5c00` is LatticeECP3.
+ARCH_DIR = "sa5p00"
 
 
 def diamond_env():
@@ -264,7 +271,7 @@ def main():
             timings["edif2ngd"] = t
             total += t
             t, _ = run(["ngdbuild", "-a", ARCH, "-d", DEVICE,
-                        "-p", str(FOUNDRY / "ep5c00" / "data"),
+                        "-p", str(FOUNDRY / ARCH_DIR / "data"),
                         ngo.name, ngd.name], out, handle, env, "ngdbuild")
             timings["ngdbuild"] = t
             total += t
