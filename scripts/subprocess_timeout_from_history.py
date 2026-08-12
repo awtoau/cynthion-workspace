@@ -24,7 +24,10 @@ it can do.
     result = run_bounded(["make"], family="firmware", cwd=ROOT)
 """
 
+import contextlib
 import json
+import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -107,13 +110,25 @@ def run_bounded(command, *, family, cwd=None, env=None, capture=True,
     """
     bound, reason = limit_for(family, floor)
     started = time.perf_counter()
-    streams =({"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
-               if merge_stderr else {"capture_output": capture})
+    if merge_stderr:
+        streams = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+    elif capture:
+        streams = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    else:
+        streams = {}
 
+    # OWN SESSION, so the whole tree can be killed and not just the shell.
+    # `subprocess.run`'s timeout kills the direct child only: an orphaned
+    # nextpnr outlived its build by 1831 s and slowed every build after it
+    # (#440).
+    proc = subprocess.Popen(command, cwd=cwd, env=env, text=True,
+                            start_new_session=True, **streams)
     try:
-        result = subprocess.run(
-            command, cwd=cwd, env=env, timeout=bound, text=True, **streams)
+        stdout, stderr = proc.communicate(timeout=bound)
     except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
         # WHAT overran, the LIMIT and where it came from, and the ELAPSED. A
         # bound that expires without naming itself turns a hang into a mystery,
         # which is the failure this module exists to prevent (#295).
@@ -122,6 +137,8 @@ def run_bounded(command, *, family, cwd=None, env=None, capture=True,
         print(f"    {' '.join(str(part) for part in command)[:160]}")
         return None
 
+    result = subprocess.CompletedProcess(command, proc.returncode,
+                                         stdout, stderr)
     elapsed = time.perf_counter() - started
 
     # Only successful runs update the history. A failing build can be much
