@@ -86,13 +86,13 @@ FINISHED = "Program finished normally."
 # Seconds a merged build may take.
 #
 #   waits for   yosys + nextpnr on the merged variant
-#   expected    204 s, the slowest observed with one other build in flight;
-#               the shipping design's 130-140 s is what `soc_run.synthesis_floor`
-#               is derived from and it is 23% less logic
+#   expected    256 s, the slowest COMPLETED merged build; the shipping design's
+#               130-140 s is what `soc_run.synthesis_floor` derives from and it
+#               is 23% less logic. 255 s was tried and killed one that needed 256
 #   multiplier  1.25x
 #   on expiry   `run_bounded` names the family, the limit and the elapsed, and
 #               the row here is NO RESULT (killed) rather than a frequency
-SYNTHESIS_FLOOR_SECONDS = 255
+SYNTHESIS_FLOOR_SECONDS = 320
 
 
 def env_for(sync_mhz):
