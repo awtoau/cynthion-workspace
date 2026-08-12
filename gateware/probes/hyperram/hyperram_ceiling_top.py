@@ -410,7 +410,7 @@ class HyperRAMCeiling(Elaboratable):
         # elaboration: they fail in the placer as "no BELs remaining to
         # implement cell type 'DTR'", which names neither design that wanted it.
         # Die temperature is a property of the chip, not of the engine, so an
-        # embedded copy reads it from `gateware_id` and REG_DIE reads zero here.
+        # embedded copy reads it from `fabric_status` and REG_DIE reads zero here.
         self._own_dtr = own_dtr
 
         # The negative control. Reads are checked against the COMPLEMENT of what

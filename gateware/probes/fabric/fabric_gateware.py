@@ -161,7 +161,8 @@ MASK = 0xFFFFFFFF
 # free-running counter whose wrap issues STARTPULSE. 2**19 at 60 MHz is 8.7 ms,
 # which is far slower than the block's 8-cycle conversion and far faster than
 # the die's thermal time constant, so the reading is never stale and never
-# retriggered mid-conversion. The same figure `riscv/gateware_id.py` uses.
+# retriggered mid-conversion. The same figure `soc/peripherals/fabric_status.py`
+# uses.
 DTR_PERIOD_BITS = 19
 
 # In REG_DIE: this build contains a DTR block at all. Without it, "0" from a

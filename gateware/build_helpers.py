@@ -12,15 +12,20 @@ identified by inspecting it. USERCODE exists for exactly this: a 32-bit field
 in the bitstream, readable over JTAG with the `READ_USERCODE` opcode whether or
 not the design is doing anything useful.
 
-Every build here left it at zero, which is why answering "what is running?"
-meant comparing build timestamps and guessing.
-
 The value is the short git hash of the working tree, with the top bit set when
 the tree is dirty. A bitstream built from uncommitted work is exactly the one
 whose provenance is least obvious later, so it is worth being able to tell.
 
+32 bits is not enough to answer "which build is this?" on its own, so the SoC
+build writes a record keyed by them: `gateware/usercode_map.py`.
+
     from build_helpers import ecppack_opts
-    platform.build(design, **ecppack_opts())
+    platform.build(design, **ecppack_opts())        # a kwarg, where one works
+    os.environ["AMARANTH_ecppack_opts"] = ecppack_opts()["ecppack_opts"]
+
+The environment form is the one the SoC uses: `CynthionPlatform.toolchain_prepare`
+passes its own `ecppack_opts` before `**kwargs`, so a kwarg is a duplicate
+keyword there, and Amaranth's `_extract_override` reads the environment first.
 """
 
 import hashlib
@@ -36,8 +41,8 @@ def source_digest():
     """A hash of every gateware source, and of the variant that selects among them.
 
     The one definition of "which gateware is this". `soc_run.gateware_digest`
-    folds HEAD and the placer flags into it for the bitstream cache;
-    `peripherals/gateware_id.py` puts its low 32 bits in a register.
+    folds the placer flags into it for the bitstream cache; `usercode_map.py`
+    records it beside the bitstream.
     """
     if str(GATEWARE_SOC) not in sys.path:
         sys.path.insert(0, str(GATEWARE_SOC))
@@ -50,11 +55,6 @@ def source_digest():
     for setting in variant.settings():
         digest.update(setting.encode())
     return digest.hexdigest()
-
-
-def source_id():
-    """`source_digest` as the 32 bits `gateware_id`'s `built` register holds."""
-    return int(source_digest()[:8], 16)
 
 
 def usercode():
@@ -76,31 +76,26 @@ def usercode():
     return value
 
 
-def ecppack_opts(extra=""):
+def ecppack_opts(extra="", code=None):
     """Build kwargs that stamp the bitstream with its USERCODE.
+
+    Pass `code` when the caller has already computed it -- `soc/top.py` does,
+    and uses the same value for `usercode_map`'s record, so the bitstream and
+    the record cannot disagree about a tree that changed mid-build.
 
     The frequency is repeated because passing ecppack_opts replaces the
     platform's own defaults rather than adding to them; dropping --freq would
     silently change the configuration clock.
     """
-    code = usercode()
+    code = usercode() if code is None else code
     # DECIMAL. ecppack parses --usercode with a plain integer reader and rejects
-    # `0x...` outright ("the argument ... is invalid"), so the hex this used to
-    # emit failed every build that asked for a USERCODE -- the stamp could not
-    # have been reaching any bitstream. Verified against ecppack 1.4-79 for
-    # values above 2**31 too, which is where a dirty tree's top bit puts it.
+    # `0x...` outright ("the argument ... is invalid"). Verified against ecppack
+    # 1.4-79 for values above 2**31 too, which is where a dirty tree's top bit
+    # puts it.
     return {"ecppack_opts": f"--compress --freq 38.8 --usercode {code:d} "
                             f"{extra}".strip()}
 
 
-def describe(code):
-    """Render a USERCODE read back from hardware."""
-    if code == 0:
-        return "unset -- built before USERCODE stamping"
-    dirty = " (dirty tree)" if code & 0x80000000 else ""
-    return f"git {code & 0x7fffffff:07x}{dirty}"
-
-
 if __name__ == "__main__":
-    print(f"usercode: {usercode():#010x}  -> {describe(usercode())}")
-    print(f"source:   {source_id():#010x}  -> {source_digest()}")
+    print(f"usercode: {usercode():#010x}")
+    print(f"source:   {source_digest()}")

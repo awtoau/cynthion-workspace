@@ -137,21 +137,45 @@ pub const TIME_HZ: u32 = cynthion_soc_pac::base::SYNC_HZ;
 #[cfg(feature = "qemu")]
 pub const TIME_HZ: u32 = 10_000_000;
 
-/// The gateware's own account of itself -- git ref, build time, `sync`
-/// frequency, cache geometry -- or `None` on a target that is not a bitstream.
+/// What the fabric is DOING -- die temperature, bus faults -- or `None` on a
+/// target that is not a bitstream.
 ///
 /// Separate from `BOARD` even though both are `Some` on the same target,
 /// because they answer different questions. `BOARD` is about hardware attached
-/// to the SoC; this is about the SoC. A build that dropped every board
-/// peripheral would still want it, and QEMU is not a bitstream at all, so under
-/// `-M virt` `info` says so rather than inventing an identity.
+/// to the SoC; this is about the SoC. QEMU is not a bitstream at all, so under
+/// `-M virt` `info` says so rather than inventing a reading.
 ///
-/// See `gateware/soc/peripherals/gateware_id.py` for the register map.
+/// See `gateware/soc/peripherals/fabric_status.py` for the register map.
 #[cfg(not(feature = "qemu"))]
-pub const GATEWARE: Option<usize> = Some(cynthion_soc_pac::base::BOARD_GATEWARE);
+pub const FABRIC: Option<usize> = Some(cynthion_soc_pac::base::BOARD_FABRIC);
 
 #[cfg(feature = "qemu")]
-pub const GATEWARE: Option<usize> = None;
+pub const FABRIC: Option<usize> = None;
+
+/// What the core was GENERATED with, as `cpu/cpu.py`'s flags say.
+///
+/// `misa` hardwires rv32im however VexiiRiscv was built, so this is the only
+/// account of A, C and rdtime. `init.rs` runs an instruction class only when it
+/// is here: a class the core lacks TRAPS rather than answering wrongly.
+///
+/// Generated into the PAC from the gateware, the same provenance as `TIME_HZ`.
+/// That this image and that bitstream are a pair is established on the host, by
+/// USERCODE (`scripts/soc_confirm.py`).
+#[cfg(not(feature = "qemu"))]
+pub const CPU_HAS_M: bool = cynthion_soc_pac::base::CPU_HAS_M;
+#[cfg(not(feature = "qemu"))]
+pub const CPU_HAS_A: bool = cynthion_soc_pac::base::CPU_HAS_A;
+#[cfg(not(feature = "qemu"))]
+pub const CPU_HAS_C: bool = cynthion_soc_pac::base::CPU_HAS_C;
+
+/// `virt`'s CPU is rv32imac with the time CSR, from the device tree's
+/// `riscv,isa`.
+#[cfg(feature = "qemu")]
+pub const CPU_HAS_M: bool = true;
+#[cfg(feature = "qemu")]
+pub const CPU_HAS_A: bool = true;
+#[cfg(feature = "qemu")]
+pub const CPU_HAS_C: bool = true;
 
 /// Where `firmware/cynthion-boot` leaves its one word of boot status, or `None` on a
 /// target that has no bootloader under it.

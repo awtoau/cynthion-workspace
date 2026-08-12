@@ -79,7 +79,7 @@ fn fault(uart: &mut Uart, args: &[u8]) {
     // The FABRIC's account beside the CPU's, which is what makes this a control
     // rather than a demonstration: `unclaimed` moving proves the terminator
     // fired, and not that the firmware happened to print a line.
-    if let Some(id) = crate::info::gateware::id() {
+    if let Some(id) = crate::info::fabric::status() {
         let _ = writeln!(
             uart,
             "  bus  {} unclaimed, {} timed out, worst wait {} cycles",

@@ -71,36 +71,14 @@ subclassing the modules under test with an empty `elaborate`.
 **DFF is exact in both.** A register is a register wherever it is placed. LUT4
 is mapping, and mapping depends on the neighbours; read the DFF column first.
 
-### The hazard: `gateware_id`'s constants fold, so an A/B must pin them
+### An A/B needs nothing pinned
 
-`GatewareId` bakes its identity in as 32-bit constants and synthesis folds them,
-so two different words land on different LUT counts. `soc_instrumentation_cost.py`
-run without pinning them reported the instrumentation at **714** TRELLIS_COMB;
-pinning `built` and `git` gives **1,074**. Same code, same question, 360 cells
-apart, and the smaller number is the wrong one. DFF was 456 both times — which is
-what "DFF is exact" means in practice.
+No build-dependent constant reaches the netlist: the identity is the ECP5's
+USERCODE plus `gateware/usercode_map.py`. What that was worth in cells is in
+[#447](https://github.com/awtoau/cynthion-workspace/issues/447) and
+[#443](https://github.com/awtoau/cynthion-workspace/issues/443), with the
+conditions it was measured under.
 
-**Measured**, 2026-08-12, shipping SoC `bist0-ck160-dqs1-merge0-sync60-mirror0-mirrordiv4`,
-`--no-parallel-refine`, one firmware image, 3 builds an arm
-([`soc_repro_arms.py`](../scripts/soc_repro_arms.py)):
-
-| arm | distinct netlists | COMB spread | FF spread | `clk` spread |
-|---|---|---|---|---|
-| `built` varies, naming pinned | 3 | **276** | 0 | **7.95 MHz** |
-| naming varies, `built` pinned | 3 | 0 | 0 | 0.00 MHz |
-| both fixed (shipped) | **1** | 0 | 0 | 0.00 MHz |
-
-- The 32-bit constant is the whole of the area and timing cost. The
-  `id()`-derived module name changed the netlist BYTES and mapped, packed and
-  placed identically — it broke reproducibility without costing a cell.
-- Both still had to be fixed. Either one alone leaves three distinct netlists,
-  and a netlist that is not byte-identical cannot be a control for anything.
-- FF is flat in every arm. Only the MAPPING moved, never the function.
-- Fixed in [#441](https://github.com/awtoau/cynthion-workspace/issues/441):
-  `built` was `datetime.now()`, so a build a minute later was a different netlist.
-  It is now the gateware source digest.
-- Still pin them for an A/B. Both arms of an A/B edit the tree, so the digest
-  moves with the edit — the constant is stable across TIME, not across SOURCES.
 - [`soc_repro_check.py`](../scripts/soc_repro_check.py) is the gate: two builds of
   one tree, byte-compared, and `check.py`'s `repro` runs it.
 
@@ -140,11 +118,11 @@ Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
 | `flash_probe` | 183 | 72 | — | instrumentation |
 | `serial_line` | 162 | 99 | — | |
 | `vexii_irq` | 149 | 101 | — | **in no SoC** |
+| `fabric_status` | 110 | 36 | — | no DTR without a platform |
 | `ulpi_window` | 98 | 96 | — | |
 | `stream_buffer` (64, sync) | 90 | 27 | — | |
 | `flash_ila` | 89 | 108 | 1 | instrumentation |
 | `sideband_csr` | 85 | 50 | — | |
-| `gateware_id` | 80 | 26 | — | no DTR without a platform |
 | `stream_buffer` (16, CDC) | 46 | 57 | — | |
 | `vbus_csr` | 23 | 24 | — | |
 | `i2c_mux` | 9 | 20 | — | |
@@ -165,9 +143,6 @@ built again with their logic removed and their CSR bridges kept:
 | TRELLIS_COMB | 14,476 | 13,402 | **1,074** | 7.4% |
 | TRELLIS_FF | 7,472 | 7,016 | **456** | 6.1% |
 | DP16KD | 44 | 43 | **1** | |
-
-Both builds pinned `GatewareId`'s timestamp and git hash; see the hazard in §2
-for what the same measurement reports without that.
 
 **This understates a deletion.** Each stub keeps the CSR bridge that answers at
 its address, so a real removal recovers this plus three bridges and three

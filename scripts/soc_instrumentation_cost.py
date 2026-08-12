@@ -78,24 +78,6 @@ sys.path.insert(0, str(ROOT / "gateware"))
 
 STUB = {stub!r}
 
-# PIN `GatewareId`'s CONSTANTS, and this is not a nicety.
-#
-# `GatewareId` bakes the build identity and the git hash in as 32-bit constants,
-# and synthesis folds them: two words that differ constant-fold differently and
-# land on different LUT counts. Measured at 153 TRELLIS_COMB between two builds
-# of an otherwise identical design -- a fifth of the number this script exists to
-# report. Both arms of this comparison edit the tree, so `built` moves with the
-# edit even now that it is a source digest rather than a clock (#441).
-import peripherals.gateware_id as gateware_id
-_real = gateware_id.GatewareId
-
-class _Fixed(_real):
-    def __init__(self, **kwargs):
-        kwargs.setdefault("built", 0)
-        kwargs.setdefault("git", 0)
-        super().__init__(**kwargs)
-
-gateware_id.GatewareId = _Fixed
 if STUB:
     # Subclass rather than replace, so every port, every CSR register and the
     # whole memory map survive and only the logic goes. `elaborate` still

@@ -518,12 +518,11 @@ fn facilities(out: &mut Out) {
 /// The instruction classes this image was COMPILED with, EXECUTED.
 ///
 /// Two accounts disagree about this core and neither is checkable on its own:
-/// `misa` reads `rv32im` however the core was generated, and the gateware's
-/// `cpu` word says what it was asked for. Running the instructions is what
-/// settles it, and `selftest` already had the sequences -- it just had to be
-/// typed. Now it is not.
+/// `misa` reads `rv32im` however the core was generated, and
+/// `target::CPU_HAS_*` says what it was asked for. Running the instructions is
+/// what settles it.
 ///
-/// **The gateware's word gates the run, not the other way round.** A core with
+/// **The generated flags gate the run, not the other way round.** A core with
 /// no `A` does not answer `lr.w` wrongly, it raises an illegal instruction, and
 /// this firmware aborts on one. So a class the core was not generated with is
 /// reported unrun; only a class it claims is exercised.
@@ -538,16 +537,13 @@ fn isa(out: &mut Out) {
     let want_a = cfg!(target_feature = "a");
     let want_c = cfg!(target_feature = "c");
 
-    // What the core was GENERATED with. A target that is not a bitstream has no
-    // second account, so there is nothing to contradict and the classes run.
-    let cpu = info::gateware::id().filter(|id| id.present()).map(|id| id.cpu);
-    let generated = |flag: u32| cpu.is_none_or(|cpu| cpu & flag != 0);
-
-    let missing = if want_m && !generated(info::gateware::CPU_M) {
+    // What the core was GENERATED with: `target::CPU_HAS_*`, from the PAC that
+    // `soc_generate_pac.py` writes out of `cpu/cpu.py`'s own flag list.
+    let missing = if want_m && !target::CPU_HAS_M {
         "M"
-    } else if want_a && !generated(info::gateware::CPU_A) {
+    } else if want_a && !target::CPU_HAS_A {
         "A"
-    } else if want_c && !generated(info::gateware::CPU_C) {
+    } else if want_c && !target::CPU_HAS_C {
         "C"
     } else {
         ""
@@ -557,7 +553,7 @@ fn isa(out: &mut Out) {
             "isa",
             "FAIL",
             format_args!(
-                "{} needs {}, and this bitstream's core was generated without it \
+                "{} needs {}, and this build's core was generated without it \
                  -- those instructions trap, not fail; NOT RUN",
                 info::build::TARGET,
                 missing
@@ -651,18 +647,18 @@ fn clocks(out: &mut Out) {
 /// and a sustained matrix sweep is precisely the workload that heats the die.
 ///
 /// Cost: one register read. The conversion free-runs in fabric every 8.7 ms
-/// (`gateware_id.py`), so nothing here waits for one.
+/// (`fabric_status.py`), so nothing here waits for one.
 fn die(out: &mut Out) {
-    let Some(id) = info::gateware::id().filter(|id| id.present()) else {
-        return out.line("die", "ABSENT", format_args!("no gateware id on this target"));
+    let Some(id) = info::fabric::status() else {
+        return out.line("die", "ABSENT", format_args!("no fabric status on this target"));
     };
     let Some((sign, degrees)) = id.celsius() else {
         return out.line(
             "die",
-            if id.die & info::gateware::DIE_PRESENT == 0 { "ABSENT" } else { "WARN" },
+            if id.die & info::fabric::DIE_PRESENT == 0 { "ABSENT" } else { "WARN" },
             format_args!(
                 "{}",
-                if id.die & info::gateware::DIE_PRESENT == 0 {
+                if id.die & info::fabric::DIE_PRESENT == 0 {
                     "no DTR in this bitstream"
                 } else {
                     "the DTR has not completed a conversion -- \
@@ -671,7 +667,7 @@ fn die(out: &mut Out) {
             ),
         );
     };
-    let hot = sign.is_empty() && degrees >= info::gateware::TCSM_KNEE_C;
+    let hot = sign.is_empty() && degrees >= info::fabric::TCSM_KNEE_C;
     out.line(
         "die",
         if hot { "WARN" } else { "ok" },

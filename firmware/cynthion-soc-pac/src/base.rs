@@ -96,10 +96,10 @@ pub const BOARD_VBUS: usize = 0xf0000624;
 /// Size of the BOARD_VBUS window, in bytes.
 pub const BOARD_VBUS_SIZE: usize = 0x00000004;
 
-/// board/gateware: 8 registers at 0xf0000640
-pub const BOARD_GATEWARE: usize = 0xf0000640;
-/// Size of the BOARD_GATEWARE window, in bytes.
-pub const BOARD_GATEWARE_SIZE: usize = 0x00000020;
+/// board/fabric: 2 registers at 0xf0000640
+pub const BOARD_FABRIC: usize = 0xf0000640;
+/// Size of the BOARD_FABRIC window, in bytes.
+pub const BOARD_FABRIC_SIZE: usize = 0x00000008;
 
 /// board/clocks: 2 registers at 0xf0000660
 pub const BOARD_CLOCKS: usize = 0xf0000660;
@@ -135,3 +135,16 @@ pub const I2C_PRESCALE: u16 = 11;
 /// where every load is a full SPI command/address/dummy/data
 /// transaction and the I-cache cannot fetch from it at all.
 pub const SPIFLASH_CACHED: bool = true;
+
+/// What `gateware/soc/cpu/cpu.py` generated the core with.
+///
+/// `misa` hardwires rv32im however the core was built, so these are
+/// the only account. `init.rs` runs a class only when it is here.
+pub const CPU_HAS_M: bool = true;
+pub const CPU_HAS_A: bool = true;
+pub const CPU_HAS_C: bool = true;
+pub const CPU_HAS_RDTIME: bool = true;
+
+/// L1 cache geometry, as `top.py` asked for it.
+pub const CPU_CACHE_SETS: u32 = 64;
+pub const CPU_CACHE_WAYS: u32 = 2;

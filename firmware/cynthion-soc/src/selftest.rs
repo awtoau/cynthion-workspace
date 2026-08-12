@@ -569,20 +569,28 @@ fn consoles(uart: &mut Uart, report: &mut Report) {
     }
 }
 
-/// The build-id window answers with its magic.
+/// The fabric-status window answers.
+///
+/// `DIE_PRESENT` is the presence guard: every platform build sets it
+/// unconditionally, and a window that decodes to nothing reads as zeros on this
+/// bus rather than faulting.
 fn gateware(uart: &mut Uart, report: &mut Report) {
-    match info::gateware::id() {
+    match info::fabric::status() {
         None => report.item(
             uart,
-            "gateware",
+            "fabric",
             Outcome::Skip,
             format_args!("this target is not a bitstream"),
         ),
         Some(id) => report.ok(
             uart,
-            "gateware",
+            "fabric",
             id.present(),
-            format_args!("magic {:08x}, want {:08x}", id.magic, info::gateware::MAGIC),
+            format_args!(
+                "die {:08x}, DTR bit {}",
+                id.die,
+                info::fabric::DIE_PRESENT
+            ),
         ),
     }
 }

@@ -29,7 +29,7 @@ Each check needs only the layers below it, so the FIRST failure names the layer:
     3. CPU reset       cpu_reset bit    the CPU is not being held
     4. USB             console tty      the gateware's USB stack enumerated
     5. CPU executing   `info` replies   the core is fetching and running
-    6. versions        no MISMATCH      the gateware and firmware are THIS tree
+    6. versions        USERCODE         the bitstream on the part is THIS build
     7. clocks          LOCK, no MISMATCH  the PLL locked and `sync` measures right
     8. PHY reset       scratch cleared  RESETB reaches the pad (#241)
     9. scheduler       late <= gap      the two are the same measurement
@@ -47,9 +47,10 @@ replies whether or not `sync` is running, whether or not the PLL locked, and
 whether or not the CPU works. A correct signature proves the bitstream reached
 the fabric; a wrong one proves it did not, without any inference.
 
-Step 6 catches the stale-bitstream case by comparing the gateware's USERCODE
-against the firmware's own build stamp. The firmware already prints `MISMATCH`
-when they disagree -- this asserts on it rather than leaving it to be noticed.
+Step 6 catches the stale-bitstream case by reading the part's USERCODE over JTAG
+and comparing it against the `usercode.json` the build wrote beside its
+bitstream. The identity is readable from JTAG and from nowhere else, so this is
+the only place the question can be put.
 
     ./scripts/soc_probe.py
     ./scripts/soc_probe.py --no-console     # JTAG only, no USB or shell
@@ -158,21 +159,7 @@ def main() -> int:
                  executing)
 
     if executing:
-        # The stale-bitstream check. The firmware compares the gateware's
-        # USERCODE against its own build stamp and says so; this asserts on it.
-        mismatch = re.search(r"MISMATCH: this firmware was built from (\S+)", output)
-        gateware = re.search(r"gateware\s+(\S+)", output)
-        checks.check(
-            "gateware and firmware are from the SAME commit"
-            + (f" -- gateware {gateware.group(1)}, firmware "
-               f"{mismatch.group(1)}" if mismatch and gateware else ""),
-            mismatch is None)
-        if mismatch:
-            emit("")
-            emit("The bitstream on the board was built from a different commit")
-            emit("than the firmware in flash. Every gateware constant the firmware")
-            emit("reads -- clock rates, cache geometry, peripheral bases -- is")
-            emit("potentially wrong, and nothing else here would notice.")
+        usercode_check(checks)
 
         # -- 7..9, what the running design REPORTS about itself. --------------
         #
@@ -194,6 +181,49 @@ def main() -> int:
     return checks.summary()
 
 
+def usercode_check(checks):
+    """The part's USERCODE against the build directory's record. #447.
+
+    Undecided rather than passed when there is no record: reporting "same build"
+    from an absent expectation is the dead-instrument shape this file exists to
+    avoid.
+    """
+    import usercode_map
+    from soc import variant
+    from soc_usercode import read_identity
+
+    build = variant.build_dir(ROOT)
+    want = usercode_map.read_build_record(build)
+    if want is None:
+        emit(f"  no {usercode_map.RECORD_NAME} in "
+             f"{build.relative_to(ROOT)}: WHICH bitstream is running is not "
+             f"decided")
+        return
+    try:
+        idcode, code = read_identity()
+    except Exception as failure:                  # noqa: BLE001 -- reported
+        emit(f"  USERCODE unread: {failure}")
+        return
+
+    if want.get("idcode") is not None:
+        checks.check(
+            f"the part is the one this was packed for: IDCODE {idcode:08x} "
+            f"(want {want['idcode']:08x}, {want.get('device')})",
+            idcode == want["idcode"])
+    checks.check(
+        f"the running bitstream IS this build: USERCODE "
+        f"{'unread' if code is None else f'{code:08x}'} "
+        f"(want {want['usercode']:08x}, {(want.get('commit') or '?')[:7]} "
+        f"{want.get('variant')})",
+        code == want["usercode"])
+    if code != want["usercode"]:
+        found = usercode_map.lookup(code) if code is not None else None
+        emit("")
+        emit("The part is configured with a bitstream that is not the one in")
+        emit(f"  {build.relative_to(ROOT)}.")
+        emit(f"  running: {usercode_map.describe(code or 0, found)}")
+
+
 def clock_checks(checks, info):
     """The clocks are what the gateware says they are -- measured, not declared.
 
@@ -202,10 +232,11 @@ def clock_checks(checks, info):
     the measurement beside the declaration and says `CLOCK MISMATCH` when they
     disagree.
 
-    Asserting on it here rather than leaving it to be read: `gateware_id` once
-    reported `sync 30000000` from a constant while the PLL was not locked and
-    `sync` was not oscillating at all. Nothing downstream noticed, because
-    everything downstream took the constant's word for it.
+    Asserting on it here rather than leaving it to be read: a constant once
+    reported `sync 30000000` while the PLL was not locked and `sync` was not
+    oscillating at all. Nothing downstream noticed, because everything
+    downstream took the constant's word for it. The declared side is
+    `target::TIME_HZ`, generated into the PAC from the gateware's `SYNC_MHZ`.
     """
     measured = re.search(r"measured sync (\d+) kHz, pll (\w+)", info)
 
@@ -229,7 +260,7 @@ def clock_checks(checks, info):
         "is exactly how an unconnected CLKFB cost a two-rebuild bisect.")
 
     checks.check(
-        "measured `sync` agrees with what the gateware declares",
+        "measured `sync` agrees with what this image assumes",
         "CLOCK MISMATCH" not in info,
         "`info` reports a measured clock that differs from the declared one by "
         "more than 1%. The measurement is counted against the board's 60 MHz "

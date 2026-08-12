@@ -13,9 +13,9 @@
 //! ## The encoding is `gateware/build_helpers.py`'s, deliberately
 //!
 //! `usercode()` there stamps the ECP5's USERCODE with `short=7 & 0x7fffffff`,
-//! and sets bit 31 when `git status --porcelain` says anything. The gateware's
-//! `peripherals/gateware_id.py` puts the same word in a CSR, and `info` compares the two --
-//! so the two definitions of "dirty" have to be the same one. In particular
+//! and sets bit 31 when `git status --porcelain` says anything. This word is the
+//! firmware's half of the same encoding, so a host holding both can compare them,
+//! and `hyperram::init` stamps it into the RAM's own state word. In particular
 //! this uses plain `--porcelain`, which counts untracked files: a build with an
 //! untracked file present is called dirty by both sides, and agreeing matters
 //! more here than being narrow, since disagreeing would report a mismatch that

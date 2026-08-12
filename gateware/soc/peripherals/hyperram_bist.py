@@ -110,7 +110,7 @@ class HyperRAMBist(wiring.Component):
                                            engine_domain=domain)
         # `own_clocks=False`: the SoC's generator makes `hr`.
         # `own_leds=False`: the SoC's GPIO already owns them.
-        # `own_dtr=False`: `gateware_id` has the ECP5's single DTR, and the
+        # `own_dtr=False`: `fabric_status` has the ECP5's single DTR, and the
         #   engine does not need one -- die temperature is a property of the
         #   chip, readable from there.
         # The HyperRAM pins it still requests itself; see the module docstring's

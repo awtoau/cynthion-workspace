@@ -115,7 +115,7 @@ from peripherals.serial_line import SerialLine
 from peripherals.i2c_master import I2CMaster, prescale_for
 from peripherals.sideband_csr import SidebandControl
 from peripherals.vbus_csr import VbusControl
-from peripherals.gateware_id import GatewareId
+from peripherals.fabric_status import FabricStatus
 from peripherals.ulpi_window import UlpiRegisters
 from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_AUX_C as I2C_MUX_AUX_C,
@@ -228,7 +228,7 @@ APOLLO_UART_BASE = 0xf0000500
 #   +0x1c  ulpi       4 bytes  ulpi_window.UlpiRegisters, on target_phy
 #   +0x20  i2c_mux    2 bytes  i2c_mux.I2CBusMux
 #   +0x24  vbus       1 byte   vbus_csr.VbusControl
-#   +0x40  gateware  32 bytes  gateware_id.GatewareId
+#   +0x40  fabric     8 bytes  fabric_status.FabricStatus
 #
 # The sub-addresses are the peripherals' natural sizes and each window is
 # aligned to its own size, which is what MemoryMap requires. The decoder is 128
@@ -236,7 +236,7 @@ APOLLO_UART_BASE = 0xf0000500
 # later should not have to move an existing one -- and moving one changes every
 # address in the generated PAC at once.
 #
-# `gateware` is not a board peripheral and is here anyway: it is the one window
+# `fabric` is not a board peripheral and is here anyway: it is the one window
 # whose whole purpose is to be readable, and a second Wishbone window for it
 # would be another comparator on the address path the paragraph above is about.
 # The decoder it goes in is inside an already-decoded window and costs one more
@@ -248,10 +248,11 @@ SIDEBAND_BASE  = BOARD_BASE + 0x18
 ULPI_BASE      = BOARD_BASE + 0x1c
 I2C_MUX_BASE   = BOARD_BASE + 0x20
 VBUS_BASE      = BOARD_BASE + 0x24
-GATEWARE_BASE  = BOARD_BASE + 0x40
-# Measured clock rates, as opposed to `gateware_id`'s declared ones. Placed after
-# GATEWARE's 0x20 so the two read as a pair: what was asked for, and what
-# happened.
+# 8 bytes now that the build identity is in USERCODE (#447); the base is kept
+# where it was so nothing else in the map moves.
+FABRIC_BASE    = BOARD_BASE + 0x40
+# What the clocks MEASURE at. The expectation it is checked against is
+# `target::TIME_HZ` on the firmware side and the build record on the host's.
 CLOCKS_BASE    = BOARD_BASE + 0x60
 
 # What is on each GPIO pin.
@@ -842,9 +843,10 @@ if WITH_BIST:
     _refuse_ck_past_the_fabric()
 
 # Sets in each of the two L1 caches, one way each. A constant rather than a
-# literal at the instantiation because `peripherals/gateware_id.py` reports it to the
-# firmware, and a geometry reported from a different number than the one the
-# core was generated with would be worse than not reporting it.
+# literal at the instantiation because `scripts/soc_generate_pac.py` and
+# `gateware/usercode_map.py` both report it, and a geometry reported from a
+# different number than the one the core was generated with would be worse than
+# not reporting it.
 #
 # 128 sets x 1 way x 64 B line = 8 KiB per cache. Doubled from 64 because the
 # spare block RAM has no better claim on it: the matched superloop-vs-RTIC runs
@@ -971,10 +973,9 @@ class AwtoSoc(Elaboratable):
             f"base={HYPERRAM_BASE:08x},size={HYPERRAM_SIZE:08x},main=1,exe=1",
         ]
 
-        # CACHE_SETS, not a literal: `gateware_id.py` reports this same constant
-        # to the firmware, so a literal here would let the core and the geometry
-        # it advertises drift apart silently. They did not, but only because both
-        # happened to be 64.
+        # CACHE_SETS, not a literal: the build record reports this same
+        # constant, so a literal here would let the core and the geometry it
+        # advertises drift apart silently.
         # `netlist` is this variant's own copy, and it is what makes concurrent
         # builds safe. The generator writes into the submodule at a fixed path
         # shared by every build (#306); with nowhere else to put it, one build
@@ -1083,13 +1084,10 @@ class AwtoSoc(Elaboratable):
         # they are on separate pin-sets and a mux is forced rather than chosen.
         m.submodules.i2c_mux = i2c_mux = I2CBusMux()
 
-        # What this bitstream is, so the firmware can say whether it was built
-        # against this one. The frequencies are what the PLL solver landed on
-        # rather than what was asked for -- see gateware_id.py.
-        m.submodules.gateware_id = gateware_id = GatewareId(
-            sync_hz=round(car.actual_sync_mhz * 1e6),
-            usb_hz=round(car.actual_usb_mhz * 1e6),
-            cache_sets=CACHE_SETS, cache_ways=CACHE_WAYS)
+        # The die's temperature and the bus's fault counters -- the two things
+        # only the fabric knows. What this bitstream IS lives in USERCODE and in
+        # `gateware/usercode_map.py`, not here (#447, #450).
+        m.submodules.fabric_status = fabric_status = FabricStatus()
 
         # What the clocks ARE, counted against the oscillator, alongside what
         # they were declared to be. A PLL that never locked reported 30 MHz from
@@ -1110,8 +1108,8 @@ class AwtoSoc(Elaboratable):
                       name="i2c_mux")
         board_csr.add(vbus_ctrl.bus,     addr=VBUS_BASE     - BOARD_BASE,
                       name="vbus")
-        board_csr.add(gateware_id.bus,   addr=GATEWARE_BASE - BOARD_BASE,
-                      name="gateware")
+        board_csr.add(fabric_status.bus, addr=FABRIC_BASE - BOARD_BASE,
+                      name="fabric")
         board_csr.add(clock_monitor.bus, addr=CLOCKS_BASE   - BOARD_BASE,
                       name="clocks")
 
@@ -1599,9 +1597,9 @@ class AwtoSoc(Elaboratable):
         # about to fault on legitimate traffic, and a margin nobody can read is
         # a margin nobody can check.
         m.d.comb += [
-            gateware_id.fault_unclaimed.eq(bus_fault.unclaimed_count),
-            gateware_id.fault_timeouts.eq(bus_fault.timeout_count),
-            gateware_id.fault_worst.eq(bus_fault.worst_wait),
+            fabric_status.fault_unclaimed.eq(bus_fault.unclaimed_count),
+            fabric_status.fault_timeouts.eq(bus_fault.timeout_count),
+            fabric_status.fault_worst.eq(bus_fault.worst_wait),
         ]
 
         # USB CDC-ACM, on the AUX port.
@@ -1777,9 +1775,8 @@ class AwtoSoc(Elaboratable):
         # than a slow one -- a UART tolerates about +/-2% and the error scales with the
         # clock. Passing SYNC_MHZ keeps the two in step by construction.
         # The ACTUAL solved frequency, not `SYNC_MHZ`. The PLL does not always
-        # land on the request -- `GatewareId` above already reports
-        # `car.actual_sync_mhz` for exactly that reason -- and the baud divisor
-        # is computed from this at elaboration with nothing checking it after.
+        # land on the request, and the baud divisor is computed from this at
+        # elaboration with nothing checking it after.
         # Requesting 61 MHz builds 60.0, which is 227273 baud against 230769:
         # -1.5%, inside a UART's ~2% tolerance with the margin gone, silently.
         m.submodules.sideband = sideband = SidebandDebug(
@@ -2241,6 +2238,7 @@ def main():
     # nothing failed.
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from board.cynthion_r1_4 import CynthionPlatformRev1D4
+    from build_helpers import ecppack_opts, source_digest, usercode
 
     # One directory per variant, not one for all of them.
     #
@@ -2252,21 +2250,45 @@ def main():
     build_dir = BUILD_DIR
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    # No `**ecppack_opts()` here, and it was tried: `CynthionPlatformRev1D4`
-    # passes its own `ecppack_opts` in `toolchain_prepare`
-    # (`repos/cynthion/.../platform/core.py:59-64`) before **kwargs, so supplying
-    # one is a duplicate keyword and the build fails outright. Stamping this
-    # bitstream's USERCODE therefore means patching the vendored platform.
+    # THE BUILD IDENTITY, stamped at pack time (#447, #450).
     #
-    # Until then the identity lives in a register instead -- `peripherals/gateware_id.py`,
-    # same encoding, read by the CPU rather than by JTAG. USERCODE is not
-    # fabric-readable on this part in any case: it is a command in the
-    # bitstream's command stream rather than a bit in a tile, so there is
-    # nothing for a primitive to read.
-    CynthionPlatformRev1D4().build(
+    # `AMARANTH_ecppack_opts`, not a `build(ecppack_opts=...)` kwarg: the platform
+    # passes its own in `toolchain_prepare` before `**kwargs`, so a kwarg is a
+    # duplicate keyword and the build fails outright. Amaranth's
+    # `_extract_override` reads the environment FIRST, so this adds to the
+    # platform's command line without patching the platform.
+    #
+    # Set here rather than by the runner so that every route into this build --
+    # `soc_run.py`, `soc_repro_check.py`, a bare `top.py --build` -- stamps the
+    # same value, computed once and reused for the record below.
+    platform = CynthionPlatformRev1D4()
+    code = usercode()
+    os.environ["AMARANTH_ecppack_opts"] = ecppack_opts(code=code)["ecppack_opts"]
+
+    platform.build(
         AwtoSoc(firmware=words),
         do_program=args.program,
         build_dir=str(build_dir))
+
+    # What those 32 bits MEAN, beside the bitstream they were stamped into.
+    # `scripts/soc_confirm.py` reads USERCODE over JTAG and resolves it here.
+    import usercode_map
+    from clocks import SocClocks
+
+    solved = SocClocks(sync_mhz=SYNC_MHZ)
+    record = usercode_map.record_for_build(
+        usercode=code,
+        build_dir=build_dir,
+        variant_slug=variant.slug(),
+        source_digest=source_digest(),
+        device=platform.device,
+        speed=platform.speed,
+        sync_hz=round(solved.actual_sync_mhz * 1e6),
+        usb_hz=round(solved.actual_usb_mhz * 1e6),
+        cache_sets=CACHE_SETS, cache_ways=CACHE_WAYS,
+        isa=vexii_cpu.isa_generated())
+    beside, index = usercode_map.write(record, build_dir)
+    print(f"usercode {code:#010x} -> {beside}")
 
     # Record the exact BRAM contents alongside the bitstream.
     #

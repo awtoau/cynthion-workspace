@@ -27,12 +27,12 @@ loop inside one interpreter would have reported the design reproducible.
 
 ## The negative control
 
-`--perturb` is the run that must fail. It drops one throwaway `.py` into
-`gateware/soc/` before the LAST run, which moves exactly one 32-bit constant: the
-source digest in `gateware_id`'s `built` word. It asserts both halves -- the runs
-before the perturbation agreed, and the one after did not -- because a check that
-reported everything as different would pass a one-sided control as loudly as a
-working one.
+`--perturb` is the run that must fail. It flips one word of the block RAM
+initialiser before the LAST run -- the smallest difference this design can have,
+and one that reaches both artifacts as an INIT string. It asserts both halves --
+the runs before the perturbation agreed, and the one after did not -- because a
+check that reported everything as different would pass a one-sided control as
+loudly as a working one.
 
 Run it before believing a PASS. This repo has twelve instruments that reported
 success while structurally unable to fail.
@@ -72,15 +72,13 @@ from subprocess_timeout_from_history import run_bounded  # noqa: E402
 BUILD = variant.build_dir(ROOT)
 OUT = ROOT / "tmp" / "repro"
 
-# The perturbation, and why it is a file rather than an edit: `source_id()`
-# hashes every `.py` under gateware/soc, so an added one moves the `built` word
-# and nothing else. One 32-bit constant is the smallest difference this design
-# can have, so a check that catches it catches anything.
-# GITIGNORED, and that is load-bearing: untracked, it would also flip
-# `usercode()`'s dirty bit on a clean tree and perturb two constants.
-PERTURB = ROOT / "gateware" / "soc" / "repro_perturbation.py"
-PERTURB_TEXT = ("# Written and deleted by scripts/soc_repro_check.py --perturb.\n"
-                "# Its only effect is to move gateware_id's source digest.\n")
+# The perturbation: one word of the block RAM initialiser.
+#
+# A firmware word rather than a source edit, so the tree is untouched and the
+# same difference reaches both stages -- the RTLIL carries the INIT string as
+# surely as the netlist does. One word is the smallest difference this design can
+# have, so a check that catches it catches anything.
+PERTURB_WORD = 0xDEAD_BEEF
 
 # A synthesis run's bound. The shipping SoC without --parallel-refine takes
 # ~160 s (#361); 1.25x of that is the floor, and `run_bounded` tightens it to
@@ -110,17 +108,29 @@ def first_differences(left, right, limit=6):
     return lines
 
 
-def elaborate(target):
+def elaborate(target, perturb=False):
     """One elaboration, in its own interpreter, leaving RTLIL at `target`."""
+    first = PERTURB_WORD if perturb else 0
     script = (
         "import sys;"
         f"sys.path[:0] = [{str(ROOT / 'gateware')!r}, {str(ROOT / 'gateware' / 'soc')!r}];"
         "import top;"
         "from board.cynthion_r1_4 import CynthionPlatformRev1D4 as P;"
-        "plan = P().prepare(top.AwtoSoc(firmware=[0] * (top.RAM_SIZE // 4)), 'top');"
+        f"words = [{first}] + [0] * (top.RAM_SIZE // 4 - 1);"
+        "plan = P().prepare(top.AwtoSoc(firmware=words), 'top');"
         f"open({str(target)!r}, 'w').write(plan.files['top.il'])")
     return run_bounded([sys.executable, "-c", script], family="gateware-elaborate",
                        cwd=ROOT, floor=ELABORATE_FLOOR)
+
+
+def perturbed_firmware(firmware):
+    """A copy of the image with its first word replaced. Returns the path."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    target = OUT / "perturbed.bin"
+    image = bytearray(firmware.read_bytes())
+    image[0:4] = PERTURB_WORD.to_bytes(4, "little")
+    target.write_bytes(bytes(image))
+    return target
 
 
 def synthesise(target, firmware, bootloader, pnr_opts):
@@ -171,19 +181,21 @@ def run_stage(args):
     for index in range(args.runs):
         # The perturbation goes in before the LAST run, so the runs before it
         # are the ordinary comparison and the last one is the control.
-        if args.perturb and index == args.runs - 1:
-            PERTURB.write_text(PERTURB_TEXT)
-            emit(f"--perturb: wrote {PERTURB.relative_to(ROOT)} before run "
-                 f"{index + 1}; one 32-bit constant should move")
+        perturb = args.perturb and index == args.runs - 1
+        if perturb:
+            emit(f"--perturb: one block RAM word replaced before run "
+                 f"{index + 1}; exactly one INIT string should move")
 
         suffix = "il" if args.stage == "elaborate" else "json"
         target = OUT / f"{variant.slug()}-run{index + 1}.{suffix}"
         emit(f"run {index + 1}/{args.runs}: {args.stage} -> "
              f"{target.relative_to(ROOT)}")
         if args.stage == "elaborate":
-            result = elaborate(target)
+            result = elaborate(target, perturb=perturb)
         else:
-            result = synthesise(target, firmware, bootloader, pnr_opts)
+            result = synthesise(
+                target, perturbed_firmware(firmware) if perturb else firmware,
+                bootloader, pnr_opts)
         if result is None:
             emit(f"run {index + 1} was KILLED on its timeout; see the line above "
                  f"for the bound and where it came from")
@@ -264,9 +276,6 @@ def main():
     try:
         return run_stage(args)
     finally:
-        if PERTURB.exists():
-            PERTURB.unlink()
-            emit(f"removed {PERTURB.relative_to(ROOT)}")
         for cache in (ROOT / "gateware" / "soc").rglob("__pycache__"):
             shutil.rmtree(cache, ignore_errors=True)
 

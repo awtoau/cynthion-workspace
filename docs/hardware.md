@@ -718,32 +718,32 @@ timestamp), the compiler and target triple, the section sizes and what is left o
 the 63 KiB image region, the boot status the bootloader left behind, `misa`
 decoded, `mstatus`/`mtvec`, the PLIC's threshold and enables, and the gateware.
 
-The gateware line is the reason the command exists. **Firmware and bitstream are
-built separately and need never have been built together** — `load` replaces the
-firmware over the console without rebuilding the bitstream, which is the point of
-it. So the bitstream carries its own git hash in a register
-(`gateware/soc/peripherals/gateware_id.py`), `info` prints both, and it says `MISMATCH`
-when they differ. Same for the clock: the register holds what the PLL actually
-produced, and `SYNC MISMATCH` means every interval derived from
-`target::TIME_HZ` is wrong by that ratio.
+**Firmware and bitstream are built separately and need never have been built
+together** — `load` replaces the firmware over the console without rebuilding the
+bitstream, which is the point of it. Which pair is running is the HOST's
+question, because the identity is the ECP5's USERCODE and only JTAG reads it:
 
-The identifier is the one `gateware/build_helpers.py` stamps into the ECP5's
-USERCODE — short hash, bit 31 set for a dirty tree — so what Apollo reads over
-JTAG and what the CPU reads from inside are the same number by construction.
+* `gateware/build_helpers.py` stamps it at pack time (`ecppack --usercode`) —
+  short hash, bit 31 set for a dirty tree.
+* `gateware/usercode_map.py` resolves those 32 bits to the commit, the variant,
+  the source digest, the part, the declared clocks and the cache and ISA the core
+  was generated with. One record beside each bitstream, one index across all.
+* `scripts/soc_confirm.py` reads USERCODE and IDCODE after configuring and names
+  `stale-bitstream`, `wrong-part` or `declared-clock`. `scripts/soc_probe.py`
+  asserts the same two.
 
-`src XXXXXXXX` beside it is the gateware's own source digest, not a build time.
-The commit says *which commit*; the dirty bit says only *that* the tree was
-dirty, so the digest is what tells two uncommitted trees apart. Reproduce it
-with `python3 gateware/build_helpers.py`. It was `datetime.now()` until
-[#441](https://github.com/awtoau/cynthion-workspace/issues/441), which made it
-the one constant in the design that moved when nothing else did.
+The `fabric` line of `info` is what only the CPU can see: the die's temperature
+and the bus fault counters. The clock check beside it is `sync` COUNTED against
+the 60 MHz oscillator against `target::TIME_HZ` — `CLOCK MISMATCH` means every
+interval derived from it is wrong by that ratio.
 
 Two lines are worth reading carefully:
 
 * **`misa` reports `rv32im`** on this core while it is generated `--with-rva
   --with-rvc`. VexiiRiscv hardwires the register; the compressed and atomic
   instructions the shell executes on every line are the counter-evidence, and
-  `selftest` runs them. `info` prints the gateware's account beside it.
+  `selftest` runs them. `target::CPU_HAS_*`, generated into the PAC from
+  `cpu/cpu.py`'s flags, is the other account.
 * **`die N C` is a DTR reading, not a measurement.** The ECP5's temperature block
   emits a 6-bit code, and the code-to-degrees table (FPGA-TN-02210 Table 4.3) is
   not linear. The data sheet says the block "is not specifically calibrated for
@@ -767,8 +767,8 @@ and division by zero), `C` (three compressed instructions, checked to occupy six
 bytes — the same answer from 32-bit encodings would prove nothing), `A` (lr/sc
 and three `amo` forms), a block RAM address and data walk over the free space
 between `.bss` and the stack,
-that `rdtime` advances, each 16550's scratch register, the gateware magic, the
-flash's known first word, and the TARGET PHY's identity.
+that `rdtime` advances, each 16550's scratch register, the fabric window's DTR
+bit, the flash's known first word, and the TARGET PHY's identity.
 
 `A` has an item of its own because atomics are why the cached CPU configuration
 is mandatory: the cacheless Wishbone bridge asserts `!withAmo`. That is a

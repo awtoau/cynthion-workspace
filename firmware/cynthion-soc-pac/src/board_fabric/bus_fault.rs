@@ -23,7 +23,7 @@ impl R {
         WorstR::new(((self.bits >> 16) & 0xffff) as u16)
     }
 }
-#[doc = "BOARD_GATEWARE.BUS_FAULT, 32 bits at +0x1c\n\nYou can [`read`](crate::Reg::read) this register and get [`bus_fault::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOARD_FABRIC.BUS_FAULT, 32 bits at +0x04\n\nYou can [`read`](crate::Reg::read) this register and get [`bus_fault::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct BusFaultSpec;
 impl crate::RegisterSpec for BusFaultSpec {
     type Ux = u32;

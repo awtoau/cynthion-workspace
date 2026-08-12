@@ -204,10 +204,11 @@ def run(cmd, cwd=None, env=None, floor=None):
 def firmware_digest(path=None):
     """A short hash of the firmware image, for saying WHICH firmware.
 
-    The provenance already in the build -- a short git hash from `build.rs` into
-    USERCODE -- cannot answer this. A git hash does not move when a file is edited
-    and not committed, which is the common case while working, and is exactly the
-    case where a stale load is hardest to notice.
+    The provenance already in the build -- the short git hash `build.rs` compiles
+    in, and the one the gateware stamps into USERCODE -- cannot answer this. A
+    git hash does not move when a file is edited and not committed, which is the
+    common case while working, and is exactly the case where a stale load is
+    hardest to notice.
 
     So: hash the bytes. `soc_run.py` prints this for what it built and again for
     what it read back out of the bitstream, and the two must agree.
@@ -268,20 +269,20 @@ def gateware_digest():
 
     CONTENT, not modification time. See `bitstream_is_stale`.
 
-    **The git hash is in here, and it has to be.** The gateware stamps `HEAD`
-    into USERCODE, so two bitstreams built from byte-identical sources at
-    different commits are different bitstreams -- and `soc_probe` compares that
-    USERCODE against the firmware's own build stamp to catch a stale load. A
-    digest over the sources alone would let a commit skip synthesis and leave the
-    board stamped with the previous one, which turns that check into a false
-    positive. A check that cries wolf is worse than the staleness it was added to
-    catch.
+    **HEAD is NOT in here, and that is a measured claim.** The only thing HEAD
+    reaches is the ECP5's USERCODE, which `ecppack --usercode` writes into the
+    configuration stream -- not a cell.
+    `scripts/soc_head_independence.py` is the instrument: two builds at two
+    commits with no source change give one netlist digest and two different
+    bitstreams, each carrying its own stamp.
 
-    So a commit costs a resynthesis. The saving is on the case that was actually
-    wasting the time: uncommitted iteration, and branch switches that rewrite
-    mtimes without changing a byte.
+    So a commit is a cache hit rather than a synthesis. The bitstream it restores
+    carries the earlier commit's USERCODE, and `usercode.json` travels with it,
+    so the two agree and `soc_confirm` reads them as the pair they are. What the
+    stamp names is the commit the GATEWARE was packed at, which is the question
+    the identity is asked.
 
-    **The variant environment is in here too, and for a sharper reason.** The
+    **The variant environment is in here, and for a sharp reason.** The
     BIST build (#226) is selected by `CYNTHION_HYPERRAM_BIST` rather than by
     editing a file, so two completely different bitstreams -- one with the
     HyperRAM on the bus, one with the engine owning the pins -- hash identically
@@ -295,17 +296,14 @@ def gateware_digest():
     changes what `top.py` elaborates belongs on this list.
 
     **The sources and the variant come from `build_helpers.source_digest()`,
-    which is also what `gateware_id` puts in a register.** One file list: a
-    second copy here is how a variable ends up hashed by the cache and not by
-    the board's own account of itself.
+    which is also what `usercode_map` records beside the bitstream.** One file
+    list: a second copy here is how a variable ends up hashed by the cache and
+    not by the record the board's identity resolves to.
     """
     import hashlib
     from build_helpers import source_digest
     digest = hashlib.sha256()
     digest.update(source_digest().encode())
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                          capture_output=True, text=True)
-    digest.update(head.stdout.strip().encode())
     # THE PLACER FLAGS ARE PART OF THE BITSTREAM. Without this a
     # `--no-parallel-refine` run of a variant already built would skip synthesis
     # and report the non-deterministic build's Fmax as the deterministic one.
@@ -372,7 +370,7 @@ def take_lock(path, emit, *, what, blocking=True):
 # session because the build directory holds exactly one. Re-visiting a rung then
 # costs another ~130 s of synthesis for a file that already existed.
 #
-# The digest already identifies a bitstream exactly -- sources, HEAD and the
+# The digest already identifies a bitstream exactly -- sources, placer flags and the
 # variant environment -- so it is the natural key. A hit is a copy; a miss is a
 # build.
 BITCACHE = ROOT / "tmp" / "bitcache"
@@ -395,7 +393,11 @@ def bitcache_put(digest, emit):
     have = BITCACHE / digest
     have.mkdir(parents=True, exist_ok=True)
     kept = 0
-    for name in ("top.bit", "top.svf", "firmware.hex", "gateware-digest.txt"):
+    # `usercode.json` travels with the bitstream: it is what a USERCODE read off
+    # the part resolves to, and a cache hit that left it behind would restore a
+    # bitstream nobody could attribute.
+    for name in ("top.bit", "top.svf", "firmware.hex", "gateware-digest.txt",
+                 "usercode.json"):
         source = BITSTREAM.parent / name
         if source.exists():
             shutil.copy2(source, have / name)
@@ -1061,6 +1063,15 @@ def main():
         # Recorded only now, after the build has returned zero. Written before
         # it would claim a bitstream that may not exist.
         GATEWARE_BUILT.write_text(gateware_digest() + "\n")
+        # The cache key, into the record the bitstream carries: it is the name of
+        # the `tmp/bitcache` directory this bitstream is filed under, so a
+        # USERCODE read off a board leads back to the artifact.
+        import usercode_map
+
+        record = usercode_map.read_build_record(BITSTREAM.parent)
+        if record is not None:
+            record["gateware_digest"] = gateware_digest()
+            usercode_map.write(record, BITSTREAM.parent)
         bitcache_put(gateware_digest(), emit)
 
         report = BUILD / "top.rpt"

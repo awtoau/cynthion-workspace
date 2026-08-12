@@ -477,7 +477,7 @@ def cross_check(peripherals, emit):
         "BOARD_SIDEBAND": soc_module.SIDEBAND_BASE,
         "BOARD_ULPI": soc_module.ULPI_BASE,
         "BOARD_I2C_MUX": soc_module.I2C_MUX_BASE,
-        "BOARD_GATEWARE": soc_module.GATEWARE_BASE,
+        "BOARD_FABRIC": soc_module.FABRIC_BASE,
         "PLIC": soc_module.PLIC_BASE,
         "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
@@ -514,7 +514,7 @@ def cross_check(peripherals, emit):
     target = (src / "target.rs").read_text()
     firmware_ok = True
     for name in ("CONSOLE", "APOLLO_UART", "PLIC", "BOARD_GPIO", "BOARD_I2C",
-                 "BOARD_SIDEBAND", "BOARD_GATEWARE", "SPIFLASH", "CLINT",
+                 "BOARD_SIDEBAND", "BOARD_FABRIC", "SPIFLASH", "CLINT",
                  "CONSOLE_IRQ", "APOLLO_UART_IRQ",
                  "BOARD_I2C_MUX_TARGET_IRQ", "BOARD_I2C_MUX_AUX_IRQ"):
         if f"cynthion_soc_pac::base::{name}" not in target:
@@ -733,6 +733,32 @@ def write_bases(peripherals, emit):
         "/// transaction and the I-cache cannot fetch from it at all.",
         f"pub const SPIFLASH_CACHED: bool = "
         f"{'true' if soc_module.FLASH_CACHED else 'false'};",
+        "",
+    ]
+
+    # WHAT THE CORE WAS GENERATED WITH, from `cpu/cpu.py`'s own flag list.
+    #
+    # `misa` reads rv32im whatever it was generated with, so this is the only
+    # account of A, C and rdtime -- and `init.rs` gates the ISA self-test on it,
+    # because an instruction class the core lacks TRAPS rather than answering
+    # wrongly. Same provenance as `SYNC_HZ` above.
+    import cpu.cpu as vexii_cpu
+
+    isa = vexii_cpu.isa_generated()
+    lines += [
+        "/// What `gateware/soc/cpu/cpu.py` generated the core with.",
+        "///",
+        "/// `misa` hardwires rv32im however the core was built, so these are",
+        "/// the only account. `init.rs` runs a class only when it is here.",
+    ]
+    lines += [f"pub const CPU_HAS_{name.upper()}: bool = "
+              f"{'true' if present else 'false'};"
+              for name, present in isa.items()]
+    lines += [
+        "",
+        "/// L1 cache geometry, as `top.py` asked for it.",
+        f"pub const CPU_CACHE_SETS: u32 = {soc_module.CACHE_SETS};",
+        f"pub const CPU_CACHE_WAYS: u32 = {soc_module.CACHE_WAYS};",
         "",
     ]
 

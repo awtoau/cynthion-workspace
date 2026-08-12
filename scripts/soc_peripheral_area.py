@@ -86,10 +86,9 @@ def _peripherals():
         from peripherals.vbus_csr import VbusControl
         return VbusControl()
 
-    def gateware_id():
-        from peripherals.gateware_id import GatewareId
-        return GatewareId(sync_hz=60_000_000, usb_hz=60_000_000,
-                          cache_sets=64)
+    def fabric_status():
+        from peripherals.fabric_status import FabricStatus
+        return FabricStatus()
 
     def ulpi_window():
         from peripherals.ulpi_window import UlpiRegisters
@@ -133,7 +132,7 @@ def _peripherals():
         ("i2c_mux",            i2c_mux,            ""),
         ("sideband_csr",       sideband_csr,       ""),
         ("vbus_csr",           vbus_csr,           ""),
-        ("gateware_id",        gateware_id,        "no DTR without a platform"),
+        ("fabric_status",      fabric_status,      "no DTR without a platform"),
         ("ulpi_window",        ulpi_window,        ""),
         ("serial_line",        serial_line,        ""),
         ("stream_buffer_sync", stream_buffer_sync, "depth 64"),

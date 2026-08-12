@@ -9,7 +9,7 @@ impl R {
         ValueR::new(self.bits & 0x01ff)
     }
 }
-#[doc = "BOARD_GATEWARE.DIE, 9 bits at +0x18\n\nYou can [`read`](crate::Reg::read) this register and get [`die::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "BOARD_FABRIC.DIE, 9 bits at +0x00\n\nYou can [`read`](crate::Reg::read) this register and get [`die::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct DieSpec;
 impl crate::RegisterSpec for DieSpec {
     type Ux = u16;

@@ -16,11 +16,6 @@ map, the generated PAC and the firmware's addresses are unchanged and the only
 difference is the logic -- which UNDERSTATES a real deletion by the CSR bridge
 and the decoder window it would also remove.
 
-`GatewareId`'s `built` timestamp and git hash are pinned on both sides. They are
-baked in as 32-bit constants and synthesis folds them, so two builds a minute
-apart land on different LUT counts for no reason connected to the trim -- 153
-TRELLIS_COMB, measured, between two builds of one design (#441).
-
     ./scripts/soc_trim_delta.py --trim spi-controller --runs 3
     ./scripts/soc_trim_delta.py --list
 
@@ -233,20 +228,13 @@ wishbone.Decoder.add = _add
     # what the bridge and its multiplexer cost (#443).
     "plus3-bridged-windows": _EXTRA_WINDOWS.format(count=3, bridged=True),
 
-    # THE NULL CONTROL. Nothing is removed and nothing is added: one pinned
-    # 32-bit identity constant takes a different value. Whatever this moves is
-    # what the MAPPER moves when the netlist changes at all, and no trim delta
-    # smaller than it is attributable to the trim. #454.
+    # THE NULL CONTROL. Nothing is removed and nothing is added: one 32-bit
+    # constant takes a different value. Whatever this moves is what the MAPPER
+    # moves when the netlist changes at all, and no trim delta smaller than it
+    # is attributable to the trim. #454.
     "null-constant": """
-import peripherals.gateware_id as gateware_id
-_pinned = gateware_id.GatewareId
-
-class _Other(_pinned):
-    def __init__(self, **kwargs):
-        kwargs["built"] = 0xdeadbeef
-        super().__init__(**kwargs)
-
-gateware_id.GatewareId = _Other
+import top as _top
+_top.I2C_SCL_HZ = 999_000
 """,
 
     # THE POSITIVE CONTROL. `HyperRAMProbe` is twelve counters and a large CSR
@@ -284,19 +272,6 @@ import fast_build_env
 # this leaves is elaboration's, not the placer's (#441, #306).
 os.environ["AMARANTH_nextpnr_opts"] = "--threads 31 --router router2"
 
-# PIN the identity constants -- see the module docstring.
-# Both are ints since #441 (`built` is a source digest, not a timestamp); a
-# datetime here raised TypeError at elaboration and built nothing (#455).
-import peripherals.gateware_id as gateware_id
-_real_id = gateware_id.GatewareId
-
-class _Fixed(_real_id):
-    def __init__(self, **kwargs):
-        kwargs.setdefault("built", 0)
-        kwargs.setdefault("git", 0)
-        super().__init__(**kwargs)
-
-gateware_id.GatewareId = _Fixed
 
 {setup}
 

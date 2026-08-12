@@ -13,39 +13,29 @@
 //!                at `target::BOOT_STATUS`
 //!     cpu        the core's own `misa` and identity CSRs
 //!     trap       `mstatus`, `mtvec`, and the PLIC's threshold and enables
-//!     gateware   a CSR in the bitstream (`gateware/soc/peripherals/gateware_id.py`)
+//!     fabric     a CSR in the bitstream (`gateware/soc/peripherals/fabric_status.py`)
 //!
-//! ## The gateware line is the reason this command exists
+//! ## The clock line is a check, not a report
 //!
-//! Firmware and gateware are built separately. `load` replaces the firmware over
-//! the console without rebuilding the bitstream, which is the point of it, so the
-//! pair that are running together need never have been built together. A firmware
-//! addressing a peripheral map it was not built against reads plausible numbers
-//! from the wrong registers and reports them, and nothing anywhere says so.
+//! `sync` is COUNTED against the 60 MHz oscillator by `clock_monitor.py` and
+//! printed beside `target::TIME_HZ`, which `scripts/soc_generate_pac.py`
+//! generates from the gateware's `SYNC_MHZ`. A PLL with its feedback
+//! unconnected reported 30 MHz from a constant while `sync` was not oscillating
+//! at all; only a counted clock catches that, and only the CPU can count it.
 //!
-//! So both sides carry the same 32-bit identifier -- the short git hash with bit
-//! 31 set when the tree was dirty, which is also what
-//! `gateware/build_helpers.py` stamps into the ECP5's USERCODE -- and this
-//! command prints both and says when they differ. A mismatch is not always a
-//! fault: staging firmware onto a bitstream from an earlier commit is a normal
-//! working state. It is a fact worth having on screen before spending a day on a
-//! peripheral that moved.
-//!
-//! `sync_hz` is checked the same way. `target::TIME_HZ` is a hand-maintained copy
-//! of `SYNC_MHZ`, and its own comment says the symptom of forgetting is a "50 ms"
-//! poll that runs at 37 ms. Now it is checked rather than trusted.
+//! Which bitstream this is, is not on this screen and cannot be: it is the
+//! ECP5's USERCODE, which JTAG reads and the fabric cannot.
+//! `scripts/soc_confirm.py` checks it against `gateware/usercode_map.py`.
 //!
 //! ## `misa` understates this core
 //!
 //! VexiiRiscv hardwires `misa` to 0x40001100 -- `rv32im` -- while being generated
 //! `--with-rva --with-rvc`, and the compressed and atomic instructions the shell
-//! executes on every line prove it. Both are printed: what the core claims, and
-//! what the gateware says it was built with. The disagreement is the core's, and
+//! executes on every line prove it. `target::CPU_HAS_*` is the other account, and
 //! `selftest` is what settles it by running the instructions.
 
 use core::fmt::Write;
 
-use crate::clock::Hz;
 use crate::plic;
 use crate::target;
 use crate::uart::Uart;
@@ -55,32 +45,16 @@ pub mod build {
     include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 }
 
-/// The gateware's account of itself: five read-only words in the bitstream.
+/// What the fabric is DOING: the die's temperature and the bus's fault counters.
 ///
-/// Register map and encodings: `gateware/soc/peripherals/gateware_id.py`.
-pub mod gateware {
+/// Register map and encodings: `gateware/soc/peripherals/fabric_status.py`.
+pub mod fabric {
     use core::ptr::read_volatile;
 
     use crate::target;
 
-    const MAGIC_OFFSET: usize = 0x00;
-    const GIT: usize = 0x04;
-    const BUILT: usize = 0x08;
-    const SYNC_HZ: usize = 0x0c;
-    const CPU: usize = 0x10;
-    const USB_HZ: usize = 0x14;
-    const DIE: usize = 0x18;
-    const BUS_FAULT: usize = 0x1c;
-
-    /// "CYN1". A window that decodes to nothing reads as zeros on this bus
-    /// rather than faulting, so this is how "the peripheral is there" is told
-    /// from "the address answers".
-    pub const MAGIC: u32 = 0x4359_4e31;
-
-    pub const CPU_M: u32 = 1 << 24;
-    pub const CPU_A: u32 = 1 << 25;
-    pub const CPU_C: u32 = 1 << 26;
-    pub const CPU_RDTIME: u32 = 1 << 27;
+    const DIE: usize = 0x00;
+    const BUS_FAULT: usize = 0x04;
 
     /// One 32-bit register, low byte first.
     ///
@@ -103,19 +77,7 @@ pub mod gateware {
 
     /// Everything the peripheral holds, read once.
     #[derive(Clone, Copy)]
-    pub struct Id {
-        pub magic: u32,
-        /// Bit 31 dirty, bits 30..0 the short git hash. The encoding
-        /// `gateware/build_helpers.py` stamps into USERCODE.
-        pub git: u32,
-        /// WHICH gateware, not when: the top 32 bits of the digest over every
-        /// `gateware/soc/**/*.py` and the variant environment. Reproduce it with
-        /// `python3 gateware/build_helpers.py`.
-        pub built: u32,
-        pub sync_hz: u32,
-        /// Cache sets, ways, and the ISA the core was generated with.
-        pub cpu: u32,
-        pub usb_hz: u32,
+    pub struct Status {
         /// The die temperature readout: bit 8 there is one, bit 7 the value is
         /// good, bits 5..0 the code. NOT degrees -- see `celsius`.
         pub die: u32,
@@ -125,15 +87,9 @@ pub mod gateware {
         pub bus_fault: u32,
     }
 
-    impl Id {
-        pub fn read(base: usize) -> Id {
-            Id {
-                magic: read(base, MAGIC_OFFSET),
-                git: read(base, GIT),
-                built: read(base, BUILT),
-                sync_hz: read(base, SYNC_HZ),
-                cpu: read(base, CPU),
-                usb_hz: read(base, USB_HZ),
+    impl Status {
+        pub fn read(base: usize) -> Status {
+            Status {
                 die: read(base, DIE),
                 bus_fault: read(base, BUS_FAULT),
             }
@@ -166,24 +122,13 @@ pub mod gateware {
             })
         }
 
+        /// The window answers at all.
+        ///
+        /// `DIE_PRESENT` is set unconditionally by every platform build, and a
+        /// window that decodes to nothing reads as zeros on this bus rather
+        /// than faulting -- so this bit is the presence guard.
         pub fn present(&self) -> bool {
-            self.magic == MAGIC
-        }
-
-        pub fn dirty(&self) -> bool {
-            self.git & 0x8000_0000 != 0
-        }
-
-        pub fn hash(&self) -> u32 {
-            self.git & 0x7fff_ffff
-        }
-
-        pub fn cache_sets(&self) -> u32 {
-            self.cpu & 0xffff
-        }
-
-        pub fn cache_ways(&self) -> u32 {
-            (self.cpu >> 16) & 0xff
+            self.die & DIE_PRESENT != 0
         }
     }
 
@@ -215,8 +160,8 @@ pub mod gateware {
     ];
 
     /// The one in this build, or `None` on a target that is not a bitstream.
-    pub fn id() -> Option<Id> {
-        target::GATEWARE.map(Id::read)
+    pub fn status() -> Option<Status> {
+        target::FABRIC.map(Status::read)
     }
 }
 
@@ -474,11 +419,11 @@ pub fn command(uart: &mut Uart) {
         plic.enabled()
     );
 
-    match gateware::id() {
+    match fabric::status() {
         None => {
             let _ = writeln!(
                 uart,
-                "gateware none -- this target is not a \
+                "fabric   none -- this target is not a \
                                     bitstream"
             );
         }
@@ -487,33 +432,14 @@ pub fn command(uart: &mut Uart) {
             // bitstream built before this peripheral existed looks like.
             let _ = writeln!(
                 uart,
-                "gateware magic {:08x}, want {:08x} -- this \
-                                    bitstream carries no id",
-                id.magic,
-                gateware::MAGIC
+                "fabric   die {:08x} -- no DTR bit, so this window \
+                                    carries no status",
+                id.die
             );
         }
         Some(id) => {
-            let _ = write!(
-                uart,
-                "gateware {:07x} {}  ",
-                id.hash(),
-                if id.dirty() { "dirty" } else { "clean" }
-            );
-            write_built(uart, id.built);
-            let _ = writeln!(
-                uart,
-                "  sync {} usb {}  cache {}x{}",
-                Hz(id.sync_hz),
-                Hz(id.usb_hz),
-                id.cache_sets(),
-                id.cache_ways()
-            );
+            let _ = write!(uart, "fabric   ");
 
-            // The one thing the die itself will say. Not the chip's identity:
-            // USERCODE, IDCODE and the TraceID are all reachable over JTAG and
-            // from nowhere in the fabric, so the CPU cannot learn which part it
-            // is running on -- see the header of gateware_id.py.
             match id.celsius() {
                 Some((sign, degrees)) => {
                     // The raw code stays, the caption goes. `uncalibrated` was
@@ -528,23 +454,23 @@ pub fn command(uart: &mut Uart) {
                     // field.
                     let _ = writeln!(
                         uart,
-                        "         die {}{} C (dtr code {})",
+                        "die {}{} C (dtr code {})",
                         sign,
                         degrees,
                         id.die & 0x3f
                     );
                 }
-                None if id.die & gateware::DIE_PRESENT == 0 => {
+                None if id.die & fabric::DIE_PRESENT == 0 => {
                     let _ = writeln!(
                         uart,
-                        "         die no readout in this \
+                        "die no readout in this \
                                             bitstream"
                     );
                 }
                 None => {
                     let _ = writeln!(
                         uart,
-                        "         die conversion has not \
+                        "die conversion has not \
                                             completed"
                     );
                 }
@@ -563,34 +489,9 @@ pub fn command(uart: &mut Uart) {
                 id.bus_fault >> 16
             );
 
-            if id.git != build::GIT_WORD {
-                let _ = writeln!(
-                    uart,
-                    "         MISMATCH: this firmware was \
-                                        built from {} {}",
-                    hash, dirty
-                );
-            }
-            if id.sync_hz != target::TIME_HZ {
-                // Every interval in this firmware is derived from TIME_HZ. A
-                // disagreement here means every one of them is wrong by the
-                // ratio, silently.
-                let _ = writeln!(
-                    uart,
-                    "         SYNC MISMATCH: firmware \
-                                        assumes {}",
-                    Hz(target::TIME_HZ)
-                );
-            }
-            // MEASURED, not declared. Everything above is a constant baked in
-            // at elaboration and says what the gateware was ASKED for. This is
-            // counted in fabric against the 60 MHz oscillator, so it says what
-            // the silicon is doing -- and the two disagreeing is a fault that
-            // nothing else in this image can see.
-            //
-            // A PLL with its feedback unconnected reported `sync 30000000` from
-            // the constant while `sync` was not oscillating at all, and finding
-            // that cost a bisect across two rebuilds.
+            // MEASURED, against the firmware's own expectation: counted in
+            // fabric against the 60 MHz oscillator, so it says what the silicon
+            // is doing rather than what a constant claims.
             //
             // One reader, in `src/clock.rs`, shared with the `clocks` line of
             // the boot report -- two copies of a CSR decode is two things to
@@ -605,31 +506,16 @@ pub fn command(uart: &mut Uart) {
                         "         measured sync {} kHz, pll {}",
                         measured.khz,
                         if measured.locked { "locked" } else { "UNLOCKED" });
-                    if !within_one_percent(measured.khz, id.sync_hz / 1000) {
+                    if !within_one_percent(measured.khz, target::TIME_HZ / 1000) {
                         let _ = writeln!(uart,
-                            "         CLOCK MISMATCH: gateware declares {} kHz, \
+                            "         CLOCK MISMATCH: this image assumes {} kHz, \
                              the fabric counts {}",
-                            id.sync_hz / 1000, measured.khz);
+                            target::TIME_HZ / 1000, measured.khz);
                     }
                 }
             }
 
-            if id.cpu & gateware::CPU_RDTIME == 0 {
-                // `src/clock.rs` is the only thing here that knows how much
-                // time has passed, and it is `rdtime` and nothing else. A core
-                // generated without it does not fail -- it traps.
-                //
-                // This line covers `stats` as well. `--with-rdtime` adds
-                // `zicntr`, and `zicntr` is what instantiates the plugin that
-                // decodes `mcycle` and `minstret` -- one flag, both CSRs, so
-                // one warning. See `src/metrics.rs`.
-                let _ = writeln!(
-                    uart,
-                    "         NO RDTIME: this core was not \
-                                        generated with the time counter"
-                );
-            }
-            let generated = isa_from(id.cpu);
+            let generated = isa_generated();
             if generated & !misa != 0 {
                 // Not a fault. VexiiRiscv hardwires `misa` to rv32im whatever
                 // it was generated with, so this line is the record of which
@@ -653,7 +539,10 @@ pub fn within_one_percent(measured_khz: u32, declared_khz: u32) -> bool {
     measured_khz + slack >= declared_khz && measured_khz <= declared_khz + slack
 }
 
-/// The `misa` extension bits the gateware says the core was generated with.
+/// The `misa` extension bits the core was GENERATED with.
+///
+/// `target::CPU_HAS_*`, which `scripts/soc_generate_pac.py` writes from
+/// `cpu/cpu.py`'s own flag list.
 ///
 /// `'a' as u32 - 'a' as u32` is zero and clippy's `eq_op` says so, correctly.
 /// It is written out anyway: every line here is `letter - 'a'`, which is what
@@ -661,15 +550,15 @@ pub fn within_one_percent(measured_khz: u32, declared_khz: u32) -> bool {
 /// instead would be the one a reader has to decode. Allowed rather than
 /// special-cased, so the four lines stay comparable at a glance.
 #[allow(clippy::eq_op)]
-fn isa_from(cpu: u32) -> u32 {
+fn isa_generated() -> u32 {
     let mut bits = 1 << ('i' as u32 - 'a' as u32);
-    if cpu & gateware::CPU_M != 0 {
+    if target::CPU_HAS_M {
         bits |= 1 << ('m' as u32 - 'a' as u32);
     }
-    if cpu & gateware::CPU_A != 0 {
+    if target::CPU_HAS_A {
         bits |= 1 << ('a' as u32 - 'a' as u32);
     }
-    if cpu & gateware::CPU_C != 0 {
+    if target::CPU_HAS_C {
         bits |= 1 << ('c' as u32 - 'a' as u32);
     }
     bits
@@ -701,12 +590,3 @@ fn write_isa(uart: &mut Uart, misa: u32) {
     }
 }
 
-/// The gateware's build identity: the digest over its own sources.
-///
-/// It was a packed wall clock, which made it the one constant in the design that
-/// moved when nothing else did -- no two builds shared a netlist (#441). A hash
-/// is comparable against `python3 gateware/build_helpers.py`; a timestamp never
-/// was.
-fn write_built(uart: &mut Uart, built: u32) {
-    let _ = write!(uart, "src {:08x}", built);
-}
