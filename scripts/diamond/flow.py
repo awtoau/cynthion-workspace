@@ -144,8 +144,8 @@ def run(cmd, cwd, handle, env, step, engine, family=None):
     return elapsed, out
 
 
-FREQ_PORT_RE = re.compile(
-    r'^\s*FREQUENCY\s+PORT\s+("[^"]+"|\S+)\s+([\d.eE+]+)\s+HZ\s*;',
+FREQ_RE = re.compile(
+    r'^\s*FREQUENCY\s+(PORT|NET)\s+("[^"]+"|\S+)\s+([\d.eE+]+)\s+HZ\s*;',
     re.IGNORECASE)
 
 
@@ -157,11 +157,12 @@ def lpf_from_amaranth(src, dst):
     already like-for-like between the flows -- which is what makes this a fair
     comparison rather than two differently-constrained builds.
 
-    One line does not survive the trip. Amaranth writes
+    The frequency lines do not survive the trip. Amaranth writes
 
         FREQUENCY PORT "clk_60MHz_0__io" 60000000.0 HZ;
+        FREQUENCY NET "car.clk_sync" 50000000.0 HZ;
 
-    and Diamond's map rejects it:
+    and Diamond's map rejects both:
 
         WARNING - map: top.lpf(242): Syntax error in "FREQUENCY PORT
         "clk_60MHz_0__io" 60000000.0 HZ;": error on token "HZ".
@@ -176,10 +177,11 @@ def lpf_from_amaranth(src, dst):
     """
     out_lines = []
     for line in Path(src).read_text().splitlines():
-        m = FREQ_PORT_RE.match(line)
+        m = FREQ_RE.match(line)
         if m:
-            port, hz = m.group(1), float(m.group(2))
-            out_lines.append(f"FREQUENCY PORT {port} {hz / 1e6:g} MHZ;")
+            kind, name, hz = m.group(1), m.group(2), float(m.group(3))
+            out_lines.append(f"FREQUENCY {kind.upper()} {name} "
+                             f"{hz / 1e6:g} MHZ;")
         else:
             out_lines.append(line)
     Path(dst).write_text("\n".join(out_lines) + "\n")
@@ -284,8 +286,8 @@ def main():
                     default="lse")
     ap.add_argument("--outdir", required=True, type=Path)
     ap.add_argument("--freq", type=float, default=None,
-                    help="constraint in MHz written into the .lpf before map, "
-                         "and given to the synthesiser as its own target")
+                    help="the synthesiser's own target in MHz; map/par/trce "
+                         "take theirs from the Amaranth .lpf either way")
     ap.add_argument("--opt-goal", choices=["Area", "Balanced", "Timing"],
                     default="Area",
                     help="LSE optimisation goal; Area by default because this "
@@ -316,13 +318,12 @@ def main():
             shutil.copy(e, d)
             extra.append(d)
 
+        # The Amaranth .lpf already constrains every clock domain at the
+        # frequency the design runs at, under the net names this netlist uses.
+        # A second hand-written `FREQUENCY NET "clk"` duplicated it against a
+        # name Diamond does not have, so it constrained nothing.
         lpf = out / "top.lpf"
         lpf_from_amaranth(args.lpf, lpf)
-        if args.freq:
-            # A frequency constraint is what makes the timing number mean
-            # "the tool worked for this", rather than "this is what fell out".
-            with open(lpf, "a") as f:
-                f.write(f'\nFREQUENCY NET "clk" {args.freq} MHz;\n')
 
         ngd = out / f"{args.top}.ngd"
         total = 0.0
