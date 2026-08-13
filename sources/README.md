@@ -578,3 +578,13 @@ issuable over JTAG, which is the port we already have.
 - Good copy: **14 pages**, 1,102,134 bytes; contains `4-Channel Over-Voltage Protection with Auto-Recovery`
   and the `tOVP_RESPONSE_CC_1` row reading `26  32  38  ms`
 - `U13` (TARGET) and `U14` (AUX) on r1.4. Pin 6 `FAULTB` is active-low open-drain.
+
+## `usb_20.pdf` — Universal Serial Bus Specification Revision 2.0
+
+- URL: `https://www.alsa-project.org/files/pub/datasheets/usb/usb_20.pdf`
+- Revision: 2.0, 27 April 2000 (the base specification, not an ECN roll-up)
+- Good copy: **650 pages**, 5,983,789 bytes; `pdftotext -layout` contains `SE0 for ≥2.5` exactly once
+  (Table 7-2, *Signaling Levels*) — a truncated copy loses chapter 7 first
+- Settles the line-state thresholds any reduction of `TARGET_FS_MONITOR_D±` (N4/P3) must use:
+  Table 7-2 disconnect `SE0 ≥ 2.5 µs`, connect `idle ≥ 2 ms` (FS) / `≥ 2.5 µs` (receiver),
+  reset `D+ and D- low ≥ 10 ms` transmitted / `≥ 2.5 µs` recognised; §7.1.7.6 suspend `idle > 3.0 ms`.
