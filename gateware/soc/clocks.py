@@ -132,15 +132,18 @@ PHY_PREP_CYCLES = 72_000
 
 
 def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
-    """Dividers for `target_mhz` on CLKOP, and `ratio * target` on CLKOS.
+    """Dividers for `target_mhz` on CLKOP and `ratio * target` on CLKOS.
 
     `FEEDBK_PATH="CLKOP"` means the feedback is taken AFTER the output divider,
     so CLKOP is `input / CLKI_DIV * CLKFB_DIV` and the VCO is that times
-    CLKOP_DIV. Both outputs divide the one VCO, which is why `ratio` is a
+    CLKOP_DIV. All four outputs divide the one VCO, which is why `ratio` is a
     property of the pair and not a free choice per output.
 
-    CLKOS rather than CLKOS2: only CLKOP and CLKOS reach an edge clock, and
-    `fast` is one. See `SocClocks.elaborate` and #314.
+    CLKOS rather than CLKOS2 for `fast`: only CLKOP and CLKOS reach an edge
+    clock. See `SocClocks.elaborate` and #314.
+
+    **CLKOS2 is not solved for and does not move the VCO.** `SocClocks` divides
+    whatever VCO this returns; see `swd_mhz` there.
 
     Returns `(vco, clki_div, clkfb_div, clkop_div, clkos_div)` or None.
     `clkos_div` is None when no ratio was asked for.
@@ -156,16 +159,15 @@ def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
                 vco = target_mhz * clkop_div
                 if not (VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ):
                     continue
-                if ratio is None:
-                    return (vco, clki_div, clkfb_div, clkop_div, None)
                 # The second output is the same VCO divided again, so the ratio
                 # is only reachable when it divides CLKOP_DIV exactly. SKIPPED,
                 # not rounded: the search moves to a larger CLKOP_DIV, and if
                 # none fits the VCO window `SocClocks` refuses with the reachable
                 # list. A rounded `fast` corrupts DDR data rather than failing.
-                if clkop_div % ratio:
+                if ratio is not None and clkop_div % ratio:
                     continue
-                return (vco, clki_div, clkfb_div, clkop_div, clkop_div // ratio)
+                return (vco, clki_div, clkfb_div, clkop_div,
+                        None if ratio is None else clkop_div // ratio)
     return None
 
 
@@ -192,12 +194,18 @@ class SocClocks(Elaboratable):
     fast_ratio : int
         `fast = fast_ratio * sync`, and it must be an integer because both come
         from one VCO. The DQS PHY's 4:1 gearing requires exactly 2.
+    swd_mhz : float or None
+        Build the `swd` domain on CLKOS2, for `peripherals/sbu.py`. It divides
+        the VCO that `sync` and `fast` already placed and never moves it, so a
+        rate that is not an exact division is refused rather than rounded.
+        105.000 MHz is CLKOS2_DIV = 4 of the shipping 420 MHz VCO.
     input_mhz : float
         The board oscillator. 60 MHz on this board, and `usb` IS it.
     """
 
     def __init__(self, *, sync_mhz, with_fast=False, fast_ratio=2,
-                 input_mhz=USB_PHY_MHZ, ceiling_mhz=SYNC_CEILING_MHZ):
+                 swd_mhz=None, input_mhz=USB_PHY_MHZ,
+                 ceiling_mhz=SYNC_CEILING_MHZ):
         # Refused HERE, before a solve that would succeed and a synthesis that
         # would not. The PLL reaching a frequency says nothing about the fabric
         # closing at it, and until this existed the two were conflated: an
@@ -216,6 +224,7 @@ class SocClocks(Elaboratable):
         self.sync_mhz = sync_mhz
         self.with_fast = with_fast
         self.fast_ratio = fast_ratio
+        self.swd_mhz = swd_mhz
         self.input_mhz = input_mhz
 
         if abs(input_mhz - USB_PHY_MHZ) > 1e-9:
@@ -241,6 +250,28 @@ class SocClocks(Elaboratable):
         (self.vco_mhz, self.clki_div, self.clkfb_div,
          self.clkop_div, self.clkos_div) = solved
 
+        # CLKOS2, the third output of the SAME VCO. It takes the VCO as it is
+        # rather than constraining it: `sync` and `fast` are already placed, and
+        # a request that would move the VCO is refused here with what this one
+        # can produce. On the shipping configuration the VCO is 420 MHz, so
+        # CLKOS2_DIV = 4 is 105.000 MHz, exactly.
+        self.clkos2_div = None
+        if swd_mhz is not None:
+            self.clkos2_div = next(
+                (d for d in range(1, DIV_MAX + 1)
+                 if abs(self.vco_mhz / d - swd_mhz) <= 1e-6), None)
+            if self.clkos2_div is None:
+                near = sorted({round(self.vco_mhz / d, 4)
+                               for d in range(1, DIV_MAX + 1)
+                               if 0.5 * swd_mhz <= self.vco_mhz / d
+                               <= 2.0 * swd_mhz})
+                raise ValueError(
+                    f"swd = {swd_mhz:g} MHz is not this VCO divided by an "
+                    f"integer. The VCO is {self.vco_mhz:g} MHz, placed by "
+                    f"sync = {sync_mhz:g}"
+                    + (f" and fast = {fast_ratio}x it" if with_fast else "")
+                    + f". CLKOS2 can produce: {near}")
+
         # The solver's own invariant, restated where the division is USED. A
         # `fast` at half of what the gearing expects builds cleanly and returns
         # wrong data, so this must never be reached by a later edit to `solve_pll`.
@@ -262,6 +293,8 @@ class SocClocks(Elaboratable):
         self.actual_sync_mhz = input_mhz / self.clki_div * self.clkfb_div
         self.actual_fast_mhz = (self.vco_mhz / self.clkos_div
                                 if self.clkos_div else None)
+        self.actual_swd_mhz = (self.vco_mhz / self.clkos2_div
+                               if self.clkos2_div else None)
 
         # `usb` IS the oscillator. Not a PLL output, so there is nothing to
         # round: it is the input frequency, exactly, by construction.
@@ -289,6 +322,8 @@ class SocClocks(Elaboratable):
         m.domains.sync = ClockDomain()
         if self.with_fast:
             m.domains.fast = ClockDomain()
+        if self.swd_mhz:
+            m.domains.swd = ClockDomain()
 
         # The domain the power-on reset itself lives in. It is `usb`'s clock with
         # no reset, and it has to be: a counter that releases `usb`'s reset
@@ -302,6 +337,7 @@ class SocClocks(Elaboratable):
 
         clk_sync = Signal()
         clk_fast = Signal()
+        clk_swd = Signal()
         locked = Signal()
 
         m.submodules.pll = Instance(
@@ -335,6 +371,14 @@ class SocClocks(Elaboratable):
                 "p_CLKOS_DIV": self.clkos_div,
                 "p_CLKOS_CPHASE": self.clkos_div - 1,
                 "p_CLKOS_FPHASE": 0} if self.with_fast else {}),
+            # CLKOS2 is the primary network only, which is all `swd` needs: its
+            # fast path is an output register, not an edge clock. Taking it here
+            # costs no bel -- one VCO already feeds CLKOP and CLKOS, and these
+            # are the third and fourth outputs of the same PLL.
+            **({"p_CLKOS2_ENABLE": "ENABLED",
+                "p_CLKOS2_DIV": self.clkos2_div,
+                "p_CLKOS2_CPHASE": self.clkos2_div - 1,
+                "p_CLKOS2_FPHASE": 0} if self.swd_mhz else {}),
             i_CLKI=osc,
             # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` means the loop is closed
             # through the CLKOP output, so CLKFB must be driven from it. Leaving
@@ -349,6 +393,7 @@ class SocClocks(Elaboratable):
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
             o_CLKOP=clk_sync,
             **({"o_CLKOS": clk_fast} if self.with_fast else {}),
+            **({"o_CLKOS2": clk_swd} if self.swd_mhz else {}),
             o_LOCK=locked,
         )
         m.d.comb += self.locked.eq(locked)
@@ -396,6 +441,9 @@ class SocClocks(Elaboratable):
         if self.with_fast:
             m.d.comb += [ClockSignal("fast").eq(clk_fast),
                          ResetSignal("fast").eq(~locked)]
+        if self.swd_mhz:
+            m.d.comb += [ClockSignal("swd").eq(clk_swd),
+                         ResetSignal("swd").eq(~locked)]
 
         # TELL THE PLACER. Without a constraint nextpnr times a domain against a
         # default and prints a PASS about a frequency nobody chose -- which has
@@ -405,5 +453,7 @@ class SocClocks(Elaboratable):
             if self.with_fast:
                 platform.add_clock_constraint(
                     clk_fast, self.fast_ratio * self.sync_mhz * 1e6)
+            if self.swd_mhz:
+                platform.add_clock_constraint(clk_swd, self.swd_mhz * 1e6)
 
         return m
