@@ -41,6 +41,7 @@ Exit code is the answer: 0 gate passed, 1 a step failed, 2 could not run.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -120,9 +121,19 @@ def main():
         "the controller's CA and latency arithmetic, against hyperram_model.v",
         [py, str(s / "hyperram_model_sim.py")])[0]
 
-    results["the twin against the shared testbench"] = step(
-        "the open twin, against the vendor model's own testbench",
-        [py, str(s / "hyperram_vendor_model_sim.py"), "--sim", "icarus"])[0]
+    # BOTH models, required to agree. The vendor one is the only artifact here
+    # that is authoritative about the part; the twin is our understanding of it,
+    # and has been caught wrong twice. Questa Sim Lattice Edition ships with
+    # Diamond and runs the vendor model -- without it this degrades to the twin
+    # alone and SAYS SO, rather than failing or quietly weakening (#426).
+    from pathlib import Path as _P
+    _questa = _P(os.environ.get("DIAMOND_ROOT") or
+                 _P.home() / "lscc" / "diamond" / "3.14") / "questasim" / "bin" / "vsim"
+    _sim = "both" if _questa.exists() else "icarus"
+    results[f"vendor and twin against the shared testbench ({_sim})"] = step(
+        "both models, required to agree" if _sim == "both" else
+        "THE TWIN ALONE -- no Questa, so the vendor model did not run",
+        [py, str(s / "hyperram_vendor_model_sim.py"), "--sim", _sim])[0]
 
     results["controller vs our Python model"] = step(
         "the controller against our own model -- fault injection and the SoC above it",
