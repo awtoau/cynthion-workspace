@@ -4,6 +4,10 @@ Four lines to the FPGA, no peripheral, and three mutually exclusive protocols
 depending on what the far end negotiated. **The gateware is the easy part; the
 analog front end decides what is reachable.**
 
+**Reference implementation:**
+<https://github.com/minoseigenheer/SWD-over-USB-C> — SWD in Debug Accessory Mode
+on this exact pin pair.
+
 **Index:** [`README.md`](README.md) · protection
 [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) ·
 interrupt design [`soc-interrupts.md`](soc-interrupts.md)

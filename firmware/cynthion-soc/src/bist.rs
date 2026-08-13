@@ -939,7 +939,7 @@ fn gate(uart: &mut Uart, bist: &Bist) -> bool {
                      "  no engine at {:#010x} (id {:#010x}, want {:#010x})",
                      BASE, bist.read(reg::ID), APPLET_ID);
     let _ = writeln!(uart,
-                     "  this image was built without CYNTHION_HYPERRAM_BIST=1");
+                     "  the engine is in every gateware, so the bitstream is not this build");
     false
 }
 

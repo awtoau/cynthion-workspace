@@ -21,8 +21,7 @@ variant does not decode, and took the board with it (#409).
 
 The comment at `top.py:HYPERRAM_CK_BASE` had already recorded the shape of it --
 "a misaligned one decodes to nothing and hangs the CPU on the first read, with no
-error at elaboration" -- and `soc_run.py` carries a `--features hyperram-bist`
-guard whose stated reason is the same hang.
+error at elaboration".
 
 ## Two mechanisms, and the second is not redundant
 

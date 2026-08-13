@@ -67,14 +67,6 @@ image = []
 
 qemu = []
 
-# The CYNTHION_HYPERRAM_BIST gateware, where the engine owns the part outright
-# and `top.py` instantiates no BootRAM. Compiles the boot-time HyperRAM probe
-# out of `init::bringup`.
-#
-# Same name and same reason as `cynthion-boot`'s: an access to an address in no
-# declared region never acks, so the CPU stalls on the load, before the console
-# exists. `scripts/soc_run.py` passes it whenever it passes the gateware flag.
-
 # The concurrency-model skeletons that produced the table in
 # `docs/rtic.md`. They are measurement artefacts, not code the
 # shell uses, and they are kept because a size comparison nobody can rebuild is
