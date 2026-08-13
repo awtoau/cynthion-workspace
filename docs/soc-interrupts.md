@@ -48,6 +48,7 @@ an unmapped address is how the trap-heavy load exercises this handler.
 | **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
 | **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
+| — | — | USER button, ball **M14** | press | **edge** | GPIO input bit only | **make it a source** |
 | — | — | sideband in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** (#509) |
 | **USB3343** | TARGET | *hi-speed USB ULPI transceiver* | link event — `DIR` carries an RX CMD | edge | none | **one source** |
 | **USB3343** | AUX | as above | link event | edge | none | **one source** |
@@ -56,6 +57,15 @@ an unmapped address is how the trap-heavy load exercises this handler.
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
+
+## The button is not debounced in fabric
+
+It bounces, and one press raises several interrupts. That is fine — a press is a
+human event, so the handler has milliseconds of slack and software does the
+debouncing.
+
+Debouncing in gateware would be a timer per source for a thing the CPU can
+settle in a few instructions.
 
 ## One source per device, never an OR
 
