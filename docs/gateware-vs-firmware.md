@@ -352,6 +352,19 @@ And one comment that disagrees with its own value: `top.py:640-654` argues at
 length for `SYNC_MHZ = 50` — *"50, and it is measured … 4 of 4 seeds"* — while
 the shipping default is **60** (`variant.py:66`).
 
+## Filed from this audit
+
+| issue | rows |
+|---|---|
+| [#532](https://github.com/awtoau/cynthion-workspace/issues/532) | ranks 1-3 — the seven timing ports, and the two that are too narrow to move |
+| [#533](https://github.com/awtoau/cynthion-workspace/issues/533) | ranks 4, 5, 9, 10 — the shell columns that cannot move, and instrumentation whose reader was deleted |
+| [#534](https://github.com/awtoau/cynthion-workspace/issues/534) | the DQS PHY never drives `phy.rwds.i` |
+| [#535](https://github.com/awtoau/cynthion-workspace/issues/535) | rank 8 — provenance, and `VEXII_ROOT` not hashed |
+| [#536](https://github.com/awtoau/cynthion-workspace/issues/536) | ranks 6-7 — the console baud, and `armed`/`frame_errors` |
+| [#537](https://github.com/awtoau/cynthion-workspace/issues/537) | the port checker that cannot fail, and the dangling-port inventory |
+| [#538](https://github.com/awtoau/cynthion-workspace/issues/538) | four defects found on the way, none of them layering questions |
+| [#539](https://github.com/awtoau/cynthion-workspace/issues/539) | the stale references |
+
 ## Row to issue
 
 | issue | rows it corresponds to |
