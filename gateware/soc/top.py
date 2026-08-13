@@ -2181,7 +2181,11 @@ def main():
     import usercode_map
     from clocks import SocClocks
 
+    # Solved for its frequencies, never elaborated -- so tell Amaranth's
+    # MustUse, or every build log carries an UnusedElaboratable that hides
+    # the warnings worth reading.
     solved = SocClocks(sync_mhz=SYNC_MHZ)
+    solved._MustUse__used = True
     record = usercode_map.record_for_build(
         usercode=code,
         build_dir=build_dir,
