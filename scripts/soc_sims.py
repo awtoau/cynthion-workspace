@@ -14,7 +14,7 @@ Runs the simulations under `scripts/` and prints how many checks each made.
 ## The two tiers
 
 `once` and `soak` differ in SCOPE, not in which simulations run -- both run all
-fifteen. `once` exercises each mechanism a single time; `soak` passes `--soak` to
+of them. `once` exercises each mechanism a single time; `soak` passes `--soak` to
 the simulations that have repetition to restore, and they put back their burst
 counts, parameter sweeps, long payloads and re-runs. `fast` and `all` still work
 as names for them.
@@ -80,6 +80,8 @@ SIMS = [
     "soc_jtag_stage_sim",
     "soc_jtag_registers_sim",
     "soc_board_sim",
+    "swd_host_sim",
+    "sbu_port_sim",
     "sideband_link_sim",
     "sideband_advertise_sim",
     "soc_test",

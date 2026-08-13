@@ -588,3 +588,16 @@ issuable over JTAG, which is the port we already have.
 - Settles the line-state thresholds any reduction of `TARGET_FS_MONITOR_D±` (N4/P3) must use:
   Table 7-2 disconnect `SE0 ≥ 2.5 µs`, connect `idle ≥ 2 ms` (FS) / `≥ 2.5 µs` (receiver),
   reset `D+ and D- low ≥ 10 ms` transmitted / `≥ 2.5 µs` recognised; §7.1.7.6 suspend `idle > 3.0 ms`.
+
+## `ARM-IHI0074-ADIv6-debug-interface.pdf` — Arm Debug Interface, ADIv6.0
+
+- URL: `https://documentation-service.arm.com/static/66a3799abfeace716f9dcf9e`
+- Revision: **ARM IHI 0074E (ID072524)**, issue E, 24 July 2024
+- Good copy: **398 pages**, 4,024,302 bytes; `pdftotext -layout` contains
+  `sampling is performed on the rising edge of SWCLK` — chapter B4 is what a
+  truncated copy loses first
+- Settles every timing and encoding decision in `gateware/soc/peripherals/swd.py`:
+  B4.3.1 the target samples AND drives on the **rising** edge (the phrase
+  "falling edge" does not appear in the document at all), B4.1.3 line turnaround,
+  B4.1.5 LSB first, B4.1.6 even parity over the payload only with ACK excluded,
+  B4.2 the per-transaction phase order, B4.3.3 the 50-clock line reset

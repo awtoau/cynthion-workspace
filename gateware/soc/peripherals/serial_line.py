@@ -72,15 +72,21 @@ unbidden on this port); making it more than policy needs an Apollo-side change,
 since the SAMD11 is the only device that knows which function owns PA11/PA14.
 """
 
-from amaranth               import Module, Signal, C
+from amaranth               import Module, Signal, C, unsigned
 from amaranth.lib           import wiring, stream
 from amaranth.lib.cdc       import FFSynchronizer
 from amaranth.lib.wiring    import In, Out
+from amaranth.utils         import bits_for
 
 from amaranth_stdio.serial  import AsyncSerial
 
 
-__all__ = ["SerialLine"]
+__all__ = ["SerialLine", "MIN_DIVISOR"]
+
+
+# `AsyncSerialRX`'s floor: below this its half-bit offset cannot keep the sampler
+# in the middle of a bit. At 60 MHz it is the 12 Mbit/s ceiling.
+MIN_DIVISOR = 5
 
 
 # A frame is start + data + stop, with no parity. Used for the transmit hold
@@ -142,23 +148,33 @@ class SerialLine(wiring.Component):
         that it existed. Wire to a 16550's `overrun`, which turns it into LSR.OE.
     """
 
-    def __init__(self, *, divisor, data_bits=8, idle_bits=12):
+    def __init__(self, *, divisor, data_bits=8, idle_bits=12,
+                 divisor_bits=None):
         frame_bits = _frame_bits(data_bits)
         if idle_bits <= frame_bits:
             raise ValueError(
                 f"idle_bits must exceed the {frame_bits}-bit frame so a frame "
                 f"cut short by disarming cannot survive into the next arming, "
                 f"not {idle_bits!r}")
-        if divisor < 5:
+        if divisor < MIN_DIVISOR:
             # AsyncSerialRX's own floor: below 5 its half-bit offset cannot keep
             # the sampler in the middle of a bit.
-            raise ValueError(f"divisor must be at least 5, not {divisor!r}")
+            raise ValueError(
+                f"divisor must be at least {MIN_DIVISOR}, not {divisor!r}")
 
-        self._divisor    = divisor
-        self._data_bits  = data_bits
-        self._idle_bits  = idle_bits
+        self._divisor      = divisor
+        self._data_bits    = data_bits
+        self._idle_bits    = idle_bits
+        self._divisor_bits = (divisor_bits if divisor_bits is not None
+                              else bits_for(divisor))
 
         super().__init__({
+            # Cycles per bit, settable at run time and initialised to the
+            # constructor's value -- a caller that never drives it gets a fixed
+            # rate, as the console does. The constructor's floor is NOT enforced
+            # on this port: below 5 the receiver cannot sample mid-bit, and
+            # whoever exposes it to firmware owns that.
+            "divisor":      In(unsigned(self._divisor_bits), init=divisor),
             "rx_i":         In(1),
             "tx_o":         Out(1),
             "tx_oe":        Out(1),
@@ -170,16 +186,13 @@ class SerialLine(wiring.Component):
             "overrun":      Out(1),
         })
 
-    @property
-    def divisor(self):
-        return self._divisor
-
     def elaborate(self, platform):
         m = Module()
 
-        phy = AsyncSerial(divisor=self._divisor, data_bits=self._data_bits,
-                          parity="none")
+        phy = AsyncSerial(divisor=self._divisor, divisor_bits=self._divisor_bits,
+                          data_bits=self._data_bits, parity="none")
         m.submodules.phy = phy
+        m.d.comb += phy.divisor.eq(self.divisor)
 
         # ---- the receive pad ------------------------------------------------
         #
@@ -194,10 +207,13 @@ class SerialLine(wiring.Component):
         # Count consecutive marks. `armed` is set when the count reaches a full
         # `idle_bits` periods and cleared by a framing error; the counter resets
         # on any space, armed or not.
-        idle_cycles = self._idle_bits * self._divisor
-        idle_count  = Signal(range(idle_cycles + 1))
+        # A product of the runtime divisor, so the qualifier follows the rate.
+        # Constant multiplication, which is shifts and one add.
+        idle_cycles = Signal(bits_for(self._idle_bits << self._divisor_bits))
+        idle_count  = Signal.like(idle_cycles)
         armed       = Signal()
-        m.d.comb += self.armed.eq(armed)
+        m.d.comb += [self.armed.eq(armed),
+                     idle_cycles.eq(self.divisor * self._idle_bits)]
 
         with m.If(~rx_pad):
             m.d.sync += idle_count.eq(0)
@@ -274,8 +290,10 @@ class SerialLine(wiring.Component):
         # emitting the start bit. Verified against the transmitter directly in
         # scripts/soc_serial_sim.py, which fails if this constant drifts from
         # what the PHY actually does.
-        frame_cycles = (1 + _frame_bits(self._data_bits)) * self._divisor
-        tx_hold = Signal(range(frame_cycles + 1))
+        hold_bits = 1 + _frame_bits(self._data_bits)
+        frame_cycles = Signal(bits_for(hold_bits << self._divisor_bits))
+        m.d.comb += frame_cycles.eq(self.divisor * hold_bits)
+        tx_hold = Signal.like(frame_cycles)
 
         # The reload wins over the decrement, so back-to-back characters keep
         # `oe` continuously asserted instead of blinking between them.
