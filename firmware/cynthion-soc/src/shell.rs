@@ -84,7 +84,6 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("bist trace [passes]", "the sweep, narrating each cell before it runs"),
     ("board", "every connector, rail and controller"),
     ("bram", "block RAM at address zero"),
-    ("bram info", "base and size, from the generated map"),
     ("bram read <hex>", "one word of block RAM"),
     ("bram bench", "time a walk over block RAM"),
     ("cpu", "the RISC-V core"),
@@ -97,7 +96,6 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("cpu wedge [ms]", "stop the scheduler on purpose; watch the lamp stop"),
     ("cpu fault [hex]", "read an address nothing decodes; it must fault, not hang"),
     ("flash", "the memory-mapped W25Q32 config flash"),
-    ("flash info", "base and size, from the generated map"),
     ("flash id", "the JEDEC id, the first word, and the size"),
     ("flash read <hex>", "one word of flash, by offset"),
     ("flash bench", "time a walk over the flash window"),
@@ -113,7 +111,6 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     // completion source, so a subcommand missing from here cannot be TAB-completed
     // and cannot be discovered without running the command wrongly first.
     ("hyperram", "HyperRAM, and its read window"),
-    ("hyperram info", "base and size, from the generated map"),
     ("hyperram status", "the DQS read path's self-report"),
     ("hyperram read <hex>", "one word over the staging port"),
     ("hyperram sel <n>", "READCLKSEL: 2:0 tap, 3 phase, 5:4 read stall"),
