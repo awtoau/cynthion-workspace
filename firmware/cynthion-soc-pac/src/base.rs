@@ -28,7 +28,7 @@ pub const HYPERRAM_SIZE: usize = 0x00800000;
 pub const CONSOLE: usize = 0xf0000000;
 /// Size of the CONSOLE window, in bytes.
 pub const CONSOLE_SIZE: usize = 0x00000008;
-/// PLIC source number wired to CONSOLE.
+/// Interrupt source number wired to CONSOLE.
 pub const CONSOLE_IRQ: u32 = 1;
 
 /// spi0: 5 registers at 0xf0000100
@@ -55,19 +55,21 @@ pub const BOOTRAM_SIZE: usize = 0x00000020;
 pub const APOLLO_UART: usize = 0xf0000500;
 /// Size of the APOLLO_UART window, in bytes.
 pub const APOLLO_UART_SIZE: usize = 0x00000008;
-/// PLIC source number wired to APOLLO_UART.
+/// Interrupt source number wired to APOLLO_UART.
 pub const APOLLO_UART_IRQ: u32 = 2;
 
 /// board/gpio: 4 registers at 0xf0000600
 pub const BOARD_GPIO: usize = 0xf0000600;
 /// Size of the BOARD_GPIO window, in bytes.
 pub const BOARD_GPIO_SIZE: usize = 0x00000010;
+/// Interrupt source number wired to BOARD_GPIO_BUTTON.
+pub const BOARD_GPIO_BUTTON_IRQ: u32 = 13;
 
 /// board/i2c: 5 registers at 0xf0000610
 pub const BOARD_I2C: usize = 0xf0000610;
 /// Size of the BOARD_I2C window, in bytes.
 pub const BOARD_I2C_SIZE: usize = 0x00000008;
-/// PLIC source number wired to BOARD_I2C.
+/// Interrupt source number wired to BOARD_I2C.
 pub const BOARD_I2C_IRQ: u32 = 3;
 
 /// board/sideband: 4 registers at 0xf0000618
@@ -84,12 +86,16 @@ pub const BOARD_ULPI_SIZE: usize = 0x00000004;
 pub const BOARD_I2C_MUX: usize = 0xf0000620;
 /// Size of the BOARD_I2C_MUX window, in bytes.
 pub const BOARD_I2C_MUX_SIZE: usize = 0x00000002;
-/// PLIC source number wired to BOARD_I2C_MUX_TARGET.
+/// Interrupt source number wired to BOARD_I2C_MUX_TARGET.
 pub const BOARD_I2C_MUX_TARGET_IRQ: u32 = 4;
-/// PLIC source number wired to BOARD_I2C_MUX_AUX.
+/// Interrupt source number wired to BOARD_I2C_MUX_AUX.
 pub const BOARD_I2C_MUX_AUX_IRQ: u32 = 5;
-/// PLIC source number wired to BOARD_I2C_MUX_POWER_ALERT.
+/// Interrupt source number wired to BOARD_I2C_MUX_POWER_ALERT.
 pub const BOARD_I2C_MUX_POWER_ALERT_IRQ: u32 = 6;
+/// Interrupt source number wired to BOARD_I2C_MUX_TARGET_FAULT.
+pub const BOARD_I2C_MUX_TARGET_FAULT_IRQ: u32 = 8;
+/// Interrupt source number wired to BOARD_I2C_MUX_AUX_FAULT.
+pub const BOARD_I2C_MUX_AUX_FAULT_IRQ: u32 = 9;
 
 /// board/vbus: 1 register at 0xf0000624
 pub const BOARD_VBUS: usize = 0xf0000624;
@@ -105,6 +111,8 @@ pub const BOARD_FABRIC_SIZE: usize = 0x00000008;
 pub const BOARD_CLOCKS: usize = 0xf0000660;
 /// Size of the BOARD_CLOCKS window, in bytes.
 pub const BOARD_CLOCKS_SIZE: usize = 0x00000010;
+/// Interrupt source number wired to BOARD_CLOCKS_PLL_LOSS.
+pub const BOARD_CLOCKS_PLL_LOSS_IRQ: u32 = 17;
 
 /// hyperram_bist: 64 registers at 0xf0000800
 pub const HYPERRAM_BIST: usize = 0xf0000800;
@@ -116,10 +124,10 @@ pub const HYPERRAM_CK: usize = 0xf0000a00;
 /// Size of the HYPERRAM_CK window, in bytes.
 pub const HYPERRAM_CK_SIZE: usize = 0x00000010;
 
-/// plic: 10 registers at 0xf0400000
-pub const PLIC: usize = 0xf0400000;
-/// Size of the PLIC window, in bytes.
-pub const PLIC_SIZE: usize = 0x00400000;
+/// intc: 2 registers at 0xf0000c00
+pub const INTC: usize = 0xf0000c00;
+/// Size of the INTC window, in bytes.
+pub const INTC_SIZE: usize = 0x00000008;
 
 /// clint: 5 registers at 0xf0800000
 pub const CLINT: usize = 0xf0800000;

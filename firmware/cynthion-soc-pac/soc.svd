@@ -1018,6 +1018,10 @@
         <size>0x10</size>
         <usage>registers</usage>
       </addressBlock>
+      <interrupt>
+        <name>BOARD_GPIO_BUTTON</name>
+        <value>13</value>
+      </interrupt>
       <registers>
         <register>
           <name>MODE</name>
@@ -1661,6 +1665,14 @@
         <name>BOARD_I2C_MUX_POWER_ALERT</name>
         <value>6</value>
       </interrupt>
+      <interrupt>
+        <name>BOARD_I2C_MUX_TARGET_FAULT</name>
+        <value>8</value>
+      </interrupt>
+      <interrupt>
+        <name>BOARD_I2C_MUX_AUX_FAULT</name>
+        <value>9</value>
+      </interrupt>
       <registers>
         <register>
           <name>SELECT</name>
@@ -1857,6 +1869,10 @@
         <size>0x10</size>
         <usage>registers</usage>
       </addressBlock>
+      <interrupt>
+        <name>BOARD_CLOCKS_PLL_LOSS</name>
+        <value>17</value>
+      </interrupt>
       <registers>
         <register>
           <name>SYNC_KHZ</name>
@@ -3201,191 +3217,47 @@
       </registers>
     </peripheral>
     <peripheral>
-      <name>PLIC</name>
-      <description>plic: 10 registers at 0xf0400000</description>
-      <baseAddress>0xF0400000</baseAddress>
+      <name>INTC</name>
+      <description>intc: 2 registers at 0xf0000c00</description>
+      <baseAddress>0xF0000C00</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x400000</size>
+        <size>0x8</size>
         <usage>registers</usage>
       </addressBlock>
       <registers>
         <register>
-          <name>PRIORITY1</name>
-          <description>PLIC.PRIORITY1, 3 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
+          <name>ENABLE</name>
+          <description>INTC.ENABLE, 18 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>32</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
+              <name>MASK</name>
+              <description>mask [17:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>PRIORITY2</name>
-          <description>PLIC.PRIORITY2, 3 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
-          <fields>
-            <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>PRIORITY3</name>
-          <description>PLIC.PRIORITY3, 3 bits at +0x0c</description>
-          <addressOffset>0xC</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
-          <fields>
-            <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>PRIORITY4</name>
-          <description>PLIC.PRIORITY4, 3 bits at +0x10</description>
-          <addressOffset>0x10</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
-          <fields>
-            <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>PRIORITY5</name>
-          <description>PLIC.PRIORITY5, 3 bits at +0x14</description>
-          <addressOffset>0x14</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
-          <fields>
-            <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>PRIORITY6</name>
-          <description>PLIC.PRIORITY6, 3 bits at +0x18</description>
-          <addressOffset>0x18</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
-          <fields>
-            <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
+              <bitWidth>18</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
           <name>PENDING</name>
-          <description>PLIC.PENDING, 7 bits at +0x1000</description>
-          <addressOffset>0x1000</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>BITS</name>
-              <description>bits [6:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>7</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>ENABLE</name>
-          <description>PLIC.ENABLE, 7 bits at +0x2000</description>
-          <addressOffset>0x2000</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7F</resetMask>
-          <fields>
-            <field>
-              <name>BITS</name>
-              <description>bits [6:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>7</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>THRESHOLD</name>
-          <description>PLIC.THRESHOLD, 3 bits at +0x200000</description>
-          <addressOffset>0x200000</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x7</resetMask>
-          <fields>
-            <field>
-              <name>LEVEL</name>
-              <description>level [2:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>3</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CLAIM</name>
-          <description>PLIC.CLAIM, 8 bits at +0x200004</description>
-          <addressOffset>0x200004</addressOffset>
-          <size>8</size>
+          <description>INTC.PENDING, 18 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>32</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>SOURCE</name>
-              <description>source [7:0]</description>
+              <name>MASK</name>
+              <description>mask [17:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>8</bitWidth>
+              <bitWidth>18</bitWidth>
               <access>read-write</access>
             </field>
           </fields>

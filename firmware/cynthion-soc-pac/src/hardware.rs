@@ -130,10 +130,10 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 4,
     },
     Peripheral {
-        name: "plic",
-        base: 0xf0400000,
-        size: 0x00400000,
-        registers: 10,
+        name: "intc",
+        base: 0xf0000c00,
+        size: 0x00000008,
+        registers: 2,
     },
     Peripheral {
         name: "clint",
