@@ -2,7 +2,7 @@
 //! written: a ready bitmap, a table of handlers, and a dispatch loop.
 //!
 //! Built by `scripts/soc_model_probe.py`. Same visible work as the other
-//! skeletons -- a PLIC front end, two sources, one shared counter -- so the
+//! skeletons -- an interrupt front end, two sources, one counter -- so the
 //! difference from `model_bare` is this scheduler and nothing else.
 //!
 //! The model: a handler claims, marks a job ready, masks its source, completes.
@@ -19,8 +19,8 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -46,13 +46,13 @@ fn console_rx() {
     SERVICED.fetch_add(1, Ordering::Relaxed);
     // Where the source is re-armed: the handler masked it, and this is the
     // normal-context code that knows the work is done.
-    plic::Plic::new(target::PLIC_BASE).enable(target::UART_IRQS[0]);
+    intc::Intc::new(target::INTC_BASE).enable(target::UART_IRQS[0]);
 }
 
 fn type_c() {
     SERVICED.fetch_add(1, Ordering::Relaxed);
     if let Some(&source) = target::TYPE_C_IRQS.first() {
-        plic::Plic::new(target::PLIC_BASE).enable(source);
+        intc::Intc::new(target::INTC_BASE).enable(source);
     }
 }
 
@@ -61,38 +61,48 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-/// Claim, mark, mask, complete. Bounded by the number of pending sources and
-/// nothing else -- no work is done here, so no source can hold the CPU.
+/// Mark and mask. Bounded by the number of pending sources and nothing else --
+/// no work is done here, so no source can hold the CPU.
 #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
 fn machine_external() {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    while let Some(source) = plic.claim() {
-        let job = if target::UART_IRQS.contains(&source) {
-            Some(JOB_CONSOLE_RX)
-        } else if target::TYPE_C_IRQS.contains(&source) {
-            Some(JOB_TYPE_C)
-        } else {
-            None
-        };
-        // Complete BEFORE disable, never the other way round: the PLIC ignores
-        // a completion for a source the context is not enabled for. See
-        // `src/irq.rs::defer_type_c`, which found that out on the board.
-        plic.complete(source);
-        if let Some(job) = job {
-            plic.disable(source);
-            READY.fetch_or(1 << job, Ordering::Release);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    loop {
+        let ready = intc.ready();
+        if ready == 0 {
+            return;
+        }
+        let mut remaining = ready;
+        while remaining != 0 {
+            let source = remaining.trailing_zeros();
+            remaining &= !(1 << source);
+            let job = if target::UART_IRQS.contains(&source) {
+                Some(JOB_CONSOLE_RX)
+            } else if target::TYPE_C_IRQS.contains(&source) {
+                Some(JOB_TYPE_C)
+            } else {
+                None
+            };
+            match job {
+                // Masked, not acknowledged: these are levels and the device is
+                // still asserting. The job's re-enable is what lets it back in.
+                Some(job) => {
+                    intc.disable(source);
+                    READY.fetch_or(1 << job, Ordering::Release);
+                }
+                // Nothing to run it, so acknowledge it or the loop never ends.
+                None => intc.clear(source),
+            }
         }
     }
 }
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    plic.set_threshold(0);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    intc.init();
     for &source in target::UART_IRQS.iter().chain(target::TYPE_C_IRQS) {
-        plic.set_priority(source, 1);
-        plic.enable(source);
-        plic.complete(source);
+        intc.clear(source);
+        intc.enable(source);
     }
     // SAFETY: every source is configured and both statics are const-initialised.
     unsafe {

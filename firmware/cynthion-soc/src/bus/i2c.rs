@@ -202,16 +202,16 @@ impl I2c {
         // were in. IF set from the last command before a reboot would be
         // reported by the next thing that looked at SR, and now that IEN is set
         // above it would assert the line before anything was ready to clear it.
-        // `irq::init()` calls `plic.complete()` for exactly the same reason and
-        // after exactly the same bug.
+        // `irq::claim_type_c` clears the pending bit for exactly the same
+        // reason and after exactly the same bug.
         //
-        // BEFORE the source is claimed, and that ordering is load-bearing: this
+        // BEFORE the source is enabled, and that ordering is load-bearing: this
         // is the FUSB302B rule applied to a second peripheral -- clear whatever
         // the previous session left asserting, then enable delivery.
         self.acknowledge_interrupt();
-        crate::plic::Plic::new(crate::target::PLIC_BASE)
-            .claim_source(cynthion_soc_pac::base::BOARD_I2C_IRQ,
-                          crate::plic::priority::I2C);
+        let intc = crate::intc::Intc::new(crate::target::INTC_BASE);
+        intc.clear(cynthion_soc_pac::base::BOARD_I2C_IRQ);
+        intc.enable(cynthion_soc_pac::base::BOARD_I2C_IRQ);
     }
 
     /// PRER as the core holds it, low byte first.
@@ -272,8 +272,7 @@ impl I2c {
     /// part makes the wait longer and the turns proportionally slower. It is the
     /// PRESCALE that moves this, which is why `i2c soak` cannot outrun it.
     fn wait_limit(&self) -> u32 {
-        let cycles = LONGEST_COMMAND_PERIODS * CYCLES_PER_PERIOD
-            * (self.prescale() as u32 + 1);
+        let cycles = LONGEST_COMMAND_PERIODS * CYCLES_PER_PERIOD * (self.prescale() as u32 + 1);
         // x1.25 over cycles/CYCLES_PER_TURN, folded: 5 turns per 4 cycles.
         cycles / CYCLES_PER_TURN * 5 / 4
     }

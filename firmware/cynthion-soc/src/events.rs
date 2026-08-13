@@ -174,6 +174,10 @@ pub const TAG_ASCII8: u32 = 17;
 pub const SUB_RING: u32 = 0x00;
 /// Type-C: `src/typec.rs` and the deferring handler in `src/irq.rs`.
 pub const SUB_TYPE_C: u32 = 0x01;
+/// The clocks: `src/clock.rs` and the PLL source in `src/irq.rs`.
+pub const SUB_CLOCK: u32 = 0x02;
+/// The board's own pins: the USER button, and whatever else gets a source.
+pub const SUB_BOARD: u32 = 0x03;
 
 /// Build a code from a tag, a subsystem and a number.
 ///
@@ -223,8 +227,8 @@ pub const fn ascii8(value: &[u8; 8]) -> u64 {
 /// A Type-C `int` line asserted. The payload is the port's bit -- 1 for TARGET,
 /// 2 for AUX.
 ///
-/// Exact rather than a guess, because each controller has its own PLIC source:
-/// the handler knows which one from the claim, with no register read. Two
+/// Exact rather than a guess, because each controller has its own source: the
+/// handler knows which one from the pending bit, with no register read. Two
 /// records, not one with two bits, if both assert.
 pub const TYPE_C_INT: u32 = code(TAG_U8, SUB_TYPE_C, 1);
 
@@ -244,6 +248,14 @@ pub const TYPE_C_FAULT: u32 = code(TAG_U8, SUB_TYPE_C, 2);
 /// explain, and keeps the decoding beside every other decoding rather than in the
 /// middle of the service loop.
 pub const TYPE_C_CAUSE: u32 = code(TAG_U32, SUB_TYPE_C, 3);
+
+/// The PLL lost lock. No payload: there is one PLL, and the only thing to say
+/// is that it happened -- which `ClockMonitor`'s level bit cannot report.
+pub const PLL_LOSS: u32 = code(TAG_NONE, SUB_CLOCK, 1);
+
+/// The USER button went down. The payload is the running count, bounces
+/// included: one press produces several of these and the numbers say so.
+pub const BUTTON: u32 = code(TAG_U32, SUB_BOARD, 1);
 
 /// A test record, pushed by the `log` shell command. The payload is the
 /// sequence number the command gave it.
@@ -631,6 +643,12 @@ fn report(uart: &mut Uart, at: log::Stamp, code: u32, value: u64) {
                 "type-c: FAULT asserted, controllers {:02x}",
                 value as u8
             );
+        }
+        PLL_LOSS => {
+            crate::log_at!(uart, at, "clocks: PLL lost lock");
+        }
+        BUTTON => {
+            crate::log_at!(uart, at, "board: USER button, edge {}", value as u32);
         }
         TYPE_C_CAUSE => {
             let value = value as u32;

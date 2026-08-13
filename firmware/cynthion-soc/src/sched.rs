@@ -48,9 +48,9 @@ use crate::bench;
 use crate::clock;
 use crate::events;
 use crate::fusb302;
+use crate::intc::Intc;
 use crate::irq;
 use crate::metrics;
-use crate::plic::Plic;
 use crate::power;
 use crate::target;
 use crate::uart::{self, Uart};
@@ -83,11 +83,18 @@ pub const POWER_ALERT: usize = 1;
 /// that is what "the OS is alive" means.
 pub const HEARTBEAT: usize = 2;
 
+/// A DPO2036 asserted `FAULTB`: `typec::Controllers::service_fault`, released by
+/// the pin (#507).
+///
+/// Aperiodic. The part auto-recovers in 26-38 ms, so by the time this runs the
+/// level may be clean -- the sticky flag in `src/irq.rs` is what it reads.
+pub const TYPE_C_FAULT: usize = 3;
+
 /// How many tasks this module accounts for.
 ///
 /// The consoles are not one: the machine-external handler fills a ring at
 /// hardware priority, above every SLIC source. #247 sweeps the rest.
-const TASKS: usize = 3;
+const TASKS: usize = 4;
 
 /// The same count, for anything outside this module that reports it. Derived
 /// rather than transcribed: the boot line said "1 task" while three were
@@ -121,6 +128,11 @@ const TABLE: [Task; TASKS] = [
         name: "heartbeat",
         priority: HEARTBEAT_PRIORITY,
         periodic: true,
+    },
+    Task {
+        name: "type_c_fault",
+        priority: TYPE_C_FAULT_PRIORITY,
+        periodic: false,
     },
 ];
 
@@ -194,6 +206,13 @@ pub const POWER_PRIORITY: u8 = 1;
 /// the threshold to 2 for as long as it holds it -- the alert waits for the
 /// cycle rather than preempting into a half-finished I2C transaction.
 pub const POWER_ALERT_PRIORITY: u8 = 2;
+
+/// The RTIC priority the `FAULTB` task runs at.
+///
+/// 2, the same as the ALERT task and for the same reason: both report a
+/// hardware event that the part has already dealt with by the time anything
+/// runs, and both take `devices`, so the ceiling is 2 either way.
+pub const TYPE_C_FAULT_PRIORITY: u8 = 2;
 
 /// How many times each task has run.
 static RUNS: [AtomicU32; TASKS] = [const { AtomicU32::new(0) }; TASKS];
@@ -355,30 +374,24 @@ pub fn released(task: usize, late: u32) {
     TOTAL_LATE[task].store(TOTAL_LATE[task].load(RELAXED).saturating_add(late), RELAXED);
 }
 
-/// The PLIC and its five sources, as the `irq` command prints them.
+/// The controller and every source, as the `irq` command prints them.
 ///
 /// Extracted so `irq` and `rtic` render the same lines from one place. They ask
 /// different questions of the same counters -- `irq` asks whether the console is
 /// interrupt-driven, `rtic` asks what the dispatcher cost -- and two renderers
 /// would eventually answer them in two formats that could not be diffed.
 ///
-/// Every register read here is side-effect free. In particular it does NOT read
-/// the claim register: that would take an interrupt away from the handler and
-/// never complete it, killing the console from a diagnostic command. See
-/// `Plic::claim`.
-///
-/// `pri` is read back from the PLIC, not from `plic::priority`. A level that is
-/// not what the table says is a claim order that is not what the table says, and
-/// nothing else on this console could show it. #344.
+/// Every read here is side-effect free, which is what makes it safe to run from
+/// a diagnostic while interrupts are live. No priority column: the controller
+/// has none, and the ranking that decides anything is RTIC's.
 pub fn sources(uart: &mut Uart) {
-    let plic = Plic::new(target::PLIC_BASE);
+    let intc = Intc::new(target::INTC_BASE);
     let _ = writeln!(
         uart,
-        "plic  @{:08x} pending {:08x} enabled {:08x} threshold {}",
-        target::PLIC_BASE,
-        plic.pending(),
-        plic.enabled(),
-        plic.threshold()
+        "intc  @{:08x} pending {:08x} enabled {:08x}",
+        target::INTC_BASE,
+        intc.pending(),
+        intc.enabled()
     );
     for console in 0..target::UART_BASES.len() {
         let (interrupts, stalls, buffered) = irq::stats(console);
@@ -388,10 +401,9 @@ pub fn sources(uart: &mut Uart) {
         // typed is a noisy line.
         let _ = writeln!(
             uart,
-            "  {} src {} pri {} irqs {} stalls {} buffered {} lost {}",
+            "  {} src {} irqs {} stalls {} buffered {} lost {}",
             console,
             target::UART_IRQS[console],
-            plic.priority(target::UART_IRQS[console]),
             interrupts,
             stalls,
             buffered,
@@ -406,9 +418,8 @@ pub fn sources(uart: &mut Uart) {
         let count = irq::i2c_interrupts();
         let _ = writeln!(
             uart,
-            "  i2c           src {} pri {} irqs {}{}",
+            "  i2c           src {} irqs {}{}",
             cynthion_soc_pac::base::BOARD_I2C_IRQ,
-            plic.priority(cynthion_soc_pac::base::BOARD_I2C_IRQ),
             count,
             if count == 0 { "  -- never fired" } else { "" }
         );
@@ -416,18 +427,43 @@ pub fn sources(uart: &mut Uart) {
     }
 
     // The PAC1954's limit ALERT. Printed at zero too: zero after a bracket has
-    // been armed means the pin is not reaching the PLIC, the part is not
+    // been armed means the pin is not reaching the controller, the part is not
     // asserting, or the source is masked -- three faults that look identical
     // without a number. #270.
     if target::BOARD.is_some() {
         let count = irq::power_alert_interrupts();
         let _ = writeln!(
             uart,
-            "  power alert   src {} pri {} irqs {}{}",
+            "  power alert   src {} irqs {}{}",
             cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
-            plic.priority(cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ),
             count,
             if count == 0 { "  -- never fired" } else { "" }
+        );
+    }
+
+    // The edge sources with no driver: two faults, the button, the PLL. A count
+    // each and nothing else, printed at zero too -- a fault that never fired
+    // and a source that is not wired look identical otherwise.
+    if target::BOARD.is_some() {
+        let _ = writeln!(
+            uart,
+            "  fault  target src {} irqs {}   aux src {} irqs {}",
+            cynthion_soc_pac::base::BOARD_I2C_MUX_TARGET_FAULT_IRQ,
+            irq::fault_interrupts(0),
+            cynthion_soc_pac::base::BOARD_I2C_MUX_AUX_FAULT_IRQ,
+            irq::fault_interrupts(1)
+        );
+        let _ = writeln!(
+            uart,
+            "  button        src {} irqs {}  (bounces counted)",
+            cynthion_soc_pac::base::BOARD_GPIO_BUTTON_IRQ,
+            irq::button_interrupts()
+        );
+        let _ = writeln!(
+            uart,
+            "  pll loss      src {} irqs {}",
+            cynthion_soc_pac::base::BOARD_CLOCKS_PLL_LOSS_IRQ,
+            irq::pll_loss_interrupts()
         );
     }
 
@@ -442,10 +478,9 @@ pub fn sources(uart: &mut Uart) {
     for (port, &source) in target::TYPE_C_IRQS.iter().enumerate() {
         let _ = writeln!(
             uart,
-            "  type-c {:6} src {} pri {} irqs {}",
+            "  type-c {:6} src {} irqs {}",
             fusb302::Port::ALL[port].name(),
             source,
-            plic.priority(source),
             irq::type_c_interrupts(port)
         );
     }
@@ -457,7 +492,7 @@ pub fn sources(uart: &mut Uart) {
 ///
 ///     model    the dispatcher, so a transcript says what produced it
 ///     task     runs, achieved period, and lateness against the period
-///     plic     the per-source counters, unchanged from `irq`
+///     intc     the per-source counters, unchanged from `irq`
 ///     stalls   mhpmcounter3/4 against mcycle
 ///
 /// Printed on request and never on a timer: formatting is the expensive part

@@ -7,7 +7,7 @@
 //!
 //! **The peripheral this assumes does not exist yet.** It is the smallest thing
 //! that would do: per timer, a 32-bit reload register and a write-to-acknowledge
-//! register, an auto-reloading down-counter, and its own PLIC line. 32-bit and
+//! register, an auto-reloading down-counter, and its own source. 32-bit and
 //! auto-reloading rather than a second `mtimecmp` because a 64-bit comparator is
 //! a carry chain on a design closing 69.5 MHz against a 60 MHz target, and
 //! because the rollover a 32-bit counter has is exactly what auto-reload removes.
@@ -25,8 +25,8 @@ use core::ptr::write_volatile;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -40,7 +40,7 @@ const TIMER_STRIDE: usize = 8;
 const TIMER_RELOAD: usize = 0;
 const TIMER_ACK: usize = 4;
 
-/// PLIC sources for the three timers. Free numbers in this SoC's map, which has
+/// Sources for the three timers. Free numbers in this SoC's map, which has
 /// four sources of thirty-one.
 const TIMER_IRQS: [u32; 3] = [5, 6, 7];
 
@@ -57,13 +57,13 @@ const JOBS: [fn(); 5] = [console_rx, type_c, periodic, periodic, periodic];
 
 fn console_rx() {
     SERVICED.fetch_add(1, Ordering::Relaxed);
-    plic::Plic::new(target::PLIC_BASE).enable(target::UART_IRQS[0]);
+    intc::Intc::new(target::INTC_BASE).enable(target::UART_IRQS[0]);
 }
 
 fn type_c() {
     SERVICED.fetch_add(1, Ordering::Relaxed);
     if let Some(&source) = target::TYPE_C_IRQS.first() {
-        plic::Plic::new(target::PLIC_BASE).enable(source);
+        intc::Intc::new(target::INTC_BASE).enable(source);
     }
 }
 
@@ -85,35 +85,34 @@ fn panic(_info: &PanicInfo) -> ! {
 /// comparator did it.
 #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
 fn machine_external() {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    while let Some(source) = plic.claim() {
+    let intc = intc::Intc::new(target::INTC_BASE);
+    while let Some(source) = intc.next_ready() {
         if target::UART_IRQS.contains(&source) {
-            plic.complete(source);
-            plic.disable(source);
+            intc.clear(source);
+            intc.disable(source);
             READY.fetch_or(1 << JOB_CONSOLE_RX, Ordering::Release);
         } else if target::TYPE_C_IRQS.contains(&source) {
-            plic.complete(source);
-            plic.disable(source);
+            intc.clear(source);
+            intc.disable(source);
             READY.fetch_or(1 << JOB_TYPE_C, Ordering::Release);
         } else if let Some(index) = TIMER_IRQS.iter().position(|&t| t == source) {
             // SAFETY: the timer window, a device.
             unsafe { write_volatile(timer_reg(index, TIMER_ACK), 1) };
             READY.fetch_or(1 << (2 + index as u32), Ordering::Release);
-            plic.complete(source);
+            intc.clear(source);
         } else {
-            plic.complete(source);
+            intc.clear(source);
         }
     }
 }
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    plic.set_threshold(0);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    intc.init();
     for &source in target::UART_IRQS.iter().chain(target::TYPE_C_IRQS) {
-        plic.set_priority(source, 1);
-        plic.enable(source);
-        plic.complete(source);
+        intc.clear(source);
+        intc.enable(source);
     }
 
     for (index, &period) in PERIODS_MS.iter().enumerate() {
@@ -125,9 +124,8 @@ fn main() -> ! {
                 (target::TIME_HZ / 1000) * period,
             );
         }
-        plic.set_priority(TIMER_IRQS[index], 1);
-        plic.enable(TIMER_IRQS[index]);
-        plic.complete(TIMER_IRQS[index]);
+        intc.clear(TIMER_IRQS[index]);
+        intc.enable(TIMER_IRQS[index]);
     }
 
     // SAFETY: every source and every timer is configured.

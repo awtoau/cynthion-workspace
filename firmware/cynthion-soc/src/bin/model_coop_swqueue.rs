@@ -20,8 +20,8 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -64,13 +64,13 @@ const JOBS: [fn(); 5] = [console_rx, type_c, periodic, periodic, periodic];
 
 fn console_rx() {
     SERVICED.fetch_add(1, Ordering::Relaxed);
-    plic::Plic::new(target::PLIC_BASE).enable(target::UART_IRQS[0]);
+    intc::Intc::new(target::INTC_BASE).enable(target::UART_IRQS[0]);
 }
 
 fn type_c() {
     SERVICED.fetch_add(1, Ordering::Relaxed);
     if let Some(&source) = target::TYPE_C_IRQS.first() {
-        plic::Plic::new(target::PLIC_BASE).enable(source);
+        intc::Intc::new(target::INTC_BASE).enable(source);
     }
 }
 
@@ -141,8 +141,8 @@ fn machine_timer() {
 
 #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
 fn machine_external() {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    while let Some(source) = plic.claim() {
+    let intc = intc::Intc::new(target::INTC_BASE);
+    while let Some(source) = intc.next_ready() {
         let job = if target::UART_IRQS.contains(&source) {
             Some(JOB_CONSOLE_RX)
         } else if target::TYPE_C_IRQS.contains(&source) {
@@ -150,9 +150,9 @@ fn machine_external() {
         } else {
             None
         };
-        plic.complete(source);
+        intc.clear(source);
         if let Some(job) = job {
-            plic.disable(source);
+            intc.disable(source);
             READY.fetch_or(1 << job, Ordering::Release);
         }
     }
@@ -160,12 +160,11 @@ fn machine_external() {
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    plic.set_threshold(0);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    intc.init();
     for &source in target::UART_IRQS.iter().chain(target::TYPE_C_IRQS) {
-        plic.set_priority(source, 1);
-        plic.enable(source);
-        plic.complete(source);
+        intc.clear(source);
+        intc.enable(source);
     }
 
     let now = mtime();

@@ -69,7 +69,7 @@
 //!
 //! ## Received bytes arrive by interrupt, not by polling
 //!
-//! - Each UART raises a PLIC source when a byte lands; the handler in `src/irq.rs`
+//! - Each UART raises a source when a byte lands; the handler in `src/irq.rs`
 //!   moves it into a per-console ring; the loop below takes bytes out with `irq::pop`.
 //!   Shell reads identically from a user's point of view: the byte is already
 //!   collected before the loop asks, so a console busy printing need not be back at
@@ -120,6 +120,7 @@ mod gpio;
 mod heartbeat;
 mod hyperram;
 mod info;
+mod intc;
 // THE peripheral bring-up contract (#315): one `<peripheral>_init()` per part,
 // ordered, verified, non-destructive and re-runnable. `boot` below runs the
 // CPU's own facilities and hands the board to it.
@@ -128,7 +129,6 @@ mod irq;
 mod log;
 mod memory;
 mod metrics;
-mod plic;
 mod power;
 mod power_rails;
 // THE dispatcher. `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`,
@@ -137,9 +137,9 @@ mod power_rails;
 mod rtic_app;
 mod sched;
 mod selftest;
-mod staging;
 mod shell;
 mod sideband;
+mod staging;
 mod target;
 mod timer;
 mod typec;
@@ -151,7 +151,6 @@ mod workload;
 
 use bus::Bus;
 use uart::Uart;
-
 
 /// The most consoles this build will run shells for.
 ///
@@ -211,8 +210,6 @@ impl Devices {
         }
     }
 }
-
-
 
 /// The console the banner, the bootloader and any panic speak on.
 fn primary() -> Uart {
@@ -311,33 +308,6 @@ fn housekeeping(console: &mut Uart, devices: &mut Devices) {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /// Does the 16550 at `base` have a working scratch register?
 ///
 /// Two patterns, not one: a single value could match a bus that returns the last thing it
@@ -393,9 +363,6 @@ fn reboot() -> ! {
     }
 }
 
-
-
-
 /// There is nowhere to report a panic except the console, and no way to recover.
 ///
 /// Printing rather than silently spinning matters: a panicking CPU and a hung one look
@@ -438,8 +405,13 @@ fn panic(info: &PanicInfo) -> ! {
     // machinery; `file:line:col` is a `&str` and two integers.
     match info.location() {
         Some(at) => {
-            let _ = writeln!(uart, "\n*** PANIC at {}:{}:{}",
-                             at.file(), at.line(), at.column());
+            let _ = writeln!(
+                uart,
+                "\n*** PANIC at {}:{}:{}",
+                at.file(),
+                at.line(),
+                at.column()
+            );
         }
         None => {
             let _ = writeln!(uart, "\n*** PANIC, location unknown");
@@ -447,5 +419,3 @@ fn panic(info: &PanicInfo) -> ! {
     }
     loop {}
 }
-
-

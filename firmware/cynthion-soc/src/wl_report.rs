@@ -61,15 +61,15 @@ impl Console {
     /// Claims against completions. A claim that is never completed gates its
     /// source off for the rest of the session, so the two are counted rather
     /// than argued -- see `src/plic.rs`.
-    pub fn plic(&mut self, model: &str, claims: u32, completes: u32) {
+    pub fn intc(&mut self, model: &str, serviced: u32, acked: u32) {
         let _ = writeln!(
             self.0,
-            "  {}    claims {} completes {}",
-            model, claims, completes
+            "  {}    serviced {} acked {}",
+            model, serviced, acked
         );
     }
 
-    /// What RTIC's `#[shared]` resource holds, beside what the PLIC did.
+    /// What RTIC's `#[shared]` resource holds, beside what the controller did.
     pub fn shared(&mut self, events: u32, defers: u32) {
         let _ = writeln!(
             self.0,

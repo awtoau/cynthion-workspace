@@ -343,16 +343,14 @@ pub const MIN_INTERVAL_MS: u32 = 1;
 /// What is lost while it is off: the change-threshold log lines, and connection
 /// state, which is still derived from the poll. Arming a current limit as the
 /// plug detector moves that into the part and is #285 step 3, unwritten.
-static INTERVAL_MS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(RATE_OFF);
+static INTERVAL_MS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(RATE_OFF);
 
 /// Has one cycle completed since boot?
 ///
 /// With the poll off nothing would ever start one, so `power` would print NO
 /// SAMPLE YET for ever and the board would look dead rather than idle. The tick
 /// releases the task until this is set, which costs exactly one cycle.
-static PRIMED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static PRIMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub fn primed() -> bool {
     PRIMED.load(core::sync::atomic::Ordering::Relaxed)
@@ -387,10 +385,8 @@ pub fn set_interval_ms(ms: u32) -> u32 {
 /// never the DURATION of one, so whether a requested rate is achievable was
 /// unknown. A rate faster than one cycle cannot be honoured however it is
 /// configured.
-static WORST_CYCLE: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-static LAST_CYCLE: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static WORST_CYCLE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_CYCLE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// `(worst, last)` complete cycle, in ticks. Zero until one has completed.
 pub fn cycle_ticks() -> (u32, u32) {
@@ -574,8 +570,7 @@ pub fn current_ua(raw: u16) -> i32 {
 ///
 /// One writer (the task) and one reader (the tick), on one hart, so relaxed is
 /// enough for the reason `src/metrics.rs` sets out at length.
-static REFRESH_PENDING: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static REFRESH_PENDING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub fn refresh_pending() -> bool {
     REFRESH_PENDING.load(core::sync::atomic::Ordering::Relaxed)
@@ -903,7 +898,6 @@ impl Monitor {
         Ok(latched.map(|latched| Sample { readings, latched }))
     }
 
-
     // ---- the limit ALERT (#270) -------------------------------------------
 
     /// Read a 24-bit register. The part sends them big-endian, like every
@@ -966,18 +960,17 @@ impl Monitor {
             self.write16(bus, REG_CTRL, wanted)?;
         }
 
-        // The peripheral claims its own PLIC source, rather than being
-        // remembered by a list in a file that is not its driver. That is the
-        // rule #264 established after the I2C source spent the life of the
-        // project wired and masked because nobody added it to a third list.
+        // The peripheral claims its own source, rather than being remembered by
+        // a list in a file that is not its driver. That is the rule #264
+        // established after the I2C source spent the life of the project wired
+        // and masked because nobody added it to a third list.
         //
         // Here rather than in `configure`: the source is only meaningful once
-        // the pin is an ALERT pin, and claiming it before that would enable a
+        // the pin is an ALERT pin, and enabling it before that would enable a
         // source whose pad is still a GPIO input floating on a pull-up.
-        crate::plic::Plic::new(crate::target::PLIC_BASE).claim_source(
-            cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ,
-            crate::plic::priority::POWER_ALERT,
-        );
+        let intc = crate::intc::Intc::new(crate::target::INTC_BASE);
+        intc.clear(cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ);
+        intc.enable(cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ);
         Ok(())
     }
 
@@ -1176,8 +1169,7 @@ impl Monitor {
         // live comparator is a defect on its own terms.
         let enabled = self.read24(bus, REG_ALERT_ENABLE)?;
         self.write24(bus, REG_ALERT_ENABLE, 0)?;
-        let result =
-            bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &[wanted as u8]);
+        let result = bus.write_registers(BUS_POWER_MONITOR, ADDRESS, register, &[wanted as u8]);
         let restored = self.write24(bus, REG_ALERT_ENABLE, enabled);
         result.and(restored)?;
         let actual = match code {
@@ -1197,7 +1189,12 @@ impl Monitor {
         channel: usize,
     ) -> Result<u32, bus::Error> {
         let mut raw = [0u8; 1];
-        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, limit.nsamples_register(), &mut raw)?;
+        bus.read_registers(
+            BUS_POWER_MONITOR,
+            ADDRESS,
+            limit.nsamples_register(),
+            &mut raw,
+        )?;
         Ok(match (raw[0] >> (6 - 2 * channel)) & 0b11 {
             0 => 1,
             1 => 4,
@@ -1305,9 +1302,17 @@ impl Monitor {
                         let (moved, excursion) = match now {
                             // Seen out of range: step past the value itself, so
                             // one move clears any size of excursion.
-                            Some(now) if (over && now > threshold) || (!over && now < threshold) => {
-                                (if over { now + step } else { now - step },
-                                 Some(if over { now - threshold } else { threshold - now }))
+                            Some(now)
+                                if (over && now > threshold) || (!over && now < threshold) =>
+                            {
+                                (
+                                    if over { now + step } else { now - step },
+                                    Some(if over {
+                                        now - threshold
+                                    } else {
+                                        threshold - now
+                                    }),
+                                )
                             }
                             // Latched, but back in range by the time normal
                             // context looked. **This must still move**, and the
@@ -1316,7 +1321,14 @@ impl Monitor {
                             // excursion is unknown, so step from the threshold
                             // rather than from the reading. It takes more steps
                             // and it converges.
-                            _ => (if over { threshold + step } else { threshold - step }, None),
+                            _ => (
+                                if over {
+                                    threshold + step
+                                } else {
+                                    threshold - step
+                                },
+                                None,
+                            ),
                         };
 
                         let raw = if limit.is_current() {
@@ -1436,8 +1448,6 @@ impl Monitor {
                 let _ = self.detect_arm(bus, channel);
             }
         }
-
-        crate::irq::resume_power_alert();
     }
 
     /// One REFRESH cycle: the work, with no decision about when.

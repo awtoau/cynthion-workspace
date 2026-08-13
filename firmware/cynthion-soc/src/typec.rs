@@ -255,6 +255,44 @@ impl Controllers {
         }
     }
 
+    /// A `FAULTB` the handler latched: record it, judge it, report it.
+    ///
+    /// Task context (`sched::TYPE_C_FAULT`), released by the pin rather than by
+    /// the poll below -- which is the point of #507. `ports` is the sticky
+    /// bitmap from `src/irq.rs`, so this is what happened and not what is
+    /// happening: the part auto-recovers in 26-38 ms and the level below is
+    /// usually clean again by the time this runs.
+    ///
+    /// Both are printed, and the pair is the judgement:
+    ///
+    ///   * level clean -- a transient the part rode out. Nothing to do; the
+    ///     count is what says how often.
+    ///   * level still asserted -- the over-voltage has not gone away, and no
+    ///     amount of waiting will help. That is a cable or a source to unplug.
+    ///
+    /// Nothing here clears the hardware condition. It cannot: `FAULTB` is the
+    /// DPO2036's entire software-visible surface and it has no registers.
+    pub fn service_fault(&mut self, uart: &mut Uart, bus: &Bus, ports: u32) {
+        let lines = bus.lines();
+        for port in Port::ALL {
+            if ports & (1 << index(port)) == 0 {
+                continue;
+            }
+            let still = fusb302::faulting(lines, port);
+            // The cached level follows what was just read, so the 50 ms poll
+            // does not announce the same transition a second time.
+            self.fault[index(port)] = still;
+            crate::log!(
+                uart,
+                "type-c {}: FAULTB latched, {} faults, line {}",
+                port.name(),
+                irq::fault_interrupts(index(port)),
+                if still { "STILL ASSERTED" } else { "recovered" }
+            );
+        }
+        irq::clear_faulted(ports);
+    }
+
     /// Look at the `fault` lines, and report a change.
     ///
     /// Level, not edge: what is announced is a transition, so a fault that stays
@@ -352,4 +390,3 @@ pub(crate) fn index(port: Port) -> usize {
         Port::Aux => 1,
     }
 }
-

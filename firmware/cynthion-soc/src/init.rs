@@ -68,12 +68,11 @@ use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::clock::{self, Hz};
+use crate::hyperram;
 use crate::uart::Uart;
 use crate::{
-    bench, info, log, plic, power, sched, selftest, shell, target, timer, ulpi,
-    vbus, Devices,
+    bench, info, intc, log, power, sched, selftest, shell, target, timer, ulpi, vbus, Devices,
 };
-use crate::hyperram;
 
 /// Bytes of boot report kept for a console that attaches late.
 ///
@@ -164,7 +163,11 @@ impl Out<'_> {
             true => (USED.load(Ordering::Relaxed), RETAINED),
             false => (RETAINED, REPORT_BYTES),
         };
-        let mut append = Append { at: start, limit, lost: 0 };
+        let mut append = Append {
+            at: start,
+            limit,
+            lost: 0,
+        };
         let _ = writeln!(
             append,
             "{} init  {:9} {:7} {}",
@@ -180,7 +183,9 @@ impl Out<'_> {
         // SAFETY: see `Retained`; the append above has finished with it.
         let buffer: &[u8; REPORT_BYTES] = unsafe { &*REPORT.0.get() };
         let fresh = &buffer[start..append.at];
-        let _ = self.uart.write_str(core::str::from_utf8(fresh).unwrap_or("?"));
+        let _ = self
+            .uart
+            .write_str(core::str::from_utf8(fresh).unwrap_or("?"));
     }
 }
 
@@ -197,7 +202,11 @@ pub(crate) fn replay(uart: &mut Uart) {
     let _ = uart.write_str(core::str::from_utf8(&buffer[..used]).unwrap_or("?"));
     let lost = LOST.load(Ordering::Relaxed);
     if lost != 0 {
-        let _ = writeln!(uart, "init  report    WARN    {} bytes of it did not fit", lost);
+        let _ = writeln!(
+            uart,
+            "init  report    WARN    {} bytes of it did not fit",
+            lost
+        );
     }
 }
 
@@ -210,7 +219,10 @@ pub(crate) fn replay(uart: &mut Uart) {
 /// Called from `main::boot` with `boot: true`, before `#[init]` returns, and
 /// from the `init` command with `boot: false`.
 pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
-    let mut out = Out { uart: console, boot };
+    let mut out = Out {
+        uart: console,
+        boot,
+    };
     uart_init(&mut out);
     i2c_init(&mut out, devices);
     pac1954_init(&mut out, devices);
@@ -219,6 +231,10 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     w25q32_init(&mut out);
     usb3343_init(&mut out);
     vbus_init(&mut out);
+    // Last of the sources, and after every part above: the edge sources have no
+    // driver to claim them, and claiming them earlier would deliver a `FAULTB`
+    // or a lock loss left over from the previous session.
+    crate::irq::claim_edges();
     facilities(&mut out);
 }
 
@@ -276,7 +292,11 @@ fn uart_init(out: &mut Out) {
             report.lcr,
             report.iir,
             report.ier,
-            if report.established() { "" } else { " -- not 8N1 with usable FIFOs" }
+            if report.established() {
+                ""
+            } else {
+                " -- not 8N1 with usable FIFOs"
+            }
         ),
     );
 }
@@ -299,8 +319,16 @@ fn i2c_init(out: &mut Out, devices: &mut Devices) {
             Hz(report.scl_hz),
             report.prescale,
             Hz(report.sync_hz),
-            if report.sync_measured { "counted" } else { "assumed" },
-            if report.established() { "" } else { " -- the core did not take the prescale" }
+            if report.sync_measured {
+                "counted"
+            } else {
+                "assumed"
+            },
+            if report.established() {
+                ""
+            } else {
+                " -- the core did not take the prescale"
+            }
         ),
     );
 }
@@ -318,7 +346,11 @@ fn pac1954_init(out: &mut Out, devices: &mut Devices) {
                 report.fsr,
                 report.ctrl,
                 power::interval_ms(),
-                if report.established() { "" } else { " -- the part is not holding what it was given" }
+                if report.established() {
+                    ""
+                } else {
+                    " -- the part is not holding what it was given"
+                }
             ),
         ),
         Err(error) => out.line(
@@ -343,7 +375,11 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
         format_args!(
             "{} controller(s), sw_res then interrupt on state change{}",
             report.ports,
-            if report.configured { "" } else { " -- a port did not answer" }
+            if report.configured {
+                ""
+            } else {
+                " -- a port did not answer"
+            }
         ),
     );
 }
@@ -402,7 +438,11 @@ fn w25q32_init(out: &mut Out) {
 
 fn usb3343_init(out: &mut Out) {
     let Some(board) = target::BOARD else {
-        return out.line("usb3343", "ABSENT", format_args!("no ulpi window on this target"));
+        return out.line(
+            "usb3343",
+            "ABSENT",
+            format_args!("no ulpi window on this target"),
+        );
     };
     match ulpi::Ulpi::new(board.ulpi).init() {
         Ok(phy) => {
@@ -410,22 +450,38 @@ fn usb3343_init(out: &mut Out) {
                 phy.vendor == ulpi::usb3343::VENDOR_ID && phy.product == ulpi::usb3343::PRODUCT_ID;
             out.line(
                 "usb3343",
-                if identified && phy.reached { "ok" } else { "WARN" },
+                if identified && phy.reached {
+                    "ok"
+                } else {
+                    "WARN"
+                },
                 format_args!(
                     "target: vendor {:04x} product {:04x}, resetb {}; aux and control have no CSR",
                     phy.vendor,
                     phy.product,
-                    if phy.reached { "reached the pad" } else { "DID NOT REACH THE PAD (#241)" }
+                    if phy.reached {
+                        "reached the pad"
+                    } else {
+                        "DID NOT REACH THE PAD (#241)"
+                    }
                 ),
             );
         }
-        Err(error) => out.line("usb3343", "WARN", format_args!("target: {}", error.as_str())),
+        Err(error) => out.line(
+            "usb3343",
+            "WARN",
+            format_args!("target: {}", error.as_str()),
+        ),
     }
 }
 
 fn vbus_init(out: &mut Out) {
     if target::BOARD.is_none() {
-        return out.line("vbus", "ABSENT", format_args!("no vbus register on this target"));
+        return out.line(
+            "vbus",
+            "ABSENT",
+            format_args!("no vbus register on this target"),
+        );
     }
     let report = vbus::init();
     out.line(
@@ -434,7 +490,11 @@ fn vbus_init(out: &mut Out) {
         format_args!(
             "all four switches open, register reads {:02x}{}",
             report.state,
-            if report.established() { "" } else { " -- a switch did not open" }
+            if report.established() {
+                ""
+            } else {
+                " -- a switch did not open"
+            }
         ),
     );
 }
@@ -445,15 +505,15 @@ fn vbus_init(out: &mut Out) {
 /// `main::boot` before any of this, because everything above needs a clock and
 /// a counter to be measured against.
 fn facilities(out: &mut Out) {
-    // WHICH sources, read back from the PLIC rather than counted from the lists
-    // that were walked. The mask is the hardware's answer, and it is the only
-    // thing here that can disagree with the code above -- `enabled 00000036`
-    // with bit 3 clear is how the masked I2C source was found (#246).
-    let enabled = plic::Plic::new(target::PLIC_BASE).enabled();
+    // WHICH sources, read back from the controller rather than counted from the
+    // lists that were walked. The mask is the hardware's answer, and it is the
+    // only thing here that can disagree with the code above -- `enabled
+    // 00000036` with bit 3 clear is how the masked I2C source was found (#246).
+    let enabled = intc::Intc::new(target::INTC_BASE).enabled();
     let i2c_masked =
         target::BOARD.is_some() && enabled & (1 << cynthion_soc_pac::base::BOARD_I2C_IRQ) == 0;
     out.line(
-        "plic",
+        "intc",
         if i2c_masked { "WARN" } else { "ok" },
         format_args!(
             "enabled {:08x}: {} console(s), {} type-c{}",
@@ -482,7 +542,11 @@ fn facilities(out: &mut Out) {
         if fe == 0 && be == 0 { "ABSENT" } else { "ok" },
         format_args!(
             "4 counters selected: frontend/backend stalls, cache{}",
-            if fe == 0 && be == 0 { " -- read as hardwired zero here" } else { "" }
+            if fe == 0 && be == 0 {
+                " -- read as hardwired zero here"
+            } else {
+                ""
+            }
         ),
     );
     // The count comes from the task table, not from a literal. It said "1 task"
@@ -595,7 +659,11 @@ fn isa(out: &mut Out) {
 /// discrete oscillator -- that is not running.
 fn clocks(out: &mut Out) {
     if target::BOARD.is_none() {
-        return out.line("clocks", "ABSENT", format_args!("no clock monitor on this target"));
+        return out.line(
+            "clocks",
+            "ABSENT",
+            format_args!("no clock monitor on this target"),
+        );
     }
     let budget = clock::micros(clock::WINDOW_US + clock::WINDOW_US / 4);
     let began = clock::now();
@@ -618,12 +686,20 @@ fn clocks(out: &mut Out) {
     let agrees = info::within_one_percent(measured.khz, target::TIME_HZ / 1000);
     out.line(
         "clocks",
-        if agrees && measured.locked { "ok" } else { "FAIL" },
+        if agrees && measured.locked {
+            "ok"
+        } else {
+            "FAIL"
+        },
         format_args!(
             "sync counted at {} against the {} this image assumes, pll {}",
             Hz::khz(measured.khz),
             Hz(target::TIME_HZ),
-            if measured.locked { "locked" } else { "UNLOCKED" }
+            if measured.locked {
+                "locked"
+            } else {
+                "UNLOCKED"
+            }
         ),
     );
 }
@@ -640,12 +716,20 @@ fn clocks(out: &mut Out) {
 /// (`fabric_status.py`), so nothing here waits for one.
 fn die(out: &mut Out) {
     let Some(id) = info::fabric::status() else {
-        return out.line("die", "ABSENT", format_args!("no fabric status on this target"));
+        return out.line(
+            "die",
+            "ABSENT",
+            format_args!("no fabric status on this target"),
+        );
     };
     let Some((sign, degrees)) = id.celsius() else {
         return out.line(
             "die",
-            if id.die & info::fabric::DIE_PRESENT == 0 { "ABSENT" } else { "WARN" },
+            if id.die & info::fabric::DIE_PRESENT == 0 {
+                "ABSENT"
+            } else {
+                "WARN"
+            },
             format_args!(
                 "{}",
                 if id.die & info::fabric::DIE_PRESENT == 0 {

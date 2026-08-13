@@ -25,8 +25,8 @@ use riscv::interrupt::Interrupt;
 use usb::UsbDriver as _;
 
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -60,8 +60,8 @@ fn panic(_info: &PanicInfo) -> ! {
 /// that is the stand-in, and it is the only one on this path.
 #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
 fn machine_external() {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    while let Some(source) = plic.claim() {
+    let intc = intc::Intc::new(target::INTC_BASE);
+    while let Some(source) = intc.next_ready() {
         if target::UART_IRQS.contains(&source) {
             // Drain, because the 16550's interrupt is a level: returning with a
             // byte still waiting re-enters this handler forever. `src/irq.rs`
@@ -72,18 +72,17 @@ fn machine_external() {
                 }
             }
         }
-        plic.complete(source);
+        intc.clear(source);
     }
 }
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    plic.set_threshold(0);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    intc.init();
     for &source in target::UART_IRQS {
-        plic.set_priority(source, 1);
-        plic.enable(source);
-        plic.complete(source);
+        intc.clear(source);
+        intc.enable(source);
     }
     usb_report::rx_enable(target::UART_BASES[0]);
 

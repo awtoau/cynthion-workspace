@@ -9,16 +9,16 @@
 //! grid. What differs is who dispatches:
 //!
 //!     superloop   main.rs's turn calls service() then drain()
-//!     preempt     src/dispatch.rs, from the tail of the PLIC handler
+//!     preempt     src/dispatch.rs, from the tail of the handler
 //!     rtic        two #[task]s on the SLIC, drained from the machine software
 //!                 interrupt, dispatched by riscv-slic in priority order
 //!
-//! ## The PLIC front end is still hand-written, and has to be
+//! ## The front end is still hand-written, and has to be
 //!
 //! `binds =` names a **SLIC** source. `riscv-slic-macros` 0.2.0's `codegen!`
 //! takes `pac`, `swi = [...]` and a backend, and nothing else: there is no
 //! hardware-interrupt list in the macro's grammar, so no `#[task]` can bind a
-//! PLIC source on any RISC-V target. [`machine_external`] below is therefore the
+//! hardware source on any RISC-V target. [`machine_external`] below is therefore the
 //! same claim loop `src/irq.rs` has, with `rtic::export::pend` in place of the
 //! work, and the queue between it and the task is a `static` that RTIC does not
 //! check.
@@ -62,8 +62,8 @@ mod clock;
 #[path = "../log.rs"]
 mod log;
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -149,7 +149,7 @@ pub mod probe {
     pub static PEND: AtomicU32 = AtomicU32::new(0);
     pub static PENDS: AtomicU32 = AtomicU32::new(0);
 
-    /// `minstret` as the PLIC front end returned, and the instructions from
+    /// `minstret` as the front end returned, and the instructions from
     /// there to the first one of the task body: `mret`, the machine software
     /// trap, riscv-rt's frame save, `__riscv_slic_pop` and the threshold raise.
     pub static AT_RETURN: AtomicU32 = AtomicU32::new(0);
@@ -244,20 +244,20 @@ mod cs {
     }
 }
 
-/// PLIC claims and completions, per handler pass.
+/// Sources serviced and acknowledged, per handler pass.
 ///
 /// Issue 3 of the six: **correct acknowledgement and completion for each
 /// source.** A claim that is never completed gates that source off for the rest
 /// of the session -- `pending[i] = sources[i] & ~claimed[i]` -- and the failure
 /// is silent, so it is counted rather than argued. `defer` completes its source
 /// a second time on the way out of the loop, exactly as `src/irq.rs` does.
-static CLAIMS: AtomicU32 = AtomicU32::new(0);
-static COMPLETES: AtomicU32 = AtomicU32::new(0);
+static SERVICED: AtomicU32 = AtomicU32::new(0);
+static ACKED: AtomicU32 = AtomicU32::new(0);
 
 /// Bytes that arrived while the run was not active, i.e. the command line.
 ///
 /// A ring rather than a `Uart` read from `#[idle]`, because the 16550's RX
-/// interrupt is the PLIC source the front end owns: a reader in idle would race
+/// interrupt is the source the front end owns: a reader in idle would race
 /// the handler for the same FIFO. Single producer (the handler), single consumer
 /// (idle), which is the same argument `src/irq.rs`'s `RINGS` makes and the same
 /// one RTIC cannot check.
@@ -359,7 +359,7 @@ fn panic(_info: &PanicInfo) -> ! {
 #[rtic::app(device = device, peripherals = false, backend = H0)]
 mod app {
     use super::{
-        clock, device, plic, target, timer, uart, wl_report, workload, CLAIMS, COMPLETES, LINE,
+        clock, device, intc, target, timer, uart, wl_report, workload, ACKED, LINE, SERVICED,
     };
     use core::sync::atomic::Ordering;
     use riscv::interrupt::Interrupt;
@@ -389,14 +389,13 @@ mod app {
     fn init(_cx: init::Context) -> (Shared, Local) {
         let console = wl_report::Console::new(target::UART_BASES[0]);
 
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        plic.set_threshold(0);
+        let intc = intc::Intc::new(target::INTC_BASE);
+        intc.init();
         for &source in target::UART_IRQS {
-            plic.set_priority(source, 1);
-            plic.enable(source);
-            // Release a claim left in flight by a `j _start` reboot, as
-            // `irq::init` does and for the same reason.
-            plic.complete(source);
+            // The previous session's pending bit, which a `j _start` reboot
+            // leaves set. `irq::claim_type_c` does the same.
+            intc.clear(source);
+            intc.enable(source);
         }
         uart::UartRx::new(target::UART_BASES[0]).enable_rx_interrupt();
 
@@ -405,7 +404,7 @@ mod app {
         unsafe { riscv::interrupt::enable_interrupt(Interrupt::MachineExternal) };
 
         // The 1 ms tick, which is also the workload's arrival generator. After
-        // the PLIC, for `src/main.rs`'s reason: neither ordering is load-bearing
+        // the controller, for `src/main.rs`'s reason: neither ordering is load-bearing
         // but the deadline must be programmed before `mie.MTIE` is set, and
         // `timer::start` does both in that order.
         timer::start();
@@ -486,10 +485,10 @@ mod app {
             let (events, defers) = cx.shared.progress.lock(|p| (p.events, p.defers));
             let (ticks, cost, late) = timer::stats();
             console.shared(events, defers);
-            console.plic(
+            console.intc(
                 "rtic",
-                CLAIMS.load(Ordering::Relaxed),
-                COMPLETES.load(Ordering::Relaxed),
+                SERVICED.load(Ordering::Relaxed),
+                ACKED.load(Ordering::Relaxed),
             );
             let per_us = target::TIME_HZ / 1_000_000;
             console.tick(ticks, cost / per_us, late / per_us);
@@ -541,18 +540,16 @@ mod app {
         );
     }
 
-    /// The PLIC front end: claim, drain the peripheral, pend, complete.
+    /// The interrupt front end: take a source, drain the peripheral, pend.
     ///
     /// Not an RTIC task and cannot be one -- see the module comment. The body is
     /// `src/irq.rs::machine_external` with `rtic::export::pend` where
-    /// `dispatch::pend` is, and it keeps `defer_workload`'s order exactly:
-    /// **complete, disable, record**, because the other order gated a Type-C
-    /// source off permanently and that was found on the board.
+    /// `dispatch::pend` is.
     #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
     fn machine_external() {
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        while let Some(source) = plic.claim() {
-            CLAIMS.fetch_add(1, Ordering::Relaxed);
+        let intc = intc::Intc::new(target::INTC_BASE);
+        while let Some(source) = intc.next_ready() {
+            SERVICED.fetch_add(1, Ordering::Relaxed);
             if target::UART_IRQS.contains(&source) {
                 let base = target::UART_BASES[0];
                 let mut rx = uart::UartRx::new(base);
@@ -567,17 +564,16 @@ mod app {
                     LINE.push(byte);
                 }
             } else if source == workload::source::SOURCE {
-                plic.complete(source);
-                COMPLETES.fetch_add(1, Ordering::Relaxed);
-                plic.disable(source);
+                // Mask and record. The level is still asserted, so the clear
+                // below is ignored; `workload::source::rearm` acknowledges it.
+                intc.disable(source);
                 workload::defer(clock::Instant::ZERO.elapsed(clock::now()));
                 pend_type_c();
             }
-            // ALWAYS, including for a source with no task, and including the
-            // deferral source completed above -- `src/irq.rs` does the same
-            // double completion and it is what the control models measure.
-            plic.complete(source);
-            COMPLETES.fetch_add(1, Ordering::Relaxed);
+            // ALWAYS, including for a source with no task: an unacknowledged
+            // pending bit is a loop that never leaves.
+            intc.clear(source);
+            ACKED.fetch_add(1, Ordering::Relaxed);
         }
         #[cfg(feature = "rticprobe")]
         super::probe::AT_RETURN.store(super::metrics::minstret(), Ordering::Relaxed);
