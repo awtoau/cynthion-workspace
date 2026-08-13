@@ -159,6 +159,10 @@ GENERATE_FLAGS = [
     # Plugin keeps 8-bit registers per counter, flushes into the 64-bit CSR RAM
     # on MSB set -- cheap on an FPGA. `zicntr`/`zihpm` added to the reported
     # ISA, visible in `info`.
+    #
+    # NOT a standalone choice: the plugin comes with `rdtime`, and dropping this
+    # flag generates a BYTE-IDENTICAL core. The count is the only free variable
+    # (#471).
     "--performance-counters", "4",
 
     # RISC-V debug module, through the ECP5's EXISTING JTAG chain.
