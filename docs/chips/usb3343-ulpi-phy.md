@@ -256,8 +256,9 @@ Without that timeout one read of a missing PHY would leave the window busy for
 the rest of the session and every later read would report "busy" instead of
 "absent"; the recovery is covered in `scripts/soc_board_sim.py`.
 
-`debug` (`0x15`) is read rather than `0x14` (Interrupt Latch), which is
-**clear-on-read**: a diagnostic must not consume the event it reports on.
+`debug` (`0x15`) is read rather than `0x14`, the Interrupt Latch, which is
+**clear-on-read**: a diagnostic must not consume the event it reports on. See
+[the interrupt block](#the-interrupt-block).
 `linestate dp 0 dm 0` is SE0 — the expected reading with nothing plugged into
 TARGET, not a fault.
 
@@ -308,6 +309,50 @@ the ULPI register window and are not in our memory map, so they do not appear in
 the generated PAC — see [Register reference](../hardware.md#register-reference).
 The two used here are the vendor D+/D- swap register `0x39` and the scratch
 register `0x16`.
+
+### The interrupt block
+
+The part has no interrupt pin. It reports events **in band**: it asserts `DIR`,
+takes the ULPI bus, and sends an RX CMD. Which transitions are worth an RX CMD is
+programmed per source and per edge:
+
+| register | address | reset |
+|---|---|---|
+| USB Interrupt Enable Rising | `0Dh` — set `0Eh`, clear `0Fh` | `1Fh` |
+| USB Interrupt Enable Falling | `10h` — set `11h`, clear `12h` | `1Fh` |
+| USB Interrupt Status | `13h` | `00h` |
+| USB Interrupt Latch | `14h` | `00h` |
+
+All four share one bit layout — five sources:
+
+| bit | field | |
+|---|---|---|
+| 0 | `HostDisconnect` | UTMI+ HS Hostdisconnect. **Host mode only** |
+| 1 | `VbusValid` | UTMI+ Vbusvalid |
+| 2 | `SessValid` | UTMI+ SessValid |
+| 3 | `SessEnd` | UTMI+ SessEnd |
+| 4 | `IdGnd` | UTMI+ IdGnd |
+| 7:5 | Reserved | read only, 0 |
+
+`1Fh` is bits 0-4, so **all five are enabled on both edges out of reset** and
+every PHY is generating RX CMDs for them now. Nothing here programs the enables
+or reads the latch.
+
+**`13h` is not a substitute for `14h`.** Two of the five read 0 in the status
+register when both their edge enables are set — which is the reset state:
+
+> *`VbusValid`: "If VbusValid Rise and VbusValid Fall are set this register will
+> read 0."*
+> *`SessEnd`: "If SessEnd Rise and SessEnd Fall are set this register will read 0."*
+
+`SessValid` is explicitly exempt — it *"will always read the current status of
+the Session Valid comparator regardless of the SessValid Rise and SessValid Fall
+settings."* So in the default configuration a `VbusValid` or `SessEnd`
+transition appears **only** in the latch.
+
+`LineState` and `RxActive` are not in this block. They ride the RX CMD directly,
+and `RxActive` changes every packet — which is why the five above are the
+interrupt sources and those two are not.
 
 ## Scripts
 
