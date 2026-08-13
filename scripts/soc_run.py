@@ -202,11 +202,14 @@ def run(cmd, cwd=None, env=None, floor=None):
         family = Path(str(cmd[1])).name
     if family == "bash":
         family = f"synth:{BUILD.name}"
+    # BEFORE the run: a kill raises the baseline, so asking afterwards reports
+    # the bound for the NEXT attempt and calls the one that just fired
+    # "slowest was". Both numbers would be true of a run that has not happened.
+    bound, reason = limit_for(f"run:{family}", floor)
     result = run_bounded(cmd, family=f"run:{family}", cwd=cwd or ROOT, env=env,
                          floor=floor)
     if result is not None:
         return result
-    bound, reason = limit_for(f"run:{family}", floor)
     return subprocess.CompletedProcess(
         cmd, 124, "", f"TIMED OUT after {bound:.0f}s ({reason}): {family}\n")
 
@@ -999,7 +1002,8 @@ def main():
         if result.returncode != 0 and result.stderr:
             output += result.stderr
             SYNTH_LOG.write_text(output)
-        emit(f"synthesis finished in {build_seconds:.1f} s "
+        emit(f"synthesis {'finished' if result.returncode == 0 else 'FAILED'} "
+             f"in {build_seconds:.1f} s "
              f"({len(output.splitlines())} lines -> "
              f"{SYNTH_LOG.relative_to(ROOT)})")
 
