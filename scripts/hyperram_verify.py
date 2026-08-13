@@ -135,6 +135,13 @@ def main():
         "THE TWIN ALONE -- no Questa, so the vendor model did not run",
         [py, str(s / "hyperram_vendor_model_sim.py"), "--sim", _sim])[0]
 
+    # The REAL ECP5 primitives -- ODDRX1F and IDDRX1F from Diamond's cae_library
+    # -- so the sample window this measures is the silicon's, not a behavioural
+    # stand-in. It was on no list at all and sat red on main; #401.
+    results["the PHY's RWDS election, against Diamond's own primitives"] = step(
+        "the PHY and its sample window, with the vendor primitive models",
+        [py, str(s / "hyperram_phy_rwds_sim.py")])[0]
+
     results["controller vs our Python model"] = step(
         "the controller against our own model -- fault injection and the SoC above it",
         [py, str(s / "soc_hyperram_sim.py")])[0]

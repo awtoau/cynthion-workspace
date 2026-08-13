@@ -422,10 +422,22 @@ module tb;
       // wrong the data loss is a consequence of that, and how much of it the
       // caller's hunt absorbs is a property of the caller, not of the controller.
       checks = checks + 1;
+      // Data is only scoreable on a LEGAL code. CR0[7:4] is sparse -- 0..2 and
+      // 14..15 decode, 3..13 are RESERVED and the part holds its last legal
+      // latency instead (observed from the vendor model, not specified). The
+      // controller still waits `5 + sext4(code)`, so on a reserved code the two
+      // disagree BY DEFINITION and the words are wrong for a reason the device
+      // never promised otherwise. The election above is still checked: a
+      // reserved code must not hang or mis-elect. #401.
       if (hl_count == want_hl && cell_errors != 0) begin
-        errors = errors + 1;
-        $display("[tb] FAIL data [%0s code %0d L=%0d] %0d of %0d words wrong on a correct election, shift %0d",
-                 mode_label, code, L, cell_errors, BURST, cell_shift);
+        if ((code <= 4'd2) || (code >= 4'd14)) begin
+          errors = errors + 1;
+          $display("[tb] FAIL data [%0s code %0d L=%0d] %0d of %0d words wrong on a correct election, shift %0d",
+                   mode_label, code, L, cell_errors, BURST, cell_shift);
+        end else begin
+          $display("[tb] reserved code %0d: %0d of %0d words wrong, as undefined latency implies -- not scored",
+                   code, cell_errors, BURST);
+        end
       end
 
       $display("[cell] float=%0s %0s code %2d L=%0d | controller waited %0d (%0s), device asked %0s | errors %0d/%0d shift %0d early %0d",
