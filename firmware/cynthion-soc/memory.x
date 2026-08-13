@@ -23,12 +23,12 @@
  * That is the inversion the split needed. Previously this crate was resident, so the
  * thing that grows was pinned at 0x0 and the thing that does not grow got the other
  * 32 KiB; the shell reached 36,514 bytes against 32,768 and stopped linking. Now the
- * growing image gets 47 KiB and the resident one changes rarely.
+ * growing image gets 31 KiB and the resident one changes rarely.
  *
  * | region | origin     | length   | contents                              |
  * |--------|------------|----------|---------------------------------------|
  * | BOOT   | 0x00000000 | 1 KiB    | cynthion-boot, and its stack          |
- * | RAM    | 0x00000400 | 47 KiB   | .data, .bss, stack                    |
+ * | RAM    | 0x00000400 | 31 KiB   | .data, .bss, stack                    |
  * | FLASH  | 0x100b0000 | 3392 KiB | .text, .rodata                        |
  *
  * The bitstream initialises block RAM only, and since `.text` moved to flash it carries
@@ -45,7 +45,7 @@
  */
 MEMORY
 {
-    RAM   : ORIGIN = 0x00000400, LENGTH = 47K
+    RAM   : ORIGIN = 0x00000400, LENGTH = 31K
     FLASH : ORIGIN = 0x100B0000, LENGTH = 0x350000
 }
 
@@ -53,7 +53,7 @@ MEMORY
  *
  * riscv-rt defaults _stack_start to the end of REGION_STACK, which is this. Nothing
  * lives above it now that the payload slot is gone -- an image IS the upper region --
- * so the stack gets everything between .bss and 0xc000.
+ * so the stack gets everything between .bss and 0x8000.
  */
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
@@ -77,7 +77,7 @@ _reset_vector = 0x00000000;
 /* Stage two: code joins immutable data in flash.
  *
  * `.text` here is what the whole split was for. Block RAM keeps only what must be
- * WRITABLE -- .data, .bss and the stack -- so the 47 KiB stops being a budget the
+ * WRITABLE -- .data, .bss and the stack -- so the 31 KiB stops being a budget the
  * shell competes with itself for, and the image can grow into 3392 KiB of flash.
  *
  * This requires FLASH_CACHED in gateware/soc/top.py. `exe=0` forbids

@@ -50,7 +50,7 @@ from devlog import emit  # noqa: E402
 # image region, which is all of block RAM but the kilobyte the bootloader keeps. The
 # firmware range-checks too and answers with its own limit; this is the earlier, clearer
 # error. `scripts/soc_generate_pac.py --check` holds the two together.
-PAYLOAD_SIZE = 47 * 1024
+PAYLOAD_SIZE = 31 * 1024
 
 # Pacing for the transfer.
 #

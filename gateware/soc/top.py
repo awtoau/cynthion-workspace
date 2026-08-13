@@ -141,7 +141,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 # `AwtoSoc.elaborate` and #306.
 BUILD_DIR = variant.build_dir(ROOT)
 
-# 48 KiB at address zero. The reset vector is 0x00000000, so the bootloader's
+# 32 KiB at address zero. The reset vector is 0x00000000, so the bootloader's
 # entry point must be the first instruction.
 #
 # Was 64 KiB to match moondancer's allocation. Block RAM is the binding resource
@@ -150,7 +150,7 @@ BUILD_DIR = variant.build_dir(ROOT)
 # two -- `luna_soc`'s blockram refused anything else, which is why
 # `peripherals/block_ram.py` exists.
 RAM_BASE = 0x00000000
-RAM_SIZE = 48 * 1024
+RAM_SIZE = 32 * 1024
 
 # Where the bootloader stops and the image begins.
 #

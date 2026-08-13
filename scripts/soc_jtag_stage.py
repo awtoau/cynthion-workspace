@@ -83,7 +83,7 @@ HDR_LENGTH = 2
 HDR_CRC    = 4
 IMAGE_WORD = 16
 MAGIC      = 0x4359_4e42
-MAX_IMAGE  = 47 * 1024
+MAX_IMAGE  = 31 * 1024
 
 # How many console reads to make while waiting for whichever image comes up to speak.
 #

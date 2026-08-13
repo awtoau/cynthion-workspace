@@ -9,10 +9,10 @@
 //! Rust cannot cast a pointer to an integer in a const context, and
 //! `target.rs` needs const addresses.
 
-/// ram: 65536 bytes of memory at 0x00000000
+/// ram: 32768 bytes of memory at 0x00000000
 pub const RAM: usize = 0x00000000;
 /// Size of the RAM window, in bytes.
-pub const RAM_SIZE: usize = 0x00010000;
+pub const RAM_SIZE: usize = 0x00008000;
 
 /// spiflash: 4194304 bytes of memory at 0x10000000
 pub const SPIFLASH: usize = 0x10000000;

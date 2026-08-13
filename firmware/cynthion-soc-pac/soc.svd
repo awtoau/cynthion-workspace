@@ -13,11 +13,11 @@
   <peripherals>
     <peripheral>
       <name>RAM</name>
-      <description>ram: 65536 bytes of memory at 0x00000000</description>
+      <description>ram: 32768 bytes of memory at 0x00000000</description>
       <baseAddress>0x00000000</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x10000</size>
+        <size>0x8000</size>
         <usage>buffer</usage>
       </addressBlock>
     </peripheral>

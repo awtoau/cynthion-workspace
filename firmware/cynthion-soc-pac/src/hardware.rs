@@ -18,7 +18,7 @@ pub static PERIPHERALS: &[Peripheral] = &[
     Peripheral {
         name: "ram",
         base: 0x00000000,
-        size: 0x00010000,
+        size: 0x00008000,
         registers: 1,
     },
     Peripheral {
