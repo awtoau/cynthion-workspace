@@ -235,7 +235,7 @@ a generated netlist.
 | PA02 | PROGRAM_BUTTON |
 | PA03 | FPGA_INITN (r1.3+) |
 | PA04 | FPGA_DONE |
-| PA06 | USB_SWITCH → TC7USB42MU |
+| PA06 | USB_SWITCH → PI3USB102G |
 | PA08 | FPGA_PROGRAM (PROGRAMN) |
 | PA09 | FPGA_ADV (EIC EXTINT7) |
 | PA16/17/22/23/27 | LED A–E |
@@ -285,7 +285,7 @@ recommended mutexes. All three were refuted against the source — see #61.
 | **JTAG** | PA15 TCK, PA14 TDI, PA11 TMS, PA10 TDO | bit-banged, or SPI-accelerated via SERCOM0 with DMA. The polled path costs ~700 µs per 1024 bytes, during which `tud_task()` cannot run. |
 | **FPGA_ADV sideband** | PA09 ↔ ECP5 **T6** | single wire, half-duplex, Apollo is master. SERCOM1 PAD3 receives in hardware; transmit is bit-banged from TC1 because `TXPO` cannot reach PAD3. Carries the port-ownership signal *and* the command protocol. Everything else: [`../sideband.md`](../chips/cynone-sideband.md). |
 | **UART** | PA14 TX, PA11 RX ↔ ECP5 T14/R14 | one CDC-ACM interface (`CFG_TUD_CDC` is 1). Mutually exclusive with JTAG. |
-| **CONTROL USB mux** | PA06 | TC7USB42MU DPDT switch; see [`../hardware.md`](../hardware.md) |
+| **CONTROL USB mux** | PA06 | PI3USB102G DPDT switch; see [`../hardware.md`](../hardware.md) |
 | dedicated debug SPI | — | **not enabled on this board.** Handlers exist (`debug_spi.c`, vendor requests `0x50`–`0x54`) but are gated on `_BOARD_HAS_DEBUG_SPI`, which `cynthion_d11` does not define. Those requests STALL. SPI to the FPGA goes via the JTAG ER1/ER2 tunnel instead. |
 
 The ECP5 `int` resource that carries FPGA_ADV is declared `PULLMODE="UP"` because the

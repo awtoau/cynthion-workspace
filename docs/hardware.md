@@ -36,7 +36,7 @@ for the life of the project.
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | **ATSAMD11D14A** | the Apollo debug MCU | USB vendor requests on CONTROL | [`chips/samd11-apollo.md`](chips/samd11-apollo.md) |
-| TC7USB42MU | USB 2.0 DPDT mux (U16), CONTROL only | Apollo PA06 | [below](#the-control-port-mux) |
+| PI3USB102G | USB 2.0 DPDT mux (U16), CONTROL only | Apollo PA06 | [below](#the-control-port-mux) |
 
 **Soft cores get notes here too**, for the same reason the silicon does: what
 they do on this board differs from what their parameters say, and the
@@ -146,7 +146,7 @@ FUSB302B.
 | PA02 | — | — | — | PROGRAM_BUTTON |
 | PA03 | — | — | — | FPGA_INITN (r1.3+) |
 | PA04 | — | — | — | FPGA_DONE |
-| PA06 | — | — | — | USB_SWITCH → TC7USB42MU |
+| PA06 | — | — | — | USB_SWITCH → PI3USB102G |
 | PA08 | — | — | — | FPGA_PROGRAM (PROGRAMN) |
 | PA09 | — | — | — | FPGA_ADV (EIC EXTINT7) |
 | **PA10** | **TDO** | — | **PAD2 (MISO)** | — |
@@ -189,7 +189,7 @@ Detail, and the limits of what has actually been confirmed:
 
 ```
 HOST PC
-├─ CONTROL USB (Type-C) ──► TC7USB42MU mux ──┬──► Apollo SAMD11  (1d50:615c)
+├─ CONTROL USB (Type-C) ──► PI3USB102G mux ──┬──► Apollo SAMD11  (1d50:615c)
 │                              ▲             └──► control_phy (USB3343) ──► ECP5
 │                              │
 │                    CONTROL_SWITCH (PA06, MCU output)
@@ -305,7 +305,8 @@ separate identity, `1209:000f`, whose bulk interface uses subclass `0x01`.
 
 ## The CONTROL port mux
 
-The physical mux is a **TC7USB42MU** USB 2.0 DPDT switch (`U16`) in `control_port`,
+The physical mux is a **PI3USB102G** USB 2.0 DPDT switch (`U16`, Diodes
+10-TQFN) in `control_port`, per `production/bom.csv` and the schematic symbol,
 driven by the `CONTROL_SWITCH` net, which originates as an output from the
 `debugger` sheet (Apollo **PA06**) and lands as an input on `control_port`.
 
