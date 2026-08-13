@@ -984,7 +984,7 @@ def main():
         # so without this line the log has a silent 60-90 s hole in it and the
         # only thing to conclude from a hole is that something hung.
         emit(f"synthesis: yosys + nextpnr on {GATEWARE.relative_to(ROOT)}, "
-             f"typically 60-120 s")
+             f"typically 140-310 s")
         emit(f"  full tool output -> {SYNTH_LOG.relative_to(ROOT)} "
              f"(thousands of lines; only the summary comes back here)")
         # DIVERTED, not discarded. Every line yosys and nextpnr produced goes to
@@ -1266,9 +1266,15 @@ def write_rodata_flash(args, emit):
     elapsed = time.perf_counter() - started
     size = RODATA_BIN.stat().st_size
     FLASH_WRITTEN.write_text(want + "\n")
+    # BOUND BY THE LINK. 4 USB round trips a page at 3.00 ms each -- write
+    # enable, program, poll -- against a 0.4 ms page program, so the part is
+    # idle for ~97% of this. Batching the round trips is where the time is
+    # (#258); the message used to blame the flash and foreclose that.
+    pages = -(-size // 256)
     emit(f"  flash written: {size} bytes in {elapsed:.2f} s "
          f"({size / elapsed / 1024:.1f} KiB/s) over Apollo JTAG -> SPI "
-         f"bit-bang; bound by the W25Q32's page program, not the link")
+         f"bit-bang; {elapsed / pages * 1000:.1f} ms/page against a 0.4 ms "
+         f"page program, so this is USB round trips, not the part")
     return True
 
 
