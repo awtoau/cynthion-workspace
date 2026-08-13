@@ -2,7 +2,7 @@
 
 **Status:** proposal, no hardware exercised
 **Date:** 2026-07-30T19:30:00+10:00; integration design added 2026-08-03T01:30:00+10:00
-**Consolidates:** awtoau/cynthion-workspace#101, #105
+**Consolidates:** awtoau/cynthion-workspace#101, [#105](https://github.com/awtoau/cynthion-workspace/issues/105)
 **Target:** LFE5U-12F (24288 LUT, 56 BRAM), Cynthion r1.4
 
 Sections 0-10 are the original feasibility study: can this board host, and does
@@ -14,7 +14,7 @@ sections 0-10 got wrong. Read section 11.1 before trusting anything above it.
 bespoke register interface has no Linux driver, so taking it means writing an HCD.
 [`linux-on-cynthion.md`](../linux-on-cynthion/ANALYSIS.md) carries that chain end to end and
 picks the full-speed OHCI route for exactly that reason; its Part II is the
-full-speed investigation in detail. This document remains the answer to #105's
+full-speed investigation in detail. This document remains the answer to [#105](https://github.com/awtoau/cynthion-workspace/issues/105)'s
 question, which was 480 Mbps.
 
 ---
@@ -197,7 +197,7 @@ with the same substance: technically possible, no support provided.
 
 ### 3.2 `apfaudio/guh` — a USB2 **high-speed** host engine for LUNA
 
-Tiliqua PR #65 (merged 2024-11-05) was the full-speed-only ancestor. That code has
+Tiliqua PR [#65](https://github.com/awtoau/cynthion-workspace/issues/65) (merged 2024-11-05) was the full-speed-only ancestor. That code has
 since been extracted and substantially extended into a standalone library,
 **`apfaudio/guh`** ("Gateware USB Host"), by the same author. This is the single
 most important artifact for this proposal.
@@ -402,7 +402,7 @@ inheriting Zephyr's enumeration, hub and class drivers.
 
 ## 7. Verdict on the Zephyr hypothesis
 
-The hypothesis from #105 was that the Zephyr USB layer is the easiest route. On
+The hypothesis from [#105](https://github.com/awtoau/cynthion-workspace/issues/105) was that the Zephyr USB layer is the easiest route. On
 the evidence it is **not the easiest route, but the mismatch is not fatal either.**
 It is the right destination if the goal is a general-purpose host, and the wrong
 starting point.
@@ -448,7 +448,7 @@ drive, and building that controller is Option B. Treat Zephyr as a later phase
 that Option B is deliberately designed to enable — worth doing if the goal is
 hosting arbitrary devices, and pointless as a shortcut to first light.
 
-One correction to the framing in #101, which proposed adapting
+One correction to the framing in [#101](https://github.com/awtoau/cynthion-workspace/issues/101), which proposed adapting
 "zephyr/freebsd/openbsd/linux code [...] but written in rust" and asked whether
 xHCI-style registers are needed. Porting an OS host stack is the Option C tail,
 not the head, and xHCI is the wrong model: GUH's author addresses this directly,
@@ -464,7 +464,7 @@ interface is far cheaper and entirely sufficient.
 **Do it, via Option A now and Option B next. Do not start with Zephyr.**
 
 This is worth doing specifically *because* the expensive parts already exist. The
-question in #101/#105 was framed as "can Cynthion host at 480 Mbps and what would
+question in [#101](https://github.com/awtoau/cynthion-workspace/issues/101)/#105 was framed as "can Cynthion host at 480 Mbps and what would
 it take", with an implicit fear that the answer was a from-scratch host stack that
 would not fit. Both halves of that fear are unfounded:
 
@@ -522,21 +522,21 @@ fabric numbers say it fits.
 
 ## 9. Issue consolidation
 
-#101 and #105 are the same request: #101 ("Create host USB device on moon?") asks
+[#101](https://github.com/awtoau/cynthion-workspace/issues/101) and [#105](https://github.com/awtoau/cynthion-workspace/issues/105) are the same request: [#101](https://github.com/awtoau/cynthion-workspace/issues/101) ("Create host USB device on moon?") asks
 for FPGA host support and speculates about OS stacks in Rust and xHCI-style
-registers; #105 asks to research a 480 Mbps host and proposes Zephyr. Same goal,
+registers; [#105](https://github.com/awtoau/cynthion-workspace/issues/105) asks to research a 480 Mbps host and proposes Zephyr. Same goal,
 different guesses at the route — and this document answers both.
 
-**Recommendation: keep #105 open, close #101 as a duplicate of #105.**
+**Recommendation: keep [#105](https://github.com/awtoau/cynthion-workspace/issues/105) open, close [#101](https://github.com/awtoau/cynthion-workspace/issues/101) as a duplicate of [#105](https://github.com/awtoau/cynthion-workspace/issues/105).**
 
-Reasoning: #105 states the measurable requirement (480 Mbps) and the hypothesis to
-test, so it reads as the actionable ticket. #101's specifics are the parts this
+Reasoning: [#105](https://github.com/awtoau/cynthion-workspace/issues/105) states the measurable requirement (480 Mbps) and the hypothesis to
+test, so it reads as the actionable ticket. [#101](https://github.com/awtoau/cynthion-workspace/issues/101)'s specifics are the parts this
 research contradicts — xHCI is explicitly the wrong model, and porting an OS host
 stack is a late phase rather than the starting point — so keeping it open would
 preserve a misleading plan. Its one durable instinct ("must be easier to find luna
 or other work if possible") turned out to be exactly right and is captured above.
 
-Retitle #105 to something like "USB host mode at 480 Mbps via GUH" and link this
+Retitle [#105](https://github.com/awtoau/cynthion-workspace/issues/105) to something like "USB host mode at 480 Mbps via GUH" and link this
 document. Neither issue was closed or edited in producing this proposal, per the
 brief.
 
@@ -555,8 +555,8 @@ Local:
 
 Upstream:
 - `apfaudio/guh` — https://github.com/apfaudio/guh (BSD-3-Clause)
-- `apfaudio/tiliqua` PR #65 — the full-speed ancestor
-- `greatscottgadgets/cynthion` #230 (GSG pointing at Tiliqua), #174
+- `apfaudio/tiliqua` PR [#65](https://github.com/awtoau/cynthion-workspace/issues/65) — the full-speed ancestor
+- `greatscottgadgets/cynthion` [#230](https://github.com/awtoau/cynthion-workspace/issues/230) (GSG pointing at Tiliqua), [#174](https://github.com/awtoau/cynthion-workspace/issues/174)
 - Zephyr UHC API — `include/zephyr/drivers/usb/uhc.h`, `drivers/usb/uhc/`
 
 Note on `import luna`: it resolves to the interpreter's own
@@ -677,11 +677,11 @@ combinationally cheap — which a CSR multiplexer is.
 
 ---
 
-## 13. Where it attaches, and the collision with #120
+## 13. Where it attaches, and the collision with [#120](https://github.com/awtoau/cynthion-workspace/issues/120)
 
 `target_phy` is the only candidate: `aux_phy` carries the CDC-ACM console
 (`gateware/soc/top.py`) and `control_phy` is shared with Apollo. It is also
-the port the ULPI register window of #120 sits on, and that is a hard conflict
+the port the ULPI register window of [#120](https://github.com/awtoau/cynthion-workspace/issues/120) sits on, and that is a hard conflict
 today, for a reason more basic than bus arbitration.
 
 ### 13.1 The conflict is ownership, not arbitration
@@ -696,7 +696,7 @@ today, for a reason more basic than bus arbitration.
 - `target_phy.rst` is tied to `ResetSignal("usb")`, so a host stack cannot
   re-initialise the PHY.
 
-This is #125's point exactly: `ULPIRegisterWindow` is an initialisation-time bus
+This is [#125](https://github.com/awtoau/cynthion-workspace/issues/125)'s point exactly: `ULPIRegisterWindow` is an initialisation-time bus
 **master** and cannot coexist with a stack that owns the PHY.
 
 ### 13.2 The fix is re-parenting, not arbitration
@@ -723,13 +723,13 @@ competing master into a client of the translator, and it is a candidate for
 `docs/upstreamable-patches.md` in its own right — the bug is that upstream
 documents an interface it does not provide.
 
-### 13.3 And it settles #125's open question
+### 13.3 And it settles [#125](https://github.com/awtoau/cynthion-workspace/issues/125)'s open question
 
-#125 asks which PHY the RX CMD status peripheral should watch and who owns it.
+[#125](https://github.com/awtoau/cynthion-workspace/issues/125) asks which PHY the RX CMD status peripheral should watch and who owns it.
 `UTMITranslator` already decodes RX CMDs and exposes `line_state`, `vbus_valid`,
 `session_valid`, `session_end`, `rx_error`, `host_disconnect`, `id_digital`
 (`ulpi.py:694-697`). So the status peripheral taps the translator's outputs, is
-instantiated once per translator, and needs no bus access — which is what #125
+instantiated once per translator, and needs no bus access — which is what [#125](https://github.com/awtoau/cynthion-workspace/issues/125)
 argued for on first principles, now with a named attachment point.
 
 ### 13.4 A host and the analyzer can share one translator
@@ -859,7 +859,7 @@ at 0x0.
 Its cost is its staging FIFO: `_DATA_FIFO_WORDS` defaults to 8 KiB, which is
 about 4 of the 14 free BRAMs, and it is a tunable. Target block RAM first —
 HyperRAM is the obvious destination for large buffers but has no Wishbone
-adapter (#90) and an unfinished DQS path (#92).
+adapter ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) and an unfinished DQS path ([#92](https://github.com/awtoau/cynthion-workspace/issues/92)).
 
 **Do not build tier two first.** It is only worth it once a measured PIO number
 proves it necessary, and §15.3's estimate is not that measurement.
@@ -938,8 +938,8 @@ Then, in order:
 
 1. **Mux `target_phy`.** Move the pad wiring at `gateware/soc/top.py`
    behind an owner select, or better, implement §13.2's `UTMITranslator` manual
-   register access so `UlpiRegisters` becomes a client. This unblocks #120 and
-   #125 as well as the host.
+   register access so `UlpiRegisters` becomes a client. This unblocks [#120](https://github.com/awtoau/cynthion-workspace/issues/120) and
+   [#125](https://github.com/awtoau/cynthion-workspace/issues/125) as well as the host.
 2. **VBUS and CC.** No `*_vbus_en` pin is driven anywhere in the SoC today.
    Add `control_vbus_en`, `target_c_vbus_en`, `aux_vbus_en` and
    `target_a_discharge` to the existing `gpio` peripheral, and present Rp on
@@ -950,7 +950,7 @@ Then, in order:
 5. **Measure the PIO byte rate** against the CLINT tick, and only then decide
    whether §15.4's DMA is needed.
 
-The AUX-to-TARGET loopback proposed on #105 remains the right acceptance test,
+The AUX-to-TARGET loopback proposed on [#105](https://github.com/awtoau/cynthion-workspace/issues/105) remains the right acceptance test,
 with one revision: it needs `aux_phy` free, and `aux_phy` is the console. Either
 move the console to `control_phy` behind `ApolloAdvertiser` for that test, or
 accept a third-party device for first light and defer the loopback.
@@ -980,7 +980,7 @@ SpinalHDL ships a complete OHCI controller —
 **`UsbOhciWishbone.scala`**. On paper it is everything §15 has to build by hand:
 a published standard register map, an existing Linux/BSD/Zephyr driver for it,
 DMA descriptors already specified, a Wishbone wrapper, and the same HDL
-ecosystem as our CPU. It is the thing #101 was reaching for.
+ecosystem as our CPU. It is the thing [#101](https://github.com/awtoau/cynthion-workspace/issues/101) was reaching for.
 
 It is **full and low speed only** — `UsbOhci.scala` carries `lowSpeed` and an
 `fs` timer constant and nothing else, because OHCI is an FS/LS specification.
@@ -988,7 +988,7 @@ The high-speed companion is EHCI, and no open EHCI implementation was found.
 
 So the choice is stark and worth stating plainly: **12 Mbps with a standard
 register map and off-the-shelf drivers, or 480 Mbps with a bespoke interface.**
-#105 asked for 480, so this note is a record of the road not taken rather than a
+[#105](https://github.com/awtoau/cynthion-workspace/issues/105) asked for 480, so this note is a record of the road not taken rather than a
 recommendation — but if the requirement ever softens to full speed, this is the
 better engineering, and it deserves a fresh look rather than a port of §15.
 Its licence was not confirmed (the repository reports `NOASSERTION`) and would
@@ -1070,7 +1070,7 @@ the in-situ number is still the next increment's job.
 
 ## 23. What the driver needs, whatever schedules it
 
-`docs/rtic.md` and #115 are unresolved, so nothing here assumes a
+`docs/rtic.md` and [#115](https://github.com/awtoau/cynthion-workspace/issues/115) are unresolved, so nothing here assumes a
 scheduling model. The engine's interface is `events in, work out`, and what it
 asks of a driver is the same under a superloop, an interrupt handler or an RTIC
 task:
@@ -1107,6 +1107,6 @@ task:
 - **No hardware.** Same as Parts I and II.
 
 Next increment, in order: re-parent `target_phy` behind `UTMITranslator` (§13.2,
-which also unblocks #120 and #125), then the in-situ build for the numbers §19
+which also unblocks [#120](https://github.com/awtoau/cynthion-workspace/issues/120) and [#125](https://github.com/awtoau/cynthion-workspace/issues/125)), then the in-situ build for the numbers §19
 could not give, then the CSR/FIFO shim of §15 with §23's five requirements, then
 firmware enumeration.

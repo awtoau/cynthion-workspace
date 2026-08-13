@@ -10,14 +10,14 @@ somewhere they can be found.
 >
 > - **The core has changed repeatedly and most figures do not say which one they
 >   were taken on.** The L1s have been 4 KiB direct-mapped, 8 KiB direct-mapped
->   and 8 KiB 2-way (#283, #292); the dispatcher has been a superloop and RTIC
->   (#245); `opt-level` was chosen against a cache that no longer exists (#167).
+>   and 8 KiB 2-way ([#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292)); the dispatcher has been a superloop and RTIC
+>   ([#245](https://github.com/awtoau/cynthion-workspace/issues/245)); `opt-level` was chosen against a cache that no longer exists ([#167](https://github.com/awtoau/cynthion-workspace/issues/167)).
 > - **A measurement without its configuration cannot be judged**, only believed.
 >   Where the configuration is stated, it is stated. Where it is not, assume the
 >   figure predates the current core.
 > - **Verifying any assertion here needs the full matrix**, not one build: cache
 >   geometry x opt-level x dispatcher x clock. No such sweep has been run.
->   #277 is that work; #291 is making a regression explain itself.
+>   [#277](https://github.com/awtoau/cynthion-workspace/issues/277) is that work; [#291](https://github.com/awtoau/cynthion-workspace/issues/291) is making a regression explain itself.
 > - **Fmax figures need repeats.** One identical design has closed at 62.81,
 >   67.76, 75.30, 77.39, 78.32, 79.58 and 81.12 MHz across builds -- a ~15 MHz
 >   placement spread, wider than most differences anyone wants to rank.
@@ -97,7 +97,7 @@ So the remaining code-size levers are not ISA ones. They are `core::fmt` (whose
 `Display` impl), and `run` at **23,258 bytes** — the largest function in the
 firmware by an order of magnitude.
 
-**Two ways, since #292.** Both caches were direct-mapped, where two lines sharing
+**Two ways, since [#292](https://github.com/awtoau/cynthion-workspace/issues/292).** Both caches were direct-mapped, where two lines sharing
 an index evict each other unconditionally — no associativity to absorb it, no
 policy to tune. That is the conflict-miss case, and it is what RTIC's preempting
 handlers hit: each is its own instruction working set, and a bigger cache does
@@ -106,7 +106,7 @@ not help two that collide.
 - 2 ways, PLRU replacement, so a colliding pair can both stay resident
 - 4 ways does not fit — 58 blocks on a 56-block die
 - 3 ways does not exist — SpinalHDL's PLRU asserts `isPow2`
-- capacity is not the lever here: 8 KiB direct-mapped (#283) preceded this and
+- capacity is not the lever here: 8 KiB direct-mapped ([#283](https://github.com/awtoau/cynthion-workspace/issues/283)) preceded this and
   addressed the wrong failure mode
 
 At `sync` = 60 MHz an IPC of 1.00 would be **60 MIPS**. Nothing here approaches
@@ -196,7 +196,7 @@ mispredict. Before the BTB the same row read 28.77 at IPC 0.244 — 7.02
 instructions, **4.09 cycles each**.
 
 **IPC: 0.309 at best, 0.056 at worst, and the axis is code size.** From
-`./dev.py optlevel` (#167), the whole firmware rather than a walk:
+`./dev.py optlevel` ([#167](https://github.com/awtoau/cynthion-workspace/issues/167)), the whole firmware rather than a walk:
 
 | `opt-level` | `.text` | IPC | flash seq |
 |---|---|---|---|
@@ -281,7 +281,7 @@ Ranked, with what each is worth.
 | D-cache hit | 1 cycle | 1 cycle | 1 by construction, **never isolated** | — | a targeted micro-walk |
 | block RAM line refill | — | — | **≈ 42 cycles**, derived from two rows | — | — |
 | flash line refill | — | — | **≈ 309 cycles**, derived; quad SPI at 144 MHz SCK | — | SCK is already at the instrument's limit |
-| HyperRAM, CSR staging port | — | uncached by construction (`main=0`) | 148.15 cycles/access | — | the memory window (#90), not this port |
+| HyperRAM, CSR staging port | — | uncached by construction (`main=0`) | 148.15 cycles/access | — | the memory window ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)), not this port |
 | fetch stall fraction | 0% | — | **NEVER MEASURED** — counters present, nothing recorded | — | one `bench` run; read `mhpmcounter3` |
 | data stall fraction | 0% | — | **NEVER MEASURED** | — | same run, `mhpmcounter4` |
 | clock | 400 MHz PLL `fOUT` | 71.81 MHz median nextpnr, 3 runs; **true ceiling unmeasured** | 60 MHz shipping | 84% of the median | re-run the ladder with the fixed `StreamBuffer` |
@@ -359,7 +359,7 @@ from working reports a small, plausible number rather than an error.
 `bench` walks seven instructions per access with **every one hitting the
 I-cache**, so its block RAM sequential row is a direct reading of the fetch path
 with no memory in the way. It read 28.77 cycles for those seven instructions —
-four cycles an instruction, IPC 0.244 (#140).
+four cycles an instruction, IPC 0.244 ([#140](https://github.com/awtoau/cynthion-workspace/issues/140)).
 
 The cause was that the core was generated with `BranchPlugin` and `LearnPlugin`
 and **no `BtbPlugin`**: branches were resolved and recorded, but nothing acted on
@@ -434,7 +434,7 @@ any SoC build, which is where the net names in a nextpnr critical path resolve t
 - So `generate()` holds an exclusive lock (`tmp/vexii-generate.lock`) across the
   run **and** the copy to the caller's `output=`. Concurrent builds without it
   read a half-written 1.2 MB file, or a valid one from another configuration
-  (#306, #351).
+  ([#306](https://github.com/awtoau/cynthion-workspace/issues/306), [#351](https://github.com/awtoau/cynthion-workspace/issues/351)).
 - `top.py` always passes `output=`; a bare `generate(0)` still returns the shared
   path, which is correct only for a one-off.
 

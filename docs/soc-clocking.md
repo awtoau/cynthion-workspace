@@ -13,7 +13,7 @@ One finding that is now designed around, and one retraction:
    `SyncFIFOBuffered` bug, not the CPU. That FIFO has since been fixed and the
    ladder has not been re-run, so **the CPU's working ceiling is unmeasured.**
 
-Issue #110 asked whether Lattice Diamond's place-and-route reaches a higher clock
+Issue [#110](https://github.com/awtoau/cynthion-workspace/issues/110) asked whether Lattice Diamond's place-and-route reaches a higher clock
 than nextpnr on the VexiiRiscv SoC. The premise was that nextpnr's
 achieved frequency climbs with the requested one -- 72.6 at 60, 76.3 at 80,
 86.1 at 90, 92.0 at 100 -- so ~92 MHz looked like where nextpnr stopped trying
@@ -161,10 +161,10 @@ this repo's own commit messages -- rests on this withdrawn measurement.
 Re-running it is cheap: the same script, the fixed `StreamBuffer`, and a readout
 that is not the console. Until then, no number here bounds the CPU.
 
-## Diamond, and what #110 asked
+## Diamond, and what [#110](https://github.com/awtoau/cynthion-workspace/issues/110) asked
 
 The comparison against Lattice Diamond, why it could not answer the question as
-posed, and what to do about #110 are recorded in the issue rather than here.
+posed, and what to do about [#110](https://github.com/awtoau/cynthion-workspace/issues/110) are recorded in the issue rather than here.
 This file is for the findings above. Note that only the first -- the three
 exact-60 PLL solutions -- is a standing result; the second is a withdrawal.
 

@@ -244,7 +244,7 @@ where block RAM is the tight resource.
 ## Why this is written from the spec rather than vendored
 
 The default is to take a proven implementation and change its back end. Surveyed
-for #128 against OpenCores `uart16550` (Verilog, **LGPL 2.1**, ~135 KB) and
+for [#128](https://github.com/awtoau/cynthion-workspace/issues/128) against OpenCores `uart16550` (Verilog, **LGPL 2.1**, ~135 KB) and
 RoaLogic `apb4_uart16550` (SystemVerilog, BSD-2, ~65 KB); ours is ~130 lines of
 Amaranth on an `amaranth_soc` CSR bus. There is no Amaranth- or Migen-native
 16550, so vendoring means a Verilog black box.
@@ -265,7 +265,7 @@ Four reasons it stays ours, in order of weight:
   divisor and a shift register's latency invented so a module could be told it was
   a UART. The Apollo port genuinely is a serial line, but on pins shared with JTAG,
   needing an output enable held across the stop bit, an idle qualifier and a pad
-  synchroniser. A stock 16550 has none of those (#113; `peripherals/serial_line.py` is the
+  synchroniser. A stock 16550 has none of those ([#113](https://github.com/awtoau/cynthion-workspace/issues/113); `peripherals/serial_line.py` is the
   answer).
 * **Licence.** The most-proven candidate is LGPL 2.1 against this tree's
   BSD-3-Clause.
@@ -275,7 +275,7 @@ Four reasons it stays ours, in order of weight:
   ([`../architecture.md`](../architecture.md)).
 
 **What was taken from the proven core instead: its behaviour, as the
-specification.** `uart_regs.v` was read line by line against ours during #128 and
+specification.** `uart_regs.v` was read line by line against ours during [#128](https://github.com/awtoau/cynthion-workspace/issues/128) and
 caught two divergences that assertions written from our own understanding would
 not have — **THRE means "FIFO empty", not "FIFO has room"**, and IIR's idle
 encoding. The driver is also exercised against QEMU's `ns16550a` on every run of

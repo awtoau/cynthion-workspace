@@ -117,7 +117,7 @@ Current status:
 - Primary tracking is in [#55](https://github.com/awtoau/cynthion-workspace/issues/55).
 - Earlier dual-CDC feasibility work is historical context from
   [#56](https://github.com/awtoau/cynthion-workspace/issues/56) (closed as deferred).
-- If promoting the near-working second-port path, open a new child issue under #55.
+- If promoting the near-working second-port path, open a new child issue under [#55](https://github.com/awtoau/cynthion-workspace/issues/55).
 
 **Files**:
 - `awto-apollo/firmware/src/mcu/samd11/usb_descriptors.c` — dual CDC setup

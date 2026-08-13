@@ -219,7 +219,7 @@ Replace pulse-train with hardware UART using:
 - f68195e: apollo_fpga.gateware: convert request handler to new interface
 
 **No References To**:
-- Issue #15 in git history
+- Issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15) in git history
 - Prior watchdog implementations
 - Gate count constraint discussions
 - UART design alternative evaluations

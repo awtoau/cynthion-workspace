@@ -74,7 +74,7 @@ Three things follow that are worth knowing before anyone budgets power:
   full array to 1/8). That is the whole prize for CR1[4:2], and it explains why
   option 7 in [`w956a8.md`](w956a8.md) is judged speculative.
 
-Measurable on this board with the PAC1954 (#82, #84) if the rail is separable.
+Measurable on this board with the PAC1954 ([#82](https://github.com/awtoau/cynthion-workspace/issues/82), [#84](https://github.com/awtoau/cynthion-workspace/issues/84)) if the rail is separable.
 
 ## Refresh and tCSM
 

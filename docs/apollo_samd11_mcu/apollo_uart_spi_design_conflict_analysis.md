@@ -161,7 +161,7 @@ Move UART to different SERCOM to support both UART + Debug SPI:
 
 **Implement Option 1 (UART Redesign)** because:
 
-1. **Solves critical vulnerability** (Issue #15) — moondancer crash no longer breaks CONTROL USB
+1. **Solves critical vulnerability** (Issue [#15](https://github.com/awtoau/cynthion-workspace/issues/15)) — moondancer crash no longer breaks CONTROL USB
 2. **Enables true debugging** — bidirectional heartbeat/diagnostics
 3. **Frees JTAG pins** — PA11/PA14 available for actual JTAG debugging
 4. **Better long-term** — Debug SPI is convenient but not critical (existing bit-bang SPI works)

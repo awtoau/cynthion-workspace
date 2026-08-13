@@ -26,7 +26,7 @@ critical section, which is a reentrancy hazard rather than a style problem.
 **The fix:** a 256-byte RX ring buffer, so the ISR only enqueues and the console
 task drains it.
 
-**Not the DMA driver from #66.** Verified: zero DMA/DMAC references. That issue
+**Not the DMA driver from [#66](https://github.com/awtoau/cynthion-workspace/issues/66).** Verified: zero DMA/DMAC references. That issue
 tracks a *ping-pong DMA* driver on SERCOM2 that was reviewed and deliberately
 **deselected**. This is a plain ISR-safe ring buffer, a much smaller change, and
 its deselection does not apply.
@@ -73,6 +73,6 @@ Worth separating, because the two get conflated:
 
 - **`repos/apollo` is 34 commits ahead of upstream.** Those are live: they are in
   the code that gets built and flashed. Submitting the upstreamable ones is
-  issue #102.
+  issue [#102](https://github.com/awtoau/cynthion-workspace/issues/102).
 - **These three files are not carried anywhere.** They are unapplied text. Nothing
   builds them.

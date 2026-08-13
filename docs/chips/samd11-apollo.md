@@ -114,7 +114,7 @@ see [`w25q32-config-flash.md`](w25q32-config-flash.md) §4.
 
 | rank | option | worth | effort |
 |---|---|---|---|
-| 1 | **page loop on this MCU** (#100) | 3.33 s → ~0.6 s on every firmware iteration, **5.5×** | a command that does not exist, on a part at 94.9% of its flash budget |
+| 1 | **page loop on this MCU** ([#100](https://github.com/awtoau/cynthion-workspace/issues/100)) | 3.33 s → ~0.6 s on every firmware iteration, **5.5×** | a command that does not exist, on a part at 94.9% of its flash budget |
 | 2 | fewer USB round trips per operation | 3.00 ms each, and they dominate every host-driven path | already done once — two redundant trips per page removed, 4.71 s → 3.33 s |
 | — | **TCK 12 → 24 MHz** | **unavailable.** 24 MHz is 10 ns short on the TDO round trip and past the ECP5's 25 MHz `fMAX` in any case | — |
 | — | a faster Apollo UART | **wrong lever.** The pins are JTAG's; the cost is arbitration | — |
@@ -149,15 +149,15 @@ being told something untrue.
 **There is no `.data`.** The linker script routes `*(.data .data.*)` into
 `.relocate` — VMA in RAM, LMA in flash — so it costs 80 bytes of each. The
 figures above superseded a check that summed by section name and reported
-94.92% / 84.77%, both under their ceilings, while both were over (#199).
+94.92% / 84.77%, both under their ceilings, while both were over ([#199](https://github.com/awtoau/cynthion-workspace/issues/199)).
 
-**The ceilings are derived, not chosen** (#404). 95% / 85% were computed against
+**The ceilings are derived, not chosen** ([#404](https://github.com/awtoau/cynthion-workspace/issues/404)). 95% / 85% were computed against
 those 80-byte-low totals, and the firmware they shipped with was already at
 95.48% / 86.33%. Each now sits under one 64-byte object — the smallest
 `apollo_memory_report.py` flags — above the measured image, so the next notable
 object trips the guard and byte drift does not. Flash has nothing left to give:
 588 B free is what upstream runs with, and the levers that would buy more are
-costed in `scripts/apollo_budget_levers.py` (#496 is the largest, 336 B).
+costed in `scripts/apollo_budget_levers.py` ([#496](https://github.com/awtoau/cynthion-workspace/issues/496) is the largest, 336 B).
 
 **14 KB, not 16.** The part has 16 KiB of flash; `BOOTLOADER_SIZE := 0x800`
 reserves 2 KiB at the bottom for the Saturn-V DFU bootloader, leaving
@@ -203,7 +203,7 @@ the code below it muxes PA14/PA15/PA10. PA08 is FPGA_PROGRAM and PA09 is FPGA_AD
 The comment is wrong, not the code.
 
 **The relocation question is settled: PA08/PA09 are not free**, so the UART cannot
-move off the shared pins on the d11. Issues #65/#66.
+move off the shared pins on the d11. Issues [#65](https://github.com/awtoau/cynthion-workspace/issues/65)/#66.
 
 ### The FPGA-side half: R14/T14 versus JTAG TDI/TMS
 
@@ -276,7 +276,7 @@ FPGA USB-takeover request. It is masked:
     NVIC_EnableIRQ(EIC_IRQn);
 
 A 2026-05 review instead reported three races in `vendor.c` and `fpga.c` and
-recommended mutexes. All three were refuted against the source — see #61.
+recommended mutexes. All three were refuted against the source — see [#61](https://github.com/awtoau/cynthion-workspace/issues/61).
 
 ## Links to the FPGA
 
@@ -317,7 +317,7 @@ generated PAC covers the *FPGA's* registers, not this part's — see
 | `scripts/apollo_budget_check.py` | flash/RAM against the ceiling |
 | `scripts/apollo_memory_report.py` | where the bytes go |
 | `scripts/apollo_budget_levers.py` | what each way back under budget costs, built not estimated |
-| `scripts/verify_vectors.py` | the LTO vector-table guard; in `check.py` since #199 |
+| `scripts/verify_vectors.py` | the LTO vector-table guard; in `check.py` since [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
 | `scripts/apollo_reflash.py` | reflash over DFU |
 | [`../apollo_samd11_mcu/`](../apollo_samd11_mcu/) | code review, race conditions, DFU buffers, serial architecture, the configure-speed investigation |
 

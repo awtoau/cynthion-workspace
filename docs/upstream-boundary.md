@@ -70,16 +70,16 @@ whether the reason was a defect, a limit, or a standard we preferred to adopt.
 
 | what | ours | why it diverged | detail |
 |---|---|---|---|
-| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. #111 | [architecture](architecture.md#core) |
+| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#core) |
 | SPI crossbar | `FairSPIControlPortCrossbar` (`gateware/soc/peripherals/flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [architecture](architecture.md#peripherals) |
 | SPI controller | `HoldableSPIController` (same file) | **upstream defect.** The CS field is `csr.action.W` — a one-cycle pulse — used as a latch. Reproducer: ILA capture | [architecture](architecture.md#peripherals) |
-| UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. #113 | [architecture](architecture.md#peripherals) |
+| UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. [#113](https://github.com/awtoau/cynthion-workspace/issues/113) | [architecture](architecture.md#peripherals) |
 | Console peripheral | `Uart16550` (`gateware/soc/peripherals/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [architecture](architecture.md#peripherals) |
 | Interrupt controller | `amaranth_soc.csr.event.EventMonitor`, wrapped by [`gateware/soc/cpu/intc.py`](../gateware/soc/cpu/intc.py) for the source numbering | **upstream, adopted.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; VexiiRiscv's is Tilelink-only | [architecture](architecture.md#interrupts-and-time) |
 | I2C master | `I2CMaster` (`gateware/soc/peripherals/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [architecture](architecture.md#peripherals) |
 | `amaranth_soc` | **upstream**, not luna_soc's vendored copy | **stale vendor.** The vendored tree reported version `unknown` and was four commits behind, including fixes it never had | [architecture](architecture.md#dependencies-and-verification) |
 | Board platform | vendored at `gateware/board/` | **in progress.** `CynthionPlatformRev1D4` is 206 lines of pin declarations plus a 134-line base, but reaching it inherits `LUNAApolloPlatform` → `LUNAPlatform` and pins `luna-soc` to the `awtoau/awto-luna-soc` fork. Target: a self-contained platform depending only on `amaranth`, `amaranth.build` and `amaranth_boards.resources` | — |
-| CONTROL port request | `SidebandAdvertiser` (`gateware/probes/sideband/sideband_advertise.py`) | **incompatible with the pin's other use.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz square wave (20 ms period), which cannot share the wire with the sideband UART. Apollo's own `FPGA_ADV_MODE_UART` already defines the alternative — the frame `C1 14 01 A5` — and no gateware emitted it. #137 | [architecture](architecture.md#peripherals), [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request) |
+| CONTROL port request | `SidebandAdvertiser` (`gateware/probes/sideband/sideband_advertise.py`) | **incompatible with the pin's other use.** `ApolloAdvertiser` drives FPGA_ADV as a 50 Hz square wave (20 ms period), which cannot share the wire with the sideband UART. Apollo's own `FPGA_ADV_MODE_UART` already defines the alternative — the frame `C1 14 01 A5` — and no gateware emitted it. [#137](https://github.com/awtoau/cynthion-workspace/issues/137) | [architecture](architecture.md#peripherals), [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request) |
 
 **Worth noting rather than using:** luna-soc's `InterruptController` exposes
 `add(peripheral, name=, number=)` and `interrupts()`, which its SVD generator reads. Any
@@ -165,7 +165,7 @@ Two upstream defects sit in **both** controllers, and both are now fixed in both
 were left in place for a while, and the reason that stopped being tenable is worth
 recording: the non-DQS path is what the SoC ships **and** the baseline every DQS result is
 compared against, so leaving the fixes in one of the two made every side-by-side
-measurement a comparison of two different instruments (#215, split out of #208).
+measurement a comparison of two different instruments ([#215](https://github.com/awtoau/cynthion-workspace/issues/215), split out of [#208](https://github.com/awtoau/cynthion-workspace/issues/208)).
 
 - `RECOVERY` carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
   keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers
@@ -174,16 +174,16 @@ measurement a comparison of two different instruments (#215, split out of #208).
   the controller as well (`:740`, gated at `:999` and `:1048`), deliberately, so that
   harness pays tCSHI twice. Whether the gap clears tCSHI is judged by
   `hyperram_model.v` in `controller_model_tb.sv`, with `+cs_hold_ns=25` as the defect
-  run that proves the monitor fires (#346). `scripts/soc_hyperram_sim.py` §4 and §4b
+  run that proves the monitor fires ([#346](https://github.com/awtoau/cynthion-workspace/issues/346)). `scripts/soc_hyperram_sim.py` §4 and §4b
   keep the caller-side half: the gap ours leaves against upstream's, measured.
-- `with m.If(extra_latency | 1)` makes the low-latency branch dead, which #90 reports as
+- `with m.If(extra_latency | 1)` makes the low-latency branch dead, which [#90](https://github.com/awtoau/cynthion-workspace/issues/90) reports as
   costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
   reads `0x8f2f`, which selects *fixed* latency, so the device takes the long count every
   time and RWDS says nothing about the transaction. So the behaviour is unchanged and the
   intent is now stated: `fixed_latency=True` by default, `False` for a part reprogrammed
   to variable latency — two changes, not one, and worth measuring rather than assuming.
 
-**The Wishbone peripheral (#90) is workspace gateware.** `HyperRAMWishbone` wraps the
+**The Wishbone peripheral ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) is workspace gateware.** `HyperRAMWishbone` wraps the
 controller with a 32-bit memory port: full stores and reads are two-word HyperBus bursts,
 while partial stores read, merge and write because the controller — upstream's FSM,
 unchanged in this respect — exposes no RWDS mask input.

@@ -142,7 +142,7 @@ anything the FPGA does.
 | cache-line refill | `0x03` single, SCK 144 MHz | 3833 ns / 64 B | as above |
 | SoC memory-mapped read | `0xEB` **non**-continuous, quad, SCK 36 MHz, sequential | 11.27 MB/s, 5.68 µs / line | `scripts/soc_shell.py bench` |
 | **host→flash program** | 58,940 B at offset `0xb0000`, `apollo flash-program` via Apollo background SPI, erase = 1 × 32 KiB block + 7 × 4 KiB sectors | **3.33 s = 17.3 KiB/s** | `repos/apollo` `90c8b7b`, driven by `scripts/soc_run.py`, 2026-08-06 |
-| page program, sector erase, block erase on the part | — | **never measured** | #93 — every figure above is a read |
+| page program, sector erase, block erase on the part | — | **never measured** | [#93](https://github.com/awtoau/cynthion-workspace/issues/93) — every figure above is a read |
 
 Three conditions worth attaching rather than assuming:
 
@@ -176,7 +176,7 @@ For that exact 58,940-byte image, from §9.6 typicals:
 **2.8 seconds of that is USB round trips**, and SCK does not appear anywhere in
 the arithmetic. Removing it needs the page loop to run on the MCU — host ships
 bulk, the SAMD11 paces the flash at SPI speed — which is a firmware command that
-does not exist, on a part at 94.4% of its flash budget. **#100** tracks it.
+does not exist, on a part at 94.4% of its flash budget. **[#100](https://github.com/awtoau/cynthion-workspace/issues/100)** tracks it.
 
 *(A note on provenance: `repos/apollo` `90c8b7b` and `scripts/soc_run.py:483`
 give the program share as ~0.16 s. That uses `tPP` = 0.7 ms from the
@@ -189,7 +189,7 @@ Ranked, with what each is worth:
 | rank | option | worth | effort |
 |---|---|---|---|
 | ✔ | `FLASH_MODE = "quad"` | **2.70×** on a 16 KiB random walk | done in `03482f4`, for **−261 LUTs** and no block RAM |
-| 1 | **page loop on the SAMD11** (#100) | 3.33 s → ~0.6 s, **5.5×**, on every firmware iteration | a firmware command that does not exist, on a part at 94.4% of its budget |
+| 1 | **page loop on the SAMD11** ([#100](https://github.com/awtoau/cynthion-workspace/issues/100)) | 3.33 s → ~0.6 s, **5.5×**, on every firmware iteration | a firmware command that does not exist, on a part at 94.4% of its budget |
 | 2 | replace luna_soc's PHY — SCK is capped at `domain`/2 | **2×** on reads | the only read option not gated on the CPU clock |
 | 3 | raise the flash domain | 2× at 120 MHz | `fast` must divide the same VCO as `sync`; the SoC's median Fmax is 75.0 MHz and the flash PHY's own is 111–125 |
 | 4 | 128-byte I-cache line | +7.2% | a parameter, plus block RAM already at 75% |
@@ -211,9 +211,9 @@ has never been instrumented.
 | bulk read, 1-lane `0x0B` | 16.6 MB/s @ 133 MHz | 15.6 MB/s | 17.95 MB/s @ SCK 144 | >100% | superseded by quad |
 | bulk read, 1-lane `0x03` | 6.25 MB/s @ 50 MHz | 6.25 MB/s in spec | 17.96 MB/s @ SCK 144 | 287% | the opcode's rating is not a wall on this board |
 | CPU cache-line refill | 62.3 MB/s @ SCK 144 | 12.8 MB/s @ SCK 30 (140-clock model) | 11.27 MB/s equivalent @ SCK 36 | — | continuous read, then the domain clock |
-| page program, on the part | **625 KiB/s** (`tPP` 0.4 ms typ) | 625 KiB/s — the chip binds, the board does not | **never measured** (#93) | — | nothing on the board affects it |
-| sector erase, on the part | 88.9 KiB/s (`tSE` 45 ms typ) | 88.9 KiB/s | **never measured** (#93) | — | pick the largest erase unit that fits |
-| **host → flash programming** | ~109 KiB/s for this image, chip-bound | ~109 KiB/s — transport is the only variable | **17.3 KiB/s** (58,940 B / 3.33 s) | **16%** | **the page loop on the SAMD11 (#100)** |
+| page program, on the part | **625 KiB/s** (`tPP` 0.4 ms typ) | 625 KiB/s — the chip binds, the board does not | **never measured** ([#93](https://github.com/awtoau/cynthion-workspace/issues/93)) | — | nothing on the board affects it |
+| sector erase, on the part | 88.9 KiB/s (`tSE` 45 ms typ) | 88.9 KiB/s | **never measured** ([#93](https://github.com/awtoau/cynthion-workspace/issues/93)) | — | pick the largest erase unit that fits |
+| **host → flash programming** | ~109 KiB/s for this image, chip-bound | ~109 KiB/s — transport is the only variable | **17.3 KiB/s** (58,940 B / 3.33 s) | **16%** | **the page loop on the SAMD11 ([#100](https://github.com/awtoau/cynthion-workspace/issues/100))** |
 
 ## Identification, read from the part
 
@@ -454,7 +454,7 @@ shift register is shorter. Nothing was spent to get 2.7×.
 line; the 16 KiB random walk, which misses on essentially every access, moved
 2.70×. The gap is the part of those 956 cycles that was never flash: ~14
 instructions of xorshift and loop per access, and a fetch path with no branch
-predictor (#140) charging four cycles an instruction. Flash stopped being the
+predictor ([#140](https://github.com/awtoau/cynthion-workspace/issues/140)) charging four cycles an instruction. Flash stopped being the
 whole cost, so it could not deliver the whole ratio.
 
 **2 KiB random is the control.** It fits the 4 KiB D-cache, so it never refills
@@ -476,7 +476,7 @@ those two are already plain constants a register could hold.
 
 ## Not measured
 
-**Write and erase timing.** Everything above is reads (#93).
+**Write and erase timing.** Everything above is reads ([#93](https://github.com/awtoau/cynthion-workspace/issues/93)).
 
 **Anything above 144 MHz SCK.** The instrument runs out before the flash does.
 Reaching further means either lifting the test design's fmax past 149 MHz — the

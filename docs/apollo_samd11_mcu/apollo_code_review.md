@@ -48,7 +48,7 @@ Apollo is the ARM-based debug controller on Cynthion. This review covers three a
 
 ## 2. Race Conditions
 
-There are none. Checked against the firmware in #61: it is bare-metal, so only an
+There are none. Checked against the firmware in [#61](https://github.com/awtoau/cynthion-workspace/issues/61): it is bare-metal, so only an
 ISR can preempt, and the three this review reported were in code that does not
 exist. What can preempt what is in
 [`../chips/samd11-apollo.md`](../chips/samd11-apollo.md).

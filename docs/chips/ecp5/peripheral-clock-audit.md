@@ -13,7 +13,7 @@ safe under this one:
 3. **`usb` has no reset.** `ResetSignal("usb")` is tied to 0 — the oscillator
    runs before any PLL is asked for anything, so there is nothing to gate on.
 
-This is the peripheral-by-peripheral review issue #229 asked for. Twenty-four
+This is the peripheral-by-peripheral review issue [#229](https://github.com/awtoau/cynthion-workspace/issues/229) asked for. Twenty-four
 modules and boundaries, nine findings. A module that turns out to be sound is
 recorded with the reason, because the point of the exercise is that none of them
 had been looked at since the topology changed.
@@ -380,7 +380,7 @@ meet timing" half is still only visible in the build log.
 
 ## What is sound, and why
 
-Recorded because "we looked and it was fine" is the result issue #229 asked for.
+Recorded because "we looked and it was fine" is the result issue [#229](https://github.com/awtoau/cynthion-workspace/issues/229) asked for.
 
 **`stream_buffer.py`** is the correct pattern and the reason this audit has a
 reference point. `i_domain`/`o_domain` are explicit at every instantiation site,

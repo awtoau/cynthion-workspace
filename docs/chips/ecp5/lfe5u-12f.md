@@ -336,7 +336,7 @@ The generator is `SocClocks` in `gateware/soc/clocks.py`. It replaced
 that in turn replaced upstream's `LunaECP5DomainGenerator` and its hardcoded
 60/120/240 MHz taps. A `usb` clock 3.7% out does not enumerate the ULPI PHY,
 which is what made the coupling expensive. See
-[`../upstream-boundary.md`](../../upstream-boundary.md) and #111.
+[`../upstream-boundary.md`](../../upstream-boundary.md) and [#111](https://github.com/awtoau/cynthion-workspace/issues/111).
 
 **`sync` is now free, within the `fPFD` caveat in the Performance section above.**
 

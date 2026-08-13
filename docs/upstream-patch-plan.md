@@ -98,7 +98,7 @@ That document was the starting point. Corrections found:
 
 | Commit | What it does | Class | Test today |
 |---|---|---|---|
-| `8054f62` | `FlashBridgeConnection` becomes a context manager instead of relying on `__del__`. Handing the port back is a USB transfer, so doing it in a destructor means libusb I/O at GC or interpreter-shutdown time when the context may be gone — that segfaults instead of reporting, and leaves the port with the FPGA so Apollo appears to have vanished. Upstream issue **#75**. | **GSG** — clear bug, clear fix | **Yes,** `test_4_flash_fast_is_not_broken`, gated behind `APOLLO_TEST_ALLOW_FLASH_FAST=1` |
+| `8054f62` | `FlashBridgeConnection` becomes a context manager instead of relying on `__del__`. Handing the port back is a USB transfer, so doing it in a destructor means libusb I/O at GC or interpreter-shutdown time when the context may be gone — that segfaults instead of reporting, and leaves the port with the FPGA so Apollo appears to have vanished. Upstream issue **[#75](https://github.com/awtoau/cynthion-workspace/issues/75)**. | **GSG** — clear bug, clear fix | **Yes,** `test_4_flash_fast_is_not_broken`, gated behind `APOLLO_TEST_ALLOW_FLASH_FAST=1` |
 | `6f16848` | `apollo install-udev`. The shipped rules cover `1209:000a` and `000e` but not `000f`, which is what the flash bridge enumerates as, so `flash-fast` failed with EACCES for non-root users and left the USB stack wedged. | **GSG** (the missing rule certainly is; the *command* is a design choice upstream may want differently) | No automated test — it writes to `/etc/udev/rules.d` |
 | `12e6d97` | `apollo exit-dfu`. `boot-to-dfu` had no inverse; a board in the bootloader could only be recovered by physically unplugging it. Uses a zero-length `DFU_DNLOAD` (**not** `DFU_DETACH` — the bootloader has no detach case) and **must** claim the interface or it stalls `LIBUSB_ERROR_PIPE`. Python only. | **GSG** — completes an existing command pair | **No test.** Notable given it is the doc's flagship "ready" item |
 | `e034daa` | ECP5 SRAM configuration 1.53× faster. Host: plumb `ignore_response` through the bitstream burst — the burst is write-only but was doing a `GET_IN_BUFFER` per chunk, 739 ms of 2575 ms. Firmware: pipeline SERCOM SPI, queueing the next byte on DRE instead of waiting for RXC. +28 B flash. | **GSG** — real speedup, no behaviour change | **No dedicated test.** Commit cites 6 consecutive runs with DONE set and no error bits. Needs a correctness test, not just a timing one |
@@ -119,7 +119,7 @@ fixes, not proposed.
 - **Sideband / FPGA_ADV command link** — `4a46b24`, `a7b8283`, `b48d4bf`,
   `ca32e5b`, `9ec249a`, `6cdc7c3`, `0b1529a`, and the feature hunks of
   `4bf7691`. A whole new protocol between the MCU and the FPGA over the FPGA_ADV
-  pin. This is a design proposal, not a fix; upstream issue #68 territory.
+  pin. This is a design proposal, not a fix; upstream issue [#68](https://github.com/awtoau/cynthion-workspace/issues/68) territory.
 - **Quad-SPI flash investigation** — `9b8ffb8`, `2418362`, `f42433d`, `1e90e5c`,
   `ace1fd8`, `c3c1911`, `4ead7df`, `42bffe6`, `7a8e304`. Gateware for reading
   the config flash faster, via Glasgow's controller. Exploratory.
@@ -233,7 +233,7 @@ series is order-independent against it; cynthion is a separate repo.
 | **A4** | `39a2213` JTAG/UART pin lock | First behaviour change. Introduces `apollo_mode`, which A5 and A6 both build on. Has the best test coverage in the set, so it is the right place to start exercising hardware |
 | **A5** | `df4a93b` boot-to-DFU vendor command | Depends on A4 only for `vendor.c` context. Before A6 because A6's gating allow-list explicitly names `BOOT_TO_DFU` as an escape hatch — reversing them means A6 references a request that does not exist yet |
 | **A6** | `6cc219e` vendor-request gating | Extends A4's lock with escalation and A5's request set. Semantically last of the mode work |
-| **A7** | `da564f8` ISR/main-loop races | Independent of A1–A6 (touches `fpga.c`, `fpga.h`, `fpga_adv.c`). Placed here because it is order-independent and because its own commit message flags that if upstream #68 lands, this hunk goes away — so it should be the easiest patch to drop |
+| **A7** | `da564f8` ISR/main-loop races | Independent of A1–A6 (touches `fpga.c`, `fpga.h`, `fpga_adv.c`). Placed here because it is order-independent and because its own commit message flags that if upstream [#68](https://github.com/awtoau/cynthion-workspace/issues/68) lands, this hunk goes away — so it should be the easiest patch to drop |
 | **A8** | `01ae228` reclaim 276 B | **Must be last.** Conflicts in any earlier position (proven above). A cleanup pass over regions A4–A6 restructure |
 
 **Series B — Apollo host-side Python (order-independent)**
@@ -245,7 +245,7 @@ same subject, so they read better together and in this order.
 | # | Patch | Why here |
 |---|---|---|
 | **B1** | `6f16848` `install-udev` (the missing `1209:000f` rule) | The rule is the precondition for testing B2 as a non-root user |
-| **B2** | `8054f62` flash-bridge port handback (#75) | The fix proper. Pairs with B1 as the two halves of #75 |
+| **B2** | `8054f62` flash-bridge port handback ([#75](https://github.com/awtoau/cynthion-workspace/issues/75)) | The fix proper. Pairs with B1 as the two halves of [#75](https://github.com/awtoau/cynthion-workspace/issues/75) |
 | **B3** | `12e6d97` `exit-dfu` | Independent. Touches `__init__.py` and `cli.py`. Naturally follows A5 conceptually (it is the inverse of boot-to-DFU) but has no code dependency |
 | **B4** | `e034daa` configure speed-up | **Straddles.** Its `spi.c` hunk is firmware (+28 B) and its `ecp5.py` hunk is host. Either submit as one cross-cutting patch after both series, or split. Recommend submitting last, whole, since the two halves are jointly measured |
 
@@ -301,7 +301,7 @@ exists it is named; where it does not, what it would need to do.
 | **A7** ISR races | **This is the hard one and no adequate test exists.** A race lost 1-in-N times passes any single-shot test. `fpga_online`: needs the compiler-caching behaviour observed, e.g. assert the flag is `volatile` in the disassembly, since a runtime test cannot reliably provoke it. `edge_counter`: drive advertisement edges at a known rate and assert the counted total matches within tolerance over many windows — an under-count is the symptom. A "handoff still works" check does not test either bug | **No.** Weakest coverage in the set relative to bug severity |
 | **A8** ROM savings | Behaviour-preserving by construction, so the test is a size assertion plus proof nothing was discarded. **`--gc-sections` makes the headline number untrustworthy**: an uncalled function looks like a saving while being absent. Assert the expected symbols are present (or verifiably inlined, not dropped) — under LTO a missing symbol may mean inlined, so confirm against disassembly. Then LED, board-rev detect and JTAG paths still function | **No** — needs a symbol-presence assertion, not just a size delta |
 | **B1** udev | Rule file contains `1209:000f`; `--print-only` output is parseable; refuses to install without root; errors cleanly on non-Linux. Then the real test: `flash-fast` succeeds **as a non-root user**, which is the actual bug | No automated test |
-| **B2** #75 handback | Two failure modes, both must be provoked deliberately: (a) transfer fails mid-flash → assert the port went back to Apollo *before* the exception propagated, and Apollo is still on the bus; (b) `close()` after a failed `__init__` touches no USB. Plus no segfault, which means asserting the interpreter exit status, not just the absence of a traceback | **Yes** — `test_4_flash_fast_is_not_broken`, `APOLLO_TEST_ALLOW_FLASH_FAST=1` |
+| **B2** [#75](https://github.com/awtoau/cynthion-workspace/issues/75) handback | Two failure modes, both must be provoked deliberately: (a) transfer fails mid-flash → assert the port went back to Apollo *before* the exception propagated, and Apollo is still on the bus; (b) `close()` after a failed `__init__` touches no USB. Plus no segfault, which means asserting the interpreter exit status, not just the absence of a traceback | **Yes** — `test_4_flash_fast_is_not_broken`, `APOLLO_TEST_ALLOW_FLASH_FAST=1` |
 | **B3** `exit-dfu` | Full round trip: `boot-to-dfu`, confirm the bootloader is present, `exit-dfu`, confirm the *application* is running again with no replug. Must also assert the two things that cost debugging cycles: that `DFU_DETACH` is refused (so nobody "simplifies" it back) and that an unclaimed interface stalls `LIBUSB_ERROR_PIPE` | **No.** Flagged as "ready" in the old doc with no test at all |
 | **B4** configure speed | Correctness first, speed second: after `configure`, the ECP5 status register reads DONE with no error bits, over enough consecutive runs to catch the dropped-byte corruption the pipelining nearly introduced (its earlier racy version silently corrupted TDO and produced an all-zero status register — so **assert the status register is non-zero and correct**, never just "no exception"). Then assert the speedup as a regression guard | **No dedicated test** |
 | **C1–C3** | Each must fail when its target patch is reverted. A test that passes both with and without the fix is not evidence | Self-testing by construction |
@@ -316,9 +316,9 @@ Less mature than the apollo set: more scaffolding, fewer clean fixes.
 
 | Commit | What it does | Class | Test today |
 |---|---|---|---|
-| `c0144f4` | Fixes a wrong function name in a `write_endpoint` log message (upstream **#28**) | **GSG** — trivial, obviously correct | None needed beyond a build |
+| `c0144f4` | Fixes a wrong function name in a `write_endpoint` log message (upstream **[#28](https://github.com/awtoau/cynthion-workspace/issues/28)**) | **GSG** — trivial, obviously correct | None needed beyond a build |
 | `56a64c2` | Removes a duplicate `ep_iso_in` from the facedancer module hierarchy | **GSG** — an actual elaboration bug | None. Wants a gateware elaboration test |
-| `fc81a06` | Makes `make clippy` pass cleanly (**#35**) | **GSG** — lint hygiene | `make clippy` is the test |
+| `fc81a06` | Makes `make clippy` pass cleanly (**[#35](https://github.com/awtoau/cynthion-workspace/issues/35)**) | **GSG** — lint hygiene | `make clippy` is the test |
 | `7378797` | Event queue overflow drops the event instead of spinning | **GSG** — a spin on overflow is a hang | None. Wants a queue-saturation test |
 | `6fa3e0a` | Clamps endpoint `max_packet_size` to `EP_MAX_PACKET_SIZE` | **GSG** — bounds check | None |
 | `edf35c9` | udev rule for the Apollo flash bridge (`1209:000f`) | **GSG** — same missing rule as apollo `6f16848`; **submit these two together or neither**, they are one bug across two repos | None |
@@ -380,7 +380,7 @@ upstream would export a workaround for a bug fixed elsewhere.
 **Ours by intent — investigation, not fixes**
 - The entire sideband/FPGA_ADV protocol (apollo Group D + cynthion `ef9addb`,
   `7fa0c6a`). A design proposal for a link that does not exist upstream. It
-  competes with upstream's own #68 direction, so it is a discussion to open, not
+  competes with upstream's own [#68](https://github.com/awtoau/cynthion-workspace/issues/68) direction, so it is a discussion to open, not
   a patch to send.
 - Quad-SPI flash work, PLL/`ecppll` work, the JTAG benchmark (`74db0e6`). Tools
   and experiments.
@@ -426,7 +426,7 @@ a readiness one**
 4. **A4 → A5 → A6** (mode work) — strictly this order.
 5. **A7** (races) — once it has a test that can actually fail.
 6. **A8** (ROM cleanup) — last, it conflicts anywhere else.
-7. **B1 + B2** together (#75, both halves), then **B3**, then **B4**.
+7. **B1 + B2** together ([#75](https://github.com/awtoau/cynthion-workspace/issues/75), both halves), then **B3**, then **B4**.
 8. **Cynthion**: `c0144f4`, `fc81a06`, `56a64c2`, `7378797`, `6fa3e0a`, plus
    `edf35c9` paired with apollo B1. After resolving `53d3ea4`.
 

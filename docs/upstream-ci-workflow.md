@@ -9,7 +9,7 @@ there is no reason to learn about a failure from a maintainer when the same
 check runs here in seconds.
 
 Related: `docs/upstream-patch-process.md` (the rules a patch must satisfy),
-`docs/upstream-patch-plan.md` (the ordering), issue #102 (the parked plan).
+`docs/upstream-patch-plan.md` (the ordering), issue [#102](https://github.com/awtoau/cynthion-workspace/issues/102) (the parked plan).
 
 ## Usage
 
@@ -41,21 +41,21 @@ Two things follow, and both matter more than the table:
 
 **The GitHub-side signal is weak.** LUNA's entire Actions gate is 93 unit tests
 that run in 2.2 seconds. Anything a patch breaks that is not covered by those 93
-tests will go green. Measured, not assumed: PR #301 fixes an inverted fanout
+tests will go green. Measured, not assumed: PR [#301](https://github.com/awtoau/cynthion-workspace/issues/301) fixes an inverted fanout
 direction in `HandshakeExchangeInterface`, and the suite passes identically with
 and without the fix (93 tests, OK, both). Upstream CI would not have caught the
 bug it fixes.
 
 **The signal that would matter is unavailable.** LUNA's Jenkins
 hardware-in-the-loop job is the only check that exercises real hardware, and it
-is `ERROR` on every open PR (#301, #303, #304) with logs behind
+is `ERROR` on every open PR ([#301](https://github.com/awtoau/cynthion-workspace/issues/301), [#303](https://github.com/awtoau/cynthion-workspace/issues/303), [#304](https://github.com/awtoau/cynthion-workspace/issues/304)) with logs behind
 `jenkins.greatscottgadgets.com`. We cannot run it and cannot read it.
 
 So upstream CI is worth passing, but it is not worth *submitting for*. Our own
 hardware tests remain the real gate — see `docs/upstream-patch-process.md`.
 
 **Fork PRs from first-time contributors do not run Actions until a maintainer
-approves them.** PR #301 has been open since 2026-03-13 with zero comments, zero
+approves them.** PR [#301](https://github.com/awtoau/cynthion-workspace/issues/301) has been open since 2026-03-13 with zero comments, zero
 reviews, and no Actions run at all. PRs from known collaborators (miek,
 martinling, mndza) run normally. A first submission sits in that queue.
 
@@ -84,5 +84,5 @@ compiler via `carlosperate/arm-none-eabi-gcc-action`. **Always run the control**
 one was identified.
 
 Note `apollo` upstream main builds cynthion at 13760 B of 14336 B (96.0%),
-consistent with the 96.04% recorded in issue #102. The flash budget is the
+consistent with the 96.04% recorded in issue [#102](https://github.com/awtoau/cynthion-workspace/issues/102). The flash budget is the
 binding constraint on any firmware patch series.

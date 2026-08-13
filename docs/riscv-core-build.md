@@ -35,7 +35,7 @@ reads.
 `scripts/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
 can be regenerated without sbt.
 
-### Concurrency (#306)
+### Concurrency ([#306](https://github.com/awtoau/cynthion-workspace/issues/306))
 
 * One generator at a time. `cpu.py`'s lock covers the sbt run **and** the copy,
   so a caller passing `output=` cannot read a half-written file.
@@ -46,7 +46,7 @@ can be regenerated without sbt.
 * `VEXII_ROOT` moves the sources and the lock together.
 * Not caching the netlist is deliberate here: every build regenerates, and a
   build that skipped it once picked up another configuration's core and left the
-  board mute with every check passing (#306).
+  board mute with every check passing ([#306](https://github.com/awtoau/cynthion-workspace/issues/306)).
 
 ## The flags, and where they live
 
@@ -92,7 +92,7 @@ event id to the matching `mhpmevent` CSR (`0x323..0x326`), read back from
 zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
 `--performance-counters` generates a **byte-identical** core to
 `--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
-FSM are all still there. Only the count is free. #471.
+FSM are all still there. Only the count is free. [#471](https://github.com/awtoau/cynthion-workspace/issues/471).
 
 **Why this file exists.** Chasing a HyperRAM performance question, five gateware
 probes were built and five readings of the source produced five wrong
@@ -113,12 +113,12 @@ theory outright. **Ask the CPU before instrumenting the fabric.**
   and 7,828 the SoC has, counted off the two netlists.
 * **Timing: not what one build said.** "Adding the counters stopped the design
   closing at `SYNC_MHZ = 72`" was one build against one build, and the placement
-  distribution at fixed occupancy is 9 MHz wide (#467). Measured over 40 seeds a
+  distribution at fixed occupancy is 9 MHz wide ([#467](https://github.com/awtoau/cynthion-workspace/issues/467)). Measured over 40 seeds a
   side, **every** counter configuration is slower than the shipping four:
   `pc8` -2.48 MHz, `pc0` -2.99, `pc2` -2.96, and removing the plugin outright
   -6.52 [-7.77, -5.27]. The smaller design is the slower one, and the counters
-  are not what is holding the clock down. Full matrix in #481.
-* The constraint a build is given does not change what nextpnr produces (#478),
+  are not what is holding the clock down. Full matrix in [#481](https://github.com/awtoau/cynthion-workspace/issues/481).
+* The constraint a build is given does not change what nextpnr produces ([#478](https://github.com/awtoau/cynthion-workspace/issues/478)),
   so `SYNC_MHZ` cannot be used to buy or lose margin either.
 * **Nothing else.** The PAC, the linker scripts and the firmware are unaffected
   unless a `--region` or an address moves, and `./dev.py run` regenerates the

@@ -19,7 +19,7 @@ not been checked. Every assertion is traceable to source in `repos/`,
 |---|---|---|---|
 | **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die** | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
 | **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, holds the bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** (#90) | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 
 **Making either memory faster** — every remaining option with its arithmetic, the
 published ECP5 scoreboard, and what is ruled out on these exact parts:
@@ -128,7 +128,7 @@ cannot be distinguished on one bus, so the board gives them separate pin-sets.
 **"Just use one bus" is not available in hardware** — the mux is forced by the
 parts, not chosen by the design. That is what motivates a single I2C controller
 with a 2-bit bus select rather than three replicated controllers
-([`gateware-architecture-plan.md`](gateware-architecture-plan.md), #98).
+([`gateware-architecture-plan.md`](gateware-architecture-plan.md), [#98](https://github.com/awtoau/cynthion-workspace/issues/98)).
 
 `scl` is declared `dir="o"` on all three buses — push-pull, no readback — so
 **clock stretching is impossible on this board**. Anything that needs it will not
@@ -161,7 +161,7 @@ convention: `uart_configure_pinmux()` refuses while `apollo_mode_jtag_active()`,
 the CDC line-coding, line-state and rx-wanted callbacks are gated on the same flag,
 because a host opening the console mid-flash would otherwise corrupt an in-flight
 configure. **PA08/PA09 are not free, so the UART cannot be relocated on the d11**
-(#65/#66).
+([#65](https://github.com/awtoau/cynthion-workspace/issues/65)/#66).
 
 ### FPGA side: R14/T14 are the same wires as JTAG TDI/TMS
 
@@ -222,7 +222,7 @@ gateware drives active-high.
 **The colour order is the schematic's, not the platform's.** `LEDResources` is
 positional and carries no colour, so nothing in the gateware or firmware could
 contradict a wrong name — and a reversed order survived in three places until
-someone watched the board and saw the wrong lamp blinking (#415). The source is
+someone watched the board and saw the wrong lamp blinking ([#415](https://github.com/awtoau/cynthion-workspace/issues/415)). The source is
 `repos/cynthion-hardware/indicators_buttons.kicad_sch`, where each diode carries
 its colour in its `Value` field.
 
@@ -259,7 +259,7 @@ left over.
 **No `ever_fetched` or `ever_io` lamp.** Both latch within microseconds of any
 boot and never distinguish anything again, so the board would carry two
 permanently-lit lamps — the dead-instrument problem this section exists to
-avoid (#411).
+avoid ([#411](https://github.com/awtoau/cynthion-workspace/issues/411)).
 
 **A latched lamp answers "has this ever happened".** A bus error is one cycle
 long and a human glances at the board at an arbitrary moment: *a fault that
@@ -279,7 +279,7 @@ The heartbeat divider must be derived from the clock, not hardcoded. Getting it
 wrong here gives a heartbeat at the wrong rate, which is harmless; the same
 mistake in `SidebandDebug` gives a **dead** link
 ([`chips/cynone-sideband.md`](chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
-`top.py` derives both from `SYNC_MHZ`. See #111.
+`top.py` derives both from `SYNC_MHZ`. See [#111](https://github.com/awtoau/cynthion-workspace/issues/111).
 
 Only the **CONTROL** port is muxed. AUX and TARGET are hardwired to their PHYs,
 which is why `default_usb_connection = "aux_phy"` — gateware that wants a host link
@@ -449,7 +449,7 @@ pins. Passthrough keeps working through either.
 ### The signal pins have their own protection, and it is a different part
 
 Everything above guards **VBUS**. The CC and SBU pins are guarded separately, by
-a part this document did not name until now (#156).
+a part this document did not name until now ([#156](https://github.com/awtoau/cynthion-workspace/issues/156)).
 
 `DPO2036DBB-7`, described in `type_c.kicad_sch` as *"4-CH OVER-VOLTAGE PROTECTION
 FOR CC/SBU PINS ON USB TYPE-C"*. There are **two**, one per Type-C port —
@@ -469,7 +469,7 @@ can short VBUS onto CC — which would take out the FUSB302B, and through SBU wo
 drive straight into FPGA I/O. That is the failure this part exists to stop, and it
 is not visible anywhere else in this tree.
 
-**#97 is a free datapoint on it.** All four SBU pins passed drive-and-readback,
+**[#97](https://github.com/awtoau/cynthion-workspace/issues/97) is a free datapoint on it.** All four SBU pins passed drive-and-readback,
 and those lines run through the DPO2036 — so that result is also evidence the part
 is not shorting them.
 

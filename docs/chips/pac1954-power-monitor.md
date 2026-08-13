@@ -496,4 +496,4 @@ Output goes to the console and to `tmp/power_probe.log`.
   Not equivalently, though: the accumulator integrates *every* conversion, so it
   is the only thing here that can see an event between two 50 ms polls.
 - The JTAG path requires an Apollo debug session, so it is unsuitable for
-  continuous monitoring. That is what #84 addresses; the CPU path is another route.
+  continuous monitoring. That is what [#84](https://github.com/awtoau/cynthion-workspace/issues/84) addresses; the CPU path is another route.

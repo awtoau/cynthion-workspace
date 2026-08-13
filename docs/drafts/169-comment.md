@@ -16,7 +16,7 @@
   obsolete.**
 - `scripts/submodule_patch_audit.py` exists; all four submodules report
   `safe -- every commit is on a remote`.
-- #190 landed: `amaranth-soc` / `amaranth-stdio` are declared, and the new
+- [#190](https://github.com/awtoau/cynthion-workspace/issues/190) landed: `amaranth-soc` / `amaranth-stdio` are declared, and the new
   `amaranthsoc` check fails if the import resolves inside luna-soc's vendored
   tree. That covers half of the cynthion-side complaint here — the shadowing is
   now a red check rather than a silent fallback. It does not remove
@@ -53,7 +53,7 @@ vendoring it as-is does not detach it.
 
 **`glasgow` is an undeclared dependency**, reached through
 `apollo_fpga.gateware.qspi_flash` and resolving to a checkout outside the
-workspace. Same shape as #190. Filing separately.
+workspace. Same shape as [#190](https://github.com/awtoau/cynthion-workspace/issues/190). Filing separately.
 
 ### Proposed split
 
@@ -83,6 +83,6 @@ here: `rust` and `apollo` build upstream's firmware and cannot be repointed, so
 either the submodules stay for them or this repo stops gating upstream firmware
 and leaves that to `upstream_ci.py`.
 
-One caveat on that: **#199 says the `apollo` check is currently measuring the
+One caveat on that: **[#199](https://github.com/awtoau/cynthion-workspace/issues/199) says the `apollo` check is currently measuring the
 budget wrong** (`.relocate` missed; both ceilings already breached). Nothing here
-should propose weakening the `apollo` check until #199 closes.
+should propose weakening the `apollo` check until [#199](https://github.com/awtoau/cynthion-workspace/issues/199) closes.

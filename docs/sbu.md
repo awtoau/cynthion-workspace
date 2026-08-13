@@ -28,14 +28,14 @@ needs no new `platform.request`.
 **The FPGA is their only consumer.** The FUSB302B has no SBU pins; its pinout is
 `CC1`, `CC2`, `VBUS`, `VDD`, `INT_N`, `SCL`, `SDA`, `VCONN`, `GND`.
 
-**Proven alive** under #97 — all four passed drive-and-readback. That is DC
+**Proven alive** under [#97](https://github.com/awtoau/cynthion-workspace/issues/97) — all four passed drive-and-readback. That is DC
 continuity, not bandwidth.
 
 **Two things to settle while building, neither a blocker:** whether the DPO2036
 passes a signal cleanly enough for a fast link, and whether the two ports are
 wired with opposite polarity — `TARGET_C.SBU1S` reaches `U13` pin 10 while
 `AUX_TYPE_C.SBU1S` reaches `U14` pin **9**, whose symbol name is `SBU2S`.
-#517 row 9.
+[#517](https://github.com/awtoau/cynthion-workspace/issues/517) row 9.
 
 Orientation has to be handled anyway: SBU1/SBU2 swap when the cable is flipped,
 like CC1/CC2, so a receiver reads orientation from the FUSB302B and swaps. A
@@ -134,14 +134,14 @@ a register and sharing the pads and the tristate logic:
   Every transition is captured with the levels after it and how long the previous
   levels held, so a sideband protocol with no engine here is readable rather than
   guessable. The FIFO reports overflow instead of dropping quietly.
-- **SWD is the host side** — Cynthion generates `SWCLK`, per #518. The engine is
+- **SWD is the host side** — Cynthion generates `SWCLK`, per [#518](https://github.com/awtoau/cynthion-workspace/issues/518). The engine is
   [`peripherals/swd.py`](../gateware/soc/peripherals/swd.py), built from ARM
   IHI 0074E chapter B4; `sources/README.md` has the document.
 - **Speed is an index into a fixed table**, the shape real probes ship: OpenOCD's
   `stlink_khz_to_speed_map_swd[]` is twelve `{kHz, divisor}` pairs and an ST-Link
   V2 tops out at 4 MHz. Index 0 here is **52.5 MHz**.
 - **`mode.swap` is the one correction** for both reasons the pair arrives
-  reversed — a flipped cable, and #517 row 9.
+  reversed — a flipped cable, and [#517](https://github.com/awtoau/cynthion-workspace/issues/517) row 9.
 
 **The clock.** SWD runs in `swd`, a 105 MHz domain that is CLKOS2 of the PLL
 already making `sync`: `CLKOS2_DIV = 4` of the 420 MHz VCO, exactly, so nothing
@@ -165,5 +165,5 @@ reported.
 
 **What a board still has to settle:** that the 105 MHz domain closes timing, and
 that the round trip through two DPO2036 switches and a cable fits the 9.5 ns half
-period at index 0. #97 proves DC continuity and nothing about a fast edge; a
+period at index 0. [#97](https://github.com/awtoau/cynthion-workspace/issues/97) proves DC continuity and nothing about a fast edge; a
 slower speed index is the answer if it does not.

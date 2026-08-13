@@ -53,8 +53,8 @@ exercises it.
 | 11 | **USB3343** AUX | link event | edge | no |
 | 12 | **USB3343** CONTROL | link event | edge | no |
 | 13 | — | USER button, ball **M14** | **edge**, rise | **yes** |
-| 14 | — | sideband byte, ball **T6** → **SAMD11** `U6` pin 8 | **edge** — `received_strobe` is one cycle | no — CSR count only (#509) |
-| 15 | — | SBU peripheral, TARGET — balls **A2**, **E4** | level | no — no peripheral ([`sbu.md`](sbu.md), #518) |
+| 14 | — | sideband byte, ball **T6** → **SAMD11** `U6` pin 8 | **edge** — `received_strobe` is one cycle | no — CSR count only ([#509](https://github.com/awtoau/cynthion-workspace/issues/509)) |
+| 15 | — | SBU peripheral, TARGET — balls **A2**, **E4** | level | no — no peripheral ([`sbu.md`](sbu.md), [#518](https://github.com/awtoau/cynthion-workspace/issues/518)) |
 | 16 | — | SBU peripheral, AUX — balls **H13**, **K14** | level | no — no peripheral |
 | 17 | — | PLL loss of lock | **edge**, fall on `locked` | **yes** |
 
@@ -99,7 +99,7 @@ So the rule is the peripheral's, not the pin's:
 * Conversion-complete is a **5 µs pulse that sets no status bit**
   (DS20006539B §5.16.1): nothing to read, nothing to clear, and only the edge
   says it happened.
-* So: edge, on the pad's falling edge. #514.
+* So: edge, on the pad's falling edge. [#514](https://github.com/awtoau/cynthion-workspace/issues/514).
 
 ## A data line is not an interrupt source
 

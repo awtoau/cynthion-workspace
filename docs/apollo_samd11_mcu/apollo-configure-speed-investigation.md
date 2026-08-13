@@ -30,7 +30,7 @@ title should not assert.
 (`awtoau/awto-apollo`), on a 14 KB / 4 KB part, with the ceilings never raised.
 Verified on hardware: IDCODE `0x21111043`, configure `rc=0`, `check.py` 6 passed.
 
-The flash and RAM percentages once quoted here were the pre-#199 figures, which
+The flash and RAM percentages once quoted here were the pre-[#199](https://github.com/awtoau/cynthion-workspace/issues/199) figures, which
 omitted `.relocate` and read as under both ceilings when both were over. Current
 numbers: `docs/chips/samd11-apollo.md` § Memory budget.
 
@@ -53,7 +53,7 @@ is 81.9 ms, so the transport still costs 3.9x what the bits do. Per-transaction 
 ~145 us against ~47 us of wire for a 64-byte packet.
 
 **The next lever is not the one this work assumed.** Dispatching SETUP from the USB
-interrupt was built and measured (`c8b9c1f`, unshipped -- **still open, see #100**; it
+interrupt was built and measured (`c8b9c1f`, unshipped -- **still open, see [#100](https://github.com/awtoau/cynthion-workspace/issues/100)**; it
 works and is faster, but stalls on a chunk-size change and is 246 bytes over budget) and
 is worth **7.8 ms -- 3.2% of the remaining gap**. That bounds the whole software-latency theory: even a perfect
 version of it leaves ~230 ms unexplained. What is left is the 64-byte control endpoint
@@ -1050,7 +1050,7 @@ rather than filed away because the audience for a configure-speed document is ex
 the audience tempted to propose an FPGA-side loader, and these are hard negatives with
 primary sources -- expensive to establish, cheap to re-propose.
 
-Tracked as **#108**.
+Tracked as **[#108](https://github.com/awtoau/cynthion-workspace/issues/108)**.
 
 ## 1. The ECP5 cannot reconfigure its own SRAM
 
@@ -1158,7 +1158,7 @@ enough that it spends most of its time waiting for data.
 The Apollo debug controller enumerates at **12 Mbps full-speed** with a 64-byte
 EP0 (`/sys/bus/usb/devices/.../speed` = 12; `CFG_TUD_ENDPOINT0_SIZE 64`).
 
-This is the single most important fact for issue #100, because the 388 Mbps
+This is the single most important fact for issue [#100](https://github.com/awtoau/cynthion-workspace/issues/100), because the 388 Mbps
 figure the issue reasons from is the throughput of the **FPGA's** USB PHY, on a
 different port and a different chip. The bitstream does not travel that path. It
 travels the SAMD11's full-speed link, whose raw ceiling is 1.5 MB/s.
@@ -1172,7 +1172,7 @@ full-speed wire**. That inefficiency is the opportunity.
 | SAMD11 ingest at measured 0.40 MB/s | 771 ms |
 | JTAG clocking alone at 1.40 us/byte | 427 ms |
 | 100% of full-speed wire | **203 ms** -- floor for *any* SAMD11 path |
-| issue #100's target | 6 ms -- **not reachable through this MCU** |
+| issue [#100](https://github.com/awtoau/cynthion-workspace/issues/100)'s target | 6 ms -- **not reachable through this MCU** |
 
 Note the end-to-end 2746 ms exceeds the 771 ms ingest figure, because the
 per-transfer fixed cost (204 us x 1191 chunks) and the `SCAN` transfers add on

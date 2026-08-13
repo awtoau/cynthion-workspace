@@ -21,9 +21,9 @@ against; the order of work is at the end.
   (below). Everything else a host might want to *set* is a driver operation and
   waits for [#303](https://github.com/awtoau/cynthion-workspace/issues/303).
 * **The first slice is read-only on purpose.** A reader duplicates no driver
-  semantics, so it needs none of #303's refactor to be correct. Writes do —
+  semantics, so it needs none of [#303](https://github.com/awtoau/cynthion-workspace/issues/303)'s refactor to be correct. Writes do —
   a binary front end that reimplemented `power::mv_to_limit_code` would
-  reintroduce the 2× scale bug of #270 independently.
+  reintroduce the 2× scale bug of [#270](https://github.com/awtoau/cynthion-workspace/issues/270) independently.
 
 ## Transport: console 0, in band, mode-switched
 
@@ -33,7 +33,7 @@ against; the order of work is at the end.
 | console 1 — the Apollo-facing UART | works unchanged (see Apollo, below), but 115200 and drops out under JTAG. A fallback, not the path |
 | a second CDC | LUNA's `USBSerialDevice` is single-function; a new descriptor set and endpoint pair. Worth doing *after* the format has a consumer |
 | USB bulk from the SoC | there is no USB device controller — `firmware/cynthion-soc/src/usb.rs:14-18` |
-| FPGA_ADV sideband | Apollo is master and the FPGA cannot initiate (#176). Fixed-length CRC-8 commands, no push path |
+| FPGA_ADV sideband | Apollo is master and the FPGA cannot initiate ([#176](https://github.com/awtoau/cynthion-workspace/issues/176)). Fixed-length CRC-8 commands, no push path |
 | JTAG | ER1's `JTAGStager` holds the CPU in reset (`gateware/soc/top.py:1456`); it cannot observe a running board |
 
 Two rules protect the one diagnostic path a person has:
@@ -271,13 +271,13 @@ reached from the host through vendor request `0xc3` (`vendor.c:388-435`).
 
 * **On the board today: zero.** Nothing here is implemented in firmware.
 * The CRC is free — already linked (`hyperram.rs:100`, used by `staging::load`).
-* The only measurement that exists is #250's prototype: **1,382 B `.text`, 372 B
+* The only measurement that exists is [#250](https://github.com/awtoau/cynthion-workspace/issues/250)'s prototype: **1,382 B `.text`, 372 B
   `.rodata`**, `riscv32imac-unknown-none-elf`, `opt-level = "z"`, `lto = true`,
   `codegen-units = 1`. It used different framing and a different CRC from this
   spec, so treat it as an order of magnitude, not a number for this design.
 * Alongside the text shell the cost is **additive**: `core::fmt`'s machinery is
   already in the image and shared. The size win is being able to *not build* the
-  shell, which needs the boundary first — #303's own conclusion.
+  shell, which needs the boundary first — [#303](https://github.com/awtoau/cynthion-workspace/issues/303)'s own conclusion.
 
 ## Known interactions
 
@@ -298,7 +298,7 @@ reached from the host through vendor request `0xc3` (`vendor.c:388-435`).
 1. Framing, `SESSION`/`CATALOGUE`/`DROP`, and the mode switch. **Done here on
    the host side**; the firmware half is next. Resync and versioning are the
    parts that are hard to change later.
-2. `POWER` — the panel #249 shows as synthetic, and the driver already returns
+2. `POWER` — the panel [#249](https://github.com/awtoau/cynthion-workspace/issues/249) shows as synthetic, and the driver already returns
    the record (`power::latest()`).
 3. Measure console 0's real device-to-host byte rate. `gateware/soc/top.py:1600`
    sets `serial.tx.last.eq(1)`, one USB IN transaction per byte — correct for a

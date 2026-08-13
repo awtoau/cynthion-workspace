@@ -8,7 +8,7 @@ The part itself: [w956a8.md](w956a8.md).
 What nineteen other controllers do, and the bounds ours is missing:
 [survey.md](survey.md).
 
-The work: #230.
+The work: [#230](https://github.com/awtoau/cynthion-workspace/issues/230).
 
 ## Shape
 
@@ -26,7 +26,7 @@ The work: #230.
 - CK must not derive from `sync`, or moving CK moves the CPU clock, console
   divisor and CLINT tick with it, and no two rungs are comparable.
 - `READCLKSEL` + phase is already a CSR: 16 settings in milliseconds.
-- CK and PLL phase joining it depends on `DCSC` and dynamic phase shift (#228).
+- CK and PLL phase joining it depends on `DCSC` and dynamic phase shift ([#228](https://github.com/awtoau/cynthion-workspace/issues/228)).
 
 ## Driving it: the CPU, from the console
 
@@ -108,7 +108,7 @@ merely to pass.
 > **SUPERSEDED for the first build.** Exclusive pins were chosen deliberately —
 > get a number out of a measurement-only bitstream first, then do the mux. The
 > requirement below stands as the target, and the failure chain it describes is
-> still what makes an unbootable bitstream expensive to debug. See #226.
+> still what makes an unbootable bitstream expensive to debug. See [#226](https://github.com/awtoau/cynthion-workspace/issues/226).
 
 **Hard requirement: adding the test engine must not remove a single thing the
 SoC has today.** Not the HyperRAM window, not BootRAM, not the staging path, not
@@ -152,7 +152,7 @@ part.
 
 - **256 bytes** — 128 16-bit words. Milliseconds to run.
 - **Four cells**, one CK, four values of an axis that is WIRED on this build —
-  capture phase on a DQS build, latency code on a non-DQS one (#343). Four
+  capture phase on a DQS build, latency code on a non-DQS one ([#343](https://github.com/awtoau/cynthion-workspace/issues/343)). Four
   repeats can only meet the criteria below by being marginal.
 - **Data derived from the address**, so a displacement is read off the dump
   rather than inferred. Byte at offset `i` encodes `i`.
@@ -222,25 +222,25 @@ Only once this behaves does the matrix mean anything.
 | Clocks measured, not declared | a dead PLL reports its intended rate from a constant |
 | BURSTDET settled | one harness wrong, or the two measure different things |
 | Known-good reference | **First one taken 2026-08-10**: non-DQS, CK 80, drive 3, phase 0, CR0 latency 2 and 6 pass on both fixed and variable, control fired 512/512. One run — see the repeatability caveat below. |
-| #204 | **cleared 2026-08-07** — `jtag_registers.py` is TCK-clocked, so no ratio applies; `jtck` closes at 295.68 MHz. The fault was luna's, not JTAG's. |
-| **#314** | **DQS edge clock ran on general fabric — closed 2026-08-10, and now checked on every build.** Fix was `CLKOS2` → `CLKOS` plus `a_BEL="X2/Y49/EHXPLL_LL"`; zero `ECLKBRIDGECS`, which sits downstream of the mux that rejected the source. Evidence is `arc: S1W2_ECLKI0 G_JLLCPLL0CLKOS` in `top.config` and zero `general routing will be used`. `soc_run.py` fails the build on either, via `soc_eclk_check.audit`. Results published before 7d88981 are still void. |
+| [#204](https://github.com/awtoau/cynthion-workspace/issues/204) | **cleared 2026-08-07** — `jtag_registers.py` is TCK-clocked, so no ratio applies; `jtck` closes at 295.68 MHz. The fault was luna's, not JTAG's. |
+| **[#314](https://github.com/awtoau/cynthion-workspace/issues/314)** | **DQS edge clock ran on general fabric — closed 2026-08-10, and now checked on every build.** Fix was `CLKOS2` → `CLKOS` plus `a_BEL="X2/Y49/EHXPLL_LL"`; zero `ECLKBRIDGECS`, which sits downstream of the mux that rejected the source. Evidence is `arc: S1W2_ECLKI0 G_JLLCPLL0CLKOS` in `top.config` and zero `general routing will be used`. `soc_run.py` fails the build on either, via `soc_eclk_check.audit`. Results published before 7d88981 are still void. |
 | **Repeatability** | The engine wedges on some reconfigures: one 128-cell sweep clean, the next producing nothing, same bitstream. **A result is not a reference until it reproduces.** |
-| #215 | non-DQS controller vendored, tCSHI + latency — done 2026-08-07 |
+| [#215](https://github.com/awtoau/cynthion-workspace/issues/215) | non-DQS controller vendored, tCSHI + latency — done 2026-08-07 |
 
 ## Open
 
-- Does PLL phase shift work through this flow (#228)? If yes, the phase axis
+- Does PLL phase shift work through this flow ([#228](https://github.com/awtoau/cynthion-workspace/issues/228))? If yes, the phase axis
   stops needing rebuilds.
 - Is a Wishbone crossing between `sync` and `hr` sound? They are one domain
   today, and two CDC bugs here have already presented as correct counters with
   dropped data.
-- Is the DQS one-word-late read a read-late or a write-early fault (#186)? A rig
+- Is the DQS one-word-late read a read-late or a write-early fault ([#186](https://github.com/awtoau/cynthion-workspace/issues/186))? A rig
   measuring a path with a known offset measures the offset. **The CA/latency
   parity explanation is refuted** (`57a9a99`): the data phase starts at edge
   `4 + 2 × L_ck`, which is a multiple of 4 at every legal fixed-latency code, so
-  DQS aligns. The fault is above the PHY and #186 is still open.
+  DQS aligns. The fault is above the PHY and [#186](https://github.com/awtoau/cynthion-workspace/issues/186) is still open.
 - `READ_DATA` is unbounded, so a run that drops one beat parks the controller
-  and the rig reports nothing (#316). Every cell below is measured through it.
+  and the rig reports nothing ([#316](https://github.com/awtoau/cynthion-workspace/issues/316)). Every cell below is measured through it.
   No implementation surveyed calibrates the read window, so the phase axis has
   no prior art to shortcut it — [survey.md](survey.md).
 
@@ -282,7 +282,7 @@ be patched and reconfigured with no resynthesis, the same trick
 
 So the axis costs ~1 s per setting, not ~90 s, and four attributes that were
 never in the matrix become affordable. Starting values and the open electrical
-questions: **#311**.
+questions: **[#311](https://github.com/awtoau/cynthion-workspace/issues/311)**.
 
 Full cross product on the DQS path is **8 × 8 × 2 × 8 × 2 × 4 = 16,384 cells**,
 so it is not run flat:
@@ -293,7 +293,7 @@ so it is not run flat:
   ECLK mux takes CLKOP/CLKOS only — 8 builds, then 8 × 2 × 8 × 2 = **512 cells**
   swept at runtime inside each.
 - Coarse-then-fine does not apply: the rungs are 20 MHz apart at the bottom of
-  the range and there is nothing between them to refine to (#313, #428).
+  the range and there is nothing between them to refine to ([#313](https://github.com/awtoau/cynthion-workspace/issues/313), [#428](https://github.com/awtoau/cynthion-workspace/issues/428)).
 - Drive and clock mode are likely separable — hold them while finding the CK/phase
   surface, then vary them at the edge. That is an assumption to test, not a given.
 
@@ -332,7 +332,7 @@ would have silently corrupted a matrix:
   configurations produced byte-identical results, because none was applied. An
   axis that does *nothing* is indistinguishable from an axis that does not
   *matter*, and the second reads as a finding.
-- **The DQS edge clock was on general fabric** (#314), announced by nextpnr as
+- **The DQS edge clock was on general fabric** ([#314](https://github.com/awtoau/cynthion-workspace/issues/314)), announced by nextpnr as
   `log_info` rather than a warning.
 
 Both were invisible in the output. That is the standing lesson: **almost every

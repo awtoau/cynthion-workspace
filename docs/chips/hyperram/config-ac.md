@@ -204,7 +204,7 @@ answer to *when* the level may be believed:
   variable-latency failures, and it is a *different* claim from
   [#321](https://github.com/awtoau/cynthion-workspace/issues/321), which fixed
   staleness rather than the instant.
-- Not changed here: the fix belongs with #338's build matrix, and a float reads as
+- Not changed here: the fix belongs with [#338](https://github.com/awtoau/cynthion-workspace/issues/338)'s build matrix, and a float reads as
   1 or 0 by chance, so the rate it produces has to be measured rather than assumed.
 
 ### 2. Refresh interval per grade — no, and not per temperature either
@@ -259,7 +259,7 @@ column above, bolded. `T200` is the `5I` the schematic allows as a substitution;
 | *"`CR0[7:4]` = `0011b`–`1101b` reserved"*, [`specifications.md`](specifications.md) | names **`0011` = LC8 and `0100` = LC9**. Seven codes, not five, and `clocks = 5 + sext4(code)` holds for all seven |
 | *"`CR1[1:0]`: `00b`, `10b`, `11b` Reserved, `01b` the only defined value"*, [`w956a8.md`](w956a8.md) | names all four, and makes **`10b` the POR value under `LA_85C`** |
 | *"tDSV (12 ns) is under one sync cycle"*, `hyperram_controller.py:182` | 12 ns is 2 CK at 166 MHz — see question 1 |
-| *"`tCSHI`, 10 ns of CS# high"*, [`w956a8.md`](w956a8.md) | 10 ns is the T100 value; **6 ns** at T166 — the gateware now uses 6 (#341) |
+| *"`tCSHI`, 10 ns of CS# high"*, [`w956a8.md`](w956a8.md) | 10 ns is the T100 value; **6 ns** at T166 — the gateware now uses 6 ([#341](https://github.com/awtoau/cynthion-workspace/issues/341)) |
 | `--grade T85` / `T104` are usable, `hyperram_vendor_model_sim.py` | no AC block exists for either |
 
 **Confirms:** ID0/ID1/CR0/CR1 POR values; the CA bit layout and the register word

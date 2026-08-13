@@ -20,7 +20,7 @@ Two devices at the same fixed address cannot be distinguished on one bus, so the
 board gives them separate pin-sets. **"Just put them on one bus" is not available
 in hardware** — the mux is forced, not chosen. That constraint is what drives the
 multiplexed-master design in
-[`../gateware-architecture-plan.md`](../gateware-architecture-plan.md) (#98).
+[`../gateware-architecture-plan.md`](../gateware-architecture-plan.md) ([#98](https://github.com/awtoau/cynthion-workspace/issues/98)).
 
 **Only TARGET and AUX have PD controllers.** CONTROL has a Type-C connector but no
 FUSB302B (commit `0ff3b5d`).
@@ -253,7 +253,7 @@ Each Type-C bus brings an `int` and a `fault` line, so four signals for two devi
 **Each `int` gets its own source** — TARGET on 4, AUX on 5. Each `fault` gets
 one.
 
-The `int` lines were OR-ed onto a single source until #135. The argument for the OR
+The `int` lines were OR-ed onto a single source until [#135](https://github.com/awtoau/cynthion-workspace/issues/135). The argument for the OR
 was that with a multiplexed controller only one device can be talked to at a time,
 so per-device sources buy nothing. Servicing does serialise, and always will, but
 that is a fact about the bus rather than about which device the handler is told to

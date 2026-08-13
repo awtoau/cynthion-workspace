@@ -32,7 +32,7 @@ Cross-checked against the board, not only the source: net membership comes from
 [`repos/cynthion-hardware/production/netlist.ipc`](../../../repos/cynthion-hardware/production/netlist.ipc)
 (IPC-356, 256 `IC1` records) and values from
 `repos/cynthion-hardware/production/bom.csv` -- NOT a link, because that file is
-gitignored upstream (`*.csv`) and exists in no clone. See #376.
+gitignored upstream (`*.csv`) and exists in no clone. See [#376](https://github.com/awtoau/cynthion-workspace/issues/376).
 A pin that the board terminates is a different finding from one that is free, and
 in two cases below the termination is the whole story.
 
@@ -327,7 +327,7 @@ entry, which is firmware work on top of the Type-C stack already present in
 [`firmware/cynthion-soc/src/fusb302.rs`](../../../firmware/cynthion-soc/src/fusb302.rs).
 
 **Not established:** whether the DPO2036 passes a signal cleanly enough for a
-megabaud UART. #97 proves DC continuity, not bandwidth. The datasheet for that
+megabaud UART. [#97](https://github.com/awtoau/cynthion-workspace/issues/97) proves DC continuity, not bandwidth. The datasheet for that
 part is not in [`sources/`](../../../sources/README.md) — fetching it is the first
 step for anyone taking this on.
 
@@ -385,7 +385,7 @@ re-derived every time someone needs a pin for an ILA trigger or a logic-analyser
 tap.
 
 **Not established:** whether `user_mezzanine` survives a loopback test. The PMODs
-were surveyed under #97; the mezzanine was in scope for that work but the results
+were surveyed under [#97](https://github.com/awtoau/cynthion-workspace/issues/97); the mezzanine was in scope for that work but the results
 are not recorded in this tree. Running the existing survey applet with a mezzanine
 group added would settle it in minutes.
 

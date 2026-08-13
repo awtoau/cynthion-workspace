@@ -7,7 +7,7 @@ proposals for the owner rather than actions taken.
 
 ## Draft 1 — `target_phy` has two owners, and the fix is re-parenting
 
-**Blocks:** any host-mode bitstream. **Also unblocks:** #120, #125.
+**Blocks:** any host-mode bitstream. **Also unblocks:** [#120](https://github.com/awtoau/cynthion-workspace/issues/120), [#125](https://github.com/awtoau/cynthion-workspace/issues/125).
 
 `platform.request("target_phy")` may be called once, and
 `gateware/soc/top.py` already calls it, driving `clk`, `rst`,

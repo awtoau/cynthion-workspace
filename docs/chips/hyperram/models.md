@@ -187,11 +187,11 @@ the controller work.
 
 ## Variable latency, and the 2x election
 
-Added for #338. All five latency codes, both modes, both models.
+Added for [#338](https://github.com/awtoau/cynthion-workspace/issues/338). All five latency codes, both modes, both models.
 
 - **The delivered latency is exactly L variable / 2L fixed, at every code.** 2L is
   even for every legal L (3..7), so the controller's `latency_clocks >> 1` is
-  exact — that arithmetic is not the #338 defect.
+  exact — that arithmetic is not the [#338](https://github.com/awtoau/cynthion-workspace/issues/338) defect.
 - **tDSV = 12 ns** (`Config-AC.v`, T166 / 3.0 V). RWDS is **not driven** until then,
   so at 100 MHz the first two CA edges carry a float. Both models print
   `zz1111` (asking for 2L) or `zz0000` (declining). **The first CA edge is not an
@@ -206,7 +206,7 @@ Added for #338. All five latency codes, both modes, both models.
   rate a board will see**; they exercise the path.
 - **Only one direction loses data.** Host on 2L against a device on L starts
   capturing L clocks into the burst: 128 of 128 words wrong, in both models — the
-  shape of #338's 121-128. Host on L against a device on 2L just idles and reads
+  shape of [#338](https://github.com/awtoau/cynthion-workspace/issues/338)'s 121-128. Host on L against a device on 2L just idles and reads
   the burst correctly; every fixed-latency read in this testbench does exactly
   that, hunting RWDS from the end of the CA.
 
@@ -247,7 +247,7 @@ turns on, from Winbond's own model and matched by the twin to the edge. Code 2,
 
 `vendor_model_tb.sv`'s own strobe hunt reads 28/14 on the vendor and 27/13 on the
 twin **over these same runs**, with the DQ edge identical on both — it is a
-property of the instrument, not of the device, and it is not a latency. (#352)
+property of the instrument, not of the device, and it is not a latency. ([#352](https://github.com/awtoau/cynthion-workspace/issues/352))
 
 So under fixed latency the device raises RWDS during every CA and the level
 carries no information — a controller can sample it at the wrong moment, or not

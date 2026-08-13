@@ -52,7 +52,7 @@ phase or centres in the eye. Lattice ties its `DPCR` delay registers to zero;
 litehyperbus exposes `DELAYF` move ports with no sweep FSM driving them; LiteX
 offers only a build-time `dq_i_cd` domain choice. Our `readclksel` sweep is
 ahead of all of them. The missing piece is a bitslip, and that is LiteDRAM's
-(#186), not any HyperRAM core's. Answers the survey half of #244.
+([#186](https://github.com/awtoau/cynthion-workspace/issues/186)), not any HyperRAM core's. Answers the survey half of [#244](https://github.com/awtoau/cynthion-workspace/issues/244).
 
 **Non-GitHub hosting is empty.** GitLab, Codeberg, sr.ht, Bitbucket,
 SourceForge, OpenCores and grep.app returned no HyperRAM/HyperBus RTL not
@@ -231,14 +231,14 @@ No replacement is available on Amaranth 0.5 + ECP5.
   ECP5 equivalent. 781 LUT / 975 FF / 1 RAMB36E1 (`:22`).
 - **Lattice `hyperram_mc`** — the right *shape*, but Lattice-licensed and built
   on Nexus primitives.
-- **ChipFlow** — the one #90 names, and the only other Amaranth core. Sound
+- **ChipFlow** — the one [#90](https://github.com/awtoau/cynthion-workspace/issues/90) names, and the only other Amaranth core. Sound
   structure and bounded by construction, but it has **no register read path at
   all** (`_hyperram.py:63`, `HRAMConfig(csr.Register, access="w")`), reaches
   only CR0, has no tCSHI, states *"no setup/chip configuration (use default
   latency)"* (`:27`), asserts `init_latency in (6, 7)` (`:70`), and samples DQ
   on the sync clock with no DDR primitives. It cannot back
   `hyperram_identify.py` and cannot run at our clocks. Design reference, not a
-  dependency — which is what #90 already concluded.
+  dependency — which is what [#90](https://github.com/awtoau/cynthion-workspace/issues/90) already concluded.
 - **LiteX `soc/cores/hyperbus.py`** — correct register handling and an explicit
   CS#-high state, but Migen, and its `REG-READ`/`DAT-READ` are as unbounded as
   ours.
@@ -256,15 +256,15 @@ Estimated cost of fixing ours, across `hyperram_controller.py` and
 | force CA[45]=1 for register space | 1 line each | [#320](https://github.com/awtoau/cynthion-workspace/issues/320) |
 | sample RWDS mid-CA, not before it | ~10 lines | [#321](https://github.com/awtoau/cynthion-workspace/issues/321) |
 
-### Correction to #90
+### Correction to [#90](https://github.com/awtoau/cynthion-workspace/issues/90)
 
-#90 records *"litex-hyperram is unlicensed and seven years stale"*. That is true
+[#90](https://github.com/awtoau/cynthion-workspace/issues/90) records *"litex-hyperram is unlicensed and seven years stale"*. That is true
 of `gregdavill/litex-hyperram` (`9b17913`, 2019-12-06) and of
 `litex-hub/litehyperbus` (`76454e4`, 2022-07-06), but the live LiteX HyperRAM
 core is neither. It is `litex/soc/cores/hyperbus.py` in `enjoy-digital/litex`
 itself — BSD-2, last touched 2026-06-19, with a CR0 init in
 `litex/soc/software/libbase/hyperram.c` and a test suite in
-`test/test_hyperbus.py`. The LiteX row above is that file; #90's dismissal
+`test/test_hyperbus.py`. The LiteX row above is that file; [#90](https://github.com/awtoau/cynthion-workspace/issues/90)'s dismissal
 judged the wrong repository.
 
 # Part 2 — software and SoC drivers
@@ -374,7 +374,7 @@ discussed:
     reg |=  0xe0;       // "Use 3 cycles of latency instead of the default 6 cycles"
 
 - Clearing `CR0[3]` is **option 1** in [`w956a8.md`](w956a8.md), in production, with
-  the reason stated as the reason we predicted (#335).
+  the reason stated as the reason we predicted ([#335](https://github.com/awtoau/cynthion-workspace/issues/335)).
 - `0xe0` = 3 clocks is **option 6**, which that page says *do not* — and the two do
   not conflict: 3 clocks is rated to 85 MHz and GAP8's uDMA HyperBus runs well below
   that. It is evidence for "the short codes are real", not for using them at our CK.

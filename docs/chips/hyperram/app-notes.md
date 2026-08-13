@@ -125,7 +125,7 @@ enforce it and does not report a violation.
   CS# must go High before tCSM is violated."*
 - *"Note that it is recommended not to stop the clock during register access."*
 
-**CONTRADICTS what #336's body says about this.** That sentence is a
+**CONTRADICTS what [#336](https://github.com/awtoau/cynthion-workspace/issues/336)'s body says about this.** That sentence is a
 **replacement, not an addition**. Datasheet §10.2.2 is the same paragraph word for
 word up to the final sentence, where it says instead *"Note that it is recommended
 to stop the clock when it is in Low state."* The app note **drops** the park-low
@@ -163,7 +163,7 @@ Recorded so nobody re-fetches them looking for an answer that is not there.
 - **§4.9 ID0 bit assignments** give, for the 64 Mb die: `[12:8] = 01100b` –
   **13 row address bits**, `[7:4] = 1000b` – **9 column address bits**,
   `[3:0] = 0110b` – Winbond. Third independent statement of the
-  **count-minus-one** convention (#109), this time in Winbond's own words.
+  **count-minus-one** convention ([#109](https://github.com/awtoau/cynthion-workspace/issues/109)), this time in Winbond's own words.
 - `[15:14]` MCP Die Address: `00b` Die 0, `01b` Die 1 — a single-die part always
   reads `00b`.
 - Dual-die only, none of it ours: fixed latency **mandatory** (`CR0[3] = 1`),

@@ -75,7 +75,7 @@ gh api repos/greatscottgadgets/<repo>/compare/<upstream-sha>...<fork-sha> \
 - Each is checked out as a **linked git worktree of the superproject's own**
   `.git/modules/<name>`. Objects are shared; only files cost disk (127 MB here
   against 396 MB of shared history). Never copy a submodule tree into a
-  worktree — that is what nearly put 225 MB into a commit (#365).
+  worktree — that is what nearly put 225 MB into a commit ([#365](https://github.com/awtoau/cynthion-workspace/issues/365)).
 - Each submodule gets its own HEAD and index, so two worktrees can hold
   different pins. A shared `modules/` checkout cannot.
 - No network: the pins are already in the shared object store.
@@ -90,7 +90,7 @@ Pin `90c8b7b6` exists in the superproject's object store and nowhere else;
 `git fetch` of it answers `upload-pack: not our ref`. `git submodule update`
 cannot repair a checkout that lacks it and a fresh clone cannot build. Worktrees
 are unaffected because they share the store rather than fetching.
-`worktree-check` reports it as a standing warning. Fix is to push it: #373.
+`worktree-check` reports it as a standing warning. Fix is to push it: [#373](https://github.com/awtoau/cynthion-workspace/issues/373).
 
 ## Notes
 

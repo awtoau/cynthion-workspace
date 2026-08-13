@@ -27,7 +27,7 @@ one by an oscillator, and only one by the device on the far end.
 
 | interface | the part supports | this board allows | we configure | gap |
 |---|---|---|---|---|
-| **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | measured: 3.33 MHz power, 2.5 MHz target/aux — see the sweep below | **1.000 MHz**, `PRER` derived from the COUNTED sync clock (#272) | **closed on the CPU path** at the parts' Fm+ rating. The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
+| **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | measured: 3.33 MHz power, 2.5 MHz target/aux — see the sweep below | **1.000 MHz**, `PRER` derived from the COUNTED sync clock ([#272](https://github.com/awtoau/cynthion-workspace/issues/272)) | **closed on the CPU path** at the parts' Fm+ rating. The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
 | **SPI flash SCK** | 133 MHz `fC1` | `USRMCLK` has no DDR ⇒ SCK ≤ the fabric clock; luna_soc's clock generator halves it again ⇒ SCK = `sync`/2 | **30 MHz** (`sync` 60, `FLASH_DIVISOR = 0`) | **4.4×** to the part, 2× of which is the `/2` |
 | **flash MCLK at boot** | 133 MHz on `0x0B` | `ecppack --freq` accepts only {2.4, 19.4, 38.8, 62.0}; ECP5 Table 4.7 stops at 62 | **38.8 MHz** | **1.6×** on configuration time |
 | **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** — the FPGA pin, not the RAM. Non-DQS PHY makes CK = fabric clock | **60 MHz** | **2.5×** to the board's own ceiling |
@@ -197,7 +197,7 @@ stable wrong answer CLEAN.
   stable wrong value. Power at 5 MHz returns 1000 bus errors.
 - 1 MHz is now reached rather than claimed: PRER is derived from the clock the
   fabric counts, so the BIST variant's 50 MHz gives PRER 9 instead of the
-  generated 11. It ran at **833 kHz** while reporting 1 MHz (#272).
+  generated 11. It ran at **833 kHz** while reporting 1 MHz ([#272](https://github.com/awtoau/cynthion-workspace/issues/272)).
 - Both variants land on the same bit timing: 50 MHz/PRER 9 and 60 MHz/PRER 11
   are both a 200 ns slot, so the margins table below holds for either.
 

@@ -97,7 +97,7 @@ Recorded so they are not re-investigated:
   there is no clock-domain crossing between endpoint and application logic.
   Raising `sync` would not help: at 60 MHz × 8 bits the datapath already carries
   480 Mbps, above the protocol ceiling.
-- **LUNA issue #276**, which caps speed to full speed, applies only to custom
+- **LUNA issue [#276](https://github.com/awtoau/cynthion-workspace/issues/276)**, which caps speed to full speed, applies only to custom
   UTMI PHYs. `USBDevice` sets `always_fs = False` on the ULPI path Cynthion uses.
 
 ## Measurement traps

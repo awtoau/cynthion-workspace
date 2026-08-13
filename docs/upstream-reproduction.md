@@ -1,7 +1,7 @@
 # Building upstream's code, unmodified, without destroying this machine
 
 Needed for two things: measuring what upstream's designs actually use, and
-validating a patch against **their** tree before sending it (#200 lists this
+validating a patch against **their** tree before sending it ([#200](https://github.com/awtoau/cynthion-workspace/issues/200) lists this
 missing container as a blocker on six prepared PR branches).
 
 `scripts/upstream_build/build.py` is the tool. This file is why it is shaped the
@@ -108,7 +108,7 @@ Nothing the container does can reach the working tree:
 
 ## Using it for patches
 
-The same container validates a patch before it is sent, which is what #200 needs:
+The same container validates a patch before it is sent, which is what [#200](https://github.com/awtoau/cynthion-workspace/issues/200) needs:
 
 1. build the target at the pinned upstream ref — that is the **before**;
 2. apply the patch to the clone, build again — the **after**;

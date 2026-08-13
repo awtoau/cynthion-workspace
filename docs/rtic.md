@@ -61,7 +61,7 @@ case and costs the mean; that is the trade taken deliberately.
 A CLINT monotonic exists and is measured — 7 µs worst late — behind
 `--features rticmono`, as a separate binary. It is written here because
 `rtic-monotonics` 2.2.1 ships two RISC-V backends, ESP32-C3 and C6 SYSTIMER, and
-neither is a CLINT one. Independent work, not derived from either — #508.
+neither is a CLINT one. Independent work, not derived from either — [#508](https://github.com/awtoau/cynthion-workspace/issues/508).
 
 Adopting it is the open question, and the single comparator is the whole of the
 cost.
@@ -74,8 +74,8 @@ The I-cache is **8 KiB, 64 sets × 2 ways**. The RTIC build's hot footprint is
 **5,440 B** against the bare build's 4,032 B — the dispatcher's `.text` costs
 about 1.4 KB of footprint, and footprint is what transfers between builds.
 
-It fits at 8 KiB. It did not at 4 KiB, which is why both L1s were grown (#110,
-#283, #292), spending block RAM that is now at 79%. That is a real trade and the
+It fits at 8 KiB. It did not at 4 KiB, which is why both L1s were grown ([#110](https://github.com/awtoau/cynthion-workspace/issues/110),
+[#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292)), spending block RAM that is now at 79%. That is a real trade and the
 reason the cache size is part of this design rather than an unrelated setting.
 
 **If the cache ever shrinks**, the 424-byte hand-written dispatcher closes the
@@ -97,7 +97,7 @@ fallback, not as a rival.
 | | |
 |---|---|
 | adopt the monotonic | one comparator, so it moves every periodic job at once |
-| the I2C transaction-complete interrupt has never fired | #246. Until it does, the power task spins on I2C rather than being woken by it |
+| the I2C transaction-complete interrupt has never fired | [#246](https://github.com/awtoau/cynthion-workspace/issues/246). Until it does, the power task spins on I2C rather than being woken by it |
 | IPC and `ICACHE_MISS` on silicon | the 16550 implements the MSR half of local loopback and not the data half, so nothing on the FPGA can inject an arrival |
 | what shrinking the hot set would take | unmeasured |
 

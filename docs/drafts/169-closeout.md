@@ -1,4 +1,4 @@
-# #169 close-out plan
+# [#169](https://github.com/awtoau/cynthion-workspace/issues/169) close-out plan
 
 Reviewed against the tree at `origin/main` = `72fc7ea`. Every claim below was
 re-checked in the tree; where the issue text and the tree disagree, the tree wins
@@ -6,28 +6,28 @@ and the difference is called out.
 
 ---
 
-## Part 1 — what #169 asked for that is already done
+## Part 1 — what [#169](https://github.com/awtoau/cynthion-workspace/issues/169) asked for that is already done
 
-| #169 said | tree at `72fc7ea` |
+| [#169](https://github.com/awtoau/cynthion-workspace/issues/169) said | tree at `72fc7ea` |
 |---|---|
 | eight submodules in `.gitmodules` | **four**: apollo, cynthion, cynthion-hardware, vexiiriscv. facedancer, luna, packetry, saturn-v are gone |
-| step 1: drop `facedancer` | **done.** No `.gitmodules` entry, no `EDITABLE` line in `machine_setup.py` (which now carries a comment citing #169), no assertion in `check.py` (same), no `install.py` manifest entry, no `upstream_ci.py` entry (same), no `versions.json` line |
+| step 1: drop `facedancer` | **done.** No `.gitmodules` entry, no `EDITABLE` line in `machine_setup.py` (which now carries a comment citing [#169](https://github.com/awtoau/cynthion-workspace/issues/169)), no assertion in `check.py` (same), no `install.py` manifest entry, no `upstream_ci.py` entry (same), no `versions.json` line |
 | `gateware` check is ~98% of lint wall time | **deleted**, with a ten-line comment at the end of `build_checks()` recording why. Question 3 is answered: deleted, not repointed — `socmap` covers the gateware this repo builds |
-| `.gitignore:17` unanchored `lib/` will untrack the next `lib/` | **fixed.** The block is now `/lib/` and `/lib64/`, anchored, with a comment naming the 34 + 2 files it cost. **This bullet of #169 is obsolete** |
-| — (not in #169) | the `flutter` check is gone too, and the dashboard is at `debris/code/app-flutter-dashboard/` |
-| — (not in #169) | `scripts/submodule_patch_audit.py` exists and reports all four submodules `safe -- every commit is on a remote` |
+| `.gitignore:17` unanchored `lib/` will untrack the next `lib/` | **fixed.** The block is now `/lib/` and `/lib64/`, anchored, with a comment naming the 34 + 2 files it cost. **This bullet of [#169](https://github.com/awtoau/cynthion-workspace/issues/169) is obsolete** |
+| — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | the `flutter` check is gone too, and the dashboard is at `debris/code/app-flutter-dashboard/` |
+| — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | `scripts/submodule_patch_audit.py` exists and reports all four submodules `safe -- every commit is on a remote` |
 
-**Overlap with #190 (closed).** `amaranth-soc` and `amaranth-stdio` are now
+**Overlap with [#190](https://github.com/awtoau/cynthion-workspace/issues/190) (closed).** `amaranth-soc` and `amaranth-stdio` are now
 declared in `machine_setup.py:AMARANTH_GIT`, and a new `amaranthsoc` check fails
 if the import resolves inside luna-soc's vendored tree. This covers *half* of
-#169's cynthion-side complaint — the vendored-`amaranth_soc` shadow is now a red
+[#169](https://github.com/awtoau/cynthion-workspace/issues/169)'s cynthion-side complaint — the vendored-`amaranth_soc` shadow is now a red
 check rather than an invisible fallback. It does **not** cover the other half:
 `repos/cynthion`'s `pyproject.toml` still requires the `awtoau/awto-luna-soc`
 fork, and that pin only disappears when the `cynthion` editable install does.
 `luna_soc` itself is already a pip install (`0.3.2+awto.1`, site-packages), not a
 submodule, so it is not a blocker for removing `repos/`.
 
-## Part 2 — numbers in #169 that are now wrong
+## Part 2 — numbers in [#169](https://github.com/awtoau/cynthion-workspace/issues/169) that are now wrong
 
 Stated so the issue is not re-read as current.
 
@@ -40,7 +40,7 @@ Stated so the issue is not re-read as current.
   platform import at all.
 - **`gateware/soc/top.py:176, 181, 277, 312, 1642`** (stale
   comment citations) → now `177, 182, 278, 313, 1711`.
-- **`scripts/sideband_build.py:40`** → line **43**, and #169 missed
+- **`scripts/sideband_build.py:40`** → line **43**, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169) missed
   `scripts/fabric_build.py:72`, which does the same `sys.path.insert(0,
   "repos/apollo")`.
 - **`machine_setup.py:72-76`** → the `EDITABLE` list is now ~line 83 and holds
@@ -53,20 +53,20 @@ Stated so the issue is not re-read as current.
 | check | what it runs | what it would test if `repos/` were gone |
 |---|---|---|
 | `rust` | `cargo check` + `make clippy` with `cwd = repos/cynthion/firmware` (moondancer) | **nothing.** The subject is upstream's firmware. Deleting it deletes the check |
-| `apollo` | `tools/get_deps.py` in `repos/apollo/lib/tinyusb`, `make APOLLO_BOARD=cynthion` in `repos/apollo/firmware`, then `scripts/apollo_budget_check.py` (in-repo) | the budget check is ours and survives — but it reads `repos/apollo/firmware/_build/.../firmware.elf`, so with no submodule there is no ELF to measure. See #199 |
+| `apollo` | `tools/get_deps.py` in `repos/apollo/lib/tinyusb`, `make APOLLO_BOARD=cynthion` in `repos/apollo/firmware`, then `scripts/apollo_budget_check.py` (in-repo) | the budget check is ours and survives — but it reads `repos/apollo/firmware/_build/.../firmware.elf`, so with no submodule there is no ELF to measure. See [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
 | `python` | `import cynthion, apollo_fpga` (both editable, resolving into `repos/`), then pytest over `repos/cynthion/cynthion/python/tests/` **and** `tests/` | our `tests/` still run; the import assertion becomes a dependency probe rather than a subject; the submodule's 3 tests go |
 | `freethreading` | `sys._is_gil_enabled()` after `import cynthion, apollo_fpga` | the interpreter assertion survives; the import list would need replacing with whatever the heaviest real import is (amaranth, luna) |
 
-This is #169's question 2, and the answer the tree suggests: `python` and
+This is [#169](https://github.com/awtoau/cynthion-workspace/issues/169)'s question 2, and the answer the tree suggests: `python` and
 `freethreading` do not need the submodules as *subjects*, only as *heavy
 imports*, and any pip-installed package serves that role. `rust` and `apollo` do
 need them, and that is the whole of question 1.
 
-**#199 changes the framing.** `apollo_budget_check.py` misses `.relocate`, so
+**[#199](https://github.com/awtoau/cynthion-workspace/issues/199) changes the framing.** `apollo_budget_check.py` misses `.relocate`, so
 both Apollo ceilings are already breached (flash 95.48% vs 95%, RAM 86.72% vs
 85%). The `apollo` check is the only thing in the gate measuring that, and it is
-currently measuring it wrong. Nothing in #169 should propose weakening or
-removing the `apollo` check until #199 is closed.
+currently measuring it wrong. Nothing in [#169](https://github.com/awtoau/cynthion-workspace/issues/169) should propose weakening or
+removing the `apollo` check until [#199](https://github.com/awtoau/cynthion-workspace/issues/199) is closed.
 
 ---
 
@@ -107,7 +107,7 @@ acceptance evidence for this step rather than writing a new comparison.
 constants is trivial; the script is useless without upstream's selftest
 bitstream, which this repo does not build. Either accept it as a
 "needs `repos/cynthion`" hardware script, or retire it. Not a blocker for
-anything else, and not worth holding #169 open for.
+anything else, and not worth holding [#169](https://github.com/awtoau/cynthion-workspace/issues/169) open for.
 
 ### Step B — vendor the `apollo_fpga.gateware` modules (no hardware)
 
@@ -137,7 +137,7 @@ Two findings that change the shape of this step:
    (`docs/upstream-boundary.md` lists it as a divergence: upstream offers
    60/120/240 MHz only). `sideband.py` and `qspi_flash.py` are local additions of
    the same family. A published `apollo-fpga` wheel will not contain them, so
-   **step C is impossible until step B is done** — #169's suggested order is
+   **step C is impossible until step B is done** — [#169](https://github.com/awtoau/cynthion-workspace/issues/169)'s suggested order is
    right, and the reason is stronger than the issue states.
 2. **`flash_bridge.py` imports the host library at module scope**
    (`from apollo_fpga import ApolloDebugger`). Vendoring it as-is does not
@@ -147,7 +147,7 @@ Two findings that change the shape of this step:
 
 **Undeclared dependency found while checking this** — `glasgow` resolves to a
 checkout outside the workspace and appears in neither `machine_setup.py`'s
-`PACKAGES_PIP` nor `install.py`. It is the exact shape #190 fixed for
+`PACKAGES_PIP` nor `install.py`. It is the exact shape [#190](https://github.com/awtoau/cynthion-workspace/issues/190) fixed for
 `amaranth-soc`: a build input that works only because a particular machine has it
 lying around. Vendoring `qspi_flash.py` inherits it. Worth its own issue (below).
 
@@ -189,7 +189,7 @@ Blocked by step B. Three separate jobs, and the first is a question, not work:
   configures or flashes the board. The substitution can be proven correct without
   hardware; that it still *works* cannot.
 
-### Step D — the checks, and #169's question 1
+### Step D — the checks, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169)'s question 1
 
 Only after A–C. `rust` and `apollo` are the last holders of `repos/cynthion` and
 `repos/apollo`, and neither can be repointed — their subjects are upstream's
@@ -201,22 +201,22 @@ firmware. The choice is the owner's:
   be the only thing that looks upstream.
 
 **Do not decide this as a side effect of A–C.** It is the actual content of
-question 1 and the only part of #169 that is a decision rather than a task.
+question 1 and the only part of [#169](https://github.com/awtoau/cynthion-workspace/issues/169) that is a decision rather than a task.
 
 ---
 
-## Part 5 — split out of #169
+## Part 5 — split out of [#169](https://github.com/awtoau/cynthion-workspace/issues/169)
 
-Five things are in or adjacent to #169 that do not depend on removing a
+Five things are in or adjacent to [#169](https://github.com/awtoau/cynthion-workspace/issues/169) that do not depend on removing a
 submodule, and each is deliverable on its own:
 
-1. **`firmware/*` is linted by nothing.** #169's own "done when" bullet 2. The
+1. **`firmware/*` is linted by nothing.** [#169](https://github.com/awtoau/cynthion-workspace/issues/169)'s own "done when" bullet 2. The
    `rust` check runs clippy with `-Dwarnings` plus a pedantic set against
    *moondancer*; the four crates in `firmware/` (`cynthion-boot`,
    `cynthion-payload`, `cynthion-soc`, `cynthion-soc-pac`) have no `[lints]`
    table and no clippy invocation anywhere. There is no workspace manifest above
    `firmware/`, so it is one cargo call per crate — the same shape `dev.py`
-   already handles for `fmt`. #169's counts (10 + 3 errors) are months old and
+   already handles for `fmt`. [#169](https://github.com/awtoau/cynthion-workspace/issues/169)'s counts (10 + 3 errors) are months old and
    must be re-measured, not carried over. **Zero dependency on `repos/`; do this
    first, independent of everything above.**
 2. **pytest rootdir is the submodule's.** Confirmed live in
@@ -230,7 +230,7 @@ submodule, and each is deliverable on its own:
    `pytest.ini`, not a `pyproject.toml`.
 3. **`glasgow` is an undeclared build dependency** reached through
    `apollo_fpga.gateware.qspi_flash`, resolving to a checkout outside the
-   workspace. Same failure shape as #190.
+   workspace. Same failure shape as [#190](https://github.com/awtoau/cynthion-workspace/issues/190).
 4. **Vendoring the six `apollo_fpga.gateware` modules** (step B) is 2,534 lines
    across six files with three distinct external dependencies and one host-side
    import to unpick. That is not a sub-task of an audit issue.
@@ -242,7 +242,7 @@ submodule, and each is deliverable on its own:
    its own change. `docs/git.md`'s "four places a submodule lives" uses
    `facedancer` as its worked example for the same reason.
 
-What is then left in #169 itself: step A, and question 1.
+What is then left in [#169](https://github.com/awtoau/cynthion-workspace/issues/169) itself: step A, and question 1.
 
 ---
 

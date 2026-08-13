@@ -12,7 +12,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 | [byte-order.md](byte-order.md) | **which byte goes where** — the 32-bit DQS path's byte and word order, measured, with the check that keeps it |
 | [models.md](models.md) | **the part without the board** — Winbond's own model, the open twin, and the testbench that holds them equal |
 | [config-ac.md](config-ac.md) | **Winbond's own constants** — the vendor model's plaintext AC table, register defaults and CA words, transcribed off a file that cannot be committed |
-| [sim-audit.md](sim-audit.md) | **every assertion in `soc_hyperram_sim.py` classified**, and `hyperram_sim_census.py` holds the file to it (#346) |
+| [sim-audit.md](sim-audit.md) | **every assertion in `soc_hyperram_sim.py` classified**, and `hyperram_sim_census.py` holds the file to it ([#346](https://github.com/awtoau/cynthion-workspace/issues/346)) |
 | [2026-08-10-audit.md](2026-08-10-audit.md) | **our own faults** — six found, three fixed, and why no measurement survives |
 | [pin-attributes.md](pin-attributes.md) | **the FPGA's own pads** — what DRIVE/SLEW/PULL/HYSTERESIS are set to, why they patch in 3 s, and why neither operating point can resolve them |
 
@@ -32,5 +32,5 @@ because zero errors and a comparator that never fired produce the same number.
     gateware/probes/hyperram/                the standalone harnesses
     scripts/hyperram_*.py                    the host-side drivers
 
-Which of it has ever actually been run is #189, and the answer is not "all of
+Which of it has ever actually been run is [#189](https://github.com/awtoau/cynthion-workspace/issues/189), and the answer is not "all of
 it".

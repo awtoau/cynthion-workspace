@@ -264,7 +264,7 @@ redundant, or can it still be used?
 (`CFG_TUD_CDC 1`; `ITF_NUM_CDC = 0` in `mcu/samd11/usb_descriptors.c`). That one
 CDC is a lazy USB↔UART bridge: `console.c` forwards host bytes to the SERCOM2
 UART on **PA11/PA14** — the JTAG pins. There is no second port; "the second
-virtual serial port" means the dual-CDC idea from #56.
+virtual serial port" means the dual-CDC idea from [#56](https://github.com/awtoau/cynthion-workspace/issues/56).
 
 **Decision — the second CDC is redundant *for its originally-intended purpose*
 on d11, but not useless.**
@@ -286,16 +286,16 @@ on d11, but not useless.**
     primary UART bridge is (correctly) muted by the lock;
   - a **control port** for issuing `emergency reset` / mode queries out-of-band,
     so the operator is never locked out while JTAG is uninterruptible;
-  - a **structured GDB-server / diagnostics** transport (aligns with #20's
+  - a **structured GDB-server / diagnostics** transport (aligns with [#20](https://github.com/awtoau/cynthion-workspace/issues/20)'s
     "GDB over serial path") that carries framed messages rather than raw UART
     bytes and therefore needs no SERCOM pins at all.
 
   These consume USB endpoints and ~1–2 KB RAM on the 4 KB-SRAM SAMD11, so
-  feasibility is a memory-budget question (the reason #56 was deferred), **not**
+  feasibility is a memory-budget question (the reason [#56](https://github.com/awtoau/cynthion-workspace/issues/56) was deferred), **not**
   a pin question.
 
 **Recommendation.** Keep the second CDC *deferred* as a UART bridge (it can never
-be one on d11), and if dual-CDC is re-opened under #55, re-scope it explicitly as
+be one on d11), and if dual-CDC is re-opened under [#55](https://github.com/awtoau/cynthion-workspace/issues/55), re-scope it explicitly as
 a **pinless control/status side-channel** that complements the uninterruptible
 JTAG lock — the one CDC role the pin constraint does not foreclose. Record this
-so #56's revival doesn't re-inherit the dead "second forwarded UART" framing.
+so [#56](https://github.com/awtoau/cynthion-workspace/issues/56)'s revival doesn't re-inherit the dead "second forwarded UART" framing.

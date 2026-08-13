@@ -6,7 +6,7 @@
 
 ---
 
-The measurements quoted on #147 should be reproducible rather than taken on
+The measurements quoted on [#147](https://github.com/awtoau/cynthion-workspace/issues/147) should be reproducible rather than taken on
 trust. This is the harness that produced them.
 
 ```
@@ -106,4 +106,4 @@ PHY exposes them; bringing that upstream would close this.
 
 ## Related
 
-* #147 — "Add DQS support for HyperRAM"
+* [#147](https://github.com/awtoau/cynthion-workspace/issues/147) — "Add DQS support for HyperRAM"

@@ -27,7 +27,7 @@ peripheral, with an interrupt line. The host still reaches it -- Apollo still
 talks FPGA_ADV -- but writes now go through the CPU, which is the only thing that
 knows whether a peripheral is mid-transaction.
 
-**That also makes the sideband the EIC replacement** (#95): as a CPU peripheral with
+**That also makes the sideband the EIC replacement** ([#95](https://github.com/awtoau/cynthion-workspace/issues/95)): as a CPU peripheral with
 an interrupt it carries the port request, the commands and user data, and the
 EIC/UART mode distinction stops mattering. The two modes, and why the port request
 and the command traffic contend for the wire, are in
@@ -44,7 +44,7 @@ distinguished on one bus. The bus table, the pins and the addresses are in
 
 The consequence for this plan: "just use one bus" is not available in hardware,
 but one *controller* is. A single I2C master with a 2-bit bus select driving three
-pin-sets is the multiplexed master #98 already asks for, and it replaces three
+pin-sets is the multiplexed master [#98](https://github.com/awtoau/cynthion-workspace/issues/98) already asks for, and it replaces three
 replicated controllers with one plus a mux.
 
 The interrupt lines get a source each, and the level-sensitive trap that a
@@ -52,10 +52,10 @@ shared one would have carried is described in
 [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
 negotiation is not on the critical path.
 
-**Done, and on silicon** (#121). `gateware/soc/peripherals/i2c_mux.py` is the select and
+**Done, and on silicon** ([#121](https://github.com/awtoau/cynthion-workspace/issues/121)). `gateware/soc/peripherals/i2c_mux.py` is the select and
 the four Type-C signals; `gateware/soc/peripherals/i2c_master.py` gained an `idle` output
 so the select cannot move underneath a transfer. The two `int` lines were OR-ed
-onto one source here, **and #135 gave each its own** — one controller does mean
+onto one source here, **and [#135](https://github.com/awtoau/cynthion-workspace/issues/135) gave each its own** — one controller does mean
 one device at a time on the bus, but that says nothing about which device the
 handler should be told to service, and a source is a pending bit and an enable.
 Each DPO2036's `FAULTB` has its own source too, edge-triggered. See
@@ -90,10 +90,10 @@ rather than proposed.
 
 Order, cheapest and most-load-bearing first:
 
-1. **I2C master, multiplexed** (#98) -- unblocks FUSB302B and PAC1954 together.
+1. **I2C master, multiplexed** ([#98](https://github.com/awtoau/cynthion-workspace/issues/98)) -- unblocks FUSB302B and PAC1954 together.
 2. **LEDs** as a CSR register with the existing override/release semantics.
 3. **Flash** (QSPI) -- already has the most bus-shaped interface of the group.
-4. **HyperRAM** (#90) -- the largest, and the one with a real timing question.
+4. **HyperRAM** ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) -- the largest, and the one with a real timing question.
 
 ## Confirmed scope
 
@@ -119,7 +119,7 @@ primitive instantiated, which it currently is not anywhere.
 **Flash and HyperRAM benchmarking driven by the CPU.** The measurements that
 motivated the RISC-V work. **Blocked** on the silent-SoC problem: both CPUs
 enumerate and neither prints, cause not established
-(#209).
+([#209](https://github.com/awtoau/cynthion-workspace/issues/209)).
 
 ## What this does not resolve
 

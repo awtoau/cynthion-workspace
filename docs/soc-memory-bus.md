@@ -34,7 +34,7 @@ Everything below is marked **measured** (a number this workspace produced),
 ## What is on the table
 
 **Measured**, `scripts/soc_hyperram_sim.py` §8, re-run 2026-08-05 on `016f4c6`,
-all checks pass, at device CK 60 MHz. CK is the second PLL's rung since #432 --
+all checks pass, at device CK 60 MHz. CK is the second PLL's rung since [#432](https://github.com/awtoau/cynthion-workspace/issues/432) --
 `CYNTHION_HYPERRAM_CK_MHZ`, 80 by default on the non-DQS path -- and no longer a
 function of `SYNC_MHZ`:
 
@@ -453,7 +453,7 @@ A read-delay sweep across all four settings showed the stall firing
 (1,632–6,222 cycles) and the selector working monotonically, with
 **byte-identical data at every setting** — so read-gate alignment is not the
 cause, and the difference is not where the model said it would be. **Unexplained**
-(#185).
+([#185](https://github.com/awtoau/cynthion-workspace/issues/185)).
 
 The modelling gap that motivated caution is real and separate: the model serves
 read data in the same cycle as the CK that asked for it, and silicon does not.

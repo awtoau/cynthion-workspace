@@ -82,7 +82,7 @@ The fix looks like one line — call `permit_fpga_configuration(true)` from
 and wants its own testing. **Not yet attempted.** See
 `docs/chips/ecp5/reconfigure-initn-gap.md`.
 
-### `flash-fast` port handback (#75)
+### `flash-fast` port handback ([#75](https://github.com/awtoau/cynthion-workspace/issues/75))
 
 `8054f62`. `FlashBridgeConnection` relied on `__del__` to hand the shared USB
 port back to Apollo. Handing the port back is a USB transfer, so doing it from

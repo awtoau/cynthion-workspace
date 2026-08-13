@@ -17,7 +17,7 @@
 
 ---
 
-`HyperRAMDQSPHY` (added in #236, May 2024) cannot be instantiated on Amaranth
+`HyperRAMDQSPHY` (added in [#236](https://github.com/awtoau/cynthion-workspace/issues/236), May 2024) cannot be instantiated on Amaranth
 0.5. It reaches pads through the 0.4 record API, and the failure is at
 construction, before any of the DQS logic runs — which is why this has never
 been reported as a DQS problem, and probably why
@@ -127,7 +127,7 @@ property of the PHY. The streaming configuration measured above is the one
 ## Related
 
 * greatscottgadgets/cynthion#147 — "Add DQS support for HyperRAM"
-* #236 — added `HyperRAMDQSPHY`
+* [#236](https://github.com/awtoau/cynthion-workspace/issues/236) — added `HyperRAMDQSPHY`
 
 One further thing worth doing that this PR does not: `HyperRAMDQSPHY` keeps
 `DDRDLLA`'s LOCK and the end of its PAUSE sequence internal. The entire read

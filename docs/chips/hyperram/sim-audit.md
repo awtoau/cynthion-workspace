@@ -224,7 +224,7 @@ with a deliberately rewired run required to fail.
 | `section_register_ca` | ours forces CA[45]=1 there | device | case 2b of `controller_model_tb.sv`, 0x60 |
 | `section_register_ca` | ...which is the datasheet's 0x60 for a register write | device | case 2b of `controller_model_tb.sv`, 0x60 |
 | `section_register_ca` | a WRAPPED memory burst is left alone -- CA[45]=0 | device | case 2b of `controller_model_tb.sv`, 0x80 |
-| `section_register_ca` | the DQS controller forces it too | device | case 2b of `controller_model_tb.sv`; the DQS path is #371 |
+| `section_register_ca` | the DQS controller forces it too | device | case 2b of `controller_model_tb.sv`; the DQS path is [#371](https://github.com/awtoau/cynthion-workspace/issues/371) |
 | `section_tcsm` | upstream holds CS# Low past tCSM on a burst nobody ends | device | `hyperram_model.v`'s tCSM monitor, `+stim=1 +cs_hold_ns=1000` |
 | `section_tcsm` | ours chops it, and CS# never passes tCSM | device | `hyperram_model.v`'s tCSM monitor, `+stim=1` |
 | `section_tcsm` | a silent device does not hold CS# past tCSM either | device | `+stim=1 -DDELIVER_WORDS=0`, tCSM judged by the device |
@@ -240,7 +240,7 @@ with a deliberately rewired run required to fail.
 | `section_line_refill` | one line occupies 49 CK with command and fixed latency | redundant | circular on `HIGH_LATENCY_CLOCKS`; CTRL-BEAT grades the beat |
 | `section_line_refill` | sixteen classic transfers occupy 304 CK | redundant | circular on `HIGH_LATENCY_CLOCKS`; CTRL-BEAT grades the beat |
 | `section_recovery_non_dqs` | ...at the addresses asked for | redundant | case 2b of `controller_model_tb.sv` and case 2 |
-| `section_latency_input` | a count below 2 is clamped rather than wrapped | wrong | the read floor is `R + 3`, not 2 (#353, #372) -- replaced |
+| `section_latency_input` | a count below 2 is clamped rather than wrapped | wrong | the read floor is `R + 3`, not 2 ([#353](https://github.com/awtoau/cynthion-workspace/issues/353), [#372](https://github.com/awtoau/cynthion-workspace/issues/372)) -- replaced |
 
 ## Running it
 

@@ -108,7 +108,7 @@ re-synced 2025-01-07 and is missing four upstream fixes, including the Python
     TypeError: Field collection must be a dict, list, or Field, not None
 
 Both are declared in `scripts/machine_setup.py`, pinned to the commits above, so
-a fresh environment gets them rather than the vendored fallback. Until #190
+a fresh environment gets them rather than the vendored fallback. Until [#190](https://github.com/awtoau/cynthion-workspace/issues/190)
 nothing declared either, and a clean install silently used the 2025 vendored
 tree. `scripts/amaranth_soc_check.py` — the `amaranthsoc` check in
 `scripts/check.py` — asserts neither name resolves inside
@@ -174,7 +174,7 @@ versions behind on both**: `riscv = "0.10"`, `riscv-rt = "0.11"`, plus
 
 Release profiles are measured, not conventional — `opt-level = "z"` is chosen for
 **speed**, because the I-cache dominates (4 KiB direct-mapped when measured;
-now 8 KiB 2-way, so re-measure — #167). The tables and
+now 8 KiB 2-way, so re-measure — [#167](https://github.com/awtoau/cynthion-workspace/issues/167)). The tables and
 their reasoning are in the `[profile.release]` comments of each `Cargo.toml`;
 re-measure with `./dev.py optlevel` if the cache geometry changes.
 
@@ -243,7 +243,7 @@ given the 2023 one. `size` needs the fallback path: gcc never invokes it, so
 derived from a tool gcc does know. On the current build both versions agree
 byte-for-byte on `size -A` and `nm`, so nothing was being misreported *yet*.
 
-The PATH entry itself is untouched; see #191 for whether it should be.
+The PATH entry itself is untouched; see [#191](https://github.com/awtoau/cynthion-workspace/issues/191) for whether it should be.
 
 LTO is enabled and load-bearing for the flash budget; `verify_vectors.py` guards
 a silent failure mode it can introduce.

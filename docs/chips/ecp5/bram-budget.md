@@ -50,7 +50,7 @@ All three build and produce bitstreams. **Facedancer must be built with
   flash fetch costs many cycles against block RAM's one, which the
   instruction cache exists to hide -- and when the cache is too small to hide
   it, the stall is measurable, not theoretical. The matched superloop-vs-RTIC
-  runs in [`../../rtic.md`](../../rtic.md) (#245) found the RTIC dispatcher's
+  runs in [`../../rtic.md`](../../rtic.md) ([#245](https://github.com/awtoau/cynthion-workspace/issues/245)) found the RTIC dispatcher's
   extra 1,700 bytes of `.text` moving frontend stalls from 44 cycles per
   1,000 to **452 per 1,000** through a 4 KiB direct-mapped I-cache.
 
@@ -82,7 +82,7 @@ relieved nothing measurable. Doubling the caches attacks the number
 
 Timing held, and "held" is the whole claim available from one build: `clk`'s
 distribution over 40 nextpnr seeds is 65.75–74.94 MHz, median 71.42, against a
-60 MHz constraint that does not itself affect the result (#467, #478).
+60 MHz constraint that does not itself affect the result ([#467](https://github.com/awtoau/cynthion-workspace/issues/467), [#478](https://github.com/awtoau/cynthion-workspace/issues/478)).
 
 ### Sets or ways — measured, and four ways is simply out of blocks
 
@@ -116,18 +116,18 @@ memory it reaches last. `bankCount = wayCount`, so each way brings its own bank,
 its own tag memory and a wider PLRU state. Three ways does not exist at all:
 SpinalHDL's PLRU asserts `isPow2` on the way count.
 
-**The 52-versus-58 disagreement on 128×2 (#287) does not reproduce.** Two
+**The 52-versus-58 disagreement on 128×2 ([#287](https://github.com/awtoau/cynthion-workspace/issues/287)) does not reproduce.** Two
 elaborations of that geometry, minutes apart, produce a byte-identical `top.json`
 and 57 blocks both times. Two things that were true when it was seen are not now:
-elaboration is reproducible (#441), and every build no longer shares one
-generated `VexiiRiscv.v` path (#306), which is exactly how one geometry's build
+elaboration is reproducible ([#441](https://github.com/awtoau/cynthion-workspace/issues/441)), and every build no longer shares one
+generated `VexiiRiscv.v` path ([#306](https://github.com/awtoau/cynthion-workspace/issues/306)), which is exactly how one geometry's build
 could report another's memories.
 
 **Fmax is not in this table on purpose.** One build's Fmax is a property of that
-placement: the distribution at fixed occupancy is 9 MHz wide (#467), and the
-constraint the design is given does not change it (#478). Timing per geometry is
+placement: the distribution at fixed occupancy is 9 MHz wide ([#467](https://github.com/awtoau/cynthion-workspace/issues/467)), and the
+constraint the design is given does not change it ([#478](https://github.com/awtoau/cynthion-workspace/issues/478)). Timing per geometry is
 a seed sweep — `soc_occupancy_timing.py` with the `cpu-l1-*` arms, 40 seeds each,
-in #481:
+in [#481](https://github.com/awtoau/cynthion-workspace/issues/481):
 
 | geometry | paired vs 64×2 | 95% CI | faster |
 |---|---|---|---|
@@ -138,7 +138,7 @@ in #481:
 | 32×2 | -1.91 | [-3.09, -0.72] | 12/40 |
 
 Dropping the way pays only where the sets are: 64×1 is indistinguishable from
-64×2. #494 is the decision, and it is blocked on the hit-rate half.
+64×2. [#494](https://github.com/awtoau/cynthion-workspace/issues/494) is the decision, and it is blocked on the hit-rate half.
 
 ### What none of this measures
 
@@ -149,8 +149,8 @@ every geometry above.
 
 Two cheaper levers were identified alongside it and may beat it outright, since
 both *remove* work rather than spending block RAM to absorb it: grouping the hot
-path so ~6.2 KB of handler code stops colliding with itself (#284), and backing
-off the 50 ms REFRESH poll now that the ALERT does its job (#285) — that poll's
+path so ~6.2 KB of handler code stops colliding with itself ([#284](https://github.com/awtoau/cynthion-workspace/issues/284)), and backing
+off the 50 ms REFRESH poll now that the ALERT does its job ([#285](https://github.com/awtoau/cynthion-workspace/issues/285)) — that poll's
 task is 2,292 bytes of the hot set, running at 20 Hz.
 
 ## Files

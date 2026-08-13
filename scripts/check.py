@@ -369,6 +369,19 @@ def build_checks() -> List[Check]:
                 Step([PYTHON, "scripts/private_path_check.py"], ROOT),
             ],
         ),
+        Check(
+            name="doclinks",
+            description="every doc link resolves and every issue ref is one",
+            steps=[
+                # Both existed, both worked, and neither was on the gate -- so a
+                # link to a deleted file and 499 unlinked issue refs survived a
+                # green run (#526).
+                #
+                # Source only; no board, no toolchain, well under a second.
+                Step([PYTHON, "scripts/check_doc_links.py"], ROOT),
+                Step([PYTHON, "scripts/link_issue_refs.py", "--check"], ROOT),
+            ],
+        ),
         # There is no `gateware` check. It elaborated
         # `cynthion.gateware.analyzer.top` -- the USB analyzer bitstream inside
         # repos/cynthion, which this repo does not build -- and it did so for

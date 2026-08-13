@@ -15,7 +15,7 @@ superseded by the above. It is kept for the subcommands that have no replacement
 `machine_setup.py` deliberately does not install the FPGA toolchain. The
 `setup`/`rebuild`/`clone-repos` sections below are historical: nothing in the
 repo invokes them, and `./dev.py audit` reports the file as `documented`,
-meaning this page is the only thing keeping it reachable. See #157.
+meaning this page is the only thing keeping it reachable. See [#157](https://github.com/awtoau/cynthion-workspace/issues/157).
 
 ## Documentation Ownership
 

@@ -32,7 +32,7 @@ file names none of it.
 - The BITS say 8. `BIDIR_LVCMOS33` sets `F0B4 F8B3 F9B3` and clears `F1B4 F2B4`
   — exactly `.config_enum PIOB.DRIVE 8`. The CK pad likewise: PIOC's
   `OUTPUT_LVCMOS33D` sets `F2B6 F3B6 F4B6`, clears `F5B6 F6B6` = `DRIVE 8`.
-- #311's open question 2 is answered from the database, not assumed.
+- [#311](https://github.com/awtoau/cynthion-workspace/issues/311)'s open question 2 is answered from the database, not assumed.
 
 ## The four attributes share config bits with BASE_TYPE
 
@@ -104,10 +104,10 @@ Measured 2026-08-10, commit `3796d4f`, one board, one session.
   and carries no information either way.
 - The failure set is **byte-identical at 80 MHz and at 90 MHz**. A 12.5% change
   in clock frequency moves nothing. (The two runs were `baseline-a` and
-  `base90-b`; every recorded matrix run was deleted with #353.)
+  `base90-b`; every recorded matrix run was deleted with [#353](https://github.com/awtoau/cynthion-workspace/issues/353).)
 - Disabling the CK output pad outright (`clk.BASE_TYPE=NONE`) also moved nothing.
 
-The verdict stands, but not on `sel`: that axis is unwired here (#343), so its
+The verdict stands, but not on `sel`: that axis is unwired here ([#343](https://github.com/awtoau/cynthion-workspace/issues/343)), so its
 flatness proves nothing. What is left still voids the build — **disabling the CK
 pad moved nothing**, and a 12.5% change in CK moved nothing. Seven points were
 run there — hysteresis off, CK# fast, CK slow, all-slow, CK
@@ -153,7 +153,7 @@ Retained artefacts are two runs per block; the full series is the table above.
 
 The axis is not expensive; it is unresolvable. Either would fix it:
 
-- **Fix the DQS read path's run-to-run drift** (#349). At a noise floor of 500
+- **Fix the DQS read path's run-to-run drift** ([#349](https://github.com/awtoau/cynthion-workspace/issues/349)). At a noise floor of 500
   cells nothing else in the matrix is resolvable either.
 - **A non-DQS build that is actually live above 90 MHz.** Today's is inert at
   both its rungs, so its 0-3 cell noise floor buys nothing.

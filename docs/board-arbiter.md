@@ -19,9 +19,9 @@ Submit a job.
 ## Why
 
 Agents coordinated for the board in prose and reflashed each other's
-measurements (#430): rows attributed to an unknown build, firmware 109 commits
+measurements ([#430](https://github.com/awtoau/cynthion-workspace/issues/430)): rows attributed to an unknown build, firmware 109 commits
 stale while measurements were taken against it, `hyperram_verify` resolving one
-variant's bitstream while the board ran another (#367).
+variant's bitstream while the board ran another ([#367](https://github.com/awtoau/cynthion-workspace/issues/367)).
 
 The board is not just a tty. It is the tty **plus** Apollo JTAG **plus** the
 state of what is configured. Nothing owned all three.
@@ -55,7 +55,7 @@ commands. The retired `cyn` (`debris/CYN_ARCHITECTURE.md`) died of the opposite.
 
 ## What a transcript carries
 
-- the bitstream sha256, its path and size — the identity that makes #367
+- the bitstream sha256, its path and size — the identity that makes [#367](https://github.com/awtoau/cynthion-workspace/issues/367)
   impossible rather than remembered
 - whether **this job** configured, or found the image already loaded
 - the commit the **board** reports from `info` (firmware and gateware), not the
@@ -71,7 +71,7 @@ commands. The retired `cyn` (`debris/CYN_ARCHITECTURE.md`) died of the opposite.
 
 1. the pre-configure gate open (Apollo on the bus),
 2. a `confirm` verdict of `ok` — `apollo configure` exiting 0 is not a running
-   design (#360),
+   design ([#360](https://github.com/awtoau/cynthion-workspace/issues/360)),
 3. the board's own `info` reporting an image commit,
 4. every command returning the shell's prompt,
 5. at least one command, for `run` and `shell`.
@@ -82,7 +82,7 @@ each leg to a failure.
 
 ## While a build is running
 
-- The arbiter holds the variant's `<build>/.build.lock` (#351) while it hashes
+- The arbiter holds the variant's `<build>/.build.lock` ([#351](https://github.com/awtoau/cynthion-workspace/issues/351)) while it hashes
   and configures the bitstream. `soc_run.py` rewrites `top.bit` in place, and
   without the lock the sha256 recorded and the bytes the ECP5 got can be from
   different builds.
@@ -125,8 +125,8 @@ They earn their board time with **events**, never rows:
 - a **cell that changed verdict** — compared over cells *both* runs reached,
   since a preempted sweep prints a prefix
 - a **cell that disagrees with itself** across passes of one job — same
-  configuration, seconds apart, which is the sharpest form of it (#437)
-- **die drift** ≥ 5 °C (#341)
+  configuration, seconds apart, which is the sharpest form of it ([#437](https://github.com/awtoau/cynthion-workspace/issues/437))
+- **die drift** ≥ 5 °C ([#341](https://github.com/awtoau/cynthion-workspace/issues/341))
 - **BUILD CHANGED** — a different bitstream sha256 or board image than the
   previous observation. Nothing is compared across it; another session
   rebuilding the variant mid-soak is the event, not the cells that moved.
@@ -146,7 +146,7 @@ They earn their board time with **events**, never rows:
 | `info`, `bist status`, `bist smoke`, `bist latency 8` | 0.04–0.07 s |
 | `bist all 1` / `bist all 8` (4096 cells) | 4.39 s / 4.59 s |
 | configure + confirm | ~2.5 s |
-| AUX console re-enumeration after a configure | 0.41 s (#419) |
+| AUX console re-enumeration after a configure | 0.41 s ([#419](https://github.com/awtoau/cynthion-workspace/issues/419)) |
 | a job on an already-loaded variant, end to end | 0.27 s |
 
 ## One board, many worktrees
