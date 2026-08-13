@@ -61,7 +61,7 @@ TEXT = "text"
 VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_CK_MHZ",    None,  "ck",        TEXT),
     ("CYNTHION_HYPERRAM_DQS",       "",    "dqs",       FLAG),
-    ("CYNTHION_SYNC_MHZ",           "50",  "sync",      TEXT),
+    ("CYNTHION_SYNC_MHZ",           "60",  "sync",      TEXT),
 )
 
 # The CK default is PER PATH, because one number cannot be right for both.
