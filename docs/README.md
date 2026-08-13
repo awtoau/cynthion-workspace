@@ -68,6 +68,7 @@ in its §13 got there in the first place.
 * [`github_actions.md`](github_actions.md) — (no title)
 * [`gsg-scenarios.md`](gsg-scenarios.md) — What upstream Cynthion officially does, and what implements it
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
+* **[`instruments.md`](instruments.md) — checks that cannot report the failure they exist to catch**: the four shapes, and the rules that follow
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
 * [`../linux-on-cynthion/`](../linux-on-cynthion/) — **Linux on Cynthion**: the analysis, the bring-up plan, and the sweep scripts behind them
 * [`rtic.md`](rtic.md) — **The concurrency design**: tasks on one stack, priority in software, and the I-cache that sizes it
