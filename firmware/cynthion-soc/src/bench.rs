@@ -799,7 +799,7 @@ fn ratio(uart: &mut Uart, region: &str, seq: &Run, rnd: &Run) {
     let times = random * 100 / sequential;
     let _ = writeln!(
         uart,
-        "{:<9}random / sequential, large set: {}.{:02}x",
+        "{:<9}large set: random is {}.{:02}x SLOWER than sequential",
         region,
         times / 100,
         times % 100
@@ -909,10 +909,10 @@ fn flash(uart: &mut Uart) {
     let known = target::flash_word(0) == 0x6150_00ff && target::flash_word(0x40) == 0x2a55_8800;
     let _ = writeln!(
         uart,
-        "flash    @0 {:08x} @40 {:08x} {}  sum {:08x}",
+        "flash    reads {} -- @0 {:08x} @40 {:08x} expected 615000ff/2a558800, checksum {:08x}",
+        if known { "CORRECT" } else { "WRONG" },
         target::flash_word(0),
         target::flash_word(0x40),
-        if known { "ok" } else { "BAD" },
         sum
     );
 }
