@@ -113,4 +113,53 @@ A data line is not an interrupt source. Whatever receiver goes on these lines,
 CDC bytes rather than the ULPI pins being one. Two ports, two sources.
 
 The existing pattern is `SerialLine` → `StreamBuffer` → `Uart16550` → source,
-and `SerialLine` would drop onto an SBU pad unchanged.
+and `SerialLine` drops onto an SBU pad unchanged.
+
+## The peripheral that was built — [`gateware/soc/peripherals/sbu.py`](../gateware/soc/peripherals/sbu.py)
+
+**One peripheral per port, one bidirectional pin pair, three modes**, selected by
+a register and sharing the pads and the tristate logic:
+
+| mode | pin 0 | pin 1 | rate |
+|---|---|---|---|
+| **0 raw** (reset) | driven and sampled | driven and sampled | capture at `sync`, 16.7 ns |
+| **1 serial** | transmit | receive | runtime baud, 10 Mbit/s exact, 12 Mbit/s ceiling |
+| **2 swd** | `SWCLK`, always driven | `SWDIO`, turnaround per B4.2 | 52.5 MHz down to 25.6 kHz |
+
+- **Raw is the fallback and it is why the peripheral is not just an SWD block.**
+  Every transition is captured with the levels after it and how long the previous
+  levels held, so a sideband protocol with no engine here is readable rather than
+  guessable. The FIFO reports overflow instead of dropping quietly.
+- **SWD is the host side** — Cynthion generates `SWCLK`, per #518. The engine is
+  [`peripherals/swd.py`](../gateware/soc/peripherals/swd.py), built from ARM
+  IHI 0074E chapter B4; `sources/README.md` has the document.
+- **Speed is an index into a fixed table**, the shape real probes ship: OpenOCD's
+  `stlink_khz_to_speed_map_swd[]` is twelve `{kHz, divisor}` pairs and an ST-Link
+  V2 tops out at 4 MHz. Index 0 here is **52.5 MHz**.
+- **`mode.swap` is the one correction** for both reasons the pair arrives
+  reversed — a flipped cable, and #517 row 9.
+
+**The clock.** SWD runs in `swd`, a 105 MHz domain that is CLKOS2 of the PLL
+already making `sync`: `CLKOS2_DIV = 4` of the 420 MHz VCO, exactly, so nothing
+else moves and no second PLL bel is taken. The CSRs stay in `sync`, so the
+crossing is real and is handled as one — pulses each way, request fields as data
+behind that handshake, and ACK/RDATA captured on `done` rather than synchronised
+per bit.
+
+**Bring-up is the on-board SAMD11, not a cable.** `J6` is the ARM 10-pin Cortex
+header carrying `MCU_SWCLK`/`MCU_SWDIO` to `U6` PA30/PA31. Jumper `user_pmod` 0
+pins 1 and 2 — balls `C9`/`B9` — to it and the target is a real SW-DP two inches
+away. **Read DPIDR and stop**: that SAMD11 is Apollo, and halting it takes the
+board off USB.
+
+**Proved in simulation, not on hardware.** `scripts/swd_host_sim.py` (37 checks)
+drives a target model written from the specification; `scripts/sbu_port_sim.py`
+(29 checks) runs both clock domains through the CSR bus. Both carry negative
+controls that are *run* — a turnaround one clock late, an inverted parity bit, an
+undefined acknowledge, a contending target — each asserting the corruption is
+reported.
+
+**What a board still has to settle:** that the 105 MHz domain closes timing, and
+that the round trip through two DPO2036 switches and a cable fits the 9.5 ns half
+period at index 0. #97 proves DC continuity and nothing about a fast edge; a
+slower speed index is the answer if it does not.
