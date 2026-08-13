@@ -124,11 +124,11 @@ def build(overlay, mhz, seed):
     # Apollo rather than through the CPU, so a rung too fast to execute can
     # still be loaded.
     #
-    # `--allow-timing-fail` is the point of the ladder: a rung nextpnr says
-    # misses is exactly the one worth loading, because STA's verdict on this die
-    # has never been checked against the die (#470).
+    # A rung nextpnr says misses is exactly the one worth loading, because STA's
+    # verdict on this die has never been checked against the die (#470). That is
+    # `soc_run.py`'s default now, so there is no flag to pass.
     command = [sys.executable, str(SOC_RUN), "--skip-tests", "--no-read",
-               "--no-parallel-refine", "--allow-timing-fail"]
+               "--no-parallel-refine"]
     if seed is not None:
         command += ["--seed", str(seed)]
     try:

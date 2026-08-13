@@ -619,12 +619,12 @@ def main():
                              "nothing else -- unlike repeat builds, which are "
                              "different netlists (#441). Folded into the gateware "
                              "digest, so each seed resynthesises")
-    parser.add_argument("--allow-timing-fail", action="store_true",
-                        help="write the bitstream even when nextpnr misses a "
-                             "constraint. Without it a missed clock aborts the "
-                             "build script and there is no .bit -- so a design "
-                             "STA calls marginal can never be RUN, and whether "
-                             "STA is right about this die is untestable (#470)")
+    parser.add_argument("--stop-on-timing-fail", dest="stop_on_timing_fail",
+                        action="store_true",
+                        help="abort instead of writing a bitstream when nextpnr "
+                             "misses a constraint. OFF by default: we flash and "
+                             "test, and a design STA calls marginal can only be "
+                             "judged by running it (#470, #525)")
     parser.add_argument("--features", default="",
                         help="cargo features for the shell crate, comma-separated. "
                              "`rtic` builds the RTIC dispatcher instead of the "
@@ -637,16 +637,16 @@ def main():
     # WHICH BUILD THIS IS, first line of every run. Unprinted, the variant is
     # visible only in the environment of whoever started it.
     # Before the digest is taken, because it is one of the digest's inputs.
-    if args.no_parallel_refine or args.seed is not None or args.allow_timing_fail:
-        global PNR_OPTS
-        PNR_OPTS = NEXTPNR_OPTS
-        if args.no_parallel_refine:
-            PNR_OPTS = " ".join(opt for opt in PNR_OPTS.split()
-                                if opt != "--parallel-refine")
-        if args.seed is not None:
-            PNR_OPTS = f"{PNR_OPTS} --seed {args.seed}"
-        if args.allow_timing_fail:
-            PNR_OPTS = f"{PNR_OPTS} --timing-allow-fail"
+    global PNR_OPTS
+    PNR_OPTS = NEXTPNR_OPTS
+    if args.no_parallel_refine:
+        PNR_OPTS = " ".join(opt for opt in PNR_OPTS.split()
+                            if opt != "--parallel-refine")
+    if args.seed is not None:
+        PNR_OPTS = f"{PNR_OPTS} --seed {args.seed}"
+    # A missed constraint yields a bitstream, because the board is the judge.
+    if not args.stop_on_timing_fail:
+        PNR_OPTS = f"{PNR_OPTS} --timing-allow-fail"
 
     BUILD.mkdir(parents=True, exist_ok=True)
     emit(f"variant {variant.slug()} -> {BUILD.relative_to(ROOT)}")
