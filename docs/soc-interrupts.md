@@ -1,7 +1,8 @@
 # SoC interrupts — the design
 
 What can interrupt this CPU and what should. **This is the design, not a
-description of the build.** Where the two differ, the "built" column says so.
+description of the build** — seventeen sources, of which six exist and five are
+enabled. The "built today" column says which.
 
 **Index:** [`README.md`](README.md) · siblings
 [`soc-clocking.md`](soc-clocking.md), [`soc-memory-bus.md`](soc-memory-bus.md)
@@ -39,26 +40,37 @@ an unmapped address is how the trap-heavy load exercises this handler.
 
 ## Every board signal that can interrupt
 
-| chip | refdes | chip part | signal | trigger | built | design |
-|---|---|---|---|---|---|---|
-| — | — | 16550 in fabric | console UART | level | source 1 | keep |
-| — | — | 16550 in fabric | Apollo link UART | level | source 2 | keep |
-| — | — | I2C master in fabric | transaction complete | level | source 3 | keep |
-| **FUSB302B** | `U2` | *IC USB TYPE C CTLR PROGR 14-MLP* | TARGET `int`, pin 5 | level | source 4 | keep |
-| **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
-| **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
-| **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
-| — | — | SBU receiver, TARGET — balls **A2**, **E4** | byte received | level | no peripheral | **a receiver, whose interrupt is the source** (#516) |
-| — | — | SBU receiver, AUX — balls **H13**, **K14** | byte received | level | no peripheral | **as above** (#516) |
-| — | — | USER button, ball **M14** | press | **edge** | GPIO input bit only | **make it a source** |
-| — | — | sideband in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** (#509) |
-| **USB3343** | TARGET | *hi-speed USB ULPI transceiver* | link event — `DIR` carries an RX CMD | edge | none | **one source** |
-| **USB3343** | AUX | as above | link event | edge | none | **one source** |
-| **USB3343** | CONTROL | as above | link event | edge | none | **one source** |
-| **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** ([why](chips/dpo2036-cc-sbu-protection.md)) | CSR bit only | **make it a source** |
-| **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
+| # | chip | signal | trigger | built today |
+|---|---|---|---|---|
+| 1 | — | console UART, 16550 in fabric | level | **yes** |
+| 2 | — | Apollo link UART, 16550 in fabric | level | **yes** |
+| 3 | — | I2C master, transaction complete | level | **yes** |
+| 4 | **FUSB302B** `U2` | TARGET `int`, pin 5 | level | **yes** |
+| 5 | **FUSB302B** `U12` | AUX `int`, pin 5 | level | **yes** |
+| 6 | **PAC1954** `U1` | `GPIO/ALERT2`, pin 15 | **edge** ([why](#the-pac1954-alert-is-not-a-level)) | wired, **not enabled** |
+| 7 | **PAC1954** `U1` | `SLOW/ALERT1`, pin 1 | edge | **no** — pin hard-driven as SLOW ([make it runtime-selectable](chips/pac1954-power-monitor.md)) |
+| 8 | **DPO2036** `U13` | TARGET `FAULTB`, pin 6 | **edge** ([why](chips/dpo2036-cc-sbu-protection.md)) | no — CSR bit only |
+| 9 | **DPO2036** `U14` | AUX `FAULTB`, pin 6 | **edge** | no — CSR bit only |
+| 10 | **USB3343** TARGET | link event — `DIR` carries an RX CMD | edge | no |
+| 11 | **USB3343** AUX | link event | edge | no |
+| 12 | **USB3343** CONTROL | link event | edge | no |
+| 13 | — | USER button, ball **M14** | **edge** | no — GPIO input bit only |
+| 14 | — | sideband byte, ball **T6** → **SAMD11** `U6` pin 8 | level | no — CSR count only (#509) |
+| 15 | — | SBU peripheral, TARGET — balls **A2**, **E4** | level | no — no peripheral ([`sbu.md`](sbu.md), #518) |
+| 16 | — | SBU peripheral, AUX — balls **H13**, **K14** | level | no — no peripheral |
+| 17 | — | PLL loss of lock | edge | no — `ClockMonitor` CSR bit only |
+
+**Seventeen sources in the design, six built, five enabled.** Source 6 is wired
+and left out of the enable mask; whether that is deliberate is unrecorded.
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
+
+## The PAC1954 alert is not a level
+
+Threshold alerts latch, but **conversion-complete is a 5 µs pulse that sets no
+status bit** (DS20006539B §5.16.1). Nothing captures it, so the one alert
+[`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md) recommends enabling would
+be silently lost as a level source. Edge, latched. #514.
 
 ## A data line is not an interrupt source
 
