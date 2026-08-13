@@ -103,7 +103,7 @@ the pin.
 
 | resource | subsignal | balls | state | where / why |
 |---|---|---|---|---|
-| `target_usb_dp` 0 | — | N4 | **never requested** (by the SoC) | Requested only by [`gateware/probes/pins/pin_survey.py`](../../../gateware/probes/pins/pin_survey.py). Net `TARGET_FS_MONITOR_D+`, 1 kΩ (`R58`) in series from `TARGET_A_D+` |
+| `target_usb_dp` 0 | — | N4 | **never requested** (by the SoC) | Requested only by [`gateware/probes/pins/pin_survey.py`](../../../gateware/probes/pins/pin_survey.py). Net `TARGET_FS_MONITOR_D+`, which has **one pad on the whole board** — this ball. Unconnected; #515 |
 | `target_usb_dm` 0 | — | P3 | **never requested** (by the SoC) | as above, `R57` |
 | `target_usb_diff` 0 | — | N4 P3 | never requested | LVDS view of the same two balls |
 | `target_usb_dp_chirp` 0 | — | N4 | never requested | LVCMOS12 view, for chirp detection |
@@ -353,8 +353,17 @@ here.
 
 ### 6. `target_usb_dp` / `target_usb_dm` (N4, P3) — a PHY-independent view of TARGET-A
 
-**State:** never requested by the SoC; only by the pin survey. The nets are
-`TARGET_FS_MONITOR_D±`, 1 kΩ in series (`R57`, `R58`) from `TARGET_A_D±`.
+**State: the nets go nowhere.** `TARGET_FS_MONITOR_D+` and `_D-` have exactly
+one pad each on the whole board — `IC1.N4` and `IC1.P3`. `R57`/`R58` do not
+exist, and neither does `TARGET_A_D±`. The TARGET Port sheet has no matching
+hierarchical labels, so the sheet pins are orphaned, and the copper dead-ends in
+bare metal ~3 mm short of `TP7`, which is itself unconnected. #515.
+
+The real topology has no tap: `J4.A6/B6` → `TARGET_C_D+` → `FL4` (common-mode
+filter) → `U9.14`.
+
+**Everything below is what such a view would be for, on a revision that had
+one.** It is not available on r1.4.
 
 **What it is for:** raw line-state on the TARGET port without going through the
 USB3343. That answers questions the ULPI register path cannot — is the bus idle,
