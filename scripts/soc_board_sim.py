@@ -115,7 +115,7 @@ MODE_PUSH_PULL  = 0b01
 class Bus:
     """Byte-wide CSR reads and writes, as the multiplexer's timing requires.
 
-    Copied from `soc_plic_sim.py`, and for the reason given there: a read is a
+    Copied from `soc_intc_sim.py`, and for the reason given there: a read is a
     strobe on one cycle and data on the next, and sampling a cycle late reads
     zero rather than stale data, which turns failures into passes.
     """
