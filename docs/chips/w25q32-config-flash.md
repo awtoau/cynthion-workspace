@@ -90,6 +90,19 @@ PIO, and `JA4`'s mux sources carry **no global-clock spine source**, so a global
 clock cannot reach `USRMCLKI` without passing through a LUT or FF. There is no
 software fix.
 
+**Diamond agrees, which is what makes this a fact rather than an inference.**
+prjtrellis is reverse-engineered, so absence from it is absence of knowledge.
+Lattice's own mapper refuses the same construct:
+
+    ERROR - map: DDR component 'sck_oddr' cannot be packed in any I/O logic
+                 block. Check connectivity and usage of the DDR.
+
+Diamond 3.14 LSE + map, `LFE5U-25FCABGA256 -8`, vendor database `sa5p25.nph`
+package 1.44, on a design that is one `ODDRX1F` driving one `USRMCLK`:
+`scripts/diamond/designs/usrmclk_oddr/`. Two independent tools, one reason — an
+ODDR must pack into an I/O logic block and the CCLK site is not one — so the open
+flow's refusal is correct rather than a missing capability.
+
 **The consequence, stated as the rule it is:**
 
 > **SCK ≤ the fabric clock of the domain that generates it.** Never 2×.
