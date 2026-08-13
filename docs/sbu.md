@@ -27,10 +27,15 @@ needs no new `platform.request`.
 **Proven alive** under #97 — all four passed drive-and-readback. That is DC
 continuity, not bandwidth.
 
-**Two open hardware questions:** whether the DPO2036 passes a signal cleanly
-enough for a fast link, and whether the two ports are wired with opposite
-polarity — `TARGET_C.SBU1S` reaches `U13` pin 10 while `AUX_TYPE_C.SBU1S`
-reaches `U14` pin **9**, whose symbol name is `SBU2S`. #517 row 9.
+**Two things to settle while building, neither a blocker:** whether the DPO2036
+passes a signal cleanly enough for a fast link, and whether the two ports are
+wired with opposite polarity — `TARGET_C.SBU1S` reaches `U13` pin 10 while
+`AUX_TYPE_C.SBU1S` reaches `U14` pin **9**, whose symbol name is `SBU2S`.
+#517 row 9.
+
+Orientation has to be handled anyway: SBU1/SBU2 swap when the cable is flipped,
+like CC1/CC2, so a receiver reads orientation from the FUSB302B and swaps. A
+fixed per-port correction folds into the same place.
 
 ## Three protocols, and only one is reachable as built
 
