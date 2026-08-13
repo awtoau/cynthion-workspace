@@ -86,7 +86,7 @@ LINE_AUX_FAULT = 3
 
 
 class I2CBusMux(wiring.Component):
-    """The bus select, the Type-C signals, and a PLIC source for each `int`.
+    """The bus select, the Type-C signals, and a source for each `int` and `fault`.
 
     Attributes
     ----------

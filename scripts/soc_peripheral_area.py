@@ -62,9 +62,10 @@ def _peripherals():
         from peripherals.uart16550 import Uart16550
         return Uart16550()
 
-    def plic():
-        from cpu.plic import Plic
-        return Plic(sources=5)
+    def intc():
+        from cpu.intc import Interrupts
+        import top
+        return Interrupts(top.IRQ_TRIGGERS)
 
     def clint():
         from cpu.clint import Clint
@@ -126,7 +127,7 @@ def _peripherals():
 
     return [
         ("uart16550",          uart16550,          "x2 in the SoC"),
-        ("plic",               plic,               "5 sources"),
+        ("intc",               intc,               "17 numbered, 10 built"),
         ("clint",              clint,              ""),
         ("i2c_master",         i2c_master,         ""),
         ("i2c_mux",            i2c_mux,            ""),

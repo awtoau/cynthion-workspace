@@ -1,13 +1,18 @@
 //! The interrupt controller: pending bits and enables, and nothing else.
 //!
-//! `gateware/soc/cpu/intc.py` on the board, `-M virt`'s PLIC under QEMU. The
-//! two register maps are the only `#[cfg]` here, because the operations are the
-//! same four: enable, disable, read what is pending, acknowledge.
+//! `gateware/soc/cpu/intc.py` on the board, `-M virt`'s PLIC under QEMU. Four
+//! operations either way: enable, disable, take the next source needing service,
+//! acknowledge it.
 //!
-//! **Nothing claims and nothing completes.** The PLIC offers both and this
-//! driver uses neither: a claim is arbitration for a controller that can
-//! preempt, and no controller can -- it gives the CPU one line, and `mstatus.MIE`
-//! is cleared by hardware on trap entry. `docs/soc-interrupts.md`.
+//! **No priority and no arbitration.** Priority is RTIC's, in software on
+//! `msip`, and no controller could preempt regardless: it gives the CPU one
+//! line and `mstatus.MIE` is cleared by hardware on trap entry.
+//! `docs/soc-interrupts.md`.
+//!
+//! Taking a source is free of side effects on the board and is the claim under
+//! QEMU, whose pending bit sets on a rising line and is cleared by nothing else
+//! -- see the `map` module. So [`Intc::next_ready`] and [`Intc::clear`] are one
+//! pair, once each per source, on both.
 //!
 //! ## The two shapes of source
 //!
@@ -44,21 +49,27 @@ mod map {
     pub const BYTES: usize = 4;
 }
 
-/// `virt`'s PLIC, driven as pending bits and enables.
+/// `virt`'s PLIC.
 ///
-/// The claim register at 0x200004 is never touched. What the PLIC adds over the
-/// board's controller -- arbitration between sources, and gating one while its
-/// handler runs -- is what this design does not want, and skipping the claim
-/// leaves exactly the pending-and-enable behaviour the board has.
+/// **Taking a source and acknowledging it are the claim and the complete here,
+/// and there is no choice about it.** QEMU's `sifive_plic_irq_request` sets a
+/// pending bit on a rising line and never clears one; the claim read is the only
+/// thing that does, and a write to the pending register is rejected as a guest
+/// error. So a driver that skipped the claim would loop on a bit nothing could
+/// clear -- which is a fact about this model, not about the design.
 ///
-/// Every source is level-sensitive on this machine, so [`super::Intc::clear`]
-/// has nothing to do: the pending bit follows the line.
+/// What the design does not use is what the claim adds BEYOND that: priority
+/// arbitration. Every source is left at 1, so the claim returns the lowest
+/// ready source and orders nothing.
 #[cfg(feature = "qemu")]
 mod map {
     pub const PRIORITY: usize = 0x0000_0000;
     pub const PENDING: usize = 0x0000_1000;
     pub const ENABLE: usize = 0x0000_2000;
     pub const THRESHOLD: usize = 0x0020_0000;
+    /// Read: take the highest-priority pending source and clear its pending bit.
+    /// Write: release the source whose number is written.
+    pub const CLAIM: usize = 0x0020_0004;
 }
 
 /// An interrupt controller at a fixed base address.
@@ -89,32 +100,6 @@ impl Intc {
     /// What the handler has to service: pending and not masked.
     pub fn ready(&self) -> u32 {
         self.pending() & self.enabled()
-    }
-
-    /// The lowest-numbered source needing service, or `None`.
-    ///
-    /// **No side effect**, unlike the PLIC claim this replaces: it reads two
-    /// registers and returns. A handler loop over it therefore terminates only
-    /// because each pass either acknowledges its source or masks it -- do
-    /// neither and this returns the same number forever.
-    ///
-    /// Re-reading per pass rather than servicing a snapshot is deliberate: a
-    /// source that goes pending while an earlier one is being serviced is
-    /// picked up in the same trap instead of costing a second trap frame.
-    pub fn next_ready(&self) -> Option<u32> {
-        match self.ready() {
-            0 => None,
-            ready => Some(ready.trailing_zeros()),
-        }
-    }
-
-    /// Acknowledge one source.
-    ///
-    /// Unconditional for an edge source. **Ignored for a level source whose
-    /// line is still asserted** -- clear the peripheral first, or this has done
-    /// nothing and the handler is re-entered.
-    pub fn clear(&self, source: u32) {
-        self.write_pending(1 << source);
     }
 
     /// Let `source` raise the CPU line.
@@ -152,6 +137,31 @@ impl Intc {
     /// Nothing to configure: both registers reset to zero and every source is
     /// enabled by the driver that owns it.
     pub fn init(&self) {}
+
+    /// The lowest-numbered source needing service, or `None`.
+    ///
+    /// **No side effect here**, and one on QEMU -- see that branch. A handler
+    /// loop over this terminates only because each pass either acknowledges its
+    /// source or masks it; do neither and it returns the same number forever.
+    ///
+    /// Re-reading per pass rather than servicing a snapshot is deliberate: a
+    /// source that goes pending while an earlier one is being serviced is
+    /// picked up in the same trap instead of costing a second trap frame.
+    pub fn next_ready(&self) -> Option<u32> {
+        match self.ready() {
+            0 => None,
+            ready => Some(ready.trailing_zeros()),
+        }
+    }
+
+    /// Acknowledge one source.
+    ///
+    /// Unconditional for an edge source. **Ignored for a level source whose
+    /// line is still asserted** -- clear the peripheral first, or this has done
+    /// nothing and the handler is re-entered.
+    pub fn clear(&self, source: u32) {
+        self.write_pending(1 << source);
+    }
 
     fn read_mask(&self, offset: usize) -> u32 {
         let mut value = 0;
@@ -214,6 +224,34 @@ impl Intc {
         }
     }
 
+    /// The lowest-numbered source needing service, or `None`.
+    ///
+    /// **This read has a side effect on this target**: it is the PLIC claim, so
+    /// it clears that source's pending bit and gates the source until
+    /// [`Intc::clear`] releases it. Pair the two, once each per source -- an
+    /// unreleased claim leaves that source dead for the session.
+    ///
+    /// The number matches the board's `ready().trailing_zeros()`: with every
+    /// priority at 1, QEMU's arbitration walks the sources in order and returns
+    /// the first that is pending and enabled.
+    pub fn next_ready(&self) -> Option<u32> {
+        // SAFETY: as above.
+        match unsafe { read_volatile((self.base + map::CLAIM) as *const u32) } {
+            0 => None,
+            source => Some(source),
+        }
+    }
+
+    /// Acknowledge one source: the PLIC complete.
+    ///
+    /// Unconditional -- QEMU checks the source number and nothing else, so this
+    /// works for a source the handler has just masked, exactly as the board's
+    /// W1C does.
+    pub fn clear(&self, source: u32) {
+        // SAFETY: as above.
+        unsafe { write_volatile((self.base + map::CLAIM) as *mut u32, source) }
+    }
+
     fn read_mask(&self, offset: usize) -> u32 {
         // SAFETY: as above.
         unsafe { read_volatile((self.base + offset) as *const u32) }
@@ -223,8 +261,4 @@ impl Intc {
         // SAFETY: as above.
         unsafe { write_volatile((self.base + map::ENABLE) as *mut u32, mask) }
     }
-
-    /// Nothing to do: every source on this machine is a level, so its pending
-    /// bit follows the line and drops when the peripheral is serviced.
-    fn write_pending(&self, _mask: u32) {}
 }

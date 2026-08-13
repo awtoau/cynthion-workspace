@@ -23,7 +23,7 @@
 //!
 //! ## The completion interrupt: enabled, and what it is for
 //!
-//! - `CTR.IEN` set, PLIC source 3 claimed by [`I2c::init`]. A peripheral claims its
+//! - `CTR.IEN` set, source 3 claimed by [`I2c::init`]. A peripheral claims its
 //!   own source rather than being remembered by a list elsewhere: a source wired in
 //!   `gateware/soc/top.py` but absent from that list reads as `enabled 00000036`,
 //!   bit 3 missing, with nothing saying so (#246).
@@ -47,7 +47,7 @@
 //!
 //! - Source 3 is a LEVEL: `self.irq.eq(irq_flag & ien)` in
 //!   `gateware/soc/peripherals/i2c_master.py`; `irq_flag` clears only via `CR.IACK`.
-//!   Completing at the PLIC while the peripheral still asserts re-delivers it
+//!   Acknowledging while the peripheral still asserts re-delivers it
 //!   immediately -- the livelock `irq.rs` documents.
 //! - [`I2c::acknowledge_interrupt`] is one MMIO write, so unlike the FUSB302B (three
 //!   read-to-clear registers over I2C, ~1 ms) it's short enough to do in the handler.
@@ -67,7 +67,7 @@ const DATA: usize = 3;
 const CMD_STATUS: usize = 4;
 
 const CTR_EN: u8 = 0x80;
-/// Interrupt enable. The gateware drives PLIC source 3 from `irq_flag & ien`, so
+/// Interrupt enable. The gateware drives source 3 from `irq_flag & ien`, so
 /// this bit is the difference between a source that is wired and a source that
 /// can fire.
 const CTR_IEN: u8 = 0x40;

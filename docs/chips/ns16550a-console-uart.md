@@ -168,7 +168,7 @@ LSR:
 
 ## Interrupts
 
-One level-sensitive line per instance, into the PLIC.
+One level-sensitive line per instance, into the interrupt controller.
 
 | IIR id | condition | enabled by | cleared by |
 |---|---|---|---|

@@ -69,11 +69,11 @@ handler. Nothing polls LSR for input any more. So a broken interrupt path is a
 shell that never answers, and every assertion here would fail at once.
 
 `irq` is asserted anyway because that failure mode is the loud one. The quiet
-one is a source that is enabled and never fires, or a claim that was taken and
-never completed -- which on a two-console board leaves one port dead while the
+one is a source that is enabled and never fires, or a pending bit nothing
+acknowledged -- which on a two-console board leaves one port dead while the
 other works perfectly. The count and the pending word are what distinguish them,
-and this target has a real PLIC (`plic@c000000`, the 16550 on source 10) rather
-than a stand-in, so the check means the same thing here as on the board.
+and this target has a real controller (`plic@c000000`, the 16550 on source 10)
+rather than a stand-in, so the check means the same thing here as on the board.
 
 The CRLF one is the reason this file exists. On a raw CDC-ACM pipe nothing supplies a
 line discipline, so a bare `\\n` from `writeln!` moves the cursor down a line without
@@ -1001,7 +1001,7 @@ def main():
         # script can derive independently agree with it.
         reply = command("info",
                         [b"image ", b"tools ", b"memory ", b"boot ", b"cpu ",
-                         b"trap ", b"plic ", b"fabric "],
+                         b"trap ", b"intc ", b"fabric "],
                         "`info` reports every section")
 
         # The bootloader's breadcrumb, and what this target has to say about
@@ -1494,18 +1494,15 @@ def main():
               f"received: {show(reply) or '(nothing)'}")
 
         # --- the console is interrupt-driven ------------------------------------
-        # `virt`'s PLIC is at 0x0c000000 and its 16550 is on source 10, both read
-        # out of the device tree (see src/target.rs). Assert the firmware found it
-        # there, and that the handler has actually run.
-        # The addresses are the TARGET's, so only the shape is common: on
-        # `virt` the PLIC is at 0x0c000000 with the 16550 on source 10, both
-        # from the device tree; the SoC puts its own at 0xf0400000. Asserting
-        # QEMU's numbers against the board would be asserting that the board is
-        # QEMU.
+        # The addresses are the TARGET's, so only the shape is common: on `virt`
+        # the controller is a PLIC at 0x0c000000 with the 16550 on source 10,
+        # both from the device tree; the SoC puts its own at 0xf0000c00.
+        # Asserting QEMU's numbers against the board would be asserting that the
+        # board is QEMU.
         reply = command("cpu irq",
-                        [b"plic  @f0400000", b"log  waiting"] if board
-                        else [b"plic  @0c000000", b"src 10", b"log  waiting"],
-                        "`irq` finds the PLIC and names the console's source")
+                        [b"intc  @f0000c00", b"log  waiting"] if board
+                        else [b"intc  @0c000000", b"src 10", b"log  waiting"],
+                        "`irq` names the controller and the console's source")
 
         # The count itself. Everything typed so far arrived through the handler, so
         # this cannot be small -- but the assertion that matters is `> 0`, because
@@ -1684,7 +1681,7 @@ def main():
         # `virt` has a real CLINT at 0x02000000 -- `clint@2000000` in the
         # device tree, with `interrupts-extended = <cpu 3>, <cpu 7>` -- so
         # `src/timer.rs` is compiled unchanged for this target and for the
-        # board, exactly as `src/plic.rs` and `src/uart.rs` are. What is
+        # board, exactly as `src/intc.rs` and `src/uart.rs` are. What is
         # exercised here is the tick that ships, not a stand-in.
         def tick_state(name):
             """`time`, parsed: (uptime ms, counter ms, ticks).

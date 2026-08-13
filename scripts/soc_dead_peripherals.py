@@ -74,7 +74,7 @@ C_GENERATOR = "scripts/riscv_firmware.py"
 # it is the detector that is broken -- see the docstring.
 KNOWN_USED = ("CONSOLE", "APOLLO_UART", "BOARD_GPIO", "BOARD_I2C",
               "BOARD_CLOCKS", "BOARD_ULPI", "BOARD_VBUS", "BOOTRAM",
-              "PLIC", "CLINT")
+              "INTC", "CLINT")
 
 # A name and an address that appear in no source file. The detector must report
 # it dead; one that cannot is a detector that reports every window used.

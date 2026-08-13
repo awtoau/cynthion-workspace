@@ -81,8 +81,8 @@ succeeds, and each is stored and otherwise ignored:
 ## Interrupt
 
 `irq` is a LEVEL, held while any enabled condition holds, reported through IIR in
-the standard priority order, and wired to `cpu/plic.py`. IER resets to zero, so
-a design that polls LSR and ignores `irq` is unaffected.
+the standard priority order, and wired to a `level` source of `cpu/intc.py`. IER
+resets to zero, so a design that polls LSR and ignores `irq` is unaffected.
 
     IIR id  condition                       enabled by  cleared by
     ------  ------------------------------  ----------  ----------------------
@@ -214,8 +214,8 @@ class Uart16550(wiring.Component):
         LSR.FE. Leave unconnected on a transport that has no frames.
     irq : Signal(), out
         The interrupt request, active high and LEVEL sensitive. Attach to a
-        source input of `vexii_plic.Plic`, or leave it unconnected and poll LSR
-        as before -- it costs nothing when nothing reads it, and IER resets to
+        `level` source of `cpu/intc.py`, or leave it unconnected and poll LSR as
+        before -- it costs nothing when nothing reads it, and IER resets to
         zero, so this line is low until a driver asks for it.
 
     The bus, the FIFOs and both stream ports are all in the `sync` domain. If a
@@ -406,11 +406,11 @@ class Uart16550(wiring.Component):
         #   rx_pending   IER.ERBFI and a byte is waiting        (LSR.DR)
         #   tx_pending   IER.ETBEI and the transmit FIFO emptied
         #
-        # LEVEL SENSITIVE, held for as long as a condition holds. The PLIC in
-        # front of this expects a level (`cpu/plic.py`), and so does a handler
-        # that drains only part of a FIFO: an edge would mean the remaining
-        # bytes are never announced, giving a console that accepts one burst and
-        # then appears to hang.
+        # LEVEL SENSITIVE, held for as long as a condition holds, which is why
+        # its source is declared `level` in `top.py`'s IRQ_TRIGGERS: the
+        # condition is a FIFO backlog the CPU drains, so draining is what clears
+        # it. An edge would announce the first burst and nothing after it,
+        # giving a console that appears to hang.
         #
         # Each condition is cleared by the read the standard says clears it --
         # LSR, RBR and IIR respectively -- so a handler that follows the standard

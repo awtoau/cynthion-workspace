@@ -19,7 +19,7 @@
 //! So a real hardware source needs a front end, and [`machine_external`] below
 //! is it: the same claim loop `src/irq.rs` has, ending in `pend` instead of in
 //! the work. The controller says WHICH source; the SLIC decides WHEN the handler
-//! for it runs relative to everything else. `Plic::set_threshold` is not what
+//! for it runs relative to everything else. A hardware threshold is not what
 //! RTIC locks with -- the SLIC has its own threshold, in a `static`.
 //!
 //! ## Why the modules are included by path

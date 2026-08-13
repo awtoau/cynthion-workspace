@@ -25,7 +25,7 @@
 //! | [`UsbEvent`] | **real**, smolusb's `event.rs` |
 //! | [`Control::dispatch_event`] | **real**, smolusb's `control.rs` state machine |
 //! | the descriptor request dispatch | **real** shape, byte tables instead of `zerocopy` views |
-//! | the interrupt that starts it | **real** -- a 16550 RX line through the PLIC |
+//! | the interrupt that starts it | **real** -- a 16550 RX line through the controller |
 //! | the FIFO the handler reads the packet out of | **stand-in** -- the 16550's RBR, not an EP_CONTROL |
 //! | what the endpoint writes go to | **stand-in** -- [`Endpoints`], a RAM buffer and a trace |
 //!
@@ -894,7 +894,7 @@ impl Journal {
 /// Cargo.toml opens by explaining it does not take.
 ///
 /// **Both binaries use this, and that is a finding rather than a shortcut.**
-/// RTIC cannot own it: its producer is the PLIC front end, which is not an RTIC
+/// RTIC cannot own it: its producer is the interrupt front end, not an RTIC
 /// task and has no `lock`. See the module comment in `src/bin/usb_rtic.rs`.
 const QUEUE: usize = 64;
 

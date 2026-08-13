@@ -340,9 +340,8 @@ fn is_i2c(source: u32) -> bool {
 /// The opposite treatment from `defer_type_c` one function down, and the reason
 /// is the clear and not the peripheral. Source 3 is a level --
 /// `irq.eq(irq_flag & ien)` in `peripherals/i2c_master.py` -- and `irq_flag`
-/// goes down only on a write of `CR.IACK`. Completing at the PLIC while the
-/// peripheral still asserts re-delivers immediately, so something has to clear
-/// it before the `plic.complete` at the bottom of the claim loop.
+/// goes down only on a write of `CR.IACK`. Acknowledging while the peripheral
+/// still asserts does nothing at all, so the clear has to come first.
 ///
 /// That clear is ONE MMIO WRITE. A FUSB302B's is three read-to-clear registers
 /// over I2C -- ~120 us at the bus's 1 MHz (#272), on the controller the power

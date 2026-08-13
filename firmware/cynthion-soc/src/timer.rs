@@ -2,7 +2,7 @@
 //!
 //! - A CLINT raises the machine timer interrupt while `mtime >= mtimecmp`. The
 //!   handler adds one period to `mtimecmp` and returns -- the whole tick.
-//! - Standard rather than bespoke, same reason as `src/plic.rs`: RTIC and Zephyr
+//! - Standard rather than bespoke: RTIC and Zephyr
 //!   both drive a RISC-V tick this way and neither drives a custom timer without
 //!   a port being written. QEMU's `-M virt` has a real CLINT, so this file
 //!   compiles unchanged for both targets and `scripts/soc_test.py` exercises the
@@ -264,7 +264,7 @@ fn tick() {
 /// Start the tick.
 ///
 /// Call once, from `main`, after `irq::init()` has enabled interrupts globally.
-/// The order between this and the PLIC does not matter -- they are different
+/// The order between this and the external interrupt does not matter -- different
 /// `mie` bits and different handlers -- but the deadline must be programmed
 /// BEFORE `mie.MTIE` is set, which is why both happen here and in this order.
 /// Neither target's reset value for `mtimecmp` may be relied on: the SoC's is

@@ -451,9 +451,8 @@ CLINT_BASE = 0xf0800000
 # sources and is the authority. Numbers with no hardware yet are left as gaps:
 # `cpu/intc.py` ties them low, so wiring one up later renumbers nothing.
 #
-# Source 0 is unused. It was the PLIC's "nothing pending" answer; nothing needs
-# a reserved number now, and renumbering to reclaim one bit would be a firmware
-# change for a bit.
+# Bit 0 is unused: the doc's table starts at 1, and bit position is the source
+# number.
 #
 # No order here and no tie-break. The controller has no priority: every enabled
 # pending source is serviced in the one trap, and which TASK runs first is
@@ -816,7 +815,7 @@ CACHE_WAYS = 2
 class AwtoSoc(Elaboratable):
     """This project's SoC. VexiiRiscv RV32IMAC, with:
 
-    - a PLIC (6 sources) and a CLINT
+    - an interrupt controller (17 numbered sources, 10 built) and a CLINT
     - 64 KiB of block RAM, HyperRAM, and memory-mapped SPI flash
     - the board: LEDs, button, VBUS control, ULPI registers, sideband
     - a PAC1954 power monitor behind an I2C mux
@@ -958,13 +957,12 @@ class AwtoSoc(Elaboratable):
         #
         # Both 16550s already have an `irq` output; before this it went nowhere
         # and both consoles were polled round-robin by the firmware. The lines
-        # are LEVELS, held for as long as the condition holds, which is what the
-        # PLIC's gateway expects -- see the docstrings in vexii_plic.py and
+        # are LEVELS, held for as long as the condition holds -- see
         # uart16550.py for why an edge here would lose everything after the
         # first burst.
         # Indexed by the IRQ_* constants rather than concatenated in order, so
-        # the source numbers the firmware writes into the PLIC's enable register
-        # and the wires they select are the same names in the same file. A Cat()
+        # the source numbers the firmware writes into the enable register and
+        # the wires they select are the same names in the same file. A Cat()
         # here would encode them positionally and silently renumber everything
         # if a third source were ever inserted in the middle.
         # The board's peripherals: LEDs and two other pins on a GPIO block, the

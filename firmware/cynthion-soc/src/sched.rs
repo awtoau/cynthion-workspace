@@ -11,7 +11,7 @@
 //! already existed and went unread:
 //!
 //!     metrics::polled()        the REFRESH cycle's achieved interval
-//!     the PLIC's counters      irqs, stalls, buffered and lost, per source
+//!     the source counters      irqs, stalls, buffered and lost, per source
 //!     mhpmcounter3/4           STALLED_CYCLES_FRONTEND and _BACKEND
 //!
 //! The `rtic` command below prints all three. It reports the model first, and

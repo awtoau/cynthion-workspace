@@ -96,7 +96,7 @@
 //! - **The Type-C deferral stands in for the one long job.** On the board:
 //!   a millisecond of I2C on a shared controller. Under QEMU there is no I2C,
 //!   so [`SERVICE_US`] is spun on the CLINT instead, sourced from `virt`'s
-//!   goldfish RTC alarm -- a second PLIC line, level-sensitive, cannot be
+//!   goldfish RTC alarm -- a second source, level-sensitive, cannot be
 //!   cleared cheaply by the handler, schedulable by the guest. Same obligation
 //!   shape as a FUSB302B.
 //! - **QEMU retires one instruction per cycle.** Board IPC measured at 0.302

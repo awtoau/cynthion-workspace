@@ -25,7 +25,7 @@
 //!
 //! 1. **Ordered.** CPU facilities, then the console, then the bus, then the
 //!    parts on it, then interrupt sources -- `fusb302b_init` must have cleared
-//!    both parts' interrupt registers before their PLIC sources are claimed.
+//!    both parts' interrupt registers before their sources are claimed.
 //! 2. **The UART is the exception**: it cannot log its own initialisation, so it
 //!    goes first and REPORTS afterwards, from the registers.
 //! 3. **Inside `#[init]`, before RTIC starts.** `devices` does not exist as a

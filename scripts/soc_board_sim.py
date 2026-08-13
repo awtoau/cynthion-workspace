@@ -1190,7 +1190,7 @@ def run_i2c_mux_checks(checks, verbose):
         seen.get("both")
         == ((1, 1), (1 << LINE_TARGET_INT) | (1 << LINE_AUX_INT)),
         f"((target_irq, aux_irq), lines) was {seen.get('both')!r}. Two devices "
-        f"asserting is two claims, and the PLIC's loop takes both -- neither "
+        f"asserting is two pending bits, and the handler takes both -- neither "
         f"waits on the other being decoded.")
     checks.check(
         "one device going away leaves the other's source asserted",

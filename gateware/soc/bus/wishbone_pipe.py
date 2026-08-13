@@ -50,10 +50,9 @@ a second time.
 
 For a RAM that is invisible. For this SoC it would be a catastrophe of exactly
 the kind the register maps here were designed to avoid: a second strobe on a
-16550's RBR pops another byte off the receive FIFO, and a second strobe on the
-PLIC's claim register takes a second interrupt and never completes it. Both
-would present as data disappearing at random under load, with every register
-read looking correct in isolation.
+16550's RBR pops another byte off the receive FIFO. That would present as data
+disappearing at random under load, with every register read looking correct in
+isolation.
 
 So STB is withheld downstream for the one cycle in which the captured response
 is being presented upstream. The subordinate sees exactly one strobe per

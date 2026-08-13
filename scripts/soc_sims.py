@@ -7,7 +7,7 @@
 Runs the simulations under `scripts/` and prints how many checks each made.
 
     ./scripts/soc_sims.py            # every simulation, with its repetition
-    ./scripts/soc_sims.py plic clint # only the ones whose name contains these
+    ./scripts/soc_sims.py intc clint # only the ones whose name contains these
     ./scripts/soc_sims.py --tier once # every simulation, one cycle each
     ./scripts/soc_sims.py --list     # what is available
 

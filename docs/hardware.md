@@ -701,7 +701,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 | `flash id`, `flash read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
 | `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories, same verb and same reply | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
-| `irq` | PLIC pending/enabled, per-console interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
+| `irq` | controller pending/enabled, per-source interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `time` | the 1 ms CLINT tick: uptime, `mtime`, and what the handler costs | below |
 | `cpu stats` | where the cycles go: busy against idle, IPC, turn length, poll jitter | below |
 | `log [n]` | push *n* deferred events, as an interrupt handler would | below |
@@ -717,7 +717,7 @@ command is *for*. Anything hardware-specific is in that chip's note.
 **`info`** prints eight lines: the image (git hash, branch, dirty flag, build
 timestamp), the compiler and target triple, the section sizes and what is left of
 the 63 KiB image region, the boot status the bootloader left behind, `misa`
-decoded, `mstatus`/`mtvec`, the PLIC's threshold and enables, and the gateware.
+decoded, `mstatus`/`mtvec`, the controller's pending and enables, and the gateware.
 
 **Firmware and bitstream are built separately and need never have been built
 together** — `load` replaces the firmware over the console without rebuilding the
@@ -778,7 +778,7 @@ instruction from a line that looks like arithmetic.
 
 It deliberately does **not** touch I2C (one owner per device protocol — `power`
 and `typec` report what their drivers cached), does not write flash (**the
-bitstream is at offset 0**), does not read the PLIC's claim register (that would
+bitstream is at offset 0**), reads no register with a side effect (that would
 take an interrupt from the handler and never complete it), and does not walk the
 PHY's scratch register (`phy` does that, and it writes). The one thing it writes
 is block RAM between this image's `.bss` and its stack, which nothing owns — and
@@ -862,7 +862,7 @@ firmware never transmits there unbidden.
 Ports are named — `target_a`, `target_c`, `aux`, `control` — and never numbered,
 because the PAC's channel order is not the port order anyone would guess.
 
-**`irq`** lists the PLIC's pending and enabled words, then a line per console and
+**`irq`** lists the controller's pending and enabled words, then a line per source and
 a line per Type-C source. The Type-C lines are per controller, not one total: a
 `target` count that climbs while `aux` stays at zero says which connector
 something is happening on. A source missing from `enabled` is one the handler has
@@ -967,7 +967,7 @@ not a measurement.
 
 Still only gateware can answer these, and none of them is built: Wishbone stall
 cycles (what the response register in `18c1fa5` costs in service), UART FIFO
-high-water marks, I2C bus occupancy, and PLIC-assert-to-handler-entry latency.
+high-water marks, I2C bus occupancy, and assert-to-handler-entry latency.
 Each is a counter and a CSR.
 
 **`i2c <bus>`** names the bus rather than remembering one. There is a single I2C
@@ -980,7 +980,7 @@ firmware writes anything.
 **`typec`** reports both controllers live: device id, VBUS, the CC voltage band,
 and the raw `int`/`fault` lines, and how many interrupts each port has been
 serviced for. A state change is *not* polled — the controllers are configured at
-boot to interrupt, and **each `int` line has its own PLIC source**, so the claim
+boot to interrupt, and **each `int` line has its own source**, so the pending bit
 says which controller asserted. The lines are levels, so the handler masks that
 one source and records which port; the main loop clears that one device and
 re-enables that one source. Clearing is a millisecond of I2C, which is why the

@@ -47,7 +47,7 @@ but one *controller* is. A single I2C master with a 2-bit bus select driving thr
 pin-sets is the multiplexed master #98 already asks for, and it replaces three
 replicated controllers with one plus a mux.
 
-The interrupt lines get a PLIC source each, and the level-sensitive trap that a
+The interrupt lines get a source each, and the level-sensitive trap that a
 shared one would have carried is described in
 [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
 negotiation is not on the critical path.
@@ -55,13 +55,15 @@ negotiation is not on the critical path.
 **Done, and on silicon** (#121). `gateware/soc/peripherals/i2c_mux.py` is the select and
 the four Type-C signals; `gateware/soc/peripherals/i2c_master.py` gained an `idle` output
 so the select cannot move underneath a transfer. The two `int` lines were OR-ed
-onto one PLIC source here, **and #135 gave each its own** — one controller does
-mean one device at a time on the bus, but that says nothing about which device the
-handler should be told to service, and the PLIC had 27 spare sources. See
+onto one source here, **and #135 gave each its own** — one controller does mean
+one device at a time on the bus, but that says nothing about which device the
+handler should be told to service, and a source is a pending bit and an enable.
+Each DPO2036's `FAULTB` has its own source too, edge-triggered. See
 [`architecture.md`](architecture.md) decision 8. The handler still *masks* rather than
 clears: clearing needs a millisecond of I2C on the controller the foreground is
 also using, which is not a thing an interrupt handler may do. Normal context
-clears the device that asserted and re-enables its source.
+clears the device that asserted, acknowledges the pending bit and re-enables
+its source. [`soc-interrupts.md`](soc-interrupts.md) is the controller.
 Note the earlier `gateware/probes/i2c/multiplexed.py` was never on silicon and is
 superseded.
 

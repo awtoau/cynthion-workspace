@@ -73,7 +73,7 @@ mod mux;
 ///
 /// It does NOT take a `&mut Bus`, and that is the point. Source 3 is a level:
 /// `irq.eq(irq_flag & ien)` in the gateware, with `irq_flag` cleared only by a
-/// write of `CR.IACK`. Completing at the PLIC while the peripheral still asserts
+/// write of `CR.IACK`. Acknowledging while the peripheral still asserts
 /// re-delivers immediately. The handler therefore has to clear it while a driver
 /// in normal context owns the transaction -- so this is deliberately the one
 /// operation on the controller that needs no ownership: a single store, of a

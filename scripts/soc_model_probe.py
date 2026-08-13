@@ -2,7 +2,7 @@
 """Build one skeleton per concurrency model and report what each runtime costs.
 
 `docs/rtic.md` is the reading. This is the measurement behind
-it: five skeletons that do the SAME VISIBLE WORK -- a PLIC front end, two
+it: five skeletons that do the SAME VISIBLE WORK -- an interrupt front end, two
 sources, one shared counter, an idle loop -- built by the same profile against
 the same linker script, so the difference between any two `.text` figures is the
 runtime and nothing else.
@@ -15,7 +15,7 @@ and one pair that answers the hardware-timer question rather than the runtime
 question -- the same three periodic jobs, scheduled two ways:
 
     model-coop-swqueue   three deadlines multiplexed onto the one `mtimecmp`
-    model-coop-hwtimer   three FPGA comparators, one PLIC line each
+    model-coop-hwtimer   three FPGA comparators, one source each
 
 The budget these spend is the 4 KiB direct-mapped I-cache, not flash and not
 block RAM. See the `opt-level` table in `firmware/cynthion-soc/Cargo.toml` for
@@ -52,7 +52,7 @@ BUILDS = [
 ]
 
 # What each runtime figure is measured against. `model-bare` is the floor: the
-# PLIC front end, the trap vector and the two counters, with no runtime at all.
+# front end, the trap vector and the two counters, with no runtime at all.
 FLOOR = "bare: riscv-rt only"
 
 # The pair whose difference is the software timer queue.

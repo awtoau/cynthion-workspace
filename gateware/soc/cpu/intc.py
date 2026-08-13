@@ -31,14 +31,10 @@ the high byte last, per the CSR multiplexer's shadow rules (`src/gpio.rs`).
 
 ## Numbering
 
-`docs/soc-interrupts.md` numbers seventeen sources, of which ten are built. The
-gaps are real sources with no hardware yet, so the map is built to the highest
-number in use and every gap gets a source whose line is tied low: bit position
-equals source number, and wiring one up later renumbers nothing.
-
-Source 0 exists and is unused. It carried the PLIC's "nothing pending" meaning;
-nothing needs a reserved number now, but renumbering every source to reclaim one
-bit would be a firmware change for a bit.
+`docs/soc-interrupts.md` numbers seventeen sources, 1..17, of which ten are
+built. That table is the contract, so **bit position equals source number** and
+bit 0 is unused: the gaps are sources with no hardware yet, each given a line
+tied low, and wiring one up later renumbers nothing.
 """
 
 from amaranth            import Module, unsigned

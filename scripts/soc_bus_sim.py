@@ -23,7 +23,7 @@ subordinate perform every access twice -- the initiator holds STB one cycle
 longer than the subordinate expects.
 
 On this SoC a repeated access is not a harmless repeat. The 16550's RBR pops a
-byte off the receive FIFO when read and the PLIC's claim register takes an
+byte off the receive FIFO when read and the interrupt controller takes an
 interrupt when read, so a duplicated strobe would lose console input and
 interrupts at random under load, while every register still read correctly by
 hand. That failure is essentially undebuggable from a console, and it is what

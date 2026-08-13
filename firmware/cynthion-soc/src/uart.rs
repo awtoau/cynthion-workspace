@@ -331,7 +331,7 @@ impl Uart {
         // SoC (`main=0` PMA) and a device address under QEMU. All writes.
         unsafe {
             // Interrupts off first, and they stay off until `irq::init()` has
-            // a handler, a PLIC and the CPU's `mie`/`mstatus` set up. An
+            // a handler, a controller and the CPU's `mie`/`mstatus` set up. An
             // external interrupt raised before that reaches riscv-rt's
             // `DefaultHandler`, which is an abort.
             //
@@ -444,7 +444,7 @@ impl UartRx {
     /// Ask for an interrupt whenever a byte is waiting.
     ///
     /// Separate from `Uart::init()` because ordering matters: every UART must be
-    /// quiet before the PLIC is configured and `mstatus.MIE` is set, and only
+    /// quiet before the controller is configured and `mstatus.MIE` is set, and only
     /// then may any of them start asking. `irq::init()` does both halves in that
     /// order.
     ///

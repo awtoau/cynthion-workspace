@@ -34,31 +34,27 @@ the SoC.
 
 | | what | provenance | detail |
 |---|---|---|---|
-| PLIC | RISC-V PLIC, one source per device | written | [`hardware.md`](hardware.md#register-reference), #135 |
+| interrupt controller | `amaranth_soc` `EventMonitor`, one source per device, level or edge per source | upstream | [`soc-interrupts.md`](soc-interrupts.md), #135 |
 | CLINT | `mtime`/`mtimecmp` | written | same |
 | concurrency | RTIC 2.3, `riscv-clint-backend` | upstream | [`rtic.md`](rtic.md) |
 | monotonic | CLINT-backed, ~60 lines | written | same — `rtic-monotonics` has no CLINT backend |
 | logging from handlers | deferred ring | written | #122, #124 |
-| source ranking | levels 4/3/2/1, 5–7 held free | written | [`plic.rs`](../firmware/cynthion-soc/src/plic.rs)'s `priority`, #344 |
+| source ranking | none in hardware; RTIC task priority only | — | [`soc-interrupts.md`](soc-interrupts.md#priority-is-software-only) |
 
-`src/irq.rs`'s PLIC claim loop survives RTIC adoption, with the SLIC in series
+`src/irq.rs`'s handler loop survives RTIC adoption, with the SLIC in series
 behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 
-### Sources are ranked by the cost of being late
+### There is no ranking in hardware
 
-- Not by how important the peripheral is. `plic::priority` is the only place a
-  level is written, with the reasoning beside each number.
-- Today: `POWER_ALERT` 4, the two consoles 3, Type-C 2, I2C 1. **5–7 are held
-  free** for the capture path (#125) and HyperRAM (#324), which is why the
-  consoles are not at the top.
-- **Enforced, not documented.** `scripts/soc_plic_sim.py` reads the levels out
-  of the claim sites, fails a bare number, fails a source with no rank, and
-  programs a real PLIC with them to assert the claim order. A flat ranking —
-  the state this board shipped in until #344 — is a test failure.
-- **Priority is not preemption.** One context, `MIE` off through the whole claim
-  loop, so a level orders sources pending at the same instant and nothing more.
-  Short handlers are what bounds latency; `cpu irq` prints each level read back
-  from the PLIC.
+- The controller has pending bits and enables, and nothing else: every enabled
+  pending source is serviced in the one trap, in source-number order.
+- **Priority is RTIC's**, declared per task and dispatched on `msip`. That is
+  also the only preemption there is — one hardware line, and `MIE` off for the
+  whole handler.
+- What the controller does decide is **when a source can be acknowledged**:
+  level and edge differ there and nowhere else.
+  [`soc-interrupts.md`](soc-interrupts.md) has the table, and
+  `scripts/soc_intc_sim.py` asserts each row of it.
 
 ## Peripherals
 
