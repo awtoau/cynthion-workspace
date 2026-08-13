@@ -73,6 +73,7 @@ in its §13 got there in the first place.
 * [`rtic.md`](rtic.md) — **The concurrency design**: tasks on one stack, priority in software, and the I-cache that sizes it
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
+* [`sbu.md`](sbu.md) — **The Type-C sideband**: four lines to the FPGA, three protocols, and why SWD is the one that fits
 * [`soc-interrupts.md`](soc-interrupts.md) — **The interrupt design**: every interrupt-capable signal, what should raise one, and the four decisions still open
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) — The CC/SBU over-voltage protection: a series switch with one open-drain flag, and nothing listening to it
