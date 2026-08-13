@@ -393,9 +393,11 @@ class ObservablePHY(SPIPHYController):
     different circuit than the one that ships.
     """
 
-    def __init__(self, pads, data_width=32, divisor=0, domain="sync"):
+    def __init__(self, pads, data_width=32, divisor=0, domain="sync",
+                 full_sck=False):
         super().__init__(pads, data_width=data_width, divisor=divisor,
                          domain=domain)
+        self.full_sck = full_sck
         # Exposed for instrumentation. Driven in elaborate().
         self.o_sr_in_shift = Signal()
         self.o_sr_out_load = Signal()
@@ -418,8 +420,14 @@ class ObservablePHY(SPIPHYController):
         sink   = self.sink
         source = self.source
 
-        m.submodules.clkgen = clkgen = SPIClockGenerator(self.divisor,
-                                                        domain=self._domain)
+        # Full-rate SCK: one bit time per domain cycle instead of two, and the
+        # pad driven as a gated clock rather than a registered level (#100).
+        if self.full_sck:
+            from soc.peripherals.flash_sck_full import FullRateClockGenerator
+            clkgen = FullRateClockGenerator(self.divisor, domain=self._domain)
+        else:
+            clkgen = SPIClockGenerator(self.divisor, domain=self._domain)
+        m.submodules.clkgen = clkgen
         spi_clk_divisor = self.divisor
 
         cs_delay = 0
@@ -437,8 +445,11 @@ class ObservablePHY(SPIPHYController):
         dq_o  = Signal.like(pads.dq.o)
         dq_i  = Signal.like(pads.dq.i)
         dq_oe = Signal.like(pads.dq.oe)
+        if self.full_sck:
+            from soc.peripherals.flash_sck_full import gated_sck
+            gated_sck(m, pads, clkgen, domain=self._domain)
         m.d.sync += [
-            pads.sck   .eq(clkgen.clk),
+            *([] if self.full_sck else [pads.sck.eq(clkgen.clk)]),
             pads.cs.o  .eq(cs_enable),
             pads.dq.o  .eq(dq_o),
             pads.dq.oe .eq(dq_oe),

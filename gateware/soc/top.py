@@ -702,6 +702,13 @@ FLASH_FAST_RATIO = 2
 # for no net gain.
 FLASH_PHY_FAST = False
 
+# SCK at the domain rate rather than half it: 60 MHz instead of 30, no clock
+# change and no new domain. `peripherals/flash_sck_full.py` has the mechanism --
+# a gated clock at the pad, which is the only path a global clock has to
+# USRMCLKI -- and what it costs. Apollo's controller reaches the same rate and
+# has run byte-exact at 144 MHz SCK on this board (#100).
+FLASH_FULL_SCK = False
+
 # Use the DQS HyperRAM PHY rather than the non-DQS one. See #92.
 #
 # ONE FLAG FOR ONE PHY. The staging path and the BIST engine share the pins, the
@@ -1133,7 +1140,8 @@ class AwtoSoc(Elaboratable):
         # synchronising `cs` rather than queueing it.
         flash_phy_domain = "fast" if FLASH_PHY_FAST else "sync"
         flash_phy_inner = ObservablePHY(pads=flash_bus, divisor=FLASH_DIVISOR,
-                                        domain=flash_phy_domain)
+                                        domain=flash_phy_domain,
+                                        full_sck=FLASH_FULL_SCK)
         if FLASH_PHY_FAST:
             flash_phy = ClockCrossedPHY(flash_phy_inner, phy_domain="fast")
         else:
