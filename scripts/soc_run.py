@@ -159,9 +159,13 @@ def synthesis_floor():
     build sharing 31 cores with seven others is slower than any of them. A bound
     from those recordings would kill a build that was working.
 
-    Measured 2026-08-10, and the workings are in #351: 138 s alone, and each
-    further concurrent build adds ~17 s to every one of them. 1.25x that.
+    Re-measured 2026-08-13 (#527): 197 s alone, and each further concurrent
+    build adds ~17 s to every one of them (#351). 1.25x that.
     `soc_build_fanout.py` sets the variable; a lone build leaves it unset.
+
+    The baseline is the SLOWEST observed, not the mean: one netlist ran 154,
+    157 and 197 s, so run-to-run spread is ~27% and a margin taken off a fast
+    run sits inside the noise.
 
     `CYNTHION_SYNTHESIS_FLOOR_SECONDS` raises it for a design this arithmetic
     does not describe -- a bigger variant is a longer place-and-route, and the
@@ -173,7 +177,7 @@ def synthesis_floor():
     """
     jobs = max(int(os.environ.get("CYNTHION_BUILD_JOBS", "1") or 1), 1)
     override = float(os.environ.get("CYNTHION_SYNTHESIS_FLOOR_SECONDS") or 0)
-    return max(1.25 * (138 + 17 * (jobs - 1)), override)
+    return max(1.25 * (197 + 17 * (jobs - 1)), override)
 
 
 def run(cmd, cwd=None, env=None, floor=None):
@@ -1083,6 +1087,19 @@ def main():
             if undriven:
                 emit("  *** undriven wires present -- a peripheral is unconnected,")
                 emit("      which produces a CPU that runs and reaches nothing")
+
+            # WHAT THE TOOLS SAID, read by the build that produced it. An
+            # `ABC: Error` sat at line 25471 of this report across every build
+            # because the only reader was `soc_review.py`, run by hand (#527).
+            import build_log_audit
+
+            audited = build_log_audit.audit(report)
+            for _number, line in audited["warnings"]:
+                emit(f"  *** synthesis: {line}")
+            for name, use in audited["usage"].items():
+                if use["fraction"] >= 0.85:
+                    emit(f"  *** {name} at {use['fraction']:.0%} "
+                         f"({use['used']} of {use['of']})")
         else:
             emit("gateware built")
 

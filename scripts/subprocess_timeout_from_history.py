@@ -97,6 +97,19 @@ def record(family, elapsed):
     _save(history)
 
 
+def _record_timeout(family, bound):
+    """Raise the baseline after a kill, so the next attempt can finish.
+
+    Records `timeouts` beside it: a family that keeps expiring is a hang, and
+    the count is what distinguishes that from a design that simply grew.
+    """
+    history = _load()
+    recorded = history.setdefault(family, {})
+    recorded["slowest"] = max(recorded.get("slowest", 0.0), bound)
+    recorded["timeouts"] = recorded.get("timeouts", 0) + 1
+    _save(history)
+
+
 def run_bounded(command, *, family, cwd=None, env=None, capture=True,
                 merge_stderr=False, floor=None):
     """Run `command`, killed if it overruns what this family has needed before.
@@ -135,6 +148,12 @@ def run_bounded(command, *, family, cwd=None, env=None, capture=True,
         print(f"  TIMEOUT {family}: killed at {bound:.0f}s ({reason}), "
               f"elapsed {time.perf_counter() - started:.0f}s")
         print(f"    {' '.join(str(part) for part in command)[:160]}")
+        # A timeout is evidence the true duration is AT LEAST the bound, so
+        # recording it can only loosen -- unlike a fast failure, which is why
+        # the success path below is selective. Without this a design that grows
+        # past 1.25x of its own history can never build again: every attempt is
+        # killed and no attempt updates the baseline.
+        _record_timeout(family, bound)
         return None
 
     result = subprocess.CompletedProcess(command, proc.returncode,
