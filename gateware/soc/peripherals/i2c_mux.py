@@ -43,16 +43,13 @@ state-changing read one byte from the register the handler polls
   * **Idle buses are DRIVEN idle.** Unselected buses get SCL high and SDA
     released every cycle. These pins are `PULLMODE="NONE"`, so undriven means
     floating, and a floating SDA is a transient that reads as a START.
-  * **One PLIC source per `int` line**, not an OR of the two. Both are levels.
-    A shared level obliges its handler to clear EVERY asserting device before
-    returning, and missing one is a storm that presents as a hung CPU; two
-    sources delete that obligation rather than documenting it. The PLIC has 27
-    spare sources, so nothing was saved by sharing (`../../docs/architecture.md`,
-    decision 8).
-  * **`fault` gets no source, and the level is not captured either.** The
-    DPO2036 auto-recovers, holding its FETs off 26-38 ms, so `FAULTB` is low
-    for roughly that long and nothing here latches it. A clean read at the
-    50 ms poll is not evidence that no fault occurred. #506.
+  * **One source per line**, never an OR. A shared level obliges its handler to
+    clear EVERY asserting device before returning, and missing one is a storm
+    that presents as a hung CPU (`../../docs/architecture.md`, decision 8).
+  * **`fault` is an EDGE source, and LINES is not evidence.** The DPO2036
+    auto-recovers, holding its FETs off 26-38 ms, so `FAULTB` is a train of
+    assertions that a 50 ms poll aliases against: a clean read is not evidence
+    that no fault occurred. The latch is in `cpu/intc.py`. #506.
 """
 
 from amaranth               import Module, Mux, Signal
@@ -105,11 +102,13 @@ class I2CBusMux(wiring.Component):
         `PinsN`, so Amaranth has already undone the active-low sense and a 1
         means the device is asserting.
     target_irq, aux_irq : Signal(), out
-        One per controller, each its own `int` line and nothing else. Level
-        sensitive; attach each to its own `vexii_plic.Plic` source. Separate
-        rather than OR-ed so a handler knows which device asserted without
-        reading LINES, and so clearing one cannot leave the other holding the
-        line up.
+        One per FUSB302B, each its own `int` line and nothing else. Level
+        sensitive. Separate rather than OR-ed so a handler knows which device
+        asserted without reading LINES, and so clearing one cannot leave the
+        other holding the line up.
+    target_fault_irq, aux_fault_irq : Signal(), out
+        One per DPO2036 `FAULTB`, post-CDC. Edge sources at the controller --
+        see the module docstring.
     """
 
     def __init__(self):
@@ -149,6 +148,8 @@ class I2CBusMux(wiring.Component):
             "aux_fault":    In(1),
             "target_irq":   Out(1),
             "aux_irq":      Out(1),
+            "target_fault_irq": Out(1),
+            "aux_fault_irq":    Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -191,6 +192,12 @@ class I2CBusMux(wiring.Component):
             # signals and why `fault` is neither of them.
             self.target_irq.eq(target_int),
             self.aux_irq.eq(aux_int),
+
+            # The two DPO2036s, same treatment, post-CDC. EDGE sources at the
+            # controller -- the part auto-recovers, so `FAULTB` is a train of
+            # ~30-42 ms assertions and LINES cannot say one happened.
+            self.target_fault_irq.eq(target_fault),
+            self.aux_fault_irq.eq(aux_fault),
         ]
 
         # The select the pins actually see, which follows the register only while
