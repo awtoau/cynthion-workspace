@@ -54,7 +54,7 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | [`peripherals/hyperram_probe.py`](../../../gateware/soc/peripherals/hyperram_probe.py) | `sync` only | none | — | **sound** |
 | [`bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | `jtck` + `sync` | `AsyncFIFO` for the stream, `FFSynchronizer` for `busy` and `cpu_hold` | `JTCK_CONSTRAINT_HZ` (constraint only) | **sound** |
 | [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 9** |
-| [`cpu/plic.py`](../../../gateware/soc/cpu/plic.py), [`cpu/clint.py`](../../../gateware/soc/cpu/clint.py), [`cpu/cpu.py`](../../../gateware/soc/cpu/cpu.py) | `sync` only | JTAG handled inside VexiiRiscv | `mtime` = 1 `sync` cycle | **sound**, with a firmware coupling |
+| [`cpu/intc.py`](../../../gateware/soc/cpu/intc.py), [`cpu/clint.py`](../../../gateware/soc/cpu/clint.py), [`cpu/cpu.py`](../../../gateware/soc/cpu/cpu.py) | `sync` only | JTAG handled inside VexiiRiscv | `mtime` = 1 `sync` cycle | **sound**, with a firmware coupling |
 | console / USB boundary in [`top.py`](../../../gateware/soc/top.py) | `sync` + `usb` | `StreamBuffer` async both ways, `FFSynchronizer` on `usb_took` | — | **sound** data path, **DEFECTS 2 and 3** |
 
 ---
@@ -424,7 +424,7 @@ the payload with an `AsyncFIFO` and both status levels with `FFSynchronizer`s,
 and asynchronously resets `jtck` from `sync` so `cpu_hold` is known clear at
 power-up with no JTAG attached.
 
-**`plic.py`, `clint.py`, `cpu.py`, `wishbone_pipe.py`, `hyperram_probe.py`,
+**`intc.py`, `clint.py`, `cpu.py`, `wishbone_pipe.py`, `hyperram_probe.py`,
 `sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`, `bootram.py`** are all
 single-domain `sync`. None names `usb`; none is affected by the reset change. Two
 invariants they depend on are worth writing down because nothing enforces them:
