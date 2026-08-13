@@ -253,6 +253,60 @@ impl Run {
 /// reads themselves are charged to the interval rather than escaping it. Both
 /// wrap at 71.6 s on this clock and every walk here is milliseconds, so
 /// `wrapping_sub` is exact.
+/// Decimal digits, or None. `bench flash` must not read `flash` as a duration.
+fn digits(text: &[u8]) -> Option<u32> {
+    if text.is_empty() || !text.iter().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let mut n: u32 = 0;
+    for b in text {
+        n = n.checked_mul(10)?.checked_add((b - b'0') as u32)?;
+    }
+    Some(n)
+}
+
+/// How long each walk runs, in seconds. `bench [region] [seconds]`.
+///
+/// A DURATION rather than an access count: a fixed count measures flash for
+/// milliseconds and block RAM for microseconds, so the slow path gets the least
+/// averaging and the fast one wastes time. One second of every path is the same
+/// confidence in each.
+pub(crate) static SECONDS: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(1);
+
+/// `body` repeatedly, until a second (or `SECONDS`) of cycles is spent.
+///
+/// `accesses` is what ONE pass does; the returned `Run` carries the total, so
+/// every derived figure -- cycles per access, MB/s, IPC -- is over the whole
+/// interval and needs no scaling.
+#[inline(always)]
+fn measure_for<F: FnMut() -> u32>(accesses: u32, width: u32, mut body: F) -> (Run, u32) {
+    let seconds = SECONDS.load(core::sync::atomic::Ordering::Relaxed);
+    let budget = target::TIME_HZ.saturating_mul(seconds);
+    let start_cycle = metrics::mcycle();
+    let start_instr = metrics::minstret();
+    let mut checksum = 0u32;
+    let mut done: u32 = 0;
+    loop {
+        checksum ^= body();
+        done = done.saturating_add(accesses);
+        if metrics::mcycle().wrapping_sub(start_cycle) >= budget {
+            break;
+        }
+    }
+    let end_instr = metrics::minstret();
+    let end_cycle = metrics::mcycle();
+    (
+        Run {
+            cycles: end_cycle.wrapping_sub(start_cycle),
+            instret: end_instr.wrapping_sub(start_instr),
+            accesses: done,
+            width,
+        },
+        checksum,
+    )
+}
+
 #[inline(always)]
 fn measure<F: FnOnce() -> u32>(accesses: u32, width: u32, body: F) -> (Run, u32) {
     let start_cycle = metrics::mcycle();
@@ -831,26 +885,26 @@ fn bram(uart: &mut Uart) {
     // touched every line, so this is belt and braces and costs 2048 accesses.
     let mut sum = ram_read(large, LARGE_WORDS as u32, false);
 
-    let (run, got) = measure(RAM_ACCESSES, 4, || ram_read(small, RAM_ACCESSES, false));
+    let (run, got) = measure_for(RAM_ACCESSES, 4, || ram_read(small, RAM_ACCESSES, false));
     row(uart, "bram", "2 KiB", "read seq", &run);
     sum ^= got;
-    let (run, got) = measure(RAM_ACCESSES, 4, || ram_read(small, RAM_ACCESSES, true));
+    let (run, got) = measure_for(RAM_ACCESSES, 4, || ram_read(small, RAM_ACCESSES, true));
     row(uart, "bram", "2 KiB", "read rnd", &run);
     sum ^= got;
-    let (seq, got) = measure(RAM_ACCESSES, 4, || ram_read(large, RAM_ACCESSES, false));
+    let (seq, got) = measure_for(RAM_ACCESSES, 4, || ram_read(large, RAM_ACCESSES, false));
     row(uart, "bram", "8 KiB", "read seq", &seq);
     sum ^= got;
-    let (rnd, got) = measure(RAM_ACCESSES, 4, || ram_read(large, RAM_ACCESSES, true));
+    let (rnd, got) = measure_for(RAM_ACCESSES, 4, || ram_read(large, RAM_ACCESSES, true));
     row(uart, "bram", "8 KiB", "read rnd", &rnd);
     sum ^= got;
 
-    let (run, _) = measure(RAM_ACCESSES, 4, || ram_write(small, RAM_ACCESSES, false));
+    let (run, _) = measure_for(RAM_ACCESSES, 4, || ram_write(small, RAM_ACCESSES, false));
     row(uart, "bram", "2 KiB", "write seq", &run);
-    let (run, _) = measure(RAM_ACCESSES, 4, || ram_write(small, RAM_ACCESSES, true));
+    let (run, _) = measure_for(RAM_ACCESSES, 4, || ram_write(small, RAM_ACCESSES, true));
     row(uart, "bram", "2 KiB", "write rnd", &run);
-    let (run, _) = measure(RAM_ACCESSES, 4, || ram_write(large, RAM_ACCESSES, false));
+    let (run, _) = measure_for(RAM_ACCESSES, 4, || ram_write(large, RAM_ACCESSES, false));
     row(uart, "bram", "8 KiB", "write seq", &run);
-    let (run, _) = measure(RAM_ACCESSES, 4, || ram_write(large, RAM_ACCESSES, true));
+    let (run, _) = measure_for(RAM_ACCESSES, 4, || ram_write(large, RAM_ACCESSES, true));
     row(uart, "bram", "8 KiB", "write rnd", &run);
 
     // Again, because the write walks above have just overwritten the pattern.
@@ -881,22 +935,22 @@ fn flash(uart: &mut Uart) {
     // timed access is not the first flash transaction since reset.
     let mut sum = flash_read(large, 64, false);
 
-    let (run, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+    let (run, got) = measure_for(FLASH_SEQ_ACCESSES, 4, || {
         flash_read(small, FLASH_SEQ_ACCESSES, false)
     });
     row(uart, "flash", "2 KiB", "read seq", &run);
     sum ^= got;
-    let (run, got) = measure(FLASH_RND_ACCESSES, 4, || {
+    let (run, got) = measure_for(FLASH_RND_ACCESSES, 4, || {
         flash_read(small, FLASH_RND_ACCESSES, true)
     });
     row(uart, "flash", "2 KiB", "read rnd", &run);
     sum ^= got;
-    let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+    let (seq, got) = measure_for(FLASH_SEQ_ACCESSES, 4, || {
         flash_read(large, FLASH_SEQ_ACCESSES, false)
     });
     row(uart, "flash", "16 KiB", "read seq", &seq);
     sum ^= got;
-    let (rnd, got) = measure(FLASH_RND_ACCESSES, 4, || {
+    let (rnd, got) = measure_for(FLASH_RND_ACCESSES, 4, || {
         flash_read(large, FLASH_RND_ACCESSES, true)
     });
     row(uart, "flash", "16 KiB", "read rnd", &rnd);
@@ -953,7 +1007,7 @@ fn hyper(uart: &mut Uart) {
         let small_words = (FLASH_SMALL_WORDS - 1) as usize;
         let large_words = (FLASH_LARGE_WORDS - 1) as usize;
         let mut sum = hyper_window_read(large_words, 64, false);
-        let (run, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+        let (run, got) = measure_for(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read(small_words, FLASH_SEQ_ACCESSES, false)
         });
         row(uart, "hyper win", "2 KiB", "read seq", &run);
@@ -961,7 +1015,7 @@ fn hyper(uart: &mut Uart) {
         probe::clear();
         hpm::select();
         let before = hpm::read();
-        let (seq, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+        let (seq, got) = measure_for(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_SEQ_ACCESSES, false)
         });
         let after = hpm::read();
@@ -1030,14 +1084,14 @@ fn hyper(uart: &mut Uart) {
                 per % 100
             );
         }
-        let (rnd, got) = measure(FLASH_RND_ACCESSES, 4, || {
+        let (rnd, got) = measure_for(FLASH_RND_ACCESSES, 4, || {
             hyper_window_read(large_words, FLASH_RND_ACCESSES, true)
         });
         row(uart, "hyper win", "16 KiB", "read rnd", &rnd);
         sum ^= got;
 
         // The same set, four loads deep. See `hyper_window_read_wide`.
-        let (wide, got) = measure(FLASH_SEQ_ACCESSES, 4, || {
+        let (wide, got) = measure_for(FLASH_SEQ_ACCESSES, 4, || {
             hyper_window_read_wide(large_words, FLASH_SEQ_ACCESSES)
         });
         row(uart, "hyper x4", "16 KiB", "read seq", &wide);
@@ -1051,30 +1105,30 @@ fn hyper(uart: &mut Uart) {
     // waking up, and that is not what the rows below are for.
     let mut sum = hyper_read(large, 16, false);
 
-    let (run, got) = measure(HYPER_ACCESSES, 2, || {
+    let (run, got) = measure_for(HYPER_ACCESSES, 2, || {
         hyper_read(small, HYPER_ACCESSES, false)
     });
     row(uart, "hyperram", "1 KiB", "read seq", &run);
     sum ^= got;
-    let (rnd, got) = measure(HYPER_ACCESSES, 2, || {
+    let (rnd, got) = measure_for(HYPER_ACCESSES, 2, || {
         hyper_read(large, HYPER_ACCESSES, true)
     });
     row(uart, "hyperram", "4 KiB", "read rnd", &rnd);
     sum ^= got;
-    let (seq, got) = measure(HYPER_ACCESSES, 2, || {
+    let (seq, got) = measure_for(HYPER_ACCESSES, 2, || {
         hyper_read(large, HYPER_ACCESSES, false)
     });
     row(uart, "hyperram", "4 KiB", "read seq", &seq);
     sum ^= got;
-    let (run, _) = measure(HYPER_ACCESSES, 2, || {
+    let (run, _) = measure_for(HYPER_ACCESSES, 2, || {
         hyper_write(small, HYPER_ACCESSES, false)
     });
     row(uart, "hyperram", "1 KiB", "write seq", &run);
-    let (run, _) = measure(HYPER_ACCESSES, 2, || {
+    let (run, _) = measure_for(HYPER_ACCESSES, 2, || {
         hyper_write(large, HYPER_ACCESSES, false)
     });
     row(uart, "hyperram", "4 KiB", "write seq", &run);
-    let (run, _) = measure(HYPER_ACCESSES, 2, || {
+    let (run, _) = measure_for(HYPER_ACCESSES, 2, || {
         hyper_write(large, HYPER_ACCESSES, true)
     });
     row(uart, "hyperram", "4 KiB", "write rnd", &run);
@@ -1090,10 +1144,25 @@ fn hyper(uart: &mut Uart) {
 
 /// `bench`, `bench bram`, `bench flash`, `bench hyperram`.
 pub fn command(uart: &mut Uart, rest: &[u8]) {
+    // A trailing number is the per-walk duration in seconds. `bench 5`,
+    // `bench flash 5`, and the region alone keeps the 1 s default.
+    let rest = crate::shell::parse::trim(rest);
+    let (rest, seconds) = match rest.iter().rposition(|&b| b == b' ') {
+        Some(i) if digits(&rest[i + 1..]).is_some() => {
+            (crate::shell::parse::trim(&rest[..i]), digits(&rest[i + 1..]))
+        }
+        _ => match digits(rest) {
+            Some(n) => (&rest[..0], Some(n)),
+            None => (rest, None),
+        },
+    };
+    SECONDS.store(seconds.unwrap_or(1).max(1),
+                  core::sync::atomic::Ordering::Relaxed);
     let _ = writeln!(
         uart,
-        "bench    mcycle at {}; D-cache 4 KiB = 64 sets x 1 way x 64 B line",
-        crate::clock::Hz(target::TIME_HZ)
+        "bench    mcycle at {}; {} s per walk; D-cache 4 KiB = 64 sets x 1 way x 64 B line",
+        crate::clock::Hz(target::TIME_HZ),
+        SECONDS.load(core::sync::atomic::Ordering::Relaxed)
     );
     // No region is every region, so it is tested before the name is parsed.
     if rest.is_empty() {
