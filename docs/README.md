@@ -76,6 +76,7 @@ in its §13 got there in the first place.
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
 * [`sbu.md`](sbu.md) — **The Type-C sideband**: four lines to the FPGA, three protocols, and why SWD is the one that fits
 * [`soc-interrupts.md`](soc-interrupts.md) — **The interrupt design**: every interrupt-capable signal, what should raise one, and the four decisions still open
+* **[`gateware-vs-firmware.md`](gateware-vs-firmware.md) — every decision the SoC bakes at elaboration**: one row per decision, seven reasons to stay in gateware, and the ports that exist and reach nothing
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) — The CC/SBU over-voltage protection: a series switch with one open-drain flag, and nothing listening to it
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
