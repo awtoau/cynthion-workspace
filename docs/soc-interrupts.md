@@ -48,6 +48,8 @@ an unmapped address is how the trap-heavy load exercises this handler.
 | **FUSB302B** | `U12` | as above | AUX `int`, pin 5 | level | source 5 | keep |
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
 | **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
+| — | — | SBU receiver, TARGET — balls **A2**, **E4** | byte received | level | no peripheral | **a receiver, whose interrupt is the source** (#516) |
+| — | — | SBU receiver, AUX — balls **H13**, **K14** | byte received | level | no peripheral | **as above** (#516) |
 | — | — | USER button, ball **M14** | press | **edge** | GPIO input bit only | **make it a source** |
 | — | — | sideband in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** (#509) |
 | **USB3343** | TARGET | *hi-speed USB ULPI transceiver* | link event — `DIR` carries an RX CMD | edge | none | **one source** |
@@ -57,6 +59,15 @@ an unmapped address is how the trap-heavy load exercises this handler.
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
+
+## A data line is not an interrupt source
+
+SBU carries DP AUX, a Debug Accessory UART, or nothing, depending on the mode
+negotiated. So it gets a **receiver**, and the receiver's interrupt is the
+source — exactly as the console's 16550 is the source for USB CDC bytes rather
+than the ULPI pins being one.
+
+Same for anything else that arrives as data rather than as an event.
 
 ## The button is not debounced in fabric
 
