@@ -49,11 +49,11 @@ exercises it.
 | 7 | **PAC1954** `U1` | `SLOW/ALERT1`, pin 1 | edge | **no** — pin hard-driven as SLOW ([make it runtime-selectable](chips/pac1954-power-monitor.md)) |
 | 8 | **DPO2036** `U13` | TARGET `FAULTB`, pin 6 | **edge**, rise ([why](chips/dpo2036-cc-sbu-protection.md)) | **yes** |
 | 9 | **DPO2036** `U14` | AUX `FAULTB`, pin 6 | **edge**, rise | **yes** |
-| 10 | **USB3343** TARGET | link event — `DIR` carries an RX CMD | edge | no |
+| 10 | **USB3343** TARGET | link event — enables in `0Dh`/`10h`, delivered as an RX CMD on `DIR` ([and a transmit swallows transients](chips/usb3343-ulpi-phy.md)) | edge | no |
 | 11 | **USB3343** AUX | link event | edge | no |
 | 12 | **USB3343** CONTROL | link event | edge | no |
 | 13 | — | USER button, ball **M14** | **edge**, rise | **yes** |
-| 14 | — | sideband byte, ball **T6** → **SAMD11** `U6` pin 8 | level | no — CSR count only (#509) |
+| 14 | — | sideband byte, ball **T6** → **SAMD11** `U6` pin 8 | **edge** — `received_strobe` is one cycle | no — CSR count only (#509) |
 | 15 | — | SBU peripheral, TARGET — balls **A2**, **E4** | level | no — no peripheral ([`sbu.md`](sbu.md), #518) |
 | 16 | — | SBU peripheral, AUX — balls **H13**, **K14** | level | no — no peripheral |
 | 17 | — | PLL loss of lock | **edge**, fall on `locked` | **yes** |

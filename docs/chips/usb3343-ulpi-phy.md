@@ -354,6 +354,25 @@ transition appears **only** in the latch.
 and `RxActive` changes every packet — which is why the five above are the
 interrupt sources and those two are not.
 
+**A transmit delays the RX CMD and staleness its payload.** s6.3.1:
+
+> *"If an RXCMD event occurs during a Hi-Speed USB transmit, the RXCMD is blocked
+> until STP deasserts at the end of the transmit. The RXCMD contains the status
+> that is current at the time the RXCMD is sent."*
+
+Blocked, not dropped — the RX CMD arrives once the transmit ends. What is lost is
+only its **payload's** value for a transition that reverted meanwhile: the bits
+describe the world at send time, not at event time.
+
+**The event itself is still captured**, in the latch `14h`, which is set by the
+transition and cleared by a read. So the rule is the same one `13h` against `14h`
+already sets: **read the latch to learn what happened; do not read the RX CMD's
+status bits as if they were the event.** Under bulk load on TARGET the delay is
+ordinary, so this is the normal path rather than a corner.
+
+During a receive there is no blocking — RX CMDs go out whenever `NXT = 0` and
+`DIR = 1`.
+
 ## Scripts
 
 | | |
