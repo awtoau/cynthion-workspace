@@ -11,9 +11,9 @@
 //! **The event queue survives adoption.** `usb::EventQueue` is a hand-rolled
 //! SPSC ring whose correctness is an argument in a comment, and that argument is
 //! exactly what RTIC's ceiling analysis was supposed to replace. It cannot: the
-//! producer is [`machine_external`], the PLIC front end, which is not an RTIC
+//! producer is [`machine_external`], the interrupt front end, not an RTIC
 //! task and has no `lock`. `binds =` names a SLIC source, so no RTIC task can
-//! bind the PLIC. Anything a hardware handler produces therefore reaches RTIC
+//! bind a hardware source. Anything a handler produces therefore reaches RTIC
 //! through something RTIC does not check.
 //!
 //! What RTIC does check is everything downstream of the queue: `control`,
@@ -38,8 +38,8 @@ use core::panic::PanicInfo;
 use core::sync::atomic::AtomicU32;
 
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -53,7 +53,7 @@ mod usb_report;
 /// The control endpoint's receive buffer, `LIBGREAT_MAX_COMMAND_SIZE` upstream.
 const RX: usize = 1024;
 
-/// Produced by the PLIC front end, consumed by the `UsbControl` task. Not an
+/// Produced by the interrupt front end, consumed by `UsbControl`. Not an
 /// RTIC resource -- see the module comment.
 static EVENTS: usb::EventQueue = usb::EventQueue::new();
 static FRAMES: usb::Frames = usb::Frames::new();
@@ -122,7 +122,7 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[rtic::app(device = device, peripherals = false, backend = H0)]
 mod app {
-    use super::{device, plic, target, usb, usb_report, EVENTS, FRAMES, JOURNAL, REPORTS, RX};
+    use super::{device, intc, target, usb, usb_report, EVENTS, FRAMES, JOURNAL, REPORTS, RX};
     use core::sync::atomic::Ordering;
     use riscv::interrupt::Interrupt;
     use usb::UsbDriver as _;
@@ -147,14 +147,13 @@ mod app {
 
     #[init]
     fn init(_cx: init::Context) -> (Shared, Local) {
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        plic.set_threshold(0);
+        let intc = intc::Intc::new(target::INTC_BASE);
+        intc.init();
         for &source in target::UART_IRQS {
-            plic.set_priority(source, 1);
-            plic.enable(source);
-            // Release a claim left in flight by a `j _start` reboot, as
-            // `irq::init` does and for the same reason.
-            plic.complete(source);
+            // The previous session's pending bit, which a `j _start` reboot
+            // leaves set. `irq::claim_type_c` does the same.
+            intc.clear(source);
+            intc.enable(source);
         }
         usb_report::rx_enable(target::UART_BASES[0]);
 
@@ -212,7 +211,7 @@ mod app {
         }
     }
 
-    /// The PLIC front end: claim, read the peripheral, build an event, enqueue,
+    /// The front end: take a source, read the peripheral, build an event, enqueue,
     /// pend, complete.
     ///
     /// Not an RTIC task and cannot be one. It runs at hardware priority, above
@@ -221,8 +220,8 @@ mod app {
     /// `mstatus.MIE` for its duration, once per event.
     #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
     fn machine_external() {
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        while let Some(source) = plic.claim() {
+        let intc = intc::Intc::new(target::INTC_BASE);
+        while let Some(source) = intc.next_ready() {
             if target::UART_IRQS.contains(&source) {
                 while let Some(byte) = usb_report::rx_get(target::UART_BASES[0]) {
                     if let Some(framed) = FRAMES.push(byte) {
@@ -231,7 +230,7 @@ mod app {
                     }
                 }
             }
-            plic.complete(source);
+            intc.clear(source);
         }
     }
 

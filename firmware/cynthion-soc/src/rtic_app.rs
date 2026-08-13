@@ -29,19 +29,15 @@
 //! source, and nothing a task could improve on. #247 is the sweep of what should
 //! become tasks; the consoles are not on it.
 //!
-//! ## RTIC does not use the PLIC, and this file does not pretend otherwise
+//! ## RTIC's controller is not the SoC's
 //!
 //! RTIC 2.3's RISC-V backends are `riscv-slic` backends: a SOFTWARE interrupt
 //! controller, dispatched out of the machine software interrupt, which the SoC
-//! wires from the CLINT's `msip` (`gateware/soc/top.py:1165`). RTIC never claims,
-//! never completes, and never touches a PLIC priority or threshold.
+//! wires from the CLINT's `msip`. It never touches `src/intc.rs`.
 //!
-//! So the PLIC front end stays exactly where it is -- `src/irq.rs`, unchanged --
-//! and the one task here is released by the timer rather than by a hardware
-//! source. That is not a compromise: a 50 ms period is a schedule, not an event,
-//! and there is no PAC1954 interrupt line on this board to bind to. The I2C
-//! controller does have a source (IRQ 3), and #246 is where that goes; see the
-//! note on `power_refresh`.
+//! So the hardware front end stays where it is -- `src/irq.rs` -- and pends
+//! these tasks. `power_refresh` is released by the timer instead, because a
+//! 50 ms period is a schedule and not an event.
 
 use crate::target;
 
@@ -116,7 +112,7 @@ pub mod device {
 /// handler, which is exactly right: the release must not be decided by the loop
 /// it exists to be independent of. That was the defect in the poll -- a turn that
 /// ran long moved the next REFRESH with it.
-pub use app::{pend_power_alert, tick};
+pub use app::{pend_power_alert, pend_type_c_fault, tick};
 
 // `device = device`, a bare name, and it has to be: riscv-slic's generated
 // `pub mod slic` says `use super::device;` -- so the argument names something
@@ -404,6 +400,30 @@ mod app {
 
     const _: () = assert!(sched::POWER_ALERT_PRIORITY == 2);
 
+    /// A DPO2036 latched `FAULTB`. #507.
+    ///
+    /// The handler cannot do this: it wants the mux's `LINES` register and the
+    /// console, and it has no `Context` to lock `devices` with. So it sets the
+    /// sticky per-port flag and pends this.
+    ///
+    /// **Sticky, not a level read.** The part auto-recovers in 26-38 ms, so by
+    /// the time this runs `LINES` is usually clean -- which is exactly why the
+    /// 50 ms poll it replaces could report nothing at all (#506).
+    #[task(binds = TypeCFault, priority = 2, shared = [devices])]
+    fn type_c_fault(mut cx: type_c_fault::Context) {
+        sched::released(sched::TYPE_C_FAULT, 0);
+
+        let ports = crate::irq::faulted();
+        let mut console = crate::primary();
+        cx.shared.devices.lock(|devices| {
+            if let Some(bus) = devices.bus.as_ref() {
+                devices.type_c.service_fault(&mut console, bus, ports);
+            }
+        });
+    }
+
+    const _: () = assert!(sched::TYPE_C_FAULT_PRIORITY == 2);
+
     /// Toggle the orange LED. The board's one live sign that the OS is up (#411).
     ///
     /// A SOFTWARE task, dispatched through the SLIC, not a hardware task bound
@@ -454,6 +474,12 @@ mod app {
         rtic::export::pend(slic::SoftwareInterrupt::PowerAlert);
     }
 
+    /// Release the `FAULTB` task. Called from the machine-external handler.
+    pub fn pend_type_c_fault() {
+        sched::pended(sched::TYPE_C_FAULT);
+        rtic::export::pend(slic::SoftwareInterrupt::TypeCFault);
+    }
+
     // THE PRIORITY THE TASK ABOVE RUNS AT is written as a literal, because
     // RTIC's grammar takes an integer there and not a path. This is what keeps
     // the literal and the constant the `rtic` command PRINTS from drifting
@@ -466,8 +492,8 @@ mod app {
     // the attribute there installs the symbol, and there is exactly one. It is
     // mentioned here only so the reader does not go looking for the
     // `#[task(binds = ...)]` that would be its natural home and is not possible:
-    // RTIC's SLIC has no PLIC backend, so a hardware source needs the claim loop
-    // that already exists.
+    // RTIC's SLIC has no backend for the SoC's controller, so a hardware source
+    // needs the handler that already exists.
     //
     // The consequence worth stating: console bytes are collected at HARDWARE
     // priority, above every SLIC source, under both models. Nothing in this file

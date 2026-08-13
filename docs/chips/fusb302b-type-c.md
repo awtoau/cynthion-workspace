@@ -117,7 +117,7 @@ cannot drift.
 | bus rate | derived, not scoped | 1.000 MHz exactly | — |
 | **SDA rise time** | — | **never measured** | the one open question on this bus |
 | **PD message turnaround** | — | **never measured**, and no datasheet figure to compare against | — |
-| interrupt path | level-sensitive, PLIC | works; latency not timed | see *Interrupts* below |
+| interrupt path | level-sensitive source each | works; latency not timed | see *Interrupts* below |
 
 ### 4. The gap, and what closes it
 
@@ -250,7 +250,7 @@ Step 4 is the one that matters for the state the board is in today.
 ## Interrupts
 
 Each Type-C bus brings an `int` and a `fault` line, so four signals for two devices.
-**Each `int` gets its own PLIC source** — TARGET on 4, AUX on 5. Neither `fault` gets
+**Each `int` gets its own source** — TARGET on 4, AUX on 5. Each `fault` gets
 one.
 
 The `int` lines were OR-ed onto a single source until #135. The argument for the OR
@@ -411,7 +411,7 @@ Default current; the higher levels require explicit arguments.
 
 ### The interrupt, and where the level-sensitive trap is actually handled
 
-Each `int` line has its own PLIC source. Clearing a controller means reading three
+Each `int` line has its own source. Clearing a controller means reading three
 read-to-clear registers over I2C — about a millisecond at 80 kHz, on the same
 controller the power monitor's 50 ms poll uses. So the handler does **not** do it:
 

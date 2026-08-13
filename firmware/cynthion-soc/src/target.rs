@@ -1,11 +1,11 @@
 //! Where the peripherals are, and nothing else.
 //!
-//! Every difference between the FPGA build and the QEMU build lives in this file
-//! and in a linker script. `src/uart.rs` and `src/plic.rs` are compiled unchanged
-//! for both, because the SoC's console is an NS16550A and `-M virt`'s is an
-//! NS16550A, and both have a standard PLIC. `scripts/soc_test.py` is evidence
-//! about the board only to the extent that the two builds share source, so
-//! resist adding a `#[cfg]` anywhere else.
+//! Every difference between the FPGA build and the QEMU build lives in this file,
+//! in a linker script, and in `src/intc.rs`'s two register maps. `src/uart.rs` is
+//! compiled unchanged for both, because the SoC's console is an NS16550A and
+//! `-M virt`'s is an NS16550A. `scripts/soc_test.py` is evidence about the board
+//! only to the extent that the two builds share source, so resist adding a
+//! `#[cfg]` anywhere else.
 //!
 //! ## Where the addresses come from
 //!
@@ -59,12 +59,9 @@ pub const UART_BASES: &[usize] = &[
 #[cfg(feature = "qemu")]
 pub const UART_BASES: &[usize] = &[0x1000_0000];
 
-/// The interrupt controller.
-///
-/// A standard RISC-V PLIC on both targets, which is the whole reason
-/// `src/plic.rs` needs no `#[cfg]`.
+/// The interrupt controller: `gateware/soc/cpu/intc.py`.
 #[cfg(not(feature = "qemu"))]
-pub const PLIC_BASE: usize = cynthion_soc_pac::base::PLIC;
+pub const INTC_BASE: usize = cynthion_soc_pac::base::INTC;
 
 /// `virt`'s PLIC, read out of the device tree rather than assumed:
 ///
@@ -75,13 +72,16 @@ pub const PLIC_BASE: usize = cynthion_soc_pac::base::PLIC;
 /// with `interrupts-extended = <cpu 11>, <cpu 9>` -- 11 being the machine
 /// external interrupt, so context 0 is hart 0 in machine mode on this machine
 /// exactly as it is on the SoC.
+///
+/// `src/intc.rs` drives it as pending bits and enables and never claims, which
+/// is what makes it the same driver as the board's -- see that file.
 #[cfg(feature = "qemu")]
-pub const PLIC_BASE: usize = 0x0c00_0000;
+pub const INTC_BASE: usize = 0x0c00_0000;
 
 /// The core-local interruptor: `mtime` and `mtimecmp`, and so the 1 ms tick.
 ///
 /// A standard RISC-V CLINT on both targets, which is the whole reason
-/// `src/timer.rs` needs no `#[cfg]` -- the same reason `src/plic.rs` needs none.
+/// `src/timer.rs` needs no `#[cfg]`.
 #[cfg(not(feature = "qemu"))]
 pub const CLINT_BASE: usize = cynthion_soc_pac::base::CLINT;
 
@@ -97,13 +97,11 @@ pub const CLINT_BASE: usize = cynthion_soc_pac::base::CLINT;
 #[cfg(feature = "qemu")]
 pub const CLINT_BASE: usize = 0x0200_0000;
 
-/// The PLIC source number each entry of `UART_BASES` is wired to, in the same
-/// order.
+/// The source number each entry of `UART_BASES` is wired to, in the same order.
 ///
-/// Source 0 is reserved by the specification as "nothing pending", so real
-/// sources start at 1. These come from `AwtoSoc.interrupt_sources`, which is
-/// declared immediately below the `plic.sources[...]` wiring it describes -- so
-/// the number the firmware enables and the wire that raises it cannot disagree.
+/// From `AwtoSoc.interrupt_sources`, declared immediately below the
+/// `intc.lines[...]` wiring it describes -- so the number the firmware enables
+/// and the wire that raises it cannot disagree.
 #[cfg(not(feature = "qemu"))]
 pub const UART_IRQS: &[u32] = &[
     cynthion_soc_pac::base::CONSOLE_IRQ,
@@ -132,7 +130,7 @@ const _: () = assert!(UART_BASES.len() == UART_IRQS.len());
 pub const TIME_HZ: u32 = cynthion_soc_pac::base::SYNC_HZ;
 
 /// `virt`'s CLINT runs at 10 MHz -- `timebase-frequency = <0x989680>` in the
-/// device tree dumped in the comment on `PLIC_BASE` above. Read out of the
+/// device tree dumped in the comment on `INTC_BASE` above. Read out of the
 /// machine rather than assumed, like every other constant in this file.
 #[cfg(feature = "qemu")]
 pub const TIME_HZ: u32 = 10_000_000;
@@ -213,7 +211,7 @@ pub const BOOT_STATUS_TEXT: &[&str] = &[
     "the BIST engine still owned the part; nothing was read",
 ];
 
-/// One PLIC source per FUSB302B `int` line, in `fusb302::Port::ALL` order.
+/// One source per FUSB302B `int` line, in `fusb302::Port::ALL` order.
 ///
 /// Not one OR-ed source: a shared level obliges its handler to clear every
 /// asserting device before returning, and one source per device removes that
@@ -322,7 +320,7 @@ pub const BRAM_BASE: usize = cynthion_soc_pac::base::RAM;
 #[cfg(not(feature = "qemu"))]
 pub const BRAM_SIZE: usize = cynthion_soc_pac::base::RAM_SIZE;
 
-/// `virt`'s DRAM, from the device tree dumped in the comment on `PLIC_BASE`:
+/// `virt`'s DRAM, from the device tree dumped in the comment on `INTC_BASE`:
 /// `memory@80000000`. The length is `memory-qemu.x`'s RAM region and not the
 /// machine's whole 64 MiB -- the two must agree, because a bound larger than the
 /// linker script's would let a read wander outside the region this image was

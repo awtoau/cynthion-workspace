@@ -39,14 +39,14 @@
 //!
 //! ## The interrupt, and why the handler does not touch this file
 //!
-//! - **One PLIC source per `int` line**, not an OR of the two -- see
+//! - **One source per `int` line**, not an OR of the two -- see
 //!   `gateware/soc/peripherals/i2c_mux.py` (where the sources are wired) and
 //!   `docs/architecture.md` decision 8 (why).
 //! - Not cosmetic: a SHARED level obliges whatever services it to clear *every*
 //!   asserting device before the source is live again, or the line stays high,
 //!   the interrupt re-fires immediately, and the CPU makes no progress -- a
 //!   hang. One source per device removes the obligation rather than documenting
-//!   it; the PLIC had 27 spare sources, so sharing would have bought nothing.
+//!   it; a source is a pending bit and an enable, so sharing bought nothing.
 //! - Each line is still a LEVEL, so the trap in `docs/chips/fusb302b-type-c.md`
 //!   applies per port: a source whose device has not been read stays asserted.
 //! - Clearing means reading the device's `INTERRUPT` registers -- an I2C

@@ -218,7 +218,7 @@ class I2CMaster(wiring.Component):
     sda_i : Signal(), in
         The data pin, straight from the pad. Synchronised here.
     irq : Signal(), out
-        Level, asserted while `IF and CTR.IEN`. Attach to a `vexii_plic.Plic`
+        Level, asserted while `IF and CTR.IEN`. Attach to a `level` source of `cpu/intc.py`
         source, or leave it and poll SR.TIP -- IEN resets to zero, so this line
         is low until a driver asks for it.
     idle : Signal(), out

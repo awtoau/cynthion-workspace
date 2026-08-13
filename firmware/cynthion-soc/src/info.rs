@@ -12,7 +12,7 @@
 //!     boot       the linker's reset vector, and the word `cynthion-boot` left
 //!                at `target::BOOT_STATUS`
 //!     cpu        the core's own `misa` and identity CSRs
-//!     trap       `mstatus`, `mtvec`, and the PLIC's threshold and enables
+//!     trap       `mstatus`, `mtvec`, and the controller's pending and enables
 //!     fabric     a CSR in the bitstream (`gateware/soc/peripherals/fabric_status.py`)
 //!
 //! ## The clock line is a check, not a report
@@ -36,7 +36,7 @@
 
 use core::fmt::Write;
 
-use crate::plic;
+use crate::intc;
 use crate::target;
 use crate::uart::Uart;
 
@@ -401,22 +401,21 @@ pub fn command(uart: &mut Uart) {
         csr!("mhartid")
     );
 
-    let plic = plic::Plic::new(target::PLIC_BASE);
+    let intc = intc::Intc::new(target::INTC_BASE);
     let _ = writeln!(
         uart,
         "trap     mstatus {:08x} mtvec {:08x}",
         csr!("mstatus"),
         csr!("mtvec")
     );
-    // Threshold and enables only. NOT the claim register -- reading that takes
-    // an interrupt away from the handler and never completes it, which would
-    // kill the console from a diagnostic. See `Plic::claim`.
+    // Both registers, and neither read has a side effect -- which is why this
+    // is safe to run from a diagnostic while interrupts are live.
     let _ = writeln!(
         uart,
-        "plic     @{:08x} threshold {} enabled {:08x}",
-        target::PLIC_BASE,
-        plic.threshold(),
-        plic.enabled()
+        "intc     @{:08x} pending {:08x} enabled {:08x}",
+        target::INTC_BASE,
+        intc.pending(),
+        intc.enabled()
     );
 
     match fabric::status() {
@@ -498,19 +497,30 @@ pub fn command(uart: &mut Uart) {
             // keep in step with the gateware.
             match crate::clock::measured() {
                 None => {
-                    let _ = writeln!(uart,
-                        "         clocks: NO MEASUREMENT YET (window incomplete)");
+                    let _ = writeln!(
+                        uart,
+                        "         clocks: NO MEASUREMENT YET (window incomplete)"
+                    );
                 }
                 Some(measured) => {
-                    let _ = writeln!(uart,
+                    let _ = writeln!(
+                        uart,
                         "         measured sync {} kHz, pll {}",
                         measured.khz,
-                        if measured.locked { "locked" } else { "UNLOCKED" });
+                        if measured.locked {
+                            "locked"
+                        } else {
+                            "UNLOCKED"
+                        }
+                    );
                     if !within_one_percent(measured.khz, target::TIME_HZ / 1000) {
-                        let _ = writeln!(uart,
+                        let _ = writeln!(
+                            uart,
                             "         CLOCK MISMATCH: this image assumes {} kHz, \
                              the fabric counts {}",
-                            target::TIME_HZ / 1000, measured.khz);
+                            target::TIME_HZ / 1000,
+                            measured.khz
+                        );
                     }
                 }
             }
@@ -589,4 +599,3 @@ fn write_isa(uart: &mut Uart, misa: u32) {
         let _ = write!(uart, " (no extensions reported)");
     }
 }
-

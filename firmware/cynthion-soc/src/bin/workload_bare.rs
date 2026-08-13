@@ -9,7 +9,7 @@
 //! differencing their `.text` measures the shell and not the dispatcher.
 //!
 //! This binary exists to make that difference mean something. Same modules by
-//! the same `#[path]`, same PLIC front end, same 16550 loopback, same 1 ms tick,
+//! the same `#[path]`, same front end, same 16550 loopback, same 1 ms tick,
 //! same `src/workload.rs`. The only thing that differs is who dispatches: a
 //! superloop here (`workload::command`, which calls `service()` then `drain()`
 //! once per turn), an `#[rtic::app]` there. The same discipline
@@ -33,8 +33,8 @@ mod log;
 #[path = "../clock.rs"]
 mod clock;
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -92,8 +92,8 @@ mod rtic_app {
     pub fn tick() {}
 }
 
-static CLAIMS: AtomicU32 = AtomicU32::new(0);
-static COMPLETES: AtomicU32 = AtomicU32::new(0);
+static SERVICED: AtomicU32 = AtomicU32::new(0);
+static ACKED: AtomicU32 = AtomicU32::new(0);
 
 /// Command bytes that arrived while the run was not active. Same ring, same
 /// argument, as `src/bin/workload_rtic.rs`.
@@ -140,14 +140,14 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-/// The PLIC front end. Byte for byte the RTIC binary's, minus the two `pend`s:
+/// The interrupt front end. Byte for byte the RTIC binary's, minus the `pend`s:
 /// there is nothing to pend, because the superloop below picks the work up on
 /// its next turn. That absence is exactly the difference under test.
 #[riscv_rt::core_interrupt(riscv::interrupt::Interrupt::MachineExternal)]
 fn machine_external() {
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    while let Some(source) = plic.claim() {
-        CLAIMS.fetch_add(1, Ordering::Relaxed);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    while let Some(source) = intc.next_ready() {
+        SERVICED.fetch_add(1, Ordering::Relaxed);
         if target::UART_IRQS.contains(&source) {
             let base = target::UART_BASES[0];
             let mut rx = uart::UartRx::new(base);
@@ -158,15 +158,14 @@ fn machine_external() {
                 LINE.push(byte);
             }
         } else if source == workload::source::SOURCE {
-            // Complete, disable, record -- `src/irq.rs`'s order, for
-            // `src/irq.rs`'s reason.
-            plic.complete(source);
-            COMPLETES.fetch_add(1, Ordering::Relaxed);
-            plic.disable(source);
+            // Mask and record -- `src/irq.rs::defer_workload`'s two steps. The
+            // level is still asserted, so the clear below is ignored and
+            // `workload::source::rearm` is what acknowledges it.
+            intc.disable(source);
             workload::defer(clock::Instant::ZERO.elapsed(clock::now()));
         }
-        plic.complete(source);
-        COMPLETES.fetch_add(1, Ordering::Relaxed);
+        intc.clear(source);
+        ACKED.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -175,12 +174,11 @@ fn main() -> ! {
     let mut console = wl_report::Console::new(target::UART_BASES[0]);
     console.banner("workload bare");
 
-    let plic = plic::Plic::new(target::PLIC_BASE);
-    plic.set_threshold(0);
+    let intc = intc::Intc::new(target::INTC_BASE);
+    intc.init();
     for &source in target::UART_IRQS {
-        plic.set_priority(source, 1);
-        plic.enable(source);
-        plic.complete(source);
+        intc.clear(source);
+        intc.enable(source);
     }
     uart::UartRx::new(target::UART_BASES[0]).enable_rx_interrupt();
 
@@ -212,10 +210,10 @@ fn main() -> ! {
 
         let (ticks, cost, late) = timer::stats();
         let per_us = target::TIME_HZ / 1_000_000;
-        console.plic(
+        console.intc(
             "bare",
-            CLAIMS.load(Ordering::Relaxed),
-            COMPLETES.load(Ordering::Relaxed),
+            SERVICED.load(Ordering::Relaxed),
+            ACKED.load(Ordering::Relaxed),
         );
         console.tick(ticks, cost / per_us, late / per_us);
     }

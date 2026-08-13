@@ -59,12 +59,12 @@ use core::sync::atomic::AtomicU32;
 #[allow(dead_code)]
 #[path = "../clock.rs"]
 mod clock;
-// `src/uart.rs` claims its own PLIC sources (#264), so a root with a console
-// needs the PLIC driver whether or not it arms a source. Dead code here: this
+// `src/uart.rs` claims its own sources (#264), so a root with a console
+// needs the controller driver whether or not it arms one. Dead code here: this
 // binary drives the monotonic and prints, and never enables console RX.
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;

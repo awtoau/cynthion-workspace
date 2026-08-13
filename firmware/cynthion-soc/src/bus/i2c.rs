@@ -23,7 +23,7 @@
 //!
 //! ## The completion interrupt: enabled, and what it is for
 //!
-//! - `CTR.IEN` set, PLIC source 3 claimed by [`I2c::init`]. A peripheral claims its
+//! - `CTR.IEN` set, source 3 claimed by [`I2c::init`]. A peripheral claims its
 //!   own source rather than being remembered by a list elsewhere: a source wired in
 //!   `gateware/soc/top.py` but absent from that list reads as `enabled 00000036`,
 //!   bit 3 missing, with nothing saying so (#246).
@@ -47,7 +47,7 @@
 //!
 //! - Source 3 is a LEVEL: `self.irq.eq(irq_flag & ien)` in
 //!   `gateware/soc/peripherals/i2c_master.py`; `irq_flag` clears only via `CR.IACK`.
-//!   Completing at the PLIC while the peripheral still asserts re-delivers it
+//!   Acknowledging while the peripheral still asserts re-delivers it
 //!   immediately -- the livelock `irq.rs` documents.
 //! - [`I2c::acknowledge_interrupt`] is one MMIO write, so unlike the FUSB302B (three
 //!   read-to-clear registers over I2C, ~1 ms) it's short enough to do in the handler.
@@ -67,7 +67,7 @@ const DATA: usize = 3;
 const CMD_STATUS: usize = 4;
 
 const CTR_EN: u8 = 0x80;
-/// Interrupt enable. The gateware drives PLIC source 3 from `irq_flag & ien`, so
+/// Interrupt enable. The gateware drives source 3 from `irq_flag & ien`, so
 /// this bit is the difference between a source that is wired and a source that
 /// can fire.
 const CTR_IEN: u8 = 0x40;
@@ -202,16 +202,16 @@ impl I2c {
         // were in. IF set from the last command before a reboot would be
         // reported by the next thing that looked at SR, and now that IEN is set
         // above it would assert the line before anything was ready to clear it.
-        // `irq::init()` calls `plic.complete()` for exactly the same reason and
-        // after exactly the same bug.
+        // `irq::claim_type_c` clears the pending bit for exactly the same
+        // reason and after exactly the same bug.
         //
-        // BEFORE the source is claimed, and that ordering is load-bearing: this
+        // BEFORE the source is enabled, and that ordering is load-bearing: this
         // is the FUSB302B rule applied to a second peripheral -- clear whatever
         // the previous session left asserting, then enable delivery.
         self.acknowledge_interrupt();
-        crate::plic::Plic::new(crate::target::PLIC_BASE)
-            .claim_source(cynthion_soc_pac::base::BOARD_I2C_IRQ,
-                          crate::plic::priority::I2C);
+        let intc = crate::intc::Intc::new(crate::target::INTC_BASE);
+        intc.clear(cynthion_soc_pac::base::BOARD_I2C_IRQ);
+        intc.enable(cynthion_soc_pac::base::BOARD_I2C_IRQ);
     }
 
     /// PRER as the core holds it, low byte first.
@@ -272,8 +272,7 @@ impl I2c {
     /// part makes the wait longer and the turns proportionally slower. It is the
     /// PRESCALE that moves this, which is why `i2c soak` cannot outrun it.
     fn wait_limit(&self) -> u32 {
-        let cycles = LONGEST_COMMAND_PERIODS * CYCLES_PER_PERIOD
-            * (self.prescale() as u32 + 1);
+        let cycles = LONGEST_COMMAND_PERIODS * CYCLES_PER_PERIOD * (self.prescale() as u32 + 1);
         // x1.25 over cycles/CYCLES_PER_TURN, folded: 5 turns per 4 cycles.
         cycles / CYCLES_PER_TURN * 5 / 4
     }

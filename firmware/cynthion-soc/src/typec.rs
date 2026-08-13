@@ -7,7 +7,7 @@
 //!     interrupt        mask that port's source, record which, return  src/irq.rs
 //!     normal context   clear that port's device, re-enable it         here
 //!
-//! Each `int` line has its own PLIC source, so the handler already knows which
+//! Each `int` line has its own source, so the handler already knows which
 //! device asserted and [`Controllers::service`] services exactly the ports that
 //! did. It does NOT read the mux's `LINES` register to find out.
 //!
@@ -36,20 +36,14 @@ use crate::uart::Uart;
 /// enough that a person who caused the event is still watching, and slow enough
 /// to be free -- this poll is one uncached CSR read, not a bus transaction.
 ///
-/// `fault` is polled rather than given a PLIC source of its own, and that stayed
-/// true when the `int` lines each got one. Two reasons, and the second is the
-/// binding one:
+/// `fault` is polled AND has an edge source of its own (#507). The two answer
+/// different questions and neither replaces the other:
 ///
-///   * It means something different from `int`; mixing them would make a fault
-///     distinguishable from an ordinary state change only by a register read,
-///     which is the ambiguity `docs/chips/fusb302b-type-c.md` says to avoid.
-///   * **Nothing here can clear it.** It drops when the device's fault does. An
-///     interrupt on a level the firmware cannot clear has to stay masked until
-///     something notices the level has gone -- which is this poll. It would add
-///     a handler, a deferral and a re-enable path, and keep the poll.
-///
-/// `int` is different in exactly that respect: it is clearable, by the three
-/// read-to-clear registers `fusb302::clear` reads, so masking terminates.
+///   * the source cannot miss an assertion, and `service_fault` reports it --
+///     that is what a poll aliasing against a 30-42 ms train cannot do (#506);
+///   * this poll is what notices the level going AWAY, which no edge on the
+///     assertion can say. Nothing in the firmware clears `FAULTB`: it drops
+///     when the part's fault does.
 const FAULT_POLL_MS: u32 = 50;
 
 /// Both controllers' last known state, and whether they have been set up.
@@ -108,7 +102,7 @@ impl Controllers {
     /// The parts have no reset pin, so the software reset IS the establishment,
     /// and it is issued unconditionally -- correct from any prior state, which
     /// is what the contract asks for. It also clears both parts' read-to-clear
-    /// interrupt registers, which is why the PLIC sources are claimed HERE and
+    /// interrupt registers, which is why the sources are claimed HERE and
     /// not before: enabling first would deliver a state change from the
     /// previous session, describing a cable that may no longer be there.
     ///
@@ -175,7 +169,7 @@ impl Controllers {
     /// handler and this, so the latency here is whatever the loop takes to come
     /// round, and nothing is lost while it does.
     ///
-    /// The bitmap comes from the PLIC source that fired, so this services the
+    /// The bitmap comes from the source that fired, so this services the
     /// port that asserted and does not look at the other one. There is no
     /// `LINES` read here at all: with one source per device there is nothing to
     /// decode, and that register is read only by `command` and `poll`.
@@ -253,6 +247,44 @@ impl Controllers {
             // The other port is untouched throughout: it was never masked.
             irq::resume_type_c(index);
         }
+    }
+
+    /// A `FAULTB` the handler latched: record it, judge it, report it.
+    ///
+    /// Task context (`sched::TYPE_C_FAULT`), released by the pin rather than by
+    /// the poll below -- which is the point of #507. `ports` is the sticky
+    /// bitmap from `src/irq.rs`, so this is what happened and not what is
+    /// happening: the part auto-recovers in 26-38 ms and the level below is
+    /// usually clean again by the time this runs.
+    ///
+    /// Both are printed, and the pair is the judgement:
+    ///
+    ///   * level clean -- a transient the part rode out. Nothing to do; the
+    ///     count is what says how often.
+    ///   * level still asserted -- the over-voltage has not gone away, and no
+    ///     amount of waiting will help. That is a cable or a source to unplug.
+    ///
+    /// Nothing here clears the hardware condition. It cannot: `FAULTB` is the
+    /// DPO2036's entire software-visible surface and it has no registers.
+    pub fn service_fault(&mut self, uart: &mut Uart, bus: &Bus, ports: u32) {
+        let lines = bus.lines();
+        for port in Port::ALL {
+            if ports & (1 << index(port)) == 0 {
+                continue;
+            }
+            let still = fusb302::faulting(lines, port);
+            // The cached level follows what was just read, so the 50 ms poll
+            // does not announce the same transition a second time.
+            self.fault[index(port)] = still;
+            crate::log!(
+                uart,
+                "type-c {}: FAULTB latched, {} faults, line {}",
+                port.name(),
+                irq::fault_interrupts(index(port)),
+                if still { "STILL ASSERTED" } else { "recovered" }
+            );
+        }
+        irq::clear_faulted(ports);
     }
 
     /// Look at the `fault` lines, and report a change.
@@ -352,4 +384,3 @@ pub(crate) fn index(port: Port) -> usize {
         Port::Aux => 1,
     }
 }
-

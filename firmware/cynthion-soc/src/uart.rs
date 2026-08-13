@@ -39,7 +39,7 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
-use crate::plic::{self, Plic};
+use crate::intc::Intc;
 use crate::target;
 use crate::MAX_CONSOLES;
 
@@ -331,7 +331,7 @@ impl Uart {
         // SoC (`main=0` PMA) and a device address under QEMU. All writes.
         unsafe {
             // Interrupts off first, and they stay off until `irq::init()` has
-            // a handler, a PLIC and the CPU's `mie`/`mstatus` set up. An
+            // a handler, a controller and the CPU's `mie`/`mstatus` set up. An
             // external interrupt raised before that reaches riscv-rt's
             // `DefaultHandler`, which is an abort.
             //
@@ -444,7 +444,7 @@ impl UartRx {
     /// Ask for an interrupt whenever a byte is waiting.
     ///
     /// Separate from `Uart::init()` because ordering matters: every UART must be
-    /// quiet before the PLIC is configured and `mstatus.MIE` is set, and only
+    /// quiet before the controller is configured and `mstatus.MIE` is set, and only
     /// then may any of them start asking. `irq::init()` does both halves in that
     /// order.
     ///
@@ -564,24 +564,30 @@ pub fn init(establish: bool) -> Init {
         claim_consoles();
     }
     let (lcr, iir, ier) = Uart::new(target::UART_BASES[0]).settings();
-    Init { ports: target::UART_BASES.len(), lcr, iir, ier }
+    Init {
+        ports: target::UART_BASES.len(),
+        lcr,
+        iir,
+        ier,
+    }
 }
 
-/// The consoles claim their PLIC sources and start asking.
+/// The consoles claim their sources and start asking.
 ///
 /// In the driver, not in a list in a file that is not the driver (#264). It
 /// moved out of `src/irq.rs` in #362: that file is the shell's handler and no
 /// `src/bin/` dispatcher can include it, so naming it from here broke every
 /// binary that has a console but not a shell.
 ///
-/// One call rather than a claim per port at the call site, because the
-/// receive-interrupt enable in the 16550 has to FOLLOW the PLIC enable: a UART
-/// asking before the PLIC will deliver is a byte that lands in the ring with
-/// nothing scheduled to come and get it.
+/// One call rather than one per port at the call site, because the
+/// receive-interrupt enable in the 16550 has to FOLLOW the controller's enable:
+/// a UART asking before the controller will deliver is a byte that lands in the
+/// ring with nothing scheduled to come and get it.
 pub fn claim_consoles() {
-    let plic = Plic::new(target::PLIC_BASE);
+    let intc = Intc::new(target::INTC_BASE);
     for &source in target::UART_IRQS {
-        plic.claim_source(source, plic::priority::CONSOLE);
+        intc.clear(source);
+        intc.enable(source);
     }
     // The UARTs start asking only now that there is something to answer them.
     for &base in target::UART_BASES {

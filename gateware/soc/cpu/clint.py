@@ -71,7 +71,7 @@ targets.
 the specification defines `mip.MTIP`. There is no acknowledge register: the only
 way to lower the line is to move the deadline, which is what the handler's
 `mtimecmp += period` does. A handler that returns without advancing it is
-re-entered immediately and forever -- the same livelock `cpu/plic.py` and
+re-entered immediately and forever -- the same livelock `cpu/intc.py` and
 `peripherals/uart16550.py` describe, arrived at from the other direction.
 
 ## Cost

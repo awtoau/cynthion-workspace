@@ -37,7 +37,7 @@
 //! * **No flash writes.** The bitstream is at offset 0. An erase here would take
 //!   the board out with it, and there is no state a self-test needs to leave
 //!   behind.
-//! * **No PLIC claim.** Reading the claim register takes an interrupt away from
+//! * **Nothing with a side effect.** A state-changing read takes work away from
 //!   the handler and never completes it, killing the console from a diagnostic.
 //!   `info` reports the threshold and enables, which are free of side effects.
 //! * **No ULPI scratch walk.** `phy` does that, and it WRITES a register on a

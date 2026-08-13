@@ -1,9 +1,10 @@
 //! The machine external interrupt handler, and the receive rings behind it.
 //!
-//! Each UART raises a PLIC source when a byte lands; the handler moves it into a
+//! Each UART raises a source when a byte lands; the handler moves it into a
 //! per-console ring; the shell takes bytes out. Nothing in this file is
-//! target-specific -- the PLIC is standard on the SoC and on QEMU's `-M virt`, so
-//! `scripts/soc_test.py` exercises this handler rather than a stand-in.
+//! target-specific -- `src/intc.rs` presents the board's controller and QEMU's
+//! PLIC as the same four operations, so `scripts/soc_test.py` exercises this
+//! handler rather than a stand-in.
 //!
 //! ## The livelock this is written to avoid
 //!
@@ -50,7 +51,7 @@ use core::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use riscv::interrupt::Interrupt;
 
 use crate::events;
-use crate::plic::Plic;
+use crate::intc::Intc;
 use crate::target;
 use crate::uart::UartRx;
 use crate::MAX_CONSOLES;
@@ -141,13 +142,11 @@ impl Ring {
 /// nowhere to be handed a reference from.
 static RINGS: [Ring; MAX_CONSOLES] = [const { Ring::new() }; MAX_CONSOLES];
 
-/// Which console a PLIC source number belongs to.
+/// Which console a source number belongs to.
 ///
-/// Linear search over at most two entries. A source with no console -- which
-/// cannot happen with the map this SoC has, but could after someone adds a timer
-/// -- is claimed and completed with no handler run, which is the right thing:
-/// the alternative is a claim that is never completed, and that leaves the source
-/// silently dead forever.
+/// Linear search over at most two entries. A source with no console is
+/// acknowledged with no handler run -- the alternative is a pending bit nothing
+/// ever clears, which raises the CPU line forever.
 fn console_of(source: u32) -> Option<usize> {
     let mut index = 0;
     while index < target::UART_IRQS.len() {
@@ -159,7 +158,7 @@ fn console_of(source: u32) -> Option<usize> {
     None
 }
 
-/// Which Type-C port a PLIC source number belongs to.
+/// Which Type-C port a source number belongs to.
 ///
 /// The same shape as [`console_of`], over the slice that is empty under QEMU --
 /// so a target with no Type-C hardware simply never matches and needs no
@@ -220,79 +219,92 @@ fn service(index: usize) {
 /// mode; the symbol is installed by the attribute, and without it this would
 /// reach `DefaultHandler`, which aborts.
 ///
-/// Loops until the PLIC has nothing left, rather than servicing one source and
-/// returning. Both are correct -- the line is still high on return, so we would
-/// simply be re-entered -- but re-entering costs a full trap frame save and
-/// restore per source, and looping does not.
+/// Loops until nothing is ready rather than servicing one source and returning.
+/// Both are correct -- the line is still high on return, so we would simply be
+/// re-entered -- but re-entering costs a full trap frame save and restore per
+/// source. [`Intc::next_ready`] re-reads, so a source that arrives mid-handler
+/// is picked up here too.
+///
+/// It terminates because every branch of [`dispatch`] either acknowledges its
+/// source or masks it.
 #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
 fn machine_external() {
-    let plic = Plic::new(target::PLIC_BASE);
-    while let Some(source) = plic.claim() {
-        if let Some(index) = console_of(source) {
-            service(index);
-        } else if let Some(port) = type_c_of(source) {
-            defer_type_c(&plic, source, port);
-        } else if is_i2c(source) {
-            service_i2c();
-        } else if is_power_alert(source) {
-            defer_power_alert(&plic, source);
-        }
-        // The #115 workload's stand-in for a Type-C controller: a second
-        // level-sensitive source whose service is too long for a handler. Same
-        // deferral, same order, and under `preempt` the same `pend`.
-        #[cfg(feature = "workload")]
-        if source == crate::workload::source::SOURCE {
-            defer_workload(&plic, source);
-        }
-        // ALWAYS, including for a source with no handler. A claim that is never
-        // completed gates that source off for the rest of the session, with
-        // `pending` reading zero and the peripheral asserting into the void.
-        plic.complete(source);
+    let intc = Intc::new(target::INTC_BASE);
+    while let Some(source) = intc.next_ready() {
+        dispatch(&intc, source);
     }
 
     // The tail of the handler is where a preemptive dispatcher belongs: every
-    // source has been claimed and every task it wants has been pended, so this
+    // source has been serviced and every task it wants has been pended, so this
     // runs them in priority order with `mstatus.MIE` back on. See
     // `src/dispatch.rs` for why `mepc` has to be saved around that.
     #[cfg(feature = "preempt")]
     crate::dispatch::run();
 }
 
+/// One source, serviced or deferred.
+///
+/// **Everything acknowledges, including a source with no handler.** A pending
+/// bit nothing clears raises the CPU line forever, and the loop above would
+/// never leave -- so an unknown source is cleared and dropped rather than
+/// skipped. The one exception is a deferral, which masks instead: a level whose
+/// line is still asserted cannot be acknowledged at all.
+fn dispatch(intc: &Intc, source: u32) {
+    if let Some(index) = console_of(source) {
+        // Drain FIRST. The clear is ignored while the 16550 still asserts, so
+        // acknowledging before draining does nothing at all.
+        service(index);
+        intc.clear(source);
+    } else if let Some(port) = type_c_of(source) {
+        defer_type_c(intc, source, port);
+    } else if is_i2c(source) {
+        service_i2c();
+        intc.clear(source);
+    } else if is_power_alert(source) {
+        defer_power_alert(intc, source);
+    } else if let Some(port) = fault_of(source) {
+        record_fault(intc, source, port);
+    } else if is_button(source) {
+        record_button(intc, source);
+    } else if is_pll_loss(source) {
+        record_pll_loss(intc, source);
+    } else {
+        // The #115 workload's stand-in for a Type-C controller: a second
+        // level-sensitive source whose service is too long for a handler.
+        #[cfg(feature = "workload")]
+        if source == crate::workload::source::SOURCE {
+            defer_workload(intc, source);
+            return;
+        }
+        intc.clear(source);
+    }
+}
+
 /// Is this the PAC1954's limit ALERT?
 fn is_power_alert(source: u32) -> bool {
-    target::BOARD.is_some()
-        && source == cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ
+    target::BOARD.is_some() && source == cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ
 }
 
 /// The PAC1954's ALERT, handled by NOT handling it here.
 ///
-/// **The same treatment as a Type-C line, and for the same reason.** Clearing
-/// this means reading `ALERT_STATUS` over I2C -- a three-byte register read at
-/// the far end of a mux, on the single controller the REFRESH cycle is also
-/// using. Doing that in a handler would be a long spin inside an interrupt AND
-/// a second master on a peripheral with one owner, either of which is worse
-/// than the problem.
+/// Clearing this means reading `ALERT_STATUS` over I2C -- a three-byte register
+/// read at the far end of a mux, on the single controller the REFRESH cycle is
+/// also using. Doing that in a handler would be a long spin inside an interrupt
+/// AND a second master on a peripheral with one owner.
 ///
-/// Contrast `service_i2c` twenty lines up, which clears IN the handler. That is
-/// not an inconsistency: its clear is a single MMIO store that moves nothing on
-/// the wire. The rule is about how long the clear takes, and these two are the
-/// two answers it has.
+/// Contrast `service_i2c` above, which clears IN the handler: its clear is a
+/// single MMIO store that moves nothing on the wire. The rule is how long the
+/// clear takes, and these are its two answers.
 ///
-/// The line is level and LATCHED low (DS20006539B section 5.16), so masking is
-/// safe: the PLIC keeps its pending bit and nothing is lost. `power::service`
-/// in normal context reads the status register -- which clears it at the part --
-/// and calls `resume_power_alert`.
-///
-/// Complete BEFORE disabling, never the other way round. The PLIC ignores a
-/// completion for a source the context is not enabled for, so disabling first
-/// throws the completion away and gates the source off permanently. That cost
-/// this board one interrupt per port per boot when the Type-C sources were
-/// wired, and the comment on `defer_type_c` is the full account.
-fn defer_power_alert(plic: &Plic, source: u32) {
-    plic.complete(source);
-    plic.disable(source);
+/// **An EDGE source, so no mask.** Acknowledging is unconditional and there is
+/// no further edge until the part releases the pin, so the handler is not
+/// re-entered while `power::service` does the I2C. A second assertion during
+/// that window is a second event and gets a second deferral, which is right.
+fn defer_power_alert(intc: &Intc, source: u32) {
+    intc.clear(source);
     POWER_ALERT_INTERRUPTS.fetch_add(1, Ordering::Relaxed);
-    // Release: the mask must be visible before the flag that publishes it.
+    // Release: the acknowledgement must be visible before the flag that
+    // publishes it.
     PENDING_POWER_ALERT.store(1, Ordering::Release);
     // Release the task that can actually clear the part. One MMIO store to
     // `msip`; the flag above stays because `power alert` reports it and because
@@ -315,19 +327,6 @@ pub fn power_alert_interrupts() -> u32 {
     POWER_ALERT_INTERRUPTS.load(Ordering::Relaxed)
 }
 
-/// Re-enable the ALERT source, after the part has been cleared.
-///
-/// Normal context only. If the part is still asserting when this runs the
-/// interrupt fires again immediately -- which is correct, the condition has not
-/// gone away -- and the deferral repeats rather than spinning, because the
-/// handler masks again on the way in.
-pub fn resume_power_alert() {
-    if target::BOARD.is_some() {
-        Plic::new(target::PLIC_BASE)
-            .enable(cynthion_soc_pac::base::BOARD_I2C_MUX_POWER_ALERT_IRQ);
-    }
-}
-
 /// Is this the I2C controller's completion source?
 ///
 /// `None` on a target with no board, which is how the emulator gets a handler
@@ -341,9 +340,8 @@ fn is_i2c(source: u32) -> bool {
 /// The opposite treatment from `defer_type_c` one function down, and the reason
 /// is the clear and not the peripheral. Source 3 is a level --
 /// `irq.eq(irq_flag & ien)` in `peripherals/i2c_master.py` -- and `irq_flag`
-/// goes down only on a write of `CR.IACK`. Completing at the PLIC while the
-/// peripheral still asserts re-delivers immediately, so something has to clear
-/// it before the `plic.complete` at the bottom of the claim loop.
+/// goes down only on a write of `CR.IACK`. Acknowledging while the peripheral
+/// still asserts does nothing at all, so the clear has to come first.
 ///
 /// That clear is ONE MMIO WRITE. A FUSB302B's is three read-to-clear registers
 /// over I2C -- ~120 us at the bus's 1 MHz (#272), on the controller the power
@@ -355,8 +353,10 @@ fn is_i2c(source: u32) -> bool {
 /// bit and is not touched here. Both writing `IACK` is idempotent, so a handler
 /// and a driver acknowledging the same completion is not a race.
 fn service_i2c() {
-    I2C_INTERRUPTS.store(I2C_INTERRUPTS.load(Ordering::Relaxed).saturating_add(1),
-                         Ordering::Relaxed);
+    I2C_INTERRUPTS.store(
+        I2C_INTERRUPTS.load(Ordering::Relaxed).saturating_add(1),
+        Ordering::Relaxed,
+    );
     // Through `bus`, which owns every construction of a controller -- see
     // `bus::acknowledge_i2c_interrupt` for why this one operation needs no
     // ownership, and `scripts/soc_i2c_owner_sim.py` for the rule.
@@ -376,12 +376,11 @@ pub fn i2c_interrupts() -> u32 {
 
 /// [`defer_type_c`], for the workload's stand-in source.
 ///
-/// The same three steps in the same order -- complete, disable, record -- and
-/// the comment on `defer_type_c` is the reason for all three.
+/// A level, so the same two steps: mask, record. `workload::source::rearm`
+/// clears the device, acknowledges and unmasks.
 #[cfg(feature = "workload")]
-fn defer_workload(plic: &Plic, source: u32) {
-    plic.complete(source);
-    plic.disable(source);
+fn defer_workload(intc: &Intc, source: u32) {
+    intc.disable(source);
     crate::workload::defer(crate::clock::Instant::ZERO.elapsed(crate::clock::now()));
 }
 
@@ -395,8 +394,9 @@ fn defer_workload(plic: &Plic, source: u32) {
 /// what made a handler unable to clear was the I2C, not the sharing.
 ///
 /// So: mask THIS source, record which port, return. The line stays asserted and
-/// the PLIC keeps its pending bit; nothing is lost. `type_c::service` in normal
-/// context clears that one device and re-enables that one source.
+/// the pending bit stays set; nothing is lost. `type_c::service` in normal
+/// context clears that one device, then acknowledges and unmasks that one
+/// source.
 ///
 /// Per-device sources are the shape of the obligation: a shared level must be
 /// cleared on *every* asserting device before it can be re-enabled, and missing
@@ -406,25 +406,10 @@ fn defer_workload(plic: &Plic, source: u32) {
 /// `log_from_irq!` records; it does not print. See `src/events.rs` for why a
 /// handler that printed would hang this board. The record carries the port
 /// bitmap, which a shared source could not supply without a register read.
-fn defer_type_c(plic: &Plic, source: u32, port: usize) {
-    // Complete BEFORE masking, and never the other way round.
-    //
-    // The PLIC ignores a completion for a source the context is not enabled for
-    // -- the spec's rule, implemented in `gateware/soc/cpu/plic.py` and
-    // warned about in that file's own comment. Disabling first therefore threw
-    // the completion away, left `claimed` set for good, and since
-    // `pending[i] = sources[i] & ~claimed[i]`, gated the source off permanently.
-    //
-    // The symptom was one interrupt per port per boot. The device kept asserting
-    // -- `typec` showed `int 1` and the gateware `lines 01` -- while the PLIC
-    // read `pending 00000000` and no handler ever ran again. Measured on the
-    // board: an attach was serviced, the matching detach was not.
-    //
-    // The caller completes again after this returns, which is harmless: the bit
-    // is already clear, and the second write lands while the source is disabled
-    // and so is ignored anyway.
-    plic.complete(source);
-    plic.disable(source);
+fn defer_type_c(intc: &Intc, source: u32, port: usize) {
+    // No acknowledgement here: the FUSB302B is still asserting, so the clear
+    // would be ignored. `resume_type_c` does it after the I2C clear.
+    intc.disable(source);
     TYPE_C_INTERRUPTS[port].fetch_add(1, Ordering::Relaxed);
     // Release: the mask must be visible before the bit that publishes it.
     PENDING_TYPE_C.fetch_or(1 << port, Ordering::Release);
@@ -463,16 +448,17 @@ pub fn take_type_c() -> u32 {
     PENDING_TYPE_C.swap(0, Ordering::Acquire)
 }
 
-/// Re-enable one port's source, after that device has been cleared.
+/// Acknowledge and unmask one port's source, after that device has been cleared.
 ///
-/// Called by normal context and only there, per port, because the mask is per
-/// port. If the device is still asserting when this runs the interrupt fires
-/// again immediately -- which is correct, there is still work -- and the
-/// deferral repeats rather than spinning, because the handler masks again on the
-/// way in.
+/// Normal context only, per port, because the mask is per port. If the device is
+/// still asserting the acknowledgement is ignored and the interrupt fires again
+/// on the unmask -- which is correct, there is still work, and the deferral
+/// repeats rather than spinning because the handler masks again on the way in.
 pub fn resume_type_c(port: usize) {
     if let Some(&source) = target::TYPE_C_IRQS.get(port) {
-        Plic::new(target::PLIC_BASE).enable(source);
+        let intc = Intc::new(target::INTC_BASE);
+        intc.clear(source);
+        intc.enable(source);
     }
 }
 
@@ -481,32 +467,22 @@ pub fn type_c_interrupts(port: usize) -> u32 {
     TYPE_C_INTERRUPTS[port].load(Ordering::Relaxed)
 }
 
-/// Configure the PLIC and the UARTs, then let interrupts happen.
+/// Configure the controller, then let interrupts happen.
 ///
 /// Call once, after every `Uart::init()` and after the bootloader has decided
-/// not to jump anywhere. Order matters throughout and each step says why.
-/// The interrupt CONTROLLER, and nothing that is plugged into it.
-///
-/// **Machine before peripherals.** This is the PLIC's own configuration -- the
-/// threshold, and `mstatus.MIE` -- and it deliberately enables no source. A
-/// source is claimed by the peripheral behind it, in [`claim`], once that
-/// peripheral is in a state where an interrupt from it would mean something.
+/// not to jump anywhere. The interrupt CONTROLLER, and nothing plugged into it:
+/// it deliberately enables no source. A source is claimed by the peripheral
+/// behind it, once that peripheral is in a state where an interrupt from it
+/// would mean something.
 ///
 /// NOT a list of sources held here. A source wired in `gateware/soc/top.py`
-/// then needs adding to a list in a file that is not its driver, which is why
-/// the I2C source never fired. A peripheral that claims its own source cannot
-/// be forgotten by a list it is not in. See #246.
+/// would then need adding to a list in a file that is not its driver, which is
+/// why the I2C source never fired (#246).
 ///
-/// Safe to call before any peripheral exists: a threshold of 0 with nothing
-/// enabled cannot deliver anything.
+/// Safe to call before any peripheral exists: nothing is enabled, so nothing
+/// can be delivered.
 pub fn init() {
-    let plic = Plic::new(target::PLIC_BASE);
-
-    // 0 admits every level in the table -- the rule is `level > threshold`, so
-    // anything above "never" gets through. The ranking in [`priority`] is what
-    // orders them; the threshold is not a second ranking and not a critical
-    // section (RTIC locks against `riscv-slic`'s own, see `docs/rtic.md`).
-    plic.set_threshold(0);
+    Intc::new(target::INTC_BASE).init();
 
     // SAFETY: the handler is installed at link time, the trap vector was set by
     // riscv-rt's `_setup_interrupts`, and the rings are `static` and initialised
@@ -526,10 +502,157 @@ pub fn init() {
 /// previous session and the report it produces describes a cable that may no
 /// longer be there.
 pub fn claim_type_c() {
-    let plic = Plic::new(target::PLIC_BASE);
+    let intc = Intc::new(target::INTC_BASE);
     for &source in target::TYPE_C_IRQS {
-        plic.claim_source(source, crate::plic::priority::TYPE_C);
+        // Acknowledge before enabling: a `j _start` reboot leaves the previous
+        // session's pending bit set, the CPU being the only thing restarted.
+        intc.clear(source);
+        intc.enable(source);
     }
+}
+
+/// The board's edge sources, claimed together.
+///
+/// **Not one per driver, unlike every level source**, because none of these has
+/// a driver: a fault, a button press and a PLL dropping lock are counted and
+/// reported, and nothing is configured to make them happen. There is no
+/// peripheral bring-up they could hang off.
+///
+/// Called after the Type-C bring-up, so an assertion from the previous session
+/// is acknowledged rather than delivered.
+pub fn claim_edges() {
+    let intc = Intc::new(target::INTC_BASE);
+    for &source in EDGE_SOURCES {
+        intc.clear(source);
+        intc.enable(source);
+    }
+}
+
+/// Every edge source with no driver of its own.
+#[cfg(not(feature = "qemu"))]
+const EDGE_SOURCES: &[u32] = &[
+    cynthion_soc_pac::base::BOARD_I2C_MUX_TARGET_FAULT_IRQ,
+    cynthion_soc_pac::base::BOARD_I2C_MUX_AUX_FAULT_IRQ,
+    cynthion_soc_pac::base::BOARD_GPIO_BUTTON_IRQ,
+    cynthion_soc_pac::base::BOARD_CLOCKS_PLL_LOSS_IRQ,
+];
+
+/// `virt` has none of this hardware and nothing raises these.
+#[cfg(feature = "qemu")]
+const EDGE_SOURCES: &[u32] = &[];
+
+/// Which DPO2036 a source number belongs to, in `fusb302::Port::ALL` order.
+fn fault_of(source: u32) -> Option<usize> {
+    let mut index = 0;
+    while index < FAULT_IRQS.len() {
+        if FAULT_IRQS[index] == source {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+#[cfg(not(feature = "qemu"))]
+const FAULT_IRQS: &[u32] = &[
+    cynthion_soc_pac::base::BOARD_I2C_MUX_TARGET_FAULT_IRQ,
+    cynthion_soc_pac::base::BOARD_I2C_MUX_AUX_FAULT_IRQ,
+];
+
+#[cfg(feature = "qemu")]
+const FAULT_IRQS: &[u32] = &[];
+
+const _: () = assert!(FAULT_IRQS.len() <= MAX_TYPE_C);
+
+/// A DPO2036 asserted `FAULTB`: an over-voltage on that port's CC/SBU pins.
+///
+/// Count it, set the port's STICKY flag, release the task. Nothing here tries to
+/// make the fault go away: the part protects itself and recovers after 26-38 ms
+/// on its own, and the task's job is to record and judge, not to clear the
+/// hardware condition. #506, #507.
+///
+/// **Sticky is the whole point.** The task runs milliseconds later, by which
+/// time the part may have recovered and `LINES` reads clean -- so a task that
+/// looked at the level would conclude nothing had happened. The flag survives
+/// the recovery and only the task clears it.
+fn record_fault(intc: &Intc, source: u32, port: usize) {
+    intc.clear(source);
+    FAULT_INTERRUPTS[port].fetch_add(1, Ordering::Relaxed);
+    // Release: the flag must be visible before the pend that publishes it.
+    FAULTED.fetch_or(1 << port, Ordering::Release);
+    let _ = crate::log_from_irq!(events::TYPE_C_FAULT, 1 << port);
+    crate::rtic_app::pend_type_c_fault();
+}
+
+static FAULT_INTERRUPTS: [AtomicU32; MAX_TYPE_C] = [const { AtomicU32::new(0) }; MAX_TYPE_C];
+
+/// Which ports have faulted and not yet been accounted for, one bit each.
+///
+/// Set by the handler, cleared only by [`clear_faulted`] in task context. Not
+/// consuming on read: the task reads it, does the work, and clears exactly what
+/// it accounted for -- a swap would lose a fault that arrived mid-service.
+static FAULTED: AtomicU32 = AtomicU32::new(0);
+
+/// Which ports have faulted since the task last accounted for them.
+pub fn faulted() -> u32 {
+    FAULTED.load(Ordering::Acquire)
+}
+
+/// Task context only, after the fault has been recorded and reported.
+pub fn clear_faulted(ports: u32) {
+    FAULTED.fetch_and(!ports, Ordering::Release);
+}
+
+/// Faults recorded for port `port`, for the `irq` and `typec` commands.
+pub fn fault_interrupts(port: usize) -> u32 {
+    FAULT_INTERRUPTS[port].load(Ordering::Relaxed)
+}
+
+/// Is this the USER button?
+fn is_button(source: u32) -> bool {
+    target::BOARD.is_some() && source == cynthion_soc_pac::base::BOARD_GPIO_BUTTON_IRQ
+}
+
+/// The USER button went down.
+///
+/// **Not debounced in fabric**, so one press arrives as several interrupts and
+/// the count climbs by more than one. Software settles it: a press is a human
+/// event and the consumer has milliseconds of slack.
+fn record_button(intc: &Intc, source: u32) {
+    intc.clear(source);
+    let count = BUTTON_INTERRUPTS.fetch_add(1, Ordering::Relaxed) + 1;
+    let _ = crate::log_from_irq!(events::BUTTON, count as u64);
+}
+
+static BUTTON_INTERRUPTS: AtomicU32 = AtomicU32::new(0);
+
+/// Presses recorded, for `irq`. Bounces included -- see [`record_button`].
+pub fn button_interrupts() -> u32 {
+    BUTTON_INTERRUPTS.load(Ordering::Relaxed)
+}
+
+/// Is this the PLL losing lock?
+fn is_pll_loss(source: u32) -> bool {
+    target::BOARD.is_some() && source == cynthion_soc_pac::base::BOARD_CLOCKS_PLL_LOSS_IRQ
+}
+
+/// The PLL dropped lock.
+///
+/// Nothing here can fix it -- the CPU runs on the clock that went away, and if
+/// `sync` itself stopped this code is not executing. It is for the report: a
+/// build that lost lock and recovered looks identical to one that never did,
+/// and `ClockMonitor`'s bit only says whether it is locked NOW.
+fn record_pll_loss(intc: &Intc, source: u32) {
+    intc.clear(source);
+    PLL_LOSS_INTERRUPTS.fetch_add(1, Ordering::Relaxed);
+    let _ = crate::log_from_irq!(events::PLL_LOSS, 0);
+}
+
+static PLL_LOSS_INTERRUPTS: AtomicU32 = AtomicU32::new(0);
+
+/// Losses of lock recorded, for `irq` and `clocks`.
+pub fn pll_loss_interrupts() -> u32 {
+    PLL_LOSS_INTERRUPTS.load(Ordering::Relaxed)
 }
 
 /// Stop interrupts reaching this firmware's handlers -- the external one below

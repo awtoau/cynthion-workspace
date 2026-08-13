@@ -112,7 +112,7 @@ Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
 |---|---:|---:|---:|---|
 | `hyperram_probe` | 750 | 289 | — | instrumentation |
 | `clint` | 400 | 137 | — | |
-| `plic` (5 sources) | 286 | 52 | — | |
+| `plic` (5 sources, retired) | 286 | 52 | — | |
 | `uart16550` | 231 | 118 | — | **×2 in the SoC** |
 | `i2c_master` | 200 | 109 | — | |
 | `flash_probe` | 183 | 72 | — | instrumentation |
@@ -129,7 +129,7 @@ Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
 | `wishbone_pipe` | 9 | 34 | — | |
 
 Two things stand out. `hyperram_probe` is the **largest peripheral in the SoC**
-— larger than the CLINT, larger than the PLIC, larger than either console — and
+— larger than the CLINT, larger than the interrupt controller, larger than either console — and
 it is instrumentation. And `wishbone_pipe`, which recovered the design's timing
 margin, costs nine LUT4 and 34 flops.
 

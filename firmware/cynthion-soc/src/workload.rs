@@ -81,7 +81,7 @@
 //! ## How this differs from the real workload
 //!
 //! - **Arrival source is a 16550, not a USB device controller.** One received
-//!   byte is one USB event, through a real PLIC source into the real handler.
+//!   byte is one USB event, through a real source into the real handler.
 //!   Bytes are injected by the 1 ms tick through local loopback ([`tick`])
 //!   rather than by a host -- buys reproducibility (both models under test see
 //!   the identical arrival sequence), gives up host jitter. Arrivals are
@@ -96,7 +96,7 @@
 //! - **The Type-C deferral stands in for the one long job.** On the board:
 //!   a millisecond of I2C on a shared controller. Under QEMU there is no I2C,
 //!   so [`SERVICE_US`] is spun on the CLINT instead, sourced from `virt`'s
-//!   goldfish RTC alarm -- a second PLIC line, level-sensitive, cannot be
+//!   goldfish RTC alarm -- a second source, level-sensitive, cannot be
 //!   cleared cheaply by the handler, schedulable by the guest. Same obligation
 //!   shape as a FUSB302B.
 //! - **QEMU retires one instruction per cycle.** Board IPC measured at 0.302
@@ -290,7 +290,7 @@ fn fifo_write(base: usize, byte: u8) {
 /// main loop would be stopped by exactly the thing under test -- a long turn --
 /// and would hide the defect it is here to measure. The 16550 is in local
 /// loopback for the duration, so a byte written to THR comes back through RSR,
-/// raises the same PLIC source a real byte would, and reaches the same handler.
+/// raises the same source a real byte would, and reaches the same handler.
 pub fn tick() {
     if ACTIVE.load(Ordering::Relaxed) == 0 {
         return;
@@ -500,7 +500,7 @@ pub fn type_c_run() -> bool {
 
 /// The interrupt source the deferred job hangs off.
 ///
-/// On the board it is a FUSB302B on its own PLIC line. Under QEMU it is
+/// On the board it is a FUSB302B on its own line. Under QEMU it is
 /// `virt`'s goldfish RTC alarm at 0x101000 on source 11 -- level-sensitive,
 /// cleared only by an MMIO write, and schedulable by the guest, which is the
 /// same obligation shape and the only spare source `virt` offers without
@@ -520,7 +520,7 @@ pub mod source {
         pub const CLEAR_INTERRUPT: usize = 0x1c;
     }
 
-    /// Which PLIC source the deferred job's device is on.
+    /// Which source the deferred job's device is on.
     #[cfg(feature = "qemu")]
     pub const SOURCE: u32 = rtc::IRQ;
     #[cfg(not(feature = "qemu"))]
@@ -572,9 +572,9 @@ pub mod source {
 
     /// Clear the device, then let the source through again.
     ///
-    /// The order is `src/irq.rs`'s and for its reason: the completion goes in
-    /// before the disable there, and the re-enable comes after the device is
-    /// quiet here.
+    /// The order is `src/irq.rs`'s and for its reason: the handler masks
+    /// without acknowledging, and the acknowledgement and the unmask come after
+    /// the device is quiet here.
     pub fn rearm() {
         #[cfg(feature = "qemu")]
         // SAFETY: as above. Writing CLEAR_INTERRUPT lowers the line.
@@ -582,24 +582,22 @@ pub mod source {
             core::ptr::write_volatile(reg(rtc::CLEAR_INTERRUPT), 1);
         }
         arm();
-        crate::plic::Plic::new(target::PLIC_BASE).enable(SOURCE);
+        let intc = crate::intc::Intc::new(target::INTC_BASE);
+        intc.clear(SOURCE);
+        intc.enable(SOURCE);
     }
 
     /// Start provoking the deferred job.
     pub fn start() {
-        let plic = crate::plic::Plic::new(target::PLIC_BASE);
-        // The table's level for the source this borrows -- TARGET on the board,
-        // a stand-in for it under QEMU. A number here would silently demote a
-        // real source for the length of the run.
-        plic.set_priority(SOURCE, crate::plic::priority::TYPE_C);
-        plic.complete(SOURCE);
+        let intc = crate::intc::Intc::new(target::INTC_BASE);
+        intc.clear(SOURCE);
         arm();
-        plic.enable(SOURCE);
+        intc.enable(SOURCE);
     }
 
     /// Stop, and leave the line low.
     pub fn stop() {
-        crate::plic::Plic::new(target::PLIC_BASE).disable(SOURCE);
+        crate::intc::Intc::new(target::INTC_BASE).disable(SOURCE);
         #[cfg(feature = "qemu")]
         // SAFETY: as above.
         unsafe {

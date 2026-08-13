@@ -16,7 +16,7 @@
 //! local of `#[idle]`, and a handler has nowhere to be handed one from.
 //!
 //! Unlike `src/usb_report.rs` this wraps `src/uart.rs`'s real `Uart` rather than
-//! a private 16550, because these binaries include `uart.rs` anyway: their PLIC
+//! a private 16550, because these binaries include `uart.rs` anyway: their
 //! front ends need `UartRx`, the receive-only half with no transmit method.
 
 use core::fmt::Write;
@@ -60,16 +60,16 @@ impl Console {
 
     /// Claims against completions. A claim that is never completed gates its
     /// source off for the rest of the session, so the two are counted rather
-    /// than argued -- see `src/plic.rs`.
-    pub fn plic(&mut self, model: &str, claims: u32, completes: u32) {
+    /// than argued.
+    pub fn intc(&mut self, model: &str, serviced: u32, acked: u32) {
         let _ = writeln!(
             self.0,
-            "  {}    claims {} completes {}",
-            model, claims, completes
+            "  {}    serviced {} acked {}",
+            model, serviced, acked
         );
     }
 
-    /// What RTIC's `#[shared]` resource holds, beside what the PLIC did.
+    /// What RTIC's `#[shared]` resource holds, beside what the controller did.
     pub fn shared(&mut self, events: u32, defers: u32) {
         let _ = writeln!(
             self.0,

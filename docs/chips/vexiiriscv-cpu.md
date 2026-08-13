@@ -313,7 +313,7 @@ chain.
 | I-cache | **8 KiB** — 64 sets × 2 ways × 64 B line |
 | D-cache | **8 KiB** — 64 sets × 2 ways × 64 B line |
 | buses | three masters: `ibus`, `dbus` (cached), `iobus` (uncached, for peripherals) |
-| interrupts | one machine-external wire; concentration is the [PLIC](../hardware.md#register-reference)'s job |
+| interrupts | one machine-external wire; concentration is the [controller](../soc-interrupts.md)'s job |
 | debug | `--debug-jtag-instruction`, ER1/ER2 on the TAP Apollo already owns |
 | prediction | `BtbPlugin`, 512 sets, relaxed; no `GSharePlugin`, no `RasPlugin` |
 

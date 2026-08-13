@@ -182,7 +182,7 @@ class Peripheral:
         self.size = size            # window size in bytes
         self.kind = kind            # "registers" or "buffer"
         self.registers = []         # (name, offset, footprint, register object)
-        # (interrupt name, PLIC source number), in the order declared. A list
+        # (interrupt name, source number), in the order declared. A list
         # rather than one number because a window may raise more than one
         # source: `i2c_mux.I2CBusMux` gives each FUSB302B its own, so that a
         # handler knows which device asserted without a register read.
@@ -487,7 +487,7 @@ def cross_check(peripherals, emit):
         "BOARD_ULPI": soc_module.ULPI_BASE,
         "BOARD_I2C_MUX": soc_module.I2C_MUX_BASE,
         "BOARD_FABRIC": soc_module.FABRIC_BASE,
-        "PLIC": soc_module.PLIC_BASE,
+        "INTC": soc_module.INTC_BASE,
         "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
         "HYPERRAM": soc_module.HYPERRAM_BASE,
@@ -521,7 +521,7 @@ def cross_check(peripherals, emit):
     src = ROOT / "firmware" / "cynthion-soc" / "src"
     target = (src / "target.rs").read_text()
     firmware_ok = True
-    for name in ("CONSOLE", "APOLLO_UART", "PLIC", "BOARD_GPIO", "BOARD_I2C",
+    for name in ("CONSOLE", "APOLLO_UART", "INTC", "BOARD_GPIO", "BOARD_I2C",
                  "BOARD_SIDEBAND", "BOARD_FABRIC", "SPIFLASH", "CLINT",
                  "CONSOLE_IRQ", "APOLLO_UART_IRQ",
                  "BOARD_I2C_MUX_TARGET_IRQ", "BOARD_I2C_MUX_AUX_IRQ"):
@@ -721,7 +721,7 @@ def render_bases(peripherals):
         lines.append(f"pub const {peripheral.name}_SIZE: usize = "
                      f"0x{peripheral.size:08x};")
         for irq_name, number in peripheral.irqs:
-            lines.append(f"/// PLIC source number wired to {irq_name}.")
+            lines.append(f"/// Interrupt source number wired to {irq_name}.")
             lines.append(f"pub const {irq_name}_IRQ: u32 = {number};")
         lines.append("")
 
@@ -1051,7 +1051,7 @@ def run(args, emit):
     memory_map = soc.decoder.bus.memory_map
     peripherals = walk(memory_map)
 
-    # The PLIC source numbers, from where they are wired rather than from a
+    # The interrupt source numbers, from where they are wired rather than from a
     # second list that could disagree with the wiring.
     #
     # A window declares either one number, and the interrupt is named after the

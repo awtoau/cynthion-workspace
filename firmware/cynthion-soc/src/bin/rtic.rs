@@ -1,15 +1,15 @@
 //! An RTIC skeleton for this SoC, built only by `--features rtic`.
 //!
-//! It is a spike, not the firmware: it boots, wires the PLIC to RTIC and runs
+//! It is a spike, not the firmware: it boots, wires the controller to RTIC and runs
 //! two tasks that count. The shell is still `src/main.rs`. What this exists to
 //! do is hold the answer to the question `docs/architecture.md` decision 19 was
 //! asserting without evidence -- whether RTIC accepts this machine at all --
 //! in a form that a compiler re-checks. See `docs/rtic.md`.
 //!
-//! ## RTIC does not use the PLIC
+//! ## RTIC does not use the SoC's controller
 //!
 //! This is the finding that shapes everything below, and it is the opposite of
-//! what `src/plic.rs` and decision 7 assume. RTIC 2.3's RISC-V backends
+//! what `src/intc.rs` and decision 7 assume. RTIC 2.3's RISC-V backends
 //! (`riscv-clint-backend`, `riscv-mecall-backend`) are `riscv-slic` backends: a
 //! SOFTWARE interrupt controller. Every RTIC task, including the ones spelled
 //! `#[task(binds = ...)]`, is a SLIC source dispatched in software priority
@@ -18,14 +18,14 @@
 //!
 //! So a real hardware source needs a front end, and [`machine_external`] below
 //! is it: the same claim loop `src/irq.rs` has, ending in `pend` instead of in
-//! the work. The PLIC decides WHICH source; the SLIC decides WHEN the handler
-//! for it runs relative to everything else. `Plic::set_threshold` is not what
+//! the work. The controller says WHICH source; the SLIC decides WHEN the handler
+//! for it runs relative to everything else. A hardware threshold is not what
 //! RTIC locks with -- the SLIC has its own threshold, in a `static`.
 //!
 //! ## Why the modules are included by path
 //!
 //! This crate has no `[lib]`, so a `src/bin/` target cannot say `use crate::`.
-//! The addresses and the PLIC driver are included from the files the shell
+//! The addresses and the controller driver are included from the files the shell
 //! uses, rather than copied, so a source number that moves in the gateware
 //! moves here too. Adding a `[lib]` to share them properly is migration work,
 //! not spike work.
@@ -39,8 +39,8 @@ use core::panic::PanicInfo;
 // handful of what they define. The alternative is 18 warnings on every build of
 // this target, which is how a real one gets missed.
 #[allow(dead_code)]
-#[path = "../plic.rs"]
-mod plic;
+#[path = "../intc.rs"]
+mod intc;
 #[allow(dead_code)]
 #[path = "../target.rs"]
 mod target;
@@ -110,7 +110,7 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[rtic::app(device = device, peripherals = false, backend = H0)]
 mod app {
-    use super::{device, plic, target};
+    use super::{device, intc, target};
     use riscv::interrupt::Interrupt;
 
     /// What the two tasks have in common, so that the skeleton exercises a
@@ -126,14 +126,14 @@ mod app {
 
     #[init]
     fn init(_cx: init::Context) -> (Shared, Local) {
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        plic.set_threshold(0);
+        let intc = intc::Intc::new(target::INTC_BASE);
+        intc.init();
         for &source in target::UART_IRQS.iter().chain(target::TYPE_C_IRQS) {
-            plic.set_priority(source, 1);
-            plic.enable(source);
-            // Release a claim left in flight by a `j _start` reboot, exactly as
-            // `irq::init` does and for the same reason.
-            plic.complete(source);
+            // The previous session's pending bit, which a `j _start` reboot
+            // leaves set -- only the CPU restarts. `irq::claim_type_c` does the
+            // same and for the same reason.
+            intc.clear(source);
+            intc.enable(source);
         }
 
         // SAFETY: every source is configured and the rings RTIC dispatches into
@@ -150,22 +150,22 @@ mod app {
         }
     }
 
-    /// The PLIC front end: claim, translate, pend, complete.
+    /// The front end: take a source, translate, pend, acknowledge.
     ///
     /// Not an RTIC task and cannot be one -- see the module comment. It runs at
     /// hardware priority, above every SLIC source, so it must stay this short.
     /// The work belongs in the tasks below.
     #[riscv_rt::core_interrupt(Interrupt::MachineExternal)]
     fn machine_external() {
-        let plic = plic::Plic::new(target::PLIC_BASE);
-        while let Some(source) = plic.claim() {
+        let intc = intc::Intc::new(target::INTC_BASE);
+        while let Some(source) = intc.next_ready() {
             if target::UART_IRQS.contains(&source) {
                 rtic::export::pend(slic::SoftwareInterrupt::ConsoleRx);
             } else if target::TYPE_C_IRQS.contains(&source) {
                 rtic::export::pend(slic::SoftwareInterrupt::TypeC);
             }
             // Always, including for a source with no task. See `src/irq.rs`.
-            plic.complete(source);
+            intc.clear(source);
         }
     }
 

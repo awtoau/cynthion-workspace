@@ -211,7 +211,8 @@ failure looks exactly like a dead CPU.
 the header of `scripts/riscv_firmware.py`.
 
 QEMU is used only as `-M virt`, and the pairing is deliberate: `virt` presents an
-NS16550A at `0x10000000` and a PLIC at `0x0c000000`, which is why the SoC console
+NS16550A at `0x10000000` and a PLIC at `0x0c000000` (which `src/intc.rs` drives),
+which is why the SoC console
 is a standard NS16550A (`gateware/soc/peripherals/uart16550.py`) — one driver serves both
 the board and the test gate. `scripts/soc_test.py` drives it, with
 `memory-qemu.x`; building the `qemu` feature without that linker script links

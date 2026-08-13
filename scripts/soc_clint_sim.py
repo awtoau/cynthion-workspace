@@ -79,7 +79,7 @@ class Bus:
     A read is a strobe on one cycle and data on the next -- `csr.Multiplexer`
     registers its read path -- so sampling a cycle late reads ZERO rather than
     the previous access's data, and every check then passes by comparing zero
-    with zero. The same shape as `scripts/soc_plic_sim.py`, and for the same
+    with zero. The same shape as `scripts/soc_intc_sim.py`, and for the same
     reason it is spelled out there.
     """
 

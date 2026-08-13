@@ -2,7 +2,7 @@
 """Build the RTIC skeleton and report what RTIC costs on this machine.
 
 `docs/architecture.md` decision 19 has said for months that RTIC fits this SoC
-"blocked by: nothing known", on the strength of the PLIC being a standard one.
+"blocked by: nothing known", on the strength of the interrupt path being sound.
 Nobody had compiled it. This does, for both targets, so the claim is a build
 result rather than a reading of the register map.
 
@@ -10,7 +10,7 @@ It is NOT in `./dev.py gate`. The `rtic` feature pulls sixteen packages that a
 default build never fetches, and a gate that needs the network to pass is a gate
 that fails on the first flight without wifi. Run it when the RTIC work moves.
 
-What the numbers mean: the skeleton is two tasks and a PLIC front end, so its
+What the numbers mean: the skeleton is two tasks and a front end, so its
 `.text` is the RTIC runtime plus almost nothing. Weigh it against the shell's
 own `.text` and the 4 KiB direct-mapped I-cache -- see the `opt-level` table in
 `firmware/cynthion-soc/Cargo.toml` for why code size here is a speed question

@@ -14,7 +14,7 @@ A cached RV32IMAC VexiiRiscv core presenting three Wishbone masters.
     ibus          Out  instruction fetch, through the L1 I-cache
     dbus          Out  data, through the L1 D-cache -- `main=1` PMA regions only
     iobus         Out  uncached data -- every `main=0` (I/O) PMA region
-    irq_external  In   one wire; drive it from `cpu/plic.py`
+    irq_external  In   one wire; drive it from `cpu/intc.py`
     irq_timer     In   drive it from `cpu/clint.py`
     irq_software  In   likewise
     mtime         Out  the counter behind `rdtime`, for that CLINT to compare
@@ -44,17 +44,16 @@ expects.
 
 Standard RISC-V: one machine external wire, not VexRiscv's 32-bit
 `irq_external` array with mask/pending in CPU CSRs. Concentrating sources and
-reporting which fired is therefore a peripheral's job -- `cpu/plic.py`, a
-standard PLIC.
+reporting which fired is therefore a peripheral's job -- `cpu/intc.py`.
 
 `irq_timer` and `irq_software` are the CLINT's, and `cpu/clint.py` is one.
 Tie them off explicitly in a design that has none, so "no source" and "nobody
 wired it" do not look identical.
 
-Interrupts are the PLIC (`cpu/plic.py`) and the CLINT (`cpu/clint.py`).
+Interrupts are the controller (`cpu/intc.py`) and the CLINT (`cpu/clint.py`).
 
 The choices behind all of the above -- VexRiscv vs VexiiRiscv, cached vs
-cacheless, PLIC vs a smaller concentrator -- are in `../../docs/architecture.md`.
+cacheless, and the controller -- are in `../../docs/architecture.md`.
 """
 
 import contextlib

@@ -32,18 +32,18 @@ point of a standard part. `peripherals/serial_line.py` is the PHY behind index 1
 
 ## Interrupts
 
-Both UARTs' `irq` lines go to a standard RISC-V PLIC (`cpu/plic.py`), whose
-output is the CPU's single machine external interrupt, so the consoles are
-interrupt-driven.
+Every board signal goes to `cpu/intc.py` -- pending bits and enables, per-source
+level or edge -- whose output is the CPU's single machine external interrupt.
+The design and the source table: `../../docs/soc-interrupts.md`.
 
 The machine timer and software interrupts come from a standard RISC-V CLINT
 (`cpu/clint.py`), comparing against the same counter `rdtime` reads. A 1 ms
 tick is `mtimecmp += period` in the handler; `firmware/cynthion-soc/src/timer.rs`
 is the driver.
 
-QEMU's `-M virt` has both a PLIC and a CLINT, so `src/plic.rs` and `src/timer.rs`
-compile unchanged for both and `scripts/soc_test.py` exercises the interrupt
-paths that ship.
+QEMU's `-M virt` has a CLINT, so `src/timer.rs` compiles unchanged for both. Its
+interrupt controller is a PLIC, which `src/intc.rs` drives as pending bits and
+enables and never claims -- the one `#[cfg]` in that file.
 
 ## Two ways to load firmware
 
@@ -110,7 +110,7 @@ import cpu.cpu as vexii_cpu
 from cpu.cpu import VexiiRiscv
 from bus.jtag_stage import JTAGStager, UserJTAG
 from peripherals.uart16550 import Uart16550
-from cpu.plic import Plic
+from cpu.intc import Interrupts
 from cpu.clint import Clint
 from peripherals.serial_line import SerialLine
 from peripherals.i2c_master import I2CMaster, prescale_for
@@ -425,46 +425,42 @@ HYPERRAM_CK_BASE = 0xf0000a00
 # that is working perfectly.
 BOOTRAM_BASE = 0xf0000400
 
-# The interrupt controller: a standard RISC-V PLIC, in its own 4 MiB window.
+# The interrupt controller: two registers, `cpu/intc.py`.
 #
-# 4 MiB because that is the smallest window a spec-compliant PLIC fits in -- the
-# claim register is at offset 0x200004 and the map is not negotiable, since the
-# whole point of being standard is that a driver that has never heard of this SoC
-# can find its way around. See gateware/soc/cpu/plic.py.
+# 32 bytes of Wishbone -- six CSR bytes at the bridge's stride of 4. Inside the
+# `main=0` CSR region declared in vexii_cpu.DEFAULT_REGIONS, because a cached
+# controller would return a stale pending word forever, and aligned to its own
+# size, which the Wishbone decoder requires of every window.
 #
-# 0xf0400000 rather than somewhere tidier: it must be 4 MiB aligned (the Wishbone
-# decoder requires a window aligned to its size), it must be inside the `main=0`
-# CSR region declared in vexii_cpu.DEFAULT_REGIONS -- a cached PLIC would return
-# a stale pending word forever -- and it must clear the peripherals above, which
-# all live below 0xf0001000.
-#
-# QEMU's `-M virt` puts its PLIC at 0x0c000000 with the 16550 on source 10. Same
-# register map, different base, and that difference is two constants in
-# firmware/cynthion-soc/src/target.rs -- which is what keeps src/plic.rs the same
-# code on both targets, exactly as src/uart.rs already is.
-PLIC_BASE = 0xf0400000
+# 0xc00: the board block ends at 0x680 and the HyperRAM CK window at 0xa10.
+INTC_BASE = 0xf0000c00
 
 # The machine timer and software interrupts: a standard RISC-V CLINT, in its own
-# 64 KiB window. Same reasoning as PLIC_BASE above -- the offsets inside are not
-# negotiable (mtime is at 0xbff8), the window must be aligned to its size and
-# inside the `main=0` CSR region, and it must clear the PLIC's 4 MiB below it.
+# 64 KiB window. The offsets inside are not negotiable (mtime is at 0xbff8), the
+# window must be aligned to its size, and it must be inside the `main=0` CSR
+# region.
 #
 # QEMU's `-M virt` puts its CLINT at 0x02000000 (`clint@2000000` in the device
 # tree), so again the difference is one constant in
 # firmware/cynthion-soc/src/target.rs and src/timer.rs is the same code on both.
 CLINT_BASE = 0xf0800000
 
-# Interrupt source numbers. 0 is reserved by the spec as "nothing pending", so
-# these start at 1 and the order matches UART_BASES in src/target.rs.
+# Interrupt source numbers, and each source's trigger.
 #
-# The console is the LOWER number deliberately. The PLIC breaks a priority tie by
-# lowest source number, and if both ports are busy at equal priority the one a
-# human is watching should be serviced first.
+# The numbering is `../../docs/soc-interrupts.md`'s, which lists seventeen
+# sources and is the authority. Numbers with no hardware yet are left as gaps:
+# `cpu/intc.py` ties them low, so wiring one up later renumbers nothing.
+#
+# Bit 0 is unused: the doc's table starts at 1, and bit position is the source
+# number.
+#
+# No order here and no tie-break. The controller has no priority: every enabled
+# pending source is serviced in the one trap, and which TASK runs first is
+# RTIC's, on `msip`.
 IRQ_CONSOLE = 1
 IRQ_APOLLO = 2
 
-# The I2C controller's completion interrupt. Third, so the two consoles keep the
-# numbers -- and the tie-break priority -- they already had.
+# The I2C controller's completion interrupt.
 #
 # The gateware raises it; the firmware does not enable it. `CTR.IEN` resets to
 # zero, so this line is held low until something asks for it, and the firmware's
@@ -477,54 +473,77 @@ IRQ_I2C = 3
 
 # The two FUSB302Bs' `int` lines, ONE SOURCE EACH.
 #
-# Fourth and fifth, so nothing above them renumbers -- TARGET keeps the number
-# the OR-ed source had. These were one source until #135; the reasoning that put
-# them there was true about the I2C mux and false about the PLIC. With one muxed
-# controller only one device can be addressed at a time, so this buys no
-# concurrency and never will. What it buys is knowing WHICH, and it deletes an
-# obligation rather than documenting one:
-#
 # A SHARED LEVEL MUST BE CLEARED ON EVERY ASSERTING DEVICE before the source is
 # re-enabled, or the line stays high and the interrupt re-fires immediately -- a
-# storm that presents as a hung CPU, which is the trap
-# `docs/chips/fusb302b-type-c.md` warns about and the symptom this project has
-# repeatedly misread. One source per device makes that unmissable by
-# construction: there is only ever one device behind the level being cleared.
+# storm that presents as a hung CPU (`docs/chips/fusb302b-type-c.md`). One
+# source per device leaves nothing to miss, and a deferred TARGET does not blind
+# AUX. These were one source until #135; `docs/architecture.md` decision 8.
 #
-# The PLIC supports 31 sources and this design now uses 5, so the OR conserved
-# nothing scarce. See `docs/architecture.md` decision 8 for the reversal.
-#
-# What does NOT change: the handler still defers. Clearing is ~1 ms of I2C on the
-# controller the foreground also uses, so `src/irq.rs` masks the asserting source
-# and records the event, and normal context clears that one device and re-enables
-# that one source. Per-device masking means a deferred TARGET does not blind
-# AUX, which a shared source cannot offer.
-#
-# `fault` gets no source at all. It means something different from `int`, and
-# nothing in the firmware can clear it -- it drops when the device's fault does.
-# An interrupt on an uncleanable level would have to stay masked until a poll saw
-# the level go away, so it would add a handler and keep the poll. It stays in
-# LINES, read every 50 ms by `src/typec.rs`.
+# The handler still defers: clearing is ~1 ms of I2C on the controller the
+# foreground also uses, so `src/irq.rs` masks and hands off to a task.
 IRQ_TYPE_C_TARGET = 4
 IRQ_TYPE_C_AUX = 5
 
 # The PAC1954's ALERT, on GPIO/ALERT2 -- ECP5 ball D6, U1 pin 15, pulled up by
 # R86 (10k). #270.
 #
-# **Active low, and LATCHED low.** DS20006539B section 5.16: "Alerts will cause
-# the ALERT pin to be asserted low and latched low." The only exception is the
-# conversion-complete alert, which is a 5 us pulse and is NOT what this source
-# carries -- that one is #278 and needs an edge latch this does not have.
+# EDGE, on the pad's falling edge. Threshold alerts latch low (DS20006539B
+# s5.16) and would survive as a level, but conversion-complete is a 5 us pulse
+# that sets no status bit (s5.16.1) -- as a level source it is silently lost.
+# #514.
 #
-# So it is a level, like the two Type-C sources above and unlike nothing else on
-# this board, and it clears the same way: a read of the device's status register
-# over I2C, in normal context, because the clear is a bus transaction and not a
-# register write. `defer_type_c` in `src/irq.rs` is the pattern.
-#
-# The pin is `dir="io"` in the platform because the part can also drive it as a
-# GPIO output. It is an input here and `oe` stays 0; R86 is what holds it high
-# when nothing is asserting, which is what an open-drain ALERT requires.
+# `gpio` is an input here and `oe` stays 0; R86 holds the line high when nothing
+# is asserting, which is what an open-drain ALERT requires.
 IRQ_POWER_ALERT = 6
+
+# The two DPO2036s' `FAULTB` pins, one source each -- TARGET U13, AUX U14, both
+# pin 6. #506.
+#
+# EDGE. The part auto-recovers: `FAULTB` is low for ~30-42 ms per event and then
+# released, so a repeating fault is a train of assertions that aliases against
+# any periodic sampler. The 50 ms poll in `src/typec.rs` can miss a whole event;
+# a latch cannot. `docs/chips/dpo2036-cc-sbu-protection.md`.
+#
+# `PinsN` in the platform, so a 1 on the port means asserted and the edge is a
+# rise. Synchronised in `peripherals/i2c_mux.py`, which owns these pins.
+IRQ_TARGET_FAULT = 8
+IRQ_AUX_FAULT = 9
+
+# The USER button, ball M14. `PinsN`, so a 1 means pressed and the edge is a
+# rise.
+#
+# NOT debounced in fabric: one press raises several interrupts and software
+# settles it. A press is a human event, so the handler has milliseconds of
+# slack; debouncing here would be a timer per source for something the CPU can
+# do in a few instructions.
+IRQ_BUTTON = 13
+
+# The PLL losing lock.
+#
+# EDGE, on the FALLING edge of `locked`, so the source is the loss and not the
+# state. `ClockMonitor` keeps the level as a CSR bit for anything that wants to
+# ask; this is what says so without being asked. `locked` is low out of reset,
+# so coming up produces a rise and no interrupt.
+IRQ_PLL_LOSS = 17
+
+# Every source's trigger, fixed at elaboration. Firmware cannot change one: an
+# edge source latches, a level source does not, and which is which is a fact
+# about the signal.
+#
+# The one table the gateware and `scripts/soc_intc_sim.py` both read, and the
+# sim checks it against the table in `../../docs/soc-interrupts.md`.
+IRQ_TRIGGERS = {
+    IRQ_CONSOLE:       "level",
+    IRQ_APOLLO:        "level",
+    IRQ_I2C:           "level",
+    IRQ_TYPE_C_TARGET: "level",
+    IRQ_TYPE_C_AUX:    "level",
+    IRQ_POWER_ALERT:   "fall",
+    IRQ_TARGET_FAULT:  "rise",
+    IRQ_AUX_FAULT:     "rise",
+    IRQ_BUTTON:        "rise",
+    IRQ_PLL_LOSS:      "fall",
+}
 
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
 # above that aliases back to offset 0, so mapping more would map the same chip
@@ -796,7 +815,7 @@ CACHE_WAYS = 2
 class AwtoSoc(Elaboratable):
     """This project's SoC. VexiiRiscv RV32IMAC, with:
 
-    - a PLIC (6 sources) and a CLINT
+    - an interrupt controller (17 numbered sources, 10 built) and a CLINT
     - 64 KiB of block RAM, HyperRAM, and memory-mapped SPI flash
     - the board: LEDs, button, VBUS control, ULPI registers, sideband
     - a PAC1954 power monitor behind an I2C mux
@@ -938,13 +957,12 @@ class AwtoSoc(Elaboratable):
         #
         # Both 16550s already have an `irq` output; before this it went nowhere
         # and both consoles were polled round-robin by the firmware. The lines
-        # are LEVELS, held for as long as the condition holds, which is what the
-        # PLIC's gateway expects -- see the docstrings in vexii_plic.py and
+        # are LEVELS, held for as long as the condition holds -- see
         # uart16550.py for why an edge here would lose everything after the
         # first burst.
         # Indexed by the IRQ_* constants rather than concatenated in order, so
-        # the source numbers the firmware writes into the PLIC's enable register
-        # and the wires they select are the same names in the same file. A Cat()
+        # the source numbers the firmware writes into the enable register and
+        # the wires they select are the same names in the same file. A Cat()
         # here would encode them positionally and silently renumber everything
         # if a third source were ever inserted in the middle.
         # The board's peripherals: LEDs and two other pins on a GPIO block, the
@@ -1009,55 +1027,55 @@ class AwtoSoc(Elaboratable):
         m.submodules.board_bridge = board_bridge
         decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
 
-        m.submodules.plic = plic = Plic(sources=6)
+        m.submodules.intc = intc = Interrupts(IRQ_TRIGGERS)
         m.d.comb += [
-            plic.sources[IRQ_CONSOLE].eq(console.irq),
-            plic.sources[IRQ_APOLLO].eq(apollo_uart.irq),
-            plic.sources[IRQ_I2C].eq(i2c.irq),
-            plic.sources[IRQ_TYPE_C_TARGET].eq(i2c_mux.target_irq),
-            plic.sources[IRQ_TYPE_C_AUX].eq(i2c_mux.aux_irq),
-            # IRQ_POWER_ALERT is wired where `power_monitor` is requested, some
-            # way below. A resource may be requested once, and this block runs
-            # before that request -- so the source is driven there rather than
-            # the resource being requested early to suit this list.
+            intc.lines[IRQ_CONSOLE].eq(console.irq),
+            intc.lines[IRQ_APOLLO].eq(apollo_uart.irq),
+            intc.lines[IRQ_I2C].eq(i2c.irq),
+            intc.lines[IRQ_TYPE_C_TARGET].eq(i2c_mux.target_irq),
+            intc.lines[IRQ_TYPE_C_AUX].eq(i2c_mux.aux_irq),
+            intc.lines[IRQ_TARGET_FAULT].eq(i2c_mux.target_fault_irq),
+            intc.lines[IRQ_AUX_FAULT].eq(i2c_mux.aux_fault_irq),
+            # IRQ_POWER_ALERT and IRQ_BUTTON are wired where their resources are
+            # requested, some way below: a resource may be requested once, and
+            # this block runs first. IRQ_PLL_LOSS is wired below too, beside the
+            # synchroniser it needs.
         ]
 
-        # The same five lines, keyed by the decoder window each peripheral lives
-        # in, so `scripts/soc_generate_pac.py` can put an <interrupt> element on
-        # the right peripheral in the SVD.
+        # The same lines, keyed by the decoder window each peripheral lives in,
+        # so `scripts/soc_generate_pac.py` can put an <interrupt> element on the
+        # right peripheral in the SVD.
         #
-        # Here rather than at the top of the file, and immediately below the
-        # wiring it describes: a source number that is written down somewhere else
-        # is a source number that can disagree with the wire, and a firmware that
-        # enables the wrong PLIC source produces a console that never interrupts
-        # with nothing to see anywhere. The names are the `name=` arguments to
-        # `decoder.add()` and `board_csr.add()`, joined -- see `walk()` in the
-        # generator for why the board's three sub-windows are named that way.
+        # Immediately below the wiring it describes: a source number written
+        # down somewhere else is a source number that can disagree with the
+        # wire, and firmware that enables the wrong one produces a console that
+        # never interrupts with nothing to see anywhere. The names are the
+        # `name=` arguments to `decoder.add()` and `board_csr.add()`, joined.
         #
-        # A dict value rather than a number where ONE window raises more than one
-        # source, which the mux does: each entry becomes its own <interrupt> and
-        # its own `<WINDOW>_<SUFFIX>_IRQ` constant. SVD allows several per
-        # peripheral and svd2rust wants their names distinct, which is also what
-        # firmware wants -- the two numbers are not interchangeable.
+        # A dict value where ONE window raises more than one source: each entry
+        # becomes its own <interrupt> and its own `<WINDOW>_<SUFFIX>_IRQ`
+        # constant, because the numbers are not interchangeable.
         self.interrupt_sources = {
             "console":       IRQ_CONSOLE,
             "apollo_uart":   IRQ_APOLLO,
             "board_i2c":     IRQ_I2C,
-            # All three muxed devices' interrupt lines, on the mux window.
-            #
-            # The PAC1954's ALERT belongs here for the same reason the two
-            # FUSB302B lines do: it is a pin on a device behind this mux, it has
-            # no CSR window of its own, and servicing it means selecting that
-            # device's segment. A source has to name a window that exists -- the
-            # generator checks -- and this is the window whose driver clears it.
-            "board_i2c_mux": {"TARGET":      IRQ_TYPE_C_TARGET,
-                              "AUX":         IRQ_TYPE_C_AUX,
-                              "POWER_ALERT": IRQ_POWER_ALERT},
+            # Every pin behind the mux, on the mux's window: none of these
+            # devices has a CSR window of its own, and servicing one means
+            # selecting its segment. A source must name a window that exists --
+            # the generator checks -- and this is the window whose driver
+            # clears it.
+            "board_i2c_mux": {"TARGET":       IRQ_TYPE_C_TARGET,
+                              "AUX":          IRQ_TYPE_C_AUX,
+                              "POWER_ALERT":  IRQ_POWER_ALERT,
+                              "TARGET_FAULT": IRQ_TARGET_FAULT,
+                              "AUX_FAULT":    IRQ_AUX_FAULT},
+            "board_gpio":    {"BUTTON":       IRQ_BUTTON},
+            "board_clocks":  {"PLL_LOSS":     IRQ_PLL_LOSS},
         }
 
-        plic_bridge = WishboneCSRBridge(plic.bus, data_width=32)
-        m.submodules.plic_bridge = plic_bridge
-        decoder.add(plic_bridge.wb_bus, addr=PLIC_BASE, name="plic")
+        intc_bridge = WishboneCSRBridge(intc.bus, data_width=32)
+        m.submodules.intc_bridge = intc_bridge
+        decoder.add(intc_bridge.wb_bus, addr=INTC_BASE, name="intc")
 
         # The CLINT, comparing against the CPU's own `rdtime` counter rather
         # than one of its own. Two counters could disagree; one cannot, and
@@ -1383,7 +1401,7 @@ class AwtoSoc(Elaboratable):
             stager.ack.eq(bootram.jtag_ack),
         ]
 
-        # The machine external interrupt, from the PLIC.
+        # The machine external interrupt, from the interrupt controller.
         #
         # This input existed and was connected to nothing -- an undriven `In`
         # port of a Component reads as zero, so the SoC had an interrupt path
@@ -1395,7 +1413,7 @@ class AwtoSoc(Elaboratable):
         # 1 ms tick rides on; `irq_software` is msip, which nothing raises yet
         # but which a driver can now reach rather than write into a hole.
         m.d.comb += [
-            cpu.irq_external.eq(plic.irq_out),
+            cpu.irq_external.eq(intc.irq_out),
             cpu.irq_timer.eq(clint.irq_timer),
             cpu.irq_software.eq(clint.irq_software),
         ]
@@ -1901,24 +1919,41 @@ class AwtoSoc(Elaboratable):
             power_monitor.slow.oe.eq(1),
         ]
 
-        # The ALERT, into the PLIC (#270). Wired here rather than with the other
-        # five sources because a resource may be requested once and that block
-        # runs before this line.
+        # The ALERT (#270). Wired here rather than with the other sources
+        # because a resource may be requested once and that block runs first.
         #
-        # INVERTED: the pad is active low -- "asserted low and latched low",
-        # DS20006539B section 5.16 -- and the PLIC wants a high level.
+        # The raw pad, not inverted: the source's trigger is `fall`, which is
+        # the assertion of an active-low pin. Synchronised because it is an
+        # asynchronous input and the edge detector is one flop.
         #
         # `gpio` stays an input: `oe` is left at its default 0, and R86 (10k to
         # +3V3) holds the line high when nothing is asserting, which is what an
-        # open-drain ALERT needs. The part drives it low and nothing here ever
-        # drives it at all.
-        m.d.comb += plic.sources[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)
+        # open-drain ALERT needs.
+        power_alert = Signal(init=1)
+        m.submodules.power_alert_cdc = FFSynchronizer(power_monitor.gpio.i,
+                                                      power_alert, init=1)
+        m.d.comb += intc.lines[IRQ_POWER_ALERT].eq(power_alert)
         m.d.comb += power_monitor.pwrdn.o.eq(
             board_gpio.pins[GPIO_PWRDN].o & board_gpio.pins[GPIO_PWRDN].oe)
         m.d.comb += board_gpio.pins[GPIO_PWRDN].i.eq(power_monitor.pwrdn.o)
 
+        # The USER button, to the GPIO peripheral's input bit and to its own
+        # source. Synchronised once, here, so the CSR bit and the interrupt
+        # cannot disagree about which cycle the press landed on.
         button = platform.request("button_user", 0)
-        m.d.comb += board_gpio.pins[GPIO_BUTTON].i.eq(button.i)
+        button_pressed = Signal()
+        m.submodules.button_cdc = FFSynchronizer(button.i, button_pressed)
+        m.d.comb += [
+            board_gpio.pins[GPIO_BUTTON].i.eq(button_pressed),
+            intc.lines[IRQ_BUTTON].eq(button_pressed),
+        ]
+
+        # PLL lock, into the source that reports its LOSS -- trigger `fall`.
+        # `car.locked` is in no clock domain of ours, so it is synchronised
+        # before an edge detector looks at it.
+        pll_locked = Signal()
+        m.submodules.pll_locked_cdc = FFSynchronizer(car.locked, pll_locked)
+        m.d.comb += intc.lines[IRQ_PLL_LOSS].eq(pll_locked)
 
         # ---- the TARGET PHY's ULPI bus --------------------------------------
         #
