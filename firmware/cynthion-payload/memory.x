@@ -15,7 +15,7 @@ ENTRY(_payload_entry)
 
 MEMORY
 {
-    PAYLOAD : ORIGIN = 0x00000400, LENGTH = 63K
+    PAYLOAD : ORIGIN = 0x00000400, LENGTH = 47K
 }
 
 /* The stack, at the top of block RAM, set by the entry stub.

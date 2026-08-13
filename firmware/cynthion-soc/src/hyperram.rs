@@ -55,7 +55,7 @@ pub const IMAGE_WORD: u32 = 16;
 /// because `staged()` bounds against it in a crate whose linker script does not name
 /// the region. `scripts/soc_generate_pac.py --check` is what holds it to the five other
 /// places that state the same split.
-pub const MAX_IMAGE: u32 = 63 * 1024;
+pub const MAX_IMAGE: u32 = 47 * 1024;
 
 /// Point the address register at the first word of the image area.
 pub fn seek_image() {

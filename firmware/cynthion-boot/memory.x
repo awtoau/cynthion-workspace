@@ -25,7 +25,7 @@
 MEMORY
 {
     BOOT  : ORIGIN = 0x00000000, LENGTH = 1K
-    IMAGE : ORIGIN = 0x00000400, LENGTH = 63K
+    IMAGE : ORIGIN = 0x00000400, LENGTH = 47K
 }
 
 /* The CPU's reset vector, `reset_addr=RAM_BASE` in ecp5-test/riscv/vexii_cpu.py. */

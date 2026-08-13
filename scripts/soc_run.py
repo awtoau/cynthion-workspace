@@ -942,7 +942,12 @@ def main():
                  # toolchain contract. It is correctness, not speed -- see #306.
                  f'YOSYS_MAX_THREADS="{YOSYS_MAX_THREADS}" '
                  f'python3.15t {GATEWARE} --build --firmware {firmware} '
-                 f'--bootloader {BOOT_BIN}')
+                 f'--bootloader {BOOT_BIN} '
+                 # REDIRECTED BY THE SHELL, so the log lands on disk as the
+                 # tools produce it. Captured through a pipe instead, a timeout
+                 # discards the buffer and the file that promised thousands of
+                 # lines gets one: the message saying it took too long (#527).
+                 f'> "{SYNTH_LOG}" 2>&1')
         # SKIP IT ENTIRELY when the sources have not changed.
         #
         # This is the same argument as the flash write's skip, and a bigger
@@ -979,17 +984,21 @@ def main():
              f"typically 60-120 s")
         emit(f"  full tool output -> {SYNTH_LOG.relative_to(ROOT)} "
              f"(thousands of lines; only the summary comes back here)")
-        build_started = time.perf_counter()
-        result = run(["bash", "-c", build], floor=synthesis_floor())
-        build_seconds = time.perf_counter() - build_started
-        output = (result.stdout or "") + (result.stderr or "")
-
         # DIVERTED, not discarded. Every line yosys and nextpnr produced goes to
         # its own file: it is the record when a build misbehaves, and it is far
         # too much to interleave into `dev.log`, where it buries the handful of
-        # lines that are about the board.
+        # lines that are about the board. The shell writes it, so a kill leaves
+        # everything up to the kill rather than nothing.
         SYNTH_LOG.parent.mkdir(parents=True, exist_ok=True)
-        SYNTH_LOG.write_text(output)
+        build_started = time.perf_counter()
+        result = run(["bash", "-c", build], floor=synthesis_floor())
+        build_seconds = time.perf_counter() - build_started
+        output = SYNTH_LOG.read_text(errors="replace") if SYNTH_LOG.exists() else ""
+        # `run` reports the expiry on its own stderr, which the redirect above
+        # cannot reach, so it is appended rather than lost.
+        if result.returncode != 0 and result.stderr:
+            output += result.stderr
+            SYNTH_LOG.write_text(output)
         emit(f"synthesis finished in {build_seconds:.1f} s "
              f"({len(output.splitlines())} lines -> "
              f"{SYNTH_LOG.relative_to(ROOT)})")

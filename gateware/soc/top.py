@@ -100,7 +100,7 @@ import usb_ids
 # instead yields a *different* class object for wishbone.Interface, so
 # Decoder.add() rejects a bus that is structurally identical -- these must come
 # first, and the bare name must be used afterwards.
-from luna_soc.gateware.core         import blockram
+from soc.peripherals.block_ram      import BlockRAM
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -141,10 +141,16 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 # `AwtoSoc.elaborate` and #306.
 BUILD_DIR = variant.build_dir(ROOT)
 
-# 64 KiB at address zero, matching what moondancer allocates. The reset vector
-# is 0x00000000, so the bootloader's entry point must be the first instruction.
+# 48 KiB at address zero. The reset vector is 0x00000000, so the bootloader's
+# entry point must be the first instruction.
+#
+# Was 64 KiB to match moondancer's allocation. Block RAM is the binding resource
+# -- 50 of 56 EBRs, this region about 32 of them -- and the firmware puts only
+# 12,824 B here (.data 292 + .bss 12,532); the rest is stack. Must be a power of
+# two -- `luna_soc`'s blockram refused anything else, which is why
+# `peripherals/block_ram.py` exists.
 RAM_BASE = 0x00000000
-RAM_SIZE = 64 * 1024
+RAM_SIZE = 48 * 1024
 
 # Where the bootloader stops and the image begins.
 #
@@ -914,7 +920,7 @@ class AwtoSoc(Elaboratable):
             user_jtag.tdo2.eq(cpu.jtag_tdo),
         ]
 
-        ram = blockram.Peripheral(size=RAM_SIZE, init=self.firmware)
+        ram = BlockRAM(size=RAM_SIZE, init=self.firmware)
         m.submodules.ram = ram
 
         # Two 16550s, identical apart from where the decoder puts them and what
