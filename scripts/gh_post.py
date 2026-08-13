@@ -204,9 +204,24 @@ def cmd_close(args) -> int:
                            str(args.body_file)], dry_run=args.dry_run)
     rc = rc or run_gh(["issue", "close", str(args.number), "--repo", args.repo,
                        "--reason", args.reason], dry_run=args.dry_run)
-    if not rc:
-        emit(f"https://github.com/{args.repo}/issues/{args.number}")
+    if rc or args.dry_run:
+        return rc
+    # `gh` exits 0 on a close that GitHub's secondary rate limit silently
+    # dropped, so the exit code is not evidence. Ask for the state back.
+    if not closed(args.number, args.repo):
+        emit(f"REFUSED: #{args.number} is still OPEN after `gh issue close` "
+             f"exited 0 -- most likely GitHub's secondary rate limit. Re-run.")
+        return 1
+    emit(f"https://github.com/{args.repo}/issues/{args.number}")
     return rc
+
+
+def closed(number: int, repo: str) -> bool:
+    """The issue's state, read back rather than inferred from an exit code."""
+    out = subprocess.run(["gh", "issue", "view", str(number), "--repo", repo,
+                          "--json", "state", "--jq", ".state"],
+                         capture_output=True, text=True)
+    return out.stdout.strip().upper() == "CLOSED"
 
 
 def add_labels(args) -> int:

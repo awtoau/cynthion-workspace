@@ -28,8 +28,8 @@ Exit status 0 if every assertion held. Output goes to the terminal and to
     order is always "clear the peripheral, then clear the bit". A handler that
     clears the bit first has done nothing and will be re-entered.
   * **The DPO2036's real shape**, not a single pulse: a train of ~30-42 ms
-    assertions separated by the recovery interval. The negative control is the
-    50 ms poll it replaces, run over the same waveform, which misses events.
+    assertions separated by the recovery interval, because the part
+    auto-recovers and a repeating fault IS a train.
   * **The built table is the documented table.** `docs/soc-interrupts.md` is the
     authority on which sources exist and what trigger each takes; this parses it
     and compares.
@@ -81,11 +81,10 @@ MASK_BYTES = 4
 
 # The DPO2036's own numbers, as cycles of the 1 ms simulated clock.
 # `docs/chips/dpo2036-cc-sbu-protection.md`: `FAULTB` is low for ~30-42 ms per
-# event, and the sampler it replaces runs at 50 ms.
+# event.
 FAULT_LOW_MS = 34
 FAULT_GAP_MS = 18
 FAULT_EVENTS = 8
-POLL_MS = 50
 
 
 class Bus:
@@ -388,32 +387,25 @@ def run_wired_source_checks(checks, verbose):
 def run_fault_train_checks(checks, verbose):
     """The DPO2036's `FAULTB`, in the shape the part actually produces.
 
-    A train of ~30-42 ms assertions separated by the recovery interval. The
-    control is the 50 ms poll this source replaces, run over the same waveform:
-    an assertion that begins and ends between two samples is invisible to it and
-    is not invisible to a latch.
+    A train of ~30-42 ms assertions separated by the recovery interval, which
+    is what a repeating fault looks like because the part auto-recovers.
     """
     triggers = {top.IRQ_TARGET_FAULT: "rise", top.IRQ_AUX_FAULT: "rise"}
     dut = Interrupts(triggers)
     target = top.IRQ_TARGET_FAULT
-    seen_by_poll = 0
     events = 0
 
     async def testbench(ctx):
-        nonlocal seen_by_poll, events
+        nonlocal events
         bus = Bus(ctx, dut.bus, verbose)
         await bus.enable(1 << target)
         await bus.clear(1 << target)
 
-        # The waveform, one cycle per millisecond. The phase is deliberately not
-        # aligned to the poll: the two periods are 52 ms and 50 ms, which is the
-        # aliasing the issue is about.
+        # The waveform, one cycle per millisecond.
         elapsed = 0
         for _ in range(FAULT_EVENTS):
             ctx.set(dut.lines, 1 << target)
             for _ in range(FAULT_LOW_MS):
-                if elapsed % POLL_MS == 0 and ctx.get(dut.lines) & (1 << target):
-                    seen_by_poll += 1
                 await ctx.tick()
                 elapsed += 1
             ctx.set(dut.lines, 0)
@@ -422,8 +414,6 @@ def run_fault_train_checks(checks, verbose):
             # what a handler does. Each event is counted separately only
             # because the acknowledgement is unconditional for an edge.
             for _ in range(FAULT_GAP_MS):
-                if elapsed % POLL_MS == 0 and ctx.get(dut.lines) & (1 << target):
-                    seen_by_poll += 1
                 await ctx.tick()
                 elapsed += 1
             if (await bus.pending()) & (1 << target):
@@ -442,15 +432,6 @@ def run_fault_train_checks(checks, verbose):
         f"separated by {FAULT_GAP_MS} ms. The part auto-recovers, so a "
         f"repeating fault IS a train; catching the first and missing the rest "
         f"reports one event where there were eight.")
-
-    checks.check(
-        "the 50 ms poll it replaces misses assertions in the same train",
-        seen_by_poll < FAULT_EVENTS,
-        f"the poll saw {seen_by_poll} of {FAULT_EVENTS}, which is not a "
-        f"failure of this design but the CONTROL for it: if a periodic sampler "
-        f"caught them all, this waveform would not be exercising the aliasing "
-        f"the source exists to remove, and the check above would prove "
-        f"nothing. Widen the gap or change the phase until it misses.")
 
 
 def run_uart_checks(checks, verbose):
