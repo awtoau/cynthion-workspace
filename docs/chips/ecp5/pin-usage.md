@@ -356,6 +356,11 @@ here.
 **State:** never requested by the SoC; only by the pin survey. The nets are
 `TARGET_FS_MONITOR_D±`, 1 kΩ in series (`R57`, `R58`) from `TARGET_A_D±`.
 
+**`repos/cynthion-hardware` is a fork with the Type-A socket removed**
+(`awtoau/awto-cynthion-hardware`, one commit above upstream `13aa71c`). In that
+tree these nets, `R57`/`R58` and `TARGET_A_D±` are all absent, so the FPGA-side
+stubs read as orphaned. Everything on this page describes **upstream r1.4**.
+
 **What it is for:** raw line-state on the TARGET port without going through the
 USB3343. That answers questions the ULPI register path cannot — is the bus idle,
 is a device asserting a pull-up, is a reset or a chirp happening — and it keeps
