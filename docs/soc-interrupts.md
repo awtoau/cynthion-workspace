@@ -49,10 +49,26 @@ an unmapped address is how the trap-heavy load exercises this handler.
 | **PAC1954** | `U1` | `PAC195X-1-VQFN`, four-channel current/voltage monitor | `GPIO/ALERT2`, pin 15 | level | source 6, **not enabled** | enable it, or record why not |
 | **PAC1954** | `U1` | as above | `SLOW/ALERT1`, pin 1 | level | **spent** — hard-driven as SLOW output | **runtime-selectable**: SLOW output or ALERT1 source |
 | — | — | sideband in fabric | FPGA_ADV byte arrived, ball **T6** → **SAMD11** `U6` pin 8 | level | CSR count only | **make it a source** (#509) |
+| **USB3343** | TARGET | *hi-speed USB ULPI transceiver* | link event — `DIR` carries an RX CMD | edge | none | **one source** |
+| **USB3343** | AUX | as above | link event | edge | none | **one source** |
+| **USB3343** | CONTROL | as above | link event | edge | none | **one source** |
 | **DPO2036** | `U13` | *4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C* | TARGET `FAULTB`, pin 6 | **edge** ([why](chips/dpo2036-cc-sbu-protection.md)) | CSR bit only | **make it a source** |
 | **DPO2036** | `U14` | as above | AUX `FAULTB`, pin 6 | **edge** | CSR bit only | **make it a source** |
 
 Balls, pull-ups and every unused pin: [`chips/ecp5/pin-usage.md`](chips/ecp5/pin-usage.md).
+
+## One source per device, never an OR
+
+Three PHYs get three sources, three FUSB302Bs get two, and nothing is merged.
+
+With one shared source the handler must interrogate every device to learn which
+fired. For a PHY that means a ULPI register read — a bus transaction with a
+timeout — three times, on every event. The saved source costs more than it saves.
+
+This board has made the mistake once: the FUSB302B `int` lines were OR-ed onto a
+single source and that was undone.
+
+A source is a pending bit and an enable. Three cost essentially nothing over one.
 
 ## Priority is software only
 
