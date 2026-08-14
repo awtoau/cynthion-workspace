@@ -70,6 +70,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 # The workspace root, not `scripts/`. One `.parent` short pointed this at
@@ -190,6 +191,33 @@ def serve(port, clients, lock, state):
                          daemon=True).start()
 
 
+def already_running():
+    """Another instance with the console, or None. Two checks, not one.
+
+    The PORT catches the ordinary case: a serving instance holds 9000. The TTY
+    catches `--no-serve`, which serves nothing but still owns the device.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.2)
+    try:
+        probe.connect(("127.0.0.1", SERVE_PORT))
+        return f"another tio_user.py is already serving on 127.0.0.1:{SERVE_PORT}"
+    except OSError:
+        pass
+    finally:
+        probe.close()
+
+    # `fuser` names the pid; without it, say only that it is held.
+    node = Path("/dev/serial/by-id")
+    for link in sorted(node.glob("*riscv_console*")) if node.is_dir() else []:
+        target = link.resolve()
+        out = subprocess.run(["fuser", str(target)], capture_output=True, text=True)
+        pids = out.stdout.split()
+        if pids:
+            return f"{target} is already held by pid {' '.join(pids)}"
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -200,6 +228,10 @@ def main():
     parser.add_argument("--no-serve", dest="serve", action="store_false",
                         help=f"do NOT fan out on TCP {SERVE_PORT} (serving is the "
                              f"default; this makes the tty exclusive to you)")
+    parser.add_argument("--verbose", action="store_true",
+                        help="timestamp each status line, and report bytes seen "
+                             "per attach -- for watching a board that keeps "
+                             "reconfiguring")
     parser.set_defaults(serve=True)
     args = parser.parse_args()
 
@@ -210,6 +242,21 @@ def main():
         return 1
 
     import usb_ids
+
+    # ONE READER, ENFORCED. Two instances on the same tty steal it from each
+    # other continuously -- each steal makes the other drop and reattach, the
+    # byte stream is split between them, and the result reads as a board that
+    # keeps disappearing. It has cost hours twice, once diagnosed as a marginal
+    # flash clock and once as a firmware fault.
+    #
+    # Same shape as the build directory's `.build.lock`: refuse, name the
+    # holder, and say what to do instead. The port is the test because serving
+    # on it is what a running instance does; the tty check catches `--no-serve`.
+    if (holder := already_running()) is not None:
+        print(f"REFUSED: {holder}\n"
+              f"  One process owns the console. Talk to the running one through "
+              f"127.0.0.1:{SERVE_PORT}, or stop it first.", file=sys.stderr)
+        return 1
 
     # The live device handle, shared with the writer threads. A dict because it is
     # rebound on every reattach and the threads must see the replacement.
