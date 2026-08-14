@@ -1304,6 +1304,7 @@ class AwtoSoc(Elaboratable):
         # the second PLL's rung and not a function of `SYNC_MHZ` at all.
         m.submodules.hyper_handover = hyper_handover = HyperRAMHandover(
             port=hyper_ram.stage, width=hyper_ram.width)
+        # Register space is the CPU's to ask for: `hyperram_ck.ctrl.regs`.
         m.submodules.bootram = bootram = BootRAM(
             dqs=HYPERRAM_DQS, ck_mhz=HYPERRAM_CK_MHZ,
             interface=hyper_handover.interface)
@@ -1385,6 +1386,7 @@ class AwtoSoc(Elaboratable):
             hyper_ck.mode.eq(hyper_ram.mode),
             hyper_ck.refused.eq(hyper_handover.refused),
             hyper_handover.refused_clear.eq(hyper_ck.refused_clear),
+            bootram.register_space.eq(hyper_ck.regs),
         ]
         hyper_ck_bridge = WishboneCSRBridge(hyper_ck.bus, data_width=32)
         m.submodules.hyper_ck_bridge = hyper_ck_bridge

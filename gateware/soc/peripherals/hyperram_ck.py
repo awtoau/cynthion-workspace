@@ -78,7 +78,10 @@ class HyperRAMClockSelect(wiring.Component):
             "sel":      csr.Field(csr.action.RW, 1),
             "bist":     csr.Field(csr.action.RW, 1),
             "refused_clear": csr.Field(csr.action.W, 1),
-            "reserved": csr.Field(csr.action.R, 29),
+            # Every access through the memory window targets the part's REGISTER
+            # space while this is set. Firmware sets it, reads CR0, clears it.
+            "regs":     csr.Field(csr.action.RW, 1),
+            "reserved": csr.Field(csr.action.R, 28),
         }, access="rw")
         self._status = csr.Register({
             "locked":   csr.Field(csr.action.R, 1),
@@ -104,6 +107,7 @@ class HyperRAMClockSelect(wiring.Component):
         super().__init__({
             "bus":    In(csr.Signature(addr_width=4, data_width=8)),
             "sel":    Out(1),
+            "regs":   Out(1),
             "locked": In(1),
             # Out to `HyperRAMShared.sel`, back from its `mode`. The mux
             # synchronises the request itself; `mode` comes back from `hr`.
@@ -138,6 +142,7 @@ class HyperRAMClockSelect(wiring.Component):
 
         m.d.comb += [
             self.sel.eq(self._ctrl.f.sel.data),
+            self.regs.eq(self._ctrl.f.regs.data),
             self.bist.eq(self._ctrl.f.bist.data),
             self.refused_clear.eq(self._ctrl.f.refused_clear.w_stb
                                   & self._ctrl.f.refused_clear.w_data),

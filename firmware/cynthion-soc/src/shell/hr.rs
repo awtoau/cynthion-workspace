@@ -24,6 +24,20 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         return crate::shell::list_family(uart, "hyperram");
     }
     match rest {
+        // The part's OWN registers, which nothing could read until #319. CR0 at
+        // 0x0800 reads 8f2f at power-on defaults; anything else means either a
+        // configuration landed or the read path is wrong -- which is what makes
+        // this the absolute reference #186 asks for.
+        b"regs" => {
+            let id0 = crate::hyperram::backend::read_register(0x0000);
+            let cr0 = crate::hyperram::backend::read_register(0x0800);
+            let cr1 = crate::hyperram::backend::read_register(0x0801);
+            let _ = writeln!(
+                uart,
+                "hyperram id0 {:04x}  cr0 {:04x} (reset 8f2f)  cr1 {:04x} (reset ffc1)",
+                id0, cr0, cr1
+            );
+        }
         b"status" => {
             let (locked, ready, seen, bursts) = bench::dqs_status();
             let _ = writeln!(

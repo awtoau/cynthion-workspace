@@ -595,6 +595,13 @@ class BootRAM(Elaboratable):
 
     def __init__(self, *, interface, dqs=False, sustained=False,
                  clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ):
+        # REGISTER SPACE, driven from a CSR rather than tied off. The controller
+        # has always had the input and nothing above it ever set it, so CR0/CR1
+        # were unreachable from firmware and the part ran at power-on defaults
+        # (#319). Reading a register still says NOTHING about the memory path --
+        # a paired fetch returns the same value in both halves -- so this is for
+        # configuring the part, not for testing it.
+        self.register_space = Signal()
         # DQS changes the data width -- 32 bits per beat against 16 -- so it is
         # recorded here and read where the word assembly is decided.
         self._dqs = dqs
@@ -927,7 +934,7 @@ class BootRAM(Elaboratable):
             # Use JTAG staging to write a known value if a verifiable read is
             # wanted. `gateware/probes/hyperram/hyperram_identify.py` is where register
             # access belongs, testing registers as registers.
-            psram.register_space.eq(0),
+            psram.register_space.eq(self.register_space),
             psram.start_transfer.eq(start),
             psram.address.eq(live_address),
 

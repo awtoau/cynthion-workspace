@@ -320,7 +320,7 @@ pub use backend::{claim, clear_refused, owner_is_bist, read_pair, refused,
 /// The HyperRAM CSR port on the FPGA, per `HyperRAMBoot` in
 /// `gateware/soc/bootram.py`.
 #[cfg(not(feature = "qemu"))]
-mod backend {
+pub mod backend {
     use core::ptr::{read_volatile, write_volatile};
     use cynthion_soc_pac::bootram::offset;
 
@@ -378,7 +378,7 @@ mod backend {
 
     /// The mode register, `hyperram_ck` (`gateware/soc/peripherals/hyperram_ck.py`).
     ///
-    ///     ctrl   +0x00  bit 0 sel, bit 1 bist, bit 2 refused_clear
+    ///     ctrl   +0x00  bit 0 sel, bit 1 bist, bit 2 refused_clear, bit 3 regs
     ///     status +0x04  bit 0 locked, bit 1 mode, bit 2 refused
     const MODE_CTRL: *mut u32 = cynthion_soc_pac::base::HYPERRAM_CK as *mut u32;
     const MODE_STATUS: *const u32 =
@@ -393,6 +393,28 @@ mod backend {
     /// CPU rung. On expiry `claim` returns false and the caller reports; the
     /// part is then still owned by the other half.
     const MODE_SPINS: u32 = 64;
+
+    /// Read one of the part's own registers -- CR0, CR1, ID0, ID1.
+    ///
+    /// **The only way firmware can see what the part is configured as.** The
+    /// controller has always had `register_space`; nothing above it set the
+    /// signal, so CR0/CR1 were unreachable and the part ran at its power-on
+    /// defaults for the life of the project (#319).
+    ///
+    /// Register space is a DIFFERENT address space from memory: CR0 is at
+    /// 0x0800, CR1 at 0x0801, ID0 at 0x0000. A paired fetch returns the same
+    /// 16-bit value in both halves, so the low half is the answer and this
+    /// says nothing about whether the MEMORY path works.
+    pub fn read_register(word_addr: u32) -> u16 {
+        // SAFETY: the mode window is a CSR, read-modify-write of one bit.
+        unsafe {
+            let ctrl = read_volatile(MODE_CTRL as *const u32);
+            write_volatile(MODE_CTRL, ctrl | 8);
+            let value = super::read_u32(word_addr);
+            write_volatile(MODE_CTRL, ctrl & !8);
+            value as u16
+        }
+    }
 
     /// Hand the part to the BIST engine, or take it back for staging.
     ///
@@ -511,7 +533,7 @@ mod backend {
 /// at 0 to fall back into. A staged image therefore never boots under QEMU; testing the
 /// round trip, the fallback and a failed CRC needs the board.
 #[cfg(feature = "qemu")]
-mod backend {
+pub mod backend {
     use core::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 
     /// Header words plus the largest image `MAX_IMAGE` allows, rounded up. Sized from the
@@ -548,6 +570,18 @@ mod backend {
     }
 
     pub fn clear_refused() {}
+
+    /// No register space on the stand-in: the array models memory, and the
+    /// part's own registers are exactly what a model cannot supply. Returns the
+    /// power-on defaults so a caller sees something legible rather than zero,
+    /// and `hr regs` says which build it is running on.
+    pub fn read_register(word_addr: u32) -> u16 {
+        match word_addr {
+            0x0800 => 0x8f2f,
+            0x0801 => 0xffc1,
+            _ => 0x0c86,
+        }
+    }
 
     /// The array stays 16-bit, because that is the part's word and the header
     /// offsets are in those units. A pair is two entries, low word first --
