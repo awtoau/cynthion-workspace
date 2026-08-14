@@ -21,14 +21,13 @@ pub fn command(uart: &mut Uart, region: Region, rest: &[u8]) {
 
     // The controller's verbs are flash-only: `bram sfdp` is not a sentence, and
     // the region check keeps them out of the other two regions' usage lines.
-    if matches!(region, Region::Flash) && matches!(verb, b"sfdp" | b"status" | b"erase" | b"program")
-    {
+    if matches!(region, Region::Flash) && matches!(verb, b"sfdp" | b"erase" | b"program") {
         return controller(uart, verb, arg);
     }
 
     match verb {
         b"read" => read(uart, region, arg),
-        b"id" => id(uart, region),
+        b"status" => info(uart, region),
         // DEVICE-MAJOR. `bench bram` was a verb-major name over a device-major
         // reality: every other thing you can do to a memory is spelled
         // `<region> <verb>`, and `hyperram bench` already existed as an alias.
@@ -74,6 +73,51 @@ fn read(uart: &mut Uart, region: Region, arg: &[u8]) {
         // the same reason and from the same probe.
         None => {
             let _ = writeln!(uart, "{} did not answer", region.name());
+        }
+    }
+}
+
+/// Everything the part will tell you about itself, in ONE command.
+///
+/// **`status` is the only verb for this.** Identity, geometry and configuration
+/// were three commands -- `info`, `id`, `regs` -- and a reader had to know all
+/// three existed to get the picture. Where it is, how big, what it says it is,
+/// how it is configured, and whether it is answering: one question.
+///
+/// Every value is READ BACK from the part or from the generated map. Nothing
+/// here restates a constant the code was written with, which is the claim this
+/// project keeps having to withdraw.
+fn info(uart: &mut Uart, region: Region) {
+    let bytes = region.size();
+    match region.base() {
+        Some(base) => {
+            let _ = write!(uart, "  {:9} @{:08x}  ", region.name(), base);
+        }
+        None => {
+            let _ = write!(uart, "  {:9} {}  ", region.name(),
+                           match region {
+                               Region::Hyperram => "via the CSR staging port",
+                               _ => "no window on this target",
+                           });
+        }
+    }
+    if bytes >= 1024 * 1024 {
+        let _ = writeln!(uart, "{} MiB ({} bytes)", bytes / (1024 * 1024), bytes);
+    } else {
+        let _ = writeln!(uart, "{} KiB ({} bytes)", bytes / 1024, bytes);
+    }
+
+    match region {
+        Region::Flash => {
+            id(uart, region);
+            if let Some(spi) = Flash::take() {
+                status(uart, &spi);
+            }
+        }
+        Region::Hyperram => crate::shell::hr::registers(uart),
+        Region::Bram => {
+            let _ = writeln!(uart, "  {:9} fabric block RAM: no identity and no \
+                                    configuration to read", "id");
         }
     }
 }
@@ -278,7 +322,7 @@ fn readback(uart: &mut Uart, spi: &Flash, offset: u32, expected: u32) {
 fn usage(uart: &mut Uart, region: Region) {
     let _ = writeln!(
         uart,
-        "usage: {} read <hex offset>{}",
+        "usage: {} info|read <hex offset>{}",
         region.name(),
         if region.no_id().is_none() {
             ", or `flash id|sfdp|status|erase|program`"

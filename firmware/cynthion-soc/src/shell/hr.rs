@@ -28,17 +28,8 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         // 0x0800 reads 8f2f at power-on defaults; anything else means either a
         // configuration landed or the read path is wrong -- which is what makes
         // this the absolute reference #186 asks for.
-        b"regs" => {
-            let id0 = crate::hyperram::backend::read_register(0x0000);
-            let cr0 = crate::hyperram::backend::read_register(0x0800);
-            let cr1 = crate::hyperram::backend::read_register(0x0801);
-            let _ = writeln!(
-                uart,
-                "hyperram id0 {:04x}  cr0 {:04x} (reset 8f2f)  cr1 {:04x} (reset ffc1)",
-                id0, cr0, cr1
-            );
-        }
         b"status" => {
+            registers(uart);
             let (locked, ready, seen, bursts) = bench::dqs_status();
             let _ = writeln!(
                 uart,
@@ -124,7 +115,6 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             );
         }
         b"bench" => bench::command(uart, b"hyperram"),
-        b"id" => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, b"id"),
         _ if rest.starts_with(b"read") => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, rest),
         _ if rest.starts_with(b"sel") => match parse_hex(trim(&rest[3..])) {
             Some(n) if n < 16 => {
@@ -213,9 +203,93 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         _ => {
             let _ = writeln!(
                 uart,
-                "usage: hr status|read <hex>|sel <n>|sweep|test|cross|bench|id"
+                "usage: hr status|read <hex>|sel <n>|sweep|test|cross|bench"
             );
         }
     }
 }
 
+
+
+/// Every register the part exposes, every field, from the datasheet.
+///
+/// **W956x8MBYA rev A01-006 tables 8, 11 and 5.2** (`sources/W956x8MBYA_A01-006.pdf`).
+/// Decoded rather than printed raw: `8f2f` and `ffc1` say nothing on their own,
+/// and the fields are where a misconfiguration shows.
+pub(crate) fn registers(uart: &mut Uart) {
+    let id0 = crate::hyperram::backend::read_register(0x0000);
+    let id1 = crate::hyperram::backend::read_register(0x0001);
+    let cr0 = crate::hyperram::backend::read_register(0x0800);
+    let cr1 = crate::hyperram::backend::read_register(0x0801);
+
+    // Table 5.2: BOTH count fields are minus-one -- 00000 is "One Row address
+    // bit" -- so capacity is 2^row * 2^col * 2 bytes. Section 8.1.1 states the
+    // answer: "9 column and 13 row address bits ... 8M bytes".
+    let rows = ((id0 >> 8) & 0x1f) + 1;
+    let cols = ((id0 >> 4) & 0xf) + 1;
+    let bytes = 1u32 << (rows as u32 + cols as u32 + 1);
+    let _ = writeln!(
+        uart,
+        "  id0  {:04x}  {}, die {}, {} row + {} column bits = {} MiB{}",
+        id0,
+        match id0 & 0xf { 6 => "winbond", _ => "unknown maker" },
+        (id0 >> 14) & 3, rows, cols, bytes / (1024 * 1024),
+        if bytes as usize == crate::target::HYPERRAM_SIZE { "" }
+        else { "  *** DISAGREES WITH THE MAPPED WINDOW ***" },
+    );
+    let _ = writeln!(uart, "  id1  {:04x}  die revision", id1);
+
+    // Table 8.
+    let _ = writeln!(uart, "  cr0  {:04x}", cr0);
+    let _ = writeln!(uart, "    [15]    {}", if cr0 & 0x8000 != 0 {
+        "normal operation (default)" } else { "DEEP POWER DOWN" });
+    let _ = writeln!(uart, "    [14:12] drive strength {} ohms{}",
+        match (cr0 >> 12) & 7 { 0 => 34, 1 => 115, 2 => 67, 3 => 46,
+                                4 => 34, 5 => 27, 6 => 22, _ => 19 },
+        if (cr0 >> 12) & 7 == 0 { " (default)" } else { "" });
+    let _ = writeln!(uart, "    [11:8]  reserved {:04b}{}", (cr0 >> 8) & 0xf,
+        if (cr0 >> 8) & 0xf == 0xf { " (default, must be 1s)" }
+        else { "  *** should be 1111 ***" });
+    let code = (cr0 >> 4) & 0xf;
+    let _ = writeln!(uart, "    [7:4]   initial latency {}", latency(code));
+    let _ = writeln!(uart, "    [3]     {}", if cr0 & 8 != 0 {
+        "fixed: always 2x initial latency (default)" }
+        else { "variable: 1x or 2x, by RWDS during CA" });
+    // NOTE THE POLARITY -- 1 is LEGACY, not hybrid.
+    let _ = writeln!(uart, "    [2]     {}", if cr0 & 4 != 0 {
+        "legacy wrapped burst (default)" } else { "hybrid burst" });
+    let _ = writeln!(uart, "    [1:0]   burst length {} bytes{}",
+        match cr0 & 3 { 0 => 128, 1 => 64, 2 => 16, _ => 32 },
+        if cr0 & 3 == 3 { " (default)" } else { "" });
+
+    // Table 11.
+    let _ = writeln!(uart, "  cr1  {:04x}", cr1);
+    let _ = writeln!(uart, "    [15:8]  reserved {:02x}{}", (cr1 >> 8) & 0xff,
+        if (cr1 >> 8) & 0xff == 0xff { " (default, must be ff)" }
+        else { "  *** should be ff ***" });
+    let _ = writeln!(uart, "    [6]     master clock {}", if cr1 & 0x40 != 0 {
+        "single ended CK (default)" } else { "differential CK/CK#" });
+    let _ = writeln!(uart, "    [5]     {}", if cr1 & 0x20 != 0 {
+        "HYBRID SLEEP" } else { "normal operation (default)" });
+    let _ = writeln!(uart, "    [4:2]   refresh {}",
+        match (cr1 >> 2) & 7 { 0 => "full array (default)", 1 => "bottom 1/2",
+                               2 => "bottom 1/4", 3 => "bottom 1/8", 4 => "NONE",
+                               5 => "top 1/2", 6 => "top 1/4", _ => "top 1/8" });
+    let _ = writeln!(uart, "    [1:0]   distributed refresh {} (read only)",
+        match cr1 & 3 { 1 => "4 us tCSM", _ => "RESERVED" });
+}
+
+/// `CR0[7:4]`, table 8. Sparse and sign-extended: `5 + sext4(code)`, so 0..2
+/// give 5..7 and 14..15 give 3..4. **3..13 are RESERVED** and the part holds
+/// its last legal latency instead (#401). The frequency is the datasheet's own
+/// maximum for that count.
+fn latency(code: u16) -> &'static str {
+    match code {
+        0 => "5 CK @ 133 MHz max",
+        1 => "6 CK @ 166 MHz max",
+        2 => "7 CK @ 200 MHz max (default)",
+        14 => "3 CK @ 83 MHz max",
+        15 => "4 CK @ 100 MHz max",
+        _ => "RESERVED -- the part holds its last legal latency",
+    }
+}
