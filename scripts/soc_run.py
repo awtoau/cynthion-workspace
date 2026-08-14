@@ -988,8 +988,19 @@ def main():
 
         # The OSS CAD Suite environment has to be sourced, so this one step is a
         # shell command rather than a bare exec.
+        # A nextpnr other than the toolchain's, when one is being TESTED.
+        #
+        # Prepended AFTER the environment script, which puts oss-cad-suite's own
+        # bin first. Set to a directory containing `nextpnr-ecp5`. An argument
+        # visible in the command rather than an edit to the install, and the
+        # build log records which binary ran -- a bitstream from a patched
+        # router that nothing said was patched is the worst of both. #540.
+        override = os.environ.get("CYNTHION_NEXTPNR_BIN") or ""
+        if override:
+            emit(f"nextpnr OVERRIDDEN: {override} (not the toolchain's)")
         build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
-                 f'AMARANTH_nextpnr_opts="{PNR_OPTS}" '
+                 + (f'PATH="{override}:$PATH" ' if override else "")
+                 + f'AMARANTH_nextpnr_opts="{PNR_OPTS}" '
                  # Inherited too, but stated here so the log line carries the whole
                  # toolchain contract. It is correctness, not speed -- see #306.
                  f'YOSYS_MAX_THREADS="{YOSYS_MAX_THREADS}" '

@@ -308,22 +308,27 @@ class HyperRAMDQSPHY(Elaboratable):
         rwds_oe_n = Signal()
         rwds_in = Signal()
 
-        # THE CA-PHASE LEVEL CANNOT BE READ ON THIS PATH. Not an oversight:
-        # the silicon forbids it.
+        # THE CA-PHASE LEVEL, sampled in fabric.
         #
-        # `rwds_in` is the pad, and it is `DQSBUFM`'s `DQSI`. Sampling it in
-        # fabric as well gives that net a second sink, and nextpnr refuses to
-        # pack the design:
+        # `rwds_in` is the pad and it is also `DQSBUFM`'s `DQSI`. Stock nextpnr
+        # refuses a DQSI net with a second sink -- but the silicon does not:
+        # prjtrellis `PICL0_DQS2/bits.db` has the pad wire hardwired into the
+        # DQS block AND into IOLOGIC AND onto the `JDIA` mux to fabric, the
+        # last costing zero configuration bits. Diamond's mapper accepts the
+        # same structure. See `scripts/diamond/designs/dqsi_fanout/`.
         #
-        #     ERROR: DQSBUFM 'hyper_ram.phy.U$5' DQSI input must be connected
-        #     only to a top level input
+        # So this needs a nextpnr with the sole-consumer half of `pack_dqsbuf`
+        # dropped: `CYNTHION_NEXTPNR_BIN`. Without it the build fails at
+        # packing, loudly, which is the right failure. #540.
         #
-        # So `phy.rwds.i` stays 0 here and the DQS controller's `rwds_asks` can
-        # never assert -- variable latency is not available on the DQS path
-        # without a second route to the RWDS pad. Tied explicitly rather than
-        # left unassigned, because silence is what made this look like a wiring
-        # omission in the first place (#540).
-        m.d.comb += self.phy.rwds.i.eq(0)
+        # During CA there is no read strobe to clock this with, because RWDS
+        # *is* the strobe -- hence a fabric sample rather than the DQS path.
+        # All four bits take the same level: the port has a bit per phase at
+        # 4:1, a fabric sample resolves one level per `sync` cycle, and the
+        # controller asks only `.any()`.
+        rwds_level = Signal()
+        m.d.sync += rwds_level.eq(rwds_in)
+        m.d.comb += self.phy.rwds.i.eq(rwds_level.replicate(4))
 
         dqsr90 = Signal()
         dqsw = Signal()
