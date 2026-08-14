@@ -314,8 +314,8 @@ pub fn init(stamp: u32) -> Init {
 }
 
 use backend::seek;
-pub use backend::{claim, clear_refused, owner_is_bist, read_pair, refused,
-                  write_pair};
+pub use backend::{claim, clear_refused, follow_cr0, owner_is_bist, read_pair,
+                  refused, write_pair, CR0};
 
 /// The HyperRAM CSR port on the FPGA, per `HyperRAMBoot` in
 /// `gateware/soc/bootram.py`.
@@ -378,7 +378,8 @@ pub mod backend {
 
     /// The mode register, `hyperram_ck` (`gateware/soc/peripherals/hyperram_ck.py`).
     ///
-    ///     ctrl   +0x00  bit 0 sel, bit 1 bist, bit 2 refused_clear, bit 3 regs
+    ///     ctrl   +0x00  bit 0 sel, bit 1 bist, bit 2 refused_clear, bit 3 regs,
+    ///                   bit 4 fixed, bits 10:5 latency, bits 16:11 low_latency
     ///     status +0x04  bit 0 locked, bit 1 mode, bit 2 refused
     const MODE_CTRL: *mut u32 = cynthion_soc_pac::base::HYPERRAM_CK as *mut u32;
     const MODE_STATUS: *const u32 =
@@ -393,6 +394,45 @@ pub mod backend {
     /// CPU rung. On expiry `claim` returns false and the caller reports; the
     /// part is then still owned by the other half.
     const MODE_SPINS: u32 = 64;
+
+    /// CR0's word address in the part's register space.
+    pub const CR0: u32 = 0x0800;
+
+    /// Tell the CONTROLLER what the part is set to, from a CR0 value.
+    ///
+    /// **The part and the controller are two configurations, not one.** They
+    /// were reconfigured independently -- only the part was reachable -- so
+    /// `hr cr0 8f27` put the part into variable latency while the controller
+    /// went on counting the fixed number, and every read came back wrong with
+    /// nothing saying why (#540). Anything that writes CR0 must call this.
+    ///
+    /// `latency_clocks` is `L - 1`: `HANDLE_LATENCY` runs the count plus a zero
+    /// cycle, and one of its cycles is 2 CK at 4:1 gearing.
+    pub fn follow_cr0(cr0: u16) {
+        let fixed = u32::from(cr0 >> 3 & 1);
+        let clocks = u32::from(latency_ck(cr0 >> 4 & 0xf).saturating_sub(1)) & 0x3f;
+        // SAFETY: the mode register, and this is the only writer of these bits.
+        unsafe {
+            let ctrl = read_volatile(MODE_CTRL as *const u32);
+            let kept = ctrl & !(0x1_ffe0 | 0x10);
+            write_volatile(MODE_CTRL, kept | fixed << 4 | clocks << 5);
+        }
+    }
+
+    /// Initial latency in CK for a CR0[7:4] code. The encoding is sparse.
+    ///
+    /// The same table `shell/hr.rs` prints; a RESERVED code holds the part's
+    /// last legal latency, and 7 CK is the power-on one.
+    fn latency_ck(code: u16) -> u16 {
+        match code {
+            0 => 5,
+            1 => 6,
+            2 => 7,
+            14 => 3,
+            15 => 4,
+            _ => 7,
+        }
+    }
 
     /// Read one of the part's own registers -- CR0, CR1, ID0, ID1.
     ///
@@ -436,6 +476,13 @@ pub mod backend {
             // bits in each, and the controller takes the low one.
             let _ = write_pair((value as u32) << 16 | value as u32);
             write_volatile(MODE_CTRL, ctrl & !8);
+        }
+        // THE CONTROLLER, in the same breath as the part. Enforced here rather
+        // than asked of every caller: the two configurations going out of step
+        // is #540, and a rule that has to be remembered at each call site is
+        // the shape of defect this already was.
+        if word_addr == CR0 {
+            follow_cr0(value);
         }
         match read_register(word_addr) {
             seen if seen == value => Ok(()),
@@ -616,6 +663,11 @@ pub mod backend {
     pub fn write_register(_word_addr: u32, _value: u16) -> Result<(), u16> {
         Err(0)
     }
+
+    pub const CR0: u32 = 0x0800;
+
+    /// No controller here to keep in step with. Refused, not silently accepted.
+    pub fn follow_cr0(_cr0: u16) {}
 
     /// The array stays 16-bit, because that is the part's word and the header
     /// offsets are in those units. A pair is two entries, low word first --

@@ -31,7 +31,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         // this the absolute reference #186 asks for.
         // `hr cr0 <hex>` / `hr cr1 <hex>` -- configure the part, and prove it.
         _ if rest.starts_with(b"cr0 ") || rest.starts_with(b"cr1 ") => {
-            let addr = if rest[2] == b'0' { 0x0800 } else { 0x0801 };
+            let addr = if rest[2] == b'0' { crate::hyperram::CR0 } else { 0x0801 };
             match parse_hex(trim(&rest[4..])) {
                 None => {
                     let _ = writeln!(uart, "usage: hr cr0|cr1 <hex>");
@@ -40,13 +40,13 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
                     match crate::hyperram::backend::write_register(addr, value as u16) {
                         Ok(()) => {
                             let _ = writeln!(uart, "cr{} = {:04x}, read back and matching",
-                                             if addr == 0x0800 { 0 } else { 1 }, value);
+                                             if addr == crate::hyperram::CR0 { 0 } else { 1 }, value);
                         }
                         Err(seen) => {
                             let _ = writeln!(
                                 uart,
                                 "cr{} WRITE DID NOT LAND: wrote {:04x}, read {:04x}",
-                                if addr == 0x0800 { 0 } else { 1 }, value, seen);
+                                if addr == crate::hyperram::CR0 { 0 } else { 1 }, value, seen);
                         }
                     }
                 }

@@ -266,6 +266,13 @@ class HyperRAMController(Elaboratable):
         # R = 4 the window starts at 6, so both landed on pin cycles 2 and 3 against
         # a CS# that falls at 4 -- a deselected, undriven bus. (#338)
         self._rwds_sample_cycle = phy_round_trip_cycles + 2
+        # WHICH cycle takes the sample, at run time, and whether it ever found
+        # RWDS asserted. The DQS twin grew both for #540; this one needs them
+        # for the same reason and on the same board -- the shipping variant is
+        # `dqs0`, so a bit that only exists on the DQS path reports nothing
+        # where it is actually being read.
+        self.rwds_sample_at = Signal(4, init=self._rwds_sample_cycle)
+        self.rwds_asked     = Signal()
         # Floor on the LONG count, for READS only -- see `min_read_latency_clocks`.
         # Writes keep the count they were given: their data phase has to land where
         # the device expects it, and WRITE_DATA never looks at RWDS. (#353)
@@ -463,18 +470,23 @@ class HyperRAMController(Elaboratable):
         # Sync cycles since `start_transfer`, stopped one past the sample so the
         # counter cannot wrap and the sample is a single cycle. Which cycle that is,
         # and why it is not a state, is `_rwds_sample_cycle`.
-        xact_age = Signal(range(0, self._rwds_sample_cycle + 2))
+        xact_age = Signal(4)
         sample_now = Signal()
         rwds_asks  = Signal()
+        # Registered where it arrives, as the DQS twin: it comes from a CSR in
+        # another domain and is a configuration, never moved inside a pass.
+        sample_at  = Signal(4)
+        m.d.sync += sample_at.eq(self.rwds_sample_at)
         m.d.comb += [
-            sample_now.eq(xact_age == self._rwds_sample_cycle),
+            sample_now.eq(xact_age == sample_at),
             # `rwds.i[0]` is `IDDRX1F`'s NEGATIVE-edge capture, the later of the
             # pair, so where tDSV crosses a cycle boundary it is still the driven
             # half. The request is a level held for the whole CA, so one half-beat is
             # the whole answer -- `.any()` ORs the other half's float back in.
             rwds_asks.eq(sample_now & ~self.fixed_latency & self.phy.rwds.i[0]),
+            self.rwds_asked.eq(rwds_asks),
         ]
-        with m.If(xact_age <= self._rwds_sample_cycle):
+        with m.If(xact_age <= sample_at):
             m.d.sync += xact_age.eq(xact_age + 1)
         with m.If(rwds_asks):
             m.d.sync += extra_latency.eq(1)

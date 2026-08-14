@@ -202,15 +202,12 @@ class HyperRAMShared(Elaboratable):
             read_phase.eq(Mux(self.mode, bist.read_phase, stage.read_phase)),
         ]
 
-        # Only the DQS controller has the extra-latency lever; the non-DQS twin
-        # samples RWDS from its own PHY and is not what #540 is about. A 0 from
-        # the CSR means "keep the build-time cycle", so a firmware that never
-        # writes it leaves the default arithmetic in place.
-        if self.dqs:
-            rwds_at = Signal(4)
-            m.d.comb += rwds_at.eq(Mux(self.mode, bist.rwds_at, stage.rwds_at))
-            with m.If(rwds_at != 0):
-                m.d.comb += psram.rwds_sample_at.eq(rwds_at)
+        # A 0 from the CSR means "keep the build-time cycle", so a firmware that
+        # never writes it leaves the default arithmetic in place.
+        rwds_at = Signal(4)
+        m.d.comb += rwds_at.eq(Mux(self.mode, bist.rwds_at, stage.rwds_at))
+        with m.If(rwds_at != 0):
+            m.d.comb += psram.rwds_sample_at.eq(rwds_at)
 
         for index, port in enumerate(self.ports):
             m.d.comb += [
@@ -222,7 +219,11 @@ class HyperRAMShared(Elaboratable):
                 port.dll_locked.eq(dll_locked),
                 port.dll_ready.eq(dll_ready),
                 port.burstdet.eq(burstdet),
-                port.rwds_ask.eq(psram.rwds_asked if self.dqs else 0),
+                # BOTH controllers, never a constant. Tying this to 0 on the
+                # non-DQS build made it unable to report on the variant that
+                # actually ships (`dqs0`) -- an instrument that cannot go red,
+                # read as evidence that the sample never fired (#540).
+                port.rwds_ask.eq(psram.rwds_asked),
             ]
 
         return m
