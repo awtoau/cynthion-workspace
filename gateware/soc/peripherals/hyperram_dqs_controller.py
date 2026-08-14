@@ -370,13 +370,22 @@ class HyperRAMDQSController(Elaboratable):
         xact_age   = Signal(4)
         sample_now = Signal()
         rwds_asks  = Signal()
+        # REGISTERED, not used where it arrives. The value comes from a CSR in
+        # `sync`, through a synchroniser and the share mux, and using it raw put
+        # a combinational path from there into this FSM's latency decision --
+        # across three modules, which the placer answers by gathering them, and
+        # `router2` then failed to converge twice (overuse rising from iter 20).
+        # It is a configuration that moves between passes, never inside one, so
+        # a cycle of delay costs nothing.
+        sample_at  = Signal(4)
+        m.d.sync += sample_at.eq(self.rwds_sample_at)
         m.d.comb += [
-            sample_now.eq(xact_age == self.rwds_sample_at),
+            sample_now.eq(xact_age == sample_at),
             rwds_asks.eq(sample_now & ~self.fixed_latency
                          & self.phy.rwds.i.any()),
             self.rwds_asked.eq(rwds_asks),
         ]
-        with m.If(xact_age <= self.rwds_sample_at):
+        with m.If(xact_age <= sample_at):
             m.d.sync += xact_age.eq(xact_age + 1)
         with m.If(rwds_asks):
             m.d.sync += extra_latency.eq(1)

@@ -1007,6 +1007,24 @@ def main():
              f"({len(output.splitlines())} lines -> "
              f"{SYNTH_LOG.relative_to(ROOT)})")
 
+        # WHY it failed, from the router's own log. A timeout otherwise reports
+        # only that it ran out of time, and a build that was diverging from
+        # iteration 20 is indistinguishable from one that was nearly done --
+        # they want opposite responses. Two builds were re-rolled on that
+        # confusion before the numbers in `top.tim` were read by hand.
+        if result.returncode != 0:
+            sys.path.insert(0, str(ROOT / "scripts"))
+            from build_log_audit import router_progress
+            route = router_progress(BUILD / "top.tim")
+            if route and not route["converged"]:
+                emit(f"  router {'DIVERGING' if route['diverging'] else 'not converged'}: "
+                     f"{route['overused_now']} overused after "
+                     f"{route['iterations']} iterations, best "
+                     f"{route['overused_best']} at iteration "
+                     f"{route['best_at_iteration']}"
+                     + (" -- re-rolling will not help; the netlist or the "
+                        "placement has to change" if route["diverging"] else ""))
+
         # THE FREQUENCIES, on success as well as on failure.
         #
         # These are the numbers every clock decision here turns on, and until

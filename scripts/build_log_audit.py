@@ -64,6 +64,47 @@ BENIGN = (
 )
 WARNING = re.compile(r"\b(Warning|WARNING|ERROR|Error):")
 
+# nextpnr's router progress, one line per iteration in `top.tim`.
+ROUTE_ITER = re.compile(r"iter=(\d+)\s+wires=(\d+)\s+overused=(\d+)")
+
+# How many of the last iterations must be rising for the router to be called
+# diverging. `router2` normally falls monotonically to zero; a few upward steps
+# happen while it rips up and retries, and three in a row is past that.
+DIVERGING_RUN = 3
+
+
+def router_progress(path):
+    """What the router did, from nextpnr's own log. `None` if it never ran.
+
+    A build that is killed on its timeout reports only the timeout, so two runs
+    said "TIMED OUT" and neither said the router had turned round at iteration
+    20 and climbed for sixty more. The numbers were in `top.tim` the whole time
+    (#527's rule, applied to the other tool).
+    """
+    if not path.exists():
+        return None
+    iters = [(int(n), int(w), int(o))
+             for n, w, o in ROUTE_ITER.findall(path.read_text(errors="replace"))]
+    if not iters:
+        return None
+
+    best = min(iters, key=lambda row: row[2])
+    last = iters[-1]
+    tail = [row[2] for row in iters[-(DIVERGING_RUN + 1):]]
+    rising = len(tail) > DIVERGING_RUN and all(
+        b > a for a, b in zip(tail, tail[1:]))
+    return {
+        "iterations": last[0],
+        "overused_now": last[2],
+        "overused_best": best[2],
+        "best_at_iteration": best[0],
+        "wires": last[1],
+        # Converged is the only success: an unrouted wire is not a bitstream.
+        "converged": last[2] == 0,
+        "diverging": rising and last[2] > best[2],
+    }
+
+
 # Things that cost LUT4s or DSPs without anyone asking. A count, not a match:
 # `MULT18X18D` is legitimate for an RV32IM core and a surprise anywhere else.
 NOTABLE = ("TRELLIS_DPR16X4", "MULT18X18D", "L6MUX21", "PFUMX")
@@ -126,12 +167,23 @@ def audit(path, keep_all=False):
         "lut4_eq_fraction": round(lut4_eq / DEVICE["LUT4"], 3),
         "notable": {name: counted[name] for name in NOTABLE if counted.get(name)},
         "warnings": warnings(text, keep_all),
+        "router": router_progress(path.with_suffix(".tim")),
     }
 
 
 def report(result):
     """Print it, and return the exit code."""
     print(f"  {result['log']}")
+
+    route = result.get("router")
+    if route and not route["converged"]:
+        # Said FIRST, because it is the difference between a build that was slow
+        # and a build that was never going to finish.
+        state = "DIVERGING" if route["diverging"] else "not converged"
+        print(f"!!router {state}: {route['overused_now']} overused after "
+              f"{route['iterations']} iterations, best was "
+              f"{route['overused_best']} at iteration "
+              f"{route['best_at_iteration']}")
 
     over = []
     for name, limit in DEVICE.items():
