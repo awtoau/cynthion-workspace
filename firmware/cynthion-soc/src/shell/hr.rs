@@ -28,6 +28,29 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         // 0x0800 reads 8f2f at power-on defaults; anything else means either a
         // configuration landed or the read path is wrong -- which is what makes
         // this the absolute reference #186 asks for.
+        // `hr cr0 <hex>` / `hr cr1 <hex>` -- configure the part, and prove it.
+        _ if rest.starts_with(b"cr0 ") || rest.starts_with(b"cr1 ") => {
+            let addr = if rest[2] == b'0' { 0x0800 } else { 0x0801 };
+            match parse_hex(trim(&rest[4..])) {
+                None => {
+                    let _ = writeln!(uart, "usage: hr cr0|cr1 <hex>");
+                }
+                Some(value) => {
+                    match crate::hyperram::backend::write_register(addr, value as u16) {
+                        Ok(()) => {
+                            let _ = writeln!(uart, "cr{} = {:04x}, read back and matching",
+                                             if addr == 0x0800 { 0 } else { 1 }, value);
+                        }
+                        Err(seen) => {
+                            let _ = writeln!(
+                                uart,
+                                "cr{} WRITE DID NOT LAND: wrote {:04x}, read {:04x}",
+                                if addr == 0x0800 { 0 } else { 1 }, value, seen);
+                        }
+                    }
+                }
+            }
+        }
         b"status" => {
             registers(uart);
             let (locked, ready, seen, bursts) = bench::dqs_status();
@@ -169,8 +192,12 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
                 }
             }
 
+            // "checked", never "verified": this line is printed BEFORE the
+            // verdict below and says only what was done. `hr ramp w` once read
+            // `256/256 correct` off the D-cache with RESET# asserted, so a
+            // pass-sounding word ahead of the count is how that reads again.
             let _ = writeln!(uart, "ramp {} at +{:x}, {} bytes",
-                             if writing { "written and verified" } else { "verified" },
+                             if writing { "written and checked" } else { "checked" },
                              RAMP_AT, RAMP_LEN);
             let _ = write!(uart, "  first 16 want 00..0f got");
             for byte in got.iter() {
@@ -203,7 +230,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         _ => {
             let _ = writeln!(
                 uart,
-                "usage: hr status|read <hex>|sel <n>|sweep|test|cross|bench"
+                "usage: hr status|cr0 <hex>|cr1 <hex>|read <hex>|sel <n>|sweep|test|cross|bench"
             );
         }
     }

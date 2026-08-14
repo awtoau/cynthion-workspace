@@ -114,6 +114,8 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     // and cannot be discovered without running the command wrongly first.
     ("hyperram", "HyperRAM, and its read window"),
     ("hyperram status", "identity, configuration, geometry and the DQS read path"),
+    ("hyperram cr0 <hex>", "write CR0 and read it back -- latency, drive, burst"),
+    ("hyperram cr1 <hex>", "write CR1 and read it back -- clock type, refresh"),
     ("hyperram read <hex>", "one word over the staging port"),
     ("hyperram sel <n>", "READCLKSEL: 2:0 tap, 3 phase, 5:4 read stall"),
     ("hyperram sweep", "try every READCLKSEL and say which read correctly"),

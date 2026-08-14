@@ -416,6 +416,33 @@ pub mod backend {
         }
     }
 
+    /// Write one of the part's own registers, and say whether it landed.
+    ///
+    /// **Verified, never assumed.** A latency sweep once "passed" on codes 2
+    /// and 6 only -- the power-on default and that default with one bit flipped
+    /// -- which is the signature of a write that never reached the die. So this
+    /// reads back and compares rather than reporting success from a completed
+    /// bus cycle (#319).
+    ///
+    /// A HyperBus register write is a single word: the controller skips the
+    /// latency phase for register space, so there is no burst to terminate.
+    pub fn write_register(word_addr: u32, value: u16) -> Result<(), u16> {
+        // SAFETY: the mode window is a CSR; one bit, read-modify-write.
+        unsafe {
+            let ctrl = read_volatile(MODE_CTRL as *const u32);
+            write_volatile(MODE_CTRL, ctrl | 8);
+            seek(word_addr);
+            // Both halves carry the value: register space returns the same 16
+            // bits in each, and the controller takes the low one.
+            let _ = write_pair((value as u32) << 16 | value as u32);
+            write_volatile(MODE_CTRL, ctrl & !8);
+        }
+        match read_register(word_addr) {
+            seen if seen == value => Ok(()),
+            seen => Err(seen),
+        }
+    }
+
     /// Hand the part to the BIST engine, or take it back for staging.
     ///
     /// Returns whether the mux followed. A mode write during a pass is not
@@ -581,6 +608,13 @@ pub mod backend {
             0x0801 => 0xffc1,
             _ => 0x0c86,
         }
+    }
+
+    /// Refused, not silently accepted. The stand-in models memory; a register
+    /// write it pretended to take would report a configuration the part never
+    /// received, which is the failure #319 exists to prevent.
+    pub fn write_register(_word_addr: u32, _value: u16) -> Result<(), u16> {
+        Err(0)
     }
 
     /// The array stays 16-bit, because that is the part's word and the header
