@@ -308,6 +308,29 @@ class HyperRAMDQSPHY(Elaboratable):
         rwds_oe_n = Signal()
         rwds_in = Signal()
 
+        # THE CA-PHASE LEVEL, which this PHY never presented. `rwds_in` went
+        # only to `DQSBUFM.DQSI`, and `phy.rwds.i` was left unassigned -- so the
+        # controller's `rwds_asks` was constant 0 and variable latency could not
+        # work, silently taking the fixed path instead (#540).
+        #
+        # Sampled in FABRIC, not through the DQS read path: during CA there is
+        # no read strobe to clock it with, because RWDS *is* the strobe. The
+        # spec requires the device to drive RWDS through CA on every latency
+        # transaction (`sources/HyperBus_Spec_infineon.pdf`).
+        #
+        # One `sync` FF, so this signal's return latency is 1 cycle -- which is
+        # the controller's `PHY_ROUND_TRIP_CYCLES` default and what
+        # `rwds_sample_cycle` counts. The DQ path's own number is NOT known to
+        # be 1 (#186, #381); the two are separate and only this one is claimed.
+        #
+        # All four bits take the same level: at 4:1 the port has a bit per
+        # phase, but a fabric sample resolves one level per `sync` cycle and the
+        # controller only asks `.any()`. Per-phase RWDS during CA would need the
+        # `fast` domain and is not what the extra-latency flag is.
+        rwds_level = Signal()
+        m.d.sync += rwds_level.eq(rwds_in)
+        m.d.comb += self.phy.rwds.i.eq(rwds_level.replicate(4))
+
         dqsr90 = Signal()
         dqsw = Signal()
         dqsw270 = Signal()
