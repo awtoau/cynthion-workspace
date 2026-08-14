@@ -383,6 +383,7 @@ figure is the denominator in the host→flash transport gap in
 | `Lattice-ECP5-Family-DataSheet-FPGA-DS-02012.pdf` | ECP5 / ECP5-5G family, FPGA-DS-02012 v1.9, March 2018 | `https://www.latticesemi.com/view_document?document_id=50461` | **108 pages** |
 | `Lattice-ECP5-sysCONFIG-FPGA-TN-02039-2.5.pdf` | sysCONFIG user guide, **FPGA-TN-02039-2.5, January 2026** — configuration modes, timing, and the SPI boot path | mirror (Lattice's own copy is behind a block page) | **75 pages** |
 | `Lattice-ECP5-HighSpeed-IO-FPGA-TN-02035-1.3.pdf` | High-Speed I/O Interface, FPGA-TN-02035-1.3, October 2020 — DDR primitives, `DELAYF`/`DELAYG`, `CLKDIV`, and the input-register modes the HyperRAM PHY is built from | latticesemi.com | **86 pages** |
+| `FPGA-TN-02032-1-4-ECP5-ECP5G-sysIO-Usage-Guide.pdf` | sysIO Usage Guide, FPGA-TN-02032-1.4 — I/O standards, `DELAYG` modes and the sysIO attributes the HyperRAM pins are constrained with | `https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02032-1-4-ECP5-ECP5G-sysIO-Usage-Guide.pdf` | **30 pages** |
 
 **sysCONFIG 2.5 replaced 2.3 on 2026-08-10**, and the two byte-identical 2.3 copies
 that differed only in filename case are gone. 2.5 keeps everything #234 was answered
