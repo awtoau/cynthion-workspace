@@ -182,6 +182,34 @@ fn is_decade(n: u32) -> bool {
     false
 }
 
+/// One byte to the wire, for a caller that holds `wire`'s claim.
+///
+/// The body of `Uart::put`, as a free function: `src/wire.rs` drains queued
+/// lines and must not mint a `Uart` to do it, which would build a 192-byte line
+/// buffer per line written.
+pub(crate) fn put_at(base: usize, byte: u8) {
+    // SAFETY: fixed peripheral addresses; volatile because these are devices
+    // whose values change underneath the compiler.
+    unsafe {
+        // Reaching THRE_SPINS means nothing is draining at all, and the only
+        // useful response is to carry on and let the next byte try again --
+        // counted, not silent.
+        let mut spins = 0u32;
+        // `read_lsr`, not a bare read: this loop is the busiest LSR reader in
+        // the firmware, and a bare read here would clear an overrun the
+        // receive path had not noticed yet -- a transmit spin quietly eating
+        // the report of lost input.
+        while read_lsr(base) & LSR_THRE == 0 {
+            spins += 1;
+            if spins > THRE_SPINS {
+                count_drop(base);
+                return;
+            }
+        }
+        write_volatile((base + RBR_THR) as *mut u8, byte);
+    }
+}
+
 /// Count one dropped byte against whichever console owns `base`.
 fn count_drop(base: usize) {
     // Linear search over at most two entries, on the path that has already
@@ -297,9 +325,14 @@ pub fn report_errors(uart: &mut Uart) {
 /// acts on rather than one written down twice.
 pub const FIFO_DEPTH: usize = 16;
 
-#[derive(Clone, Copy)]
+/// NOT `Copy`, and it carries state: `line` is the partial line this writer has
+/// formatted but not yet finished. Copying a handle would duplicate a half-built
+/// line and put both halves on the wire. See `src/wire.rs`.
 pub struct Uart {
     base: usize,
+    /// The line being formatted, complete with the CRs. Submitted whole.
+    line: [u8; crate::wire::LINE],
+    len: usize,
 }
 
 impl Uart {
@@ -312,7 +345,31 @@ impl Uart {
     /// wrong address is a wrong program, not an unsound one, and making this
     /// `unsafe` would put an `unsafe` block around every call site for no gain.
     pub const fn new(base: usize) -> Self {
-        Uart { base }
+        Uart { base, line: [0; crate::wire::LINE], len: 0 }
+    }
+
+    /// Put the partial line on the wire now.
+    ///
+    /// `write_str` flushes at every newline, so this is only for a write that
+    /// deliberately has none -- a prompt. Dropping a handle also flushes.
+    pub fn flush(&mut self) {
+        if self.len > 0 {
+            crate::wire::submit(self.base, &self.line[..self.len]);
+            self.len = 0;
+        }
+    }
+
+    /// Append one byte, submitting early if the line has no newline in it.
+    fn stage(&mut self, byte: u8) {
+        if self.len == self.line.len() {
+            // Cut rather than dropped, and counted: a cut line is two
+            // submissions and CAN be interleaved, so it is not silently a
+            // success. Nothing this firmware emits reaches it.
+            crate::wire::count_split();
+            self.flush();
+        }
+        self.line[self.len] = byte;
+        self.len += 1;
     }
 
     fn reg(&self, offset: usize) -> *mut u8 {
@@ -386,26 +443,7 @@ impl Uart {
     /// Dropping a byte is strictly better than wedging: a console exists to
     /// report, and one that hangs to preserve a character reports nothing at all.
     pub fn put(&mut self, byte: u8) {
-        // SAFETY: fixed peripheral addresses; volatile because these are devices
-        // whose values change underneath the compiler.
-        unsafe {
-            // Reaching THRE_SPINS means nothing is draining at all, and the only
-            // useful response is to carry on and let the next byte try again --
-            // counted, not silent.
-            let mut spins = 0u32;
-            // `read_lsr`, not a bare read: this loop is the busiest LSR reader in
-            // the firmware, and a bare read here would clear an overrun the
-            // receive path had not noticed yet -- a transmit spin quietly eating
-            // the report of lost input.
-            while read_lsr(self.base) & LSR_THRE == 0 {
-                spins += 1;
-                if spins > THRE_SPINS {
-                    count_drop(self.base);
-                    return;
-                }
-            }
-            write_volatile(self.reg(RBR_THR), byte);
-        }
+        put_at(self.base, byte);
     }
 }
 
@@ -496,6 +534,18 @@ impl UartRx {
     }
 }
 
+/// A handle that goes out of scope with a line half-formatted puts it on the
+/// wire rather than losing it.
+///
+/// `write_str` flushes at every newline, so this catches only a deliberate
+/// `write!` with none -- and a panic partway through formatting, where the
+/// fragment already staged is the most useful thing on the console.
+impl Drop for Uart {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
 impl core::fmt::Write for Uart {
     /// Translates LF to CRLF on the way out.
     ///
@@ -516,11 +566,18 @@ impl core::fmt::Write for Uart {
     /// `soc_test.py` asserts that no bare LF ever reaches the wire, because this
     /// fix has been made and lost once already.
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        // Staged, not written. `core::fmt` calls this once per FRAGMENT of a
+        // line, so writing here is what let a task splice a whole line into the
+        // middle of another one (#541). The line goes to the wire at its
+        // newline, in one submission.
         for &byte in s.as_bytes() {
             if byte == b'\n' {
-                self.put(b'\r');
+                self.stage(b'\r');
+                self.stage(byte);
+                self.flush();
+            } else {
+                self.stage(byte);
             }
-            self.put(byte);
         }
         Ok(())
     }

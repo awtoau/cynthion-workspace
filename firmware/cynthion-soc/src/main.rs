@@ -144,6 +144,7 @@ mod target;
 mod timer;
 mod typec;
 mod uart;
+mod wire;
 mod ulpi;
 mod vbus;
 #[cfg(feature = "workload")]

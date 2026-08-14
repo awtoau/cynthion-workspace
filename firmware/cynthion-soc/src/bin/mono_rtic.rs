@@ -71,6 +71,11 @@ mod target;
 #[allow(dead_code)]
 #[path = "../uart.rs"]
 mod uart;
+
+// `uart.rs` stages a line and submits it whole, so a console root needs the
+// submitter too (#541).
+#[path = "../wire.rs"]
+mod wire;
 #[allow(dead_code)]
 #[path = "../wl_report.rs"]
 mod wl_report;

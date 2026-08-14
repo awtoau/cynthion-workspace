@@ -648,12 +648,22 @@ fn ports_command(uart: &mut Uart) {
                 let present = scratch_responds(base);
                 let _ = writeln!(
                     uart,
-                    "  {} {:08x} {}",
+                    "  {} {:08x} {}  tx-drops {}",
                     index,
                     base,
-                    if present { "ok" } else { "NO RESPONSE" }
+                    if present { "ok" } else { "NO RESPONSE" },
+                    crate::uart::tx_drops(index)
                 );
             }
+
+    // The line writer's own losses. #541: a spliced line was invisible to the
+    // firmware as well as to the reader, so a queue that overflows says so.
+    let (dropped, cut) = crate::wire::stats();
+    let _ = writeln!(
+        uart,
+        "  lines {} dropped (queue full), {} cut (no newline in {} bytes)",
+        dropped, cut, crate::wire::LINE
+    );
         }
 
 /// `cpu log [n|tags]` -- the deferred event ring the interrupt handlers push to.

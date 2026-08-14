@@ -44,6 +44,11 @@ mod timer;
 #[allow(dead_code)]
 #[path = "../uart.rs"]
 mod uart;
+
+// `uart.rs` stages a line and submits it whole, so a console root needs the
+// submitter too (#541).
+#[path = "../wire.rs"]
+mod wire;
 // Everything that formats, so this file -- a handler module -- contains no
 // `writeln!`, no `fmt::Write` and no `Uart`. See its module comment and
 // `scripts/soc_irq_log_check.py`.
