@@ -1,0 +1,15 @@
+# The real board's HyperRAM pins, so the DDR interface lands in ONE bank.
+# Scratch pins elsewhere put it across banks 2 and 7 and `par` refuses:
+# "A generic DDR interface has been locked to bank(s) 2,7, which are not
+# neighbors; therefore, the interface cannot be covered by an ECLK signal".
+LOCATE COMP "rwds"      SITE "D1";
+LOCATE COMP "dq"        SITE "F2";
+LOCATE COMP "clk"       SITE "C3";
+LOCATE COMP "level_out" SITE "C1";
+LOCATE COMP "dqs_alive" SITE "B1";
+IOBUF PORT "rwds"      IO_TYPE=LVCMOS33;
+IOBUF PORT "dq"        IO_TYPE=LVCMOS33;
+IOBUF PORT "clk"       IO_TYPE=LVCMOS33;
+IOBUF PORT "level_out" IO_TYPE=LVCMOS33;
+IOBUF PORT "dqs_alive" IO_TYPE=LVCMOS33;
+FREQUENCY PORT "clk" 40.000000 MHz;
