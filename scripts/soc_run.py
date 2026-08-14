@@ -181,7 +181,7 @@ def synthesis_floor():
     return max(1.25 * (197 + 17 * (jobs - 1)), override)
 
 
-def router_watchdog():
+def router_watchdog(started_at):
     """Stop a place-and-route that has turned round, rather than waiting it out.
 
     `router2` escalates congestion costs and can DIVERGE: overuse bottoms out
@@ -189,16 +189,29 @@ def router_watchdog():
     those were waited out to their full bound -- 610 s, 763 s, 1500 s -- before
     the numbers in `top.tim` were read by hand (#540). They are readable while
     it runs.
+
+    `started_at` is wall clock, and the mtime check below is not a nicety: the
+    first version had none and killed a HEALTHY build 15 s in, while yosys was
+    still running, off a `top.tim` a previous build had left in the directory
+    three and a half hours earlier. A stale log is not evidence about this run.
     """
-    sys.path.insert(0, str(ROOT / "scripts"))
-    from build_log_audit import router_progress
-    route = router_progress(BUILD / "top.tim")
-    if not route or not route.get("diverging"):
-        return None
-    return (f"router DIVERGING -- {route['overused_now']} overused after "
-            f"{route['iterations']} iterations, best {route['overused_best']} "
-            f"at iteration {route['best_at_iteration']}. Re-rolling will not "
-            f"help; try --router router1")
+    log = BUILD / "top.tim"
+
+    def look():
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from build_log_audit import router_progress
+        if not log.exists() or log.stat().st_mtime < started_at:
+            return None
+        route = router_progress(log)
+        if not route or not route.get("diverging"):
+            return None
+        return (f"router DIVERGING -- {route['overused_now']} overused after "
+                f"{route['iterations']} iterations, best "
+                f"{route['overused_best']} at iteration "
+                f"{route['best_at_iteration']}. Re-rolling will not help; try "
+                f"--router router1")
+
+    return look
 
 
 def run(cmd, cwd=None, env=None, floor=None, watch=None):
@@ -1031,7 +1044,7 @@ def main():
         SYNTH_LOG.parent.mkdir(parents=True, exist_ok=True)
         build_started = time.perf_counter()
         result = run(["bash", "-c", build], floor=synthesis_floor(),
-                     watch=router_watchdog)
+                     watch=router_watchdog(time.time()))
         build_seconds = time.perf_counter() - build_started
         output = SYNTH_LOG.read_text(errors="replace") if SYNTH_LOG.exists() else ""
         # `run` reports the expiry on its own stderr, which the redirect above
