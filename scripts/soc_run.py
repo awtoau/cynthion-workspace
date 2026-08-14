@@ -620,6 +620,14 @@ def main():
                              "is the whole of this design's Fmax spread (#361). "
                              "Slower and reproducible: use it for any build whose "
                              "timing number is going to be reported")
+    parser.add_argument("--router", choices=("router1", "router2"), default=None,
+                        help="nextpnr's router. `router2` is the default and is "
+                             "there to recover Fmax; it escalates congestion "
+                             "costs and can DIVERGE -- overuse bottoming out and "
+                             "then climbing, which no number of re-rolls fixes. "
+                             "`router1` is the plain one and does not. Use it "
+                             "when a build will not converge and the frequency "
+                             "is not the point")
     parser.add_argument("--seed", type=int, default=None,
                         help="nextpnr's placer seed. Same netlist, different "
                              "placement, so a spread over seeds is placement and "
@@ -649,6 +657,10 @@ def main():
     if args.no_parallel_refine:
         PNR_OPTS = " ".join(opt for opt in PNR_OPTS.split()
                             if opt != "--parallel-refine")
+    if args.router is not None:
+        PNR_OPTS = " ".join(opt for opt in PNR_OPTS.split()
+                            if opt not in ("router1", "router2", "--router"))
+        PNR_OPTS = f"{PNR_OPTS} --router {args.router}"
     if args.seed is not None:
         PNR_OPTS = f"{PNR_OPTS} --seed {args.seed}"
     # A missed constraint yields a bitstream, because the board is the judge.

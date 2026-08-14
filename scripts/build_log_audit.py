@@ -64,8 +64,15 @@ BENIGN = (
 )
 WARNING = re.compile(r"\b(Warning|WARNING|ERROR|Error):")
 
-# nextpnr's router progress, one line per iteration in `top.tim`.
+# nextpnr's router progress in `top.tim`. THE TWO ROUTERS LOG NOTHING ALIKE,
+# and a parser that knows only one reports "no routing" for the other -- which
+# reads as silence, not as a gap. `router2` counts overuse UP from zero and must
+# reach zero; `router1` counts arcs REMAINING down to zero.
 ROUTE_ITER = re.compile(r"iter=(\d+)\s+wires=(\d+)\s+overused=(\d+)")
+# `  IterCnt | w/ripup  wo/ripup | w/r  wo/r |  arcs | batch total|`
+ROUTE1_ROW = re.compile(r"^Info:\s+(\d+)\s+\|\s+\d+\s+\d+\s+\|"
+                        r"\s+\d+\s+\d+\s+\|\s+(\d+)\|", re.M)
+ROUTE1_TOTAL = re.compile(r"^Info: Routing (\d+) arcs\.", re.M)
 
 # How many of the last iterations must be rising for the router to be called
 # diverging. `router2` normally falls monotonically to zero; a few upward steps
@@ -83,10 +90,10 @@ def router_progress(path):
     """
     if not path.exists():
         return None
-    iters = [(int(n), int(w), int(o))
-             for n, w, o in ROUTE_ITER.findall(path.read_text(errors="replace"))]
+    text = path.read_text(errors="replace")
+    iters = [(int(n), int(w), int(o)) for n, w, o in ROUTE_ITER.findall(text)]
     if not iters:
-        return None
+        return _router1(text)
 
     best = min(iters, key=lambda row: row[2])
     last = iters[-1]
@@ -94,6 +101,7 @@ def router_progress(path):
     rising = len(tail) > DIVERGING_RUN and all(
         b > a for a, b in zip(tail, tail[1:]))
     return {
+        "router": "router2",
         "iterations": last[0],
         "overused_now": last[2],
         "overused_best": best[2],
@@ -102,6 +110,31 @@ def router_progress(path):
         # Converged is the only success: an unrouted wire is not a bitstream.
         "converged": last[2] == 0,
         "diverging": rising and last[2] > best[2],
+    }
+
+
+def _router1(text):
+    """`router1`'s table: arcs remaining, which only ever falls.
+
+    It has no congestion metric to rise, so `diverging` is not a state it can
+    reach -- it either finishes or is still going. Reported in the SAME shape as
+    `router2` so a caller does not have to know which router ran.
+    """
+    rows = [(int(n), int(left)) for n, left in ROUTE1_ROW.findall(text)]
+    if not rows:
+        return None
+    total = ROUTE1_TOTAL.search(text)
+    best = min(rows, key=lambda row: row[1])
+    last = rows[-1]
+    return {
+        "router": "router1",
+        "iterations": last[0],
+        "overused_now": last[1],          # arcs still to route
+        "overused_best": best[1],
+        "best_at_iteration": best[0],
+        "wires": int(total.group(1)) if total else 0,
+        "converged": last[1] == 0,
+        "diverging": False,
     }
 
 
