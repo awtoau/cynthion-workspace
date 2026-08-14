@@ -265,6 +265,19 @@ class HyperRAMDQSController(Elaboratable):
         # CR0[3] as the part is set to; see the non-DQS controller. Was
         # `int(self._fixed_latency)`, which made the variable path dead (#338).
         self.fixed_latency    = Signal(reset=int(fixed_latency))
+        # WHICH cycle reads the extra-latency request, at RUN TIME.
+        #
+        # Reset is `rwds_sample_cycle`'s arithmetic, but that is built on
+        # `PHY_ROUND_TRIP_CYCLES`, which is the BEHAVIOURAL PHY's number -- the
+        # real one is unresolved (#186, #381). So the cycle is a lever and not a
+        # constant, for the same reason READCLKSEL is: the alternative is a
+        # bitstream per candidate. Swept against `rwds_asked` below. (#540)
+        self.rwds_sample_at   = Signal(4, init=self._rwds_sample_cycle)
+        # Did the sample find RWDS asserted. Combinational and one cycle wide;
+        # the probe latches it, because sampling this from the CPU would miss
+        # every assertion. Without it, "sampled at the wrong cycle" and "never
+        # sampled" are the same observation. (#540)
+        self.rwds_asked       = Signal()
         # The count for the SHORT branch, when the part declines the extra
         # latency. An input rather than a derivation for the reason the non-DQS
         # twin gives: the derivation is the datasheet's, not the silicon's.
@@ -351,15 +364,19 @@ class HyperRAMDQSController(Elaboratable):
         # Sync cycles since `start_transfer`, stopped one past the sample so the
         # counter cannot wrap and the sample is a single cycle. Which cycle that
         # is, and why it is not a state, is `rwds_sample_cycle`. (#381)
-        xact_age   = Signal(range(0, self._rwds_sample_cycle + 2))
+        # Sized for the lever's full range, not for the build-time value: the
+        # cycle is settable at run time now, so a counter sized to the default
+        # could not reach a later candidate.
+        xact_age   = Signal(4)
         sample_now = Signal()
         rwds_asks  = Signal()
         m.d.comb += [
-            sample_now.eq(xact_age == self._rwds_sample_cycle),
+            sample_now.eq(xact_age == self.rwds_sample_at),
             rwds_asks.eq(sample_now & ~self.fixed_latency
                          & self.phy.rwds.i.any()),
+            self.rwds_asked.eq(rwds_asks),
         ]
-        with m.If(xact_age <= self._rwds_sample_cycle):
+        with m.If(xact_age <= self.rwds_sample_at):
             m.d.sync += xact_age.eq(xact_age + 1)
         with m.If(rwds_asks):
             m.d.sync += extra_latency.eq(1)

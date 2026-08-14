@@ -462,6 +462,13 @@ mod probe {
     /// Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase.
     /// Writable so sixteen combinations need one bitstream, not sixteen builds.
     const SEL: usize = 0x25;
+    /// WHICH cycle the controller reads the extra-latency request on.
+    ///
+    /// 0 leaves the build-time arithmetic alone, which is what a firmware that
+    /// never writes it does. Writable because that arithmetic rests on
+    /// `PHY_ROUND_TRIP_CYCLES`, the behavioural PHY's number and not this
+    /// board's -- so it is swept against `rwds_ask`, not trusted. #540.
+    const RWDS_AT: usize = 0x26;
 
     /// Two byte reads, low first.
     ///
@@ -504,13 +511,20 @@ mod probe {
         }
     }
 
-    pub fn dqs_status() -> (bool, bool, bool, u32) {
+    /// Point the extra-latency sample at cycle `at`; 0 restores the default.
+    pub fn set_rwds_at(at: u8) {
+        // SAFETY: one byte inside the generated HYPERRAM_PROBE window.
+        unsafe { core::ptr::write_volatile((BASE + RWDS_AT) as *mut u8, at & 0xf) };
+    }
+
+    pub fn dqs_status() -> (bool, bool, bool, bool, u32) {
         // SAFETY: one byte inside the generated HYPERRAM_PROBE window.
         let status = unsafe { core::ptr::read_volatile((BASE + STATUS) as *const u8) };
         (
             status & 1 != 0,
             status & 2 != 0,
             status & 4 != 0,
+            status & 8 != 0,
             read16(BURSTS),
         )
     }
@@ -1373,8 +1387,13 @@ fn evict() {
 /// The DQS read path's self-report, for the shell. `probe` is private because
 /// nothing outside this file should be reading raw counter offsets; this is the
 /// one fact the shell needs from it.
-pub fn dqs_status() -> (bool, bool, bool, u32) {
+pub fn dqs_status() -> (bool, bool, bool, bool, u32) {
     probe::dqs_status()
+}
+
+/// Point the extra-latency sample at a cycle. See `hr rwds` and #540.
+pub fn set_rwds_at(at: u8) {
+    probe::set_rwds_at(at);
 }
 
 /// Set the DQS read clock tap. See `hr sel` and `hr sweep`.

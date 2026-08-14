@@ -14,6 +14,7 @@ use crate::{bench, hyperram};
 ///     hr status   the DQS read path's self-report
 ///     hr read <hex>  one word over the staging port
 ///     hr sel <n>  bits 2:0 READCLKSEL, bit 3 read-window phase
+///     hr rwds <n> which cycle takes the extra-latency sample (#540)
 ///     hr sweep    try every READCLKSEL and say which ones read correctly
 ///     hr test     round-trip one word through the staging port
 ///     hr cross    do the window and the staging port agree?
@@ -53,14 +54,17 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         }
         b"status" => {
             registers(uart);
-            let (locked, ready, seen, bursts) = bench::dqs_status();
+            let (locked, ready, seen, asked, bursts) = bench::dqs_status();
             let _ = writeln!(
                 uart,
-                "dqs: dll {} {}, burstdet {} ({} bursts)",
+                "dqs: dll {} {}, burstdet {} ({} bursts), rwds-ask {}",
                 if locked { "locked" } else { "UNLOCKED" },
                 if ready { "ready" } else { "NOT-READY" },
                 if seen { "seen" } else { "NEVER" },
-                bursts
+                bursts,
+                // Meaningless under fixed latency: the controller gates the
+                // sample on CR0[3], so NEVER is the only correct answer there.
+                if asked { "SEEN" } else { "never" }
             );
         }
         b"test" => {
@@ -91,14 +95,17 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             // Printed either way. On a pass it is the evidence that a DQS read
             // used its strobe rather than a latency count that landed right by
             // luck; on a failure it says which layer to look at.
-            let (locked, ready, seen, bursts) = bench::dqs_status();
+            let (locked, ready, seen, asked, bursts) = bench::dqs_status();
             let _ = writeln!(
                 uart,
-                "dqs: dll {} {}, burstdet {} ({} bursts)",
+                "dqs: dll {} {}, burstdet {} ({} bursts), rwds-ask {}",
                 if locked { "locked" } else { "UNLOCKED" },
                 if ready { "ready" } else { "NOT-READY" },
                 if seen { "seen" } else { "NEVER" },
-                bursts
+                bursts,
+                // Meaningless under fixed latency: the controller gates the
+                // sample on CR0[3], so NEVER is the only correct answer there.
+                if asked { "SEEN" } else { "never" }
             );
             let (wrote_w, win_w, stg_w) = result.window_written;
             let (wrote_s, win_s, stg_s) = result.staged_written;
@@ -139,6 +146,21 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         }
         b"bench" => bench::command(uart, b"hyperram"),
         _ if rest.starts_with(b"read") => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, rest),
+        // WHICH cycle the extra-latency sample is taken on. The default comes
+        // from `PHY_ROUND_TRIP_CYCLES`, which is the behavioural PHY's number
+        // and not this board's (#186, #381), so it is swept and not trusted:
+        // set a cycle, clear the counters, read with CR0[3] cleared, and ask
+        // `hr status` whether `rwds-ask` moved. #540.
+        _ if rest.starts_with(b"rwds") => match parse_hex(trim(&rest[4..])) {
+            Some(n) if n <= 0xf => {
+                bench::set_rwds_at(n as u8);
+                let _ = writeln!(uart, "rwds sample at cycle {}{}", n,
+                                 if n == 0 { " (the build-time default)" } else { "" });
+            }
+            _ => {
+                let _ = writeln!(uart, "usage: hr rwds <0-f>  (0 = build-time default)");
+            }
+        },
         _ if rest.starts_with(b"sel") => match parse_hex(trim(&rest[3..])) {
             Some(n) if n < 16 => {
                 bench::set_readclksel(n as u8);
@@ -218,7 +240,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             for setting in 0..64u8 {
                 bench::set_readclksel(setting);
                 let (good, bitmap, want, got) = bench::hyper_line_write_check();
-                let (_, _, seen, bursts) = bench::dqs_status();
+                let (_, _, seen, _, bursts) = bench::dqs_status();
                 let _ = writeln!(
                     uart,
                     "  tap {} phase {} rd-stall {}: {:2}/16, bad {:016b}, burstdet {} ({}), want {:08x} got {:08x}",
@@ -230,7 +252,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
         _ => {
             let _ = writeln!(
                 uart,
-                "usage: hr status|cr0 <hex>|cr1 <hex>|read <hex>|sel <n>|sweep|test|cross|bench"
+                "usage: hr status|cr0 <hex>|cr1 <hex>|read <hex>|sel <n>|rwds <n>|sweep|test|cross|bench"
             );
         }
     }

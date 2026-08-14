@@ -83,6 +83,11 @@ class HyperRAMPort:
         self.dll_locked = Signal(name=f"{name}_dll_locked")
         self.dll_ready = Signal(name=f"{name}_dll_ready")
         self.burstdet = Signal(name=f"{name}_burstdet")
+        # The extra-latency sample's verdict, and WHICH cycle takes it. The
+        # cycle is a lever because the arithmetic behind its default is the
+        # behavioural PHY's, not this board's (#186, #381, #540).
+        self.rwds_ask = Signal(name=f"{name}_rwds_ask")
+        self.rwds_at = Signal(4, name=f"{name}_rwds_at")
         # This port drives the controller. Separate from `idle`, which is low
         # both when another mode owns the part and when this one is mid-burst.
         self.granted = Signal(name=f"{name}_granted")
@@ -197,6 +202,16 @@ class HyperRAMShared(Elaboratable):
             read_phase.eq(Mux(self.mode, bist.read_phase, stage.read_phase)),
         ]
 
+        # Only the DQS controller has the extra-latency lever; the non-DQS twin
+        # samples RWDS from its own PHY and is not what #540 is about. A 0 from
+        # the CSR means "keep the build-time cycle", so a firmware that never
+        # writes it leaves the default arithmetic in place.
+        if self.dqs:
+            rwds_at = Signal(4)
+            m.d.comb += rwds_at.eq(Mux(self.mode, bist.rwds_at, stage.rwds_at))
+            with m.If(rwds_at != 0):
+                m.d.comb += psram.rwds_sample_at.eq(rwds_at)
+
         for index, port in enumerate(self.ports):
             m.d.comb += [
                 port.granted.eq(self.mode == index),
@@ -207,6 +222,7 @@ class HyperRAMShared(Elaboratable):
                 port.dll_locked.eq(dll_locked),
                 port.dll_ready.eq(dll_ready),
                 port.burstdet.eq(burstdet),
+                port.rwds_ask.eq(psram.rwds_asked if self.dqs else 0),
             ]
 
         return m

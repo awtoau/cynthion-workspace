@@ -6,6 +6,8 @@ pub type DllLockedR = crate::BitReader;
 pub type DllReadyR = crate::BitReader;
 #[doc = "Field `BURSTDET` reader - burstdet \\[2\\]"]
 pub type BurstdetR = crate::BitReader;
+#[doc = "Field `RWDS_ASK` reader - rwds_ask \\[3\\]"]
+pub type RwdsAskR = crate::BitReader;
 impl R {
     #[doc = "Bit 0 - dll_locked \\[0\\]"]
     #[inline(always)]
@@ -22,8 +24,13 @@ impl R {
     pub fn burstdet(&self) -> BurstdetR {
         BurstdetR::new(((self.bits >> 2) & 1) != 0)
     }
+    #[doc = "Bit 3 - rwds_ask \\[3\\]"]
+    #[inline(always)]
+    pub fn rwds_ask(&self) -> RwdsAskR {
+        RwdsAskR::new(((self.bits >> 3) & 1) != 0)
+    }
 }
-#[doc = "HYPERRAM_PROBE.STATUS, 3 bits at +0x1c\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "HYPERRAM_PROBE.STATUS, 4 bits at +0x1c\n\nYou can [`read`](crate::Reg::read) this register and get [`status::R`](R). See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct StatusSpec;
 impl crate::RegisterSpec for StatusSpec {
     type Ux = u8;

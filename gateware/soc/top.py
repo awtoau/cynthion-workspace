@@ -1327,10 +1327,12 @@ class AwtoSoc(Elaboratable):
         dll_locked = Signal()
         dll_ready = Signal()
         burstdet = Signal()
+        rwds_ask = Signal()
         m.submodules += [
             FFSynchronizer(hyper_ram.stage.dll_locked, dll_locked),
             FFSynchronizer(hyper_ram.stage.dll_ready, dll_ready),
             FFSynchronizer(hyper_ram.stage.burstdet, burstdet),
+            FFSynchronizer(hyper_ram.stage.rwds_ask, rwds_ask),
         ]
         m.d.comb += [
             hyper_probe.start_transfer.eq(bootram.probe_start),
@@ -1344,6 +1346,7 @@ class AwtoSoc(Elaboratable):
             hyper_probe.dll_locked.eq(dll_locked),
             hyper_probe.dll_ready.eq(dll_ready),
             hyper_probe.burstdet.eq(burstdet),
+            hyper_probe.rwds_ask.eq(rwds_ask),
             hyper_probe.stall.eq(bootram.probe_stall),
         ]
         # The DQS tap, out to the PHY through the staging side of the mux. Two
@@ -1354,6 +1357,10 @@ class AwtoSoc(Elaboratable):
                                        Cat(hyper_ram.stage.readclksel,
                                            hyper_ram.stage.read_phase),
                                        o_domain="hr")
+        # The extra-latency sample cycle, the same way and for the same reason:
+        # a configuration the firmware moves between passes, never timed across.
+        m.submodules += FFSynchronizer(hyper_probe.rwds_at,
+                                       hyper_ram.stage.rwds_at, o_domain="hr")
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge
         decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
