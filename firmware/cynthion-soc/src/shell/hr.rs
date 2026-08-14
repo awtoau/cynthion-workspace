@@ -233,21 +233,62 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
                                  wrong, RAMP_LEN, first_bad);
             }
         }
-        b"sweep" => {
-            // One bitstream, eight settings. The tap that captures returning
-            // data is a property of the board and CK, and the built-in default
-            // is upstream's untested guess.
+        _ if rest.starts_with(b"sweep") => {
+            // One bitstream, 64 settings. The tap that captures returning data
+            // is a property of the board and CK, and the built-in default is
+            // upstream's untested guess.
+            //
+            // REPEATED, and scored as a proportion. One attempt per setting
+            // made this useless on silicon: 61 of 64 settings scored a perfect
+            // 16/16 in three consecutive sweeps, while `hr cross` -- the SAME
+            // check -- returned 0/16 moments later. A single pass on an
+            // intermittent path is a coin flip, and a sweep that reports one
+            // number per setting cannot tell a good tap from a lucky one
+            // (#148, and #186 for why the path is intermittent).
+            let repeats = parse_hex(trim(&rest[5..])).unwrap_or(8).clamp(1, 64) as u32;
+            // Restored at the end. The old sweep left the tap at whatever it
+            // tried last -- setting 63 -- so every measurement taken after one
+            // was on a tap nobody chose.
+            let entry = bench::readclksel();
+
+            let _ = writeln!(uart, "  {} attempts per setting; a setting is only \
+                                    clean if EVERY attempt is 16/16", repeats);
+            let mut clean = 0u32;
             for setting in 0..64u8 {
                 bench::set_readclksel(setting);
-                let (good, bitmap, want, got) = bench::hyper_line_write_check();
+                let mut passes = 0u32;
+                let mut worst = 16u32;
+                let mut bad_bits = 0u32;
+                let (mut want, mut got) = (0u32, 0u32);
+                for _ in 0..repeats {
+                    let (good, bitmap, w, g) = bench::hyper_line_write_check();
+                    if good == 16 {
+                        passes += 1;
+                    } else if good <= worst {
+                        // Keep the WORST attempt's evidence, not the last:
+                        // the failure is what names the fault.
+                        worst = good;
+                        bad_bits = bitmap;
+                        want = w;
+                        got = g;
+                    }
+                }
                 let (_, _, seen, _, bursts) = bench::dqs_status();
+                if passes == repeats {
+                    clean += 1;
+                }
                 let _ = writeln!(
                     uart,
-                    "  tap {} phase {} rd-stall {}: {:2}/16, bad {:016b}, burstdet {} ({}), want {:08x} got {:08x}",
-                    setting & 7, (setting >> 3) & 1, setting >> 4, good, bitmap,
+                    "  tap {} phase {} rd-stall {}: {:2}/{} clean, worst {:2}/16, \
+                     bad {:016b}, burstdet {} ({}), want {:08x} got {:08x}",
+                    setting & 7, (setting >> 3) & 1, setting >> 4,
+                    passes, repeats, worst, bad_bits,
                     if seen { "y" } else { "n" }, bursts, want, got
                 );
             }
+            bench::set_readclksel(entry);
+            let _ = writeln!(uart, "  {}/64 settings clean on every attempt; \
+                                    tap restored to {:02x}", clean, entry);
         }
         _ => {
             let _ = writeln!(

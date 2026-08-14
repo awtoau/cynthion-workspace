@@ -1391,6 +1391,11 @@ pub fn dqs_status() -> (bool, bool, bool, bool, u32) {
     probe::dqs_status()
 }
 
+/// The DQS tap currently applied, so a sweep can put it back.
+pub fn readclksel() -> u8 {
+    probe::LAST_SEL.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// Point the extra-latency sample at a cycle. See `hr rwds` and #540.
 pub fn set_rwds_at(at: u8) {
     probe::set_rwds_at(at);
