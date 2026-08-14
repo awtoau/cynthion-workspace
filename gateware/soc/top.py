@@ -1361,6 +1361,7 @@ class AwtoSoc(Elaboratable):
         # a configuration the firmware moves between passes, never timed across.
         m.submodules += FFSynchronizer(hyper_probe.rwds_at,
                                        hyper_ram.stage.rwds_at, o_domain="hr")
+
         hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
         m.submodules.hyper_probe_bridge = hyper_probe_bridge
         decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
@@ -1394,6 +1395,34 @@ class AwtoSoc(Elaboratable):
             hyper_ck.refused.eq(hyper_handover.refused),
             hyper_handover.refused_clear.eq(hyper_ck.refused_clear),
             bootram.register_space.eq(hyper_ck.regs),
+        ]
+        # THE CONTROLLER'S OWN LATENCY CONFIGURATION, which nothing drove.
+        #
+        # `fixed_latency`, `latency_clocks` and `low_latency_clocks` are
+        # controller INPUTS on the staging port, and `HyperRAMHandover` does not
+        # touch them -- so they held their build-time resets for the life of the
+        # bitstream while firmware reprogrammed the part's CR0 underneath. The
+        # part went variable, the controller kept counting fixed, and reads came
+        # back wrong with no way to see why (#540).
+        #
+        # Two flops each, same as the DQS tap above and for the same reason:
+        # a configuration firmware moves between passes, never inside one.
+        hr_fixed = Signal()
+        hr_latency = Signal(6)
+        hr_low_latency = Signal(6)
+        m.submodules += [
+            FFSynchronizer(hyper_ck.fixed, hr_fixed, o_domain="hr"),
+            FFSynchronizer(hyper_ck.latency, hr_latency, o_domain="hr"),
+            FFSynchronizer(hyper_ck.low_latency, hr_low_latency, o_domain="hr"),
+        ]
+        m.d.comb += hyper_ram.stage.fixed_latency.eq(hr_fixed)
+        # Zero means "the controller's own reset", so a firmware that never
+        # writes these leaves the build exactly as it was.
+        with m.If(hr_latency != 0):
+            m.d.comb += hyper_ram.stage.latency_clocks.eq(hr_latency)
+        with m.If(hr_low_latency != 0):
+            m.d.comb += hyper_ram.stage.low_latency_clocks.eq(hr_low_latency)
+        m.d.comb += [
         ]
         hyper_ck_bridge = WishboneCSRBridge(hyper_ck.bus, data_width=32)
         m.submodules.hyper_ck_bridge = hyper_ck_bridge

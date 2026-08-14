@@ -81,7 +81,19 @@ class HyperRAMClockSelect(wiring.Component):
             # Every access through the memory window targets the part's REGISTER
             # space while this is set. Firmware sets it, reads CR0, clears it.
             "regs":     csr.Field(csr.action.RW, 1),
-            "reserved": csr.Field(csr.action.R, 28),
+            # CR0[3] AS THE CONTROLLER IS SET TO, which is a separate thing from
+            # CR0[3] as the part is set to. `fixed_latency` is a controller
+            # input and nothing drove it, so the controller counted the
+            # build-time number for the life of the bitstream while firmware
+            # reconfigured the part underneath it -- the two went out of step
+            # and reads came back wrong (#540). Init 1: the build ships fixed.
+            "fixed":    csr.Field(csr.action.RW, 1, init=1),
+            # `latency_clocks` and `low_latency_clocks`, the counts the FSM
+            # spends. Same argument: the part's CR0[7:4] moves and these must
+            # move with it. 0 means "keep the controller's own reset".
+            "latency":  csr.Field(csr.action.RW, 6),
+            "low_latency": csr.Field(csr.action.RW, 6),
+            "reserved": csr.Field(csr.action.R, 15),
         }, access="rw")
         self._status = csr.Register({
             "locked":   csr.Field(csr.action.R, 1),
@@ -108,6 +120,10 @@ class HyperRAMClockSelect(wiring.Component):
             "bus":    In(csr.Signature(addr_width=4, data_width=8)),
             "sel":    Out(1),
             "regs":   Out(1),
+            # Out to the controller, through `HyperRAMShared`'s staging port.
+            "fixed":  Out(1),
+            "latency": Out(6),
+            "low_latency": Out(6),
             "locked": In(1),
             # Out to `HyperRAMShared.sel`, back from its `mode`. The mux
             # synchronises the request itself; `mode` comes back from `hr`.
@@ -143,6 +159,9 @@ class HyperRAMClockSelect(wiring.Component):
         m.d.comb += [
             self.sel.eq(self._ctrl.f.sel.data),
             self.regs.eq(self._ctrl.f.regs.data),
+            self.fixed.eq(self._ctrl.f.fixed.data),
+            self.latency.eq(self._ctrl.f.latency.data),
+            self.low_latency.eq(self._ctrl.f.low_latency.data),
             self.bist.eq(self._ctrl.f.bist.data),
             self.refused_clear.eq(self._ctrl.f.refused_clear.w_stb
                                   & self._ctrl.f.refused_clear.w_data),

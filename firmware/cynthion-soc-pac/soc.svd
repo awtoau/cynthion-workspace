@@ -3117,8 +3117,8 @@
           <addressOffset>0x0</addressOffset>
           <size>32</size>
           <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0xB</resetMask>
+          <resetValue>0x10</resetValue>
+          <resetMask>0x1FFFB</resetMask>
           <fields>
             <field>
               <name>SEL</name>
@@ -3149,10 +3149,31 @@
               <access>read-write</access>
             </field>
             <field>
-              <name>RESERVED</name>
-              <description>reserved [31:4]</description>
+              <name>FIXED</name>
+              <description>fixed [4]</description>
               <bitOffset>4</bitOffset>
-              <bitWidth>28</bitWidth>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>LATENCY</name>
+              <description>latency [10:5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>LOW_LATENCY</name>
+              <description>low_latency [16:11]</description>
+              <bitOffset>11</bitOffset>
+              <bitWidth>6</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>RESERVED</name>
+              <description>reserved [31:17]</description>
+              <bitOffset>17</bitOffset>
+              <bitWidth>15</bitWidth>
               <access>read-only</access>
             </field>
           </fields>

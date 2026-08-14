@@ -128,7 +128,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, spawn  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
-from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
+from subprocess_timeout_from_history import (KilledEarly, limit_for,  # noqa: E402
+                                             run_bounded)
 
 # The nextpnr flags THIS run uses. `--no-parallel-refine` drops the one flag that
 # makes Fmax non-deterministic -- 14.34 MHz of spread on a fixed netlist, 8/8
@@ -180,7 +181,27 @@ def synthesis_floor():
     return max(1.25 * (197 + 17 * (jobs - 1)), override)
 
 
-def run(cmd, cwd=None, env=None, floor=None):
+def router_watchdog():
+    """Stop a place-and-route that has turned round, rather than waiting it out.
+
+    `router2` escalates congestion costs and can DIVERGE: overuse bottoms out
+    and then climbs, and no amount of further iterations recovers it. Three of
+    those were waited out to their full bound -- 610 s, 763 s, 1500 s -- before
+    the numbers in `top.tim` were read by hand (#540). They are readable while
+    it runs.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from build_log_audit import router_progress
+    route = router_progress(BUILD / "top.tim")
+    if not route or not route.get("diverging"):
+        return None
+    return (f"router DIVERGING -- {route['overused_now']} overused after "
+            f"{route['iterations']} iterations, best {route['overused_best']} "
+            f"at iteration {route['best_at_iteration']}. Re-rolling will not "
+            f"help; try --router router1")
+
+
+def run(cmd, cwd=None, env=None, floor=None, watch=None):
     """Every cargo, objcopy, yosys and apollo invocation goes through here.
 
     Bounded by what THIS program has taken before, per family, rather than not at
@@ -206,8 +227,11 @@ def run(cmd, cwd=None, env=None, floor=None):
     # the bound for the NEXT attempt and calls the one that just fired
     # "slowest was". Both numbers would be true of a run that has not happened.
     bound, reason = limit_for(f"run:{family}", floor)
-    result = run_bounded(cmd, family=f"run:{family}", cwd=cwd or ROOT, env=env,
-                         floor=floor)
+    try:
+        result = run_bounded(cmd, family=f"run:{family}", cwd=cwd or ROOT,
+                             env=env, floor=floor, watch=watch)
+    except KilledEarly as stopped:
+        return subprocess.CompletedProcess(cmd, 124, "", f"{stopped}\n")
     if result is not None:
         return result
     return subprocess.CompletedProcess(
@@ -1006,7 +1030,8 @@ def main():
         # everything up to the kill rather than nothing.
         SYNTH_LOG.parent.mkdir(parents=True, exist_ok=True)
         build_started = time.perf_counter()
-        result = run(["bash", "-c", build], floor=synthesis_floor())
+        result = run(["bash", "-c", build], floor=synthesis_floor(),
+                     watch=router_watchdog)
         build_seconds = time.perf_counter() - build_started
         output = SYNTH_LOG.read_text(errors="replace") if SYNTH_LOG.exists() else ""
         # `run` reports the expiry on its own stderr, which the redirect above

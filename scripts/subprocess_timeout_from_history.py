@@ -97,6 +97,37 @@ def record(family, elapsed):
     _save(history)
 
 
+class KilledEarly(Exception):
+    """A `watch` callback asked for the child to be stopped. Carries its reason."""
+
+
+def _watched(proc, bound, started, watch, watch_every, family, command):
+    """`communicate`, in slices, with `watch` between them.
+
+    Retrying `communicate` after a `TimeoutExpired` is the documented way to
+    wait again -- the reader threads keep going and nothing already read is
+    lost.
+    """
+    while True:
+        remaining = bound - (time.perf_counter() - started)
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, bound)
+        try:
+            return proc.communicate(timeout=min(watch_every, remaining))
+        except subprocess.TimeoutExpired:
+            reason = watch()
+            if not reason:
+                continue
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            elapsed = time.perf_counter() - started
+            # Named the same way a timeout names itself, because a kill that
+            # does not say why is the mystery this module exists to prevent.
+            print(f"  STOPPED {family} at {elapsed:.0f}s: {reason}")
+            raise KilledEarly(reason)
+
+
 def _record_timeout(family, bound):
     """Raise the baseline after a kill, so the next attempt can finish.
 
@@ -111,7 +142,7 @@ def _record_timeout(family, bound):
 
 
 def run_bounded(command, *, family, cwd=None, env=None, capture=True,
-                merge_stderr=False, floor=None):
+                merge_stderr=False, floor=None, watch=None, watch_every=15.0):
     """Run `command`, killed if it overruns what this family has needed before.
 
     Returns the CompletedProcess, or None if it was killed. A killed run is
@@ -120,6 +151,17 @@ def run_bounded(command, *, family, cwd=None, env=None, capture=True,
 
     `merge_stderr` puts the child's stderr in `stdout`, for callers that log one
     interleaved stream rather than two.
+
+    `watch` is called every `watch_every` seconds while the child runs. Return a
+    reason from it to KILL the child early; return None to let it continue. It
+    is how a run that is provably not going to succeed stops costing wall clock
+    instead of waiting out its whole bound -- a diverging place-and-route is
+    knowable a minute in and was being waited out for twenty (#540).
+
+    `watch_every` of 15 s: a nextpnr router iteration is seconds, and the
+    divergence rule needs three consecutive rises, so this sees several
+    iterations per call. On expiry of the bound the timeout path below runs
+    unchanged.
     """
     bound, reason = limit_for(family, floor)
     started = time.perf_counter()
@@ -137,7 +179,11 @@ def run_bounded(command, *, family, cwd=None, env=None, capture=True,
     proc = subprocess.Popen(command, cwd=cwd, env=env, text=True,
                             start_new_session=True, **streams)
     try:
-        stdout, stderr = proc.communicate(timeout=bound)
+        if watch is None:
+            stdout, stderr = proc.communicate(timeout=bound)
+        else:
+            stdout, stderr = _watched(proc, bound, started, watch, watch_every,
+                                      family, command)
     except subprocess.TimeoutExpired:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
