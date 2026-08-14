@@ -73,10 +73,14 @@ pub(crate) fn consoles(shells: &mut [Shell; MAX_CONSOLES], devices: &mut Devices
     }
 }
 
+/// A MILESTONE, not a title: printed from `init::uart_init`, so reaching it
+/// means the bootloader ran and a console exists -- and the rest of init has
+/// not happened yet. `init complete` at the end is the line that says whether
+/// the boot added up.
 pub(crate) fn banner(uart: &mut Uart) {
     let _ = write!(uart, "\n");
-    crate::log!(uart, "Cynthion RISC-V SoC - Rust firmware");
-    crate::log!(uart, "type `help` or `?` for commands");
+    crate::log!(uart, "Cynthion RISC-V SoC - Rust firmware, console up");
+    crate::log!(uart, "type `help` or `?` for commands; `init complete` below is the verdict");
 }
 
 /// What `led`, `i2c` and `sideband` say when there is no board under them.

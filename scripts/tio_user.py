@@ -236,22 +236,34 @@ def main():
     else:
         print("watching the Cynthion RISC-V console (Ctrl-C to stop)", flush=True)
 
+    # RAW tty: `\n` is line feed with NO carriage return, so a bare `print`
+    # starts at whatever column the board's last byte left the cursor on. That
+    # is the staircase these messages used to make when the board disappeared.
+    def say(text, *, detail=False):
+        if detail and not args.verbose:
+            return
+        stamp = f"{time.strftime('%H:%M:%S')} " if args.verbose else ""
+        sys.stdout.write(f"\r\n{stamp}{text}\r\n" if interactive
+                         else f"{stamp}{text}\n")
+        sys.stdout.flush()
+
     port = None
     waiting_announced = False
+    bytes_seen = 0
     try:
         while True:
             if port is None:
                 node = usb_ids.wait_for_tty("riscv_console")
                 if node is None:
                     if not waiting_announced:
-                        print("waiting for a bitstream...", flush=True)
+                        say("waiting for a bitstream...")
                         waiting_announced = True
                     continue
                 try:
                     port = serial.Serial(node, 115200, timeout=3)
                 except Exception:
-                    print(f"{node} is busy — another reader has it. Stop that one, or "
-                          f"read via the socket if it is serving.", flush=True)
+                    say(f"{node} is busy — another reader has it. Stop that one, "
+                        f"or read via the socket if it is serving.")
                     subprocess.run(["udevadm", "settle"], capture_output=True)
                     continue
                 with lock:
@@ -259,8 +271,8 @@ def main():
                 # Repeated per attach, not once at startup: a reconfigure floods
                 # the screen with the boot report, so the one line saying how to
                 # get out has scrolled away by the time anyone wants it.
-                print(f"attached: {node}"
-                      + ("   [Ctrl-] quits]" if interactive else ""), flush=True)
+                say(f"attached: {node}"
+                    + ("   [Ctrl-] quits]" if interactive else ""))
                 waiting_announced = False
 
             try:
@@ -281,7 +293,9 @@ def main():
             except (serial.SerialException, OSError):
                 # Almost always a reconfigure. Reattach rather than exit; that is the
                 # reason this exists rather than `cat`.
-                print("\n[device went away — waiting]", flush=True)
+                say(f"[device went away — waiting]  "
+                    f"{bytes_seen} bytes this attach")
+                bytes_seen = 0
                 with lock:
                     state["port"] = None
                 try:
@@ -292,6 +306,7 @@ def main():
                 continue
 
             if data:
+                bytes_seen += len(data)
                 sys.stdout.write(data.decode("ascii", "replace"))
                 sys.stdout.flush()
                 with lock:
@@ -302,7 +317,7 @@ def main():
                             clients.remove(conn)
                             conn.close()
     except KeyboardInterrupt:
-        print("\nstopped", flush=True)
+        say("stopped")
     finally:
         if port is not None:
             try:

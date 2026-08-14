@@ -135,6 +135,12 @@ struct Out<'a> {
     /// True for the boot sequence: retain the report, and perform the writes
     /// that are only safe when nothing is using the peripheral yet.
     boot: bool,
+    /// Steps run, and how many were not `ok`. The report is a wall of lines and
+    /// nothing said whether it ADDED UP -- a reader had to scan every verdict
+    /// to tell a clean boot from one with three warnings.
+    steps: u16,
+    warned: u16,
+    failed: u16,
 }
 
 impl Out<'_> {
@@ -155,6 +161,12 @@ impl Out<'_> {
     /// line reads as a subsystem nobody thought about; a present one reading
     /// `ABSENT` reads as a board without it, which is the truth on the emulator.
     fn line(&mut self, what: &str, status: &str, detail: fmt::Arguments) {
+        self.steps += 1;
+        match status {
+            "ok" | "ABSENT" => {}
+            "FAIL" => self.failed += 1,
+            _ => self.warned += 1,
+        }
         // Formatted once, into the buffer, then the same bytes go at whoever is
         // already listening. The stamp is captured HERE rather than at replay,
         // for the reason `src/log.rs` gives: a line drained later must still
@@ -222,6 +234,9 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     let mut out = Out {
         uart: console,
         boot,
+        steps: 0,
+        warned: 0,
+        failed: 0,
     };
     uart_init(&mut out);
     i2c_init(&mut out, devices);
@@ -236,6 +251,30 @@ pub(crate) fn bringup(console: &mut Uart, devices: &mut Devices, boot: bool) {
     // or a lock loss left over from the previous session.
     crate::irq::claim_edges();
     facilities(&mut out);
+
+    // THE VERDICT, last. The banner above says only that a console exists; the
+    // lines between it are per-step and have to be read one at a time. This is
+    // the line that says whether the boot ADDED UP, and it is the one to look
+    // at first.
+    let verdict = if out.failed != 0 {
+        "FAIL"
+    } else if out.warned != 0 {
+        "WARN"
+    } else {
+        "ok"
+    };
+    let (steps, warned, failed) = (out.steps, out.warned, out.failed);
+    out.line(
+        "complete",
+        verdict,
+        format_args!(
+            "{} step(s): {} ok, {} warned, {} failed",
+            steps,
+            steps - warned - failed,
+            warned,
+            failed
+        ),
+    );
 }
 
 /// One peripheral by name, for `init <peripheral>`.
@@ -263,7 +302,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if name.is_empty() {
         return bringup(uart, devices, false);
     }
-    let mut out = Out { uart, boot: false };
+    let mut out = Out { uart, boot: false, steps: 0, warned: 0, failed: 0 };
     if !one(&mut out, name, devices) {
         let _ = writeln!(out.uart, "no such peripheral; try `help`");
     }
