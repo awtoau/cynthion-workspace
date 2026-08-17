@@ -98,6 +98,15 @@ REPLY_S = 2.0
 # reintroduced one layer down.
 PROMPT = b">"
 
+# How long the wire must stay quiet after a prompt before the reply is complete.
+#
+# Waits for: the command's own output, which the editor prints AFTER redrawing
+# the prompt. Expected: replies land in 0.04-0.07 s on this build and the gap
+# between the redraw and the first output byte is far under that. 30 ms is
+# comfortably above the gap and small enough that a 64-step sweep pays 2 s.
+# On expiry: the prompt is accepted and the reply returned.
+SETTLE_S = 0.030
+
 
 def other_readers(node):
     """Every other process holding `node` open, as (pid, command) pairs.
@@ -228,8 +237,24 @@ class Link:
             chunk = self.read_available()
             if chunk:
                 reply += chunk
+                # A PROMPT IS NOT THE END UNTIL THE WIRE GOES QUIET.
+                #
+                # The line editor redraws on Enter: it erases the line, prints
+                # the prompt, re-prints what was typed, and only THEN runs the
+                # command and prints its output. So the first prompt after a
+                # command arrives BEFORE the answer, and stopping at it returns
+                # the previous command's transcript -- `bram status` answering
+                # with "time", and `info` coming back as bare prompt so the
+                # board could not identify itself (a whole afternoon of builds
+                # blamed on the board, which was healthy throughout).
+                #
+                # Whether that prompt landed at a chunk boundary was a matter of
+                # timing, which is why this was intermittent rather than broken.
                 if reply.rstrip().endswith(PROMPT):
-                    return reply
+                    more = self._settle(deadline)
+                    if not more:
+                        return reply
+                    reply += more
         # SAY SO. Expiry returned the partial bytes silently, so a timeout and a
         # genuinely short reply were the same value and the caller could not tell
         # a slow board from a quiet one (#295). The bytes are still returned --
@@ -239,6 +264,21 @@ class Link:
              f"(elapsed {time.monotonic() - started:.1f} s, "
              f"{len(reply)} byte(s) received)")
         return reply
+
+    def _settle(self, deadline):
+        """Bytes that arrived within `SETTLE_S` of a prompt; `b""` if none did.
+
+        RETURNED, never swallowed: these are the command's actual output, and
+        dropping them here would reproduce the very truncation this exists to
+        stop. Bounded by the caller's deadline, so a chatty board cannot extend
+        a command past its budget.
+        """
+        quiet_until = time.monotonic() + SETTLE_S
+        while time.monotonic() < min(quiet_until, deadline):
+            chunk = self.read_available()
+            if chunk:
+                return chunk
+        return b""
 
     def discard_pending(self):
         """Drop what arrived BEFORE this prompt.

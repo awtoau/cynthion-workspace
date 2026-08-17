@@ -86,6 +86,53 @@ pub fn count_split() {
     SPLIT.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Put any queued lines on the wire NOW, if nobody else is draining.
+///
+/// **Ordering, and the console does not work without it.** The ring is drained
+/// only by whoever finishes a submission, while `Uart::put` writes the editor's
+/// prompt and echo straight to the wire. So a reply sat queued until the NEXT
+/// command submitted something, and every reply arrived one command late:
+/// `bram status` answered with "time", `cpu status` answered with "bram
+/// status", and `info` returned 18 bytes of prompt so the board could not
+/// identify itself at all.
+///
+/// Re-entrant by construction: draining calls `put_at`, which calls this, which
+/// sees the claim held and returns.
+pub fn flush_pending() {
+    let ours = riscv::interrupt::free(|| {
+        if ON_WIRE.load(Ordering::Relaxed)
+            || HEAD.load(Ordering::Relaxed) == TAIL.load(Ordering::Relaxed) {
+            return false;
+        }
+        ON_WIRE.store(true, Ordering::Relaxed);
+        true
+    });
+    if ours {
+        drain_queued();
+    }
+}
+
+/// Pop and write queued lines until the ring is empty, then release the claim.
+///
+/// Released with the ring observed empty inside the same interrupts-off window
+/// that observed it, so a line cannot be queued into a ring nobody will drain.
+fn drain_queued() {
+    loop {
+        let mut queued = [0u8; LINE];
+        let next = riscv::interrupt::free(|| {
+            let taken = dequeue(&mut queued);
+            if taken.is_none() {
+                ON_WIRE.store(false, Ordering::Relaxed);
+            }
+            taken
+        });
+        match next {
+            Some((queued_base, length)) => raw(queued_base, &queued[..length]),
+            None => return,
+        }
+    }
+}
+
 /// Write `line` to `base`'s wire, or queue it whole if another writer is on it.
 ///
 /// Never blocks on another writer and never returns a partial line to the wire.
@@ -110,24 +157,7 @@ pub fn submit(base: usize, line: &[u8]) {
     // `ON_WIRE` and queues; we pick it up below rather than letting it onto the
     // wire behind us.
     raw(base, line);
-
-    loop {
-        let mut queued = [0u8; LINE];
-        let next = riscv::interrupt::free(|| {
-            let taken = dequeue(&mut queued);
-            if taken.is_none() {
-                // Released with the ring observed empty under the same
-                // interrupts-off window that observed it, so a line cannot be
-                // queued into a ring nobody is going to drain.
-                ON_WIRE.store(false, Ordering::Relaxed);
-            }
-            taken
-        });
-        match next {
-            Some((queued_base, length)) => raw(queued_base, &queued[..length]),
-            None => return,
-        }
-    }
+    drain_queued();
 }
 
 /// Bytes straight to the wire. The caller owns the claim.

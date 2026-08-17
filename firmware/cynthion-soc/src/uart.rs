@@ -188,6 +188,10 @@ fn is_decade(n: u32) -> bool {
 /// lines and must not mint a `Uart` to do it, which would build a 192-byte line
 /// buffer per line written.
 pub(crate) fn put_at(base: usize, byte: u8) {
+    // ORDER FIRST. This is the raw path -- the editor's prompt and echo -- and
+    // nothing else drains the ring, so a staged line must reach the wire before
+    // any byte written around it. See `wire::flush_pending`.
+    crate::wire::flush_pending();
     // SAFETY: fixed peripheral addresses; volatile because these are devices
     // whose values change underneath the compiler.
     unsafe {
@@ -570,6 +574,11 @@ impl core::fmt::Write for Uart {
         // line, so writing here is what let a task splice a whole line into the
         // middle of another one (#541). The line goes to the wire at its
         // newline, in one submission.
+        //
+        // The ring is drained by whoever finishes a submission AND by `put_at`
+        // before any raw byte -- see `wire::flush_pending`. Without that second
+        // drainer a reply sat queued until the next command submitted
+        // something, because the editor's prompt and echo are raw writes.
         for &byte in s.as_bytes() {
             if byte == b'\n' {
                 self.stage(b'\r');
