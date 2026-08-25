@@ -38,11 +38,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLURIBUS = Path("../pluribus")
+
+# Where pluribus is checked out. NOT an absolute path in a tracked file: this
+# repository is public, and `/mnt/...` names one machine and one account --
+# `scripts/private_path_check.py` refuses it, which is how this was caught.
+#
+# `PLURIBUS_ROOT` overrides; otherwise the sibling of this checkout, which is
+# the layout `CYN_REPOS_ROOT` already assumes elsewhere.
+PLURIBUS = Path(os.environ.get("PLURIBUS_ROOT")
+                or os.environ.get("CYN_REPOS_ROOT", str(ROOT.parent)))
+if not (PLURIBUS / "boards").is_dir() and (PLURIBUS / "pluribus").is_dir():
+    PLURIBUS = PLURIBUS / "pluribus"
 
 # What each signal is for, when the resource name alone does not say. Keyed by
 # the resource name the platform uses.
