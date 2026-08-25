@@ -1,0 +1,35 @@
+diff --git a/ecp5/pack.cc b/ecp5/pack.cc
+index 60979d34..3b0726b4 100644
+--- a/ecp5/pack.cc
++++ b/ecp5/pack.cc
+@@ -1716,8 +1716,28 @@ class Ecp5Packer
+             CellInfo *ci = cell.second.get();
+             if (ci->type == id_DQSBUFM) {
+                 CellInfo *pio = net_driven_by(ctx, ci->ports.at(id_DQSI).net, is_trellis_io, id_O);
+-                if (pio == nullptr || ci->ports.at(id_DQSI).net->users.entries() > 1)
+-                    log_error("DQSBUFM '%s' DQSI input must be connected only to a top level input\n",
++                // AWTO: the sole-consumer half of this test is dropped.
++                //
++                // The DQS pad's wire fans out THREE ways in the routing graph,
++                // all hardwired, none a mux that claims the pad -- from
++                // prjtrellis PICL0_DQS2/bits.db:
++                //
++                //   .fixed_conn JDQSI_DQS       JPADDIA_PIO   the DQS block
++                //   .fixed_conn PADDIA_IOLOGIC  JPADDIA_PIO   IOLOGIC
++                //   .mux JDIA / JPADDIA_PIO -                 -> E1_JF5 -> CIB
++                //
++                // The fabric arc costs zero configuration bits, so it is the
++                // mux's default and is already present in every DQSBUFM
++                // bitstream. Lattice Diamond's mapper accepts the same
++                // structure with no error. The restriction arrived whole in
++                // eb45956d (2019) with no stated rationale and has never been
++                // revisited.
++                //
++                // Why it matters: HyperBus variable latency requires the
++                // controller to read RWDS as a LEVEL during CA, while the same
++                // pin is the read strobe. awtoau/cynthion-workspace#540.
++                if (pio == nullptr)
++                    log_error("DQSBUFM '%s' DQSI input must be driven by a top level input\n",
+                               ci->name.c_str(ctx));
+                 if (!pio->attrs.count(id_BEL))
+                     log_error("DQSBUFM can only be used with a pin-constrained PIO connected to its DQSI input"
