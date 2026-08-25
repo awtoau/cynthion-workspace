@@ -236,6 +236,26 @@ DEFAULT_REGIONS = [
 ]
 
 
+def _inotify_instances():
+    """How many inotify instances this user holds, or `"?"` if unreadable.
+
+    Counted from `/proc`, because the number is the whole point of the message:
+    "the cap is spent" with no figure is a guess the reader has to check.
+    """
+    total = 0
+    try:
+        for fd_dir in Path("/proc").glob("[0-9]*/fd"):
+            try:
+                for fd in fd_dir.iterdir():
+                    if "inotify" in os.readlink(str(fd)):
+                        total += 1
+            except OSError:
+                continue
+    except OSError:
+        return "?"
+    return total
+
+
 @contextlib.contextmanager
 def _generator_lock():
     """Serialise the Scala generator against the checkout it runs in.
@@ -334,6 +354,24 @@ def generate(reset_addr, cache_sets=128, output=None, regions=None,
         if result.returncode != 0:
             errors = [l for l in result.stdout.splitlines()
                       if l.startswith("[error]")]
+            # NAME THE ENVIRONMENT, don't report it as a generator fault. sbt's
+            # file watcher takes an inotify instance, and on a workstation with
+            # many editor windows the per-user cap is already spent -- the whole
+            # of the failure then reaches the caller as "[error] Use 'last' for
+            # the full log", which reads as a broken CPU generator and is not
+            # one. Intermittent, because it depends on who else is running.
+            if "inotify" in result.stdout or "inotify" in result.stderr:
+                used = _inotify_instances()
+                cap = Path("/proc/sys/fs/inotify/max_user_instances")
+                limit = cap.read_text().strip() if cap.exists() else "?"
+                raise RuntimeError(
+                    "VexiiRiscv generation could not start: the per-user "
+                    f"inotify instance cap is spent ({used} in use, limit "
+                    f"{limit}). sbt's file watcher needs one. This is the "
+                    "machine, not the generator or this tree -- raise it with "
+                    "`sudo sysctl -w fs.inotify.max_user_instances=1024` (and "
+                    "/etc/sysctl.d to make it stick), or close some editor "
+                    "windows.")
             raise RuntimeError("VexiiRiscv generation failed: "
                                + (errors[-1] if errors else "unknown"))
 

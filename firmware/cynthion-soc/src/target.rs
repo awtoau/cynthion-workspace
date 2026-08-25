@@ -209,6 +209,7 @@ pub const BOOT_STATUS_TEXT: &[&str] = &[
     "the bootloader panicked",
     "staged image verified but NOT installed: this build boots from flash",
     "the BIST engine still owned the part; nothing was read",
+    "staged image verified, then the COPY read back something else (#544)",
 ];
 
 /// One source per FUSB302B `int` line, in `fusb302::Port::ALL` order.

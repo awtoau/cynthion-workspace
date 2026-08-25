@@ -154,6 +154,18 @@ enum Status {
     /// left it, and a staging access in that mode is answered all-ones (#432)
     /// -- which would otherwise be reported as `Silent`.
     Owned = 7,
+    /// The image verified, and then the COPY read back something else.
+    ///
+    /// The copy pass re-reads HyperRAM, so on a part that does not read the same
+    /// bytes twice the verify can pass and the copy install garbage. #186 makes
+    /// that real on the DQS path: reads there are wrong about a third of the
+    /// time, as a whole-burst one-beat offset.
+    ///
+    /// **Nothing can be recovered here and nothing tries.** The image region is
+    /// already overwritten -- which is exactly why the passes are split -- so
+    /// this reports and jumps like every other outcome. What it does not do is
+    /// say `Ran` about an image it has the evidence to know is wrong. #544.
+    CopyCrc = 8,
 }
 
 /// Whether the image region is the memory-mapped flash window rather than block RAM.
@@ -265,8 +277,14 @@ fn boot() -> ! {
                 // do what its name says and jumping afterwards would run whatever
                 // flash already held while reporting a successful install.
                 Status::FlashResident
+            } else if pass(length, Some((&raw const _image_start) as *mut u8))
+                != expected
+            {
+                // CONTROL FLOW IS UNCHANGED: this jumps, as every arm does. The
+                // copy pass already computed this checksum and the result was
+                // being dropped, so the only cost is the comparison. #544.
+                Status::CopyCrc
             } else {
-                pass(length, Some((&raw const _image_start) as *mut u8));
                 Status::Ran
             }
         }
@@ -304,6 +322,7 @@ fn enter_image(status: Status) -> ! {
         let fault = matches!(
             status,
             Status::Crc | Status::Length | Status::Silent | Status::Panicked
+                | Status::CopyCrc
         );
         write_volatile(
             SIDEBAND,
