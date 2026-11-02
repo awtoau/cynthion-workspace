@@ -3313,3 +3313,312 @@ responder, flash and power monitor.
 **The silent SoC.** Everything CPU-driven waits on it, and it is the one item in
 this plan with no established cause rather than an unstarted task.
 
+
+---
+
+## riscv-core-build.md and board-arbiter.md: narrative removed
+
+### Source: docs/riscv-core-build.md
+
+# Building the RISC-V core — and why you should, more often than you think
+
+**The core is generated, not vendored, and regenerating it takes seconds.** That
+sentence is the whole point of this file, because it was assumed false for a long
+time and the assumption cost real work.
+
+**Index:** [`hardware.md`] (hardware.md) · CPU notes:
+[`chips/vexiiriscv-cpu.md`] (chips/vexiiriscv-cpu.md)
+
+## The command
+
+`gateware/soc/cpu/cpu.py` runs it. Nothing else needs to be invoked by hand:
+
+```python
+import cpu.cpu
+vexii_cpu.generate(reset_addr=0x0, cache_sets=64)   # -> repos/vexiiriscv/VexiiRiscv.v
+```
+
+Under that it is one `sbt` run against `repos/vexiiriscv`:
+
+    sbt --batch --no-server "runMain vexiiriscv.Generate <flags>"
+
+**Requirements: `sbt` and a JDK. Java 25 works.** There is no toolchain freeze —
+that was believed and it is not true. Verified 2026-08-04 on
+`openjdk 25.0.4` with `sbt` from the distro. If a regeneration fails, read the
+error; do not conclude the toolchain is unusable.
+
+The generator writes `repos/vexiiriscv/VexiiRiscv.v` — a fixed path, because
+SpinalHDL's target directory is the process cwd and sbt's cwd must be the project
+root. `generate(output=...)` copies it to the caller's path; `top.py` passes
+`tmp/awto_soc/build/<variant>/VexiiRiscv.v`, and that copy is what synthesis
+reads.
+
+`gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v` is a checked-in copy that
+`scripts/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
+can be regenerated without sbt.
+
+### Concurrency ([#306] (https://github.com/awtoau/cynthion-workspace/issues/306))
+
+* One generator at a time. `cpu.py`'s lock covers the sbt run **and** the copy,
+  so a caller passing `output=` cannot read a half-written file.
+* The lock lives beside the **checkout**, not beside the worktree:
+  `<checkout>/../../tmp/vexii-generate.lock`. `git worktree add` does not
+  populate submodules, so every worktree shares the main checkout's
+  `repos/vexiiriscv` — a per-worktree lock would have excluded nothing.
+* `VEXII_ROOT` moves the sources and the lock together.
+* Not caching the netlist is deliberate here: every build regenerates, and a
+  build that skipped it once picked up another configuration's core and left the
+  board mute with every check passing ([#306] (https://github.com/awtoau/cynthion-workspace/issues/306)).
+
+## The flags, and where they live
+
+`GENERATE_FLAGS` in `gateware/soc/cpu/cpu.py` is the single list. Each entry
+carries its reasoning in a comment there; that file is the authority and this is
+a map, not a copy.
+
+| what | flag |
+|---|---|
+| 32-bit, M/C/A, `rdtime` | `--xlen 32 --with-rvm --with-rvc --with-rva --with-rdtime` |
+| I-cache, 64 sets × 2 ways | `--with-fetch-l1 --fetch-l1-sets 64 --fetch-l1-ways 2` |
+| D-cache, same shape | `--with-lsu-l1 --lsu-l1-sets 64 --lsu-l1-ways 2` |
+| Wishbone on all three buses | `--fetch-wishbone --lsu-wishbone --lsu-l1-wishbone` |
+| branch target buffer | `--with-btb --relaxed-branch --relaxed-btb` |
+| JTAG debug module on ER2 | `--debug-jtag-instruction` |
+| **performance counters** | `--performance-counters 4` |
+| PMA regions | `--region base=...,size=...,main=,exe=` per window |
+
+`--region` is not optional. VexiiRiscv's `defaultPma` covers only `0x80000000`
+and `0x10000000`, so a design with memory at `0x00000000` has it in **no region
+at all** and every access traps — including every stack operation. The failure
+looks exactly like a dead CPU.
+
+## The performance counters, and the lesson attached to them
+
+`--performance-counters 4` gives `mhpmcounter3..6`, each selected by writing an
+event id to the matching `mhpmevent` CSR (`0x323..0x326`), read back from
+`0xb03..0xb06`. The ids are VexiiRiscv's own, in
+`repos/vexiiriscv/src/main/scala/vexiiriscv/misc/Service.scala`:
+
+| id | event |
+|---|---|
+| `0x04` | `STALLED_CYCLES_FRONTEND` — waiting on instruction fetch |
+| `0x05` | `STALLED_CYCLES_BACKEND` — waiting on data |
+| `0x10`/`0x11` | `ICACHE_ACCESS` / `ICACHE_MISS` |
+| `0x12` | `ICACHE_WAITING` |
+| `0x18`/`0x19` | `DCACHE_LOAD_ACCESS` / `DCACHE_LOAD_MISS` |
+| `0x1A` | `DCACHE_WAITING` |
+
+`src/bench.rs`'s `hpm` module reads them around a walk.
+
+**The plugin is not optional while `rdtime` is kept.** `--with-rdtime` adds
+zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
+`--performance-counters` generates a **byte-identical** core to
+`--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
+FSM are all still there. Only the count is free. [#471] (https://github.com/awtoau/cynthion-workspace/issues/471).
+
+**Why this file exists.** Chasing a HyperRAM performance question, five gateware
+probes were built and five readings of the source produced five wrong
+explanations — sixteen transactions per line, 316 CK inside the burst, a
+non-streaming data phase, slow plumbing, and a benchmark bounded by instruction
+fetch. Every one was refuted by measurement. The counters settled it in one
+build, and had been available in the core the entire time:
+
+    front-stall 7   back-stall 294   dcache-waiting 79   dcache-miss 1
+
+Seven cycles of fetch stall and zero I-cache misses killed the "bounded by flash"
+theory outright. **Ask the CPU before instrumenting the fabric.**
+
+## What regeneration costs
+
+* **Seconds of wall clock.** `sbt` is warm after the first run.
+* **Area.** The four counters are 670 LUT4-equivalents and 94 FFs of the 13,685
+  and 7,828 the SoC has, counted off the two netlists.
+* **Timing: not what one build said.** "Adding the counters stopped the design
+  closing at `SYNC_MHZ = 72`" was one build against one build, and the placement
+  distribution at fixed occupancy is 9 MHz wide ([#467] (https://github.com/awtoau/cynthion-workspace/issues/467)). Measured over 40 seeds a
+  side, **every** counter configuration is slower than the shipping four:
+  `pc8` -2.48 MHz, `pc0` -2.99, `pc2` -2.96, and removing the plugin outright
+  -6.52 [-7.77, -5.27]. The smaller design is the slower one, and the counters
+  are not what is holding the clock down. Full matrix in [#481] (https://github.com/awtoau/cynthion-workspace/issues/481).
+* The constraint a build is given does not change what nextpnr produces ([#478] (https://github.com/awtoau/cynthion-workspace/issues/478)),
+  so `SYNC_MHZ` cannot be used to buy or lose margin either.
+* **Nothing else.** The PAC, the linker scripts and the firmware are unaffected
+  unless a `--region` or an address moves, and `./dev.py run` regenerates the
+  peripheral map itself.
+
+## When to regenerate rather than reason
+
+Whenever the question is about the CPU's own behaviour: stalls, cache hit rates,
+branch prediction, whether an instruction is implemented. A flag and a rebuild is
+usually cheaper than an afternoon of inference, and it produces a number instead
+of an argument.
+
+### Source: docs/board-arbiter.md
+
+# The board arbiter — one owner for the tty, the JTAG and what is configured
+
+**Never open the console tty yourself. Never run `apollo configure` yourself.**
+Submit a job.
+
+```bash
+./dev.py board run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 "bist smoke"
+./dev.py board status
+```
+
+- Server: [`scripts/board_arbiter.py`] (../scripts/board_arbiter.py), HTTP on
+  127.0.0.1:9100.
+- Client: [`scripts/board.py`] (../scripts/board.py), which **starts the server**
+  if the port is down. No `daemon start` step.
+- Records: `tmp/board-arbiter/jobs/<id>.json`, log `tmp/logs/board-arbiter.log`.
+- Proof harness against real hardware:
+  [`scripts/board_arbiter_proof.py`] (../scripts/board_arbiter_proof.py).
+
+## Why
+
+Agents coordinated for the board in prose and reflashed each other's
+measurements ([#430] (https://github.com/awtoau/cynthion-workspace/issues/430)): rows attributed to an unknown build, firmware 109 commits
+stale while measurements were taken against it, `hyperram_verify` resolving one
+variant's bitstream while the board ran another ([#367] (https://github.com/awtoau/cynthion-workspace/issues/367)).
+
+The board is not just a tty. It is the tty **plus** Apollo JTAG **plus** the
+state of what is configured. Nothing owned all three.
+
+## The shape, and what is deliberately absent
+
+- **One verb.** Submit a job, get a transcript with its provenance.
+- **Verbs are operations, never leases.** There is no acquire/release; an agent
+  never gets handed the tty.
+- **One high-level verb, primitives underneath**, all on `POST /jobs` with a
+  `kind`:
+
+  | kind | does |
+  |---|---|
+  | `run` (default) | resolve bitstream → configure if what is loaded is not what was asked → **confirm** → run the commands → transcript |
+  | `configure` | configure and confirm; no commands |
+  | `confirm` | is a design running, and which failure if not |
+  | `shell` | commands on whatever is loaded, provenance saying what that is |
+
+- **Not building.** A variant with no bitstream is refused, naming what is
+  built. `./dev.py` is the entry point;
+  [`soc_build_fanout.py`] (../scripts/soc_build_fanout.py) keeps the builds.
+- **Not flashing firmware.** [`soc_run.py`] (../scripts/soc_run.py) owns that.
+- **Not command dispatch.** A job's commands are SoC *shell* commands. The only
+  host program the arbiter runs is `apollo configure`, through
+  [`soc_confirm.py`] (../scripts/soc_confirm.py).
+
+The scope rule is the whole design: it owns a resource, it does not dispatch
+commands. The retired `cyn` (`debris/CYN_ARCHITECTURE.md`) died of the opposite.
+**A second unrelated verb is the signal it is repeating `cyn`.**
+
+## What a transcript carries
+
+- the bitstream sha256, its path and size — the identity that makes [#367] (https://github.com/awtoau/cynthion-workspace/issues/367)
+  impossible rather than remembered
+- whether **this job** configured, or found the image already loaded
+- the commit the **board** reports from `info` (firmware and gateware), not the
+  host checkout — those differ whenever the board was flashed from elsewhere
+- the `confirm` verdict by name
+- the die temperature the part reports
+- per command: the reply, `ok`/`timeout`/`preempted`, and the elapsed
+- the host checkout's commit and dirty flag, and which worktree submitted it
+
+## Why it cannot report a pass having run nothing
+
+`passed` requires **all** of:
+
+1. the pre-configure gate open (Apollo on the bus),
+2. a `confirm` verdict of `ok` — `apollo configure` exiting 0 is not a running
+   design ([#360] (https://github.com/awtoau/cynthion-workspace/issues/360)),
+3. the board's own `info` reporting an image commit,
+4. every command returning the shell's prompt,
+5. at least one command, for `run` and `shell`.
+
+Anything else is `failed`, `refused` or `preempted`, and the client exits
+non-zero. [`tests/test_board_arbiter.py`] (../tests/test_board_arbiter.py) drives
+each leg to a failure.
+
+## While a build is running
+
+- The arbiter holds the variant's `<build>/.build.lock` ([#351] (https://github.com/awtoau/cynthion-workspace/issues/351)) while it hashes
+  and configures the bitstream. `soc_run.py` rewrites `top.bit` in place, and
+  without the lock the sha256 recorded and the bytes the ECP5 got can be from
+  different builds.
+- A job submitted while that variant is building is **refused**, naming the
+  lock. It does not wait, and it does not configure half a file.
+
+## Going around it
+
+- The tty's holders are read from `/proc`
+  ([`board_holders.py`] (../scripts/board_holders.py)). Anything but
+  [`tio_user.py`] (../scripts/tio_user.py) — which owns the tty by design and
+  fans it out on 9000 — is a refusal naming the pid and command line.
+- An interactive session stays possible: run `tio_user.py`, and the arbiter
+  reads the console through its socket rather than competing for the node.
+
+## The idle queue
+
+`priority=idle` runs when nothing else is queued and is **preempted by a real
+submission** — abandoned mid-sweep. Nothing depends on it finishing.
+
+```bash
+./dev.py board idle --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \
+                    --repeat 200 --budget 6 "bist all 8"
+```
+
+**Idle results are not measurements and cannot be made into one.** Three
+barriers, because a caveat beside a number is read as the number:
+
+1. separate directory — `tmp/board-arbiter/idle/`, never `results/hyperram/`
+2. separate schema — `board-idle-observation`, which
+   [`hyperram_matrix_diff.py`] (../scripts/hyperram_matrix_diff.py) `load()`
+   refuses, by schema **and** by path
+3. none of a matrix run's keys — no `failures`, no `summary`, no `pins`
+
+They earn their board time with **events**, never rows:
+
+- a **wedge**, with the state that caused it still on the board until the next
+  job configures
+- a **tally that moved** between identical runs
+- a **cell that changed verdict** — compared over cells *both* runs reached,
+  since a preempted sweep prints a prefix
+- a **cell that disagrees with itself** across passes of one job — same
+  configuration, seconds apart, which is the sharpest form of it ([#437] (https://github.com/awtoau/cynthion-workspace/issues/437))
+- **die drift** ≥ 5 °C ([#341] (https://github.com/awtoau/cynthion-workspace/issues/341))
+- **BUILD CHANGED** — a different bitstream sha256 or board image than the
+  previous observation. Nothing is compared across it; another session
+  rebuilding the variant mid-soak is the event, not the cells that moved.
+
+## Preemption, and what it costs
+
+- The reader loop checks the preempt flag every 50 ms, so a sweep is abandoned
+  mid-command rather than at the next command.
+- An abandoned sweep leaves the board printing, so the arbiter marks it unknown:
+  the next `run` configures (that is the reset), and a `shell` job is refused
+  until something does. The cost of a preemption is one configure, ~2.5 s.
+
+## Timing, measured on this board (2026-08-12, `bist1-ck120`, image `80a242f`)
+
+| operation | measured |
+|---|---|
+| `info`, `bist status`, `bist smoke`, `bist latency 8` | 0.04–0.07 s |
+| `bist all 1` / `bist all 8` (4096 cells) | 4.39 s / 4.59 s |
+| configure + confirm | ~2.5 s |
+| AUX console re-enumeration after a configure | 0.41 s ([#419] (https://github.com/awtoau/cynthion-workspace/issues/419)) |
+| a job on an already-loaded variant, end to end | 0.27 s |
+
+## One board, many worktrees
+
+- The **port is the mutex**: agents work in git worktrees, and a lock under one
+  worktree's `tmp/` arbitrates nothing.
+- State and records live in the **main working tree**, resolved through
+  `git rev-parse --git-common-dir`.
+- The first client to find the port down starts the server **from its own
+  checkout**; `status` reports which root that was.
+
+## Superseded
+
+`scripts/fpga_job_runner.py` and `fpga-jobs/` — a directory queue drained
+one-shot, whose lock was worktree-local. Its `/proc` holder scan survives as
+`board_holders.py`; its positive/negative-control discipline survives as the
+arbiter's refusal rules and `board_arbiter_proof.py`.
+

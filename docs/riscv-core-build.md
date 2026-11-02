@@ -1,11 +1,6 @@
-# Building the RISC-V core — and why you should, more often than you think
+# Building the RISC-V core
 
-**The core is generated, not vendored, and regenerating it takes seconds.** That
-sentence is the whole point of this file, because it was assumed false for a long
-time and the assumption cost real work.
-
-**Index:** [`hardware.md`](hardware.md) · CPU notes:
-[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)
+The core is generated, not vendored; regeneration takes seconds. Index: [`hardware.md`](hardware.md). CPU notes: [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md).
 
 ## The command
 
@@ -20,10 +15,7 @@ Under that it is one `sbt` run against `repos/vexiiriscv`:
 
     sbt --batch --no-server "runMain vexiiriscv.Generate <flags>"
 
-**Requirements: `sbt` and a JDK. Java 25 works.** There is no toolchain freeze —
-that was believed and it is not true. Verified 2026-08-04 on
-`openjdk 25.0.4` with `sbt` from the distro. If a regeneration fails, read the
-error; do not conclude the toolchain is unusable.
+Requirements: `sbt` and a JDK. Java 25 works (verified 2026-08-04, `openjdk 25.0.4`, distro `sbt`). A failed regeneration is an error to read, not a frozen toolchain.
 
 The generator writes `repos/vexiiriscv/VexiiRiscv.v` — a fixed path, because
 SpinalHDL's target directory is the process cwd and sbt's cwd must be the project
@@ -94,32 +86,13 @@ zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
 `--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
 FSM are all still there. Only the count is free. [#471](https://github.com/awtoau/cynthion-workspace/issues/471).
 
-**Why this file exists.** Chasing a HyperRAM performance question, five gateware
-probes were built and five readings of the source produced five wrong
-explanations — sixteen transactions per line, 316 CK inside the burst, a
-non-streaming data phase, slow plumbing, and a benchmark bounded by instruction
-fetch. Every one was refuted by measurement. The counters settled it in one
-build, and had been available in the core the entire time:
-
-    front-stall 7   back-stall 294   dcache-waiting 79   dcache-miss 1
-
-Seven cycles of fetch stall and zero I-cache misses killed the "bounded by flash"
-theory outright. **Ask the CPU before instrumenting the fabric.**
+**Ask the CPU before instrumenting the fabric.** The counters answer stall and miss questions in one build (example HyperRAM walk: `front-stall 7  back-stall 294  dcache-waiting 79  dcache-miss 1`, i.e. not fetch-bound). History: [`history/soc-usb.md`](history/soc-usb.md).
 
 ## What regeneration costs
 
 * **Seconds of wall clock.** `sbt` is warm after the first run.
-* **Area.** The four counters are 670 LUT4-equivalents and 94 FFs of the 13,685
-  and 7,828 the SoC has, counted off the two netlists.
-* **Timing: not what one build said.** "Adding the counters stopped the design
-  closing at `SYNC_MHZ = 72`" was one build against one build, and the placement
-  distribution at fixed occupancy is 9 MHz wide ([#467](https://github.com/awtoau/cynthion-workspace/issues/467)). Measured over 40 seeds a
-  side, **every** counter configuration is slower than the shipping four:
-  `pc8` -2.48 MHz, `pc0` -2.99, `pc2` -2.96, and removing the plugin outright
-  -6.52 [-7.77, -5.27]. The smaller design is the slower one, and the counters
-  are not what is holding the clock down. Full matrix in [#481](https://github.com/awtoau/cynthion-workspace/issues/481).
-* The constraint a build is given does not change what nextpnr produces ([#478](https://github.com/awtoau/cynthion-workspace/issues/478)),
-  so `SYNC_MHZ` cannot be used to buy or lose margin either.
+* **Area.** The four counters are 670 LUT4-equivalents and 94 FFs, counted off the two netlists.
+* **Timing.** The counters are not what holds the clock down; measurement over 40 seeds a side in [#481](https://github.com/awtoau/cynthion-workspace/issues/481), [#467](https://github.com/awtoau/cynthion-workspace/issues/467). `SYNC_MHZ` as a constraint does not change what nextpnr produces ([#478](https://github.com/awtoau/cynthion-workspace/issues/478)).
 * **Nothing else.** The PAC, the linker scripts and the firmware are unaffected
   unless a `--region` or an address moves, and `./dev.py run` regenerates the
   peripheral map itself.
