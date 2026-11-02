@@ -87,6 +87,8 @@ pub const BULK_US: u32 = 100_000;
 /// Whole pump/echo: 1 MiB cap at a 1 MB/s worst case = 1.05 s; x1.25 rounded. Expiry: `Timeout`.
 const PUMP_US: u32 = 1_300_000;
 pub const PUMP_MAX: u32 = 1 << 20;
+/// Echo transfer size: the bench app reads 16384-byte buffers (#565); a read ends on a full one.
+const ECHO_CHUNK: u32 = 16384;
 /// RX FIFO refill is ~0.1 us per byte (4 usb cycles of CDC); 2 us covers one read.
 const FIFO_US: u32 = 2;
 /// Error retries per transaction: xHCI endpoint context CERR = 3.
@@ -524,17 +526,31 @@ impl Host {
         Ok(self.pump_end(p, naks0, started, r))
     }
 
-    /// OUT one packet, then IN until it has come back; the ramp is checked on the way in.
+    /// OUT `ECHO_CHUNK` bytes at a time, then IN until they are back; the ramp is checked.
+    /// The far read ends on a short packet: a whole-packet chunk under `ECHO_CHUNK` gets a
+    /// ZLP out, and the ZLP the far write adds comes back in (#565).
     pub fn echo(&mut self, ep: u8, len: u32, seed: u8) -> Result<Pump, Error> {
-        self.bulk_mps()?;
+        let mps = self.bulk_mps()? as u32;
         if len > PUMP_MAX {
             return Err(Error::Bad("len over 1 MiB"));
         }
         let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
         let mut r = Ok(());
         while r.is_ok() && p.bytes_in < len {
-            r = self.pump_send(ep, &mut p, len, seed, started);
-            while r.is_ok() && p.bytes_in < p.bytes_out {
+            let chunk = (len - p.bytes_in).min(ECHO_CHUNK);
+            let end = p.bytes_in + chunk;
+            let whole = chunk % mps == 0;
+            while r.is_ok() && p.bytes_out < end {
+                r = self.pump_send(ep, &mut p, end, seed, started);
+            }
+            if r.is_ok() && whole && chunk < ECHO_CHUNK {
+                r = Self::pump_left(started, "echo zlp").and_then(|left| self.bulk_out(ep, &[], left));
+                p.packets += r.is_ok() as u32;
+            }
+            while r.is_ok() && p.bytes_in < end {
+                r = self.pump_recv(ep, &mut p, Some(seed), started);
+            }
+            if r.is_ok() && whole {
                 r = self.pump_recv(ep, &mut p, Some(seed), started);
             }
         }
