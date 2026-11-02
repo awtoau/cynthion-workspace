@@ -85,6 +85,7 @@ SIMS = [
     "sbu_port_sim",
     "sideband_link_sim",
     "sideband_advertise_sim",
+    "sideband_watchdog_sim",
     "soc_test",
     "qspi_burst_sim",
     "bist_sim",
