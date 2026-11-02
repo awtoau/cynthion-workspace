@@ -41,8 +41,6 @@ pub struct Shell {
     esc: u8,
     /// First CSI parameter byte, which is all `ESC[3~` and friends need.
     param: u8,
-    /// Anything entered since the last Enter.
-    typed: bool,
     /// The line editor, built on first keypress.
     ///
     /// `Option<Option<..>>`: the outer is "not built yet", the inner is "could
@@ -101,7 +99,6 @@ impl Shell {
         cursor: 0,
         esc: 0,
         param: 0,
-        typed: false,
         editor: None,
         spoken: false,
     };
@@ -168,29 +165,11 @@ impl Shell {
             // written to the console. Nothing useful is left to say on it.
             None => return,
         };
-        // ENTER ON AN EMPTY LINE PRINTS THE LISTING.
-        //
-        // The crate does not call the processor for an empty line, so a bare
-        // Enter reprinted the prompt and said nothing -- which is the one moment
-        // a person is most likely to be asking what there is. `typed` tracks
-        // whether anything was entered since the last Enter, because the word
-        // shadow clears on a space and cannot answer this.
-        // Restamp before the crate prints the next prompt.
+        // Restamp before the crate prints the next prompt. An empty Enter only
+        // reprints the prompt; `help` lists the commands.
         if byte == b'\r' || byte == b'\n' {
             refresh_prompt(index, editor);
         }
-        if (byte == b'\r' || byte == b'\n') && !self.typed {
-            let _ = editor.write(|writer| {
-                use crate::shell::editor::Commands;
-                use embedded_cli::service::Help;
-                Commands::list_commands(writer)
-            });
-        }
-        self.typed = match byte {
-            b'\r' | b'\n' => false,
-            0x20..=0x7e => true,
-            _ => self.typed,
-        };
 
         // ESCAPE SEQUENCES ARE NOT TEXT. Treated as text, `0x1b` clears the
         // shadow and then `[` and `C` push as printable, so a right-arrow
