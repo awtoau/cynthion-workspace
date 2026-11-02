@@ -4,7 +4,7 @@
 Submit a job.
 
 ```bash
-./dev.py board run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 "bist smoke"
+./dev.py board run --variant ck80-sync60 "bist smoke"
 ./dev.py board status
 ```
 
@@ -104,7 +104,7 @@ each leg to a failure.
 submission** — abandoned mid-sweep. Nothing depends on it finishing.
 
 ```bash
-./dev.py board idle --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \
+./dev.py board idle --variant ck80-sync60 \
                     --repeat 200 --budget 6 "bist all 8"
 ```
 

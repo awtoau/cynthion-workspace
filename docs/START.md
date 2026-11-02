@@ -47,7 +47,7 @@ Submodules (4): apollo, cynthion, cynthion-hardware, vexiiriscv ([`.gitmodules`]
 | PAC / SVD | `./dev.py pac` | `firmware/cynthion-soc-pac` | `dev.log` |
 | VexiiRiscv netlist | automatic inside the gateware build; `generate()` in `cpu.py` runs `sbt --batch --no-server "runMain vexiiriscv.Generate ..."` | `repos/vexiiriscv/VexiiRiscv.v`, copied to `tmp/awto_soc/build/<slug>/VexiiRiscv.v` | `dev.log` |
 
-- Variant = env `CYNTHION_HYPERRAM_CK_MHZ`, `CYNTHION_HYPERRAM_DQS`, `CYNTHION_SYNC_MHZ` ([`variant.py`](../gateware/soc/variant.py)); defaults in `VARIANT_ENV`.
+- Variant = env `CYNTHION_HYPERRAM_CK_MHZ`, `CYNTHION_SYNC_MHZ` ([`variant.py`](../gateware/soc/variant.py)); defaults in `VARIANT_ENV`.
 - Bitstream cache: `tmp/bitcache/<digest>/`; unchanged sources = no resynthesis.
 - [`fast_build_env.py`](../scripts/fast_build_env.py) sets `AMARANTH_nextpnr_opts` (`--parallel-refine`) + `YOSYS_MAX_THREADS=1`; `soc_run.py --no-parallel-refine` drops it (reproducible placement).
 - CPU: [riscv-core-build.md](riscv-core-build.md); flags = `GENERATE_FLAGS` in `cpu.py`. Regenerates every build, seconds when sbt is warm.

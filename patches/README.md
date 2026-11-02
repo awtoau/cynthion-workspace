@@ -11,8 +11,8 @@ Where a patch belongs upstream, the issue that tracks that is named below.
 Drops the sole-consumer half of `pack_dqsbuf`, so a DQS-group pad can drive
 `DQSBUFM.DQSI` **and** be read as a level in fabric.
 
-Needed by: any `CYNTHION_HYPERRAM_DQS=1` build since `1a89c86`. Without it the
-build fails at packing with
+Needed only by the DQS builds, whose code was removed at tag `dqs-last`; the
+shipping build does not use it. Without it a DQS build fails at packing with
 
     ERROR: DQSBUFM '...' DQSI input must be connected only to a top level input
 
@@ -52,7 +52,7 @@ free-threaded 3.15t it compiles and then fails to import with
 
 Then point a build at it:
 
-    CYNTHION_HYPERRAM_DQS=1 CYNTHION_NEXTPNR_BIN=<build-dir>/build \
+    CYNTHION_NEXTPNR_BIN=<build-dir>/build \
         python3 scripts/soc_run.py --router router1
 
 `soc_run` prints `nextpnr OVERRIDDEN` when it is not the toolchain's, so no

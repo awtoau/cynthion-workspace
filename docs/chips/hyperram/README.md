@@ -2,7 +2,12 @@
 
 The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 
-**DQS is parked (Dan, 2026-11-02):** the shipping path is non-DQS (`dqs0`); DQS code stays in the tree switched off, DQS board tests are paused, and the upstream-PR drafts are in [`../../deprecated/dqs/`](../../deprecated/dqs). Issues carry the label `hyperram-dqs-experiment`.
+**DQS is parked (Dan, 2026-11-02):** the shipping path is non-DQS, DQS board tests are paused, and the upstream-PR drafts are in [`../../deprecated/dqs/`](../../deprecated/dqs). Issues carry the label `hyperram-dqs-experiment`.
+
+- **DQS code was removed at tag `dqs-last`** (the last commit that has it): `hyperram_dqs_controller.py`, `hyperram_dqs_phy.py`, the `CYNTHION_HYPERRAM_DQS` variant flag and `dqs` slug tag, `hr_fast`, the DQS sims and scripts, the `hr sel` / `hr sweep` shell verbs.
+- Restore with `git checkout dqs-last -- <path>`, or revert the removal commits.
+- Measurements and findings in these docs stay. Links to removed files are plain names; read one with `git show dqs-last:<path>`.
+- Still in the engine, inert without DQS (#343): the capture-phase `sel` axis (`READCLKSEL` register, `SEL_VALUES`, `Census`, `pick_phase`).
 
 | document | what it is |
 |---|---|
@@ -11,7 +16,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 | [app-notes.md](app-notes.md) | **what the vendor says outside the datasheet** — the four Winbond application notes, the four questions they settle, and the three places they contradict the datasheet or each other |
 | [bist-plan.md](bist-plan.md) | **the method** — what to measure, the matrix, and the rule that makes a result admissible |
 | [survey.md](survey.md) | **everyone else** — nineteen open HyperBus controllers in RTL, the software and SoC drivers above them, and the simulation models |
-| [byte-order.md](byte-order.md) | **which byte goes where** — the 32-bit DQS path's byte and word order, measured, with the check that keeps it |
+| [byte-order.md](byte-order.md) | **which byte goes where** — the 32-bit DQS path's byte and word order, measured (code removed, `dqs-last`) |
 | [models.md](models.md) | **the part without the board** — Winbond's own model, the open twin, and the testbench that holds them equal |
 | [config-ac.md](config-ac.md) | **Winbond's own constants** — the vendor model's plaintext AC table, register defaults and CA words, transcribed off a file that cannot be committed |
 | [sim-audit.md](sim-audit.md) | **every assertion in `soc_hyperram_sim.py` classified**, and `hyperram_sim_census.py` holds the file to it ([#346](https://github.com/awtoau/cynthion-workspace/issues/346)) |
@@ -30,7 +35,7 @@ because zero errors and a comparator that never fired produce the same number.
 
 ## Where the code is
 
-    gateware/soc/peripherals/hyperram*.py    the controller and the DQS PHY
+    gateware/soc/peripherals/hyperram*.py    the controller
     gateware/probes/hyperram/                the standalone harnesses
     scripts/hyperram_*.py                    the host-side drivers
 
