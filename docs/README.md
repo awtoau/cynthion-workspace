@@ -67,6 +67,7 @@ in its §13 got there in the first place.
 * [`git.md`](git.md) — Git & Submodules Reference
 * [`github_actions.md`](github_actions.md) — (no title)
 * [`gsg-scenarios.md`](gsg-scenarios.md) — What upstream Cynthion officially does, and what implements it
+* [`apollo-firmware.md`](apollo-firmware.md) — Apollo firmware: the SoC needs the fork, and how to restore it
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * **[`instruments.md`](instruments.md) — checks that cannot report the failure they exist to catch**: the four shapes, and the rules that follow
 * [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
