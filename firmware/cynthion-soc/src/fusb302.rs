@@ -14,7 +14,7 @@
 //!
 //! - `POWER` -- bandgap, wake, measure block, receiver. Not the internal
 //!   oscillator, only needed to *send* PD messages.
-//! - `MASK` -- unmask `I_BC_LVL` and `I_VBUSOK`, mask the rest.
+//! - `MASK` -- unmask `I_VBUSOK`, mask the rest (`I_BC_LVL` flapped continuously, #555).
 //! - `MASKA`/`MASKB` -- everything masked. Carry PD and hard-reset events;
 //!   nothing here acts on one yet, and unmasking would produce interrupts with
 //!   no handler -- a storm, not a curiosity, on a shared level-sensitive line.
@@ -134,9 +134,9 @@ const SWITCHES0_MEASURE: u8 = SWITCHES0_MEASURE_CC1 | SWITCHES0_MEASURE_CC2;
 /// changing to the opposite role, while AUX remains measure-only and untouched.
 const SWITCHES0_SOURCE: u8 = (1 << 7) | (1 << 6);
 
-/// `MASK`: unmask `I_BC_LVL` (bit 0) and `I_VBUSOK` (bit 7), mask everything
-/// else. A 1 in this register MASKS, so the value is the complement.
-const MASK_WANTED: u8 = !(0b1000_0001);
+/// `MASK`: unmask `I_VBUSOK` (bit 7), mask everything else including `I_BC_LVL`:
+/// it fired every 20-40 ms on both ports with no state change (#555). A 1 MASKS.
+const MASK_WANTED: u8 = !(0b1000_0000);
 
 /// `MASK.M_BC_LVL`, bit 0. A 1 masks.
 ///
