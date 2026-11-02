@@ -39,7 +39,7 @@ from amaranth.sim import Simulator
 # purpose, and Amaranth's warning about it would be the only noise in the output.
 warnings.filterwarnings("ignore", category=UnusedElaboratable)
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes" / "sideband"))

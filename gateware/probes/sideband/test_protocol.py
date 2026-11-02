@@ -14,7 +14,7 @@ responder's own state. That is a test bitstream's job -- diagnosing a board that
 will not boot far enough to have a console.
 
 The shipping SoC does **not** implement them, and answers them as unknown
-commands. Its host side is `scripts/sideband_decoder.py`, which does not know
+commands. Its host side is `scripts/sideband/sideband_decoder.py`, which does not know
 these opcodes at all. Keeping the two apart is the point: a decoder that knows
 opcodes its bitstream does not implement can only mislead, and a shipping design
 that answered them with zeros would look like a working query returning nothing.

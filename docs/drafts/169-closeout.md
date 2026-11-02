@@ -40,7 +40,7 @@ Stated so the issue is not re-read as current.
   platform import at all.
 - **`gateware/soc/top.py:176, 181, 277, 312, 1642`** (stale
   comment citations) → now `177, 182, 278, 313, 1711`.
-- **`scripts/sideband_build.py:40`** → line **43**, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169) missed
+- **`scripts/sideband/sideband_build.py:40`** → line **43**, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169) missed
   `scripts/fabric_build.py:72`, which does the same `sys.path.insert(0,
   "repos/apollo")`.
 - **`machine_setup.py:72-76`** → the `EDITABLE` list is now ~line 83 and holds
@@ -153,7 +153,7 @@ lying around. Vendoring `qspi_flash.py` inherits it. Worth its own issue (below)
 
 - **Verification:** `dev.py lint`, `dev.py test`, `scripts/soc_sims.py`,
   `dev.py build`, plus an elaboration of each consumer above.
-  `scripts/sideband_link_sim.py` / `sideband_advertise_sim.py` are the closest
+  `scripts/sideband/sideband_link_sim.py` / `sideband_advertise_sim.py` are the closest
   thing to unit tests for `sideband.py`.
 - **Hardware:** none for the vendoring. Confirming the sideband and QSPI
   bitstreams still behave *does* need the board, and should be a separate,
@@ -180,7 +180,7 @@ Blocked by step B. Three separate jobs, and the first is a question, not work:
    `diamond/ladder.py:300`, and a printed hint in `soc_jtag_stage.py:405`. All
    become `-m apollo_fpga.commands.cli`. Mechanical, and verifiable without a
    board via `--help` / `info` returning "no device".
-   `scripts/sideband_build.py:43` and `scripts/fabric_build.py:72` drop their
+   `scripts/sideband/sideband_build.py:43` and `scripts/fabric_build.py:72` drop their
    `sys.path.insert(0, "repos/apollo")` in the same change.
 
 - **Verification:** `dev.py lint`, `dev.py test`, `scripts/soc_sims.py`, plus

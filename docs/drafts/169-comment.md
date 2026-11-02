@@ -35,7 +35,7 @@
   useful. It is a separate decision, not a conversion.
 - **Still eight checks, still four touching `repos/`, but a different four:**
   `rust`, `apollo`, `python`, `freethreading`.
-- `scripts/sideband_build.py:40` → **43**, and `scripts/fabric_build.py:72` does
+- `scripts/sideband/sideband_build.py:40` → **43**, and `scripts/fabric_build.py:72` does
   the same `sys.path.insert(0, "repos/apollo")` and was missed.
 - Stale comment citations in `top.py`: `176, 181, 277, 312, 1642` →
   `177, 182, 278, 313, 1711`. Line **84** — the `variable_clock` import — is

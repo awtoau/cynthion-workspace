@@ -175,7 +175,7 @@ def build_and_flash(handle, baud, open_drain):
         return False
 
     gateware = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "sideband_build.py"),
+        [sys.executable, str(ROOT / "scripts" / "sideband" / "sideband_build.py"),
          "--baud", str(baud),
          "--drive", "open-drain" if open_drain else "push-pull"],
         cwd=ROOT, capture_output=True, text=True)

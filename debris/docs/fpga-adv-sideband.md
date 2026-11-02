@@ -21,7 +21,7 @@ Implementations:
 |---|---|---|
 | Responder | [sideband_link.py](../../ecp5-test/sideband_link.py) | [sideband.py](../../repos/apollo/apollo_fpga/gateware/sideband.py) |
 | Wired to the pad by | [sideband_debug.py](../../ecp5-test/sideband_debug.py) | [sideband_gateware.py](../../ecp5-test/sideband/sideband_gateware.py) |
-| Host side | [sideband_decoder.py](../../scripts/sideband_decoder.py) | [test_protocol.py](../../ecp5-test/sideband/test_protocol.py) |
+| Host side | [sideband_decoder.py](../../scripts/sideband/sideband_decoder.py) | [test_protocol.py](../../ecp5-test/sideband/test_protocol.py) |
 | `PING` reports | v2 | v1 |
 
 Common to both: [fpga_adv.c](../../repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c)
@@ -411,7 +411,7 @@ bitstream that seized CONTROL on configuration would take the port from Apollo's
 own debug interface, which is the path used to recover a board that will not
 boot. Clearing bit 5 hands the port back one timeout later.
 
-Simulated frame-exact by `scripts/sideband_advertise_sim.py`. **Not verified on
+Simulated frame-exact by `scripts/sideband/sideband_advertise_sim.py`. **Not verified on
 hardware** — no bitstream has been built with it, and nothing has yet put Apollo
 into UART mode from the host.
 

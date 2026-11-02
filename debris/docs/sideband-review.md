@@ -338,8 +338,8 @@ parsing.
 
 ## 5. What nothing tests
 
-`scripts/sideband_link_sim.py` checks the responder at the pad — 20 checks, all on
-`SidebandLink` **alone**. `scripts/sideband_advertise_sim.py` checks
+`scripts/sideband/sideband_link_sim.py` checks the responder at the pad — 20 checks, all on
+`SidebandLink` **alone**. `scripts/sideband/sideband_advertise_sim.py` checks
 `SidebandAdvertiser` **alone**, 16 checks. Both are in `soc_sims.py`'s list
 (`:65-66`). Neither covers what the proposals need:
 

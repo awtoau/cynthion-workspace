@@ -16,8 +16,8 @@ The oss-cad-suite environment matters: yosys, nextpnr-ecp5 and ecppack must be
 the versions this project pins, and Amaranth finds them on PATH. Rather than
 source a shell script, the paths are added directly.
 
-    ./scripts/sideband_build.py
-    ./scripts/sideband_build.py --baud 460800 --drive open-drain
+    ./scripts/sideband/sideband_build.py
+    ./scripts/sideband/sideband_build.py --baud 460800 --drive open-drain
 """
 
 import argparse
@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUILD_DIR = ROOT / "gateware" / "probes" / "sideband" / "build"
 
 sys.path.insert(0, str(ROOT / "scripts"))

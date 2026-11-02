@@ -286,7 +286,7 @@ is that a state change can be looked into when it happens instead of polled.
 | bus and device ownership | `scripts/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
 | orientation and interrupt decode | `scripts/soc_typec_sim.py` — both bands from one comparator, and the read-to-clear registers |
 | the cable-reversal experiment | `scripts/typec_watch.py` — the only thing that can validate orientation |
-| `DEVICE_ID` decode helper | `scripts/sideband_decoder.py` |
+| `DEVICE_ID` decode helper | `scripts/sideband/sideband_decoder.py` |
 
 **There is no host-side script for either applet.** The values above were read ad
 hoc and survive only in the commit messages cited — worth fixing if these parts are
