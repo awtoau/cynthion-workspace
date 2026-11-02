@@ -8,6 +8,35 @@
 - The RV does the protocol and a diagnostics side channel (power, port analysis, console). Gateware stays minimal.
 - The PC needs no custom driver.
 
+## Decisions (Dan, 2026-11-02)
+| # | question | answer |
+|---|---|---|
+| 1 | AOA peer | **A** (Cynthion hosts a phone). C (tap) later, built on A. |
+| 2 | phone port | **either**: A and C share one data bus and `target_phy`. Native C cable works: `vbus charge` powers TARGET-A and C and presents Rp on C. A-to-C cable on A also fine (accepted). |
+| 3 | speed | **high speed preferred**; full speed is the fallback. |
+| 4 | PC driver | composite device: libusb interface for the AOA mirror + stock CDC-ACM for console/diag (trade-off below). |
+| 5-6 | streams / console | **one USB port to the PC carries everything**: the AOA mirror, diagnostics and console. Simpler cabling; the link never runs at 100% so there is room. |
+| 7 | A-to-C cable | yes. |
+| 8 | bitstream | **dedicated** SoC bitstream (below). |
+| 9 | PC link | **AUX**; CONTROL stays for programming, test and diagnostics (shared with Apollo). |
+| 10 | RC behaviour | handshake strings already known (V, awto-dji live tests). **Build the AOA test app first** (awto-dji bench app); capture the real RC only if byte-level timing is needed. |
+
+### PC side: stock cdc_acm vs libusb
+| | stock `cdc_acm` only | libusb interface (+ ACM for console) |
+|---|---|---|
+| PC setup | none; `/dev/ttyACM*` on Linux/Windows/macOS | udev rule (Linux) or WinUSB/Zadig (Windows); our tool |
+| data model | byte stream: packet boundaries, zero-length packets and exact sizes are lost | true packets: sizes, ZLPs and boundaries visible |
+| fits "mirror AOA" | only with our own framing | 1:1: PC bulk IN/OUT = the phone's AOA bulk IN/OUT |
+| fits the test rig (size sweep, ZLP, fuzz) | weak: cannot see a ZLP bug | strong |
+| speed | fine; line settings meaningless | full bulk rate |
+- Chosen: **composite** = interface 0 vendor bulk pair (the AOA mirror, libusb) + CDC-ACM interfaces for console/diagnostics (stock, no PC setup). Both on AUX (`1d50:6180` family, new PID in `usb_ids.py`).
+- Cost: LUNA descriptor work for the composite device; effort UNSURE.
+
+### Bitstream: dedicated vs also passing the analyzer
+- **Dedicated SoC bitstream (chosen).** One design with the role-per-PHY engine (host/device/raw). Topology A needs no analyzer: the Cynthion is the host, so the RV already sees every byte it sends and receives.
+- The stock analyzer stays a separate bitstream: `cynthion run analyzer` loads it from the wheel, and it is in FPGA flash (replug boots it). Use it to capture the **real** RC to phone link (a tap, not our host) with Packetry.
+- Combining capture and host in one bitstream is topology C: a second PHY and an analyzer core (~18k LUT projected, not measured). Defer until A works.
+
 ## AOA in one page (spec: <https://source.android.com/docs/core/interaction/accessories/aoa>, AOA 1.0)
 - Accessory = USB **host**; powers the bus (500 mA, 5 V). Android phone = USB **device**.
 - Already in accessory mode if VID `0x18D1`, PID `0x2D00` (AOA) or `0x2D01` (AOA + ADB).
