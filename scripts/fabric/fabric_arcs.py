@@ -57,8 +57,8 @@ Two denominators, and they mean different things
 
 Both are reported, because quoting either alone overstates something.
 
-    ./scripts/fabric_arcs.py tmp/fabric-coverage/seed-*/top.config
-    ./scripts/fabric_arcs.py --device LFE5U-12F path/to/top.config
+    ./scripts/fabric/fabric_arcs.py tmp/fabric-coverage/seed-*/top.config
+    ./scripts/fabric/fabric_arcs.py --device LFE5U-12F path/to/top.config
 """
 
 import argparse
@@ -68,7 +68,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

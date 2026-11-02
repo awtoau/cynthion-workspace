@@ -47,9 +47,9 @@ Nothing here sleeps. Builds run to completion; each hardware test stops on a
 count of rounds, not a duration. Wall-clock figures are recorded because a
 mismatch rate needs a denominator, not because anything waits on them.
 
-    ./scripts/fabric_sweep.py --configs 8
-    ./scripts/fabric_sweep.py --configs 24 --jobs 8
-    ./scripts/fabric_sweep.py --configs 24 --skip-build   # re-test what is built
+    ./scripts/fabric/fabric_sweep.py --configs 8
+    ./scripts/fabric/fabric_sweep.py --configs 24 --jobs 8
+    ./scripts/fabric/fabric_sweep.py --configs 24 --skip-build   # re-test what is built
 """
 
 import argparse
@@ -60,8 +60,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent.parent
+SCRIPTS = Path(__file__).resolve().parent.parent
 WORK = ROOT / "tmp" / "fabric-coverage"
 
 sys.path.insert(0, str(SCRIPTS))
@@ -83,7 +83,7 @@ def build(seed, directory, blocks, round_bits, min_luts, golden=None):
     """One configuration. Returns (ok, seconds, log path)."""
     directory.mkdir(parents=True, exist_ok=True)
     log = directory / "build.log"
-    command = [sys.executable, str(SCRIPTS / "fabric_build.py"),
+    command = [sys.executable, str(SCRIPTS / "fabric" / "fabric_build.py"),
                "--seed", str(seed),
                "--build-dir", str(directory),
                "--log", str(log),
@@ -122,7 +122,7 @@ def measure(directory):
 def test(directory, rounds, emit):
     """Load and run one configuration. Returns the result dict."""
     result_path = directory / "result.json"
-    command = [sys.executable, str(SCRIPTS / "fabric_run.py"),
+    command = [sys.executable, str(SCRIPTS / "fabric" / "fabric_run.py"),
                "--bitstream", str(directory / "top.bit"),
                "--rounds", str(rounds),
                "--result-json", str(result_path),
@@ -272,7 +272,7 @@ def main():
             loaded = test(directory, args.rounds, emit)
             emit(f"  loaded; fabric_run.py's verdict: {loaded['verdict']}")
             outcome = subprocess.run(
-                [sys.executable, str(SCRIPTS / "fabric_negative_control.py")],
+                [sys.executable, str(SCRIPTS / "fabric" / "fabric_negative_control.py")],
                 cwd=ROOT, capture_output=True, text=True)
             for line in (outcome.stdout or "").splitlines():
                 emit(f"  {line}")

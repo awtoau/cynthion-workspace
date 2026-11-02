@@ -29,9 +29,9 @@ The oss-cad-suite environment matters: yosys, nextpnr-ecp5 and ecppack must be
 the versions this project pins, and Amaranth finds them on PATH. Rather than
 source a shell script, the paths are added directly.
 
-    ./scripts/fabric_build.py
-    ./scripts/fabric_build.py --blocks 120 --min-luts 20000
-    ./scripts/fabric_build.py --seed 7 --build-dir tmp/fabric-coverage/seed-007
+    ./scripts/fabric/fabric_build.py
+    ./scripts/fabric/fabric_build.py --blocks 120 --min-luts 20000
+    ./scripts/fabric/fabric_build.py --seed 7 --build-dir tmp/fabric-coverage/seed-007
 
 `--seed` is what makes more than one configuration possible. The same source
 placed differently routes differently, and routing is the only way to reach
@@ -50,7 +50,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUILD_DIR = ROOT / "tmp" / "fabric" / "build"
 
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -161,7 +161,7 @@ def main():
 
     sys.path.insert(0, str(ROOT / "gateware"))
     sys.path.insert(0, str(ROOT / "gateware" / "probes"))
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from fabric.fabric_gateware import BLOCKS, ROUND_BITS
 
     blocks = args.blocks if args.blocks is not None else BLOCKS

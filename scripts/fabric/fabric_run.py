@@ -55,10 +55,10 @@ placements it says whether they all ran at the same temperature, and if a soak
 ever shows mismatches correlating with it, that is the signature of a marginal
 part rather than a hard defect. This test cannot currently tell those apart.
 
-    ./scripts/fabric_run.py                    # load, then watch
-    ./scripts/fabric_run.py --no-load          # watch what is already loaded
-    ./scripts/fabric_run.py --rounds 2000000   # a longer soak
-    ./scripts/fabric_run.py --bitstream tmp/fabric-coverage/seed-003/top.bit
+    ./scripts/fabric/fabric_run.py                    # load, then watch
+    ./scripts/fabric/fabric_run.py --no-load          # watch what is already loaded
+    ./scripts/fabric/fabric_run.py --rounds 2000000   # a longer soak
+    ./scripts/fabric/fabric_run.py --bitstream tmp/fabric-coverage/seed-003/top.bit
 """
 
 import argparse
@@ -67,13 +67,13 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BITSTREAM = ROOT / "tmp" / "fabric" / "build" / "top.bit"
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from devlog import emit  # noqa: E402
 
@@ -105,7 +105,7 @@ def load(bitstream, emit):
     `apollo configure` is not one (#360).
     """
     if not bitstream.exists():
-        emit(f"no bitstream at {bitstream} -- run scripts/fabric_build.py")
+        emit(f"no bitstream at {bitstream} -- run scripts/fabric/fabric_build.py")
         return False
     emit(f"loading {bitstream} into SRAM (volatile; a power cycle undoes it)")
     import soc_confirm
@@ -166,6 +166,9 @@ def main():
     # Recompute the golden value here, from the specification, rather than
     # reading it out of the build log. A gateware built against a wrong
     # constant would report clean forever; this is the check that catches it.
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))  # scripts/ root, for _paths
     import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from fabric_golden import golden as compute_golden, verify_vector_model
     checked = verify_vector_model(BLOCKS, 300)

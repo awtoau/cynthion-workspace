@@ -32,9 +32,9 @@ overlap is measured as the share of occupied LUT sites two builds have in
 common -- the exact `RxCy` tile and `SLICEn.Kn` position, not a row histogram,
 because two placements can have identical row totals and share no site at all.
 
-    ./scripts/fabric_placement.py
-    ./scripts/fabric_placement.py --config path/to/top.config
-    ./scripts/fabric_placement.py --compare tmp/fabric-coverage/seed-*/top.config
+    ./scripts/fabric/fabric_placement.py
+    ./scripts/fabric/fabric_placement.py --config path/to/top.config
+    ./scripts/fabric/fabric_placement.py --compare tmp/fabric-coverage/seed-*/top.config
 """
 
 import argparse
@@ -43,7 +43,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
@@ -209,7 +209,7 @@ def main():
         return 0
 
     if not args.config.exists():
-        print(f"no config at {args.config} -- run scripts/fabric_build.py")
+        print(f"no config at {args.config} -- run scripts/fabric/fabric_build.py")
         return 1
 
     rows, columns, total = survey(args.config)

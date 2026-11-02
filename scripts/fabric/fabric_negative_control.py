@@ -29,7 +29,7 @@ silicon through the same JTAG path.
 This deliberately does not reconfigure. It verifies the loaded design has a
 clean baseline before arming the control.
 
-    ./scripts/fabric_negative_control.py
+    ./scripts/fabric/fabric_negative_control.py
 """
 
 import argparse
@@ -37,12 +37,12 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from devlog import emit  # noqa: E402
 

@@ -41,7 +41,7 @@ Stated so the issue is not re-read as current.
 - **`gateware/soc/top.py:176, 181, 277, 312, 1642`** (stale
   comment citations) → now `177, 182, 278, 313, 1711`.
 - **`scripts/sideband/sideband_build.py:40`** → line **43**, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169) missed
-  `scripts/fabric_build.py:72`, which does the same `sys.path.insert(0,
+  `scripts/fabric/fabric_build.py:72`, which does the same `sys.path.insert(0,
   "repos/apollo")`.
 - **`machine_setup.py:72-76`** → the `EDITABLE` list is now ~line 83 and holds
   one entry.
@@ -180,7 +180,7 @@ Blocked by step B. Three separate jobs, and the first is a question, not work:
    `diamond/ladder.py:300`, and a printed hint in `soc_jtag_stage.py:405`. All
    become `-m apollo_fpga.commands.cli`. Mechanical, and verifiable without a
    board via `--help` / `info` returning "no device".
-   `scripts/sideband/sideband_build.py:43` and `scripts/fabric_build.py:72` drop their
+   `scripts/sideband/sideband_build.py:43` and `scripts/fabric/fabric_build.py:72` drop their
    `sys.path.insert(0, "repos/apollo")` in the same change.
 
 - **Verification:** `dev.py lint`, `dev.py test`, `scripts/soc_sims.py`, plus

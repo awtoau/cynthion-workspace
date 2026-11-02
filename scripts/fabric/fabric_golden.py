@@ -25,8 +25,8 @@ Speed matters because the hardware is about 700 times faster than the model: at
 seconds. That asymmetry is why the gateware restarts each round from its seeds
 and checks itself against one constant, rather than the host trying to keep up.
 
-    ./scripts/fabric_golden.py
-    ./scripts/fabric_golden.py --check-cycles 500
+    ./scripts/fabric/fabric_golden.py
+    ./scripts/fabric/fabric_golden.py --check-cycles 500
 """
 
 import argparse
@@ -36,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes"))

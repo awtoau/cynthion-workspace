@@ -25,25 +25,28 @@ depend on how many cycles the round contains.
 If this disagrees, the bug is in the gateware or the model, and the hardware
 result would have been meaningless. It runs in seconds.
 
-    ./scripts/fabric_sim.py
-    ./scripts/fabric_sim.py --round-bits 8 --blocks 7
+    ./scripts/fabric/fabric_sim.py
+    ./scripts/fabric/fabric_sim.py --round-bits 8 --blocks 7
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from devlog import emit  # noqa: E402
 
 from amaranth.sim import Simulator
 
 from fabric.fabric_gateware import FabricTest, REG_SIGNATURE
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))  # scripts/ root, for _paths
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from fabric_golden import golden
 

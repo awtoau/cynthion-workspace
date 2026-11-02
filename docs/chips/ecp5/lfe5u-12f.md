@@ -371,7 +371,7 @@ board index. This note covers the silicon, not the gateware running on it.
 |---|---|
 | pin map (vendored) | `gateware/board/cynthion_r1_4.py` |
 | fabric test gateware | `gateware/probes/fabric/fabric_gateware.py` |
-| build / run / control | `scripts/fabric_build.py`, `fabric_run.py`, `fabric_negative_control.py`, `fabric_placement.py`, `fabric_sim.py`, `fabric_golden.py` |
+| build / run / control | `scripts/fabric/fabric_build.py`, `fabric_run.py`, `fabric_negative_control.py`, `fabric_placement.py`, `fabric_sim.py`, `fabric_golden.py` |
 | flashing and configuration | [`../chips/ecp5/flashing.md`](../ecp5/flashing.md) |
 | live opcode sweep | [`../chips/ecp5/config-engine-probe.md`](../ecp5/config-engine-probe.md), `scripts/ecp5_cmd_probe.py` |
 
