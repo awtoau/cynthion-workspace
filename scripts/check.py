@@ -530,6 +530,8 @@ def main() -> int:
                         help="run checks concurrently (free-threaded build makes this real)")
     parser.add_argument("--jobs", type=int, default=4, help="workers for --parallel")
     parser.add_argument("--verbose", action="store_true", help="stream command output")
+    parser.add_argument("--allow-skips", action="store_true",
+                        help="a skipped check does not fail the run (default: it does)")
     args = parser.parse_args()
 
     if args.list:
@@ -623,7 +625,16 @@ def main() -> int:
             print(f"{YELLOW}⊘ {r.name} skipped — {r.detail}{RESET}")
 
     print()
-    return 1 if failed else 0
+    return exit_code(results, args.allow_skips)
+
+
+def exit_code(results: List[Result], allow_skips: bool) -> int:
+    # A skipped check ran nothing; green would hide a smaller gate (#392).
+    if any(not r.ok for r in results):
+        return 1
+    if not allow_skips and any(r.skipped for r in results):
+        return 1
+    return 0
 
 
 def _report(r: Result) -> None:
