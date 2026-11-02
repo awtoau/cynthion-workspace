@@ -366,8 +366,10 @@ impl Host {
         let r = self.host()?;
         self.stage(r, TY_SETUP, 0, 0, setup, &mut [], "control setup", SETUP_US)?;
         let (mps, mut toggle, mut n) = (self.mps0 as usize, 1, 0);
-        let want = (setup[6] as usize | (setup[7] as usize) << 8).min(inbuf.len());
-        if setup[0] & 0x80 != 0 {
+        let length = setup[6] as usize | (setup[7] as usize) << 8;
+        let want = length.min(inbuf.len());
+        // No data stage when wLength is 0, whatever the direction bit: the status stage is IN.
+        if setup[0] & 0x80 != 0 && length != 0 {
             while n < want {
                 let got = self.stage(r, TY_IN, 0, toggle, &[], &mut inbuf[n..want],
                                      "control data in", DATA_US)?;
