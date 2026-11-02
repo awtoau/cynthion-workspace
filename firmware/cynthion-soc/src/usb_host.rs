@@ -79,8 +79,9 @@ pub const BULK_US: u32 = 100_000;
 const FIFO_US: u32 = 2;
 /// Error retries per transaction: xHCI endpoint context CERR = 3.
 const TRIES: u8 = 3;
-/// Phone re-enumerating after START: ~1.5 s by eye (`scripts/tools/aoa_probe.py`); 5 s = 3.3x.
-const ATTACH_US: u32 = 5_000_000;
+/// Phone re-enumerating after START: 4.0 s and over 5 s on the Pixel 3 XL
+/// (`scripts/tools/aoa_probe.py`); 8 s is ~1.25x a 6.5 s worst case.
+const ATTACH_US: u32 = 8_000_000;
 /// Gap between re-attach polls: the probe's 100 ms (a bus reset alone is 50 ms).
 const ATTACH_GAP_MS: u32 = 100;
 
