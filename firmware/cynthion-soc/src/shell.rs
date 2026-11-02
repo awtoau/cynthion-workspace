@@ -176,7 +176,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("usb <port> addr [n]", "device address the transfers use"),
     ("usb <port> aoa", "enumerate, 51/52/53, re-attach, bulk pair"),
     ("usb <port> pump out|in <ep> <n>", "host: n ramp bytes OUT/IN; [seed] [zlp]"),
-    ("usb <port> echo <ep> <n>", "host: OUT then IN per packet, compare the ramp"),
+    ("usb <port> echo <ep> <n>", "host: OUT a chunk, IN it back, compare the ramp"),
     ("usb3343", "the USB PHYs"),
     ("usb3343 status", "identity, line state and the data-line walk"),
     ("usb3343 reset", "pulse TARGET's RESETB, and prove it reached"),
