@@ -1,6 +1,6 @@
 # Capture-path compression in the FPGA: design
 
-**Status:** requirement and design only, nothing built. Requirement (Dan, 2026-11-02): compression is essential; it must be **switchable**; the RISC-V must be able to **sample data before it is compressed**; data is **stored compressed in HyperRAM**; the RISC-V reads **uncompressed** data through a **gateware decompressor** (no software decompression).
+**Status:** stage 1 built and simulated: codec modules only (`gateware/soc/capture/`), standalone, NOT in `top.py`, HyperRAM or the shell; nothing run on hardware (U). Tap, block packer, index, CSRs: not built. See [Implementation: stage 1](#implementation-stage-1). Requirement (Dan, 2026-11-02): compression is essential; it must be **switchable**; the RISC-V must be able to **sample data before it is compressed**; data is **stored compressed in HyperRAM**; the RISC-V reads **uncompressed** data through a **gateware decompressor** (no software decompression).
 **Index:** [`aoa-adaptor.md`](aoa-adaptor.md) · [`upstream-watch.md`](upstream-watch.md) (upstream has no compression anywhere on the capture path) · [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md)
 
 ## Why
@@ -51,6 +51,72 @@
    - **Two sources, two framers feeding one compressor interface:** the passive `target_phy` needs a `UTMITranslator` placed behind it (it has none today: register path only) and infers direction from PID context; the host engine knows its own TX, so its framer synthesises records (token from TX, response from RX) from an 8-bit RX FIFO that has no packet boundaries.
    - **Confirming test:** simulate a worst-case IN/NAK storm plus a reset/chirp burst through translator, framer and tap: the event log never overruns and counters stay consistent with packet totals. Then measure real RxError and mid-packet RXCMD rates on `target_phy` (UNSURE if non-zero).
    - UNVERIFIED: the SoC's current BRAM count (49 of 56 was the 2026-08-12 figure; run `./dev.py metrics report`), the exact chirp event count.
+
+## Implementation: stage 1
+Tags: V = verified in simulation, I = inferred, U = unverified (nothing is on hardware).
+
+- Code: [`gateware/soc/capture/`](../gateware/soc/capture/) (`codec.py`, `lz4_compress.py`, `lz4_decompress.py`); oracle [`scripts/soc/capture_codec_ref.py`](../scripts/soc/capture_codec_ref.py); sim [`scripts/soc/capture_codec_sim.py`](../scripts/soc/capture_codec_sim.py) (in `soc_sims.py`); cells [`scripts/soc/capture_codec_area.py`](../scripts/soc/capture_codec_area.py).
+- Not built: integration (`top.py`, HyperRAM block writer/reader, index, CSRs, tap). Compressor and decompressor are standalone modules.
+
+### Interface (`codec.py`)
+- Streams: `data[8]`, `valid`, `ready`, `last` (`last` = final byte of the block).
+- `CompressorSignature`: `sink` raw, `source` coded, `block_limit` in (1..1024, default 1024; reaching it ends the block), `codec_id` / `comp_len` / `raw_len` out, valid on the `source.last` beat.
+- `DecompressorSignature`: `sink` coded, `source` raw (`last` on the final raw byte), `codec_id` / `raw_len` in (from the index entry, held for the block), `error` out (valid when `done` pulses; held to the next block's first beat), `done` out (1-cycle strobe).
+- `CODECS[id] = Codec(name, compressor, decompressor)`: 0 stored, 1 lz4, 2..15 reserved. `register_codec` adds one; importing `capture` registers all.
+- `SwitchableCompressor` (`mode` in, sampled at a block's first byte) and `SwitchableDecompressor` (dispatch on `codec_id`). A block of a different codec waits until the previous block has fully left, so output order is preserved. V
+- `StoredCompressor` / `StoredDecompressor`: pass-through, same interface; `comp_len == raw_len`. V
+
+### LZ4 compressor (`lz4_compress.py`)
+- Engine runs on a 16-byte lookahead window, one position per clock, three stages: S0 hash + table read, S1 candidate check + history read + table write, S2 byte compare + commit.
+- Hash: 4 bytes -> 8-bit index (256 entries) + 6-bit check; entry = 10-bit position + check. Candidates are not pre-verified; a speculative match under 4 bytes is dropped (those positions stay literals). Stale entries from earlier blocks are harmless (compare decides).
+- Match extension: the history address (`pos - offset`) is predictable, so extension reads 1 byte/clk with no stall; the table lookup pipeline keeps running through a match, so back-to-back matches have no bubble. V
+- Tail rules: match starts only with >= 12 bytes left, extends only with >= 6 left (ends >= 5 before the end); the window gives the remaining count without knowing the block length. V (round trip with the `lz4` library as decoder)
+- Literals are re-read from `raw_b` at emit time; sequence records (literal count, match length, offset) sit in a 512 x 32 RAM, 256 per bank.
+- Coded size is known before the first coded byte; `coded >= raw` -> stored (id 0, bytes replayed from `raw_b`). Output is never larger than the input. V
+- Two raw copies (`raw_a` history, `raw_b` emit), 2 x 1 KiB banks each, so ingest of block k+1, compression and emission of block k overlap and no RAM port is shared.
+- `window` (<= 1024) limits the offset only; RAM does not shrink with it.
+
+### LZ4 decompressor (`lz4_decompress.py`)
+- WINDOW-byte circular RAM; literals pass through at 1 B/clk; match copy 1 B/clk after a 1-clock prime; offset-1 runs forward the previous byte. Newest byte is held back one stage so `last` lands on the final raw byte.
+- Corrupt block (offset 0 / beyond output / beyond WINDOW, literal or match length past `raw_len`, `last` mid-sequence, output != `raw_len`): `error` set, no further byte emitted, rest of block drained to `last`, then `done`.
+- Bound (`source.ready` high): ends within `comp_len + raw_len + 2 * sequences + 3` clocks of the first beat; output <= `raw_len`. V (worst measured 0.58 of the bound over the corrupt set)
+
+### Cells (yosys `synth_ecp5`, module alone; no timing)
+| config | LUT4 | CCU2C | FF | DP16KD | LUTRAM |
+|---|---|---|---|---|---|
+| compress, window 1024 | 712 | 196 | 621 | 4 | 0 |
+| decompress, window 1024 | 512 | 118 | 124 | 1 | 0 |
+| both, window 1024 | 1070 | 311 | 745 | 5 | 0 |
+| both, window 256 | 1051 | 309 | 741 | 5 | 0 |
+
+- 5 DP16KD for both exceeds the ~3 estimated earlier. Breakdown: `raw_a` 1, `raw_b` 1, hash table 1, sequence RAM 1, decompressor window 1.
+- Window 256 saves nothing in BRAM (compressor RAMs hold whole blocks; the 256 B decoder window still maps to one DP16KD) and ~20 LUT4.
+- Levers if the budget bites (I, not tried): hash table (256 x 16) into LUTRAM; drop the `raw_a`/`raw_b` mirror by time-sharing a port (costs throughput); 512 B blocks halve both raw RAMs only if banks are also dropped.
+
+### Throughput (simulation, output always ready, input valid every clock)
+- Compressor: 1024 B block = 1036 clk (0.988 B/clk) for zero, ones, alternating, 12 B frames, 74 B pattern, incompressible, far repeats. Blocks of 100-300 B: 0.89-0.96 B/clk. V
+- Per-block overhead: 12 clk (ingest pauses while the 16-byte window drains the tail; the next block's first 12 bytes fill the window before the engine starts). Independent of content.
+- Emission overhead is about 4 clk per sequence (record load, token, offset bytes); the corpora never make emission the limiter. U for fragmented traffic whose coded size approaches the input.
+- Decompressor: 0.89-0.99 B/clk of raw output (about 4 clk overhead per sequence). V
+
+### Verification run (`capture_codec_sim.py`)
+- (a) compress -> Python and `lz4` library decode == input: 19-block corpus + 2000 fuzz blocks (seeded, random stalls both sides), window 256 offsets <= 256. V
+- (b) Python / `lz4` library (default and HC) encode -> gateware decompress == input, window 1024 and 256, plus generated valid blocks with overlap, runs and length extensions. V
+- (c) stored iff the lz4 size is not smaller (checked against the compressor's own size signal); incompressible 1 KiB stored, zero-fill 1 KiB lz4. V
+- (d) mode switching at block boundaries, both directions, mixed stream decoded. V
+- (e) 14 corrupt-block cases (+ a good block after each) and the stored decoder's `raw_len` bound. V
+- The AOAT-frame corpus entries are skipped: no `awto-dji` checkout is reachable from here (U).
+
+### Run
+- `python3 scripts/soc/capture_codec_sim.py [--seed N] [--fuzz N]` (default 2000; log `tmp/logs/dev.log`).
+- `python3 scripts/soc_sims.py capture_codec`
+- `python3 scripts/soc/capture_codec_area.py`
+- Needs `lz4` for the library checks (`python3 -m pip install lz4`); without it those checks are skipped.
+
+### Unverified
+- U: everything on hardware. Block RAM read-during-write behaviour on the ECP5 for the two same-address cases (table read vs write, history read vs ingest write): the design never relies on the collision result (table write is one stage after the read; ingest and history addresses differ), but the mapped primitives were not run.
+- U: ratio on real USB captures (only synthetic corpora here).
+- U: a corrupt block whose `last` never arrives hangs by construction (the decoder is input-driven); the bound is from the first beat to `done` given the block's `last`.
 
 ## Open
 - Confirm the tap by simulation (item 5).
