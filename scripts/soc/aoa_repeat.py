@@ -15,6 +15,7 @@ Needs `vbus control` already done and the bench app (control port 6560) installe
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,7 +25,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LOG = ROOT / "tmp" / "logs" / "aoa_repeat.log"
-CTL_REPO = Path("/mnt/2tb/git/awto-dji-wt-ctl")
+# The awto-dji bench worktree with `dev.py ctl`; override with AWTO_DJI_CTL.
+CTL_REPO = Path(os.environ.get("AWTO_DJI_CTL", ROOT.parent / "awto-dji-wt-ctl"))
 
 # One shell command is ~4 s on this console (prompt wait); a cycle is ~8 commands.
 SHELL_LIMIT_S = 60

@@ -780,7 +780,34 @@ def render_bases(peripherals):
         "",
     ]
 
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    return (body + "\n/// First 32 bits of SHA-256 over the SVD plus everything above:\n"
+            "/// the map this firmware was built against. Host-compared (#307).\n"
+            f"pub const MAP_DIGEST: u32 = 0x{map_digest(peripherals, body)[:8]};\n")
+
+
+SVD_DESCRIPTION = ("Cynthion r1.4 VexiiRiscv SoC, generated "
+                   "from its Amaranth memory map")
+
+
+def map_digest(peripherals, body=None):
+    """Hex SHA-256 over the SVD and the base.rs body: one computation, two consumers.
+
+    `render_bases` stamps it into `base.rs`; `top.py` puts it in the build record.
+    """
+    import hashlib
+    document = build_svd(peripherals, SVD_DESCRIPTION)
+    ET.indent(document, space="  ")
+    if body is None:
+        body = render_bases(peripherals).split("\n/// First 32 bits")[0]
+    return hashlib.sha256(ET.tostring(document, encoding="utf-8")
+                          + body.encode()).hexdigest()
+
+
+def current_map_digest():
+    """Digest of the map the gateware elaborates now (full hex), or None."""
+    elaborated = elaborate_peripherals(lambda *a, **k: None)
+    return None if elaborated is None else map_digest(elaborated[2])
 
 
 def write_bases(peripherals, emit):
@@ -1020,10 +1047,20 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help="regenerate into ./tmp and report whether the "
                              "committed SVD is current; change nothing")
+    parser.add_argument("--digest", action="store_true",
+                        help="print the full peripheral-map digest, the last "
+                             "line of output, and stop; touches nothing")
     parser.add_argument("--variant-only", metavar="PATH",
                         help="write only the variant-dependent constants to "
                              "PATH and stop; touches nothing committed")
     args = parser.parse_args()
+
+    if args.digest:
+        digest = current_map_digest()
+        if digest is None:
+            return 1
+        print(digest)
+        return 0
 
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -1043,10 +1080,8 @@ def main():
     return status
 
 
-def run(args, emit):
-    emit("Generating a PAC from the SoC's own memory map")
-    emit()
-
+def elaborate_peripherals(emit):
+    """(soc, platform, peripherals) with interrupt sources attached, or None."""
     soc, platform = build_soc()
     memory_map = soc.decoder.bus.memory_map
     peripherals = walk(memory_map)
@@ -1064,7 +1099,7 @@ def run(args, emit):
         if name.upper() not in by_name:
             emit(f"  PROBLEM: interrupt source {declared} names {name!r}, which "
                  f"is not a window in the memory map")
-            return 1
+            return None
         peripheral = by_name[name.upper()]
         if isinstance(declared, dict):
             peripheral.irqs = [(f"{peripheral.name}_{suffix.upper()}", number)
@@ -1080,8 +1115,19 @@ def run(args, emit):
             if number in taken:
                 emit(f"  PROBLEM: source {number} is claimed by both "
                      f"{taken[number]} and {irq_name}")
-                return 1
+                return None
             taken[number] = irq_name
+    return soc, platform, peripherals
+
+
+def run(args, emit):
+    emit("Generating a PAC from the SoC's own memory map")
+    emit()
+
+    elaborated = elaborate_peripherals(emit)
+    if elaborated is None:
+        return 1
+    soc, platform, peripherals = elaborated
 
     emit(f"{len(peripherals)} peripherals:")
     for peripheral in peripherals:

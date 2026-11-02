@@ -193,6 +193,8 @@ class Evidence:
     # The `usercode.json` beside the bitstream that was just loaded. None is
     # "nothing to compare against", which is not "they agree".
     expected: dict | None = None
+    # `base::MAP_DIGEST` of the PAC the firmware is built against (8 hex digits).
+    firmware_map: str | None = None
     jtag_console: bytes | None = None   # the JTAG-pin UART, Apollo's own CDC node
     # How far confirmation can go for THIS bitstream. See `EXPECT`.
     expect: str = "shell"
@@ -212,6 +214,7 @@ class Evidence:
             "usercode": (None if self.usercode is None
                          else f"{self.usercode:08x}"),
             "expected": self.expected,
+            "firmware_map": self.firmware_map,
         }
 
 
@@ -315,6 +318,18 @@ def from_identity(ev: Evidence):
         ]
         return Verdict("stale-bitstream", "a design is running and it is not this build",
                        lines)
+
+    # The firmware's peripheral map against the gateware's (#307). Not the
+    # commit: same map at two commits agrees, a moved register at one commit
+    # does not.
+    built = want.get("map_digest")
+    if built and ev.firmware_map and not built.startswith(ev.firmware_map):
+        return Verdict("map-skew", "the firmware was built against another peripheral map", [
+            f"  gateware map {built[:8]}, firmware PAC map {ev.firmware_map}",
+            "  Regenerate with `./dev.py pac` and rebuild the firmware, or rebuild",
+            "  the gateware. Mismatched, the firmware reads plausible numbers from",
+            "  the wrong registers and nothing on the board says so.",
+        ])
 
     # What the build ASKED the PLL for, against what the part can do. Cheap, and
     # it is the one check that does not need the board to have answered.
@@ -626,6 +641,9 @@ def gather(*, node=None, jtag=True, expect="shell", expected=None):
     if expect not in EXPECT:
         raise ValueError(f"expect must be one of {EXPECT}, not {expect!r}")
     ev = Evidence(expect=expect, expected=expected)
+    if expected:
+        import usercode_map
+        ev.firmware_map = usercode_map.pac_map_digest()
     if expected and jtag:
         ask_identity(ev)
         if from_identity(ev) is not None:
