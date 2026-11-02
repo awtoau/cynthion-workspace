@@ -14,7 +14,7 @@ Clock plan, owned here. Other docs link, they do not restate.
 - Code: `gateware/soc/clocks.py` (`SocClocks`), `gateware/soc/hyperram_clocks.py`.
 - 60 MHz appears in `clocks.py` once, as the USB PHY's requirement; it is not the CPU's number.
 - `sync` choices: `reachable()` from the 60 MHz reference gives `60 70 72 75 80 84 90 96 100 105 108 110 120 130` (and 132, 135 past the ceiling). The other integers divide the reference below `PFD_MIN_MHZ` (jitter not guaranteed).
-- **Why `sync` is 60:** it equals the oscillator (`solve_pll(60)` = VCO 420 MHz, feedback 7, output div 7), so `sync` and `usb` run at one rate. It is the bottom of the menu, not below it. No measurement chose it; it is the default, not a limit ([#462](https://github.com/awtoau/cynthion-workspace/issues/462)).
+- **Why `sync` is 60:** it equals the oscillator (`solve_pll(60)` = VCO 420 MHz, feedback 7, output div 7), so `sync` and `usb` run at one rate. It is the bottom of the menu, not below it. **Decision (Dan, 2026-11-02): run `sync` at 60 MHz for now, because it is simple** (one rate for CPU and PHY). Not a limit; faster rungs are not being pursued ([#462](https://github.com/awtoau/cynthion-workspace/issues/462)).
 - CPU working ceiling is **unmeasured**: [#110](https://github.com/awtoau/cynthion-workspace/issues/110) (Diamond vs nextpnr). nextpnr achieved 92 MHz at a 100 MHz request and 96 at 110; whether either runs correctly is open.
   - Any "RISC-V tops out ~75 MHz" claim rests on a withdrawn measurement (`StreamBuffer` bug, now fixed; ladder not re-run).
 
