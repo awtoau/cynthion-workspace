@@ -205,13 +205,27 @@ fn trace(uart: &mut Uart, host: &mut Host, args: &[u8]) {
                     match host.trace_entry(i) {
                         Ok(e) => {
                             let w = e[0] as u64 | (e[1] as u64) << 8 | (e[2] as u64) << 16
-                                | (e[3] as u64) << 24 | (e[4] as u64) << 32;
-                            let _ = writeln!(uart, "{} +{} d{:02x} f{:02x} ls{}", i, w >> 18,
-                                             w & 0xff, (w >> 8) & 0xff, (w >> 16) & 3);
+                                | (e[3] as u64) << 24 | (e[4] as u64) << 32 | (e[5] as u64) << 40;
+                            let _ = writeln!(uart, "{} +{} d{:02x} f{:02x} ls{} q{:02x}", i,
+                                             (w >> 18) & 0x3ffff, w & 0xff, (w >> 8) & 0xff,
+                                             (w >> 16) & 3, (w >> 36) & 0x1f);
                         }
                         Err(e) => return fail(uart, e),
                     }
                 }
+            }
+            Err(e) => fail(uart, e),
+        }
+        return;
+    }
+    if args == b"reset" {
+        // Arm now (incl. reset period, drop repeats), then reset: the capture spans it.
+        let t0 = crate::clock::now();
+        let r = host.trace_ctrl(0x7).and_then(|()| host.reset());
+        let us = crate::clock::to_micros(t0.elapsed(crate::clock::now()));
+        match r {
+            Ok(()) => {
+                let _ = writeln!(uart, "reset done in {} us (incl. 10 ms recovery), trace armed", us);
             }
             Err(e) => fail(uart, e),
         }

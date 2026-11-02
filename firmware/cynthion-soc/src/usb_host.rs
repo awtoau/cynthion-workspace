@@ -549,14 +549,14 @@ impl Host {
         Ok((s & 3, s & 8 != 0, r.rd(TR_CNT_LO) as u16 | (r.rd(TR_CNT_HI) as u16) << 8))
     }
 
-    /// One 36-bit trace entry as 5 little-endian bytes. Load wait: the usb-domain
+    /// One 41-bit trace entry as 6 little-endian bytes. Load wait: the usb-domain
     /// latch takes ~8 cycles (0.15 us); 5 us is 30x.
-    pub fn trace_entry(&self, i: u16) -> Result<[u8; 5], Error> {
+    pub fn trace_entry(&self, i: u16) -> Result<[u8; 6], Error> {
         let r = self.regs()?;
         r.wr(TR_IDX_LO, i as u8);
         r.wr(TR_IDX_HI, (i >> 8) as u8);
         wait_until("trace load", 5, || r.rd(TR_STATE) & 4 == 0)?;
-        let mut out = [0u8; 5];
+        let mut out = [0u8; 6];
         for (k, b) in out.iter_mut().enumerate() {
             r.wr(TR_SEL, k as u8);
             *b = r.rd(TR_DATA);

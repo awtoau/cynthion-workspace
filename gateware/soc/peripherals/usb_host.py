@@ -56,7 +56,7 @@ and the `regs_*` hand-off are ports, so aux/control can be instanced later.
     0x19 TR_STATE    r   [1:0] 0 idle 1 armed 2 recording 3 full  2 read busy  3 present
     0x1a/0x1b TR_CNT r   entries recorded
     0x1c/0x1d TR_IDX rw  entry to read; the HI write loads it (poll TR_STATE.2 clear)
-    0x1e TR_SEL      rw  byte of the loaded entry (0..4, little-endian)
+    0x1e TR_SEL      rw  byte of the loaded entry (0..5, little-endian)
     0x1f TR_DATA     r   that byte
 
 ## FIFO entries
@@ -115,9 +115,9 @@ REG_TX_DATA, REG_TX_LAST, REG_TX_CMD, REG_TX_LEVEL = 0x14, 0x15, 0x16, 0x17
 REG_TR_CTRL, REG_TR_STATE, REG_TR_CNT_LO, REG_TR_CNT_HI = 0x18, 0x19, 0x1a, 0x1b
 REG_TR_IDX_LO, REG_TR_IDX_HI, REG_TR_SEL, REG_TR_DATA = 0x1c, 0x1d, 0x1e, 0x1f
 
-# Trace entry (36 bit): [7:0] data, [15:8] flags, [17:16] line state, [35:18] cycles
-# since the previous entry. Flags: dir nxt stp data_oe tx_valid rx_active rx_valid reset_active.
-TRACE_WIDTH = 36
+# Trace entry (41 bit): [7:0] data, [15:8] flags, [17:16] line state, [35:18] cycles
+# since the previous entry, [40:36] SIE's PHY request: xcvr[1:0] term op_mode[1:0]. Flags: dir nxt stp data_oe tx_valid rx_active rx_valid reset_active.
+TRACE_WIDTH = 41
 TR_IDLE, TR_ARMED, TR_REC, TR_FULL = 0, 1, 2, 3
 
 CTRL_BUS_RESET, CTRL_START, CTRL_CLR_TX, CTRL_CLR_RX = 1 << 0, 1 << 1, 1 << 2, 1 << 3
@@ -903,8 +903,13 @@ class UsbPort(wiring.Component):
         m.d.comb += nd.eq(Cat(data, flags, ls))
         prev_nd, prev_ev = Signal(18), Signal()
         ev = Signal()
+        req = Signal(5)
+        req_prev = Signal(5)
+        m.d.comb += req.eq(Cat(sie.utmi.xcvr_select, sie.utmi.term_select, sie.utmi.op_mode))
+        m.d.usb += req_prev.eq(req)
         m.d.comb += ev.eq(pin.dir_i | pin.nxt_i | pin.stp_o
-                          | (pin.data_oe & (pin.data_o != 0)) | (ls != ls_prev))
+                          | (pin.data_oe & (pin.data_o != 0)) | (ls != ls_prev)
+                          | (req != req_prev))
         m.d.usb += [prev_nd.eq(nd), prev_ev.eq(ev)]
         dup = Signal()
         m.d.comb += dup.eq(compress & prev_ev & (prev_nd == nd))
@@ -929,7 +934,7 @@ class UsbPort(wiring.Component):
                     with m.If(count == depth - 1):
                         m.d.usb += state.eq(TR_FULL)
         m.d.comb += [wport.addr.eq(count[:abits]),
-                     wport.data.eq(Cat(nd, since))]
+                     wport.data.eq(Cat(nd, since, req))]
 
         # Read side: sync writes the index, usb latches the word, sync reads bytes.
         idx_lo, idx_hi = self._tr_idx_lo.f.v, self._tr_idx_hi.f.v
