@@ -133,7 +133,7 @@ def build_one(ck, dqs, sync):
     out = BUILD_ROOT / tag_of(ck, dqs)
     script = (
         "import sys\n"
-        f"sys.path[:0]={[str(ROOT / 'gateware'), str(ROOT / 'repos' / 'apollo')]!r}\n"
+        f"sys.path[:0]={[str(ROOT / 'gateware'), str(ROOT / 'gateware' / 'probes'), str(ROOT / 'repos' / 'apollo')]!r}\n"
         "from hyperram.hyperram_ceiling_top import HyperRAMCeiling\n"
         "from board import CynthionPlatformRev1D4\n"
         f"d = HyperRAMCeiling(sync_mhz={sync!r}, dqs={dqs!r})\n"
@@ -142,6 +142,10 @@ def build_one(ck, dqs, sync):
     )
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}:{env['PATH']}"
+    # A directory holding the patched `nextpnr-ecp5`, as in soc_run.py (#540).
+    override = os.environ.get("CYNTHION_NEXTPNR_BIN") or ""
+    if override:
+        env["PATH"] = f"{override}:{env['PATH']}"
 
     # The platform hardcodes `ecppack_opts` in its own `toolchain_prepare`, so
     # passing it as a build kwarg is a duplicate-argument TypeError. Amaranth
