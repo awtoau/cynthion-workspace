@@ -4,6 +4,8 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 
 **DQS is parked (Dan, 2026-11-02):** the shipping path is non-DQS (`dqs0`); DQS code stays in the tree switched off, DQS board tests are paused, and the upstream-PR drafts are in [`../../deprecated/dqs/`](../../deprecated/dqs). Issues carry the label `hyperram-dqs-experiment`.
 
+**CR0/CR1 init:** the shipping path is firmware (`hyperram::init`, write + read-back each boot, #319). `gateware/soc/peripherals/hyperram_init.py` is a sim-verified gateware sequencer kept as a reference; it is wired into no build.
+
 | document | what it is |
 |---|---|
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
