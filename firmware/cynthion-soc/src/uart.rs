@@ -162,6 +162,10 @@ static ERROR_READS: [AtomicU32; MAX_CONSOLES] = [const { AtomicU32::new(0) }; MA
 /// stopped draining (#295). Counted here, reported by `report_errors`.
 static TX_DROPS: [AtomicU32; MAX_CONSOLES] = [const { AtomicU32::new(0) }; MAX_CONSOLES];
 
+/// The drop count last reported, so a count that has not moved is not reported again.
+static TX_DROPS_REPORTED: [AtomicU32; MAX_CONSOLES] =
+    [const { AtomicU32::new(0) }; MAX_CONSOLES];
+
 /// How many transmitted bytes console `index` has dropped since boot.
 pub fn tx_drops(index: usize) -> u32 {
     TX_DROPS[index].load(Ordering::Relaxed)
@@ -301,7 +305,7 @@ pub fn report_errors(uart: &mut Uart) {
         // than per byte: a transport that stopped drops thousands, and a line
         // per drop would use the very console that is failing.
         let drops = tx_drops(index);
-        if is_decade(drops) {
+        if is_decade(drops) && TX_DROPS_REPORTED[index].swap(drops, Ordering::Relaxed) != drops {
             crate::metrics::busy();
             crate::log!(
                 uart,
