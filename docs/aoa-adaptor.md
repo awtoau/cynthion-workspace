@@ -83,6 +83,23 @@
 - `sync` domain is the tight one (71.6 MHz vs 60); put the host in `usb`.
 - Upstream: no host mode in Cynthion ([cynthion#230](https://github.com/greatscottgadgets/cynthion/issues/230)); only reference is LUNA host in Tiliqua. Maintainers refuse LLM-generated contributions: this stays in the fork.
 
+## Bring-up console: drive USB by hand from the RV shell
+- Goal: type host transactions on the AUX console to explore a device before any gateware host core exists. The RV is the software SIE.
+- Why it fits: ULPI is a byte stream at 60 MHz; the RV cannot bit-bang it live, but it can fill a TX FIFO and drain an RX FIFO through CSRs. That FIFO shim is the same shim topology A needs.
+- Missing piece (gateware): `target_phy` hand-over from `UlpiRegisters`, TX FIFO (TXCMD + bytes), RX FIFO (RXCMD + bytes + line-state events). ~200-400 LUT, 0 BRAM (LUTRAM FIFOs).
+- Proposed verbs (`usbh`, firmware only on top of the shim):
+  - `usbh power on|off` (VBUS via the existing gated `vbus control`), `usbh reset` (bus reset + speed), `usbh status` (line state, speed, VBUS mA)
+  - `usbh tx <hex..>` / `usbh rx` (raw packets), `usbh setup <8 bytes>` + `usbh in <ep> <len>` (control transfer by hand)
+  - `usbh desc` (GET_DESCRIPTOR device/config), `usbh aoa` (51, 52×6, 53, wait re-attach)
+- Exists today: `usb3343 status` (PHY registers, line state), `usb target_a` (rail), `vbus`, `pac1954`. No raw TX/RX.
+- Prior art: LUNA has no host gateware (only `ulpi.py`). GSG's RV-plus-serial tool is Moondancer (GCP over USB), device-side emulation only. Only host reference: Tiliqua's USB MIDI host (apfaudio/tiliqua PR 65, closed 2024-11-05). Vendored GUH SIE is the sim-proven core.
+
+## Pixel on TARGET-A, 2026-11-02
+- Power: TARGET-A has no switch of its own; `vbus control` passes CONTROL's VBUS to it. The firmware refuses unless a power sample is ≤200 ms old: run `pac1954 rate 50` first, `pac1954 rate 0` after (else `no: stale`).
+- Result: draw climbed 85 → 455 mA in ~100 ms and held ~450 mA at 5.0 V (a device is there and charging).
+- PHY line state stayed `dp 0 dm 0` (host pulldowns on, OTG control `06`): no D+ pull-up, so the phone is not attaching for data. Likely locked screen / charge-only; retry unlocked with USB set to File transfer (PTP/MTP) after `usbh`-level tooling exists, or first from the PC as Stage 0.
+- Console bug found on the way: `usb target_a` said "nothing drawing" while 450 mA flowed (signed compare) — [#551](https://github.com/awtoau/cynthion-workspace/issues/551), fixed in firmware, not yet flashed.
+
 ## Plan
 1. **Stage 0, PC only:** libusb script as accessory against a phone: 51, 52×6, 53, wait for `18d1:2d00`, bulk echo with an Android test app. Capture with usbmon. Pin the DJI RC's exact behaviour first (Q1).
 2. **Stage 1, simulation:** AOA model device on `model.py`'s `USBDevice` in `usb_host_sie_sim.py`; build the shim; keep `soc_sims.py` green.
