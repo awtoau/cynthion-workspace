@@ -102,6 +102,7 @@ const ATTACH_GAP_MS: u32 = 100;
 const REQ_GET_DESCRIPTOR: u8 = 6;
 const REQ_SET_ADDRESS: u8 = 5;
 const REQ_SET_CONFIGURATION: u8 = 9;
+const REQ_CLEAR_FEATURE: u8 = 1;
 const AOA_GET_PROTOCOL: u8 = 51;
 const AOA_SEND_STRING: u8 = 52;
 const AOA_START: u8 = 53;
@@ -392,8 +393,10 @@ impl Host {
         let r = self.host()?;
         self.stage(r, TY_SETUP, 0, 0, setup, &mut [], "control setup", SETUP_US)?;
         let (mps, mut toggle, mut n) = (self.mps0 as usize, 1, 0);
-        let want = (setup[6] as usize | (setup[7] as usize) << 8).min(inbuf.len());
-        if setup[0] & 0x80 != 0 {
+        let length = setup[6] as usize | (setup[7] as usize) << 8;
+        let want = length.min(inbuf.len());
+        // No data stage when wLength is 0, whatever the direction bit: the status stage is IN.
+        if setup[0] & 0x80 != 0 && length != 0 {
             while n < want {
                 let got = self.stage(r, TY_IN, 0, toggle, &[], &mut inbuf[n..want],
                                      "control data in", DATA_US)?;
@@ -410,6 +413,16 @@ impl Host {
                 toggle ^= 1;
             }
             self.stage(r, TY_IN, 0, 1, &[], &mut [], "control status", STATUS_US)?;
+        }
+        if setup[0] == 0 && setup[1] == REQ_SET_CONFIGURATION {
+            // The device restarts its toggles at DATA0 (USB 2.0 9.1.1.5).
+            self.tog_in = 0;
+            self.tog_out = 0;
+        }
+        if setup[0] == 0x02 && setup[1] == REQ_CLEAR_FEATURE && setup[2] == 0 && setup[3] == 0 {
+            // CLEAR_FEATURE(ENDPOINT_HALT) restarts that endpoint's toggle (9.4.5).
+            let bit = 1u16 << (setup[4] & 15);
+            if setup[4] & 0x80 != 0 { self.tog_in &= !bit } else { self.tog_out &= !bit }
         }
         Ok(n)
     }

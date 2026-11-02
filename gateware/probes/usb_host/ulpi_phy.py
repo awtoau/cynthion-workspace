@@ -13,6 +13,7 @@ Modelled (from the ULPI timing LUNA's own link produces, not from silicon):
 - Device-to-host packets: dir up, two RXCMDs (RxActive), data bytes with `nxt`, RXCMD
   RxActive=0, dir down.
 - RXCMD line-state reports, debounced 8 cycles and held back while a packet is in flight.
+- `host_disconnect` high: RXCMD RxEvent = HostDisconnect (0b10) in every RXCMD.
 - Function control bits [4:3] go straight to UTMI `op_mode` (chirp / SE0 for the wire).
 
 Not modelled: bit stuffing, NRZI, SYNC/EOP, `nxt` gaps from stuffing, RxError, VBUS
@@ -44,6 +45,7 @@ class UlpiPhyModel(Elaboratable):
         # Visible state.
         # `mute`: the PHY ignores every link command (an absent or unpowered part).
         self.mute      = Signal()
+        self.host_disconnect = Signal()    # RXCMD[5:4] = 0b10 while high
         self.func_ctrl = Signal(8, init=func_ctrl)
         self.otg_ctrl  = Signal(8, init=0x06)
         self.scratch   = Signal(8)
@@ -103,7 +105,7 @@ class UlpiPhyModel(Elaboratable):
         m.d.comb += [
             # RXCMD: line state, VbusValid, RxActive.
             cmd_active.eq(Cat(ls, C(0b11, 2), C(1, 1), C(0, 3))),
-            cmd_idle.eq(Cat(ls, C(0b11, 2), C(0, 4))),
+            cmd_idle.eq(Cat(ls, C(0b11, 2), Mux(self.host_disconnect, C(0b10, 2), C(0, 2)), C(0, 2))),
         ]
 
         with m.FSM(domain="usb"):

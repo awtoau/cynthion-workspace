@@ -80,12 +80,12 @@ DONE_POLLS = 800          # x 16 sync ticks; one transaction is < 12k usb cycles
 class Wire(Elaboratable):
     """`model.connect_utmi` for a bench whose single clock is called `usb`."""
 
-    def __init__(self, a, b, present=None):
-        self.a, self.b, self.present = a, b, present
+    def __init__(self, a, b, present=None, fault=None):
+        self.a, self.b, self.present, self.fault = a, b, present, fault
 
     def elaborate(self, platform):
         m = Module()
-        connect_utmi(m, self.a, self.b, present=self.present)
+        connect_utmi(m, self.a, self.b, present=self.present, fault=self.fault)
         return m
 
 
@@ -93,13 +93,13 @@ class Bench(Elaboratable):
     """UsbPort + UlpiRegisters + PHY model (+ optional device on its wire)."""
 
     def __init__(self, *, with_device=True, full_speed_only=False, func_ctrl=0x41,
-                 phone=None, **port_kwargs):
+                 phone=None, fault=None, report_disconnect=False, **port_kwargs):
         self.port = UsbPort(**port_kwargs)
         self.regs = UlpiRegisters()
         self.phy = UlpiPhyModel(func_ctrl=func_ctrl)
         self.force_dir = Signal()
         self.with_device = with_device
-        self.phone = phone
+        self.phone, self.fault, self.report_disconnect = phone, fault, report_disconnect
         if phone is not None:
             self.device = phone
         elif with_device:
@@ -117,9 +117,12 @@ class Bench(Elaboratable):
             p.regs_stp_o.eq(r.stp_o), p.regs_idle.eq(r.usb_idle),
         ]
         if self.phone is not None:
+            if self.report_disconnect:
+                m.d.comb += phy.host_disconnect.eq(~self.phone.present)
             m.submodules.device = self.phone
             m.submodules.wire = DomainRenamer({"sync": "usb"})(
-                Wire(phy.utmi, self.phone.utmi, present=self.phone.present))
+                Wire(phy.utmi, self.phone.utmi, present=self.phone.present,
+                     fault=self.fault))
         elif self.with_device:
             m.submodules.device = self.device
             m.submodules.wire = DomainRenamer({"sync": "usb"})(Wire(phy.utmi, self.device.utmi))

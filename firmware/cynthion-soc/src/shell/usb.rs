@@ -85,7 +85,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             Some((name, what, missing)) => planned(uart, index, name, what, missing),
             None => {
                 let _ = writeln!(uart, "usage: usb {} [status|disable|enable|role|reset|desc|\
-setup|in|out|tx|rx|addr|aoa|pump|echo]", PORTS[index].0);
+enum|ctrl|setup|in|out|tx|rx|addr|aoa|pump|echo]", PORTS[index].0);
             }
         },
     }

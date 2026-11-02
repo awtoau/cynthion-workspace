@@ -69,6 +69,26 @@ BULK_MAX_PACKET_SIZE = 512  # the high-speed bulk maximum, and 2 x the SIE's rx_
 _timing_scaled = False
 
 
+_device_reset_scaled = False
+
+
+def scale_device_hs_fallback_for_simulation():
+    """Let a second bus reset renegotiate HS: scale LUNA's 3 ms HS-to-FS fallback like its 2 ms chirp.
+
+    - Unscaled, an HS device never sees a later reset: the host's SE0 (15k cycles) ends first.
+    - Fallback must stay above one FS frame (6k cycles) or the device suspends between SOFs.
+    - Host reset is lengthened 4x to fit fallback + chirp exchange. Use after scale_timing_for_simulation.
+    """
+    global _device_reset_scaled
+    if _device_reset_scaled:
+        return
+    _device_reset_scaled = True
+    from luna.gateware.usb.usb2.reset import USBResetSequencer
+    USBResetSequencer._CYCLES_3_MILLISECONDS //= 20
+    from .guh.reset import USBResetController
+    USBResetController._MAX_RESET_TIME *= 4      # 60k cycles: room for fallback + chirp exchange
+
+
 def scale_timing_for_simulation():
     """Divide the reset and SOF timers down to a simulable number of cycles.
 
@@ -126,7 +146,20 @@ def scale_timing_for_simulation():
     USBSOFController._SOF_TX_TO_RX_MAX_HS = USBSOFController._SOF_CYCLES_HS - 60
 
 
-def connect_utmi(m, host_utmi, device_utmi, present=None):
+class WireFault:
+    """Device-to-host fault injection for `connect_utmi` (simulation only).
+
+    - `drop`: swallow every device packet (the host sees silence).
+    - `xor` at byte `index` of each device packet: PID (0) or CRC (>= 1) corruption.
+    """
+
+    def __init__(self):
+        self.drop = Signal()
+        self.xor = Signal(8)
+        self.index = Signal(12)
+
+
+def connect_utmi(m, host_utmi, device_utmi, present=None, fault=None):
     """Face two UTMI interfaces at each other. Returns the shared line state.
 
     Each direction is a byte pipe with a three-cycle lead-in on `rx_active`,
@@ -134,24 +167,35 @@ def connect_utmi(m, host_utmi, device_utmi, present=None):
     the first data byte. `present` low (a detached device) holds the line at SE0.
     """
 
-    def bridge(source, sink):
+    def bridge(source, sink, fault=None):
         lead_in = Signal(2)
         m.d.comb += [
             sink.rx_active.eq(0),
             sink.rx_valid.eq(source.tx_valid & source.tx_ready),
             sink.rx_data.eq(source.tx_data),
         ]
+        if fault is not None:
+            count = Signal(12)
+            with m.If(~source.tx_valid):
+                m.d.sync += count.eq(0)
+            with m.Elif(source.tx_ready & (count != 0xFFF)):
+                m.d.sync += count.eq(count + 1)
+            with m.If((count == fault.index) & source.tx_valid):
+                m.d.comb += sink.rx_data.eq(source.tx_data ^ fault.xor)
         with m.If(source.tx_valid):
             m.d.comb += sink.rx_active.eq(1)
             with m.If(lead_in == 0b11):
                 m.d.comb += source.tx_ready.eq(1)
             with m.Else():
                 m.d.sync += lead_in.eq(lead_in + 1)
+            if fault is not None:
+                with m.If(fault.drop):
+                    m.d.comb += [sink.rx_active.eq(0), sink.rx_valid.eq(0)]
         with m.Else():
             m.d.sync += lead_in.eq(0)
 
     bridge(host_utmi, device_utmi)
-    bridge(device_utmi, host_utmi)
+    bridge(device_utmi, host_utmi, fault)
 
     # VBUS present, from the device's point of view.
     m.d.comb += device_utmi.session_end.eq(0)

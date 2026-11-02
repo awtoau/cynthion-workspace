@@ -1,4 +1,4 @@
-//! `usb <port> role|reset|desc|setup|in|out|tx|rx|addr|aoa|pump|echo` -- syntax over `crate::usb_host`.
+//! `usb <port> role|reset|desc|enum|ctrl|setup|in|out|tx|rx|addr|aoa|pump|echo` -- syntax over `crate::usb_host`.
 //!
 //! No transfer logic here: parse, call the driver, print its `Error` as it displays.
 
@@ -9,9 +9,9 @@ use crate::uart::Uart;
 use crate::usb_host::{self, Error, Host};
 
 /// Verbs this module owns; `usb.rs` routes on them.
-pub(crate) const VERBS: [&[u8]; 13] = [
-    b"trace", b"role", b"reset", b"desc", b"setup", b"in", b"out", b"tx", b"rx", b"addr", b"aoa",
-    b"pump", b"echo",
+pub(crate) const VERBS: [&[u8]; 15] = [
+    b"trace", b"role", b"reset", b"desc", b"enum", b"ctrl", b"setup", b"in", b"out", b"tx", b"rx",
+    b"addr", b"aoa", b"pump", b"echo",
 ];
 
 fn fail(uart: &mut Uart, error: Error) {
@@ -57,6 +57,40 @@ pub(crate) fn command(uart: &mut Uart, host: &mut Host, verb: &[u8], args: &[u8]
                 dump(uart, &d);
             }
             Err(e) => fail(uart, e),
+        },
+        b"enum" => match parse_decimal(args).filter(|&a| (1..128).contains(&a)) {
+            Some(a) => match host.enumerate(a as u8) {
+                Ok(id) => {
+                    let _ = writeln!(uart, "{:04x}:{:04x}", id.vid, id.pid);
+                }
+                Err(e) => fail(uart, e),
+            },
+            None => {
+                let _ = writeln!(uart, "usage: usb <port> enum <addr 1-127>");
+            }
+        },
+        // SETUP (8 bytes) then optional OUT data (up to 56 bytes); IN data prints like `in`.
+        b"ctrl" => match hex_bytes(args, &mut buf) {
+            Some(n) if n >= 8 => {
+                let mut packet = [0u8; 8];
+                packet.copy_from_slice(&buf[..8]);
+                let mut out = [0u8; 56];
+                out[..n - 8].copy_from_slice(&buf[8..n]);
+                let mut data = [0u8; 64];
+                match host.control(&packet, &out[..n - 8], &mut data) {
+                    Ok(got) if packet[0] & 0x80 != 0 => {
+                        let _ = writeln!(uart, "{} bytes", got);
+                        dump(uart, &data[..got]);
+                    }
+                    Ok(_) => {
+                        let _ = writeln!(uart, "ack");
+                    }
+                    Err(e) => fail(uart, e),
+                }
+            }
+            _ => {
+                let _ = writeln!(uart, "usage: usb <port> ctrl <8 setup bytes> [out bytes]");
+            }
         },
         b"setup" => match hex_bytes(args, &mut buf) {
             Some(8) => {
