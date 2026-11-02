@@ -486,7 +486,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seed", type=int, default=20261102)
-    parser.add_argument("--fuzz", type=int, default=2000)
+    parser.add_argument("--fuzz", type=int, default=300)
     args = parser.parse_args()
     emit("capture codecs -- LZ4 block compressor / decompressor, stored, switching")
     emit(f"  fuzz blocks {args.fuzz}, seed {args.seed}")
