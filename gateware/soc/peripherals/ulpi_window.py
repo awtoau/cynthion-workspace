@@ -198,6 +198,8 @@ class UlpiRegisters(wiring.Component):
             "nxt_i":   In(1),
             "stp_o":   Out(1),
             "phy_rst": Out(1),
+            # usb domain: no transaction or PHY reset in flight. For the role mux.
+            "usb_idle": Out(1),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
 
@@ -407,5 +409,8 @@ class UlpiRegisters(wiring.Component):
                 with m.If(reset_elapsed == settled - 1):
                     m.d.usb += reset_ack.eq(reset_request_usb)
                     m.next = "IDLE"
+
+        m.d.comb += self.usb_idle.eq(~window.busy & (request_usb == acknowledge)
+                                     & (reset_request_usb == reset_ack))
 
         return m

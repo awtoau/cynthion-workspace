@@ -129,6 +129,13 @@ pub const INTC: usize = 0xf0000c00;
 /// Size of the INTC window, in bytes.
 pub const INTC_SIZE: usize = 0x00000008;
 
+/// usb_host: 19 registers at 0xf0001000
+pub const USB_HOST: usize = 0xf0001000;
+/// Size of the USB_HOST window, in bytes.
+pub const USB_HOST_SIZE: usize = 0x00000020;
+/// Interrupt source number wired to USB_HOST.
+pub const USB_HOST_IRQ: u32 = 10;
+
 /// clint: 5 registers at 0xf0800000
 pub const CLINT: usize = 0xf0800000;
 /// Size of the CLINT window, in bytes.

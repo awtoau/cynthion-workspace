@@ -1,6 +1,6 @@
 # AOA adaptor on Cynthion — design for review
 
-**Status:** proposal, nothing built. Source: read-only study 2026-11-02 (Sonnet agent; claims below UNSURE where marked).
+**Status:** proposal; stage 1 gateware built and simulated (see "What exists"), nothing run on hardware. Source: read-only study 2026-11-02 (Sonnet agent; claims below UNSURE where marked).
 **Index:** [`usb-host-options.md`](usb-host-options.md) (host-core study) · [`hardware.md`](hardware.md)
 
 ## Goal
@@ -48,10 +48,23 @@
 - Send all header strings (Android ≤10 can reboot on a version mismatch). AOA and MTP do not coexist. AOA 2.0 (HID, audio) not studied.
 
 ## What exists in this repo
-- Host SIE (GUH) vendored at [`gateware/probes/usb_host/guh/`](../gateware/probes/usb_host/guh); 21 simulated checks ([`usb_host_sie_sim.py`](../scripts/soc/usb_host_sie_sim.py)): chirp, CRC, GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, 512 B bulk IN.
-- Cost: +2080 LUT, 0 BRAM (SIE); +2910 LUT with enumerator ([`usb-host-options.md`](usb-host-options.md) §12, §22).
-- **Not done:** no CSR/FIFO shim to the SoC; `target_phy` still owned by `UlpiRegisters` (#120, #125); no firmware; no VBUS drive for host mode (UNSURE: [`vbus_csr.py`](../gateware/soc/peripherals/vbus_csr.py) postdates the study); never run on hardware.
-- Known SIE traps: 8-bit `rx_len` wraps at 512 B; caller tracks data toggle; no completion strobe; NYET read as ACK; no split transactions.
+Legend: **I** implemented and simulated; **U** not proven on a board (everything below is U on hardware).
+- Host SIE (GUH) vendored at [`gateware/probes/usb_host/guh/`](../gateware/probes/usb_host/guh); 21 simulated checks ([`usb_host_sie_sim.py`](../scripts/soc/usb_host_sie_sim.py)): chirp, CRC, GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, 512 B bulk IN. I
+- **Stage 1 gateware (role mux + CSR/FIFO shim) is built:** [`peripherals/usb_host.py`](../gateware/soc/peripherals/usb_host.py), instanced on `target_phy` only, window `usb_host` `0xf0001000`, IRQ 10. I
+  - Roles `off` (reset) / `regs` / `host` / `raw` by CSR; `off` and `regs` are the same wire behaviour (`UlpiRegisters`), cycle-identical to before. I
+  - `raw`: CPU queues TXCMD + bytes, reads RXCMD/data from the RX FIFO (tag bit). `host`: SIE transfers by CSR. I
+  - Sim: [`usb_host_shim_sim.py`](../scripts/soc/usb_host_shim_sim.py), 50 checks: golden regs trace, switching rules, raw SETUP+DATA0 vs the LUNA model device, host enumeration + 512 B bulk IN through CSRs, FIFO edges. I
+  - Register map, tag format, switching rules, SIE-trap handling: [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md#role-mux-and-byte-stream-on-target_phy-usb_host-window).
+  - PAC regenerated ([`firmware/cynthion-soc-pac`](../firmware/cynthion-soc-pac)); `USB_HOST` peripheral and interrupt 10 exist for firmware. I
+- Cost (SIE + shim + two 512 B SIE FIFOs + two 128-entry async FIFOs): see "Stage 1 cost" below.
+- **Not done:** no firmware (no `usb <port>` verbs, no enumeration code, no AOA sequence); no VBUS drive tied to the role (stays the gated `vbus` command); never run on hardware (host chirp, `nxt` gaps, RxError, bit-level framing, D+/D- swap are U); not instanced on aux/control; AOA model device not written.
+- SIE traps now handled in the shim: `rx_len` wrap (`RXLEN` counts UTMI bytes), completion edge (`EV_DONE`, IRQ), `start` while busy dropped. Left to the caller: data toggle. Flagged only: NYET read as ACK (`RESP.nyet`). Not handled: split transactions. I/U
+
+### Stage 1 cost
+- Standalone synthesis: `usb_host` 2279 LUT4-equivalent, 856 DFF (upper bound; includes GUH SIE). In-SoC (`--build-only --skip-tests --no-parallel-refine`, variant ck80-dqs0-sync60, same tree with and without the block, one run each, nextpnr cell counts):
+  - TRELLIS_COMB 19631 -> 22210 (+2579; 80% -> 91%), TRELLIS_FF 9879 -> 10772 (+893), TRELLIS_RAMW 235 -> 363 (+128), DP16KD 34 -> 36 (+2, not 0: yosys put two memories in block RAM).
+  - Build completes; default (parallel-refine) router diverges on both baseline and this tree, so the build needs `--no-parallel-refine`. `sync` constraint missed in both runs, others met (per tool).
+  - 91% COMB is the thing to watch before stage 2.
 - Device side: CDC-ACM on `aux_phy` (`1d50:6180`), ~195 Mbps loopback ([`usb-performance.md`](usb-performance.md)).
 
 ## Topologies
@@ -142,7 +155,7 @@
 ## Plan
 0. **Stage 0 tool:** [`scripts/tools/aoa_probe.py`](../scripts/tools/aoa_probe.py) plays the accessory from the PC with the DJI identity above, then lists the `18d1:2d00/2d01` endpoints. Needs the Pixel on a PC USB port (not the Cynthion) and the permission dialog answered. Its `usbmon` capture is the byte-exact target for the RV.
 1. **Stage 0, PC only:** libusb script as accessory against a phone: 51, 52×6, 53, wait for `18d1:2d00`, bulk echo with an Android test app. Capture with usbmon. Pin the DJI RC's exact behaviour first (Q1).
-2. **Stage 1, simulation:** AOA model device on `model.py`'s `USBDevice` in `usb_host_sie_sim.py`; build the shim; keep `soc_sims.py` green.
+2. **Stage 1, simulation:** shim built, `soc_sims.py` green (I). Still open: AOA model device on `model.py`'s `USBDevice` (51/52/53, re-attach as `18d1:2d00`).
 3. **Stage 2, board:** re-parent `target_phy` → VBUS to TARGET-A → print a phone's device descriptor → run the sequence → bridge to ACM. Pass: PC reads the test app's bytes from `/dev/ttyACM*`, SoC log shows `18d1:2d00`.
 
 ## Questions for Dan (answer in a few words)

@@ -18,6 +18,8 @@ pub enum Interrupt {
     BOARD_I2C_MUX_TARGET_FAULT = 8,
     #[doc = "9 - BOARD_I2C_MUX_AUX_FAULT"]
     BOARD_I2C_MUX_AUX_FAULT = 9,
+    #[doc = "10 - USB_HOST"]
+    USB_HOST = 10,
     #[doc = "13 - BOARD_GPIO_BUTTON"]
     BOARD_GPIO_BUTTON = 13,
     #[doc = "17 - BOARD_CLOCKS_PLL_LOSS"]
@@ -39,6 +41,7 @@ impl Interrupt {
             6 => Ok(Interrupt::BOARD_I2C_MUX_POWER_ALERT),
             8 => Ok(Interrupt::BOARD_I2C_MUX_TARGET_FAULT),
             9 => Ok(Interrupt::BOARD_I2C_MUX_AUX_FAULT),
+            10 => Ok(Interrupt::USB_HOST),
             13 => Ok(Interrupt::BOARD_GPIO_BUTTON),
             17 => Ok(Interrupt::BOARD_CLOCKS_PLL_LOSS),
             _ => Err(TryFromInterruptError(())),

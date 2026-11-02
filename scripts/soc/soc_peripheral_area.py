@@ -95,6 +95,10 @@ def _peripherals():
         from peripherals.ulpi_window import UlpiRegisters
         return UlpiRegisters()
 
+    def usb_host():
+        from peripherals.usb_host import UsbPort
+        return UsbPort(name="target")
+
     def serial_line():
         from peripherals.serial_line import SerialLine
         return SerialLine(divisor=520, data_bits=8)
@@ -127,7 +131,7 @@ def _peripherals():
 
     return [
         ("uart16550",          uart16550,          "x2 in the SoC"),
-        ("intc",               intc,               "17 numbered, 10 built"),
+        ("intc",               intc,               "17 numbered, 11 built"),
         ("clint",              clint,              ""),
         ("i2c_master",         i2c_master,         ""),
         ("i2c_mux",            i2c_mux,            ""),
@@ -135,6 +139,7 @@ def _peripherals():
         ("vbus_csr",           vbus_csr,           ""),
         ("fabric_status",      fabric_status,      "no DTR without a platform"),
         ("ulpi_window",        ulpi_window,        ""),
+        ("usb_host",           usb_host,           "role mux + shim + GUH SIE + 2 x 512 B"),
         ("serial_line",        serial_line,        ""),
         ("stream_buffer_sync", stream_buffer_sync, "depth 64"),
         ("stream_buffer_async", stream_buffer_async, "depth 16, CDC"),

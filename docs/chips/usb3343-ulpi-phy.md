@@ -302,6 +302,73 @@ specified to return to `00h` on a RESETB cycle (Table 7.1), so the command write
 `00` means the pad moved and the part saw it; `5a` means it did not. Verified on
 hardware 2026-08-07.
 
+## Role mux and byte stream on `target_phy` (`usb_host` window)
+
+Legend: **I** implemented and simulated ([`usb_host_shim_sim.py`](../../scripts/soc/usb_host_shim_sim.py)); **U** not proven on a board. Nothing here has run on hardware: every row is U for the board; I marks what the simulation covers.
+
+Source: [`peripherals/usb_host.py`](../../gateware/soc/peripherals/usb_host.py), class `UsbPort`. Window `usb_host` at `0xf0001000`, 0x20 bytes, 8-bit CSRs (4 per word), IRQ 10 (level). Design: [`../aoa-adaptor.md`](../aoa-adaptor.md), [`../usb-host-options.md`](../usb-host-options.md).
+
+### Roles (`ROLE`, reset `off`)
+| role | pins belong to | status |
+|---|---|---|
+| `off` (0) | `UlpiRegisters`; same wire behaviour as `regs` | I (cycle-identical to bare `UlpiRegisters`), U |
+| `regs` (1) | `UlpiRegisters` (`ulpi` window, `phy` shell command) | I, U |
+| `host` (2) | vendored GUH SIE via `UTMITranslator` | I (HS and FS enumeration, 512 B bulk IN vs LUNA device), U |
+| `raw` (3) | CPU: TXCMD/bytes out, RXCMD/bytes in | I (SETUP+DATA0 vs LUNA device, register read/write), U |
+
+- Switch (usb domain) only when `DIR` has been low 8 cycles AND the outgoing owner is idle (regs window and PHY reset done; host translator not busy; raw TX engine idle). I
+- Wait bound `SWITCH_LIMIT` = 1.25 x (`PHY_PAD_RESET_CYCLES + PHY_PREP_CYCLES`) usb cycles; expiry: role unchanged, `ROLE_STATUS.timeout`, `EV_TIMEOUT`. I
+- Entering `host` first writes function control `0x04 = 0x41` and OTG control `0x0a = 0x06` (the translator's shadow of them); 32-cycle bound per write; failure leaves role `regs` + timeout. I
+- The translator also writes the board's swap register `0x39` (`ulpi_extra_registers`). `raw` does not: firmware writes `0x39 = 0x06` itself via `TX_DATA`/`TX_LAST` (`0xB9`, `0x06`). The sim runs with the swap register but has no D+/D- to swap. I/U
+- While `UlpiRegisters` is not selected it sees `DIR=1`: a `ulpi` read times out as "PHY absent". I
+- `usb3343 reset` (`phy_rst`) is independent of the role; resetting under `host` is not coordinated (SIE keeps its state). U
+- VBUS: not touched here; `vbus` command only. Host pull-downs come from the SIE's OTG-control writes.
+- Not instanced on aux/control: `UsbPort(name=...)` takes the pins and the `regs_*` hand-off as ports. U
+
+### Registers (byte offsets; side effects sit alone in a word)
+| off | name | acc | contents |
+|---|---|---|---|
+| 0x00 | `ROLE` | rw | [1:0] requested role; write while a switch is pending is dropped (`BUSY_DROP`) |
+| 0x01 | `CTRL` | w | 0 `bus_reset` (host) 1 `start` (host) 2 `clr_tx` 3 `clr_rx` |
+| 0x02 | `IRQ_EN` | rw | 0 rx_avail 1 done 2 line 3 errors (`EVENTS` bits 2-7) |
+| 0x04 | `ROLE_STATUS` | r | [1:0] current role 2 switching 3 timeout (sticky) |
+| 0x05 | `LINK` | r | [1:0] line state (host: translator; raw: last RXCMD) [3:2] speed 0 HS 1 FS 2 LS 3 unknown 4 connected 5 reset_active 6 idle 7 reset_done |
+| 0x06 | `EVENTS` | rw1c | 0 done 1 line 2 rx_overflow 3 tx_overflow 4 rx_underflow 5 tx_abort 6 busy_drop 7 timeout |
+| 0x07 | `RXPID` | r | first PID byte received in the last transfer |
+| 0x08 | `ADDR` | rw | [6:0] device address |
+| 0x09 | `EP` | rw | [3:0] endpoint [5:4] type (0 SETUP 1 IN 2 OUT) 6 data_pid (caller's toggle) |
+| 0x0a | `RESP` | r | [2:0] response (1 ACK 2 NAK 3 STALL 4 TIMEOUT 5 CRC 6 RX_OVERFLOW) 3 `nyet` |
+| 0x0c/0x0d | `RXLEN` | r | 16-bit payload bytes of the last IN |
+| 0x10 | `RX_DATA` | r | **pops** the RX FIFO; empty returns 0 + `rx_underflow` |
+| 0x11 | `RX_TAG` | r | 0 tag of head 1 head valid; no side effect (read before `RX_DATA`) |
+| 0x12 | `RX_LEVEL` | r | RX entries (0..128) |
+| 0x14 | `TX_DATA` | w | push a byte |
+| 0x15 | `TX_LAST` | w | push the last byte of a packet; raw ends it with STP |
+| 0x16 | `TX_CMD` | w | push the last byte of a command with no STP (ULPI register read) |
+| 0x17 | `TX_LEVEL` | r | TX entries (0..128) |
+
+- Use byte accesses: a 32-bit store strobes every register in the word.
+
+### FIFOs
+- Both 128 deep, async (`sync` <-> `usb`), LUTRAM. TX 10 bit `{tag[1:0], byte}`: tag 0 data, 1 last+STP, 2 last without STP (`host` ignores tags). RX 9 bit `{tag, byte}`: tag 0 data byte, **tag 1 RXCMD**.
+- `raw` RX also synthesises an RXCMD when DIR+NXT start a receive (RxActive set) and when DIR falls with RxActive set (cleared). A register read comes back as a tag-1 entry. I
+- `raw` TX: a packet leaves only after its last byte is queued (marker count crossed to usb, 4-cycle settle). Packets > 128 bytes cannot be sent; > 128 RX entries overflow (oldest kept, tail dropped, `rx_overflow`). I
+- A packet is a ULPI transmit: `[0x40|PID, byte..., last]` (TXCMD, then bytes, STP after the last); the CPU computes CRC5/CRC16. Register write: `[0x80|addr, value(last)]`; register read: `[0xC0|addr (TX_CMD)]` then the RX entry. I
+- `host`: TX bytes flow into the SIE's own 512 B FIFO as written (`clr_tx` clears only the shim FIFO); RX entries are payload bytes, tag 0. I
+
+### SIE traps (7.3 of [`../usb-host-options.md`](../usb-host-options.md))
+| trap | handling |
+|---|---|
+| 8-bit `rx_len` wraps at 512 | `RXLEN` counts UTMI receive bytes less PID and CRC16; sim: RXLEN 512 while SIE `rx_len` reads 0. I |
+| data toggle | caller's (`EP.data_pid`); no auto toggle. I |
+| no completion strobe | driver FSM edge-detects `idle`; `EV_DONE` + IRQ. I |
+| NYET read as ACK | flagged only: `RESP.nyet` when `RXPID == 0x96`; PING not issued; the sim cannot produce NYET (LUNA does not). U |
+| `start` while SIE not idle / in reset | dropped, `BUSY_DROP`, `done` raised with resp NONE. I |
+| SIE never finishes | watchdog `XFER_LIMIT` = 76000 usb cycles (1.25 x one FS frame + IPD): SIE reset (bus re-resets), `EV_TIMEOUT`. U (no sim; the bound is arithmetic) |
+
+### Cost
+- Standalone synthesis, [`soc_peripheral_area.py`](../../scripts/soc/soc_peripheral_area.py): `usb_host` 2279 LUT4-equivalent / 856 DFF (includes the GUH SIE and its two 512x8 FIFOs); `ulpi_window` 148 / 122 for scale. Out-of-context upper bound. In-SoC delta: see [`../aoa-adaptor.md`](../aoa-adaptor.md).
+
 ## Registers
 
 **PHY registers are ULPI registers, not SoC registers.** They are reached through
