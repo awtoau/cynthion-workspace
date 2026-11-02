@@ -269,3 +269,58 @@ def test_a_part_that_will_not_answer_reports_no_usercode():
 
     assert read_identity(FakeDebugger(0xFFFF_FFFF, 0x1234)) == (0xFFFF_FFFF, None)
     assert read_identity(FakeDebugger(0, 0x1234)) == (0, None)
+
+
+# ---------------------------------------------------------------------------
+# The firmware's peripheral map against the gateware's (#307)
+# ---------------------------------------------------------------------------
+
+MAP = "8e1af06a" + "0" * 56
+
+
+def test_map_skew_is_its_own_verdict_at_the_same_commit():
+    """Same USERCODE (same commit, so the old check agrees), different map."""
+    result = verdict(**HEALTHY, usercode=0xAAAA_1111,
+                     expected=record(0xAAAA_1111, map_digest=MAP),
+                     firmware_map="deadbeef")
+    assert result.name == "map-skew"
+    assert "8e1af06a" in " ".join(result.lines)
+
+
+def test_map_skew_control_same_map_at_a_different_commit_passes():
+    """A different commit with an identical map is the false positive #307 names."""
+    assert verdict(**HEALTHY, usercode=0xAAAA_1111,
+                   expected=record(0xAAAA_1111, map_digest=MAP, commit="b" * 40),
+                   firmware_map="8e1af06a").name == "ok"
+    # No digest on either side leaves the question undecided, not failed.
+    assert verdict(**HEALTHY, usercode=0xAAAA_1111,
+                   expected=record(0xAAAA_1111)).name == "ok"
+
+
+@pytest.fixture(scope="module")
+def peripherals():
+    sys.path.insert(0, str(ROOT / "scripts" / "soc"))
+    import soc_generate_pac as gen
+    try:
+        elaborated = gen.elaborate_peripherals(lambda *a, **k: None)
+    except FileNotFoundError as error:
+        pytest.skip(str(error))
+    assert elaborated is not None
+    return gen, elaborated[2]
+
+
+def test_moving_a_register_moves_the_digest(peripherals):
+    gen, windows = peripherals
+    before = gen.map_digest(windows)
+    assert gen.map_digest(windows) == before          # control: deterministic
+    windows[0].base += 4
+    try:
+        assert gen.map_digest(windows) != before
+    finally:
+        windows[0].base -= 4
+
+
+def test_the_committed_pac_carries_the_gateware_s_digest(peripherals):
+    """Forget `dev.py pac` after moving a register and this is what fails."""
+    gen, windows = peripherals
+    assert usercode_map.pac_map_digest() == gen.map_digest(windows)[:8]
