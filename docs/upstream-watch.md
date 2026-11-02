@@ -4,6 +4,9 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 
 **Policy:** luna and cynthion maintainers refuse LLM-generated pull requests **and issues** (luna `CONTRIBUTING.md`, "AI policy"). Nothing from this workflow is filed or sent upstream; "CONTRIBUTE" means a human would do it. See [`upstream-boundary.md`](upstream-boundary.md).
 
+
+**Terminology:** upstream's "Sideband" (PHY, port) is the old r0.x second USB port. It is unrelated to our FPGA_ADV one-wire UART, which this repo also calls "the sideband" ([`chips/cynone-sideband.md`](chips/cynone-sideband.md)).
+
 ## luna (greatscottgadgets/luna)
 | item | state | why it matters | verdict |
 |---|---|---|---|
@@ -100,7 +103,7 @@ First sweep covered May 2025 on. This one read every open issue/PR of any age an
 | cynthion [#216](https://github.com/greatscottgadgets/cynthion/issues/216) CLI soft reset | open 2025-03 | maintainer: `apollo reconfigure` does this | USE |
 | apollo [#15](https://github.com/greatscottgadgets/apollo/issues/15) `flash_program` does not check part IDs | open 2023-02 | check the part ID ourselves before flashing | AVOID |
 | apollo [#18](https://github.com/greatscottgadgets/apollo/pull/18) auto-convert 12F/25F bitstreams | open 2023-06 | bitstreams identical except VERIFY_ID; unmerged | USE manually |
-| apollo [#21](https://github.com/greatscottgadgets/apollo/issues/21) sideband PHY unusable on older Cynthions | closed 2024-05 | Apollo cannot regain USB once the FPGA uses the shared PHY | AVOID relying on takeover |
+| apollo [#21](https://github.com/greatscottgadgets/apollo/issues/21) "Sideband PHY" unusable on older Cynthions | closed 2024-05 | r0.1-r0.4 only: the old Host/Sideband ports. r1.x replaced them with Control/Aux and an MCU-controlled D+/D- switch for the handoff (martinling), so it does not apply to r1.4. Fixed for r0.3-r0.4 by [PR#66](https://github.com/greatscottgadgets/apollo/pull/66) | not relevant to r1.4 |
 | saturn-v [#15](https://github.com/greatscottgadgets/saturn-v/issues/15) FPGA interferes with bootloader USB (older Cynthions) | open 2024-05 | bootloader/FPGA contention | WATCH |
 | hardware [#15](https://github.com/greatscottgadgets/cynthion-hardware/issues/15) r1.3 leaks 1.1 V to TARGET A VBUS | closed 2023-12 | r1.3 only; fix is 0 ohm at R114 | reference |
 
