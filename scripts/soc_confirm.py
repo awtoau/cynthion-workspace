@@ -37,6 +37,7 @@ is the whole value.
 | `wrong-port`        | design running, its console is on no bus      | DONE set (or the JTAG-pin UART answers) with `1d50:6180` absent |
 | `control-unplugged` | console on the bus, Apollo is not             | `6180` present, `615c` absent |
 | `board-absent`      | nothing of this board is on USB               | neither ID present |
+| `stock-apollo`      | Apollo runs upstream's firmware, not the fork | firmware string is a bare release tag |
 | `tty-unbound`       | device enumerated, no tty yet                 | USB present, no node -- retryable |
 | `jtag-contended`    | the ECP5 will not answer JTAG                 | IDCODE `ffffffff`/`0` -- retryable, inconclusive |
 | `silent-firmware`   | everything present and free, no reply         | the residual, and the only one that IS the firmware |
@@ -81,6 +82,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -660,6 +662,39 @@ def confirm(*, node=None, jtag=True, expect="shell", expected=None):
     return verdict
 
 
+def is_stock_apollo(version):
+    """True for upstream's release string, `vX.Y.Z` with no commits after the tag.
+
+    The fork's build is `git describe` ahead of the tag (`v1.1.1-64-g90c8b7b`).
+    """
+    return bool(version) and re.fullmatch(r"v\d+\.\d+\.\d+", version.strip()) is not None
+
+
+def apollo_firmware_version():
+    """The attached Apollo's firmware string, or None when it cannot be read."""
+    try:
+        from apollo_fpga import ApolloDebugger
+
+        debugger = ApolloDebugger()
+        try:
+            return debugger.get_firmware_version()
+        finally:
+            debugger.close()
+    except Exception:
+        return None
+
+
+def stock_apollo_verdict(version):
+    """The refusal for upstream Apollo firmware, or None. See docs/apollo-firmware.md."""
+    if not is_stock_apollo(version):
+        return None
+    return Verdict("stock-apollo", "the board runs upstream Apollo firmware", [
+        f"  firmware {version.strip()}: the SoC needs the fork (sideband, JTAG, flash).",
+        "  Rebuild and flash it: docs/apollo-firmware.md. `cynthion update` replaces it",
+        "  with upstream's.",
+    ])
+
+
 def precheck():
     """The gate BEFORE configuring: is the board there to configure at all?
 
@@ -672,7 +707,7 @@ def precheck():
     ev = Evidence(apollo=usb_present(APOLLO_PID),
                   console_usb=usb_present(usb_ids.product_id(CONSOLE)))
     if ev.apollo:
-        return None
+        return stock_apollo_verdict(apollo_firmware_version())
     if ev.console_usb:
         return Verdict("control-unplugged", "the board is here, its CONTROL cable is not", [
             "  1d50:6180 (console, AUX) is on the bus but 1d50:615c (Apollo) is",
