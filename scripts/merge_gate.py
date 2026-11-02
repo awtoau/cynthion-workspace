@@ -63,8 +63,10 @@ def say(line, log):
 
 def run_step(name, cmd, started, log):
     """-> (returncode, output lines). Kills on stall or total expiry."""
+    # A hook inherits GIT_DIR / GIT_INDEX_FILE; every git call in a step would hit this repo's index.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+                            stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
     selector = selectors.DefaultSelector()
     selector.register(proc.stdout, selectors.EVENT_READ)
     lines, last = [], time.monotonic()
