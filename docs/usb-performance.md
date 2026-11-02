@@ -1,9 +1,6 @@
 # LUNA USB gateware: measured performance
 
-LUNA's USB2 stack on Cynthion r1.4. It reaches 91% of the USB 2.0 protocol
-maximum, responds to a token in one clock cycle, and never NAKs. Every figure
-below that fell short traced to the measurement harness or the physical
-topology, not to the gateware.
+LUNA USB2 stack on Cynthion r1.4: 91% of the USB 2.0 protocol maximum, one-cycle token response, zero NAKs. Shortfalls traced to the harness or topology, not the gateware. Hub-depth effect on the SAMD11 link: [apollo_samd11_mcu/apollo-configure-speed-investigation.md](apollo_samd11_mcu/apollo-configure-speed-investigation.md).
 
 ## Results
 
@@ -102,27 +99,10 @@ Recorded so they are not re-investigated:
 
 ## Measurement traps
 
-Three of the numbers above were initially wrong, all because the instrument was
-doing work inside the timed region.
-
-**Per-byte verification in Python.** Checking a counting sequence byte by byte as
-it arrived cost 3.4 ms per 64 KiB — a ceiling of ~150 Mbps, *below the figure it
-then reported as the link speed*. It applied to IN only, producing a 56% IN/OUT
-asymmetry that looked exactly like a gateware defect and was investigated as one.
-Buffering the capture and verifying afterwards raised IN by 53% and collapsed the
-asymmetry to 9%.
-
-**Reporting payload instead of bus traffic.** A loopback carries every byte in
-both directions, so the bus figure is double the payload one. Quoting payload
-alone understated the link by exactly 2×.
-
-**Comparing along a diagonal.** Measuring AUX-through-hubs against TARGET-direct
-changes two variables at once. The conclusion happened to be right, but it was an
-inference dressed as a measurement until the fourth cell of the matrix was filled
-in.
-
-Rule: do nothing to the data while the clock is running, and when a result
-surprises, suspect the instrument before the device.
+- Do nothing to the data while the clock is running: per-byte Python verification cost 3.4 ms per 64 KiB (ceiling ~150 Mbps) and applied to IN only; buffer the capture, verify after.
+- Loopback carries every byte both directions: bus figure = 2x payload.
+- Vary one variable per cell (AUX-through-hubs vs TARGET-direct changes two).
+- When a result surprises, suspect the instrument before the device.
 
 ## Files
 
@@ -139,11 +119,4 @@ surprises, suspect the instrument before the device.
 
 ## In context
 
-The capture path is bounded by the slower of USB and HyperRAM:
-
-| | MB/s |
-|---|---|
-| HyperRAM, FIFO access at 512-byte granularity | 220.2 |
-| USB bulk, direct port | 48.5 |
-
-4.5× headroom. USB is the constraint.
+The capture path is bounded by the slower of USB (48.5 MB/s, direct port) and HyperRAM ([chips/hyperram/w956a8.md](chips/hyperram/w956a8.md)).
