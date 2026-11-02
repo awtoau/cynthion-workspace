@@ -280,11 +280,11 @@ class _PLL(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
-        m.domains[self.domain] = ClockDomain(self.domain)
+        m.domains += ClockDomain(self.domain)
         clk, locked = Signal(name=f"clk_{self.domain}"), Signal(name=f"lock_{self.domain}")
         extra = {}
         if self.d90:
-            m.domains[self.d90] = ClockDomain(self.d90)
+            m.domains += ClockDomain(self.d90)
             clk90 = Signal(name=f"clk_{self.d90}")
             cph, fph = phase_params(self.div, 90.0)
             extra = dict(p_CLKOS_ENABLE="ENABLED", p_CLKOS_DIV=self.div,
