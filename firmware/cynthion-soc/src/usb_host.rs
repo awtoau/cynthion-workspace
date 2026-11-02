@@ -85,8 +85,9 @@ const STATUS_US: u32 = 50_000;
 const DATA_US: u32 = 500_000;
 /// Bulk from the console: no spec bound; 100 ms is the longest a typed command may sit.
 pub const BULK_US: u32 = 100_000;
-/// Whole pump/echo: 1 MiB cap at a 1 MB/s worst case = 1.05 s; x1.25 rounded. Expiry: `Timeout`.
-const PUMP_US: u32 = 1_300_000;
+/// Whole pump/echo: echo moves 2 x 1 MiB at the 0.5 MB/s floor (#565) = 4.2 s; x1.25 = 5.2 s.
+/// Expiry: `Timeout` naming op, limit, elapsed.
+const PUMP_US: u32 = 5_200_000;
 pub const PUMP_MAX: u32 = 1 << 20;
 /// Echo transfer size: the bench app reads 16384-byte buffers (#565); a read ends on a full one.
 const ECHO_CHUNK: u32 = 16384;
