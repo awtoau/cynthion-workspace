@@ -136,7 +136,8 @@ fn status(uart: &mut Uart, index: usize, devices: &mut Devices) {
             // ABSENT, not "0 mA". Below the floor the current is indistinguishable
             // from the part's own offset, so the reading is not evidence of a
             // connected device -- and printing a small number implies it is.
-            if milliamps < floor as i32 {
+            // Magnitude: TARGET-A is the far end, so its current reads negative.
+            if milliamps.unsigned_abs() < floor as u32 {
                 let _ = writeln!(
                     uart,
                     "{}.{:03} V   nothing drawing (under the {} mA floor)",
