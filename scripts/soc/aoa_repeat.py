@@ -5,7 +5,7 @@
     ./scripts/soc/aoa_repeat.py [--cycles 10] [--sizes 1 64 512 4096] [--phone IP]
 
 Stops at the first failing cycle (--keep-going to run on): fix the error, rerun.
-Per cycle: role off/host, reset, aoa, wait for the app's attach + open events from AFTER the aoa,
+Per cycle: role off/host, reset, aoa, wait for the app's accessory generation to rise (a new attach, open),
 set echo mode, echo each size. The app's event log is followed the whole time and
 `ctl get` is read after each phase: a cycle fails on any app error after the accessory is open,
 on `accessory_open` false, or when the app's received byte count differs from what was sent.
@@ -32,6 +32,7 @@ CTL_REPO = Path(os.environ.get("AWTO_DJI_CTL", ROOT.parent / "awto-dji-wt-ctl"))
 SHELL_LIMIT_S = 60
 CTL_LIMIT_S = 20
 # The app logs attach + open ~1-2 s after the phone re-enumerates; bounded by the re-attach limit.
+OFF_SETTLE_S = 2.5
 ATTACH_WAIT_S = 8.0   # phone re-attach bound, same as ATTACH_US in the firmware
 # Log-follow poll: an app event line lands within one poll; 0.2 s is far below a USB step.
 POLL_S = 0.2
@@ -121,17 +122,16 @@ def echo_ok(text, size):
         and "stopped:" not in block.split("aux>")[1] and "mismatch" not in block
 
 
-def wait_for_new_accessory(events, mark):
-    """True once the app logs an accessory attach intent AND then 'accessory open' after `mark`.
+def wait_for_new_accessory(phone, gen_before):
+    """True once the app reports a higher accessory generation, open, than before the `aoa`.
 
-    `accessory_open` in a reply can be left over from the session before our `aoa`; only an
-    attach followed by an open that arrive after the `aoa` belong to the new accessory.
+    A bare `accessory_open` can be left over from the session before; the generation (one per
+    attach, from the app) proves it is the new accessory, whatever order its log lines land in.
     """
     deadline = time.monotonic() + ATTACH_WAIT_S
     while time.monotonic() < deadline:
-        seen = events.since(mark)
-        attach = next((i for i, t in enumerate(seen) if "USB_ACCESSORY_ATTACHED" in t), None)
-        if attach is not None and any("accessory open" in t for t in seen[attach:]):
+        got = reply(ctl(phone, "get"))
+        if got.get("accessory_open") and (got.get("accessory_gen") or 0) > gen_before:
             return True
         time.sleep(POLL_S)
     return False
@@ -139,17 +139,23 @@ def wait_for_new_accessory(events, mark):
 
 def run_cycle(cycle, args, events, log):
     """-> (ok, why). `why` names the first thing that failed, with the app's side of it."""
-    out = shell(["usb target_a role off", "usb target_a role host", "usb target_a reset"])
+    out = shell(["usb target_a role off"])
+    # Android tears its gadget down ~1 s after the bus loss and re-presents it ~1.7 s after; a reset
+    # or aoa inside that window is undone by it. 2.5 s = 1.5x the measured re-present time.
+    time.sleep(OFF_SETTLE_S)
+    out += shell(["usb target_a role host", "usb target_a reset"])
     log.write(out)
     if "reset done" not in out:
         return False, f"reset did not complete: {out.strip().splitlines()[-3:]}"
+    gen_before = reply(ctl(args.phone, "get")).get("accessory_gen") or 0
     mark = events.mark()
     out = shell(["usb target_a aoa"])
     log.write(out)
     if "accessory 18d1:2d0" not in out:
         return False, f"aoa did not enumerate; app saw: {events.since(mark) or 'nothing'}"
-    if not wait_for_new_accessory(events, mark):
-        return False, f"app never logged attach + open after aoa; saw: {events.since(mark)[-4:]}"
+    if not wait_for_new_accessory(args.phone, gen_before):
+        return False, (f"app accessory_gen never rose above {gen_before} with the accessory open; "
+                       f"saw: {events.since(mark)[-4:]}")
 
     mode = reply(ctl(args.phone, "mode", "echo", f"test={cycle}"))
     log.write(json.dumps(mode) + "\n")
