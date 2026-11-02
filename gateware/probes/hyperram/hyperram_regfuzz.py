@@ -40,7 +40,7 @@ does not write. **Configures the FPGA**, replacing whatever gateware is loaded; 
 only, so a power cycle restores it.
 
     python3 gateware/probes/hyperram/hyperram_regfuzz.py --build
-    ./scripts/hyperram_regfuzz.py
+    ./scripts/hyperram/hyperram_regfuzz.py
 """
 
 import sys

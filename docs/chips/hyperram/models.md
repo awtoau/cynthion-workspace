@@ -15,17 +15,17 @@ drive strength, the 200 MHz failure.
 | [`../../../gateware/probes/hyperram/hyperram_model.v`](../../../gateware/probes/hyperram/hyperram_model.v) | **the open twin.** Plain Verilog; Icarus, Verilator, cocotb |
 | [`../../../gateware/probes/hyperram/vendor_model_tb.sv`](../../../gateware/probes/hyperram/vendor_model_tb.sv) | the shared testbench; instantiates whichever `` `DUT_MODULE `` names |
 | [`../../../gateware/probes/hyperram/fault_model_tb.sv`](../../../gateware/probes/hyperram/fault_model_tb.sv) | the twin told to MISBEHAVE; Icarus only, the vendor model has no knobs |
-| [`../../../scripts/hyperram_vendor_model_sim.py`](../../../scripts/hyperram_vendor_model_sim.py) | the runner, and the regression |
+| [`../../../scripts/hyperram/hyperram_vendor_model_sim.py`](../../../scripts/hyperram/hyperram_vendor_model_sim.py) | the runner, and the regression |
 
 ## Running it
 
-    scripts/hyperram_vendor_model_sim.py                 # both, and they must agree
-    scripts/hyperram_vendor_model_sim.py --sim icarus    # open twin only, no Diamond needed
-    scripts/hyperram_vendor_model_sim.py --sim fault     # the fault knobs alone
-    scripts/hyperram_vendor_model_sim.py --grade T250    # the grade the datasheet has no column for
-    scripts/hyperram_vendor_model_sim.py --hunt 2048     # more variable-latency transactions
-    scripts/hyperram_vendor_model_sim.py --bursts 256    # more 128-word bursts
-    scripts/hyperram_vendor_model_sim.py --keep          # leave tmp/hyperram-vendor-model for vsim -gui
+    scripts/hyperram/hyperram_vendor_model_sim.py                 # both, and they must agree
+    scripts/hyperram/hyperram_vendor_model_sim.py --sim icarus    # open twin only, no Diamond needed
+    scripts/hyperram/hyperram_vendor_model_sim.py --sim fault     # the fault knobs alone
+    scripts/hyperram/hyperram_vendor_model_sim.py --grade T250    # the grade the datasheet has no column for
+    scripts/hyperram/hyperram_vendor_model_sim.py --hunt 2048     # more variable-latency transactions
+    scripts/hyperram/hyperram_vendor_model_sim.py --bursts 256    # more 128-word bursts
+    scripts/hyperram/hyperram_vendor_model_sim.py --keep          # leave tmp/hyperram-vendor-model for vsim -gui
 
 Exit code is the result: every marker present, zero testbench failures, and the
 deliberate tCSM violation reported. 0.7 s for the vendor model, ~1.3 s for both.

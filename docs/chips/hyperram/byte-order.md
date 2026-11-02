@@ -63,7 +63,7 @@ through unchanged, so a RISC-V `sw` of value `V` lands as:
 
 ## How it was measured
 
-    scripts/hyperram_dqs_model_sim.py --stage order
+    scripts/hyperram/hyperram_dqs_model_sim.py --stage order
 
 [`dqs_order_tb.sv`](../../../gateware/probes/hyperram/dqs_order_tb.sv), three
 tests, none of which compares a path against itself. Log:
@@ -141,6 +141,6 @@ the fault it names has measured nothing.
 ## The check that keeps it
 
 `ORDER_WRITE` and `ORDER_READ` in
-[`scripts/hyperram_dqs_model_sim.py`](../../../scripts/hyperram_dqs_model_sim.py).
+[`scripts/hyperram/hyperram_dqs_model_sim.py`](../../../scripts/hyperram/hyperram_dqs_model_sim.py).
 A change to either is a change to the wire format: the run fails and names this
 file, rather than reporting a new convention quietly.

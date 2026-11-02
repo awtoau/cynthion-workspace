@@ -128,7 +128,7 @@ In-tree consumers: `gateware/soc/top.py:84`,
 `gateware/probes/sideband/sideband_gateware.py:32-37`,
 `gateware/probes/sideband/test_protocol.py:33`,
 `gateware/probes/hyperram/hyperram_dqs_top.py:134`,
-`scripts/qspi_burst_sim.py:111`.
+`scripts/hyperram/qspi_burst_sim.py:111`.
 
 Two findings that change the shape of this step:
 

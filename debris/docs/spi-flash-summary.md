@@ -206,5 +206,5 @@ without reconfiguring. Fixing it doubled the apparent ceiling.
 | `repos/apollo/apollo_fpga/gateware/variable_clock.py` | ecppll-driven PLL |
 | `ecp5-test/qspi/qspi_gateware.py` | Test bitstream |
 | `scripts/qspi_ladder.py` | Divisor/offset sweep, verified against apollo |
-| `scripts/qspi_burst.py` | Small-read comparison (blocked, see above) |
+| `scripts/hyperram/qspi_burst.py` | Small-read comparison (blocked, see above) |
 | `scripts/flash_modes.py` | Opcode and clock sweep |

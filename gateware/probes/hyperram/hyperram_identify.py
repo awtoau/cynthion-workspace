@@ -61,7 +61,7 @@ Results are read over JTAG registers, so no CPU is needed -- which matters becau
 RISC-V is not up (#91) and the HyperRAM has no other master.
 
     python3 gateware/probes/hyperram/hyperram_identify.py --build
-    ./scripts/hyperram_identify.py
+    ./scripts/hyperram/hyperram_identify.py
 """
 
 import sys

@@ -264,7 +264,7 @@ phase argument; `hyperram_ceiling_top.py` passes the register to the PHY inside
 by nothing, so the 4096-cell matrix is **512 configurations run 8 times**
 ([#343](https://github.com/awtoau/cynthion-workspace/issues/343)).
 
-- `./scripts/hyperram_axis_wiring.py` decides this from the elaborated design,
+- `./scripts/hyperram/hyperram_axis_wiring.py` decides this from the elaborated design,
   needs no board, and is the only thing that can: `READCLKSEL` reaches the FPGA,
   not the part, so there is no read-back for `hyperram_axis_liveness.py` to use.
 - `drive` (CR0[14:12]) and `clk` (CR1[6]) are wired on both builds — they reach

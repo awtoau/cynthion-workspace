@@ -33,7 +33,7 @@ order -- are judged in `gateware/probes/hyperram/controller_model_tb.sv` against
 `vendor_model_tb.sv`.
 
 **A new conformance check belongs there, not here.**
-`scripts/hyperram_model_sim.py` runs it and carries a defect run for each, so a
+`scripts/hyperram/hyperram_model_sim.py` runs it and carries a defect run for each, so a
 check that stops discriminating fails instead of reading as coverage.
 
 **It cannot check DQS timing, and nothing here pretends to.** `DQSBUFM`,
@@ -41,7 +41,7 @@ check that stops discriminating fails instead of reading as coverage.
 is the property #92 is about and it is decided on silicon.
 
 The pin-group question, which is the other half of #92, is answered from the
-device database by `scripts/hyperram_dqs_pins.py` and is not repeated here.
+device database by `scripts/hyperram/hyperram_dqs_pins.py` and is not repeated here.
 
 ## Each section runs the wrong arrangement too
 
@@ -679,7 +679,7 @@ def section_recovery(checks, emit):
     # At sync 120 the two agree, because T166's 6 ns is under one cycle there and
     # upstream's accidental single cycle already clears it. What separates them at
     # EVERY clock is that ours moves when `recovery_cycles` is driven and upstream
-    # has nothing to drive -- `scripts/hyperram_timing_levers_sim.py`. (#341)
+    # has nothing to drive -- `scripts/hyperram/hyperram_timing_levers_sim.py`. (#341)
     if required == 1:
         emit("        at this clock tCSHI is under one cycle, so upstream's "
              "accident clears it too -- the lever sweep is the discriminator")
@@ -730,7 +730,7 @@ class NonDQSProtocolHarness(Elaboratable):
             # `ModelHyperRAM16` hangs off the `HyperBusPHY` record directly and
             # answers in the same cycle, so the round trip here is 0 against
             # upstream's `HyperRAMPHY` at 4, and the RWDS sample instant follows it.
-            # `scripts/hyperram_phy_rwds_sim.py` is where the 4 is measured and where
+            # `scripts/hyperram/hyperram_phy_rwds_sim.py` is where the 4 is measured and where
             # the real PHY is exercised. (#338)
             self.psram = HyperRAMController(
                 phy=self.gate.ctrl if self.gate else self.phy,

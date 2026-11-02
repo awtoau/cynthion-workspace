@@ -88,7 +88,7 @@ plus a whole HyperRAM BIST stack that exists nowhere else:
     gateware/soc/peripherals/hyperram_bist.py
     gateware/soc/peripherals/bist_csr.py
     firmware/cynthion-soc/src/bist.rs
-    scripts/bist_sim.py, soc_bist_cdc_sim.py, soc_bist_transport_sim.py
+    scripts/hyperram/bist_sim.py, soc_bist_cdc_sim.py, soc_bist_transport_sim.py
     tests/test_bist_constants.py
     docs/chips/ecp5/clocks.md
     docs/upstream-reproduction.md
@@ -127,7 +127,7 @@ block, the section heading, the table header row and **5 of 7 data rows** — an
 2 rows behind. The result at `w956a8.md:189-197` is a broken table with no header,
 no separator meaning, and no caveat:
 
-    `scripts/hyperram_ceiling.py`, CPU-free: the pattern is generated and verified in
+    `scripts/hyperram/hyperram_ceiling.py`, CPU-free: the pattern is generated and verified in
     gateware, so nothing here goes through the CPU, the cache or `BootRAM`.
 
     |---|---|---|---|---|
@@ -481,7 +481,7 @@ text. Spot-checked: `gateware/board/core.py:82`, `gateware/soc/top.py:567`,
 | # | Title | Evidence |
 |---|---|---|
 | **172** | clock: SYNC_MHZ is constrained by the PLL, not the ULPI PHY | `cce87ec`. `gateware/soc/clocks.py:101` `class SocClocks`; `:225` `ClockSignal("usb").eq(osc)`; `:29-32` "every integer MHz from 63 to 130 is reachable within 0.5% except eight". The issue's premise is resolved. |
-| **189** | hyperram: all the test code in one place | `398a6db`, `aae83fb`. `scripts/hyperram_harnesses.py` is the one door (`./dev.py hyperram`); `gateware/probes/hyperram/README.md:1-25` states each harness and resolves all three alleged duplicates (runner/top pairs, not copies). |
+| **189** | hyperram: all the test code in one place | `398a6db`, `aae83fb`. `scripts/hyperram/hyperram_harnesses.py` is the one door (`./dev.py hyperram`); `gateware/probes/hyperram/README.md:1-25` states each harness and resolves all three alleged duplicates (runner/top pairs, not copies). |
 | **190** | toolchain: amaranth-soc is undeclared | `scripts/machine_setup.py:100-105` declares `amaranth-soc`/`amaranth-stdio` at pinned commits; `scripts/amaranth_soc_check.py:3` names [#190](https://github.com/awtoau/cynthion-workspace/issues/190) and is wired into `dev.py lint`. |
 | **191** | toolchain: the ARM binutils on PATH shadow the flash-budget guards | `scripts/apollo/arm_binutils_resolve.py` exists; all three guards use it — `verify_vectors.py:24,83,87`, `apollo_budget_check.py:46,69,92,100`, `apollo_memory_report.py:47,64,87,118,142` — and each calls `.report()`. |
 | **204** | Replace luna's JTAGRegisterInterface | `a9ec4be`. `gateware/probes/jtag_registers.py`, TCK-clocked, wire-compatible; adopted by all 9 applets. The only remaining luna JTAG import is `scripts/soc_jtag_registers_sim.py:101`, deliberately, as the negative control. |
@@ -593,7 +593,7 @@ Beyond the path fixes in §2, these have stale *substance*:
 
 Two cross-issue conflicts worth reconciling when either is touched:
 * **[#182](https://github.com/awtoau/cynthion-workspace/issues/182) vs [#199](https://github.com/awtoau/cynthion-workspace/issues/199)** — [#182](https://github.com/awtoau/cynthion-workspace/issues/182)'s headline *"flash: 11 bytes free"* is contradicted by [#199](https://github.com/awtoau/cynthion-workspace/issues/199), which says the guard misses `.relocate` and the real figure is 95.48%, already over the ceiling.
-* **[#225](https://github.com/awtoau/cynthion-workspace/issues/225)'s "one broken dependency"** is live and wider than the issue says: `docs/luna_ecp5_fpga/` does not exist but is still cited from `gateware/probes/loader/bitstream_sink.py:25`, `gateware/probes/hyperram/hyperram_identify.py:11`, `scripts/hyperram_identify.py:11`, `gateware/soc/peripherals/flash.py:38`, `scripts/hyperram_fifo.py:43`, `scripts/bitstream_load_time_probe.py:15,396`.
+* **[#225](https://github.com/awtoau/cynthion-workspace/issues/225)'s "one broken dependency"** is live and wider than the issue says: `docs/luna_ecp5_fpga/` does not exist but is still cited from `gateware/probes/loader/bitstream_sink.py:25`, `gateware/probes/hyperram/hyperram_identify.py:11`, `scripts/hyperram/hyperram_identify.py:11`, `gateware/soc/peripherals/flash.py:38`, `scripts/hyperram/hyperram_fifo.py:43`, `scripts/bitstream_load_time_probe.py:15,396`.
 
 ---
 

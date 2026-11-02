@@ -130,7 +130,7 @@ both permanent:
   retires that figure.
 
 **The HyperRAM DQS group fits, and this was checked rather than assumed.**
-`scripts/hyperram_dqs_pins.py` reads prjtrellis's `iodb.json` and reports, for
+`scripts/hyperram/hyperram_dqs_pins.py` reads prjtrellis's `iodb.json` and reports, for
 `LFE5U-12F` `CABGA256`:
 
 | pin | ball | bank | DQS tag |

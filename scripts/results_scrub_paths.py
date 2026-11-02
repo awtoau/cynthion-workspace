@@ -17,7 +17,7 @@ worktree under `.claude/worktrees/<id>/`) loses that prefix too: the sha256
 beside it is the identity, and the directory it was read from is not
 reproducible anywhere else anyway.
 
-The producer is fixed in `scripts/hyperram_matrix_diff.py:pin_provenance`;
+The producer is fixed in `scripts/hyperram/hyperram_matrix_diff.py:pin_provenance`;
 this is for the records already committed.
 """
 

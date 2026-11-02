@@ -113,7 +113,7 @@ barriers, because a caveat beside a number is read as the number:
 
 1. separate directory — `tmp/board-arbiter/idle/`, never `results/hyperram/`
 2. separate schema — `board-idle-observation`, which
-   [`hyperram_matrix_diff.py`](../scripts/hyperram_matrix_diff.py) `load()`
+   [`hyperram_matrix_diff.py`](../scripts/hyperram/hyperram_matrix_diff.py) `load()`
    refuses, by schema **and** by path
 3. none of a matrix run's keys — no `failures`, no `summary`, no `pins`
 

@@ -159,7 +159,7 @@ module's `elaborate`.
 
 **And the board was wired for DQS all along.** `hyperram-detailed.md` recorded "unusable —
 no DQS pin group"; the device database says RWDS is on `LDQS8` and every DQ line is in the
-same group, and nextpnr agrees. `scripts/hyperram_dqs_pins.py` is the check.
+same group, and nextpnr agrees. `scripts/hyperram/hyperram_dqs_pins.py` is the check.
 
 Two upstream defects sit in **both** controllers, and both are now fixed in both. They
 were left in place for a while, and the reason that stopped being tenable is worth

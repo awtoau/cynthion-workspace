@@ -1,7 +1,7 @@
 # `soc_hyperram_sim.py`, check by check
 
 Every assertion classified, and the classification is CHECKED:
-[`../../../scripts/hyperram_sim_census.py`](../../../scripts/hyperram_sim_census.py)
+[`../../../scripts/hyperram/hyperram_sim_census.py`](../../../scripts/hyperram/hyperram_sim_census.py)
 reads the table below against the file and fails if an assertion is missing from
 it, if a `caller` row has vanished, or if a `device`/`redundant`/`wrong` row is
 asserted again. An assertion with no home is what made the first attempt at
@@ -33,7 +33,7 @@ model can do neither.
 ## Where the 19 moved, and the defect each still fails on
 
 Every moved check has a defect run in
-[`hyperram_model_sim.py`](../../../scripts/hyperram_model_sim.py), injected on the
+[`hyperram_model_sim.py`](../../../scripts/hyperram/hyperram_model_sim.py), injected on the
 wire BETWEEN the controller and the device so the controller is untouched. The
 run is required to produce the named line; a clean defect run exits non-zero.
 
@@ -244,11 +244,11 @@ with a deliberately rewired run required to fail.
 
 ## Running it
 
-    scripts/hyperram_sim_census.py            # the table against the file
-    scripts/hyperram_sim_census.py --list     # print the classification
+    scripts/hyperram/hyperram_sim_census.py            # the table against the file
+    scripts/hyperram/hyperram_sim_census.py --list     # print the classification
 
     scripts/soc_hyperram_sim.py                        # 122 checks, caller-side
-    scripts/hyperram_model_sim.py                      # the moved ones + 6 defect runs
-    scripts/hyperram_model_sim.py --negative-control   # 1 CK of latency error
-    scripts/hyperram_vendor_model_sim.py --sim icarus  # the twin against the vendor tb
-    scripts/hyperram_dqs_model_sim.py --stage all      # the DQS path
+    scripts/hyperram/hyperram_model_sim.py                      # the moved ones + 6 defect runs
+    scripts/hyperram/hyperram_model_sim.py --negative-control   # 1 CK of latency error
+    scripts/hyperram/hyperram_vendor_model_sim.py --sim icarus  # the twin against the vendor tb
+    scripts/hyperram/hyperram_dqs_model_sim.py --stage all      # the DQS path

@@ -3,7 +3,7 @@
 # Does the host still parse what the board prints? #226.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Hold `scripts/bist_rows.py` against a transcript of the firmware's output.
+"""Hold `scripts/hyperram/bist_rows.py` against a transcript of the firmware's output.
 
 **A regex that silently matches nothing looks exactly like a board that reported
 nothing.** Three of the seven scripts that parsed BIST rows had already drifted

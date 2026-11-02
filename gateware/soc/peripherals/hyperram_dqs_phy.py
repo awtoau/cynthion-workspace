@@ -133,7 +133,7 @@ class ReadClkSelWindow(Elaboratable):
 
     Separate from `HyperRAMDQSPHY` so it can be simulated: pysim cannot elaborate
     a module carrying `Instance`, and this is the only part with a sequence to
-    get wrong. `scripts/hyperram_dqs_pause_sim.py` is the check.
+    get wrong. `scripts/hyperram/hyperram_dqs_pause_sim.py` is the check.
 
     Ports
     -----
