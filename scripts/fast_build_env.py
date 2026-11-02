@@ -92,8 +92,8 @@ import sys
 #   --parallel-refine   parallelises the SA refinement pass after HeAP placement, and
 #                       is the only reason a rebuild's Fmax moves at all (#306)
 #   --threads 31        gives that pass threads to use; inert on its own, caps at 16
-#   --router router2    recovers the Fmax that --parallel-refine alone gives up
-NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router2"
+#   --router router1    router2 adds detours at 84% occupancy; router1 is slower but steadier
+NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router1"
 
 # yosys runs SINGLE-THREADED here, and it is not a performance decision.
 #

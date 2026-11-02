@@ -88,7 +88,6 @@ in its §13 got there in the first place.
 * [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream and what we replaced; no-upstreaming policy; luna-soc fork pin; carried commits; upstream CI and clean-build traps
 * [`capture-compression.md`](capture-compression.md) — FPGA capture-path compression (switchable, RV tap before it, gateware decompressor): requirement, path, codec options, verification
 * [`upstream-watch.md`](upstream-watch.md) — Upstream issues and PRs that matter to us (luna, apollo, cynthion, hardware, packetry), with USE/AVOID/WATCH verdicts; the no-LLM-contributions policy
-* [`upstream-yosys-edif-notes.md`](upstream-yosys-edif-notes.md) — yosys -> Lattice Diamond EDIF handoff: three blockers (`$scopeinfo`, vector ports, LPF `HZ`)
 * [`history.md`](history.md) — Removed text, by area (agents: do not read unless the task needs history): [`chips-hardware`](history/chips-hardware.md), [`upstream-toolchain`](history/upstream-toolchain.md), [`soc-usb`](history/soc-usb.md)
 * [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
 

@@ -18,9 +18,8 @@ interesting to someone optimising place-and-route. What IS interesting is the
 RTLIL, the constraints and the exact yosys/nextpnr invocation -- all of which the
 Amaranth build already writes out, so this copies rather than regenerates.
 
-`emit_verilog.py` converts the same RTLIL to Verilog for a vendor flow. It is not
-run here: RTLIL is what the open flow actually consumes, and converting adds a
-translation step that would be blamed for any difference.
+Verilog is not emitted: RTLIL is what the open flow actually consumes, and
+converting adds a translation step that would be blamed for any difference.
 
 ## The variant matters
 
@@ -163,8 +162,7 @@ ECP5 `LFE5U-25F` die (marked 12F), open flow: yosys + nextpnr-ecp5 + ecppack.
 
 `top.il` is the design as RTLIL — what yosys reads. Verilog is NOT included on
 purpose: RTLIL is what the open flow consumes, and converting adds a translation
-step that would get blamed for any difference. `scripts/emit_verilog.py` in the
-source repo does that conversion if a vendor flow needs it.
+step that would get blamed for any difference.
 
 `build_top.sh` is the exact invocation, including the `NEXTPNR_OPTS` this project
 already tuned (`--parallel-refine` plus `--router router2`; measured 64 s → 59 s
