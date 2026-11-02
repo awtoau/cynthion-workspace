@@ -301,7 +301,7 @@ JTAG", which is a much smaller thing than the effort implies.
 | flash | 13,608 B | 14,336 B | 95% = 13,619 B | **11 bytes** |
 | RAM | 3,472 B | 4,096 B | 85% = 3,481 B | **9 bytes** |
 
-That is the answer to §4 on its own. `scripts/apollo_budget_check.py` gates at those
+That is the answer to §4 on its own. `scripts/apollo/apollo_budget_check.py` gates at those
 ceilings, so **no addition of any size passes today.** LTO is already on and
 load-bearing — it reclaims 2,968 B (`chips/samd11-apollo.md`) — and `-Os` is already
 in effect (#73).

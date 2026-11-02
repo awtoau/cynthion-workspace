@@ -200,7 +200,7 @@ def build_checks() -> List[Check]:
                 # reservation. Passed in rather than re-measured because
                 # measuring it needs the board, and this check has to work
                 # without hardware attached.
-                Step([PYTHON, "scripts/apollo_budget_check.py",
+                Step([PYTHON, "scripts/apollo/apollo_budget_check.py",
                       "--stack-measured", "344"], ROOT),
                 # The LTO guard, which until now ran in no check at all -- the
                 # same gap as #337 and #362. Docs call it the vector-table guard
@@ -208,7 +208,7 @@ def build_checks() -> List[Check]:
                 # binary that links cleanly and does nothing, because the plugin
                 # resolved a weak alias to Dummy_Handler. Needs only the ELF the
                 # step above already built.
-                Step([PYTHON, "scripts/verify_vectors.py"], ROOT),
+                Step([PYTHON, "scripts/apollo/verify_vectors.py"], ROOT),
             ],
         ),
         Check(

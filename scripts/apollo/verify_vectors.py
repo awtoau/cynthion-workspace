@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+WORKSPACE = Path(__file__).resolve().parent.parent.parent
 ELF = WORKSPACE / "repos/apollo/firmware/_build/cynthion_d11/firmware.elf"
 
 sys.path.insert(0, str(WORKSPACE / "scripts"))

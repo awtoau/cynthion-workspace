@@ -16,8 +16,8 @@ a commit rather than a percentage.
 - `VERSION_STRING` is not pinned here: it is `git describe --always` of the
   commit being measured, seven hex digits wide at every one of them
 
-    ./scripts/apollo_budget_history.py
-    ./scripts/apollo_budget_history.py --since d61f6d5
+    ./scripts/apollo/apollo_budget_history.py
+    ./scripts/apollo/apollo_budget_history.py --since d61f6d5
 
 Output also goes to `tmp/logs/dev.log`.
 """
@@ -27,7 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)

@@ -143,7 +143,7 @@ being told something untrue.
 | stack high-water mark | **344 B** of 704 reserved | | | |
 
 `arm-none-eabi-gcc` 15.2.0, `APOLLO_BOARD=cynthion` at apollo `90c8b7b6`,
-2026-08-10. Checked by `scripts/apollo_budget_check.py`; `firmware.bin` is
+2026-08-10. Checked by `scripts/apollo/apollo_budget_check.py`; `firmware.bin` is
 13,688 bytes, which is the same number arrived at independently.
 
 **There is no `.data`.** The linker script routes `*(.data .data.*)` into
@@ -157,7 +157,7 @@ those 80-byte-low totals, and the firmware they shipped with was already at
 `apollo_memory_report.py` flags — above the measured image, so the next notable
 object trips the guard and byte drift does not. Flash has nothing left to give:
 588 B free is what upstream runs with, and the levers that would buy more are
-costed in `scripts/apollo_budget_levers.py` ([#496](https://github.com/awtoau/cynthion-workspace/issues/496) is the largest, 336 B).
+costed in `scripts/apollo/apollo_budget_levers.py` ([#496](https://github.com/awtoau/cynthion-workspace/issues/496) is the largest, 336 B).
 
 **14 KB, not 16.** The part has 16 KiB of flash; `BOOTLOADER_SIZE := 0x800`
 reserves 2 KiB at the bottom for the Saturn-V DFU bootloader, leaving
@@ -170,12 +170,12 @@ at 96.04% with 568 bytes free. The stack reservation is also cut deliberately �
 `-Wl,--defsym=STACK_SIZE=0x2C0` (704 B) against the linker default of 1,024 B,
 justified by the measured 344-byte high-water mark, reclaiming 320 bytes.
 
-**LTO has a specific hazard here**, which is why `scripts/verify_vectors.py`
+**LTO has a specific hazard here**, which is why `scripts/apollo/verify_vectors.py`
 exists: weak-alias vector tables plus `-flto` can silently resolve interrupt
 vectors to `Dummy_Handler`. The script checks the linked ELF's vector slots. That
 is a silent failure — the firmware links, flashes and mostly works.
 
-Reports: `scripts/apollo_memory_report.py`. (`apollo_rom_sizing.py` and
+Reports: `scripts/apollo/apollo_memory_report.py`. (`apollo_rom_sizing.py` and
 `apollo_stack_measure.py` are retired to `debris/scripts/`.)
 
 ## Pin sharing — PA10, PA11, PA14, PA15 are shared three ways
@@ -314,10 +314,10 @@ generated PAC covers the *FPGA's* registers, not this part's — see
 
 | | |
 |---|---|
-| `scripts/apollo_budget_check.py` | flash/RAM against the ceiling |
-| `scripts/apollo_memory_report.py` | where the bytes go |
-| `scripts/apollo_budget_levers.py` | what each way back under budget costs, built not estimated |
-| `scripts/verify_vectors.py` | the LTO vector-table guard; in `check.py` since [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
+| `scripts/apollo/apollo_budget_check.py` | flash/RAM against the ceiling |
+| `scripts/apollo/apollo_memory_report.py` | where the bytes go |
+| `scripts/apollo/apollo_budget_levers.py` | what each way back under budget costs, built not estimated |
+| `scripts/apollo/verify_vectors.py` | the LTO vector-table guard; in `check.py` since [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
 | `scripts/apollo_reflash.py` | reflash over DFU |
 | [`../apollo_samd11_mcu/`](../apollo_samd11_mcu/) | code review, race conditions, DFU buffers, serial architecture, the configure-speed investigation |
 

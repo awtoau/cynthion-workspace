@@ -42,8 +42,8 @@ the final binary. The numbers come out individually plausible and collectively
 wrong. Disabling LTO to get them is worse -- LTO is load-bearing for the flash
 budget, see #73.
 
-    ./scripts/apollo_memory_report.py
-    ./scripts/apollo_memory_report.py --board cynthion --top 20
+    ./scripts/apollo/apollo_memory_report.py
+    ./scripts/apollo/apollo_memory_report.py --board cynthion --top 20
 """
 
 import argparse
@@ -52,7 +52,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)

@@ -53,7 +53,7 @@ Stated so the issue is not re-read as current.
 | check | what it runs | what it would test if `repos/` were gone |
 |---|---|---|
 | `rust` | `cargo check` + `make clippy` with `cwd = repos/cynthion/firmware` (moondancer) | **nothing.** The subject is upstream's firmware. Deleting it deletes the check |
-| `apollo` | `tools/get_deps.py` in `repos/apollo/lib/tinyusb`, `make APOLLO_BOARD=cynthion` in `repos/apollo/firmware`, then `scripts/apollo_budget_check.py` (in-repo) | the budget check is ours and survives — but it reads `repos/apollo/firmware/_build/.../firmware.elf`, so with no submodule there is no ELF to measure. See [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
+| `apollo` | `tools/get_deps.py` in `repos/apollo/lib/tinyusb`, `make APOLLO_BOARD=cynthion` in `repos/apollo/firmware`, then `scripts/apollo/apollo_budget_check.py` (in-repo) | the budget check is ours and survives — but it reads `repos/apollo/firmware/_build/.../firmware.elf`, so with no submodule there is no ELF to measure. See [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
 | `python` | `import cynthion, apollo_fpga` (both editable, resolving into `repos/`), then pytest over `repos/cynthion/cynthion/python/tests/` **and** `tests/` | our `tests/` still run; the import assertion becomes a dependency probe rather than a subject; the submodule's 3 tests go |
 | `freethreading` | `sys._is_gil_enabled()` after `import cynthion, apollo_fpga` | the interpreter assertion survives; the import list would need replacing with whatever the heaviest real import is (amaranth, luna) |
 

@@ -74,8 +74,8 @@ Flash has no headroom left to give: 588 bytes free is what upstream runs with,
 and every lever that would buy more is costed in `apollo_budget_levers.py` --
 `bench` is 336 bytes and the only one that clears flash.
 
-    ./scripts/apollo_budget_check.py
-    ./scripts/apollo_budget_check.py --stack-measured 344
+    ./scripts/apollo/apollo_budget_check.py
+    ./scripts/apollo/apollo_budget_check.py --stack-measured 344
 """
 
 import argparse
@@ -84,7 +84,7 @@ import struct
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
@@ -341,8 +341,8 @@ def main():
         emit("A step change rather than drift is what this catches: a new")
         emit("buffer, a disabled optimisation, or a newly linked library.")
         emit("Raising the ceiling is the wrong first response -- check what")
-        emit("grew, with scripts/apollo_memory_report.py, and what each way")
-        emit("out costs, with scripts/apollo_budget_levers.py.")
+        emit("grew, with scripts/apollo/apollo_memory_report.py, and what each way")
+        emit("out costs, with scripts/apollo/apollo_budget_levers.py.")
         return 1
 
     return 0

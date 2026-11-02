@@ -16,8 +16,8 @@ Every lever is reverted after it is measured, and the baseline is rebuilt last.
 Nothing here is a recommendation: what a lever costs in function is a judgement,
 and only the bytes are measured.
 
-    ./scripts/apollo_budget_levers.py
-    ./scripts/apollo_budget_levers.py --only oz,dfu
+    ./scripts/apollo/apollo_budget_levers.py
+    ./scripts/apollo/apollo_budget_levers.py --only oz,dfu
 
 Results go to `tmp/logs/apollo_budget_levers.log` as well as the terminal.
 """
@@ -27,7 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
