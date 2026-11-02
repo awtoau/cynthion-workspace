@@ -157,9 +157,7 @@ enum Status {
     /// The image verified, and then the COPY read back something else.
     ///
     /// The copy pass re-reads HyperRAM, so on a part that does not read the same
-    /// bytes twice the verify can pass and the copy install garbage. #186 makes
-    /// that real on the DQS path: reads there are wrong about a third of the
-    /// time, as a whole-burst one-beat offset.
+    /// bytes twice the verify can pass and the copy install garbage.
     ///
     /// **Nothing can be recovered here and nothing tries.** The image region is
     /// already overwritten -- which is exactly why the passes are split -- so

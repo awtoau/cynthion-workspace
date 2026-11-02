@@ -277,10 +277,6 @@ const CR1_ADDR: u32 = 0x0801;
 /// documented Deep Power Down exit, which Hybrid Sleep clears itself on, and
 /// which preserves contents. One staging transaction is one CS# pulse.
 ///
-/// A DQS build wrote `CR0 = 0x0000` on every register write, and `CR0[15] = 0`
-/// is Deep Power Down. Every subsequent reconfigure left the part asleep,
-/// because nothing power-cycles it and no path asserts `RESET#` (#226).
-///
 /// The canary answers a question nothing could ask before: **was this part
 /// power-cycled?** Present with this build's `stamp` -- it kept power and its
 /// contents are ours. Present with another -- it kept power across a different
@@ -428,11 +424,11 @@ pub mod backend {
     /// went on counting the fixed number, and every read came back wrong with
     /// nothing saying why (#540). Anything that writes CR0 must call this.
     ///
-    /// `latency_clocks` is `L - 1`: `HANDLE_LATENCY` runs the count plus a zero
-    /// cycle, and one of its cycles is 2 CK at 4:1 gearing.
+    /// `latency_clocks` is `2 * L`: the controller's cycle is one CK and fixed
+    /// latency doubles the initial latency (the power-on 7 CK is 14).
     pub fn follow_cr0(cr0: u16) {
         let fixed = u32::from(cr0 >> 3 & 1);
-        let clocks = u32::from(latency_ck(cr0 >> 4 & 0xf).saturating_sub(1)) & 0x3f;
+        let clocks = u32::from(latency_ck(cr0 >> 4 & 0xf) * 2) & 0x3f;
         // SAFETY: the mode register, and this is the only writer of these bits.
         unsafe {
             let ctrl = read_volatile(MODE_CTRL as *const u32);

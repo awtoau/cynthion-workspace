@@ -450,25 +450,19 @@ mod probe {
     const WANT: usize = 0x10;
     const ARMING: usize = 0x14;
     const CYC: usize = 0x18;
-    /// 3 bits: dll_locked, dll_ready, burstdet-since-clear. DQS builds only;
-    /// reads 0 on the non-DQS one, where none of the three exist.
+    /// Bit 0: rwds_ask, sticky since the last clear.
     const STATUS: usize = 0x1c;
-    const BURSTS: usize = 0x1e;
-    // MOVED when STATUS and BURSTS were added above it. It is a byte offset into
-    // a generated map, and the generator is the authority -- see
-    // `firmware/cynthion-soc-pac/src/hyperram_probe.rs`, which records +0x20.
+    // Byte offsets into a generated map, and the generator is the authority --
+    // see `firmware/cynthion-soc-pac/src/hyperram_probe.rs`.
     const STALLS: usize = 0x20;
     const CLEAR: usize = 0x24;
-    /// Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase.
-    /// Writable so sixteen combinations need one bitstream, not sixteen builds.
-    const SEL: usize = 0x25;
     /// WHICH cycle the controller reads the extra-latency request on.
     ///
     /// 0 leaves the build-time arithmetic alone, which is what a firmware that
     /// never writes it does. Writable because that arithmetic rests on
     /// `PHY_ROUND_TRIP_CYCLES`, the behavioural PHY's number and not this
     /// board's -- so it is swept against `rwds_ask`, not trusted. #540.
-    const RWDS_AT: usize = 0x26;
+    const RWDS_AT: usize = 0x25;
 
     /// Two byte reads, low first.
     ///
@@ -488,19 +482,6 @@ mod probe {
         }
     }
 
-    /// What the DQS read path says about itself.
-    ///
-    /// Returns `(dll_locked, dll_ready, burstdet_seen, bursts)`. The three flags
-    /// separate faults that otherwise look identical from outside -- every one
-    /// of them presents as "the data read back wrong":
-    ///
-    ///   * `dll_locked` clear: DDRDLLA never locked, so the `fast` domain or
-    ///     ECLK is wrong and every delay code in the read path is meaningless.
-    ///   * locked but not `dll_ready`: the settle sequence is stuck.
-    ///   * ready, but `bursts` zero: DQSBUFM never saw a strobe inside its
-    ///     window -- READCLKSEL is on the wrong tap. This is #148.
-    ///   * bursts counted but data wrong: the strobe is fine and the fault is
-    ///     byte or half order, or the write mask.
     /// Cycles the Active Clock Stop gate held CK off. Zero means the gate never
     /// fired, which is a different fault from a misaligned one.
     pub fn stalls() -> u32 {
@@ -517,36 +498,10 @@ mod probe {
         unsafe { core::ptr::write_volatile((BASE + RWDS_AT) as *mut u8, at & 0xf) };
     }
 
-    pub fn dqs_status() -> (bool, bool, bool, bool, u32) {
+    /// Has the extra-latency sample found RWDS asserted since the last clear?
+    pub fn rwds_ask() -> bool {
         // SAFETY: one byte inside the generated HYPERRAM_PROBE window.
-        let status = unsafe { core::ptr::read_volatile((BASE + STATUS) as *const u8) };
-        (
-            status & 1 != 0,
-            status & 2 != 0,
-            status & 4 != 0,
-            status & 8 != 0,
-            read16(BURSTS),
-        )
-    }
-
-    /// Read one 16-bit word from the part's REGISTER space via the staging port.
-    ///
-    /// The only absolute reference this SoC has for the read path. Every
-    /// experiment through the memory window moves reads and writes together, so
-    /// a uniform displacement is invisible there -- reads-late and writes-early
-    /// differ by a global address translation the window cannot observe. A
-    /// register holds a constant nobody here wrote: ID0 is 0x0c86. #186.
-    /// Choose which tap captures returning read data.
-    pub static LAST_SEL: core::sync::atomic::AtomicU8 =
-        core::sync::atomic::AtomicU8::new(0b010);
-
-    pub fn set_readclksel(tap: u8) {
-        LAST_SEL.store(tap & 0x7f, core::sync::atomic::Ordering::Relaxed);
-        // SAFETY: one byte inside the generated HYPERRAM_PROBE window; a
-        // write-only field.
-        unsafe {
-            core::ptr::write_volatile((BASE + SEL) as *mut u8, tap & 0x7f);
-        }
+        unsafe { core::ptr::read_volatile((BASE + STATUS) as *const u8) & 1 != 0 }
     }
 
     /// Zero every counter, so what follows is measured over one walk rather than
@@ -1384,26 +1339,15 @@ fn evict() {
     let _ = hyper_window_read(0x3ff, 1024, false);
 }
 
-/// The DQS read path's self-report, for the shell. `probe` is private because
-/// nothing outside this file should be reading raw counter offsets; this is the
-/// one fact the shell needs from it.
-pub fn dqs_status() -> (bool, bool, bool, bool, u32) {
-    probe::dqs_status()
-}
-
-/// The DQS tap currently applied, so a sweep can put it back.
-pub fn readclksel() -> u8 {
-    probe::LAST_SEL.load(core::sync::atomic::Ordering::Relaxed)
+/// The extra-latency sample's verdict, for the shell. `probe` is private
+/// because nothing outside this file should be reading raw counter offsets.
+pub fn rwds_ask() -> bool {
+    probe::rwds_ask()
 }
 
 /// Point the extra-latency sample at a cycle. See `hr rwds` and #540.
 pub fn set_rwds_at(at: u8) {
     probe::set_rwds_at(at);
-}
-
-/// Set the DQS read clock tap. See `hr sel` and `hr sweep`.
-pub fn set_readclksel(tap: u8) {
-    probe::set_readclksel(tap);
 }
 
 /// Cycles the Active Clock Stop gate held CK off. See `hr cross`.

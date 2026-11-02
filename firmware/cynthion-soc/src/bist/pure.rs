@@ -22,7 +22,7 @@ pub struct Axes {
     pub drive: u8,
     /// `CR1[6]`: false selects the differential clock the board is wired for.
     pub single_ended_clock: bool,
-    /// `READCLKSEL` 0..=7, which shifts the DQSBUFM read pulse by T/4 a step.
+    /// `READCLKSEL` 0..=7. Reaches no PHY (#343).
     pub readclksel: u8,
     /// `CR0[7:4]`, the part's initial latency code, and `CR0[3]` fixed/variable.
     ///
@@ -307,7 +307,7 @@ pub fn latency_code_legal(code: u8) -> bool {
 /// **Expected duration, and where it comes from**: a burst is 128 words, one
 /// word per `hr` cycle, and a pass does two of them -- 256 `hr` cycles -- plus
 /// command, latency and tCSHI, call it 512 to be safe about the fixed part. The
-/// slowest rung this rig builds is CK 100 on the DQS path, where `hr` is 50 MHz,
+/// slowest rung this rig builds has `hr` at 50 MHz,
 /// against a CPU at 60 MHz: 512 x 60/50 = 614 CPU cycles per pass. One spin is
 /// an uncached CSR read plus a mask and a branch; at ~10 cycles that is ~62
 /// spins per pass.
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(eye_centre(0, 8), None);
         // Two runs: the wider one, and its centre -- never a phase between them.
         assert_eq!(eye_centre(0b0011_1001, 8), Some(4));
-        // A non-DQS build walks one phase, where `sel` reaches nothing (#343).
+        // One phase is walked: `sel` reaches nothing (#343).
         assert_eq!(eye_centre(0b0000_0001, 1), Some(0));
         assert_eq!(eye_centre(0b1111_1110, 1), None);
     }

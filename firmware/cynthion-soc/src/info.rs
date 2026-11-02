@@ -136,11 +136,10 @@ pub mod fabric {
     ///
     /// Winbond's own `Config-AC.v` (`sources/README.md`, and
     /// `docs/chips/hyperram/models.md`) switches tCSM on `` `define LA_85C ``:
-    /// **4000 ns below 85 C, 1000 ns above**. Both controllers derive their CS#
+    /// **4000 ns below 85 C, 1000 ns above**. The controller derives its CS#
     /// cap from the 4000 ns figure alone -- `T_CSM_NS` in
-    /// `gateware/soc/peripherals/hyperram_dqs_controller.py` and
-    /// `hyperram_controller.py`, `HYPERRAM_TCSM_NS` in `gateware/soc/bootram.py`
-    /// -- so above this the cap is four times too loose and nothing else on the
+    /// `gateware/soc/peripherals/hyperram_controller.py`, `HYPERRAM_TCSM_NS` in
+    /// `gateware/soc/bootram.py` -- so above this the cap is four times too loose and nothing else on the
     /// board would say so.
     pub const TCSM_KNEE_C: u32 = 85;
 
