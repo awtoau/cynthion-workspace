@@ -87,7 +87,7 @@ in its §13 got there in the first place.
 * [`toolchain-versions.md`](toolchain-versions.md) — Toolchain versions (pinned vs installed vs latest) and the constraints on them
 * [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream and what we replaced; no-upstreaming policy; luna-soc fork pin; carried commits; upstream CI and clean-build traps
 * [`upstream-yosys-edif-notes.md`](upstream-yosys-edif-notes.md) — yosys -> Lattice Diamond EDIF handoff: three blockers (`$scopeinfo`, vector ports, LPF `HZ`)
-* [`history/upstream-toolchain.md`](history/upstream-toolchain.md) — Removed text: upstream patch plan and process, old install/CI guides, dated upstream snapshots
+* [`history.md`](history.md) — Removed text, by area (agents: do not read unless the task needs history): [`chips-hardware`](history/chips-hardware.md), [`upstream-toolchain`](history/upstream-toolchain.md), [`soc-usb`](history/soc-usb.md)
 * [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
 
 ### Per-chip notes
