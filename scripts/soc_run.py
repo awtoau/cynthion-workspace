@@ -1046,8 +1046,9 @@ def main():
         # only thing to conclude from a hole is that something hung.
         emit(f"synthesis: yosys + nextpnr on {GATEWARE.relative_to(ROOT)}, "
              f"typically 140-310 s")
-        emit(f"  full tool output -> {SYNTH_LOG.relative_to(ROOT)} "
-             f"(thousands of lines; only the summary comes back here)")
+        emit(f"  yosys log -> {(BUILD / 'top.rpt').relative_to(ROOT)}, "
+             f"nextpnr log -> {(BUILD / 'top.tim').relative_to(ROOT)}; "
+             f"wrapper output -> {SYNTH_LOG.relative_to(ROOT)}")
         # DIVERTED, not discarded. Every line yosys and nextpnr produced goes to
         # its own file: it is the record when a build misbehaves, and it is far
         # too much to interleave into `dev.log`, where it buries the handful of
