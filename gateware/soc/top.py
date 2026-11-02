@@ -2225,7 +2225,9 @@ def main():
     # Set here rather than by the runner so that every route into this build --
     # `soc_run.py`, `soc_repro_check.py`, a bare `top.py --build` -- stamps the
     # same value, computed once and reused for the record below.
-    platform = CynthionPlatformRev1D4()
+    platform = CynthionPlatformRev1D4(
+        flash_drive=variant.value("CYNTHION_FLASH_DRIVE"),
+        flash_slewrate=variant.value("CYNTHION_FLASH_SLEWRATE"))
     code = usercode()
     os.environ["AMARANTH_ecppack_opts"] = ecppack_opts(code=code)["ecppack_opts"]
 

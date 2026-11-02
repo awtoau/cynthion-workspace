@@ -66,6 +66,18 @@ HYPERRAM_CTRL_DRIVE    = "4"     # CS#/RESET# static in a burst
 HYPERRAM_DQ_HYSTERESIS = "OFF"   # nextpnr forces ON; skews rise against fall
 HYPERRAM_DQ_PULLMODE   = "NONE"  # nextpnr omits it unless stated
 
+# Config-flash pin electricals, stated not inherited. Values are what nextpnr
+# applied when they were omitted (read from top.config), so behaviour is
+# unchanged. Sweep axes: CYNTHION_FLASH_DRIVE/_SLEWRATE. #459.
+FLASH_DRIVE    = "8"      # unset in .config; the pad bits decode as 8 mA
+FLASH_SLEWRATE = "SLOW"   # unset = SLOW
+FLASH_PULLMODE = "NONE"
+
+
+def flash_attrs(drive=FLASH_DRIVE, slewrate=FLASH_SLEWRATE):
+    return Attrs(IO_TYPE="LVCMOS33", DRIVE=drive, SLEWRATE=slewrate,
+                 PULLMODE=FLASH_PULLMODE)
+
 
 class CynthionPlatformRev1D4(CynthionPlatform):
     """ Board description for Cynthion r1.4 """
@@ -121,7 +133,7 @@ class CynthionPlatformRev1D4(CynthionPlatform):
             Subsignal("sdi",  Pins("T8",  dir="o")),
             Subsignal("sdo",  Pins("T7",  dir="i")),
             Subsignal("cs",   PinsN("N8", dir="o")),
-            Attrs(IO_TYPE="LVCMOS33")
+            flash_attrs()
         ),
 
         # Connection to our SPI flash but using quad mode (QSPI)
@@ -131,7 +143,7 @@ class CynthionPlatformRev1D4(CynthionPlatform):
             # See interfaces/flash.py for more information.
             Subsignal("dq",  Pins("T8 T7 M7 N7",  dir="io")),
             Subsignal("cs",  PinsN("N8", dir="o")),
-            Attrs(IO_TYPE="LVCMOS33")
+            flash_attrs()
         ),
 
         # Note: UART pins R14 and T14 are connected to JTAG pins R11 (TDI)
@@ -281,3 +293,10 @@ class CynthionPlatformRev1D4(CynthionPlatform):
     ]
 
     apollo_port_sharing = {'control_phy': 'advertising'}
+
+    def __init__(self, *, flash_drive=FLASH_DRIVE, flash_slewrate=FLASH_SLEWRATE):
+        attrs = flash_attrs(flash_drive, flash_slewrate)
+        self.resources = [
+            Resource(r.name, r.number, *r.ios, attrs) if r.name in ("spi_flash", "qspi_flash") else r
+            for r in type(self).resources]
+        super().__init__()
