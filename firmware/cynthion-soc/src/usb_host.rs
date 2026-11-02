@@ -385,6 +385,11 @@ impl Host {
             }
             self.stage(r, TY_IN, 0, 1, &[], &mut [], "control status", STATUS_US)?;
         }
+        if setup[0] == 0 && setup[1] == REQ_SET_CONFIGURATION {
+            // The device restarts its toggles at DATA0 (USB 2.0 9.1.1.5).
+            self.tog_in = 0;
+            self.tog_out = 0;
+        }
         Ok(n)
     }
 
