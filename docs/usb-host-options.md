@@ -116,6 +116,8 @@
 
 Transfer register plus FIFO port, matching `USBSIEInterface` (`guh/usbh/sie.py:47-72`: `dev_addr`/`ep_addr`/`type`/`data_pid`, strobe `start`, poll `idle`, two 8-bit streams). Not a descriptor ring.
 
+BUILT (simulation only), differently from the table below: byte map, FIFO tags, roles and trap handling are in [chips/usb3343-ulpi-phy.md](chips/usb3343-ulpi-phy.md#role-mux-and-byte-stream-on-target_phy-usb_host-window); window is 0x20 bytes at 0xf0001000, IRQ 10, `peripherals/usb_host.py`. The table is the original proposal.
+
 Proposed window `usb_host` at 0xf0001000, size 0x100 (free, aligned, inside the uncached PMA region `base=f0000000 size=10000000 main=0`, `gateware/soc/cpu/cpu.py:110-113`; INTC is at 0xf0000c00). Own `decoder.add()` (needs a 32-bit port, not the 8-bit `board` CSR decoder).
 
 | off | name | acc | contents |

@@ -47,6 +47,7 @@ class UlpiPhyModel(Elaboratable):
         self.func_ctrl = Signal(8, init=func_ctrl)
         self.otg_ctrl  = Signal(8, init=0x06)
         self.scratch   = Signal(8)
+        self.vendor_swap = Signal(8)   # register 0x39, the board's D+/D- swap
         self.writes    = Signal(8)   # register writes seen
         self.rxcmds    = Signal(16)  # line-state RXCMDs sent
 
@@ -155,6 +156,8 @@ class UlpiPhyModel(Elaboratable):
                         m.d.usb += self.otg_ctrl.eq(self.data_i)
                     with m.Case(0x16):
                         m.d.usb += self.scratch.eq(self.data_i)
+                    with m.Case(0x39):
+                        m.d.usb += self.vendor_swap.eq(self.data_i)
                 m.next = "W_STOP"
             with m.State("W_STOP"):
                 m.next = "IDLE"

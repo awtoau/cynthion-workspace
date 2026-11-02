@@ -25,6 +25,7 @@ USB3343's `nxt` gaps and RxError.
 
 import argparse
 import sys
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -161,8 +162,14 @@ def capture_usb(device_utmi, packets):
     return process
 
 
-def run(bench, testbench, extra=(), processes=()):
-    sim = Simulator(Fragment.get(bench, None))
+class BoardPlatform:
+    """Just the attribute the translator reads: the board's USB3343 D+/D- swap."""
+    ulpi_extra_registers = {0x39: 0b000110}
+    device = "LFE5U"          # LUNA asks (it only special-cases iCE40UP)
+
+
+def run(bench, testbench, extra=(), processes=(), platform=None):
+    sim = Simulator(Fragment.get(bench, platform))
     sim.add_clock(SYNC_PERIOD)
     sim.add_clock(USB_PERIOD, domain="usb")
     for process in processes:
@@ -304,7 +311,7 @@ def golden_run(through_port):
 
 
 def group_golden(checks, verbose=False):
-    emit("  golden: regs through the mux")
+    checks._emit("  golden: regs through the mux")
     ref = golden_run(False)
     cand = golden_run(True)
     checks.check(
@@ -342,7 +349,7 @@ def group_golden(checks, verbose=False):
 # ---------------------------------------------------------------------------
 
 def group_switching(checks, verbose=False):
-    emit("  switching")
+    checks._emit("  switching")
     bench = Bench(with_device=False, switch_limit=2000, func_ctrl=0x55)  # not the reset value
     phy, port = bench.phy, bench.port
     seen = {"func_writes": []}
@@ -478,7 +485,7 @@ async def drain_rx(csr, limit=600):
 
 
 def group_raw(checks, verbose=False):
-    emit("  raw")
+    checks._emit("  raw")
     bench = Bench(with_device=True, full_speed_only=False)
     port, phy, device = bench.port, bench.phy, bench.device
     packets, seen = [], {}
@@ -529,7 +536,7 @@ def group_raw(checks, verbose=False):
 
     if verbose:
         for packet in packets:
-            emit(f"        {packet.cycle:7d}  " + " ".join(f"{b:02x}" for b in packet.data))
+            checks._emit(f"        {packet.cycle:7d}  " + " ".join(f"{b:02x}" for b in packet.data))
 
     checks.check("raw role entered", role_of(seen["role"]) == ROLE_RAW,
                  f"status {seen['role']}")
@@ -632,7 +639,7 @@ async def host_transact(csr, *, type, address, endpoint, data_pid=0, payload=())
 
 
 def group_host(checks, verbose=False):
-    emit("  host (high speed)")
+    checks._emit("  host (high speed)")
     bench = Bench(with_device=True, full_speed_only=False)
     port, device = bench.port, bench.device
     packets, seen = [], {}
@@ -645,6 +652,7 @@ def group_host(checks, verbose=False):
         if seen["link"] is None:
             return
         seen["connected_link"] = await pc.read(REG_LINK)
+        seen["swap"] = int(ctx.get(bench.phy.vendor_swap))
 
         mark = len(packets)
         seen["setup"] = await host_transact(
@@ -698,11 +706,12 @@ def group_host(checks, verbose=False):
         seen["bulk_pid"] = await pc.read(REG_RXPID)
         seen["bulk_resp"] = (await pc.read(REG_RESP)) & 7
 
-    run(bench, testbench, processes=(capture_usb(device.utmi, packets),))
+    run(bench, testbench, processes=(capture_usb(device.utmi, packets),),
+        platform=BoardPlatform())
 
     if verbose:
         for packet in packets:
-            emit(f"        {packet.cycle:7d}  " + " ".join(f"{b:02x}" for b in packet.data))
+            checks._emit(f"        {packet.cycle:7d}  " + " ".join(f"{b:02x}" for b in packet.data))
 
     link = seen.get("link")
     checks.check("host: the role switch, PHY init, bus reset and chirp reach reset_done",
@@ -714,6 +723,8 @@ def group_host(checks, verbose=False):
     checks.check("host: LINK reports connected, idle, not in reset, line state J",
                  seen["connected_link"] & 0x70 == 0x50 and seen["connected_link"] & 3 == 1,
                  f"LINK {seen['connected_link']:#x}")
+    checks.check("host: the board's D+/D- swap (vendor register 0x39) is written by the translator",
+                 seen["swap"] == 0b000110, f"register 0x39 = {seen['swap']:#x}")
     checks.check("host: the IRQ line is low at reset", seen["irq_before"] == 0)
 
     def resp_name(result):
@@ -773,7 +784,10 @@ def group_host(checks, verbose=False):
         seen["bulk_len"] == BULK_MAX_PACKET_SIZE and seen["sie_rx_len"] == 0,
         f"RXLEN {seen['bulk_len']} SIE rx_len {seen['sie_rx_len']}")
 
-    emit("  host (full speed)")
+
+
+def group_host_fs(checks, verbose=False):
+    checks._emit("  host (full speed)")
     bench = Bench(with_device=True, full_speed_only=True)
     port, device = bench.port, bench.device
     fs = {}
@@ -802,7 +816,7 @@ def group_host(checks, verbose=False):
 # ---------------------------------------------------------------------------
 
 def group_fifos(checks, verbose=False):
-    emit("  fifos")
+    checks._emit("  fifos")
     bench = Bench(with_device=False)
     port, phy = bench.port, bench.phy
     packets, seen = [], {}
@@ -885,14 +899,30 @@ def main():
     scale_timing_for_simulation()
     checks = Checks(emit)
     emit("USB port role mux and CSR/FIFO shim (peripherals/usb_host.py)")
-    for name, group in GROUPS:
-        if not args.groups or name in args.groups:
-            group(checks, verbose=args.verbose)
-    return checks.summary()
+    chosen = [(n, g) for n, g in GROUPS if not args.groups or n in args.groups]
+
+    if len(chosen) == 1:
+        chosen[0][1](checks, verbose=args.verbose)
+        return checks.summary()
+
+    # Groups are independent simulations. Amaranth's builder is not thread-safe
+    # (tried: IndexError in _dsl), so each group runs in its own process; the
+    # longest, host HS, bounds the wall time.
+    procs = [(name, subprocess.Popen(
+        [sys.executable, __file__, name] + (["-v"] if args.verbose else []),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True))
+        for name, _ in chosen]
+    status = 0
+    for name, proc in procs:
+        out, _ = proc.communicate()
+        for line in out.splitlines()[1:]:       # drop the child's own banner
+            emit(line)
+        status |= proc.returncode
+    return status
 
 
 GROUPS = [("golden", group_golden), ("switching", group_switching), ("raw", group_raw),
-          ("host", group_host), ("fifos", group_fifos)]
+          ("host", group_host), ("host_fs", group_host_fs), ("fifos", group_fifos)]
 
 if __name__ == "__main__":
     sys.exit(main())
