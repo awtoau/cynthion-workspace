@@ -61,6 +61,8 @@ BENIGN = (
     "No latch inferred",
     "ABC: Warning: The network is combinational.",
     "AIG with boxes has internal fanout",
+    # &mfs on a flop-only module (BufferCC: 0 AND gates); ABC then verifies equivalent.
+    "Abc_FrameUpdateGia(): Transformation has failed",
 )
 WARNING = re.compile(r"\b(Warning|WARNING|ERROR|Error):")
 

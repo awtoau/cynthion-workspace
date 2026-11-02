@@ -1119,6 +1119,19 @@ def main():
         for entry in latest.values():
             emit("  " + entry)
 
+        # Cost and unfiltered warnings from the yosys log (#527); never fails the build.
+        try:
+            from build_log_audit import audit as audit_log
+            census = audit_log(BUILD / "top.rpt")
+            for name, use in census["usage"].items():
+                emit(f"  {name}: {use['used']}/{use['of']} ({use['fraction']:.1%})")
+            if census["notable"]:
+                emit(f"  notable cells: {census['notable']}")
+            for number, line in census["warnings"][:10]:
+                emit(f"  yosys warning (top.rpt:{number}): {line}")
+        except Exception as problem:
+            emit(f"  build log audit unavailable: {problem}")
+
         # RECORD IT. Every build, no flag to skip, before the failure return.
         #
         # A build that misses timing is the most interesting row in the table --
